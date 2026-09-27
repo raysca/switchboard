@@ -1,0 +1,77 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-09-27T16:00:00Z",
+    "tools": [
+      {
+        "vendor": "Google",
+        "name": "govoice-sbom-generator",
+        "version": "1.0.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "name": "govoice-server",
+      "version": "1.0.0",
+      "description": "Voice Framework V1 Production Server",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "github.com/coder/websocket",
+      "version": "v1.8.12",
+      "purl": "pkg:golang/github.com/coder/websocket@v1.8.12",
+      "licenses": [{"license": {"id": "ISC"}}]
+    },
+    {
+      "type": "library",
+      "name": "github.com/golang-jwt/jwt/v5",
+      "version": "v5.2.1",
+      "purl": "pkg:golang/github.com/golang-jwt/jwt/v5@v5.2.1",
+      "licenses": [{"license": {"id": "MIT"}}]
+    },
+    {
+      "type": "library",
+      "name": "google.golang.org/protobuf",
+      "version": "v1.36.5",
+      "purl": "pkg:golang/google.golang.org/protobuf@v1.36.5",
+      "licenses": [{"license": {"id": "BSD-3-Clause"}}]
+    },
+    {
+      "type": "library",
+      "name": "github.com/yalue/onnxruntime_go",
+      "version": "v1.36.0",
+      "purl": "pkg:golang/github.com/yalue/onnxruntime_go@v1.36.0",
+      "licenses": [{"license": {"id": "MIT"}}]
+    },
+    {
+      "type": "library",
+      "name": "gopkg.in/yaml.v3",
+      "version": "v3.0.1",
+      "purl": "pkg:golang/gopkg.in/yaml.v3@v3.0.1",
+      "licenses": [{"license": {"id": "Apache-2.0"}}]
+    },
+    {
+      "type": "file",
+      "name": "silero_vad.onnx",
+      "version": "v5",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+        }
+      ]
+    }
+  ]
+}

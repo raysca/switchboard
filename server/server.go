@@ -157,7 +157,7 @@ func (s *Server) setupRoutes() {
 	wsCfg := ws.ServerConfig{
 		Security: ws.SecurityConfig{
 			AllowedOrigins:     s.cfg.OriginAllowlist,
-			AllowMissingOrigin: len(s.cfg.OriginAllowlist) == 0,
+			AllowMissingOrigin: s.cfg.Profile == ProfileDevelopment || hasOriginWildcard(s.cfg.OriginAllowlist) || len(s.cfg.OriginAllowlist) == 0,
 			RequireTLS:         s.cfg.Profile == ProfileProduction && !s.cfg.InsecureOverrides.AllowPlainWSInProduction && !s.cfg.TLS.TrustedProxyMode,
 		},
 		TokenValidator:        s.validator,
@@ -476,4 +476,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	s.logger.Info("server shutdown complete")
 	return nil
+}
+
+func hasOriginWildcard(origins []string) bool {
+	for _, o := range origins {
+		if o == "*" {
+			return true
+		}
+	}
+	return false
 }

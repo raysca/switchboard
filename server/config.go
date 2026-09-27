@@ -139,7 +139,7 @@ func DefaultConfig(profile Profile) *Config {
 		Profile:          profile,
 		PublicListenAddr: "127.0.0.1:8080",
 		AdminListenAddr:  "127.0.0.1:9090",
-		OriginAllowlist:  []string{"http://localhost:3000", "https://localhost:3000"},
+		OriginAllowlist:  []string{"http://localhost:3000", "https://localhost:3000", "*"},
 		Pipelines:        make(map[string]PipelineConfig),
 	}
 
@@ -196,6 +196,13 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Pipelines["default"] = PipelineConfig{
 		STT:         "google.stt",
 		LLM:         "google.llm",
+		TTS:         "google.tts",
+		MaxMessages: 20,
+		MaxTokens:   4000,
+	}
+	cfg.Pipelines["xai"] = PipelineConfig{
+		STT:         "google.stt",
+		LLM:         "xai.llm",
 		TTS:         "google.tts",
 		MaxMessages: 20,
 		MaxTokens:   4000,

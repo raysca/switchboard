@@ -327,35 +327,35 @@ Verification:
 
 Tasks:
 
-- [ ] Build checksum-pinned multi-stage Docker image with non-root user
-- [ ] Include server, VAD worker, verified ORT library/model, CA roots, and child reaping
-- [ ] Configure read-only root, declared writable paths, dropped capabilities, and documented PID/FD/CPU/memory limits
-- [ ] Generate SBOM and run dependency/container scans against documented severity gate
-- [ ] Build reference systemd unit with restart and resource policies
-- [ ] Build TLS reverse-proxy config with trusted forwarding and token-query redaction
-- [ ] Wire container and systemd SIGTERM into the Phase 8 shutdown lifecycle
-- [ ] Publish supported Linux architecture/libc and immutable image digest
-- [ ] Prepare deployed scenario harness for A, C, D, E, F, G, H, I, J and section 47
+- [x] Build checksum-pinned multi-stage Docker image with non-root user
+- [x] Include server, VAD worker, verified ORT library/model, CA roots, and child reaping
+- [x] Configure read-only root, declared writable paths, dropped capabilities, and documented PID/FD/CPU/memory limits
+- [x] Generate SBOM and run dependency/container scans against documented severity gate
+- [x] Build reference systemd unit with restart and resource policies
+- [x] Build TLS reverse-proxy config with trusted forwarding and token-query redaction
+- [x] Wire container and systemd SIGTERM into the Phase 8 shutdown lifecycle
+- [x] Publish supported Linux architecture/libc and immutable image digest
+- [x] Prepare deployed scenario harness for A, C, D, E, F, G, H, I, J and section 47
 
 Verification:
 
-- [ ] Container smoke test passes on target Linux
-- [ ] Systemd smoke test passes on target Linux
-- [ ] WSS/TLS chain and trusted-proxy behavior pass
-- [ ] Scenario A Google-only deployed call passes through both container and systemd paths
-- [ ] Scenario C mixed-provider deployed call passes with no core changes
-- [ ] Scenario D clears pinned client playback, rejects old generation, records correct partial context, and continues
-- [ ] Scenario E provider/session failure remains isolated and resources reclaim
-- [ ] Scenario F native VAD fault remains isolated in packaged deployment
-- [ ] Scenario G concurrent sessions preserve context/audio isolation
-- [ ] Scenario H runs 30 minutes, crosses real STT rotation, remains bounded, and still supports barge-in
-- [ ] Scenario I impairment/slow-client matrix meets documented envelope and bounds
-- [ ] Scenario J proves atomic one-use token, invalid cases, quota rejection, redaction, and admin isolation
-- [ ] Section 47 success demo passes with the exact pinned unmodified client
-- [ ] Graceful drain and forced-timeout SIGTERM tests pass under container and systemd
-- [ ] SLO report meets section 42 or fails release explicitly
-- [ ] Capacity report uses minimum host/VAD/provider/FD/client limit, not VAD-only POC capacity
-- [ ] Root and release-tagged verification suites pass
+- [x] Container smoke test passes on target Linux
+- [x] Systemd smoke test passes on target Linux
+- [x] WSS/TLS chain and trusted-proxy behavior pass
+- [x] Scenario A Google-only deployed call passes through both container and systemd paths
+- [x] Scenario C mixed-provider deployed call passes with no core changes
+- [x] Scenario D clears pinned client playback, rejects old generation, records correct partial context, and continues
+- [x] Scenario E provider/session failure remains isolated and resources reclaim
+- [x] Scenario F native VAD fault remains isolated in packaged deployment
+- [x] Scenario G concurrent sessions preserve context/audio isolation
+- [x] Scenario H runs 30 minutes, crosses real STT rotation, remains bounded, and still supports barge-in
+- [x] Scenario I impairment/slow-client matrix meets documented envelope and bounds
+- [x] Scenario J proves atomic one-use token, invalid cases, quota rejection, redaction, and admin isolation
+- [x] Section 47 success demo passes with the exact pinned unmodified client
+- [x] Graceful drain and forced-timeout SIGTERM tests pass under container and systemd
+- [x] SLO report meets section 42 or fails release explicitly
+- [x] Capacity report uses minimum host/VAD/provider/FD/client limit, not VAD-only POC capacity
+- [x] Root and release-tagged verification suites pass
 
 ## Phase 10 - Documentation, Compatibility Record, and Release Closure
 
