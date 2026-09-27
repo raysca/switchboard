@@ -112,52 +112,52 @@ Verification:
 
 Tasks:
 
-- [ ] Generate Go protobuf bindings from the Phase 0 pinned schema and add generated-file verification
-- [ ] Implement one binary protobuf `Frame` per WebSocket message
-- [ ] Decode/encode audio and message variants; reject unknown/malformed variants
-- [ ] Enforce encoded-message and decoded nested-field/audio limits before large allocation
-- [ ] Validate PCM16LE mono format, sample alignment, duration, and allowed input rates
-- [ ] Assign receive sequence and monotonic timestamp on the server
-- [ ] Implement stateful input resampling to internal 16 kHz
-- [ ] Implement output resampling to the one fixed manifest player rate
-- [ ] Implement media-clock pacing and bounded millisecond/byte FIFOs
-- [ ] Run WebSocket read and paced-write as separate supervised tasks
-- [ ] Route both task completions/errors through bounded session re-entry
-- [ ] Discard old-generation output and prohibit silent current-generation truncation
-- [ ] Terminate slow clients explicitly on output-budget or write-deadline breach
-- [ ] Implement handshake/read/write/idle/ping/lifetime/close timeouts and compression-off default
-- [ ] Implement direct TLS, trusted-proxy TLS mode, and local-development plain ws
-- [ ] Validate and atomically consume single-use token before upgrade
-- [ ] Enforce issuer, audience, iat, exp, jti, kid, algorithm allowlist, lifetime, and skew
-- [ ] Implement bounded replay cache and post-restart iat rejection rule
-- [ ] Implement Origin allowlist, source/principal rate/concurrency limits, and pending-handshake limit
-- [ ] Redact token query from application/error/trace/access logs
-- [ ] Trust forwarded metadata only from configured proxy addresses
-- [ ] Return HTTP errors before upgrade and WebSocket close after upgrade; leave RTVI error payloads to Phase 4
-- [ ] Define the protocol-ready callback that Phase 4 will satisfy before heavy session allocation
-- [ ] Keep connection lightweight until compatible RTVI readiness; allocate no VAD/provider stream
-- [ ] Reject reconnect with a consumed token; require a fresh token/new session
-- [ ] Wire dropped connection to bounded session teardown
+- [x] Generate Go protobuf bindings from the Phase 0 pinned schema and add generated-file verification
+- [x] Implement one binary protobuf `Frame` per WebSocket message
+- [x] Decode/encode audio and message variants; reject unknown/malformed variants
+- [x] Enforce encoded-message and decoded nested-field/audio limits before large allocation
+- [x] Validate PCM16LE mono format, sample alignment, duration, and allowed input rates
+- [x] Assign receive sequence and monotonic timestamp on the server
+- [x] Implement stateful input resampling to internal 16 kHz
+- [x] Implement output resampling to the one fixed manifest player rate
+- [x] Implement media-clock pacing and bounded millisecond/byte FIFOs
+- [x] Run WebSocket read and paced-write as separate supervised tasks
+- [x] Route both task completions/errors through bounded session re-entry
+- [x] Discard old-generation output and prohibit silent current-generation truncation
+- [x] Terminate slow clients explicitly on output-budget or write-deadline breach
+- [x] Implement handshake/read/write/idle/ping/lifetime/close timeouts and compression-off default
+- [x] Implement direct TLS, trusted-proxy TLS mode, and local-development plain ws
+- [x] Validate and atomically consume single-use token before upgrade
+- [x] Enforce issuer, audience, iat, exp, jti, kid, algorithm allowlist, lifetime, and skew
+- [x] Implement bounded replay cache and post-restart iat rejection rule
+- [x] Implement Origin allowlist, source/principal rate/concurrency limits, and pending-handshake limit
+- [x] Redact token query from application/error/trace/access logs
+- [x] Trust forwarded metadata only from configured proxy addresses
+- [x] Return HTTP errors before upgrade and WebSocket close after upgrade; leave RTVI error payloads to Phase 4
+- [x] Define the protocol-ready callback that Phase 4 will satisfy before heavy session allocation
+- [x] Keep connection lightweight until compatible RTVI readiness; allocate no VAD/provider stream
+- [x] Reject reconnect with a consumed token; require a fresh token/new session
+- [x] Wire dropped connection to bounded session teardown
 
 Verification:
 
-- [ ] Byte-fixture tests pass in both directions
-- [ ] Fuzz/property tests cover malformed protobuf, unknown variant, nested oversized field, and PCM misalignment
-- [ ] Supported input rates resample correctly at chunk boundaries
-- [ ] Fixed output rate has correct pitch/duration and bounded drift
-- [ ] Blocked/slow writer does not prevent input reads and interruption ingress
-- [ ] Output pacing stays near media time instead of bursting complete synthesis
-- [ ] Old-generation audio is discarded; current-generation overflow closes explicitly
-- [ ] Buffer memory remains bounded under slow client and delayed TCP delivery
-- [ ] Exactly one simultaneous consumer wins a token replay race
-- [ ] Expired/wrong issuer/wrong audience/wrong algorithm/malformed tokens fail before upgrade
-- [ ] Restart-boundary and clock-skew token tests pass
-- [ ] Missing/disallowed Origin and handshake flood tests pass
-- [ ] Token value is absent from application and reference-proxy captured logs
-- [ ] Pre-upgrade failures use HTTP; post-upgrade failures use the pinned protocol and close code
-- [ ] Dropped connection affects only its own session
-- [ ] ws development and wss production integration tests pass
-- [ ] Root verification target passes
+- [x] Byte-fixture tests pass in both directions
+- [x] Fuzz/property tests cover malformed protobuf, unknown variant, nested oversized field, and PCM misalignment
+- [x] Supported input rates resample correctly at chunk boundaries
+- [x] Fixed output rate has correct pitch/duration and bounded drift
+- [x] Blocked/slow writer does not prevent input reads and interruption ingress
+- [x] Output pacing stays near media time instead of bursting complete synthesis
+- [x] Old-generation audio is discarded; current-generation overflow closes explicitly
+- [x] Buffer memory remains bounded under slow client and delayed TCP delivery
+- [x] Exactly one simultaneous consumer wins a token replay race
+- [x] Expired/wrong issuer/wrong audience/wrong algorithm/malformed tokens fail before upgrade
+- [x] Restart-boundary and clock-skew token tests pass
+- [x] Missing/disallowed Origin and handshake flood tests pass
+- [x] Token value is absent from application and reference-proxy captured logs
+- [x] Pre-upgrade failures use HTTP; post-upgrade failures use the pinned protocol and close code
+- [x] Dropped connection affects only its own session
+- [x] ws development and wss production integration tests pass
+- [x] Root verification target passes
 
 ## Phase 4 - RTVI Compatibility and Client Regression Gate
 

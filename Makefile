@@ -15,13 +15,14 @@ test: build
 	go test -race -count=1 ./voice/
 	go test -count=1 ./vad/
 	go test -race -count=1 ./tools/compat/...
+	go test -race -count=1 ./transport/...
 	@echo "=== Vetting and testing core module ==="
 	cd core && go vet ./...
 	cd core && go test -race -count=1 ./...
 
 verify: test
 	@echo "=== Checking code formatting ==="
-	@unformatted=$$(gofmt -l core/ tools/compat/ proto/); \
+	@unformatted=$$(gofmt -l core/ transport/ tools/compat/ proto/); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files need formatting:"; \
 		echo "$$unformatted"; \
