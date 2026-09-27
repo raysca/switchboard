@@ -156,6 +156,19 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 		w.queue = w.queue[1:]
 		w.queuedBytes -= len(frame.Samples)
 		w.queuedDur -= frame.Duration
+
+		var waitDur time.Duration
+		if w.cfg.EnablePacing && frame.Duration > 0 {
+			now := time.Now()
+			if w.lastMediaEnd.IsZero() || now.Sub(w.lastMediaEnd) > 100*time.Millisecond {
+				// Gap or first frame: schedule from now
+				w.lastMediaEnd = now.Add(frame.Duration)
+			} else {
+				// Consecutive frames: schedule smoothly against media clock
+				waitDur = time.Until(w.lastMediaEnd)
+				w.lastMediaEnd = w.lastMediaEnd.Add(frame.Duration)
+			}
+		}
 		w.mu.Unlock()
 
 		// Stale check before write
@@ -165,22 +178,11 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 		}
 
 		// Media clock pacing: wait until media time arrives
-		if w.cfg.EnablePacing && frame.Duration > 0 {
-			now := time.Now()
-			if w.lastMediaEnd.IsZero() || now.Sub(w.lastMediaEnd) > 100*time.Millisecond {
-				// Gap or first frame: schedule from now
-				w.lastMediaEnd = now.Add(frame.Duration)
-			} else {
-				// Consecutive frames: schedule smoothly against media clock
-				waitDur := time.Until(w.lastMediaEnd)
-				if waitDur > 0 {
-					select {
-					case <-time.After(waitDur):
-					case <-ctx.Done():
-						return ctx.Err()
-					}
-				}
-				w.lastMediaEnd = w.lastMediaEnd.Add(frame.Duration)
+		if waitDur > 0 {
+			select {
+			case <-time.After(waitDur):
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
 

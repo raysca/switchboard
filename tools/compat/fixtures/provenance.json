@@ -1,6 +1,22 @@
 {
   "generator": "tools/compat/generate_fixtures.js",
   "generated_at": "2026-09-27T10:00:00Z",
+  "coordinates": {
+    "packages": {
+      "@pipecat-ai/websocket-transport": "1.7.2",
+      "@pipecat-ai/client-js": "1.13.1"
+    },
+    "schema": {
+      "source_file": "proto/frames.proto",
+      "pipecat_reference_commit": "2967e1c09ad484076089bc88427d305fe8f79fa9",
+      "sha256": "adcd346af21673d3385d075c5a662a8407584b4b04f177320609596f4dea5c37"
+    },
+    "protocol": {
+      "rtvi_version": "2.1.0",
+      "interruption_event": "user-started-speaking",
+      "clear_event": "bot-stopped-speaking"
+    }
+  },
   "packages": {
     "@pipecat-ai/websocket-transport": "1.7.2",
     "@pipecat-ai/client-js": "1.13.1"
@@ -9,27 +25,107 @@
     "client-audio.bin": {
       "size": 658,
       "sha256": "a60ee56cf9b7d7dd8923081f2025252cb96140a005f1357ef43afd09272630de",
-      "description": "20ms 16kHz PCM16LE mono client audio in Protobuf AudioRawFrame"
+      "description": "20ms 16kHz PCM16LE mono client audio in Protobuf AudioRawFrame",
+      "coordinates": {
+        "packages": {
+          "@pipecat-ai/websocket-transport": "1.7.2",
+          "@pipecat-ai/client-js": "1.13.1"
+        },
+        "schema": {
+          "source_file": "proto/frames.proto",
+          "pipecat_reference_commit": "2967e1c09ad484076089bc88427d305fe8f79fa9",
+          "sha256": "adcd346af21673d3385d075c5a662a8407584b4b04f177320609596f4dea5c37"
+        },
+        "protocol": {
+          "rtvi_version": "2.1.0",
+          "interruption_event": "user-started-speaking",
+          "clear_event": "bot-stopped-speaking"
+        }
+      }
     },
     "server-audio.bin": {
       "size": 979,
       "sha256": "0fbba06df37f71d237903d5609df8ad33ab8fb2bec3022bdc68800f61c2521bb",
-      "description": "20ms 24kHz PCM16LE mono server audio in Protobuf AudioRawFrame"
+      "description": "20ms 24kHz PCM16LE mono server audio in Protobuf AudioRawFrame",
+      "coordinates": {
+        "packages": {
+          "@pipecat-ai/websocket-transport": "1.7.2",
+          "@pipecat-ai/client-js": "1.13.1"
+        },
+        "schema": {
+          "source_file": "proto/frames.proto",
+          "pipecat_reference_commit": "2967e1c09ad484076089bc88427d305fe8f79fa9",
+          "sha256": "adcd346af21673d3385d075c5a662a8407584b4b04f177320609596f4dea5c37"
+        },
+        "protocol": {
+          "rtvi_version": "2.1.0",
+          "interruption_event": "user-started-speaking",
+          "clear_event": "bot-stopped-speaking"
+        }
+      }
     },
     "nested-rtvi.bin": {
       "size": 121,
       "sha256": "33b33d798ad6b26b7109534d1f47741c33f5ce0c83ab343744d7b4ab0506497c",
-      "description": "Protobuf MessageFrame carrying bot-ready RTVI JSON payload"
+      "description": "Protobuf MessageFrame carrying bot-ready RTVI JSON payload",
+      "coordinates": {
+        "packages": {
+          "@pipecat-ai/websocket-transport": "1.7.2",
+          "@pipecat-ai/client-js": "1.13.1"
+        },
+        "schema": {
+          "source_file": "proto/frames.proto",
+          "pipecat_reference_commit": "2967e1c09ad484076089bc88427d305fe8f79fa9",
+          "sha256": "adcd346af21673d3385d075c5a662a8407584b4b04f177320609596f4dea5c37"
+        },
+        "protocol": {
+          "rtvi_version": "2.1.0",
+          "interruption_event": "user-started-speaking",
+          "clear_event": "bot-stopped-speaking"
+        }
+      }
     },
     "malformed.bin": {
       "size": 7,
       "sha256": "fbe79a0e7ad9521c59627ca2feeceb58c4663e7c34e7c42a70c8bfcaf252176a",
-      "description": "Malformed protobuf wire bytes for failure testing"
+      "description": "Malformed protobuf wire bytes for failure testing",
+      "coordinates": {
+        "packages": {
+          "@pipecat-ai/websocket-transport": "1.7.2",
+          "@pipecat-ai/client-js": "1.13.1"
+        },
+        "schema": {
+          "source_file": "proto/frames.proto",
+          "pipecat_reference_commit": "2967e1c09ad484076089bc88427d305fe8f79fa9",
+          "sha256": "adcd346af21673d3385d075c5a662a8407584b4b04f177320609596f4dea5c37"
+        },
+        "protocol": {
+          "rtvi_version": "2.1.0",
+          "interruption_event": "user-started-speaking",
+          "clear_event": "bot-stopped-speaking"
+        }
+      }
     },
     "wrong-schema.bin": {
       "size": 3,
       "sha256": "56389ebdc11b722c2d091870e3c6b2155b5ab1c38c5174bbee20a6da2885d5a0",
-      "description": "Protobuf bytes with unknown field tags outside Frame definition"
+      "description": "Protobuf bytes with unknown field tags outside Frame definition",
+      "coordinates": {
+        "packages": {
+          "@pipecat-ai/websocket-transport": "1.7.2",
+          "@pipecat-ai/client-js": "1.13.1"
+        },
+        "schema": {
+          "source_file": "proto/frames.proto",
+          "pipecat_reference_commit": "2967e1c09ad484076089bc88427d305fe8f79fa9",
+          "sha256": "adcd346af21673d3385d075c5a662a8407584b4b04f177320609596f4dea5c37"
+        },
+        "protocol": {
+          "rtvi_version": "2.1.0",
+          "interruption_event": "user-started-speaking",
+          "clear_event": "bot-stopped-speaking"
+        }
+      }
     }
   }
 }

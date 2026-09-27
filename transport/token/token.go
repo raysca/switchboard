@@ -47,7 +47,7 @@ func DefaultConfig(issuer, audience string, secret []byte) Config {
 		Issuer:            issuer,
 		Audience:          audience,
 		AllowedAlgorithms: []string{"HS256"},
-		MaxLifetime:       60 * time.Second,
+		MaxLifetime:       300 * time.Second,
 		ClockSkew:         5 * time.Second,
 		ReplayCacheSize:   10000,
 		HMACSecret:        secret,
@@ -76,7 +76,7 @@ func NewValidator(cfg Config, startTime time.Time) (*Validator, error) {
 		cfg.ClockSkew = 5 * time.Second
 	}
 	if cfg.MaxLifetime <= 0 {
-		cfg.MaxLifetime = 60 * time.Second
+		cfg.MaxLifetime = 300 * time.Second
 	}
 	if cfg.ReplayCacheSize <= 0 {
 		cfg.ReplayCacheSize = 10000

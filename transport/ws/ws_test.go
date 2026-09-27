@@ -51,6 +51,29 @@ func createTestToken(t *testing.T, jti string, iat time.Time, exp time.Time) str
 	return s
 }
 
+func performHandshake(t *testing.T, ctx context.Context, clientConn *websocket.Conn) {
+	t.Helper()
+	readyMsg, err := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`)
+	if err != nil {
+		t.Fatalf("failed to encode client-ready frame: %v", err)
+	}
+	if err := clientConn.Write(ctx, websocket.MessageBinary, readyMsg); err != nil {
+		t.Fatalf("failed to send client-ready: %v", err)
+	}
+	_, data, err := clientConn.Read(ctx)
+	if err != nil {
+		t.Fatalf("failed to read bot-ready: %v", err)
+	}
+	f, err := ws.DecodeBinaryFrame(data, 1, time.Now())
+	if err != nil {
+		t.Fatalf("failed to decode bot-ready frame: %v", err)
+	}
+	wmf, ok := f.(*ws.WireMessageFrame)
+	if !ok || !strings.Contains(wmf.Data, "bot-ready") {
+		t.Fatalf("expected bot-ready message, got: %v", f)
+	}
+}
+
 // 1. Byte-fixture tests in both directions
 func TestPhase3_ByteFixtures_BothDirections(t *testing.T) {
 	fixturesDir := filepath.Join("..", "..", "tools", "compat", "fixtures")
@@ -343,6 +366,8 @@ func TestPhase3_BlockedWriter_DoesNotBlockInputReads(t *testing.T) {
 	}
 	defer clientConn.Close(websocket.StatusNormalClosure, "")
 
+	performHandshake(t, ctx, clientConn)
+
 	// Client sends an audio frame
 	audioBytes, _ := ws.EncodeAudioFrame(make([]byte, 640), 16000, 1)
 	err = clientConn.Write(ctx, websocket.MessageBinary, audioBytes)
@@ -469,6 +494,7 @@ func TestPhase3_DroppedConnection_Isolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial conn1 failed: %v", err)
 	}
+	performHandshake(t, ctx, conn1)
 
 	// Connect Session 2
 	url2 := "ws" + strings.TrimPrefix(ts.URL, "http") + "?token=" + createTestToken(t, "jti-conn2", now, now.Add(time.Minute))
@@ -477,6 +503,7 @@ func TestPhase3_DroppedConnection_Isolation(t *testing.T) {
 		t.Fatalf("dial conn2 failed: %v", err)
 	}
 	defer conn2.Close(websocket.StatusNormalClosure, "")
+	performHandshake(t, ctx, conn2)
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -583,6 +610,8 @@ func TestPhase3_InputRates_ResampleCorrectlyAtChunkBoundaries(t *testing.T) {
 		t.Fatalf("websocket.Dial failed: %v", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	performHandshake(t, ctx, conn)
 
 	// 9a. Send 24 kHz audio (480 samples = 960 bytes for 20ms)
 	audio24k, _ := ws.EncodeAudioFrame(make([]byte, 960), 24000, 1)

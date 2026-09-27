@@ -100,6 +100,9 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 			return nil
 		}
 		p.textBuf.WriteString(delta.Delta)
+		if err := e.PushDirection(f, dir); err != nil {
+			return err
+		}
 		return p.segmentBuffer(e, false)
 
 	case FrameLLMText:
@@ -109,6 +112,9 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		}
 		if lt.Text != "" {
 			p.textBuf.WriteString(lt.Text)
+		}
+		if err := e.PushDirection(f, dir); err != nil {
+			return err
 		}
 		return p.segmentBuffer(e, true)
 

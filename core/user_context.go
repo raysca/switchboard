@@ -97,6 +97,9 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 
 	p.TurnsCreated.Add(1)
 
+	// Forward FinalTranscriptionFrame downstream toward transport/listeners
+	_ = e.PushDirection(f, dir)
+
 	// Forward UserMessageFrame downstream toward LLM
 	return e.Push(&UserMessageFrame{
 		Turn:      turnID,

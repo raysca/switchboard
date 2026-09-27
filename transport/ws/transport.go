@@ -13,6 +13,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/transport/resample"
+	"govoice/transport/rtvi"
 	"govoice/transport/token"
 )
 
@@ -28,6 +29,7 @@ type ServerConfig struct {
 	TokenValidator        *token.Validator
 	Pacer                 PacerConfig
 	HandshakeTimeout      time.Duration // Max handshake duration (default: 5s)
+	RTVIReadyTimeout      time.Duration // Max wait for client-ready handshake (default: 5s)
 	ReadTimeout           time.Duration // Idle read timeout (default: 30s)
 	PingInterval          time.Duration // Keepalive ping interval (default: 10s)
 	MaxConnectionLifetime time.Duration // Max duration for a voice call (default: 60m)
@@ -46,6 +48,7 @@ func DefaultServerConfig(val *token.Validator) ServerConfig {
 		TokenValidator:        val,
 		Pacer:                 DefaultPacerConfig(),
 		HandshakeTimeout:      5 * time.Second,
+		RTVIReadyTimeout:      5 * time.Second,
 		ReadTimeout:           30 * time.Second,
 		PingInterval:          10 * time.Second,
 		MaxConnectionLifetime: 60 * time.Minute,
@@ -64,6 +67,12 @@ type Connection struct {
 	pacer      *PacedWriter
 	session    *core.Session
 	seqCounter atomic.Uint64
+	rtvi       *rtvi.Handler
+
+	writeMu   sync.Mutex
+	readyCh   chan struct{}
+	readyOnce sync.Once
+	speaking  atomic.Bool
 
 	// Resamplers
 	resamplersMu sync.Mutex
@@ -94,6 +103,9 @@ type Server struct {
 func NewServer(cfg ServerConfig) *Server {
 	if cfg.HandshakeTimeout <= 0 {
 		cfg.HandshakeTimeout = 5 * time.Second
+	}
+	if cfg.RTVIReadyTimeout <= 0 {
+		cfg.RTVIReadyTimeout = 5 * time.Second
 	}
 	if cfg.ReadTimeout <= 0 {
 		cfg.ReadTimeout = 30 * time.Second
@@ -203,17 +215,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cfg:          s.cfg,
 		ctx:          sessCtx,
 		cancel:       sessCancel,
+		rtvi:         rtvi.NewHandler(),
+		readyCh:      make(chan struct{}),
 		inResamplers: make(map[int]*resample.Resampler),
 	}
 
-	// Initialize PacedWriter
+	// Initialize PacedWriter with thread-safe writeFn
 	pacer := NewPacedWriter(s.cfg.Pacer, func(ctx context.Context, data []byte) error {
+		conn.writeMu.Lock()
+		defer conn.writeMu.Unlock()
 		return wsConn.Write(ctx, websocket.MessageBinary, data)
 	})
 	conn.pacer = pacer
 
-	// Hook write completion re-entry
+	// Hook write completion re-entry and speech state
 	pacer.OnWriteComplete = func(f *core.OutputAudioFrame, err error) {
+		if f.IsFinal {
+			if conn.speaking.CompareAndSwap(true, false) {
+				msg, _ := conn.rtvi.FormatBotStoppedSpeaking()
+				_ = conn.WriteWireMessage(conn.ctx, msg)
+			}
+		}
 		if conn.session != nil {
 			_ = conn.session.Reenter(&core.WriteCompletionFrame{
 				Turn:    f.Turn,
@@ -226,6 +248,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Protocol-ready handshake callback: allocate session ONLY after valid RTVI readiness!
+	conn.rtvi.OnClientReady = func(version string) error {
+		conn.readyOnce.Do(func() {
+			close(conn.readyCh)
+		})
+		// 1. Format and send bot-ready message immediately
+		botReadyMsg, err := conn.rtvi.FormatBotReady()
+		if err != nil {
+			return err
+		}
+		if err := conn.WriteWireMessage(conn.ctx, botReadyMsg); err != nil {
+			return err
+		}
+
+		// 2. Allocate session only after token, protobuf, and RTVI readiness pass
+		if s.OnSessionReady != nil {
+			session, err := s.OnSessionReady(conn)
+			if err != nil {
+				return err
+			}
+			conn.session = session
+			if err := session.Start(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	defer func() {
 		conn.Close()
 		s.activeMu.Lock()
@@ -233,19 +283,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.activeMu.Unlock()
 	}()
 
-	// Allocate session if factory provided
-	if s.OnSessionReady != nil {
-		session, err := s.OnSessionReady(conn)
-		if err != nil {
-			_ = wsConn.Close(websocket.StatusInternalError, "session allocation failed")
-			return
+	// RTVI Ready watchdog: if client does not send valid client-ready within timeout,
+	// terminate connection before heavy session allocation.
+	go func() {
+		select {
+		case <-conn.readyCh:
+			// Handshake completed successfully
+		case <-time.After(s.cfg.RTVIReadyTimeout):
+			if !conn.rtvi.IsReady() {
+				_ = wsConn.Close(websocket.StatusPolicyViolation, "rtvi ready timeout exceeded")
+				conn.cancel()
+			}
+		case <-conn.ctx.Done():
 		}
-		conn.session = session
-		if err := session.Start(); err != nil {
-			_ = wsConn.Close(websocket.StatusInternalError, "session start failed")
-			return
-		}
-	}
+	}()
 
 	// Run independent supervised read and write tasks
 	var wg sync.WaitGroup
@@ -306,24 +357,52 @@ func (c *Connection) readLoop() {
 			return
 		}
 
-		// Audio input handling
-		if audio, ok := frame.(*core.InputAudioFrame); ok {
-			// Resample to 16 kHz internal format if needed
-			if audio.SampleRate != InternalSampleRate {
-				resampled, err := c.resampleInput(audio.Samples, audio.SampleRate)
-				if err == nil {
-					audio.Samples = resampled
-					audio.SampleRate = InternalSampleRate
+		switch f := frame.(type) {
+		case *WireMessageFrame:
+			respFrame, err := c.rtvi.HandleIncomingJSON(f.Data)
+			if err != nil {
+				if errors.Is(err, rtvi.ErrIncompatibleProtocol) {
+					errJSON, _ := c.rtvi.FormatError(err.Error(), true)
+					_ = c.WriteWireMessage(c.ctx, errJSON)
+					_ = c.conn.Close(websocket.StatusPolicyViolation, err.Error())
+					return
+				}
+				_ = c.conn.Close(websocket.StatusUnsupportedData, err.Error())
+				return
+			}
+			if respFrame != nil {
+				if _, ok := respFrame.(*core.EndFrame); ok {
+					c.Close()
+					return
+				}
+				if c.session != nil {
+					_ = c.session.Post(respFrame)
 				}
 			}
-		}
 
-		if c.session != nil {
-			if err := c.session.Post(frame); err != nil {
-				// Queue full or session closed
-				if errors.Is(err, core.ErrControlQueueFull) {
-					_ = c.conn.Close(websocket.StatusPolicyViolation, "control queue full")
-					return
+		case *core.InputAudioFrame:
+			// Audio input handling: require RTVI client-ready before accepting audio
+			if !c.rtvi.IsReady() {
+				_ = c.conn.Close(websocket.StatusPolicyViolation, "audio sent before rtvi client-ready handshake")
+				return
+			}
+
+			// Resample to 16 kHz internal format if needed
+			if f.SampleRate != InternalSampleRate {
+				resampled, err := c.resampleInput(f.Samples, f.SampleRate)
+				if err == nil {
+					f.Samples = resampled
+					f.SampleRate = InternalSampleRate
+				}
+			}
+
+			if c.session != nil {
+				if err := c.session.Post(f); err != nil {
+					// Queue full or session closed
+					if errors.Is(err, core.ErrControlQueueFull) {
+						_ = c.conn.Close(websocket.StatusPolicyViolation, "control queue full")
+						return
+					}
 				}
 			}
 		}
@@ -358,11 +437,16 @@ func (c *Connection) Close() {
 	})
 }
 
-// ProcessFrame implements core.Processor to serve as the transport audio sink.
+// ProcessFrame implements core.Processor to serve as the transport audio sink and RTVI emitter.
 func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch f.Type() {
 	case core.FrameOutputAudio:
 		oaf := f.(*core.OutputAudioFrame)
+		if c.speaking.CompareAndSwap(false, true) {
+			msg, _ := c.rtvi.FormatBotStartedSpeaking()
+			_ = c.WriteWireMessage(ctx, msg)
+		}
+
 		// Convert provider rate to fixed player rate if necessary
 		if oaf.SampleRate != c.cfg.FixedPlayerRate {
 			c.resamplersMu.Lock()
@@ -385,9 +469,63 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 
 		return c.pacer.Enqueue(oaf)
 
+	case core.FrameUserStartedSpeaking:
+		msg, _ := c.rtvi.FormatUserStartedSpeaking()
+		_ = c.WriteWireMessage(ctx, msg)
+		return e.PushDirection(f, dir)
+
+	case core.FrameUserStoppedSpeaking:
+		msg, _ := c.rtvi.FormatUserStoppedSpeaking()
+		_ = c.WriteWireMessage(ctx, msg)
+		return e.PushDirection(f, dir)
+
+	case core.FrameInterimTranscription:
+		itf := f.(*core.InterimTranscriptionFrame)
+		ts := ""
+		if !itf.Timestamp.IsZero() {
+			ts = itf.Timestamp.Format(time.RFC3339Nano)
+		}
+		msg, _ := c.rtvi.FormatUserTranscriptionWithMeta(itf.Text, false, ts, itf.UserID)
+		_ = c.WriteWireMessage(ctx, msg)
+		return e.PushDirection(f, dir)
+
+	case core.FrameFinalTranscription:
+		ftf := f.(*core.FinalTranscriptionFrame)
+		ts := ""
+		if !ftf.Timestamp.IsZero() {
+			ts = ftf.Timestamp.Format(time.RFC3339Nano)
+		}
+		msg, _ := c.rtvi.FormatUserTranscriptionWithMeta(ftf.Text, true, ts, ftf.UserID)
+		_ = c.WriteWireMessage(ctx, msg)
+		return e.PushDirection(f, dir)
+
+	case core.FrameLLMTextDelta:
+		ltf := f.(*core.LLMTextDeltaFrame)
+		msg, _ := c.rtvi.FormatBotLLMText(ltf.Delta)
+		_ = c.WriteWireMessage(ctx, msg)
+		return e.PushDirection(f, dir)
+
+	case core.FrameTTSStarted:
+		if c.speaking.CompareAndSwap(false, true) {
+			msg, _ := c.rtvi.FormatBotStartedSpeaking()
+			_ = c.WriteWireMessage(ctx, msg)
+		}
+		return e.PushDirection(f, dir)
+
+	case core.FrameTTSStopped:
+		if c.speaking.CompareAndSwap(true, false) {
+			msg, _ := c.rtvi.FormatBotStoppedSpeaking()
+			_ = c.WriteWireMessage(ctx, msg)
+		}
+		return e.PushDirection(f, dir)
+
 	case core.FrameInterruption:
 		intr := f.(*core.InterruptionFrame)
 		c.pacer.Flush(intr.Gen)
+		c.speaking.Store(false)
+		// Emit playback clear event (proven in Phase 0 / ADR-0001)
+		msg, _ := c.rtvi.FormatBotStoppedSpeaking()
+		_ = c.WriteWireMessage(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameFlush:
@@ -396,9 +534,39 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		// Acknowledge flush barrier
 		return e.PushDirection(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream)
 
+	case core.FrameError:
+		ef := f.(*core.ErrorFrame)
+		msg, _ := c.rtvi.FormatError(ef.Err.Error(), ef.Fatal)
+		_ = c.WriteWireMessage(ctx, msg)
+		if ef.Fatal {
+			c.Close()
+		}
+		return e.PushDirection(f, dir)
+
 	default:
 		return e.PushDirection(f, dir)
 	}
+}
+
+// WriteWireMessage safely serializes and writes an RTVI JSON message to the client over WebSocket.
+func (c *Connection) WriteWireMessage(ctx context.Context, rtviJSON string) error {
+	data, err := EncodeMessageFrame(rtviJSON)
+	if err != nil {
+		return err
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.conn.Write(ctx, websocket.MessageBinary, data)
+}
+
+// RTVI returns the associated RTVI protocol handler.
+func (c *Connection) RTVI() *rtvi.Handler {
+	return c.rtvi
+}
+
+// Session returns the allocated core session, or nil if not ready yet.
+func (c *Connection) Session() *core.Session {
+	return c.session
 }
 
 // Pacer returns the underlying PacedWriter.

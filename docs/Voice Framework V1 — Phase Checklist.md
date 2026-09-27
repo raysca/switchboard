@@ -163,31 +163,31 @@ Verification:
 
 Tasks:
 
-- [ ] Parse/emit RTVI JSON only within the protobuf message variant
-- [ ] Implement exact pinned client-ready/version validation
-- [ ] Implement bot/server readiness and connected/disconnected lifecycle
-- [ ] Implement user speech and transcription events
-- [ ] Implement bot text, speaking, and audio state events
-- [ ] Implement safe error events and session termination
-- [ ] Implement the exact interruption/playback-clear event proven in Phase 0
-- [ ] Allocate voice session only after token, protobuf, and RTVI readiness pass
-- [ ] Reject incompatible/unpinned protocol before VAD/provider allocation
-- [ ] Keep RTVI types out of core frames
-- [ ] Wire deterministic fake STT/LLM/TTS for complete round trip
-- [ ] Add exact package/schema/protocol coordinates to every compatibility fixture result
+- [x] Parse/emit RTVI JSON only within the protobuf message variant
+- [x] Implement exact pinned client-ready/version validation
+- [x] Implement bot/server readiness and connected/disconnected lifecycle
+- [x] Implement user speech and transcription events
+- [x] Implement bot text, speaking, and audio state events
+- [x] Implement safe error events and session termination
+- [x] Implement the exact interruption/playback-clear event proven in Phase 0
+- [x] Allocate voice session only after token, protobuf, and RTVI readiness pass
+- [x] Reject incompatible/unpinned protocol before VAD/provider allocation
+- [x] Keep RTVI types out of core frames
+- [x] Wire deterministic fake STT/LLM/TTS for complete round trip
+- [x] Add exact package/schema/protocol coordinates to every compatibility fixture result
 
 Verification:
 
-- [ ] Clean install of exact released packages connects without patch or custom serializer
-- [ ] Fresh token reaches ready state and allocates one voice session
-- [ ] Incompatible protocol closes before heavy allocation
-- [ ] Client audio produces fake transcription, bot text, speaking state, and bot audio
-- [ ] Buffered client playback clears during fake barge-in
-- [ ] New-generation audio follows the clear event in wire order
-- [ ] Consumed-token automatic reconnect is rejected; fresh-token new call succeeds without old context
-- [ ] Client disconnect tears down session/resources cleanly
-- [ ] Automated compatibility suite uses the checked-in byte fixtures and manifest coordinates
-- [ ] Root verification target passes
+- [x] Clean install of exact released packages connects without patch or custom serializer
+- [x] Fresh token reaches ready state and allocates one voice session
+- [x] Incompatible protocol closes before heavy allocation
+- [x] Client audio produces fake transcription, bot text, speaking state, and bot audio
+- [x] Buffered client playback clears during fake barge-in
+- [x] New-generation audio follows the clear event in wire order
+- [x] Consumed-token automatic reconnect is rejected; fresh-token new call succeeds without old context
+- [x] Client disconnect tears down session/resources cleanly
+- [x] Automated compatibility suite uses the checked-in byte fixtures and manifest coordinates
+- [x] Root verification target passes
 
 ## Phase 5 - Google Providers and Provider Lifecycle
 

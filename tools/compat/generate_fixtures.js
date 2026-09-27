@@ -64,39 +64,59 @@ function generateFixtures() {
   const wrongSchemaPath = path.join(fixturesDir, 'wrong-schema.bin');
   fs.writeFileSync(wrongSchemaPath, wrongSchemaBytes);
 
-  // Manifest of generated fixtures
-  const provenance = {
-    generator: "tools/compat/generate_fixtures.js",
-    generated_at: "2026-09-27T10:00:00Z",
+  // Manifest of generated fixtures with exact package, schema, and protocol coordinates
+  const coordinates = {
     packages: {
       "@pipecat-ai/websocket-transport": "1.7.2",
       "@pipecat-ai/client-js": "1.13.1"
     },
+    schema: {
+      source_file: "proto/frames.proto",
+      pipecat_reference_commit: "2967e1c09ad484076089bc88427d305fe8f79fa9",
+      sha256: "adcd346af21673d3385d075c5a662a8407584b4b04f177320609596f4dea5c37"
+    },
+    protocol: {
+      rtvi_version: "2.1.0",
+      interruption_event: "user-started-speaking",
+      clear_event: "bot-stopped-speaking"
+    }
+  };
+
+  const provenance = {
+    generator: "tools/compat/generate_fixtures.js",
+    generated_at: "2026-09-27T10:00:00Z",
+    coordinates: coordinates,
+    packages: coordinates.packages,
     fixtures: {
       "client-audio.bin": {
         size: clientAudioBytes.length,
         sha256: sha256Buffer(Buffer.from(clientAudioBytes)),
-        description: "20ms 16kHz PCM16LE mono client audio in Protobuf AudioRawFrame"
+        description: "20ms 16kHz PCM16LE mono client audio in Protobuf AudioRawFrame",
+        coordinates: coordinates
       },
       "server-audio.bin": {
         size: serverAudioBytes.length,
         sha256: sha256Buffer(Buffer.from(serverAudioBytes)),
-        description: "20ms 24kHz PCM16LE mono server audio in Protobuf AudioRawFrame"
+        description: "20ms 24kHz PCM16LE mono server audio in Protobuf AudioRawFrame",
+        coordinates: coordinates
       },
       "nested-rtvi.bin": {
         size: nestedRtviBytes.length,
         sha256: sha256Buffer(Buffer.from(nestedRtviBytes)),
-        description: "Protobuf MessageFrame carrying bot-ready RTVI JSON payload"
+        description: "Protobuf MessageFrame carrying bot-ready RTVI JSON payload",
+        coordinates: coordinates
       },
       "malformed.bin": {
         size: malformedBytes.length,
         sha256: sha256Buffer(malformedBytes),
-        description: "Malformed protobuf wire bytes for failure testing"
+        description: "Malformed protobuf wire bytes for failure testing",
+        coordinates: coordinates
       },
       "wrong-schema.bin": {
         size: wrongSchemaBytes.length,
         sha256: sha256Buffer(wrongSchemaBytes),
-        description: "Protobuf bytes with unknown field tags outside Frame definition"
+        description: "Protobuf bytes with unknown field tags outside Frame definition",
+        coordinates: coordinates
       }
     }
   };
