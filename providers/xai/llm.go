@@ -64,6 +64,11 @@ type Processor struct {
 	activeTurn   string
 	closed       bool
 
+	Requests atomic.Uint64
+	Errors   atomic.Uint64
+	Retries  atomic.Uint64
+	Stale    atomic.Uint64
+
 	// Token usage telemetry
 	PromptTokens atomic.Int64
 	OutputTokens atomic.Int64
@@ -99,6 +104,13 @@ func NewProcessor(cfg Config) (*Processor, error) {
 	return &Processor{
 		cfg: cfg,
 	}, nil
+}
+
+// SetContextProvider supplies bounded conversation history for each request.
+func (p *Processor) SetContextProvider(fn func() []core.Message) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cfg.ContextProvider = fn
 }
 
 func (p *Processor) Attach(s core.SessionController, index int) error {
@@ -160,7 +172,8 @@ type responsesRequest struct {
 	Model    string        `json:"model"`
 	Store    bool          `json:"store"`
 	Stream   bool          `json:"stream"`
-	Messages []chatMessage `json:"messages"`
+	Input    []chatMessage `json:"input,omitempty"`
+	Messages []chatMessage `json:"messages,omitempty"`
 }
 
 type chatChunkChoice struct {
@@ -174,13 +187,20 @@ type chatChunkUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
 }
 
 type chatChunkResponse struct {
-	Type    string            `json:"type"`
-	Delta   string            `json:"delta"`
-	Choices []chatChunkChoice `json:"choices"`
-	Usage   *chatChunkUsage   `json:"usage"`
+	Type     string            `json:"type"`
+	Delta    string            `json:"delta"`
+	Text     string            `json:"text"`
+	Choices  []chatChunkChoice `json:"choices"`
+	Usage    *chatChunkUsage   `json:"usage"`
+	Response *struct {
+		OutputText string          `json:"output_text"`
+		Usage      *chatChunkUsage `json:"usage"`
+	} `json:"response"`
 }
 
 func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame, e core.Emitter) error {
@@ -206,9 +226,19 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 	p.activeTurn = turn
 	p.activeGen = gen
 
-	streamCtx, cancel := context.WithTimeout(context.Background(), p.cfg.Timeout)
+	parent := context.Background()
+	if s != nil {
+		parent = s.Context()
+	}
+	streamCtx, cancel := context.WithTimeout(parent, p.cfg.Timeout)
 	p.activeCancel = cancel
 	p.mu.Unlock()
+
+	// Push UserMessageFrame downstream so AssistantContextProcessor initializes activeTurn
+	if err := e.Push(f); err != nil {
+		cancel()
+		return err
+	}
 
 	// Build message history
 	var history []core.Message
@@ -245,10 +275,14 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 	}
 
 	reqBody := responsesRequest{
-		Model:    p.cfg.Model,
-		Store:    false, // Spec: store: false MUST be sent on every request
-		Stream:   true,
-		Messages: messages,
+		Model:  p.cfg.Model,
+		Store:  false, // Spec: store: false MUST be sent on every request
+		Stream: true,
+	}
+	if strings.Contains(p.cfg.Endpoint, "chat/completions") {
+		reqBody.Messages = messages
+	} else {
+		reqBody.Input = messages
 	}
 
 	jsonBytes, err := json.Marshal(reqBody)
@@ -258,6 +292,7 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 	}
 
 	// Supervised async execution
+	p.Requests.Add(1)
 	return s.Go(func(sessionCtx context.Context) {
 		defer cancel()
 
@@ -266,6 +301,9 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 		var promptTok, outTok, totTok int
 
 		opErr := ExecuteWithRetry(streamCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, &committed, func(attempt int) error {
+			if attempt > 0 {
+				p.Retries.Add(1)
+			}
 			httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, p.cfg.Endpoint, bytes.NewReader(jsonBytes))
 			if err != nil {
 				return err
@@ -315,14 +353,42 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 					return fmt.Errorf("%w: %v", ErrInvalidEvent, err)
 				}
 
-				if chunk.Usage != nil {
-					promptTok = chunk.Usage.PromptTokens
-					outTok = chunk.Usage.CompletionTokens
-					totTok = chunk.Usage.TotalTokens
+				usage := chunk.Usage
+				if usage == nil && chunk.Response != nil {
+					usage = chunk.Response.Usage
+				}
+				if usage != nil {
+					if usage.PromptTokens > 0 {
+						promptTok = usage.PromptTokens
+					} else if usage.InputTokens > 0 {
+						promptTok = usage.InputTokens
+					}
+					if usage.CompletionTokens > 0 {
+						outTok = usage.CompletionTokens
+					} else if usage.OutputTokens > 0 {
+						outTok = usage.OutputTokens
+					}
+					if usage.TotalTokens > 0 {
+						totTok = usage.TotalTokens
+					} else {
+						totTok = promptTok + outTok
+					}
+				}
+				if chunk.Type == "response.failed" {
+					return fmt.Errorf("xai responses API returned response.failed")
+				}
+				if chunk.Type == "response.completed" || chunk.Type == "response.done" {
+					return nil
 				}
 
 				// Extract delta content
 				deltaText := chunk.Delta
+				if deltaText == "" {
+					deltaText = chunk.Text
+				}
+				if deltaText == "" && chunk.Response != nil {
+					deltaText = chunk.Response.OutputText
+				}
 				if deltaText == "" && len(chunk.Choices) > 0 {
 					deltaText = chunk.Choices[0].Delta.Content
 				}
@@ -360,6 +426,7 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			if errors.Is(opErr, context.Canceled) || streamCtx.Err() != nil {
 				return
 			}
+			p.Errors.Add(1)
 			sanitizedErr := SanitizeError(opErr)
 			_ = s.Reenter(&core.ErrorFrame{
 				Err:   sanitizedErr,
@@ -378,7 +445,9 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 		isStale := p.activeGen != gen || p.closed
 		p.mu.Unlock()
 
-		if !isStale {
+		if isStale {
+			p.Stale.Add(1)
+		} else {
 			_ = s.Reenter(&core.LLMTextFrame{
 				Text: fullText.String(),
 				Turn: turn,

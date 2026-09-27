@@ -26,6 +26,37 @@ const (
 var initOnce sync.Once
 var initErr error
 
+var (
+	modelPathOverride string
+	ortLibOverride    string
+)
+
+// ConfigureArtifacts records the model and ONNX Runtime library paths used by
+// this process and by child VAD workers. Empty values are ignored. A path that
+// does not exist is not used, so local discovery can still find third_party/.
+func ConfigureArtifacts(modelPath, ortLib string) {
+	if modelPath != "" {
+		modelPathOverride = modelPath
+		_ = os.Setenv("GOVOICE_MODEL_PATH", modelPath)
+	}
+	if ortLib != "" {
+		ortLibOverride = ortLib
+		_ = os.Setenv("GOVOICE_ORT_LIB", ortLib)
+	}
+}
+
+func existingPath(candidates ...string) string {
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 // Root finds the repo root (dir containing third_party/) from cwd or GOVOICE_ROOT.
 func Root() string {
 	if r := os.Getenv("GOVOICE_ROOT"); r != "" {
@@ -40,7 +71,25 @@ func Root() string {
 	return dir
 }
 
-func ModelPath() string { return filepath.Join(Root(), "third_party", "silero_vad.onnx") }
+func ModelPath() string {
+	if p := existingPath(modelPathOverride, os.Getenv("GOVOICE_MODEL_PATH")); p != "" {
+		return p
+	}
+	return filepath.Join(Root(), "third_party", "silero_vad.onnx")
+}
+
+func ORTLibPath() string {
+	if p := existingPath(ortLibOverride, os.Getenv("GOVOICE_ORT_LIB")); p != "" {
+		return p
+	}
+	root := Root()
+	return existingPath(
+		filepath.Join(root, "third_party", "onnxruntime-osx-arm64-1.29.0", "lib", "libonnxruntime.dylib"),
+		filepath.Join(root, "third_party", "onnxruntime-linux-x64-1.29.0", "lib", "libonnxruntime.so"),
+		filepath.Join(root, "lib", "libonnxruntime.so"),
+		filepath.Join(root, "lib", "libonnxruntime.dylib"),
+	)
+}
 
 // VerifyModelArtifact verifies that the model file exists and matches PinnedModelSHA256.
 func VerifyModelArtifact(path string) ([32]byte, error) {
@@ -58,12 +107,10 @@ func VerifyModelArtifact(path string) ([32]byte, error) {
 
 func InitORT() error {
 	initOnce.Do(func() {
-		ortLib := filepath.Join(Root(), "third_party", "onnxruntime-osx-arm64-1.29.0", "lib", "libonnxruntime.dylib")
-		if _, err := os.Stat(ortLib); err != nil {
-			ortLibLinux := filepath.Join(Root(), "third_party", "onnxruntime-linux-x64-1.29.0", "lib", "libonnxruntime.so")
-			if _, lErr := os.Stat(ortLibLinux); lErr == nil {
-				ortLib = ortLibLinux
-			}
+		ortLib := ORTLibPath()
+		if ortLib == "" {
+			initErr = fmt.Errorf("onnx runtime library not found")
+			return
 		}
 		ort.SetSharedLibraryPath(ortLib)
 		initErr = ort.InitializeEnvironment()

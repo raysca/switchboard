@@ -21,6 +21,7 @@ var (
 	ErrTokenLifetime    = errors.New("token: token lifetime exceeds maximum allowed")
 	ErrTokenBeforeStart = errors.New("token: token issued before server start boundary")
 	ErrTokenFuture      = errors.New("token: token issued in the future beyond allowed skew")
+	ErrTokenPrincipal   = errors.New("token: missing principal or subject claim")
 )
 
 var tokenQueryRegex = regexp.MustCompile(`([?&]token=)[^&#\s]+`)
@@ -35,10 +36,11 @@ type Config struct {
 	Issuer            string
 	Audience          string
 	AllowedAlgorithms []string
-	MaxLifetime       time.Duration // Maximum acceptable exp - iat duration (e.g. 60s)
-	ClockSkew         time.Duration // Acceptable clock skew allowance (default: 5s)
-	ReplayCacheSize   int           // Max entries before aggressive pruning
-	HMACSecret        []byte        // Secret key for HMAC algorithms (e.g. HS256)
+	MaxLifetime       time.Duration     // Maximum acceptable exp - iat duration (e.g. 60s)
+	ClockSkew         time.Duration     // Acceptable clock skew allowance (default: 5s)
+	ReplayCacheSize   int               // Max entries before aggressive pruning
+	HMACSecret        []byte            // Secret key for HMAC algorithms (e.g. HS256)
+	Keys              map[string][]byte // Optional key-id (kid) -> HMAC secret mapping
 }
 
 // DefaultConfig provides production-grade defaults.
@@ -58,6 +60,7 @@ func DefaultConfig(issuer, audience string, secret []byte) Config {
 type Claims struct {
 	jwt.RegisteredClaims
 	Principal string `json:"principal,omitempty"`
+	Pipeline  string `json:"pipeline,omitempty"`
 }
 
 // Validator manages admission token verification, atomic single-use consumption,
@@ -112,6 +115,17 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 		if !allowed {
 			return nil, fmt.Errorf("%w: %s", ErrTokenAlgorithm, alg)
 		}
+		if len(v.cfg.Keys) > 0 {
+			kid, _ := t.Header["kid"].(string)
+			if kid == "" {
+				return nil, fmt.Errorf("%w: missing kid in header", ErrTokenInvalid)
+			}
+			sec, ok := v.cfg.Keys[kid]
+			if !ok {
+				return nil, fmt.Errorf("%w: unknown kid %s", ErrTokenInvalid, kid)
+			}
+			return sec, nil
+		}
 		return v.cfg.HMACSecret, nil
 	}, jwt.WithAudience(v.cfg.Audience), jwt.WithIssuer(v.cfg.Issuer))
 
@@ -137,6 +151,9 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 
 	if claims.ID == "" {
 		return nil, fmt.Errorf("%w: missing jti claim", ErrTokenInvalid)
+	}
+	if claims.Principal == "" && claims.Subject == "" {
+		return nil, ErrTokenPrincipal
 	}
 
 	if claims.IssuedAt == nil {
@@ -170,11 +187,27 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	// Prune expired entries if cache is large
+	// Prune expired entries if cache is at or exceeds limit
 	if len(v.replay) >= v.cfg.ReplayCacheSize {
 		for id, expiry := range v.replay {
 			if now.After(expiry) {
 				delete(v.replay, id)
+			}
+		}
+		// Strict bound: if still full after pruning expired, evict entry with earliest expiry
+		for len(v.replay) >= v.cfg.ReplayCacheSize {
+			var earliestID string
+			var earliestExp time.Time
+			for id, expiry := range v.replay {
+				if earliestID == "" || expiry.Before(earliestExp) {
+					earliestID = id
+					earliestExp = expiry
+				}
+			}
+			if earliestID != "" {
+				delete(v.replay, earliestID)
+			} else {
+				break
 			}
 		}
 	}

@@ -31,13 +31,10 @@ type Metrics struct {
 	AdmissionRejectsDisabled  atomic.Uint64
 
 	// VAD Metrics
-	VADQueueWaitSeconds        atomic.Uint64 // nanoseconds stored as uint64
-	VADInferenceLatencySeconds atomic.Uint64 // nanoseconds stored as uint64
-	VADInferenceCount          atomic.Uint64
-	VADStaleChunksTotal        atomic.Uint64
-	VADDroppedChunksTotal      atomic.Uint64
-	VADActiveStreams           atomic.Int64
-	VADWorkerRestartsTotal     atomic.Uint64
+	VADStaleChunksTotal    atomic.Uint64
+	VADDroppedChunksTotal  atomic.Uint64
+	VADActiveStreams       atomic.Int64
+	VADWorkerRestartsTotal atomic.Uint64
 
 	// STT Metrics
 	STTActiveStreams         atomic.Int64
@@ -45,6 +42,7 @@ type Metrics struct {
 	STTRotationsTotal        atomic.Uint64
 	STTRotationFailuresTotal atomic.Uint64
 	STTDeduplicatedTotal     atomic.Uint64
+	STTCircuitStateGoogle    atomic.Int64
 
 	// LLM Metrics
 	LLMRequestsTotal        atomic.Uint64
@@ -189,6 +187,10 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_stt_deduplicated_results_total Deduplicated STT results ignored.\n")
 	fmt.Fprintf(w, "# TYPE voice_stt_deduplicated_results_total counter\n")
 	fmt.Fprintf(w, "voice_stt_deduplicated_results_total %d\n", m.STTDeduplicatedTotal.Load())
+
+	fmt.Fprintf(w, "# HELP voice_stt_circuit_state STT circuit state (0=closed, 1=open, 2=half_open).\n")
+	fmt.Fprintf(w, "# TYPE voice_stt_circuit_state gauge\n")
+	fmt.Fprintf(w, "voice_stt_circuit_state{provider=\"google\"} %d\n", m.STTCircuitStateGoogle.Load())
 
 	// LLM
 	fmt.Fprintf(w, "# HELP voice_llm_requests_total Total LLM turn requests.\n")

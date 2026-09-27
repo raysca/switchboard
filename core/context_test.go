@@ -574,6 +574,9 @@ func TestPhase2_FlushTimeoutFailsOrDegradesExplicitlyWithoutBlocking(t *testing.
 	if asstProc.FlushTimeouts.Load() != 1 {
 		t.Fatalf("expected FlushTimeouts == 1, got %d", asstProc.FlushTimeouts.Load())
 	}
+	if asstProc.Degraded.Load() != 1 {
+		t.Fatalf("expected flush timeout to degrade the session, degraded=%d", asstProc.Degraded.Load())
+	}
 
 	// Crucial invariant: session run loop is NOT blocked!
 	// Next turn must process normally
@@ -696,5 +699,62 @@ func TestPhase2_NextTurnSucceedsInSameSessionWithCoherentContext(t *testing.T) {
 
 	if sess.State() != core.StateRunning {
 		t.Fatalf("expected session still running, got: %v", sess.State())
+	}
+}
+
+func TestAssistantContext_NoDuplicateSynthesisOnFinalLLMTextFrame(t *testing.T) {
+	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	cfg := core.DefaultAssistantContextConfig()
+	cfg.MinUnitLength = 5
+	cfg.MaxUnitLength = 100
+	asstProc := core.NewAssistantContextProcessor(ctxPool, cfg)
+
+	var emittedUnits []string
+	sink := &core.PassthroughProcessor{}
+
+	pipe, err := core.NewPipeline(asstProc, sink)
+	if err != nil {
+		t.Fatalf("NewPipeline failed: %v", err)
+	}
+	sess, err := core.NewSession(101, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatalf("NewSession failed: %v", err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer sess.Close()
+
+	// 1. Send UserMessageFrame to initialize turn
+	_ = sess.Post(&core.UserMessageFrame{Turn: "turn-1", Gen: 1, Content: "Hello"})
+	time.Sleep(20 * time.Millisecond)
+
+	// 2. Stream two deltas that form a complete sentence and an incomplete fragment
+	_ = sess.Post(&core.LLMTextDeltaFrame{Turn: "turn-1", Gen: 1, Delta: "Hello world. How are "})
+	_ = sess.Post(&core.LLMTextDeltaFrame{Turn: "turn-1", Gen: 1, Delta: "you today?"})
+	time.Sleep(30 * time.Millisecond)
+
+	// 3. Send final LLMTextFrame containing the entire accumulated text
+	fullText := "Hello world. How are you today?"
+	_ = sess.Post(&core.LLMTextFrame{Turn: "turn-1", Gen: 1, Text: fullText})
+	time.Sleep(30 * time.Millisecond)
+
+	// Inspect emitted synthesis units
+	for _, f := range sink.GetFrames() {
+		if su, ok := f.(*core.SynthesisUnitFrame); ok {
+			emittedUnits = append(emittedUnits, su.Text)
+		}
+	}
+
+	// Should emit exactly two units: "Hello world." and "How are you today?"
+	// NOT four units with "Hello world." repeated!
+	if len(emittedUnits) != 2 {
+		t.Fatalf("expected exactly 2 synthesis units, got %d: %+v", len(emittedUnits), emittedUnits)
+	}
+	if emittedUnits[0] != "Hello world." {
+		t.Errorf("expected unit 0 'Hello world.', got %q", emittedUnits[0])
+	}
+	if emittedUnits[1] != "How are you today?" {
+		t.Errorf("expected unit 1 'How are you today?', got %q", emittedUnits[1])
 	}
 }

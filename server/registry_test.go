@@ -18,6 +18,15 @@ func (f *fakeTransportSink) ProcessFrame(ctx context.Context, frame core.Frame, 
 }
 func (f *fakeTransportSink) Attach(s core.SessionController, index int) error { return nil }
 
+type contextSinkProc struct {
+	provider func() []core.Message
+}
+
+func (p *contextSinkProc) ProcessFrame(ctx context.Context, frame core.Frame, dir core.Direction, e core.Emitter) error {
+	return nil
+}
+func (p *contextSinkProc) SetContextProvider(fn func() []core.Message) { p.provider = fn }
+
 func TestRegistry_BuildPipelineGoogleAndMixed(t *testing.T) {
 	cfg, err := LoadConfig("../config/development.yaml")
 	if err != nil {
@@ -28,6 +37,17 @@ func TestRegistry_BuildPipelineGoogleAndMixed(t *testing.T) {
 	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
 	vadProc := vad.NewProcessor(mockExec, vad.DefaultProcessorConfig())
 	sink := &fakeTransportSink{}
+
+	// Missing credentials must fail closed rather than returning a nil-backed processor.
+	if _, _, err := reg.BuildPipeline(cfg, "default", vadProc, sink); err == nil {
+		t.Fatal("expected default pipeline to fail without provider credentials")
+	}
+
+	stub := func(c *Config) (core.Processor, error) { return &fakeTransportSink{}, nil }
+	reg.Register("google.stt", stub)
+	reg.Register("google.llm", func(c *Config) (core.Processor, error) { return &contextSinkProc{}, nil })
+	reg.Register("google.tts", stub)
+	reg.Register("xai.llm", func(c *Config) (core.Processor, error) { return &contextSinkProc{}, nil })
 
 	// 1. Build default (Google STT -> Google LLM -> Google TTS) pipeline
 	pipeDefault, ctxPoolDefault, err := reg.BuildPipeline(cfg, "default", vadProc, sink)

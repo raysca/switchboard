@@ -1,6 +1,7 @@
 package xai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,23 +18,26 @@ import (
 
 type mockSessionController struct {
 	id          uint64
-	gen         uint64
+	gen         atomic.Uint64
 	reenteredMu sync.Mutex
 	reentered   []core.Frame
 	taskWg      sync.WaitGroup
 }
 
 func newMockSessionController(id, gen uint64) *mockSessionController {
-	return &mockSessionController{id: id, gen: gen}
+	s := &mockSessionController{id: id}
+	s.gen.Store(gen)
+	return s
 }
 
 func (s *mockSessionController) ID() uint64 { return s.id }
 
-func (s *mockSessionController) CurrentGeneration() uint64 { return s.gen }
+func (s *mockSessionController) Context() context.Context { return context.Background() }
+
+func (s *mockSessionController) CurrentGeneration() uint64 { return s.gen.Load() }
 
 func (s *mockSessionController) IncrementGeneration() uint64 {
-	s.gen++
-	return s.gen
+	return s.gen.Add(1)
 }
 
 func (s *mockSessionController) Go(fn func(ctx context.Context)) error {
@@ -47,7 +52,7 @@ func (s *mockSessionController) Go(fn func(ctx context.Context)) error {
 func (s *mockSessionController) Reenter(f core.Frame, dir core.Direction, resumeIndex int, gen uint64) error {
 	s.reenteredMu.Lock()
 	defer s.reenteredMu.Unlock()
-	if gen == s.gen {
+	if gen == s.gen.Load() {
 		s.reentered = append(s.reentered, f)
 	}
 	return nil
@@ -71,6 +76,7 @@ func (m *mockEmitter) PushDirection(f core.Frame, dir core.Direction) error {
 
 func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 	var receivedBody responsesRequest
+	var rawBody []byte
 	var authHeader string
 	var reqMu sync.Mutex
 
@@ -78,6 +84,7 @@ func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 		reqMu.Lock()
 		authHeader = r.Header.Get("Authorization")
 		bodyBytes, _ := io.ReadAll(r.Body)
+		rawBody = append([]byte(nil), bodyBytes...)
 		_ = json.Unmarshal(bodyBytes, &receivedBody)
 		reqMu.Unlock()
 
@@ -129,8 +136,16 @@ func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 
 	reqMu.Lock()
 	body := receivedBody
+	raw := append([]byte(nil), rawBody...)
 	auth := authHeader
 	reqMu.Unlock()
+
+	if bytes.Contains(raw, []byte(`"messages"`)) {
+		t.Fatalf("Responses API rejects messages; request body: %s", raw)
+	}
+	if !bytes.Contains(raw, []byte(`"input"`)) {
+		t.Fatalf("Responses API requires input; request body: %s", raw)
+	}
 
 	// Verify store: false is strictly enforced
 	if body.Store != false {
@@ -148,11 +163,11 @@ func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 	}
 
 	// Verify complete context resent
-	if len(body.Messages) != 4 {
-		t.Fatalf("expected 4 messages resent in request, got %d", len(body.Messages))
+	if len(body.Input) != 4 {
+		t.Fatalf("expected 4 input items resent in request, got %d", len(body.Input))
 	}
-	if body.Messages[0].Content != "System prompt" || body.Messages[3].Content != "Current question" {
-		t.Fatalf("message content mismatch: %+v", body.Messages)
+	if body.Input[0].Content != "System prompt" || body.Input[3].Content != "Current question" {
+		t.Fatalf("input content mismatch: %+v", body.Input)
 	}
 
 	// Verify re-entered frames: deltas and final text

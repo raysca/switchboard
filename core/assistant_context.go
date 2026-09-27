@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -36,6 +37,7 @@ type AssistantContextProcessor struct {
 	activeTurn     string
 	activeGen      uint64
 	textBuf        strings.Builder
+	totalTurnText  strings.Builder
 	unitCounter    uint64
 	finalUnitID    uint64 // 0 until final unit is emitted
 	ttsStopped     bool
@@ -47,6 +49,7 @@ type AssistantContextProcessor struct {
 	pendingFlushGen   atomic.Uint64
 	FlushAcks         atomic.Uint64
 	FlushTimeouts     atomic.Uint64
+	Degraded          atomic.Uint64
 	InterruptionCount atomic.Uint64
 }
 
@@ -87,6 +90,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		p.activeTurn = um.Turn
 		p.activeGen = um.Gen
 		p.textBuf.Reset()
+		p.totalTurnText.Reset()
 		p.unitCounter = 0
 		p.finalUnitID = 0
 		p.ttsStopped = false
@@ -100,6 +104,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 			return nil
 		}
 		p.textBuf.WriteString(delta.Delta)
+		p.totalTurnText.WriteString(delta.Delta)
 		if err := e.PushDirection(f, dir); err != nil {
 			return err
 		}
@@ -110,9 +115,9 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		if p.isStaleTurn(lt.Turn, lt.Gen) {
 			return nil
 		}
-		if lt.Text != "" {
-			p.textBuf.WriteString(lt.Text)
-		}
+		// Providers emit deltas and then a final frame containing the full
+		// accumulated response. Append only text that is not already buffered.
+		p.appendFinalText(lt.Text)
 		if err := e.PushDirection(f, dir); err != nil {
 			return err
 		}
@@ -173,6 +178,40 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 
 	default:
 		return e.PushDirection(f, dir)
+	}
+}
+
+func (p *AssistantContextProcessor) appendFinalText(text string) {
+	if text == "" {
+		return
+	}
+	total := p.totalTurnText.String()
+	if total == "" {
+		// Non-streaming LLM: no deltas were previously ingested
+		p.textBuf.WriteString(text)
+		p.totalTurnText.WriteString(text)
+		return
+	}
+	if strings.HasPrefix(text, total) {
+		// Only append remainder not covered by streamed deltas
+		tail := text[len(total):]
+		p.textBuf.WriteString(tail)
+		p.totalTurnText.WriteString(tail)
+		return
+	}
+	if text == total || strings.Contains(total, text) || strings.TrimSpace(text) == strings.TrimSpace(total) {
+		return
+	}
+	accumulated := p.textBuf.String()
+	if strings.HasPrefix(text, accumulated) {
+		tail := text[len(accumulated):]
+		p.textBuf.WriteString(tail)
+		p.totalTurnText.WriteString(tail)
+		return
+	}
+	if !strings.Contains(accumulated, text) {
+		p.textBuf.WriteString(text)
+		p.totalTurnText.WriteString(text)
 	}
 }
 
@@ -376,12 +415,14 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	_ = e.Push(intrFrame)
 	_ = e.PushDirection(intrFrame, Upstream)
 
+	// Store the expected generation before the flush is emitted. The transport
+	// acknowledgement is synchronous and would otherwise be discarded.
+	p.pendingFlushGen.Store(oldGen)
+
 	// 3. Emit FlushFrame downstream
 	flushFrame := &FlushFrame{Gen: oldGen}
 	_ = e.Push(flushFrame)
 
-	// 4. Coordinate bounded server-local flush barrier
-	p.pendingFlushGen.Store(oldGen)
 	if p.session != nil {
 		p.startFlushBarrierTimeout(oldGen)
 	}
@@ -401,8 +442,16 @@ func (p *AssistantContextProcessor) startFlushBarrierTimeout(gen uint64) {
 				return
 			}
 		case <-timer.C:
-			// Flush barrier timed out: fail/degrade explicitly without blocking run loop
+			if p.pendingFlushGen.Load() != gen {
+				return
+			}
 			p.FlushTimeouts.Add(1)
+			p.Degraded.Add(1)
+			// Non-fatal, generation 0 so the fence does not drop the degradation.
+			_ = p.session.Reenter(&ErrorFrame{
+				Err:   fmt.Errorf("flush barrier timed out for generation %d; session degraded", gen),
+				Fatal: false,
+			}, Downstream, p.index, 0)
 		case <-ctx.Done():
 			return
 		}

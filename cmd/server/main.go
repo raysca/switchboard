@@ -10,11 +10,16 @@ import (
 	"syscall"
 	"time"
 
+	"path/filepath"
+
+	"govoice/examples/envload"
 	"govoice/server"
 	"govoice/vad"
 )
 
 func main() {
+	_ = envload.Load()
+
 	configPath := flag.String("config", "config/development.yaml", "path to YAML configuration file")
 	profileFlag := flag.String("profile", "", "override profile: development|production")
 	vadModeFlag := flag.String("vad-mode", "", "override VAD mode: process|inprocess")
@@ -52,13 +57,19 @@ func main() {
 	if cfg.VAD.QueueCap > 0 {
 		vadCfg.QueueCap = cfg.VAD.QueueCap
 	}
-	vadCfg.WorkerBinary = "bin/vadworker"
+	if exe, err := os.Executable(); err == nil {
+		vadCfg.WorkerBinary = filepath.Join(filepath.Dir(exe), "vadworker")
+	} else {
+		vadCfg.WorkerBinary = "bin/vadworker"
+	}
+	vad.ConfigureArtifacts(cfg.VAD.ModelPath, cfg.VAD.OrtLibPath)
 
 	vadExec, err := vad.New(vadCfg)
 	if err != nil {
-		log.Printf("warning: could not initialize vad executor (%v); falling back to stub", err)
-		vadCfg.Mode = "stub"
-		vadExec, _ = vad.New(vadCfg)
+		if cfg.Profile == server.ProfileProduction || cfg.VAD.Mode == "process" {
+			log.Fatalf("vad executor failed closed: %v", err)
+		}
+		log.Fatalf("vad executor failed (%v); refusing stub fallback", err)
 	}
 
 	if vadExec != nil {

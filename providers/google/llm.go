@@ -15,15 +15,16 @@ import (
 
 // LLMConfig configures the Google Gemini LLM processor.
 type LLMConfig struct {
-	Model          string // Pinned: "gemini-2.5-flash"
-	SystemPrompt   string // System instructions
-	MaxTokens      int    // Output token limit
-	Temperature    float32
-	AuthMode       AuthMode
-	Credentials    *ResolvedCredentials
-	Client         LLMStreamClient
-	RetryPolicy    RetryPolicy
-	CircuitBreaker *CircuitBreaker
+	Model           string // Pinned: "gemini-2.5-flash"
+	SystemPrompt    string // System instructions
+	MaxTokens       int    // Output token limit
+	Temperature     float32
+	AuthMode        AuthMode
+	Credentials     *ResolvedCredentials
+	Client          LLMStreamClient
+	RetryPolicy     RetryPolicy
+	CircuitBreaker  *CircuitBreaker
+	ContextProvider func() []core.Message
 }
 
 // DefaultLLMConfig returns configuration matching v1-lock.json.
@@ -161,6 +162,11 @@ type LLMProcessor struct {
 	activeTurn   string
 	closed       bool
 
+	Requests atomic.Uint64
+	Errors   atomic.Uint64
+	Retries  atomic.Uint64
+	Stale    atomic.Uint64
+
 	// Usage tracking
 	PromptTokens atomic.Int64
 	OutputTokens atomic.Int64
@@ -181,6 +187,13 @@ func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
 }
 
 // Attach registers session controller and index.
+// SetContextProvider supplies bounded multi-turn history for each generation.
+func (p *LLMProcessor) SetContextProvider(fn func() []core.Message) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cfg.ContextProvider = fn
+}
+
 func (p *LLMProcessor) Attach(s core.SessionController, index int) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -249,7 +262,11 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 	}
 	turn := um.Turn
 
-	genCtx, cancel := context.WithCancel(context.Background())
+	parent := context.Background()
+	if p.session != nil {
+		parent = p.session.Context()
+	}
+	genCtx, cancel := context.WithCancel(parent)
 	p.activeCancel = cancel
 	p.activeGen = gen
 	p.activeTurn = turn
@@ -266,12 +283,17 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		return nil
 	}
 
-	// Build messages history
 	history := []core.Message{
 		{Role: core.RoleUser, Content: um.Content, TurnID: um.Turn},
 	}
+	if p.cfg.ContextProvider != nil {
+		if provided := p.cfg.ContextProvider(); len(provided) > 0 {
+			history = provided
+		}
+	}
 
 	// Launch async generation task on session supervisor
+	p.Requests.Add(1)
 	return p.session.Go(func(taskCtx context.Context) {
 		defer cancel()
 
@@ -281,6 +303,9 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		err := ExecuteWithRetry(genCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
 			return committed
 		}, func(attemptCtx context.Context, attempt int) error {
+			if attempt > 0 {
+				p.Retries.Add(1)
+			}
 			chunkCh, errCh, err := p.cfg.Client.GenerateStream(attemptCtx, p.cfg.Model, p.cfg.SystemPrompt, history)
 			if err != nil {
 				return err
@@ -320,6 +345,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 						// Fence late output from old generation
 						if gen != currentGen {
 							p.mu.Unlock()
+							p.Stale.Add(1)
 							return ErrGenerationMismatch
 						}
 						p.mu.Unlock()
@@ -343,6 +369,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrGenerationMismatch) {
 				return // Normal interruption / stale generation
 			}
+			p.Errors.Add(1)
 			// Emit safe error frame
 			provErr := MapError("llm", err)
 			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false}, core.Downstream, p.index+1, gen)

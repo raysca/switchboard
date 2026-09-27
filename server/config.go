@@ -36,9 +36,10 @@ type Config struct {
 
 	// TLS & Network Policy
 	TLS struct {
-		CertFile         string `yaml:"cert_file"`
-		KeyFile          string `yaml:"key_file"`
-		TrustedProxyMode bool   `yaml:"trusted_proxy_mode"`
+		CertFile         string   `yaml:"cert_file"`
+		KeyFile          string   `yaml:"key_file"`
+		TrustedProxyMode bool     `yaml:"trusted_proxy_mode"`
+		TrustedProxies   []string `yaml:"trusted_proxies"`
 	} `yaml:"tls"`
 
 	OriginAllowlist []string `yaml:"origin_allowlist"`
@@ -172,10 +173,11 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.VAD.Workers = 4
 	cfg.VAD.Batch = 8
 	cfg.VAD.QueueCap = 8192
-	cfg.VAD.ModelPath = "models/silero_vad.onnx"
+	cfg.VAD.ModelPath = "third_party/silero_vad.onnx"
 
 	// Providers
 	cfg.Providers.GoogleSTT.Model = "chirp_2"
+	cfg.Providers.GoogleSTT.Location = "us-central1"
 	cfg.Providers.GoogleSTT.LanguageCode = "en-US"
 	cfg.Providers.GoogleSTT.MaxStreams = 100
 	cfg.Providers.GoogleSTT.RotationThreshold = 240 * time.Second
@@ -258,9 +260,15 @@ func ValidateConfig(cfg *Config) error {
 	// Production TLS requirements
 	if cfg.Profile == ProfileProduction {
 		hasTLS := cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != ""
-		hasProxy := cfg.TLS.TrustedProxyMode
+		hasProxy := cfg.TLS.TrustedProxyMode && len(cfg.TLS.TrustedProxies) > 0
+		if cfg.TLS.TrustedProxyMode && len(cfg.TLS.TrustedProxies) == 0 {
+			return errors.New("production trusted_proxy_mode requires tls.trusted_proxies")
+		}
 		if !hasTLS && !hasProxy && !cfg.InsecureOverrides.AllowPlainWSInProduction {
 			return errors.New("production profile requires TLS cert/key or trusted_proxy_mode enabled (or explicit insecure override allow_plain_ws_in_production)")
+		}
+		if _, err := ResolveTokenSecret(cfg); err != nil {
+			return err
 		}
 
 		// Production VAD default
@@ -315,6 +323,33 @@ func ValidateConfig(cfg *Config) error {
 	}
 
 	return nil
+}
+
+const DevInsecureTokenSecret = "dev-insecure-secret-key-for-testing-only-12345"
+
+// ResolveTokenSecret returns the HMAC secret. Production refuses an empty
+// secret and the repository-public development key.
+func ResolveTokenSecret(cfg *Config) (string, error) {
+	secret := cfg.Token.Secret
+	if secret == "" && cfg.Token.SecretEnv != "" {
+		secret = os.Getenv(cfg.Token.SecretEnv)
+	}
+	if cfg.Profile == ProfileProduction {
+		if secret == "" {
+			return "", errors.New("production profile requires token.secret or token.secret_env")
+		}
+		if secret == DevInsecureTokenSecret {
+			return "", errors.New("production profile refuses the repository-public development token secret")
+		}
+		if len(secret) < 32 {
+			return "", errors.New("production token secret must be at least 32 characters")
+		}
+		return secret, nil
+	}
+	if secret == "" {
+		secret = DevInsecureTokenSecret
+	}
+	return secret, nil
 }
 
 func checkFileSecurity(filePath string) error {

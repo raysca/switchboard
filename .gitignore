@@ -20,3 +20,5 @@ __pycache__/
 # Temporary and coverage files
 *.tmp
 coverage.out
+.env
+examples/secrets

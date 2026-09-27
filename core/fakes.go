@@ -31,6 +31,14 @@ func (p *PassthroughProcessor) Count() int {
 	return len(p.Frames)
 }
 
+func (p *PassthroughProcessor) GetFrames() []Frame {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cp := make([]Frame, len(p.Frames))
+	copy(cp, p.Frames)
+	return cp
+}
+
 // LatencyProcessor sleeps for a configured duration before forwarding the frame.
 type LatencyProcessor struct {
 	Delay time.Duration

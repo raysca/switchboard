@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Framework V1 — Pipecat RTVI Test Client</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --accent: #a855f7;
+    }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+    .container {
+      width: 100%;
+      max-width: 800px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 24px;
+      color: var(--primary);
+    }
+    p.subtitle {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .pipeline-select {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    select, button {
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--text);
+    }
+    button.primary {
+      background: #0284c7;
+      border-color: #0284c7;
+      color: white;
+    }
+    button.primary:hover {
+      background: #0369a1;
+    }
+    button.danger {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: white;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: #0f172a;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge.disconnected { background: #334155; color: #94a3b8; }
+    .badge.connected { background: #14532d; color: #4ade80; }
+    .badge.speaking { background: #581c87; color: #c084fc; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    .transcript-box {
+      min-height: 280px;
+      max-height: 400px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px;
+      background: #0f172a;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .message {
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 85%;
+    }
+    .message.user {
+      align-self: flex-end;
+      background: #1e3a8a;
+      color: #e0e7ff;
+    }
+    .message.bot {
+      align-self: flex-start;
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .message.interim {
+      opacity: 0.7;
+      font-style: italic;
+    }
+    .meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Voice Framework V1 — Pipecat RTVI Test Client</h1>
+      <p class="subtitle">End-to-End WebSocket Voice Conversation Demo (Google & xAI Pipelines)</p>
+    </header>
+
+    <div class="card controls">
+      <div class="pipeline-select">
+        <label for="pipeline">Pipeline:</label>
+        <select id="pipeline">
+          <option value="default">Google (Chirp 2 STT + Gemini 2.5 Flash + Journey TTS)</option>
+          <option value="xai">xAI Grok (Chirp 2 STT + xAI Grok LLM + Journey TTS)</option>
+        </select>
+      </div>
+
+      <div style="display: flex; gap: 10px;">
+        <button id="btnConnect" class="primary">Connect & Start Talking</button>
+        <button id="btnDisconnect" class="danger" disabled>Disconnect</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="status-bar">
+        <div>
+          <span>Status: </span>
+          <span id="connBadge" class="badge disconnected"><span class="dot"></span> Disconnected</span>
+        </div>
+        <div>
+          <span>Speech State: </span>
+          <span id="speechState" style="color: var(--text-muted); font-weight: 500;">Idle</span>
+        </div>
+      </div>
+
+      <div style="margin-top: 16px;">
+        <div class="meta">Conversation Stream</div>
+        <div id="transcriptBox" class="transcript-box">
+          <div class="message bot">
+            <div class="meta">System</div>
+            Select a pipeline and click <strong>"Connect & Start Talking"</strong> to test live audio conversation.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let audioCtx = null;
+    let micStream = null;
+    let scriptProcessor = null;
+    let currentBotMsgEl = null;
+
+    const btnConnect = document.getElementById('btnConnect');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+    const selectPipeline = document.getElementById('pipeline');
+    const connBadge = document.getElementById('connBadge');
+    const speechState = document.getElementById('speechState');
+    const transcriptBox = document.getElementById('transcriptBox');
+
+    function appendMessage(role, text, isInterim = false) {
+      if (isInterim) {
+        let el = document.getElementById('interimMsg');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'interimMsg';
+          el.className = 'message user interim';
+          transcriptBox.appendChild(el);
+        }
+        el.innerHTML = `<div class="meta">User (transcribing...)</div>${escapeHtml(text)}`;
+        transcriptBox.scrollTop = transcriptBox.scrollHeight;
+        return;
+      }
+
+      // Remove interim if present
+      const interim = document.getElementById('interimMsg');
+      if (interim) interim.remove();
+
+      const msg = document.createElement('div');
+      msg.className = `message ${role}`;
+      msg.innerHTML = `<div class="meta">${role === 'user' ? 'User' : 'Assistant'}</div>${escapeHtml(text)}`;
+      transcriptBox.appendChild(msg);
+      transcriptBox.scrollTop = transcriptBox.scrollHeight;
+      return msg;
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Connect handler
+    btnConnect.addEventListener('click', async () => {
+      btnConnect.disabled = true;
+      selectPipeline.disabled = true;
+      connBadge.className = 'badge disconnected';
+      connBadge.textContent = 'Connecting...';
+
+      try {
+        const pipeline = selectPipeline.value;
+        const res = await fetch(`/api/token?pipeline=${pipeline}`);
+        const data = await res.json();
+
+        // 1. Initialize Audio Context for 24kHz output and microphone capture
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+        await audioCtx.resume();
+
+        // 2. Open WebSocket
+        ws = new WebSocket(data.wsUrl);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+          connBadge.className = 'badge connected';
+          connBadge.innerHTML = '<span class="dot"></span> Connected';
+          btnDisconnect.disabled = false;
+
+          // Send client-ready RTVI event
+          sendRtviMessage({
+            id: 'init-001',
+            label: 'rtvi-ai',
+            type: 'client-ready',
+            data: { version: '2.1.0' }
+          });
+
+          // Start Microphone Streaming
+          startMicrophone();
+        };
+
+        ws.onmessage = (event) => {
+          if (typeof event.data === 'string') {
+            handleRtviJson(JSON.parse(event.data));
+          } else if (event.data instanceof ArrayBuffer) {
+            handleBinaryFrame(event.data);
+          }
+        };
+
+        ws.onclose = () => {
+          cleanup();
+        };
+
+        ws.onerror = (err) => {
+          console.error('WebSocket Error:', err);
+          cleanup();
+        };
+
+      } catch (err) {
+        alert('Connection error: ' + err.message);
+        cleanup();
+      }
+    });
+
+    btnDisconnect.addEventListener('click', () => {
+      if (ws) ws.close();
+      cleanup();
+    });
+
+    function cleanup() {
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop());
+        micStream = null;
+      }
+      if (scriptProcessor) {
+        scriptProcessor.disconnect();
+        scriptProcessor = null;
+      }
+      if (audioCtx) {
+        audioCtx.close();
+        audioCtx = null;
+      }
+      ws = null;
+      btnConnect.disabled = false;
+      btnDisconnect.disabled = true;
+      selectPipeline.disabled = false;
+      connBadge.className = 'badge disconnected';
+      connBadge.innerHTML = '<span class="dot"></span> Disconnected';
+      speechState.textContent = 'Idle';
+      speechState.style.color = 'var(--text-muted)';
+      currentBotMsgEl = null;
+    }
+
+    async function startMicrophone() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            sampleRate: 16000,
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+
+        const micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        const source = micCtx.createMediaStreamSource(micStream);
+
+        // 20ms @ 16kHz = 320 samples -> buffer size 512 for ScriptProcessor
+        scriptProcessor = micCtx.createScriptProcessor(512, 1, 1);
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(micCtx.destination);
+
+        scriptProcessor.onaudioprocess = (e) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const float32 = e.inputBuffer.getChannelData(0);
+          // Convert Float32 to PCM16LE
+          const pcm16 = new Int16Array(float32.length);
+          for (let i = 0; i < float32.length; i++) {
+            let s = Math.max(-1, Math.min(1, float32[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          sendAudioFrame(pcm16.buffer, 16000);
+        };
+      } catch (err) {
+        console.error('Microphone access denied or error:', err);
+      }
+    }
+
+    // Protobuf Encoders (Minimal binary framing matching frames.proto)
+    function sendAudioFrame(pcmBuffer, sampleRate) {
+      // Protobuf wire format: Tag 1 (audio) -> FrameAudio (bytes audio = 1, sample_rate = 2, channels = 3)
+      const audioBytes = new Uint8Array(pcmBuffer);
+      // Construct tag 1 length-delimited FrameAudio
+      const inner = [];
+      // Field 1: bytes audio (tag 1: (1 << 3) | 2 = 10)
+      inner.push(10);
+      writeVarint(inner, audioBytes.length);
+      for (let b of audioBytes) inner.push(b);
+      // Field 2: uint32 sample_rate (tag 2: (2 << 3) | 0 = 16)
+      inner.push(16);
+      writeVarint(inner, sampleRate);
+      // Field 3: uint32 channels = 1 (tag 3: (3 << 3) | 0 = 24)
+      inner.push(24);
+      writeVarint(inner, 1);
+
+      // Outer Frame: tag 1 length-delimited (tag 1: (1 << 3) | 2 = 10)
+      const outer = [10];
+      writeVarint(outer, inner.length);
+      const payload = new Uint8Array(outer.concat(inner));
+      ws.send(payload.buffer);
+    }
+
+    function sendRtviMessage(jsonObj) {
+      const str = JSON.stringify(jsonObj);
+      const strBytes = new TextEncoder().encode(str);
+      // Inner FrameMessage: string data = 1 (tag 1: (1 << 3) | 2 = 10)
+      const inner = [10];
+      writeVarint(inner, strBytes.length);
+      for (let b of strBytes) inner.push(b);
+      // Outer Frame: tag 2 length-delimited (tag 2: (2 << 3) | 2 = 18)
+      const outer = [18];
+      writeVarint(outer, inner.length);
+      const payload = new Uint8Array(outer.concat(inner));
+      ws.send(payload.buffer);
+    }
+
+    function writeVarint(arr, val) {
+      while (val >= 0x80) {
+        arr.push((val & 0x7F) | 0x80);
+        val >>>= 7;
+      }
+      arr.push(val);
+    }
+
+    // Binary / RTVI Incoming Parsers
+    function handleBinaryFrame(buf) {
+      const u8 = new Uint8Array(buf);
+      if (u8.length === 0) return;
+      const tag = u8[0] >> 3;
+
+      if (tag === 2) {
+        // Nested RTVI Message
+        let pos = 1;
+        let [len, lenBytes] = readVarint(u8, pos);
+        pos += lenBytes;
+        // Inner FrameMessage
+        if (u8[pos] === 10) {
+          pos++;
+          let [strLen, strBytes] = readVarint(u8, pos);
+          pos += strBytes;
+          const jsonStr = new TextDecoder().decode(u8.subarray(pos, pos + strLen));
+          try {
+            handleRtviJson(JSON.parse(jsonStr));
+          } catch(e) {}
+        }
+      } else if (tag === 1) {
+        // Audio Frame: extract raw audio bytes and play via Web Audio
+        playAudioBuffer(u8);
+      }
+    }
+
+    function readVarint(arr, offset) {
+      let res = 0, shift = 0, count = 0;
+      while (offset < arr.length) {
+        let b = arr[offset++];
+        count++;
+        res |= (b & 0x7F) << shift;
+        if ((b & 0x80) === 0) break;
+        shift += 7;
+      }
+      return [res, count];
+    }
+
+    let nextPlayTime = 0;
+    function playAudioBuffer(u8) {
+      if (!audioCtx) return;
+      // Extract audio bytes from protobuf FrameAudio (approximate payload offset)
+      let pcmBytes = u8.subarray(4); // Payload offset
+      const int16 = new Int16Array(pcmBytes.buffer, pcmBytes.byteOffset, Math.floor(pcmBytes.byteLength / 2));
+      const float32 = new Float32Array(int16.length);
+      for (let i = 0; i < int16.length; i++) {
+        float32[i] = int16[i] / 32768.0;
+      }
+
+      const audioBuf = audioCtx.createBuffer(1, float32.length, 24000);
+      audioBuf.copyToChannel(float32, 0);
+      const node = audioCtx.createBufferSource();
+      node.buffer = audioBuf;
+      node.connect(audioCtx.destination);
+
+      let now = audioCtx.currentTime;
+      let start = Math.max(now, nextPlayTime);
+      node.start(start);
+      nextPlayTime = start + audioBuf.duration;
+    }
+
+    function handleRtviJson(msg) {
+      switch (msg.type) {
+        case 'bot-ready':
+          console.log('Bot ready:', msg);
+          break;
+        case 'user-started-speaking':
+          speechState.textContent = 'Speaking...';
+          speechState.style.color = '#c084fc';
+          // Barge-in: flush playing audio immediately
+          nextPlayTime = 0;
+          break;
+        case 'user-stopped-speaking':
+          speechState.textContent = 'Listening...';
+          speechState.style.color = '#38bdf8';
+          break;
+        case 'user-transcription':
+          if (msg.data && msg.data.final) {
+            appendMessage('user', msg.data.text);
+          } else if (msg.data && msg.data.text) {
+            appendMessage('user', msg.data.text, true);
+          }
+          break;
+        case 'bot-llm-text':
+          if (msg.data && msg.data.text) {
+            if (!currentBotMsgEl) {
+              currentBotMsgEl = appendMessage('bot', '');
+            }
+            currentBotMsgEl.innerHTML = `<div class="meta">Assistant</div>${escapeHtml(currentBotMsgEl.textContent.replace('Assistant', '') + msg.data.text)}`;
+            transcriptBox.scrollTop = transcriptBox.scrollHeight;
+          }
+          break;
+        case 'bot-started-speaking':
+          speechState.textContent = 'Bot Speaking';
+          speechState.style.color = '#4ade80';
+          break;
+        case 'bot-stopped-speaking':
+          speechState.textContent = 'Idle';
+          speechState.style.color = 'var(--text-muted)';
+          currentBotMsgEl = null;
+          break;
+      }
+    }
+  </script>
+</body>
+</html>

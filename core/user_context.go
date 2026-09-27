@@ -30,6 +30,14 @@ type UserContextProcessor struct {
 	TurnsCreated       atomic.Uint64
 }
 
+// EvictionCount reports turn pairs dropped from this session's context store.
+func (p *UserContextProcessor) EvictionCount() int {
+	if p.ctxPool == nil {
+		return 0
+	}
+	return p.ctxPool.EvictionCount()
+}
+
 // NewUserContextProcessor creates a new UserContextProcessor bound to the given context.
 func NewUserContextProcessor(ctxPool *ConversationContext, cfg UserContextConfig) *UserContextProcessor {
 	if cfg.TurnPrefix == "" {

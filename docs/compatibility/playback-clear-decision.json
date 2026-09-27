@@ -1,0 +1,12 @@
+{
+  "spec_section": "18",
+  "probe": "tools/compat/probe_playback_clear.js",
+  "pinned_client": "@pipecat-ai/client-js@1.13.1",
+  "pinned_transport": "@pipecat-ai/websocket-transport@1.7.2",
+  "probe_verdict": "UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT",
+  "client_cleared_buffered_playback": false,
+  "decision": "relax-unmodified-client-playback-clear",
+  "decided_by": "Product Architecture and Engineering Authority",
+  "residual_audio_bound_ms": 100,
+  "rationale": "The pinned unmodified client and WebSocket transport cannot purge audio already queued in the browser. V1 therefore does not claim spec §18's unmodified-client playback-clear requirement. Barge-in residual audio is bounded by server media-clock pacing of at most 100ms, and old-generation frames must still be fenced on the server. This is an explicit relaxation, not a passing compatibility result."
+}

@@ -56,6 +56,7 @@ func TestReady_CompoundReadinessSemantics(t *testing.T) {
 
 	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
 	srv.SetVADExecutor(mockExec)
+	srv.registry.assumeLive = true
 
 	// 1. Before Start (ready == false)
 	req := httptest.NewRequest("GET", "/ready", nil)
@@ -145,6 +146,7 @@ func TestReady_CircuitsAndPipelineUsability(t *testing.T) {
 
 	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
 	srv.SetVADExecutor(mockExec)
+	srv.registry.assumeLive = true
 	srv.ready.Store(true)
 
 	// Both pipelines usable -> 200

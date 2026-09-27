@@ -705,3 +705,17 @@ func TestPhase3_HandshakeFlood_ReturnsHTTP429(t *testing.T) {
 		// Handshake limit reached
 	}
 }
+
+func TestIsSecure_UntrustedForwardedProtoIsIgnored(t *testing.T) {
+	cfg := &ws.SecurityConfig{TrustedProxies: []string{"10.0.0.1/32"}}
+	req := httptest.NewRequest(http.MethodGet, "http://example/ws", nil)
+	req.RemoteAddr = "192.0.2.10:1234"
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if cfg.IsSecure(req) {
+		t.Fatal("an untrusted peer must not prove TLS with X-Forwarded-Proto")
+	}
+	req.RemoteAddr = "10.0.0.1:443"
+	if !cfg.IsSecure(req) {
+		t.Fatal("a trusted proxy forwarding https should count as secure")
+	}
+}

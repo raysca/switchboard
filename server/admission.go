@@ -25,6 +25,7 @@ type AdmissionController struct {
 	pendingCount atomic.Int64
 	activeCount  atomic.Int64
 	principals   map[string]int
+	sources      map[string]int
 	activeSTT    atomic.Int64
 }
 
@@ -34,6 +35,7 @@ func NewAdmissionController(cfg *Config, metrics *Metrics) *AdmissionController 
 		cfg:        cfg,
 		metrics:    metrics,
 		principals: make(map[string]int),
+		sources:    make(map[string]int),
 	}
 	ac.enabled.Store(true)
 	return ac
@@ -50,10 +52,27 @@ func (ac *AdmissionController) IsEnabled() bool {
 }
 
 // AcquireHandshake reserves a lightweight pending-handshake slot.
-func (ac *AdmissionController) AcquireHandshake() error {
+func (ac *AdmissionController) AcquireHandshake(source ...string) error {
 	if !ac.enabled.Load() {
 		ac.metrics.AdmissionRejectsDisabled.Add(1)
 		return ErrAdmissionDisabled
+	}
+
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+
+	var src string
+	if len(source) > 0 {
+		src = source[0]
+	}
+
+	maxPerSource := ac.cfg.Limits.MaxPendingHandshakes / 4
+	if maxPerSource < 5 {
+		maxPerSource = 5
+	}
+	if src != "" && ac.sources[src] >= maxPerSource {
+		ac.metrics.AdmissionRejectsPending.Add(1)
+		return ErrPendingLimitExceeded
 	}
 
 	current := ac.pendingCount.Add(1)
@@ -62,18 +81,31 @@ func (ac *AdmissionController) AcquireHandshake() error {
 		ac.metrics.AdmissionRejectsPending.Add(1)
 		return ErrPendingLimitExceeded
 	}
+	if src != "" {
+		ac.sources[src]++
+	}
 	ac.metrics.PendingHandshakes.Store(current)
 	return nil
 }
 
 // ReleaseHandshake releases the pending-handshake slot.
-func (ac *AdmissionController) ReleaseHandshake() {
+func (ac *AdmissionController) ReleaseHandshake(source ...string) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+
 	current := ac.pendingCount.Add(-1)
 	if current < 0 {
 		ac.pendingCount.Store(0)
 		current = 0
 	}
 	ac.metrics.PendingHandshakes.Store(current)
+
+	if len(source) > 0 && source[0] != "" {
+		ac.sources[source[0]]--
+		if ac.sources[source[0]] <= 0 {
+			delete(ac.sources, source[0])
+		}
+	}
 }
 
 // AcquireSession admits a full voice session with VAD and provider resources.
@@ -129,7 +161,6 @@ func (ac *AdmissionController) AcquireSession(principal string, vadCapacityAvail
 	}
 
 	ac.metrics.ActiveSessions.Store(ac.activeCount.Load())
-	ac.metrics.SessionsStartedTotal.Add(1)
 	ac.metrics.STTActiveStreams.Store(ac.activeSTT.Load())
 	return nil
 }

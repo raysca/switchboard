@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"govoice/core"
+	"govoice/examples/envload"
 	"govoice/providers/google"
 	"govoice/vad"
 )
@@ -13,6 +16,8 @@ import (
 // main demonstrates how to assemble and run a complete Google Voice pipeline
 // programmatically using standard govoice components without the HTTP/WebSocket server.
 func main() {
+	_ = envload.Load()
+
 	fmt.Println("=== Voice Framework V1: Programmatic Google Pipeline Example ===")
 
 	// 1. Initialize In-Process VAD Executor
@@ -35,17 +40,47 @@ func main() {
 	vadProc := vad.NewProcessor(vadExec, vad.DefaultProcessorConfig())
 
 	// 2. Initialize Google Providers
-	sttProc, err := google.NewSTTProcessor(google.DefaultSTTConfig())
+	sttCfg := google.DefaultSTTConfig()
+	if opener, err := google.NewRealGoogleSTTOpener(context.Background(), sttCfg); err == nil {
+		sttCfg.StreamOpener = opener
+	}
+	sttProc, err := google.NewSTTProcessor(sttCfg)
 	if err != nil {
 		log.Fatalf("Failed to create Google STT processor: %v", err)
 	}
 
-	llmProc, err := google.NewLLMProcessor(google.DefaultLLMConfig())
+	llmCfg := google.DefaultLLMConfig()
+	if apiKey := os.Getenv("GOOGLE_API_KEY"); apiKey != "" {
+		creds, err := google.ResolveCredentials(google.CredentialConfig{
+			Mode:   google.AuthModeGeminiAPIKey,
+			APIKey: apiKey,
+		})
+		if err == nil && creds != nil {
+			if client, err := google.NewRealGoogleLLMClient(context.Background(), creds); err == nil {
+				llmCfg.Client = client
+			}
+		}
+	} else if saFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); saFile != "" {
+		creds, err := google.ResolveCredentials(google.CredentialConfig{
+			Mode:            google.AuthModeVertexADC,
+			CredentialsFile: saFile,
+		})
+		if err == nil && creds != nil {
+			if client, err := google.NewRealGoogleLLMClient(context.Background(), creds); err == nil {
+				llmCfg.Client = client
+			}
+		}
+	}
+	llmProc, err := google.NewLLMProcessor(llmCfg)
 	if err != nil {
 		log.Fatalf("Failed to create Google LLM processor: %v", err)
 	}
 
-	ttsProc, err := google.NewTTSProcessor(google.DefaultTTSConfig())
+	ttsCfg := google.DefaultTTSConfig()
+	if client, err := google.NewRealGoogleTTSClient(context.Background(), ttsCfg); err == nil {
+		ttsCfg.Client = client
+	}
+	ttsProc, err := google.NewTTSProcessor(ttsCfg)
 	if err != nil {
 		log.Fatalf("Failed to create Google TTS processor: %v", err)
 	}

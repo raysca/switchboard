@@ -9,8 +9,12 @@ Type=simple
 User=govoice
 Group=govoice
 
-# Binary and configuration
+# Binary and configuration. TOKEN_SECRET must be set in the environment file.
 WorkingDirectory=/opt/govoice
+EnvironmentFile=-/etc/govoice/env
+Environment=GOVOICE_ROOT=/opt/govoice
+Environment=GOVOICE_MODEL_PATH=/opt/govoice/models/silero_vad.onnx
+Environment=GOVOICE_ORT_LIB=/opt/govoice/lib/libonnxruntime.so
 ExecStart=/opt/govoice/bin/server -config /etc/govoice/production.yaml
 
 # Process lifecycle and graceful shutdown (spec §37, §39)

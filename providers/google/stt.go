@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +26,7 @@ type STTConfig struct {
 	StreamOverlap           time.Duration // Pinned: 500ms
 	MaxRequestBytes         int           // Pinned: 25600
 	ProjectID               string        // Google Cloud project ID
+	Location                string        // Speech v2 location (chirp_2 is not in "global")
 	CredentialsFile         string        // Path to service account key JSON
 	APIKey                  string        // Fallback API key if supported
 	QuotaManager            *QuotaManager // Headroom manager (multiplier 2.0)
@@ -71,9 +74,23 @@ type RealGoogleSTTOpener struct {
 	client *speech.Client
 }
 
+func speechEndpoint(cfg STTConfig) string {
+	loc := cfg.Location
+	if loc == "" {
+		loc = "us-central1"
+	}
+	if cfg.Endpoint != "" && cfg.Endpoint != "speech.googleapis.com" {
+		return cfg.Endpoint
+	}
+	if loc == "global" {
+		return "speech.googleapis.com"
+	}
+	return loc + "-speech.googleapis.com"
+}
+
 func NewRealGoogleSTTOpener(ctx context.Context, cfg STTConfig) (*RealGoogleSTTOpener, error) {
 	opts := []option.ClientOption{
-		option.WithEndpoint(cfg.Endpoint + ":443"),
+		option.WithEndpoint(speechEndpoint(cfg) + ":443"),
 	}
 	if cfg.CredentialsFile != "" {
 		opts = append(opts, option.WithCredentialsFile(cfg.CredentialsFile))
@@ -105,7 +122,11 @@ func (o *RealGoogleSTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (ST
 	if project == "" {
 		project = "_"
 	}
-	recognizer := fmt.Sprintf("projects/%s/locations/global/recognizers/_", project)
+	location := cfg.Location
+	if location == "" {
+		location = "us-central1"
+	}
+	recognizer := fmt.Sprintf("projects/%s/locations/%s/recognizers/_", project, location)
 
 	// Send initial streaming configuration
 	initReq := &speechpb.StreamingRecognizeRequest{
@@ -211,6 +232,7 @@ type STTProcessor struct {
 	RotationFailures    atomic.Uint64
 	DeduplicatedResults atomic.Uint64
 	TotalRequestsSent   atomic.Uint64
+	Errors              atomic.Uint64
 }
 
 // NewSTTProcessor creates a new STTProcessor with the given config.
@@ -266,6 +288,9 @@ func (p *STTProcessor) Close() error {
 		p.active.cancel()
 		_ = p.active.stream.Close()
 		p.active = nil
+	}
+	if closer, ok := p.cfg.StreamOpener.(interface{ Close() error }); ok {
+		_ = closer.Close()
 	}
 	return nil
 }
@@ -347,6 +372,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 
 	// Ensure stream is open
 	if err := p.ensureStream(ctx); err != nil {
+		p.Errors.Add(1)
 		return err
 	}
 
@@ -382,12 +408,22 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 	return p.openPrimaryStream(ctx)
 }
 
+func (p *STTProcessor) ioParent(ctx context.Context) context.Context {
+	if p.session != nil {
+		return p.session.Context()
+	}
+	if ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
 func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 	if p.cfg.StreamOpener == nil {
 		return fmt.Errorf("no STTStreamOpener configured")
 	}
 
-	streamCtx, cancel := context.WithCancel(context.Background())
+	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
 	st, err := p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
 	if err != nil {
 		cancel()
@@ -439,7 +475,7 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	}
 
 	// Open replacement stream
-	streamCtx, cancel := context.WithCancel(context.Background())
+	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
 	newStream, err := p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
 	if err != nil {
 		cancel()
@@ -507,10 +543,24 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 
 			res, err := st.stream.Recv()
 			if err != nil {
+				p.mu.Lock()
+				if p.active == st {
+					p.active = nil
+				}
+				p.mu.Unlock()
+
 				if errors.Is(err, context.Canceled) || st.ctx.Err() != nil {
 					return
 				}
-				// Stream ended or encountered error
+				if isSTTIdleOrClosed(err) {
+					return
+				}
+				p.Errors.Add(1)
+				if p.session != nil {
+					_ = p.session.Reenter(&core.ErrorFrame{
+						Err: MapError("stt", err),
+					}, core.Downstream, p.index+1, p.streamGen)
+				}
 				return
 			}
 			if res == nil || res.Transcript == "" {
@@ -564,4 +614,13 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 			}
 		}
 	})
+}
+
+func isSTTIdleOrClosed(err error) bool {
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Stream timed out after receiving no more client requests") ||
+		strings.Contains(msg, "context canceled")
 }

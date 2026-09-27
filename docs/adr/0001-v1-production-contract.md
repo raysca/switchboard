@@ -38,11 +38,11 @@ Before product implementation begins, all fast-changing library coordinates, wir
 2. **Hard Playback-Clear Probe Outcome:**
    - The unmodified `@pipecat-ai/websocket-transport@1.7.2` package's `WebSocketTransport` does not wire incoming RTVI `user-started-speaking` messages to its internal `_mediaManager.userStartedSpeaking()` method.
    - Furthermore, `PipecatClient.handleMessage` notifies only the user callback `callbacks.onUserStartedSpeaking` and does not call any transport interruption method.
-3. **Closed Product Decision:**
-   - V1 enforces a **server-side interruption barrier with media-clock pacing backpressure**.
-   - Because the Go server paces output in strict 20 ms chunks against the media clock, the client never buffers more than 40–100 ms of audio.
-   - On interruption, the server immediately drops queued old-generation audio, cancels active TTS synthesis and LLM generation, fences all late provider completions, and emits the server-local flush barrier.
-   - Client playback naturally ceases within the ~50 ms buffer window without requiring client monkey-patching or proprietary frame serializers.
+3. **Closed Product Decision (explicit relaxation of spec §18, not a passing clear):**
+   - The Phase 0 probe verdict is `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`. The pinned client does not clear buffered playback. Recorded in `docs/compatibility/playback-clear-decision.json` as `relax-unmodified-client-playback-clear`.
+   - V1 does **not** claim that the unmodified client clears already-buffered playback. That spec §18 requirement is relaxed.
+   - What V1 does guarantee is a server-side interruption barrier plus media-clock pacing, so residual client audio is bounded to 100 ms.
+   - On interruption, the server drops queued and in-flight old-generation audio, cancels in-flight TTS and LLM work, fences late provider completions, and emits the server-local flush barrier. A missing flush acknowledgement degrades the session explicitly.
    - Delivered context follows Section 17: only complete synthesis units whose final audio frame was written to the socket before the interruption barrier are recorded. Partially written units are excluded in full.
 
 ## 5. Decision 4: Audio Sampling and Stateful Pure-Go Resampler

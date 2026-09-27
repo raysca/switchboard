@@ -35,6 +35,7 @@ type CircuitBreaker struct {
 	failures    int
 	lastFailure time.Time
 	probing     bool
+	onChange    func(CircuitState)
 }
 
 // NewCircuitBreaker creates a new CircuitBreaker.
@@ -78,21 +79,34 @@ func (cb *CircuitBreaker) Allow() bool {
 	}
 }
 
+// SetObserver receives state transitions. The callback runs without the breaker lock.
+func (cb *CircuitBreaker) SetObserver(fn func(CircuitState)) {
+	cb.mu.Lock()
+	cb.onChange = fn
+	cb.mu.Unlock()
+}
+
+func (cb *CircuitBreaker) notify(st CircuitState) {
+	fn := cb.onChange
+	if fn != nil {
+		fn(st)
+	}
+}
+
 // RecordSuccess records a successful call, resetting the failure count and closing the circuit.
 func (cb *CircuitBreaker) RecordSuccess() {
 	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
 	cb.failures = 0
 	cb.probing = false
 	cb.state = CircuitClosed
+	st := cb.state
+	cb.mu.Unlock()
+	cb.notify(st)
 }
 
 // RecordFailure records a failed call.
 func (cb *CircuitBreaker) RecordFailure() {
 	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
 	cb.failures++
 	cb.lastFailure = time.Now()
 	cb.probing = false
@@ -100,6 +114,9 @@ func (cb *CircuitBreaker) RecordFailure() {
 	if cb.state == CircuitHalfOpen || cb.failures >= cb.cfg.FailureThreshold {
 		cb.state = CircuitOpen
 	}
+	st := cb.state
+	cb.mu.Unlock()
+	cb.notify(st)
 }
 
 // State returns the current CircuitState.

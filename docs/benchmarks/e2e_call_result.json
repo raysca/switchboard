@@ -1,0 +1,12 @@
+{
+  "assistant_deltas": 2,
+  "output_audio_bytes": 103680,
+  "providers": "google stt, google llm, google tts",
+  "ran_at": "2026-09-27T19:43:23+01:00",
+  "saw_bot_ready": true,
+  "transcript_excerpt": "{\"id\":\"msg-1\",\"label\":\"rtvi-ai\",\"type\":\"bot-ready\",\"data\":{\"version\":\"2.1.0\"}}\n{\"id\":\"msg-2\",\"label\":\"rtvi-ai\",\"type\":\"user-started-speaking\"}\n{\"id\":\"msg-3\",\"label\":\"rtvi-ai\",\"type\":\"user-stopped-speaking\"}\n{\"id\":\"msg-4\",\"label\":\"rtvi-ai\",\"type\":\"user-transcription\",\"data\":{\"text\":\"what is 2 + 2\",\"final\":true,\"timestamp\":\"2026-09-27T19:43:12.873177+01:00\"}}\n{\"id\":\"msg-5\",\"label\":\"rtvi-ai\",\"type\":\"bot-llm-text\",\"data\":{\"text\":\"2 + 2 = 4\"}}\n{\"id\":\"msg-6\",\"label\":\"rtvi-ai\",\"type\":\"bot-started-speaking\"}\n{\"id\":\"msg-7\",\"label\":\"rtvi-ai\",\"type\":\"bot-stopped-speaking\"}\n{\"id\":\"msg-8\",\"label\":\"rtvi-ai\",\"type\":\"user-started-speaking\"}\n{\"id\":\"msg-9\",\"label\":\"rtvi-ai\",\"type\":\"user-stopped-speaking\"}\n{\"id\":\"msg-10\",\"label\":\"rtvi-ai\",\"type\":\"user-transcription\",\"data\":{\"text\":\" what did i just ask you\",\"final\":true,\"timestamp\":\"2026-09-27T19:43:21.093995+01:00\"}}\n{\"id\":\"msg-11\",\"label\":\"rtvi-ai\",\"type\":\"bot-llm-text\",\"data\":{\"text\":\"You just asked me \\\"what is 2 + 2\\\".\"}}\n{\"id\":\"msg-12\",\"label\":\"rtvi-ai\",\"type\":\"bot-started-speaking\"}",
+  "transport": "wss://127.0.0.1:18181/ws",
+  "turns": 2,
+  "user_transcripts": 2,
+  "vad": "silero sharded in-process"
+}

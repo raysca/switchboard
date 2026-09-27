@@ -21,8 +21,9 @@ services:
       - /tmp:rw,noexec,nosuid,size=256M
     volumes:
       - govoice_logs:/var/log/govoice:rw
+      - ${GOOGLE_APPLICATION_CREDENTIALS_FILE:-./credentials/gcp.json}:/etc/govoice/credentials/gcp.json:ro
     environment:
-      - TOKEN_SECRET=${TOKEN_SECRET:-dev-insecure-secret-key-for-testing-only-12345}
+      - TOKEN_SECRET=${TOKEN_SECRET:?TOKEN_SECRET is required and must not be the public development key}
       - GOOGLE_APPLICATION_CREDENTIALS=/etc/govoice/credentials/gcp.json
       - XAI_API_KEY=${XAI_API_KEY:-}
     ports:

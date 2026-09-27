@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/providers/google"
+	"govoice/providers/xai"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 	"govoice/vad"
@@ -42,6 +45,7 @@ type Server struct {
 	mu          sync.Mutex
 	activeCalls map[uint64]*activeCall
 	nextCallID  atomic.Uint64
+	pruneStop   chan struct{}
 }
 
 type activeCall struct {
@@ -86,14 +90,17 @@ func NewServer(cfg *Config) (*Server, error) {
 	)
 	admission := NewAdmissionController(cfg, metrics)
 	registry := NewRegistry()
-
-	// Token Validator
-	tokenSecret := cfg.Token.Secret
-	if tokenSecret == "" && cfg.Token.SecretEnv != "" {
-		tokenSecret = os.Getenv(cfg.Token.SecretEnv)
+	registry.BindMetrics(metrics)
+	if err := registry.Prepare(cfg); err != nil {
+		if cfg.Profile == ProfileProduction {
+			return nil, fmt.Errorf("provider initialization: %w", err)
+		}
+		logger.Warn("providers not initialized; readiness will stay false", slog.String("err", err.Error()))
 	}
-	if tokenSecret == "" {
-		tokenSecret = "dev-insecure-secret-key-for-testing-only-12345"
+
+	tokenSecret, err := ResolveTokenSecret(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	tokenCfg := token.DefaultConfig(cfg.Token.Issuer, cfg.Token.Audience, []byte(tokenSecret))
@@ -154,12 +161,16 @@ func (s *Server) Timelines() *TimelineRegistry {
 
 func (s *Server) setupRoutes() {
 	// Configure WS Transport Server
+	directTLS := s.cfg.TLS.CertFile != "" && s.cfg.TLS.KeyFile != ""
+	proxyTLS := s.cfg.TLS.TrustedProxyMode && len(s.cfg.TLS.TrustedProxies) > 0
 	wsCfg := ws.ServerConfig{
 		Security: ws.SecurityConfig{
 			AllowedOrigins:     s.cfg.OriginAllowlist,
 			AllowMissingOrigin: s.cfg.Profile == ProfileDevelopment || hasOriginWildcard(s.cfg.OriginAllowlist) || len(s.cfg.OriginAllowlist) == 0,
-			RequireTLS:         s.cfg.Profile == ProfileProduction && !s.cfg.InsecureOverrides.AllowPlainWSInProduction && !s.cfg.TLS.TrustedProxyMode,
+			RequireTLS:         s.cfg.Profile == ProfileProduction && !s.cfg.InsecureOverrides.AllowPlainWSInProduction && (directTLS || proxyTLS),
+			TrustedProxies:     s.cfg.TLS.TrustedProxies,
 		},
+		Observe:               s.observeTransport,
 		TokenValidator:        s.validator,
 		Pacer:                 ws.DefaultPacerConfig(),
 		HandshakeTimeout:      s.cfg.Limits.UpgradeTimeout,
@@ -183,7 +194,10 @@ func (s *Server) setupRoutes() {
 	s.adminMux = http.NewServeMux()
 	s.adminMux.HandleFunc("GET /health", s.handleHealth)
 	s.adminMux.HandleFunc("GET /ready", s.handleReady)
-	s.adminMux.Handle("GET /metrics", s.metrics.Handler())
+	s.adminMux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.sampleVADMetrics()
+		s.metrics.Handler().ServeHTTP(w, r)
+	}))
 	s.adminMux.Handle("GET /debug/timeline", s.timelines.Handler())
 }
 
@@ -218,7 +232,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	vadProc := vad.NewProcessor(s.vadExecutor, vad.DefaultProcessorConfig())
 
 	// 3. Assemble Pipeline
-	pipe, _, err := s.registry.BuildPipeline(s.cfg, "default", vadProc, conn)
+	pipe, _, err := s.registry.BuildPipeline(s.cfg, conn.Pipeline(), vadProc, conn)
 	if err != nil {
 		s.admission.ReleaseSession(principal)
 		s.metrics.SessionsFailedTotal.Add(1)
@@ -242,6 +256,73 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		timeline:  timeline,
 	}
 
+	var (
+		speechActive       bool
+		lastSTTTurn        string
+		firstTokenRecorded bool
+		lastLLMTurn        string
+		lastTTSUnit        uint64
+		lastInterruption   uint64
+		lastFlushAck       uint64
+	)
+
+	session.OnFrame = func(f core.Frame, dir core.Direction) {
+		switch f.Type() {
+		case core.FrameUserStartedSpeaking:
+			if !speechActive {
+				speechActive = true
+				firstTokenRecorded = false
+				timeline.Record(TimelineEvent{Type: EventSpeechStart})
+			}
+		case core.FrameUserStoppedSpeaking:
+			if speechActive {
+				speechActive = false
+				timeline.Record(TimelineEvent{Type: EventSpeechStop})
+			}
+		case core.FrameUserMessage:
+			um := f.(*core.UserMessageFrame)
+			if um.Turn != lastSTTTurn {
+				lastSTTTurn = um.Turn
+				timeline.Record(TimelineEvent{Type: EventSTTResult, TurnID: um.Turn, Gen: um.Gen})
+			}
+		case core.FrameLLMTextDelta:
+			if !firstTokenRecorded {
+				firstTokenRecorded = true
+				timeline.Record(TimelineEvent{Type: EventLLMFirstToken})
+			}
+		case core.FrameLLMText:
+			lt := f.(*core.LLMTextFrame)
+			if lt.Turn != lastLLMTurn {
+				lastLLMTurn = lt.Turn
+				timeline.Record(TimelineEvent{Type: EventLLMComplete, TurnID: lt.Turn, Gen: lt.Gen})
+			}
+		case core.FrameSynthesisUnit:
+			su := f.(*core.SynthesisUnitFrame)
+			if su.UnitID != lastTTSUnit {
+				lastTTSUnit = su.UnitID
+				timeline.Record(TimelineEvent{Type: EventTTSUnit, TurnID: su.Turn, Gen: su.Gen})
+			}
+		case core.FrameOutputAudio:
+			// Audio frames stream directly to client; first chunk per unit is covered by EventTTSUnit
+		case core.FrameInterruption:
+			intr := f.(*core.InterruptionFrame)
+			if intr.Gen != lastInterruption {
+				lastInterruption = intr.Gen
+				speechActive = false
+				timeline.Record(TimelineEvent{Type: EventInterruption, TurnID: intr.Turn, Gen: intr.Gen})
+			}
+		case core.FrameFlushProcessed:
+			fp := f.(*core.FlushProcessedFrame)
+			if fp.Gen != lastFlushAck {
+				lastFlushAck = fp.Gen
+				timeline.Record(TimelineEvent{Type: EventFlushAck, Gen: fp.Gen})
+			}
+		case core.FrameError:
+			ef := f.(*core.ErrorFrame)
+			timeline.Record(TimelineEvent{Type: EventError, Error: ef.Err.Error()})
+		}
+	}
+
 	s.mu.Lock()
 	s.activeCalls[sessionID] = active
 	s.mu.Unlock()
@@ -249,6 +330,18 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	// 5. Cleanup when session closes
 	go func() {
 		<-session.Done()
+		if n := session.LeakedTasks(); n > 0 {
+			s.metrics.LeakedSessionsTotal.Add(1)
+			s.metrics.LeakedWorkTotal.Add(uint64(n))
+		}
+		for _, proc := range session.Processors() {
+			s.recordProcessorMetrics(proc)
+		}
+		if err := session.Err(); err != nil {
+			s.metrics.SessionsFailedTotal.Add(1)
+			s.logger.Error("session failed", slog.Uint64("session", sessionID), slog.String("err", err.Error()))
+			conn.Close()
+		}
 		s.admission.ReleaseSession(principal)
 		s.mu.Lock()
 		delete(s.activeCalls, sessionID)
@@ -256,6 +349,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "session closed"})
 		s.metrics.SessionsStoppedTotal.Add(1)
 	}()
+
+	s.metrics.SessionsStartedTotal.Add(1)
 
 	// 6. Max call duration cost guard (spec §32, §35)
 	if s.cfg.Limits.MaxCallDuration > 0 {
@@ -312,8 +407,18 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !s.registry.PipelinesLive(s.cfg) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "unready",
+			"reason": "configured providers are not initialized",
+		})
+		return
+	}
+
 	// Check provider circuits and usable pipelines (spec §31)
 	circuits := map[string]string{
+		"google_stt": circuitStateName(s.metrics.STTCircuitStateGoogle.Load()),
 		"google_llm": circuitStateName(s.metrics.LLMCircuitStateGoogle.Load()),
 		"xai_llm":    circuitStateName(s.metrics.LLMCircuitStateXAI.Load()),
 		"google_tts": circuitStateName(s.metrics.TTSCircuitStateGoogle.Load()),
@@ -345,6 +450,12 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) isPipelineUsable(pipe PipelineConfig) bool {
+	if !s.registry.pipelineProvidersLive(pipe) {
+		return false
+	}
+	if pipe.STT == "google.stt" && s.metrics.STTCircuitStateGoogle.Load() == 1 {
+		return false
+	}
 	if pipe.LLM == "google.llm" && s.metrics.LLMCircuitStateGoogle.Load() == 1 {
 		return false
 	}
@@ -381,15 +492,43 @@ func (s *Server) Start() error {
 		return fmt.Errorf("listen admin %s: %w", s.cfg.AdminListenAddr, err)
 	}
 
-	s.publicServer = &http.Server{Handler: s.publicMux}
-	s.adminServer = &http.Server{Handler: s.adminMux}
+	s.publicServer = &http.Server{
+		Handler:           s.publicMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	s.adminServer = &http.Server{
+		Handler:           s.adminMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 
+	certFile, keyFile := s.cfg.TLS.CertFile, s.cfg.TLS.KeyFile
+	if certFile != "" && keyFile != "" {
+		if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+			pubListener.Close()
+			adminListener.Close()
+			return fmt.Errorf("load tls certificate: %w", err)
+		}
+	}
 	go func() {
-		_ = s.publicServer.Serve(pubListener)
+		var err error
+		if certFile != "" && keyFile != "" {
+			err = s.publicServer.ServeTLS(pubListener, certFile, keyFile)
+		} else {
+			err = s.publicServer.Serve(pubListener)
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.logger.Error("public listener stopped", slog.String("err", err.Error()))
+			s.ready.Store(false)
+		}
 	}()
 	go func() {
 		_ = s.adminServer.Serve(adminListener)
 	}()
+
+	s.pruneStop = make(chan struct{})
+	go s.pruneTimelines()
 
 	s.ready.Store(true)
 	s.logger.Info("server started",
@@ -404,6 +543,13 @@ func (s *Server) Start() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.shuttingDown.Store(true)
 	s.ready.Store(false)
+	if s.pruneStop != nil {
+		select {
+		case <-s.pruneStop:
+		default:
+			close(s.pruneStop)
+		}
+	}
 
 	s.logger.Info("server shutting down: marked unready, stopping admission")
 
@@ -420,6 +566,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.cfg.Limits.ImmediateCancel {
 		drainDeadline = 0
 	}
+
+	var drainTimedOut bool
+	var remainingCount int
 
 	if drainDeadline > 0 {
 		s.logger.Info("draining active calls", slog.Duration("drain_timeout", drainDeadline))
@@ -439,6 +588,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			select {
 			case <-drainTimer.C:
 				s.logger.Warn("drain timeout reached; cancelling remaining active calls", slog.Int("remaining", count))
+				drainTimedOut = true
+				remainingCount = count
 				break drainLoop
 			case <-ctx.Done():
 				s.logger.Warn("shutdown context cancelled during drain")
@@ -473,9 +624,109 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("shutdown deadline exceeded: %w", err)
 	}
+	if drainTimedOut {
+		return fmt.Errorf("server shutdown timed out: forced cancellation of %d sessions", remainingCount)
+	}
 
 	s.logger.Info("server shutdown complete")
 	return nil
+}
+
+func (s *Server) observeTransport(event string, n uint64) {
+	switch event {
+	case "auth_failure":
+		s.metrics.AuthFailuresTotal.Add(n)
+	case "replay":
+		s.metrics.ReplayRejectionsTotal.Add(n)
+	case "origin_reject":
+		s.metrics.OriginRejectionsTotal.Add(n)
+	case "frame_in":
+		s.metrics.FramesInTotal.Add(1)
+		s.metrics.BytesInTotal.Add(n)
+	case "frame_out":
+		s.metrics.FramesOutTotal.Add(1)
+		s.metrics.BytesOutTotal.Add(n)
+	case "flush_ack":
+		s.metrics.FlushAcksTotal.Add(n)
+	case "slow_client":
+		s.metrics.SlowClientTermTotal.Add(n)
+	case "client_connected":
+		s.metrics.ConnectedClients.Add(int64(n))
+	case "client_disconnected":
+		s.metrics.ConnectedClients.Add(-int64(n))
+	case "disconnect_normal":
+		s.metrics.DisconnectsNormal.Add(n)
+	case "disconnect_client":
+		s.metrics.DisconnectsClientError.Add(n)
+	case "disconnect_server":
+		s.metrics.DisconnectsServerError.Add(n)
+	case "disconnect_timeout":
+		s.metrics.DisconnectsTimeout.Add(n)
+	case "protocol_error":
+		s.metrics.ProtocolErrorsTotal.Add(n)
+	}
+}
+
+func (s *Server) sampleVADMetrics() {
+	if s.vadExecutor == nil {
+		return
+	}
+	st := s.vadExecutor.Stats()
+	s.metrics.VADActiveStreams.Store(st.Streams)
+	s.metrics.VADStaleChunksTotal.Store(uint64(st.Stale))
+	dropped := st.RejectedFull + st.RejectedLimit
+	if dropped < 0 {
+		dropped = 0
+	}
+	s.metrics.VADDroppedChunksTotal.Store(uint64(dropped))
+	if st.Restarts > 0 {
+		s.metrics.VADWorkerRestartsTotal.Store(uint64(st.Restarts))
+	}
+}
+
+func (s *Server) recordProcessorMetrics(proc core.Processor) {
+	switch p := proc.(type) {
+	case *core.AssistantContextProcessor:
+		s.metrics.FlushTimeoutsTotal.Add(p.FlushTimeouts.Load())
+		s.metrics.FlushAcksTotal.Add(p.FlushAcks.Load())
+	case *core.UserContextProcessor:
+		if n := p.EvictionCount(); n > 0 {
+			s.metrics.ContextEvictionsTotal.Add(uint64(n))
+		}
+	case *google.STTProcessor:
+		s.metrics.STTRotationsTotal.Add(p.RotationsCount.Load())
+		s.metrics.STTRotationFailuresTotal.Add(p.RotationFailures.Load())
+		s.metrics.STTDeduplicatedTotal.Add(p.DeduplicatedResults.Load())
+		s.metrics.STTErrorsTotal.Add(p.Errors.Load())
+	case *google.LLMProcessor:
+		s.metrics.LLMRequestsTotal.Add(p.Requests.Load())
+		s.metrics.LLMErrorsTotal.Add(p.Errors.Load())
+		s.metrics.LLMRetriesTotal.Add(p.Retries.Load())
+		s.metrics.LLMStaleDeltasDiscarded.Add(p.Stale.Load())
+	case *xai.Processor:
+		s.metrics.LLMRequestsTotal.Add(p.Requests.Load())
+		s.metrics.LLMErrorsTotal.Add(p.Errors.Load())
+		s.metrics.LLMRetriesTotal.Add(p.Retries.Load())
+		s.metrics.LLMStaleDeltasDiscarded.Add(p.Stale.Load())
+	case *google.TTSProcessor:
+		s.metrics.TTSRequestsTotal.Add(p.Requests.Load())
+		s.metrics.TTSErrorsTotal.Add(p.Errors.Load())
+		s.metrics.TTSRetriesTotal.Add(p.Retries.Load())
+		s.metrics.TTSStaleAudioDiscarded.Add(p.Stale.Load())
+	}
+}
+
+func (s *Server) pruneTimelines() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.pruneStop:
+			return
+		case <-ticker.C:
+			s.timelines.PruneExpired()
+		}
+	}
 }
 
 func hasOriginWildcard(origins []string) bool {

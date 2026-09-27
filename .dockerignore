@@ -1,0 +1,16 @@
+.git
+.venv
+pipecat-impl
+examples/rtvi_client
+tools
+bin
+assets
+results
+baseline
+scripts
+loadgen
+.env
+**/.env
+examples/secrets
+**/node_modules
+third_party/onnxruntime-*

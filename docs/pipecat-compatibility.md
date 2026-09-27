@@ -13,7 +13,7 @@ All compatibility guarantees are pinned against the exact npm release packages a
 | **`@pipecat-ai/client-js`** | `1.13.1` | `753fb509426f0d14b1ce3d0f0ebcc04d538e12ec` |
 | **`@pipecat-ai/websocket-transport`** | `1.7.2` | `e2a4f48ffc774431e21b18d2643aeb482a095368` |
 | **RTVI Protocol Version** | `2.1.0` | Exact string match in `client-ready` / `bot-ready` |
-| **Protobuf Serializer** | `frames.proto` | Wire tag 1 (audio), wire tag 2 (message) |
+| **Protobuf Serializer** | `frames.proto` | Wire tag 2 (audio), wire tag 4 (message) |
 | **Upstream Git Commit** | `pipecat-ai/pipecat@207b8b4` | Reference baseline commit |
 
 ---
@@ -40,11 +40,9 @@ Voice Framework V1 provides 100% wire-compatible drop-in interoperability with t
 ### 1. Interruption & The Client Playback Clear Finding (Phase 0 Probe)
 - **Upstream Assumption**: Standard voice frameworks assume the client-side transport will immediately silence audio upon receiving an interruption wire frame or `bot-stopped-speaking` message.
 - **Phase 0 Empirical Finding**: Detailed inspection and automated probing (`tools/compat/probe_playback_clear.js`) proved that `@pipecat-ai/client-js@1.13.1` and `@pipecat-ai/websocket-transport@1.7.2` have **no mechanism to purge or silence audio chunks already written to the browser's Web Audio / AudioContext queue**.
-- **The Remedy (Server Pacing)**:
-  - Voice Framework V1 solves this at the server edge via **high-resolution media-clock pacing**.
-  - Audio is pushed to the WebSocket writer at exactly 1x real-time speed (one 20ms chunk every 20ms).
-  - The server buffer is capped at `<= 100ms` of unpaced lookahead.
-  - Upon barge-in, the server drops all queued unpaced audio immediately. Because the browser never holds more than 100ms of buffered audio, the user experiences instantaneous interruption (p99 <= 200ms) without any client-side monkey-patching.
+- **Recorded product decision** (`docs/compatibility/playback-clear-decision.json`, id `relax-unmodified-client-playback-clear`): spec §18's unmodified-client clear is **relaxed**. The probe verdict remains `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`. Server pacing is not a passing clear.
+  - Audio is written at media time. The server output queue is capped at 100ms so barge-in can drop audio that has not yet been written. Audio already inside the browser can still play out.
+  - The probe exits 0 only while that decision file matches; a missing or different decision fails the gate.
 
 ### 2. Mandatory Cryptographic Admission Tokens
 - **Upstream Behavior**: Many Pipecat examples allow unauthenticated connections or rely on custom HTTP endpoints.

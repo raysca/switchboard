@@ -170,7 +170,7 @@ func (r *TimelineRegistry) PruneExpired() {
 
 	now := time.Now()
 	for id, tl := range r.timelines {
-		if now.Sub(tl.createdAt) > tl.ttl*2 {
+		if now.Sub(tl.createdAt) > tl.ttl {
 			delete(r.timelines, id)
 		}
 	}

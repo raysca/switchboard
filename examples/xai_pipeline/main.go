@@ -1,20 +1,25 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"govoice/core"
+	"govoice/examples/envload"
 	"govoice/providers/google"
 	"govoice/providers/xai"
 	"govoice/vad"
 )
 
 // main demonstrates Scenario C from the specification: interchangeable LLM substitution
-// using xAI Grok (grok-2-1212) within an otherwise Google-based pipeline (Google STT + Google TTS)
+// using xAI Grok within an otherwise Google-based pipeline (Google STT + Google TTS)
 // with zero changes to the core runtime.
 func main() {
+	_ = envload.Load()
+
 	fmt.Println("=== Voice Framework V1: Scenario C xAI LLM Interchangeability Example ===")
 
 	// 1. Initialize In-Process VAD Executor
@@ -37,7 +42,11 @@ func main() {
 	vadProc := vad.NewProcessor(vadExec, vad.DefaultProcessorConfig())
 
 	// 2. Google STT
-	sttProc, err := google.NewSTTProcessor(google.DefaultSTTConfig())
+	sttCfg := google.DefaultSTTConfig()
+	if opener, err := google.NewRealGoogleSTTOpener(context.Background(), sttCfg); err == nil {
+		sttCfg.StreamOpener = opener
+	}
+	sttProc, err := google.NewSTTProcessor(sttCfg)
 	if err != nil {
 		log.Fatalf("Failed to create Google STT processor: %v", err)
 	}
@@ -50,9 +59,17 @@ func main() {
 	userCtxProc := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn"})
 
 	// 4. xAI LLM Processor (Drop-in substitution for Google LLM)
+	model := "grok-2-1212"
+	if envModel := os.Getenv("XAI_MODEL"); envModel != "" {
+		model = envModel
+	}
+	endpoint := "https://api.x.ai/v1/responses"
+	if envEndpoint := os.Getenv("XAI_ENDPOINT"); envEndpoint != "" {
+		endpoint = envEndpoint
+	}
 	xaiProc, err := xai.NewProcessor(xai.Config{
-		Model:        "grok-2-1212",
-		Endpoint:     "https://api.x.ai/v1/responses",
+		Model:        model,
+		Endpoint:     endpoint,
 		SystemPrompt: "You are a concise voice assistant.",
 	})
 	if err != nil {
@@ -61,7 +78,11 @@ func main() {
 
 	// 5. Assistant Context Processor & Google TTS
 	asstCtxProc := core.NewAssistantContextProcessor(convCtx, core.DefaultAssistantContextConfig())
-	ttsProc, err := google.NewTTSProcessor(google.DefaultTTSConfig())
+	ttsCfg := google.DefaultTTSConfig()
+	if client, err := google.NewRealGoogleTTSClient(context.Background(), ttsCfg); err == nil {
+		ttsCfg.Client = client
+	}
+	ttsProc, err := google.NewTTSProcessor(ttsCfg)
 	if err != nil {
 		log.Fatalf("Failed to create Google TTS processor: %v", err)
 	}

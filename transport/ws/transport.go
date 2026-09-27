@@ -36,6 +36,7 @@ type ServerConfig struct {
 	MaxConcurrentSessions int           // Max active voice sessions (default: 100)
 	MaxPendingHandshakes  int           // Max handshakes in flight (default: 50)
 	FixedPlayerRate       int           // Fixed client player rate (default: 24000)
+	Observe               func(event string, n uint64)
 }
 
 // DefaultServerConfig returns production-ready server parameters.
@@ -63,6 +64,7 @@ type Connection struct {
 	id         uint64
 	conn       *websocket.Conn
 	claims     *token.Claims
+	pipeline   string
 	cfg        ServerConfig
 	pacer      *PacedWriter
 	session    *core.Session
@@ -88,15 +90,22 @@ type Connection struct {
 
 // Server handles HTTP upgrades to WebSocket voice connections.
 type Server struct {
-	cfg        ServerConfig
-	activeMu   sync.Mutex
-	activeSess int
-	pendingMu  sync.Mutex
-	pendingHsh int
-	idCounter  atomic.Uint64
+	cfg          ServerConfig
+	activeMu     sync.Mutex
+	activeSess   int
+	pendingMu    sync.Mutex
+	pendingHsh   int
+	pendingPerIP map[string]int
+	idCounter    atomic.Uint64
 
 	// Session factory callback
 	OnSessionReady func(conn *Connection) (*core.Session, error)
+}
+
+func (s *Server) observe(event string, n uint64) {
+	if s.cfg.Observe != nil {
+		s.cfg.Observe(event, n)
+	}
 }
 
 // NewServer creates a new WebSocket voice server.
@@ -120,23 +129,37 @@ func NewServer(cfg ServerConfig) *Server {
 		cfg.FixedPlayerRate = FixedPlayerSampleRate
 	}
 
-	return &Server{cfg: cfg}
+	return &Server{
+		cfg:          cfg,
+		pendingPerIP: make(map[string]int),
+	}
 }
 
 // ServeHTTP processes WebSocket upgrade requests with pre-upgrade token and origin checks.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// 1. Pending handshakes limit
+	// 1. Pending handshakes limit (global and per-source IP)
+	clientIP := s.cfg.Security.ClientIP(r)
+	maxPerSource := s.cfg.MaxPendingHandshakes / 4
+	if maxPerSource < 5 {
+		maxPerSource = 5
+	}
+
 	s.pendingMu.Lock()
-	if s.pendingHsh >= s.cfg.MaxPendingHandshakes {
+	if s.pendingHsh >= s.cfg.MaxPendingHandshakes || s.pendingPerIP[clientIP] >= maxPerSource {
 		s.pendingMu.Unlock()
 		http.Error(w, ErrHandshakeLimitExceeded.Error(), http.StatusTooManyRequests)
 		return
 	}
 	s.pendingHsh++
+	s.pendingPerIP[clientIP]++
 	s.pendingMu.Unlock()
 	defer func() {
 		s.pendingMu.Lock()
 		s.pendingHsh--
+		s.pendingPerIP[clientIP]--
+		if s.pendingPerIP[clientIP] <= 0 {
+			delete(s.pendingPerIP, clientIP)
+		}
 		s.pendingMu.Unlock()
 	}()
 
@@ -157,6 +180,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Security: Origin check
 	if err := s.cfg.Security.CheckOrigin(r); err != nil {
+		s.observe("origin_reject", 1)
 		if errors.Is(err, ErrMissingOrigin) {
 			http.Error(w, "missing origin header", http.StatusForbidden)
 			return
@@ -168,6 +192,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 5. Authentication: Validate and atomically consume single-use token from query
 	tokenStr := r.URL.Query().Get("token")
 	if tokenStr == "" {
+		s.observe("auth_failure", 1)
 		http.Error(w, "missing admission token", http.StatusUnauthorized)
 		return
 	}
@@ -175,13 +200,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, err := s.cfg.TokenValidator.ValidateAndConsume(tokenStr)
 	if err != nil {
 		if errors.Is(err, token.ErrTokenReplayed) {
+			s.observe("replay", 1)
 			http.Error(w, "token already consumed (single-use)", http.StatusUnauthorized)
 			return
 		}
 		if errors.Is(err, token.ErrTokenExpired) {
+			s.observe("auth_failure", 1)
 			http.Error(w, "token expired", http.StatusUnauthorized)
 			return
 		}
+		s.observe("auth_failure", 1)
 		http.Error(w, fmt.Sprintf("invalid token: %v", err), http.StatusUnauthorized)
 		return
 	}
@@ -202,16 +230,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.activeMu.Lock()
 	s.activeSess++
 	s.activeMu.Unlock()
+	s.observe("client_connected", 1)
 
 	sessCtx, sessCancel := context.WithCancel(context.Background())
 	if s.cfg.MaxConnectionLifetime > 0 {
 		sessCtx, sessCancel = context.WithTimeout(sessCtx, s.cfg.MaxConnectionLifetime)
 	}
 
+	pipeline := ""
+	if claims != nil {
+		pipeline = claims.Pipeline
+	}
+	if pipeline == "" {
+		pipeline = r.URL.Query().Get("pipeline")
+	}
+	if pipeline == "" {
+		pipeline = "default"
+	}
+
 	conn := &Connection{
 		id:           s.idCounter.Add(1),
 		conn:         wsConn,
 		claims:       claims,
+		pipeline:     pipeline,
 		cfg:          s.cfg,
 		ctx:          sessCtx,
 		cancel:       sessCancel,
@@ -270,6 +311,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			conn.session = session
 			if err := session.Start(); err != nil {
+				_ = session.Close()
 				return err
 			}
 		}
@@ -307,6 +349,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		if err := pacer.Run(conn.ctx); err != nil && !errors.Is(err, context.Canceled) {
 			if errors.Is(err, ErrSlowClient) {
+				s.observe("slow_client", 1)
 				_ = wsConn.Close(websocket.StatusPolicyViolation, "slow client terminated")
 			}
 			conn.cancel()
@@ -334,14 +377,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (c *Connection) readLoop() {
 	for {
 		readCtx := c.ctx
+		var cancel context.CancelFunc
 		if c.cfg.ReadTimeout > 0 {
-			var cancel context.CancelFunc
 			readCtx, cancel = context.WithTimeout(c.ctx, c.cfg.ReadTimeout)
-			defer cancel()
 		}
 
 		msgType, data, err := c.conn.Read(readCtx)
+		if cancel != nil {
+			cancel()
+		}
 		if err != nil {
+			c.observeDisconnect(err)
 			return
 		}
 
@@ -350,9 +396,14 @@ func (c *Connection) readLoop() {
 		}
 
 		seq := c.seqCounter.Add(1)
+		if c.cfg.Observe != nil {
+			c.cfg.Observe("frame_in", uint64(len(data)))
+		}
 		frame, err := DecodeBinaryFrame(data, seq, time.Now())
 		if err != nil {
-			// Malformed frame: close connection
+			if c.cfg.Observe != nil {
+				c.cfg.Observe("protocol_error", 1)
+			}
 			_ = c.conn.Close(websocket.StatusUnsupportedData, err.Error())
 			return
 		}
@@ -427,9 +478,30 @@ func (c *Connection) resampleInput(samples []byte, inRate int) ([]byte, error) {
 }
 
 // Close gracefully terminates the connection.
+func (c *Connection) observeDisconnect(err error) {
+	if c.cfg.Observe == nil {
+		return
+	}
+	switch websocket.CloseStatus(err) {
+	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
+		c.cfg.Observe("disconnect_normal", 1)
+	case websocket.StatusPolicyViolation, websocket.StatusUnsupportedData, websocket.StatusInternalError:
+		c.cfg.Observe("disconnect_server", 1)
+	default:
+		if errors.Is(err, context.DeadlineExceeded) {
+			c.cfg.Observe("disconnect_timeout", 1)
+			return
+		}
+		c.cfg.Observe("disconnect_client", 1)
+	}
+}
+
 func (c *Connection) Close() {
 	c.closeOnce.Do(func() {
 		c.closed.Store(true)
+		if c.cfg.Observe != nil {
+			c.cfg.Observe("client_disconnected", 1)
+		}
 		c.cancel()
 		if c.pacer != nil {
 			c.pacer.Close()
@@ -467,7 +539,7 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 			oaf.SampleRate = c.cfg.FixedPlayerRate
 		}
 
-		return c.pacer.Enqueue(oaf)
+		return c.enqueueOutput(ctx, oaf)
 
 	case core.FrameUserStartedSpeaking:
 		msg, _ := c.rtvi.FormatUserStartedSpeaking()
@@ -531,6 +603,10 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 	case core.FrameFlush:
 		ff := f.(*core.FlushFrame)
 		c.pacer.Flush(ff.Gen)
+		c.pacer.SetActiveGeneration(ff.Gen + 1)
+		if c.cfg.Observe != nil {
+			c.cfg.Observe("flush_ack", 1)
+		}
 		// Acknowledge flush barrier
 		return e.PushDirection(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream)
 
@@ -548,15 +624,47 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 	}
 }
 
+// enqueueOutput applies backpressure while the pacer drains at media time.
+// A client that does not drain before the write timeout is terminated.
+func (c *Connection) enqueueOutput(ctx context.Context, frame *core.OutputAudioFrame) error {
+	deadline := time.Now().Add(c.cfg.Pacer.WriteTimeout)
+	for {
+		err := c.pacer.Enqueue(frame)
+		if err == nil || !errors.Is(err, ErrSlowClient) {
+			return err
+		}
+		if time.Now().After(deadline) || ctx.Err() != nil {
+			return err
+		}
+		timer := time.NewTimer(20 * time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return err
+		}
+	}
+}
+
 // WriteWireMessage safely serializes and writes an RTVI JSON message to the client over WebSocket.
 func (c *Connection) WriteWireMessage(ctx context.Context, rtviJSON string) error {
 	data, err := EncodeMessageFrame(rtviJSON)
 	if err != nil {
 		return err
 	}
+	writeCtx := ctx
+	var cancel context.CancelFunc
+	if c.cfg.Pacer.WriteTimeout > 0 {
+		writeCtx, cancel = context.WithTimeout(ctx, c.cfg.Pacer.WriteTimeout)
+		defer cancel()
+	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	return c.conn.Write(ctx, websocket.MessageBinary, data)
+	err = c.conn.Write(writeCtx, websocket.MessageBinary, data)
+	if err == nil && c.cfg.Observe != nil {
+		c.cfg.Observe("frame_out", uint64(len(data)))
+	}
+	return err
 }
 
 // RTVI returns the associated RTVI protocol handler.
@@ -577,6 +685,14 @@ func (c *Connection) Pacer() *PacedWriter {
 // Claims returns the authenticated token claims.
 func (c *Connection) Claims() *token.Claims {
 	return c.claims
+}
+
+// Pipeline returns the target pipeline requested by token or query parameter.
+func (c *Connection) Pipeline() string {
+	if c.pipeline == "" {
+		return "default"
+	}
+	return c.pipeline
 }
 
 // ID returns the unique connection identifier.

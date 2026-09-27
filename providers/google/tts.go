@@ -3,9 +3,11 @@ package google
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"govoice/core"
@@ -77,7 +79,9 @@ func (c *RealGoogleTTSClient) SynthesizeSpeech(ctx context.Context, text string,
 			Name:         voice,
 		},
 		AudioConfig: &texttospeechpb.AudioConfig{
-			AudioEncoding:   texttospeechpb.AudioEncoding_PCM,
+			// Journey voices reject AudioEncoding_PCM. LINEAR16 is headered WAV;
+			// strip the container so the pipeline still sees raw PCM16LE.
+			AudioEncoding:   texttospeechpb.AudioEncoding_LINEAR16,
 			SampleRateHertz: int32(sampleRate),
 		},
 	}
@@ -86,7 +90,27 @@ func (c *RealGoogleTTSClient) SynthesizeSpeech(ctx context.Context, text string,
 	if err != nil {
 		return nil, MapError("tts", err)
 	}
-	return resp.AudioContent, nil
+	pcm, err := stripWAV(resp.AudioContent)
+	if err != nil {
+		return nil, err
+	}
+	return pcm, nil
+}
+
+func stripWAV(b []byte) ([]byte, error) {
+	if len(b) < 12 || !bytes.Equal(b[:4], []byte("RIFF")) {
+		return b, nil
+	}
+	idx := bytes.Index(b, []byte("data"))
+	if idx < 0 || idx+8 > len(b) {
+		return nil, fmt.Errorf("google tts LINEAR16 response is missing a WAV data chunk")
+	}
+	n := binary.LittleEndian.Uint32(b[idx+4 : idx+8])
+	start := idx + 8
+	if start+int(n) > len(b) {
+		return nil, fmt.Errorf("google tts LINEAR16 WAV data is truncated")
+	}
+	return append([]byte(nil), b[start:start+int(n)]...), nil
 }
 
 func (c *RealGoogleTTSClient) Close() error {
@@ -102,10 +126,23 @@ type TTSProcessor struct {
 	session core.SessionController
 	index   int
 
-	mu           sync.Mutex
-	activeCancel context.CancelFunc
-	activeGen    uint64
-	closed       bool
+	mu          sync.Mutex
+	cond        *sync.Cond
+	cancels     []ttsCancel
+	nextSeq     uint64
+	finishedSeq uint64
+	activeGen   uint64
+	closed      bool
+
+	Requests atomic.Uint64
+	Errors   atomic.Uint64
+	Retries  atomic.Uint64
+	Stale    atomic.Uint64
+}
+
+type ttsCancel struct {
+	seq    uint64
+	cancel context.CancelFunc
 }
 
 // NewTTSProcessor creates a new TTSProcessor.
@@ -125,9 +162,9 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	if cfg.CircuitBreaker == nil {
 		cfg.CircuitBreaker = NewCircuitBreaker(DefaultCircuitConfig())
 	}
-	return &TTSProcessor{
-		cfg: cfg,
-	}, nil
+	p := &TTSProcessor{cfg: cfg}
+	p.cond = sync.NewCond(&p.mu)
+	return p, nil
 }
 
 // Attach registers session controller and index.
@@ -144,11 +181,20 @@ func (p *TTSProcessor) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closed = true
-	if p.activeCancel != nil {
-		p.activeCancel()
-		p.activeCancel = nil
+	p.cancelAllLocked()
+	p.finishedSeq = p.nextSeq
+	p.cond.Broadcast()
+	if closer, ok := p.cfg.Client.(interface{ Close() error }); ok {
+		_ = closer.Close()
 	}
 	return nil
+}
+
+func (p *TTSProcessor) cancelAllLocked() {
+	for _, c := range p.cancels {
+		c.cancel()
+	}
+	p.cancels = nil
 }
 
 // ProcessFrame handles pipeline frames.
@@ -159,19 +205,17 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
-		if p.activeCancel != nil {
-			p.activeCancel()
-			p.activeCancel = nil
-		}
+		p.cancelAllLocked()
+		p.finishedSeq = p.nextSeq
+		p.cond.Broadcast()
 		p.mu.Unlock()
 		return e.Push(f)
 
 	case *core.CancelFrame:
 		p.mu.Lock()
-		if p.activeCancel != nil {
-			p.activeCancel()
-			p.activeCancel = nil
-		}
+		p.cancelAllLocked()
+		p.finishedSeq = p.nextSeq
+		p.cond.Broadcast()
 		p.mu.Unlock()
 		return e.Push(f)
 
@@ -196,13 +240,20 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 	if p.session != nil {
 		currentGen := p.session.CurrentGeneration()
 		if gen != 0 && gen < currentGen {
+			p.Stale.Add(1)
 			p.mu.Unlock()
 			return nil // Drop stale unit
 		}
 	}
 
-	unitCtx, cancel := context.WithCancel(context.Background())
-	p.activeCancel = cancel
+	parent := context.Background()
+	if p.session != nil {
+		parent = p.session.Context()
+	}
+	unitCtx, cancel := context.WithCancel(parent)
+	seq := p.nextSeq + 1
+	p.nextSeq = seq
+	p.cancels = append(p.cancels, ttsCancel{seq: seq, cancel: cancel})
 	p.activeGen = gen
 	p.mu.Unlock()
 
@@ -217,9 +268,40 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		return nil
 	}
 
-	// Synthesize speech asynchronously
+	// Synthesize speech asynchronously, in unit order. Cancellation covers every
+	// in-flight request, not only the most recently started one.
 	return p.session.Go(func(taskCtx context.Context) {
 		defer cancel()
+		defer func() {
+			p.mu.Lock()
+			kept := make([]ttsCancel, 0, len(p.cancels))
+			for _, c := range p.cancels {
+				if c.seq != seq {
+					kept = append(kept, c)
+				}
+			}
+			p.cancels = kept
+			if p.finishedSeq+1 == seq {
+				p.finishedSeq = seq
+			}
+			p.cond.Broadcast()
+			p.mu.Unlock()
+		}()
+
+		p.mu.Lock()
+		for p.finishedSeq+1 != seq && unitCtx.Err() == nil && taskCtx.Err() == nil && !p.closed {
+			p.cond.Wait()
+		}
+		stale := p.closed || unitCtx.Err() != nil || taskCtx.Err() != nil
+		if !stale && p.session != nil && gen != 0 && gen < p.session.CurrentGeneration() {
+			stale = true
+		}
+		p.mu.Unlock()
+		if stale {
+			p.Stale.Add(1)
+			return
+		}
+		p.Requests.Add(1)
 
 		var rawAudio []byte
 		var committed bool
@@ -227,6 +309,9 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		err := ExecuteWithRetry(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
 			return committed
 		}, func(attemptCtx context.Context, attempt int) error {
+			if attempt > 0 {
+				p.Retries.Add(1)
+			}
 			audio, err := p.cfg.Client.SynthesizeSpeech(attemptCtx, su.Text, p.cfg.Voice, p.cfg.SampleRate)
 			if err != nil {
 				return err
@@ -239,6 +324,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			if errors.Is(err, context.Canceled) {
 				return
 			}
+			p.Errors.Add(1)
 			provErr := MapError("tts", err)
 			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false}, core.Downstream, p.index+1, gen)
 			return

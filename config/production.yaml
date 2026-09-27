@@ -10,6 +10,10 @@ tls:
   cert_file: ""
   key_file: ""
   trusted_proxy_mode: true
+  trusted_proxies:
+    - "127.0.0.1/32"
+    - "::1/128"
+    - "172.16.0.0/12"
 
 origin_allowlist:
   - "https://app.govoice.internal"
@@ -45,7 +49,7 @@ vad:
 providers:
   google_stt:
     project_id: ""
-    location: "global"
+    location: "us-central1"
     model: "chirp_2"
     language_code: "en-US"
     max_streams: 250

@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -129,6 +130,8 @@ func TestConfig_ProductionFileSecurityCheck(t *testing.T) {
 
 	cfg := DefaultConfig(ProfileProduction)
 	cfg.TLS.TrustedProxyMode = true
+	cfg.TLS.TrustedProxies = []string{"127.0.0.1/32"}
+	cfg.Token.Secret = "production-test-secret-not-the-dev-key-123456"
 	cfg.Providers.GoogleSTT.CredentialsFile = credPath
 	cfg.InsecureOverrides.SkipCredentialPermsCheck = false
 
@@ -164,6 +167,7 @@ func TestConfig_LoadDevelopmentYAML(t *testing.T) {
 }
 
 func TestConfig_LoadProductionYAML(t *testing.T) {
+	t.Setenv("TOKEN_SECRET", "production-test-secret-not-the-dev-key-123456")
 	cfg, err := LoadConfig("../config/production.yaml")
 	if err != nil {
 		t.Fatalf("load production.yaml: %v", err)
@@ -176,5 +180,22 @@ func TestConfig_LoadProductionYAML(t *testing.T) {
 	}
 	if cfg.Limits.MaxCallDuration != 60*time.Minute {
 		t.Fatalf("expected max call duration 60m")
+	}
+}
+
+func TestResolveTokenSecret_ProductionRejectsPublicKey(t *testing.T) {
+	cfg := DefaultConfig(ProfileProduction)
+	cfg.Token.Secret = DevInsecureTokenSecret
+	if _, err := ResolveTokenSecret(cfg); err == nil || !strings.Contains(err.Error(), "repository-public") {
+		t.Fatalf("expected public development secret to be refused, got %v", err)
+	}
+	cfg.Token.Secret = "short"
+	if _, err := ResolveTokenSecret(cfg); err == nil || !strings.Contains(err.Error(), "32") {
+		t.Fatalf("expected short secret to be refused, got %v", err)
+	}
+	cfg.Token.Secret = "production-test-secret-not-the-dev-key-123456"
+	got, err := ResolveTokenSecret(cfg)
+	if err != nil || got != cfg.Token.Secret {
+		t.Fatalf("expected the configured secret, got %q %v", got, err)
 	}
 }

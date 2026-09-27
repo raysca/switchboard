@@ -1,32 +1,75 @@
-# Voice Framework V1 — Release Criteria Evidence Matrix
+# Voice Framework V1 — Release Criteria Evidence
 
-This document provides explicit verification evidence for each of the 24 release criteria mandated by **Spec §46 (V1 Release Criteria)**.
+Updated 2026-09-27 after the release-audit remediation. Statuses below describe what was actually run. A unit test with mocks is not a production call. A config file is not a deployment.
 
----
-
-| # | Spec §46 Release Criterion | Verification Evidence / Passing Suite / Artifact | Status |
+| # | Criterion | What was run | Status |
 |---|---|---|---|
-| **1** | Exact pinned, released, unmodified Pipecat JS client and WebSocket transport can connect over wss to the production-deployed server. | `tools/compat/client_compat_test.go` (`TestCompat_UnmodifiedClientPackage_RegressionGate`), `tools/compat/test_rtvi_client.js` running against live server; `server/scenarios_test.go` (`TestScenarioA_DeployedGoogleStack`). | **VERIFIED / PASS** |
-| **2** | Exact released RTVI client and WebSocket transport versions, default serializer/protobuf schema, recorder/player rates, protocol version, and reference commit pinned and compatibility-tested. | `docs/compatibility/v1-lock.json`; `tools/compat/validate_manifest.js`; `tools/compat/verify_fixtures.js`; `transport/rtvi/rtvi_test.go`. | **VERIFIED / PASS** |
-| **3** | WebSocket admission requires valid short-lived single-use token; atomic replay prevention, Origin, per-principal limits; token query redacted; public clients cannot access admin endpoints. | `transport/token/token_test.go`; `transport/ws/ws_test.go` (`TestPhase3_SecurityAndOrigin`, `TestPhase3_HandshakeFlood_ReturnsHTTP429`); `server/admission_test.go` (`TestAdmission_LimitsAndRejections`); `server/scenarios_test.go` (`TestScenarioJ_AdmissionSecurityDeployed`). | **VERIFIED / PASS** |
-| **4** | Client microphone audio reaches the Go session runtime. | `transport/ws/ws_test.go` (`TestPhase3_ByteFixtures_BothDirections`, `TestPhase3_BlockedWriter_DoesNotBlockInputReads`); `server/scenarios_test.go` (`TestScenarioA_DeployedGoogleStack`); `transport/ws/rtvi_integration_test.go` (`TestRTVI_AudioTextRoundTrip`). | **VERIFIED / PASS** |
-| **5** | Supported client sample rates validated and resampled correctly; output audio paced; queues remain bounded under slow client. | `core/transport/resample/resample_test.go`; `transport/ws/ws_test.go` (`TestPhase3_OutputPacing_StaysNearMediaTime`, `TestPhase3_StaleGenerationDiscard_AndSlowClientOverflow`, `TestPhase3_InputRates_ResampleCorrectlyAtChunkBoundaries`); `docs/benchmarks/capacity_slo_report.md` (Scenario I). | **VERIFIED / PASS** |
-| **6** | Silero VAD produces speech boundaries using production-default worker-process executor. | `vad/resilience_test.go` (`TestWorkerProcess_HardKillAndRespawn`, `TestWorkerProcess_SessionIsolation`); `vad/pipeline_test.go` (`TestExecutors_IdenticalPipelineAPI`, `TestScenarioF_NativeFaultIsolationWithPipeline`); `cmd/vadworker/main.go`. | **VERIFIED / PASS** |
-| **7** | Google STT, LLM, and TTS each work in a real session. | `providers/google/stt_test.go`; `providers/google/llm_test.go`; `providers/google/tts_test.go`; `providers/google/integration_test.go` (`TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD`); `server/scenarios_test.go` (`TestScenarioA_DeployedGoogleStack`); `examples/google_pipeline/main.go`. | **VERIFIED / PASS** |
-| **8** | xAI LLM works as drop-in substitute in otherwise-Google pipeline with no core changes (Scenario C); complete xAI STT/TTS stack not required. | `providers/xai/scenario_c_test.go` (`TestScenarioC_MixedProviderInterchangeability`); `server/scenarios_test.go` (`TestScenarioC_InterchangeabilityDeployed`); `examples/xai_pipeline/main.go`. | **VERIFIED / PASS** |
-| **9** | Multi-turn context works, including correct partial-turn recording on interruption. | `core/context_test.go` (`TestPhase2_MidUnitInterruption_ExcludesPartlyWrittenUnit`, `TestPhase2_InterruptionBetweenUnits_RecordsOnlyFullyWrittenUnitsWithPartialTrue`, `TestPhase2_NextTurnSucceedsInSameSessionWithCoherentContext`); `core/assistant_context.go`. | **VERIFIED / PASS** |
-| **10** | Conversation context remains within configured message and token budgets during long-call scenario. | `core/context_test.go` (`TestPhase2_DeterministicContextEviction_AndLimitRejection`); `docs/benchmarks/capacity_slo_report.md` (Scenario H). | **VERIFIED / PASS** |
-| **11** | Barge-in interrupts assistant speech correctly, clears pinned client playback buffer, meets interruption SLO, rejects late old-generation frames. | `core/context_test.go` (`TestPhase2_LLMTTSOutputAfterCancellation_NeverReachesOutputOrContext`); `transport/ws/ws_test.go` (`TestPhase3_StaleGenerationDiscard_AndSlowClientOverflow`); `transport/ws/rtvi_integration_test.go` (`TestRTVI_BargeIn_PlaybackClearAndGenerationFence`); `tools/compat/probe_playback_clear.js`; `docs/benchmarks/capacity_slo_report.md` (SLO #5). | **VERIFIED / PASS** |
-| **12** | 30-minute real Google call crosses STT stream rotations without duplicate or missing user turns. | `providers/google/stt_test.go` (`TestSTT_AcceleratedFiveRotationsWithoutDuplicates`); `providers/google/stt.go` (rotation threshold 240s with 500ms overlap buffer); `docs/benchmarks/capacity_slo_report.md` (Scenario H). | **VERIFIED / PASS** |
-| **13** | One failed session does not break unrelated sessions, for managed faults (Scenario E) and native/cgo faults under production VAD executor (Scenario F). | `core/core_test.go` (`TestCore_SessionIsolation`); `vad/resilience_test.go` (`TestWorkerProcess_HardKillAndRespawn`); `vad/pipeline_test.go` (`TestScenarioF_NativeFaultIsolationWithPipeline`); `server/scenarios_test.go` (`TestScenarioE_ManagedFailureIsolation`, `TestScenarioG_ConcurrentSessionsIsolation`). | **VERIFIED / PASS** |
-| **14** | Admission control can reject new sessions. | `server/admission_test.go` (`TestAdmission_LimitsAndRejections`); `server/scenarios_test.go` (`TestScenarioJ_AdmissionSecurityDeployed`). | **VERIFIED / PASS** |
-| **15** | Health, readiness, and protected metrics endpoints exist, including leaked-work metric from §35, verified live during Scenario F. | `server/health_ready_test.go` (`TestHealth_CheapLocalProcessLiveness`, `TestReady_CompoundReadinessSemantics`, `TestNetworkSurface_PublicAdminSeparation`, `TestReady_CircuitsAndPipelineUsability`); `server/metrics_test.go` (`TestMetrics_ExpositionFormatAndBoundedLabels`, verifying `voice_session_tasks_leaked_total`); `server/scenarios_test.go` (`TestScenarioE_ManagedFailureIsolation`). | **VERIFIED / PASS** |
-| **16** | Graceful shutdown works under both systemd and container SIGTERM delivery. | `server/lifecycle_test.go` (`TestServer_GracefulShutdownLifecycle`, `TestServer_ImmediateCancelShutdown`, `TestServer_ForcedShutdownTimeoutReturnsError`); `deploy/govoice.service` (`TimeoutStopSec=45s`); `deploy/docker-compose.yaml`. | **VERIFIED / PASS** |
-| **17** | Server can be configured without writing Go; development and production configuration profiles both work as specified. | `server/config_test.go` (`TestConfig_Defaults`, `TestConfig_UnknownFieldsRejection`, `TestConfig_ValidationFailures`, `TestConfig_ProductionFileSecurityCheck`, `TestConfig_LoadDevelopmentYAML`, `TestConfig_LoadProductionYAML`); `config/development.yaml`; `config/production.yaml`. | **VERIFIED / PASS** |
-| **18** | Same pipeline can be constructed programmatically in Go. | `server/registry.go` (`BuildPipeline`); `examples/google_pipeline/main.go`; `examples/xai_pipeline/main.go`; `examples/custom_processor/main.go`. | **VERIFIED / PASS** |
-| **19** | Pinned protobuf serializer and RTVI behavior are covered by automated wire-contract and integration tests. | `tools/compat/verify_fixtures.js`; `tools/compat/client_compat_test.go`; `transport/rtvi/rtvi_test.go`; `transport/ws/rtvi_integration_test.go`. | **VERIFIED / PASS** |
-| **20** | Network-impairment, slow-client, admission-security, oversized-input, provider-retry, quota-aware rejection tests pass. | `transport/ws/ws_test.go`; `providers/google/resilience_test.go` (`TestRetry_TransientErrorsAndJitter`, `TestRetry_HonorsRetryAfter`, `TestQuotaManager_HeadroomAndAdmission`); `providers/xai/resilience_test.go`; `server/scenarios_test.go` (`TestScenarioJ_AdmissionSecurityDeployed`); `docs/benchmarks/capacity_slo_report.md` (Scenario I). | **VERIFIED / PASS** |
-| **21** | Product latency, interruption, teardown, and end-to-end capacity results meet §42 and are reported separately from VAD-only capacity. | `docs/benchmarks/capacity_slo_report.md` (Capacity bounded by 250 calls based on STT rotation headroom; full §42 SLO verification table; disclaiming synthetic VAD-only numbers). | **VERIFIED / PASS** |
-| **22** | System runs successfully on target Linux server hardware, deployed via container and systemd paths, with TLS terminated correctly. | `deploy/Dockerfile`; `deploy/docker-compose.yaml`; `deploy/govoice.service`; `deploy/nginx.conf`; `deploy/security_scans.md` (Ubuntu 22.04, Debian 12, RHEL 9; glibc >= 2.34). | **VERIFIED / PASS** |
-| **23** | Pipecat behavioral differences are documented. | `docs/pipecat-compatibility.md` (covering Probe 0 playback-clear finding, server-side pacing remedy, single-use token requirement, clean session disconnects, and format restrictions). | **VERIFIED / PASS** |
-| **24** | Production deployment and operations runbook exists and has been followed end-to-end at least once by someone other than implementer. | `docs/operations_runbook.md` (step-by-step procedures for container, systemd, TLS reverse proxy, drain-then-cancel shutdown, crash loop, and incident recovery). | **VERIFIED / PASS** |
+| 1 | Pinned unmodified Pipecat client connects over WS/WSS to a production server | Pinned unmodified client (@pipecat-ai/client-js@1.13.1 and @pipecat-ai/websocket-transport@1.7.2) tested end-to-end via examples/rtvi_client/cli.js against bin/server with live Google and xAI pipelines. | **Verified live with pinned client** |
+| 2 | Pinned client, serializer, and rates are recorded | `docs/compatibility/v1-lock.json` pins `@pipecat-ai/client-js@1.13.1` and `@pipecat-ai/websocket-transport@1.7.2`. | **Recorded and verified with live client** |
+| 3 | Token admission, replay, origin, principal | Unit tests in `transport/token`, `transport/ws`, and `server` cover signature, replay, origin, and missing principal (`ErrTokenPrincipal`). Production rejects `dev-insecure-secret-key-for-testing-only-12345`. | **Unit-tested** |
+| 4 | Microphone audio reaches the session | Tested via both `server/e2e_live_test.go` and standalone `examples/rtvi_client/cli.js`. The server returned `user-transcription` for real speech audio. | **Verified live** |
+| 5 | Resample, pacing, slow-client termination | Resample and pacer unit tests pass. Default pacer queue is 100ms (`transport/ws/pacing.go`). Slow clients fail with `ErrSlowClient` / `ErrSlowOutput` instead of a silent drop. | **Unit-tested; verified in live stream** |
+| 6 | Silero VAD on the production worker | Sharded VAD executor verified on live call; worker-process kill/restart covered by `vad` tests. | **In-process VAD on live call; worker path unit-tested** |
+| 7 | Google STT, LLM, and TTS in a real session | Verified end-to-end via `examples/rtvi_client/cli.js --pipeline default`. Transcript received, Gemini 2.5 Flash streamed response, Google TTS synthesized 130 audio frames (124800 bytes). | **Verified live via RTVI client** |
+| 8 | xAI LLM as a drop-in | Verified end-to-end via `examples/rtvi_client/cli.js --pipeline xai`. Google STT transcript forwarded to xAI Grok LLM, streamed token-by-token deltas, Google TTS synthesized 166 frames (159360 bytes). | **Verified live via RTVI client** |
+| 9 | Multi-turn context | Same live call, follow-up transcript `what did i just ask you`, assistant text `You just asked me "what is 2 + 2".` | **Verified on that call** |
+| 10 | Context budgets on a long call | Eviction is unit-tested in `core/context_test.go`. No multi-minute call was run. | **Not verified on a long call** |
+| 11 | Barge-in clears pinned client playback | `node tools/compat/probe_playback_clear.js` prints `PLAYBACK_CLEAR_REQUIREMENT_FAILED` and verdict `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`. Exit 0 only because `docs/compatibility/playback-clear-decision.json` records `relax-unmodified-client-playback-clear`. This is not a passing clear. Server generation fencing is unit-tested. | **Requirement failed; relaxation recorded** |
+| 12 | 30-minute Google call across STT rotations | `TestLiveSTTRotation` on 2026-09-27 held a real Google STT stream for 250s past the 240s threshold. `voice_stt_rotations_total 1`. Transcripts before and after: `what is 2 + 2`, then `what is 3 + 3`. Artifact: `docs/benchmarks/long_call_result.json`. This is one rotation, not a 30-minute soak. | **One live rotation verified** |
+| 13 | Failed session isolation, including native VAD faults | Session and VAD worker tests exist. Not re-run as a multi-session live fault drill in this pass. | **Unit-tested only** |
+| 14 | Admission can reject | Admission unit tests exist. Not re-measured under live load. | **Unit-tested only** |
+| 15 | Health, readiness, metrics | Readiness stays false when providers are not live. `/ready` tests set `assumeLive` only to exercise circuit logic. Metric names are registered and session teardown copies flush and leaked-task counters. | **Unit-tested; no production scrape** |
+| 16 | systemd and container SIGTERM | On 2026-09-27 the image `govoice:v1-audit` was started with VAD mode `process`, answered `GET /health` with `{"status":"live"}`, then exited 0 after `docker kill -s TERM`. Logs: `Received signal terminated`, `all active calls drained cleanly`, `Server stopped cleanly.` systemd is not installed on this Mac. | **Container SIGTERM verified; systemd not available** |
+| 17 | YAML profiles | `config/development.yaml` and `config/production.yaml` load in `server/config_test.go`. Production tests set `TOKEN_SECRET` to a non-public value. | **Unit-tested** |
+| 18 | Programmatic pipeline | `server.Registry.BuildPipeline` is used by the server and examples. | **Code path present** |
+| 19 | Protobuf / RTVI wire tests | Transport and RTVI unit tests pass. The live call exchanged RTVI JSON (`bot-ready`, transcripts, `bot-llm-text`) and protobuf audio frames. | **Live messages plus unit tests** |
+| 20 | Impairment, retry, quota | Existing unit tests. No new impairment run in this pass. | **Not re-verified here** |
+| 21 | Latency and capacity vs §42 | See `docs/benchmarks/capacity_slo_report.md`. No p95/p99 sample and no 250-call run exist. | **Not verified** |
+| 22 | Linux container and systemd with TLS | `docker build -f deploy/Dockerfile -t govoice:v1-audit .` succeeded (`golang:1.27.1-bookworm`, ONNX Runtime 1.29.0 for the image architecture). `docker run --entrypoint /opt/govoice/bin/vadworker` verified the model and loaded `libonnxruntime.so`, then exited 3 because stdin had no parent handshake. `docker run` of the server with a non-public `TOKEN_SECRET` exited 1: `provider initialization: google.stt: no credentials` (no stub VAD fallback). `TestServer_ServeTLS` completed HTTPS `/health` on the host. systemd was not run. | **Image and in-container VAD init verified; not deployed on a Linux host** |
+| 23 | Pipecat differences documented | `docs/pipecat-compatibility.md` and `docs/adr/0001-v1-production-contract.md` record the playback-clear relaxation. | **Documented** |
+| 24 | Runbook followed by someone other than the implementer | `docs/operations_runbook.md` exists. It was not followed on a host in this pass. | **Not verified** |
+
+## Live call command
+
+From the repo root, with the macOS 26 SDK (the 27 SDK fails cgo link against `arm64e.x1`):
+
+```
+export SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk
+export CGO_LDFLAGS='-Wl,-w'
+export GOVOICE_ROOT="$PWD"
+go test -tags live -count=1 -timeout 180s -run TestLiveEndToEndCall -v ./server/
+```
+
+Result on 2026-09-27: `PASS` in 16.40s, `audio=103680`, `transcripts=2`, transport `wss://127.0.0.1:18181/ws` with a temporary certificate. Providers were Google STT (`us-central1`, project from the service-account file), Google LLM, and Google TTS (`LINEAR16`, WAV header stripped). VAD was Silero in-process. The call was not a container. The artifact is `docs/benchmarks/e2e_call_result.json` from that run.
+
+## Standalone RTVI Client App Test Driver
+
+Both Google and xAI pipelines are testable end-to-end using the standalone Pipecat RTVI client app in `examples/rtvi_client/`:
+
+```bash
+# 1. Start server daemon
+./bin/server -config config/development.yaml &
+
+# 2. Test Google pipeline
+node examples/rtvi_client/cli.js --pipeline default
+
+# 3. Test xAI pipeline
+node examples/rtvi_client/cli.js --pipeline xai
+```
+
+Results on 2026-09-27:
+- **Default Pipeline (Google STT -> Gemini 2.5 Flash -> Google TTS)**:
+  - Handshake: `PASS` (18ms)
+  - VAD Speech Detection: `PASS`
+  - STT Final Transcript: `"hi i'd like to check the status of my order please"`
+  - Gemini LLM: `"Of course! I can help you with that. To look up your order, I'll need either your order number or the email address you used when placing the order."`
+  - Google TTS Synthesized: `PASS` (130 frames, 124,800 bytes)
+  - Exit code: 0
+- **xAI Pipeline (Google STT -> xAI Grok -> Google TTS)**:
+  - Handshake: `PASS` (17ms)
+  - VAD Speech Detection: `PASS`
+  - STT Final Transcript: `"hi i'd like to check the status of my order please"`
+  - xAI Grok LLM: Streamed token-by-token RTVI deltas
+  - Google TTS Synthesized: `PASS` (166 frames, 159,360 bytes)
+  - Exit code: 0
+

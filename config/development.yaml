@@ -40,14 +40,14 @@ vad:
   mode: "inprocess"
   workers: 4
   batch: 8
-  model_path: "models/silero_vad.onnx"
+  model_path: "third_party/silero_vad.onnx"
   ort_lib_path: ""
   queue_cap: 8192
 
 providers:
   google_stt:
     project_id: ""
-    location: "global"
+    location: "us-central1"
     model: "chirp_2"
     language_code: "en-US"
     max_streams: 100

@@ -183,12 +183,27 @@ func TestScenarioC_MixedProviderInterchangeability(t *testing.T) {
 
 	t.Logf("Scenario C succeeded: synthesized units=%v", synthesizedUnits)
 
-	if len(transportOutput.WrittenFrames) == 0 {
+	if len(transportOutput.GetWrittenFrames()) == 0 {
 		t.Fatal("no output audio delivered to transport output")
 	}
 
 	// Verify token usage tracked on xAI processor
 	if xaiProc.TotalTokens.Load() != 23 {
 		t.Fatalf("expected 23 total tokens on xAI processor, got %d", xaiProc.TotalTokens.Load())
+	}
+
+	// Verify assistant turn was committed to conversation context
+	msgs := ctxPool.Messages()
+	var hasAssistantMsg bool
+	for _, m := range msgs {
+		if m.Role == core.RoleAssistant && m.Content != "" {
+			hasAssistantMsg = true
+			if m.TurnID == "" {
+				t.Fatalf("assistant message committed with empty TurnID: %+v", m)
+			}
+		}
+	}
+	if !hasAssistantMsg {
+		t.Fatalf("assistant message was not committed to conversation context in Scenario C; msgs=%+v", msgs)
 	}
 }

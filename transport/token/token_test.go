@@ -173,6 +173,31 @@ func TestToken_PostRestartBoundary(t *testing.T) {
 	}
 }
 
+func TestToken_MissingPrincipalRejected(t *testing.T) {
+	now := time.Now()
+	val, err := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := token.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "jti-anon",
+			Issuer:    testIssuer,
+			Audience:  jwt.ClaimStrings{testAudience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(30 * time.Second)),
+		},
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := tok.SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := val.ValidateAndConsume(signed); err != token.ErrTokenPrincipal {
+		t.Fatalf("expected ErrTokenPrincipal, got %v", err)
+	}
+}
+
 func TestToken_Redaction(t *testing.T) {
 	rawURL := "wss://api.example.com/v1/connect?token=secret-token-value-12345&client=pipecat"
 	redactedURL := token.RedactToken(rawURL)

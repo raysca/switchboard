@@ -42,7 +42,7 @@ verify: test
 	node tools/compat/validate_manifest.js
 	@echo "=== Verifying Protobuf Fixtures ==="
 	node tools/compat/verify_fixtures.js
-	@echo "=== Verifying Playback Clear Probe ==="
+	@echo "=== Playback-clear probe (clear failure stays a failure unless the recorded decision matches) ==="
 	node tools/compat/probe_playback_clear.js
 	@echo "=== All verify checks passed ==="
 

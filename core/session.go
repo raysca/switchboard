@@ -19,6 +19,7 @@ var (
 	ErrSessionClosed     = errors.New("core: session closed")
 	ErrStaleGeneration   = errors.New("core: frame discarded due to stale generation")
 	ErrTeardownTimeout   = errors.New("core: teardown timeout exceeded, leaked tasks present")
+	ErrSlowOutput        = errors.New("core: current-generation output audio queue is full; session terminated")
 )
 
 // SessionState tracks the lifecycle phase of a voice session.
@@ -96,6 +97,7 @@ type Session struct {
 	// Edge callbacks
 	OnOutput   func(Frame)
 	OnUpstream func(Frame)
+	OnFrame    func(Frame, Direction)
 
 	// Metrics
 	FramesIn       atomic.Uint64
@@ -141,6 +143,12 @@ func (s *Session) ID() uint64 {
 	return s.id
 }
 
+// Context is the session lifetime context. Provider I/O must derive from it so
+// Close cancels in-flight calls before waiting for supervised tasks.
+func (s *Session) Context() context.Context {
+	return s.ctx
+}
+
 // State returns the current lifecycle state of the session.
 func (s *Session) State() SessionState {
 	return SessionState(s.state.Load())
@@ -178,6 +186,14 @@ func (s *Session) Done() <-chan struct{} {
 // LeakedTasks returns the count of background tasks that failed to exit within teardown timeout.
 func (s *Session) LeakedTasks() int {
 	return int(s.leakedTasks.Load())
+}
+
+// Processors returns the session pipeline processors.
+func (s *Session) Processors() []Processor {
+	if s.pipe == nil {
+		return nil
+	}
+	return s.pipe.Processors()
 }
 
 // Start attaches all pipeline processors and begins the session run loop.
@@ -229,17 +245,11 @@ func (s *Session) Post(f Frame) error {
 		}
 	}
 
-	// Data queue policy
 	select {
 	case s.data <- env:
 		return nil
 	default:
-		// If queue is full and frame is audio, shed frame with counter to preserve session
-		if f.Type() == FrameInputAudio || f.Type() == FrameOutputAudio {
-			s.AudioDropped.Add(1)
-			return nil
-		}
-		return ErrQueueFull
+		return s.enqueueData(env)
 	}
 }
 
@@ -270,11 +280,35 @@ func (s *Session) Reenter(f Frame, dir Direction, resumeIndex int, gen uint64) e
 	case s.data <- env:
 		return nil
 	default:
-		if f.Type() == FrameInputAudio || f.Type() == FrameOutputAudio {
-			s.AudioDropped.Add(1)
-			return nil
-		}
+		return s.enqueueData(env)
+	}
+}
+
+// enqueueData sheds input audio when the inbox is full. Current-generation output
+// waits for the run loop to drain, then terminates the session if it does not.
+func (s *Session) enqueueData(env Envelope) error {
+	select {
+	case s.data <- env:
+		return nil
+	default:
+	}
+	if env.Frame.Type() == FrameInputAudio {
+		s.AudioDropped.Add(1)
+		return nil
+	}
+	if env.Frame.Type() != FrameOutputAudio {
 		return ErrQueueFull
+	}
+	timer := time.NewTimer(s.budget.MaxFrameProcessing)
+	defer timer.Stop()
+	select {
+	case s.data <- env:
+		return nil
+	case <-timer.C:
+		s.fail(ErrSlowOutput)
+		return ErrSlowOutput
+	case <-s.ctx.Done():
+		return ErrSessionClosed
 	}
 }
 
@@ -315,6 +349,14 @@ func (s *Session) Close() error {
 		s.state.Store(int32(StateStopping))
 		s.cancel()
 
+		// Cancel provider I/O before waiting for supervised tasks. Processors
+		// parent their calls on s.ctx; Close also drops any extra handles.
+		for _, proc := range s.pipe.Processors() {
+			if closer, ok := proc.(Closer); ok {
+				_ = closer.Close()
+			}
+		}
+
 		// Wait for run loop exit
 		<-s.runLoopDone
 
@@ -342,13 +384,6 @@ func (s *Session) Close() error {
 			s.leakedTasks.Store(rem)
 			s.state.Store(int32(StateLeaked))
 			s.recordErr(fmt.Errorf("%w: %d background tasks failed to exit", ErrTeardownTimeout, rem))
-		}
-
-		// Run Closer on all processors
-		for _, proc := range s.pipe.Processors() {
-			if closer, ok := proc.(Closer); ok {
-				_ = closer.Close()
-			}
 		}
 
 		close(s.stopped)
@@ -461,6 +496,10 @@ func (s *Session) processEnvelope(env Envelope) bool {
 
 // deliver dispatches a frame inline to the processor at index 'to'.
 func (s *Session) deliver(f Frame, dir Direction, to int) error {
+	if s.OnFrame != nil {
+		s.OnFrame(f, dir)
+	}
+
 	switch {
 	case to >= s.pipe.Len():
 		// Reached downstream edge
@@ -511,6 +550,8 @@ func (e *sessionEmitter) PushDirection(f Frame, dir Direction) error {
 func (s *Session) fail(err error) {
 	s.recordErr(err)
 	s.cancel()
+	// Release admission and provider work without waiting for the socket timeout.
+	go s.Close()
 }
 
 func (s *Session) recordErr(err error) {

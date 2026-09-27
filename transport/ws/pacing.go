@@ -19,8 +19,8 @@ var (
 
 // PacerConfig configures media clock pacing and queue limits.
 type PacerConfig struct {
-	MaxQueueDuration time.Duration // Maximum queued audio duration (e.g. 500ms)
-	MaxQueueBytes    int           // Maximum queued audio bytes (e.g. 24 KB)
+	MaxQueueDuration time.Duration // Maximum queued audio duration (100ms residual bound)
+	MaxQueueBytes    int           // Maximum queued audio bytes at 24 kHz PCM16 mono
 	WriteTimeout     time.Duration // Maximum duration per socket write (e.g. 2s)
 	EnablePacing     bool          // If true, pace against real media time (default: true)
 }
@@ -28,8 +28,8 @@ type PacerConfig struct {
 // DefaultPacerConfig returns production-tuned pacer parameters.
 func DefaultPacerConfig() PacerConfig {
 	return PacerConfig{
-		MaxQueueDuration: 500 * time.Millisecond,
-		MaxQueueBytes:    24 * 1024,
+		MaxQueueDuration: 100 * time.Millisecond,
+		MaxQueueBytes:    4800, // 100ms of 24 kHz 16-bit mono
 		WriteTimeout:     2 * time.Second,
 		EnablePacing:     true,
 	}
@@ -47,6 +47,13 @@ type PacedWriter struct {
 	queuedBytes  int
 	queuedDur    time.Duration
 	activeGen    uint64
+	inflight     *core.OutputAudioFrame
+	dropInflight bool
+	abortCh      chan struct{}
+	inWrite      bool
+	writeGen     uint64
+	writeCancel  context.CancelFunc
+	writeDoneCh  chan struct{}
 	closed       bool
 	lastMediaEnd time.Time
 
@@ -64,6 +71,7 @@ func NewPacedWriter(cfg PacerConfig, writeFn func(ctx context.Context, data []by
 		cfg:     cfg,
 		writeFn: writeFn,
 		queue:   make([]*core.OutputAudioFrame, 0, 32),
+		abortCh: make(chan struct{}),
 	}
 	pw.cond = sync.NewCond(&pw.mu)
 	return pw
@@ -116,7 +124,6 @@ func (w *PacedWriter) Enqueue(f *core.OutputAudioFrame) error {
 // Flush removes all queued audio frames belonging to the specified generation.
 func (w *PacedWriter) Flush(gen uint64) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	active := make([]*core.OutputAudioFrame, 0, len(w.queue))
 	for _, f := range w.queue {
@@ -129,9 +136,36 @@ func (w *PacedWriter) Flush(gen uint64) {
 		}
 	}
 	w.queue = active
+	if w.inflight != nil && w.inflight.Gen == gen {
+		w.dropInflight = true
+	}
+	if gen+1 > w.activeGen {
+		w.activeGen = gen + 1
+	}
 	w.lastMediaEnd = time.Time{} // Reset media clock
+	oldAbort := w.abortCh
+	w.abortCh = make(chan struct{})
 	w.FlushesDone.Add(1)
 	w.cond.Broadcast()
+
+	var cancelFn context.CancelFunc
+	var waitCh chan struct{}
+	if w.inWrite && w.writeGen <= gen {
+		cancelFn = w.writeCancel
+		waitCh = w.writeDoneCh
+	}
+	w.mu.Unlock()
+	close(oldAbort)
+
+	if cancelFn != nil {
+		cancelFn()
+	}
+	if waitCh != nil {
+		select {
+		case <-waitCh:
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // Run executes the media-clock pacing loop until the context is canceled or the writer is closed.
@@ -156,6 +190,10 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 		w.queue = w.queue[1:]
 		w.queuedBytes -= len(frame.Samples)
 		w.queuedDur -= frame.Duration
+		w.inflight = frame
+		w.dropInflight = false
+		abortCh := w.abortCh
+		activeGen := w.activeGen
 
 		var waitDur time.Duration
 		if w.cfg.EnablePacing && frame.Duration > 0 {
@@ -171,19 +209,40 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 		}
 		w.mu.Unlock()
 
-		// Stale check before write
-		if frame.Gen != 0 && frame.Gen < w.activeGen {
+		dropFrame := func() bool {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			drop := w.dropInflight || (frame.Gen != 0 && frame.Gen < w.activeGen)
+			if w.inflight == frame {
+				w.inflight = nil
+				w.dropInflight = false
+			}
+			return drop
+		}
+
+		if frame.Gen != 0 && frame.Gen < activeGen {
 			w.FramesDropped.Add(1)
+			_ = dropFrame()
 			continue
 		}
 
-		// Media clock pacing: wait until media time arrives
+		// Media clock pacing: wait until media time arrives. Flush closes abortCh.
 		if waitDur > 0 {
+			timer := time.NewTimer(waitDur)
 			select {
-			case <-time.After(waitDur):
+			case <-timer.C:
+			case <-abortCh:
+				timer.Stop()
 			case <-ctx.Done():
+				timer.Stop()
+				_ = dropFrame()
 				return ctx.Err()
 			}
+		}
+
+		if dropFrame() {
+			w.FramesDropped.Add(1)
+			continue
 		}
 
 		// Encode audio to protobuf
@@ -195,12 +254,35 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 			return err
 		}
 
-		// Write with write timeout
+		w.mu.Lock()
+		if w.dropInflight || (frame.Gen != 0 && frame.Gen < w.activeGen) {
+			w.mu.Unlock()
+			w.FramesDropped.Add(1)
+			continue
+		}
 		writeCtx, writeCancel := context.WithTimeout(ctx, w.cfg.WriteTimeout)
+		doneCh := make(chan struct{})
+		w.inWrite = true
+		w.writeGen = frame.Gen
+		w.writeCancel = writeCancel
+		w.writeDoneCh = doneCh
+		w.mu.Unlock()
+
 		err = w.writeFn(writeCtx, wireBytes)
 		writeCancel()
 
+		w.mu.Lock()
+		w.inWrite = false
+		w.writeCancel = nil
+		w.writeDoneCh = nil
+		close(doneCh)
+		w.mu.Unlock()
+
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				w.FramesDropped.Add(1)
+				continue
+			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf("%w: write deadline exceeded (%v)", ErrSlowClient, w.cfg.WriteTimeout)
 			}

@@ -36,6 +36,7 @@ type Closer interface {
 // SessionController is the restricted interface exposed to processors via Attacher.
 type SessionController interface {
 	ID() uint64
+	Context() context.Context
 	CurrentGeneration() uint64
 	Go(fn func(ctx context.Context)) error
 	Reenter(f Frame, dir Direction, resumeIndex int, gen uint64) error

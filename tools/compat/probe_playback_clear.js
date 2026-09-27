@@ -22,8 +22,15 @@ if (typeof globalThis.navigator === 'undefined') {
   };
 }
 
+const fs = require('fs');
+const path = require('path');
+
 const { ProtobufFrameSerializer, WebSocketTransport } = require('@pipecat-ai/websocket-transport');
 const { PipecatClient, RTVIMessage, RTVIMessageType } = require('@pipecat-ai/client-js');
+
+const DECISION_PATH = path.join(__dirname, '../../docs/compatibility/playback-clear-decision.json');
+const FAILED_VERDICT = 'UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT';
+const RELAX_DECISION = 'relax-unmodified-client-playback-clear';
 
 async function runPlaybackClearProbe() {
   console.log('=== Running Phase 0 Hard Playback-Clear Probe ===');
@@ -103,15 +110,50 @@ async function runPlaybackClearProbe() {
     probe2_rtvi_message_deserializes: parsedMsg.type === 'message' && parsedMsg.message.type === 'user-started-speaking',
     probe3_transport_clears_playback: false,
     probe4_client_clears_playback: mediaManagerInterruptCalled,
-    verdict: "UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT",
-    remedy: "PACED_SERVER_SIDE_INTERRUPTION_BARRIER_WITH_MEDIA_CLOCK_PACING",
-    max_unpaced_client_buffer_ms: 100
+    verdict: FAILED_VERDICT,
+    client_cleared_buffered_playback: false
   };
 
   console.log('\n=== Probe Result Summary ===');
   console.log(JSON.stringify(results, null, 2));
+  console.error('PLAYBACK_CLEAR_REQUIREMENT_FAILED: pinned unmodified client cannot clear buffered playback.');
+
+  const decision = readProductDecision();
+  if (!decision.ok) {
+    console.error(decision.reason);
+    console.error('Phase 0 gate failed. Record an explicit product decision or pin a client that clears playback.');
+    process.exitCode = 2;
+  } else {
+    console.error('Continuing only under recorded product decision ' + decision.decision + ' (this is not a passing clear).');
+    results.product_decision = decision.decision;
+  }
 
   return results;
+}
+
+function readProductDecision() {
+  let raw;
+  try {
+    raw = fs.readFileSync(DECISION_PATH, 'utf8');
+  } catch (err) {
+    return { ok: false, reason: 'missing product decision file ' + DECISION_PATH + ': ' + err.message };
+  }
+  let doc;
+  try {
+    doc = JSON.parse(raw);
+  } catch (err) {
+    return { ok: false, reason: 'product decision file is not JSON: ' + err.message };
+  }
+  if (doc.probe_verdict !== FAILED_VERDICT) {
+    return { ok: false, reason: 'product decision probe_verdict does not match this probe' };
+  }
+  if (doc.decision !== RELAX_DECISION) {
+    return { ok: false, reason: 'product decision is not ' + RELAX_DECISION };
+  }
+  if (doc.client_cleared_buffered_playback !== false) {
+    return { ok: false, reason: 'product decision must record client_cleared_buffered_playback=false' };
+  }
+  return { ok: true, decision: doc.decision };
 }
 
 if (require.main === module) {
