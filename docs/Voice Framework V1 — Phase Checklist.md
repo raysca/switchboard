@@ -263,26 +263,26 @@ Verification:
 
 Tasks:
 
-- [ ] Create independent xAI provider module
-- [ ] Implement self-owned bounded REST/SSE Responses client with pinned immutable model
-- [ ] Send `store: false` on every request and resend bounded local context
-- [ ] Bound SSE line, event, and total response sizes
-- [ ] Validate event types and terminal completion/error event
-- [ ] Extract text deltas and usage without leaking raw provider errors
-- [ ] Honor cancellation, deadlines, Retry-After, and retry/circuit policy
-- [ ] Fence late xAI deltas by generation
-- [ ] Assemble Google STT to xAI LLM to Google TTS without core changes
-- [ ] Keep xAI STT/TTS out of V1 tasks
+- [x] Create independent xAI provider module
+- [x] Implement self-owned bounded REST/SSE Responses client with pinned immutable model
+- [x] Send `store: false` on every request and resend bounded local context
+- [x] Bound SSE line, event, and total response sizes
+- [x] Validate event types and terminal completion/error event
+- [x] Extract text deltas and usage without leaking raw provider errors
+- [x] Honor cancellation, deadlines, Retry-After, and retry/circuit policy
+- [x] Fence late xAI deltas by generation
+- [x] Assemble Google STT to xAI LLM to Google TTS without core changes
+- [x] Keep xAI STT/TTS out of V1 tasks
 
 Verification:
 
-- [ ] Request fixture asserts `store: false` and complete bounded local context
-- [ ] SSE tests cover split lines/events, malformed JSON, oversized line/event/body, and missing terminal event
-- [ ] Cancellation and late-delta tests pass
-- [ ] Retry/Retry-After/circuit tests pass without duplicate committed text
-- [ ] Safe error mapping and secret redaction tests pass
-- [ ] Live Scenario C passes with zero core changes from Google-only pipeline
-- [ ] Root verification target passes
+- [x] Request fixture asserts `store: false` and complete bounded local context
+- [x] SSE tests cover split lines/events, malformed JSON, oversized line/event/body, and missing terminal event
+- [x] Cancellation and late-delta tests pass
+- [x] Retry/Retry-After/circuit tests pass without duplicate committed text
+- [x] Safe error mapping and secret redaction tests pass
+- [x] Live Scenario C passes with zero core changes from Google-only pipeline
+- [x] Root verification target passes
 
 ## Phase 8 - Config-Driven Server, Readiness, and Observability
 
