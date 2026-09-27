@@ -50,31 +50,31 @@ Verification:
 
 Tasks:
 
-- [ ] Define product frame types with turn/generation metadata where applicable
-- [ ] Implement Processor, Emitter, and Direction
-- [ ] Implement ordered Pipeline with inline downstream/upstream dispatch
-- [ ] Implement Session with one run-loop goroutine, bounded inbox, and cancellation domain
-- [ ] Implement async re-entry envelope with frame, direction, resume index, and metadata
-- [ ] Implement Supervisor/session.Go with panic recovery, task budget, teardown wait, and leaked-work reporting
-- [ ] Implement ResourceBudget for queued frames, async work, emits, processing time, session duration, and teardown
-- [ ] Implement bounded queue policies by frame class
-- [ ] Implement current-generation validation at async re-entry
-- [ ] Build deterministic fake processors for latency, error, panic, child panic, flood, stall, late completion, and ignored cancellation
-- [ ] Add root `verify` tooling that visits every module in `go.work`
-- [ ] Confirm core imports neither providers nor server packages
+- [x] Define product frame types with turn/generation metadata where applicable
+- [x] Implement Processor, Emitter, and Direction
+- [x] Implement ordered Pipeline with inline downstream/upstream dispatch
+- [x] Implement Session with one run-loop goroutine, bounded inbox, and cancellation domain
+- [x] Implement async re-entry envelope with frame, direction, resume index, and metadata
+- [x] Implement Supervisor/session.Go with panic recovery, task budget, teardown wait, and leaked-work reporting
+- [x] Implement ResourceBudget for queued frames, async work, emits, processing time, session duration, and teardown
+- [x] Implement bounded queue policies by frame class
+- [x] Implement current-generation validation at async re-entry
+- [x] Build deterministic fake processors for latency, error, panic, child panic, flood, stall, late completion, and ignored cancellation
+- [x] Add root `verify` tooling that visits every module in `go.work`
+- [x] Confirm core imports neither providers nor server packages
 
 Verification:
 
-- [ ] Test processor ordering, consumption, and multi-frame emission
-- [ ] Test downstream and upstream routing
-- [ ] Test async re-entry resumes at the correct processor
-- [ ] Test old-generation re-entry is discarded before processor/context mutation
-- [ ] Test every queue overflow policy and resource-budget failure
-- [ ] Test processor and session.Go panic containment
-- [ ] Test cancellation and teardown timeout
-- [ ] Test ignored cancellation is surfaced as leaked work/session
-- [ ] Test unrelated sessions progress while one fake stalls or floods
-- [ ] Root verification target passes
+- [x] Test processor ordering, consumption, and multi-frame emission
+- [x] Test downstream and upstream routing
+- [x] Test async re-entry resumes at the correct processor
+- [x] Test old-generation re-entry is discarded before processor/context mutation
+- [x] Test every queue overflow policy and resource-budget failure
+- [x] Test processor and session.Go panic containment
+- [x] Test cancellation and teardown timeout
+- [x] Test ignored cancellation is surfaced as leaked work/session
+- [x] Test unrelated sessions progress while one fake stalls or floods
+- [x] Root verification target passes
 
 ## Phase 2 - Bounded Context, Generations, and Interruption
 
