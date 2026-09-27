@@ -1,0 +1,89 @@
+profile: production
+insecure_overrides:
+  allow_plain_ws_in_production: false
+  skip_credential_perms_check: false
+
+public_listen_addr: "0.0.0.0:8080"
+admin_listen_addr: "127.0.0.1:9090"
+
+tls:
+  cert_file: ""
+  key_file: ""
+  trusted_proxy_mode: true
+
+origin_allowlist:
+  - "https://app.govoice.internal"
+
+token:
+  secret_env: "TOKEN_SECRET"
+  secret: ""
+  issuer: "govoice"
+  audience: "govoice-rtvi"
+  max_lifetime: 5m
+  clock_skew: 30s
+  replay_cache_limit: 50000
+
+limits:
+  max_pending_handshakes: 100
+  max_sessions: 250
+  max_sessions_per_principal: 5
+  upgrade_timeout: 5s
+  ready_timeout: 10s
+  max_call_duration: 60m
+  idle_timeout: 30s
+  drain_timeout: 45s
+  immediate_cancel: false
+
+vad:
+  mode: "process"
+  workers: 8
+  batch: 8
+  model_path: "/opt/govoice/models/silero_vad.onnx"
+  ort_lib_path: "/opt/govoice/lib/libonnxruntime.so"
+  queue_cap: 8192
+
+providers:
+  google_stt:
+    project_id: ""
+    location: "global"
+    model: "chirp_2"
+    language_code: "en-US"
+    max_streams: 250
+    rotation_threshold: 240s
+    rotation_headroom_multiplier: 2.0
+    credentials_file: ""
+  google_llm:
+    model: "gemini-2.5-flash"
+    auth_mode: "vertex_adc"
+    system_prompt: "You are a professional voice assistant."
+    api_key_env: "GOOGLE_API_KEY"
+  google_tts:
+    voice: "en-US-Journey-F"
+    sample_rate: 24000
+    credentials_file: ""
+  xai_llm:
+    model: "grok-2-1212"
+    endpoint: "https://api.x.ai/v1/responses"
+    api_key_env: "XAI_API_KEY"
+    system_prompt: "You are a professional voice assistant powered by Grok."
+
+pipelines:
+  default:
+    stt: "google.stt"
+    llm: "google.llm"
+    tts: "google.tts"
+    max_messages: 20
+    max_tokens: 4000
+  xai:
+    stt: "google.stt"
+    llm: "xai.llm"
+    tts: "google.tts"
+    max_messages: 20
+    max_tokens: 4000
+
+observability:
+  log_level: "info"
+  json_format: true
+  enable_transcript_logging: false
+  timeline_max_events: 1000
+  timeline_ttl: 15m

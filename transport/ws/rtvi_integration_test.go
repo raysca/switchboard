@@ -127,6 +127,13 @@ func TestRTVI_SessionAllocationGate(t *testing.T) {
 
 	performHandshake(t, ctx, connValid)
 
+	for i := 0; i < 50; i++ {
+		if sessionAllocated.Load() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
 	if !sessionAllocated.Load() {
 		t.Fatalf("Session MUST be allocated after valid client-ready handshake")
 	}

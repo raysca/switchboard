@@ -288,40 +288,40 @@ Verification:
 
 Tasks:
 
-- [ ] Implement validated YAML configuration for every required production setting
-- [ ] Implement provider/executor registry and factories using the same programmatic constructors
-- [ ] Implement development and production profiles with explicit insecure overrides
-- [ ] Bind public WebSocket/health surface separately from protected admin metrics/debug surface
-- [ ] Wire token, Origin, proxy, TLS, limits, and redaction settings from Phase 3
-- [ ] Configure maximum pending handshakes, sessions, principals, VAD pressure, provider budgets, and STT rotation headroom
-- [ ] Configure/enforce maximum call duration with an observable terminal reason
-- [ ] Implement local cheap `/health`
-- [ ] Implement `/ready` for startup/shutdown, artifacts/credentials, VAD capacity, admission, and usable pipeline circuits
-- [ ] Implement all runtime/VAD/STT/LLM/TTS/transport metrics from spec section 35
-- [ ] Prevent session IDs and other unbounded values from metric labels
-- [ ] Implement structured JSON logging without raw audio, secrets, or default transcripts
-- [ ] Implement bounded event-count/byte/TTL per-session timeline
-- [ ] Ensure exporter failure drops diagnostics with a counter and never blocks session run loop
-- [ ] Protect timeline retrieval on admin surface only
-- [ ] Implement off-by-default transcript logging as a separate control
-- [ ] Implement drain-then-cancel server lifecycle and explicit immediate-cancel mode
+- [x] Implement validated YAML configuration for every required production setting
+- [x] Implement provider/executor registry and factories using the same programmatic constructors
+- [x] Implement development and production profiles with explicit insecure overrides
+- [x] Bind public WebSocket/health surface separately from protected admin metrics/debug surface
+- [x] Wire token, Origin, proxy, TLS, limits, and redaction settings from Phase 3
+- [x] Configure maximum pending handshakes, sessions, principals, VAD pressure, provider budgets, and STT rotation headroom
+- [x] Configure/enforce maximum call duration with an observable terminal reason
+- [x] Implement local cheap `/health`
+- [x] Implement `/ready` for startup/shutdown, artifacts/credentials, VAD capacity, admission, and usable pipeline circuits
+- [x] Implement all runtime/VAD/STT/LLM/TTS/transport metrics from spec section 35
+- [x] Prevent session IDs and other unbounded values from metric labels
+- [x] Implement structured JSON logging without raw audio, secrets, or default transcripts
+- [x] Implement bounded event-count/byte/TTL per-session timeline
+- [x] Ensure exporter failure drops diagnostics with a counter and never blocks session run loop
+- [x] Protect timeline retrieval on admin surface only
+- [x] Implement off-by-default transcript logging as a separate control
+- [x] Implement drain-then-cancel server lifecycle and explicit immediate-cancel mode
 
 Verification:
 
-- [ ] Google-only and mixed YAML build the same objects as programmatic API
-- [ ] Unknown fields, invalid limits, insecure production defaults, and missing credentials fail clearly
-- [ ] Development/production defaults match the spec
-- [ ] `/health` performs no provider call and remains live during provider outage
-- [ ] `/ready` remains true when another configured pipeline is usable, and becomes false when no configured pipeline can accept a call
-- [ ] Public listener cannot reach metrics or session timelines
-- [ ] Metrics expose all required counters/histograms with bounded labels
-- [ ] Event timeline is ordered by session/turn/generation and excludes transcript content by default
-- [ ] Ring eviction and exporter-failure tests prove bounded memory/non-blocking behavior
-- [ ] Fault test shows metric increment and one useful ordered timeline
-- [ ] Maximum-duration test terminates only the affected call and emits metric/timeline reason
-- [ ] Shutdown test marks unready, rejects new calls, drains existing calls to deadline, then cancels and cleans providers/workers
-- [ ] Forced shutdown timeout returns the documented non-zero status
-- [ ] Root verification target passes
+- [x] Google-only and mixed YAML build the same objects as programmatic API
+- [x] Unknown fields, invalid limits, insecure production defaults, and missing credentials fail clearly
+- [x] Development/production defaults match the spec
+- [x] `/health` performs no provider call and remains live during provider outage
+- [x] `/ready` remains true when another configured pipeline is usable, and becomes false when no configured pipeline can accept a call
+- [x] Public listener cannot reach metrics or session timelines
+- [x] Metrics expose all required counters/histograms with bounded labels
+- [x] Event timeline is ordered by session/turn/generation and excludes transcript content by default
+- [x] Ring eviction and exporter-failure tests prove bounded memory/non-blocking behavior
+- [x] Fault test shows metric increment and one useful ordered timeline
+- [x] Maximum-duration test terminates only the affected call and emits metric/timeline reason
+- [x] Shutdown test marks unready, rejects new calls, drains existing calls to deadline, then cancels and cleans providers/workers
+- [x] Forced shutdown timeout returns the documented non-zero status
+- [x] Root verification target passes
 
 ## Phase 9 - Production Packaging and Release Scenarios
 
