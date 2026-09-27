@@ -422,6 +422,8 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		"google_llm": circuitStateName(s.metrics.LLMCircuitStateGoogle.Load()),
 		"xai_llm":    circuitStateName(s.metrics.LLMCircuitStateXAI.Load()),
 		"google_tts": circuitStateName(s.metrics.TTSCircuitStateGoogle.Load()),
+		"xai_stt":    circuitStateName(s.metrics.STTCircuitStateXAI.Load()),
+		"xai_tts":    circuitStateName(s.metrics.TTSCircuitStateXAI.Load()),
 	}
 
 	usablePipelines := make([]string, 0, len(s.cfg.Pipelines))
@@ -456,6 +458,9 @@ func (s *Server) isPipelineUsable(pipe PipelineConfig) bool {
 	if pipe.STT == "google.stt" && s.metrics.STTCircuitStateGoogle.Load() == 1 {
 		return false
 	}
+	if pipe.STT == "xai.stt" && s.metrics.STTCircuitStateXAI.Load() == 1 {
+		return false
+	}
 	if pipe.LLM == "google.llm" && s.metrics.LLMCircuitStateGoogle.Load() == 1 {
 		return false
 	}
@@ -463,6 +468,9 @@ func (s *Server) isPipelineUsable(pipe PipelineConfig) bool {
 		return false
 	}
 	if pipe.TTS == "google.tts" && s.metrics.TTSCircuitStateGoogle.Load() == 1 {
+		return false
+	}
+	if pipe.TTS == "xai.tts" && s.metrics.TTSCircuitStateXAI.Load() == 1 {
 		return false
 	}
 	return true

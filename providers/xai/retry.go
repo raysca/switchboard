@@ -62,7 +62,7 @@ func ExecuteWithRetry(
 	var lastErr error
 
 	for attempt := 0; attempt < policy.MaxAttempts; attempt++ {
-		if !cb.Allow() {
+		if cb != nil && !cb.Allow() {
 			return ErrCircuitOpen
 		}
 
@@ -74,7 +74,9 @@ func ExecuteWithRetry(
 
 		err := fn(attempt)
 		if err == nil {
-			cb.RecordSuccess()
+			if cb != nil {
+				cb.RecordSuccess()
+			}
 			return nil
 		}
 
@@ -82,7 +84,9 @@ func ExecuteWithRetry(
 
 		// Strict invariant: no retries after committed user-visible output
 		if committed != nil && *committed {
-			cb.RecordFailure()
+			if cb != nil {
+				cb.RecordFailure()
+			}
 			return errors.Join(ErrRetryCommitted, lastErr)
 		}
 
@@ -90,12 +94,16 @@ func ExecuteWithRetry(
 		var pe *ProviderError
 		if errors.As(err, &pe) {
 			if pe.Class == ClassificationNonRetryable {
-				cb.RecordFailure()
+				if cb != nil {
+					cb.RecordFailure()
+				}
 				return lastErr
 			}
 		}
 
-		cb.RecordFailure()
+		if cb != nil {
+			cb.RecordFailure()
+		}
 
 		if attempt == policy.MaxAttempts-1 {
 			break

@@ -35,6 +35,7 @@ var (
 	ErrCircuitOpen          = errors.New("xai: circuit breaker is open")
 	ErrRetryCommitted       = errors.New("xai: retry prohibited after output committed")
 	ErrMissingAPIKey        = errors.New("xai: missing API key (XAI_API_KEY)")
+	ErrProviderUnavailable  = errors.New("xai: provider unavailable")
 	ErrMissingTerminalEvent = errors.New("xai sse: stream ended without terminal completion event")
 	ErrOversizedLine        = errors.New("xai sse: line exceeded maximum size")
 	ErrOversizedEvent       = errors.New("xai sse: event exceeded maximum size")
@@ -171,5 +172,23 @@ func MapHTTPError(capability string, resp *http.Response, body string, cause err
 		StatusCode: statusCode,
 		RetryAfter: retryAfter,
 		Cause:      cause,
+	}
+}
+
+// MapError sanitizes any error and returns a classified ProviderError.
+func MapError(capability string, err error) *ProviderError {
+	if err == nil {
+		return nil
+	}
+	var pe *ProviderError
+	if errors.As(err, &pe) {
+		return pe
+	}
+	return &ProviderError{
+		Capability: capability,
+		Code:       "ERROR",
+		Message:    SanitizeString(err.Error()),
+		Class:      ClassificationNonRetryable,
+		Cause:      err,
 	}
 }

@@ -43,6 +43,7 @@ type Metrics struct {
 	STTRotationFailuresTotal atomic.Uint64
 	STTDeduplicatedTotal     atomic.Uint64
 	STTCircuitStateGoogle    atomic.Int64
+	STTCircuitStateXAI       atomic.Int64
 
 	// LLM Metrics
 	LLMRequestsTotal        atomic.Uint64
@@ -58,6 +59,7 @@ type Metrics struct {
 	TTSRetriesTotal        atomic.Uint64
 	TTSStaleAudioDiscarded atomic.Uint64
 	TTSCircuitStateGoogle  atomic.Int64
+	TTSCircuitStateXAI     atomic.Int64
 
 	// Transport Metrics
 	PendingHandshakes      atomic.Int64
@@ -191,6 +193,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_stt_circuit_state STT circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_stt_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_stt_circuit_state{provider=\"google\"} %d\n", m.STTCircuitStateGoogle.Load())
+	fmt.Fprintf(w, "voice_stt_circuit_state{provider=\"xai\"} %d\n", m.STTCircuitStateXAI.Load())
 
 	// LLM
 	fmt.Fprintf(w, "# HELP voice_llm_requests_total Total LLM turn requests.\n")
@@ -234,6 +237,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_tts_circuit_state TTS circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_tts_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"google\"} %d\n", m.TTSCircuitStateGoogle.Load())
+	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"xai\"} %d\n", m.TTSCircuitStateXAI.Load())
 
 	// Transport
 	fmt.Fprintf(w, "# HELP voice_transport_pending_handshakes Number of pending WebSocket handshakes.\n")

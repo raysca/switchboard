@@ -72,8 +72,8 @@ const targetWsUrl = `${wsBaseUrl}?token=${explicitToken}&pipeline=${pipeline}`;
 async function main() {
   console.log('================================================================');
   console.log(` Voice Framework V1: Standalone RTVI Client Test Driver`);
-  console.log(` Target URL:  ${wsBaseUrl}`);
-  console.log(` Pipeline:    ${pipeline} (${pipeline === 'xai' ? 'Google STT -> xAI Grok LLM -> Google TTS' : 'Google STT -> Gemini LLM -> Google TTS'})`);
+  const pipelineDesc = pipeline === 'full_xai' ? '100% Native xAI (xAI STT -> xAI Grok LLM -> xAI TTS)' : (pipeline === 'xai' ? 'Mixed (Google STT -> xAI Grok LLM -> Google TTS)' : 'Google Stack (Google STT -> Gemini LLM -> Google TTS)');
+  console.log(` Pipeline:    ${pipeline} (${pipelineDesc})`);
   console.log(` Audio Input: ${audioPath}`);
   console.log('================================================================\n');
 

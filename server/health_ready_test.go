@@ -135,9 +135,10 @@ func TestNetworkSurface_PublicAdminSeparation(t *testing.T) {
 
 func TestReady_CircuitsAndPipelineUsability(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	// Configure two pipelines: default (google.llm) and xai (xai.llm)
-	cfg.Pipelines["default"] = PipelineConfig{STT: "google.stt", LLM: "google.llm", TTS: "google.tts", MaxMessages: 10, MaxTokens: 1000}
-	cfg.Pipelines["xai"] = PipelineConfig{STT: "google.stt", LLM: "xai.llm", TTS: "google.tts", MaxMessages: 10, MaxTokens: 1000}
+	cfg.Pipelines = map[string]PipelineConfig{
+		"default": {STT: "google.stt", LLM: "google.llm", TTS: "google.tts", MaxMessages: 10, MaxTokens: 1000},
+		"xai":     {STT: "google.stt", LLM: "xai.llm", TTS: "google.tts", MaxMessages: 10, MaxTokens: 1000},
+	}
 
 	srv, err := NewServer(cfg)
 	if err != nil {

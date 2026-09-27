@@ -125,6 +125,32 @@ func TestScenarioC_InterchangeabilityDeployed(t *testing.T) {
 	}
 }
 
+// TestFullXAI_DeployedPipeline verifies that the 100% native xAI pipeline (xAI STT -> xAI LLM -> xAI TTS)
+// is registered in default server configuration with all three xAI native providers.
+func TestFullXAI_DeployedPipeline(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Token.Secret = "test-scenario-secret-key-1234567890"
+
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	pCfg, ok := srv.cfg.Pipelines["full_xai"]
+	if !ok {
+		t.Fatal("missing full_xai pipeline in DefaultConfig")
+	}
+	if pCfg.STT != "xai.stt" {
+		t.Errorf("expected full_xai STT to be xai.stt, got: %s", pCfg.STT)
+	}
+	if pCfg.LLM != "xai.llm" {
+		t.Errorf("expected full_xai LLM to be xai.llm, got: %s", pCfg.LLM)
+	}
+	if pCfg.TTS != "xai.tts" {
+		t.Errorf("expected full_xai TTS to be xai.tts, got: %s", pCfg.TTS)
+	}
+}
+
 // Scenario E - Managed Failure Isolation (spec §41 Scenario E)
 // Verifies that a failure in one call does not impact another concurrent call.
 func TestScenarioE_ManagedFailureIsolation(t *testing.T) {

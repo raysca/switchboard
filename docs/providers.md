@@ -52,7 +52,18 @@ Voice Framework V1 supports drop-in interchangeability for the LLM stage using x
   - SSE event limit: `1 MB`
   - SSE total response body limit: `10 MB`
 - **Terminal Event**: Streams must terminate with an explicit `data: [DONE]` event. Any stream closing prematurely without `[DONE]` fails with `ErrMissingTerminalEvent`.
-- **Scope Note**: xAI STT and TTS are explicitly excluded from V1 scope.
+
+### Native xAI Speech-to-Text (STT)
+- **Protocol**: Real-time bidirectional streaming over WebSocket (`wss://api.x.ai/v1/stt`).
+- **Audio Format**: Headerless 16kHz 16-bit mono PCM (`encoding=pcm&sample_rate=16000`).
+- **Events**: Consumes streaming audio chunks and processes `transcript.created`, `transcript.partial`, and `transcript.done` events, mapping `speech_final` and `is_final` to `core.FinalTranscriptionFrame`.
+- **Fencing & Circuits**: Protected by generation fencing and circuit breakers.
+
+### Native xAI Text-to-Speech (TTS)
+- **Protocol**: REST API (`https://api.x.ai/v1/tts`).
+- **Audio Output**: Headerless raw 24kHz 16-bit mono PCM (`{"codec": "pcm", "sample_rate": 24000}`).
+- **Pacing**: Chunked into 20ms frames (960 bytes) matching Voice Framework V1 media clock, emitting `core.OutputAudioFrame`.
+- **Pipelines**: Fully selectable in config via `full_xai` pipeline (`xai.stt` -> `xai.llm` -> `xai.tts`).
 
 ---
 

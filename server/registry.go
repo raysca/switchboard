@@ -28,6 +28,8 @@ type Registry struct {
 	googleTTSBreaker *google.CircuitBreaker
 	googleSTTBreaker *google.CircuitBreaker
 	xaiBreaker       *xai.CircuitBreaker
+	xaiSTTBreaker    *xai.CircuitBreaker
+	xaiTTSBreaker    *xai.CircuitBreaker
 }
 
 // NewRegistry initializes the provider registry with default factories.
@@ -39,6 +41,8 @@ func NewRegistry() *Registry {
 		googleTTSBreaker: google.NewCircuitBreaker(google.DefaultCircuitConfig()),
 		googleSTTBreaker: google.NewCircuitBreaker(google.DefaultCircuitConfig()),
 		xaiBreaker:       xai.NewCircuitBreaker(xai.DefaultCircuitConfig()),
+		xaiSTTBreaker:    xai.NewCircuitBreaker(xai.DefaultCircuitConfig()),
+		xaiTTSBreaker:    xai.NewCircuitBreaker(xai.DefaultCircuitConfig()),
 	}
 
 	// Register default production providers
@@ -182,6 +186,55 @@ func NewRegistry() *Registry {
 		return xai.NewProcessor(xaiCfg)
 	})
 
+	r.Register("xai.stt", func(cfg *Config) (core.Processor, error) {
+		sttCfg := xai.DefaultSTTConfig()
+		if cfg.Providers.XAISTT.Endpoint != "" {
+			sttCfg.Endpoint = cfg.Providers.XAISTT.Endpoint
+		}
+		if envEndpoint := os.Getenv("XAI_STT_ENDPOINT"); envEndpoint != "" {
+			sttCfg.Endpoint = envEndpoint
+		}
+		if cfg.Providers.XAISTT.Language != "" {
+			sttCfg.Language = cfg.Providers.XAISTT.Language
+		}
+		apiKeyVar := cfg.Providers.XAISTT.APIKeyEnv
+		if apiKeyVar == "" {
+			apiKeyVar = "XAI_API_KEY"
+		}
+		sttCfg.APIKey = os.Getenv(apiKeyVar)
+		if sttCfg.APIKey == "" {
+			return nil, fmt.Errorf("xai.stt: %s is empty", apiKeyVar)
+		}
+		sttCfg.CircuitBreaker = r.xaiSTTBreaker
+		return xai.NewSTTProcessor(sttCfg)
+	})
+
+	r.Register("xai.tts", func(cfg *Config) (core.Processor, error) {
+		ttsCfg := xai.DefaultTTSConfig()
+		if cfg.Providers.XAITTS.Endpoint != "" {
+			ttsCfg.Endpoint = cfg.Providers.XAITTS.Endpoint
+		}
+		if envEndpoint := os.Getenv("XAI_TTS_ENDPOINT"); envEndpoint != "" {
+			ttsCfg.Endpoint = envEndpoint
+		}
+		if cfg.Providers.XAITTS.Voice != "" {
+			ttsCfg.Voice = cfg.Providers.XAITTS.Voice
+		}
+		if cfg.Providers.XAITTS.Language != "" {
+			ttsCfg.Language = cfg.Providers.XAITTS.Language
+		}
+		apiKeyVar := cfg.Providers.XAITTS.APIKeyEnv
+		if apiKeyVar == "" {
+			apiKeyVar = "XAI_API_KEY"
+		}
+		ttsCfg.APIKey = os.Getenv(apiKeyVar)
+		if ttsCfg.APIKey == "" {
+			return nil, fmt.Errorf("xai.tts: %s is empty", apiKeyVar)
+		}
+		ttsCfg.CircuitBreaker = r.xaiTTSBreaker
+		return xai.NewTTSProcessor(ttsCfg)
+	})
+
 	return r
 }
 
@@ -323,6 +376,12 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	})
 	r.xaiBreaker.SetObserver(func(st xai.CircuitState) {
 		m.LLMCircuitStateXAI.Store(circuitCode(string(st)))
+	})
+	r.xaiSTTBreaker.SetObserver(func(st xai.CircuitState) {
+		m.STTCircuitStateXAI.Store(circuitCode(string(st)))
+	})
+	r.xaiTTSBreaker.SetObserver(func(st xai.CircuitState) {
+		m.TTSCircuitStateXAI.Store(circuitCode(string(st)))
 	})
 }
 

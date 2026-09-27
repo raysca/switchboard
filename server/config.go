@@ -110,6 +110,19 @@ type Config struct {
 			APIKeyEnv    string `yaml:"api_key_env"`
 			SystemPrompt string `yaml:"system_prompt"`
 		} `yaml:"xai_llm"`
+
+		XAISTT struct {
+			Endpoint  string `yaml:"endpoint"`
+			APIKeyEnv string `yaml:"api_key_env"`
+			Language  string `yaml:"language"`
+		} `yaml:"xai_stt"`
+
+		XAITTS struct {
+			Endpoint  string `yaml:"endpoint"`
+			APIKeyEnv string `yaml:"api_key_env"`
+			Voice     string `yaml:"voice"`
+			Language  string `yaml:"language"`
+		} `yaml:"xai_tts"`
 	} `yaml:"providers"`
 
 	// Pipeline Definitions
@@ -194,6 +207,15 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Providers.XAILLM.Endpoint = "https://api.x.ai/v1/responses"
 	cfg.Providers.XAILLM.APIKeyEnv = "XAI_API_KEY"
 
+	cfg.Providers.XAISTT.Endpoint = "wss://api.x.ai/v1/stt"
+	cfg.Providers.XAISTT.APIKeyEnv = "XAI_API_KEY"
+	cfg.Providers.XAISTT.Language = "en"
+
+	cfg.Providers.XAITTS.Endpoint = "https://api.x.ai/v1/tts"
+	cfg.Providers.XAITTS.APIKeyEnv = "XAI_API_KEY"
+	cfg.Providers.XAITTS.Voice = "eve"
+	cfg.Providers.XAITTS.Language = "en"
+
 	// Default pipeline
 	cfg.Pipelines["default"] = PipelineConfig{
 		STT:         "google.stt",
@@ -206,6 +228,13 @@ func DefaultConfig(profile Profile) *Config {
 		STT:         "google.stt",
 		LLM:         "xai.llm",
 		TTS:         "google.tts",
+		MaxMessages: 20,
+		MaxTokens:   4000,
+	}
+	cfg.Pipelines["full_xai"] = PipelineConfig{
+		STT:         "xai.stt",
+		LLM:         "xai.llm",
+		TTS:         "xai.tts",
 		MaxMessages: 20,
 		MaxTokens:   4000,
 	}

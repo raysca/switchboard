@@ -70,6 +70,15 @@ providers:
     endpoint: "https://api.x.ai/v1/responses"
     api_key_env: "XAI_API_KEY"
     system_prompt: "You are a professional voice assistant powered by Grok."
+  xai_stt:
+    endpoint: "wss://api.x.ai/v1/stt"
+    api_key_env: "XAI_API_KEY"
+    language: "en"
+  xai_tts:
+    endpoint: "https://api.x.ai/v1/tts"
+    api_key_env: "XAI_API_KEY"
+    voice: "eve"
+    language: "en"
 
 pipelines:
   default:
@@ -82,6 +91,12 @@ pipelines:
     stt: "google.stt"
     llm: "xai.llm"
     tts: "google.tts"
+    max_messages: 20
+    max_tokens: 4000
+  full_xai:
+    stt: "xai.stt"
+    llm: "xai.llm"
+    tts: "xai.tts"
     max_messages: 20
     max_tokens: 4000
 
