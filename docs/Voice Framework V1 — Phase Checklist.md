@@ -230,34 +230,34 @@ Verification:
 
 Tasks:
 
-- [ ] Implement ordinary VAD Processor and shared executor interface
-- [ ] Implement in-process sharded executor for development
-- [ ] Implement local worker-process executor for production
-- [ ] Pin/verify Silero and ONNX Runtime artifacts at startup
-- [ ] Implement IPC magic/version/worker/model/ORT readiness handshake
-- [ ] Implement uint32 length framing, fixed-width little-endian messages, and maximum length before allocation
-- [ ] Include global request ID, session/sequence, relative timeout, audio format, state, result, and typed status
-- [ ] Enforce one outstanding state-mutating VAD request per session
-- [ ] Retain parent-owned state checkpoint for recovery
-- [ ] Reserve stdout for protocol and stderr for diagnostics
-- [ ] Enforce parent monotonic deadline and kill unresponsive native inference after grace
-- [ ] Implement worker crash/hang detection, capped respawn backoff, and crash-loop threshold
-- [ ] Reflect lost worker capacity in admission/readiness
-- [ ] Reap child processes and bound diagnostics/process count
-- [ ] Wire real VAD into Google pipeline without API change
+- [x] Implement ordinary VAD Processor and shared executor interface
+- [x] Implement in-process sharded executor for development
+- [x] Implement local worker-process executor for production
+- [x] Pin/verify Silero and ONNX Runtime artifacts at startup
+- [x] Implement IPC magic/version/worker/model/ORT readiness handshake
+- [x] Implement uint32 length framing, fixed-width little-endian messages, and maximum length before allocation
+- [x] Include global request ID, session/sequence, relative timeout, audio format, state, result, and typed status
+- [x] Enforce one outstanding state-mutating VAD request per session
+- [x] Retain parent-owned state checkpoint for recovery
+- [x] Reserve stdout for protocol and stderr for diagnostics
+- [x] Enforce parent monotonic deadline and kill unresponsive native inference after grace
+- [x] Implement worker crash/hang detection, capped respawn backoff, and crash-loop threshold
+- [x] Reflect lost worker capacity in admission/readiness
+- [x] Reap child processes and bound diagnostics/process count
+- [x] Wire real VAD into Google pipeline without API change
 
 Verification:
 
-- [ ] Streaming-state output matches unbatched reference within pinned tolerance
-- [ ] Oversized/truncated/invalid IPC and handshake mismatch fail only the worker
-- [ ] Unknown/late response cannot corrupt another session's detector state
-- [ ] Hard-killed worker respawns only after complete handshake
-- [ ] Hung native call is killed by parent deadline; no claim of in-call cancellation is made
-- [ ] Crash loop is capped and readiness/capacity update correctly
-- [ ] In-flight loss is bounded and observable; sessions on other workers continue
-- [ ] Isolation portion of Scenario F passes with concurrent real Google sessions and exposes internal fault/capacity signals for Phase 8
-- [ ] Development and production executors expose the identical pipeline API
-- [ ] Root verification target passes
+- [x] Streaming-state output matches unbatched reference within pinned tolerance
+- [x] Oversized/truncated/invalid IPC and handshake mismatch fail only the worker
+- [x] Unknown/late response cannot corrupt another session's detector state
+- [x] Hard-killed worker respawns only after complete handshake
+- [x] Hung native call is killed by parent deadline; no claim of in-call cancellation is made
+- [x] Crash loop is capped and readiness/capacity update correctly
+- [x] In-flight loss is bounded and observable; sessions on other workers continue
+- [x] Isolation portion of Scenario F passes with concurrent real Google sessions and exposes internal fault/capacity signals for Phase 8
+- [x] Development and production executors expose the identical pipeline API
+- [x] Root verification target passes
 
 ## Phase 7 - xAI LLM Interchangeability
 

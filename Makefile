@@ -13,7 +13,7 @@ test: build
 	@echo "=== Vetting and testing root module ==="
 	go vet ./...
 	go test -race -count=1 ./voice/
-	go test -count=1 ./vad/
+	go test -race -count=1 ./vad/
 	go test -race -count=1 ./tools/compat/...
 	go test -race -count=1 ./transport/...
 	@echo "=== Vetting and testing core module ==="
@@ -25,7 +25,7 @@ test: build
 
 verify: test
 	@echo "=== Checking code formatting ==="
-	@unformatted=$$(gofmt -l core/ transport/ tools/compat/ proto/ providers/); \
+	@unformatted=$$(gofmt -l core/ transport/ tools/compat/ proto/ providers/ vad/ cmd/ call/); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files need formatting:"; \
 		echo "$$unformatted"; \

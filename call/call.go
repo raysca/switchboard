@@ -53,7 +53,7 @@ type Opts struct {
 // Call is a running session plus its handles.
 type Call struct {
 	*loadgen.Stream
-	VAD   *vad.Processor
+	VAD   *vad.LegacyProcessor
 	Fakes []*voice.Fake
 }
 
@@ -63,7 +63,7 @@ func (r *Runtime) NewCall(o Opts) (*Call, voice.StartTimings, error) {
 	pc.EnergyGate = o.Gate
 	pc.PassAudio = o.Fakes
 	s, tm, err := r.M.Create(voice.Spec{Budget: o.Budget, Build: func(s *voice.Session) ([]voice.Processor, error) {
-		c.VAD = vad.NewProcessor(r.Exec, pc, r.Host)
+		c.VAD = vad.NewLegacyProcessor(r.Exec, pc, r.Host)
 		ps := []voice.Processor{c.VAD}
 		if o.Fakes {
 			lat := o.FakeLatency

@@ -1,50 +1,131 @@
-// Command vadworker is a Strategy C VAD worker process: stateless Silero
-// inference over stdin/stdout. Request: u32 n, then n x (576 f32 input, 256 f32 state).
-// Response: n x (1 f32 prob, 256 f32 state). Little-endian (host order).
+// Command vadworker is the isolated Silero VAD worker process for production.
+// It communicates with the parent process over stdin/stdout using framed binary IPC.
+// stdout is strictly reserved for the binary protocol; stderr is for diagnostics.
 package main
 
 import (
-	"bufio"
+	"encoding/binary"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
-	"unsafe"
 
 	"govoice/vad"
 )
 
 func main() {
-	maxBatch, _ := strconv.Atoi(os.Args[1])
-	r, err := vad.NewRunner(maxBatch, 1)
-	if err != nil {
-		panic(err)
+	maxBatch := 4
+	if len(os.Args) > 1 {
+		if b, err := strconv.Atoi(os.Args[1]); err == nil && b > 0 {
+			maxBatch = b
+		}
 	}
-	in, out := bufio.NewReaderSize(os.Stdin, 1<<16), bufio.NewWriterSize(os.Stdout, 1<<16)
+
+	// 1. Verify model artifact SHA-256 before loading
+	modelSHA, err := vad.VerifyModelArtifact(vad.ModelPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vadworker: model verification failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 2. Initialize ONNX Runtime runner
+	runner, err := vad.NewRunner(maxBatch, 1)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vadworker: init ORT runner failed: %v\n", err)
+		os.Exit(2)
+	}
+	defer runner.Close()
+
+	// 3. Complete handshake with parent
+	hsPayload, err := vad.ReadFrame(os.Stdin, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vadworker: read handshake failed: %v\n", err)
+		os.Exit(3)
+	}
+
+	hsReq, err := vad.DecodeHandshakeReq(hsPayload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "vadworker: decode handshake failed: %v\n", err)
+		os.Exit(4)
+	}
+
+	var hsResp vad.HandshakeResp
+	hsResp.WorkerPID = uint32(os.Getpid())
+	copy(hsResp.ActualModelSHA256[:], modelSHA[:])
+	copy(hsResp.ORTVersion[:], []byte(vad.PinnedORTVersion))
+
+	if hsReq.ExpectedModelSHA256 != modelSHA {
+		hsResp.Status = vad.StatusModelMismatch
+		_ = vad.WriteFrame(os.Stdout, vad.EncodeHandshakeResp(hsResp))
+		fmt.Fprintf(os.Stderr, "vadworker: expected model SHA mismatch\n")
+		os.Exit(5)
+	}
+
+	hsResp.Status = vad.StatusOK
+	if err := vad.WriteFrame(os.Stdout, vad.EncodeHandshakeResp(hsResp)); err != nil {
+		fmt.Fprintf(os.Stderr, "vadworker: write handshake response failed: %v\n", err)
+		os.Exit(6)
+	}
+
+	// 4. Main request loop
 	jobs := make([]*vad.Job, maxBatch)
 	for i := range jobs {
 		jobs[i] = &vad.Job{}
 	}
-	b := func(p *float32, n int) []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), n*4) }
-	var n uint32
+
 	for {
-		if _, err := io.ReadFull(in, unsafe.Slice((*byte)(unsafe.Pointer(&n)), 4)); err != nil {
-			return // parent closed
+		payload, err := vad.ReadFrame(os.Stdin, nil)
+		if err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return // parent closed connection or exited
+			}
+			fmt.Fprintf(os.Stderr, "vadworker: read frame error: %v\n", err)
+			return
 		}
-		batch := jobs[:n]
-		for _, j := range batch {
-			io.ReadFull(in, b(&j.Input[0], vad.InputSamples))
-			if _, err := io.ReadFull(in, b(&j.State[0], vad.StateLen)); err != nil {
-				return
+
+		if len(payload) >= 8 {
+			msgType := binary.LittleEndian.Uint16(payload[6:8])
+			if msgType == vad.MsgTypeFaultInject {
+				// Deliberate native fault simulation for Scenario F
+				fmt.Fprintf(os.Stderr, "vadworker: received fault inject command; simulating native crash\n")
+				// Dereference nil to trigger SIGSEGV / crash
+				*(*int)(nil) = 42
+				os.Exit(139)
 			}
 		}
-		if err := r.Run(batch); err != nil {
-			panic(err)
+
+		reqItems, err := vad.DecodeInferReq(payload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vadworker: decode infer req error: %v\n", err)
+			return
 		}
-		for _, j := range batch {
-			out.Write(b(&j.Prob, 1))
-			out.Write(b(&j.State[0], vad.StateLen))
+
+		bSize := len(reqItems)
+		batch := jobs[:bSize]
+		for i, item := range reqItems {
+			batch[i].Input = item.Input
+			batch[i].State = item.State
 		}
-		if out.Flush() != nil {
+
+		runErr := runner.Run(batch)
+
+		respItems := make([]vad.InferItemResp, bSize)
+		for i, item := range reqItems {
+			respItems[i].RequestID = item.RequestID
+			respItems[i].SessionID = item.SessionID
+			respItems[i].Seq = item.Seq
+			if runErr != nil {
+				respItems[i].Status = vad.StatusError
+			} else {
+				respItems[i].Status = vad.StatusOK
+				respItems[i].Prob = batch[i].Prob
+				respItems[i].State = batch[i].State
+			}
+		}
+
+		respData := vad.EncodeInferResp(respItems)
+		if err := vad.WriteFrame(os.Stdout, respData); err != nil {
+			fmt.Fprintf(os.Stderr, "vadworker: write infer resp error: %v\n", err)
 			return
 		}
 	}

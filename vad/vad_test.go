@@ -119,7 +119,7 @@ func TestEndToEndDetection(t *testing.T) {
 			for i := 0; i < 10; i++ {
 				st := &loadgen.Stream{TL: loadgen.NewTimeline(L, uint64(i+1), 0.5)}
 				s, _, err := m.Create(voice.Spec{Build: func(s *voice.Session) ([]voice.Processor, error) {
-					return []voice.Processor{NewProcessor(ex, DefaultProcessorConfig(), nil)}, nil
+					return []voice.Processor{NewLegacyProcessor(ex, DefaultProcessorConfig(), nil)}, nil
 				}})
 				if err != nil {
 					t.Fatal(err)

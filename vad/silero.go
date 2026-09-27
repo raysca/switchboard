@@ -2,6 +2,8 @@
 package vad
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +18,9 @@ const (
 	ContextSamples = 64
 	InputSamples   = ChunkSamples + ContextSamples
 	StateLen       = 2 * 128
+
+	PinnedModelSHA256 = "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3"
+	PinnedORTVersion  = "1.29.0"
 )
 
 var initOnce sync.Once
@@ -37,9 +42,30 @@ func Root() string {
 
 func ModelPath() string { return filepath.Join(Root(), "third_party", "silero_vad.onnx") }
 
+// VerifyModelArtifact verifies that the model file exists and matches PinnedModelSHA256.
+func VerifyModelArtifact(path string) ([32]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("read model artifact: %w", err)
+	}
+	h := sha256.Sum256(data)
+	actualHex := hex.EncodeToString(h[:])
+	if actualHex != PinnedModelSHA256 {
+		return h, fmt.Errorf("%w: expected %s, got %s", ErrModelHashMismatch, PinnedModelSHA256, actualHex)
+	}
+	return h, nil
+}
+
 func InitORT() error {
 	initOnce.Do(func() {
-		ort.SetSharedLibraryPath(filepath.Join(Root(), "third_party", "onnxruntime-osx-arm64-1.29.0", "lib", "libonnxruntime.dylib"))
+		ortLib := filepath.Join(Root(), "third_party", "onnxruntime-osx-arm64-1.29.0", "lib", "libonnxruntime.dylib")
+		if _, err := os.Stat(ortLib); err != nil {
+			ortLibLinux := filepath.Join(Root(), "third_party", "onnxruntime-linux-x64-1.29.0", "lib", "libonnxruntime.so")
+			if _, lErr := os.Stat(ortLibLinux); lErr == nil {
+				ortLib = ortLibLinux
+			}
+		}
+		ort.SetSharedLibraryPath(ortLib)
 		initErr = ort.InitializeEnvironment()
 	})
 	return initErr

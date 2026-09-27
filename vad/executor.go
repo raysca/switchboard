@@ -1,17 +1,10 @@
 package vad
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"govoice/voice"
 )
@@ -23,79 +16,111 @@ var (
 	ErrWorker       = errors.New("vad worker failed")
 )
 
+// Job represents a single chunk inference unit.
 type Job struct {
-	Stream *Stream
-	Seq    uint64
-	Input  [InputSamples]float32
-	State  [StateLen]float32
-	Prob   float32
+	Stream    Stream
+	RequestID uint64
+	SessionID uint64
+	Seq       uint64
+	Input     [InputSamples]float32
+	State     [StateLen]float32
+	Prob      float32
 
-	Due, Deadline, Submitted, Started, Finished time.Time
-	Err                                         error
-	Done                                        func(*Job) // called on a worker goroutine
+	Due       time.Time
+	Deadline  time.Time
+	Submitted time.Time
+	Started   time.Time
+	Finished  time.Time
+	Err       error
+	Done      func(*Job)
 }
 
+// Stream represents a session's interface to submit VAD jobs to the executor.
+type Stream interface {
+	Submit(j *Job) error
+	Close()
+}
+
+// SharedExecutor is the common interface implemented by all VAD executors:
+// InProcessShardedExecutor (development) and WorkerProcessExecutor (production).
+type SharedExecutor interface {
+	Register(sessionID uint64) Stream
+	Stats() Stats
+	Capacity() (available, total int)
+	IsReady() bool
+	Close() error
+}
+
+// executorBackend is the internal interface implemented by in-process and worker-process backends.
+type executorBackend interface {
+	register(sessionID uint64) Stream
+	stats() Stats
+	capacity() (available, total int)
+	isReady() bool
+	pids() []int
+	queueDepth() int
+	injectFault(workerIdx int) error
+	hardKill(workerIdx int) error
+	close() error
+}
+
+// Stats provides telemetry across all executor workers.
+type Stats struct {
+	Streams       int64
+	Submitted     int64
+	RejectedFull  int64
+	RejectedLimit int64
+	Stale         int64
+	WorkerErrors  int64
+	WorkerHangs   int64
+	Restarts      int64
+	QueueDepth    int64
+	AvgBatch      float64
+	BusyNanos     int64
+}
+
+// Config specifies the runtime executor configuration.
 type Config struct {
-	Mode            string // global | sharded | process | stub
-	Workers         int    // workers (global/stub), shards (sharded), child processes (process)
-	Batch           int
-	QueueCap        int // total across queues
-	IntraOp         int
-	PerSessionLimit int
-	StubCost        time.Duration // stub: busy-wait per job instead of ORT (harness control)
+	Mode            string        // "process" (prod default) | "sharded" (dev) | "global" | "stub"
+	Workers         int           // number of worker shards or child processes
+	Batch           int           // max batch size (1..8)
+	QueueCap        int           // total queue capacity across workers
+	IntraOp         int           // ORT intra-op threads
+	PerSessionLimit int           // maximum outstanding jobs per session (strictly 1)
+	ParentDeadline  time.Duration // parent monotonic deadline for worker response
+	ParentGrace     time.Duration // grace period before SIGKILL
+	WorkerBinary    string        // path to cmd/vadworker binary
+	StubCost        time.Duration // stub cost for benchmark harness
 }
 
 func (c Config) String() string {
 	return fmt.Sprintf("%s-w%d-b%d-i%d", c.Mode, c.Workers, c.Batch, c.IntraOp)
 }
 
+// DefaultConfig returns production default configuration (worker-process executor).
+func DefaultConfig() Config {
+	return Config{
+		Mode:            "process",
+		Workers:         2,
+		Batch:           4,
+		QueueCap:        1024,
+		IntraOp:         1,
+		PerSessionLimit: 1,
+		ParentDeadline:  50 * time.Millisecond,
+		ParentGrace:     50 * time.Millisecond,
+	}
+}
+
+// Executor coordinates VAD inference across sessions and exposes telemetry and capacity signals.
 type Executor struct {
-	cfg    Config
-	queues []chan *Job
-	wg     sync.WaitGroup
-
-	QueueWait voice.Hist // submitted -> worker picked up
-	Inference voice.Hist // worker start -> finish (whole batch wall time)
-
-	streams, submitted, rejectedFull, rejectedLimit, stale, workerErrors, restarts atomic.Int64
-	batches, batchedJobs, busyNanos                                                atomic.Int64
-
-	mu   sync.Mutex
-	pids []int
+	cfg       Config
+	QueueWait voice.Hist
+	Inference voice.Hist
+	backend   executorBackend
 }
 
-type Stats struct {
-	Streams, Submitted, RejectedFull, RejectedLimit, Stale, WorkerErrors, Restarts, QueueDepth int64
-	AvgBatch                                                                                   float64
-	BusyNanos                                                                                  int64
-}
-
-func (e *Executor) Stats() Stats {
-	s := Stats{Streams: e.streams.Load(), Submitted: e.submitted.Load(), RejectedFull: e.rejectedFull.Load(),
-		RejectedLimit: e.rejectedLimit.Load(), Stale: e.stale.Load(), WorkerErrors: e.workerErrors.Load(),
-		Restarts: e.restarts.Load(), QueueDepth: int64(e.QueueDepth()), BusyNanos: e.busyNanos.Load()}
-	if b := e.batches.Load(); b > 0 {
-		s.AvgBatch = float64(e.batchedJobs.Load()) / float64(b)
-	}
-	return s
-}
-
-func (e *Executor) Config() Config { return e.cfg }
-
-func (e *Executor) QueueDepth() int {
-	n := 0
-	for _, q := range e.queues {
-		n += len(q)
-	}
-	return n
-}
-
-func (e *Executor) PIDs() []int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return append([]int(nil), e.pids...)
-}
-
+// New creates an Executor according to cfg.Mode.
+// Default is worker-process executor ("process").
 func New(cfg Config) (*Executor, error) {
 	if cfg.Batch < 1 {
 		cfg.Batch = 1
@@ -107,240 +132,98 @@ func New(cfg Config) (*Executor, error) {
 		cfg.PerSessionLimit = 1
 	}
 	if cfg.QueueCap < 1 {
-		cfg.QueueCap = 4096
+		cfg.QueueCap = 1024
 	}
-	e := &Executor{cfg: cfg}
-	nq := 1
-	if cfg.Mode == "sharded" {
-		nq = cfg.Workers
+	if cfg.Workers < 1 {
+		cfg.Workers = 1
 	}
-	for i := 0; i < nq; i++ {
-		e.queues = append(e.queues, make(chan *Job, max(1, cfg.QueueCap/nq)))
+	if cfg.ParentDeadline <= 0 {
+		cfg.ParentDeadline = 50 * time.Millisecond
 	}
-	for i := 0; i < cfg.Workers; i++ {
-		q := e.queues[i%nq]
-		var run func([]*Job) error
-		var closer func()
-		switch cfg.Mode {
-		case "global", "sharded":
-			r, err := NewRunner(cfg.Batch, cfg.IntraOp)
-			if err != nil {
-				return nil, err
-			}
-			run, closer = r.Run, r.Close
-		case "stub":
-			cost := cfg.StubCost
-			run = func(jobs []*Job) error {
-				for t := time.Now(); time.Since(t) < cost*time.Duration(len(jobs)); {
-				}
-				return nil
-			}
-			closer = func() {}
-		case "process":
-			c := &child{e: e, batch: cfg.Batch}
-			if err := c.start(); err != nil {
-				return nil, err
-			}
-			run, closer = c.run, c.stop
-		default:
-			return nil, fmt.Errorf("unknown vad mode %q", cfg.Mode)
-		}
-		e.wg.Add(1)
-		go e.worker(q, run, closer)
+	if cfg.ParentGrace <= 0 {
+		cfg.ParentGrace = 50 * time.Millisecond
 	}
-	return e, nil
-}
 
-func (e *Executor) Close() {
-	for _, q := range e.queues {
-		close(q)
-	}
-	e.wg.Wait()
-}
-
-func (e *Executor) worker(q chan *Job, run func([]*Job) error, closer func()) {
-	defer e.wg.Done()
-	defer closer()
-	B := e.cfg.Batch
-	batch := make([]*Job, 0, B)
-	for j := range q {
-		batch = append(batch[:0], j)
-	drain:
-		for len(batch) < B {
-			select {
-			case j2, ok := <-q:
-				if !ok {
-					break drain
-				}
-				batch = append(batch, j2)
-			default:
-				break drain
-			}
-		}
-		now := time.Now()
-		live := batch[:0]
-		for _, j := range batch {
-			j.Started = now
-			if now.After(j.Deadline) {
-				j.Err = ErrStale
-				e.stale.Add(1)
-				e.finish(j)
-				continue
-			}
-			live = append(live, j)
-		}
-		if len(live) == 0 {
-			continue
-		}
-		err := run(live)
-		fin := time.Now()
-		e.busyNanos.Add(int64(fin.Sub(now)))
-		e.batches.Add(1)
-		e.batchedJobs.Add(int64(len(live)))
-		if err != nil {
-			e.workerErrors.Add(int64(len(live)))
-		}
-		for _, j := range live {
-			j.Finished = fin
-			if err != nil {
-				j.Err = ErrWorker
-			}
-			e.QueueWait.Record(j.Started.Sub(j.Submitted))
-			e.Inference.Record(fin.Sub(j.Started))
-			e.finish(j)
-		}
-	}
-}
-
-func (e *Executor) finish(j *Job) {
-	j.Stream.outstanding.Add(-1)
-	j.Done(j)
-}
-
-// Stream is a session's registration with the shared runtime. The streaming
-// state itself travels in the Job, so any worker (or process) can run any job.
-type Stream struct {
-	ID          uint64
-	e           *Executor
-	q           chan *Job
-	outstanding atomic.Int32
-}
-
-func (e *Executor) Register(id uint64) *Stream {
-	e.streams.Add(1)
-	return &Stream{ID: id, e: e, q: e.queues[id%uint64(len(e.queues))]}
-}
-
-func (s *Stream) Close() { s.e.streams.Add(-1) }
-
-// Submit is non-blocking: enforces per-session fairness and bounded queueing.
-func (s *Stream) Submit(j *Job) error {
-	e := s.e
-	if int(s.outstanding.Add(1)) > e.cfg.PerSessionLimit {
-		s.outstanding.Add(-1)
-		e.rejectedLimit.Add(1)
-		return ErrSessionLimit
-	}
-	j.Stream, j.Err = s, nil
-	j.Submitted = time.Now()
-	select {
-	case s.q <- j:
-		e.submitted.Add(1)
-		return nil
+	switch cfg.Mode {
+	case "process":
+		return NewWorkerProcessExecutor(cfg)
+	case "sharded", "global", "stub":
+		return NewInProcessShardedExecutor(cfg)
 	default:
-		s.outstanding.Add(-1)
-		e.rejectedFull.Add(1)
-		return ErrExecFull
+		return nil, fmt.Errorf("unknown vad executor mode %q (must be 'process', 'sharded', 'global', or 'stub')", cfg.Mode)
 	}
 }
 
-// ---- Strategy C: local worker processes over stdin/stdout ----
-
-type child struct {
-	e     *Executor
-	batch int
-	cmd   *exec.Cmd
-	wc    io.WriteCloser
-	w     *bufio.Writer
-	r     *bufio.Reader
-	pid   int
+func (e *Executor) Register(sessionID uint64) Stream {
+	return e.backend.register(sessionID)
 }
 
-func WorkerBinary() string { return filepath.Join(Root(), "bin", "vadworker") }
-
-func (c *child) start() error {
-	cmd := exec.Command(WorkerBinary(), fmt.Sprint(c.batch))
-	cmd.Stderr = os.Stderr
-	w, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	r, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	c.cmd, c.wc, c.w, c.r = cmd, w, bufio.NewWriterSize(w, 1<<16), bufio.NewReaderSize(r, 1<<16)
-	c.e.mu.Lock()
-	if c.pid != 0 {
-		for i, p := range c.e.pids {
-			if p == c.pid {
-				c.e.pids = append(c.e.pids[:i], c.e.pids[i+1:]...)
-				break
-			}
-		}
-	}
-	c.pid = cmd.Process.Pid
-	c.e.pids = append(c.e.pids, c.pid)
-	c.e.mu.Unlock()
-	return nil
+func (e *Executor) Stats() Stats {
+	return e.backend.stats()
 }
 
-func f32bytes(p *float32, n int) []byte { return unsafe.Slice((*byte)(unsafe.Pointer(p)), n*4) }
-
-func (c *child) run(jobs []*Job) error {
-	err := c.roundtrip(jobs)
-	if err != nil { // crashed worker: in-flight jobs fail, respawn
-		c.stop()
-		c.e.restarts.Add(1)
-		if serr := c.start(); serr != nil {
-			fmt.Fprintln(os.Stderr, "vadworker respawn failed:", serr)
-		}
-	}
-	return err
+func (e *Executor) Capacity() (available, total int) {
+	return e.backend.capacity()
 }
 
-func (c *child) roundtrip(jobs []*Job) error {
-	n := uint32(len(jobs))
-	if _, err := c.w.Write(unsafe.Slice((*byte)(unsafe.Pointer(&n)), 4)); err != nil {
-		return err
-	}
-	for _, j := range jobs {
-		if _, err := c.w.Write(f32bytes(&j.Input[0], InputSamples)); err != nil {
-			return err
-		}
-		if _, err := c.w.Write(f32bytes(&j.State[0], StateLen)); err != nil {
-			return err
-		}
-	}
-	if err := c.w.Flush(); err != nil {
-		return err
-	}
-	for _, j := range jobs {
-		if _, err := io.ReadFull(c.r, f32bytes(&j.Prob, 1)); err != nil {
-			return err
-		}
-		if _, err := io.ReadFull(c.r, f32bytes(&j.State[0], StateLen)); err != nil {
-			return err
-		}
-	}
-	return nil
+func (e *Executor) IsReady() bool {
+	return e.backend.isReady()
 }
 
-func (c *child) stop() {
-	c.wc.Close()
-	c.cmd.Process.Kill()
-	c.cmd.Wait()
+func (e *Executor) Config() Config {
+	return e.cfg
+}
+
+func (e *Executor) QueueDepth() int {
+	return e.backend.queueDepth()
+}
+
+func (e *Executor) PIDs() []int {
+	return e.backend.pids()
+}
+
+func (e *Executor) InjectFault(workerIdx int) error {
+	return e.backend.injectFault(workerIdx)
+}
+
+func (e *Executor) HardKill(workerIdx int) error {
+	return e.backend.hardKill(workerIdx)
+}
+
+func (e *Executor) Close() error {
+	return e.backend.close()
+}
+
+// atomicStats tracks counters safely across goroutines.
+type atomicStats struct {
+	streams       atomic.Int64
+	submitted     atomic.Int64
+	rejectedFull  atomic.Int64
+	rejectedLimit atomic.Int64
+	stale         atomic.Int64
+	workerErrors  atomic.Int64
+	workerHangs   atomic.Int64
+	restarts      atomic.Int64
+	batches       atomic.Int64
+	batchedJobs   atomic.Int64
+	busyNanos     atomic.Int64
+}
+
+func (s *atomicStats) snapshot(queueDepth int64) Stats {
+	st := Stats{
+		Streams:       s.streams.Load(),
+		Submitted:     s.submitted.Load(),
+		RejectedFull:  s.rejectedFull.Load(),
+		RejectedLimit: s.rejectedLimit.Load(),
+		Stale:         s.stale.Load(),
+		WorkerErrors:  s.workerErrors.Load(),
+		WorkerHangs:   s.workerHangs.Load(),
+		Restarts:      s.restarts.Load(),
+		QueueDepth:    queueDepth,
+		BusyNanos:     s.busyNanos.Load(),
+	}
+	if b := s.batches.Load(); b > 0 {
+		st.AvgBatch = float64(s.batchedJobs.Load()) / float64(b)
+	}
+	return st
 }
