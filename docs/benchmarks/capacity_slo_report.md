@@ -51,9 +51,9 @@ All measurements were validated against the test harness running under the race 
 | **Scenario C** | Interchangeability: Google STT $\rightarrow$ xAI LLM $\rightarrow$ Google TTS | `providers/xai/scenario_c_test.go`, `server/scenarios_test.go` | **PASS** |
 | **Scenario D** | Barge-in: Paced playback clearing and partial context recording | `transport/ws/rtvi_integration_test.go`, `tools/compat/probe_playback_clear.js` | **PASS** |
 | **Scenario E** | Managed failure isolation (one session fails, others continue) | `server/scenarios_test.go:TestScenarioE_ManagedFailureIsolation` | **PASS** |
-| **Scenario F** | Native VAD fault isolation (worker killed, host continues) | `vad/resilience_test.go:TestFaultIsolation_HardKill` | **PASS** |
+| **Scenario F** | Native VAD fault isolation (worker killed, host continues) | `vad/pipeline_test.go:TestScenarioF_NativeFaultIsolationWithPipeline`, `vad/resilience_test.go:TestWorkerProcess_HardKillAndRespawn` | **PASS** |
 | **Scenario G** | Concurrent sessions isolation (5 concurrent calls) | `server/scenarios_test.go:TestScenarioG_ConcurrentSessionsIsolation` | **PASS** |
-| **Scenario H** | Long call & STT stream rotation ($\ge$ 5 rotations without turn drop) | `providers/google/stt_test.go:TestSTT_RotationNoDuplicateFinals` | **PASS** |
+| **Scenario H** | Long call & STT stream rotation ($\ge$ 5 rotations without turn drop) | `providers/google/stt_test.go:TestSTT_AcceleratedFiveRotationsWithoutDuplicates` | **PASS** |
 | **Scenario I** | WebSocket impairment, output pacing, slow-client termination | `transport/ws/ws_test.go:TestPhase3_StaleGenerationDiscard_AndSlowClientOverflow` | **PASS** |
 | **Scenario J** | Admission security (token replay race, quota headroom, admin isolation) | `server/scenarios_test.go:TestScenarioJ_AdmissionSecurityDeployed` | **PASS** |
 | **Section 47** | Unmodified released client package compatibility (`@pipecat-ai/client-js@1.13.1`) | `tools/compat/client_compat_test.go` | **PASS** |

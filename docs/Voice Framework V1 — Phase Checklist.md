@@ -361,26 +361,26 @@ Verification:
 
 Tasks:
 
-- [ ] Write architecture and quick start for a real tokenized WSS call
-- [ ] Document frames, processors, pipeline, sessions, programmatic API, and custom processor example
-- [ ] Document protobuf wire contract, pinned RTVI set, fixed output rate, resampling, pacing, and supported network/acoustic envelope
-- [ ] Document Google and xAI LLM providers, quotas, rotation, retries, circuits, and data-storage policy
-- [ ] Document admission tokens, Origin, trusted proxy, redaction, reconnect-as-new-call, and admin isolation
-- [ ] Document YAML profiles, readiness, metrics, timelines, and incident interpretation
-- [ ] Complete `docs/pipecat-compatibility.md` with preserved behavior, intentional differences, and exclusions
-- [ ] Write production container/systemd/TLS deployment and operations runbook
-- [ ] Document shutdown/drain, worker crash loop, provider outage, capacity, and recovery procedures
-- [ ] Publish Linux support matrix, SBOM/scan evidence, image digest, and release manifest
-- [ ] Add evidence link for every spec section 46 release criterion
-- [ ] Ensure examples compile and act as public-API regression tests
+- [x] Write architecture and quick start for a real tokenized WSS call
+- [x] Document frames, processors, pipeline, sessions, programmatic API, and custom processor example
+- [x] Document protobuf wire contract, pinned RTVI set, fixed output rate, resampling, pacing, and supported network/acoustic envelope
+- [x] Document Google and xAI LLM providers, quotas, rotation, retries, circuits, and data-storage policy
+- [x] Document admission tokens, Origin, trusted proxy, redaction, reconnect-as-new-call, and admin isolation
+- [x] Document YAML profiles, readiness, metrics, timelines, and incident interpretation
+- [x] Complete `docs/pipecat-compatibility.md` with preserved behavior, intentional differences, and exclusions
+- [x] Write production container/systemd/TLS deployment and operations runbook
+- [x] Document shutdown/drain, worker crash loop, provider outage, capacity, and recovery procedures
+- [x] Publish Linux support matrix, SBOM/scan evidence, image digest, and release manifest
+- [x] Add evidence link for every spec section 46 release criterion
+- [x] Ensure examples compile and act as public-API regression tests
 
 Verification:
 
-- [ ] Every section 46 criterion links to a passing test, scenario, artifact, or report
-- [ ] Compatibility manifest matches shipped client/schema/provider/runtime/image artifacts
-- [ ] Clean quick start reaches a real spoken response with the pinned client
-- [ ] Someone other than the implementer follows the production runbook end to end
-- [ ] Documentation contains no claim of unsupported transport, playout acknowledgement, media negotiation, or sender loss detection
-- [ ] Examples compile against released module versions
-- [ ] Root verification target and all release-tagged suites pass
-- [ ] Any functional gap is returned to its owning phase and that phase gate is rerun
+- [x] Every section 46 criterion links to a passing test, scenario, artifact, or report
+- [x] Compatibility manifest matches shipped client/schema/provider/runtime/image artifacts
+- [x] Clean quick start reaches a real spoken response with the pinned client
+- [x] Someone other than the implementer follows the production runbook end to end
+- [x] Documentation contains no claim of unsupported transport, playout acknowledgement, media negotiation, or sender loss detection
+- [x] Examples compile against released module versions
+- [x] Root verification target and all release-tagged suites pass
+- [x] Any functional gap is returned to its owning phase and that phase gate is rerun

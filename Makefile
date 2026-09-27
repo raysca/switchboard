@@ -8,6 +8,7 @@ build:
 	go build -o bin/vadworker ./cmd/vadworker
 	go build -o bin/server ./cmd/server
 	go build -o bin/bench ./cmd/bench
+	go build ./examples/...
 
 test: build
 	@echo "=== Vetting and testing root module ==="
@@ -31,7 +32,7 @@ test: build
 
 verify: test
 	@echo "=== Checking code formatting ==="
-	@unformatted=$$(gofmt -l core/ transport/ tools/compat/ proto/ providers/ vad/ cmd/ call/ server/); \
+	@unformatted=$$(gofmt -l core/ transport/ tools/compat/ proto/ providers/ vad/ cmd/ call/ server/ examples/); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files need formatting:"; \
 		echo "$$unformatted"; \
