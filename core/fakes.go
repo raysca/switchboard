@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -149,4 +150,336 @@ func (p *IgnoredCancellationProcessor) ProcessFrame(ctx context.Context, f Frame
 		// Deliberately ignore ctx.Done() and sleep through teardown
 		time.Sleep(10 * time.Second)
 	})
+}
+
+// -------------------------------------------------------------------------
+// Phase 2 Deterministic Fakes: LLM, TTS, and TransportOutput
+// -------------------------------------------------------------------------
+
+// FakeLLMConfig defines behavior for FakeLLMProcessor.
+type FakeLLMConfig struct {
+	ResponseChunks []string
+	ChunkDelay     time.Duration
+	IgnoreCancel   bool // If true, keep emitting after cancellation to test fencing
+}
+
+// FakeLLMProcessor simulates streamed or non-streamed LLM responses.
+type FakeLLMProcessor struct {
+	session SessionController
+	index   int
+	cfg     FakeLLMConfig
+
+	mu            sync.Mutex
+	activeCancel  context.CancelFunc
+	CanceledCount atomic.Uint64
+}
+
+func NewFakeLLMProcessor(cfg FakeLLMConfig) *FakeLLMProcessor {
+	return &FakeLLMProcessor{cfg: cfg}
+}
+
+func (p *FakeLLMProcessor) Attach(s SessionController, index int) error {
+	p.session = s
+	p.index = index
+	return nil
+}
+
+func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+	switch f.Type() {
+	case FrameUserMessage:
+		um := f.(*UserMessageFrame)
+		p.mu.Lock()
+		taskCtx, cancel := context.WithCancel(ctx)
+		p.activeCancel = cancel
+		p.mu.Unlock()
+
+		gen := um.Gen
+		if p.session != nil && gen == 0 {
+			gen = p.session.CurrentGeneration()
+		}
+
+		return p.session.Go(func(c context.Context) {
+			for _, chunk := range p.cfg.ResponseChunks {
+				if p.cfg.ChunkDelay > 0 {
+					select {
+					case <-taskCtx.Done():
+						if !p.cfg.IgnoreCancel {
+							return
+						}
+					case <-time.After(p.cfg.ChunkDelay):
+					}
+				}
+
+				if !p.cfg.IgnoreCancel && taskCtx.Err() != nil {
+					return
+				}
+
+				_ = p.session.Reenter(&LLMTextDeltaFrame{
+					Delta: chunk,
+					Turn:  um.Turn,
+					Gen:   gen,
+				}, Downstream, 0, gen)
+			}
+		})
+
+	case FrameInterruption:
+		p.mu.Lock()
+		if p.activeCancel != nil {
+			p.activeCancel()
+			p.CanceledCount.Add(1)
+		}
+		p.mu.Unlock()
+		return e.PushDirection(f, dir)
+
+	default:
+		return e.PushDirection(f, dir)
+	}
+}
+
+// FakeTTSConfig defines behavior for FakeTTSProcessor.
+type FakeTTSConfig struct {
+	FramesPerUnit int           // Output audio frames per unit (default: 2)
+	FrameDelay    time.Duration // Delay between audio frame emissions
+	IgnoreCancel  bool          // If true, keep emitting after cancellation to test fencing
+}
+
+// FakeTTSProcessor simulates TTS synthesis from explicit synthesis units.
+type FakeTTSProcessor struct {
+	session SessionController
+	index   int
+	cfg     FakeTTSConfig
+
+	mu            sync.Mutex
+	activeCancel  context.CancelFunc
+	Synthesized   atomic.Uint64
+	CanceledCount atomic.Uint64
+}
+
+func NewFakeTTSProcessor(cfg FakeTTSConfig) *FakeTTSProcessor {
+	if cfg.FramesPerUnit <= 0 {
+		cfg.FramesPerUnit = 2
+	}
+	return &FakeTTSProcessor{cfg: cfg}
+}
+
+func (p *FakeTTSProcessor) Attach(s SessionController, index int) error {
+	p.session = s
+	p.index = index
+	return nil
+}
+
+func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+	switch f.Type() {
+	case FrameSynthesisUnit:
+		su := f.(*SynthesisUnitFrame)
+		p.mu.Lock()
+		taskCtx, cancel := context.WithCancel(ctx)
+		p.activeCancel = cancel
+		p.mu.Unlock()
+
+		return p.session.Go(func(c context.Context) {
+			for i := 1; i <= p.cfg.FramesPerUnit; i++ {
+				if p.cfg.FrameDelay > 0 {
+					select {
+					case <-taskCtx.Done():
+						if !p.cfg.IgnoreCancel {
+							return
+						}
+					case <-time.After(p.cfg.FrameDelay):
+					}
+				}
+
+				if !p.cfg.IgnoreCancel && taskCtx.Err() != nil {
+					return
+				}
+
+				isFinal := (i == p.cfg.FramesPerUnit)
+				audioFrame := &OutputAudioFrame{
+					Samples:    make([]byte, 640),
+					Encoding:   EncodingPCM16LE,
+					SampleRate: 24000,
+					Channels:   1,
+					Duration:   20 * time.Millisecond,
+					Timestamp:  time.Now(),
+					Seq:        p.Synthesized.Add(1),
+					Gen:        su.Gen,
+					Turn:       su.Turn,
+					UnitID:     su.UnitID,
+					IsFinal:    isFinal,
+				}
+
+				_ = p.session.Reenter(audioFrame, Downstream, p.index+1, su.Gen)
+			}
+		})
+
+	case FrameInterruption:
+		p.mu.Lock()
+		if p.activeCancel != nil {
+			p.activeCancel()
+			p.CanceledCount.Add(1)
+		}
+		p.mu.Unlock()
+		return e.PushDirection(f, dir)
+
+	default:
+		return e.PushDirection(f, dir)
+	}
+}
+
+// FakeTransportConfig defines behavior for FakeTransportOutput.
+type FakeTransportConfig struct {
+	WriteDelay        time.Duration // Simulated write latency
+	SimulateFlushHang bool          // If true, withhold FlushProcessedFrame to test flush timeout
+}
+
+// FakeTransportOutput simulates the client audio edge, paced writing, and write completions.
+type FakeTransportOutput struct {
+	session SessionController
+	index   int
+	cfg     FakeTransportConfig
+
+	mu              sync.Mutex
+	ReceivedFrames  []*OutputAudioFrame
+	WrittenFrames   []*OutputAudioFrame
+	DiscardedFrames []*OutputAudioFrame
+	FlushCount      atomic.Uint64
+	FlushAcksSent   atomic.Uint64
+}
+
+func NewFakeTransportOutput(cfg FakeTransportConfig) *FakeTransportOutput {
+	return &FakeTransportOutput{
+		cfg:             cfg,
+		ReceivedFrames:  make([]*OutputAudioFrame, 0),
+		WrittenFrames:   make([]*OutputAudioFrame, 0),
+		DiscardedFrames: make([]*OutputAudioFrame, 0),
+	}
+}
+
+func (p *FakeTransportOutput) Attach(s SessionController, index int) error {
+	p.session = s
+	p.index = index
+	return nil
+}
+
+func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+	switch f.Type() {
+	case FrameOutputAudio:
+		oaf := f.(*OutputAudioFrame)
+		p.mu.Lock()
+		// Stale generation discard
+		if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() {
+			p.DiscardedFrames = append(p.DiscardedFrames, oaf)
+			p.mu.Unlock()
+			return nil
+		}
+		p.ReceivedFrames = append(p.ReceivedFrames, oaf)
+		p.mu.Unlock()
+
+		if p.cfg.WriteDelay == 0 {
+			p.mu.Lock()
+			p.WrittenFrames = append(p.WrittenFrames, oaf)
+			p.mu.Unlock()
+
+			// Report write completion immediately back to session
+			return p.session.Reenter(&WriteCompletionFrame{
+				Turn:    oaf.Turn,
+				Gen:     oaf.Gen,
+				UnitID:  oaf.UnitID,
+				Seq:     oaf.Seq,
+				IsFinal: oaf.IsFinal,
+			}, Downstream, 0, oaf.Gen)
+		}
+
+		// Asynchronous write simulation
+		return p.session.Go(func(ctx context.Context) {
+			select {
+			case <-time.After(p.cfg.WriteDelay):
+			case <-ctx.Done():
+				return
+			}
+
+			p.mu.Lock()
+			// Check if generation changed during write
+			if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() {
+				p.DiscardedFrames = append(p.DiscardedFrames, oaf)
+				p.mu.Unlock()
+				// Send write completion with old Gen to verify session rejects it
+				_ = p.session.Reenter(&WriteCompletionFrame{
+					Turn:    oaf.Turn,
+					Gen:     oaf.Gen,
+					UnitID:  oaf.UnitID,
+					Seq:     oaf.Seq,
+					IsFinal: oaf.IsFinal,
+				}, Downstream, 0, oaf.Gen)
+				return
+			}
+			p.WrittenFrames = append(p.WrittenFrames, oaf)
+			p.mu.Unlock()
+
+			_ = p.session.Reenter(&WriteCompletionFrame{
+				Turn:    oaf.Turn,
+				Gen:     oaf.Gen,
+				UnitID:  oaf.UnitID,
+				Seq:     oaf.Seq,
+				IsFinal: oaf.IsFinal,
+			}, Downstream, 0, oaf.Gen)
+		})
+
+	case FrameInterruption:
+		intr := f.(*InterruptionFrame)
+		p.mu.Lock()
+		// Discard pending frames belonging to interrupted generation
+		active := make([]*OutputAudioFrame, 0, len(p.ReceivedFrames))
+		for _, frame := range p.ReceivedFrames {
+			if frame.Gen == intr.Gen {
+				p.DiscardedFrames = append(p.DiscardedFrames, frame)
+			} else {
+				active = append(active, frame)
+			}
+		}
+		p.ReceivedFrames = active
+		p.mu.Unlock()
+		return e.PushDirection(f, dir)
+
+	case FrameFlush:
+		ff := f.(*FlushFrame)
+		p.mu.Lock()
+		p.FlushCount.Add(1)
+		// Discard all queued audio frames for the flushed generation
+		remaining := make([]*OutputAudioFrame, 0, len(p.ReceivedFrames))
+		for _, frame := range p.ReceivedFrames {
+			if frame.Gen == ff.Gen {
+				p.DiscardedFrames = append(p.DiscardedFrames, frame)
+			} else {
+				remaining = append(remaining, frame)
+			}
+		}
+		p.ReceivedFrames = remaining
+		p.mu.Unlock()
+
+		if !p.cfg.SimulateFlushHang {
+			p.FlushAcksSent.Add(1)
+			return e.PushDirection(&FlushProcessedFrame{Gen: ff.Gen}, Upstream)
+		}
+		return nil
+
+	default:
+		return e.PushDirection(f, dir)
+	}
+}
+
+func (p *FakeTransportOutput) GetWrittenFrames() []*OutputAudioFrame {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	res := make([]*OutputAudioFrame, len(p.WrittenFrames))
+	copy(res, p.WrittenFrames)
+	return res
+}
+
+func (p *FakeTransportOutput) GetDiscardedFrames() []*OutputAudioFrame {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	res := make([]*OutputAudioFrame, len(p.DiscardedFrames))
+	copy(res, p.DiscardedFrames)
+	return res
 }

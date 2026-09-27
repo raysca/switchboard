@@ -23,6 +23,7 @@ const (
 	// LLM and text frames
 	FrameLLMTextDelta FrameType = 400 + iota
 	FrameLLMText
+	FrameSynthesisUnit
 
 	// TTS frames
 	FrameTTSStarted FrameType = 500 + iota
@@ -44,6 +45,7 @@ const (
 
 	// Internal async re-entry
 	FrameInternal FrameType = 800 + iota
+	FrameWriteCompletion
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.
@@ -203,6 +205,19 @@ func (f *LLMTextFrame) Type() FrameType    { return FrameLLMText }
 func (f *LLMTextFrame) Generation() uint64 { return f.Gen }
 func (f *LLMTextFrame) TurnID() string     { return f.Turn }
 
+// SynthesisUnitFrame carries an explicit synthesis unit segmented from LLM text.
+type SynthesisUnitFrame struct {
+	Turn    string
+	Gen     uint64
+	UnitID  uint64
+	Text    string
+	IsFinal bool // true if this is the final synthesis unit for the turn
+}
+
+func (f *SynthesisUnitFrame) Type() FrameType    { return FrameSynthesisUnit }
+func (f *SynthesisUnitFrame) Generation() uint64 { return f.Gen }
+func (f *SynthesisUnitFrame) TurnID() string     { return f.Turn }
+
 // -------------------------------------------------------------------------
 // TTS Frames
 // -------------------------------------------------------------------------
@@ -330,3 +345,17 @@ type FlushProcessedFrame struct {
 
 func (f *FlushProcessedFrame) Type() FrameType    { return FrameFlushProcessed }
 func (f *FlushProcessedFrame) Generation() uint64 { return f.Gen }
+
+// WriteCompletionFrame reports asynchronous completion of an audio frame write.
+type WriteCompletionFrame struct {
+	Turn    string
+	Gen     uint64
+	UnitID  uint64
+	Seq     uint64
+	IsFinal bool // true if this completed the final audio frame of the synthesis unit
+	Err     error
+}
+
+func (f *WriteCompletionFrame) Type() FrameType    { return FrameWriteCompletion }
+func (f *WriteCompletionFrame) Generation() uint64 { return f.Gen }
+func (f *WriteCompletionFrame) TurnID() string     { return f.Turn }

@@ -80,33 +80,33 @@ Verification:
 
 Tasks:
 
-- [ ] Implement provider-neutral Message/Role model with TurnID and Partial
-- [ ] Implement message/token budgets and deterministic oldest-complete-turn-pair eviction
-- [ ] Preserve system instruction, current user turn, and newest complete turns during eviction
-- [ ] Implement UserContextProcessor with duplicate/late-final protection
-- [ ] Implement AssistantContextProcessor with bounded explicit synthesis units
-- [ ] Propagate turn/generation/unit IDs through fake LLM, fake TTS, and fake output
-- [ ] Implement fake TransportOutput write-completion re-entry
-- [ ] Commit a synthesis unit to delivered context only after its final audio frame write completes
-- [ ] Exclude a partly written unit in full when interrupted
-- [ ] Implement UserStartedSpeaking to InterruptionFrame transition
-- [ ] Cancel active fake LLM/TTS and fence all late old-generation completions
-- [ ] Clear queued old-generation audio and process a server-local flush barrier
-- [ ] Implement bounded flush timeout/failure behavior
-- [ ] Keep the same session usable for the next turn
+- [x] Implement provider-neutral Message/Role model with TurnID and Partial
+- [x] Implement message/token budgets and deterministic oldest-complete-turn-pair eviction
+- [x] Preserve system instruction, current user turn, and newest complete turns during eviction
+- [x] Implement UserContextProcessor with duplicate/late-final protection
+- [x] Implement AssistantContextProcessor with bounded explicit synthesis units
+- [x] Propagate turn/generation/unit IDs through fake LLM, fake TTS, and fake output
+- [x] Implement fake TransportOutput write-completion re-entry
+- [x] Commit a synthesis unit to delivered context only after its final audio frame write completes
+- [x] Exclude a partly written unit in full when interrupted
+- [x] Implement UserStartedSpeaking to InterruptionFrame transition
+- [x] Cancel active fake LLM/TTS and fence all late old-generation completions
+- [x] Clear queued old-generation audio and process a server-local flush barrier
+- [x] Implement bounded flush timeout/failure behavior
+- [x] Keep the same session usable for the next turn
 
 Verification:
 
-- [ ] Test deterministic context eviction and provider-limit rejection
-- [ ] Test duplicate and late final transcripts cannot create another user turn
-- [ ] Test interruption before first audio records no assistant text
-- [ ] Test mid-unit interruption excludes the partly written unit
-- [ ] Test interruption between units records only fully written units with Partial=true
-- [ ] Test write completion racing the barrier has deterministic ordering
-- [ ] Test LLM/TTS output arriving after cancellation never reaches output or context
-- [ ] Test flush timeout fails/degrades explicitly without blocking the run loop
-- [ ] Test next turn succeeds in the same session with coherent context
-- [ ] Root verification target passes
+- [x] Test deterministic context eviction and provider-limit rejection
+- [x] Test duplicate and late final transcripts cannot create another user turn
+- [x] Test interruption before first audio records no assistant text
+- [x] Test mid-unit interruption excludes the partly written unit
+- [x] Test interruption between units records only fully written units with Partial=true
+- [x] Test write completion racing the barrier has deterministic ordering
+- [x] Test LLM/TTS output arriving after cancellation never reaches output or context
+- [x] Test flush timeout fails/degrades explicitly without blocking the run loop
+- [x] Test next turn succeeds in the same session with coherent context
+- [x] Root verification target passes
 
 ## Phase 3 - Secure WebSocket, Protobuf Audio Edge, and Backpressure
 

@@ -521,7 +521,7 @@ func (s *Session) recordErr(err error) {
 
 func isControlFrame(f Frame) bool {
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed:
+	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion:
 		return true
 	default:
 		return false
