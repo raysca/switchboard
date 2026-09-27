@@ -19,10 +19,13 @@ test: build
 	@echo "=== Vetting and testing core module ==="
 	cd core && go vet ./...
 	cd core && go test -race -count=1 ./...
+	@echo "=== Vetting and testing providers/google module ==="
+	cd providers/google && go vet ./...
+	cd providers/google && go test -race -count=1 ./...
 
 verify: test
 	@echo "=== Checking code formatting ==="
-	@unformatted=$$(gofmt -l core/ transport/ tools/compat/ proto/); \
+	@unformatted=$$(gofmt -l core/ transport/ tools/compat/ proto/ providers/); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files need formatting:"; \
 		echo "$$unformatted"; \

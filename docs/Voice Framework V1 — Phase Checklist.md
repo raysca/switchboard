@@ -193,38 +193,38 @@ Verification:
 
 Tasks:
 
-- [ ] Create independent Google provider module with no SDK types crossing into core
-- [ ] Implement Speech-to-Text V2 using pinned endpoint/recognizer/model
-- [ ] Keep STT audio messages below pinned byte limit and near real-time cadence
-- [ ] Implement pre-limit stream rotation with bounded overlap and transcript deduplication
-- [ ] Reserve temporary second-stream quota for every active call's rotation
-- [ ] Prevent rotation from creating duplicate UserMessageFrame
-- [ ] Implement streamed Google LLM with immutable model, bounded context, usage, and cancellation
-- [ ] Implement stable Cloud TTS SynthesizeSpeech with headerless `AudioEncoding_PCM`
-- [ ] Implement bounded phrase/sentence synthesis units and explicit sample-rate metadata
-- [ ] Convert TTS PCM to the fixed manifest client player rate
-- [ ] Fence late STT/LLM/TTS output by generation
-- [ ] Implement deadlines, retry classification, Retry-After, capped jitter, and circuit state
-- [ ] Prohibit retry after user-visible output commit without provider idempotency
-- [ ] Map safe provider-neutral errors without exposing credentials/provider bodies
-- [ ] Resolve separate Google credential modes and reject missing/unsafe credential files in production
-- [ ] Keep transient live credential outage in readiness rather than startup crash loop
-- [ ] Run provider path with deterministic VAD for this phase
+- [x] Create independent Google provider module with no SDK types crossing into core
+- [x] Implement Speech-to-Text V2 using pinned endpoint/recognizer/model
+- [x] Keep STT audio messages below pinned byte limit and near real-time cadence
+- [x] Implement pre-limit stream rotation with bounded overlap and transcript deduplication
+- [x] Reserve temporary second-stream quota for every active call's rotation
+- [x] Prevent rotation from creating duplicate UserMessageFrame
+- [x] Implement streamed Google LLM with immutable model, bounded context, usage, and cancellation
+- [x] Implement stable Cloud TTS SynthesizeSpeech with headerless `AudioEncoding_PCM`
+- [x] Implement bounded phrase/sentence synthesis units and explicit sample-rate metadata
+- [x] Convert TTS PCM to the fixed manifest client player rate
+- [x] Fence late STT/LLM/TTS output by generation
+- [x] Implement deadlines, retry classification, Retry-After, capped jitter, and circuit state
+- [x] Prohibit retry after user-visible output commit without provider idempotency
+- [x] Map safe provider-neutral errors without exposing credentials/provider bodies
+- [x] Resolve separate Google credential modes and reject missing/unsafe credential files in production
+- [x] Keep transient live credential outage in readiness rather than startup crash loop
+- [x] Run provider path with deterministic VAD for this phase
 
 Verification:
 
-- [ ] Unit tests cover Google request/response/error mappings
-- [ ] Cancellation and late-output tests pass for all three capabilities
-- [ ] Retry/circuit/Retry-After tests pass, including no duplicate visible output
-- [ ] TTS bytes begin with PCM samples, not a WAV container
-- [ ] Synthesis-unit size/duration bounds and first-audio behavior pass
-- [ ] STT request byte/cadence constraints pass
-- [ ] Accelerated STT test crosses at least five rotations without duplicate/missing turns
-- [ ] Admission test reserves rotation headroom and rejects before quota exhaustion
-- [ ] Credential-gated pinned-client Google multi-turn test passes with deterministic VAD
-- [ ] Missing credential and unsafe file mode fail with clear diagnostics
-- [ ] Release suite includes a 30-minute real call crossing a production-limit rotation
-- [ ] Root verification target passes
+- [x] Unit tests cover Google request/response/error mappings
+- [x] Cancellation and late-output tests pass for all three capabilities
+- [x] Retry/circuit/Retry-After tests pass, including no duplicate visible output
+- [x] TTS bytes begin with PCM samples, not a WAV container
+- [x] Synthesis-unit size/duration bounds and first-audio behavior pass
+- [x] STT request byte/cadence constraints pass
+- [x] Accelerated STT test crosses at least five rotations without duplicate/missing turns
+- [x] Admission test reserves rotation headroom and rejects before quota exhaustion
+- [x] Credential-gated pinned-client Google multi-turn test passes with deterministic VAD
+- [x] Missing credential and unsafe file mode fail with clear diagnostics
+- [x] Release suite includes a 30-minute real call crossing a production-limit rotation
+- [x] Root verification target passes
 
 ## Phase 6 - Silero VAD and Production Worker Isolation
 
