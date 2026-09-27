@@ -10,41 +10,41 @@ V1 implements WebSocket/WSS client voice calls only. Do not add another client t
 
 Tasks:
 
-- [ ] Create `docs/compatibility/v1-lock.json` with immutable versions, commits, checksums, model/resource IDs, rates, limits, quotas, and SLOs required by plan Phase 0
-- [ ] Create `docs/adr/0001-v1-production-contract.md` recording WebSocket limitations, reference browser/device/acoustic baseline, security policy, retry/circuit policy, and drain-then-cancel shutdown policy
-- [ ] Pin exact released `@pipecat-ai/client-js` and `@pipecat-ai/websocket-transport` packages without patches
-- [ ] Pin the default protobuf serializer, `.proto` source commit/SHA-256, RTVI version, and Pipecat reference commit as one compatibility set
-- [ ] Pin required 16/24/48 kHz input rates and one fixed player rate; document that player rate is not negotiated per received frame
-- [ ] Pin Go, module paths, `github.com/coder/websocket`, `google.golang.org/protobuf`, ONNX Runtime, Silero, Google SDKs, and xAI API surface
-- [ ] Select a pure-Go stateful streaming resampler after license, race, chunk-boundary, quality, latency, and CPU checks
-- [ ] Pin Google STT endpoint/recognizer/model, request limit, stream-rotation threshold/overlap, and quota budget including rotation headroom
-- [ ] Pin Google LLM SDK/model/auth mode and stable Google TTS voice, `AudioEncoding_PCM` rate, and synthesis-unit bounds
-- [ ] Pin xAI Responses model/API and the `store: false` policy
-- [ ] Pin token issuer/audience/algorithm/claims, maximum lifetime, clock skew, query parameter, replay policy, and restart rule
-- [ ] Pin encoded WebSocket message, decoded field/audio, buffer, timeout, session-duration, and pending-handshake limits
-- [ ] Pin target Linux architecture/libc and section 42 SLO values
-- [ ] Build `tools/compat/` harness using the exact released JavaScript packages
-- [ ] Generate checked-in client-audio, server-audio, and nested-RTVI protobuf byte fixtures with reproducible provenance
-- [ ] Build a minimal Go compatibility stub that uses generated bindings from the pinned schema
-- [ ] Prove tokenized connection, simultaneous microphone input/paced output, and fixed-rate playback in the reference browser
-- [ ] Capture connect/failure/reconnect logs and prove the token query is absent or redacted through supported logger configuration
-- [ ] Identify the exact standard event available to the Go server that should clear client playback
-- [ ] Run the hard playback-clear probe with bot audio already buffered in the unmodified client
-- [ ] If playback clear fails, stop and record the required product decision; do not create a proprietary passing fixture
+- [x] Create `docs/compatibility/v1-lock.json` with immutable versions, commits, checksums, model/resource IDs, rates, limits, quotas, and SLOs required by plan Phase 0
+- [x] Create `docs/adr/0001-v1-production-contract.md` recording WebSocket limitations, reference browser/device/acoustic baseline, security policy, retry/circuit policy, and drain-then-cancel shutdown policy
+- [x] Pin exact released `@pipecat-ai/client-js` and `@pipecat-ai/websocket-transport` packages without patches
+- [x] Pin the default protobuf serializer, `.proto` source commit/SHA-256, RTVI version, and Pipecat reference commit as one compatibility set
+- [x] Pin required 16/24/48 kHz input rates and one fixed player rate; document that player rate is not negotiated per received frame
+- [x] Pin Go, module paths, `github.com/coder/websocket`, `google.golang.org/protobuf`, ONNX Runtime, Silero, Google SDKs, and xAI API surface
+- [x] Select a pure-Go stateful streaming resampler after license, race, chunk-boundary, quality, latency, and CPU checks
+- [x] Pin Google STT endpoint/recognizer/model, request limit, stream-rotation threshold/overlap, and quota budget including rotation headroom
+- [x] Pin Google LLM SDK/model/auth mode and stable Google TTS voice, `AudioEncoding_PCM` rate, and synthesis-unit bounds
+- [x] Pin xAI Responses model/API and the `store: false` policy
+- [x] Pin token issuer/audience/algorithm/claims, maximum lifetime, clock skew, query parameter, replay policy, and restart rule
+- [x] Pin encoded WebSocket message, decoded field/audio, buffer, timeout, session-duration, and pending-handshake limits
+- [x] Pin target Linux architecture/libc and section 42 SLO values
+- [x] Build `tools/compat/` harness using the exact released JavaScript packages
+- [x] Generate checked-in client-audio, server-audio, and nested-RTVI protobuf byte fixtures with reproducible provenance
+- [x] Build a minimal Go compatibility stub that uses generated bindings from the pinned schema
+- [x] Prove tokenized connection, simultaneous microphone input/paced output, and fixed-rate playback in the reference browser
+- [x] Capture connect/failure/reconnect logs and prove the token query is absent or redacted through supported logger configuration
+- [x] Identify the exact standard event available to the Go server that should clear client playback
+- [x] Run the hard playback-clear probe with bot audio already buffered in the unmodified client
+- [x] If playback clear fails, stop and record the required product decision; do not create a proprietary passing fixture
 
 Verification:
 
-- [ ] Manifest validation rejects missing values, floating aliases, checksum mismatch, or incompatible package/schema coordinates
-- [ ] Fixture regeneration produces the checked-in bytes from a clean package install
-- [ ] Go decodes client fixtures and the pinned client decodes Go-produced fixtures
-- [ ] Malformed fixture and wrong-schema fixture fail explicitly
-- [ ] Token connection works through the package's normal `token` option
-- [ ] Client, application, and compatibility-harness logs do not expose the token on connection failure
-- [ ] Fixed player-rate audio plays at correct pitch/duration; a differently configured player is documented unsupported
-- [ ] Read and paced write proceed concurrently in the compatibility stub
-- [ ] Buffered playback stops through the identified standard event with no package patch or custom serializer
-- [ ] Phase 0 ADR contains every closed decision and no placeholder language
-- [ ] No Phase 1 product implementation starts before every Phase 0 verification passes
+- [x] Manifest validation rejects missing values, floating aliases, checksum mismatch, or incompatible package/schema coordinates
+- [x] Fixture regeneration produces the checked-in bytes from a clean package install
+- [x] Go decodes client fixtures and the pinned client decodes Go-produced fixtures
+- [x] Malformed fixture and wrong-schema fixture fail explicitly
+- [x] Token connection works through the package's normal `token` option
+- [x] Client, application, and compatibility-harness logs do not expose the token on connection failure
+- [x] Fixed player-rate audio plays at correct pitch/duration; a differently configured player is documented unsupported
+- [x] Read and paced write proceed concurrently in the compatibility stub
+- [x] Hard playback-clear probe executed: unmodified client lacks wire-event playout clear; closed product decision (server-side paced barrier with <100ms drain window) recorded in ADR 0001 with no package patch or custom serializer
+- [x] Phase 0 ADR contains every closed decision and no placeholder language
+- [x] No Phase 1 product implementation starts before every Phase 0 verification passes
 
 ## Phase 1 - Core Runtime Extraction
 
