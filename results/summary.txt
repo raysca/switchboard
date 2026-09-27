@@ -1,0 +1,28 @@
+T1 | existing=0 | ready p50=1.9us p99=12.1us
+T1 | existing=1 | ready p50=1.8us p99=5.1us
+T1 | existing=10 | ready p50=1.7us p99=4.2us
+T1 | existing=50 | ready p50=1.6us p99=2.5us
+T1 | existing=100 | ready p50=1.6us p99=5.1us
+T1 | existing=200 | ready p50=1.2us p99=6.5us
+T1 | existing=500 | ready p50=1.3us p99=6.0us
+T1 | existing=1000 | ready p50=1.4us p99=3.7us
+T1 | existing=2000 | ready p50=2.0us p99=5.3us
+T1 | existing=5000 | ready p50=2.7us p99=9.0us
+T3 | Go idle marginal | footprint 19.5 KB/session, heap 16.8 KB/session (0->10000)
+T3 | Go streaming marginal | footprint -2.0 KB/session, heap 19.4 KB/session (0->1000)
+T8 | global-w11-b1-i1 | RT ceiling 2000 streams (window 10s)
+T8 | global-w11-b8-i1 | RT ceiling 5000 streams (window 30s)
+T8 | global-w4-b8-i3 | RT ceiling 2000 streams (window 30s)
+T8 | global-w8-b1-i1 | RT ceiling 2000 streams (window 10s)
+T8 | global-w8-b8-i1 | RT ceiling 4000 streams (window 10s)
+T8 | process-w4-b8-i1 | RT ceiling 2000 streams (window 10s)
+T8 | process-w8-b8-i1 | RT ceiling 3500 streams (window 10s)
+T8 | sharded-w11-b1-i1 | RT ceiling 3000 streams (window 10s)
+T8 | sharded-w11-b8-i1 | RT ceiling 5000 streams (window 30s)
+T8 | stub-w11-b1-i1 | RT ceiling 4000 streams (window 10s)
+T9 | t9_duty0.1.csv | duty=0.1 gate=0.002: connected-session RT ceiling 32000 (window 30s)
+T9 | t9_duty0.25.csv | duty=0.25 gate=0.002: connected-session RT ceiling 18000 (window 30s)
+T9 | t9_duty0.5.csv | duty=0.5 gate=0.002: connected-session RT ceiling 8000 (window 10s)
+T9 | t9_duty1.0_gateoff.csv | duty=0.5 gate=0.0: connected-session RT ceiling 5000 (window 30s)
+T11 | admission off | active=7500 rejected=0 hold p99=104.858ms drop=35.685% slo_met=false
+T11 | admission on | active=5000 rejected=2500 hold p99=6.816ms drop=0.000% slo_met=true

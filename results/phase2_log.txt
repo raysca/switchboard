@@ -1,0 +1,28 @@
+=== stub control
+19:19:08 stub-w11-b1-i1 n=500 pass=true p99=2.883583ms qwait99=40.959µs infer99=163.839µs lag99=2.621439ms sessP95max=3.014655ms drop=0.000% cpu=12% util=11% batch=1.0 onsets 0/566 false=0
+19:19:21 stub-w11-b1-i1 n=1000 pass=true p99=3.276799ms qwait99=163.839µs infer99=163.839µs lag99=2.752511ms sessP95max=3.670015ms drop=0.000% cpu=24% util=23% batch=1.0 onsets 0/1210 false=0
+19:19:34 stub-w11-b1-i1 n=2000 pass=true p99=4.718591ms qwait99=507.903µs infer99=90.111µs lag99=3.276799ms sessP95max=4.456447ms drop=0.000% cpu=45% util=44% batch=1.0 onsets 0/2523 false=0
+19:19:47 stub-w11-b1-i1 n=3000 pass=true p99=3.538943ms qwait99=851.967µs infer99=81.919µs lag99=2.359295ms sessP95max=3.801087ms drop=0.000% cpu=67% util=65% batch=1.0 onsets 0/3870 false=0
+19:20:00 stub-w11-b1-i1 n=4000 pass=true p99=3.801087ms qwait99=1.310719ms infer99=77.823µs lag99=2.228223ms sessP95max=4.063231ms drop=0.000% cpu=86% util=86% batch=1.0 onsets 0/5288 false=0
+19:20:33 stub-w11-b1-i1 n=5000 pass=false p99=104.857599ms qwait99=32.505855ms infer99=81.919µs lag99=19.922943ms sessP95max=104.857599ms drop=9.784% cpu=96% util=98% batch=1.0 onsets 0/22223 false=0
+19:21:06 stub-w11-b1-i1 n=6000 pass=false p99=104.857599ms qwait99=32.505855ms infer99=86.015µs lag99=27.262975ms sessP95max=117.440511ms drop=25.476% cpu=96% util=98% batch=1.0 onsets 0/26698 false=0
+=== T10 combined (fakes)
+19:21:19 sharded-w11-b8-i1 n=2500 pass=true p99=3.538943ms qwait99=786.431µs infer99=786.431µs lag99=2.359295ms sessP95max=3.801087ms drop=0.000% cpu=56% util=55% batch=2.8 onsets 2827/2827 false=0
+19:21:32 sharded-w11-b8-i1 n=3500 pass=true p99=4.063231ms qwait99=1.179647ms infer99=884.735µs lag99=2.490367ms sessP95max=4.718591ms drop=0.000% cpu=73% util=72% batch=3.2 onsets 4472/4472 false=33
+19:21:45 sharded-w11-b8-i1 n=4000 pass=true p99=4.718591ms qwait99=1.441791ms infer99=917.503µs lag99=2.752511ms sessP95max=4.980735ms drop=0.000% cpu=81% util=81% batch=3.4 onsets 5426/5426 false=39
+19:22:18 sharded-w11-b8-i1 n=4500 pass=true p99=5.505023ms qwait99=2.359295ms infer99=950.271µs lag99=3.014655ms sessP95max=5.242879ms drop=0.000% cpu=89% util=90% batch=3.8 onsets 20050/20050 false=38
+19:22:51 sharded-w11-b8-i1 n=5000 pass=true p99=30.408703ms qwait99=26.214399ms infer99=983.039µs lag99=3.932159ms sessP95max=16.777215ms drop=0.002% cpu=95% util=97% batch=4.3 onsets 22300/22300 false=52
+=== T9 duty 0.1 gate on
+19:23:05 sharded-w11-b8-i1 n=2000 pass=true p99=3.932159ms qwait99=655.359µs infer99=819.199µs lag99=2.359295ms sessP95max=6.029311ms drop=0.000% cpu=13% util=8% batch=2.3 onsets 0/0 false=0
+19:23:18 sharded-w11-b8-i1 n=4000 pass=true p99=5.767167ms qwait99=622.591µs infer99=753.663µs lag99=2.883583ms sessP95max=13.107199ms drop=0.000% cpu=25% util=16% batch=2.0 onsets 414/414 false=0
+19:23:31 sharded-w11-b8-i1 n=6000 pass=true p99=5.242879ms qwait99=507.903µs infer99=655.359µs lag99=3.932159ms sessP95max=8.388607ms drop=0.000% cpu=34% util=24% batch=1.8 onsets 1074/1074 false=6
+19:23:44 sharded-w11-b8-i1 n=8000 pass=true p99=5.505023ms qwait99=557.055µs infer99=655.359µs lag99=3.932159ms sessP95max=14.155775ms drop=0.000% cpu=43% util=32% batch=1.7 onsets 1747/1747 false=14
+19:23:57 sharded-w11-b8-i1 n=10000 pass=true p99=6.291455ms qwait99=524.287µs infer99=622.591µs lag99=4.980735ms sessP95max=22.020095ms drop=0.000% cpu=42% util=31% batch=1.7 onsets 2230/2230 false=16
+19:24:10 sharded-w11-b8-i1 n=12000 pass=true p99=7.340031ms qwait99=655.359µs infer99=655.359µs lag99=5.242879ms sessP95max=23.068671ms drop=0.000% cpu=45% util=33% batch=1.6 onsets 2858/2858 false=12
+19:24:23 sharded-w11-b8-i1 n=14000 pass=true p99=7.340031ms qwait99=557.055µs infer99=655.359µs lag99=4.718591ms sessP95max=29.360127ms drop=0.000% cpu=52% util=38% batch=1.6 onsets 3454/3454 false=24
+19:24:36 sharded-w11-b8-i1 n=16000 pass=true p99=7.077887ms qwait99=655.359µs infer99=688.127µs lag99=3.801087ms sessP95max=27.262975ms drop=0.000% cpu=58% util=43% batch=1.6 onsets 4030/4030 false=21
+19:24:49 sharded-w11-b8-i1 n=20000 pass=false p99=100.663295ms qwait99=39.845887ms infer99=1.245183ms lag99=9.437183ms sessP95max=117.440511ms drop=2.405% cpu=69% util=51% batch=1.7 onsets 4585/4585 false=60
+19:25:23 sharded-w11-b8-i1 n=24000 pass=false p99=96.468991ms qwait99=35.651583ms infer99=917.503µs lag99=6.291455ms sessP95max=125.829119ms drop=2.165% cpu=82% util=60% batch=1.7 onsets 19949/19949 false=66
+=== T9 duty 0.25 gate on
+19:25:36 sharded-w11-b8-i1 n=2000 pass=true p99=4.718591ms qwait99=622.591µs infer99=786.431µs lag99=2.621439ms sessP95max=8.912895ms drop=0.000% cpu=20% util=16% batch=1.9 onsets 610/610 false=0
+19:25:49 sharded-w11-b8-i1 n=4000 pass=true p99=4.980735ms qwait99=589.823µs infer99=753.663µs lag99=3.801087ms sessP95max=7.340031ms drop=0.000% cpu=39% util=34% batch=1.9 onsets 2000/2000 false=18

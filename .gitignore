@@ -1,0 +1,22 @@
+# Binaries and build artifacts
+bin/
+*.o
+*.a
+*.so
+*.dylib
+*.dSYM/
+*.test
+
+# Python & JS virtual environments / dependencies
+.venv/
+node_modules/
+dist/
+__pycache__/
+*.pyc
+
+# OS metadata
+.DS_Store
+
+# Temporary and coverage files
+*.tmp
+coverage.out

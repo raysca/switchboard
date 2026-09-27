@@ -1,0 +1,2 @@
+threads,inferences,seconds,inferences_per_sec,us_per_inference,speech_chunk_frac
+1,63758,5.0,12751,78.4,0.87

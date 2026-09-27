@@ -1,0 +1,2 @@
+admission,ceiling,offered,active,rejected,hold_p99_ms,hold_drop_pct,slo_met
+off,5000,7500,7500,0,104.858,35.685,false
