@@ -22,3 +22,6 @@ __pycache__/
 coverage.out
 .env
 examples/secrets
+
+# Isolated implementation worktrees
+.worktrees/
