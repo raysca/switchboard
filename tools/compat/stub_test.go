@@ -254,6 +254,7 @@ func TestCompat_TokenSecurityAndRedaction(t *testing.T) {
 			},
 		}
 		tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tok.Header["kid"] = "v1"
 		str, _ := tok.SignedString([]byte(testHMACSecret))
 		return str
 	}

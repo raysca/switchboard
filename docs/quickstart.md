@@ -26,7 +26,6 @@ make build
 This generates:
 - `bin/server`: Config-driven voice edge & pipeline server
 - `bin/vadworker`: Isolated child worker process for Silero VAD
-- `bin/bench`: Capacity and latency benchmarking harness
 
 ---
 
@@ -69,14 +68,15 @@ node -e '
 const jwt = require("jsonwebtoken");
 const token = jwt.sign(
   {
+    jti: require("crypto").randomUUID(),
     sub: "user-1234",
-    aud: "govoice",
-    iss: "govoice-auth",
+    aud: "govoice-v1-client",
+    iss: "govoice-v1",
     exp: Math.floor(Date.now() / 1000) + 300,
     iat: Math.floor(Date.now() / 1000)
   },
-  "dev-insecure-secret-key-at-least-32-chars-long",
-  { algorithm: "HS256" }
+  "dev-insecure-secret-key-for-testing-only-12345",
+  { algorithm: "HS256", keyid: "v1" }
 );
 console.log(token);
 '

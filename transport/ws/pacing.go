@@ -121,13 +121,71 @@ func (w *PacedWriter) Enqueue(f *core.OutputAudioFrame) error {
 	return nil
 }
 
+// BeginFlush drops queued audio for gen and aborts an in-flight write without
+// blocking the caller. done runs after the in-flight write has stopped, or
+// immediately on another goroutine when nothing is in flight.
+func (w *PacedWriter) BeginFlush(gen uint64, done func(error)) {
+	waitCh, cancelFn := w.dropGeneration(gen)
+	if cancelFn != nil {
+		cancelFn()
+	}
+	if done == nil {
+		return
+	}
+	if waitCh == nil {
+		go done(nil)
+		return
+	}
+	go func() {
+		// Bound matches the interruption-to-flush target. The session loop must not wait on the write timeout.
+		flushTimeout := 200 * time.Millisecond
+		timer := time.NewTimer(flushTimeout)
+		defer timer.Stop()
+		select {
+		case <-waitCh:
+			done(nil)
+		case <-timer.C:
+			done(fmt.Errorf("%w: flush timed out waiting for in-flight write cancellation", ErrSlowClient))
+		}
+	}()
+}
+
 // Flush removes all queued audio frames belonging to the specified generation.
-func (w *PacedWriter) Flush(gen uint64) {
+// Flush drops all queued and inflight frames matching generation gen (or older),
+// resets the media clock, and aborts any active sleep or in-flight write for that generation.
+// If an in-flight write for that generation does not terminate within the write timeout,
+// it returns ErrSlowClient, guaranteeing no Flush acknowledgement is emitted while
+// old-generation audio is still being transmitted.
+func (w *PacedWriter) Flush(ctx context.Context, gen uint64) error {
+	waitCh, cancelFn := w.dropGeneration(gen)
+	if cancelFn != nil {
+		cancelFn()
+	}
+	if waitCh == nil {
+		return nil
+	}
+	flushTimeout := w.cfg.WriteTimeout
+	if flushTimeout <= 0 {
+		flushTimeout = 5 * time.Second
+	}
+	timer := time.NewTimer(flushTimeout)
+	defer timer.Stop()
+	select {
+	case <-waitCh:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("%w: flush timed out waiting for in-flight write cancellation", ErrSlowClient)
+	}
+}
+
+func (w *PacedWriter) dropGeneration(gen uint64) (chan struct{}, context.CancelFunc) {
 	w.mu.Lock()
 
 	active := make([]*core.OutputAudioFrame, 0, len(w.queue))
 	for _, f := range w.queue {
-		if f.Gen == gen {
+		if f.Gen <= gen {
 			w.queuedBytes -= len(f.Samples)
 			w.queuedDur -= f.Duration
 			w.FramesDropped.Add(1)
@@ -136,7 +194,7 @@ func (w *PacedWriter) Flush(gen uint64) {
 		}
 	}
 	w.queue = active
-	if w.inflight != nil && w.inflight.Gen == gen {
+	if w.inflight != nil && w.inflight.Gen <= gen {
 		w.dropInflight = true
 	}
 	if gen+1 > w.activeGen {
@@ -157,15 +215,7 @@ func (w *PacedWriter) Flush(gen uint64) {
 	w.mu.Unlock()
 	close(oldAbort)
 
-	if cancelFn != nil {
-		cancelFn()
-	}
-	if waitCh != nil {
-		select {
-		case <-waitCh:
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
+	return waitCh, cancelFn
 }
 
 // Run executes the media-clock pacing loop until the context is canceled or the writer is closed.

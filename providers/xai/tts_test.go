@@ -1,3 +1,5 @@
+//go:build xaispeech
+
 package xai
 
 import (
@@ -208,5 +210,80 @@ func TestXAITTS_ErrorHandling(t *testing.T) {
 
 	if !errSeen {
 		t.Error("expected error frame emitted downstream")
+	}
+}
+
+func TestXAITTS_MultiSentenceQueue_FIFO(t *testing.T) {
+	rawPCM := make([]byte, 960) // 1 frame
+	mockClient := &mockTTSClient{pcmData: rawPCM}
+	cfg := DefaultTTSConfig()
+	cfg.Client = mockClient
+
+	proc, err := NewTTSProcessor(cfg)
+	if err != nil {
+		t.Fatalf("new tts processor: %v", err)
+	}
+
+	sink := &core.PassthroughProcessor{}
+	pipe, err := core.NewPipeline(proc, sink)
+	if err != nil {
+		t.Fatalf("new pipeline: %v", err)
+	}
+
+	session, err := core.NewSession(2, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	if err := session.Start(); err != nil {
+		t.Fatalf("start session: %v", err)
+	}
+	defer session.Close()
+
+	// Post sentence 1 and sentence 2 rapidly in succession
+	_ = session.Post(&core.SynthesisUnitFrame{
+		Text:    "First sentence.",
+		Turn:    "turn-1",
+		Gen:     1,
+		UnitID:  1,
+		IsFinal: false,
+	})
+	_ = session.Post(&core.SynthesisUnitFrame{
+		Text:    "Second sentence.",
+		Turn:    "turn-1",
+		Gen:     1,
+		UnitID:  2,
+		IsFinal: true,
+	})
+
+	deadline := time.After(2 * time.Second)
+	var unitIDsSeen []uint64
+
+	for len(unitIDsSeen) < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for both units to complete: saw unitIDs %v", unitIDsSeen)
+		default:
+			unitIDsSeen = nil
+			for _, f := range sink.GetFrames() {
+				if af, ok := f.(*core.OutputAudioFrame); ok {
+					if len(unitIDsSeen) == 0 || unitIDsSeen[len(unitIDsSeen)-1] != af.UnitID {
+						unitIDsSeen = append(unitIDsSeen, af.UnitID)
+					}
+				}
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
+	if len(unitIDsSeen) != 2 || unitIDsSeen[0] != 1 || unitIDsSeen[1] != 2 {
+		t.Fatalf("expected units [1, 2] in FIFO order, got: %v", unitIDsSeen)
+	}
+
+	mockClient.mu.Lock()
+	calls := mockClient.calls
+	mockClient.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("expected both sentences synthesized (calls=2), got %d", calls)
 	}
 }

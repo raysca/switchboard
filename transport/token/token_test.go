@@ -26,6 +26,7 @@ func createToken(t *testing.T, jti string, iss string, aud string, iat time.Time
 			Audience:  jwt.ClaimStrings{aud},
 			IssuedAt:  jwt.NewNumericDate(iat),
 			ExpiresAt: jwt.NewNumericDate(exp),
+			Subject:   "user-123",
 		},
 		Principal: "user-123",
 	}
@@ -196,6 +197,16 @@ func TestToken_MissingPrincipalRejected(t *testing.T) {
 	if _, err := val.ValidateAndConsume(signed); err != token.ErrTokenPrincipal {
 		t.Fatalf("expected ErrTokenPrincipal, got %v", err)
 	}
+
+	claims.Principal = "principal-only"
+	tok = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err = tok.SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := val.ValidateAndConsume(signed); err != token.ErrTokenPrincipal {
+		t.Fatalf("principal without sub must be rejected, got %v", err)
+	}
 }
 
 func TestToken_Redaction(t *testing.T) {
@@ -210,5 +221,94 @@ func TestToken_Redaction(t *testing.T) {
 	redactedLog := token.RedactToken(logLine)
 	if redactedLog != "failed handshake from ip=1.2.3.4 url=/ws?token=[REDACTED]&foo=bar" {
 		t.Fatalf("unexpected redacted log: %s", redactedLog)
+	}
+}
+
+func TestToken_ReplayCacheFull_NeverEvictsUnexpired(t *testing.T) {
+	now := time.Now()
+	cfg := token.DefaultConfig(testIssuer, testAudience, []byte(testSecret))
+	cfg.ReplayCacheSize = 3 // small cache for test
+	val, err := token.NewValidator(cfg, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tok1 := createToken(t, "jti-1", testIssuer, testAudience, now, now.Add(30*time.Second), jwt.SigningMethodHS256, []byte(testSecret))
+	tok2 := createToken(t, "jti-2", testIssuer, testAudience, now, now.Add(30*time.Second), jwt.SigningMethodHS256, []byte(testSecret))
+	tok3 := createToken(t, "jti-3", testIssuer, testAudience, now, now.Add(30*time.Second), jwt.SigningMethodHS256, []byte(testSecret))
+	tok4 := createToken(t, "jti-4", testIssuer, testAudience, now, now.Add(30*time.Second), jwt.SigningMethodHS256, []byte(testSecret))
+
+	if _, err := val.ValidateAndConsume(tok1); err != nil {
+		t.Fatalf("tok1 consume: %v", err)
+	}
+	if _, err := val.ValidateAndConsume(tok2); err != nil {
+		t.Fatalf("tok2 consume: %v", err)
+	}
+	if _, err := val.ValidateAndConsume(tok3); err != nil {
+		t.Fatalf("tok3 consume: %v", err)
+	}
+
+	// Cache is full of unexpired tokens. tok4 must be rejected with ErrReplayCacheFull!
+	if _, err := val.ValidateAndConsume(tok4); err != token.ErrReplayCacheFull {
+		t.Fatalf("expected ErrReplayCacheFull for tok4, got: %v", err)
+	}
+
+	// tok1 MUST NOT have been evicted; replaying tok1 must still yield ErrTokenReplayed!
+	if _, err := val.ValidateAndConsume(tok1); err != token.ErrTokenReplayed {
+		t.Fatalf("expected tok1 to still be rejected with ErrTokenReplayed, got: %v", err)
+	}
+}
+
+func TestToken_RequireKeyID(t *testing.T) {
+	now := time.Now()
+	cfg := token.DefaultConfig(testIssuer, testAudience, []byte(testSecret))
+	cfg.RequireKeyID = true
+	cfg.KeyID = "v1"
+	val, err := token.NewValidator(cfg, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Missing kid
+	tokNoKid := createToken(t, "jti-nokid", testIssuer, testAudience, now, now.Add(30*time.Second), jwt.SigningMethodHS256, []byte(testSecret))
+	if _, err := val.ValidateAndConsume(tokNoKid); err == nil {
+		t.Fatal("expected error for token with missing kid")
+	}
+
+	// Mismatched kid
+	claims := token.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "jti-wrongkid",
+			Issuer:    testIssuer,
+			Audience:  jwt.ClaimStrings{testAudience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(30 * time.Second)),
+		},
+		Principal: "user-1",
+	}
+	claims.Subject = "user-1"
+	tokWrong := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokWrong.Header["kid"] = "v2"
+	signedWrong, err := tokWrong.SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := val.ValidateAndConsume(signedWrong); err == nil {
+		t.Fatal("expected error for token with mismatched kid")
+	}
+
+	// Valid kid
+	tokValid := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokValid.Header["kid"] = "v1"
+	signedValid, err := tokValid.SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := val.ValidateAndConsume(signedValid)
+	if err != nil {
+		t.Fatalf("valid kid failed: %v", err)
+	}
+	if c.ID != "jti-wrongkid" {
+		t.Fatalf("unexpected claims: %+v", c)
 	}
 }

@@ -1,3 +1,5 @@
+//go:build xaispeech
+
 package xai
 
 import (
@@ -130,6 +132,11 @@ func (c *RealXAITTSClient) Synthesize(ctx context.Context, text string, cfg TTSC
 	return pcmBytes, nil
 }
 
+type ttsCancel struct {
+	seq    uint64
+	cancel context.CancelFunc
+}
+
 // TTSProcessor converts SynthesisUnitFrame into raw OutputAudioFrame chunks using xAI.
 type TTSProcessor struct {
 	cfg     TTSConfig
@@ -137,10 +144,13 @@ type TTSProcessor struct {
 	session core.SessionController
 	index   int
 
-	mu           sync.Mutex
-	activeCancel context.CancelFunc
-	activeGen    uint64
-	closed       bool
+	mu          sync.Mutex
+	cond        *sync.Cond
+	cancels     []ttsCancel
+	nextSeq     uint64
+	finishedSeq uint64
+	activeGen   uint64
+	closed      bool
 
 	// Metrics
 	RequestsTotal atomic.Uint64
@@ -148,6 +158,7 @@ type TTSProcessor struct {
 	AudioFrames   atomic.Uint64
 	AudioBytes    atomic.Uint64
 	ErrorsTotal   atomic.Uint64
+	StaleTotal    atomic.Uint64
 }
 
 // NewTTSProcessor creates a new xAI TTSProcessor.
@@ -168,10 +179,12 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	if client == nil {
 		client = NewRealXAITTSClient()
 	}
-	return &TTSProcessor{
+	p := &TTSProcessor{
 		cfg:    cfg,
 		client: client,
-	}, nil
+	}
+	p.cond = sync.NewCond(&p.mu)
+	return p, nil
 }
 
 // Attach registers the processor with the session pipeline and supervisor.
@@ -188,11 +201,17 @@ func (p *TTSProcessor) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.closed = true
-	if p.activeCancel != nil {
-		p.activeCancel()
-		p.activeCancel = nil
-	}
+	p.cancelAllLocked()
+	p.finishedSeq = p.nextSeq
+	p.cond.Broadcast()
 	return nil
+}
+
+func (p *TTSProcessor) cancelAllLocked() {
+	for _, c := range p.cancels {
+		c.cancel()
+	}
+	p.cancels = nil
 }
 
 // ProcessFrame processes frames traversing the pipeline.
@@ -203,19 +222,17 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
-		if p.activeCancel != nil {
-			p.activeCancel()
-			p.activeCancel = nil
-		}
+		p.cancelAllLocked()
+		p.finishedSeq = p.nextSeq
+		p.cond.Broadcast()
 		p.mu.Unlock()
 		return e.Push(f)
 
 	case *core.CancelFrame:
 		p.mu.Lock()
-		if p.activeCancel != nil {
-			p.activeCancel()
-			p.activeCancel = nil
-		}
+		p.cancelAllLocked()
+		p.finishedSeq = p.nextSeq
+		p.cond.Broadcast()
 		p.mu.Unlock()
 		return e.Push(f)
 
@@ -239,23 +256,43 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 
 	// Stale generation check
 	if unit.Gen != 0 && unit.Gen < s.CurrentGeneration() {
+		p.StaleTotal.Add(1)
 		p.mu.Unlock()
 		return nil
 	}
 
-	if p.activeCancel != nil {
-		p.activeCancel()
-	}
-
 	parent := s.Context()
 	synthCtx, cancel := context.WithTimeout(parent, p.cfg.Timeout)
-	p.activeCancel = cancel
+	seq := p.nextSeq + 1
+	p.nextSeq = seq
+	p.cancels = append(p.cancels, ttsCancel{seq: seq, cancel: cancel})
 	p.activeGen = unit.Gen
 	p.mu.Unlock()
+
+	// Push unit frame downstream for assistant context tracking
+	if err := e.Push(unit); err != nil {
+		cancel()
+		return err
+	}
 
 	p.RequestsTotal.Add(1)
 	return s.Go(func(sessionCtx context.Context) {
 		defer cancel()
+		defer func() {
+			p.mu.Lock()
+			kept := make([]ttsCancel, 0, len(p.cancels))
+			for _, c := range p.cancels {
+				if c.seq != seq {
+					kept = append(kept, c)
+				}
+			}
+			p.cancels = kept
+			if p.finishedSeq+1 == seq {
+				p.finishedSeq = seq
+			}
+			p.cond.Broadcast()
+			p.mu.Unlock()
+		}()
 
 		var pcmData []byte
 		var committed bool
@@ -278,8 +315,22 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 			}
 			p.ErrorsTotal.Add(1)
 			_ = s.Reenter(&core.ErrorFrame{
-				Err: opErr,
+				Err:   opErr,
+				Fatal: false,
 			}, core.Downstream, p.index+1, unit.Gen)
+			return
+		}
+
+		// Wait for turn in emission sequence: units must be emitted strictly in arrival order
+		p.mu.Lock()
+		for p.finishedSeq+1 != seq && synthCtx.Err() == nil && sessionCtx.Err() == nil && !p.closed {
+			p.cond.Wait()
+		}
+		stale := p.closed || synthCtx.Err() != nil || sessionCtx.Err() != nil || (unit.Gen != 0 && unit.Gen < s.CurrentGeneration())
+		p.mu.Unlock()
+
+		if stale {
+			p.StaleTotal.Add(1)
 			return
 		}
 

@@ -1,21 +1,87 @@
 package vad
 
 import (
+	"encoding/binary"
 	"math"
+	"math/rand/v2"
+	"os"
 	"path/filepath"
+	"sort"
 	"testing"
-	"time"
-
-	"govoice/loadgen"
-	"govoice/voice"
 )
 
-func lib(t *testing.T) *loadgen.Library {
-	l, err := loadgen.Load(filepath.Join(Root(), "assets", "speech"), 0.0005)
+type testClip struct {
+	Samples []float32
+}
+
+type testLib struct {
+	Clips []testClip
+	Noise []float32
+}
+
+func lib(t *testing.T) *testLib {
+	l, err := loadTestLib(filepath.Join(Root(), "assets", "speech"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return l
+}
+
+func loadTestLib(dir string) (*testLib, error) {
+	files, err := filepath.Glob(filepath.Join(dir, "*.wav"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	lib := &testLib{}
+	for _, fn := range files {
+		pcm, err := readWavPCM(fn)
+		if err != nil {
+			return nil, err
+		}
+		lib.Clips = append(lib.Clips, testClip{Samples: pcm})
+	}
+	if len(lib.Clips) == 0 {
+		return nil, os.ErrNotExist
+	}
+	r := rand.New(rand.NewPCG(1, 2))
+	lib.Noise = make([]float32, 30*16000)
+	for i := range lib.Noise {
+		lib.Noise[i] = float32(r.NormFloat64() * 0.0005)
+	}
+	return lib, nil
+}
+
+func readWavPCM(fn string) ([]float32, error) {
+	b, err := os.ReadFile(fn)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
+		return nil, os.ErrInvalid
+	}
+	for p := 12; p+8 <= len(b); {
+		id, sz := string(b[p:p+4]), int(binary.LittleEndian.Uint32(b[p+4:]))
+		p += 8
+		if id == "fmt " {
+			ch := binary.LittleEndian.Uint16(b[p+2:])
+			sr := binary.LittleEndian.Uint32(b[p+4:])
+			bits := binary.LittleEndian.Uint16(b[p+14:])
+			if ch != 1 || sr != 16000 || bits != 16 {
+				return nil, os.ErrInvalid
+			}
+		}
+		if id == "data" {
+			sz = min(sz, len(b)-p)
+			out := make([]float32, sz/2)
+			for i := range out {
+				out[i] = float32(int16(binary.LittleEndian.Uint16(b[p+2*i:]))) / 32768
+			}
+			return out, nil
+		}
+		p += sz + sz&1
+	}
+	return nil, os.ErrInvalid
 }
 
 // streamProbs runs one clip through a streaming state with batch size 1.
@@ -101,60 +167,5 @@ func TestStreamingAndBatching(t *testing.T) {
 	t.Logf("batched vs unbatched max |dprob| = %g", maxDiff)
 	if maxDiff > 1e-4 {
 		t.Fatal("batched inference diverges from unbatched")
-	}
-}
-
-// End-to-end: sessions + VAD processor + shared executor + real-time feeder.
-func TestEndToEndDetection(t *testing.T) {
-	for _, mode := range []string{"global", "sharded", "process"} {
-		t.Run(mode, func(t *testing.T) {
-			L := lib(t)
-			ex, err := New(Config{Mode: mode, Workers: 2, Batch: 4, QueueCap: 256})
-			if err != nil {
-				t.Fatal(err)
-			}
-			m := voice.NewManager()
-			pool := loadgen.NewPool(1)
-			var streams []*loadgen.Stream
-			for i := 0; i < 10; i++ {
-				st := &loadgen.Stream{TL: loadgen.NewTimeline(L, uint64(i+1), 0.5)}
-				s, _, err := m.Create(voice.Spec{Build: func(s *voice.Session) ([]voice.Processor, error) {
-					return []voice.Processor{NewLegacyProcessor(ex, DefaultProcessorConfig(), nil)}, nil
-				}})
-				if err != nil {
-					t.Fatal(err)
-				}
-				s.OnOutput = func(f voice.Frame) {
-					if sf, ok := f.(*voice.SpeechStartedFrame); ok {
-						st.Detections = append(st.Detections, sf.EmittedAt)
-					}
-				}
-				st.S, st.Start = s, time.Now()
-				streams = append(streams, st)
-				pool.Add(st)
-			}
-			from := time.Now()
-			time.Sleep(12 * time.Second)
-			until := time.Now()
-			pool.Stop()
-			var tot loadgen.Score
-			for _, st := range streams {
-				st.S.Stop()
-				sc := st.Score(from, until)
-				tot.Onsets += sc.Onsets
-				tot.Hits += sc.Hits
-				tot.False += sc.False
-			}
-			ex.Close()
-			m.Close()
-			p99 := m.VADLatency.Quantile(0.99)
-			t.Logf("%s: onsets %d hits %d false %d; VAD p99 %v; exec %+v", mode, tot.Onsets, tot.Hits, tot.False, p99, ex.Stats())
-			if tot.Onsets < 10 || tot.Hits*100 < tot.Onsets*95 || tot.False > 2 {
-				t.Fatal("detection accuracy too low")
-			}
-			if st := ex.Stats(); st.Streams != 0 {
-				t.Fatalf("stream registrations leaked: %d", st.Streams)
-			}
-		})
 	}
 }

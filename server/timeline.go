@@ -49,10 +49,9 @@ type TimelineEvent struct {
 
 // SessionTimeline stores a bounded circular ring of diagnostic events for a single call.
 type SessionTimeline struct {
-	sessionID        uint64
-	maxEvents        int
-	ttl              time.Duration
-	enableTranscript bool
+	sessionID uint64
+	maxEvents int
+	ttl       time.Duration
 
 	mu           sync.Mutex
 	events       []TimelineEvent
@@ -63,7 +62,7 @@ type SessionTimeline struct {
 }
 
 // NewSessionTimeline initializes a bounded ring buffer for a call.
-func NewSessionTimeline(sessionID uint64, maxEvents int, ttl time.Duration, enableTranscript bool) *SessionTimeline {
+func NewSessionTimeline(sessionID uint64, maxEvents int, ttl time.Duration) *SessionTimeline {
 	if maxEvents <= 0 {
 		maxEvents = 500
 	}
@@ -71,12 +70,11 @@ func NewSessionTimeline(sessionID uint64, maxEvents int, ttl time.Duration, enab
 		ttl = 10 * time.Minute
 	}
 	return &SessionTimeline{
-		sessionID:        sessionID,
-		maxEvents:        maxEvents,
-		ttl:              ttl,
-		enableTranscript: enableTranscript,
-		events:           make([]TimelineEvent, maxEvents),
-		createdAt:        time.Now(),
+		sessionID: sessionID,
+		maxEvents: maxEvents,
+		ttl:       ttl,
+		events:    make([]TimelineEvent, maxEvents),
+		createdAt: time.Now(),
 	}
 }
 
@@ -130,16 +128,14 @@ type TimelineRegistry struct {
 	timelines map[uint64]*SessionTimeline
 	maxEvents int
 	ttl       time.Duration
-	enableTx  bool
 }
 
 // NewTimelineRegistry creates an empty registry.
-func NewTimelineRegistry(maxEvents int, ttl time.Duration, enableTx bool) *TimelineRegistry {
+func NewTimelineRegistry(maxEvents int, ttl time.Duration) *TimelineRegistry {
 	return &TimelineRegistry{
 		timelines: make(map[uint64]*SessionTimeline),
 		maxEvents: maxEvents,
 		ttl:       ttl,
-		enableTx:  enableTx,
 	}
 }
 
@@ -151,7 +147,7 @@ func (r *TimelineRegistry) GetOrCreate(sessionID uint64) *SessionTimeline {
 	if tl, ok := r.timelines[sessionID]; ok {
 		return tl
 	}
-	tl := NewSessionTimeline(sessionID, r.maxEvents, r.ttl, r.enableTx)
+	tl := NewSessionTimeline(sessionID, r.maxEvents, r.ttl)
 	r.timelines[sessionID] = tl
 	return tl
 }

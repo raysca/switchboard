@@ -30,14 +30,14 @@ const server = http.createServer((req, res) => {
       {
         jti: crypto.randomUUID(),
         sub: 'web-user-demo',
-        aud: 'govoice-rtvi',
-        iss: 'govoice',
+        aud: 'govoice-v1-client',
+        iss: 'govoice-v1',
         exp: now + 300,
         iat: now,
         pipeline: pipeline
       },
       SECRET_KEY,
-      { algorithm: 'HS256' }
+      { algorithm: 'HS256', keyid: 'v1' }
     );
 
     res.writeHead(200, { 'Content-Type': 'application/json' });

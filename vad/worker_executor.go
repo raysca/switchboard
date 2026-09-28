@@ -22,7 +22,6 @@ const (
 
 // workerProcessBackend implements executorBackend by managing isolated child worker processes.
 type workerProcessBackend struct {
-	exec         *Executor
 	cfg          Config
 	modelSHA     [32]byte
 	workers      []*workerProcess
@@ -165,7 +164,6 @@ func NewWorkerProcessExecutor(cfg Config) (*Executor, error) {
 
 	e := &Executor{cfg: cfg}
 	b := &workerProcessBackend{
-		exec:     e,
 		cfg:      cfg,
 		modelSHA: modelSHA,
 		queues:   make([]chan *Job, cfg.Workers),
@@ -531,8 +529,6 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 					j.Err = ErrWorker
 					wp.backend.statCounters.workerErrors.Add(1)
 				}
-				wp.backend.exec.QueueWait.Record(j.Started.Sub(j.Submitted))
-				wp.backend.exec.Inference.Record(fin.Sub(j.Started))
 				wp.backend.finish(j)
 			}
 		}

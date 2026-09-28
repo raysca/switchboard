@@ -9,7 +9,6 @@ import (
 
 // inProcessBackend implements executorBackend using in-process sharded ORT sessions.
 type inProcessBackend struct {
-	exec         *Executor
 	cfg          Config
 	queues       []chan *Job
 	wg           sync.WaitGroup
@@ -57,8 +56,7 @@ func (s *inProcessStream) Close() {
 func NewInProcessShardedExecutor(cfg Config) (*Executor, error) {
 	e := &Executor{cfg: cfg}
 	b := &inProcessBackend{
-		exec: e,
-		cfg:  cfg,
+		cfg: cfg,
 	}
 	e.backend = b
 
@@ -210,8 +208,6 @@ func (b *inProcessBackend) worker(q chan *Job, run func([]*Job) error, closer fu
 			if err != nil {
 				j.Err = ErrWorker
 			}
-			b.exec.QueueWait.Record(j.Started.Sub(j.Submitted))
-			b.exec.Inference.Record(fin.Sub(j.Started))
 			b.finish(j)
 		}
 	}

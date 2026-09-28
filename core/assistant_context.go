@@ -40,6 +40,7 @@ type AssistantContextProcessor struct {
 	totalTurnText  strings.Builder
 	unitCounter    uint64
 	finalUnitID    uint64 // 0 until final unit is emitted
+	llmComplete    bool   // true once complete LLMText has been received
 	ttsStopped     bool
 	pendingUnits   map[uint64]string
 	deliveredUnits map[uint64]string
@@ -93,6 +94,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		p.totalTurnText.Reset()
 		p.unitCounter = 0
 		p.finalUnitID = 0
+		p.llmComplete = false
 		p.ttsStopped = false
 		p.pendingUnits = make(map[uint64]string)
 		p.deliveredUnits = make(map[uint64]string)
@@ -115,6 +117,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		if p.isStaleTurn(lt.Turn, lt.Gen) {
 			return nil
 		}
+		p.llmComplete = true
 		// Providers emit deltas and then a final frame containing the full
 		// accumulated response. Append only text that is not already buffered.
 		p.appendFinalText(lt.Text)
@@ -129,7 +132,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 			return nil
 		}
 		p.ttsStopped = true
-		if len(p.deliveredUnits) > 0 && len(p.deliveredUnits) == len(p.pendingUnits) {
+		if p.llmComplete && p.finalUnitID > 0 && len(p.deliveredUnits) >= len(p.pendingUnits) {
 			return p.commitTurn(e, false)
 		}
 		return e.PushDirection(f, dir)
@@ -140,12 +143,15 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 			return nil
 		}
 		if wc.IsFinal {
-			// Final audio frame of unit wc.UnitID has completed writing
+			if wc.Err != nil {
+				return p.failUndeliveredTurn(e, wc.Err)
+			}
+			// Final audio frame of unit wc.UnitID was written to the client.
 			if unitText, exists := p.pendingUnits[wc.UnitID]; exists {
 				p.deliveredUnits[wc.UnitID] = unitText
 			}
-			// If this was the final unit of the turn, commit complete assistant turn
-			if (p.finalUnitID > 0 && wc.UnitID == p.finalUnitID) || (p.ttsStopped && len(p.deliveredUnits) == len(p.pendingUnits)) {
+			// If this was the final unit of the turn and LLM has completed, commit complete assistant turn
+			if p.llmComplete && p.finalUnitID > 0 && wc.UnitID == p.finalUnitID {
 				return p.commitTurn(e, false)
 			}
 		}
@@ -353,10 +359,28 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	p.textBuf.Reset()
 	p.unitCounter = 0
 	p.finalUnitID = 0
+	p.llmComplete = false
+	p.ttsStopped = false
 	p.pendingUnits = make(map[uint64]string)
 	p.deliveredUnits = make(map[uint64]string)
 
 	return nil
+}
+
+// failUndeliveredTurn refuses to commit assistant text when the final audio write failed.
+func (p *AssistantContextProcessor) failUndeliveredTurn(e Emitter, writeErr error) error {
+	p.activeTurn = ""
+	p.textBuf.Reset()
+	p.unitCounter = 0
+	p.finalUnitID = 0
+	p.llmComplete = false
+	p.ttsStopped = false
+	p.pendingUnits = make(map[uint64]string)
+	p.deliveredUnits = make(map[uint64]string)
+	return e.Push(&ErrorFrame{
+		Err:   fmt.Errorf("assistant audio was not delivered: %w", writeErr),
+		Fatal: true,
+	})
 }
 
 // handleInterruption executes the server-side interruption barrier and partial context rule.
@@ -407,6 +431,8 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	p.textBuf.Reset()
 	p.unitCounter = 0
 	p.finalUnitID = 0
+	p.llmComplete = false
+	p.ttsStopped = false
 	p.pendingUnits = make(map[uint64]string)
 	p.deliveredUnits = make(map[uint64]string)
 

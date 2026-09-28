@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-
-	"govoice/voice"
 )
 
 var (
@@ -113,10 +111,8 @@ func DefaultConfig() Config {
 
 // Executor coordinates VAD inference across sessions and exposes telemetry and capacity signals.
 type Executor struct {
-	cfg       Config
-	QueueWait voice.Hist
-	Inference voice.Hist
-	backend   executorBackend
+	cfg     Config
+	backend executorBackend
 }
 
 // New creates an Executor according to cfg.Mode.

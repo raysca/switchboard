@@ -29,10 +29,12 @@ func createScenarioToken(t *testing.T, srv *Server, principal string, jti string
 			Audience:  jwt.ClaimStrings{srv.cfg.Token.Audience},
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
+			Subject:   principal,
 		},
 		Principal: principal,
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tok.Header["kid"] = "v1"
 	tokString, err := tok.SignedString([]byte(srv.cfg.Token.Secret))
 	if err != nil {
 		t.Fatalf("mint test token: %v", err)
@@ -125,29 +127,10 @@ func TestScenarioC_InterchangeabilityDeployed(t *testing.T) {
 	}
 }
 
-// TestFullXAI_DeployedPipeline verifies that the 100% native xAI pipeline (xAI STT -> xAI LLM -> xAI TTS)
-// is registered in default server configuration with all three xAI native providers.
-func TestFullXAI_DeployedPipeline(t *testing.T) {
+func TestFullXAI_NotAdvertised(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.Token.Secret = "test-scenario-secret-key-1234567890"
-
-	srv, err := NewServer(cfg)
-	if err != nil {
-		t.Fatalf("new server: %v", err)
-	}
-
-	pCfg, ok := srv.cfg.Pipelines["full_xai"]
-	if !ok {
-		t.Fatal("missing full_xai pipeline in DefaultConfig")
-	}
-	if pCfg.STT != "xai.stt" {
-		t.Errorf("expected full_xai STT to be xai.stt, got: %s", pCfg.STT)
-	}
-	if pCfg.LLM != "xai.llm" {
-		t.Errorf("expected full_xai LLM to be xai.llm, got: %s", pCfg.LLM)
-	}
-	if pCfg.TTS != "xai.tts" {
-		t.Errorf("expected full_xai TTS to be xai.tts, got: %s", pCfg.TTS)
+	if _, ok := cfg.Pipelines["full_xai"]; ok {
+		t.Fatal("xAI speech pipeline must not be part of the default server")
 	}
 }
 

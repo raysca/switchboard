@@ -21,16 +21,18 @@ origin_allowlist:
 token:
   secret_env: "TOKEN_SECRET"
   secret: ""
-  issuer: "govoice"
-  audience: "govoice-rtvi"
+  issuer: "govoice-v1"
+  audience: "govoice-v1-client"
   max_lifetime: 5m
   clock_skew: 30s
   replay_cache_limit: 50000
+  key_id: "v1"
 
 limits:
   max_pending_handshakes: 100
   max_sessions: 250
   max_sessions_per_principal: 5
+  max_sessions_per_ip: 5
   upgrade_timeout: 5s
   ready_timeout: 10s
   max_call_duration: 60m
@@ -70,15 +72,6 @@ providers:
     endpoint: "https://api.x.ai/v1/responses"
     api_key_env: "XAI_API_KEY"
     system_prompt: "You are a professional voice assistant powered by Grok."
-  xai_stt:
-    endpoint: "wss://api.x.ai/v1/stt"
-    api_key_env: "XAI_API_KEY"
-    language: "en"
-  xai_tts:
-    endpoint: "https://api.x.ai/v1/tts"
-    api_key_env: "XAI_API_KEY"
-    voice: "eve"
-    language: "en"
 
 pipelines:
   default:
@@ -93,16 +86,9 @@ pipelines:
     tts: "google.tts"
     max_messages: 20
     max_tokens: 4000
-  full_xai:
-    stt: "xai.stt"
-    llm: "xai.llm"
-    tts: "xai.tts"
-    max_messages: 20
-    max_tokens: 4000
 
 observability:
   log_level: "info"
   json_format: true
-  enable_transcript_logging: false
   timeline_max_events: 1000
   timeline_ttl: 15m

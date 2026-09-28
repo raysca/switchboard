@@ -1,3 +1,5 @@
+//go:build xaispeech
+
 package main
 
 import (

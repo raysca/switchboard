@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +41,7 @@ func createTestToken(t *testing.T, jti string, iat time.Time, exp time.Time) str
 			Audience:  jwt.ClaimStrings{testAudience},
 			IssuedAt:  jwt.NewNumericDate(iat),
 			ExpiresAt: jwt.NewNumericDate(exp),
+			Subject:   "user-123",
 		},
 		Principal: "user-123",
 	}
@@ -321,7 +323,9 @@ func TestPhase3_StaleGenerationDiscard_AndSlowClientOverflow(t *testing.T) {
 	}
 
 	// 4d. Flush clears old generation queue and drops bytes cleanly
-	pacer.Flush(2)
+	if err := pacer.Flush(context.Background(), 2); err != nil {
+		t.Fatalf("flush failed: %v", err)
+	}
 	if pacer.QueuedBytes() != 0 || pacer.QueuedDuration() != 0 {
 		t.Fatalf("flush did not clear queue: bytes=%d, dur=%v", pacer.QueuedBytes(), pacer.QueuedDuration())
 	}
@@ -649,19 +653,19 @@ func TestPhase3_InputRates_ResampleCorrectlyAtChunkBoundaries(t *testing.T) {
 	}
 }
 
-// 10. Handshake flood returns HTTP 429
+// 10. Concurrent upgrades cannot pass the session limit.
 func TestPhase3_HandshakeFlood_ReturnsHTTP429(t *testing.T) {
 	now := time.Now()
 	val, _ := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
 	serverCfg := ws.DefaultServerConfig(val)
-	serverCfg.MaxPendingHandshakes = 2
+	serverCfg.MaxConcurrentSessions = 2
+	serverCfg.MaxPendingHandshakes = 50
 	serverCfg.HandshakeTimeout = 500 * time.Millisecond
 
 	server := ws.NewServer(serverCfg)
 	ts := httptest.NewServer(server)
 	defer ts.Close()
 
-	// Fill pending handshakes
 	var wg sync.WaitGroup
 	var statuses []int
 	var mu sync.Mutex
@@ -671,19 +675,17 @@ func TestPhase3_HandshakeFlood_ReturnsHTTP429(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			tokenStr := createTestToken(t, fmt.Sprintf("jti-flood-%d", idx), now, now.Add(time.Minute))
-			req, _ := http.NewRequest("GET", ts.URL+"?token="+tokenStr, nil)
-			req.Header.Set("Upgrade", "websocket")
-			req.Header.Set("Connection", "Upgrade")
-			req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
-			req.Header.Set("Sec-WebSocket-Version", "13")
-
-			client := &http.Client{Timeout: 300 * time.Millisecond}
-			resp, err := client.Do(req)
+			wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "?token=" + tokenStr
+			conn, resp, err := websocket.Dial(context.Background(), wsURL, nil)
+			mu.Lock()
+			defer mu.Unlock()
 			if err == nil {
-				mu.Lock()
+				statuses = append(statuses, http.StatusSwitchingProtocols)
+				conn.Close(websocket.StatusNormalClosure, "")
+				return
+			}
+			if resp != nil {
 				statuses = append(statuses, resp.StatusCode)
-				mu.Unlock()
-				resp.Body.Close()
 			}
 		}(i)
 	}
@@ -700,9 +702,40 @@ func TestPhase3_HandshakeFlood_ReturnsHTTP429(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// At least one flood attempt should receive 429 or handshake limit error
-	if !has429 && len(statuses) < 5 {
-		// Handshake limit reached
+	if !has429 {
+		t.Fatalf("expected at least one 429 from the session limit, got %v", statuses)
+	}
+}
+
+func TestPendingHandshakeReleasedAfterUpgrade(t *testing.T) {
+	now := time.Now()
+	val, _ := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
+	serverCfg := ws.DefaultServerConfig(val)
+	serverCfg.MaxPendingHandshakes = 1
+	serverCfg.MaxConcurrentSessions = 5
+	server := ws.NewServer(serverCfg)
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+
+	ctx := context.Background()
+	var conns []*websocket.Conn
+	defer func() {
+		for _, c := range conns {
+			c.Close(websocket.StatusNormalClosure, "")
+		}
+	}()
+	for i := 0; i < 3; i++ {
+		tokenStr := createTestToken(t, fmt.Sprintf("jti-pending-%d", i), now, now.Add(time.Minute))
+		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "?token=" + tokenStr
+		conn, resp, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			status := 0
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			t.Fatalf("upgrade %d failed with %d: %v", i, status, err)
+		}
+		conns = append(conns, conn)
 	}
 }
 
@@ -717,5 +750,152 @@ func TestIsSecure_UntrustedForwardedProtoIsIgnored(t *testing.T) {
 	req.RemoteAddr = "10.0.0.1:443"
 	if !cfg.IsSecure(req) {
 		t.Fatal("a trusted proxy forwarding https should count as secure")
+	}
+}
+
+func TestPhase3_Flush_TimeoutFailsOnUnresponsiveWriter(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	writingStarted := make(chan struct{})
+	// writeFn ignores context cancellation and hangs
+	hangingWriteFn := func(writeCtx context.Context, data []byte) error {
+		select {
+		case <-writingStarted:
+		default:
+			close(writingStarted)
+		}
+		// Deliberately sleep longer than write timeout even if canceled
+		time.Sleep(200 * time.Millisecond)
+		return nil
+	}
+
+	pacer := ws.NewPacedWriter(ws.PacerConfig{
+		MaxQueueDuration: 5 * time.Second,
+		MaxQueueBytes:    65536,
+		WriteTimeout:     50 * time.Millisecond,
+	}, hangingWriteFn)
+
+	go func() {
+		_ = pacer.Run(ctx)
+	}()
+
+	// Enqueue a frame to trigger the hanging write
+	_ = pacer.Enqueue(&core.OutputAudioFrame{
+		Samples:    make([]byte, 960),
+		SampleRate: 24000,
+		Channels:   1,
+		Duration:   20 * time.Millisecond,
+		Gen:        1,
+	})
+
+	// Wait until the hanging write has actually started
+	select {
+	case <-writingStarted:
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for write to start")
+	}
+
+	// Flush must cancel the write and wait, but since the writer ignores cancellation,
+	// Flush must return ErrSlowClient rather than succeeding while old audio is in flight!
+	err := pacer.Flush(context.Background(), 1)
+	if err == nil {
+		t.Fatal("expected Flush to fail on unresponsive writer, but got nil")
+	}
+	if !errors.Is(err, ws.ErrSlowClient) {
+		t.Fatalf("expected ErrSlowClient from Flush, got: %v", err)
+	}
+}
+
+func TestSecurity_ClientIPSpoofing_RightToLeftTraversal(t *testing.T) {
+	cfg := &ws.SecurityConfig{
+		TrustedProxies: []string{"10.0.0.1/32", "10.0.0.2/32"},
+	}
+
+	// 1. Untrusted client connecting through two trusted proxies.
+	// Client at 198.51.100.42 connects to 10.0.0.2, which connects to 10.0.0.1 (RemoteAddr).
+	// Client injects a spoofed IP 1.2.3.4 into X-Forwarded-For: "1.2.3.4, 198.51.100.42, 10.0.0.2"
+	req := httptest.NewRequest("GET", "http://example.com/ws", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "1.2.3.4, 198.51.100.42, 10.0.0.2")
+
+	clientIP := cfg.ClientIP(req)
+	// Right-to-left traversal:
+	// 10.0.0.2 is trusted.
+	// 198.51.100.42 is NOT trusted -> selected as real client IP!
+	// Spoofed 1.2.3.4 is NOT selected!
+	if clientIP != "198.51.100.42" {
+		t.Fatalf("expected client IP to be 198.51.100.42, got %q", clientIP)
+	}
+
+	// 2. Direct untrusted connection attempting to forge X-Forwarded-For
+	reqDirect := httptest.NewRequest("GET", "http://example.com/ws", nil)
+	reqDirect.RemoteAddr = "203.0.113.10:54321"
+	reqDirect.Header.Set("X-Forwarded-For", "1.2.3.4, 5.6.7.8")
+
+	directIP := cfg.ClientIP(reqDirect)
+	if directIP != "203.0.113.10" {
+		t.Fatalf("expected direct untrusted connection to use RemoteAddr 203.0.113.10, got %q", directIP)
+	}
+
+	reqBad := httptest.NewRequest("GET", "http://example.com/ws", nil)
+	reqBad.RemoteAddr = "10.0.0.1:12345"
+	reqBad.Header.Set("X-Forwarded-For", "not-an-ip, 198.51.100.42")
+	reqBad.Header.Set("X-Real-IP", "also-not-an-ip")
+	if got := cfg.ClientIP(reqBad); got != "198.51.100.42" {
+		t.Fatalf("expected invalid forwarded entries to be skipped, got %q", got)
+	}
+}
+
+func TestPipeline_AuthorizationCheck(t *testing.T) {
+	now := time.Now()
+	val, err := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	serverCfg := ws.DefaultServerConfig(val)
+	srv := ws.NewServer(serverCfg)
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	// Mint token with pipeline: "xai"
+	claims := token.Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "jti-pipe-xai",
+			Issuer:    testIssuer,
+			Audience:  jwt.ClaimStrings{testAudience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
+		},
+		Principal: "user-1",
+		Pipeline:  "xai",
+	}
+	claims.Subject = "user-1"
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokStr, _ := tok.SignedString([]byte(testSecret))
+
+	// 1. Client requests authorized pipeline "xai": succeeds
+	wsURL := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=xai", ts.Listener.Addr().String(), tokStr)
+	c, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	if err != nil {
+		t.Fatalf("expected connection to succeed for authorized pipeline, got: %v", err)
+	}
+	c.Close(websocket.StatusNormalClosure, "")
+
+	// 2. Client requests unauthorized override "default": rejected with 403
+	claims2 := claims
+	claims2.ID = "jti-pipe-xai-2"
+	tok2 := jwt.NewWithClaims(jwt.SigningMethodHS256, claims2)
+	tokStr2, _ := tok2.SignedString([]byte(testSecret))
+
+	wsURLUnauthorized := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=default", ts.Listener.Addr().String(), tokStr2)
+	_, resp, err := websocket.Dial(context.Background(), wsURLUnauthorized, nil)
+	if err == nil {
+		t.Fatal("expected unauthorized pipeline request to fail, but succeeded")
+	}
+	if resp != nil && resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden, got %d", resp.StatusCode)
 	}
 }

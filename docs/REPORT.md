@@ -68,4 +68,4 @@ The session runtime is decisively validated (µs startup, KB per call, flat chur
 ## Limitations
 macOS laptop, not Linux server hardware (P/E asymmetry); load generator in-process on the same cores; speech from macOS TTS voices; STT/LLM/TTS are fakes; `Close()` goroutines of leaked sessions are not counted in the managed-goroutine gauge (sessions are); per-session drop stats in containment include targets' own drops (~0.1 %).
 
-Reproduce: `make test`, `scripts/run_t8.sh`, `scripts/run_phase2.sh sharded 11 8 5000`, `.venv/bin/python scripts/plot.py`.
+The benchmark commands cited by the original POC (`scripts/run_t8.sh`, `scripts/run_phase2.sh`, `scripts/plot.py`, `cmd/bench`) are not in this tree. Numbers in this report are not reproducible from the current repository.

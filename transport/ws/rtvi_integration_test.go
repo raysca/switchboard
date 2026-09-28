@@ -385,7 +385,7 @@ func TestRTVI_BargeIn_PlaybackClearAndGenerationFence(t *testing.T) {
 		}
 	}
 
-	// Assert that bot-stopped-speaking (the playback-clear event proven in Phase 0) was emitted
+	// bot-stopped-speaking means the server stopped sending. The pinned client does not clear buffered playback.
 	hasClearEvent := false
 	for _, m := range messages {
 		if strings.Contains(m, "bot-stopped-speaking") {
@@ -395,7 +395,7 @@ func TestRTVI_BargeIn_PlaybackClearAndGenerationFence(t *testing.T) {
 	}
 
 	if !hasClearEvent {
-		t.Fatalf("Expected bot-stopped-speaking playback clear event on interruption, got: %v", messages)
+		t.Fatalf("expected bot-stopped-speaking after interruption, got: %v", messages)
 	}
 }
 

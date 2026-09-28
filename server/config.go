@@ -53,6 +53,7 @@ type Config struct {
 		MaxLifetime      time.Duration `yaml:"max_lifetime"`
 		ClockSkew        time.Duration `yaml:"clock_skew"`
 		ReplayCacheLimit int           `yaml:"replay_cache_limit"`
+		KeyID            string        `yaml:"key_id"` // Expected kid header in production (default "v1")
 	} `yaml:"token"`
 
 	// Limits & Admission
@@ -60,6 +61,7 @@ type Config struct {
 		MaxPendingHandshakes    int           `yaml:"max_pending_handshakes"`
 		MaxSessions             int           `yaml:"max_sessions"`
 		MaxSessionsPerPrincipal int           `yaml:"max_sessions_per_principal"`
+		MaxSessionsPerIP        int           `yaml:"max_sessions_per_ip"`
 		UpgradeTimeout          time.Duration `yaml:"upgrade_timeout"`
 		ReadyTimeout            time.Duration `yaml:"ready_timeout"`
 		MaxCallDuration         time.Duration `yaml:"max_call_duration"`
@@ -130,11 +132,10 @@ type Config struct {
 
 	// Observability
 	Observability struct {
-		LogLevel                string        `yaml:"log_level"`
-		JSONFormat              bool          `yaml:"json_format"`
-		EnableTranscriptLogging bool          `yaml:"enable_transcript_logging"`
-		TimelineMaxEvents       int           `yaml:"timeline_max_events"`
-		TimelineTTL             time.Duration `yaml:"timeline_ttl"`
+		LogLevel          string        `yaml:"log_level"`
+		JSONFormat        bool          `yaml:"json_format"`
+		TimelineMaxEvents int           `yaml:"timeline_max_events"`
+		TimelineTTL       time.Duration `yaml:"timeline_ttl"`
 	} `yaml:"observability"`
 }
 
@@ -159,8 +160,9 @@ func DefaultConfig(profile Profile) *Config {
 
 	// Token defaults
 	cfg.Token.SecretEnv = "TOKEN_SECRET"
-	cfg.Token.Issuer = "govoice"
-	cfg.Token.Audience = "govoice-rtvi"
+	cfg.Token.Issuer = "govoice-v1"
+	cfg.Token.Audience = "govoice-v1-client"
+	cfg.Token.KeyID = "v1"
 	cfg.Token.MaxLifetime = 5 * time.Minute
 	cfg.Token.ClockSkew = 30 * time.Second
 	cfg.Token.ReplayCacheLimit = 10000
@@ -231,17 +233,9 @@ func DefaultConfig(profile Profile) *Config {
 		MaxMessages: 20,
 		MaxTokens:   4000,
 	}
-	cfg.Pipelines["full_xai"] = PipelineConfig{
-		STT:         "xai.stt",
-		LLM:         "xai.llm",
-		TTS:         "xai.tts",
-		MaxMessages: 20,
-		MaxTokens:   4000,
-	}
 
 	// Observability
 	cfg.Observability.LogLevel = "info"
-	cfg.Observability.EnableTranscriptLogging = false
 	cfg.Observability.TimelineMaxEvents = 500
 	cfg.Observability.TimelineTTL = 10 * time.Minute
 

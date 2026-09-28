@@ -1,3 +1,5 @@
+//go:build xaispeech
+
 package xai
 
 import (
@@ -152,10 +154,19 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 }
 
 type activeSTTStream struct {
-	stream STTStream
-	cancel context.CancelFunc
-	ctx    context.Context
-	id     int
+	stream    STTStream
+	cancel    context.CancelFunc
+	ctx       context.Context
+	id        int
+	readyCh   chan struct{}
+	turnID    string
+	gen       uint64
+	lastText  string
+	finalSent bool
+
+	mu       sync.Mutex
+	audioBuf [][]byte
+	isReady  bool
 }
 
 // STTProcessor implements core.Processor for xAI Speech-to-Text.
@@ -221,6 +232,12 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.mu.Lock()
 		p.turnID = fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq)
 		p.streamGen = frame.Gen
+		if p.active != nil {
+			p.active.mu.Lock()
+			p.active.turnID = p.turnID
+			p.active.gen = frame.Gen
+			p.active.mu.Unlock()
+		}
 		p.mu.Unlock()
 		if err := p.ensureStream(ctx); err != nil {
 			p.ErrorsTotal.Add(1)
@@ -285,6 +302,18 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		return ErrProviderUnavailable
 	}
 
+	st.mu.Lock()
+	if !st.isReady {
+		// Buffer audio until transcript.created arrives (bound to 50 chunks = 1s of 20ms audio)
+		if len(st.audioBuf) < 50 {
+			st.audioBuf = append(st.audioBuf, append([]byte(nil), f.Samples...))
+		}
+		st.mu.Unlock()
+		p.RequestsTotal.Add(1)
+		return e.Push(f)
+	}
+	st.mu.Unlock()
+
 	sendCtx, sendCancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
 	defer sendCancel()
 
@@ -336,10 +365,14 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 	p.mu.Lock()
 	p.streamID++
 	active := &activeSTTStream{
-		stream: st,
-		cancel: cancel,
-		ctx:    streamCtx,
-		id:     p.streamID,
+		stream:   st,
+		cancel:   cancel,
+		ctx:      streamCtx,
+		id:       p.streamID,
+		readyCh:  make(chan struct{}),
+		turnID:   p.turnID,
+		gen:      p.streamGen,
+		audioBuf: make([][]byte, 0, 16),
 	}
 	p.active = active
 	p.mu.Unlock()
@@ -379,9 +412,12 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 				}
 				p.ErrorsTotal.Add(1)
 				if p.session != nil {
+					st.mu.Lock()
+					turnGen := st.gen
+					st.mu.Unlock()
 					_ = p.session.Reenter(&core.ErrorFrame{
 						Err: MapError("stt", err),
-					}, core.Downstream, p.index+1, p.streamGen)
+					}, core.Downstream, p.index+1, turnGen)
 				}
 				return
 			}
@@ -391,20 +427,40 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 			}
 
 			switch msg.Type {
+			case "transcript.created":
+				st.mu.Lock()
+				st.isReady = true
+				select {
+				case <-st.readyCh:
+				default:
+					close(st.readyCh)
+				}
+				// Flush buffered audio captured before transcript.created arrived
+				for _, chunk := range st.audioBuf {
+					_ = st.stream.SendAudio(st.ctx, chunk)
+				}
+				st.audioBuf = nil
+				st.mu.Unlock()
+
 			case "transcript.partial":
 				if msg.Text == "" {
 					continue
 				}
 
-				p.mu.Lock()
-				turn := p.turnID
-				turnGen := p.streamGen
+				st.mu.Lock()
+				turn := st.turnID
+				turnGen := st.gen
 				if turnGen == 0 && p.session != nil {
 					turnGen = p.session.CurrentGeneration()
 				}
-				p.mu.Unlock()
+				st.lastText = msg.Text
+				isUtteranceFinal := msg.SpeechFinal
+				st.mu.Unlock()
 
-				if msg.SpeechFinal || msg.IsFinal {
+				if isUtteranceFinal {
+					st.mu.Lock()
+					st.finalSent = true
+					st.mu.Unlock()
 					frame := &core.FinalTranscriptionFrame{
 						Text:      msg.Text,
 						Turn:      turn,
@@ -423,7 +479,27 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 				}
 
 			case "transcript.done":
-				// Stream turn concluded
+				st.mu.Lock()
+				turn := st.turnID
+				turnGen := st.gen
+				if turnGen == 0 && p.session != nil {
+					turnGen = p.session.CurrentGeneration()
+				}
+				lastText := st.lastText
+				finalSent := st.finalSent
+				st.mu.Unlock()
+
+				// If turn concluded and final transcript was not yet emitted, emit it now
+				if !finalSent && lastText != "" && p.session != nil {
+					frame := &core.FinalTranscriptionFrame{
+						Text:      lastText,
+						Turn:      turn,
+						Gen:       turnGen,
+						Timestamp: time.Now(),
+					}
+					_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
+				}
+
 				p.mu.Lock()
 				if p.active == st {
 					p.active = nil
@@ -438,9 +514,12 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 					errMsg = msg.Code
 				}
 				if p.session != nil {
+					st.mu.Lock()
+					turnGen := st.gen
+					st.mu.Unlock()
 					_ = p.session.Reenter(&core.ErrorFrame{
 						Err: MapError("stt", errors.New(errMsg)),
-					}, core.Downstream, p.index+1, p.streamGen)
+					}, core.Downstream, p.index+1, turnGen)
 				}
 			}
 		}

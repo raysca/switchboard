@@ -12,7 +12,7 @@ import (
 
 func TestTimeline_OrderingAndCapacityEviction(t *testing.T) {
 	// Ring buffer with small capacity (5 events)
-	tl := NewSessionTimeline(101, 5, 10*time.Minute, false)
+	tl := NewSessionTimeline(101, 5, 10*time.Minute)
 
 	// Record 7 events
 	for i := 1; i <= 7; i++ {
@@ -36,7 +36,7 @@ func TestTimeline_OrderingAndCapacityEviction(t *testing.T) {
 }
 
 func TestTimeline_TranscriptOmittedByDefault(t *testing.T) {
-	reg := NewTimelineRegistry(10, 10*time.Minute, false)
+	reg := NewTimelineRegistry(10, 10*time.Minute)
 	tl := reg.GetOrCreate(102)
 
 	tl.Record(TimelineEvent{
@@ -78,7 +78,7 @@ func TestTimeline_NonBlockingConcurrentRingEviction(t *testing.T) {
 	const goroutines = 10
 	const eventsPerGoroutine = 100
 
-	tl := NewSessionTimeline(201, capacity, 10*time.Minute, false)
+	tl := NewSessionTimeline(201, capacity, 10*time.Minute)
 
 	var wg sync.WaitGroup
 	startCh := make(chan struct{})
@@ -115,7 +115,7 @@ func TestTimeline_NonBlockingConcurrentRingEviction(t *testing.T) {
 
 func TestTimeline_FaultAndMetricIncrement(t *testing.T) {
 	metrics := NewMetrics()
-	reg := NewTimelineRegistry(100, 10*time.Minute, false)
+	reg := NewTimelineRegistry(100, 10*time.Minute)
 	tl := reg.GetOrCreate(301)
 
 	// Simulate fault

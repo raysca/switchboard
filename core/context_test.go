@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -756,5 +757,111 @@ func TestAssistantContext_NoDuplicateSynthesisOnFinalLLMTextFrame(t *testing.T) 
 	}
 	if emittedUnits[1] != "How are you today?" {
 		t.Errorf("expected unit 1 'How are you today?', got %q", emittedUnits[1])
+	}
+}
+
+func TestAssistantContext_NoPrematureCommit_BeforeLLMComplete(t *testing.T) {
+	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	asstProc := core.NewAssistantContextProcessor(ctxPool, core.AssistantContextConfig{
+		MinUnitLength: 5,
+		MaxUnitLength: 100,
+	})
+
+	pipe, err := core.NewPipeline(asstProc)
+	if err != nil {
+		t.Fatalf("NewPipeline failed: %v", err)
+	}
+	sess, err := core.NewSession(109, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatalf("NewSession failed: %v", err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer sess.Close()
+
+	// 1. Initialize turn
+	_ = sess.Post(&core.UserMessageFrame{Turn: "turn-1", Gen: 1, Content: "Tell me a story"})
+	time.Sleep(20 * time.Millisecond)
+
+	// 2. Stream sentence 1
+	_ = sess.Post(&core.LLMTextDeltaFrame{Turn: "turn-1", Gen: 1, Delta: "Once upon a time. "})
+	time.Sleep(20 * time.Millisecond)
+
+	// 3. Sentence 1 write completes and TTS signals stopped
+	_ = sess.Post(&core.WriteCompletionFrame{Turn: "turn-1", Gen: 1, UnitID: 1, IsFinal: true})
+	_ = sess.Post(&core.TTSStoppedFrame{Turn: "turn-1", Gen: 1})
+	time.Sleep(20 * time.Millisecond)
+
+	// Assistant turn MUST NOT be committed because LLM generation is not complete!
+	msgs := ctxPool.Messages()
+	for _, m := range msgs {
+		if m.Role == core.RoleAssistant {
+			t.Fatalf("premature commit detected: assistant message committed while LLM still generating: %q", m.Content)
+		}
+	}
+
+	// 4. Stream sentence 2 and finish LLM response
+	_ = sess.Post(&core.LLMTextDeltaFrame{Turn: "turn-1", Gen: 1, Delta: "There lived a brave knight."})
+	_ = sess.Post(&core.LLMTextFrame{Turn: "turn-1", Gen: 1, Text: "Once upon a time. There lived a brave knight."})
+	time.Sleep(20 * time.Millisecond)
+
+	// 5. Sentence 2 write completes
+	_ = sess.Post(&core.WriteCompletionFrame{Turn: "turn-1", Gen: 1, UnitID: 2, IsFinal: true})
+	time.Sleep(20 * time.Millisecond)
+
+	// Now assistant turn MUST be committed as a single complete response
+	msgs = ctxPool.Messages()
+	var asstMsgs []core.Message
+	for _, m := range msgs {
+		if m.Role == core.RoleAssistant {
+			asstMsgs = append(asstMsgs, m)
+		}
+	}
+	if len(asstMsgs) != 1 {
+		t.Fatalf("expected exactly 1 committed assistant message, got %d", len(asstMsgs))
+	}
+	if asstMsgs[0].Partial {
+		t.Errorf("expected complete (non-partial) turn, got partial")
+	}
+	expected := "Once upon a time. There lived a brave knight."
+	if asstMsgs[0].Content != expected {
+		t.Errorf("expected content %q, got %q", expected, asstMsgs[0].Content)
+	}
+}
+
+func TestWriteCompletionErrorDoesNotCommitAssistantText(t *testing.T) {
+	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	userProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
+	asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
+	pipe, err := core.NewPipeline(userProc, asstProc, &core.PassthroughProcessor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	_ = sess.Post(&core.FinalTranscriptionFrame{Text: "hello", Turn: "turn-1", Gen: 1})
+	_ = sess.Post(&core.LLMTextFrame{Text: "This text was not delivered.", Turn: "turn-1", Gen: 1})
+	time.Sleep(30 * time.Millisecond)
+	_ = sess.Post(&core.WriteCompletionFrame{
+		Turn:    "turn-1",
+		Gen:     1,
+		UnitID:  1,
+		IsFinal: true,
+		Err:     errors.New("write timeout"),
+	})
+	time.Sleep(30 * time.Millisecond)
+
+	for _, m := range ctxPool.Messages() {
+		if m.Role == core.RoleAssistant {
+			t.Fatalf("failed audio write committed assistant text %q", m.Content)
+		}
 	}
 }

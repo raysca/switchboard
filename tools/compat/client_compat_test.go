@@ -32,10 +32,12 @@ func mintCompatToken(t *testing.T, jti string, iat time.Time, exp time.Time) str
 			Audience:  jwt.ClaimStrings{compatAudience},
 			IssuedAt:  jwt.NewNumericDate(iat),
 			ExpiresAt: jwt.NewNumericDate(exp),
+			Subject:   "client-js-user",
 		},
 		Principal: "client-js-user",
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tok.Header["kid"] = "v1"
 	s, err := tok.SignedString([]byte(compatSecret))
 	if err != nil {
 		t.Fatalf("failed to sign compat token: %v", err)

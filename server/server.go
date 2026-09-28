@@ -86,7 +86,6 @@ func NewServer(cfg *Config) (*Server, error) {
 	timelines := NewTimelineRegistry(
 		cfg.Observability.TimelineMaxEvents,
 		cfg.Observability.TimelineTTL,
-		cfg.Observability.EnableTranscriptLogging,
 	)
 	admission := NewAdmissionController(cfg, metrics)
 	registry := NewRegistry()
@@ -112,6 +111,17 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 	if cfg.Token.ReplayCacheLimit > 0 {
 		tokenCfg.ReplayCacheSize = cfg.Token.ReplayCacheLimit
+	}
+	if cfg.Profile == ProfileProduction {
+		tokenCfg.RequireKeyID = true
+		keyID := cfg.Token.KeyID
+		if keyID == "" {
+			keyID = "v1"
+		}
+		tokenCfg.KeyID = keyID
+	} else if cfg.Token.KeyID != "" {
+		tokenCfg.RequireKeyID = true
+		tokenCfg.KeyID = cfg.Token.KeyID
 	}
 
 	validator, err := token.NewValidator(tokenCfg, time.Now())
@@ -170,16 +180,17 @@ func (s *Server) setupRoutes() {
 			RequireTLS:         s.cfg.Profile == ProfileProduction && !s.cfg.InsecureOverrides.AllowPlainWSInProduction && (directTLS || proxyTLS),
 			TrustedProxies:     s.cfg.TLS.TrustedProxies,
 		},
-		Observe:               s.observeTransport,
-		TokenValidator:        s.validator,
-		Pacer:                 ws.DefaultPacerConfig(),
-		HandshakeTimeout:      s.cfg.Limits.UpgradeTimeout,
-		RTVIReadyTimeout:      s.cfg.Limits.ReadyTimeout,
-		ReadTimeout:           s.cfg.Limits.IdleTimeout,
-		MaxConnectionLifetime: s.cfg.Limits.MaxCallDuration,
-		MaxConcurrentSessions: s.cfg.Limits.MaxSessions,
-		MaxPendingHandshakes:  s.cfg.Limits.MaxPendingHandshakes,
-		FixedPlayerRate:       24000,
+		Observe:                    s.observeTransport,
+		TokenValidator:             s.validator,
+		Pacer:                      ws.DefaultPacerConfig(),
+		HandshakeTimeout:           s.cfg.Limits.UpgradeTimeout,
+		RTVIReadyTimeout:           s.cfg.Limits.ReadyTimeout,
+		ReadTimeout:                s.cfg.Limits.IdleTimeout,
+		MaxConnectionLifetime:      s.cfg.Limits.MaxCallDuration,
+		MaxConcurrentSessions:      s.cfg.Limits.MaxSessions,
+		MaxConcurrentSessionsPerIP: s.cfg.Limits.MaxSessionsPerIP,
+		MaxPendingHandshakes:       s.cfg.Limits.MaxPendingHandshakes,
+		FixedPlayerRate:            24000,
 	}
 
 	s.wsServer = ws.NewServer(wsCfg)

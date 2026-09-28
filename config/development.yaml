@@ -19,8 +19,9 @@ origin_allowlist:
 token:
   secret_env: "TOKEN_SECRET"
   secret: "dev-insecure-secret-key-for-testing-only-12345"
-  issuer: "govoice"
-  audience: "govoice-rtvi"
+  issuer: "govoice-v1"
+  audience: "govoice-v1-client"
+  key_id: "v1"
   max_lifetime: 5m
   clock_skew: 30s
   replay_cache_limit: 10000
@@ -91,16 +92,9 @@ pipelines:
     tts: "google.tts"
     max_messages: 20
     max_tokens: 4000
-  full_xai:
-    stt: "xai.stt"
-    llm: "xai.llm"
-    tts: "xai.tts"
-    max_messages: 20
-    max_tokens: 4000
 
 observability:
   log_level: "debug"
   json_format: false
-  enable_transcript_logging: false
   timeline_max_events: 500
   timeline_ttl: 10m

@@ -63,7 +63,7 @@ Voice Framework V1 supports drop-in interchangeability for the LLM stage using x
 - **Protocol**: REST API (`https://api.x.ai/v1/tts`).
 - **Audio Output**: Headerless raw 24kHz 16-bit mono PCM (`{"codec": "pcm", "sample_rate": 24000}`).
 - **Pacing**: Chunked into 20ms frames (960 bytes) matching Voice Framework V1 media clock, emitting `core.OutputAudioFrame`.
-- **Pipelines**: Fully selectable in config via `full_xai` pipeline (`xai.stt` -> `xai.llm` -> `xai.tts`).
+- **Speech path**: xAI STT and TTS are experimental. They compile only with `-tags xaispeech` and are not registered on the default server. The supported xAI surface is the LLM (`xai.llm`).
 
 ---
 

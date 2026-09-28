@@ -56,14 +56,14 @@ if (!explicitToken) {
     {
       jti: crypto.randomUUID(),
       sub: 'rtvi-cli-tester',
-      aud: 'govoice-rtvi',
-      iss: 'govoice',
+      aud: 'govoice-v1-client',
+      iss: 'govoice-v1',
       exp: now + 300,
       iat: now,
       pipeline: pipeline
     },
     secretKey,
-    { algorithm: 'HS256' }
+    { algorithm: 'HS256', keyid: 'v1' }
   );
 }
 

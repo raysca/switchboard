@@ -63,11 +63,9 @@ voice/                   frame.go pipeline.go session.go manager.go (registry+ad
 vad/                     silero.go (ORT wrapper, batched runner) executor.go (A,B) procpool.go (C) processor.go (VADProcessor+detector)
 cmd/server/              HTTP control surface: POST/DELETE/GET /sessions, POST /sessions/:id/fault, GET /metrics
 cmd/vadworker/           Strategy C worker process
-cmd/bench/               experiments T1–T11 → results/*.csv|json
-baseline/python/         bot.py (pipecat process-per-call), startup_bench.py, vad_bench.py
-scripts/plot.py          graphs → results/*.png
-REPORT.md                verdict with graphs
 ```
+
+The T1–T11 harness (`cmd/bench`, `scripts/run_t8.sh`, `scripts/run_phase2.sh`, `scripts/plot.py`) is not in this tree. Do not treat those commands as a way to reproduce capacity numbers. `REPORT.md` is a historical verdict; its reproduce commands are not in this tree.
 
 ## 3. Implementation milestones (maps to spec §15)
 

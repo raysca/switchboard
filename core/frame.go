@@ -59,12 +59,6 @@ type GenerationalFrame interface {
 	Generation() uint64
 }
 
-// TurnFrame is implemented by frames associated with a conversation turn.
-type TurnFrame interface {
-	GenerationalFrame
-	TurnID() string
-}
-
 // Direction represents the flow direction of a frame within the pipeline.
 type Direction uint8
 
@@ -123,7 +117,6 @@ type OutputAudioFrame struct {
 
 func (f *OutputAudioFrame) Type() FrameType    { return FrameOutputAudio }
 func (f *OutputAudioFrame) Generation() uint64 { return f.Gen }
-func (f *OutputAudioFrame) TurnID() string     { return f.Turn }
 
 // -------------------------------------------------------------------------
 // Speech-State Frames
@@ -164,7 +157,6 @@ type InterimTranscriptionFrame struct {
 
 func (f *InterimTranscriptionFrame) Type() FrameType    { return FrameInterimTranscription }
 func (f *InterimTranscriptionFrame) Generation() uint64 { return f.Gen }
-func (f *InterimTranscriptionFrame) TurnID() string     { return f.Turn }
 
 // FinalTranscriptionFrame carries a finalized STT transcript.
 type FinalTranscriptionFrame struct {
@@ -177,7 +169,6 @@ type FinalTranscriptionFrame struct {
 
 func (f *FinalTranscriptionFrame) Type() FrameType    { return FrameFinalTranscription }
 func (f *FinalTranscriptionFrame) Generation() uint64 { return f.Gen }
-func (f *FinalTranscriptionFrame) TurnID() string     { return f.Turn }
 
 // -------------------------------------------------------------------------
 // LLM and Text Frames
@@ -192,7 +183,6 @@ type LLMTextDeltaFrame struct {
 
 func (f *LLMTextDeltaFrame) Type() FrameType    { return FrameLLMTextDelta }
 func (f *LLMTextDeltaFrame) Generation() uint64 { return f.Gen }
-func (f *LLMTextDeltaFrame) TurnID() string     { return f.Turn }
 
 // LLMTextFrame carries the complete generated text response from the LLM.
 type LLMTextFrame struct {
@@ -203,7 +193,6 @@ type LLMTextFrame struct {
 
 func (f *LLMTextFrame) Type() FrameType    { return FrameLLMText }
 func (f *LLMTextFrame) Generation() uint64 { return f.Gen }
-func (f *LLMTextFrame) TurnID() string     { return f.Turn }
 
 // SynthesisUnitFrame carries an explicit synthesis unit segmented from LLM text.
 type SynthesisUnitFrame struct {
@@ -216,7 +205,6 @@ type SynthesisUnitFrame struct {
 
 func (f *SynthesisUnitFrame) Type() FrameType    { return FrameSynthesisUnit }
 func (f *SynthesisUnitFrame) Generation() uint64 { return f.Gen }
-func (f *SynthesisUnitFrame) TurnID() string     { return f.Turn }
 
 // -------------------------------------------------------------------------
 // TTS Frames
@@ -231,7 +219,6 @@ type TTSStartedFrame struct {
 
 func (f *TTSStartedFrame) Type() FrameType    { return FrameTTSStarted }
 func (f *TTSStartedFrame) Generation() uint64 { return f.Gen }
-func (f *TTSStartedFrame) TurnID() string     { return f.Turn }
 
 // TTSAudioFrame carries synthesized audio from the TTS provider.
 type TTSAudioFrame struct {
@@ -247,7 +234,6 @@ type TTSAudioFrame struct {
 
 func (f *TTSAudioFrame) Type() FrameType    { return FrameTTSAudio }
 func (f *TTSAudioFrame) Generation() uint64 { return f.Gen }
-func (f *TTSAudioFrame) TurnID() string     { return f.Turn }
 
 // TTSStoppedFrame marks completion of synthesis for a turn/unit.
 type TTSStoppedFrame struct {
@@ -258,7 +244,6 @@ type TTSStoppedFrame struct {
 
 func (f *TTSStoppedFrame) Type() FrameType    { return FrameTTSStopped }
 func (f *TTSStoppedFrame) Generation() uint64 { return f.Gen }
-func (f *TTSStoppedFrame) TurnID() string     { return f.Turn }
 
 // -------------------------------------------------------------------------
 // Conversation Context Frames
@@ -274,7 +259,6 @@ type UserMessageFrame struct {
 
 func (f *UserMessageFrame) Type() FrameType    { return FrameUserMessage }
 func (f *UserMessageFrame) Generation() uint64 { return f.Gen }
-func (f *UserMessageFrame) TurnID() string     { return f.Turn }
 
 // AssistantMessageFrame represents a committed assistant conversation turn.
 type AssistantMessageFrame struct {
@@ -287,7 +271,6 @@ type AssistantMessageFrame struct {
 
 func (f *AssistantMessageFrame) Type() FrameType    { return FrameAssistantMessage }
 func (f *AssistantMessageFrame) Generation() uint64 { return f.Gen }
-func (f *AssistantMessageFrame) TurnID() string     { return f.Turn }
 
 // -------------------------------------------------------------------------
 // Lifecycle and Control Frames
@@ -328,7 +311,6 @@ type InterruptionFrame struct {
 
 func (f *InterruptionFrame) Type() FrameType    { return FrameInterruption }
 func (f *InterruptionFrame) Generation() uint64 { return f.Gen }
-func (f *InterruptionFrame) TurnID() string     { return f.Turn }
 
 // FlushFrame travels downstream to flush old-generation audio at the transport.
 type FlushFrame struct {
@@ -358,4 +340,3 @@ type WriteCompletionFrame struct {
 
 func (f *WriteCompletionFrame) Type() FrameType    { return FrameWriteCompletion }
 func (f *WriteCompletionFrame) Generation() uint64 { return f.Gen }
-func (f *WriteCompletionFrame) TurnID() string     { return f.Turn }

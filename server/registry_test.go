@@ -48,8 +48,6 @@ func TestRegistry_BuildPipelineGoogleAndMixed(t *testing.T) {
 	reg.Register("google.llm", func(c *Config) (core.Processor, error) { return &contextSinkProc{}, nil })
 	reg.Register("google.tts", stub)
 	reg.Register("xai.llm", func(c *Config) (core.Processor, error) { return &contextSinkProc{}, nil })
-	reg.Register("xai.stt", stub)
-	reg.Register("xai.tts", stub)
 
 	// 1. Build default (Google STT -> Google LLM -> Google TTS) pipeline
 	pipeDefault, ctxPoolDefault, err := reg.BuildPipeline(cfg, "default", vadProc, sink)
@@ -67,15 +65,6 @@ func TestRegistry_BuildPipelineGoogleAndMixed(t *testing.T) {
 	}
 	if pipeXAI == nil || ctxPoolXAI == nil {
 		t.Fatal("expected non-nil xai pipeline and conversation context")
-	}
-
-	// 3. Build full xAI (xAI STT -> xAI LLM -> xAI TTS) pipeline
-	pipeFullXAI, ctxPoolFullXAI, err := reg.BuildPipeline(cfg, "full_xai", vadProc, sink)
-	if err != nil {
-		t.Fatalf("build full_xai pipeline: %v", err)
-	}
-	if pipeFullXAI == nil || ctxPoolFullXAI == nil {
-		t.Fatal("expected non-nil full_xai pipeline and conversation context")
 	}
 
 	// 3. Programmatic construction equivalence

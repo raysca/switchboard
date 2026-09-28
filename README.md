@@ -7,7 +7,7 @@ Voice Framework V1 is a high-performance, low-latency, resilient voice agent run
 ## Key Capabilities
 
 - **Unmodified Pipecat Compatibility**: Integrates seamlessly with official, unmodified `@pipecat-ai/client-js@1.13.1` and `@pipecat-ai/websocket-transport@1.7.2` using binary Protobuf frames and the RTVI 2.1.0 protocol.
-- **Sub-200ms Barge-In Interruption**: Solves the client-side audio buffer clear limitation via server-side media-clock pacing and bounded queues, ensuring immediate assistant silence upon user speech.
+- **Sub-200ms Barge-In Interruption**: On user speech the server stops sending assistant audio. The pinned Pipecat client does not clear audio it has already buffered; residual playback is bounded by the 100 ms server pacing queue.
 - **Fault-Isolated Neural VAD**: Runs Silero VAD inside supervised worker child processes, ensuring that native C/C++ or ONNX faults or segmentation faults cannot crash the Go server.
 - **Provider Interchangeability**: Supports complete Google Cloud pipelines (Chirp 2 STT + Gemini 2.5 Flash LLM + Journey TTS) and drop-in xAI Grok LLM interchangeability (Scenario C) with zero core runtime modifications.
 - **Bounded Resource Safety**: Enforces message and token context budgets, async task budgets, priority control queues, and data shedding under backpressure.
@@ -25,7 +25,6 @@ make build
 This compiles:
 - `bin/server`: Production voice server
 - `bin/vadworker`: Isolated child worker process for Silero VAD
-- `bin/bench`: Capacity and benchmark harness
 - `examples/...`: Programmatic pipeline examples
 
 ### 2. Run Complete Verification Suite

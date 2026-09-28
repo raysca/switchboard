@@ -22,6 +22,7 @@ var (
 	ErrTokenBeforeStart = errors.New("token: token issued before server start boundary")
 	ErrTokenFuture      = errors.New("token: token issued in the future beyond allowed skew")
 	ErrTokenPrincipal   = errors.New("token: missing principal or subject claim")
+	ErrReplayCacheFull  = errors.New("token: replay cache full; unexpired tokens cannot be evicted")
 )
 
 var tokenQueryRegex = regexp.MustCompile(`([?&]token=)[^&#\s]+`)
@@ -41,6 +42,8 @@ type Config struct {
 	ReplayCacheSize   int               // Max entries before aggressive pruning
 	HMACSecret        []byte            // Secret key for HMAC algorithms (e.g. HS256)
 	Keys              map[string][]byte // Optional key-id (kid) -> HMAC secret mapping
+	RequireKeyID      bool              // Require kid in token header (v1-lock.json required_claims)
+	KeyID             string            // Expected key ID if RequireKeyID is true and Keys is empty
 }
 
 // DefaultConfig provides production-grade defaults.
@@ -115,6 +118,23 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 		if !allowed {
 			return nil, fmt.Errorf("%w: %s", ErrTokenAlgorithm, alg)
 		}
+		if v.cfg.RequireKeyID {
+			kid, _ := t.Header["kid"].(string)
+			if kid == "" {
+				return nil, fmt.Errorf("%w: missing kid in header", ErrTokenInvalid)
+			}
+			if len(v.cfg.Keys) > 0 {
+				sec, ok := v.cfg.Keys[kid]
+				if !ok {
+					return nil, fmt.Errorf("%w: unknown kid %s", ErrTokenInvalid, kid)
+				}
+				return sec, nil
+			}
+			if v.cfg.KeyID != "" && kid != v.cfg.KeyID {
+				return nil, fmt.Errorf("%w: mismatch kid %s (expected %s)", ErrTokenInvalid, kid, v.cfg.KeyID)
+			}
+			return v.cfg.HMACSecret, nil
+		}
 		if len(v.cfg.Keys) > 0 {
 			kid, _ := t.Header["kid"].(string)
 			if kid == "" {
@@ -152,8 +172,11 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 	if claims.ID == "" {
 		return nil, fmt.Errorf("%w: missing jti claim", ErrTokenInvalid)
 	}
-	if claims.Principal == "" && claims.Subject == "" {
+	if claims.Subject == "" {
 		return nil, ErrTokenPrincipal
+	}
+	if claims.Principal == "" {
+		claims.Principal = claims.Subject
 	}
 
 	if claims.IssuedAt == nil {
@@ -187,33 +210,23 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	// Prune expired entries if cache is at or exceeds limit
+	// 1. Check if token has already been consumed
+	if _, exists := v.replay[claims.ID]; exists {
+		return nil, ErrTokenReplayed
+	}
+
+	// 2. Prune expired entries if cache is at or exceeds limit
 	if len(v.replay) >= v.cfg.ReplayCacheSize {
 		for id, expiry := range v.replay {
 			if now.After(expiry) {
 				delete(v.replay, id)
 			}
 		}
-		// Strict bound: if still full after pruning expired, evict entry with earliest expiry
-		for len(v.replay) >= v.cfg.ReplayCacheSize {
-			var earliestID string
-			var earliestExp time.Time
-			for id, expiry := range v.replay {
-				if earliestID == "" || expiry.Before(earliestExp) {
-					earliestID = id
-					earliestExp = expiry
-				}
-			}
-			if earliestID != "" {
-				delete(v.replay, earliestID)
-			} else {
-				break
-			}
+		// Strict bound: if still full after pruning expired, reject admission.
+		// Unexpired tokens must never be evicted because evicted tokens could then be replayed!
+		if len(v.replay) >= v.cfg.ReplayCacheSize {
+			return nil, ErrReplayCacheFull
 		}
-	}
-
-	if _, exists := v.replay[claims.ID]; exists {
-		return nil, ErrTokenReplayed
 	}
 
 	v.replay[claims.ID] = exp

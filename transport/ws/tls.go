@@ -41,7 +41,9 @@ func (cfg *SecurityConfig) CheckOrigin(r *http.Request) error {
 	return ErrDisallowedOrigin
 }
 
-// ClientIP extracts the real client IP, trusting forwarded headers ONLY if RemoteAddr is a trusted proxy.
+// ClientIP extracts the real client IP. Forwarded headers are trusted ONLY if RemoteAddr is a trusted proxy.
+// When behind a trusted proxy, X-Forwarded-For is traversed from right to left, selecting the first untrusted IP
+// to prevent client-injected header spoofing. If X-Real-IP is present from the trusted proxy, it is used as fallback.
 func (cfg *SecurityConfig) ClientIP(r *http.Request) string {
 	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -49,19 +51,35 @@ func (cfg *SecurityConfig) ClientIP(r *http.Request) string {
 	}
 
 	if !cfg.isTrustedProxy(remoteHost) {
+		if net.ParseIP(remoteHost) == nil {
+			return ""
+		}
 		return remoteHost
 	}
 
-	// Remote host is trusted proxy: check X-Forwarded-For
+	// Remote host is a trusted proxy: parse X-Forwarded-For right-to-left.
+	// Unparseable entries are skipped so they cannot become rate-limiter keys.
 	xff := r.Header.Get("X-Forwarded-For")
 	if xff != "" {
 		parts := strings.Split(xff, ",")
-		clientIP := strings.TrimSpace(parts[0])
-		if clientIP != "" {
-			return clientIP
+		for i := len(parts) - 1; i >= 0; i-- {
+			ip := strings.TrimSpace(parts[i])
+			if net.ParseIP(ip) == nil {
+				continue
+			}
+			if !cfg.isTrustedProxy(ip) {
+				return ip
+			}
 		}
 	}
 
+	if xrip := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(xrip) != nil {
+		return xrip
+	}
+
+	if net.ParseIP(remoteHost) == nil {
+		return ""
+	}
 	return remoteHost
 }
 

@@ -1,3 +1,5 @@
+//go:build xaispeech
+
 package xai
 
 import (
@@ -6,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -244,21 +245,10 @@ func TestFullXAI_EndToEndPipeline(t *testing.T) {
 }
 
 func TestFullXAI_LiveEndToEnd(t *testing.T) {
-	apiKey := os.Getenv("XAI_API_KEY")
-	if apiKey == "" {
-		// Try loading from ../../examples/.env
-		if data, err := os.ReadFile("../../examples/.env"); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if strings.HasPrefix(line, "XAI_API_KEY=") {
-					val := strings.TrimPrefix(line, "XAI_API_KEY=")
-					val = strings.Trim(val, `"' `)
-					apiKey = val
-					break
-				}
-			}
-		}
+	if os.Getenv("RUN_LIVE_XAI_TESTS") != "1" {
+		t.Skip("skipping live xAI end-to-end test; set RUN_LIVE_XAI_TESTS=1 to run")
 	}
+	apiKey := os.Getenv("XAI_API_KEY")
 	if apiKey == "" {
 		t.Skip("skipping live xAI end-to-end test; XAI_API_KEY not set")
 	}
