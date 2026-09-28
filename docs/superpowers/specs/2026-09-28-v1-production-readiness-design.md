@@ -90,7 +90,7 @@ The compatibility verifier will compare the lock with:
 
 The repository will generate a standard CycloneDX or SPDX SBOM with no developer-local paths. Release tools and scanner images will be version/digest pinned. CI will run module builds, vet/race tests, compatibility fixtures, contract validation, release-tag suites, image build/smoke, dependency scanning, container scanning, and SBOM validation.
 
-The existing multi-module architecture will be retained because it is required by the V1 specification. Before publishing, placeholder module names and local release-time replacements will be changed to a user-supplied canonical module path and independently consumed from a clean external module. No canonical path will be invented.
+The existing multi-module architecture will be retained because it is required by the V1 specification. The user-approved canonical module root is `github.com/raysca/go-voice`; placeholder module names and local release-time replacements will be migrated beneath that root and independently consumed from a clean external module before publishing.
 
 ### 7. Deployment and documentation
 

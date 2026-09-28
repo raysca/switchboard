@@ -34,6 +34,10 @@
 - A muted or half-open socket must follow ping/idle/close bounds without provider allocation or goroutine leaks; Task 5 adds lifecycle tests.
 - Clean-clone release gates must detect contract drift, local paths, missing submodules, and mutable tooling; Tasks 8, 9, and 12 add isolated-checkout tests.
 
+## Execution Order
+
+Execute Tasks 1–7, then Task 12 (canonical module migration), Task 8 (executable contract), Task 10 (final deployment artifacts), Task 9 (SBOM/CI over those final artifacts), Task 11 (quickstart), and finally Tasks 13–14. Task 12 intentionally precedes every artifact that consumes command/import paths, while Task 9 intentionally follows Task 10 so release evidence is generated only from the finalized Dockerfile and deployment layout.
+
 ---
 
 ### Task 1: Transactional Core Session Startup
@@ -74,22 +78,15 @@ Expected: failure or timeout because attachment failure never closes `runLoopDon
 
 - [ ] **Step 3: Implement transactional startup**
 
-Add a start guard and terminal helper to `Session`:
+Add an explicit lifecycle mutex, `StateNew`, and single teardown owner:
 
 ```go
-startOnce sync.Once
-startErr  error
-
-func (s *Session) finishWithoutRunLoop(err error) {
-	s.recordErr(err)
-	s.state.Store(int32(StateFailed))
-	s.cancel()
-	select { case <-s.runLoopDone: default: close(s.runLoopDone) }
-	select { case <-s.stopped: default: close(s.stopped) }
-}
+lifecycleMu    sync.Mutex
+runLoopStarted bool
+attached       []Processor
 ```
 
-`Start` records successfully attached processors, closes them in reverse order on failure, calls `finishWithoutRunLoop`, and returns the stable `startErr` on repeated calls. `Close` detects `StateStarting` and completes the no-run-loop path rather than waiting for `runLoopDone`.
+`NewSession` begins in `StateNew`. `Start` holds the lifecycle transition through attachment, moves to `StateStarting`, records successfully attached processors, then starts the run loop and moves to `StateRunning`. On failure it records the error, closes the recorded processors exactly once in reverse order, and completes teardown through the same internal teardown function used by `Close`. `Close` serializes with `Start`, checks `runLoopStarted` before waiting for `runLoopDone`, and owns closure of `stopped`. Add concurrent tests that block each attachment index while another goroutine calls `Close`; neither goroutine may race, double-close, or remain blocked.
 
 - [ ] **Step 4: Verify core lifecycle**
 
@@ -115,18 +112,22 @@ Independent review focus: terminal-channel ownership, double-close prevention, r
 - Test: `transport/rtvi/rtvi_test.go`
 - Test: `transport/ws/rtvi_integration_test.go`
 - Test: `server/scenarios_test.go`
+- Create: `tools/compat/verify_rtvi_lifecycle.js`
+- Create: `tools/compat/rtvi_lifecycle_test.go`
 
 **Interfaces:**
 - Consumes: Task 1 transactional `Session.Start`/`Close`.
-- Produces: `ErrAlreadyReady`, one allocation per socket, and `bot-ready` only after the session is running.
+- Produces: explicit `unseen → allocating → running/failed` readiness, one allocation per socket, and `bot-ready` only after the session is running.
 
 - [ ] **Step 1: Write duplicate-ready and failed-allocation tests**
 
-In RTVI tests, invoke two compatible messages and assert the callback count is one and the second call returns `ErrAlreadyReady`.
+In RTVI tests, invoke two compatible messages concurrently and assert the callback count is one and the loser returns `ErrAlreadyReady`. Repeat while allocation is deliberately blocked and while connection close begins.
 
 In WebSocket integration tests, count `OnSessionReady` invocations and send two encoded `client-ready` frames. Assert one session and either a policy close or an ignored duplicate, but never another allocation.
 
 Add a callback returning `errors.New("quota exhausted")`; assert the client receives no `bot-ready`, receives an RTVI fatal error, and the socket closes with a policy/service status.
+
+Create `tools/compat/verify_rtvi_lifecycle.js` using only the pinned, unmodified packages from `tools/compat/package-lock.json`. Add `TestPinnedRTVILifecycle` in Go to start the real WebSocket server on an ephemeral port with stubbed providers, mint a valid token, invoke the Node script with endpoint/token environment variables, enforce a bounded startup/test/cleanup deadline, and report child output on failure. Assert exactly one `bot-ready`, compatible decode, speaking/audio ordering, interruption notification, and terminal error/close behavior. This Go-owned harness becomes the cross-task compatibility regression rerun after Tasks 3, 5, and 8.
 
 - [ ] **Step 2: Run tests and confirm red**
 
@@ -136,32 +137,33 @@ Expected: duplicate callback count is two and allocation failure occurs after `b
 
 - [ ] **Step 3: Implement the one-shot transition**
 
-In `rtvi.Handler`, replace unconditional readiness with CAS:
+In `rtvi.Handler`, replace the readiness boolean with a terminal state machine:
 
 ```go
-if !h.ready.CompareAndSwap(false, true) {
+if !h.state.CompareAndSwap(rtviStateUnseen, rtviStateAllocating) {
 	return nil, ErrAlreadyReady
 }
 if h.OnClientReady != nil {
 	if err := h.OnClientReady(readyData.Version); err != nil {
-		h.ready.Store(false)
+		h.state.Store(rtviStateFailed)
 		return nil, err
 	}
 }
+h.state.Store(rtviStateRunning)
 ```
 
-In the transport callback, allocate and start first, publish `conn.session`, then send `bot-ready` and close `readyCh`. If sending `bot-ready` fails, close the newly running session. Map admission/provider failures to a safe RTVI error and appropriate close reason.
+Never roll a failed socket back to `unseen`. In the transport callback, allocate and start first, publish `conn.session`, then send `bot-ready` and close `readyCh`. If sending `bot-ready` fails, close the newly running session. Map admission/provider failures to a safe RTVI error and appropriate close reason.
 
 - [ ] **Step 4: Verify transport and server integration**
 
-Run: `go test -race -count=1 ./transport/... && (cd server && go test -race -count=1 ./...)`
+Run: `go test -race -count=1 ./transport/... && (cd server && go test -race -count=1 ./...) && go test -count=1 -run TestPinnedRTVILifecycle ./tools/compat/...`
 
 Expected: PASS; the allocation counter remains one.
 
 - [ ] **Step 5: Commit and review**
 
 ```bash
-git add transport/rtvi/rtvi.go transport/rtvi/rtvi_test.go transport/ws/transport.go transport/ws/rtvi_integration_test.go server/server.go server/scenarios_test.go
+git add transport/rtvi/rtvi.go transport/rtvi/rtvi_test.go transport/ws/transport.go transport/ws/rtvi_integration_test.go server/server.go server/scenarios_test.go tools/compat/verify_rtvi_lifecycle.js tools/compat/rtvi_lifecycle_test.go
 git commit -m "fix(ws): make client readiness one-shot"
 ```
 
@@ -179,7 +181,7 @@ Independent review focus: failure rollback, session publication races, admission
 - Test: `core/context_test.go`
 
 **Interfaces:**
-- Produces: `ControlWriter.Enqueue(ctx context.Context, payload []byte, completion func(error)) error`, bounded by message count/bytes; flush acknowledgement payload generation remains old while envelope generation bypasses stale filtering.
+- Produces: `Connection.Attach(core.SessionController, int) error`, storing the transport processor index; `ControlWriter.Enqueue(ctx context.Context, payload []byte, completion func(error)) error`, bounded by message count/bytes; flush acknowledgement payload generation remains old while envelope generation bypasses stale filtering.
 
 - [ ] **Step 1: Add red tests for the real flush path**
 
@@ -190,7 +192,7 @@ if got := asst.FlushAcks.Load(); got != 1 { t.Fatalf("flush acks=%d", got) }
 if got := asst.FlushTimeouts.Load(); got != 0 { t.Fatalf("flush timeouts=%d", got) }
 ```
 
-Add a transport observer assertion that `flush_ack` increments only after core accepts `FlushProcessedFrame`. Add a write function that blocks longer than 200 ms and assert the pacer flush callback completes or closes the connection without the session run loop blocking on `bot-stopped-speaking`.
+Add a transport observer assertion that `flush_ack` increments only after core accepts `FlushProcessedFrame`. Add a write function that blocks longer than 200 ms and assert the pacer flush callback completes or closes the connection without the session run loop blocking on any RTVI control message. Add ordering assertions: `bot-started-speaking` precedes first audio, `bot-stopped-speaking` follows the last successful final audio write, fatal RTVI error is attempted before close, and transcript/bot-text writes preserve their frame order.
 
 - [ ] **Step 2: Run tests and confirm red**
 
@@ -200,11 +202,11 @@ Expected: flush acknowledgement is stale-discarded and interruption waits on the
 
 - [ ] **Step 3: Implement the barrier ordering**
 
-For `FrameInterruption`, update speaking state and forward immediately; do not synchronously write. For `FrameFlush`, call `BeginFlush` first. On completion:
+Make `Connection` an `Attacher` and record its pipeline index. For `FrameInterruption`, update speaking state and forward immediately; do not synchronously write. For `FrameFlush`, call `BeginFlush` first. On completion:
 
 ```go
 ack := &core.FlushProcessedFrame{Gen: ff.Gen}
-if err := c.session.Reenter(ack, core.Upstream, 0, 0); err != nil {
+if err := c.session.Reenter(ack, core.Upstream, c.index-1, 0); err != nil {
 	c.Close()
 	return
 }
@@ -212,11 +214,11 @@ c.observe("flush_ack", 1)
 _ = c.control.Enqueue(c.ctx, stoppedPayload, c.failControlWrite)
 ```
 
-Implement one bounded control queue with default maximum 32 messages and 256 KiB. It serializes writes with the same socket write mutex, applies the configured write deadline, and reports every failure. Queue overflow and write failure close only the affected connection.
+Implement one bounded control queue with default maximum 32 messages and 256 KiB. Migrate every control write in `ProcessFrame` and the pacer completion callback to it: user speech, interim/final transcript, bot text, bot speaking state, interruption notification, and error. It serializes control/audio writes under a single ordering policy, applies the configured write deadline, and reports every failure. Queue overflow and write failure close only the affected connection. Audio enqueuing may remain paced, but the ordering tests above are binding.
 
 - [ ] **Step 4: Verify race, latency, and failure behavior**
 
-Run: `go test -race -count=1 ./transport/ws ./core`
+Run: `go test -race -count=1 ./transport/ws ./core && go test -count=1 -run TestPinnedRTVILifecycle ./tools/compat/...`
 
 Expected: PASS; measured test barrier stays below 200 ms and no goroutine remains after close.
 
@@ -248,7 +250,7 @@ Independent review focus: ack ordering, queue bounds, session-run-loop blocking,
 
 Create tokens expired by 4 seconds and 6 seconds; assert the former is accepted and the latter rejected. Add `nbf` and future-`iat` boundary cases.
 
-Table-test production configuration with origin lists `nil`, empty, `{"*"}`, and `{"https://app.example.com"}`. Only the explicit origin succeeds unless the new insecure override is true.
+Table-test production configuration with origin lists `nil`, empty, `{"*"}`, and `{"https://app.example.com"}`. Wildcard always fails in production. An empty list succeeds only with the new missing-Origin override and then accepts only requests with no Origin; any present Origin still requires an explicit allowlist match.
 
 - [ ] **Step 2: Run tests and confirm red**
 
@@ -264,7 +266,7 @@ Use `jwt.WithLeeway(v.cfg.ClockSkew)` in `ParseWithClaims`. Set the compatibilit
 AllowMissingOriginInProduction bool `yaml:"allow_missing_origin_in_production"`
 ```
 
-Production validation rejects empty/wildcard origins unless this override is true. Development retains permissive behavior.
+Production validation always rejects wildcard origins. It rejects an empty allowlist unless the missing-Origin override is true. The override affects only absent Origin headers; it never bypasses validation of a present browser Origin. Development retains permissive behavior.
 
 - [ ] **Step 4: Verify auth and server configuration**
 
@@ -294,7 +296,7 @@ git commit -m "fix(security): align token leeway and origin policy"
 
 - [ ] **Step 1: Add locked-value and lifecycle tests**
 
-Add a production-config table matching every value in `v1-lock.json`. Add a muted-client test that waits across two ping intervals and remains connected, a half-open peer test that terminates within read/idle bounds, and encoded/decoded oversize rejection tests.
+First extend the lock with exact ping interval, close timeout, active/per-principal/per-source limits, handshake rate, control-queue budget, and encoded/decoded limits. Add a bidirectional production-config key-set test so a missing or unexpected locked field fails. Add a muted-client test that waits beyond both the nominal message-read bound and two ping intervals while Pong traffic keeps it alive, a half-open peer test that terminates within idle bounds, and encoded/decoded oversize rejection tests.
 
 - [ ] **Step 2: Run tests and confirm red**
 
@@ -304,7 +306,7 @@ Expected: no ping is sent and several YAML fields do not exist.
 
 - [ ] **Step 3: Implement lifecycle configuration and ping task**
 
-Add the exact fields to `Limits`, validate every positive duration/size, and wire them to `ws.ServerConfig`. Start a supervised connection goroutine:
+Add the exact fields to `Limits`, validate every positive duration/size, and wire them to `ws.ServerConfig`. Define semantics explicitly: `read_timeout` bounds assembly of one WebSocket message, `idle_timeout` bounds time since any successful application message or Ping/Pong activity, and successful Ping/Pong refreshes idle activity. Start a supervised connection goroutine:
 
 ```go
 ticker := time.NewTicker(c.cfg.PingInterval)
@@ -325,7 +327,7 @@ Apply encoded limits before decode and decoded-audio limits before allocation.
 
 - [ ] **Step 4: Verify transport lifecycle**
 
-Run: `go test -race -count=1 ./transport/... && (cd server && go test -race -count=1 ./...)`
+Run: `go test -race -count=1 ./transport/... && (cd server && go test -race -count=1 ./...) && go test -count=1 -run TestPinnedRTVILifecycle ./tools/compat/...`
 
 - [ ] **Step 5: Commit and review**
 
@@ -401,9 +403,9 @@ git commit -m "fix(server): make admission and provider readiness truthful"
 **Interfaces:**
 - Produces bounded histogram buckets/counters for required V1 operational signals and content-free timeline events.
 
-- [ ] **Step 1: Add one scenario asserting the complete signal set**
+- [ ] **Step 1: Add focused signal tests plus one ordering integration**
 
-Drive admission rejection, retry, circuit transition, STT rotation, interruption, slow control write, context eviction, VAD restart, and teardown. Assert exported metric names and ordered timeline event types, and assert output does not contain transcript strings or PCM bytes.
+Add focused tests for admission rejection, provider retry/circuit transition, STT rotation, interruption/slow control write, context eviction, VAD restart, and teardown. Each focused test owns only its signal and content-redaction assertions. Add one smaller integration test covering the ordering that matters across components: admission → provider start → interruption/flush → teardown. Assert exported metric names and ordered timeline event types, and assert output does not contain transcript strings or PCM bytes.
 
 - [ ] **Step 2: Run tests and confirm red**
 
@@ -429,9 +431,14 @@ git commit -m "feat(observability): cover v1 release signals"
 **Files:**
 - Modify: `docs/compatibility/v1-lock.json`
 - Modify: `docs/Voice Framework V1 Specification (Revised).md`
+- Modify: `docs/Voice Framework V1 — Implementation Plan.md`
 - Modify: `docs/adr/0001-v1-production-contract.md`
 - Modify: `docs/pipecat-compatibility.md`
+- Modify: `providers/google/tts.go`
+- Test: `providers/google/tts_test.go`
 - Modify: `tools/compat/validate_manifest.js`
+- Modify: `tools/compat/verify_rtvi_lifecycle.js`
+- Modify: `tools/compat/rtvi_lifecycle_test.go`
 - Create: `tools/compat/contract_values.go`
 - Test: `tools/compat/client_compat_test.go`
 - Modify: `Makefile`
@@ -453,7 +460,11 @@ Expected: existing validator does not detect runtime/config drift.
 
 `contract_values.go` loads production YAML and emits toolchain, module versions, transport defaults, token requirements, timeouts, sizes, audio rates, Google TTS request encoding, model/library hashes, and gitlink commit. Node validator compares exact keys and npm lock integrity.
 
-Revise the specification/ADR/compatibility documents to encode the approved server-side interruption guarantee and explicitly record `client_cleared_buffered_playback: false`. Change Google TTS to request stable `texttospeechpb.AudioEncoding_PCM` and assert the response is headerless PCM16LE. Derive the native-systemd glibc floor from the production binary with `readelf --version-info`, while the container contract remains the pinned Debian image digest.
+Revise every contradictory playback-clear requirement in specification sections 18, 20, 40, Scenario D, M0, M4, release criteria, and success demo, plus the older implementation plan. Rename lock field `clear_event` to `interruption_notification_event`; record server queue/in-flight cancellation separately and set `client_cleared_buffered_playback:false`. Do not claim a client residual-playout duration without browser/device evidence.
+
+Change Google TTS to request stable `texttospeechpb.AudioEncoding_PCM` and assert the response is headerless PCM16LE. Derive the native-systemd glibc floor in the pinned Linux builder with `readelf --version-info` against the exact binary digest; local validation consumes that Linux evidence rather than inspecting a macOS binary. The container contract remains the pinned Debian image digest.
+
+Extend the lifecycle regression created in Task 2 to assert the now-final locked values. It must continue using the pinned, unmodified Pipecat packages and real transport with stubbed providers, covering duplicate `client-ready`, exactly one `bot-ready`, Pipecat-compatible message decoding, speaking/audio ordering, interruption notification, and terminal error/close behavior. No fork or patch of the client package is permitted.
 
 - [ ] **Step 4: Verify manifest failure and success paths**
 
@@ -462,7 +473,7 @@ Run: `go test -race -count=1 ./tools/compat/... && make verify`
 - [ ] **Step 5: Commit and review**
 
 ```bash
-git add docs/compatibility/v1-lock.json docs/Voice\ Framework\ V1\ Specification\ \(Revised\).md docs/adr/0001-v1-production-contract.md docs/pipecat-compatibility.md tools/compat Makefile
+git add docs/compatibility/v1-lock.json docs/Voice\ Framework\ V1\ Specification\ \(Revised\).md docs/Voice\ Framework\ V1\ —\ Implementation\ Plan.md docs/adr/0001-v1-production-contract.md docs/pipecat-compatibility.md providers/google/tts.go providers/google/tts_test.go tools/compat Makefile
 git commit -m "fix(contract): validate shipped v1 coordinates"
 ```
 
@@ -471,18 +482,18 @@ git commit -m "fix(contract): validate shipped v1 coordinates"
 **Files:**
 - Create: `.github/workflows/verify.yml`
 - Create: `.github/workflows/release.yml`
-- Create: `deploy/sbom.cdx.json`
+- Create: `deploy/sbom/README.md`
 - Create: `scripts/verify_release.sh`
 - Modify: `Makefile`
 - Modify: `deploy/security_scans.md`
 - Delete: `deploy/sbom.json`
 
 **Interfaces:**
-- Produces: `make release-security` with pinned `govulncheck`, Syft/CycloneDX, and Trivy versions; CI clean-checkout gate.
+- Produces: `make release-security` with pinned `govulncheck`, Syft/CycloneDX, and Trivy versions; per-platform SBOM/provenance artifacts bound to immutable image digests; CI clean-checkout gate.
 
 - [ ] **Step 1: Add a release-artifact validation script and red test**
 
-The script rejects an SBOM unless `bomFormat=="CycloneDX"`, `specVersion` is fixed, components include Go modules, Debian packages, ONNX Runtime and Silero, and serialized content contains neither `/Users/` nor the checkout path.
+The script rejects either platform SBOM unless `bomFormat=="CycloneDX"`, `specVersion` is fixed, metadata binds it to the matching immutable platform image digest, components include Go modules, Debian packages, ONNX Runtime and Silero, and serialized content contains neither `/Users/` nor the checkout path. It also validates a release index binding both platform digests and SBOM checksums to the multi-architecture manifest digest.
 
 Run: `bash scripts/verify_release.sh --artifacts-only`
 
@@ -490,11 +501,11 @@ Expected: FAIL because the current raw module list is not CycloneDX.
 
 - [ ] **Step 2: Pin tools and generate the SBOM**
 
-Pin exact versions in Make variables and scanner image digests. Generate the image, then generate an image-level CycloneDX SBOM so OS and application components share one artifact. Run `govulncheck` for every workspace module and Trivy against the built digest.
+Pin exact versions in Make variables and scanner image digests. Generate each platform image, then generate `sbom-amd64.cdx.json` and `sbom-arm64.cdx.json` from those image digests so OS and application components share one artifact per platform. Generate a release index containing the manifest digest, platform digests, SBOM checksums, tool versions, and commit. These are generated release artifacts, not a checked-in SBOM that becomes stale. Run `govulncheck` for every workspace module and Trivy against each built digest.
 
 - [ ] **Step 3: Add CI workflows**
 
-`verify.yml` runs `make verify` on Linux for every pull request. `release.yml` runs tagged release tests, initializes submodules, builds both amd64/arm64 images, generates/validates SBOMs, scans, smoke-tests, and uploads evidence. It must not claim publish/sign success unless credentials and an actual registry push occur.
+`verify.yml` runs `make verify` on Linux for every pull request. `release.yml` runs tagged release tests, initializes submodules, builds and executes runtime smoke tests for both amd64 and arm64 (native or emulated), pushes the immutable platform images and manifest when authorized, generates/validates both SBOMs and their index, scans, and uploads evidence. It must not claim publish or attestation success unless credentials and an actual registry push/attestation occur.
 
 - [ ] **Step 4: Verify locally**
 
@@ -505,7 +516,7 @@ Expected: PASS with zero High/Critical fixed vulnerabilities under the documente
 - [ ] **Step 5: Commit and review**
 
 ```bash
-git add .github Makefile scripts/verify_release.sh deploy/sbom.cdx.json deploy/security_scans.md
+git add .github Makefile scripts/verify_release.sh deploy/sbom deploy/security_scans.md
 git rm deploy/sbom.json
 git commit -m "ci(release): add reproducible security gate"
 ```
@@ -513,6 +524,7 @@ git commit -m "ci(release): add reproducible security gate"
 ### Task 10: Repair Container, Nginx, systemd, and Shutdown Paths
 
 **Files:**
+- Modify: `deploy/Dockerfile`
 - Modify: `deploy/docker-compose.yaml`
 - Modify: `deploy/nginx.conf`
 - Modify: `deploy/govoice.service`
@@ -525,7 +537,7 @@ git commit -m "ci(release): add reproducible security gate"
 
 - [ ] **Step 1: Write deployment static/smoke checks**
 
-The script renders Compose config, runs `nginx -t` with generated temporary certificates, asserts every referenced host/container path exists, verifies systemd `ExecStart`, model and ORT library paths, and asserts both supervisor grace periods exceed `drain_timeout + 5s`.
+The script renders Compose config, runs `nginx -t` with generated temporary certificates, asserts every referenced host/container path exists, verifies systemd `ExecStart`, model and ORT library paths, and asserts both supervisor grace periods exceed `drain_timeout + 5s`. It builds and runs the real image with a read-only root filesystem plus only the declared tmpfs/writable mounts, confirms an unprivileged user, exercises health/readiness, and checks child-process reaping and SIGTERM exit.
 
 - [ ] **Step 2: Run and confirm red**
 
@@ -535,13 +547,13 @@ Expected: missing private-key mount, wrong native model/config paths, and insuff
 
 - [ ] **Step 3: Align deployment assets**
 
-Mount cert and key directories exactly where Nginx reads them. Install server, worker, model, ORT library, production YAML, and environment file to paths used by the unit. Set Compose/systemd grace to at least 55 seconds for the 45-second drain. Pin Compose image references by digest or require `GOVOICE_IMAGE_DIGEST`.
+Mount cert and key directories exactly where Nginx reads them. Install server, worker, model, ORT library, production YAML, and environment file to paths used by the unit. Make the container run unprivileged with a read-only root and explicit writable mounts. Set Compose/systemd grace to at least 55 seconds for the 45-second drain. Pin Compose image references by digest or require `GOVOICE_IMAGE_DIGEST`.
 
 - [ ] **Step 4: Verify container and shutdown smoke**
 
-Run: `bash scripts/smoke_deploy.sh && docker build -f deploy/Dockerfile -t govoice:v1-review .`
+Run: `bash scripts/smoke_deploy.sh`
 
-Then run the lifecycle test that holds a session through the drain deadline and confirms application exit precedes supervisor hard-kill.
+The script must run the built container, not merely build it. Then run the lifecycle test that holds a session through the drain deadline and confirms application exit precedes supervisor hard-kill; repeat the SIGTERM/drain assertion for the systemd unit in the target-Linux certification environment.
 
 - [ ] **Step 5: Commit and review**
 
@@ -559,6 +571,11 @@ git commit -m "fix(deploy): align production runtime paths"
 - Modify: `docs/benchmarks/capacity_slo_report.md`
 - Modify: `docs/release_evidence.md`
 - Modify: `docs/Voice Framework V1 — Phase Checklist.md`
+- Modify: `examples/rtvi_client/README.md`
+- Modify: `examples/rtvi_client/cli.js`
+- Modify: `examples/rtvi_client/server.js`
+- Modify: `examples/rtvi_client/package.json`
+- Modify: `examples/rtvi_client/package-lock.json`
 - Create: `scripts/verify_quickstart.sh`
 
 **Interfaces:**
@@ -597,12 +614,18 @@ git commit -m "docs(v1): make release paths executable"
 - Modify: `providers/google/go.mod`
 - Modify: `providers/xai/go.mod`
 - Modify: `server/go.mod`
+- Move: `transport/` to `core/transport/`
+- Move: `vad/` to `core/vad/`
+- Move: `examples/envload/` to `core/envload/`
+- Move: `cmd/server/` to `server/cmd/server/`
+- Move: `cmd/vadworker/` to `server/cmd/vadworker/`
 - Modify: all Go imports beginning `govoice`
+- Modify: `Makefile`
 - Modify: `docs/compatibility/v1-lock.json`
 - Create: `scripts/verify_modules.sh`
 
 **Interfaces:**
-- Produces module paths rooted at `github.com/raysca/go-voice`; workspace replaces remain development-only, while published module metadata resolves tagged sibling modules.
+- Produces module paths rooted at `github.com/raysca/go-voice`; no committed module file contains a local `replace`; `go.work` supplies local workspace resolution; release metadata resolves coordinated tagged sibling modules.
 
 - [ ] **Step 1: Add external-consumer verification**
 
@@ -615,7 +638,7 @@ import (
 )
 ```
 
-Also build the server command without `go.work`. Assert no module contains a `replace` directive in its release copy.
+Also build the server command without `go.work`. Assert no committed module contains a `replace` directive. Before publication, construct a temporary file-backed GOPROXY containing release-form module archives for the exact coordinated versions and resolve/build only through that proxy. After tags are published, repeat against the public proxy and verify tag-to-module-path/version correspondence.
 
 - [ ] **Step 2: Run and confirm red**
 
@@ -635,7 +658,13 @@ github.com/raysca/go-voice/providers/xai
 github.com/raysca/go-voice/server
 ```
 
-Remove the root↔server release dependency cycle by moving `cmd/server` into `server/cmd/server` or moving shared root packages under a dependency-safe module. Keep `go.work` for local development; create release module files without local replaces and verify coordinated semantic-version tags.
+Use exact sibling requirements at `v0.1.0`. The coordinated repository tags are `v0.1.0`, `core/v0.1.0`, `providers/google/v0.1.0`, `providers/xai/v0.1.0`, and `server/v0.1.0`; tag creation/publication remains a release action, not part of this source-edit task.
+
+Eliminate the existing root↔server cycle deterministically: move transport, VAD, and the generic environment loader into the dependency-safe `core` module; move both production commands into the `server` module; and update imports to `github.com/raysca/go-voice/core/transport/...`, `github.com/raysca/go-voice/core/vad`, and `github.com/raysca/go-voice/core/envload`. This removes the `examples/envload` root import from both the server command and live server test.
+
+Remove `core/vad`'s source-tree fallback that runs `go build ./cmd/vadworker`. Core accepts a configured/preinstalled worker binary and fails with an actionable error when none is available; the server packaging/build owns production of `server/cmd/vadworker`, while tests inject a fixture path. The root module remains an umbrella/examples/tools consumer and may depend on core/providers/server; server must not depend on the root module. Providers depend only on core. Keep `go.work` for local development and remove every local `replace` from all committed `go.mod` files.
+
+Update every Make target affected by the moves, including server/worker build paths, test and format package roots, release image inputs, and the canonical Protobuf `go_opt` import. `make verify` must run solely against the new layout.
 
 - [ ] **Step 4: Verify workspace-off and workspace-on builds**
 
@@ -644,11 +673,11 @@ Run: `bash scripts/verify_modules.sh && make verify`
 - [ ] **Step 5: Commit and review**
 
 ```bash
-git add go.mod go.sum go.work core providers server cmd docs/compatibility/v1-lock.json scripts/verify_modules.sh
+git add go.mod go.sum go.work core providers server cmd examples Makefile docs/compatibility/v1-lock.json scripts/verify_modules.sh
 git commit -m "refactor(modules): publish canonical module graph"
 ```
 
-Independent review focus: dependency direction remains core → providers → server, external consumers need no local replace, and the production command remains buildable.
+Independent review focus: dependency direction is core ← providers ← server with no reverse edge to the umbrella module, external consumers need no local replace, and both production commands remain buildable.
 
 ### Task 13: External Scenario Harness and Release Evidence
 
@@ -657,17 +686,20 @@ Independent review focus: dependency direction remains core → providers → se
 - Create: `scripts/run_release_scenarios.sh`
 - Create: `deploy/netem/README.md`
 - Create: `docs/benchmarks/release-results.schema.json`
+- Modify: `examples/rtvi_client/cli.js`
+- Modify: `examples/rtvi_client/package.json`
+- Modify: `examples/rtvi_client/package-lock.json`
 - Modify: `docs/release_evidence.md`
 - Modify: `docs/benchmarks/capacity_slo_report.md`
 - Test: `server/e2e_live_test.go`
 - Test: `server/scenarios_test.go`
 
 **Interfaces:**
-- Produces signed/timestamped JSON results for Scenarios A, C, D, E, F, G, H, I, and J, with environment identity and percentile calculations.
+- Produces timestamped, checksummed, provenance-bound JSON results for mandatory Scenarios A, C, D, E, F, G, H, I, and J, with environment identity and percentile calculations. Scenario B remains optional and non-blocking unless the frozen specification promotes it.
 
 - [ ] **Step 1: Add schema and self-test mode**
 
-`releasecheck` records commit, dirty status, image digest, architecture, libc, provider regions/models, client versions, sample counts, p50/p95/p99, maximum memory, and pass/fail reason. `--self-test` uses deterministic fixtures and validates every required field without provider credentials.
+`releasecheck` records commit, dirty status, manifest and platform image digests, SBOM checksum, architecture, libc, deployment mode, provider regions/models, browser/device identity, client versions, sample counts, p50/p95/p99, maximum memory, live metric/timeline artifact checksums, and pass/fail reason. The schema rejects unknown/missing mandatory fields. `--self-test` uses deterministic fixtures and validates every required field without provider credentials.
 
 - [ ] **Step 2: Run self-test and confirm red before implementation**
 
@@ -677,7 +709,9 @@ Expected initially: package or schema does not exist.
 
 - [ ] **Step 3: Implement scenario orchestration**
 
-The shell script refuses a dirty tree, unpinned image, missing target metadata, or missing required credentials. It runs real Google and mixed xAI-LLM calls, 30 minutes with at least five test-threshold rotations, concurrent isolation, worker native-fault injection, admission security, and a `tc netem` impairment matrix. It captures no secrets, transcript text, or PCM.
+The shell script refuses a dirty tree, unpinned image, missing target metadata, missing required credentials, or a result not bound to the commit/image/SBOM under review. It runs real Google and mixed xAI-LLM calls using the pinned unmodified Pipecat package in a real supported browser and named audio device, including an acoustic loopback or documented hardware path. It executes 30 minutes with at least five test-threshold rotations, concurrent isolation, admission security, `tc netem` impairment, native-worker fault injection, and a separate hard-kill case. It captures live exported metrics and bounded timeline evidence, but no secrets, transcript text, or PCM.
+
+Run both amd64 and arm64 images (native or documented emulation) and exercise both container and systemd deployments through SIGTERM/drain. Require a second operator or fresh independent agent to follow only `docs/operations_runbook.md` and record whether startup, rollback, evidence collection, and shutdown succeed without undocumented steps.
 
 - [ ] **Step 4: Run available certification**
 
@@ -689,7 +723,7 @@ On target Linux with credentials and explicit cost authorization:
 
 `bash scripts/run_release_scenarios.sh --execute`
 
-The release remains not-ready if any mandatory result is absent or below the frozen SLO.
+The release remains not-ready if any mandatory result, architecture/runtime smoke, browser/device/acoustic run, deployment-mode shutdown run, live metric/timeline capture, or independent runbook-following result is absent or below the frozen SLO. Scenario B absence alone does not block V1.
 
 - [ ] **Step 5: Commit harness and truthful evidence**
 
