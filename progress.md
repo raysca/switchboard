@@ -126,43 +126,42 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Phase 2 — P0 audio/call parity
 
-- [ ] Task 6: Audio conditioning, filters, conversion, buffers.
+- [x] Task 6: Audio conditioning, filters, conversion, buffers.
 - [ ] Task 7: Silence, turn detection, manager.
 - [ ] Task 8: Output pacing, speaking state, barge-in/flush.
 - [ ] Task 9: STT commit/finalization.
 - [ ] Independent Phase 2 tester gate; record Gate B.
 
-### Task 6 implementation awaiting independent review
+### Task 6 closeout
 
-- Implementation is present but Task 6 remains open pending the required
-  independent review. The core contract now has explicit PCM format metadata;
-  a real SpeexDSP 1.2.1 preprocessor with 10 ms observable latency; a
-  quality-5 band-limited streaming resampler; deterministic PCM16/float and
-  mono/stereo conversion; and byte-bounded pre-roll, rechunking, and opt-in
-  turn buffering.
-- SpeexDSP is vendored from official release tag `SpeexDSP-1.2.1`, commit
-  `1b28a0f61bc31162979e1f26f3981fc3637095c8`, under its BSD 3-Clause license.
-  The C sources and headers were audited byte-for-byte against that revision;
-  the only local changes are the documented generated
-  `speexdsp_config_types.h` expansion and whitespace-only diff hygiene in
-  three upstream files. No RNNoise model weights or globally installed
-  library are used. Builds require CGO and a C compiler; the supported Debian
-  production builder already sets `CGO_ENABLED=1`.
-- RED evidence: the focused Task 6 command failed on the absent resampler and
-  invalid C adapter calls. Focused GREEN and full core race/vet evidence are
-  recorded in `.superpowers/sdd/2026-10-04-v2-execution/task-6-report.md`.
-  Gate B remains open for Tasks 7–9 and the independent Phase 2 gate.
-- Review round 1 required changes for cancellation at the full-frame boundary,
-  Speex's native one-frame delay/tail drain, resampler rate/allocation bounds,
-  DSP assertions that reject silence/gating, explicit turn-buffer overflow,
-  and typed turn identity. Regressions and fixes are implemented; Task 6
-  remains open pending independent re-review and tester PASS.
-- Review round 2 replaced the attenuation-sensitive DSP assertion with a
-  gain-normalized residual/SNR metric over a deterministic voiced-burst and
-  stationary-noise fixture. It requires at least 3 dB improvement and 0.5
-  wanted gain; bypass, 0.9x/0.1x attenuation, all-silence, and threshold-gate
-  negative controls fail the same predicate. Task 6 and Gate B remain open
-  pending independent re-review and the Phase 2 tester gate.
+- Implementation commits: `10d9c26` (`feat(core): add bounded streaming audio
+  conditioning`), `26b2613` (`fix(core): harden streaming audio conditioning`),
+  and `6cb134a` (`test(core): prove real noise suppression`). The independent
+  reviewer APPROVED and the final independent tester passed at `6cb134a`.
+- Review round 1 found six issues: full-frame cancellation could strand state;
+  Speex's one-frame delay and tail drain were not represented honestly;
+  resampler rates, allocation, and C-narrowing needed bounds; DSP assertions
+  could accept silence or gating; reject-newest overflow was not observable;
+  and turn buffers used strings instead of `core.TurnID`. Round 2 found the
+  residual metric could accept uniform attenuation; it now uses a deterministic
+  voiced/noise fixture with gain-normalized SNR plus a wanted-gain floor and
+  explicit bypass, attenuation, silence, and threshold-gate negative controls.
+- Final tester evidence passed the suppression controls 25 consecutive times
+  under the race detector, full `core` race tests and vet, and the audio race
+  suite in the supported Linux/arm64 Debian builder. SpeexDSP is vendored from
+  official tag `SpeexDSP-1.2.1`, commit
+  `1b28a0f61bc31162979e1f26f3981fc3637095c8`, under BSD 3-Clause; provenance,
+  generated-config expansion, harmless whitespace differences, RED/GREEN
+  commands, and review evidence are recorded in
+  `.superpowers/sdd/2026-10-04-v2-execution/task-6-report.md`. No unresolved
+  RNNoise weights or global package installation are used.
+- Durable limits: native audio builds require CGO and a C compiler; the initial
+  denoiser accepts mono PCM16LE only; denoising/resampling rates are limited to
+  8/16/24/48 kHz; resampling accepts at most 48,000 input samples per call and
+  caps output allocation at 288,064 samples. The existing V1 transport
+  resampler was not migrated. Task 6 does not change the pinned browser
+  player's inability to clear already-buffered playback. Tasks 7–9 and the
+  independent Phase 2 Gate B remain open.
 
 ## Phase 3 — Context, tools, tracing, compatibility
 
@@ -234,4 +233,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Tasks 1–5 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Gates B–G remain open. Next unblocked work is Phase 2 Task 6; product implementation tasks are not complete.
+Tasks 1–6 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Gates B–G remain open. Next unblocked work is Phase 2 Task 7; product implementation tasks are not complete.
