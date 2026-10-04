@@ -1,0 +1,19 @@
+# Server storage operations
+
+Task 3 introduces Server-owned SQL storage. The Framework and provider modules have no persistence dependency. Configure `storage.Config{Dialect: storage.SQLite, DSN: path}` for one-node deployment or `storage.Postgres` with a pgx connection string for PostgreSQL. The opener pings the database and applies embedded, ordered Goose migrations before returning a store. Opening with an unsupported dialect or failed migration fails startup.
+
+## Dependencies and migration policy
+
+The Server pins `modernc.org/sqlite` v1.60.1 (CGO-free SQLite; Go 1.26 minimum), `github.com/jackc/pgx/v5` v5.11.0 (PostgreSQL `database/sql` driver), `github.com/pressly/goose/v3` v3.28.0 (embedded, transactional versioned SQL migrations), `github.com/gofrs/flock` v0.13.1 (cross-process SQLite migration lock), and `github.com/google/uuid` v1.6.0 (UUIDv7 generation). These versions were checked with Go module metadata on 2026-10-04; all support the repository's Go 1.27.1. Goose's Provider is scoped per opener, so the two dialect migration sets do not share mutable global migration state. PostgreSQL migrations use Goose's session advisory locker; SQLite takes a file lock across startup migration and keeps one connection with foreign keys, WAL, and a five-second busy timeout. The SQLite lock file is `<database>.migration.lock` and can remain after shutdown. The lock is released, not the file deleted. In-memory SQLite skips this file lock.
+
+Both dialects use migration 001 for tables and 002 for indexes. Goose records applied versions in `goose_db_version`; each migration runs in a transaction. Migrations move forward only at startup. A failed migration aborts startup and leaves its version unapplied. Keep old migration files byte-for-byte stable after release; add a numbered migration for schema changes. Never silently rebuild a database or run an automatic downgrade. Test upgrades against a copy of the last deployed schema before rolling out.
+
+## Backup and restore
+
+Back up before each upgrade. For SQLite, use SQLite's online backup API or `VACUUM INTO` while the app is running; do not copy only the main `.db` file during WAL activity. A stopped server may be backed up by copying the database and any WAL state together. Include encryption key identifiers and deployment-managed keys in an independent secure backup; ciphertext in the database cannot be recovered without those keys. For PostgreSQL, use the deployment's consistent `pg_dump`/physical backup and point-in-time recovery policy. Restore into an isolated instance, start with the matching Server build so migrations run, and verify `goose_db_version`, foreign-key integrity, agent versions, and session history before serving traffic.
+
+SQLite is intended for a single node on a local filesystem. Concurrent processes on the same host coordinate migration through the adjacent lock file; do not place it on a filesystem without reliable locks. PostgreSQL supports multi-instance startup via the advisory migration lock. Keep write transactions short. Historical agent versions, MCP discovery/tools, sessions, turns, and traces have restricted foreign keys and no cascade deletion. A current agent's selected MCP server blocks normal deletion; after creating a detached current version, the live server may be removed while historical discovery, selected tool identity, and tool-call evidence remain.
+
+Repository methods store ciphertext bytes but do not encrypt, decrypt, validate provider credentials, or decide what text may be retained. Callers must apply the Task 16 secret policy and Task 19 trace retention policy before writing. No raw audio column exists.
+
+PostgreSQL integration tests run when `TEST_POSTGRES_DSN` is set to an isolated test database. They are skipped in the default local suite when no DSN is available.

@@ -96,6 +96,12 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Rulings: default assistant output is interruptible; admission and applied mute state are separate, with inline controls queued in admission order; a flush requires an explicit matching generation and advances the fence once; stale controls cannot cancel a new turn; partial already-delivered context and explicitly uninterruptible media survive the core/fake flush. Costs and alternatives are recorded in the Task 2 report. Real WebSocket disposition/pacing remains Task 8; client playback clearing is not claimed.
 - Gate A remains open pending Tasks 3–5 and the independent Phase 1 tester.
 
+### Task 3 implementation, pending independent review
+
+- Server-owned `database/sql` storage, embedded SQLite/PostgreSQL Goose migrations, UUIDv7 IDs, canonical snapshot hashes, and thin repositories are implemented on `codex/v2-implementation`.
+- Focused RED/GREEN evidence covers empty and upgraded migrations, transactional rollback, immutable versions, history-safe MCP deletion, concurrent SQLite startup/writes, and JSON validation. The exact commands and remaining PostgreSQL integration limitation are recorded in `.superpowers/sdd/2026-10-04-v2-execution/task-3-report.md`.
+- Independent review and Gate A remain open. Task 3 is not marked complete until review findings are resolved.
+
 ## Phase 2 — P0 audio/call parity
 
 - [ ] Task 6: Audio conditioning, filters, conversion, buffers.
