@@ -16,7 +16,7 @@
 - `SessionID`, `TurnID`, and `Generation` remain distinct; generation is a cancellation fence, never an identity.
 - Server durable IDs are opaque UUIDv7 strings; `AgentVersion`, MCP discovery, and selected tool schemas are immutable snapshots with explicit hashes.
 - Trace defaults to metadata-only; raw audio and credentials are never traced; text and tool content require explicit policy and redaction.
-- Land and integrate all P0 work before P1, and P1 before P2; optional P2 work does not block V2 release unless promoted by product evidence.
+- Land and integrate P0 behavior before functional P1 work, and P1 before P2; only prerequisite contract types/envelopes may be published earlier, with their implementation explicitly deferred below. Optional P2 work does not block V2 release unless promoted by product evidence.
 - Preserve independent RTVI conformance, Whisker semantic conformance, and Pipecat behavioral parity results; a recorded playback-clear decision is not a pass.
 - Use `database/sql`, `modernc.org/sqlite`, `github.com/jackc/pgx/v5/stdlib`, embedded dialect-specific migrations, thin repositories, and shared repository-contract tests.
 - Management APIs use versioned `/api/v1` DTOs; public voice admission is separate from administrator authentication; secrets never reach browser reads.
@@ -25,11 +25,11 @@
 
 ## Review Focus
 
-1. Interrupt or flush racing late STT/LLM/TTS output must preserve turn identity and prevent stale frames, context commits, or misleading trace events; pin in Tasks 2 and 4.
-2. Sentinel transcript, prompt, tool payload, credential, and provider-error content must not leak under metadata-only policy; pin in Tasks 1, 9, and 21.
-3. MCP schema drift, tool deletion, and active sessions must preserve immutable snapshots and historical evidence; pin in Tasks 14–16 and 25.
-4. SQLite/PostgreSQL behavior and upgrade paths must agree under concurrent writes and interrupted migrations; pin in Tasks 5 and 26.
-5. A trace/history store outage must not terminate an active voice session, while invalid configuration must prevent a new session; pin in Tasks 9 and 26.
+1. Interrupt or flush racing late STT/LLM/TTS output must preserve turn identity and prevent stale frames, context commits, or misleading trace events; pin in Tasks 2, 4, 9, and 13.
+2. Sentinel transcript, prompt, tool payload, credential, and provider-error content must not leak under metadata-only policy; pin in Tasks 13, 16, 19, and 20.
+3. MCP schema drift, tool deletion, and active sessions must preserve immutable snapshots and historical evidence; pin in Tasks 17–18 and 25.
+4. SQLite/PostgreSQL behavior and upgrade paths must agree under concurrent writes and interrupted migrations; pin in Tasks 3 and 26.
+5. A trace/history store outage must not terminate an active voice session, while invalid configuration must prevent a new session; pin in Tasks 19 and 26.
 
 ---
 
@@ -54,24 +54,24 @@ For every task below: add the named focused regression tests first and run them 
 
 ## Phase 1 — Foundations in Parallel
 
-### Task 1: Turn, trace, observer, and serializer contracts (FW-A/FW-D)
+### Task 1: Turn, trace, observer, serializer, and tool contract surfaces (FW-A/FW-C/FW-D)
 
-**Files:** `core/identity.go`, `core/trace.go`, `core/observer.go`, `core/debug.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+**Files:** `core/identity.go`, `core/trace.go`, `core/observer.go`, `core/debug.go`, `core/tools/types.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
 
-**Interfaces:** Consumes Phase 0 contracts. Produces distinct `SessionID`, `TurnID`, `Generation`; no-op `Tracer`/`Span`; immutable `TraceEvent`, `ObserverEvent`, `DebugEvent`; serializer boundary. No exporter or persistence types in core.
+**Interfaces:** Consumes Phase 0 contracts. Produces distinct `SessionID`, `TurnID`, `Generation`; no-op `Tracer`/`Span`; immutable `TraceEvent`, `ObserverEvent`, `DebugEvent`; and the provider-neutral `ToolDefinition`, `ToolCall`, `ToolResult`, and `ToolExecutor` signatures from `docs/v2-contracts.md`. This task publishes type/interface contracts and compile-time contract tests only: serializer mapping, observer delivery, ToolExecutor execution, and ToolLoop behavior are deferred until after P0. No exporter or persistence types enter core.
 
-- [ ] Add compile-time identity, no-op, parent/child span, observer isolation/order, semantic-event and privacy tests; run `cd core && go test -run 'Test(Identity|Trace|Observer|Debug)' ./...` and confirm failure.
-- [ ] Implement public core contracts, docs and API examples; rerun focused tests, then `cd core && go test -race -count=1 ./... && go vet ./...`.
+- [ ] Add compile-time identity and tool-signature, no-op, parent/child span, immutable observer/debug-value, and privacy-envelope contract tests; run `cd core && go test -run 'Test(Identity|TraceContract|ObserverContract|DebugContract|ToolContract)' ./...` and confirm failure.
+- [ ] Implement only public contract types and docs/API examples; do not implement P1 observer/serializer/tool behavior; rerun focused tests, then `cd core && go test -race -count=1 ./... && go vet ./...`.
 - [ ] Obtain independent review; commit `feat(core): add v2 identity and observability contracts`.
 
-### Task 2: Runtime lifecycle, control priority, mute, flush, and settings (FW-A)
+### Task 2: P0 runtime lifecycle, mute, and deterministic flush (FW-A)
 
 **Files:** `core/pipeline.go`, `core/session.go`, `core/turn.go`, `core/control.go`, `core/*_test.go`; `docs/v2-contracts.md`.
 
-**Interfaces:** Consumes Task 1 identities/events. Produces turn manager, typed runtime update/revision, input mute, cancellation fence, urgent control ordering, interruptible-output classification, deterministic server-side flush semantics.
+**Interfaces:** Consumes Task 1 identities/events. Produces turn lifecycle state, input mute, cancellation fence, interruptible-output classification, and deterministic server-side flush semantics. The task defines ordering needed for P0 interruption but does not add a P1 urgent-control queue or runtime-settings update API; those implementations are Tasks 27 and 30.
 
-- [ ] Add race tests for duplicate completion, false start, mute/unmute, late frame after interruption, invalid/replayed settings revision, and flush versus queued media; verify failures with `cd core && go test -run 'Test(Turn|Mute|Flush|RuntimeSettings)' ./...`.
-- [ ] Implement lifecycle/control behavior and document boundaries; run focused tests then `cd core && go test -race -count=1 ./... && go vet ./...`.
+- [ ] Add race tests for duplicate completion, false start, mute/unmute, late frame after interruption, and flush versus queued media; verify failures with `cd core && go test -run 'Test(TurnLifecycle|Mute|Flush)' ./...`.
+- [ ] Implement P0 lifecycle/control behavior and document boundaries; run focused tests then `cd core && go test -race -count=1 ./... && go vet ./...`.
 - [ ] Obtain independent review; commit `feat(core): harden turn lifecycle and control semantics`.
 
 ### Task 3: Server storage foundation (SV-A)
@@ -104,7 +104,7 @@ For every task below: add the named focused regression tests first and run them 
 - [ ] Implement shell and docs; run `cd ui && npm test -- --run && npm run build`.
 - [ ] Obtain independent UI review; commit `feat(ui): establish v2 admin shell`.
 
-**Phase 1 independent tester gate:** A reviewer outside Tasks 1–5 runs `cd core && go test -race -count=1 ./... && go vet ./...`, `cd server && go test -race -count=1 ./... && go vet ./...`, `cd ui && npm test -- --run && npm run build`; inspect that core imports no server/UI/storage/MCP packages and record Gate A evidence in `progress.md`.
+**Phase 1 independent tester gate:** A reviewer outside Tasks 1–5 runs `cd core && go test -race -count=1 ./... && go vet ./...`, `cd server && go test -race -count=1 ./... && go vet ./...`, `cd ui && npm test -- --run && npm run build`; inspect that core imports no server/UI/storage/MCP packages and that Task 1's public turn, trace, observer/debug, serializer-boundary, and provider-neutral tool type contracts all have contract tests. Gate A passes only on this contract/API evidence; Task 11's ToolLoop implementation remains required for Gate C. Record the Gate A result in `progress.md`.
 
 ## Phase 2 — P0 Framework Audio/Call Parity (complete before P1/P2)
 
@@ -148,7 +148,7 @@ For every task below: add the named focused regression tests first and run them 
 - [ ] Implement the common policy and provider adapters; run focused tests then race/vet suites in `core`, `providers/google`, and `providers/xai`.
 - [ ] Obtain independent review; commit `feat(core): stabilize speech transcript commits`.
 
-**Phase 2 independent tester gate:** Run every affected module's full race suite and vet plus P0 audio eval scenarios for mute, silence/no-speech, turn completion, normalization, pacing, barge-in, server flush, and transcript finalization. Separately run the playback-clear probe and preserve its unresolved result; do not infer client buffer clearing. Update Gate B in `progress.md` before Phase 3 begins.
+**Phase 2 independent tester gate:** This gate is executable before the eval harness exists and does not depend on Task 14. Run `cd core && go test -race -count=1 ./... && go vet ./...`, `cd providers/google && go test -race -count=1 ./... && go vet ./...`, `cd providers/xai && go test -race -count=1 ./... && go vet ./...`, and `go test -race -count=1 ./transport/rtvi ./transport/ws`; inspect focused unit tests for mute, silence/no-speech, turn completion, normalization, pacing, barge-in, server flush, and transcript finalization. Phase 3 Task 14 then packages these behaviors as machine-readable scenarios. Separately run the playback-clear probe and preserve its unresolved result; do not infer client buffer clearing. Update Gate B in `progress.md` before Phase 3 begins.
 
 ## Phase 3 — Context, Tools, Tracing, Compatibility
 
@@ -156,7 +156,7 @@ For every task below: add the named focused regression tests first and run them 
 
 **Files:** `core/context.go`, `core/context_test.go`, `core/context/`; `docs/v2-contracts.md`.
 
-**Interfaces:** Consumes stable turns, committed transcripts, and output completion barriers. Produces user/assistant/tool context aggregation, partial assistant reconciliation, deterministic commit, and a provider-neutral compaction hook (P1 implementation scheduled in Task 24).
+**Interfaces:** Consumes stable turns, committed transcripts, and output completion barriers. Produces user/assistant/tool context aggregation, partial assistant reconciliation, and deterministic commit. The P1 provider-neutral compaction hook is Task 28.
 
 - [ ] Add context ordering, partial write, cancelled output, tool-result, and bounded-window tests; run `cd core && go test -run 'Test(Context|AssistantContext|InterruptedAssistant)' ./...` and confirm failure.
 - [ ] Implement semantics and docs; run focused tests then `cd core && go test -race -count=1 ./... && go vet ./...`.
@@ -172,11 +172,11 @@ For every task below: add the named focused regression tests first and run them 
 - [ ] Implement the minimal provider-neutral loop and publish the library evaluation; run focused tests then `cd core && go test -race -count=1 ./... && go vet ./...`.
 - [ ] Obtain independent review; commit `feat(core): add bounded provider-neutral tool loop`.
 
-### Task 12: Google/xAI tool adapters and usage (FW-E)
+### Task 12: Google/xAI tool adapters (FW-E)
 
 **Files:** `providers/google/llm.go`, `providers/google/tools.go`, `providers/xai/llm.go`, `providers/xai/tools.go`, provider tests; `docs/pipecat-compatibility.md`.
 
-**Interfaces:** Consumes Task 11 tool types. Produces symmetric schema mapping, call/result parsing, continuation, cancellation/retry rules, optional usage units, and safe readiness events.
+**Interfaces:** Consumes Task 11 tool types. Produces symmetric schema mapping, call/result parsing, continuation, and cancellation/retry rules. Usage metrics are deferred to P1 Task 32; readiness-event behavior is deferred to P2 Task 43.
 
 - [ ] Add identical shared contract cases to both provider modules; run focused provider tests and confirm failures.
 - [ ] Implement adapters; run each focused suite then `cd providers/google && go test -race -count=1 ./... && go vet ./...` and the equivalent in `providers/xai`.
@@ -186,7 +186,7 @@ For every task below: add the named focused regression tests first and run them 
 
 **Files:** `core/trace.go`, `core/observer.go`, instrumentation in `core/`, `providers/google/`, `providers/xai/`; `docs/v2-contracts.md`, `docs/privacy.md`.
 
-**Interfaces:** Consumes Task 1 trace API and completed turn/tool/audio interfaces. Produces correlated spans/events for session through transport, metadata default, selected text redaction, provider usage/readiness, and observer fault isolation.
+**Interfaces:** Consumes Task 1 trace API and completed turn/tool/audio interfaces. Produces correlated spans/events for session through transport, metadata default, and selected text redaction. Usage emission is P1 Task 32, readiness events are P2 Task 43, and observer delivery/fault isolation is P1 Task 35.
 
 - [ ] Add sentinel-secret/content tests and ordering/correlation tests across session, turn, tools, interruption, and usage; confirm failure in affected module tests.
 - [ ] Instrument and document; run full race/vet suites in core and both providers.
@@ -270,7 +270,7 @@ For every task below: add the named focused regression tests first and run them 
 - [ ] Implement and document; run full server race/vet.
 - [ ] Obtain independent privacy/operations review; commit `feat(server): add trace retention and optional export`.
 
-**Phase 5 independent tester gate:** Send a real framework session through persistence and API; check metadata-only sentinels and inject trace-store write failure while speech remains active. Verify Gate E evidence and mark it only when the UI/API consumer can retrieve correctly correlated records.
+**Phase 5 independent tester gate:** Send a real framework session through persistence and the query API; check metadata-only sentinels and inject trace-store write failure while speech remains active. Record the persistence/API evidence, but leave Gate E open until Task 23's UI timeline retrieves and presents the same correlated real-session trace.
 
 ## Phase 6 — Admin UI Product Features
 
@@ -314,11 +314,11 @@ For every task below: add the named focused regression tests first and run them 
 - [ ] Implement and document; run UI tests/build and full server race/vet.
 - [ ] Obtain independent operations/UI review; commit `feat(ui): add operations dashboard and server view`.
 
-**Phase 6 independent tester gate:** A tester not on UI implementation runs `cd ui && npm test -- --run && npm run build`, checks keyboard/accessibility and responsive flows, and verifies every view uses `/api/v1` with no secret-bearing browser DTOs. Record status in `progress.md`.
+**Phase 6 independent tester gate:** A tester not on UI implementation runs `cd ui && npm test -- --run && npm run build`, checks keyboard/accessibility and responsive flows, and verifies every view uses `/api/v1` with no secret-bearing browser DTOs. After Task 23, send one real session through Framework → Server persistence → API → UI timeline, verify session/turn/span correlation in the rendered trace under metadata-only policy, and record Gate E only when this evidence passes. Task 24's dashboard is not a Gate E dependency.
 
 ## Phase 7 — Full Vertical Integration
 
-### Task 25: Seven product scenarios and Gate G integration (FW/SV/UI)
+### Task 25: Seven product scenarios (FW/SV/UI)
 
 **Files:** `server/e2e/`, `ui/e2e/`, `tools/eval/scenarios/`, `docs/v2-plan.md`, `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
 
@@ -328,7 +328,7 @@ For every task below: add the named focused regression tests first and run them 
 - [ ] Run all scenario suites, document setup/results and known limitations; run full affected module/UI suites.
 - [ ] Obtain independent end-to-end review; commit `test(v2): verify seven vertical product scenarios`.
 
-**Phase 7 independent tester gate:** A clean-environment tester runs all seven scenarios without using implementation notes, checks session snapshot/version and trace correlation end to end, and records Gate G blockers and evidence in `progress.md`.
+**Phase 7 independent tester gate:** A clean-environment tester runs all seven scenarios without using implementation notes, checks session snapshot/version and trace correlation end to end, and records scenario evidence and any blockers in `progress.md`. This is the vertical-scenario input to Gate G; it does not pass the product-release gate before production hardening.
 
 ## Phase 8 — Production Hardening
 
@@ -342,35 +342,207 @@ For every task below: add the named focused regression tests first and run them 
 - [ ] Implement hardening, docs, image checks, and target Linux benchmark run; run `make verify`, release security checks where available, and database integration suite.
 - [ ] Obtain independent security/operations review; commit `chore(server): harden v2 production release`.
 
-**Phase 8 independent tester gate:** Run clean install/upgrade/backup-restore and graceful-shutdown drills; verify security review findings, immutable image dependencies, and target Linux benchmark comparisons. Record production readiness and remaining environment-specific limits.
+**Phase 8 independent tester gate:** Run clean install/upgrade/backup-restore and graceful-shutdown drills; verify security review findings, immutable image dependencies, and target Linux benchmark comparisons. Combine this evidence with Phase 7's seven scenarios and Phase 6's onboarding/persistent-agent/Pipecat-test/MCP/trace results. Record Gate G as passed only when every listed product flow, security review, and production packaging check succeeds; otherwise record the exact failed condition and keep it open.
 
 ## Phase 9 — P1 Parity Completion (after P0 gates)
 
-### Task 27: P1 runtime, context, capture, failure, usage, and observer features
+Each task below starts only after Gate B and the relevant Gate A/C/F contract is stable. Contract envelopes published in Phase 1 do not authorize implementing these behaviors early. Each subsystem lands in its own commit with focused RED/GREEN evidence, docs, full module race/vet, and independent review under the shared task protocol.
 
-**Files:** `core/`, `providers/google/`, `providers/xai/`, `server/`, affected tests; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+### Task 27: Atomic runtime settings updates
 
-**Interfaces:** Consumes Gates A–F. Produces atomic runtime settings, context compaction hook, audio capture sink, urgent control priority refinement, failure/degradation policies, complete optional usage units, playback-state observer, serializer and observer hardening.
+**Files:** `core/control.go`, `core/session.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
 
-- [ ] Add P1 parity cases for partial invalid update, hook decline, consent/buffer bound, retry/degrade safety, absent metrics, playback state transitions, and serializer negatives; run the owning focused tests to confirm failure.
-- [ ] Implement in separately reviewable subsystem commits; update status/evidence per P1 row; run full race/vet suites for every changed Go module and UI tests if APIs change.
-- [ ] Obtain independent review per subsystem; final commit `feat(v2): complete p1 runtime parity`.
+**Interfaces:** Consumes the Phase 0 `RuntimeSettingsUpdate` contract and Task 2 lifecycle. Produces revisioned, all-or-nothing updates for supported mute/interruption/language/timeout thresholds at defined control boundaries.
 
-**Phase 9 independent tester gate:** Run the complete P1 capability suite plus `make verify`; verify P1 documentation reflects evidence rather than intended state. Record the release decision and any explicit deferrals.
+- [ ] Add invalid partial-update, stale revision, supported update, and no-session-rebuild tests; run `cd core && go test -run 'Test(RuntimeSettings|SettingsRevision)' ./...` and confirm failure.
+- [ ] Implement the validated atomic update path and docs; rerun focused tests, then `cd core && go test -race -count=1 ./... && go vet ./...`.
+- [ ] Obtain independent API/concurrency review; commit `feat(core): apply runtime settings atomically`.
+
+### Task 28: Context summarization and compaction hook
+
+**Files:** `core/context.go`, `core/context_test.go`, `core/context/`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 10 context commit semantics. Produces provider-neutral compaction hook that preserves system/tool state and leaves context usable when the hook declines or fails safely.
+
+- [ ] Add hook success/decline/error, system-message preservation, tool-state retention, and bounded-context tests; run `cd core && go test -run 'Test(ContextCompaction|ContextSummary)' ./...` and confirm failure.
+- [ ] Implement the hook and document application ownership; rerun focused tests and full core race/vet.
+- [ ] Obtain independent context/privacy review; commit `feat(core): add context compaction hook`.
+
+### Task 29: Opt-in audio recording/capture sink
+
+**Files:** `core/audio/capture.go`, `core/audio/*_test.go`; `docs/v2-contracts.md`, `docs/privacy.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 6 audio formats and Task 13 content policy. Produces application-supplied sinks for user, assistant, mixed, or separate audio with consent, format metadata, bounded buffering, cancellation, and no core storage.
+
+- [ ] Add consent-off, each capture mode, buffer overflow, cancellation, and metadata tests; run `cd core && go test -run 'Test(AudioCapture|CaptureConsent)' ./...` and confirm failure.
+- [ ] Implement bounded opt-in capture and docs; rerun focused tests and full core race/vet.
+- [ ] Obtain independent privacy/audio review; commit `feat(core): add opt-in audio capture sink`.
+
+### Task 30: Urgent control lane
+
+**Files:** `core/pipeline.go`, `core/control.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 2 P0 cancel/flush ordering. Produces a P1 priority lane for cancel, interruption, flush, end, and critical error that can pass congested media while preserving control order.
+
+- [ ] Add media-congestion, ordering, starvation, and shutdown tests; run `cd core && go test -run 'Test(UrgentControl|ControlPriority)' ./...` and confirm failure.
+- [ ] Implement bounded priority scheduling and docs; rerun focused tests and full core race/vet.
+- [ ] Obtain independent scheduler review; commit `feat(core): prioritize urgent runtime control frames`.
+
+### Task 31: Processor failure and unusable policies
+
+**Files:** `core/pipeline.go`, `core/errors.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 2 lifecycle/error boundary. Produces explicit fail-session, disable, degrade, and safe-retry policy decisions with side-effect-aware error propagation.
+
+- [ ] Add one test per policy plus cancellation/retry-after-output and session-isolation tests; run `cd core && go test -run 'Test(ProcessorFailure|UnusablePolicy|SafeRetry)' ./...` and confirm failure.
+- [ ] Implement policy dispatch and docs; rerun focused tests and full core race/vet.
+- [ ] Obtain independent failure-semantics review; commit `feat(core): define processor failure policies`.
+
+### Task 32: Provider usage metrics
+
+**Files:** `core/usage.go`, `providers/google/`, `providers/xai/`, provider tests; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 1 event envelope and Task 13 trace instrumentation. Produces optional typed token/audio/character/request/tool usage events correlated by session/turn; unavailable values remain absent and no billing decision is made.
+
+- [ ] Add provider contract tests for available and unavailable units, correlation, and redaction; run focused tests in core, Google, and xAI modules and confirm failure.
+- [ ] Implement optional usage extraction/emission and docs; run full race/vet in all three modules.
+- [ ] Obtain independent provider/privacy review; commit `feat(providers): emit correlated usage metrics`.
+
+### Task 33: Bot output and playback-state observer
+
+**Files:** `core/audio/output*`, `core/observer.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 8 output lifecycle and Task 1 observer value contract. Produces ordered generating, buffered, playing, drained, interrupted, and completed state events.
+
+- [ ] Add transitions/races for empty output, first audio, drain, interruption, and completion; run `cd core && go test -run 'Test(PlaybackState|BotOutputState)' ./...` and confirm failure.
+- [ ] Implement events and docs; rerun focused tests and full core race/vet.
+- [ ] Obtain independent state-machine review; commit `feat(core): expose ordered playback state events`.
+
+### Task 34: Serializer abstraction
+
+**Files:** `core/serializer.go`, `core/debug.go`, `core/*_test.go`, transport serializers; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 1 serializer boundary. Produces protocol-selected encode/decode of semantic events and frames, preserving RTVI as a separate adapter and avoiding wire types in processors.
+
+- [ ] Add round-trip, unknown-field, malformed-input, and cross-serializer boundary tests; run `cd core && go test -run 'Test(Serializer|DebugSerialization)' ./...` and owning transport tests; confirm failure.
+- [ ] Implement serializer adapters and docs; run full core race/vet and `go test -race -count=1 ./transport/...`.
+- [ ] Obtain independent protocol-boundary review; commit `feat(core): add semantic serializer adapters`.
+
+### Task 35: Frame and pipeline observer API
+
+**Files:** `core/observer.go`, `core/pipeline.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 1 immutable observer contract. Produces non-mutating ordered frame/pipeline delivery with direction, processor position, timing, correlation, and panic/error isolation.
+
+- [ ] Add mutation-impossibility, callback ordering, timing/position, panic, error, and session-survival tests; run `cd core && go test -run 'Test(Observer|PipelineObservation)' ./...` and confirm failure.
+- [ ] Implement callback delivery/fault isolation and docs; rerun focused tests and full core race/vet.
+- [ ] Obtain independent concurrency/API review; commit `feat(core): deliver isolated pipeline observations`.
+
+**Phase 9 independent tester gate:** Run all P1 suites from Tasks 27–35, plus `make verify`; verify every P1 matrix row is marked from test evidence and not intent. Record exact results and any deferrals in `progress.md`.
 
 ## Phase 10 — P2 Parity / Nice-to-Haves (after P1)
 
-### Task 28: P2 audio sources, mixing, metadata, readiness, replay, and extended evals
+### Task 36: DTMF and transport-neutral tone frames
 
-**Files:** `core/audio/`, `core/frame.go`, provider readiness packages, `tools/eval/`, associated tests and docs.
+**Files:** `core/frame.go`, `core/audio/tone.go`, core/transport tests; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
 
-**Interfaces:** Consumes stable P0/P1 audio/control and privacy contracts. Produces typed DTMF/tone, bounded mixer, earcon/background audio, generic source, composable advanced filters, read-only runtime introspection, processor capability metadata, readiness events, consent-aware replay hooks, and extended edge-case scenarios.
+**Interfaces:** Consumes frame contract. Produces typed tone/DTMF values without implying PSTN/SIP support.
 
-- [ ] Add per-capability tests for mix bounds/timing, source cancellation, filter format transitions, tone typing, safe optional metadata, readiness transitions, replay privacy, reconnect/overflow and race cases; verify focused failures.
-- [ ] Implement optional capabilities individually and update the compatibility matrix; run focused tests then complete race/vet suites in all affected modules and full eval suite.
-- [ ] Obtain independent review for each optional subsystem; commit `feat(v2): add selected p2 audio and runtime capabilities`.
+- [ ] Add validation, serialization, and transport-neutrality tests; run `cd core && go test -run 'Test(Tone|DTMF)' ./...` and confirm failure.
+- [ ] Implement types/adapters and docs; run full core race/vet and transport tests.
+- [ ] Obtain independent API review; commit `feat(core): add transport-neutral tone frames`.
 
-**Phase 10 independent tester gate:** Confirm P2 work introduces no P0/P1 regressions with `make verify` and the complete behavioral eval suite. Update every P2 row with evidence or a reasoned deferred status; P2 omissions do not block release absent a documented product dependency.
+### Task 37: Bounded audio mixer
+
+**Files:** `core/audio/mixer.go`, `core/audio/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Tasks 6 and 8 audio format/pacing contracts. Produces bounded multi-source mix with deterministic format, timing, and interruption policy.
+
+- [ ] Add source-count bound, format mismatch, timing, cancellation, and interruption tests; run `cd core && go test -run 'Test(AudioMixer|Mixer)' ./...` and confirm failure.
+- [ ] Implement mixer/docs; run full core race/vet.
+- [ ] Obtain independent audio review; commit `feat(core): add bounded audio mixer`.
+
+### Task 38: Background audio and earcon processor
+
+**Files:** `core/audio/background.go`, `core/audio/earcon.go`, tests; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Tasks 8 and 37 output policies. Produces paced background/earcon injection, classification, start/stop, and interruption behavior.
+
+- [ ] Add lifecycle, pacing, output classification, and interruption tests; run `cd core && go test -run 'Test(BackgroundAudio|Earcon)' ./...` and confirm failure.
+- [ ] Implement processor/docs; run full core race/vet.
+- [ ] Obtain independent output review; commit `feat(core): add background audio and earcons`.
+
+### Task 39: Generic audio source abstraction
+
+**Files:** `core/audio/source.go`, `core/audio/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 6 formats and Task 8 output pacing. Produces generated/file/application source streams with shared format, bounded buffering, cancellation, and pacing.
+
+- [ ] Add each source type, EOF, format, overflow, and cancellation tests; run `cd core && go test -run 'Test(AudioSource|GeneratedAudio|FileAudio)' ./...` and confirm failure.
+- [ ] Implement source interface/adapters and docs; run full core race/vet.
+- [ ] Obtain independent lifecycle review; commit `feat(core): add generic audio source interface`.
+
+### Task 40: Composable advanced audio filter chain
+
+**Files:** `core/audio/filter_chain.go`, `core/audio/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 6 `AudioFilter`. Produces ordered filters with declared format transitions, bounded copies/state, cancellation, and deterministic close/reset.
+
+- [ ] Add format-chain mismatch, ordering, allocation/state bound, cancellation, and reset tests; run `cd core && go test -run 'Test(AudioFilterChain|FilterFormatTransition)' ./...` and confirm failure.
+- [ ] Implement chain/docs; run full core race/vet.
+- [ ] Obtain independent audio/API review; commit `feat(core): compose streaming audio filters`.
+
+### Task 41: Read-only runtime pipeline settings introspection
+
+**Files:** `core/runtime_snapshot.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Tasks 2 and 27 runtime state. Produces immutable read-only supported settings/state snapshots without mutable internals or content leakage.
+
+- [ ] Add snapshot immutability, concurrent read, unsupported field, and privacy tests; run `cd core && go test -run 'Test(RuntimeSnapshot|PipelineSettings)' ./...` and confirm failure.
+- [ ] Implement snapshot API/docs; run full core race/vet.
+- [ ] Obtain independent API/privacy review; commit `feat(core): expose read-only runtime snapshots`.
+
+### Task 42: Processor capability metadata
+
+**Files:** `core/processor.go`, `core/capability.go`, `core/*_test.go`; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes existing processor API. Produces optional audio, interruption, runtime-update, async, and stateful declarations with safe absence for older processors.
+
+- [ ] Add old-processor compatibility, each capability, invalid declaration, and introspection tests; run `cd core && go test -run 'Test(ProcessorCapability|CapabilityMetadata)' ./...` and confirm failure.
+- [ ] Implement optional metadata/docs; run full core race/vet.
+- [ ] Obtain independent compatibility review; commit `feat(core): describe optional processor capabilities`.
+
+### Task 43: Provider and processor readiness events
+
+**Files:** `core/readiness.go`, `providers/google/`, `providers/xai/`, readiness tests; `docs/v2-contracts.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Task 1 event envelope and provider lifecycle. Produces ready/degraded/unavailable/recovered transitions with safe reason categories; optional components do not block startup by default.
+
+- [ ] Add state transition, safe reason, recovery, and optional-startup tests; run focused tests in core, Google, and xAI modules and confirm failure.
+- [ ] Implement event emission/docs; run full race/vet in affected modules.
+- [ ] Obtain independent reliability review; commit `feat(providers): emit component readiness events`.
+
+### Task 44: Turn recording/replay hooks
+
+**Files:** `core/turn/replay.go`, `core/*_test.go`, `tools/eval/`; `docs/v2-contracts.md`, `docs/privacy.md`, `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes stable turn/event order and Task 13 privacy policy. Produces application-owned hooks preserving order/consent without core storage.
+
+- [ ] Add order, opt-in/consent, content redaction, cancellation, and application sink tests; run `cd core && go test -run 'Test(TurnReplay|RecordingHook)' ./...` and confirm failure.
+- [ ] Implement hooks/eval integration/docs; run core race/vet and full eval suite.
+- [ ] Obtain independent privacy/evaluation review; commit `feat(core): add consent-aware turn replay hooks`.
+
+### Task 45: Extended behavioral parity scenarios
+
+**Files:** `tools/eval/scenarios/`, `tools/eval/`, tests and `docs/pipecat-compatibility.md`.
+
+**Interfaces:** Consumes Tasks 14 and 36–44. Produces deterministic edge scenarios for false speech start, repeated barge-in, late STT, reconnect, TTS/tool races, mute update, congestion, overflow, and degradation.
+
+- [ ] Add each machine-readable scenario and assert expected results; run the focused eval runner and confirm new cases fail before behavior fixes.
+- [ ] Implement missing evaluation adapters and document outcomes; run full eval suite, `make verify`, and all affected Go module race/vet suites.
+- [ ] Obtain independent parity review; commit `test(eval): cover extended v2 behavior edges`.
+
+**Phase 10 independent tester gate:** Confirm optional P2 work introduces no P0/P1 regression with `make verify` and the full behavioral eval suite. Update each P2 matrix row with evidence or a reasoned deferred status; P2 omissions do not block release absent a documented product dependency.
 
 ## Final release gate
 

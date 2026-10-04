@@ -7,7 +7,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Branch: `codex/v2-implementation`
 - Base/starting commit: `9d99f80f519e5f20f567e1c6ac8ef52aea9d5559`
 - Phase 0 analyst roles: framework contract/domain analyst; compatibility and V1 evidence auditor; task decomposition/dependency planner; independent self-reviewer of the six-document set.
-- Baseline source: repository test/vet/benchmark evidence recorded for the Phase 0 freeze; machine-readable compatibility coordinates validated against the current worktree and pinned Node packages.
+- Baseline sources: repository test/vet/benchmark evidence recorded for the Phase 0 freeze. The manifest validator verifies required keys, selected non-floating/empty string rules, protobuf and VAD file hashes, and installed versions of the two client packages; it does not verify every inventory value against implementation sources. Remaining pin provenance is mapped in `docs/pipecat-compatibility.md`.
 - Baseline: 155 passing race-enabled test events, zero failures, across 10 test-bearing packages. Vet passed in root, `core`, `providers/google`, `providers/xai`, and `server`.
 - Baseline benchmark: resampler, 892,284 operations; 1,202 ns/op; 3,648 B/op; 7 allocs/op on Apple M4 Pro.
 - Live provider tests were not run because credentials were unavailable. Pipecat pytest was not run because pytest was unavailable.
@@ -50,13 +50,20 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 - RED evidence for missing compatibility-file checks: not available in the recovered worktree because the partial JSON files were already present at handoff; the pre-existing files validated on first invocation. Do not report a missing-file RED run as performed.
 - Missing-file RED replay in this recovery turn: validator exited 1 with “Manifest not found”; playback probe exited 2 with missing decision file after reproducing the unsupported playback-clear observations. Files were restored immediately.
-- Current manifest validation: passed; immutable coordinates, checksums, and npm package versions verified.
+- Current manifest validation: passed; required fields and selected string constraints passed, protobuf/VAD hashes matched, and installed versions for the two client packages matched. Other V1 inventory values are sourced from repository files listed in `docs/pipecat-compatibility.md`, not certified by this script.
 - Current playback-clear probe: passed through the recorded decision only; observed unsupported interruption and no client clear remain explicit. V2 gate remains unresolved.
 - Fixture verification: passed; client/server audio and nested RTVI valid, malformed and wrong-schema fixtures rejected explicitly.
 - `make verify`: passed with the Makefile SDK candidate. It built server, VAD worker and examples; root/core/Google/xAI/server vet and race suites passed; formatting passed; manifest, fixtures, and playback-decision checks passed.
 - Markdown placeholder scan: passed across all new Markdown.
 - Six-deliverable self-review: passed; checked requirements, cross-document consistency, pins and evidence. No material contract discrepancies found.
-- Report: `.superpowers/sdd/v2-plan/task-0-report.md` (to be completed with output and final review).
+- Report: `.superpowers/sdd/v2-plan/task-0-report.md` (contains initial evidence and completed Round 1 review fixes/verification).
+
+### Independent review and Round 1 corrections
+
+- Independent Phase 0 tester: PASS on initial deliverables; compatibility scripts, diff check, placeholder scan, and `make verify` all exited 0. Playback remains unsupported and passed only by the explicit recorded decision.
+- Independent reviewer: identified gate-ordering, contract-dependency, premature P1, task granularity, stale task-reference, progress wording, and validator-provenance findings; all findings are addressed in this revision.
+- Phase 0 document reviewer/fixer: completed Round 1 corrections; Gate A/E/G sequencing corrected; Task 1 now includes compile-time tool contracts; P0 gate no longer depends on the later eval harness; functional P1/P2 work is deferred and split into reviewable tasks; progress distinguishes the Phase 0 review from Gate A.
+- Reverification after these fixes: `node tools/compat/validate_manifest.js`, `node tools/compat/probe_playback_clear.js`, `node tools/compat/verify_fixtures.js`, `git diff --check`, placeholder scan, and `make verify` all exited 0. Playback remains unsupported; probe exit 0 is only via the recorded decision.
 
 ## Phase 1 — Foundations in parallel
 
@@ -109,23 +116,40 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 ## Phase 7 — Vertical integration
 
 - [ ] Task 25: Seven product scenarios: fresh install, mixed providers, MCP, agent versioning, MCP deletion safety, barge-in, failure isolation.
-- [ ] Independent Phase 7 tester gate; record Gate G.
+- [ ] Independent Phase 7 tester gate; record the seven vertical scenario results as Gate G inputs.
 
 ## Phase 8 — Production hardening
 
 - [ ] Task 26: Security, persistence reliability, operations, packaging, Linux performance.
-- [ ] Independent Phase 8 tester gate.
+- [ ] Independent Phase 8 tester gate; pass Gate G only after combining Phase 7 scenario results with security and production packaging evidence.
 
 ## Phase 9 — P1 parity (after P0)
 
-- [ ] Task 27: Runtime updates, context compaction, capture, failure policy, usage, observers/serializer.
+- [ ] Task 27: Atomic runtime settings updates.
+- [ ] Task 28: Context summarization/compaction hook.
+- [ ] Task 29: Opt-in audio recording/capture sink.
+- [ ] Task 30: Urgent control lane.
+- [ ] Task 31: Processor failure/unusable policies.
+- [ ] Task 32: Provider usage metrics.
+- [ ] Task 33: Bot output/playback-state observer.
+- [ ] Task 34: Serializer abstraction.
+- [ ] Task 35: Frame/pipeline observer API.
 - [ ] Independent Phase 9 tester gate.
 
 ## Phase 10 — P2 parity (after P1)
 
-- [ ] Task 28: Audio sources/mixing, metadata/readiness, replay, extended evaluation.
+- [ ] Task 36: DTMF/tone frames.
+- [ ] Task 37: Bounded audio mixer.
+- [ ] Task 38: Background audio/earcons.
+- [ ] Task 39: Generic audio source.
+- [ ] Task 40: Advanced audio filter chain.
+- [ ] Task 41: Read-only runtime introspection.
+- [ ] Task 42: Processor capability metadata.
+- [ ] Task 43: Provider/processor readiness events.
+- [ ] Task 44: Turn recording/replay hooks.
+- [ ] Task 45: Extended behavioral parity scenarios.
 - [ ] Independent Phase 10 tester gate.
 
 ## Next unblocked work
 
-After an independent Gate A contract review, begin Phase 1 tasks. Keep implementation tasks open; this ledger marks no product implementation phase complete.
+After the Phase 0 document reviewer records the contract freeze, begin Phase 1 tasks. Phase 0 reviewer approval is distinct from Gate A: Gate A remains open until the Phase 1 independent tester verifies public contract APIs and tests. Keep implementation tasks open; this ledger marks no product implementation phase complete.
