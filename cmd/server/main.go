@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"path/filepath"
 
@@ -91,7 +90,7 @@ func main() {
 	sig := <-sigCh
 	fmt.Printf("\nReceived signal %v: initiating graceful shutdown...\n", sig)
 
-	shutdownTimeout := cfg.Limits.DrainTimeout + 5*time.Second
+	shutdownTimeout := server.ShutdownBudget(cfg.Limits.DrainTimeout)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 

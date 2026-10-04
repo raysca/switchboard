@@ -253,6 +253,16 @@ func (s *Session) Post(f Frame) error {
 	}
 }
 
+// TailIndex is the last pipeline processor. Upstream re-entry starts there
+// so a transport acknowledgement walks back to the assistant.
+func (s *Session) TailIndex() int {
+	n := s.pipe.Len()
+	if n == 0 {
+		return 0
+	}
+	return n - 1
+}
+
 // Reenter queues an asynchronous operation result back into the pipeline at resumeIndex.
 func (s *Session) Reenter(f Frame, dir Direction, resumeIndex int, gen uint64) error {
 	if s.State() > StateRunning {

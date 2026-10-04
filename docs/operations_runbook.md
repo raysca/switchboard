@@ -6,7 +6,9 @@ This runbook provides step-by-step instructions for deploying, operating, monito
 
 ## 1. Supported Production Environments
 
-Voice Framework V1 is certified and supported on the following Linux distributions:
+The container image is the V1 distribution. The production image is Debian bookworm. A host install on Ubuntu, Debian, or RHEL is not part of this release. Host resource numbers below are planning guidance, not a measured capacity result.
+
+The following table is planning guidance for a host that runs the image:
 
 | Distribution | Minimum Version | Architecture | C Runtime Requirement |
 |---|---|---|---|
@@ -52,6 +54,8 @@ The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at
 ---
 
 ## 3. Deployment Path B: Systemd Native Service
+
+The systemd unit is a reference file and is not required to run V1.
 
 ### Step 1: Install Binaries and Models
 ```bash

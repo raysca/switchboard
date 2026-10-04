@@ -226,3 +226,18 @@ func TestLLM_RetryBeforeAndAfterCommit(t *testing.T) {
 		t.Fatalf("expected 2 attempts, got %d", attempts)
 	}
 }
+
+func TestLLMForwardsUpstreamInterruption(t *testing.T) {
+	proc, err := NewLLMProcessor(DefaultLLMConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	em := &directionEmitter{}
+	frame := &core.InterruptionFrame{Turn: "turn-1", Gen: 1}
+	if err := proc.ProcessFrame(context.Background(), frame, core.Upstream, em); err != nil {
+		t.Fatal(err)
+	}
+	if em.dir != core.Upstream {
+		t.Fatalf("interruption direction = %v, want upstream", em.dir)
+	}
+}

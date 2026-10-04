@@ -228,7 +228,7 @@ func (p *LLMProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.activeCancel = nil
 		}
 		p.mu.Unlock()
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 
 	case *core.CancelFrame:
 		p.mu.Lock()
@@ -237,10 +237,10 @@ func (p *LLMProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.activeCancel = nil
 		}
 		p.mu.Unlock()
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 
 	default:
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 	}
 }
 

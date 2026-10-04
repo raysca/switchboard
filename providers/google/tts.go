@@ -220,7 +220,9 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		return e.Push(f)
 
 	default:
-		return e.Push(f)
+		// Preserve direction. A flush acknowledgement walks upstream from the
+		// transport and must not be turned back downstream.
+		return e.PushDirection(f, dir)
 	}
 }
 

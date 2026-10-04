@@ -254,7 +254,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		if active != nil {
 			_ = active.stream.CloseSend(ctx)
 		}
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
@@ -264,7 +264,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.active = nil
 		}
 		p.mu.Unlock()
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 
 	case *core.CancelFrame:
 		p.mu.Lock()
@@ -274,10 +274,10 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.active = nil
 		}
 		p.mu.Unlock()
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 
 	default:
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 	}
 }
 

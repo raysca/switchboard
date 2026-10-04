@@ -25,6 +25,7 @@ services:
     environment:
       - TOKEN_SECRET=${TOKEN_SECRET:?TOKEN_SECRET is required and must not be the public development key}
       - GOOGLE_APPLICATION_CREDENTIALS=/etc/govoice/credentials/gcp.json
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
     ports:
       - "127.0.0.1:8080:8080" # Public WebSocket / Health (proxied via NGINX)
@@ -35,7 +36,7 @@ services:
       timeout: 2s
       retries: 3
       start_period: 5s
-    stop_grace_period: 45s
+    stop_grace_period: 60s
     deploy:
       resources:
         limits:
@@ -64,3 +65,9 @@ services:
 
 volumes:
   govoice_logs:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

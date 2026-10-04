@@ -321,19 +321,21 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.mu.Lock()
 		p.lastFinalText = ""
 		if p.session != nil {
+			// Barge-in advances generation after this speech start was stamped.
+			// Later results for the new utterance belong to the new generation.
 			p.streamGen = p.session.CurrentGeneration()
 		}
 		p.mu.Unlock()
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 
 	case *core.CancelFrame:
 		p.mu.Lock()
 		p.lastFinalText = ""
 		p.mu.Unlock()
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 
 	default:
-		return e.Push(f)
+		return e.PushDirection(f, dir)
 	}
 }
 

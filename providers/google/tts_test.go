@@ -291,3 +291,36 @@ func TestTTS_CancellationAndLateOutputFencing(t *testing.T) {
 		t.Fatalf("expected 0 audio frames delivered after interruption, got %d", audioCount)
 	}
 }
+
+type directionEmitter struct {
+	frame core.Frame
+	dir   core.Direction
+}
+
+func (d *directionEmitter) Push(f core.Frame) error {
+	return d.PushDirection(f, core.Downstream)
+}
+
+func (d *directionEmitter) PushDirection(f core.Frame, dir core.Direction) error {
+	d.frame = f
+	d.dir = dir
+	return nil
+}
+
+func TestTTSForwardsUpstreamFlushAck(t *testing.T) {
+	proc, err := NewTTSProcessor(DefaultTTSConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	em := &directionEmitter{}
+	frame := &core.FlushProcessedFrame{Gen: 1}
+	if err := proc.ProcessFrame(context.Background(), frame, core.Upstream, em); err != nil {
+		t.Fatal(err)
+	}
+	if em.dir != core.Upstream {
+		t.Fatalf("flush ack direction = %v, want upstream", em.dir)
+	}
+	if em.frame != frame {
+		t.Fatal("flush ack frame was replaced")
+	}
+}

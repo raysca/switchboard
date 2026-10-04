@@ -719,7 +719,9 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 				c.cfg.Observe("flush_ack", 1)
 			}
 			if c.session != nil {
-				_ = c.session.Reenter(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream, 0, ff.Gen)
+				// Start at the transport and walk upstream. Envelope generation 0
+				// keeps the fence from dropping an ack for the generation just closed.
+				_ = c.session.Reenter(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream, c.session.TailIndex(), 0)
 			}
 		})
 		return e.PushDirection(f, dir)
