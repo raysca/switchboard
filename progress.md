@@ -183,6 +183,12 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - The detector owner now drains a single coalesced newest-input slot after a stale callback; identical deterministic snapshots are not rerun, preventing reentrant self-rescheduling. Same-epoch time-only advancement preserves valid pre-callback frames, while reset, close, interruption, and generation changes invalidate them. Terminal confidence is always finite and absent confidence is normalized to zero.
 - Review regressions passed 50 repetitions under the race detector; the all-package focused suite, full core race suite, vet, `gofmt`, and `git diff --check` also passed. Task 7 remains unchecked for independent re-review and Gate B remains open.
 
+#### Task 7 review round 3 fixes (independent review still pending)
+
+- RED regressions proved the equal-snapshot shortcut could suppress a due validated result, reset could leave a previous epoch's `pendingDetectAt` and complete the new turn beyond its caller timestamp, and continually advancing detector reentry was not independently bounded.
+- Pending work now stores a complete newest snapshot with input/revision/epoch and is cleared at every epoch, generation, reset, close, mute, speech-resume, and terminal boundary. A validated result crosses a revision only for semantically identical current state; all other queued snapshots run. Two plugin callbacks are allowed per outer evaluation before deterministic silence fallback handles the latest snapshot. Invalid semantic confidence is dropped before storage/equality.
+- Exact same-timestamp, reset A→B, and adversarial +1ns/NaN regressions passed 100 repetitions under the race detector; the all-package focused suite, full core race suite, vet, `gofmt`, and `git diff --check` also passed. Task 7 remains unchecked for independent re-review and Gate B remains open.
+
 ## Phase 3 — Context, tools, tracing, compatibility
 
 - [ ] Task 10: Context aggregation/reconciliation.

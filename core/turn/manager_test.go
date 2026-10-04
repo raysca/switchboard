@@ -418,9 +418,10 @@ func TestTurnManagerRejectsOperationsAfterClose(t *testing.T) {
 
 func TestTurnDetectorMayReenterManagerControlsWithoutStaleCommit(t *testing.T) {
 	cases := []struct {
-		name    string
-		action  func(*Manager, time.Time) ([]core.Frame, error)
-		wantInt bool
+		name         string
+		action       func(*Manager, time.Time) ([]core.Frame, error)
+		wantInt      bool
+		wantComplete bool
 	}{
 		{name: "close", action: func(m *Manager, _ time.Time) ([]core.Frame, error) { return nil, m.Close() }},
 		{name: "interrupt", wantInt: true, action: func(m *Manager, at time.Time) ([]core.Frame, error) {
@@ -428,7 +429,7 @@ func TestTurnDetectorMayReenterManagerControlsWithoutStaleCommit(t *testing.T) {
 		}},
 		{name: "mute", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return nil, m.SetMuted(true, at) }},
 		{name: "reset", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return nil, m.Reset(at) }},
-		{name: "observe", action: func(m *Manager, at time.Time) ([]core.Frame, error) {
+		{name: "observe", wantComplete: true, action: func(m *Manager, at time.Time) ([]core.Frame, error) {
 			return m.Observe(observation(at, "reentrant", 1, false))
 		}},
 	}
@@ -485,8 +486,9 @@ func TestTurnDetectorMayReenterManagerControlsWithoutStaleCommit(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("detector was not called")
 			}
-			if outer.err != nil || findEvent(eventFrames(outer.frames), core.TurnEventCompleted) != nil {
-				t.Fatalf("stale detector result committed after reentrant %s: events=%+v err=%v", tc.name, eventFrames(outer.frames), outer.err)
+			completed := findEvent(eventFrames(outer.frames), core.TurnEventCompleted)
+			if outer.err != nil || (completed != nil) != tc.wantComplete {
+				t.Fatalf("unexpected completion after reentrant %s: events=%+v err=%v", tc.name, eventFrames(outer.frames), outer.err)
 			}
 			if tc.name == "close" {
 				if _, err := m.Advance(t0.Add(2300 * time.Millisecond)); !errors.Is(err, ErrClosed) {
@@ -494,6 +496,88 @@ func TestTurnDetectorMayReenterManagerControlsWithoutStaleCommit(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTurnManagerResetClearsPendingDetectionSnapshot(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	calls := 0
+	detector := detectorFunc(func(input DetectionInput) (DetectionDecision, bool) {
+		calls++
+		if calls == 1 {
+			close(entered)
+			<-release
+		}
+		return (SilenceDetector{}).Detect(input)
+	})
+	m := manager(t, detector)
+	_, _ = m.Observe(observation(t0, "old-a", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "old-a", 1, false))
+	oldDone := make(chan []core.Frame, 1)
+	go func() {
+		frames, _ := m.Advance(t0.Add(2200 * time.Millisecond))
+		oldDone <- frames
+	}()
+	<-entered
+	if err := m.Reset(t0); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = m.Observe(observation(t0, "new-b", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "new-b", 1, false))
+	newFrames, err := m.Advance(t0.Add(1100 * time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	oldFrames := <-oldDone
+	all := append(eventFrames(oldFrames), eventFrames(newFrames)...)
+	if findEvent(all, core.TurnEventCompleted) != nil {
+		t.Fatalf("post-reset turn completed from stale pending time: %+v", all)
+	}
+	for _, event := range all {
+		if event.At.After(t0.Add(1100 * time.Millisecond)) {
+			t.Fatalf("event timestamp exceeds caller advancement: %+v", event)
+		}
+	}
+}
+
+func TestTurnManagerBoundsAdversarialDetectorCoalescing(t *testing.T) {
+	var m *Manager
+	calls := 0
+	sawInvalidEvidence := false
+	detector := detectorFunc(func(input DetectionInput) (DetectionDecision, bool) {
+		calls++
+		if input.Semantic != nil {
+			sawInvalidEvidence = true
+		}
+		if calls > 4 {
+			panic("unbounded detector drain")
+		}
+		next := input.At.Add(time.Nanosecond)
+		_, _ = m.Observe(Observation{
+			At: next, TurnID: input.TurnID, Generation: input.Generation,
+			Semantic: &SemanticEvidence{TurnID: input.TurnID, Generation: input.Generation, At: next, Confidence: math.NaN()},
+		})
+		return DetectionDecision{}, false
+	})
+	var err error
+	m, err = NewManager(testConfig(), detector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = m.Start(t0)
+	_, _ = m.Observe(observation(t0, "bounded", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "bounded", 1, false))
+	frames, err := m.Advance(t0.Add(2200 * time.Millisecond))
+	completed := findEvent(eventFrames(frames), core.TurnEventCompleted)
+	if err != nil || completed == nil || completed.Reason != core.TurnReasonSilence || calls != 2 {
+		t.Fatalf("bounded fallback failed: events=%+v calls=%d err=%v", eventFrames(frames), calls, err)
+	}
+	if sawInvalidEvidence {
+		t.Fatal("invalid semantic evidence reached detector snapshot")
 	}
 }
 

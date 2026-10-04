@@ -34,7 +34,8 @@ type DetectionDecision struct {
 // manager invokes Detect without holding its state lock and permits only one
 // callback in flight; concurrent or reentrant advances update state but do
 // not wait for or start another detector call. The callback owner drains one
-// coalesced newest evaluation before returning when the input changed.
+// coalesced newest snapshot with a bounded plugin-call budget, then uses the
+// built-in silence fallback if adversarial reentry keeps invalidating results.
 type TurnDetector interface {
 	Detect(DetectionInput) (DetectionDecision, bool)
 }
