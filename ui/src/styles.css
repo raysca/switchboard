@@ -1,0 +1,346 @@
+:root {
+  font-family: "IBM Plex Sans", sans-serif;
+  color: #15262a;
+  background: #f3f5f4;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+a {
+  color: inherit;
+}
+a:focus-visible,
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid #007e82;
+  outline-offset: 3px;
+}
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -5rem;
+  background: #fff;
+  padding: 0.75rem 1rem;
+  z-index: 10;
+}
+.skip-link:focus {
+  top: 1rem;
+}
+.app-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: 100vh;
+}
+.sidebar {
+  background: #e7edeb;
+  border-right: 1px solid #c9d3d2;
+  display: flex;
+  flex-direction: column;
+  padding: 29px 17px 24px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  padding: 0 12px 39px;
+}
+.brand-mark {
+  color: #007e82;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 2.2rem;
+  line-height: 1;
+}
+.navigation {
+  display: grid;
+  gap: 3px;
+}
+.nav-link {
+  text-decoration: none;
+  padding: 11px 14px;
+  border-left: 3px solid transparent;
+  color: #53666b;
+  font-weight: 500;
+}
+.nav-link:hover {
+  background: #d9e4e1;
+  color: #15262a;
+}
+.nav-link--current {
+  border-left-color: #007e82;
+  color: #15262a;
+  background: #d9e4e1;
+}
+.sidebar-foot {
+  margin-top: auto;
+  color: #53666b;
+  font-size: 0.85rem;
+  padding: 0 15px;
+}
+.workspace {
+  min-width: 0;
+}
+.topbar {
+  height: 81px;
+  border-bottom: 1px solid #c9d3d2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 clamp(24px, 5vw, 72px);
+  color: #53666b;
+}
+.topbar > span:first-child {
+  font-weight: 500;
+}
+.status {
+  font-size: 0.84rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #53666b;
+}
+.status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #879b9c;
+}
+.status--good::before {
+  background: #007e82;
+}
+.status--bad::before {
+  background: #a43e30;
+}
+main {
+  max-width: 1100px;
+  padding: clamp(36px, 6vw, 76px) clamp(24px, 5vw, 72px) 60px;
+}
+.section-heading {
+  padding-bottom: 36px;
+  border-bottom: 1px solid #c9d3d2;
+}
+.section-heading h1 {
+  font-size: clamp(2.4rem, 5vw, 4.1rem);
+  letter-spacing: -0.055em;
+  line-height: 1.08;
+  margin: 0 0 14px;
+  font-weight: 500;
+}
+.section-heading p {
+  font-size: 1.07rem;
+  color: #53666b;
+  margin: 0;
+  max-width: 62ch;
+  line-height: 1.6;
+}
+.message-panel {
+  margin-top: 48px;
+  border-left: 3px solid #007e82;
+  padding: 3px 0 4px 27px;
+  max-width: 62ch;
+}
+.message-panel h2 {
+  font-size: 1.35rem;
+  letter-spacing: -0.025em;
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+.message-panel p {
+  line-height: 1.55;
+  color: #53666b;
+  margin: 0;
+}
+.message-panel--error {
+  border-color: #a43e30;
+}
+.message-panel--error button {
+  margin-top: 20px;
+}
+.request-id {
+  font:
+    500 0.8rem "IBM Plex Mono",
+    monospace;
+  margin-top: 12px !important;
+  overflow-wrap: anywhere;
+}
+.loading {
+  margin-top: 50px;
+  color: #53666b;
+}
+.access-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: 30px;
+  align-items: end;
+  margin-top: 90px;
+  padding: 26px 0;
+  border-top: 1px solid #c9d3d2;
+}
+.access-panel h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.access-panel p {
+  color: #53666b;
+  margin: 0;
+  line-height: 1.5;
+}
+.access-panel form {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+.form-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.form-field input {
+  border: 1px solid #879b9c;
+  background: #fff;
+  color: #15262a;
+  border-radius: 2px;
+  padding: 9px 11px;
+  min-width: 220px;
+}
+.action-button,
+.message-panel button {
+  background: #007e82;
+  color: white;
+  border: 1px solid #007e82;
+  border-radius: 2px;
+  padding: 9px 15px;
+  white-space: nowrap;
+}
+.action-button:hover,
+.message-panel button:hover {
+  background: #00676a;
+}
+.capability-line {
+  display: flex;
+  gap: 12px 26px;
+  flex-wrap: wrap;
+  border-top: 1px solid #c9d3d2;
+  padding-top: 17px;
+  color: #53666b;
+  font-size: 0.78rem;
+}
+.capability-line span:first-child {
+  font-weight: 600;
+  color: #15262a;
+}
+.table-scroll {
+  overflow-x: auto;
+  margin-top: 25px;
+}
+table {
+  border-collapse: collapse;
+  text-align: left;
+  width: 100%;
+  max-width: 700px;
+}
+caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 25px 0 12px;
+}
+th,
+td {
+  border-bottom: 1px solid #c9d3d2;
+  padding: 14px 18px 14px 0;
+}
+th {
+  font-size: 0.85rem;
+  color: #53666b;
+  font-weight: 500;
+}
+td:last-child {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9rem;
+}
+@media (max-width: 760px) {
+  .app-layout {
+    display: block;
+  }
+  .sidebar {
+    padding: 14px 20px 0;
+    border-right: 0;
+    border-bottom: 1px solid #c9d3d2;
+  }
+  .brand {
+    padding: 0 0 12px;
+  }
+  .navigation {
+    display: flex;
+    overflow-x: auto;
+    gap: 0;
+    margin: 0 -20px;
+    padding: 0 17px;
+    scrollbar-width: thin;
+  }
+  .nav-link {
+    white-space: nowrap;
+    border-left: 0;
+    border-bottom: 3px solid transparent;
+    padding: 12px;
+  }
+  .nav-link--current {
+    border-bottom-color: #007e82;
+  }
+  .sidebar-foot {
+    display: none;
+  }
+  .topbar {
+    height: 54px;
+    padding: 0 24px;
+  }
+  main {
+    padding: 38px 24px 50px;
+  }
+  .access-panel {
+    display: block;
+    margin-top: 72px;
+  }
+  .access-panel form {
+    margin-top: 22px;
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .form-field {
+    flex: 1;
+  }
+  .form-field input {
+    min-width: 0;
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .status::before {
+    transition: background-color 0.16s ease;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

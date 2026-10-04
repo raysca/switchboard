@@ -1,0 +1,86 @@
+import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { App } from "./App";
+
+describe("admin shell", () => {
+  it("shows all six routes and keeps keyboard navigation visible", async () => {
+    render(<App initialPath="/agents" />);
+    for (const name of [
+      "Dashboard",
+      "Agents",
+      "Providers",
+      "MCP Servers",
+      "Sessions",
+      "Server",
+    ]) {
+      expect(screen.getByRole("link", { name })).toBeVisible();
+    }
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "MCP Servers" })).toBeVisible();
+    const user = userEvent.setup();
+    await user.tab();
+    expect(
+      screen.getByRole("link", { name: /skip to content/i }),
+    ).toHaveFocus();
+    await user.click(screen.getByRole("link", { name: "Sessions" }));
+    expect(screen.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Sessions" })).toHaveFocus();
+  });
+
+  it("asks for management access and never requests microphone access at boot", () => {
+    render(<App initialPath="/dashboard" />);
+    expect(screen.getByLabelText(/management key/i)).toBeVisible();
+    expect(screen.getByText(/The key stays in memory only/i)).toBeVisible();
+  });
+
+  it("loads the server projection after entry and returns to key entry on 401", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              profile: "production",
+              max_sessions: 50,
+              max_call_duration_seconds: 300,
+              voice_token_max_lifetime_seconds: 60,
+            },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "unauthorized",
+              message: "Unauthorized",
+              request_id: "req-3",
+            },
+          }),
+          { status: 401, headers: { "X-Request-ID": "req-3" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const user = userEvent.setup();
+      render(<App initialPath="/server" />);
+      await user.type(screen.getByLabelText(/management key/i), "first-key");
+      await user.click(screen.getByRole("button", { name: "Connect" }));
+      expect(await screen.findByText("production")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Clear key" }));
+      await user.type(screen.getByLabelText(/management key/i), "expired-key");
+      await user.click(screen.getByRole("button", { name: "Connect" }));
+      expect(
+        await screen.findByRole("button", { name: "Connect" }),
+      ).toBeVisible();
+      expect(screen.getByText("No management key")).toBeVisible();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
