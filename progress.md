@@ -27,7 +27,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 | Gate | Status | Evidence/remaining condition |
 |---|---|---|
-| A — Core Contracts Stable | Open | Tasks 1–3 passed independent review and testing; Tasks 4–5 and the independent Phase 1 tester remain. |
+| A — Core Contracts Stable | Open | Tasks 1–4 passed independent review and testing; Task 5 and the independent Phase 1 tester remain. |
 | B — P0 Audio Path Stable | Open | Pinned client cannot clear already-buffered playback; P0 framework implementation remains open. |
 | C — Tool Loop Stable | Open | Contract frozen; framework/provider implementation remains open. |
 | D — Persistent Agent Runtime | Open | Domain/snapshot contract frozen; server implementation remains open. |
@@ -78,9 +78,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [x] Task 1: Distinct identity types, trace/observer/debug value contracts, no-op spans, privacy envelope, and public tool types. Independent tester PASS and reviewer approval after two fix rounds; runtime integration and serializer behavior remain in their assigned tasks.
 - [x] Task 2: P0 lifecycle, mute, and deterministic core/fake-transport flush. Independent reviewer APPROVED after two fix rounds; final independent tester PASS. Typed settings envelope declared; application and urgent priority remain deferred.
 - [x] Task 3: Storage foundation and dialect migrations. Independent reviewer APPROVED after two fix rounds; final independent tester PASS on SQLite and PostgreSQL 18.
-- [ ] Task 4: Management API/auth skeleton.
-- Task 4 implementation is committed pending independent review. The admin-only `/api/v1` skeleton, deployment management key, sanitized config DTO, and scoped voice-token issuer are documented in `docs/api/v1.md`; Gate A remains open.
-- Task 4 review round 1 addresses production default `kid`, complete JSON body limit enforcement, scoped-token replay after validator replacement, whole-second token lifetime bounds, and JSON envelopes for noncanonical API paths. Independent re-review and Gate A remain open.
+- [x] Task 4: Management API/auth skeleton. Independent reviewer APPROVED after one fix round; final independent tester PASS.
 - [ ] Task 5: UI shell and typed API client.
 - [ ] Independent Phase 1 tester gate; record Gate A.
 
@@ -104,6 +102,13 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Final tester ran focused storage tests, the SQLite suite and concurrent-open cases 25 times, disposable PostgreSQL 18 shared repository contract and 001→002 upgrade/failed-migration rollback tests, full Server race suite, `go vet ./...`, diff check, clean-worktree check, and container/schema cleanup. RED/GREEN details and review fixes are in `.superpowers/sdd/2026-10-04-v2-execution/task-3-report.md`.
 - Ruling: Server owns `database/sql` and thin repositories; modernc SQLite v1.60.1 and pgx/v5 v5.11.0 supply CGO-free and PostgreSQL drivers. Goose v3.28.0 owns embedded dialect migration parsing/versioning and PostgreSQL session locking; gofrs/flock v0.13.1 coordinates SQLite startup, and google/uuid v1.6.0 issues UUIDv7 IDs. Immutable config/schema hashes use canonical JSON bytes stored as text on both dialects. SQLite rejects caller DSN overrides of mandatory settings. Costs include a larger Server dependency graph, an adjacent SQLite migration lock file, and reserved SQLite connection options; see `docs/operations/storage.md`.
 - macOS Command Line Tools SDK 27 could not link the existing Server test binary (`tapi error: malformed file`); verification used the documented Xcode macOS 26 `SDKROOT` override and completed with non-failing target-version linker warnings. Gate A remains open pending Tasks 4–5 and the independent Phase 1 tester.
+
+### Task 4 closeout
+
+- Implementation range: `5d536ab..21e0450` (`b5b5482` implementation, `21e0450` review fixes). Independent reviewer APPROVED after one fix round; final independent tester PASS at `21e0450` with repeated security regressions, full root and Server race suites, vet, diff check, and clean-worktree check. RED/GREEN and fix evidence are in `.superpowers/sdd/2026-10-04-v2-execution/task-4-report.md`.
+- The admin-only `/api/v1` boundary uses storage-independent DTOs, a deployment-provided management key, JSON error/request-ID envelopes, bounded request bodies, a sanitized read-only config projection, and scoped single-use voice token issuance. The Server reuses `golang-jwt/v5` and Go `net/http`. The production signing and validation key ID is resolved once. JWT lifetime is bounded at whole-second precision, and noncanonical API paths retain JSON errors.
+- Scoped tokens carry a validator-generated random issuance epoch to reject replay after validator replacement. Issuance and `/ws` admission therefore need replica affinity until a shared replay/issuance service is provided. Legacy unscoped V1 voice tokens retain their explicit compatibility exception; management credentials remain separate from voice signing. The bootstrap management key requires deployment-side distribution/rotation. See `docs/api/v1.md` and `docs/v2-contracts.md`.
+- Final verification used the documented Xcode macOS 26 `SDKROOT` override. The default Command Line Tools SDK 27 linker could not parse its `.tbd` architecture metadata; the Xcode SDK produced only non-failing target-version warnings. Gate A remains open pending Task 5 and the independent Phase 1 tester.
 
 ## Phase 2 — P0 audio/call parity
 
@@ -183,4 +188,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Task 1 is complete. The remaining Phase 1 foundations are unblocked. Phase 0 completion is distinct from Gate A: Gate A remains open pending Tasks 2–5 and the independent Phase 1 tester. Gates A–G remain open; product implementation tasks are not complete.
+Tasks 1–4 are complete. Phase 0 completion is distinct from Gate A: Gate A remains open pending Task 5 and the independent Phase 1 tester. Gates A–G remain open; product implementation tasks are not complete.
