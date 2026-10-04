@@ -11,8 +11,16 @@ import (
 )
 
 func TestIdentityDistinctAndStable(t *testing.T) {
-	if reflect.TypeOf(core.SessionID("s")) == reflect.TypeOf(core.TurnID("t")) {
-		t.Fatal("session and turn identities must be distinct defined types")
+	types := []reflect.Type{reflect.TypeOf(core.SessionID("s")), reflect.TypeOf(core.TurnID("t")), reflect.TypeOf(core.Generation(1))}
+	for i, typ := range types {
+		if typ.PkgPath() != "govoice/core" || typ.Name() == "" {
+			t.Fatalf("identity %d must remain a core-defined non-alias type: %v", i, typ)
+		}
+		for j := 0; j < i; j++ {
+			if typ == types[j] {
+				t.Fatalf("identities %d and %d must remain distinct", i, j)
+			}
+		}
 	}
 	turn := core.TurnID("turn-1")
 	gen := core.Generation(1)
@@ -22,7 +30,24 @@ func TestIdentityDistinctAndStable(t *testing.T) {
 	}
 }
 
-func TestTraceContractNoopAndParent(t *testing.T) {
+type contractSpan struct{ label string }
+
+func (*contractSpan) SetAttribute(string, any) {}
+func (*contractSpan) AddEvent(core.TraceEvent) {}
+func (*contractSpan) End(error)                {}
+
+func TestTraceContractParentSelection(t *testing.T) {
+	parent := &contractSpan{label: "parent"}
+	child := &contractSpan{label: "child"}
+	root := context.Background()
+	parentContext := core.ContextWithSpan(root, parent)
+	childContext := core.ContextWithSpan(parentContext, child)
+	if core.SpanFromContext(root) != nil || core.SpanFromContext(parentContext) != parent || core.SpanFromContext(childContext) != child {
+		t.Fatal("nested context must select nearest span without mutating parent context")
+	}
+}
+
+func TestTraceContractNoop(t *testing.T) {
 	var tracer core.Tracer = core.NoopTracer{}
 	parent := tracer.StartSpan(context.Background(), core.TraceEvent{Name: "turn.start"})
 	ctx := core.ContextWithSpan(context.Background(), parent)
@@ -34,6 +59,32 @@ func TestTraceContractNoopAndParent(t *testing.T) {
 	child.AddEvent(core.TraceEvent{Name: "stt.final"})
 	child.End(nil)
 	parent.End(nil)
+}
+
+func TestTraceContractStructuredCustomMetadata(t *testing.T) {
+	data := map[string]any{"scores": []any{0.2, 0.8}, "counts": map[string]any{"frames": 3}}
+	event := core.NewTraceEvent("custom.vad.decision", time.Now(), "s", "t", 1, core.TracePolicy{}, map[string]any{
+		"custom.vad":    data,
+		"custom.unsafe": map[string]any{"transcript": "unique-private-text"},
+	})
+	data["counts"].(map[string]any)["frames"] = 999
+	data["scores"].([]any)[0] = 999.0
+	attrs := event.Attributes()
+	if _, ok := attrs["custom.unsafe"]; ok {
+		t.Fatal("custom text entered metadata envelope")
+	}
+	value, ok := attrs["custom.vad"]
+	if !ok {
+		t.Fatal("structured custom metadata was dropped")
+	}
+	got := value.(map[string]any)
+	if got["counts"].(map[string]any)["frames"] != 3 || got["scores"].([]any)[0] != 0.2 {
+		t.Fatalf("nested input aliased: %#v", got)
+	}
+	got["scores"].([]any)[0] = 999.0
+	if event.Attributes()["custom.vad"].(map[string]any)["scores"].([]any)[0] != 0.2 {
+		t.Fatal("nested accessor aliased event")
+	}
 }
 
 func TestTraceContractPrivacyEnvelope(t *testing.T) {
@@ -89,6 +140,22 @@ func TestDebugContractImmutableValue(t *testing.T) {
 	got["status"] = "changed"
 	if event.Attributes()["status"] != "ready" {
 		t.Fatal("debug accessor exposes mutable state")
+	}
+}
+
+func TestDebugContractFlowAndToolCorrelation(t *testing.T) {
+	first := core.NewDebugEvent("frame.flow", time.Now(), "s", "t", 2, nil)
+	first.PipelineID = "voice-pipeline"
+	first.Processor = "vad"
+	first.ProcessorIndex = 1
+	first.FrameKind = core.FrameInputAudio
+	first.Direction = core.Downstream
+	first.Sequence = 42
+	first.ToolCallID = "call-a"
+	second := first
+	second.ToolCallID = "call-b"
+	if first.PipelineID != "voice-pipeline" || first.ProcessorIndex != 1 || first.FrameKind != core.FrameInputAudio || first.Direction != core.Downstream || first.Sequence != 42 || first.ToolCallID != "call-a" || second.ToolCallID != "call-b" {
+		t.Fatal("debug values lost frame, processor, order, or tool correlation")
 	}
 }
 

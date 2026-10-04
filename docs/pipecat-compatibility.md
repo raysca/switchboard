@@ -60,7 +60,7 @@ go test -race -count=1 ./transport/rtvi ./transport/ws
 
 Until an official Whisker package and protocol version are pinned, the V2 target is a semantic observer/debug adapter. The adapter translates `core.DebugEvent` values and does not add Whisker-specific concepts to core processors or the RTVI message vocabulary. Tests assert required semantics and event ordering, not a guessed byte-for-byte protocol. Pin an official package/protocol coordinate before any claim of wire compatibility.
 
-Task 1 adds only the protocol-neutral `core.DebugEvent` and immutable observer value contracts. The Whisker adapter and its eleven conformance scenarios remain pending; the new core contract tests are not a Whisker conformance pass.
+Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` directly carries pipeline/processor position, frame kind, direction, sequence, and tool call ID with session/turn/generation correlation. Namespaced structured metadata is restricted to copied numeric/boolean values. The Whisker adapter and its eleven conformance scenarios remain pending; the new core contract tests are not a Whisker conformance pass.
 
 The conformance scenario set is:
 

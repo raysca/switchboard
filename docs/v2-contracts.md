@@ -70,7 +70,7 @@ The standard event vocabulary includes session start/end/failure; turn start/end
 
 `TracePolicy.Content` has exactly `none`, `metadata`, or `text` modes. Production defaults to `metadata`. Raw audio bytes are never included in traces. Metadata mode records event names, timing, identifiers, counts, sample formats, provider/model names, status, and safe error categories, but not transcript text, prompts, tool arguments, tool results, keys, or audio. Text mode permits selected text fields; tool arguments/results still pass through an explicit redaction policy. No mode permits credentials or raw audio.
 
-The Task 1 constructor defaults an unset mode to `metadata`, admits a fixed set of scalar metadata keys, and drops unknown keys and mutable values. An unknown content mode drops all attributes. Text mode admits `transcript`, `prompt`, and `text`; `tool.arguments` and `tool.result` require `RedactToolContent`. Callers supply safe provider/model/status/category labels rather than raw provider errors.
+The Task 1 constructor defaults an unset mode to `metadata`, admits a fixed set of scalar metadata keys, and drops unknown keys and mutable values. An unknown content mode drops all attributes. Namespaced `custom.*` attributes may hold nested `map[string]any` and `[]any` values containing only finite numbers and booleans; they are deeply copied on input and output, limited to eight levels and 64 entries per collection, and dropped as a whole if validation fails. This permits structured counters, thresholds, and scores without a text-content path. Text mode admits `transcript`, `prompt`, and `text`; `tool.arguments` and `tool.result` require `RedactToolContent`. Callers supply safe provider/model/status/category labels rather than raw provider errors.
 
 **Acceptance criteria**
 
@@ -84,7 +84,7 @@ The Task 1 constructor defaults an unset mode to `metadata`, admits a fixed set 
 
 The framework emits protocol-neutral `DebugEvent` values for session/pipeline lifecycle, frame flow, speech/transcription, LLM/TTS lifecycle, interruption/flush, tool call/result, provider readiness/error, and teardown. An adapter maps these semantic values to Whisker-compatible messages. A `Serializer` owns conversion between semantic events/frames and a wire representation; it is not a pipeline processor and does not choose product persistence. RTVI serialization remains its separate client-facing compatibility surface.
 
-Task 1 defines `Observer`, `ObserverEvent`, and `DebugEvent` value surfaces. Their constructors copy filtered scalar attributes and their accessors return copies; observer values contain a frame kind rather than a frame pointer. Delivery, panic isolation, protocol adapters, and general `Serializer` behavior remain assigned to later tasks.
+Task 1 defines `Observer`, `ObserverEvent`, and `DebugEvent` value surfaces. Their constructors filter and copy attributes, including approved structured numeric/boolean metadata, and their accessors return deep copies. Observer values contain a frame kind rather than a frame pointer. `DebugEvent` has explicit scalar `PipelineID`, `Processor`, `ProcessorIndex`, `FrameKind`, `Direction`, `Sequence`, and `ToolCallID` fields alongside session/turn/generation correlation, so a later adapter can distinguish frame flow and concurrent tool calls without parsing attributes. Delivery, panic isolation, protocol adapters, and general `Serializer` behavior remain assigned to later tasks.
 
 **Acceptance criteria**
 
