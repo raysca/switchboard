@@ -85,13 +85,14 @@ The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status des
 | Priority and capability | Status | Acceptance evidence |
 |---|---|---|
 | P0 — Input mute/unmute control | P0 gate | Core tests prove mute keeps the session alive, blocks VAD/STT by default, emits state, and unmute resumes input without reconnecting. |
-| P0 — Audio filter/noise-suppression abstraction | P0 gate | Format/error, chunk continuity, cancellation, bounded state, reset isolation, and at least one real denoiser pass the `core` audio-filter suite. |
+| P0 — Audio filter/noise-suppression abstraction | implemented; review pending | Task 6 uses vendored BSD-licensed SpeexDSP 1.2.1 preprocessing, not a noise gate or model-weight substitute. Core tests cover explicit formats, chunk continuity, cancellation, a sub-frame state bound, reset isolation, observable 10 ms latency, and close. Gate B remains open. |
+| P0 — Audio resampling and normalization | implemented; review pending | Task 6 adds the SpeexDSP quality-5 band-limited streaming resampler plus deterministic PCM16/float and mono/stereo conversion. Tests cover exact finite-stream sample count, chunk partition continuity, alias rejection, cancellation, reset, and close. The existing V1 transport resampler is not silently replaced in this task. |
 | P0 — Bot speaking state | current | Transport tests prove speaking transitions derive from output audio/playback lifecycle, balance on empty/error/interrupted output, and agree with RTVI and observer events. |
 | P0 — Interruptible vs uninterruptible output | P0 gate | Tests show interruption drops interruptible output and preserves explicitly uninterruptible output in the defined order. |
 | P0 — Output flush semantics | P0 gate | Queue/text/TTS/in-flight transport tests prove deterministic server flush ordering; a separate browser/player test is required before claiming client-buffer clearing. |
 | P0 — Turn management controller | P0 gate | State-machine tests cover start, completion, timeout, false start, mute, duplicate decisions, and interruption races. |
 | P0 — STT commit/finalization policy | P0 gate | Tests cover interim stability, delayed final, timeout, late final, duplicate suppression, and configured end-of-turn grace. |
-| P0 — Turn-scoped audio buffer | P0 gate | Tests prove exact turn boundaries, memory/retention bounds, reset, opt-in content, and no persistence dependency. |
+| P0 — Turn-scoped audio buffer | implemented; review pending | Task 6 adds byte-bounded, in-memory-only pre-roll, rechunking, and opt-in turn capture with exact start/end IDs, reset, disabled retention, and explicit overflow behavior. Gate B remains open. |
 | P0 — Behavioral eval harness | P0 gate | Machine-readable scenarios pass for barge-in, turn completion, silence/no-speech timeout, flush, transcript stabilization, tool interruption, pacing, teardown, RTVI, and Whisker. |
 | P1 — Runtime service settings updates | P1 tracked | Tests prove supported changes apply atomically at control boundaries, increment revision, and reject invalid updates without partial mutation. |
 | P1 — Context summarization/compaction hook | P1 tracked | Context tests prove compaction is provider-neutral, preserves required system/tool state, and leaves the session usable when an application hook declines. |
@@ -118,6 +119,7 @@ The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status des
 | Topic | Status | Contract |
 |---|---|---|
 | Go framework API and internal execution | intentional difference | Behavioral and semantic compatibility is the objective. Go uses native contexts, goroutines, and its own public types; Python class names and internal implementation are not API requirements. |
+| Audio DSP dependency | intentional difference | Go uses a minimal CGO adapter over vendored SpeexDSP 1.2.1 sources for reproducible preprocessing and resampling. It does not import Pipecat provider classes, install a system DSP package, or bundle unresolved RNNoise model weights. The supported release image already enables CGO. |
 | Whisker wire protocol | P0 gate | Semantic adapter/conformance is required, but a byte-level wire claim waits for an official protocol/package version to be pinned. |
 | Playback clear in the pinned V1 client | intentional difference | The probe records a failure for both tested wire events. V2 must satisfy its output-flush gate through a compatible client/API or another playback-buffer mechanism with direct test evidence. |
 | PSTN, SIP, Twilio, and call-center behavior | deferred beyond V2 | Telephony remains out of scope; generic tones/DTMF do not imply telephony support. |

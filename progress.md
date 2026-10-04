@@ -132,6 +132,27 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [ ] Task 9: STT commit/finalization.
 - [ ] Independent Phase 2 tester gate; record Gate B.
 
+### Task 6 implementation awaiting independent review
+
+- Implementation is present but Task 6 remains open pending the required
+  independent review. The core contract now has explicit PCM format metadata;
+  a real SpeexDSP 1.2.1 preprocessor with 10 ms observable latency; a
+  quality-5 band-limited streaming resampler; deterministic PCM16/float and
+  mono/stereo conversion; and byte-bounded pre-roll, rechunking, and opt-in
+  turn buffering.
+- SpeexDSP is vendored from official release tag `SpeexDSP-1.2.1`, commit
+  `1b28a0f61bc31162979e1f26f3981fc3637095c8`, under its BSD 3-Clause license.
+  The C sources and headers were audited byte-for-byte against that revision;
+  the only local changes are the documented generated
+  `speexdsp_config_types.h` expansion and whitespace-only diff hygiene in
+  three upstream files. No RNNoise model weights or globally installed
+  library are used. Builds require CGO and a C compiler; the supported Debian
+  production builder already sets `CGO_ENABLED=1`.
+- RED evidence: the focused Task 6 command failed on the absent resampler and
+  invalid C adapter calls. Focused GREEN and full core race/vet evidence are
+  recorded in `.superpowers/sdd/2026-10-04-v2-execution/task-6-report.md`.
+  Gate B remains open for Tasks 7–9 and the independent Phase 2 gate.
+
 ## Phase 3 — Context, tools, tracing, compatibility
 
 - [ ] Task 10: Context aggregation/reconciliation.
