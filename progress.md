@@ -76,7 +76,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 ## Phase 1 — Foundations in parallel
 
 - [x] Task 1: Distinct identity types, trace/observer/debug value contracts, no-op spans, privacy envelope, and public tool types. Independent tester PASS and reviewer approval after two fix rounds; runtime integration and serializer behavior remain in their assigned tasks.
-- [ ] Task 2: P0 lifecycle, mute, and flush; publish prerequisite settings/control envelopes only.
+- [ ] Task 2: P0 lifecycle, mute, and flush; implementation and focused RED/GREEN plus core race/vet evidence recorded, pending independent review. Typed settings envelope declared; application and urgent priority remain deferred.
 - [ ] Task 3: Storage foundation and dialect migrations.
 - [ ] Task 4: Management API/auth skeleton.
 - [ ] Task 5: UI shell and typed API client.

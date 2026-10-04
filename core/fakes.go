@@ -375,7 +375,7 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 		oaf := f.(*OutputAudioFrame)
 		p.mu.Lock()
 		// Stale generation discard
-		if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() {
+		if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() && oaf.Disposition != OutputUninterruptible {
 			p.DiscardedFrames = append(p.DiscardedFrames, oaf)
 			p.mu.Unlock()
 			return nil
@@ -408,7 +408,7 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 
 			p.mu.Lock()
 			// Check if generation changed during write
-			if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() {
+			if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() && oaf.Disposition != OutputUninterruptible {
 				p.DiscardedFrames = append(p.DiscardedFrames, oaf)
 				p.mu.Unlock()
 				// Send write completion with old Gen to verify session rejects it
@@ -439,7 +439,7 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 		// Discard pending frames belonging to interrupted generation
 		active := make([]*OutputAudioFrame, 0, len(p.ReceivedFrames))
 		for _, frame := range p.ReceivedFrames {
-			if frame.Gen == intr.Gen {
+			if frame.Gen == intr.Gen && frame.Disposition != OutputUninterruptible {
 				p.DiscardedFrames = append(p.DiscardedFrames, frame)
 			} else {
 				active = append(active, frame)
@@ -456,7 +456,7 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 		// Discard all queued audio frames for the flushed generation
 		remaining := make([]*OutputAudioFrame, 0, len(p.ReceivedFrames))
 		for _, frame := range p.ReceivedFrames {
-			if frame.Gen == ff.Gen {
+			if frame.Gen == ff.Gen && frame.Disposition != OutputUninterruptible {
 				p.DiscardedFrames = append(p.DiscardedFrames, frame)
 			} else {
 				remaining = append(remaining, frame)

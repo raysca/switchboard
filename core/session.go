@@ -59,6 +59,7 @@ type Envelope struct {
 	Dir         Direction
 	ResumeIndex int    // Processor index to resume delivery at
 	Gen         uint64 // Generation when envelope was generated
+	DropInput   bool   // Input was admitted while muted
 }
 
 // Session represents a single active voice session with its own pipeline,
@@ -74,8 +75,9 @@ type Session struct {
 	control chan Envelope
 	data    chan Envelope
 
-	state atomic.Int32
-	gen   atomic.Uint64
+	state      atomic.Int32
+	gen        atomic.Uint64
+	inputMuted atomic.Bool
 
 	// Concurrency & Supervisor
 	taskWg      sync.WaitGroup
@@ -164,6 +166,8 @@ func (s *Session) IncrementGeneration() uint64 {
 	return s.gen.Add(1)
 }
 
+func (s *Session) InputMuted() bool { return s.inputMuted.Load() }
+
 // Err returns the terminal error of the session, if any.
 func (s *Session) Err() error {
 	p := s.err.Load()
@@ -222,6 +226,16 @@ func (s *Session) Post(f Frame) error {
 	}
 
 	s.FramesIn.Add(1)
+	switch f.Type() {
+	case FrameInputMute:
+		s.inputMuted.Store(true)
+	case FrameInputUnmute:
+		s.inputMuted.Store(false)
+	case FrameFlush:
+		if ff, ok := f.(*FlushFrame); ok && ff.Gen == s.CurrentGeneration() {
+			s.IncrementGeneration()
+		}
+	}
 	gen := s.CurrentGeneration()
 	if gf, ok := f.(GenerationalFrame); ok && gf.Generation() != 0 {
 		gen = gf.Generation()
@@ -232,6 +246,7 @@ func (s *Session) Post(f Frame) error {
 		Dir:         Downstream,
 		ResumeIndex: 0,
 		Gen:         gen,
+		DropInput:   f.Type() == FrameInputAudio && s.InputMuted(),
 	}
 
 	// Classify queue policy
@@ -274,6 +289,7 @@ func (s *Session) Reenter(f Frame, dir Direction, resumeIndex int, gen uint64) e
 		Dir:         dir,
 		ResumeIndex: resumeIndex,
 		Gen:         gen,
+		DropInput:   f.Type() == FrameInputAudio && s.InputMuted(),
 	}
 
 	if isControlFrame(f) {
@@ -468,9 +484,19 @@ func (s *Session) runLoop() {
 // processEnvelope executes the inline delivery of a single envelope.
 func (s *Session) processEnvelope(env Envelope) bool {
 	// Generation fencing: discard old-generation async re-entry before mutating processor or context
-	if env.Gen != 0 && env.Gen < s.CurrentGeneration() {
+	if env.DropInput {
+		s.AudioDropped.Add(1)
+		return true
+	}
+	if env.Gen != 0 && env.Gen < s.CurrentGeneration() && !isFenceSurvivingControl(env.Frame) && !isUninterruptibleOutput(env.Frame) && !isPartialAssistantCommit(env.Frame) {
 		s.StaleDiscarded.Add(1)
 		return true // Discard and proceed
+	}
+	if env.Frame.Type() == FrameInputMute {
+		env.Frame = &InputMutedStateFrame{Muted: true}
+	}
+	if env.Frame.Type() == FrameInputUnmute {
+		env.Frame = &InputMutedStateFrame{Muted: false}
 	}
 
 	// Reset per-envelope emit counter and set watchdog start time
@@ -506,6 +532,10 @@ func (s *Session) processEnvelope(env Envelope) bool {
 
 // deliver dispatches a frame inline to the processor at index 'to'.
 func (s *Session) deliver(f Frame, dir Direction, to int) error {
+	if gf, ok := f.(GenerationalFrame); ok && gf.Generation() != 0 && gf.Generation() < s.CurrentGeneration() && isInterruptibleOutput(f) {
+		s.StaleDiscarded.Add(1)
+		return nil
+	}
 	if s.OnFrame != nil {
 		s.OnFrame(f, dir)
 	}
@@ -572,9 +602,43 @@ func (s *Session) recordErr(err error) {
 
 func isControlFrame(f Frame) bool {
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion:
+	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
 		return true
 	default:
 		return false
 	}
+}
+
+func isFenceSurvivingControl(f Frame) bool {
+	switch f.Type() {
+	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
+		return true
+	}
+	return false
+}
+
+func isUninterruptibleOutput(f Frame) bool {
+	switch v := f.(type) {
+	case *OutputAudioFrame:
+		return v.Disposition == OutputUninterruptible
+	case *TTSAudioFrame:
+		return v.Disposition == OutputUninterruptible
+	}
+	return false
+}
+
+func isPartialAssistantCommit(f Frame) bool {
+	m, ok := f.(*AssistantMessageFrame)
+	return ok && m.Partial
+}
+
+func isInterruptibleOutput(f Frame) bool {
+	if isPartialAssistantCommit(f) {
+		return false
+	}
+	switch f.Type() {
+	case FrameLLMTextDelta, FrameLLMText, FrameSynthesisUnit, FrameTTSStarted, FrameTTSAudio, FrameTTSStopped, FrameOutputAudio, FrameAssistantMessage:
+		return !isUninterruptibleOutput(f)
+	}
+	return false
 }

@@ -42,6 +42,10 @@ const (
 	FrameInterruption
 	FrameFlush
 	FrameFlushProcessed
+	FrameInputMute
+	FrameInputUnmute
+	FrameInputMutedState
+	FrameSettingsControl
 
 	// Internal async re-entry
 	FrameInternal FrameType = 800 + iota
@@ -102,17 +106,18 @@ func (f *InputAudioFrame) Generation() uint64 { return f.Gen }
 
 // OutputAudioFrame carries raw audio heading toward the client.
 type OutputAudioFrame struct {
-	Samples    []byte
-	Encoding   AudioEncoding
-	SampleRate int
-	Channels   int
-	Duration   time.Duration
-	Timestamp  time.Time
-	Seq        uint64
-	Gen        uint64
-	Turn       string
-	UnitID     uint64
-	IsFinal    bool // true if this is the final audio frame of the synthesis unit
+	Samples     []byte
+	Encoding    AudioEncoding
+	SampleRate  int
+	Channels    int
+	Duration    time.Duration
+	Timestamp   time.Time
+	Seq         uint64
+	Gen         uint64
+	Turn        string
+	UnitID      uint64
+	IsFinal     bool // true if this is the final audio frame of the synthesis unit
+	Disposition OutputDisposition
 }
 
 func (f *OutputAudioFrame) Type() FrameType    { return FrameOutputAudio }
@@ -222,14 +227,15 @@ func (f *TTSStartedFrame) Generation() uint64 { return f.Gen }
 
 // TTSAudioFrame carries synthesized audio from the TTS provider.
 type TTSAudioFrame struct {
-	Audio      []byte
-	SampleRate int
-	Channels   int
-	Duration   time.Duration
-	Turn       string
-	Gen        uint64
-	UnitID     uint64
-	IsFinal    bool
+	Audio       []byte
+	SampleRate  int
+	Channels    int
+	Duration    time.Duration
+	Turn        string
+	Gen         uint64
+	UnitID      uint64
+	IsFinal     bool
+	Disposition OutputDisposition
 }
 
 func (f *TTSAudioFrame) Type() FrameType    { return FrameTTSAudio }

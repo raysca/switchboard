@@ -30,6 +30,10 @@ The UI owns presentation and browser interaction. It calls authenticated, versio
 
 Task 1 publishes these as distinct defined types in `core/identity.go`. Existing V1 session and frame methods still use their historical `uint64`/`string` fields; the P0 turn and frame integration will migrate those runtime paths.
 
+Task 2 adds `TurnLifecycle` as the one-shot start/complete/interruption state primitive. It accepts an opaque `TurnID` and a session-scoped `Generation`; duplicate starts, completions, interruptions, and idle false starts are ignored. Existing V1 frame fields remain in use at the adapter boundary pending the broader frame migration. The generation fence advances when a flush is committed and stale queued or late assistant text, synthesis units, TTS frames, and output audio are discarded before processor delivery or at the session edge. A partial assistant context event for audio already delivered remains visible, as does explicitly uninterruptible output. Generation never becomes a turn identifier.
+
+`InputMuteFrame` and `InputUnmuteFrame` are session controls. Audio admitted while muted is marked for discard before any processor (including VAD/STT), and `InputMutedStateFrame` reports the transition. Unmute keeps the same session and generation. Flush and lifecycle controls remain in the V1 control queue; stale write-completion acknowledgements are discarded because they must not commit old media. The P0 flush barrier covers framework queues and server-side transport buffers; it makes no claim about audio already buffered by a client. The `RuntimeSettingsUpdate` envelope declares revisioned, typed optional values, but validation and atomic application are deferred to Task 27; queue prioritization is deferred to Task 30.
+
 **Acceptance criteria**
 
 - Compile-time-distinct `SessionID` and `TurnID` values cannot be assigned to one another without an explicit conversion.
