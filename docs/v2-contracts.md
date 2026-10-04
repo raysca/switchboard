@@ -146,15 +146,18 @@ evaluation.
 
 ### 2.7 Turn detector and manager
 
-`core.TurnDetector` is a pluggable input-to-decision interface that consumes speech/VAD and audio observations and reports a user-turn completion decision with reason, confidence where available, and timestamp. Implementations include silence-duration and hybrid/semantic strategies; pipeline code does not hardcode one detector.
+`core/turn` provides the provider-neutral `TurnDetector` interface, `SilenceDetector`, `HybridDetector`, and a session-owned `Manager`. The manager receives caller-supplied `core.TurnID`, `core.Generation`, VAD/activity observations, and explicit timestamps through `Observe` and `Advance`; it does not read wall time, create timers/goroutines, mint IDs, or depend on providers, Server, storage, STT, or transports. A detector is synchronous, deterministic, and side-effect free.
 
-`core.TurnManager` is the single framework owner of turn start, completion, interruption, idle/turn timeout, and supported runtime policy updates. It coordinates VAD, detector, STT commit, context commit, output cancellation, and generation fencing, and emits ordinary framework events/frames. It does not perform persistence or own product-level session state.
+The manager distinguishes initial no-speech timeout, accepted speech start/stop, silence-based user-turn completion, and active-turn maximum duration. Start and stop debounce plus minimum speech duration suppress short false starts. `SetMuted` pauses turn and timeout advancement; unmute starts fresh silence timing without replaying muted observations. Timestamp regression is rejected. `Interrupt` commits only for the expected active typed turn and generation. Terminal decisions are one-shot through `core.TurnLifecycle` and are returned as ordinary `core.TurnEventFrame` values for the caller to route. Semantic evidence is a provider-neutral confidence value; it can complete early only for the matching turn/generation, a timestamp within the current turn and configured freshness window, confidence above threshold, and an elapsed silence guard. Missing, invalid, stale, or low-confidence evidence falls back to silence.
+
+This state machine does not commit transcripts or context, advance the session cancellation fence, flush output, apply runtime policy updates, or terminate a session. Those actions remain with their owning tasks and integration. The manager owns only bounded per-session state, and its frames have no implicit process or session side effect.
 
 **Acceptance criteria**
 
-- Start, completion, false-start recovery, timeout, mute, and interruption have deterministic state transitions and reason events.
-- STT/context consumers agree on the committed turn boundary.
-- A completion or interruption race cannot emit a second completion or allow stale-generation output to resume.
+- Timestamped start, completion, false-start recovery, no-speech/active-duration timeout, mute, and interruption transitions are deterministic and include typed identity and a reason where applicable.
+- A completion or interruption is one-shot; old-turn and old-generation observations cannot alter the current turn.
+- Semantic evidence can only shorten the silence path under its identity, timestamp, confidence, freshness, and guard checks; every rejected signal preserves deterministic silence fallback.
+- STT/context agreement, output cancellation, and generation-fence integration remain Gate B acceptance items and are not claimed by the state-machine package alone.
 
 ### 2.8 Provider readiness and usage
 

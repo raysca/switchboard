@@ -50,6 +50,7 @@ const (
 	// Internal async re-entry
 	FrameInternal        FrameType = 821
 	FrameWriteCompletion FrameType = 822
+	FrameTurnEvent       FrameType = 823
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.

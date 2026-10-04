@@ -127,7 +127,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 ## Phase 2 — P0 audio/call parity
 
 - [x] Task 6: Audio conditioning, filters, conversion, buffers.
-- [ ] Task 7: Silence, turn detection, manager.
+- [ ] Task 7: Silence, turn detection, manager (implementation committed; independent review pending).
 - [ ] Task 8: Output pacing, speaking state, barge-in/flush.
 - [ ] Task 9: STT commit/finalization.
 - [ ] Independent Phase 2 tester gate; record Gate B.
@@ -162,6 +162,13 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   resampler was not migrated. Task 6 does not change the pinned browser
   player's inability to clear already-buffered playback. Tasks 7–9 and the
   independent Phase 2 Gate B remain open.
+
+### Task 7 implementation evidence (independent review pending)
+
+- RED: the required focused command first failed because `core/turn` and the typed `TurnEventFrame` API did not exist. Its all-package run also hit the known Command Line Tools SDK 27 `tapi error: malformed file` while linking `core/audio`; the documented Xcode macOS 26 SDK override was used for subsequent verification.
+- GREEN: `cd core && SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS=-Wl,-w go test -run 'Test(TurnDetector|TurnManager|Silence|NoSpeech)' ./...` passed. Focused turn-manager/hybrid race tests passed 25 repetitions; `go test -race -count=1 ./...` and `go vet ./...` passed in `core` with the same SDK override. `gofmt` and `git diff --check` passed.
+- The implementation adds `core/turn` deterministic detection/management and a typed normal framework event frame. Configured caller timestamps drive no-speech, start/stop debounce, silence completion, active-turn maximum, mute pauses, interruption, and reset. Hybrid evidence has turn/generation/time/confidence/freshness/silence guards and always falls back to silence. Full details and rulings are in `.superpowers/sdd/2026-10-04-v2-execution/task-7-report.md`.
+- Task 7 remains unchecked pending independent review. Gate B remains open pending Tasks 8–9 and the Phase 2 independent tester; this task has no provider, STT/context, transport, output-flush, or session-termination integration.
 
 ## Phase 3 — Context, tools, tracing, compatibility
 
@@ -233,4 +240,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Tasks 1–6 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Gates B–G remain open. Next unblocked work is Phase 2 Task 7; product implementation tasks are not complete.
+Tasks 1–6 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Task 7 implementation is committed and awaits independent review. Gates B–G remain open; after that review, Phase 2 continues with Tasks 8–9 and its independent tester gate.
