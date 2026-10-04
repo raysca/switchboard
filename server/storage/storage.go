@@ -13,6 +13,7 @@ import (
 	"io"
 	"io/fs"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -119,6 +120,7 @@ func sqliteLockPath(dsn string) (string, error) {
 	if dsn == ":memory:" {
 		return "", nil
 	}
+	var path string
 	if strings.HasPrefix(dsn, "file:") {
 		u, err := url.Parse(dsn)
 		if err != nil {
@@ -127,12 +129,35 @@ func sqliteLockPath(dsn string) (string, error) {
 		if u.Query().Get("mode") == "memory" {
 			return "", nil
 		}
-		if u.Opaque != "" {
-			return u.Opaque, nil
+		if u.Host != "" && u.Host != "localhost" {
+			return "", errors.New("remote SQLite file URI unsupported")
 		}
-		return u.Path, nil
+		if u.Opaque != "" {
+			path, err = url.PathUnescape(u.Opaque)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			path = u.Path
+		}
+		if path == ":memory:" {
+			return "", nil
+		}
+	} else {
+		path = strings.SplitN(dsn, "?", 2)[0]
 	}
-	return strings.SplitN(dsn, "?", 2)[0], nil
+	if path == "" {
+		return "", errors.New("SQLite file path required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(abs))
+	if err == nil {
+		abs = filepath.Join(parent, filepath.Base(abs))
+	}
+	return abs, nil
 }
 
 func sqliteConfiguredDSN(dsn string) (string, error) {
@@ -143,6 +168,12 @@ func sqliteConfiguredDSN(dsn string) (string, error) {
 	q, err := url.ParseQuery(query)
 	if err != nil {
 		return "", err
+	}
+	reserved := map[string]bool{"_foreign_keys": true, "_fk": true, "_busy_timeout": true, "_timeout": true, "_journal_mode": true, "_journal": true, "_pragma": true, "_txlock": true}
+	for key := range q {
+		if reserved[strings.ToLower(key)] {
+			return "", fmt.Errorf("SQLite setting %q is managed by storage", key)
+		}
 	}
 	q.Set("_foreign_keys", "on")
 	q.Set("_busy_timeout", "5000")
@@ -218,7 +249,7 @@ func NewID() string {
 
 func validID(id string) error {
 	u, err := uuid.Parse(id)
-	if err != nil || u.Version() != 7 || u.String() != id {
+	if err != nil || u.Version() != 7 || u.Variant() != uuid.RFC4122 || u.String() != id {
 		return errors.New("UUIDv7 id required")
 	}
 	return nil

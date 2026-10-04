@@ -182,6 +182,8 @@ Task 3's storage package uses Goose Provider v3.28.0 for ordered embedded SQL mi
 
 After Task 3 review, SQLite connection settings are applied through the driver DSN on every physical connection. Repository-issued durable IDs are validated as UUIDv7, and timestamps use UTC microsecond precision. PostgreSQL preserves canonical JSON bytes in `TEXT` columns rather than rewriting them through JSONB. Agent versions and selected MCP tools publish atomically; a selected tool must match the live server's latest discovery and schema hash. Database triggers enforce current-version/latest-discovery pointer ownership and session agent/version/hash provenance. Published selections cannot be appended later.
 
+Storage rejects caller SQLite DSN aliases and `_pragma` that could override its mandatory connection policy. File URI migration locks use decoded, normalized paths; in-memory databases do not create lock files. UUIDv7 validation also requires the RFC 4122 variant bits.
+
 ### Management API and authentication boundary
 
 Management routes begin at `/api/v1`; success and error bodies use versioned JSON DTOs independent of database structs and framework frames. Management UI/API authentication is distinct from public voice-client admission. Voice clients receive short-lived, scoped, single-use connection tokens and never receive management credentials or provider secrets. The Server configuration endpoint is read-only. Provider secret create/update requests accept a secret once; reads return only masked metadata.

@@ -165,6 +165,37 @@ func TestStorageSQLiteReplacementKeepsPragmas(t *testing.T) {
 	}
 }
 
+func TestStorageSQLiteRejectsSettingOverrides(t *testing.T) {
+	for _, query := range []string{"_fk=off", "_foreign_keys=off", "_timeout=0", "_busy_timeout=0", "_journal=DELETE", "_journal_mode=DELETE", "_pragma=busy_timeout(0)", "_pragma=foreign_keys(OFF)", "_txlock=deferred"} {
+		t.Run(query, func(t *testing.T) {
+			_, err := sqliteConfiguredDSN("file:test.db?" + query)
+			if err == nil {
+				t.Fatal("reserved SQLite setting accepted")
+			}
+		})
+	}
+	s, err := Open(context.Background(), Config{Dialect: SQLite, DSN: filepath.Join(t.TempDir(), "safe.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.DB().SetConnMaxLifetime(time.Nanosecond)
+	var fk, busy int
+	var journal string
+	if err := s.DB().QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB().QueryRow("PRAGMA busy_timeout").Scan(&busy); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB().QueryRow("PRAGMA journal_mode").Scan(&journal); err != nil {
+		t.Fatal(err)
+	}
+	if fk != 1 || busy < 5000 || strings.ToLower(journal) != "wal" {
+		t.Fatalf("effective settings fk=%d busy=%d journal=%s", fk, busy, journal)
+	}
+}
+
 func TestMigrationConcurrentSQLiteURI(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "uri.db")
 	cwd, err := os.Getwd()
@@ -197,8 +228,67 @@ func TestMigrationConcurrentSQLiteURI(t *testing.T) {
 			}
 		}
 	}
-	if got, err := sqliteLockPath("file:voice.db?cache=shared"); err != nil || got != "voice.db" {
+	expected, err := filepath.Abs("voice.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := sqliteLockPath("file:voice.db?cache=shared"); err != nil || got != expected {
 		t.Fatalf("opaque uri path=%q err=%v", got, err)
+	}
+}
+
+func TestMigrationEncodedURILockPath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data dir")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "voice.db")
+	canonicalDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalPath := filepath.Join(canonicalDir, "voice.db")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(cwd, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := "file:" + strings.ReplaceAll(rel, " ", "%20") + "?cache=shared"
+	for _, dsn := range []string{encoded, "file:" + path + "?cache=shared", path} {
+		got, err := sqliteLockPath(dsn)
+		if err != nil || got != canonicalPath {
+			t.Fatalf("dsn=%q lock=%q err=%v", dsn, got, err)
+		}
+	}
+	if got, err := sqliteLockPath("file::memory:"); err != nil || got != "" {
+		t.Fatalf("memory lock=%q err=%v", got, err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 6)
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			dsn := encoded
+			if i%2 == 0 {
+				dsn = "file:" + path + "?cache=shared"
+			}
+			s, err := Open(context.Background(), Config{Dialect: SQLite, DSN: dsn})
+			if err == nil {
+				err = s.Close()
+			}
+			errs <- err
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -220,7 +310,7 @@ func TestStorageTimestampMatchesPostgresPrecision(t *testing.T) {
 func TestStorageRejectsInvalidIDs(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	for _, id := range []string{"", "bad", "00000000-0000-4000-8000-000000000000"} {
+	for _, id := range []string{"", "bad", "00000000-0000-4000-8000-000000000000", "00000000-0000-7000-0000-000000000000"} {
 		if err := s.Agents().Create(ctx, Agent{ID: id, Name: "bad"}); err == nil {
 			t.Fatalf("accepted id %q", id)
 		}
@@ -437,12 +527,26 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer admin.Close()
 	schema := "storage_" + strings.ReplaceAll(NewID(), "-", "")
+	created := false
+	t.Cleanup(func() {
+		if created {
+			if _, err := admin.ExecContext(context.Background(), "DROP SCHEMA "+schema+" CASCADE"); err != nil {
+				t.Errorf("drop test schema: %v", err)
+			}
+			var count int
+			if err := admin.QueryRowContext(context.Background(), "SELECT count(*) FROM pg_namespace WHERE nspname=$1", schema).Scan(&count); err != nil || count != 0 {
+				t.Errorf("test schema remains: count=%d err=%v", count, err)
+			}
+		}
+		if err := admin.Close(); err != nil {
+			t.Errorf("close test admin DB: %v", err)
+		}
+	})
 	if _, err := admin.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { admin.ExecContext(context.Background(), "DROP SCHEMA "+schema+" CASCADE") })
+	created = true
 	parsed, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatal(err)
