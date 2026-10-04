@@ -22,6 +22,11 @@ type SessionRepository struct{ s *Store }
 
 func (s *Store) Sessions() SessionRepository { return SessionRepository{s} }
 func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
+	for _, id := range []string{v.ID, v.AgentID, v.AgentVersionID} {
+		if err := validID(id); err != nil {
+			return err
+		}
+	}
 	stack := v.ProviderStackJSON
 	if stack == "" {
 		stack = "{}"
@@ -34,6 +39,11 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 	return err
 }
 func (r SessionRepository) AddTurn(ctx context.Context, v TurnRecord) error {
+	for _, id := range []string{v.ID, v.SessionID} {
+		if err := validID(id); err != nil {
+			return err
+		}
+	}
 	latency := v.LatenciesJSON
 	if latency == "" {
 		latency = "{}"
@@ -61,9 +71,13 @@ func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, e
 	if err != nil {
 		return v, err
 	}
-	v.StartedAt, _ = time.Parse(time.RFC3339Nano, started)
+	if v.StartedAt, err = parseTime(started); err != nil {
+		return v, err
+	}
 	if ended.Valid {
-		v.EndedAt, _ = time.Parse(time.RFC3339Nano, ended.String)
+		if v.EndedAt, err = parseTime(ended.String); err != nil {
+			return v, err
+		}
 	}
 	return v, nil
 }
@@ -75,9 +89,13 @@ func (r SessionRepository) Turn(ctx context.Context, id string) (TurnRecord, err
 	if err != nil {
 		return v, err
 	}
-	v.StartedAt, _ = time.Parse(time.RFC3339Nano, started)
+	if v.StartedAt, err = parseTime(started); err != nil {
+		return v, err
+	}
 	if ended.Valid {
-		v.EndedAt, _ = time.Parse(time.RFC3339Nano, ended.String)
+		if v.EndedAt, err = parseTime(ended.String); err != nil {
+			return v, err
+		}
 	}
 	v.Transcript = transcript.String
 	v.AssistantText = assistant.String
@@ -100,6 +118,14 @@ type TraceRepository struct{ s *Store }
 
 func (s *Store) Traces() TraceRepository { return TraceRepository{s} }
 func (r TraceRepository) AddSpan(ctx context.Context, v TraceSpan) error {
+	if err := validID(v.ID); err != nil {
+		return err
+	}
+	for _, id := range []string{v.SessionID, v.TurnID, v.ParentID} {
+		if err := optionalID(id); err != nil {
+			return err
+		}
+	}
 	attrs, err := metadata(v.AttributesJSON)
 	if err != nil {
 		return err
@@ -108,6 +134,14 @@ func (r TraceRepository) AddSpan(ctx context.Context, v TraceSpan) error {
 	return err
 }
 func (r TraceRepository) AddEvent(ctx context.Context, v TraceEvent) error {
+	if err := validID(v.ID); err != nil {
+		return err
+	}
+	for _, id := range []string{v.SpanID, v.SessionID, v.TurnID} {
+		if err := optionalID(id); err != nil {
+			return err
+		}
+	}
 	attrs, err := metadata(v.AttributesJSON)
 	if err != nil {
 		return err
@@ -116,6 +150,16 @@ func (r TraceRepository) AddEvent(ctx context.Context, v TraceEvent) error {
 	return err
 }
 func (r TraceRepository) AddToolCall(ctx context.Context, v ToolCallRecord) error {
+	for _, id := range []string{v.ID, v.SessionID} {
+		if err := validID(id); err != nil {
+			return err
+		}
+	}
+	for _, id := range []string{v.TurnID, v.MCPServerID} {
+		if err := optionalID(id); err != nil {
+			return err
+		}
+	}
 	if v.SessionID == "" {
 		return errors.New("tool call session required")
 	}

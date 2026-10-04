@@ -76,6 +76,11 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 			}
 			defer guard.Unlock()
 		}
+		driverDSN, err := sqliteConfiguredDSN(cfg.DSN)
+		if err != nil {
+			return nil, err
+		}
+		cfg.DSN = driverDSN
 	}
 	db, err := sql.Open(driver, cfg.DSN)
 	if err != nil {
@@ -83,13 +88,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	}
 	fail := func(err error) (*Store, error) { db.Close(); return nil, err }
 	if cfg.Dialect == SQLite {
-		// One connection keeps PRAGMAs effective and serializes short write transactions.
 		db.SetMaxOpenConns(1)
-		for _, pragma := range []string{"PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA busy_timeout=5000"} {
-			if _, err = db.ExecContext(ctx, pragma); err != nil {
-				return fail(err)
-			}
-		}
 	}
 	if err = db.PingContext(ctx); err != nil {
 		return fail(err)
@@ -128,9 +127,28 @@ func sqliteLockPath(dsn string) (string, error) {
 		if u.Query().Get("mode") == "memory" {
 			return "", nil
 		}
+		if u.Opaque != "" {
+			return u.Opaque, nil
+		}
 		return u.Path, nil
 	}
 	return strings.SplitN(dsn, "?", 2)[0], nil
+}
+
+func sqliteConfiguredDSN(dsn string) (string, error) {
+	base, query, found := strings.Cut(dsn, "?")
+	if !found {
+		query = ""
+	}
+	q, err := url.ParseQuery(query)
+	if err != nil {
+		return "", err
+	}
+	q.Set("_foreign_keys", "on")
+	q.Set("_busy_timeout", "5000")
+	q.Set("_journal_mode", "WAL")
+	q.Set("_txlock", "immediate")
+	return base + "?" + q.Encode(), nil
 }
 
 func (s *Store) DB() *sql.DB      { return s.db }
@@ -167,7 +185,11 @@ func utc(t time.Time) string {
 	if t.IsZero() {
 		t = time.Now()
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return t.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z")
+}
+func parseTime(s string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	return t.UTC(), err
 }
 func nullTime(t time.Time) any {
 	if t.IsZero() {
@@ -192,6 +214,20 @@ func NewID() string {
 		panic(err)
 	}
 	return id.String()
+}
+
+func validID(id string) error {
+	u, err := uuid.Parse(id)
+	if err != nil || u.Version() != 7 || u.String() != id {
+		return errors.New("UUIDv7 id required")
+	}
+	return nil
+}
+func optionalID(id string) error {
+	if id == "" {
+		return nil
+	}
+	return validID(id)
 }
 
 // CanonicalJSON normalizes valid JSON into a stable, map-key-sorted encoding.

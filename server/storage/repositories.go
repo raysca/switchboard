@@ -22,18 +22,28 @@ type AgentVersion struct {
 	CreatedAt              time.Time
 }
 type AgentRepository struct{ s *Store }
+type SelectedTool struct {
+	ServerID, RemoteName, SchemaHash string
+	Required                         bool
+}
 
 func (s *Store) Agents() AgentRepository { return AgentRepository{s} }
 func (r AgentRepository) Create(ctx context.Context, a Agent) error {
-	if a.ID == "" {
-		return errors.New("agent id required")
+	if err := validID(a.ID); err != nil {
+		return err
 	}
 	now := utc(a.CreatedAt)
-	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO agents(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, true), boolValue(r.s.dialect, false), now, now)
+	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO agents(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, a.Enabled), boolValue(r.s.dialect, a.Archived), now, now)
 	return err
 }
 func (r AgentRepository) AddVersion(ctx context.Context, agentID string, version int, config []byte) (AgentVersion, error) {
+	return r.PublishVersion(ctx, agentID, version, config, nil)
+}
+func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, version int, config []byte, selections []SelectedTool) (AgentVersion, error) {
 	var out AgentVersion
+	if err := validID(agentID); err != nil {
+		return out, err
+	}
 	if version < 1 {
 		return out, errors.New("version must be positive")
 	}
@@ -43,9 +53,39 @@ func (r AgentRepository) AddVersion(ctx context.Context, agentID string, version
 	}
 	out = AgentVersion{ID: NewID(), AgentID: agentID, Version: version, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC()}
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		// The same transaction validates every selected schema and publishes the version.
+		// SQLite begins IMMEDIATE; PostgreSQL row locks block refresh or delete races.
+		for _, sel := range selections {
+			if err := validID(sel.ServerID); err != nil {
+				return err
+			}
+			query := "SELECT latest_discovery_id FROM mcp_servers WHERE id=? AND enabled=?"
+			if r.s.dialect == Postgres {
+				query += " FOR SHARE"
+			}
+			var discovery sql.NullString
+			if err := tx.QueryRowContext(ctx, r.s.bind(query), sel.ServerID, boolValue(r.s.dialect, true)).Scan(&discovery); err != nil {
+				return err
+			}
+			if !discovery.Valid {
+				return errors.New("MCP server has no discovery")
+			}
+			var actual string
+			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT schema_hash FROM mcp_tools WHERE discovery_id=? AND remote_name=?"), discovery.String, sel.RemoteName).Scan(&actual); err != nil {
+				return err
+			}
+			if actual != sel.SchemaHash {
+				return errors.New("MCP schema hash changed")
+			}
+		}
 		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), out.ID, agentID, version, out.SchemaVersion, string(canonical), hash, utc(out.CreatedAt))
 		if err != nil {
 			return err
+		}
+		for _, sel := range selections {
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) VALUES(?,?,?,?,?)"), out.ID, sel.ServerID, sel.RemoteName, sel.SchemaHash, boolValue(r.s.dialect, sel.Required)); err != nil {
+				return err
+			}
 		}
 		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE agents SET current_version_id=?,updated_at=? WHERE id=? AND archived=?"), out.ID, utc(time.Now()), agentID, boolValue(r.s.dialect, false))
 		if err != nil {
@@ -71,8 +111,12 @@ func (r AgentRepository) Current(ctx context.Context, id string) (Agent, error) 
 		return a, err
 	}
 	a.CurrentVersionID = current.String
-	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	if a.CreatedAt, err = parseTime(created); err != nil {
+		return a, err
+	}
+	if a.UpdatedAt, err = parseTime(updated); err != nil {
+		return a, err
+	}
 	return a, nil
 }
 func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, error) {
@@ -82,7 +126,9 @@ func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, 
 	if err != nil {
 		return v, err
 	}
-	v.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	if v.CreatedAt, err = parseTime(created); err != nil {
+		return v, err
+	}
 	return v, nil
 }
 func (r AgentRepository) Archive(ctx context.Context, id string) error {
@@ -106,6 +152,9 @@ type CredentialRepository struct{ s *Store }
 
 func (s *Store) Credentials() CredentialRepository { return CredentialRepository{s} }
 func (r CredentialRepository) Put(ctx context.Context, c Credential) error {
+	if err := validID(c.ID); err != nil {
+		return err
+	}
 	if c.ID == "" || len(c.Ciphertext) == 0 || c.KeyID == "" {
 		return errors.New("credential id, ciphertext and key id required")
 	}
@@ -130,10 +179,16 @@ func (r CredentialRepository) Get(ctx context.Context, id string) (Credential, e
 		return c, err
 	}
 	if validated.Valid {
-		c.ValidatedAt, _ = time.Parse(time.RFC3339Nano, validated.String)
+		if c.ValidatedAt, err = parseTime(validated.String); err != nil {
+			return c, err
+		}
 	}
-	c.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	c.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	if c.CreatedAt, err = parseTime(created); err != nil {
+		return c, err
+	}
+	if c.UpdatedAt, err = parseTime(updated); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 
@@ -155,12 +210,21 @@ type MCPRepository struct{ s *Store }
 
 func (s *Store) MCP() MCPRepository { return MCPRepository{s} }
 func (r MCPRepository) CreateServer(ctx context.Context, m MCPServer) error {
+	if err := validID(m.ID); err != nil {
+		return err
+	}
+	if err := optionalID(m.AuthCredentialID); err != nil {
+		return err
+	}
 	now := utc(time.Now())
 	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO mcp_servers(id,name,endpoint,transport,auth_credential_id,enabled,validation_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)"), m.ID, m.Name, m.Endpoint, m.Transport, nullable(m.AuthCredentialID), boolValue(r.s.dialect, m.Enabled), m.ValidationState, now, now)
 	return err
 }
 func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools []MCPTool) (MCPDiscovery, error) {
 	var out MCPDiscovery
+	if err := validID(serverID); err != nil {
+		return out, err
+	}
 	sorted := append([]MCPTool(nil), tools...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].RemoteName < sorted[j].RemoteName })
 	for i := range sorted {
@@ -220,7 +284,9 @@ func (r MCPRepository) Discovery(ctx context.Context, id string) (MCPDiscovery, 
 	if err != nil {
 		return d, err
 	}
-	d.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
+	if d.CreatedAt, err = parseTime(created); err != nil {
+		return d, err
+	}
 	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT remote_name,schema_json,schema_hash FROM mcp_tools WHERE discovery_id=? ORDER BY remote_name"), id)
 	if err != nil {
 		return d, err
@@ -236,8 +302,7 @@ func (r MCPRepository) Discovery(ctx context.Context, id string) (MCPDiscovery, 
 	return d, rows.Err()
 }
 func (r MCPRepository) SelectTool(ctx context.Context, versionID, serverID, name, hash string, required bool) error {
-	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) VALUES(?,?,?,?,?)"), versionID, serverID, name, hash, boolValue(r.s.dialect, required))
-	return err
+	return errors.New("selected tools must be published with an agent version")
 }
 
 func nullable(s string) any {
