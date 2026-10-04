@@ -1,0 +1,208 @@
+# Voice Platform V2 Contracts
+
+**Status:** Phase 0 contract freeze for V2 planning
+**Authority:** `docs/v2-spec.md` and `docs/v2-plan.md`
+**Scope:** Stable cross-workstream boundaries; implementation may refine internal details without changing these observable contracts.
+
+## 1. Architecture and ownership
+
+```text
+Framework (`core`, providers, transports)
+        ↓ public APIs
+Server (`server`, persistence, management APIs)
+        ↓ versioned HTTP management APIs
+Admin UI (`ui`)
+```
+
+The Framework owns frames, processors, pipelines, sessions, turn identity and lifecycle, supervision, interruption, audio processing, VAD, turn detection, context, tool execution primitives, tracing and observer interfaces, provider integration interfaces, and transport abstractions. The Framework has no dependency on Server, persistence, UI, product authentication, or MCP.
+
+The Server owns persistent agents and immutable versions, provider credentials and capabilities, MCP configuration and discovery, agent configuration, storage, trace/session history, management APIs and authentication, onboarding, provider discovery, agent readiness, and deployment/runtime configuration presentation. Server runtime construction uses the same public Framework APIs available to a standalone Go application.
+
+The UI owns presentation and browser interaction. It calls authenticated, versioned management APIs and uses the normal RTVI connection flow for the embedded voice test. It does not call database repositories or construct a private test-only runtime.
+
+## 2. Framework contracts
+
+### 2.1 Session, turn, and generation identity
+
+`core.SessionID` and `core.TurnID` are distinct opaque defined string types. They are created once at their respective lifecycle boundaries, propagated through frames, trace events, observer events, tool calls, and provider usage events, and are never parsed to infer another value. A `TurnID` identifies one conversational turn; session-local turn ordering is separate metadata. Server-issued UUIDv7 strings may be used as the underlying session and turn values.
+
+`core.Generation` is a monotonically increasing unsigned cancellation fence scoped to a session. A generation may mark work stale and prevent stale frames from being delivered after interruption or turn replacement. It is not an identifier for a session, user turn, assistant turn, trace, or persistent record. Turn identity remains stable when generation changes.
+
+**Acceptance criteria**
+
+- Compile-time-distinct `SessionID` and `TurnID` values cannot be assigned to one another without an explicit conversion.
+- A turn keeps the same `TurnID` across its speech, transcript, model, tool, and output events, including interruption; cancellation advances the generation without synthesizing a new identity.
+- Session and turn IDs remain opaque at framework boundaries; no consumer derives identity from generation, sequence number, or a database row number.
+- A restart or concurrent session cannot reuse a server durable ID.
+
+### 2.2 Trace and span API
+
+The provider-neutral public API is in `core`:
+
+```go
+type Tracer interface {
+	StartSpan(ctx context.Context, event TraceEvent) Span
+}
+
+type Span interface {
+	SetAttribute(key string, value any)
+	AddEvent(event TraceEvent)
+	End(err error)
+}
+```
+
+`TraceEvent` carries a stable event name, event time, optional `SessionID`, optional `TurnID`, optional cancellation `Generation`, and structured attributes. The returned span is a no-op span when tracing is disabled; callers need not branch on tracer presence. Span parentage follows the context passed to `StartSpan`. The API does not expose persistence or exporter types.
+
+The standard event vocabulary includes session start/end/failure; turn start/end; speech start/stop and VAD latency; STT start, partial, final, and finalization; context commit; LLM request, first output, completion, and failure; tool requested/start/complete/failure; TTS request, first audio, completion, and failure; interruption and flush; provider readiness/usage/error; transport disconnect; and session failure. Custom processors may add namespaced events and structured metadata.
+
+**Acceptance criteria**
+
+- A disabled tracer has a no-op path and creates no exporter, database, or server dependency.
+- Spans correlate by typed session and turn IDs and preserve parent/child timing.
+- The standard vocabulary can represent the complete user-speech → STT → context → LLM → tool loop → TTS → output path and interruption ordering.
+- Tracing errors cannot fail or delay a voice session.
+
+### 2.3 Trace content policy
+
+`TracePolicy.Content` has exactly `none`, `metadata`, or `text` modes. Production defaults to `metadata`. Raw audio bytes are never included in traces. Metadata mode records event names, timing, identifiers, counts, sample formats, provider/model names, status, and safe error categories, but not transcript text, prompts, tool arguments, tool results, keys, or audio. Text mode permits selected text fields; tool arguments/results still pass through an explicit redaction policy. No mode permits credentials or raw audio.
+
+**Acceptance criteria**
+
+- Tests with unique sentinel secrets/text prove that metadata mode, logs, errors, and event attributes do not contain them.
+- Text inclusion requires explicit policy configuration and does not enable raw-audio capture.
+- Server retention controls decide whether selected content is persisted; the core policy only controls what the tracer is allowed to receive.
+
+### 2.4 Observer and semantic debug events
+
+`core.Observer` is a non-mutating observation boundary. Its immutable event values describe frame kind, direction, processor identity/index, session/turn/generation correlation, and monotonic timing/lifecycle. Observer APIs do not grant a mutable frame pointer or a callback that can replace, drop, reorder, or inject frames. Callbacks run in event order and must return promptly; observer failures are isolated from session execution and counted/reported through a safe diagnostic hook.
+
+The framework emits protocol-neutral `DebugEvent` values for session/pipeline lifecycle, frame flow, speech/transcription, LLM/TTS lifecycle, interruption/flush, tool call/result, provider readiness/error, and teardown. An adapter maps these semantic values to Whisker-compatible messages. A `Serializer` owns conversion between semantic events/frames and a wire representation; it is not a pipeline processor and does not choose product persistence. RTVI serialization remains its separate client-facing compatibility surface.
+
+**Acceptance criteria**
+
+- Observer delivery cannot mutate frame flow and an observer panic/error does not fail the session.
+- Event order, direction, correlation IDs, processor position, and lifecycle boundaries are testable.
+- A semantic event can be serialized for a selected debug protocol without adding Whisker-specific types to core processors.
+- RTVI and Whisker conformance results are recorded independently.
+
+### 2.5 Runtime settings updates
+
+Runtime changes enter a session through a typed `RuntimeSettingsUpdate` control message. The update includes a monotonic revision and a typed set of supported values, is validated as a complete unit, and takes effect at a documented control boundary. An invalid update is rejected without partially changing processor state. Arbitrary mutation of processor internals is not public API. Initial updateable values are input mute, interruption enabled, silence/turn timeouts, language, and selected runtime thresholds.
+
+**Acceptance criteria**
+
+- A valid update is observed as one revision and applies atomically.
+- An invalid or out-of-order revision leaves the prior settings active and produces a structured error/event.
+- Updates take effect without rebuilding a session for the supported fields.
+
+### 2.6 Audio filter
+
+`core.AudioFilter` is a provider-neutral streaming abstraction with explicit input/output audio format, bounded per-stream state, cancellation-aware processing, reset, and close. The first implementation must include one real noise-suppression implementation; a noise gate alone does not satisfy this contract. Filter latency is observable. Resampling and channel/format conversion remain composable core audio utilities rather than provider-specific copies.
+
+**Acceptance criteria**
+
+- A filter declares encoding, sample rate, and channels and rejects unsupported input formats explicitly.
+- Repeated chunk processing is bounded and session-safe; reset clears all prior-session signal state.
+- Cancellation and close release processing resources, and measured filter latency is available to observers/traces.
+
+### 2.7 Turn detector and manager
+
+`core.TurnDetector` is a pluggable input-to-decision interface that consumes speech/VAD and audio observations and reports a user-turn completion decision with reason, confidence where available, and timestamp. Implementations include silence-duration and hybrid/semantic strategies; pipeline code does not hardcode one detector.
+
+`core.TurnManager` is the single framework owner of turn start, completion, interruption, idle/turn timeout, and supported runtime policy updates. It coordinates VAD, detector, STT commit, context commit, output cancellation, and generation fencing, and emits ordinary framework events/frames. It does not perform persistence or own product-level session state.
+
+**Acceptance criteria**
+
+- Start, completion, false-start recovery, timeout, mute, and interruption have deterministic state transitions and reason events.
+- STT/context consumers agree on the committed turn boundary.
+- A completion or interruption race cannot emit a second completion or allow stale-generation output to resume.
+
+### 2.8 Provider readiness and usage
+
+Providers report typed readiness transitions and optional provider-neutral usage events. Readiness includes provider/component, state, timestamp, and safe reason category. Usage includes provider/model, session/turn IDs when available, unit name, quantity, and timestamp (for example LLM tokens, STT audio duration, TTS characters/audio duration, tool calls, or request count). These are observability values, not billing or admission decisions.
+
+**Acceptance criteria**
+
+- Missing provider metrics are represented as absent, never fabricated as zero usage.
+- Readiness and usage can reach trace/observer consumers without a database dependency.
+- Provider errors and secret-bearing response text are redacted before event emission.
+
+### 2.9 Provider-neutral tools and ToolLoop
+
+Core defines `ToolDefinition` (stable name, description, JSON input schema, and policy metadata), `ToolCall` (call ID, name, raw JSON arguments, session/turn/generation correlation), and `ToolResult` (call ID, structured result or safe error, status, and timing). A provider adapter translates provider-native requests/results to these types. `ToolExecutor` invokes registered handlers using a `context.Context`; an MCP wrapper is one Server-supplied handler and is invisible to core.
+
+`ToolLoop` owns sequential model/tool rounds, multiple calls returned in one round, maximum iterations, maximum calls, per-tool timeout, context cancellation, result normalization, interruption behavior, and trace hooks. It returns control to the LLM after successful results and terminates with a typed error when a limit is exceeded. It does not own session lifecycle, pipeline execution, provider SDKs, persistence, or MCP.
+
+**Acceptance criteria**
+
+- Google, xAI, and server-supplied handlers share the same framework tool types.
+- Multiple calls, malformed arguments, unknown names, provider errors, timeout, cancellation, interruption, and iteration exhaustion have deterministic results.
+- Tool call/result events correlate to the originating turn; content follows trace policy.
+- A tool handler cannot keep a session alive past cancellation or its configured timeout.
+
+## 3. Server concepts and ownership
+
+Server owns the following durable domain records. All durable IDs are UUIDv7 strings; wire and repository APIs treat IDs as opaque. Framework `SessionID`/`TurnID` types may carry the corresponding durable value but remain framework types.
+
+| Concept | Owner and frozen meaning |
+|---|---|
+| `Agent` | Mutable current product resource: identity, name/description, enabled/archive state, and pointer to current version. The API never uses the framework `Pipeline` as its persistence model. |
+| `AgentVersion` | Immutable validated configuration snapshot. Stores schema version, normalized config, creation time, and lower-case SHA-256 `config_hash`. Hash excludes mutable timestamps and its own hash field. Existing sessions continue using the snapshot they started with. |
+| `ProviderCredential` | Server-only secret material encrypted at rest with a key supplied by deployment configuration. API responses contain ID, provider, masked suffix, validation state/time, and capabilities; never secret bytes. |
+| `ProviderCapability` | Registry-derived provider/model/voice/language capability metadata and validation result. Credential strings are not inspected to guess capabilities. |
+| `MCPServer` | Mutable Server resource with endpoint/transport/auth reference, enable state, validation state, and latest immutable discovery reference. OAuth/token material remains server-side. |
+| `MCPToolDiscovery` | Immutable discovery snapshot. A canonical, name-sorted representation gets a SHA-256 `discovery_hash`; each tool schema gets its own canonical SHA-256 `schema_hash`. A refresh creates a new snapshot and never rewrites history. |
+| `AgentMCPTool` | Version-scoped association keyed by agent version, MCP server ID, and remote tool name. Stores selected schema hash and required/optional policy. Schema drift or disappearance marks current configuration as needing review; historical snapshots remain readable. |
+| `SessionRecord` | Persistent product session metadata: UUIDv7 ID, agent/version/config hash, start/end, status, provider stack, turn count, and safe summary. Stores the immutable runtime snapshot reference needed to explain which configuration ran. |
+| `TurnRecord` | Optional history row keyed by UUIDv7 and Session ID, with timing, final transcript/assistant text only when policy permits, latencies, interruption status, and tools invoked. |
+| `Trace`, `Span`, `Event` | Server adapter records framework correlation and nested time relationships. Events carry typed name, safe JSON metadata, and parent/session/turn IDs. Raw audio is excluded. Content persistence is independently governed by retention/privacy settings. |
+| `ToolCallRecord` | Server trace/history projection with tool/MCP identity, timing/status, schema hash, and redacted argument/result summaries. It survives live MCP configuration deletion. |
+
+Normal MCP deletion is blocked while current agent versions reference the server. Disable is reversible and removes tools from new session snapshots. Explicit detach-and-delete updates current versions, stops new references, lets active sessions drain, then removes the live configuration; historical version, discovery, session, and tool-call evidence is retained. No database cascade removes agent/session/trace history.
+
+### Storage boundary
+
+The Server uses `database/sql`, `modernc.org/sqlite` for the CGO-free single-node SQLite driver, and `github.com/jackc/pgx/v5/stdlib` for PostgreSQL. Dialect-specific migrations are embedded in the Server and versioned. Thin repositories own SQL and transaction boundaries; product services own validation and domain rules. SQLite and PostgreSQL migrations implement the same repository contract. The Framework has no SQL driver or repository package.
+
+### Management API and authentication boundary
+
+Management routes begin at `/api/v1`; success and error bodies use versioned JSON DTOs independent of database structs and framework frames. Management UI/API authentication is distinct from public voice-client admission. Voice clients receive short-lived, scoped, single-use connection tokens and never receive management credentials or provider secrets. The Server configuration endpoint is read-only. Provider secret create/update requests accept a secret once; reads return only masked metadata.
+
+### UI information architecture
+
+The separate `ui/` product uses React, TypeScript, and Vite. Its primary sections are Dashboard, Agents, Providers, MCP Servers, Sessions, and read-only Server Configuration. Agent detail combines configuration, readiness, selected MCP tools, and the official Pipecat client/UI test panel on the production RTVI path. Session detail displays persisted server traces. A generated or strongly typed API client consumes only `/api/v1` DTOs.
+
+**Acceptance criteria**
+
+- A changed agent creates a new immutable version; an already-running session still reports the original config hash.
+- A discovered tool schema change creates a new immutable discovery hash and does not silently alter old agent/session snapshots.
+- Database and API deletion paths cannot cascade away historical session, tool-call, or trace evidence.
+- Provider and MCP secrets never appear in browser reads, logs, traces, or error messages.
+- UI functionality is reachable through the management API and no UI imports Server repositories or core implementation internals.
+- SQLite and PostgreSQL pass the same repository contract suite and migrations can be applied on an empty database and upgraded from the prior schema.
+
+## 4. Dependency gates A–G
+
+| Gate | Required evidence to pass |
+|---|---|
+| A — Core Contracts Stable | Typed session/turn identity, trace model, provider-neutral tool model, and observer/debug model are stable; public contract tests pass. Required before deep provider/MCP/tool work. |
+| B — P0 Audio Path Stable | Turn management, STT commit, output pacing, deterministic flush/barge-in, silence/no-speech, and audio normalization pass focused and integrated tests. Required before parity results are treated as meaningful. |
+| C — Tool Loop Stable | Provider-neutral multi-step loop, Google adapter, and xAI adapter pass the same call/result, limit, timeout, cancellation, and error contracts. Required before MCP end-to-end integration. |
+| D — Persistent Agent Runtime | Immutable agent snapshot, credential resolution, provider selection, and MCP tool wiring work at session construction. Required before the UI test surface is authoritative. |
+| E — Trace End-to-End | Framework span → Server persistence → management API → UI timeline is correlated for a real session and remains useful under metadata-only privacy mode. |
+| F — Compatibility | RTVI conformance, Whisker semantic conformance, and P0 Pipecat behavioral parity each pass their separate suites; intentional differences are documented. |
+| G — Product Release | Onboarding, persistent agents, Pipecat UI test, MCP tool flow, session traces, security, and production packaging pass the seven vertical scenarios and release checklist. |
+
+## 5. Rulings and assumptions
+
+- Ruling: Keep `SessionID`, `TurnID`, and `Generation` as distinct framework types; use UUIDv7 strings for server durable IDs — opaque IDs simplify correlation while generation remains only a cancellation fence — cost if wrong: changing identity plumbing after tracing and provider work lands will require broad API and stored-data migrations.
+- Ruling: Hash normalized immutable `AgentVersion` JSON and per-tool canonical schema JSON with SHA-256; keep the hash outside its own input — stable hashes make session provenance and MCP schema drift comparable — cost if wrong: a different canonicalization contract changes all snapshot hashes and needs explicit schema-version migration.
+- Ruling: Use `database/sql`, `modernc.org/sqlite`, `pgx/v5/stdlib`, embedded dialect migrations, and thin repositories — this supports CGO-free single-node deployment and PostgreSQL without putting SQL in core — cost if wrong: changing driver or migration structure later touches every repository and deployment build.
+- Ruling: Default trace content to metadata-only; raw audio is never traced and text/tool payloads require explicit policy — voice data is sensitive and timing remains useful without content — cost if wrong: stricter defaults may frustrate debugging, while looser defaults increase retention, consent, and breach exposure.
+- Ruling: Use the official `github.com/modelcontextprotocol/go-sdk/mcp` package at `v1.7.0` behind a Server-owned `MCPClient` adapter; prefer Streamable HTTP for remote servers and require explicit admin configuration for local/process transport — the official SDK documents client and transport APIs and the version compatibility matrix — cost if wrong: SDK churn or remote-server dialect differences may require an adapter replacement, while a narrower initial transport set delays integrations. ([official Go SDK](https://github.com/modelcontextprotocol/go-sdk))
+- Ruling: Identify an MCP tool by `(MCPServerID, remote tool name)` and bind every selected version to an immutable `schema_hash` — remote names are scoped by server and schema changes require review instead of silent identity replacement — cost if wrong: servers that reuse names for distinct resources require adding a remote stable tool ID and migrating associations.
+- Ruling: Encrypt provider and MCP secrets with AES-256-GCM using a deployment-managed 32-byte key identifier kept outside the database; mask values in every API response — this supports authenticated encryption and explicit key rotation without persisting the encryption key with the ciphertext — cost if wrong: adopting a KMS envelope or hardware-backed key later requires key-version migration and a credential re-encryption pass.
+- Ruling: Separate management authentication from voice admission; issue short-lived, scoped, single-use voice tokens and never expose management/provider secrets to the browser — public RTVI clients and administrators have different trust boundaries — cost if wrong: a different deployment identity model may require replacing the management session mechanism and its UI integration.
+- Ruling: Use React, TypeScript, Vite, and a typed `/api/v1` client for the management UI — this keeps UI concepts outside Go core and matches the V2 admin product scope — cost if wrong: choosing another frontend toolchain changes UI build/hosting integration but not the HTTP contract.
+- Ruling: Keep Whisker compatibility semantic through a Framework observer/debug adapter until an official package and protocol version are pinned — no exact Whisker wire target is specified in the approved inputs — cost if wrong: byte-level interoperability will require a versioned wire serializer and additional fixture/version maintenance.
+- Ruling: A database trace/history failure is observable but cannot abort an active voice session; failure to resolve an agent or credential prevents new session creation — an existing session must outlive optional observability writes while new sessions require valid startup configuration — cost if wrong: operators may temporarily miss history during storage outages or reject a session that a degraded provider fallback could have served.

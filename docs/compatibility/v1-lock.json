@@ -1,0 +1,150 @@
+{
+  "name": "go-voice-v1-compatibility-lock",
+  "version": "1.0.0",
+  "toolchain": {
+    "go": "1.27.1",
+    "node_observed": "22.18.0",
+    "protoc_observed": "36.2",
+    "modules": ["govoice", "govoice/core", "govoice/providers/google", "govoice/providers/xai", "govoice/server"]
+  },
+  "modules": {
+    "govoice": {"path": ".", "go": "1.27.1"},
+    "govoice/core": {"path": "core", "go": "1.27.1"},
+    "govoice/providers/google": {"path": "providers/google", "go": "1.27.1"},
+    "govoice/providers/xai": {"path": "providers/xai", "go": "1.27.1"},
+    "govoice/server": {"path": "server", "go": "1.27.1"}
+  },
+  "client_packages": {
+    "@pipecat-ai/client-js": {
+      "version": "1.13.1",
+      "resolved": "https://registry.npmjs.org/@pipecat-ai/client-js/-/client-js-1.13.1.tgz",
+      "integrity": "sha512-kRzNWBouHrYyoc6iN60RO97kBhB+uAPSXzf3M1tL//w59X8lkPGCL1onM0crh28C64nxP4hJ0+v6Spf5amJKIg=="
+    },
+    "@pipecat-ai/websocket-transport": {
+      "version": "1.7.2",
+      "resolved": "https://registry.npmjs.org/@pipecat-ai/websocket-transport/-/websocket-transport-1.7.2.tgz",
+      "integrity": "sha512-gax+OsOmq8IcXYDXZbWCqNdFkqnDKi/0EaYGqo/gMNX3ZUt9iRkuZjseWyhTnNswnNvajqrzLIL9gUBrcxJw5A=="
+    }
+  },
+  "protobuf": {
+    "syntax": "proto3",
+    "source_file": "proto/frames.proto",
+    "sha256": "adcd346af21673d3385d075c5a662a8407584b4b04f177320609596f4dea5c37",
+    "message": "pipecat.Frame",
+    "oneof_fields": {
+      "text": 1,
+      "audio": 2,
+      "transcription": 3,
+      "message": 4,
+      "interruption": 5
+    }
+  },
+  "rtvi": {
+    "label": "rtvi-ai",
+    "protocol_version": "2.1.0",
+    "accepted_compatibility_spelling": "2.1",
+    "websocket_path": "/ws",
+    "client_ready_type": "client-ready",
+    "bot_ready_type": "bot-ready"
+  },
+  "audio": {
+    "wire_encoding": "PCM16LE",
+    "channels": 1,
+    "internal_sample_rate_hz": 16000,
+    "client_playback_sample_rate_hz": 24000,
+    "fixture_input_samples": 320,
+    "fixture_output_samples": 480,
+    "fixture_duration_ms": 20,
+    "maximum_nested_message_bytes": 16384
+  },
+  "resampler": {
+    "implementation": "stateful streaming linear interpolation with a dedicated 48-kHz-to-16-kHz three-tap boxcar path",
+    "common_sample_rates_hz": [8000, 16000, 24000, 48000],
+    "benchmark": {
+      "operations": 892284,
+      "ns_per_operation": 1202,
+      "bytes_per_operation": 3648,
+      "allocations_per_operation": 7,
+      "hardware": "Apple M4 Pro"
+    }
+  },
+  "vad": {
+    "engine": "Silero ONNX Runtime",
+    "model_file": "third_party/silero_vad.onnx",
+    "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+    "sample_rate_hz": 16000,
+    "chunk_samples": 512,
+    "context_samples": 64,
+    "onnxruntime_version": "1.29.0"
+  },
+  "google_provider": {
+    "stt_model": "chirp_2",
+    "stt_location": "us-central1",
+    "stt_language": "en-US",
+    "llm_model": "gemini-2.5-flash",
+    "llm_auth_mode": "vertex_adc",
+    "tts_voice": "en-US-Journey-F",
+    "tts_sample_rate_hz": 24000
+  },
+  "xai_provider": {
+    "llm_model": "grok-2-1212",
+    "llm_endpoint": "https://api.x.ai/v1/responses",
+    "stt_endpoint": "wss://api.x.ai/v1/stt",
+    "tts_endpoint": "https://api.x.ai/v1/tts",
+    "tts_voice": "eve",
+    "language": "en"
+  },
+  "auth_and_admission": {
+    "token_type": "JWT",
+    "signature_algorithm": "HS256",
+    "issuer": "govoice-v1",
+    "audience": "govoice-v1-client",
+    "required_claims": ["jti", "sub", "iat", "exp"],
+    "single_use": true,
+    "maximum_lifetime_seconds": 300,
+    "default_clock_skew_seconds": 30,
+    "development_secret_minimum_bytes": 32,
+    "public_listener": "0.0.0.0:8080",
+    "admin_listener": "127.0.0.1:9090"
+  },
+  "limits_and_timeouts": {
+    "production_profile": {
+      "max_pending_handshakes": 100,
+      "max_sessions": 250,
+      "max_sessions_per_principal": 5,
+      "max_sessions_per_ip": 5,
+      "upgrade_timeout_seconds": 5,
+      "ready_timeout_seconds": 10,
+      "max_call_duration_seconds": 3600,
+      "idle_timeout_seconds": 30,
+      "drain_timeout_seconds": 45,
+      "google_stt_max_streams": 250,
+      "google_stt_rotation_headroom_multiplier": 2.0
+    },
+    "default_websocket": {
+      "handshake_timeout_seconds": 5,
+      "rtvi_ready_timeout_seconds": 5,
+      "read_timeout_seconds": 30,
+      "max_concurrent_sessions": 100,
+      "max_concurrent_sessions_per_ip": 10,
+      "max_pending_handshakes": 50,
+      "handshake_rate_limit_per_second_per_ip": 20,
+      "output_queue_duration_ms": 100,
+      "output_queue_bytes": 4800,
+      "socket_write_timeout_seconds": 2
+    }
+  },
+  "target_platform": {
+    "production_image_distribution": "Debian 12 Bookworm",
+    "supported_linux_distributions": ["Ubuntu 22.04 LTS", "Debian 12 Bookworm", "Red Hat Enterprise Linux 9.x"],
+    "architectures": ["amd64", "arm64"],
+    "glibc_minimum_version": "2.34",
+    "vad_executor_production_default": "process"
+  },
+  "slos": {
+    "v1_formal_availability_or_percentile_objective": "No contractual availability or p95 latency objective is published in V1.",
+    "resampler_benchmark_baseline": "892284 operations; 1202 ns/op; 3648 B/op; 7 allocs/op on Apple M4 Pro.",
+    "live_provider_tests": "Not run in the Phase 0 baseline because credentials were not supplied.",
+    "pipecat_pytest": "Not run in the Phase 0 baseline because pytest was unavailable."
+  }
+}
