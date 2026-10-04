@@ -1,5 +1,0 @@
-processors,sync_ns_per_frame,chan_ns_per_frame,ratio,sync_allocs,chan_allocs
-1,348,240,0.690,0,0
-4,374,652,1.743,0,0
-8,460,1168,2.539,0,0
-16,670,2154,3.215,0,0
