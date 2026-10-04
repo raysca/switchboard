@@ -76,7 +76,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 ## Phase 1 — Foundations in parallel
 
 - [x] Task 1: Distinct identity types, trace/observer/debug value contracts, no-op spans, privacy envelope, and public tool types. Independent tester PASS and reviewer approval after two fix rounds; runtime integration and serializer behavior remain in their assigned tasks.
-- [ ] Task 2: P0 lifecycle, mute, and flush; independent command tester passed and two reviewer fix rounds are implemented with focused regressions and core race/vet evidence; awaiting review confirmation. Typed settings envelope declared; application and urgent priority remain deferred.
+- [x] Task 2: P0 lifecycle, mute, and deterministic core/fake-transport flush. Independent reviewer APPROVED after two fix rounds; final independent tester PASS. Typed settings envelope declared; application and urgent priority remain deferred.
 - [ ] Task 3: Storage foundation and dialect migrations.
 - [ ] Task 4: Management API/auth skeleton.
 - [ ] Task 5: UI shell and typed API client.
@@ -88,6 +88,13 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Initial focused contract tests, full core race suite, vet, diff, dependency-boundary, and privacy checks passed. Final independent tester PASS at `b71dbd1` repeated focused correlation/budget/privacy tests, full core race, vet, diff, dependency boundary, and clean-worktree checks. Independent reviewer approved all findings after Rounds 1–2.
 - Rulings: public typed IDs remain additive while V1 `uint64`/`string` runtime fields await P0 migration; trace metadata defaults to a fail-closed allowlist; custom structured metadata admits only finite numeric/boolean values with depth, collection, key-count, and shared 1,024-node copy budgets; tool-call correlation is a scalar field; tool JSON byte slices remain caller-owned. Costs and alternatives are recorded in the Task 1 report.
 - Gate A remains open pending Tasks 2–5 and the independent Phase 1 tester.
+
+### Task 2 closeout
+
+- Implementation range: `9a1eab7..3094453` (`fa5f8d4` implementation, `cafdede` Round 1 fixes, `3094453` Round 2 fixes). The independent reviewer APPROVED the final implementation after two fix rounds.
+- Final independent tester PASS at `3094453`: focused lifecycle/control suite, new regressions repeated 100 times, transport preservation repeated 1,000 times, full core race suite, `go vet ./...`, diff check, and clean-worktree check. RED/GREEN details and review findings are in `.superpowers/sdd/2026-10-04-v2-execution/task-2-report.md`.
+- Rulings: default assistant output is interruptible; admission and applied mute state are separate, with inline controls queued in admission order; a flush requires an explicit matching generation and advances the fence once; stale controls cannot cancel a new turn; partial already-delivered context and explicitly uninterruptible media survive the core/fake flush. Costs and alternatives are recorded in the Task 2 report. Real WebSocket disposition/pacing remains Task 8; client playback clearing is not claimed.
+- Gate A remains open pending Tasks 3–5 and the independent Phase 1 tester.
 
 ## Phase 2 — P0 audio/call parity
 
