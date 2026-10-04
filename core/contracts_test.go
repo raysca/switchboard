@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -84,6 +85,51 @@ func TestTraceContractStructuredCustomMetadata(t *testing.T) {
 	got["scores"].([]any)[0] = 999.0
 	if event.Attributes()["custom.vad"].(map[string]any)["scores"].([]any)[0] != 0.2 {
 		t.Fatal("nested accessor aliased event")
+	}
+}
+
+func TestTraceContractConcurrentToolCorrelation(t *testing.T) {
+	first := core.NewTraceEvent("tool.start", time.Now(), "s", "t", 2, core.TracePolicy{}, nil)
+	first.ToolCallID = "call-a"
+	second := first
+	second.ToolCallID = "call-b"
+	if first.ToolCallID != "call-a" || second.ToolCallID != "call-b" || first.TurnID != second.TurnID {
+		t.Fatal("concurrent tool events lost distinct call identity")
+	}
+}
+
+func TestTraceContractCustomMetadataWorkBudget(t *testing.T) {
+	shared := any(map[string]any{"value": true})
+	for range 7 {
+		shared = map[string]any{"a": shared, "b": shared, "c": shared, "d": shared}
+	}
+	cycle := map[string]any{}
+	cycle["self"] = cycle
+	event := core.NewTraceEvent("custom.vad.decision", time.Now(), "s", "t", 1, core.TracePolicy{}, map[string]any{
+		"custom.c_shared": shared,
+		"custom.b_cycle":  cycle,
+		"custom.a_valid":  map[string]any{"confidence": 0.8},
+	})
+	attrs := event.Attributes()
+	if _, ok := attrs["custom.c_shared"]; ok {
+		t.Fatal("high-expansion shared subtree was admitted")
+	}
+	if _, ok := attrs["custom.b_cycle"]; ok {
+		t.Fatal("cyclic metadata was admitted")
+	}
+	if attrs["custom.a_valid"].(map[string]any)["confidence"] != 0.8 {
+		t.Fatal("valid metadata was lost")
+	}
+}
+
+func TestTraceContractCustomMetadataKeyBudget(t *testing.T) {
+	input := make(map[string]any)
+	for i := range 1025 {
+		input["custom."+strconv.Itoa(i)] = true
+	}
+	event := core.NewTraceEvent("custom.counts", time.Now(), "s", "t", 1, core.TracePolicy{}, input)
+	if len(event.Attributes()) != 0 {
+		t.Fatal("too many custom keys should fail closed")
 	}
 }
 

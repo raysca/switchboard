@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -30,6 +31,7 @@ type TraceEvent struct {
 	SessionID  SessionID
 	TurnID     TurnID
 	Generation Generation
+	ToolCallID string
 	attributes map[string]any
 }
 
@@ -85,6 +87,8 @@ func safeEventAttributes(policy TracePolicy, input map[string]any) map[string]an
 		return nil
 	}
 	out := make(map[string]any)
+	var customKeys []string
+	tooManyCustom := false
 	for key, value := range input {
 		switch key {
 		case "transcript", "prompt", "text":
@@ -106,10 +110,22 @@ func safeEventAttributes(policy TracePolicy, input map[string]any) map[string]an
 			}
 		default:
 			if strings.HasPrefix(key, "custom.") && safeMetadataKey(key) {
-				if copied, ok := copyStructuredMetadata(value, 0); ok {
-					out[key] = copied
+				if len(customKeys) == maxStructuredMetadataNodes {
+					tooManyCustom = true
+				} else {
+					customKeys = append(customKeys, key)
 				}
 			}
+		}
+	}
+	if tooManyCustom {
+		return out
+	}
+	sort.Strings(customKeys)
+	remaining := maxStructuredMetadataNodes
+	for _, key := range customKeys {
+		if copied, ok := copyStructuredMetadata(input[key], 0, &remaining); ok {
+			out[key] = copied
 		}
 	}
 	return out
@@ -117,22 +133,33 @@ func safeEventAttributes(policy TracePolicy, input map[string]any) map[string]an
 
 func cloneAttributes(input map[string]any) map[string]any {
 	out := make(map[string]any, len(input))
+	var customKeys []string
 	for key, value := range input {
 		if strings.HasPrefix(key, "custom.") {
-			out[key], _ = copyStructuredMetadata(value, 0)
+			customKeys = append(customKeys, key)
 		} else {
 			out[key] = value
+		}
+	}
+	sort.Strings(customKeys)
+	remaining := maxStructuredMetadataNodes
+	for _, key := range customKeys {
+		if copied, ok := copyStructuredMetadata(input[key], 0, &remaining); ok {
+			out[key] = copied
 		}
 	}
 	return out
 }
 
+const maxStructuredMetadataNodes = 1024
+
 // copyStructuredMetadata accepts bounded JSON-like numeric/boolean metadata.
 // Strings, bytes, pointers, and unsupported collections fail closed.
-func copyStructuredMetadata(value any, depth int) (any, bool) {
-	if depth > 8 {
+func copyStructuredMetadata(value any, depth int, remaining *int) (any, bool) {
+	if depth > 8 || *remaining == 0 {
 		return nil, false
 	}
+	*remaining--
 	switch v := value.(type) {
 	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return v, true
@@ -155,7 +182,7 @@ func copyStructuredMetadata(value any, depth int) (any, bool) {
 			if !safeMetadataKey(key) {
 				return nil, false
 			}
-			copied, ok := copyStructuredMetadata(child, depth+1)
+			copied, ok := copyStructuredMetadata(child, depth+1, remaining)
 			if !ok {
 				return nil, false
 			}
@@ -168,7 +195,7 @@ func copyStructuredMetadata(value any, depth int) (any, bool) {
 		}
 		out := make([]any, len(v))
 		for i, child := range v {
-			copied, ok := copyStructuredMetadata(child, depth+1)
+			copied, ok := copyStructuredMetadata(child, depth+1, remaining)
 			if !ok {
 				return nil, false
 			}
