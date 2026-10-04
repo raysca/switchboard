@@ -79,6 +79,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [x] Task 2: P0 lifecycle, mute, and deterministic core/fake-transport flush. Independent reviewer APPROVED after two fix rounds; final independent tester PASS. Typed settings envelope declared; application and urgent priority remain deferred.
 - [x] Task 3: Storage foundation and dialect migrations. Independent reviewer APPROVED after two fix rounds; final independent tester PASS on SQLite and PostgreSQL 18.
 - [ ] Task 4: Management API/auth skeleton.
+- Task 4 implementation is committed pending independent review. The admin-only `/api/v1` skeleton, deployment management key, sanitized config DTO, and scoped voice-token issuer are documented in `docs/api/v1.md`; Gate A remains open.
 - [ ] Task 5: UI shell and typed API client.
 - [ ] Independent Phase 1 tester gate; record Gate A.
 

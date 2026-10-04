@@ -43,6 +43,9 @@ type Config struct {
 	} `yaml:"tls"`
 
 	OriginAllowlist []string `yaml:"origin_allowlist"`
+	Management      struct {
+		APIKeyEnv string `yaml:"api_key_env"`
+	} `yaml:"management"`
 
 	// Admission Token
 	Token struct {
@@ -160,6 +163,7 @@ func DefaultConfig(profile Profile) *Config {
 
 	// Token defaults
 	cfg.Token.SecretEnv = "TOKEN_SECRET"
+	cfg.Management.APIKeyEnv = "GOVOICE_MANAGEMENT_API_KEY"
 	cfg.Token.Issuer = "govoice-v1"
 	cfg.Token.Audience = "govoice-v1-client"
 	cfg.Token.KeyID = "v1"

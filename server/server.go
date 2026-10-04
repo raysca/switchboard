@@ -17,6 +17,7 @@ import (
 	"govoice/core"
 	"govoice/providers/google"
 	"govoice/providers/xai"
+	"govoice/server/auth"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 	"govoice/vad"
@@ -24,14 +25,16 @@ import (
 
 // Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
-	cfg         *Config
-	metrics     *Metrics
-	timelines   *TimelineRegistry
-	admission   *AdmissionController
-	registry    *Registry
-	validator   *token.Validator
-	vadExecutor vad.SharedExecutor
-	logger      *slog.Logger
+	cfg          *Config
+	metrics      *Metrics
+	timelines    *TimelineRegistry
+	admission    *AdmissionController
+	registry     *Registry
+	validator    *token.Validator
+	management   *auth.Management
+	voiceSignKey []byte
+	vadExecutor  vad.SharedExecutor
+	logger       *slog.Logger
 
 	ready        atomic.Bool
 	shuttingDown atomic.Bool
@@ -128,16 +131,31 @@ func NewServer(cfg *Config) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize token validator: %w", err)
 	}
+	managementKey := ""
+	managementEnv := cfg.Management.APIKeyEnv
+	if managementEnv == "" {
+		managementEnv = "GOVOICE_MANAGEMENT_API_KEY"
+	}
+	managementKey = os.Getenv(managementEnv)
+	management, err := auth.NewManagement(managementKey)
+	if err != nil {
+		return nil, err
+	}
+	if managementKey != "" && managementKey == tokenSecret {
+		return nil, errors.New("management API key must differ from voice token signing key")
+	}
 
 	s := &Server{
-		cfg:         cfg,
-		metrics:     metrics,
-		timelines:   timelines,
-		admission:   admission,
-		registry:    registry,
-		validator:   validator,
-		logger:      logger,
-		activeCalls: make(map[uint64]*activeCall),
+		cfg:          cfg,
+		metrics:      metrics,
+		timelines:    timelines,
+		admission:    admission,
+		registry:     registry,
+		validator:    validator,
+		management:   management,
+		voiceSignKey: []byte(tokenSecret),
+		logger:       logger,
+		activeCalls:  make(map[uint64]*activeCall),
 	}
 
 	s.setupRoutes()
@@ -210,6 +228,7 @@ func (s *Server) setupRoutes() {
 		s.metrics.Handler().ServeHTTP(w, r)
 	}))
 	s.adminMux.Handle("GET /debug/timeline", s.timelines.Handler())
+	s.adminMux.Handle("/api/v1/", http.HandlerFunc(s.handleAPI))
 }
 
 func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {

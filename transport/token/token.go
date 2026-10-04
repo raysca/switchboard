@@ -64,6 +64,7 @@ type Claims struct {
 	jwt.RegisteredClaims
 	Principal string `json:"principal,omitempty"`
 	Pipeline  string `json:"pipeline,omitempty"`
+	Scope     string `json:"scope,omitempty"`
 }
 
 // Validator manages admission token verification, atomic single-use consumption,
@@ -177,6 +178,11 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 	}
 	if claims.Principal == "" {
 		claims.Principal = claims.Subject
+	}
+	// V1 tokens had no scope. Preserve that admission contract while rejecting
+	// a token explicitly scoped for any purpose other than voice connection.
+	if claims.Scope != "" && claims.Scope != "voice:connect" {
+		return nil, fmt.Errorf("%w: invalid voice scope", ErrTokenInvalid)
 	}
 
 	if claims.IssuedAt == nil {
