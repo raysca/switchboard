@@ -65,10 +65,17 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Phase 0 document reviewer/fixer: completed Round 1 corrections; Gate A/E/G sequencing corrected; Task 1 now includes compile-time tool contracts; P0 gate no longer depends on the later eval harness; functional P1/P2 work is deferred and split into reviewable tasks; progress distinguishes the Phase 0 review from Gate A.
 - Reverification after these fixes: `node tools/compat/validate_manifest.js`, `node tools/compat/probe_playback_clear.js`, `node tools/compat/verify_fixtures.js`, `git diff --check`, placeholder scan, and `make verify` all exited 0. Playback remains unsupported; probe exit 0 is only via the recorded decision.
 
+### Independent review Round 2 corrections
+
+- Phase 5 tracker now records persistence/API evidence and explicitly leaves Gate E open until Phase 6 UI timeline correlation.
+- Task summaries now match their detailed plans: Task 2 is P0 lifecycle/mute/flush with prerequisite envelope declarations only; Task 11 consumes Task 1 tool types and owns only bounded ToolLoop behavior; Task 12 is provider tool adapters only, with usage assigned to P1 Task 32; Task 13 no longer promises usage tests or a usage commit.
+- Task 14 uses a narrow protocol-specific RTVI encoder and Whisker debug-event adapter for Gate F, distinct from the reusable general serializer abstraction in Task 34.
+- Focused revalidation after Round 2: manifest validator, playback probe, fixture verifier, `git diff --check`, and Markdown placeholder scan passed. No JSON, executable code, dependencies, or machine-readable inputs changed; the prior independent tester `make verify` and Round 1 full verification remain applicable, so full `make verify` was not rerun.
+
 ## Phase 1 — Foundations in parallel
 
-- [ ] Task 1: Turn, trace, observer, serializer contracts.
-- [ ] Task 2: Lifecycle, priority lane, mute, flush, runtime settings.
+- [ ] Task 1: Turn, trace, observer/serializer boundaries, and public tool types.
+- [ ] Task 2: P0 lifecycle, mute, and flush; publish prerequisite settings/control envelopes only.
 - [ ] Task 3: Storage foundation and dialect migrations.
 - [ ] Task 4: Management API/auth skeleton.
 - [ ] Task 5: UI shell and typed API client.
@@ -85,10 +92,10 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 ## Phase 3 — Context, tools, tracing, compatibility
 
 - [ ] Task 10: Context aggregation/reconciliation.
-- [ ] Task 11: Provider-neutral ToolLoop/ToolExecutor.
-- [ ] Task 12: Google/xAI tool adapters and usage.
-- [ ] Task 13: Runtime trace instrumentation/content policy.
-- [ ] Task 14: P0 eval harness and separate compatibility suites.
+- [ ] Task 11: Bounded ToolLoop behavior consuming Task 1 public types.
+- [ ] Task 12: Google/xAI tool adapters only; usage is P1 Task 32.
+- [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.
+- [ ] Task 14: P0 eval harness and separate compatibility suites with protocol-specific debug adapters.
 - [ ] Independent Phase 3 tester gate; record Gates C and F.
 
 ## Phase 4 — Persistent Server product core
@@ -103,7 +110,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 - [ ] Task 19: Framework-to-Server trace adapter/query API.
 - [ ] Task 20: Retention/privacy and optional OTel export.
-- [ ] Independent Phase 5 tester gate; record Gate E.
+- [ ] Independent Phase 5 tester gate; record persistence/API evidence and leave Gate E open pending Phase 6 UI timeline correlation.
 
 ## Phase 6 — Admin UI product
 

@@ -68,10 +68,10 @@ For every task below: add the named focused regression tests first and run them 
 
 **Files:** `core/pipeline.go`, `core/session.go`, `core/turn.go`, `core/control.go`, `core/*_test.go`; `docs/v2-contracts.md`.
 
-**Interfaces:** Consumes Task 1 identities/events. Produces turn lifecycle state, input mute, cancellation fence, interruptible-output classification, and deterministic server-side flush semantics. The task defines ordering needed for P0 interruption but does not add a P1 urgent-control queue or runtime-settings update API; those implementations are Tasks 27 and 30.
+**Interfaces:** Consumes Task 1 identities/events. Produces turn lifecycle state, input mute, cancellation fence, interruptible-output classification, and deterministic server-side flush semantics. It may declare the typed settings/control envelope fields needed by Tasks 27 and 30, but does not apply runtime settings or implement urgent-control prioritization; those functional P1 behaviors remain deferred to Tasks 27 and 30.
 
-- [ ] Add race tests for duplicate completion, false start, mute/unmute, late frame after interruption, and flush versus queued media; verify failures with `cd core && go test -run 'Test(TurnLifecycle|Mute|Flush)' ./...`.
-- [ ] Implement P0 lifecycle/control behavior and document boundaries; run focused tests then `cd core && go test -race -count=1 ./... && go vet ./...`.
+- [ ] Add compile-time settings/control-envelope contract tests plus race tests for duplicate completion, false start, mute/unmute, late frame after interruption, and flush versus queued media; verify failures with `cd core && go test -run 'Test(ControlEnvelopeContract|TurnLifecycle|Mute|Flush)' ./...`.
+- [ ] Implement P0 lifecycle/flush behavior and declare only the typed prerequisite envelopes; do not implement P1 settings application or control prioritization. Run focused tests then `cd core && go test -race -count=1 ./... && go vet ./...`.
 - [ ] Obtain independent review; commit `feat(core): harden turn lifecycle and control semantics`.
 
 ### Task 3: Server storage foundation (SV-A)
@@ -162,15 +162,15 @@ For every task below: add the named focused regression tests first and run them 
 - [ ] Implement semantics and docs; run focused tests then `cd core && go test -race -count=1 ./... && go vet ./...`.
 - [ ] Obtain independent review; commit `feat(core): harden turn-scoped context commits`.
 
-### Task 11: Provider-neutral ToolLoop and ToolExecutor (FW-C)
+### Task 11: Provider-neutral ToolLoop policy and behavior (FW-C)
 
 **Files:** `core/tools/`, `core/tools/*_test.go`, `core/go.mod`; `docs/v2-contracts.md`, `docs/decisions/tool-loop.md`.
 
-**Interfaces:** Consumes Phase 0 tool contract and Task 10 context. Produces `ToolDefinition`, `ToolCall`, `ToolResult`, `ToolExecutor`, and bounded multi-round `ToolLoop`. Evaluate current Go libraries for schema/loop reuse only; reject ownership of voice lifecycle, pipeline, or providers.
+**Interfaces:** Consumes Task 1's public `ToolDefinition`, `ToolCall`, `ToolResult`, and `ToolExecutor` contracts plus Task 10 context. Produces only bounded multi-round `ToolLoop` policy and behavior: call limits, timeout/cancellation handling, result normalization, and continuation/interruption rules. Applications and Server implement the Task 1 executor contract. Evaluate current Go libraries for schema/loop reuse only; reject ownership of voice lifecycle, pipeline, or providers.
 
-- [ ] Add multiple-call, malformed/unknown tool, max-round, timeout, cancellation, interruption, and trace-correlation tests; run `cd core && go test -run 'Test(ToolLoop|ToolExecutor)' ./...` and confirm failure.
+- [ ] Add multiple-call, malformed/unknown tool, max-round, timeout, cancellation, interruption, and trace-correlation tests using a test `ToolExecutor`; run `cd core && go test -run 'TestToolLoop' ./...` and confirm failure.
 - [ ] Implement the minimal provider-neutral loop and publish the library evaluation; run focused tests then `cd core && go test -race -count=1 ./... && go vet ./...`.
-- [ ] Obtain independent review; commit `feat(core): add bounded provider-neutral tool loop`.
+- [ ] Obtain independent loop-policy review; commit `feat(core): add bounded provider-neutral tool loop`.
 
 ### Task 12: Google/xAI tool adapters (FW-E)
 
@@ -184,22 +184,22 @@ For every task below: add the named focused regression tests first and run them 
 
 ### Task 13: Framework trace instrumentation and content policy (FW-D)
 
-**Files:** `core/trace.go`, `core/observer.go`, instrumentation in `core/`, `providers/google/`, `providers/xai/`; `docs/v2-contracts.md`, `docs/privacy.md`.
+**Files:** `core/trace.go`, trace instrumentation in `core/`, `providers/google/`, `providers/xai/`; `docs/v2-contracts.md`, `docs/privacy.md`.
 
 **Interfaces:** Consumes Task 1 trace API and completed turn/tool/audio interfaces. Produces correlated spans/events for session through transport, metadata default, and selected text redaction. Usage emission is P1 Task 32, readiness events are P2 Task 43, and observer delivery/fault isolation is P1 Task 35.
 
-- [ ] Add sentinel-secret/content tests and ordering/correlation tests across session, turn, tools, interruption, and usage; confirm failure in affected module tests.
+- [ ] Add sentinel-secret/content tests and ordering/correlation tests across session, turn, tools, and interruption; confirm failure in affected module tests.
 - [ ] Instrument and document; run full race/vet suites in core and both providers.
-- [ ] Obtain independent privacy and API review; commit `feat(core): instrument v2 runtime traces and usage`.
+- [ ] Obtain independent privacy and API review; commit `feat(core): instrument v2 runtime traces`.
 
 ### Task 14: P0 eval harness and separate compatibility suites (FW-D)
 
-**Files:** `tools/eval/`, `tools/compat/`, `transport/rtvi/`, `transport/ws/`, tests and fixtures; `docs/pipecat-compatibility.md`.
+**Files:** `tools/eval/`, `tools/compat/`, `tools/compat/whisker/adapter.go`, `transport/rtvi/wire_encoder.go`, `transport/ws/`, tests and fixtures; `docs/pipecat-compatibility.md`.
 
-**Interfaces:** Consumes finalized semantic events, serializer and runtime behaviors. Produces deterministic machine-readable P0 scenarios plus independent RTVI client, Whisker semantic adapter, and pinned Pipecat paired-behavior suites.
+**Interfaces:** Consumes Task 1 semantic `DebugEvent`/`TraceEvent` values and finalized runtime behaviors. Produces deterministic machine-readable P0 scenarios and independent RTVI client, Whisker semantic, and pinned Pipecat paired-behavior suites. For Gate F, add a minimal protocol-specific RTVI encoder and Whisker debug-event adapter in the compatibility/transport packages that map Task 1 semantic values to each required wire/test fixture. These narrow conformance adapters are not the general reusable serializer abstraction; Task 34 later defines and tests that abstraction for application-selected serializers.
 
 - [ ] Add scenarios for barge-in, turn completion, silence/no-speech, flush, transcript stability, tool interruption, pacing, teardown, RTVI and Whisker; verify expected failures with `go test`/`node` focused commands.
-- [ ] Implement suites, event fixture evidence, and differences; run `node tools/compat/test_rtvi_client.js`, `node tools/compat/verify_fixtures.js`, `go test -race -count=1 ./tools/compat/...`, and `go test -race -count=1 ./transport/rtvi ./transport/ws`.
+- [ ] Implement the focused protocol-specific RTVI encoder and Whisker semantic adapter, suites, fixtures, and differences; run `node tools/compat/test_rtvi_client.js`, `node tools/compat/verify_fixtures.js`, `go test -race -count=1 ./tools/compat/...`, and `go test -race -count=1 ./transport/rtvi ./transport/ws`.
 - [ ] Obtain independent compatibility review; commit `test(compat): add independent v2 conformance and parity suites`.
 
 **Phase 3 independent tester gate:** Confirm Gate C only after shared ToolLoop, Google, and xAI contract suites pass; run all core/provider race and vet suites plus eval and each compatibility suite independently. Confirm Gate F reports three separate results and documents known playback-clear limits. Record phase evidence in `progress.md`.
