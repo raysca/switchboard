@@ -55,11 +55,12 @@ func (s SessionState) String() string {
 
 // Envelope wraps a frame travelling through the session inbox or async re-entry.
 type Envelope struct {
-	Frame       Frame
-	Dir         Direction
-	ResumeIndex int    // Processor index to resume delivery at
-	Gen         uint64 // Generation when envelope was generated
-	DropInput   bool   // Input was admitted while muted
+	Frame          Frame
+	Dir            Direction
+	ResumeIndex    int    // Processor index to resume delivery at
+	Gen            uint64 // Generation when envelope was generated
+	DropInput      bool   // Input was admitted while muted
+	CommittedFlush bool   // This admission advanced the generation fence
 }
 
 // Session represents a single active voice session with its own pipeline,
@@ -75,9 +76,11 @@ type Session struct {
 	control chan Envelope
 	data    chan Envelope
 
-	state      atomic.Int32
-	gen        atomic.Uint64
-	inputMuted atomic.Bool
+	state          atomic.Int32
+	gen            atomic.Uint64
+	inputMuted     atomic.Bool
+	admissionMu    sync.Mutex
+	admissionMuted bool
 
 	// Concurrency & Supervisor
 	taskWg      sync.WaitGroup
@@ -163,6 +166,8 @@ func (s *Session) CurrentGeneration() uint64 {
 
 // IncrementGeneration atomically advances the turn generation.
 func (s *Session) IncrementGeneration() uint64 {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
 	return s.gen.Add(1)
 }
 
@@ -221,51 +226,8 @@ func (s *Session) Start() error {
 
 // Post queues an incoming frame to the session run loop from outside the pipeline.
 func (s *Session) Post(f Frame) error {
-	if s.State() > StateRunning {
-		return ErrSessionClosed
-	}
-
 	s.FramesIn.Add(1)
-	switch f.Type() {
-	case FrameInputMute:
-		s.inputMuted.Store(true)
-	case FrameInputUnmute:
-		s.inputMuted.Store(false)
-	case FrameFlush:
-		if ff, ok := f.(*FlushFrame); ok && ff.Gen == s.CurrentGeneration() {
-			s.IncrementGeneration()
-		}
-	}
-	gen := s.CurrentGeneration()
-	if gf, ok := f.(GenerationalFrame); ok && gf.Generation() != 0 {
-		gen = gf.Generation()
-	}
-
-	env := Envelope{
-		Frame:       f,
-		Dir:         Downstream,
-		ResumeIndex: 0,
-		Gen:         gen,
-		DropInput:   f.Type() == FrameInputAudio && s.InputMuted(),
-	}
-
-	// Classify queue policy
-	if isControlFrame(f) {
-		select {
-		case s.control <- env:
-			return nil
-		default:
-			s.fail(ErrControlQueueFull)
-			return ErrControlQueueFull
-		}
-	}
-
-	select {
-	case s.data <- env:
-		return nil
-	default:
-		return s.enqueueData(env)
-	}
+	return s.admit(f, Downstream, 0, 0)
 }
 
 // TailIndex is the last pipeline processor. Upstream re-entry starts there
@@ -280,32 +242,59 @@ func (s *Session) TailIndex() int {
 
 // Reenter queues an asynchronous operation result back into the pipeline at resumeIndex.
 func (s *Session) Reenter(f Frame, dir Direction, resumeIndex int, gen uint64) error {
+	return s.admit(f, dir, resumeIndex, gen)
+}
+
+// admit orders control commitment, input tagging, and inbox insertion. A
+// blocking output enqueue runs after unlocking, carrying its admission tag.
+func (s *Session) admit(f Frame, dir Direction, resumeIndex int, suppliedGen uint64) error {
+	s.admissionMu.Lock()
 	if s.State() > StateRunning {
+		s.admissionMu.Unlock()
 		return ErrSessionClosed
 	}
-
-	env := Envelope{
-		Frame:       f,
-		Dir:         dir,
-		ResumeIndex: resumeIndex,
-		Gen:         gen,
-		DropInput:   f.Type() == FrameInputAudio && s.InputMuted(),
+	gen := s.CurrentGeneration()
+	if suppliedGen != 0 {
+		gen = suppliedGen
+	} else if gf, ok := f.(GenerationalFrame); ok && gf.Generation() != 0 {
+		gen = gf.Generation()
 	}
-
+	env := Envelope{Frame: f, Dir: dir, ResumeIndex: resumeIndex, Gen: gen, DropInput: f.Type() == FrameInputAudio && s.admissionMuted}
+	switch f.Type() {
+	case FrameInputMute:
+		s.admissionMuted = true
+	case FrameInputUnmute:
+		s.admissionMuted = false
+	case FrameFlush:
+		if gen == 0 || gen != s.CurrentGeneration() {
+			s.admissionMu.Unlock()
+			return ErrStaleGeneration
+		}
+		s.gen.Add(1)
+		env.CommittedFlush = true
+	case FrameInterruption:
+		if gen != 0 && gen < s.CurrentGeneration() {
+			s.admissionMu.Unlock()
+			return ErrStaleGeneration
+		}
+	}
 	if isControlFrame(f) {
 		select {
 		case s.control <- env:
+			s.admissionMu.Unlock()
 			return nil
 		default:
+			s.admissionMu.Unlock()
 			s.fail(ErrControlQueueFull)
 			return ErrControlQueueFull
 		}
 	}
-
 	select {
 	case s.data <- env:
+		s.admissionMu.Unlock()
 		return nil
 	default:
+		s.admissionMu.Unlock()
 		return s.enqueueData(env)
 	}
 }
@@ -488,15 +477,20 @@ func (s *Session) processEnvelope(env Envelope) bool {
 		s.AudioDropped.Add(1)
 		return true
 	}
-	if env.Gen != 0 && env.Gen < s.CurrentGeneration() && !isFenceSurvivingControl(env.Frame) && !isUninterruptibleOutput(env.Frame) && !isPartialAssistantCommit(env.Frame) {
+	if env.Gen != 0 && env.Gen < s.CurrentGeneration() && !env.CommittedFlush && !isFenceSurvivingControl(env.Frame) && !isUninterruptibleOutput(env.Frame) && !isPartialAssistantCommit(env.Frame) {
 		s.StaleDiscarded.Add(1)
 		return true // Discard and proceed
 	}
 	if env.Frame.Type() == FrameInputMute {
+		s.inputMuted.Store(true)
 		env.Frame = &InputMutedStateFrame{Muted: true}
 	}
 	if env.Frame.Type() == FrameInputUnmute {
+		s.inputMuted.Store(false)
 		env.Frame = &InputMutedStateFrame{Muted: false}
+	}
+	if env.CommittedFlush {
+		env.Frame = &FlushFrame{Gen: env.Frame.(*FlushFrame).Gen, committed: true}
 	}
 
 	// Reset per-envelope emit counter and set watchdog start time
@@ -532,6 +526,34 @@ func (s *Session) processEnvelope(env Envelope) bool {
 
 // deliver dispatches a frame inline to the processor at index 'to'.
 func (s *Session) deliver(f Frame, dir Direction, to int) error {
+	if intr, ok := f.(*InterruptionFrame); ok && intr.Gen != 0 && intr.Gen < s.CurrentGeneration() && (!intr.committed || intr.Gen+1 != s.CurrentGeneration()) {
+		s.StaleDiscarded.Add(1)
+		return nil
+	}
+	// Processors may emit controls inline. Commit before publishing a state or
+	// flush event so their observable result cannot lie about session state.
+	switch f.Type() {
+	case FrameInputMute, FrameInputUnmute:
+		muted := f.Type() == FrameInputMute
+		s.admissionMu.Lock()
+		s.admissionMuted = muted
+		s.inputMuted.Store(muted)
+		s.admissionMu.Unlock()
+		f = &InputMutedStateFrame{Muted: muted}
+	case FrameFlush:
+		ff := f.(*FlushFrame)
+		s.admissionMu.Lock()
+		if ff.Gen == s.CurrentGeneration() {
+			s.gen.Add(1)
+			ff = &FlushFrame{Gen: ff.Gen, committed: true}
+			f = ff
+		} else if !ff.committed {
+			s.admissionMu.Unlock()
+			s.StaleDiscarded.Add(1)
+			return nil
+		}
+		s.admissionMu.Unlock()
+	}
 	if gf, ok := f.(GenerationalFrame); ok && gf.Generation() != 0 && gf.Generation() < s.CurrentGeneration() && isInterruptibleOutput(f) {
 		s.StaleDiscarded.Add(1)
 		return nil
@@ -611,7 +633,7 @@ func isControlFrame(f Frame) bool {
 
 func isFenceSurvivingControl(f Frame) bool {
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
+	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
 		return true
 	}
 	return false

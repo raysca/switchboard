@@ -166,7 +166,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 
 	case FrameInterruption:
 		intr := f.(*InterruptionFrame)
-		if p.activeTurn != "" && (intr.Turn == "" || intr.Turn == p.activeTurn) {
+		if p.activeTurn != "" && (intr.Turn == "" || intr.Turn == p.activeTurn) && (intr.Gen == 0 || intr.Gen == p.activeGen) {
 			return p.handleInterruption(e)
 		}
 		return e.PushDirection(f, dir)
@@ -437,7 +437,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	p.deliveredUnits = make(map[uint64]string)
 
 	// 2. Emit InterruptionFrame downstream and upstream
-	intrFrame := &InterruptionFrame{Turn: interruptedTurn, Gen: oldGen}
+	intrFrame := &InterruptionFrame{Turn: interruptedTurn, Gen: oldGen, committed: true}
 	_ = e.Push(intrFrame)
 	_ = e.PushDirection(intrFrame, Upstream)
 
@@ -446,7 +446,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	p.pendingFlushGen.Store(oldGen)
 
 	// 3. Emit FlushFrame downstream
-	flushFrame := &FlushFrame{Gen: oldGen}
+	flushFrame := &FlushFrame{Gen: oldGen, committed: true}
 	_ = e.Push(flushFrame)
 
 	if p.session != nil {

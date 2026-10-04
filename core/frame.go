@@ -48,8 +48,8 @@ const (
 	FrameSettingsControl
 
 	// Internal async re-entry
-	FrameInternal FrameType = 800 + iota
-	FrameWriteCompletion
+	FrameInternal        FrameType = 821
+	FrameWriteCompletion FrameType = 822
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.
@@ -311,8 +311,9 @@ func (f *ErrorFrame) Type() FrameType { return FrameError }
 
 // InterruptionFrame signals user barge-in on an active assistant turn.
 type InterruptionFrame struct {
-	Turn string
-	Gen  uint64
+	Turn      string
+	Gen       uint64
+	committed bool // Set only by the assistant after advancing the session fence.
 }
 
 func (f *InterruptionFrame) Type() FrameType    { return FrameInterruption }
@@ -320,7 +321,8 @@ func (f *InterruptionFrame) Generation() uint64 { return f.Gen }
 
 // FlushFrame travels downstream to flush old-generation audio at the transport.
 type FlushFrame struct {
-	Gen uint64
+	Gen       uint64
+	committed bool // Set when a session admission or assistant barrier advanced the fence.
 }
 
 func (f *FlushFrame) Type() FrameType    { return FrameFlush }
