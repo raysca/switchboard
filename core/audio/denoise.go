@@ -29,6 +29,8 @@ type SpeexDenoiser struct {
 	state   *C.SpeexPreprocessState
 	pending []int16
 	frame   int
+	primed  bool
+	flushed bool
 }
 
 var _ core.AudioFilter = (*SpeexDenoiser)(nil)
@@ -82,28 +84,26 @@ func (f *SpeexDenoiser) Process(ctx context.Context, input []byte) ([]byte, erro
 	if f.state == nil {
 		return nil, ErrClosed
 	}
+	if f.flushed {
+		return nil, ErrFlushed
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if len(input)%2 != 0 {
 		return nil, errors.New("audio: PCM16LE buffer has odd length")
 	}
-	output := make([]byte, 0, len(input)+f.frame*2)
+	output := make([]byte, 0, len(input))
 	for i := 0; i < len(input); i += 2 {
-		if i%2048 == 0 {
-			if err := ctx.Err(); err != nil {
-				return output, err
-			}
+		// Check before consuming each sample. Once a frame is complete, the
+		// bounded native call is committed so cancellation can never strand a
+		// full frame in pending state.
+		if err := ctx.Err(); err != nil {
+			return output, err
 		}
 		f.pending = append(f.pending, int16(binary.LittleEndian.Uint16(input[i:])))
 		if len(f.pending) == f.frame {
-			if err := ctx.Err(); err != nil {
-				return output, err
-			}
-			C.speex_preprocess_run(f.state, (*C.spx_int16_t)(unsafe.Pointer(&f.pending[0])))
-			for _, s := range f.pending {
-				output = binary.LittleEndian.AppendUint16(output, uint16(s))
-			}
+			output = f.processFrame(output, f.pending)
 			f.pending = f.pending[:0]
 		}
 	}
@@ -119,20 +119,44 @@ func (f *SpeexDenoiser) Flush(ctx context.Context) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	n := len(f.pending)
-	if n == 0 {
+	if f.flushed {
 		return nil, nil
 	}
-	for len(f.pending) < f.frame {
-		f.pending = append(f.pending, 0)
+	n := len(f.pending)
+	out := make([]byte, 0, (f.frame+n)*2)
+	if n > 0 {
+		for len(f.pending) < f.frame {
+			f.pending = append(f.pending, 0)
+		}
+		out = f.processFrame(out, f.pending)
+		f.pending = f.pending[:0]
 	}
-	C.speex_preprocess_run(f.state, (*C.spx_int16_t)(unsafe.Pointer(&f.pending[0])))
-	out := make([]byte, 0, n*2)
-	for _, s := range f.pending[:n] {
-		out = binary.LittleEndian.AppendUint16(out, uint16(s))
+	if f.primed {
+		before := len(out)
+		out = f.processFrame(out, make([]int16, f.frame))
+		keep := f.frame
+		if n > 0 {
+			keep = n
+		}
+		out = out[:before+keep*2]
 	}
-	f.pending = f.pending[:0]
+	f.flushed = true
 	return out, nil
+}
+
+// processFrame runs one complete native frame. Speex preprocessing delays the
+// signal by one frame: the first result is only priming and is intentionally
+// withheld. Every later result belongs to the preceding input frame.
+func (f *SpeexDenoiser) processFrame(output []byte, frame []int16) []byte {
+	C.speex_preprocess_run(f.state, (*C.spx_int16_t)(unsafe.Pointer(&frame[0])))
+	if !f.primed {
+		f.primed = true
+		return output
+	}
+	for _, sample := range frame {
+		output = binary.LittleEndian.AppendUint16(output, uint16(sample))
+	}
+	return output
 }
 
 func (f *SpeexDenoiser) Reset() error {
@@ -144,6 +168,8 @@ func (f *SpeexDenoiser) Reset() error {
 	C.speex_preprocess_state_destroy(f.state)
 	f.state = nil
 	f.pending = nil
+	f.primed = false
+	f.flushed = false
 	return f.newState()
 }
 
@@ -155,5 +181,7 @@ func (f *SpeexDenoiser) Close() error {
 		f.state = nil
 	}
 	f.pending = nil
+	f.primed = false
+	f.flushed = true
 	return nil
 }

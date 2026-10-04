@@ -123,12 +123,16 @@ one 10 ms frame, reports 10 ms algorithmic/block latency, and rebuilds native
 state on reset. The composable audio utilities use the same vendored,
 BSD-licensed SpeexDSP release for quality-5 band-limited resampling and local
 deterministic PCM16/float conversion, mono/stereo normalization, pre-roll,
-rechunking, and opt-in turn buffering. Buffers are byte-bounded and require an
-explicit drop-oldest or reject-newest policy. Every mutable native/DSP object
-is per stream and serialized; no process-global DSP state or model weights are
-used. Native and production builds require CGO and a C compiler; the release
-container already builds with `CGO_ENABLED=1`. Gate B remains open until the
-rest of the Phase 2 audio path and its independent gate pass.
+rechunking, and opt-in turn buffering. The resampler accepts only 8, 16, 24,
+or 48 kHz, at most 48,000 input samples per call, and caps any per-call output
+allocation at 288,064 samples before narrowing lengths for C. Turn buffers use
+`core.TurnID`; all buffers are byte-bounded and require an explicit
+drop-oldest or reject-newest policy, with reject-newest reported to the caller
+without changing retained bytes. Every mutable native/DSP object is per stream
+and serialized; no process-global DSP state or model weights are used. Native
+and production builds require CGO and a C compiler; the release container
+already builds with `CGO_ENABLED=1`. Gate B remains open until the rest of the
+Phase 2 audio path and its independent gate pass.
 
 ### 2.7 Turn detector and manager
 

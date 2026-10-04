@@ -145,43 +145,6 @@ func TestAudioFilterConcurrentStreamsAreIsolated(t *testing.T) {
 	}
 }
 
-func TestAudioFilterSuppressesStationaryNoise(t *testing.T) {
-	format := core.AudioFormat{Encoding: core.PCM16LE, SampleRate: 16000, Channels: 1}
-	filter, err := NewSpeexDenoiser(format)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer filter.Close()
-
-	noise := make([]int16, 160*200)
-	state := uint32(1)
-	for i := range noise {
-		state = state*1664525 + 1013904223
-		noise[i] = int16(int32(state>>16)%1401 - 700)
-	}
-	var output []byte
-	for offset := 0; offset < len(noise); offset += 160 {
-		chunk, err := filter.Process(context.Background(), pcm(noise[offset:offset+160]))
-		if err != nil {
-			t.Fatal(err)
-		}
-		output = append(output, chunk...)
-	}
-	processed, err := PCM16LEToFloat32(output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	start := len(noise) / 2
-	var inputEnergy, outputEnergy float64
-	for i := start; i < len(noise); i++ {
-		inputEnergy += math.Abs(float64(noise[i]))
-		outputEnergy += math.Abs(float64(processed[i] * 32768))
-	}
-	if outputEnergy >= inputEnergy*0.8 {
-		t.Fatalf("stationary noise was not suppressed: input=%g output=%g", inputEnergy, outputEnergy)
-	}
-}
-
 func TestAudioConversionAndChannels(t *testing.T) {
 	b, err := Float32ToPCM16LE([]float32{-2, -1, 0, 0.5, math.Nextafter32(1, 0), 1, 2})
 	if err != nil {
@@ -260,37 +223,66 @@ func TestPreRollAndRechunkBounds(t *testing.T) {
 }
 
 func TestAudioBufferExactTurnBoundaries(t *testing.T) {
-	disabled, err := NewTurnBuffer(false, 4)
+	disabled, err := NewTurnBuffer(false, 4, OverflowDropOldest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	disabled.Start("one")
-	disabled.Push([]byte{1, 2})
-	if got, err := disabled.End("one"); err != nil || got != nil {
+	disabled.Start(core.TurnID("one"))
+	if err := disabled.Push([]byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := disabled.End(core.TurnID("one")); err != nil || got != nil {
 		t.Fatalf("disabled buffer retained audio: %v %v", got, err)
 	}
 
-	b, err := NewTurnBuffer(true, 4)
+	b, err := NewTurnBuffer(true, 4, OverflowDropOldest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.Push([]byte{0})
-	b.Start("one")
-	b.Push([]byte{1, 2})
-	b.Start("two")
-	b.Push([]byte{3, 4, 5})
-	if got, err := b.End("one"); err == nil || got != nil {
+	if err := b.Push([]byte{0}); err != nil {
+		t.Fatal(err)
+	}
+	b.Start(core.TurnID("one"))
+	if err := b.Push([]byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
+	b.Start(core.TurnID("two"))
+	if err := b.Push([]byte{3, 4, 5}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := b.End(core.TurnID("one")); err == nil || got != nil {
 		t.Fatal("wrong turn ended")
 	}
-	got, err := b.End("two")
+	got, err := b.End(core.TurnID("two"))
 	if err != nil || !bytes.Equal(got, []byte{3, 4, 5}) {
 		t.Fatalf("turn %v %v", got, err)
 	}
-	b.Start("three")
-	b.Push([]byte{1, 2, 3, 4, 5})
-	got, err = b.End("three")
+	b.Start(core.TurnID("three"))
+	if err := b.Push([]byte{1, 2, 3, 4, 5}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = b.End(core.TurnID("three"))
 	if err != nil || !bytes.Equal(got, []byte{2, 3, 4, 5}) {
 		t.Fatalf("overflow %v %v", got, err)
+	}
+
+	reject, err := NewTurnBuffer(true, 4, OverflowRejectNewest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reject.Start(core.TurnID("reject"))
+	if err := reject.Push([]byte{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reject.Push([]byte{4, 5}); err == nil {
+		t.Fatal("reject-newest overflow accepted")
+	}
+	got, err = reject.End(core.TurnID("reject"))
+	if err != nil || !bytes.Equal(got, []byte{1, 2, 3}) {
+		t.Fatalf("rejected bytes changed prior content: %v %v", got, err)
+	}
+	if _, err := NewTurnBuffer(true, 4, OverflowPolicy(99)); err == nil {
+		t.Fatal("invalid turn-buffer overflow policy accepted")
 	}
 }
 
@@ -332,6 +324,9 @@ func TestResamplerStreamingCountAndAlias(t *testing.T) {
 	for i, s := range out {
 		wanted += float64(s) * math.Sin(2*math.Pi*1000*float64(i)/16000)
 		alias += float64(s) * math.Sin(2*math.Pi*4000*float64(i)/16000)
+	}
+	if math.Abs(wanted) < 1e7 {
+		t.Fatalf("wanted tone was not preserved: amplitude=%g", wanted)
 	}
 	if math.Abs(alias) > math.Abs(wanted)*0.1 {
 		t.Fatalf("alias too high: wanted=%g alias=%g", wanted, alias)

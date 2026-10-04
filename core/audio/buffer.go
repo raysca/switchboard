@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"govoice/core"
 )
 
 type OverflowPolicy uint8
@@ -13,6 +15,8 @@ const (
 	OverflowDropOldest OverflowPolicy = iota
 	OverflowRejectNewest
 )
+
+var ErrBufferOverflow = errors.New("audio: buffer overflow")
 
 func checkBound(capacity int, policy OverflowPolicy) error {
 	if capacity <= 0 {
@@ -120,33 +124,37 @@ type TurnBuffer struct {
 	mu       sync.Mutex
 	enabled  bool
 	capacity int
+	policy   OverflowPolicy
 	active   bool
-	id       string
+	id       core.TurnID
 	data     []byte
 }
 
-func NewTurnBuffer(enabled bool, capacity int) (*TurnBuffer, error) {
-	if capacity <= 0 {
-		return nil, errors.New("audio: capacity must be positive")
+func NewTurnBuffer(enabled bool, capacity int, policy OverflowPolicy) (*TurnBuffer, error) {
+	if err := checkBound(capacity, policy); err != nil {
+		return nil, err
 	}
-	return &TurnBuffer{enabled: enabled, capacity: capacity}, nil
+	return &TurnBuffer{enabled: enabled, capacity: capacity, policy: policy}, nil
 }
-func (b *TurnBuffer) Start(id string) {
+func (b *TurnBuffer) Start(id core.TurnID) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.id = id
 	b.active = true
 	b.data = nil
 }
-func (b *TurnBuffer) Push(input []byte) {
+func (b *TurnBuffer) Push(input []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if !b.enabled || !b.active {
-		return
+		return nil
+	}
+	if b.policy == OverflowRejectNewest && len(b.data)+len(input) > b.capacity {
+		return ErrBufferOverflow
 	}
 	if len(input) >= b.capacity {
 		b.data = append(b.data[:0], input[len(input)-b.capacity:]...)
-		return
+		return nil
 	}
 	over := len(b.data) + len(input) - b.capacity
 	if over > 0 {
@@ -154,8 +162,9 @@ func (b *TurnBuffer) Push(input []byte) {
 		b.data = b.data[:len(b.data)-over]
 	}
 	b.data = append(b.data, input...)
+	return nil
 }
-func (b *TurnBuffer) End(id string) ([]byte, error) {
+func (b *TurnBuffer) End(id core.TurnID) ([]byte, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if !b.active || b.id != id {
@@ -163,7 +172,7 @@ func (b *TurnBuffer) End(id string) ([]byte, error) {
 	}
 	out := bytes.Clone(b.data)
 	b.active = false
-	b.id = ""
+	b.id = core.TurnID("")
 	b.data = nil
 	return out, nil
 }
@@ -171,6 +180,6 @@ func (b *TurnBuffer) Reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.active = false
-	b.id = ""
+	b.id = core.TurnID("")
 	b.data = nil
 }

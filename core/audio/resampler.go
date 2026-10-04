@@ -16,9 +16,22 @@ import (
 const (
 	resamplerQuality       = C.SPEEX_RESAMPLER_QUALITY_DESKTOP
 	maxResamplerInputBlock = 4096
+	maxResamplerLatency    = 4096
+	resamplerOutputSlack   = 64
+
+	// MaxResamplerInputSamples bounds caller work and allocation per Process.
+	MaxResamplerInputSamples = 48000
+	// MaxResamplerOutputSamples is the largest allocation Process or a native
+	// block may request (one second at the maximum supported 6:1 ratio, plus
+	// bounded filter slack).
+	MaxResamplerOutputSamples = MaxResamplerInputSamples*6 + resamplerOutputSlack
 )
 
-var ErrFlushed = errors.New("audio: stream flushed; reset before processing more input")
+var (
+	ErrFlushed                = errors.New("audio: stream flushed; reset before processing more input")
+	ErrUnsupportedSampleRate  = errors.New("audio: unsupported sample rate")
+	ErrResamplerInputTooLarge = errors.New("audio: resampler input exceeds per-call bound")
+)
 
 // Resampler is a bounded, mono PCM16 streaming adapter over SpeexDSP's
 // band-limited resampler. One instance owns the native state for one stream.
@@ -30,15 +43,13 @@ type Resampler struct {
 	outRate int
 	input   uint64
 	output  uint64
+	latency int
 	flushed bool
 }
 
 func NewResampler(inRate, outRate int) (*Resampler, error) {
-	if inRate <= 0 || outRate <= 0 {
-		return nil, fmt.Errorf("audio: sample rates must be positive: %d to %d", inRate, outRate)
-	}
-	if uint64(inRate) > uint64(^uint32(0)) || uint64(outRate) > uint64(^uint32(0)) {
-		return nil, fmt.Errorf("audio: sample rate exceeds SpeexDSP range: %d to %d", inRate, outRate)
+	if !supportedRate(inRate) || !supportedRate(outRate) {
+		return nil, fmt.Errorf("%w: %d to %d", ErrUnsupportedSampleRate, inRate, outRate)
 	}
 	r := &Resampler{inRate: inRate, outRate: outRate}
 	if err := r.newState(); err != nil {
@@ -62,6 +73,12 @@ func (r *Resampler) newState() error {
 		r.state = nil
 		return resamplerError("skip leading zeros", code)
 	}
+	r.latency = int(C.speex_resampler_get_input_latency(r.state))
+	if r.latency < 0 || r.latency > maxResamplerLatency {
+		C.speex_resampler_destroy(r.state)
+		r.state = nil
+		return fmt.Errorf("audio: SpeexDSP input latency %d exceeds bound %d", r.latency, maxResamplerLatency)
+	}
 	return nil
 }
 
@@ -84,8 +101,12 @@ func (r *Resampler) Process(ctx context.Context, input []int16) ([]int16, error)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	capacity, err := outputCapacity(len(input), r.inRate, r.outRate)
+	if err != nil {
+		return nil, err
+	}
 
-	result := make([]int16, 0, outputCapacity(len(input), r.inRate, r.outRate))
+	result := make([]int16, 0, capacity)
 	for offset := 0; offset < len(input); {
 		if err := ctx.Err(); err != nil {
 			return result, err
@@ -101,6 +122,9 @@ func (r *Resampler) Process(ctx context.Context, input []int16) ([]int16, error)
 		if consumed == 0 {
 			return result, errors.New("audio: SpeexDSP resampler made no input progress")
 		}
+		if len(out) > MaxResamplerOutputSamples-len(result) {
+			return result, fmt.Errorf("audio: resampler output exceeds per-call bound %d", MaxResamplerOutputSamples)
+		}
 		result = append(result, out...)
 		offset += consumed
 		r.input += uint64(consumed)
@@ -109,12 +133,23 @@ func (r *Resampler) Process(ctx context.Context, input []int16) ([]int16, error)
 	return result, nil
 }
 
-func outputCapacity(input, inRate, outRate int) int {
-	return int((uint64(input)*uint64(outRate)+uint64(inRate)-1)/uint64(inRate)) + 64
+func outputCapacity(input, inRate, outRate int) (int, error) {
+	if input < 0 || input > MaxResamplerInputSamples {
+		return 0, ErrResamplerInputTooLarge
+	}
+	product := uint64(input) * uint64(outRate)
+	capacity := (product+uint64(inRate)-1)/uint64(inRate) + resamplerOutputSlack
+	if capacity > MaxResamplerOutputSamples || capacity > uint64(^uint32(0)) {
+		return 0, fmt.Errorf("audio: resampler output allocation %d exceeds bound %d", capacity, MaxResamplerOutputSamples)
+	}
+	return int(capacity), nil
 }
 
 func (r *Resampler) processBlock(input []int16) ([]int16, int, error) {
-	capacity := outputCapacity(len(input), r.inRate, r.outRate)
+	capacity, err := outputCapacity(len(input), r.inRate, r.outRate)
+	if err != nil {
+		return nil, 0, err
+	}
 	output := make([]int16, capacity)
 	inLen := C.spx_uint32_t(len(input))
 	outLen := C.spx_uint32_t(len(output))
@@ -151,8 +186,17 @@ func (r *Resampler) Flush(ctx context.Context) ([]int16, error) {
 	if r.output >= target {
 		return nil, nil
 	}
-	remaining := int(target - r.output)
-	zeros := make([]int16, int(C.speex_resampler_get_input_latency(r.state))+maxResamplerInputBlock)
+	remaining64 := target - r.output
+	if remaining64 > MaxResamplerOutputSamples {
+		r.flushed = false
+		return nil, fmt.Errorf("audio: resampler flush output %d exceeds bound %d", remaining64, MaxResamplerOutputSamples)
+	}
+	remaining := int(remaining64)
+	if r.latency == 0 {
+		r.flushed = false
+		return nil, errors.New("audio: SpeexDSP resampler has no bounded flush latency")
+	}
+	zeros := make([]int16, r.latency)
 	result := make([]int16, 0, remaining)
 	for len(result) < remaining {
 		if err := ctx.Err(); err != nil {

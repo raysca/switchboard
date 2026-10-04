@@ -10,11 +10,15 @@ come from the official Xiph SpeexDSP release `SpeexDSP-1.2.1`, commit
 The vendored `.c` files come from upstream `libspeexdsp/`; the headers under
 `native/libspeexdsp/` and `native/speex/` come from upstream `libspeexdsp/`
 and `include/speex/`. A clean-checkout audit found them byte-for-byte identical
-before three diff-hygiene-only normalizations: final blank lines were removed
-from `kiss_fft.c`, `preprocess.c`, and `native/libspeexdsp/os_support.h`, and
-two mixed space/tab indents in `preprocess.c` were changed to tabs. No C tokens
-or behavior changed. `native/speex/speexdsp_config_types.h` is the other local
-generated file. It is the concrete, portable expansion of upstream
+before three diff-hygiene-only normalizations:
+
+- the final blank line was removed from `kiss_fft.c`;
+- the final blank line was removed from `preprocess.c`, and two mixed
+  space/tab indents there were changed to tabs;
+- the final blank line was removed from `native/libspeexdsp/os_support.h`.
+
+No C tokens or behavior changed. `native/speex/speexdsp_config_types.h` is the
+other local generated file. It is the concrete, portable expansion of upstream
 `include/speex/speexdsp_config_types.h.in`: it includes `<stdint.h>` and maps
 the 16- and 32-bit signed/unsigned Speex types to the corresponding standard
 integer types.

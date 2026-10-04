@@ -152,6 +152,11 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   invalid C adapter calls. Focused GREEN and full core race/vet evidence are
   recorded in `.superpowers/sdd/2026-10-04-v2-execution/task-6-report.md`.
   Gate B remains open for Tasks 7–9 and the independent Phase 2 gate.
+- Review round 1 required changes for cancellation at the full-frame boundary,
+  Speex's native one-frame delay/tail drain, resampler rate/allocation bounds,
+  DSP assertions that reject silence/gating, explicit turn-buffer overflow,
+  and typed turn identity. Regressions and fixes are implemented; Task 6
+  remains open pending independent re-review and tester PASS.
 
 ## Phase 3 — Context, tools, tracing, compatibility
 
