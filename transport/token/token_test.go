@@ -65,6 +65,50 @@ func TestToken_ValidAndConsume(t *testing.T) {
 	}
 }
 
+func TestToken_ScopedRestartRejects(t *testing.T) {
+	now := time.Now()
+	cfg := token.DefaultConfig(testIssuer, testAudience, []byte(testSecret))
+	first, err := token.NewValidator(cfg, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := token.Claims{RegisteredClaims: jwt.RegisteredClaims{Issuer: testIssuer, Audience: jwt.ClaimStrings{testAudience}, Subject: "user-123", ID: "scoped-jti", IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute))}, Scope: "voice:connect", IssuerEpoch: first.ScopeEpoch()}
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.ValidateAndConsume(signed); err != nil {
+		t.Fatalf("current validator rejected token: %v", err)
+	}
+	second, err := token.NewValidator(cfg, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.ValidateAndConsume(signed); err != token.ErrTokenEpoch {
+		t.Fatalf("replacement validator accepted/reclassified token: %v", err)
+	}
+}
+
+func TestToken_LegacyUnscopedRestartCompatibility(t *testing.T) {
+	now := time.Now()
+	cfg := token.DefaultConfig(testIssuer, testAudience, []byte(testSecret))
+	old, err := token.NewValidator(cfg, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := createToken(t, "legacy-jti", testIssuer, testAudience, now, now.Add(time.Minute), jwt.SigningMethodHS256, []byte(testSecret))
+	if _, err := old.ValidateAndConsume(signed); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := token.NewValidator(cfg, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replacement.ValidateAndConsume(signed); err != nil {
+		t.Fatalf("legacy compatibility changed: %v", err)
+	}
+}
+
 func TestToken_ConcurrentReplayRace(t *testing.T) {
 	now := time.Now()
 	cfg := token.DefaultConfig(testIssuer, testAudience, []byte(testSecret))

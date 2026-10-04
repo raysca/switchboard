@@ -272,6 +272,9 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.Profile != ProfileDevelopment && cfg.Profile != ProfileProduction {
 		return fmt.Errorf("invalid profile %q: must be 'development' or 'production'", cfg.Profile)
 	}
+	if cfg.Token.MaxLifetime != 0 && cfg.Token.MaxLifetime < 2*time.Second {
+		return errors.New("token.max_lifetime must be at least 2 seconds when configured")
+	}
 
 	if cfg.PublicListenAddr == "" {
 		return errors.New("public_listen_addr must be specified")

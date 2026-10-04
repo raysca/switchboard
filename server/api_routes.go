@@ -59,10 +59,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Issuer: s.cfg.Token.Issuer, Audience: jwt.ClaimStrings{s.cfg.Token.Audience},
 			Subject: input.Principal, ID: uuid.NewString(),
 			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
-		}, Principal: input.Principal, Pipeline: input.Pipeline, Scope: "voice:connect"}
+		}, Principal: input.Principal, Pipeline: input.Pipeline, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
 		jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		if s.cfg.Token.KeyID != "" {
-			jwtToken.Header["kid"] = s.cfg.Token.KeyID
+		if s.voiceKeyID != "" {
+			jwtToken.Header["kid"] = s.voiceKeyID
 		}
 		signed, err := jwtToken.SignedString(s.voiceSignKey)
 		if err != nil {
@@ -82,5 +82,5 @@ func (s *Server) effectiveVoiceTokenLifetime() time.Duration {
 	if lifetime <= 0 {
 		lifetime = 5 * time.Minute
 	}
-	return min(time.Minute, lifetime)
+	return min(time.Minute, lifetime).Truncate(time.Second)
 }

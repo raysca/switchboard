@@ -2,6 +2,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -72,7 +73,14 @@ func DecodeJSON(r *http.Request, dst any) error {
 	if mediaType != "application/json" {
 		return errors.New("content type must be application/json")
 	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, MaxBodyBytes+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxBodyBytes+1))
+	if err != nil {
+		return errors.New("invalid JSON body")
+	}
+	if len(body) > MaxBodyBytes {
+		return errors.New("JSON body exceeds size limit")
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return errors.New("invalid JSON body")
@@ -80,9 +88,6 @@ func DecodeJSON(r *http.Request, dst any) error {
 	var extra any
 	if err := dec.Decode(&extra); err != io.EOF {
 		return errors.New("body must contain one JSON value")
-	}
-	if dec.InputOffset() > MaxBodyBytes {
-		return errors.New("JSON body exceeds size limit")
 	}
 	return nil
 }

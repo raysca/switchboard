@@ -7,7 +7,7 @@ import (
 )
 
 func TestAPIDecodeJSONRejectsUnknownTrailingAndOversize(t *testing.T) {
-	for _, body := range []string{`{"name":"ok","extra":1}`, `{"name":"ok"} {}`, strings.Repeat("x", MaxBodyBytes+1)} {
+	for _, body := range []string{`{"name":"ok","extra":1}`, `{"name":"ok"} {}`, strings.Repeat("x", MaxBodyBytes+1), `{"name":"ok"}` + strings.Repeat(" ", MaxBodyBytes), `{"name":"ok"}` + strings.Repeat(" ", MaxBodyBytes) + `{}`} {
 		r := httptest.NewRequest("POST", "/", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		var v struct {

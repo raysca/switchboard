@@ -1,6 +1,8 @@
 package token
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -23,6 +25,7 @@ var (
 	ErrTokenFuture      = errors.New("token: token issued in the future beyond allowed skew")
 	ErrTokenPrincipal   = errors.New("token: missing principal or subject claim")
 	ErrReplayCacheFull  = errors.New("token: replay cache full; unexpired tokens cannot be evicted")
+	ErrTokenEpoch       = errors.New("token: admission token was issued by another server process")
 )
 
 var tokenQueryRegex = regexp.MustCompile(`([?&]token=)[^&#\s]+`)
@@ -62,16 +65,18 @@ func DefaultConfig(issuer, audience string, secret []byte) Config {
 // Claims represents the standard and custom claims expected in V1 tokens.
 type Claims struct {
 	jwt.RegisteredClaims
-	Principal string `json:"principal,omitempty"`
-	Pipeline  string `json:"pipeline,omitempty"`
-	Scope     string `json:"scope,omitempty"`
+	Principal   string `json:"principal,omitempty"`
+	Pipeline    string `json:"pipeline,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	IssuerEpoch string `json:"issuer_epoch,omitempty"`
 }
 
 // Validator manages admission token verification, atomic single-use consumption,
 // clock-skew enforcement, and post-restart iat gating.
 type Validator struct {
-	cfg       Config
-	startTime time.Time
+	cfg        Config
+	startTime  time.Time
+	scopeEpoch string
 
 	mu     sync.Mutex
 	replay map[string]time.Time // jti -> exp
@@ -91,13 +96,21 @@ func NewValidator(cfg Config, startTime time.Time) (*Validator, error) {
 	if startTime.IsZero() {
 		startTime = time.Now()
 	}
+	var epoch [32]byte
+	if _, err := rand.Read(epoch[:]); err != nil {
+		return nil, fmt.Errorf("create voice token epoch: %w", err)
+	}
 
 	return &Validator{
-		cfg:       cfg,
-		startTime: startTime,
-		replay:    make(map[string]time.Time),
+		cfg:        cfg,
+		startTime:  startTime,
+		scopeEpoch: hex.EncodeToString(epoch[:]),
+		replay:     make(map[string]time.Time),
 	}, nil
 }
+
+// ScopeEpoch returns this validator's random process-bound epoch for scoped issuers.
+func (v *Validator) ScopeEpoch() string { return v.scopeEpoch }
 
 // ValidateAndConsume validates the token string and atomically marks its JTI as consumed.
 // If valid and unused, it returns the parsed Claims; otherwise it returns an explicit error.
@@ -183,6 +196,9 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 	// a token explicitly scoped for any purpose other than voice connection.
 	if claims.Scope != "" && claims.Scope != "voice:connect" {
 		return nil, fmt.Errorf("%w: invalid voice scope", ErrTokenInvalid)
+	}
+	if claims.Scope == "voice:connect" && claims.IssuerEpoch != v.scopeEpoch {
+		return nil, ErrTokenEpoch
 	}
 
 	if claims.IssuedAt == nil {

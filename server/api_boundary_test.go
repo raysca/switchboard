@@ -108,6 +108,10 @@ func TestAPITokenExpiryScopeReplay(t *testing.T) {
 	if _, err := s.validator.ValidateAndConsume(response.Data.Token); err != token.ErrTokenReplayed {
 		t.Fatalf("replay: %v", err)
 	}
+	restarted := apiTestServer(t)
+	if _, err := restarted.validator.ValidateAndConsume(response.Data.Token); err == nil {
+		t.Fatal("restarted server accepted prior-process scoped token")
+	}
 	if w := apiRequest(s, http.MethodGet, "/api/v1/server-config", response.Data.Token, ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("voice token admitted to management: %d", w.Code)
 	}
@@ -144,6 +148,111 @@ func TestAPITokenExpiryScopeReplay(t *testing.T) {
 	}
 }
 
+func TestAPITokenProductionDefaultKeyID(t *testing.T) {
+	s := apiTestServer(t)
+	s.cfg.Profile = ProfileProduction
+	s.cfg.Token.KeyID = ""
+	configured := voiceTokenConfig(s.cfg, string(s.voiceSignKey))
+	var err error
+	s.validator, err = token.NewValidator(configured, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.voiceKeyID = configured.KeyID
+	s.voiceEpoch = s.validator.ScopeEpoch()
+	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","pipeline":"default"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.validator.ValidateAndConsume(response.Data.Token); err != nil {
+		t.Fatalf("minted production token rejected: %v", err)
+	}
+}
+
+func TestAPIHandlerValidationAndCanonicalErrors(t *testing.T) {
+	s := apiTestServer(t)
+	key := "management-test-key-32-bytes-long-and-separate"
+	for _, tc := range []struct {
+		name, path, contentType, body string
+		want                          int
+	}{
+		{"missing content type", "/api/v1/voice-tokens", "", `{"principal":"alice","pipeline":"default"}`, 400},
+		{"malformed", "/api/v1/voice-tokens", "application/json", `{`, 400},
+		{"trailing", "/api/v1/voice-tokens", "application/json", `{"principal":"alice","pipeline":"default"} {}`, 400},
+		{"oversized whitespace", "/api/v1/voice-tokens", "application/json", `{"principal":"alice","pipeline":"default"}` + strings.Repeat(" ", 65536), 400},
+		{"hidden second value", "/api/v1/voice-tokens", "application/json", `{"principal":"alice","pipeline":"default"}` + strings.Repeat(" ", 65536) + `{}`, 400},
+		{"bare version", "/api/v1", "", "", 404},
+		{"double slash", "/api/v1//server-config", "", "", 404},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", tc.path, strings.NewReader(tc.body))
+			if tc.name == "bare version" || tc.name == "double slash" {
+				r.Method = "GET"
+			}
+			r.Header.Set("Authorization", "Bearer "+key)
+			if tc.contentType != "" {
+				r.Header.Set("Content-Type", tc.contentType)
+			}
+			w := httptest.NewRecorder()
+			s.adminMux.ServeHTTP(w, r)
+			if w.Code != tc.want || w.Header().Get("X-Request-ID") == "" || w.Header().Get("Cache-Control") != "no-store" || !strings.Contains(w.Body.String(), `"error"`) {
+				t.Fatalf("status=%d headers=%v body=%s", w.Code, w.Header(), w.Body.String())
+			}
+			var failure struct {
+				Error struct {
+					Code      string `json:"code"`
+					RequestID string `json:"request_id"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &failure); err != nil || failure.Error.Code == "" || failure.Error.RequestID != w.Header().Get("X-Request-ID") {
+				t.Fatalf("invalid error envelope: %s %v", w.Body.String(), err)
+			}
+		})
+	}
+}
+
+func TestConfigRejectsSubsecondVoiceLifetime(t *testing.T) {
+	for _, lifetime := range []time.Duration{500 * time.Millisecond, -time.Second} {
+		cfg := DefaultConfig(ProfileDevelopment)
+		cfg.Token.MaxLifetime = lifetime
+		if err := ValidateConfig(cfg); err == nil {
+			t.Fatalf("accepted invalid token lifetime %s", lifetime)
+		}
+	}
+}
+
+func TestAPITokenFractionalLifetimeIsBounded(t *testing.T) {
+	s := apiTestServer(t)
+	s.cfg.Token.MaxLifetime = 2500 * time.Millisecond
+	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","pipeline":"default"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	claims, err := s.validator.ValidateAndConsume(response.Data.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time); got > 2500*time.Millisecond || got < time.Second {
+		t.Fatalf("signed lifetime=%s", got)
+	}
+}
+
 func TestAuthManagementUnavailableAndSeparateKey(t *testing.T) {
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", "")
 	cfg := DefaultConfig(ProfileDevelopment)
@@ -158,6 +267,15 @@ func TestAuthManagementUnavailableAndSeparateKey(t *testing.T) {
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", cfg.Token.Secret)
 	if _, err := NewServer(cfg); err == nil {
 		t.Fatal("accepted identical management and voice secrets")
+	}
+}
+
+func TestAuthShortManagementKeyRejected(t *testing.T) {
+	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", "too-short-secret")
+	cfg := DefaultConfig(ProfileDevelopment)
+	_, err := NewServer(cfg)
+	if err == nil || !strings.Contains(err.Error(), "at least 32 bytes") || strings.Contains(err.Error(), "too-short-secret") {
+		t.Fatalf("short management key error=%v", err)
 	}
 }
 

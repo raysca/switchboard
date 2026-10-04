@@ -80,6 +80,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [x] Task 3: Storage foundation and dialect migrations. Independent reviewer APPROVED after two fix rounds; final independent tester PASS on SQLite and PostgreSQL 18.
 - [ ] Task 4: Management API/auth skeleton.
 - Task 4 implementation is committed pending independent review. The admin-only `/api/v1` skeleton, deployment management key, sanitized config DTO, and scoped voice-token issuer are documented in `docs/api/v1.md`; Gate A remains open.
+- Task 4 review round 1 addresses production default `kid`, complete JSON body limit enforcement, scoped-token replay after validator replacement, whole-second token lifetime bounds, and JSON envelopes for noncanonical API paths. Independent re-review and Gate A remain open.
 - [ ] Task 5: UI shell and typed API client.
 - [ ] Independent Phase 1 tester gate; record Gate A.
 

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,6 +34,8 @@ type Server struct {
 	validator    *token.Validator
 	management   *auth.Management
 	voiceSignKey []byte
+	voiceKeyID   string
+	voiceEpoch   string
 	vadExecutor  vad.SharedExecutor
 	logger       *slog.Logger
 
@@ -40,7 +43,7 @@ type Server struct {
 	shuttingDown atomic.Bool
 
 	publicMux    *http.ServeMux
-	adminMux     *http.ServeMux
+	adminMux     http.Handler
 	publicServer *http.Server
 	adminServer  *http.Server
 	wsServer     *ws.Server
@@ -105,28 +108,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		return nil, err
 	}
 
-	tokenCfg := token.DefaultConfig(cfg.Token.Issuer, cfg.Token.Audience, []byte(tokenSecret))
-	if cfg.Token.MaxLifetime > 0 {
-		tokenCfg.MaxLifetime = cfg.Token.MaxLifetime
-	}
-	if cfg.Token.ClockSkew > 0 {
-		tokenCfg.ClockSkew = cfg.Token.ClockSkew
-	}
-	if cfg.Token.ReplayCacheLimit > 0 {
-		tokenCfg.ReplayCacheSize = cfg.Token.ReplayCacheLimit
-	}
-	if cfg.Profile == ProfileProduction {
-		tokenCfg.RequireKeyID = true
-		keyID := cfg.Token.KeyID
-		if keyID == "" {
-			keyID = "v1"
-		}
-		tokenCfg.KeyID = keyID
-	} else if cfg.Token.KeyID != "" {
-		tokenCfg.RequireKeyID = true
-		tokenCfg.KeyID = cfg.Token.KeyID
-	}
-
+	tokenCfg := voiceTokenConfig(cfg, tokenSecret)
 	validator, err := token.NewValidator(tokenCfg, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("initialize token validator: %w", err)
@@ -154,12 +136,40 @@ func NewServer(cfg *Config) (*Server, error) {
 		validator:    validator,
 		management:   management,
 		voiceSignKey: []byte(tokenSecret),
+		voiceKeyID:   tokenCfg.KeyID,
+		voiceEpoch:   validator.ScopeEpoch(),
 		logger:       logger,
 		activeCalls:  make(map[uint64]*activeCall),
 	}
 
 	s.setupRoutes()
 	return s, nil
+}
+
+func voiceTokenConfig(cfg *Config, tokenSecret string) token.Config {
+	tokenCfg := token.DefaultConfig(cfg.Token.Issuer, cfg.Token.Audience, []byte(tokenSecret))
+	if cfg.Token.MaxLifetime > 0 {
+		tokenCfg.MaxLifetime = cfg.Token.MaxLifetime
+	}
+	if cfg.Token.ClockSkew > 0 {
+		tokenCfg.ClockSkew = cfg.Token.ClockSkew
+	}
+	if cfg.Token.ReplayCacheLimit > 0 {
+		tokenCfg.ReplayCacheSize = cfg.Token.ReplayCacheLimit
+	}
+	if cfg.Profile == ProfileProduction {
+		tokenCfg.RequireKeyID = true
+		keyID := cfg.Token.KeyID
+		if keyID == "" {
+			keyID = "v1"
+		}
+		tokenCfg.KeyID = keyID
+	} else if cfg.Token.KeyID != "" {
+		tokenCfg.RequireKeyID = true
+		tokenCfg.KeyID = cfg.Token.KeyID
+	}
+
+	return tokenCfg
 }
 
 // SetVADExecutor attaches a custom or mocked VAD executor.
@@ -220,15 +230,21 @@ func (s *Server) setupRoutes() {
 	s.publicMux.Handle("GET /ws", s.wsServer)
 
 	// Admin Listener: /health, /ready, /metrics, /debug/timeline
-	s.adminMux = http.NewServeMux()
-	s.adminMux.HandleFunc("GET /health", s.handleHealth)
-	s.adminMux.HandleFunc("GET /ready", s.handleReady)
-	s.adminMux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	adminRoutes := http.NewServeMux()
+	adminRoutes.HandleFunc("GET /health", s.handleHealth)
+	adminRoutes.HandleFunc("GET /ready", s.handleReady)
+	adminRoutes.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.sampleVADMetrics()
 		s.metrics.Handler().ServeHTTP(w, r)
 	}))
-	s.adminMux.Handle("GET /debug/timeline", s.timelines.Handler())
-	s.adminMux.Handle("/api/v1/", http.HandlerFunc(s.handleAPI))
+	adminRoutes.Handle("GET /debug/timeline", s.timelines.Handler())
+	s.adminMux = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1" || strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			s.handleAPI(w, r)
+			return
+		}
+		adminRoutes.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
