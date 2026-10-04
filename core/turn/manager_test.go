@@ -21,6 +21,7 @@ func testConfig() Config {
 		StopDebounce:          100 * time.Millisecond,
 		MinimumSpeechDuration: 200 * time.Millisecond,
 		SemanticMaxAge:        time.Second,
+		MaxRetiredTurns:       4,
 	}
 }
 
@@ -55,6 +56,11 @@ func TestTurnManagerRejectsInvalidConfig(t *testing.T) {
 	cfg.SilenceTimeout = -time.Second
 	if _, err := NewManager(cfg, SilenceDetector{}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("negative silence timeout: got %v", err)
+	}
+	cfg = testConfig()
+	cfg.MaxRetiredTurns = 0
+	if _, err := NewManager(cfg, SilenceDetector{}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("zero retired-turn capacity: got %v", err)
 	}
 	if _, err := NewHybridDetector(SilenceDetector{}, time.Second, math.NaN()); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("NaN semantic threshold: got %v", err)
@@ -130,6 +136,31 @@ func TestTurnManagerStopDebounceDoesNotCompleteBeforeStableStop(t *testing.T) {
 	}
 }
 
+func TestTurnManagerContinuousIdleSnapshotsPreserveSilenceOrigin(t *testing.T) {
+	m := manager(t, SilenceDetector{})
+	_, _ = m.Observe(observation(t0, "idle-stream", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "idle-stream", 1, false))
+	var stopped, completed int
+	for at := t0.Add(time.Second + 100*time.Millisecond); !at.After(t0.Add(3 * time.Second)); at = at.Add(100 * time.Millisecond) {
+		frames, err := m.Observe(observation(at, "idle-stream", 1, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range eventFrames(frames) {
+			switch event.Kind {
+			case core.TurnEventStopped:
+				stopped++
+			case core.TurnEventCompleted:
+				completed++
+			}
+		}
+	}
+	if stopped != 1 || completed != 1 {
+		t.Fatalf("continuous idle must preserve one stop and one silence completion; stopped=%d completed=%d", stopped, completed)
+	}
+}
+
 func TestTurnManagerMinimumSpeechDuration(t *testing.T) {
 	m := manager(t, SilenceDetector{})
 	_, _ = m.Observe(observation(t0, "short", 1, true))
@@ -182,6 +213,114 @@ func TestTurnManagerStaleTurnCannotStopCurrentTurn(t *testing.T) {
 	frames, _ = m.Advance(t0.Add(2 * time.Second))
 	if findEvent(eventFrames(frames), core.TurnEventCompleted) != nil {
 		t.Fatal("stale turn unexpectedly started the silence timer")
+	}
+}
+
+func TestTurnManagerHigherGenerationFalseSnapshotCancelsOldCandidate(t *testing.T) {
+	m := manager(t, SilenceDetector{})
+	_, _ = m.Observe(observation(t0, "candidate-a", 1, true))
+	frames, err := m.Observe(observation(t0.Add(50*time.Millisecond), "candidate-b", 2, false))
+	if err != nil || findEvent(eventFrames(frames), core.TurnEventStarted) != nil {
+		t.Fatalf("false higher-generation observation emitted a start: events=%+v err=%v", eventFrames(frames), err)
+	}
+	frames, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	if started := findEvent(eventFrames(frames), core.TurnEventStarted); started != nil {
+		t.Fatalf("old generation candidate survived rollover: %+v", started)
+	}
+	_, _ = m.Observe(observation(t0.Add(time.Second), "candidate-b", 2, true))
+	frames, _ = m.Advance(t0.Add(1250 * time.Millisecond))
+	started := findEvent(eventFrames(frames), core.TurnEventStarted)
+	if started == nil || started.Turn != "candidate-b" || started.Gen != 2 {
+		t.Fatalf("new generation candidate did not start: events=%+v", eventFrames(frames))
+	}
+}
+
+func TestTurnManagerHigherGenerationAutomaticallyInterruptsActiveTurn(t *testing.T) {
+	m := manager(t, SilenceDetector{})
+	_, _ = m.Observe(observation(t0, "active-a", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	frames, err := m.Observe(observation(t0.Add(time.Second), "active-b", 2, true))
+	interrupted := findEvent(eventFrames(frames), core.TurnEventInterrupted)
+	if err != nil || interrupted == nil || interrupted.Turn != "active-a" || interrupted.Gen != 1 {
+		t.Fatalf("generation advance did not interrupt old turn: events=%+v err=%v", eventFrames(frames), err)
+	}
+}
+
+func TestTurnManagerRetiresAllTerminalTurnsWithinGeneration(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxRetiredTurns = 3
+	m, err := NewManager(cfg, SilenceDetector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(t0); err != nil {
+		t.Fatal(err)
+	}
+	completeTestTurn(t, m, "retired-a", 1, t0)
+	_, _ = m.Observe(observation(t0.Add(3*time.Second), "turn-b", 1, true))
+	_, _ = m.Advance(t0.Add(3250 * time.Millisecond))
+	frames, err := m.Observe(observation(t0.Add(4*time.Second), "retired-a", 1, true))
+	if err != nil || len(eventFrames(frames)) != 0 {
+		t.Fatalf("retired A altered active B: events=%+v err=%v", eventFrames(frames), err)
+	}
+	_, _ = m.Observe(observation(t0.Add(5*time.Second), "turn-b", 1, false))
+	frames, _ = m.Advance(t0.Add(6200 * time.Millisecond))
+	if findEvent(eventFrames(frames), core.TurnEventCompleted) == nil {
+		t.Fatal("turn B did not complete")
+	}
+	frames, err = m.Observe(observation(t0.Add(7*time.Second), "retired-a", 1, true))
+	if err != nil || len(eventFrames(frames)) != 0 {
+		t.Fatalf("late A revived after B completed: events=%+v err=%v", eventFrames(frames), err)
+	}
+	frames, _ = m.Advance(t0.Add(7250 * time.Millisecond))
+	if findEvent(eventFrames(frames), core.TurnEventStarted) != nil {
+		t.Fatal("retired turn A restarted from its old observation")
+	}
+}
+
+func TestTurnManagerRetiredTurnCapacityFailsClosedAndGenerationClears(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxRetiredTurns = 1
+	m, err := NewManager(cfg, SilenceDetector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(t0); err != nil {
+		t.Fatal(err)
+	}
+	completeTestTurn(t, m, "only-slot", 1, t0)
+	frames, err := m.Observe(observation(t0.Add(3*time.Second), "blocked", 1, true))
+	if !errors.Is(err, ErrRetiredTurnLimit) || len(eventFrames(frames)) != 0 {
+		t.Fatalf("full retirement ledger must reject new same-generation turn: events=%+v err=%v", eventFrames(frames), err)
+	}
+	_, err = m.Observe(observation(t0.Add(4*time.Second), "new-generation", 2, true))
+	if err != nil {
+		t.Fatalf("generation advance should clear retired IDs: %v", err)
+	}
+	frames, err = m.Advance(t0.Add(4250 * time.Millisecond))
+	started := findEvent(eventFrames(frames), core.TurnEventStarted)
+	if err != nil || started == nil || started.Turn != "new-generation" || started.Gen != 2 {
+		t.Fatalf("new generation did not resume after ledger reset: events=%+v err=%v", eventFrames(frames), err)
+	}
+}
+
+func completeTestTurn(t *testing.T, m *Manager, id core.TurnID, generation core.Generation, start time.Time) {
+	t.Helper()
+	_, err := m.Observe(observation(start, id, generation, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Advance(start.Add(250 * time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.Observe(observation(start.Add(time.Second), id, generation, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames, err := m.Advance(start.Add(2200 * time.Millisecond))
+	if err != nil || findEvent(eventFrames(frames), core.TurnEventCompleted) == nil {
+		t.Fatalf("turn %q did not complete: frames=%+v err=%v", id, eventFrames(frames), err)
 	}
 }
 
@@ -248,6 +387,276 @@ func TestTurnManagerResetIsolationAndCloseIdempotence(t *testing.T) {
 	}
 	if err := m.Close(); err != nil {
 		t.Fatal("close should be idempotent:", err)
+	}
+}
+
+func TestTurnManagerRejectsOperationsAfterClose(t *testing.T) {
+	m := manager(t, SilenceDetector{})
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(t0); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Start after Close: %v", err)
+	}
+	if _, err := m.Observe(observation(t0, "closed", 1, true)); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Observe after Close: %v", err)
+	}
+	if _, err := m.Advance(t0); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Advance after Close: %v", err)
+	}
+	if err := m.SetMuted(true, t0); !errors.Is(err, ErrClosed) {
+		t.Fatalf("SetMuted after Close: %v", err)
+	}
+	if _, err := m.Interrupt("closed", 1, t0); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Interrupt after Close: %v", err)
+	}
+	if err := m.Reset(t0); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Reset after Close: %v", err)
+	}
+}
+
+func TestTurnDetectorMayReenterManagerControlsWithoutStaleCommit(t *testing.T) {
+	cases := []struct {
+		name    string
+		action  func(*Manager, time.Time) ([]core.Frame, error)
+		wantInt bool
+	}{
+		{name: "close", action: func(m *Manager, _ time.Time) ([]core.Frame, error) { return nil, m.Close() }},
+		{name: "interrupt", wantInt: true, action: func(m *Manager, at time.Time) ([]core.Frame, error) {
+			return m.Interrupt("reentrant", 1, at)
+		}},
+		{name: "mute", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return nil, m.SetMuted(true, at) }},
+		{name: "reset", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return nil, m.Reset(at) }},
+		{name: "observe", action: func(m *Manager, at time.Time) ([]core.Frame, error) {
+			return m.Observe(observation(at, "reentrant", 1, false))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var m *Manager
+			callbackResult := make(chan struct {
+				frames []core.Frame
+				err    error
+			}, 1)
+			detector := detectorFunc(func(input DetectionInput) (DetectionDecision, bool) {
+				frames, callbackErr := tc.action(m, input.At)
+				callbackResult <- struct {
+					frames []core.Frame
+					err    error
+				}{frames: frames, err: callbackErr}
+				return DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: 0.95, HasConfidence: true}, true
+			})
+			var err error
+			m, err = NewManager(testConfig(), detector)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = m.Start(t0); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = m.Observe(observation(t0, "reentrant", 1, true))
+			_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+			_, _ = m.Observe(observation(t0.Add(time.Second), "reentrant", 1, false))
+			type result struct {
+				frames []core.Frame
+				err    error
+			}
+			done := make(chan result, 1)
+			go func() {
+				frames, callErr := m.Advance(t0.Add(2200 * time.Millisecond))
+				done <- result{frames: frames, err: callErr}
+			}()
+			var outer result
+			select {
+			case got := <-done:
+				outer = got
+			case <-time.After(300 * time.Millisecond):
+				t.Fatal("detector control reentry deadlocked on manager state lock")
+			}
+			select {
+			case nested := <-callbackResult:
+				if nested.err != nil {
+					t.Fatalf("reentrant control failed: %v", nested.err)
+				}
+				if tc.wantInt && findEvent(eventFrames(nested.frames), core.TurnEventInterrupted) == nil {
+					t.Fatal("reentrant Interrupt did not emit its event")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("detector was not called")
+			}
+			if outer.err != nil || findEvent(eventFrames(outer.frames), core.TurnEventCompleted) != nil {
+				t.Fatalf("stale detector result committed after reentrant %s: events=%+v err=%v", tc.name, eventFrames(outer.frames), outer.err)
+			}
+			if tc.name == "close" {
+				if _, err := m.Advance(t0.Add(2300 * time.Millisecond)); !errors.Is(err, ErrClosed) {
+					t.Fatalf("Advance after reentrant Close: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestTurnManagerConcurrentMuteInvalidatesBlockedDetector(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	detector := detectorFunc(func(DetectionInput) (DetectionDecision, bool) {
+		close(entered)
+		<-release
+		return DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: 0.9, HasConfidence: true}, true
+	})
+	m := manager(t, detector)
+	_, _ = m.Observe(observation(t0, "blocked", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "blocked", 1, false))
+	type result struct {
+		frames []core.Frame
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		frames, err := m.Advance(t0.Add(2200 * time.Millisecond))
+		done <- result{frames: frames, err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("detector was not entered")
+	}
+	muteDone := make(chan error, 1)
+	go func() { muteDone <- m.SetMuted(true, t0.Add(2200*time.Millisecond)) }()
+	select {
+	case err := <-muteDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		close(release)
+		<-done
+		t.Fatal("concurrent state update blocked behind detector")
+	}
+	close(release)
+	got := <-done
+	if got.err != nil || findEvent(eventFrames(got.frames), core.TurnEventCompleted) != nil {
+		t.Fatalf("blocked stale decision committed after mute: events=%+v err=%v", eventFrames(got.frames), got.err)
+	}
+}
+
+func TestTurnDetectorReentrantAdvanceDoesNotWaitOnPluginCallback(t *testing.T) {
+	var m *Manager
+	calls := 0
+	detector := detectorFunc(func(input DetectionInput) (DetectionDecision, bool) {
+		calls++
+		if calls == 1 {
+			if _, err := m.Advance(input.At.Add(100 * time.Millisecond)); err != nil {
+				t.Errorf("reentrant Advance: %v", err)
+			}
+			return DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: 0.9, HasConfidence: true}, true
+		}
+		return DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: 0.9, HasConfidence: true}, true
+	})
+	var err error
+	m, err = NewManager(testConfig(), detector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(t0); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = m.Observe(observation(t0, "reentrant-advance", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "reentrant-advance", 1, false))
+
+	done := make(chan struct {
+		frames []core.Frame
+		err    error
+	}, 1)
+	go func() {
+		frames, callErr := m.Advance(t0.Add(2200 * time.Millisecond))
+		done <- struct {
+			frames []core.Frame
+			err    error
+		}{frames: frames, err: callErr}
+	}()
+	select {
+	case result := <-done:
+		if result.err != nil || findEvent(eventFrames(result.frames), core.TurnEventCompleted) != nil {
+			t.Fatalf("stale result committed across reentrant Advance: events=%+v err=%v", eventFrames(result.frames), result.err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("reentrant Advance waited for the detector callback")
+	}
+	frames, err := m.Advance(t0.Add(2300 * time.Millisecond))
+	if err != nil || findEvent(eventFrames(frames), core.TurnEventCompleted) == nil || calls != 2 {
+		t.Fatalf("next caller advance did not reevaluate after stale callback: events=%+v calls=%d err=%v", eventFrames(frames), calls, err)
+	}
+}
+
+func TestTurnDetectorReceivesDefensiveSemanticEvidenceCopy(t *testing.T) {
+	var m *Manager
+	seen := false
+	detector := detectorFunc(func(input DetectionInput) (DetectionDecision, bool) {
+		if input.Semantic != nil {
+			input.Semantic.Confidence = 0
+			seen = true
+		}
+		return DetectionDecision{}, false
+	})
+	var err error
+	m, err = NewManager(testConfig(), detector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(t0); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = m.Observe(observation(t0, "evidence-copy", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "evidence-copy", 1, false))
+	evidence := &SemanticEvidence{TurnID: "evidence-copy", Generation: 1, At: t0.Add(1100 * time.Millisecond), Confidence: 0.95}
+	_, _ = m.Observe(Observation{At: t0.Add(1100 * time.Millisecond), TurnID: "evidence-copy", Generation: 1, Semantic: evidence})
+	_, err = m.Advance(t0.Add(1200 * time.Millisecond))
+	if err != nil || !seen || evidence.Confidence != 0.95 {
+		t.Fatalf("detector input was not isolated: seen=%v source confidence=%v err=%v", seen, evidence.Confidence, err)
+	}
+}
+
+func TestTurnManagerRejectsInvalidDetectorDecisionAndFallsBack(t *testing.T) {
+	cases := []struct {
+		name     string
+		decision DetectionDecision
+	}{
+		{name: "unsupported reason", decision: DetectionDecision{Reason: core.TurnReasonMaxDuration}},
+		{name: "nan confidence", decision: DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: math.NaN(), HasConfidence: true}},
+		{name: "confidence above one", decision: DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: 1.1, HasConfidence: true}},
+		{name: "confidence below zero", decision: DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: -0.1, HasConfidence: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := manager(t, detectorFunc(func(DetectionInput) (DetectionDecision, bool) { return tc.decision, true }))
+			_, _ = m.Observe(observation(t0, "invalid-decision", 1, true))
+			_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+			_, _ = m.Observe(observation(t0.Add(time.Second), "invalid-decision", 1, false))
+			frames, err := m.Advance(t0.Add(1500 * time.Millisecond))
+			if err != nil || findEvent(eventFrames(frames), core.TurnEventCompleted) != nil {
+				t.Fatalf("invalid detector result ended turn early: events=%+v err=%v", eventFrames(frames), err)
+			}
+			frames, err = m.Advance(t0.Add(2200 * time.Millisecond))
+			completed := findEvent(eventFrames(frames), core.TurnEventCompleted)
+			if err != nil || completed == nil || completed.Reason != core.TurnReasonSilence {
+				t.Fatalf("invalid suggestion did not fall back to silence: events=%+v err=%v", eventFrames(frames), err)
+			}
+		})
+	}
+}
+
+func TestTurnManagerDetectorPanicFallsBackToSilence(t *testing.T) {
+	m := manager(t, detectorFunc(func(DetectionInput) (DetectionDecision, bool) { panic("detector failure") }))
+	_, _ = m.Observe(observation(t0, "panic-detector", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "panic-detector", 1, false))
+	frames, err := m.Advance(t0.Add(2200 * time.Millisecond))
+	completed := findEvent(eventFrames(frames), core.TurnEventCompleted)
+	if err != nil || completed == nil || completed.Reason != core.TurnReasonSilence {
+		t.Fatalf("detector panic must not strand the turn: events=%+v err=%v", eventFrames(frames), err)
 	}
 }
 
@@ -361,6 +770,10 @@ func findEvent(events []*core.TurnEventFrame, kind core.TurnEventKind) *core.Tur
 	}
 	return nil
 }
+
+type detectorFunc func(DetectionInput) (DetectionDecision, bool)
+
+func (f detectorFunc) Detect(input DetectionInput) (DetectionDecision, bool) { return f(input) }
 
 func TestTurnEventFrameCarriesTypedIdentity(t *testing.T) {
 	var frame core.Frame = &core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: core.TurnID("typed"), Gen: core.Generation(7), At: t0}

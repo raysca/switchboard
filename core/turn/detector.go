@@ -30,8 +30,10 @@ type DetectionDecision struct {
 }
 
 // TurnDetector decides whether the current user turn has ended.
-// Implementations should be deterministic, fast, and side-effect free; the
-// manager serializes calls while protecting its per-session state.
+// Implementations should be deterministic, fast, and side-effect free. The
+// manager invokes Detect without holding its state lock and permits only one
+// callback in flight; concurrent or reentrant advances update state but do
+// not wait for or start another detector call.
 type TurnDetector interface {
 	Detect(DetectionInput) (DetectionDecision, bool)
 }
