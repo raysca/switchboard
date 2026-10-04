@@ -75,7 +75,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Phase 1 — Foundations in parallel
 
-- [ ] Task 1: Turn, trace, observer/serializer boundaries, and public tool types.
+- [ ] Task 1: Distinct identity types, trace/observer/debug value contracts, no-op spans, privacy envelope, and public tool types are implemented. Focused contract tests and full core race/vet passed. Independent review remains; runtime integration and serializer behavior remain in their assigned tasks.
 - [ ] Task 2: P0 lifecycle, mute, and flush; publish prerequisite settings/control envelopes only.
 - [ ] Task 3: Storage foundation and dialect migrations.
 - [ ] Task 4: Management API/auth skeleton.
@@ -160,4 +160,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Next unblocked work is Task 1: turn, trace, observer/serializer boundary, and public tool-type contracts. Phase 0 completion is distinct from Gate A: Gate A remains open until the Phase 1 independent tester verifies public contract APIs and tests. Gates A–G remain open; product implementation tasks are not complete.
+Task 1 contract surfaces are implemented and await independent review. The remaining Phase 1 foundations are also unblocked. Phase 0 completion is distinct from Gate A: Gate A remains open until the Phase 1 independent tester verifies public contract APIs and tests. Gates A–G remain open; product implementation tasks are not complete.

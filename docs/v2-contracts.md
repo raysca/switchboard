@@ -28,6 +28,8 @@ The UI owns presentation and browser interaction. It calls authenticated, versio
 
 `core.Generation` is a monotonically increasing unsigned cancellation fence scoped to a session. A generation may mark work stale and prevent stale frames from being delivered after interruption or turn replacement. It is not an identifier for a session, user turn, assistant turn, trace, or persistent record. Turn identity remains stable when generation changes.
 
+Task 1 publishes these as distinct defined types in `core/identity.go`. Existing V1 session and frame methods still use their historical `uint64`/`string` fields; the P0 turn and frame integration will migrate those runtime paths.
+
 **Acceptance criteria**
 
 - Compile-time-distinct `SessionID` and `TurnID` values cannot be assigned to one another without an explicit conversion.
@@ -53,6 +55,8 @@ type Span interface {
 
 `TraceEvent` carries a stable event name, event time, optional `SessionID`, optional `TurnID`, optional cancellation `Generation`, and structured attributes. The returned span is a no-op span when tracing is disabled; callers need not branch on tracer presence. Span parentage follows the context passed to `StartSpan`. The API does not expose persistence or exporter types.
 
+The initial surface provides `core.NoopTracer`, `core.ContextWithSpan` / `core.SpanFromContext`, and `core.NewTraceEvent`. The constructor copies and filters attributes; `Attributes()` returns a new map. For example, `child := tracer.StartSpan(core.ContextWithSpan(ctx, parent), event)` carries parentage through the context. Runtime instrumentation and exporter behavior belong to Task 13.
+
 The standard event vocabulary includes session start/end/failure; turn start/end; speech start/stop and VAD latency; STT start, partial, final, and finalization; context commit; LLM request, first output, completion, and failure; tool requested/start/complete/failure; TTS request, first audio, completion, and failure; interruption and flush; provider readiness/usage/error; transport disconnect; and session failure. Custom processors may add namespaced events and structured metadata.
 
 **Acceptance criteria**
@@ -66,6 +70,8 @@ The standard event vocabulary includes session start/end/failure; turn start/end
 
 `TracePolicy.Content` has exactly `none`, `metadata`, or `text` modes. Production defaults to `metadata`. Raw audio bytes are never included in traces. Metadata mode records event names, timing, identifiers, counts, sample formats, provider/model names, status, and safe error categories, but not transcript text, prompts, tool arguments, tool results, keys, or audio. Text mode permits selected text fields; tool arguments/results still pass through an explicit redaction policy. No mode permits credentials or raw audio.
 
+The Task 1 constructor defaults an unset mode to `metadata`, admits a fixed set of scalar metadata keys, and drops unknown keys and mutable values. An unknown content mode drops all attributes. Text mode admits `transcript`, `prompt`, and `text`; `tool.arguments` and `tool.result` require `RedactToolContent`. Callers supply safe provider/model/status/category labels rather than raw provider errors.
+
 **Acceptance criteria**
 
 - Tests with unique sentinel secrets/text prove that metadata mode, logs, errors, and event attributes do not contain them.
@@ -77,6 +83,8 @@ The standard event vocabulary includes session start/end/failure; turn start/end
 `core.Observer` is a non-mutating observation boundary. Its immutable event values describe frame kind, direction, processor identity/index, session/turn/generation correlation, and monotonic timing/lifecycle. Observer APIs do not grant a mutable frame pointer or a callback that can replace, drop, reorder, or inject frames. Callbacks run in event order and must return promptly; observer failures are isolated from session execution and counted/reported through a safe diagnostic hook.
 
 The framework emits protocol-neutral `DebugEvent` values for session/pipeline lifecycle, frame flow, speech/transcription, LLM/TTS lifecycle, interruption/flush, tool call/result, provider readiness/error, and teardown. An adapter maps these semantic values to Whisker-compatible messages. A `Serializer` owns conversion between semantic events/frames and a wire representation; it is not a pipeline processor and does not choose product persistence. RTVI serialization remains its separate client-facing compatibility surface.
+
+Task 1 defines `Observer`, `ObserverEvent`, and `DebugEvent` value surfaces. Their constructors copy filtered scalar attributes and their accessors return copies; observer values contain a frame kind rather than a frame pointer. Delivery, panic isolation, protocol adapters, and general `Serializer` behavior remain assigned to later tasks.
 
 **Acceptance criteria**
 
@@ -130,6 +138,8 @@ Providers report typed readiness transitions and optional provider-neutral usage
 ### 2.9 Provider-neutral tools and ToolLoop
 
 Core defines `ToolDefinition` (stable name, description, JSON input schema, and policy metadata), `ToolCall` (call ID, name, raw JSON arguments, session/turn/generation correlation), and `ToolResult` (call ID, structured result or safe error, status, and timing). A provider adapter translates provider-native requests/results to these types. `ToolExecutor` invokes registered handlers using a `context.Context`; an MCP wrapper is one Server-supplied handler and is invisible to core.
+
+The Task 1 signatures live in `govoice/core/tools`: `ToolExecutor.Execute(context.Context, ToolCall) (ToolResult, error)` and the matching `ToolExecutorFunc` adapter. JSON schema, arguments, and results use `json.RawMessage`; callers own those byte slices. `ToolResult.ErrorCategory` is a safe category, not provider error text. Registration, execution, timeouts, and ToolLoop policy are deferred.
 
 `ToolLoop` owns sequential model/tool rounds, multiple calls returned in one round, maximum iterations, maximum calls, per-tool timeout, context cancellation, result normalization, interruption behavior, and trace hooks. It returns control to the LLM after successful results and terminates with a typed error when a limit is exceeded. It does not own session lifecycle, pipeline execution, provider SDKs, persistence, or MCP.
 
