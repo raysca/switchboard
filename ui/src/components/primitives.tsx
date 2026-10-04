@@ -2,6 +2,7 @@ import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
+  Ref,
 } from "react";
 import type { ApiError } from "../api/client";
 
@@ -42,13 +43,15 @@ export function LoadingState({ label = "Loading" }: { label?: string }) {
 export function ErrorState({
   error,
   onRetry,
+  title = "Request failed",
 }: {
   error: ApiError;
   onRetry?: () => void;
+  title?: string;
 }) {
   return (
     <section className="message-panel message-panel--error" role="alert">
-      <h2>Request failed</h2>
+      <h2>{title}</h2>
       <p>{error.message}</p>
       {error.requestId && (
         <p className="request-id">Request ID: {error.requestId}</p>
@@ -60,12 +63,17 @@ export function ErrorState({
 export function FormField({
   label,
   id,
+  inputRef,
   ...props
-}: { label: string; id: string } & InputHTMLAttributes<HTMLInputElement>) {
+}: {
+  label: string;
+  id: string;
+  inputRef?: Ref<HTMLInputElement>;
+} & InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="form-field" htmlFor={id}>
       <span>{label}</span>
-      <input id={id} {...props} />
+      <input id={id} ref={inputRef} {...props} />
     </label>
   );
 }

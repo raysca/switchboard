@@ -9,8 +9,13 @@ import {
   useLocation,
 } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createApiClient } from "../api/client";
-import { ActionButton, FormField, Status } from "../components/primitives";
+import { ApiError, createApiClient } from "../api/client";
+import {
+  ActionButton,
+  ErrorState,
+  FormField,
+  Status,
+} from "../components/primitives";
 import { getBrowserCapabilities } from "./capabilities";
 import { SectionPage, sections } from "../routes/sections";
 
@@ -29,13 +34,26 @@ function RouteFocus() {
 export function App({ initialPath }: { initialPath?: string }) {
   const [keyValue, setKeyValue] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [authError, setAuthError] = useState<ApiError | null>(null);
+  const auth = useRef({ key: null as string | null, generation: 0 });
+  const keyInput = useRef<HTMLInputElement>(null);
   const [queryClient] = useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   );
   const client = createApiClient(
-    () => keyValue,
+    () => auth.current,
     fetch,
-    () => {
+    (error, generation) => {
+      if (generation !== auth.current.generation) return;
+      auth.current = { key: null, generation: generation + 1 };
+      setAuthError(
+        new ApiError(
+          "Management key was rejected. Enter a key to reconnect.",
+          error.code,
+          error.status,
+          error.requestId,
+        ),
+      );
       setKeyValue(null);
       queryClient.clear();
     },
@@ -43,10 +61,24 @@ export function App({ initialPath }: { initialPath?: string }) {
   const Router = initialPath ? MemoryRouter : BrowserRouter;
   const capabilities = getBrowserCapabilities();
 
+  useEffect(() => {
+    if (authError) keyInput.current?.focus();
+  }, [authError]);
+
+  function clearKey() {
+    auth.current = { key: null, generation: auth.current.generation + 1 };
+    setKeyValue(null);
+    setAuthError(null);
+    queryClient.clear();
+  }
+
   function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = draft.trim();
     if (!value) return;
+    auth.current = { key: value, generation: auth.current.generation + 1 };
+    setAuthError(null);
+    queryClient.clear();
     setKeyValue(value);
     setDraft("");
   }
@@ -120,24 +152,22 @@ export function App({ initialPath }: { initialPath?: string }) {
               <section className="access-panel" aria-labelledby="access-title">
                 <div>
                   <h2 id="access-title">Management access</h2>
-                  <p>
-                    The key stays in memory only. Reloading clears it.
-                  </p>
+                  <p>The key stays in memory only. Reloading clears it.</p>
+                  {authError && (
+                    <ErrorState
+                      title="Management access rejected"
+                      error={authError}
+                    />
+                  )}
                 </div>
                 {keyValue ? (
-                  <ActionButton
-                    onClick={() => {
-                      setKeyValue(null);
-                      queryClient.clear();
-                    }}
-                  >
-                    Clear key
-                  </ActionButton>
+                  <ActionButton onClick={clearKey}>Clear key</ActionButton>
                 ) : (
                   <form onSubmit={connect}>
                     <FormField
                       id="management-key"
                       label="Management key"
+                      inputRef={keyInput}
                       type="password"
                       autoComplete="off"
                       value={draft}

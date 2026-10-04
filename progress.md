@@ -82,7 +82,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [ ] Task 5: UI shell and typed API client.
 - [ ] Independent Phase 1 tester gate; record Gate A.
 
-Task 5 implementation is staged for independent UI review. The six-route React shell, typed `/api/v1` client, in-memory management key, browser capability check, shared view primitives, and responsive design are in `ui/`. The implementation report is `.superpowers/sdd/2026-10-04-v2-execution/task-5-report.md`. Keep Task 5 and Gate A open until review and the Phase 1 tester gate complete.
+Task 5 implementation and Round 1 authentication-recovery fixes are staged for independent UI re-review. The six-route React shell, typed `/api/v1` client, in-memory management key with request-generation fencing, browser capability check, shared view primitives, and responsive design are in `ui/`. The implementation report is `.superpowers/sdd/2026-10-04-v2-execution/task-5-report.md`. Keep Task 5 and Gate A open until review and the Phase 1 tester gate complete.
 
 ### Task 1 closeout
 

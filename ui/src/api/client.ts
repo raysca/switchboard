@@ -25,6 +25,7 @@ const tokenEnvelope = z.object({
 
 export type ServerConfig = z.infer<typeof configEnvelope>["data"];
 export type VoiceToken = z.infer<typeof tokenEnvelope>["data"];
+export type AuthSnapshot = { key: string | null; generation: number };
 
 export class ApiError extends Error {
   constructor(
@@ -39,16 +40,16 @@ export class ApiError extends Error {
 }
 
 export function createApiClient(
-  getKey: () => string | null,
+  getAuth: () => AuthSnapshot,
   fetcher: typeof fetch = fetch,
-  onUnauthorized?: () => void,
+  onUnauthorized?: (error: ApiError, generation: number) => void,
 ) {
   async function request<T>(
     path: string,
     schema: z.ZodType<T>,
     body?: object,
   ): Promise<T> {
-    const key = getKey();
+    const { key, generation } = getAuth();
     if (!key)
       throw new ApiError(
         "Enter a management key to continue.",
@@ -83,9 +84,8 @@ export function createApiClient(
       payload = null;
     }
     if (!response.ok) {
-      if (response.status === 401) onUnauthorized?.();
       const parsed = errorEnvelope.safeParse(payload);
-      throw new ApiError(
+      const error = new ApiError(
         parsed.success
           ? parsed.data.error.message
           : "The management API returned an unreadable error.",
@@ -93,6 +93,8 @@ export function createApiClient(
         response.status,
         requestId || (parsed.success ? parsed.data.error.request_id : ""),
       );
+      if (response.status === 401) onUnauthorized?.(error, generation);
+      throw error;
     }
     const parsed = schema.safeParse(payload);
     if (!parsed.success)

@@ -19,7 +19,10 @@ describe("management client", () => {
         { headers: { "X-Request-ID": "req-1" } },
       );
     });
-    const client = createApiClient(() => "management-key", fetcher);
+    const client = createApiClient(
+      () => ({ key: "management-key", generation: 1 }),
+      fetcher,
+    );
     await expect(client.serverConfig()).resolves.toMatchObject({
       profile: "production",
       max_sessions: 50,
@@ -45,7 +48,10 @@ describe("management client", () => {
         ),
     );
     await expect(
-      createApiClient(() => "key", fetcher).serverConfig(),
+      createApiClient(
+        () => ({ key: "key", generation: 1 }),
+        fetcher,
+      ).serverConfig(),
     ).rejects.toMatchObject({
       code: "unavailable",
       requestId: "req-header",
@@ -68,7 +74,11 @@ describe("management client", () => {
           { status: 401, headers: { "X-Request-ID": "req-2" } },
         ),
     );
-    const client = createApiClient(() => "private-key", fetcher, clear);
+    const client = createApiClient(
+      () => ({ key: "private-key", generation: 1 }),
+      fetcher,
+      clear,
+    );
     await expect(client.serverConfig()).rejects.toBeInstanceOf(ApiError);
     expect(clear).toHaveBeenCalledOnce();
     await expect(client.serverConfig()).rejects.not.toHaveProperty(
@@ -98,13 +108,47 @@ describe("management client", () => {
       );
     });
     const token = await createApiClient(
-      () => "management-key",
+      () => ({ key: "management-key", generation: 1 }),
       fetcher,
     ).issueVoiceToken({ principal: "operator-1", pipeline: "default" });
     expect(token.scope).toBe("voice:connect");
     expect(fetcher).toHaveBeenCalledWith(
       "/api/v1/voice-tokens",
       expect.any(Object),
+    );
+  });
+
+  it("reports the generation captured when a request starts", async () => {
+    let respond!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      respond = resolve;
+    });
+    const fetcher = vi.fn<typeof fetch>(async () => pending);
+    const onUnauthorized = vi.fn();
+    let generation = 7;
+    const client = createApiClient(
+      () => ({ key: "management-key", generation }),
+      fetcher,
+      onUnauthorized,
+    );
+    const request = client.serverConfig();
+    generation = 8;
+    respond(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "unauthorized",
+            message: "Unauthorized",
+            request_id: "req-old",
+          },
+        }),
+        { status: 401, headers: { "X-Request-ID": "req-old" } },
+      ),
+    );
+    await expect(request).rejects.toBeInstanceOf(ApiError);
+    expect(onUnauthorized).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "req-old" }),
+      7,
     );
   });
 });

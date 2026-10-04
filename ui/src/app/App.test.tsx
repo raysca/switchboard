@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 
@@ -79,6 +79,67 @@ describe("admin shell", () => {
         await screen.findByRole("button", { name: "Connect" }),
       ).toBeVisible();
       expect(screen.getByText("No management key")).toBeVisible();
+      expect(
+        screen.getByText(
+          "Management key was rejected. Enter a key to reconnect.",
+        ),
+      ).toBeVisible();
+      expect(screen.getByText("Request ID: req-3")).toBeVisible();
+      expect(screen.getByLabelText(/management key/i)).toHaveFocus();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not let a late 401 from key A clear successfully loaded key B", async () => {
+    let respondToA!: (response: Response) => void;
+    const pendingA = new Promise<Response>((resolve) => {
+      respondToA = resolve;
+    });
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(async () => pendingA)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              profile: "production",
+              max_sessions: 50,
+              max_call_duration_seconds: 300,
+              voice_token_max_lifetime_seconds: 60,
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      const user = userEvent.setup();
+      render(<App initialPath="/server" />);
+      await user.type(screen.getByLabelText(/management key/i), "key-A");
+      await user.click(screen.getByRole("button", { name: "Connect" }));
+      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+      await user.click(screen.getByRole("button", { name: "Clear key" }));
+      await user.type(screen.getByLabelText(/management key/i), "key-B");
+      await user.click(screen.getByRole("button", { name: "Connect" }));
+      expect(await screen.findByText("production")).toBeVisible();
+      await act(async () => {
+        respondToA(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: "unauthorized",
+                message: "Unauthorized",
+                request_id: "req-A",
+              },
+            }),
+            { status: 401, headers: { "X-Request-ID": "req-A" } },
+          ),
+        );
+      });
+      expect(screen.getByRole("button", { name: "Clear key" })).toBeVisible();
+      expect(screen.getByText("production")).toBeVisible();
+      expect(screen.queryByText("Request ID: req-A")).not.toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }

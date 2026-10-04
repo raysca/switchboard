@@ -190,6 +190,9 @@ main {
   padding: 26px 0;
   border-top: 1px solid #c9d3d2;
 }
+.access-panel .message-panel {
+  margin-top: 18px;
+}
 .access-panel h2 {
   font-size: 1.1rem;
   font-weight: 600;
