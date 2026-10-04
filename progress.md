@@ -27,7 +27,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 | Gate | Status | Evidence/remaining condition |
 |---|---|---|
-| A — Core Contracts Stable | Open | Planning contract frozen; implementation contract tests not yet run. |
+| A — Core Contracts Stable | Open | Task 1 public contract tests and independent review passed; Tasks 2–5 and the independent Phase 1 tester remain. |
 | B — P0 Audio Path Stable | Open | Pinned client cannot clear already-buffered playback; P0 framework implementation remains open. |
 | C — Tool Loop Stable | Open | Contract frozen; framework/provider implementation remains open. |
 | D — Persistent Agent Runtime | Open | Domain/snapshot contract frozen; server implementation remains open. |
@@ -75,12 +75,19 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Phase 1 — Foundations in parallel
 
-- [ ] Task 1: Distinct identity types, trace/observer/debug value contracts, no-op spans, privacy envelope, and public tool types are implemented. Independent tester passed. Round 1 reviewer findings were fixed; Round 2 addressed trace tool-call correlation and a shared metadata copy budget. Reviewer recheck remains. Runtime integration and serializer behavior remain in their assigned tasks.
+- [x] Task 1: Distinct identity types, trace/observer/debug value contracts, no-op spans, privacy envelope, and public tool types. Independent tester PASS and reviewer approval after two fix rounds; runtime integration and serializer behavior remain in their assigned tasks.
 - [ ] Task 2: P0 lifecycle, mute, and flush; publish prerequisite settings/control envelopes only.
 - [ ] Task 3: Storage foundation and dialect migrations.
 - [ ] Task 4: Management API/auth skeleton.
 - [ ] Task 5: UI shell and typed API client.
 - [ ] Independent Phase 1 tester gate; record Gate A.
+
+### Task 1 closeout
+
+- Commit range: `60a5e8f..b71dbd1` (`751187a` implementation, `64123b9` Round 1 fixes, `b71dbd1` Round 2 fixes).
+- Initial focused contract tests, full core race suite, vet, diff, dependency-boundary, and privacy checks passed. Final independent tester PASS at `b71dbd1` repeated focused correlation/budget/privacy tests, full core race, vet, diff, dependency boundary, and clean-worktree checks. Independent reviewer approved all findings after Rounds 1–2.
+- Rulings: public typed IDs remain additive while V1 `uint64`/`string` runtime fields await P0 migration; trace metadata defaults to a fail-closed allowlist; custom structured metadata admits only finite numeric/boolean values with depth, collection, key-count, and shared 1,024-node copy budgets; tool-call correlation is a scalar field; tool JSON byte slices remain caller-owned. Costs and alternatives are recorded in the Task 1 report.
+- Gate A remains open pending Tasks 2–5 and the independent Phase 1 tester.
 
 ## Phase 2 — P0 audio/call parity
 
@@ -160,4 +167,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Task 1 contract surfaces passed independent testing and await reviewer recheck after Round 2 fixes. The remaining Phase 1 foundations are also unblocked. Phase 0 completion is distinct from Gate A: Gate A remains open until Phase 1 foundation and review conditions are complete. Gates A–G remain open; product implementation tasks are not complete.
+Task 1 is complete. The remaining Phase 1 foundations are unblocked. Phase 0 completion is distinct from Gate A: Gate A remains open pending Tasks 2–5 and the independent Phase 1 tester. Gates A–G remain open; product implementation tasks are not complete.
