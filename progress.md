@@ -27,7 +27,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 | Gate | Status | Evidence/remaining condition |
 |---|---|---|
-| A — Core Contracts Stable | Open | Tasks 1–4 passed independent review and testing; Task 5 and the independent Phase 1 tester remain. |
+| A — Core Contracts Stable | Open | Tasks 1–5 passed independent review and testing; the independent Phase 1 tester remains. |
 | B — P0 Audio Path Stable | Open | Pinned client cannot clear already-buffered playback; P0 framework implementation remains open. |
 | C — Tool Loop Stable | Open | Contract frozen; framework/provider implementation remains open. |
 | D — Persistent Agent Runtime | Open | Domain/snapshot contract frozen; server implementation remains open. |
@@ -79,10 +79,8 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [x] Task 2: P0 lifecycle, mute, and deterministic core/fake-transport flush. Independent reviewer APPROVED after two fix rounds; final independent tester PASS. Typed settings envelope declared; application and urgent priority remain deferred.
 - [x] Task 3: Storage foundation and dialect migrations. Independent reviewer APPROVED after two fix rounds; final independent tester PASS on SQLite and PostgreSQL 18.
 - [x] Task 4: Management API/auth skeleton. Independent reviewer APPROVED after one fix round; final independent tester PASS.
-- [ ] Task 5: UI shell and typed API client.
+- [x] Task 5: UI shell and typed API client. Independent reviewer APPROVED after one fix round; final independent tester PASS.
 - [ ] Independent Phase 1 tester gate; record Gate A.
-
-Task 5 implementation and Round 1 authentication-recovery fixes are staged for independent UI re-review. The six-route React shell, typed `/api/v1` client, in-memory management key with request-generation fencing, browser capability check, shared view primitives, and responsive design are in `ui/`. The implementation report is `.superpowers/sdd/2026-10-04-v2-execution/task-5-report.md`. Keep Task 5 and Gate A open until review and the Phase 1 tester gate complete.
 
 ### Task 1 closeout
 
@@ -111,6 +109,12 @@ Task 5 implementation and Round 1 authentication-recovery fixes are staged for i
 - The admin-only `/api/v1` boundary uses storage-independent DTOs, a deployment-provided management key, JSON error/request-ID envelopes, bounded request bodies, a sanitized read-only config projection, and scoped single-use voice token issuance. The Server reuses `golang-jwt/v5` and Go `net/http`. The production signing and validation key ID is resolved once. JWT lifetime is bounded at whole-second precision, and noncanonical API paths retain JSON errors.
 - Scoped tokens carry a validator-generated random issuance epoch to reject replay after validator replacement. Issuance and `/ws` admission therefore need replica affinity until a shared replay/issuance service is provided. Legacy unscoped V1 voice tokens retain their explicit compatibility exception; management credentials remain separate from voice signing. The bootstrap management key requires deployment-side distribution/rotation. See `docs/api/v1.md` and `docs/v2-contracts.md`.
 - Final verification used the documented Xcode macOS 26 `SDKROOT` override. The default Command Line Tools SDK 27 linker could not parse its `.tbd` architecture metadata; the Xcode SDK produced only non-failing target-version warnings. Gate A remains open pending Task 5 and the independent Phase 1 tester.
+
+### Task 5 closeout
+
+- Implementation commits: `3d8191f` (`feat(ui): establish v2 admin shell`) and `8e29616` (`fix(ui): harden authentication recovery`). Independent reviewer APPROVED after Round 1 identified a stale 401 that could clear a newer key and a current 401 that lost its message/request ID and input focus. The fix fences requests by auth generation and preserves a sanitized rejection outside the query cache. Review and RED/GREEN evidence are in `.superpowers/sdd/2026-10-04-v2-execution/task-5-report.md`.
+- Final independent tester PASS at `8e29616`: `cd ui && npm test -- --run` passed 10/10, focused stale/current 401 recovery tests passed, and `npm run typecheck` and `npm run build` passed. The initial lockfile audit found zero vulnerabilities. The worktree and diff checks passed. The browser visual review was unverified because the bundled browser runtime file was missing; CSS responsiveness and keyboard behavior have source/test evidence, not a visual browser finding.
+- The shell exposes six routes with an in-memory management bearer and typed `/api/v1` client. Design and architecture are in `docs/ui/architecture.md`. React Router 7.18.4 was chosen because Node 22.18.0 cannot run React Router 8.4.0. Only the read-only Server configuration route has live API data; collection views await later management endpoints. Gate A remains open pending the independent Phase 1 tester gate.
 
 ## Phase 2 — P0 audio/call parity
 
@@ -190,4 +194,4 @@ Task 5 implementation and Round 1 authentication-recovery fixes are staged for i
 
 ## Next unblocked work
 
-Tasks 1–4 are complete. Phase 0 completion is distinct from Gate A: Gate A remains open pending Task 5 and the independent Phase 1 tester. Gates A–G remain open; product implementation tasks are not complete.
+Tasks 1–5 are complete. Phase 0 completion is distinct from Gate A: Gate A remains open pending the independent Phase 1 tester. Gates A–G remain open; product implementation tasks are not complete.
