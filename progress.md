@@ -27,7 +27,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 | Gate | Status | Evidence/remaining condition |
 |---|---|---|
-| A — Core Contracts Stable | Open | Task 1 public contract tests and independent review passed; Tasks 2–5 and the independent Phase 1 tester remain. |
+| A — Core Contracts Stable | Open | Tasks 1–3 passed independent review and testing; Tasks 4–5 and the independent Phase 1 tester remain. |
 | B — P0 Audio Path Stable | Open | Pinned client cannot clear already-buffered playback; P0 framework implementation remains open. |
 | C — Tool Loop Stable | Open | Contract frozen; framework/provider implementation remains open. |
 | D — Persistent Agent Runtime | Open | Domain/snapshot contract frozen; server implementation remains open. |
@@ -77,7 +77,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 - [x] Task 1: Distinct identity types, trace/observer/debug value contracts, no-op spans, privacy envelope, and public tool types. Independent tester PASS and reviewer approval after two fix rounds; runtime integration and serializer behavior remain in their assigned tasks.
 - [x] Task 2: P0 lifecycle, mute, and deterministic core/fake-transport flush. Independent reviewer APPROVED after two fix rounds; final independent tester PASS. Typed settings envelope declared; application and urgent priority remain deferred.
-- [ ] Task 3: Storage foundation and dialect migrations.
+- [x] Task 3: Storage foundation and dialect migrations. Independent reviewer APPROVED after two fix rounds; final independent tester PASS on SQLite and PostgreSQL 18.
 - [ ] Task 4: Management API/auth skeleton.
 - [ ] Task 5: UI shell and typed API client.
 - [ ] Independent Phase 1 tester gate; record Gate A.
@@ -94,15 +94,14 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Implementation range: `9a1eab7..3094453` (`fa5f8d4` implementation, `cafdede` Round 1 fixes, `3094453` Round 2 fixes). The independent reviewer APPROVED the final implementation after two fix rounds.
 - Final independent tester PASS at `3094453`: focused lifecycle/control suite, new regressions repeated 100 times, transport preservation repeated 1,000 times, full core race suite, `go vet ./...`, diff check, and clean-worktree check. RED/GREEN details and review findings are in `.superpowers/sdd/2026-10-04-v2-execution/task-2-report.md`.
 - Rulings: default assistant output is interruptible; admission and applied mute state are separate, with inline controls queued in admission order; a flush requires an explicit matching generation and advances the fence once; stale controls cannot cancel a new turn; partial already-delivered context and explicitly uninterruptible media survive the core/fake flush. Costs and alternatives are recorded in the Task 2 report. Real WebSocket disposition/pacing remains Task 8; client playback clearing is not claimed.
-- Gate A remains open pending Tasks 3–5 and the independent Phase 1 tester.
+- At Task 2 closeout, Gate A remained open pending Tasks 3–5 and the independent Phase 1 tester.
 
-### Task 3 implementation, pending independent review
+### Task 3 closeout
 
-- Server-owned `database/sql` storage, embedded SQLite/PostgreSQL Goose migrations, UUIDv7 IDs, canonical snapshot hashes, and thin repositories are implemented on `codex/v2-implementation`.
-- Focused RED/GREEN evidence covers empty and upgraded migrations, transactional rollback, immutable versions, history-safe MCP deletion, concurrent SQLite startup/writes, and JSON validation. The exact commands and remaining PostgreSQL integration limitation are recorded in `.superpowers/sdd/2026-10-04-v2-execution/task-3-report.md`.
-- Independent review and Gate A remain open. Task 3 is not marked complete until review findings are resolved.
-- Round 1 reviewer findings are addressed in a follow-up commit: per-connection SQLite settings; atomic, validated tool selection publication; PostgreSQL canonical JSON byte preservation; shared SQLite/PostgreSQL repository contract and migration rollback tests; pointer and session provenance constraints; relative SQLite URI locking; fixed UTC microsecond timestamps; UUIDv7 validation; timestamp read errors; and explicit agent create flags. Reverification and independent review status are in the Task 3 report. Task 3 remains open pending reviewer confirmation.
-- Round 2 addresses reserved SQLite DSN alias/pragma overrides, RFC 4122 UUID variant validation, percent-decoded normalized file URI lock paths, and verified PostgreSQL test-schema cleanup. Task 3 remains open pending reviewer confirmation.
+- Implementation range: `8a55cac..5b46752` (`34655c0` implementation, `fc30920` Round 1 fixes, `5b46752` Round 2 fixes). Independent reviewer APPROVED after two fix rounds; final independent tester PASS at `5b46752`.
+- Final tester ran focused storage tests, the SQLite suite and concurrent-open cases 25 times, disposable PostgreSQL 18 shared repository contract and 001→002 upgrade/failed-migration rollback tests, full Server race suite, `go vet ./...`, diff check, clean-worktree check, and container/schema cleanup. RED/GREEN details and review fixes are in `.superpowers/sdd/2026-10-04-v2-execution/task-3-report.md`.
+- Ruling: Server owns `database/sql` and thin repositories; modernc SQLite v1.60.1 and pgx/v5 v5.11.0 supply CGO-free and PostgreSQL drivers. Goose v3.28.0 owns embedded dialect migration parsing/versioning and PostgreSQL session locking; gofrs/flock v0.13.1 coordinates SQLite startup, and google/uuid v1.6.0 issues UUIDv7 IDs. Immutable config/schema hashes use canonical JSON bytes stored as text on both dialects. SQLite rejects caller DSN overrides of mandatory settings. Costs include a larger Server dependency graph, an adjacent SQLite migration lock file, and reserved SQLite connection options; see `docs/operations/storage.md`.
+- macOS Command Line Tools SDK 27 could not link the existing Server test binary (`tapi error: malformed file`); verification used the documented Xcode macOS 26 `SDKROOT` override and completed with non-failing target-version linker warnings. Gate A remains open pending Tasks 4–5 and the independent Phase 1 tester.
 
 ## Phase 2 — P0 audio/call parity
 
