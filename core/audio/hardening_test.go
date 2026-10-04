@@ -158,23 +158,38 @@ func TestAudioFilterPreservesWantedSignalAndSuppressesNoise(t *testing.T) {
 	}
 	defer filter.Close()
 
-	wanted := make([]int16, 160*200)
+	const (
+		frameSamples   = 160
+		trainingFrames = 100
+		totalFrames    = 400
+	)
+	wanted := make([]int16, frameSamples*totalFrames)
 	mixed := make([]int16, len(wanted))
 	state := uint32(7)
+	phase := 0.0
 	for i := range wanted {
-		frame := i / 160
-		fundamental := 170 + 37*(frame%7)
-		envelope := 0.55 + 0.45*math.Sin(math.Pi*float64(i%160)/160)
-		voice := envelope * (7000*math.Sin(2*math.Pi*float64(fundamental)*float64(i)/16000) +
-			2500*math.Sin(2*math.Pi*float64(2*fundamental)*float64(i)/16000))
-		wanted[i] = int16(math.Round(voice))
+		frame := i / frameSamples
+		if frame >= trainingFrames {
+			syllableFrame := (frame - trainingFrames) % 40
+			if syllableFrame < 26 {
+				syllable := (frame - trainingFrames) / 40
+				position := float64(syllableFrame*frameSamples+i%frameSamples) / float64(26*frameSamples)
+				envelope := math.Sin(math.Pi * position)
+				fundamental := 125 + 18*math.Sin(2*math.Pi*position) + float64(13*(syllable%5))
+				phase += 2 * math.Pi * fundamental / 16000
+				voice := envelope * (7200*math.Sin(phase) +
+					2600*math.Sin(2*phase+0.3) + 1300*math.Sin(3*phase+0.7) +
+					700*math.Sin(5*phase+0.2))
+				wanted[i] = int16(math.Round(voice))
+			}
+		}
 		state = state*1664525 + 1013904223
-		noise := int16(int32(state>>16)%1201 - 600)
+		noise := int16(int32(state>>16)%1801 - 900)
 		mixed[i] = wanted[i] + noise
 	}
 	var output []byte
-	for offset := 0; offset < len(mixed); offset += 160 {
-		chunk, err := filter.Process(context.Background(), pcm(mixed[offset:offset+160]))
+	for offset := 0; offset < len(mixed); offset += frameSamples {
+		chunk, err := filter.Process(context.Background(), pcm(mixed[offset:offset+frameSamples]))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -187,27 +202,87 @@ func TestAudioFilterPreservesWantedSignalAndSuppressesNoise(t *testing.T) {
 	output = append(output, tail...)
 	processed := decodePCM16(t, output)
 
-	start := len(wanted) / 2
+	evidence := measureSuppression(wanted, mixed, processed, trainingFrames*frameSamples)
+	if !evidence.accepted() {
+		t.Fatalf("wanted/noise evidence failed: gain=%g improvement=%g dB", evidence.gain, evidence.improvementDB)
+	}
+	t.Logf("Speex evidence: gain=%0.3f improvement=%0.2f dB", evidence.gain, evidence.improvementDB)
+
+	negativeControls := []struct {
+		name   string
+		output []int16
+	}{
+		{"bypass", append([]int16(nil), mixed...)},
+		{"fixed attenuation 0.9", scalePCM16(mixed, 0.9)},
+		{"fixed attenuation 0.1", scalePCM16(mixed, 0.1)},
+		{"all silence", make([]int16, len(mixed))},
+		{"threshold gate", thresholdGatePCM16(mixed, 901)},
+	}
+	for _, tt := range negativeControls {
+		t.Run(tt.name, func(t *testing.T) {
+			control := measureSuppression(wanted, mixed, tt.output, trainingFrames*frameSamples)
+			t.Logf("negative-control evidence: gain=%0.3f improvement=%0.2f dB", control.gain, control.improvementDB)
+			if control.accepted() {
+				t.Fatalf("negative control unexpectedly accepted: gain=%g improvement=%g dB", control.gain, control.improvementDB)
+			}
+		})
+	}
+}
+
+type suppressionEvidence struct {
+	gain          float64
+	improvementDB float64
+}
+
+func (e suppressionEvidence) accepted() bool {
+	// A 3 dB improvement halves equivalent residual-noise power. The 0.5 gain
+	// floor allows at most about 6 dB wanted-signal attenuation and independently
+	// rejects outputs that improve SNR by erasing the wanted signal.
+	return e.gain >= 0.5 && e.improvementDB >= 3
+}
+
+func measureSuppression(wanted, mixed, output []int16, start int) suppressionEvidence {
 	var wantedPower, projection, inputNoisePower float64
 	for i := start; i < len(wanted); i++ {
 		w := float64(wanted[i])
 		wantedPower += w * w
-		projection += float64(processed[i]) * w
+		projection += float64(output[i]) * w
 		d := float64(int(mixed[i]) - int(wanted[i]))
 		inputNoisePower += d * d
 	}
 	gain := projection / wantedPower
-	if gain < 0.08 {
-		t.Fatalf("wanted signal not preserved: gain=%g", gain)
-	}
-	var outputNoisePower float64
+	var outputResidualPower float64
 	for i := start; i < len(wanted); i++ {
-		d := float64(processed[i]) - gain*float64(wanted[i])
-		outputNoisePower += d * d
+		d := float64(output[i]) - gain*float64(wanted[i])
+		outputResidualPower += d * d
 	}
-	if outputNoisePower >= inputNoisePower*0.9 {
-		t.Fatalf("noise not reduced: input=%g output=%g gain=%g", inputNoisePower, outputNoisePower, gain)
+	improvementDB := math.Inf(-1)
+	if gain > 0 {
+		equivalentResidualPower := outputResidualPower / (gain * gain)
+		improvementDB = 10 * math.Log10(inputNoisePower/equivalentResidualPower)
 	}
+	return suppressionEvidence{
+		gain:          gain,
+		improvementDB: improvementDB,
+	}
+}
+
+func scalePCM16(input []int16, scale float64) []int16 {
+	output := make([]int16, len(input))
+	for i, sample := range input {
+		output[i] = int16(math.Round(float64(sample) * scale))
+	}
+	return output
+}
+
+func thresholdGatePCM16(input []int16, threshold int) []int16 {
+	output := make([]int16, len(input))
+	for i, sample := range input {
+		if absInt(int(sample)) >= threshold {
+			output[i] = sample
+		}
+	}
+	return output
 }
 
 func TestResamplerRejectsUnsupportedRatesAndOversizeInput(t *testing.T) {

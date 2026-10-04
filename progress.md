@@ -157,6 +157,12 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   DSP assertions that reject silence/gating, explicit turn-buffer overflow,
   and typed turn identity. Regressions and fixes are implemented; Task 6
   remains open pending independent re-review and tester PASS.
+- Review round 2 replaced the attenuation-sensitive DSP assertion with a
+  gain-normalized residual/SNR metric over a deterministic voiced-burst and
+  stationary-noise fixture. It requires at least 3 dB improvement and 0.5
+  wanted gain; bypass, 0.9x/0.1x attenuation, all-silence, and threshold-gate
+  negative controls fail the same predicate. Task 6 and Gate B remain open
+  pending independent re-review and the Phase 2 tester gate.
 
 ## Phase 3 — Context, tools, tracing, compatibility
 

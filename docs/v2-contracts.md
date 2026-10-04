@@ -134,6 +134,16 @@ and production builds require CGO and a C compiler; the release container
 already builds with `CGO_ENABLED=1`. Gate B remains open until the rest of the
 Phase 2 audio path and its independent gate pass.
 
+The deterministic denoiser regression uses a stationary-noise learning prefix
+followed by voiced, pitch-varying harmonic bursts and pauses. It projects the
+output onto the clean wanted reference, divides residual power by the fitted
+gain squared, and requires at least 3 dB SNR improvement plus at least 0.5
+wanted-signal gain (about -6 dB). Gain normalization makes uniform attenuation
+unable to masquerade as suppression; explicit bypass, fixed-attenuation,
+silence, and threshold-gate controls must fail the same predicate. This is a
+repeatable DSP regression, not a perceptual quality or real-speech corpus
+evaluation.
+
 ### 2.7 Turn detector and manager
 
 `core.TurnDetector` is a pluggable input-to-decision interface that consumes speech/VAD and audio observations and reports a user-turn completion decision with reason, confidence where available, and timestamp. Implementations include silence-duration and hybrid/semantic strategies; pipeline code does not hardcode one detector.
