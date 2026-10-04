@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"sync"
@@ -578,15 +579,97 @@ func TestTurnDetectorReentrantAdvanceDoesNotWaitOnPluginCallback(t *testing.T) {
 	}()
 	select {
 	case result := <-done:
-		if result.err != nil || findEvent(eventFrames(result.frames), core.TurnEventCompleted) != nil {
-			t.Fatalf("stale result committed across reentrant Advance: events=%+v err=%v", eventFrames(result.frames), result.err)
+		if result.err != nil || findEvent(eventFrames(result.frames), core.TurnEventCompleted) == nil || calls != 2 {
+			t.Fatalf("reentrant Advance was not drained: events=%+v calls=%d err=%v", eventFrames(result.frames), calls, result.err)
 		}
 	case <-time.After(300 * time.Millisecond):
 		t.Fatal("reentrant Advance waited for the detector callback")
 	}
-	frames, err := m.Advance(t0.Add(2300 * time.Millisecond))
-	if err != nil || findEvent(eventFrames(frames), core.TurnEventCompleted) == nil || calls != 2 {
-		t.Fatalf("next caller advance did not reevaluate after stale callback: events=%+v calls=%d err=%v", eventFrames(frames), calls, err)
+}
+
+func TestTurnManagerOverlappingAdvancesDrainNewestEvaluation(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	calls := 0
+	detector := detectorFunc(func(DetectionInput) (DetectionDecision, bool) {
+		calls++
+		if calls == 1 {
+			close(entered)
+			<-release
+		}
+		return DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: 0.9, HasConfidence: true}, true
+	})
+	m := manager(t, detector)
+	_, _ = m.Observe(observation(t0, "overlap", 1, true))
+	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+	_, _ = m.Observe(observation(t0.Add(time.Second), "overlap", 1, false))
+	type result struct {
+		frames []core.Frame
+		err    error
+	}
+	firstDone := make(chan result, 1)
+	go func() {
+		frames, err := m.Advance(t0.Add(2200 * time.Millisecond))
+		firstDone <- result{frames: frames, err: err}
+	}()
+	<-entered
+	secondFrames, secondErr := m.Advance(t0.Add(2300 * time.Millisecond))
+	close(release)
+	first := <-firstDone
+	events := append(eventFrames(first.frames), eventFrames(secondFrames)...)
+	if first.err != nil || secondErr != nil || calls != 2 || findEvent(events, core.TurnEventStopped) == nil {
+		t.Fatalf("overlap did not preserve valid stop and drain newest input: events=%+v calls=%d errors=%v/%v", events, calls, first.err, secondErr)
+	}
+	completed := 0
+	for _, event := range events {
+		if event.Kind == core.TurnEventCompleted {
+			completed++
+		}
+	}
+	if completed != 1 {
+		t.Fatalf("two overlapping advances emitted %d completions, want one: %+v", completed, events)
+	}
+}
+
+func TestTurnManagerReentrantEpochChangeDiscardsPreCallbackFrames(t *testing.T) {
+	cases := []struct {
+		name   string
+		action func(*Manager, time.Time) ([]core.Frame, error)
+	}{
+		{name: "reset", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return nil, m.Reset(at) }},
+		{name: "close", action: func(m *Manager, _ time.Time) ([]core.Frame, error) { return nil, m.Close() }},
+		{name: "interrupt", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return m.Interrupt("epoch", 1, at) }},
+		{name: "generation", action: func(m *Manager, at time.Time) ([]core.Frame, error) {
+			return m.Observe(observation(at, "next", 2, false))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var m *Manager
+			var nested []core.Frame
+			detector := detectorFunc(func(input DetectionInput) (DetectionDecision, bool) {
+				var err error
+				nested, err = tc.action(m, input.At)
+				if err != nil {
+					t.Errorf("reentrant %s: %v", tc.name, err)
+				}
+				return DetectionDecision{}, false
+			})
+			m, _ = NewManager(testConfig(), detector)
+			_ = m.Start(t0)
+			_, _ = m.Observe(observation(t0, "epoch", 1, true))
+			_, _ = m.Advance(t0.Add(250 * time.Millisecond))
+			_, _ = m.Observe(observation(t0.Add(time.Second), "epoch", 1, false))
+			frames, err := m.Advance(t0.Add(1100 * time.Millisecond))
+			if err != nil || len(eventFrames(frames)) != 0 {
+				t.Fatalf("stale pre-callback frames escaped after %s: events=%+v err=%v", tc.name, eventFrames(frames), err)
+			}
+			if tc.name == "interrupt" || tc.name == "generation" {
+				events := eventFrames(nested)
+				if len(events) != 1 || events[0].Kind != core.TurnEventInterrupted {
+					t.Fatalf("interrupt ordering/duplication: %+v", events)
+				}
+			}
+		})
 	}
 }
 
@@ -628,6 +711,8 @@ func TestTurnManagerRejectsInvalidDetectorDecisionAndFallsBack(t *testing.T) {
 		{name: "nan confidence", decision: DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: math.NaN(), HasConfidence: true}},
 		{name: "confidence above one", decision: DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: 1.1, HasConfidence: true}},
 		{name: "confidence below zero", decision: DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: -0.1, HasConfidence: true}},
+		{name: "nan hidden by absent flag", decision: DetectionDecision{Reason: core.TurnReasonSilence, Confidence: math.NaN()}},
+		{name: "infinity hidden by absent flag", decision: DetectionDecision{Reason: core.TurnReasonSilence, Confidence: math.Inf(1)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -643,6 +728,12 @@ func TestTurnManagerRejectsInvalidDetectorDecisionAndFallsBack(t *testing.T) {
 			completed := findEvent(eventFrames(frames), core.TurnEventCompleted)
 			if err != nil || completed == nil || completed.Reason != core.TurnReasonSilence {
 				t.Fatalf("invalid suggestion did not fall back to silence: events=%+v err=%v", eventFrames(frames), err)
+			}
+			if completed.HasConfidence || completed.Confidence != 0 {
+				t.Fatalf("absent confidence was not normalized: %+v", completed)
+			}
+			if _, err := json.Marshal(completed); err != nil {
+				t.Fatalf("terminal event is not JSON-safe: %v", err)
 			}
 		})
 	}

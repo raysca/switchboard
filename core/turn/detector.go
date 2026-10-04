@@ -33,7 +33,8 @@ type DetectionDecision struct {
 // Implementations should be deterministic, fast, and side-effect free. The
 // manager invokes Detect without holding its state lock and permits only one
 // callback in flight; concurrent or reentrant advances update state but do
-// not wait for or start another detector call.
+// not wait for or start another detector call. The callback owner drains one
+// coalesced newest evaluation before returning when the input changed.
 type TurnDetector interface {
 	Detect(DetectionInput) (DetectionDecision, bool)
 }

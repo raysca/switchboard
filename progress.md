@@ -177,6 +177,12 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Assumption: when a concurrent/reentrant update invalidates an in-flight detector snapshot, no recursive or background retry occurs; the next caller-driven `Observe`/`Advance` reevaluates. Gate B remains open and Task 7 unchecked pending independent review. No Task 8/9/14/27 behavior is included.
 - RED/GREEN and test evidence for this review round is maintained in `.superpowers/sdd/2026-10-04-v2-execution/task-7-report.md`. The focused suite, 25 race repetitions of the review regressions, full core race suite, vet, `gofmt`, and `git diff --check` passed with the documented SDK workaround; the follow-up commit is `fix(core): harden turn manager ordering`.
 
+#### Task 7 review round 2 fixes (independent review still pending)
+
+- RED regressions showed two overlapping advances could both return without completion, reentrant epoch changes could leak an outer `Stopped` frame, and NaN/Inf confidence with `HasConfidence=false` could enter a terminal frame and fail JSON encoding.
+- The detector owner now drains a single coalesced newest-input slot after a stale callback; identical deterministic snapshots are not rerun, preventing reentrant self-rescheduling. Same-epoch time-only advancement preserves valid pre-callback frames, while reset, close, interruption, and generation changes invalidate them. Terminal confidence is always finite and absent confidence is normalized to zero.
+- Review regressions passed 50 repetitions under the race detector; the all-package focused suite, full core race suite, vet, `gofmt`, and `git diff --check` also passed. Task 7 remains unchecked for independent re-review and Gate B remains open.
+
 ## Phase 3 — Context, tools, tracing, compatibility
 
 - [ ] Task 10: Context aggregation/reconciliation.

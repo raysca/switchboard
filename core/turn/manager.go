@@ -70,6 +70,8 @@ type Manager struct {
 	cfg               Config
 	detector          TurnDetector
 	detectionInFlight bool
+	pendingDetection  bool
+	pendingDetectAt   time.Time
 
 	started  bool
 	closed   bool
@@ -267,30 +269,80 @@ func (m *Manager) finishDetection(frames []core.Frame, snapshot *detectionSnapsh
 	if snapshot == nil {
 		return frames
 	}
-	m.mu.Lock()
-	if !m.snapshotCurrentLocked(snapshot) {
-		m.detectionInFlight = false
+	frameEpoch := snapshot.epoch
+	for snapshot != nil {
+		m.mu.Lock()
+		if !m.snapshotCurrentLocked(snapshot) {
+			m.detectionInFlight = false
+			if m.epoch != frameEpoch {
+				frames = nil
+			}
+			more, next := m.drainPendingDetectionLocked()
+			frames = append(frames, more...)
+			if next != nil && sameDetectionInput(snapshot.input, next.input) {
+				m.detectionInFlight = false
+				next = nil
+			}
+			m.mu.Unlock()
+			snapshot = next
+			continue
+		}
+		detector := m.detector
 		m.mu.Unlock()
-		return frames
-	}
-	detector := m.detector
-	m.mu.Unlock()
 
-	decision, done, panicked := detectSafely(detector, snapshot.input)
-	if panicked || (done && !validDecision(decision)) {
-		decision, done = (SilenceDetector{}).Detect(snapshot.input)
+		decision, done, panicked := detectSafely(detector, snapshot.input)
+		if normalized, valid := normalizeDecision(decision); done && valid && !panicked {
+			decision = normalized
+		} else if panicked || (done && !valid) {
+			decision, done = (SilenceDetector{}).Detect(snapshot.input)
+		}
+		m.mu.Lock()
+		m.detectionInFlight = false
+		if done && m.snapshotCurrentLocked(snapshot) {
+			frames = append(frames, m.completeLocked(snapshot.input.At, decision.Reason, decision.Confidence, decision.HasConfidence)...)
+			m.pendingDetection = false
+			m.mu.Unlock()
+			return frames
+		}
+		if m.epoch != frameEpoch {
+			frames = nil
+		}
+		if m.snapshotCurrentLocked(snapshot) {
+			m.pendingDetection = false
+			m.mu.Unlock()
+			return frames
+		}
+		more, next := m.drainPendingDetectionLocked()
+		frames = append(frames, more...)
+		if next != nil && sameDetectionInput(snapshot.input, next.input) {
+			m.detectionInFlight = false
+			next = nil
+		}
+		m.mu.Unlock()
+		snapshot = next
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.detectionInFlight = false
-	if !done {
-		return frames
-	}
-	if !m.snapshotCurrentLocked(snapshot) {
-		return frames
-	}
-	frames = append(frames, m.completeLocked(snapshot.input.At, decision.Reason, decision.Confidence, decision.HasConfidence)...)
 	return frames
+}
+
+func sameDetectionInput(a, b DetectionInput) bool {
+	aSemantic, bSemantic := a.Semantic, b.Semantic
+	a.Semantic, b.Semantic = nil, nil
+	if a != b || (aSemantic == nil) != (bSemantic == nil) {
+		return false
+	}
+	return aSemantic == nil || *aSemantic == *bSemantic
+}
+
+func (m *Manager) drainPendingDetectionLocked() ([]core.Frame, *detectionSnapshot) {
+	if !m.pendingDetection {
+		return nil, nil
+	}
+	at := m.pendingDetectAt
+	m.pendingDetection = false
+	if m.closed || m.muted || !m.active || !m.hasSilenceSince {
+		return nil, nil
+	}
+	return m.advanceLocked(at)
 }
 
 func (m *Manager) snapshotCurrentLocked(snapshot *detectionSnapshot) bool {
@@ -310,20 +362,26 @@ func detectSafely(detector TurnDetector, input DetectionInput) (decision Detecti
 	return decision, done, false
 }
 
-func validDecision(decision DetectionDecision) bool {
+func normalizeDecision(decision DetectionDecision) (DetectionDecision, bool) {
+	if math.IsNaN(decision.Confidence) || math.IsInf(decision.Confidence, 0) {
+		return DetectionDecision{}, false
+	}
 	switch decision.Reason {
 	case core.TurnReasonSilence:
 	case core.TurnReasonSemantic:
 		if !decision.HasConfidence {
-			return false
+			return DetectionDecision{}, false
 		}
 	default:
-		return false
+		return DetectionDecision{}, false
 	}
-	if decision.HasConfidence && (math.IsNaN(decision.Confidence) || math.IsInf(decision.Confidence, 0) || decision.Confidence < 0 || decision.Confidence > 1) {
-		return false
+	if decision.HasConfidence && (decision.Confidence < 0 || decision.Confidence > 1) {
+		return DetectionDecision{}, false
 	}
-	return true
+	if !decision.HasConfidence {
+		decision.Confidence = 0
+	}
+	return decision, true
 }
 
 // SetMuted pauses all turn and timeout advancement. Unmute discards muted
@@ -345,6 +403,7 @@ func (m *Manager) SetMuted(muted bool, at time.Time) error {
 		m.muted, m.muteSince = true, at
 		m.startCandidate = false
 		m.stopCandidate = false
+		m.pendingDetection = false
 		m.semantic = nil
 		return nil
 	}
@@ -447,6 +506,10 @@ func (m *Manager) advanceLocked(at time.Time) ([]core.Frame, *detectionSnapshot)
 		}
 		if m.hasSilenceSince {
 			if m.detectionInFlight {
+				m.pendingDetection = true
+				if at.After(m.pendingDetectAt) {
+					m.pendingDetectAt = at
+				}
 				return frames, nil
 			}
 			var semantic *SemanticEvidence
@@ -464,6 +527,8 @@ func (m *Manager) advanceLocked(at time.Time) ([]core.Frame, *detectionSnapshot)
 				generation: m.currentGen, turnStartedAt: m.turnStartedAt, silenceSince: m.silenceSince,
 			}
 			m.detectionInFlight = true
+			m.pendingDetection = false
+			m.pendingDetectAt = at
 			return frames, snapshot
 		}
 	}
@@ -511,7 +576,8 @@ func (m *Manager) completeLocked(at time.Time, reason core.TurnReason, confidenc
 	e := event(m.currentID, m.currentGen, core.TurnEventCompleted, at, reason, confidence, hasConfidence)
 	m.active = false
 	m.speaking, m.stopCandidate, m.startCandidate, m.hasSilenceSince = false, false, false, false
-	m.bumpRevisionLocked()
+	m.pendingDetection = false
+	m.bumpEpochLocked()
 	return []core.Frame{e}
 }
 
@@ -525,7 +591,8 @@ func (m *Manager) interruptLocked(id core.TurnID, generation core.Generation, at
 	e := event(id, generation, core.TurnEventInterrupted, at, core.TurnReasonInterrupted, 0, false)
 	m.active = false
 	m.speaking, m.stopCandidate, m.startCandidate, m.hasSilenceSince = false, false, false, false
-	m.bumpRevisionLocked()
+	m.pendingDetection = false
+	m.bumpEpochLocked()
 	return []core.Frame{e}
 }
 
@@ -560,6 +627,7 @@ func (m *Manager) clearPendingLocked() {
 	m.startCandidate, m.stopCandidate = false, false
 	m.speaking = false
 	m.hasSilenceSince = false
+	m.pendingDetection = false
 }
 
 func event(id core.TurnID, generation core.Generation, kind core.TurnEventKind, at time.Time, reason core.TurnReason, confidence float64, hasConfidence bool) *core.TurnEventFrame {
