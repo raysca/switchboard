@@ -27,7 +27,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 | Gate | Status | Evidence/remaining condition |
 |---|---|---|
-| A — Core Contracts Stable | Open | Tasks 1–5 passed independent review and testing; the independent Phase 1 tester remains. |
+| A — Core Contracts Stable | Passed | Independent Phase 1 tester PASS at `00175a9`: core/server race and vet, focused API/auth, UI tests/typecheck/build, SQLite/PostgreSQL 18 repository contract, and `make verify`; dependency and Task 1 contract boundaries inspected. |
 | B — P0 Audio Path Stable | Open | Pinned client cannot clear already-buffered playback; P0 framework implementation remains open. |
 | C — Tool Loop Stable | Open | Contract frozen; framework/provider implementation remains open. |
 | D — Persistent Agent Runtime | Open | Domain/snapshot contract frozen; server implementation remains open. |
@@ -80,7 +80,15 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [x] Task 3: Storage foundation and dialect migrations. Independent reviewer APPROVED after two fix rounds; final independent tester PASS on SQLite and PostgreSQL 18.
 - [x] Task 4: Management API/auth skeleton. Independent reviewer APPROVED after one fix round; final independent tester PASS.
 - [x] Task 5: UI shell and typed API client. Independent reviewer APPROVED after one fix round; final independent tester PASS.
-- [ ] Independent Phase 1 tester gate; record Gate A.
+- [x] Independent Phase 1 tester gate; Gate A passed at `00175a9`.
+
+### Gate A independent verification
+
+- At `00175a9`, `cd core && go test -race -count=1 ./... && go vet ./...` and the equivalent Server commands passed with `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk` and `CGO_LDFLAGS=-Wl,-w`. Focused `Test(API|Auth|Token|Config)` Server tests passed.
+- `cd ui && npm test -- --run && npm run typecheck && npm run build` passed (10/10 UI tests). Root `make verify` passed the root/core/provider/server checks, formatting, manifest, and fixtures. Its playback-clear probe still observes that the pinned unmodified client cannot clear buffered playback; the target exits successfully only under the recorded Phase 0 decision.
+- The race-enabled shared repository contract passed against SQLite and a disposable PostgreSQL 18 container, along with PostgreSQL integration, config-hash round trip, and migration upgrade/rollback checks. The isolated migration schema was absent after testing, and the container was removed.
+- `go list -deps` and core import inspection found no Server, UI, storage, or MCP dependency. Focused core contract tests passed for distinct session/turn/generation types, trace/span parentage and no-op behavior, privacy and immutable observer/debug values, debug correlation, and provider-neutral tool executor signatures. The serializer boundary is a protocol-neutral debug value contract; general serializer implementation and wire mapping remain deferred to their planned tasks.
+- Final `git status --porcelain=v1` and `git diff --check` were empty. No product code changed during Gate A testing.
 
 ### Task 1 closeout
 
@@ -194,4 +202,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Tasks 1–5 are complete. Phase 0 completion is distinct from Gate A: Gate A remains open pending the independent Phase 1 tester. Gates A–G remain open; product implementation tasks are not complete.
+Tasks 1–5 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Gates B–G remain open. Next unblocked work is Phase 2 Task 6; product implementation tasks are not complete.
