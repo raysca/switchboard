@@ -303,6 +303,110 @@ func TestControlReentryAndInlineCommit(t *testing.T) {
 	}
 }
 
+func TestMuteQueuedAndInlineControlsKeepAdmissionAndStateOrdered(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		queued, inline Frame
+		first, final   bool
+	}{
+		{"queued mute then inline unmute", &InputMuteFrame{}, &InputUnmuteFrame{}, true, false},
+		{"queued unmute then inline mute", &InputUnmuteFrame{}, &InputMuteFrame{}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			inlineDone := make(chan struct{})
+			audio := make(chan struct{}, 1)
+			pipe, _ := NewPipeline(&testFnProcessor{fn: func(_ context.Context, f Frame, d Direction, e Emitter) error {
+				if f.Type() == FrameStart {
+					close(entered)
+					<-release
+					err := e.Push(tc.inline)
+					close(inlineDone)
+					return err
+				}
+				if f.Type() == FrameInputAudio {
+					audio <- struct{}{}
+				}
+				return e.PushDirection(f, d)
+			}})
+			s, _ := NewSession(20, pipe, DefaultResourceBudget())
+			states := make(chan observedMuteState, 2)
+			s.OnOutput = func(f Frame) {
+				if v, ok := f.(*InputMutedStateFrame); ok {
+					states <- observedMuteState{v.Muted, s.InputMuted()}
+				}
+			}
+			_ = s.Start()
+			defer s.Close()
+			_ = s.Post(&StartFrame{})
+			<-entered
+			if err := s.Post(tc.queued); err != nil {
+				t.Fatal(err)
+			}
+			close(release)
+			<-inlineDone
+			_ = s.Post(&InputAudioFrame{Samples: []byte{1}})
+			first := awaitState(t, states)
+			second := awaitState(t, states)
+			if first.event != tc.first || first.applied != tc.first || second.event != tc.final || second.applied != tc.final {
+				t.Fatalf("out of order state: %+v then %+v", first, second)
+			}
+			select {
+			case <-audio:
+				if tc.final {
+					t.Fatal("audio leaked after mute")
+				}
+			case <-time.After(30 * time.Millisecond):
+				if !tc.final {
+					t.Fatal("audio discarded after unmute")
+				}
+			}
+		})
+	}
+}
+
+func TestFlushRejectsZeroOrConflictingTargetBeforeCommit(t *testing.T) {
+	pipe, _ := NewPipeline(&PassthroughProcessor{})
+	s, _ := NewSession(21, pipe, DefaultResourceBudget())
+	if err := s.Post(&FlushFrame{}); err != ErrInvalidControlGeneration {
+		t.Fatalf("zero target: %v", err)
+	}
+	if s.CurrentGeneration() != 1 {
+		t.Fatal("zero target advanced generation")
+	}
+	if err := s.Reenter(&FlushFrame{Gen: 2}, Downstream, 0, 1); err != ErrInvalidControlGeneration {
+		t.Fatalf("conflicting target: %v", err)
+	}
+	if s.CurrentGeneration() != 1 {
+		t.Fatal("conflicting target advanced generation")
+	}
+	seen := make(chan Frame, 1)
+	s.OnOutput = func(f Frame) { seen <- f }
+	_ = s.Start()
+	defer s.Close()
+	select {
+	case f := <-seen:
+		t.Fatalf("rejected flush published: %T", f)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if err := s.Post(&FlushFrame{Gen: 1}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case f := <-seen:
+		v, ok := f.(*FlushFrame)
+		if !ok || v.Gen != 1 {
+			t.Fatalf("wrong committed target: %T %+v", f, f)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("committed flush missing")
+	}
+	if s.CurrentGeneration() != 2 {
+		t.Fatalf("one flush advanced to %d", s.CurrentGeneration())
+	}
+}
+
 func TestControlReentryFlushCommitsFence(t *testing.T) {
 	pipe, _ := NewPipeline(&PassthroughProcessor{})
 	s, _ := NewSession(16, pipe, DefaultResourceBudget())

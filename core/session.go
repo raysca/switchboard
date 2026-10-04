@@ -11,15 +11,16 @@ import (
 )
 
 var (
-	ErrQueueFull         = errors.New("core: data queue full")
-	ErrControlQueueFull  = errors.New("core: control queue full")
-	ErrRunawayEmits      = errors.New("core: runaway frame emits exceeded budget")
-	ErrTooManyTasks      = errors.New("core: async task budget exceeded")
-	ErrProcessorWatchdog = errors.New("core: processor exceeded MaxFrameProcessing watchdog")
-	ErrSessionClosed     = errors.New("core: session closed")
-	ErrStaleGeneration   = errors.New("core: frame discarded due to stale generation")
-	ErrTeardownTimeout   = errors.New("core: teardown timeout exceeded, leaked tasks present")
-	ErrSlowOutput        = errors.New("core: current-generation output audio queue is full; session terminated")
+	ErrQueueFull                = errors.New("core: data queue full")
+	ErrControlQueueFull         = errors.New("core: control queue full")
+	ErrRunawayEmits             = errors.New("core: runaway frame emits exceeded budget")
+	ErrTooManyTasks             = errors.New("core: async task budget exceeded")
+	ErrProcessorWatchdog        = errors.New("core: processor exceeded MaxFrameProcessing watchdog")
+	ErrSessionClosed            = errors.New("core: session closed")
+	ErrStaleGeneration          = errors.New("core: frame discarded due to stale generation")
+	ErrInvalidControlGeneration = errors.New("core: control frame generation conflicts with envelope")
+	ErrTeardownTimeout          = errors.New("core: teardown timeout exceeded, leaked tasks present")
+	ErrSlowOutput               = errors.New("core: current-generation output audio queue is full; session terminated")
 )
 
 // SessionState tracks the lifecycle phase of a voice session.
@@ -266,11 +267,19 @@ func (s *Session) admit(f Frame, dir Direction, resumeIndex int, suppliedGen uin
 	case FrameInputUnmute:
 		s.admissionMuted = false
 	case FrameFlush:
+		ff := f.(*FlushFrame)
+		if ff.Gen == 0 || (suppliedGen != 0 && suppliedGen != ff.Gen) {
+			s.admissionMu.Unlock()
+			return ErrInvalidControlGeneration
+		}
+		gen = ff.Gen
 		if gen == 0 || gen != s.CurrentGeneration() {
 			s.admissionMu.Unlock()
 			return ErrStaleGeneration
 		}
 		s.gen.Add(1)
+		env.Frame = &FlushFrame{Gen: gen, committed: true}
+		env.Gen = gen
 		env.CommittedFlush = true
 	case FrameInterruption:
 		if gen != 0 && gen < s.CurrentGeneration() {
@@ -490,7 +499,7 @@ func (s *Session) processEnvelope(env Envelope) bool {
 		env.Frame = &InputMutedStateFrame{Muted: false}
 	}
 	if env.CommittedFlush {
-		env.Frame = &FlushFrame{Gen: env.Frame.(*FlushFrame).Gen, committed: true}
+		env.Frame = &FlushFrame{Gen: env.Gen, committed: true}
 	}
 
 	// Reset per-envelope emit counter and set watchdog start time
@@ -534,16 +543,11 @@ func (s *Session) deliver(f Frame, dir Direction, to int) error {
 	// flush event so their observable result cannot lie about session state.
 	switch f.Type() {
 	case FrameInputMute, FrameInputUnmute:
-		muted := f.Type() == FrameInputMute
-		s.admissionMu.Lock()
-		s.admissionMuted = muted
-		s.inputMuted.Store(muted)
-		s.admissionMu.Unlock()
-		f = &InputMutedStateFrame{Muted: muted}
+		return s.admit(f, dir, to, 0)
 	case FrameFlush:
 		ff := f.(*FlushFrame)
 		s.admissionMu.Lock()
-		if ff.Gen == s.CurrentGeneration() {
+		if !ff.committed && ff.Gen == s.CurrentGeneration() {
 			s.gen.Add(1)
 			ff = &FlushFrame{Gen: ff.Gen, committed: true}
 			f = ff
