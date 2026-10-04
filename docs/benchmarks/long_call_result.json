@@ -1,7 +1,0 @@
-{
-  "hold_seconds": 250,
-  "ran_at": "2026-09-28T10:31:47+01:00",
-  "rotation_line": "voice_stt_rotations_total 1",
-  "threshold_seconds": 240,
-  "transcript_excerpt": "{\"id\":\"msg-1\",\"label\":\"rtvi-ai\",\"type\":\"bot-ready\",\"data\":{\"version\":\"2.1.0\"}}\n{\"id\":\"msg-2\",\"label\":\"rtvi-ai\",\"type\":\"user-started-speaking\"}\n{\"id\":\"msg-3\",\"label\":\"rtvi-ai\",\"type\":\"user-stopped-speaking\"}\n{\"id\":\"msg-4\",\"label\":\"rtvi-ai\",\"type\":\"user-transcription\",\"data\":{\"text\":\"what is 2 + 2\",\"final\":true,\"timestamp\":\"2026-09-28T10:27:33.962191+01:00\"}}\n{\"id\":\"msg-5\",\"label\":\"rtvi-ai\",\"type\":\"bot-llm-text\",\"data\":{\"text\":\"2 +\"}}\n{\"id\":\"msg-6\",\"label\":\"rtvi-ai\",\"type\":\"bot-llm-text\",\"data\":{\"text\":\" 2 = 4\"}}\n{\"id\":\"msg-7\",\"label\":\"rtvi-ai\",\"type\":\"bot-started-speaking\"}\n{\"id\":\"msg-8\",\"label\":\"rtvi-ai\",\"type\":\"bot-stopped-speaking\"}\n{\"id\":\"msg-9\",\"label\":\"rtvi-ai\",\"type\":\"user-started-speaking\"}\n{\"id\":\"msg-10\",\"label\":\"rtvi-ai\",\"type\":\"user-stopped-speaking\"}\n{\"id\":\"msg-11\",\"label\":\"rtvi-ai\",\"type\":\"user-transcription\",\"data\":{\"text\":\"what is 3 + 3\",\"final\":true,\"timestamp\":\"2026-09-28T10:31:47.169783+01:00\"}}"
-}
