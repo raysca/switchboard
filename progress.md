@@ -64,6 +64,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Independent reviewer: identified gate-ordering, contract-dependency, premature P1, task granularity, stale task-reference, progress wording, and validator-provenance findings; all findings are addressed in this revision.
 - Phase 0 document reviewer/fixer: completed Round 1 corrections; Gate A/E/G sequencing corrected; Task 1 now includes compile-time tool contracts; P0 gate no longer depends on the later eval harness; functional P1/P2 work is deferred and split into reviewable tasks; progress distinguishes the Phase 0 review from Gate A.
 - Reverification after these fixes: `node tools/compat/validate_manifest.js`, `node tools/compat/probe_playback_clear.js`, `node tools/compat/verify_fixtures.js`, `git diff --check`, placeholder scan, and `make verify` all exited 0. Playback remains unsupported; probe exit 0 is only via the recorded decision.
+- Final bookkeeping: independent tester PASS is recorded at initial deliverables commit `02af5c9`; review Rounds 1–2 are complete; all Critical and Important findings were addressed by `09150ac`; the remaining Task 12 wording has been corrected in the closeout commit. Phase 0 is complete. Gates A–G all remain open for implementation evidence.
 
 ### Independent review Round 2 corrections
 
@@ -159,4 +160,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-After the Phase 0 document reviewer records the contract freeze, begin Phase 1 tasks. Phase 0 reviewer approval is distinct from Gate A: Gate A remains open until the Phase 1 independent tester verifies public contract APIs and tests. Keep implementation tasks open; this ledger marks no product implementation phase complete.
+Next unblocked work is Task 1: turn, trace, observer/serializer boundary, and public tool-type contracts. Phase 0 completion is distinct from Gate A: Gate A remains open until the Phase 1 independent tester verifies public contract APIs and tests. Gates A–G remain open; product implementation tasks are not complete.

@@ -176,7 +176,7 @@ For every task below: add the named focused regression tests first and run them 
 
 **Files:** `providers/google/llm.go`, `providers/google/tools.go`, `providers/xai/llm.go`, `providers/xai/tools.go`, provider tests; `docs/pipecat-compatibility.md`.
 
-**Interfaces:** Consumes Task 11 tool types. Produces symmetric schema mapping, call/result parsing, continuation, and cancellation/retry rules. Usage metrics are deferred to P1 Task 32; readiness-event behavior is deferred to P2 Task 43.
+**Interfaces:** Consumes Task 1 public tool types and Task 11 ToolLoop behavior. Produces symmetric schema mapping, call/result parsing, continuation, and cancellation/retry rules. Usage metrics are deferred to P1 Task 32; readiness-event behavior is deferred to P2 Task 43.
 
 - [ ] Add identical shared contract cases to both provider modules; run focused provider tests and confirm failures.
 - [ ] Implement adapters; run each focused suite then `cd providers/google && go test -race -count=1 ./... && go vet ./...` and the equivalent in `providers/xai`.
