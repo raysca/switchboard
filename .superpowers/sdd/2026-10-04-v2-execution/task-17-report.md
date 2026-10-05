@@ -1,6 +1,6 @@
 # Task 17: MCP discovery and validation
 
-Status: implementation and review remediations complete; final race/vet verification pending.
+Status: implementation, independent review remediations, and final race/vet verification complete.
 
 ## Delivered
 
@@ -34,7 +34,8 @@ The server had no MCP SDK dependency. The official `github.com/modelcontextproto
 - API tests cover management auth, absent-auth fail-closed behavior, and rejecting endpoint query secrets without returning them.
 - Full server: `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS='-Wl,-w' go test -race -count=1 ./...` passed, including agent, credential, provider, MCP, storage, and server packages.
 - Full server vet with the same SDK environment passed; `git diff --check` passed.
+- Review remediation verification: `go test -race -count=10 ./mcp` passed; final focused `go test -race -count=1 ./mcp` and full-server `go vet ./...` passed with the same SDK environment. The default Command Line Tools SDK link failed against its macOS 27 TBD stubs; the required Xcode macOS 26 SDK workaround passed.
 
 ## Review
 
-Independent MCP/security review is pending. Apply any findings before the Task 17 commit.
+Independent review findings were remediated: bounded/cycle-safe schema preflight, recursive result redaction, wire DTO/integer preservation, typed SDK failures, authenticated root-listener mounting and request-ID propagation, bounded session DELETE cleanup, common DNS/dial public-egress enforcement, and correlation-safe execution identity/tracing.
