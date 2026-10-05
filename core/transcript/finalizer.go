@@ -34,6 +34,9 @@ type Config struct {
 	FinalizationTimeout time.Duration
 	MaxTextBytes        int
 	MaxRetiredTurns     int
+	// PolicyClock supplies receipt-order time and the single deadline driver.
+	// Nil selects the monotonic component of the process clock.
+	PolicyClock PolicyClock
 }
 
 func DefaultConfig() Config {
@@ -50,10 +53,13 @@ func DefaultConfig() Config {
 // Candidate is a raw provider hypothesis. Final means the provider will not
 // revise this hypothesis; EndOfUtterance is the stronger speech boundary.
 type Candidate struct {
-	Turn           core.TurnID
-	Generation     core.Generation
-	Text           string
-	At             time.Time
+	Turn       core.TurnID
+	Generation core.Generation
+	Text       string
+	At         time.Time
+	// SourceAt is the provider/media timestamp retained for emitted frames.
+	// At is receipt-ordered policy time and alone controls ordering/deadlines.
+	SourceAt       time.Time
 	Final          bool
 	EndOfUtterance bool
 	Stability      float64
@@ -74,7 +80,16 @@ type Output struct {
 	Generation core.Generation
 	Text       string
 	At         time.Time
+	SourceAt   time.Time
 }
+
+type candidateStrength uint8
+
+const (
+	strengthInterim candidateStrength = iota + 1
+	strengthProviderFinal
+	strengthUtteranceFinal
+)
 
 type turnKey struct {
 	turn core.TurnID
@@ -91,6 +106,8 @@ type turnState struct {
 	completed       bool
 	completedAt     time.Time
 	deadline        time.Time
+	strength        candidateStrength
+	sourceAt        time.Time
 }
 
 // Finalizer is safe for concurrent callers. It never invokes external code,
@@ -139,34 +156,43 @@ func (f *Finalizer) Observe(candidate Candidate) ([]Output, error) {
 	if err != nil || stale {
 		return nil, err
 	}
+	if err := f.acceptTimeLocked(candidate.At); err != nil {
+		return nil, err
+	}
+	outputs := f.expireDueLocked(candidate.At)
 	if _, ok := f.retired[key]; ok {
-		return nil, nil
+		return outputs, nil
 	}
 	state := f.turns[key]
 	if state == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
-		return nil, ErrRetiredTurnLimit
-	}
-	if err := f.acceptTimeLocked(candidate.At); err != nil {
-		return nil, err
+		return outputs, ErrRetiredTurnLimit
 	}
 	if state == nil {
 		state = &turnState{}
 		f.turns[key] = state
 	}
 
-	var outputs []Output
-	if candidate.Final {
+	strength := strengthInterim
+	if candidate.EndOfUtterance {
+		strength = strengthUtteranceFinal
+	} else if candidate.Final {
+		strength = strengthProviderFinal
+	}
+	if strength >= state.strength {
 		state.text = text
 		state.hasCandidate = true
-		state.hasFinal = true
-		if state.completed {
-			state.deadline = state.completedAt.Add(f.cfg.GracePeriod)
-		} else if candidate.EndOfUtterance && state.deadline.IsZero() {
-			state.deadline = candidate.At.Add(f.cfg.GracePeriod)
+		state.strength = strength
+		state.hasFinal = strength >= strengthProviderFinal
+		state.sourceAt = candidate.SourceAt
+		if state.sourceAt.IsZero() {
+			state.sourceAt = candidate.At
 		}
-	} else if !state.hasFinal {
-		state.text = text
-		state.hasCandidate = true
+	}
+	if strength >= strengthProviderFinal {
+		if state.completed || strength == strengthUtteranceFinal {
+			f.setDeadlineLocked(state, candidate.At.Add(f.cfg.GracePeriod))
+		}
+	} else if state.strength == strengthInterim {
 		if text == state.lastRawText {
 			state.repeatCount++
 		} else {
@@ -176,13 +202,10 @@ func (f *Finalizer) Observe(candidate Candidate) ([]Output, error) {
 		stable := candidate.HasStability && candidate.Stability >= f.cfg.InterimStability
 		if (stable || state.repeatCount >= f.cfg.InterimRepeats) && text != state.lastInterimText {
 			state.lastInterimText = text
-			outputs = append(outputs, f.output(Interim, key, text, candidate.At))
+			outputs = append(outputs, f.output(Interim, key, text, candidate.At, candidate.SourceAt))
 		}
 	}
-
-	if !state.deadline.IsZero() && !candidate.At.Before(state.deadline) {
-		outputs = append(outputs, f.retireLocked(key, state, candidate.At)...)
-	}
+	outputs = append(outputs, f.expireDueLocked(candidate.At)...)
 	return outputs, nil
 }
 
@@ -199,34 +222,33 @@ func (f *Finalizer) Complete(turn core.TurnID, generation core.Generation, at ti
 	if err != nil || stale {
 		return nil, err
 	}
+	if err := f.acceptTimeLocked(at); err != nil {
+		return nil, err
+	}
+	outputs := f.expireDueLocked(at)
 	if _, ok := f.retired[key]; ok {
-		return nil, nil
+		return outputs, nil
 	}
 	state := f.turns[key]
 	if state == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
-		return nil, ErrRetiredTurnLimit
-	}
-	if err := f.acceptTimeLocked(at); err != nil {
-		return nil, err
+		return outputs, ErrRetiredTurnLimit
 	}
 	if state == nil {
 		state = &turnState{}
 		f.turns[key] = state
 	}
 	if state.completed {
-		return nil, nil
+		return outputs, nil
 	}
 	state.completed = true
 	state.completedAt = at
 	if state.hasFinal {
-		state.deadline = at.Add(f.cfg.GracePeriod)
+		f.setDeadlineLocked(state, at.Add(f.cfg.GracePeriod))
 	} else {
-		state.deadline = at.Add(f.cfg.FinalizationTimeout)
+		f.setDeadlineLocked(state, at.Add(f.cfg.FinalizationTimeout))
 	}
-	if !at.Before(state.deadline) {
-		return f.retireLocked(key, state, at), nil
-	}
-	return nil, nil
+	outputs = append(outputs, f.expireDueLocked(at)...)
+	return outputs, nil
 }
 
 // Advance applies caller-supplied time and returns commits in stable generation/turn order.
@@ -236,6 +258,24 @@ func (f *Finalizer) Advance(at time.Time) ([]Output, error) {
 	if err := f.acceptTimeLocked(at); err != nil {
 		return nil, err
 	}
+	return f.expireDueLocked(at), nil
+}
+
+// NextDeadline returns the earliest pending terminal deadline. It invokes no
+// external code and is used by the processor's single lifecycle-owned driver.
+func (f *Finalizer) NextDeadline() (time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var next time.Time
+	for _, state := range f.turns {
+		if !state.deadline.IsZero() && (next.IsZero() || state.deadline.Before(next)) {
+			next = state.deadline
+		}
+	}
+	return next, !next.IsZero()
+}
+
+func (f *Finalizer) expireDueLocked(at time.Time) []Output {
 	keys := make([]turnKey, 0, len(f.turns))
 	for key, state := range f.turns {
 		if !state.deadline.IsZero() && !at.Before(state.deadline) {
@@ -252,7 +292,7 @@ func (f *Finalizer) Advance(at time.Time) ([]Output, error) {
 	for _, key := range keys {
 		outputs = append(outputs, f.retireLocked(key, f.turns[key], at)...)
 	}
-	return outputs, nil
+	return outputs
 }
 
 func (f *Finalizer) Interrupt(turn core.TurnID, generation core.Generation, at time.Time) error {
@@ -292,7 +332,6 @@ func (f *Finalizer) acceptIdentityLocked(turn core.TurnID, generation core.Gener
 	}
 	if generation > f.generation {
 		f.generation = generation
-		f.lastAt = time.Time{}
 		clear(f.turns)
 		clear(f.retired)
 	}
@@ -330,9 +369,18 @@ func (f *Finalizer) retireLocked(key turnKey, state *turnState, at time.Time) []
 	if state == nil || !state.hasCandidate {
 		return nil
 	}
-	return []Output{f.output(Committed, key, state.text, at)}
+	return []Output{f.output(Committed, key, state.text, at, state.sourceAt)}
 }
 
-func (f *Finalizer) output(kind OutputKind, key turnKey, text string, at time.Time) Output {
-	return Output{Kind: kind, Turn: key.turn, Generation: key.gen, Text: strings.Clone(text), At: at}
+func (f *Finalizer) output(kind OutputKind, key turnKey, text string, at, sourceAt time.Time) Output {
+	if sourceAt.IsZero() {
+		sourceAt = at
+	}
+	return Output{Kind: kind, Turn: key.turn, Generation: key.gen, Text: strings.Clone(text), At: at, SourceAt: sourceAt}
+}
+
+func (f *Finalizer) setDeadlineLocked(state *turnState, deadline time.Time) {
+	if state.deadline.IsZero() || deadline.Before(state.deadline) {
+		state.deadline = deadline
+	}
 }

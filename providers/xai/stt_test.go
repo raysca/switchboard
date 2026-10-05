@@ -191,7 +191,7 @@ func TestXAISTT_TurnSemantics_IntermediateFinalVsSpeechFinal(t *testing.T) {
 	mockStream := &mockSTTStream{
 		messages: []*STTMessage{
 			{Type: "transcript.created"},
-			// Chunk final, but NOT speech final: must produce InterimTranscriptionFrame
+			// Chunk final, but NOT speech final: provider-final candidate, not EOU.
 			{Type: "transcript.partial", Text: "Good morning", IsFinal: true, SpeechFinal: false},
 			// Utterance final: must produce FinalTranscriptionFrame
 			{Type: "transcript.partial", Text: "Good morning everyone", IsFinal: true, SpeechFinal: true},
@@ -228,7 +228,7 @@ func TestXAISTT_TurnSemantics_IntermediateFinalVsSpeechFinal(t *testing.T) {
 
 	deadline := time.After(2 * time.Second)
 	var finalFrame *core.TranscriptCandidateFrame
-	var interimFrames []*core.TranscriptCandidateFrame
+	var providerFinals []*core.TranscriptCandidateFrame
 
 	for finalFrame == nil {
 		select {
@@ -236,8 +236,8 @@ func TestXAISTT_TurnSemantics_IntermediateFinalVsSpeechFinal(t *testing.T) {
 			t.Fatal("timed out waiting for transcription frames")
 		default:
 			for _, f := range sink.GetFrames() {
-				if it, ok := f.(*core.TranscriptCandidateFrame); ok && !it.Final {
-					interimFrames = append(interimFrames, it)
+				if it, ok := f.(*core.TranscriptCandidateFrame); ok && it.Final && !it.EndOfUtterance {
+					providerFinals = append(providerFinals, it)
 				}
 				if ft, ok := f.(*core.TranscriptCandidateFrame); ok && ft.Final {
 					finalFrame = ft
@@ -247,16 +247,16 @@ func TestXAISTT_TurnSemantics_IntermediateFinalVsSpeechFinal(t *testing.T) {
 		}
 	}
 
-	// Verify "Good morning" with is_final=true and speech_final=false was emitted as Interim
-	foundInterimChunkFinal := false
-	for _, it := range interimFrames {
+	// is_final closes a provider segment; speech_final closes the utterance.
+	foundChunkFinal := false
+	for _, it := range providerFinals {
 		if it.Text == "Good morning" {
-			foundInterimChunkFinal = true
+			foundChunkFinal = true
 			break
 		}
 	}
-	if !foundInterimChunkFinal {
-		t.Error("expected 'Good morning' (speech_final=false) to be emitted as InterimTranscriptionFrame")
+	if !foundChunkFinal {
+		t.Error("expected is_final=true/speech_final=false provider-final candidate")
 	}
 
 	// Verify FinalTranscriptionFrame was emitted for speech_final=true
@@ -364,7 +364,114 @@ func TestXAISTTEmitsRawCandidatesAndDoneIsUtteranceFinal(t *testing.T) {
 			t.Fatalf("provider emitted a committed-frame type directly: %T", frame)
 		}
 	}
-	if len(candidates) != 2 || candidates[0].Final || !candidates[0].HasStability || candidates[0].Stability != 1 || !candidates[1].Final {
+	if len(candidates) != 2 || !candidates[0].Final || candidates[0].EndOfUtterance || candidates[0].HasStability || !candidates[1].Final || !candidates[1].EndOfUtterance {
 		t.Fatalf("xAI is_final/speech_final/done mapping mismatch: %#v", candidates)
+	}
+}
+
+func TestXAISTTDoneUsesMessageTextAndFallsBackToLastText(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		messages []*STTMessage
+		want     string
+	}{
+		{"done-only", []*STTMessage{{Type: "transcript.created"}, {Type: "transcript.done", Text: "done text"}}, "done text"},
+		{"correction", []*STTMessage{{Type: "transcript.created"}, {Type: "transcript.partial", Text: "old", IsFinal: true}, {Type: "transcript.done", Text: "corrected"}}, "corrected"},
+		{"fallback", []*STTMessage{{Type: "transcript.created"}, {Type: "transcript.partial", Text: "last", IsFinal: true}, {Type: "transcript.done"}}, "last"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := &mockSTTStream{messages: tc.messages}
+			cfg := DefaultSTTConfig()
+			cfg.StreamOpener = &mockSTTOpener{stream: stream}
+			proc, _ := NewSTTProcessor(cfg)
+			sink := &core.PassthroughProcessor{}
+			pipe, _ := core.NewPipeline(proc, sink)
+			session, _ := core.NewSession(40, pipe, core.DefaultResourceBudget())
+			_ = session.Start()
+			defer session.Close()
+			_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+			time.Sleep(60 * time.Millisecond)
+			var got string
+			for _, frame := range sink.GetFrames() {
+				if c, ok := frame.(*core.TranscriptCandidateFrame); ok && c.EndOfUtterance {
+					got = c.Text
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("done final=%q want=%q", got, tc.want)
+			}
+		})
+	}
+}
+
+type channelSTTStream struct{ messages chan *STTMessage }
+
+func (s *channelSTTStream) SendAudio(context.Context, []byte) error { return nil }
+func (s *channelSTTStream) CloseSend(context.Context) error         { return nil }
+func (s *channelSTTStream) Recv(ctx context.Context) (*STTMessage, error) {
+	select {
+	case msg := <-s.messages:
+		return msg, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+func (s *channelSTTStream) Close() error { return nil }
+
+type sequenceSTTOpener struct {
+	mu      sync.Mutex
+	streams []*channelSTTStream
+}
+
+func (o *sequenceSTTOpener) OpenStream(context.Context, STTConfig) (STTStream, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	st := &channelSTTStream{messages: make(chan *STTMessage, 8)}
+	o.streams = append(o.streams, st)
+	return st, nil
+}
+
+func TestXAISTTStreamOwnershipIsImmutableAcrossTurns(t *testing.T) {
+	opener := &sequenceSTTOpener{}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = opener
+	proc, _ := NewSTTProcessor(cfg)
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	session, _ := core.NewSession(41, pipe, core.DefaultResourceBudget())
+	_ = session.Start()
+	defer session.Close()
+	openTurn := func(seq, gen uint64) *channelSTTStream {
+		_ = session.Post(&core.UserStartedSpeakingFrame{Seq: seq, Gen: gen})
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			opener.mu.Lock()
+			n := len(opener.streams)
+			var st *channelSTTStream
+			if n > 0 {
+				st = opener.streams[n-1]
+			}
+			opener.mu.Unlock()
+			if n >= int(seq) {
+				return st
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatalf("stream %d did not open", seq)
+		return nil
+	}
+	a, b, c := openTurn(1, 1), openTurn(2, 1), openTurn(3, 2)
+	a.messages <- &STTMessage{Type: "transcript.done", Text: "late A"}
+	b.messages <- &STTMessage{Type: "transcript.done", Text: "turn B"}
+	c.messages <- &STTMessage{Type: "transcript.done", Text: "turn C"}
+	time.Sleep(30 * time.Millisecond)
+	seen := map[string]string{}
+	for _, frame := range sink.GetFrames() {
+		if cand, ok := frame.(*core.TranscriptCandidateFrame); ok {
+			seen[cand.Text] = string(cand.Turn)
+		}
+	}
+	if seen["late A"] != "turn-1-1" || seen["turn B"] != "turn-1-2" || seen["turn C"] != "turn-2-3" {
+		t.Fatalf("stream result relabeled: %#v", seen)
 	}
 }

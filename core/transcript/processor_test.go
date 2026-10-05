@@ -2,11 +2,21 @@ package transcript
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"govoice/core"
 )
+
+type manualPolicyClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *manualPolicyClock) Now() time.Time                     { c.mu.Lock(); defer c.mu.Unlock(); return c.now }
+func (c *manualPolicyClock) NewTimer(time.Duration) PolicyTimer { panic("timer not used") }
+func (c *manualPolicyClock) Set(at time.Time)                   { c.mu.Lock(); c.now = at; c.mu.Unlock() }
 
 type recordingEmitter struct{ frames []core.Frame }
 
@@ -60,7 +70,10 @@ func TestProcessorSeparatesRawCandidatesFromCommittedFinals(t *testing.T) {
 }
 
 func TestProcessorConsumesTurnDecisionAndExplicitAdvance(t *testing.T) {
-	p, _ := NewProcessor(testConfig())
+	cfg := testConfig()
+	clock := &manualPolicyClock{now: time.Unix(100, 0)}
+	cfg.PolicyClock = clock
+	p, _ := NewProcessor(cfg)
 	emitter := &recordingEmitter{}
 	t0 := time.Unix(11, 0)
 	if err := p.ProcessFrame(context.Background(), &core.TranscriptCandidateFrame{
@@ -73,6 +86,7 @@ func TestProcessorConsumesTurnDecisionAndExplicitAdvance(t *testing.T) {
 	}, core.Downstream, emitter); err != nil {
 		t.Fatal(err)
 	}
+	clock.Set(time.Unix(102, 0))
 	if err := p.ProcessFrame(context.Background(), &core.TranscriptAdvanceFrame{
 		At: t0.Add(time.Second + time.Millisecond),
 	}, core.Downstream, emitter); err != nil {
@@ -87,6 +101,60 @@ func TestProcessorConsumesTurnDecisionAndExplicitAdvance(t *testing.T) {
 	if commits != 1 {
 		t.Fatalf("expected one timeout commit, got %d in %#v", commits, emitter.frames)
 	}
+}
+
+func TestProcessorPolicyOrderingIgnoresDelayedSourceTimestamp(t *testing.T) {
+	cfg := testConfig()
+	cfg.GracePeriod = 0
+	clock := &manualPolicyClock{now: time.Unix(110, 0)}
+	cfg.PolicyClock = clock
+	p, _ := NewProcessor(cfg)
+	emitter := &recordingEmitter{}
+	sourceCandidate := time.Unix(110, 0)
+	if err := p.ProcessFrame(context.Background(), &core.TranscriptCandidateFrame{
+		Text: "on time", Turn: "A", Gen: 1, Timestamp: sourceCandidate, Final: true,
+	}, core.Downstream, emitter); err != nil {
+		t.Fatal(err)
+	}
+	clock.Set(time.Unix(111, 0))
+	if err := p.ProcessFrame(context.Background(), &core.TurnEventFrame{
+		Kind: core.TurnEventCompleted, Turn: "A", Gen: 1, At: time.Unix(100, 0),
+	}, core.Downstream, emitter); err != nil {
+		t.Fatalf("delayed source event regressed policy time: %v", err)
+	}
+	final, ok := emitter.frames[len(emitter.frames)-1].(*core.FinalTranscriptionFrame)
+	if !ok || final.Timestamp != sourceCandidate || final.Text != "on time" {
+		t.Fatalf("source timestamp was not retained separately: %#v", emitter.frames)
+	}
+}
+
+func TestProcessorDeadlineDriverCommitsWithoutExplicitAdvance(t *testing.T) {
+	cfg := testConfig()
+	cfg.GracePeriod = 5 * time.Millisecond
+	p, _ := NewProcessor(cfg)
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(p, sink)
+	session, _ := core.NewSession(991, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	source := time.Unix(50, 0)
+	_ = session.Post(&core.TranscriptCandidateFrame{Text: "driven", Turn: "A", Gen: 1, Timestamp: source, Final: true})
+	_ = session.Post(&core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "A", Gen: 1, At: time.Unix(40, 0)})
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, frame := range sink.GetFrames() {
+			if final, ok := frame.(*core.FinalTranscriptionFrame); ok && final.Committed {
+				if final.Text != "driven" || final.Timestamp != source {
+					t.Fatalf("wrong commit: %#v", final)
+				}
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("deadline driver did not commit")
 }
 
 func TestProcessorDropsInterruptedTurn(t *testing.T) {

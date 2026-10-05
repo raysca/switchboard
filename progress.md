@@ -136,18 +136,22 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 - Implementation is prepared for independent review; Task 9 deliberately
   remains unchecked and Gate B remains open. `core/transcript` now owns raw
-  candidate stabilization, explicit-time grace/timeout, late-final selection,
+  candidate stabilization, receipt-time grace/timeout, late-final selection,
   exactly-once commit, interruption/generation fencing, and bounded fail-closed
-  retirement. V2 context assembly accepts only finalizer-marked commits.
+  retirement. Its one session-owned deadline driver uses an injectable
+  monotonic policy clock; provider/media timestamps are retained only as source
+  metadata. V2 context assembly accepts only finalizer-marked commits and
+  boundedly suppresses replay by `(TurnID, Generation)`.
 - Google and tagged xAI adapters emit raw candidates. Google preserves the SDK's
-  audio-portion `IsFinal` and interim-only `Stability`; xAI preserves the
-  difference between chunk `is_final`, utterance `speech_final`, and
-  `transcript.done`. Google's provider-local five-second text/wall-clock dedupe
-  was removed.
+  audio-portion `IsFinal` and interim-only `Stability`, consumes every result in
+  a response, and assembles offset-ordered final segments while reconciling
+  rotation overlap. xAI preserves the difference between provider-final
+  `is_final`, utterance `speech_final`, and `transcript.done`; done text is
+  authoritative when present. Provider streams retain immutable turn owners.
 - The production server and demos insert the finalizer before UserContext. The
-  current V1 VAD assembly explicitly selects zero grace because it has no
-  transcript advance driver; configured nonzero grace/timeout is driven by
-  typed turn events and caller-supplied `TranscriptAdvanceFrame` timestamps.
+  production path now keeps the nonzero grace/timeout defaults; the lifecycle
+  driver advances typed completion even when no further frame arrives. Focused
+  server tests cover delayed-final, interim-only, and empty-result turns.
 - Focused RED/GREEN evidence, verification commands, and assumptions are in
   `.superpowers/sdd/2026-10-04-v2-execution/task-9-report.md`. Independent
   review and the Phase 2 tester are still required before Task 9 or Gate B can

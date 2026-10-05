@@ -239,11 +239,7 @@ func (r *Registry) BuildPipeline(
 		MaxMessages: pCfg.MaxMessages,
 		MaxTokens:   pCfg.MaxTokens,
 	})
-	// The V1 VAD path has no caller-driven transcript Advance frames yet, so
-	// it uses zero grace while still routing every provider candidate through
-	// the V2 exactly-once commit boundary.
 	transcriptCfg := coretranscript.DefaultConfig()
-	transcriptCfg.GracePeriod = 0
 	transcriptProc, err := coretranscript.NewProcessor(transcriptCfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create transcript finalizer: %w", err)

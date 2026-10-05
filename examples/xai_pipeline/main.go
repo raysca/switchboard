@@ -58,7 +58,6 @@ func main() {
 		MaxTokens:   4096,
 	})
 	transcriptCfg := coretranscript.DefaultConfig()
-	transcriptCfg.GracePeriod = 0 // V1 VAD compatibility; V2 turn managers drive Advance explicitly.
 	transcriptProc, _ := coretranscript.NewProcessor(transcriptCfg)
 	userCtxProc := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 

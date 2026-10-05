@@ -229,7 +229,7 @@ func (p *STTProcessor) Close() error {
 func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch frame := f.(type) {
 	case *core.StartFrame:
-		return p.ensureStream(ctx)
+		return e.PushDirection(f, dir)
 
 	case *core.UserStartedSpeakingFrame:
 		p.mu.Lock()
@@ -237,9 +237,14 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.streamGen = frame.Gen
 		if p.active != nil {
 			p.active.mu.Lock()
-			p.active.turnID = p.turnID
-			p.active.gen = frame.Gen
+			owned := p.active.turnID != "" && (p.active.turnID != p.turnID || p.active.gen != frame.Gen)
+			if p.active.turnID == "" {
+				p.active.turnID, p.active.gen = p.turnID, frame.Gen
+			}
 			p.active.mu.Unlock()
+			if owned {
+				p.active = nil // old receiver retains immutable ownership while draining
+			}
 		}
 		p.mu.Unlock()
 		if err := p.ensureStream(ctx); err != nil {
@@ -254,9 +259,14 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.streamGen = uint64(frame.Gen)
 			if p.active != nil {
 				p.active.mu.Lock()
-				p.active.turnID = p.turnID
-				p.active.gen = p.streamGen
+				owned := p.active.turnID != "" && (p.active.turnID != p.turnID || p.active.gen != p.streamGen)
+				if p.active.turnID == "" {
+					p.active.turnID, p.active.gen = p.turnID, p.streamGen
+				}
 				p.active.mu.Unlock()
+				if owned {
+					p.active = nil
+				}
 			}
 			p.mu.Unlock()
 		}
@@ -472,6 +482,7 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 					turnGen = p.session.CurrentGeneration()
 				}
 				st.lastText = msg.Text
+				isProviderFinal := msg.IsFinal || msg.SpeechFinal
 				isUtteranceFinal := msg.SpeechFinal
 				st.mu.Unlock()
 
@@ -482,10 +493,10 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 					Turn:           core.TurnID(turn),
 					Gen:            core.Generation(turnGen),
 					Timestamp:      p.cfg.Now(),
-					Final:          isUtteranceFinal,
+					Final:          isProviderFinal,
 					EndOfUtterance: isUtteranceFinal,
 					Stability:      boolStability(msg.IsFinal),
-					HasStability:   msg.IsFinal && !isUtteranceFinal,
+					HasStability:   false,
 					Provider:       "xai",
 				}
 				_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
@@ -497,7 +508,10 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 				if turnGen == 0 && p.session != nil {
 					turnGen = p.session.CurrentGeneration()
 				}
-				lastText := st.lastText
+				lastText := msg.Text
+				if lastText == "" {
+					lastText = st.lastText
+				}
 				st.mu.Unlock()
 
 				// transcript.done closes the stream/utterance. Re-emitting the last

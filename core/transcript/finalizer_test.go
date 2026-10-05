@@ -264,3 +264,30 @@ func TestFinalizerRejectedInputDoesNotAdvancePolicyTime(t *testing.T) {
 		t.Fatalf("rejected input poisoned policy time: %v", err)
 	}
 }
+
+func TestFinalizerExpiresBeforeLateInputAndPreservesUtteranceFinalStrength(t *testing.T) {
+	f, _ := NewFinalizer(testConfig())
+	t0 := time.Unix(12, 0)
+	provider := candidate("A", 1, "provider final", t0)
+	provider.Final = true
+	_, _ = f.Observe(provider)
+	_, _ = f.Complete("A", 1, t0.Add(10*time.Millisecond))
+	late := candidate("A", 1, "too late", t0.Add(211*time.Millisecond))
+	late.Final, late.EndOfUtterance = true, true
+	outs, err := f.Observe(late)
+	if err != nil || len(outs) != 1 || outs[0].Text != "provider final" {
+		t.Fatalf("late input replaced due state: outputs=%v err=%v", outs, err)
+	}
+
+	f, _ = NewFinalizer(testConfig())
+	utterance := candidate("B", 1, "authoritative", t0.Add(time.Second))
+	utterance.Final, utterance.EndOfUtterance = true, true
+	_, _ = f.Observe(utterance)
+	weaker := candidate("B", 1, "weaker correction", t0.Add(time.Second+50*time.Millisecond))
+	weaker.Final = true
+	_, _ = f.Observe(weaker)
+	outs, err = f.Advance(t0.Add(time.Second + 200*time.Millisecond))
+	if err != nil || len(outs) != 1 || outs[0].Text != "authoritative" {
+		t.Fatalf("weaker final replaced utterance final: outputs=%v err=%v", outs, err)
+	}
+}

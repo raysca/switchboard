@@ -225,3 +225,100 @@ func TestGoogleSTTEmitsRawCandidatesWithProviderSemantics(t *testing.T) {
 		t.Fatalf("Google IsFinal/Stability mapping mismatch: %#v", candidates)
 	}
 }
+
+func TestGoogleSTTAssemblesSequentialFinalsAndInterimFromWholeResponse(t *testing.T) {
+	st := newMockSTTStream()
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = &mockSTTOpener{onOpenStream: func(STTConfig) *mockSTTStream { return st }}
+	proc, _ := NewSTTProcessor(cfg)
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	session, _ := core.NewSession(32, pipe, core.DefaultResourceBudget())
+	_ = session.Start()
+	defer session.Close()
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	time.Sleep(10 * time.Millisecond)
+	st.PushResults(
+		&STTResult{Transcript: "hello", IsFinal: true, ResultEndOffset: time.Second},
+		&STTResult{Transcript: "world", IsFinal: true, ResultEndOffset: 2 * time.Second},
+		&STTResult{Transcript: "again", Stability: .9, ResultEndOffset: 2500 * time.Millisecond},
+	)
+	time.Sleep(30 * time.Millisecond)
+	var got []string
+	for _, frame := range sink.GetFrames() {
+		if candidate, ok := frame.(*core.TranscriptCandidateFrame); ok {
+			got = append(got, candidate.Text)
+		}
+	}
+	want := []string{"hello", "hello world", "hello world again"}
+	if len(got) != len(want) {
+		t.Fatalf("batch results lost: got=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("result %d: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestGoogleSTTReconcilesRotationOverlapByOffset(t *testing.T) {
+	proc, _ := NewSTTProcessor(DefaultSTTConfig())
+	old := &activeStream{turnID: "A", gen: 1}
+	rotated := &activeStream{turnID: "A", gen: 1, offsetBase: 1500 * time.Millisecond}
+	proc.mu.Lock()
+	first := proc.assembleLocked(old, &STTResult{Transcript: "hello world", IsFinal: true, ResultEndOffset: 2 * time.Second})
+	overlap := proc.assembleLocked(rotated, &STTResult{Transcript: "world", IsFinal: true, ResultEndOffset: 500 * time.Millisecond})
+	proc.mu.Unlock()
+	if first != "hello world" || overlap != "hello world" {
+		t.Fatalf("overlap duplicated/lost text: first=%q overlap=%q", first, overlap)
+	}
+}
+
+func TestGoogleSTTStreamOwnershipIsImmutableAcrossTurns(t *testing.T) {
+	opener := &mockSTTOpener{}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = opener
+	proc, _ := NewSTTProcessor(cfg)
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	session, _ := core.NewSession(33, pipe, core.DefaultResourceBudget())
+	_ = session.Start()
+	defer session.Close()
+	openTurn := func(seq, gen uint64) *mockSTTStream {
+		_ = session.Post(&core.UserStartedSpeakingFrame{Seq: seq, Gen: gen})
+		_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: gen})
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			opener.mu.Lock()
+			n := len(opener.streams)
+			var st *mockSTTStream
+			if n > 0 {
+				st = opener.streams[n-1]
+			}
+			opener.mu.Unlock()
+			if n >= int(seq) {
+				return st
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatalf("stream %d did not open", seq)
+		return nil
+	}
+	a := openTurn(1, 1)
+	b := openTurn(2, 1)
+	c := openTurn(3, 2)
+	a.PushResult(&STTResult{Transcript: "late A", IsFinal: true, ResultEndOffset: time.Second})
+	b.PushResult(&STTResult{Transcript: "turn B", IsFinal: true, ResultEndOffset: time.Second})
+	c.PushResult(&STTResult{Transcript: "turn C", IsFinal: true, ResultEndOffset: time.Second})
+	time.Sleep(30 * time.Millisecond)
+	seen := map[string]string{}
+	for _, frame := range sink.GetFrames() {
+		if c, ok := frame.(*core.TranscriptCandidateFrame); ok {
+			seen[c.Text] = string(c.Turn)
+		}
+	}
+	if seen["late A"] != "turn-1-1" || seen["turn B"] != "turn-1-2" || seen["turn C"] != "turn-2-3" {
+		t.Fatalf("stream result relabeled: %#v", seen)
+	}
+}

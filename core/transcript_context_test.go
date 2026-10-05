@@ -52,3 +52,32 @@ func TestUserContextV2RejectsCommittedTranscriptWithoutPolicyTime(t *testing.T) 
 		t.Fatalf("malformed committed transcript entered context: %#v", ctxPool.Messages())
 	}
 }
+
+func TestUserContextCommittedIdempotenceIsTurnGenerationScopedAndBounded(t *testing.T) {
+	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	user := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{RequireCommittedTranscript: true, MaxCommittedTurns: 2})
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(user, sink)
+	session, _ := core.NewSession(903, pipe, core.DefaultResourceBudget())
+	_ = session.Start()
+	defer session.Close()
+	at := time.Unix(30, 0)
+	a := &core.FinalTranscriptionFrame{Text: "same", Turn: "A", Gen: 1, Timestamp: at, Committed: true}
+	_ = session.Post(a)
+	_ = session.Post(a)
+	_ = session.Post(&core.FinalTranscriptionFrame{Text: "same", Turn: "B", Gen: 1, Timestamp: at, Committed: true})
+	time.Sleep(20 * time.Millisecond)
+	msgs := ctxPool.Messages()
+	if len(msgs) != 2 || msgs[0].TurnID != "A" || msgs[1].TurnID != "B" {
+		t.Fatalf("turn-scoped idempotence mismatch: %#v", msgs)
+	}
+	_ = session.Post(&core.FinalTranscriptionFrame{Text: "third", Turn: "C", Gen: 1, Timestamp: at, Committed: true})
+	select {
+	case <-session.Done():
+	case <-time.After(time.Second):
+		t.Fatal("bounded idempotence did not fail closed")
+	}
+	if !errors.Is(session.Err(), core.ErrCommittedTurnLimit) {
+		t.Fatalf("expected bound error, got %v", session.Err())
+	}
+}

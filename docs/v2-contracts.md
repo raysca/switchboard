@@ -230,9 +230,13 @@ committed final is explicitly marked, and the V2 `UserContextProcessor` path
 accepts only marked finals. Direct unmarked finals remain an opt-in-compatible
 V1 boundary and retain the historical generated-turn/timestamp fallback.
 
-All policy time is supplied in candidate, turn-decision, and
-`TranscriptAdvanceFrame` values. The finalizer does not read wall time, start a
-timer or goroutine, or invoke application/provider callbacks. Text must be
+Policy ordering and deadlines use an injected monotonic receipt clock owned by
+the transcript processor; provider/media timestamps remain separate output and
+diagnostic metadata and may arrive out of order. The finalizer itself does not
+read wall time, start a timer or goroutine, or invoke application/provider
+callbacks. One session-owned deadline driver wakes for the earliest pending
+terminal deadline and re-enters the serialized pipeline; it is not a
+per-candidate goroutine. Text must be
 non-empty valid UTF-8, is copied after trimming, and is limited to 32 KiB by
 default. Stability must be finite and in `[0,1]`. Active plus retired identities
 are bounded (128 by default); capacity fails closed rather than evicting a
@@ -241,12 +245,16 @@ permanently fences older-generation input.
 
 Google `IsFinal` is retained as a provider-final hypothesis for one audio
 portion; Google `Stability` is admitted only on non-final hypotheses, matching
-the generated Speech V2 contract. xAI `is_final` marks a stable chunk but does
-not close an utterance; `speech_final` and `transcript.done` supply the stronger
-utterance boundary. The common policy, not either adapter, decides commitment.
-The production V1 VAD assembly uses zero grace because it has no explicit
-advance driver; typed V2 turn decisions plus explicit advances enable the
-configured grace and timeout without hidden clocks.
+the generated Speech V2 contract. Every result in a response is consumed.
+Result-end offsets order sequential final segments, and text/offset overlap
+reconciles audio replay at stream rotation; interim output includes the
+committed segment prefix. xAI `is_final` is provider-final but does not close an
+utterance; `speech_final` and `transcript.done` supply the stronger utterance
+boundary, with nonempty done text taking precedence over the prior partial.
+Streams retain the turn/generation bound when opened, so a draining old stream
+cannot be relabeled by a later speech start. The common policy, not either
+adapter, decides commitment. Production server and demo assembly keep nonzero
+grace and timeout defaults because the lifecycle driver supplies due advances.
 
 **Acceptance criteria**
 
@@ -256,6 +264,8 @@ configured grace and timeout without hidden clocks.
 - Completion, interruption, stale generations, duplicate finals, and
   concurrent replay cannot produce more than one committed final/context row.
 - Same-generation turns remain distinct even when their text is identical.
+- Replaying one marked commit cannot append context twice; the identity ledger
+  is bounded and fails closed at capacity.
 
 ### 2.10 Provider readiness and usage
 

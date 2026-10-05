@@ -11,14 +11,14 @@ import (
 type mockSTTStream struct {
 	mu          sync.Mutex
 	audioChunks [][]byte
-	results     chan *STTResult
+	results     chan []*STTResult
 	closed      chan struct{}
 	closeOnce   sync.Once
 }
 
 func newMockSTTStream() *mockSTTStream {
 	return &mockSTTStream{
-		results: make(chan *STTResult, 64),
+		results: make(chan []*STTResult, 64),
 		closed:  make(chan struct{}),
 	}
 }
@@ -38,10 +38,14 @@ func (s *mockSTTStream) Send(audio []byte) error {
 }
 
 func (s *mockSTTStream) PushResult(res *STTResult) {
-	s.results <- res
+	s.results <- []*STTResult{res}
 }
 
-func (s *mockSTTStream) Recv() (*STTResult, error) {
+func (s *mockSTTStream) PushResults(results ...*STTResult) {
+	s.results <- results
+}
+
+func (s *mockSTTStream) Recv() ([]*STTResult, error) {
 	select {
 	case <-s.closed:
 		return nil, context.Canceled

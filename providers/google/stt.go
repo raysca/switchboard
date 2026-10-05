@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,15 +53,16 @@ func DefaultSTTConfig() STTConfig {
 
 // STTResult is a provider-neutral recognition result.
 type STTResult struct {
-	Transcript string
-	IsFinal    bool
-	Stability  float32
+	Transcript      string
+	IsFinal         bool
+	Stability       float32
+	ResultEndOffset time.Duration
 }
 
 // STTStream abstracts the bidirectional recognition stream.
 type STTStream interface {
 	Send(audio []byte) error
-	Recv() (*STTResult, error)
+	Recv() ([]*STTResult, error)
 	CloseSend() error
 	Close() error
 }
@@ -173,21 +175,26 @@ func (s *grpcSTTStream) Send(audio []byte) error {
 	return s.stream.Send(req)
 }
 
-func (s *grpcSTTStream) Recv() (*STTResult, error) {
+func (s *grpcSTTStream) Recv() ([]*STTResult, error) {
 	resp, err := s.stream.Recv()
 	if err != nil {
 		return nil, err
 	}
+	results := make([]*STTResult, 0, len(resp.Results))
 	for _, res := range resp.Results {
 		if len(res.Alternatives) > 0 {
-			return &STTResult{
+			result := &STTResult{
 				Transcript: res.Alternatives[0].Transcript,
 				IsFinal:    res.IsFinal,
 				Stability:  res.Stability,
-			}, nil
+			}
+			if res.ResultEndOffset != nil {
+				result.ResultEndOffset = res.ResultEndOffset.AsDuration()
+			}
+			results = append(results, result)
 		}
 	}
-	return nil, nil
+	return results, nil
 }
 
 func (s *grpcSTTStream) CloseSend() error {
@@ -200,11 +207,24 @@ func (s *grpcSTTStream) Close() error {
 
 // activeStream holds the state of an open STT stream.
 type activeStream struct {
-	stream    STTStream
-	cancel    context.CancelFunc
-	ctx       context.Context
-	createdAt time.Time
-	id        int
+	stream     STTStream
+	cancel     context.CancelFunc
+	ctx        context.Context
+	createdAt  time.Time
+	id         int
+	turnID     string
+	gen        uint64
+	offsetBase time.Duration
+}
+
+type googleSegment struct {
+	end  time.Duration
+	text string
+}
+
+type googleAssembly struct {
+	segments []googleSegment
+	prefix   string
 }
 
 // STTProcessor implements core.Processor for Google Speech-to-Text V2.
@@ -213,12 +233,14 @@ type STTProcessor struct {
 	session core.SessionController
 	index   int
 
-	mu        sync.Mutex
-	active    *activeStream
-	streamID  int
-	closed    bool
-	turnID    string
-	streamGen uint64
+	mu         sync.Mutex
+	active     *activeStream
+	streamID   int
+	closed     bool
+	turnID     string
+	streamGen  uint64
+	assemblies map[string]*googleAssembly
+	audioBytes int64
 
 	// Audio overlap buffer: keeps last 500ms (16,000 bytes for 16kHz 16-bit mono)
 	audioBuffer  []byte
@@ -266,6 +288,7 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 		cfg:          cfg,
 		overlapBytes: overlapBytes,
 		audioBuffer:  make([]byte, 0, overlapBytes*2),
+		assemblies:   make(map[string]*googleAssembly),
 	}, nil
 }
 
@@ -299,13 +322,13 @@ func (p *STTProcessor) Close() error {
 func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch frame := f.(type) {
 	case *core.StartFrame:
-		// Initialize the primary recognition stream
-		return p.ensureStream(ctx)
+		return e.PushDirection(f, dir)
 
 	case *core.UserStartedSpeakingFrame:
 		p.mu.Lock()
 		p.turnID = fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq)
 		p.streamGen = frame.Gen
+		p.bindOrDetachActiveLocked(p.turnID, p.streamGen)
 		p.mu.Unlock()
 		return e.Push(f)
 
@@ -314,6 +337,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.mu.Lock()
 			p.turnID = string(frame.Turn)
 			p.streamGen = uint64(frame.Gen)
+			p.bindOrDetachActiveLocked(p.turnID, p.streamGen)
 			p.mu.Unlock()
 		}
 		return e.PushDirection(f, dir)
@@ -327,11 +351,8 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
-		if p.session != nil {
-			// Barge-in advances generation after this speech start was stamped.
-			// Later results for the new utterance belong to the new generation.
-			p.streamGen = p.session.CurrentGeneration()
-		}
+		// Never relabel an existing stream. A new speech start binds the next
+		// stream to its immutable turn/generation owner.
 		p.mu.Unlock()
 		return e.PushDirection(f, dir)
 
@@ -357,6 +378,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 
 	// Update rolling overlap buffer
 	p.audioBuffer = append(p.audioBuffer, f.Samples...)
+	p.audioBytes += int64(len(f.Samples))
 	if len(p.audioBuffer) > p.overlapBytes {
 		overflow := len(p.audioBuffer) - p.overlapBytes
 		p.audioBuffer = p.audioBuffer[overflow:]
@@ -452,6 +474,8 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		ctx:       streamCtx,
 		createdAt: p.cfg.Now(),
 		id:        p.streamID,
+		turnID:    p.turnID,
+		gen:       p.streamGen,
 	}
 	p.active = newActive
 	p.mu.Unlock()
@@ -508,11 +532,17 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	p.mu.Lock()
 	p.streamID++
 	newActive := &activeStream{
-		stream:    newStream,
-		cancel:    cancel,
-		ctx:       streamCtx,
-		createdAt: p.cfg.Now(),
-		id:        p.streamID,
+		stream:     newStream,
+		cancel:     cancel,
+		ctx:        streamCtx,
+		createdAt:  p.cfg.Now(),
+		id:         p.streamID,
+		turnID:     oldActive.turnID,
+		gen:        oldActive.gen,
+		offsetBase: time.Duration(p.audioBytes*int64(time.Second)/32000) - p.cfg.StreamOverlap,
+	}
+	if newActive.offsetBase < 0 {
+		newActive.offsetBase = 0
 	}
 	p.active = newActive
 	p.RotationsCount.Add(1)
@@ -547,7 +577,7 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 			default:
 			}
 
-			res, err := st.stream.Recv()
+			results, err := st.stream.Recv()
 			if err != nil {
 				p.mu.Lock()
 				if p.active == st {
@@ -565,47 +595,138 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				if p.session != nil {
 					_ = p.session.Reenter(&core.ErrorFrame{
 						Err: MapError("stt", err),
-					}, core.Downstream, p.index+1, p.streamGen)
+					}, core.Downstream, p.index+1, st.gen)
 				}
 				return
 			}
-			if res == nil || res.Transcript == "" {
-				continue
-			}
-
-			// Snapshot identity. The common transcript finalizer owns all text
-			// deduplication and late-candidate reconciliation across streams.
-			p.mu.Lock()
-			turn := p.turnID
-			turnGen := p.streamGen
-			currentGen := turnGen
-			if p.session != nil {
-				currentGen = p.session.CurrentGeneration()
-			}
-
-			// Discard if the speech turn is from a stale generation (e.g. interrupted)
-			if turnGen != 0 && turnGen < currentGen {
+			for _, res := range results {
+				if res == nil || res.Transcript == "" || st.turnID == "" || st.gen == 0 {
+					continue
+				}
+				currentGen := st.gen
+				if p.session != nil {
+					currentGen = p.session.CurrentGeneration()
+				}
+				if st.gen < currentGen {
+					continue
+				}
+				p.mu.Lock()
+				text := p.assembleLocked(st, res)
 				p.mu.Unlock()
-				continue
+				frame := &core.TranscriptCandidateFrame{
+					Text: text, Turn: core.TurnID(st.turnID), Gen: core.Generation(st.gen),
+					Timestamp: p.cfg.Now(), Final: res.IsFinal,
+					Stability: float64(res.Stability), HasStability: !res.IsFinal && res.Stability > 0,
+					Provider: "google",
+				}
+				_ = p.session.Reenter(frame, core.Downstream, p.index+1, st.gen)
 			}
-
-			p.mu.Unlock()
-
-			// Google documents IsFinal as final for this audio portion, while
-			// Stability is meaningful only for non-final hypotheses.
-			frame := &core.TranscriptCandidateFrame{
-				Text:         res.Transcript,
-				Turn:         core.TurnID(turn),
-				Gen:          core.Generation(turnGen),
-				Timestamp:    p.cfg.Now(),
-				Final:        res.IsFinal,
-				Stability:    float64(res.Stability),
-				HasStability: !res.IsFinal && res.Stability > 0,
-				Provider:     "google",
-			}
-			_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
 		}
 	})
+}
+
+func (p *STTProcessor) bindOrDetachActiveLocked(turn string, gen uint64) {
+	if p.active == nil {
+		return
+	}
+	if p.active.turnID == "" {
+		p.active.turnID, p.active.gen = turn, gen
+		return
+	}
+	if p.active.turnID != turn || p.active.gen != gen {
+		old := p.active
+		p.active = nil
+		_ = old.stream.CloseSend()
+	}
+}
+
+func (p *STTProcessor) assembleLocked(st *activeStream, result *STTResult) string {
+	key := fmt.Sprintf("%d/%s", st.gen, st.turnID)
+	a := p.assemblies[key]
+	if a == nil {
+		if len(p.assemblies) >= 128 {
+			return strings.Clone(strings.TrimSpace(result.Transcript))
+		}
+		a = &googleAssembly{}
+		p.assemblies[key] = a
+	}
+	text := strings.Clone(strings.TrimSpace(result.Transcript))
+	const maxTranscriptBytes = 32 * 1024
+	if len(text) > maxTranscriptBytes {
+		return text // common policy rejects it fail-closed; do not retain it here
+	}
+	if !result.IsFinal {
+		return joinTranscript(a.prefix, text)
+	}
+	end := st.offsetBase + result.ResultEndOffset
+	if end <= 0 {
+		composed := joinTranscript(a.prefix, text)
+		if len(composed) <= maxTranscriptBytes {
+			a.prefix = strings.Clone(composed)
+		}
+		return composed
+	}
+	replaced := false
+	for i := range a.segments {
+		if a.segments[i].end == end {
+			// Rotation overlap often reports only the suffix ending at the same
+			// media offset. Keep the more complete compatible text; otherwise a
+			// same-offset result is a provider correction and replaces it.
+			existing := a.segments[i].text
+			if strings.Contains(existing, text) {
+				text = existing
+			} else if !strings.Contains(text, existing) {
+				a.segments[i].text = text
+			} else {
+				a.segments[i].text = text
+			}
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		a.segments = append(a.segments, googleSegment{end: end, text: text})
+		sort.Slice(a.segments, func(i, j int) bool { return a.segments[i].end < a.segments[j].end })
+		if len(a.segments) > 128 {
+			a.segments = a.segments[len(a.segments)-128:]
+		}
+	}
+	a.prefix = ""
+	for _, segment := range a.segments {
+		a.prefix = joinTranscript(a.prefix, segment.text)
+	}
+	if len(a.prefix) > maxTranscriptBytes {
+		// The common finalizer rejects this candidate. Do not retain an
+		// unbounded composed prefix in the adapter.
+		a.prefix = ""
+		a.segments = nil
+	}
+	return a.prefix
+}
+
+func joinTranscript(prefix, next string) string {
+	prefix, next = strings.TrimSpace(prefix), strings.TrimSpace(next)
+	if prefix == "" {
+		return next
+	}
+	if next == "" || strings.HasSuffix(prefix, next) {
+		return prefix
+	}
+	left, right := strings.Fields(prefix), strings.Fields(next)
+	max := len(left)
+	if len(right) < max {
+		max = len(right)
+	}
+	overlap := 0
+	for n := 1; n <= max; n++ {
+		if strings.Join(left[len(left)-n:], " ") == strings.Join(right[:n], " ") {
+			overlap = n
+		}
+	}
+	if overlap == len(right) {
+		return prefix
+	}
+	return strings.TrimSpace(prefix + " " + strings.Join(right[overlap:], " "))
 }
 
 func isSTTIdleOrClosed(err error) bool {

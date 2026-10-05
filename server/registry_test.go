@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"govoice/core"
 	coretranscript "govoice/core/transcript"
@@ -16,6 +18,61 @@ type fakeTransportSink struct{}
 
 func (f *fakeTransportSink) ProcessFrame(ctx context.Context, frame core.Frame, dir core.Direction, e core.Emitter) error {
 	return nil
+}
+
+func TestTranscriptDeadlinePipelineDelayedFinalInterimAndEmptyTurns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		post func(*core.Session)
+		want string
+	}{
+		{"delayed-final", func(s *core.Session) {
+			_ = s.Post(&core.TranscriptCandidateFrame{Text: "interim", Turn: "A", Gen: 1, Timestamp: time.Unix(1, 0)})
+			_ = s.Post(&core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "A", Gen: 1, At: time.Unix(2, 0)})
+			time.Sleep(3 * time.Millisecond)
+			_ = s.Post(&core.TranscriptCandidateFrame{Text: "better final", Turn: "A", Gen: 1, Timestamp: time.Unix(3, 0), Final: true})
+		}, "better final"},
+		{"interim-only", func(s *core.Session) {
+			_ = s.Post(&core.TranscriptCandidateFrame{Text: "fallback", Turn: "B", Gen: 1, Timestamp: time.Unix(4, 0)})
+			_ = s.Post(&core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "B", Gen: 1, At: time.Unix(5, 0)})
+		}, "fallback"},
+		{"empty", func(s *core.Session) {
+			_ = s.Post(&core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "C", Gen: 1, At: time.Unix(6, 0)})
+		}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := coretranscript.DefaultConfig()
+			cfg.GracePeriod = 5 * time.Millisecond
+			cfg.FinalizationTimeout = 15 * time.Millisecond
+			finalizer, _ := coretranscript.NewProcessor(cfg)
+			conversation := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+			user := core.NewUserContextProcessor(conversation, core.UserContextConfig{RequireCommittedTranscript: true})
+			sink := &core.PassthroughProcessor{}
+			pipe, _ := core.NewPipeline(finalizer, user, sink)
+			session, _ := core.NewSession(920, pipe, core.DefaultResourceBudget())
+			var mu sync.Mutex
+			var messages []string
+			session.OnOutput = func(frame core.Frame) {
+				if msg, ok := frame.(*core.UserMessageFrame); ok {
+					mu.Lock()
+					messages = append(messages, msg.Content)
+					mu.Unlock()
+				}
+			}
+			_ = session.Start()
+			defer session.Close()
+			tc.post(session)
+			time.Sleep(50 * time.Millisecond)
+			mu.Lock()
+			defer mu.Unlock()
+			if tc.want == "" && len(messages) != 0 {
+				t.Fatalf("empty turn emitted user message: %v", messages)
+			}
+			if tc.want != "" && (len(messages) != 1 || messages[0] != tc.want) {
+				t.Fatalf("messages=%v want one %q", messages, tc.want)
+			}
+		})
+	}
 }
 func (f *fakeTransportSink) Attach(s core.SessionController, index int) error { return nil }
 
@@ -76,7 +133,6 @@ func TestRegistry_BuildPipelineGoogleAndMixed(t *testing.T) {
 	}
 	progCtx := core.NewConversationContext(core.ContextConfig{MaxMessages: 20, MaxTokens: 4000})
 	transcriptCfg := coretranscript.DefaultConfig()
-	transcriptCfg.GracePeriod = 0
 	transcriptProc, _ := coretranscript.NewProcessor(transcriptCfg)
 	userCtx := core.NewUserContextProcessor(progCtx, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	llmProc, err := google.NewLLMProcessor(google.DefaultLLMConfig())

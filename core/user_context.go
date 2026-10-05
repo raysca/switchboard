@@ -9,11 +9,13 @@ import (
 )
 
 var ErrInvalidCommittedTranscript = errors.New("core: committed transcript requires turn, generation, text, and timestamp")
+var ErrCommittedTurnLimit = errors.New("core: committed transcript identity limit reached")
 
 // UserContextConfig configures the user context processor.
 type UserContextConfig struct {
 	TurnPrefix                 string // Prefix for auto-generated turn IDs (default: "turn")
 	RequireCommittedTranscript bool   // V2: only finalizer-marked finals may enter context
+	MaxCommittedTurns          int    // V2 fail-closed idempotence bound (default: 128)
 }
 
 // UserContextProcessor receives final transcription frames, assigns stable turn IDs,
@@ -30,8 +32,14 @@ type UserContextProcessor struct {
 	lastFinalTurn      string
 	lastFinalText      string
 	lastFinalGen       uint64
+	committedTurns     map[committedTurnKey]struct{}
 	DuplicateDropCount atomic.Uint64
 	TurnsCreated       atomic.Uint64
+}
+
+type committedTurnKey struct {
+	turn string
+	gen  uint64
 }
 
 // EvictionCount reports turn pairs dropped from this session's context store.
@@ -47,9 +55,13 @@ func NewUserContextProcessor(ctxPool *ConversationContext, cfg UserContextConfig
 	if cfg.TurnPrefix == "" {
 		cfg.TurnPrefix = "turn"
 	}
+	if cfg.MaxCommittedTurns <= 0 {
+		cfg.MaxCommittedTurns = 128
+	}
 	return &UserContextProcessor{
-		ctxPool: ctxPool,
-		cfg:     cfg,
+		ctxPool:        ctxPool,
+		cfg:            cfg,
+		committedTurns: make(map[committedTurnKey]struct{}, cfg.MaxCommittedTurns),
 	}
 }
 
@@ -76,11 +88,21 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	if p.cfg.RequireCommittedTranscript && (ft.Turn == "" || ft.Gen == 0 || ft.Text == "" || ft.Timestamp.IsZero()) {
 		return ErrInvalidCommittedTranscript
 	}
-
 	// 1. Stale generation check
 	if ft.Gen != 0 && p.session != nil && ft.Gen < p.session.CurrentGeneration() {
 		p.DuplicateDropCount.Add(1)
 		return nil
+	}
+	var committedKey committedTurnKey
+	if ft.Committed {
+		committedKey = committedTurnKey{turn: ft.Turn, gen: ft.Gen}
+		if _, exists := p.committedTurns[committedKey]; exists {
+			p.DuplicateDropCount.Add(1)
+			return nil
+		}
+		if len(p.committedTurns) >= p.cfg.MaxCommittedTurns {
+			return ErrCommittedTurnLimit
+		}
 	}
 
 	// 2. Duplicate / late final transcript protection:
@@ -98,10 +120,6 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 		turnID = fmt.Sprintf("%s-%d", p.cfg.TurnPrefix, p.turnCounter)
 	}
 
-	p.lastFinalTurn = turnID
-	p.lastFinalText = ft.Text
-	p.lastFinalGen = ft.Gen
-
 	createdAt := ft.Timestamp
 	if createdAt.IsZero() {
 		// Explicit V1 compatibility: historical direct-final frames did not
@@ -118,6 +136,12 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	if err := p.ctxPool.AddMessage(userMsg); err != nil {
 		return err
 	}
+	if ft.Committed {
+		p.committedTurns[committedKey] = struct{}{}
+	}
+	p.lastFinalTurn = turnID
+	p.lastFinalText = ft.Text
+	p.lastFinalGen = ft.Gen
 
 	p.TurnsCreated.Add(1)
 
