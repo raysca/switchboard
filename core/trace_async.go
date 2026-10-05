@@ -86,9 +86,11 @@ func (t *AsyncTracer) StartSpan(ctx context.Context, event TraceEvent) Span {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	proxy := &asyncSpan{tracer: t}
+	proxy := &asyncSpan{tracer: t, ready: make(chan struct{})}
 	if t.enqueueStart(traceOperation{kind: traceStart, ctx: ctx, parent: SpanFromContext(ctx), proxy: proxy, event: event}) {
 		proxy.accepted.Store(true)
+	} else {
+		close(proxy.ready)
 	}
 	return proxy
 }
@@ -156,6 +158,7 @@ type asyncSpan struct {
 	// Written and read only by the dispatcher worker. Child starts can arrive
 	// after the parent has ended and left the worker's active-span map.
 	resolved Span
+	ready    chan struct{} // close publishes immutable resolved across dispatchers
 }
 
 func (s *asyncSpan) SetAttribute(key string, value any) {
@@ -229,12 +232,11 @@ func (t *AsyncTracer) run() {
 		if operation.kind == traceStart {
 			ctx := operation.ctx
 			if operation.parent != nil {
-				if parent := spansFor(operation.parent, spans); parent != nil {
-					ctx = ContextWithSpan(ctx, parent)
-				}
+				ctx = ContextWithSpan(ctx, spansFor(operation.parent, spans))
 			}
 			spans[operation.proxy] = StartSpanSafe(ctx, t.tracer, operation.event)
 			operation.proxy.resolved = spans[operation.proxy]
+			close(operation.proxy.ready)
 			continue
 		}
 		span := spans[operation.proxy]
@@ -315,6 +317,7 @@ func spansFor(parent Span, spans map[*asyncSpan]Span) Span {
 	if proxy, ok := parent.(*asyncSpan); ok {
 		parent = spans[proxy]
 		if parent == nil {
+			<-proxy.ready
 			parent = proxy.resolved
 		}
 	}

@@ -15,15 +15,19 @@ type lifecycleRecorder struct {
 	mu             sync.Mutex
 	starts, events []core.TraceEvent
 	ends           int
+	endErrors      map[string][]error
 }
-type lifecycleSpan struct{ r *lifecycleRecorder }
+type lifecycleSpan struct {
+	r    *lifecycleRecorder
+	name string
+}
 
 func (r *lifecycleRecorder) StartSpan(_ context.Context, ev core.TraceEvent) core.Span {
 	r.mu.Lock()
 	r.starts = append(r.starts, ev)
 	r.events = append(r.events, ev)
 	r.mu.Unlock()
-	return lifecycleSpan{r}
+	return lifecycleSpan{r: r, name: ev.Name}
 }
 func (lifecycleSpan) SetAttribute(string, any) {}
 func (s lifecycleSpan) AddEvent(ev core.TraceEvent) {
@@ -31,7 +35,15 @@ func (s lifecycleSpan) AddEvent(ev core.TraceEvent) {
 	s.r.events = append(s.r.events, ev)
 	s.r.mu.Unlock()
 }
-func (s lifecycleSpan) End(error) { s.r.mu.Lock(); s.r.ends++; s.r.mu.Unlock() }
+func (s lifecycleSpan) End(err error) {
+	s.r.mu.Lock()
+	s.r.ends++
+	if s.r.endErrors == nil {
+		s.r.endErrors = make(map[string][]error)
+	}
+	s.r.endErrors[s.name] = append(s.r.endErrors[s.name], err)
+	s.r.mu.Unlock()
+}
 func (r *lifecycleRecorder) count(name string, turn core.TurnID) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -62,6 +74,42 @@ func waitLifecycle(t *testing.T, f func() bool) {
 			t.Fatal("trace lifecycle did not arrive")
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+type panicXAISTTOpener struct{}
+
+func (panicXAISTTOpener) OpenStream(context.Context, STTConfig) (STTStream, error) {
+	panic("private-xai-open-secret")
+}
+func TestXAISTTTraceOpenPanicEndsFailure(t *testing.T) {
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = panicXAISTTOpener{}
+	p, err := NewSTTProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe, _ := core.NewPipeline(p)
+	s, _ := core.NewSession(403, pipe, core.DefaultResourceBudget())
+	if err := p.Attach(s, 0); err != nil {
+		t.Fatal(err)
+	}
+	r := &lifecycleRecorder{}
+	ctx := core.ContextWithTraceContext(context.Background(), r, core.TracePolicy{})
+	p.turnID, p.streamGen = "turn-panic", 1
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected opener panic")
+			}
+		}()
+		_ = p.ensureStream(ctx)
+	}()
+	r.mu.Lock()
+	ends := append([]error(nil), r.endErrors["stt.stream"]...)
+	r.mu.Unlock()
+	if len(ends) != 1 || ends[0] == nil || ends[0].Error() != "provider_failure" {
+		t.Fatalf("open panic trace ends=%v", ends)
 	}
 }
 

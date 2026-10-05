@@ -533,7 +533,19 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 	p.mu.Unlock()
 	span, policy := p.startStreamTrace(ctx, turn, gen)
 	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
-	st, err := p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
+	st, err := func() (STTStream, error) {
+		defer func() {
+			if v := recover(); v != nil {
+				cancel()
+				if span != nil {
+					span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), p.traceSessionID(), core.TurnID(turn), core.Generation(gen), policy, nil))
+					span.End(errors.New("provider_failure"))
+				}
+				panic(v)
+			}
+		}()
+		return p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
+	}()
 	if err != nil {
 		if span != nil {
 			span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), p.traceSessionID(), core.TurnID(turn), core.Generation(gen), policy, nil))
@@ -598,7 +610,19 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	// Open replacement stream
 	span, policy := p.startStreamTrace(ctx, oldActive.turnID, oldActive.gen)
 	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
-	newStream, err := p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
+	newStream, err := func() (STTStream, error) {
+		defer func() {
+			if v := recover(); v != nil {
+				cancel()
+				if span != nil {
+					span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), p.traceSessionID(), core.TurnID(oldActive.turnID), core.Generation(oldActive.gen), policy, nil))
+					span.End(errors.New("provider_failure"))
+				}
+				panic(v)
+			}
+		}()
+		return p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
+	}()
 	if err != nil {
 		if span != nil {
 			span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), p.traceSessionID(), core.TurnID(oldActive.turnID), core.Generation(oldActive.gen), policy, nil))

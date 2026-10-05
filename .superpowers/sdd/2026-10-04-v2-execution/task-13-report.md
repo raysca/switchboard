@@ -119,3 +119,48 @@ Google, xAI (`xaispeech`), and VAD/WS/RTVI race and vet suites passed with
 the MacOSX26 SDK override. Root tagged tests and build passed. The Task 14
 files were not edited or staged. Task 13 remains unchecked for independent
 review.
+
+## Correction round 5 — trace safety invariants
+
+The seven independent-review findings were reproduced with targeted RED tests
+before implementation:
+
+1. A value-type Frame containing a slice panicked when used as a map key.
+   Per-envelope origin tracking now keys the boxed interface identity, not
+   the concrete Frame value; queued and inline origins each emit once.
+2. A forwarded frame installed a noop parent, disconnecting downstream
+   processors and provider child spans. It now carries the current context
+   unchanged. Three processor levels and a provider child form one chain.
+3. A child on another dispatcher could read an unresolved mutable parent
+   proxy. Each accepted start now publishes its immutable resolved span via a
+   readiness channel; foreign dispatchers wait for publication. This is an
+   exporter-worker wait, never a voice runtime wait.
+4. VAD Close could leave an accepted detector-job span open. It now marks the
+   processor closed and finishes the pending trace as canceled before stream
+   teardown; the existing once guard prevents a late callback from ending it
+   twice.
+5. Generic frame names claimed provider first-output/request/completion
+   vocabulary, including every delta or audio chunk. Generic names are now
+   `llm.delta`, `llm.text`, `tts.started`, `tts.audio_chunk`, and
+   `tts.stopped`; provider operation spans remain the lifecycle owners.
+6. Processor and inline-emitter panics could close spans as success. Local
+   recovery now ends the affected spans with fixed `processor_error` before
+   re-panicking into the session's failure handler.
+7. Google/xAI STT opener panics could leave stream spans open, including
+   Google's rotation opener. Opener-local guards cancel the stream context,
+   emit a safe failure, end the span, and re-panic.
+
+Mocked tests cover each regression under `-race`, including non-comparable
+frames, cross-dispatcher parent resolution, VAD's late callback, and panicking
+STT openers. The test recorder also now waits for the asynchronous terminal
+callback before asserting exact span counts; waiting for the start event alone
+was racy. Task 13 remains unchecked for independent review.
+
+Round 5 verification: focused core/ToolLoop and Google/xAI/VAD regression
+sets passed `go test -race -count=50` with the MacOSX26 SDK override. Full
+core, Google, xAI (`xaispeech`), and VAD/transport package suites passed
+`go test -race -count=1` and `go vet`. Root `go test -tags xaispeech ./...`
+and `go build -tags xaispeech ./...` passed. `gofmt -l` and
+`git diff --check` were clean; the production trace-value scan found no
+test sentinels, credentials, or raw-error trace emission. Platform link warnings
+about macOS 27 objects targeting the 26.5 SDK were non-fatal.

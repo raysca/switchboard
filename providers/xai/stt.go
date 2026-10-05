@@ -463,7 +463,17 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 	span := core.StartContextSpan(ctx, "stt.stream", traceSession, core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "xai"})
 	policy := core.TraceContextFromContext(ctx).Policy
 	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
-	st, err := p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
+	st, err := func() (STTStream, error) {
+		defer func() {
+			if v := recover(); v != nil {
+				cancel()
+				span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), traceSession, core.TurnID(turn), core.Generation(gen), policy, nil))
+				span.End(errors.New("provider_failure"))
+				panic(v)
+			}
+		}()
+		return p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
+	}()
 	if err != nil {
 		span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), traceSession, core.TurnID(turn), core.Generation(gen), policy, nil))
 		span.End(errors.New("provider_failure"))

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 var (
@@ -122,9 +123,17 @@ type Session struct {
 	traceQueue     *AsyncTracer
 	ownsTraceQueue bool
 	tracing        bool
-	turnSpans      map[TurnID]Span    // run-loop owned; finalized after runLoopDone
-	traceOrigins   map[Frame]struct{} // run-loop owned, reset for each envelope
+	turnSpans      map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
+	traceOrigins   map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
 }
+
+// A Frame interface can contain a non-comparable concrete value. The two
+// interface words give this envelope's boxed frame a comparable identity,
+// without hashing or inspecting user-defined fields. The map lives only for
+// one run-loop envelope and its nested inline deliveries.
+type traceFrameIdentity struct{ typ, data unsafe.Pointer }
+
+func traceIdentity(f Frame) traceFrameIdentity { return *(*traceFrameIdentity)(unsafe.Pointer(&f)) }
 
 // NewSession creates and initializes a new Session with the specified pipeline and budget.
 func NewSession(id uint64, pipeline *Pipeline, budget ResourceBudget) (*Session, error) {
@@ -602,7 +611,7 @@ func (s *Session) processEnvelope(env Envelope) bool {
 	// Reset per-envelope emit counter and set watchdog start time
 	s.emitsCount = 0
 	if s.tracing {
-		s.traceOrigins = map[Frame]struct{}{env.Frame: {}}
+		s.traceOrigins = map[traceFrameIdentity]struct{}{traceIdentity(env.Frame): {}}
 	}
 	s.procStart.Store(time.Now().UnixNano())
 	defer s.procStart.Store(0)
@@ -740,6 +749,10 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 		s.traceCtx = ContextWithSpan(parent, span)
 		defer func() {
 			s.traceCtx = previous
+			if r := recover(); r != nil {
+				span.End(errors.New("processor_error"))
+				panic(r)
+			}
 			span.End(traceStatusError(resultErr, "processor_error"))
 		}()
 		resultErr = proc.ProcessFrame(s.traceCtx, f, dir, e)
@@ -801,10 +814,10 @@ func frameTrace(f Frame) (string, map[string]any) {
 		return "context.assistant_commit", attrs
 	case *LLMTextDeltaFrame:
 		attrs["text"] = v.Delta
-		return "llm.first_output", attrs
+		return "llm.delta", attrs
 	case *LLMTextFrame:
 		attrs["text"] = v.Text
-		return "llm.complete", attrs
+		return "llm.text", attrs
 	case *ToolCallFrame:
 		attrs["component"] = v.Call.Name
 		return "tool.requested", attrs
@@ -815,12 +828,12 @@ func frameTrace(f Frame) (string, map[string]any) {
 		}
 		return "tool.failed", attrs
 	case *TTSStartedFrame:
-		return "tts.request", attrs
+		return "tts.started", attrs
 	case *TTSAudioFrame:
 		attrs["count"], attrs["sample_rate"], attrs["channels"], attrs["duration_ms"] = len(v.Audio), v.SampleRate, v.Channels, float64(v.Duration.Microseconds())/1000
-		return "tts.first_audio", attrs
+		return "tts.audio_chunk", attrs
 	case *TTSStoppedFrame:
-		return "tts.complete", attrs
+		return "tts.stopped", attrs
 	case *TurnEventFrame:
 		switch v.Kind {
 		case TurnEventStarted:
@@ -966,9 +979,10 @@ func (e *sessionEmitter) PushDirection(f Frame, dir Direction) error {
 	// A frame forwarded by a processor is the same object as its origin and
 	// must not produce a second semantic event. Fresh inline frames are traced
 	// at their emitting boundary exactly once.
-	_, forwarded := e.s.traceOrigins[f]
+	identity := traceIdentity(f)
+	_, forwarded := e.s.traceOrigins[identity]
 	if !forwarded {
-		e.s.traceOrigins[f] = struct{}{}
+		e.s.traceOrigins[identity] = struct{}{}
 	}
 	parent := e.s.traceCtx
 	if parent == nil {
@@ -984,16 +998,34 @@ func (e *sessionEmitter) PushDirection(f Frame, dir Direction) error {
 			parent = ContextWithSpan(e.s.traceCtx, turnSpan)
 		}
 	}
-	var span Span = noopSpan{}
+	var span Span
 	if !forwarded {
 		span = StartSpanSafe(parent, e.s.tracer, e.s.traceEvent(f))
 	}
 	var err error
 	previous := e.s.traceCtx
-	e.s.traceCtx = ContextWithSpan(parent, span)
+	if span != nil {
+		e.s.traceCtx = ContextWithSpan(parent, span)
+	} else {
+		e.s.traceCtx = parent
+	}
 	defer func() {
 		e.s.traceCtx = previous
-		span.End(traceStatusError(err, "processor_error"))
+		if r := recover(); r != nil {
+			if span != nil {
+				span.End(errors.New("processor_error"))
+			}
+			if !forwarded && turn != "" && traceTurnTerminal(f) {
+				if turnSpan := e.s.turnSpans[turn]; turnSpan != nil {
+					turnSpan.End(errors.New("processor_error"))
+					e.s.turnSpans[turn] = nil
+				}
+			}
+			panic(r)
+		}
+		if span != nil {
+			span.End(traceStatusError(err, "processor_error"))
+		}
 		if !forwarded && turn != "" && traceTurnTerminal(f) {
 			if turnSpan := e.s.turnSpans[turn]; turnSpan != nil {
 				turnSpan.End(traceStatusError(err, "processor_error"))

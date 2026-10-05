@@ -107,6 +107,7 @@ type Processor struct {
 	droppedCount atomic.Int64
 	traceMu      sync.Mutex
 	jobTrace     *vadJobTrace
+	closed       bool
 }
 
 // NewProcessor creates a VAD Processor backed by the given Executor.
@@ -134,6 +135,12 @@ func (p *Processor) Attach(s core.SessionController, index int) error {
 }
 
 func (p *Processor) Close() error {
+	p.traceMu.Lock()
+	p.closed = true
+	trace := p.jobTrace
+	p.jobTrace = nil
+	p.traceMu.Unlock()
+	trace.finish(errors.New("canceled"))
 	if p.st != nil {
 		p.st.Close()
 	}
@@ -219,6 +226,12 @@ func rms(x []float32) float32 {
 
 func (p *Processor) trySubmit(e core.Emitter) error {
 	for !p.busy && len(p.pending) > 0 {
+		p.traceMu.Lock()
+		closed := p.closed
+		p.traceMu.Unlock()
+		if closed {
+			return nil
+		}
 		pc := p.pending[0]
 		p.pending = p.pending[1:]
 
@@ -245,6 +258,11 @@ func (p *Processor) trySubmit(e core.Emitter) error {
 			trace.event("vad.job", map[string]any{"sequence": pc.seq})
 		}
 		p.traceMu.Lock()
+		if p.closed {
+			p.traceMu.Unlock()
+			trace.finish(errors.New("canceled"))
+			return nil
+		}
 		p.jobTrace = trace
 		p.traceMu.Unlock()
 

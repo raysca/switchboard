@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -14,15 +15,18 @@ import (
 type traceRecorder struct {
 	mu          sync.Mutex
 	events      []core.TraceEvent
+	starts      []core.TraceEvent
 	parents     []bool
 	ends        int
 	endErrors   []error
+	endedNames  []string
 	parentNames []string
 }
 
 func (r *traceRecorder) StartSpan(ctx context.Context, event core.TraceEvent) core.Span {
 	r.mu.Lock()
 	r.events = append(r.events, event)
+	r.starts = append(r.starts, event)
 	r.parents = append(r.parents, core.SpanFromContext(ctx) != nil)
 	parentName := ""
 	if parent, ok := core.SpanFromContext(ctx).(*traceRecordSpan); ok {
@@ -48,7 +52,224 @@ func (s *traceRecordSpan) End(err error) {
 	s.recorder.mu.Lock()
 	s.recorder.ends++
 	s.recorder.endErrors = append(s.recorder.endErrors, err)
+	s.recorder.endedNames = append(s.recorder.endedNames, s.name)
 	s.recorder.mu.Unlock()
+}
+
+func waitTraceTerminal(t *testing.T, r *traceRecorder, terminal string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		r.mu.Lock()
+		found := false
+		for _, name := range r.endedNames {
+			if name == terminal {
+				found = true
+				break
+			}
+		}
+		r.mu.Unlock()
+		if found {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("trace terminal %s not exported", terminal)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+type traceSliceFrame struct{ data []byte }
+
+func (traceSliceFrame) Type() core.FrameType { return core.FrameType(999) }
+
+type traceSliceProducer struct{}
+
+func (traceSliceProducer) ProcessFrame(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+	if _, ok := f.(traceSliceFrame); ok {
+		if err := e.PushDirection(traceSliceFrame{data: []byte("fresh")}, d); err != nil {
+			return err
+		}
+	}
+	return e.PushDirection(f, d)
+}
+
+func TestSessionTraceNonComparableFrameQueuedAndInline(t *testing.T) {
+	pipe, _ := core.NewPipeline(traceSliceProducer{}, tracePassProcessor{}, tracePassProcessor{})
+	s, _ := core.NewSession(701, pipe, core.DefaultResourceBudget())
+	r := &traceRecorder{}
+	if err := s.SetTracer(r, core.TracePolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(chan struct{}, 2)
+	s.OnOutput = func(core.Frame) { seen <- struct{}{} }
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Post(traceSliceFrame{data: []byte("queued")}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-seen:
+		case <-time.After(time.Second):
+			t.Fatal("noncomparable frame delivery failed")
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitTraceTerminal(t, r, "session.end")
+	if err := s.Err(); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, ev := range r.events {
+		if ev.Name == "frame.999" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("semantic events=%d, want one per queued and inline origin", n)
+	}
+}
+
+type traceProviderChild struct{}
+
+func (traceProviderChild) ProcessFrame(ctx context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+	span := core.StartContextSpan(ctx, "provider.child", "702", "", 1, nil)
+	span.End(nil)
+	return e.PushDirection(f, d)
+}
+func TestSessionTraceForwardedFrameRetainsProcessorChain(t *testing.T) {
+	pipe, _ := core.NewPipeline(tracePassProcessor{}, tracePassProcessor{}, traceProviderChild{})
+	s, _ := core.NewSession(702, pipe, core.DefaultResourceBudget())
+	r := &traceRecorder{}
+	if err := s.SetTracer(r, core.TracePolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(chan struct{}, 1)
+	s.OnOutput = func(core.Frame) { seen <- struct{}{} }
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Post(&core.InputAudioFrame{Samples: make([]byte, 2), SampleRate: 16000}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-seen:
+	case <-time.After(time.Second):
+		t.Fatal("missing output")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitTraceTerminal(t, r, "session.end")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var parents []string
+	semantic := 0
+	for i, ev := range r.starts {
+		if ev.Name == "processor.frame" || ev.Name == "provider.child" {
+			parents = append(parents, r.parentNames[i])
+		}
+		if ev.Name == "frame.input_audio" {
+			semantic++
+		}
+	}
+	want := []string{"frame.input_audio", "processor.frame", "processor.frame", "processor.frame"}
+	if !reflect.DeepEqual(parents, want) || semantic != 1 {
+		t.Fatalf("parents=%v semantic=%d", parents, semantic)
+	}
+}
+
+type tracePanicProcessor struct{}
+
+func (tracePanicProcessor) ProcessFrame(context.Context, core.Frame, core.Direction, core.Emitter) error {
+	panic("private processor panic")
+}
+
+type traceInlinePanicProducer struct{}
+
+func (traceInlinePanicProducer) ProcessFrame(_ context.Context, _ core.Frame, _ core.Direction, e core.Emitter) error {
+	return e.Push(&core.OutputAudioFrame{})
+}
+func TestSessionTracePanicEndsProcessorAndInlineSpansAsFailure(t *testing.T) {
+	for _, processors := range [][]core.Processor{{tracePanicProcessor{}}, {traceInlinePanicProducer{}, tracePanicProcessor{}}} {
+		pipe, _ := core.NewPipeline(processors...)
+		s, _ := core.NewSession(703, pipe, core.DefaultResourceBudget())
+		r := &traceRecorder{}
+		if err := s.SetTracer(r, core.TracePolicy{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Post(&core.InputAudioFrame{Samples: make([]byte, 2), SampleRate: 16000}); err != nil {
+			t.Fatal(err)
+		}
+		<-s.Done()
+		_ = s.Close()
+		waitTraceTerminal(t, r, "session.failure")
+		r.mu.Lock()
+		for i, name := range r.endedNames {
+			if name == "processor.frame" || name == "transport.output_audio" {
+				if r.endErrors[i] == nil || r.endErrors[i].Error() != "processor_error" {
+					r.mu.Unlock()
+					t.Fatalf("%s panic end=%v", name, r.endErrors[i])
+				}
+			}
+		}
+		r.mu.Unlock()
+	}
+}
+
+func TestSessionTraceGenericFramesDoNotClaimProviderFirstOrCompletion(t *testing.T) {
+	pipe, _ := core.NewPipeline(tracePassProcessor{})
+	s, _ := core.NewSession(704, pipe, core.DefaultResourceBudget())
+	r := &traceRecorder{}
+	if err := s.SetTracer(r, core.TracePolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(chan struct{}, 6)
+	s.OnOutput = func(core.Frame) { seen <- struct{}{} }
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	frames := []core.Frame{&core.LLMTextDeltaFrame{Delta: "a"}, &core.LLMTextDeltaFrame{Delta: "b"}, &core.TTSStartedFrame{}, &core.TTSAudioFrame{}, &core.TTSAudioFrame{}, &core.TTSStoppedFrame{}}
+	for _, f := range frames {
+		if err := s.Post(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range frames {
+		select {
+		case <-seen:
+		case <-time.After(time.Second):
+			t.Fatal("missing frame")
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	waitTraceTerminal(t, r, "session.end")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	counts := map[string]int{}
+	for _, ev := range r.events {
+		counts[ev.Name]++
+		switch ev.Name {
+		case "llm.first_output", "tts.request", "tts.first_audio", "tts.complete":
+			t.Fatalf("generic frame claimed provider lifecycle: %s", ev.Name)
+		}
+	}
+	for name, want := range map[string]int{"llm.delta": 2, "tts.started": 1, "tts.audio_chunk": 2, "tts.stopped": 1} {
+		if counts[name] != want {
+			t.Fatalf("generic %s count=%d, want %d", name, counts[name], want)
+		}
+	}
 }
 
 func TestSessionTraceTurnParentAndRawErrorSafety(t *testing.T) {
@@ -140,6 +361,51 @@ func TestAsyncTracerKeepsEndedParentForLaterChild(t *testing.T) {
 	}
 }
 
+type gatedParentTracer struct {
+	recorder *traceRecorder
+	gate     chan struct{}
+}
+
+func (g gatedParentTracer) StartSpan(ctx context.Context, event core.TraceEvent) core.Span {
+	if event.Name == "parent" {
+		<-g.gate
+	}
+	return g.recorder.StartSpan(ctx, event)
+}
+func TestAsyncTracerCrossDispatcherParentResolution(t *testing.T) {
+	r := &traceRecorder{}
+	gate := make(chan struct{})
+	underlying := gatedParentTracer{recorder: r, gate: gate}
+	a, b := core.NewAsyncTracer(underlying, 8), core.NewAsyncTracer(underlying, 8)
+	parent := a.StartSpan(context.Background(), core.NewTraceEvent("parent", time.Now(), "s", "t", 1, core.TracePolicy{}, nil))
+	child := b.StartSpan(core.ContextWithSpan(context.Background(), parent), core.NewTraceEvent("child", time.Now(), "s", "t", 1, core.TracePolicy{}, nil))
+	time.Sleep(10 * time.Millisecond)
+	close(gate)
+	child.End(nil)
+	parent.End(nil)
+	a.Close()
+	b.Close()
+	deadline := time.Now().Add(time.Second)
+	for {
+		r.mu.Lock()
+		events := append([]core.TraceEvent(nil), r.events...)
+		parents := append([]string(nil), r.parentNames...)
+		r.mu.Unlock()
+		if len(events) >= 2 || time.Now().After(deadline) {
+			for i, e := range events {
+				if e.Name == "child" {
+					if parents[i] != "parent" {
+						t.Fatalf("cross dispatcher child parent=%q", parents[i])
+					}
+					return
+				}
+			}
+			t.Fatal("child span missing")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 type traceFailProcessor struct{ err error }
 
 func (p traceFailProcessor) ProcessFrame(context.Context, core.Frame, core.Direction, core.Emitter) error {
@@ -190,25 +456,7 @@ func TestSessionTraceCorrelatesFramesAndNeverCapturesAudioOrTextByDefault(t *tes
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(time.Second)
-	for {
-		recorder.mu.Lock()
-		foundEnd := false
-		for _, event := range recorder.events {
-			if event.Name == "session.end" {
-				foundEnd = true
-				break
-			}
-		}
-		recorder.mu.Unlock()
-		if foundEnd {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("asynchronous trace worker did not drain terminal events")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	waitTraceTerminal(t, recorder, "session.end")
 
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
