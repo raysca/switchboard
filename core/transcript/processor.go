@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -138,6 +139,15 @@ func (p *Processor) runDeadlineDriver(ctx context.Context) {
 }
 
 func (p *Processor) ProcessFrame(_ context.Context, frame core.Frame, dir core.Direction, emitter core.Emitter) error {
+	if _, ok := frame.(*core.InterruptionFrame); ok {
+		generation := p.legacyGen
+		if p.session != nil && core.Generation(p.session.CurrentGeneration()) > generation {
+			generation = core.Generation(p.session.CurrentGeneration())
+		}
+		if generation != 0 {
+			p.legacyGen = generation
+		}
+	}
 	if dir != core.Downstream {
 		return emitter.PushDirection(frame, dir)
 	}
@@ -158,6 +168,13 @@ func (p *Processor) ProcessFrame(_ context.Context, frame core.Frame, dir core.D
 	case *core.TranscriptAdvanceFrame:
 		forward = false
 		outputs, err = p.finalizer.Advance(policyAt)
+	case *core.TranscriptInvalidationFrame:
+		forward = false
+		err = p.finalizer.Interrupt(value.Turn, value.Gen, policyAt)
+	case *core.ErrorFrame:
+		if errors.Is(value.Err, core.ErrTranscriptInvalidated) {
+			err = p.finalizer.InvalidateAll(policyAt)
+		}
 	case *core.TurnEventFrame:
 		switch value.Kind {
 		case core.TurnEventStarted:

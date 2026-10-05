@@ -99,7 +99,7 @@ func (s *reviewBudgetSession) CurrentGeneration() uint64                        
 func (s *reviewBudgetSession) IncrementGeneration() uint64                           { return 1 }
 func (s *reviewBudgetSession) Reenter(core.Frame, core.Direction, int, uint64) error { return nil }
 func (s *reviewBudgetSession) Go(fn func(context.Context)) error {
-	if s.active.Add(1) > 2 {
+	if s.active.Add(1) > 16 {
 		s.active.Add(-1)
 		s.rejections.Add(1)
 		return core.ErrTooManyTasks

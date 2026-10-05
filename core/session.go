@@ -627,6 +627,11 @@ func (s *Session) recordErr(err error) {
 }
 
 func isControlFrame(f Frame) bool {
+	if errFrame, ok := f.(*ErrorFrame); ok && errors.Is(errFrame.Err, ErrTranscriptInvalidated) {
+		// Transcript invalidation must preserve candidate/invalidation order.
+		// It remains observable downstream, but does not jump the data queue.
+		return false
+	}
 	switch f.Type() {
 	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
 		return true

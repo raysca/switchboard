@@ -171,6 +171,9 @@ func (f *Finalizer) Observe(candidate Candidate) ([]Output, error) {
 	}
 	f.commitIdentityTimeLocked(candidate.Generation, candidate.At)
 	outputs := f.expireDueLocked(candidate.At)
+	if _, ok := f.retired[key]; ok {
+		return outputs, nil
+	}
 	state := f.turns[key]
 	if state == nil {
 		state = &turnState{}
@@ -242,6 +245,9 @@ func (f *Finalizer) Complete(turn core.TurnID, generation core.Generation, at ti
 	}
 	f.commitIdentityTimeLocked(generation, at)
 	outputs := f.expireDueLocked(at)
+	if _, ok := f.retired[key]; ok {
+		return outputs, nil
+	}
 	state := f.turns[key]
 	if state == nil {
 		state = &turnState{}
@@ -335,6 +341,23 @@ func (f *Finalizer) Interrupt(turn core.TurnID, generation core.Generation, at t
 	f.commitIdentityTimeLocked(generation, at)
 	delete(f.turns, key)
 	f.retired[key] = struct{}{}
+	return nil
+}
+
+// InvalidateAll retires every pending candidate in the active generation
+// without committing text. It is the fail-closed fallback for uncorrelated
+// provider assembly failures; correlated invalidation should use Interrupt.
+func (f *Finalizer) InvalidateAll(at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.validateTimeLocked(at); err != nil {
+		return err
+	}
+	f.lastAt = at
+	for key := range f.turns {
+		delete(f.turns, key)
+		f.retired[key] = struct{}{}
+	}
 	return nil
 }
 

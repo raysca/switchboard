@@ -1,8 +1,13 @@
 package core
 
 import (
+	"errors"
 	"time"
 )
+
+// ErrTranscriptInvalidated marks a provider assembly failure whose partial
+// candidate must never be committed.
+var ErrTranscriptInvalidated = errors.New("core: transcript candidate invalidated")
 
 // FrameType identifies the concrete category of a framework frame.
 type FrameType uint16
@@ -48,13 +53,14 @@ const (
 	FrameSettingsControl
 
 	// Internal async re-entry
-	FrameInternal            FrameType = 821
-	FrameWriteCompletion     FrameType = 822
-	FrameTurnEvent           FrameType = 823
-	FrameSpeakingState       FrameType = 824
-	FrameOutputTurnFinal     FrameType = 825
-	FrameTranscriptCandidate FrameType = 826
-	FrameTranscriptAdvance   FrameType = 827
+	FrameInternal               FrameType = 821
+	FrameWriteCompletion        FrameType = 822
+	FrameTurnEvent              FrameType = 823
+	FrameSpeakingState          FrameType = 824
+	FrameOutputTurnFinal        FrameType = 825
+	FrameTranscriptCandidate    FrameType = 826
+	FrameTranscriptAdvance      FrameType = 827
+	FrameTranscriptInvalidation FrameType = 828
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.
@@ -207,6 +213,18 @@ func (f *TranscriptCandidateFrame) Generation() uint64 { return uint64(f.Gen) }
 type TranscriptAdvanceFrame struct{ At time.Time }
 
 func (*TranscriptAdvanceFrame) Type() FrameType { return FrameTranscriptAdvance }
+
+// TranscriptInvalidationFrame retires one affected raw transcript identity
+// without committing its partial text. Providers emit a separate ErrorFrame
+// when the underlying failure must also remain observable.
+type TranscriptInvalidationFrame struct {
+	Turn TurnID
+	Gen  Generation
+	Err  error
+}
+
+func (*TranscriptInvalidationFrame) Type() FrameType      { return FrameTranscriptInvalidation }
+func (f *TranscriptInvalidationFrame) Generation() uint64 { return uint64(f.Gen) }
 
 // -------------------------------------------------------------------------
 // LLM and Text Frames

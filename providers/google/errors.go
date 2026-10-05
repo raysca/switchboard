@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"govoice/core"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -27,7 +29,7 @@ var (
 	ErrUnitTooLong                = errors.New("google provider: synthesis unit exceeds maximum character limit")
 	ErrRequestTooLarge            = errors.New("google provider: request payload exceeds maximum byte limit")
 	ErrQuotaExhausted             = errors.New("google provider: stream quota headroom exhausted")
-	ErrTranscriptAssemblyCapacity = errors.New("google provider: transcript assembly capacity exhausted")
+	ErrTranscriptAssemblyCapacity = core.ErrTranscriptInvalidated
 )
 
 // ProviderError represents a sanitized, provider-neutral error with classification.

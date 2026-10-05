@@ -63,7 +63,7 @@ func TestSTT_AcceleratedFiveRotationsWithoutDuplicates(t *testing.T) {
 		// On stream 1 and stream 2, simulate the provider returning the SAME final transcript
 		// across the rotation boundary to test deduplication!
 		if curr <= 2 {
-			st.PushResult(&STTResult{Transcript: "hello world", IsFinal: true})
+			st.PushResult(&STTResult{Transcript: "hello world", IsFinal: true, ResultEndOffset: time.Second})
 		}
 		return st
 	}
@@ -251,7 +251,7 @@ func TestGoogleSTTAssemblesSequentialFinalsAndInterimFromWholeResponse(t *testin
 			got = append(got, candidate.Text)
 		}
 	}
-	want := []string{"hello", "hello world", "hello world again"}
+	want := []string{"hello world again"}
 	if len(got) != len(want) {
 		t.Fatalf("batch results lost: got=%v want=%v", got, want)
 	}

@@ -207,15 +207,16 @@ func (s *grpcSTTStream) Close() error {
 
 // activeStream holds the state of an open STT stream.
 type activeStream struct {
-	stream          STTStream
-	cancel          context.CancelFunc
-	ctx             context.Context
-	createdAt       time.Time
-	id              int
-	turnID          string
-	gen             uint64
-	offsetBase      time.Duration
-	lastFinalOffset time.Duration
+	stream            STTStream
+	cancel            context.CancelFunc
+	ctx               context.Context
+	createdAt         time.Time
+	id                int
+	turnID            string
+	gen               uint64
+	offsetBase        time.Duration
+	lastFinalOffset   time.Duration
+	lastInterimOffset time.Duration
 }
 
 type googleSegment struct {
@@ -227,6 +228,7 @@ type googleSegment struct {
 
 type googleAssembly struct {
 	segments []googleSegment
+	interims []googleSegment
 	prefix   string
 }
 
@@ -408,15 +410,8 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		return nil
 	}
 
-	// Update rolling overlap buffer
-	p.audioBuffer = append(p.audioBuffer, f.Samples...)
-	p.turnAudioBytes += int64(len(f.Samples))
-	if len(p.audioBuffer) > p.overlapBytes {
-		overflow := len(p.audioBuffer) - p.overlapBytes
-		p.audioBuffer = p.audioBuffer[overflow:]
-	}
-
-	// Check if active stream requires rotation
+	// Rotate from audio already sent. The current chunk is appended only after
+	// replay, so it cannot be both replayed and sent again.
 	shouldRotate := false
 	if p.active != nil && p.cfg.Now().Sub(p.active.createdAt) >= p.cfg.StreamRotationThreshold {
 		shouldRotate = true
@@ -437,6 +432,12 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	}
 
 	p.mu.Lock()
+	p.audioBuffer = append(p.audioBuffer, f.Samples...)
+	p.turnAudioBytes += int64(len(f.Samples))
+	if len(p.audioBuffer) > p.overlapBytes {
+		overflow := len(p.audioBuffer) - p.overlapBytes
+		p.audioBuffer = p.audioBuffer[overflow:]
+	}
 	st := p.active
 	p.mu.Unlock()
 
@@ -632,40 +633,59 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				}
 				return
 			}
+			p.mu.Lock()
+			turn, turnGen := st.turnID, st.gen
+			currentGen := turnGen
+			if p.session != nil {
+				currentGen = p.session.CurrentGeneration()
+			}
+			if turn == "" || turnGen == 0 || turnGen < currentGen {
+				p.mu.Unlock()
+				continue
+			}
+			p.resetInterimsLocked(st)
+			var text string
+			var latest *STTResult
+			var assemblyErr error
 			for _, res := range results {
 				if res == nil || res.Transcript == "" {
 					continue
 				}
-				p.mu.Lock()
-				turn, turnGen := st.turnID, st.gen
-				if turn == "" || turnGen == 0 {
-					p.mu.Unlock()
-					continue
-				}
-				currentGen := turnGen
-				if p.session != nil {
-					currentGen = p.session.CurrentGeneration()
-				}
-				if turnGen < currentGen {
-					p.mu.Unlock()
-					continue
-				}
-				text, assemblyErr := p.assembleResultLocked(st, res)
-				p.mu.Unlock()
+				text, assemblyErr = p.assembleResultLocked(st, res)
+				latest = res
 				if assemblyErr != nil {
-					_ = p.session.Reenter(&core.ErrorFrame{Err: assemblyErr}, core.Downstream, p.index+1, turnGen)
-					continue
+					break
 				}
-				frame := &core.TranscriptCandidateFrame{
-					Text: text, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
-					Timestamp: p.cfg.Now(), Final: res.IsFinal,
-					Stability: float64(res.Stability), HasStability: !res.IsFinal && res.Stability > 0,
-					Provider: "google",
-				}
-				_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
 			}
+			p.mu.Unlock()
+			if assemblyErr != nil {
+				_ = p.session.Reenter(&core.TranscriptInvalidationFrame{
+					Turn: core.TurnID(turn), Gen: core.Generation(turnGen), Err: assemblyErr,
+				}, core.Downstream, p.index+1, turnGen)
+				_ = p.session.Reenter(&core.ErrorFrame{
+					Err: fmt.Errorf("google transcript assembly failed: %v", assemblyErr),
+				}, core.Downstream, p.index+1, turnGen)
+				continue
+			}
+			if latest == nil {
+				continue
+			}
+			frame := &core.TranscriptCandidateFrame{
+				Text: text, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
+				Timestamp: p.cfg.Now(), Final: latest.IsFinal,
+				Stability: float64(latest.Stability), HasStability: !latest.IsFinal && latest.Stability > 0,
+				Provider: "google",
+			}
+			_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
 		}
 	})
+}
+
+func (p *STTProcessor) resetInterimsLocked(st *activeStream) {
+	st.lastInterimOffset = 0
+	if assembly := p.assemblies[googleAssemblyKey{turn: st.turnID, gen: st.gen}]; assembly != nil {
+		assembly.interims = nil
+	}
 }
 
 func (p *STTProcessor) bindOrDetachActiveLocked(turn string, gen uint64) *activeStream {
@@ -722,8 +742,34 @@ func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult)
 		return "", ErrTranscriptAssemblyCapacity
 	}
 	if !result.IsFinal {
-		return joinTranscript(a.prefix, text), nil
+		start := st.offsetBase + st.lastInterimOffset
+		end := st.offsetBase + result.ResultEndOffset
+		if result.ResultEndOffset > st.lastInterimOffset {
+			st.lastInterimOffset = result.ResultEndOffset
+		}
+		replaced := false
+		for i := range a.interims {
+			if a.interims[i].end == end {
+				a.interims[i] = googleSegment{start: start, end: end, streamID: st.id, text: text}
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			if len(a.interims) >= maxGoogleSegments {
+				return "", ErrTranscriptAssemblyCapacity
+			}
+			a.interims = append(a.interims, googleSegment{start: start, end: end, streamID: st.id, text: text})
+			sort.Slice(a.interims, func(i, j int) bool { return a.interims[i].end < a.interims[j].end })
+		}
+		composed := composeGoogleSegments(a.prefix, a.interims)
+		if len(composed) > maxTranscriptBytes {
+			return "", ErrTranscriptAssemblyCapacity
+		}
+		return composed, nil
 	}
+	a.interims = nil
+	st.lastInterimOffset = 0
 	relativeStart := st.lastFinalOffset
 	if result.ResultEndOffset > st.lastFinalOffset {
 		st.lastFinalOffset = result.ResultEndOffset
@@ -762,18 +808,7 @@ func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult)
 		a.segments = append(a.segments, googleSegment{start: start, end: end, streamID: st.id, text: text})
 		sort.Slice(a.segments, func(i, j int) bool { return a.segments[i].end < a.segments[j].end })
 	}
-	a.prefix = ""
-	var priorEnd time.Duration
-	for i, segment := range a.segments {
-		if i > 0 && segment.start < priorEnd {
-			a.prefix = joinTranscript(a.prefix, segment.text)
-		} else {
-			a.prefix = appendTranscript(a.prefix, segment.text)
-		}
-		if segment.end > priorEnd {
-			priorEnd = segment.end
-		}
-	}
+	a.prefix = composeGoogleSegments("", a.segments)
 	if len(a.prefix) > maxTranscriptBytes {
 		// The common finalizer rejects this candidate. Do not retain an
 		// unbounded composed prefix in the adapter.
@@ -782,6 +817,22 @@ func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult)
 		return "", ErrTranscriptAssemblyCapacity
 	}
 	return a.prefix, nil
+}
+
+func composeGoogleSegments(prefix string, segments []googleSegment) string {
+	composed := prefix
+	var priorEnd time.Duration
+	for i, segment := range segments {
+		if (i > 0 || prefix != "") && segment.start < priorEnd {
+			composed = joinTranscript(composed, segment.text)
+		} else {
+			composed = appendTranscript(composed, segment.text)
+		}
+		if segment.end > priorEnd {
+			priorEnd = segment.end
+		}
+	}
+	return composed
 }
 
 func appendTranscript(prefix, next string) string {

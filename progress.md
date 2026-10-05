@@ -165,6 +165,15 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   immutable stream, bounds draining, restarts cleanly, and propagates receiver
   task admission failure. All independent review probes are now tracked tests;
   Task 9 and Gate B remain open for independent re-review.
+- Correction round 3 closes six additional integration gaps without claiming
+  the gate: due-state expiration rechecks retirement before applying late input;
+  real Google barge-in control reconciles the transcript processor generation;
+  bounded xAI draining preserves a prior V1 or typed turn's late final; Google
+  assembly overflow emits correlated turn invalidation before its observable
+  error; each Google response emits one complete consecutive-result snapshot;
+  and automatic rotation replays only previously sent audio. Both preserved
+  review overlays are promoted or covered by tracked regressions and pass under
+  the race detector. Task 9 and Gate B remain open for independent re-review.
 
 ### Task 8 closeout
 

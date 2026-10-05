@@ -180,6 +180,7 @@ type STTProcessor struct {
 
 	mu        sync.Mutex
 	active    *activeSTTStream
+	draining  []*activeSTTStream
 	streamID  int
 	closed    bool
 	turnID    string
@@ -219,10 +220,16 @@ func (p *STTProcessor) Attach(s core.SessionController, index int) error {
 func (p *STTProcessor) Close() error {
 	p.mu.Lock()
 	p.closed = true
-	active := p.active
+	streams := append([]*activeSTTStream(nil), p.draining...)
+	if p.active != nil {
+		streams = append(streams, p.active)
+	}
 	p.active = nil
+	p.draining = nil
 	p.mu.Unlock()
-	p.stopStream(active)
+	for _, st := range streams {
+		p.stopStream(st)
+	}
 	return nil
 }
 
@@ -245,13 +252,9 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			}
 			p.active.mu.Unlock()
 			if owned {
-				old, p.active = p.active, nil
-				old.mu.Lock()
-				closing := old.closing
-				old.mu.Unlock()
-				if !closing {
-					old = nil // immutable receiver drains an unfinished prior stream
-				}
+				p.draining = append(p.draining, p.active)
+				p.active = nil
+				old = p.trimDrainingLocked()
 			}
 		}
 		p.mu.Unlock()
@@ -277,13 +280,9 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 				}
 				p.active.mu.Unlock()
 				if owned {
-					old, p.active = p.active, nil
-					old.mu.Lock()
-					closing := old.closing
-					old.mu.Unlock()
-					if !closing {
-						old = nil
-					}
+					p.draining = append(p.draining, p.active)
+					p.active = nil
+					old = p.trimDrainingLocked()
 				}
 			}
 			p.mu.Unlock()
@@ -313,18 +312,30 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
-		active := p.active
+		streams := append([]*activeSTTStream(nil), p.draining...)
+		if p.active != nil {
+			streams = append(streams, p.active)
+		}
 		p.active = nil
+		p.draining = nil
 		p.mu.Unlock()
-		p.stopStream(active)
+		for _, st := range streams {
+			p.stopStream(st)
+		}
 		return e.PushDirection(f, dir)
 
 	case *core.CancelFrame:
 		p.mu.Lock()
-		active := p.active
+		streams := append([]*activeSTTStream(nil), p.draining...)
+		if p.active != nil {
+			streams = append(streams, p.active)
+		}
 		p.active = nil
+		p.draining = nil
 		p.mu.Unlock()
-		p.stopStream(active)
+		for _, st := range streams {
+			p.stopStream(st)
+		}
 		return e.PushDirection(f, dir)
 
 	default:
@@ -447,6 +458,7 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 
 	return p.session.Go(func(ctx context.Context) {
 		defer p.stopDrainTimer(st)
+		defer p.releaseStream(st)
 		for {
 			select {
 			case <-st.ctx.Done():
@@ -629,6 +641,7 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 				st.cancel()
 				_ = st.stream.Close()
 			})
+			p.releaseStream(st)
 		})
 	}
 	st.mu.Unlock()
@@ -668,8 +681,44 @@ func (p *STTProcessor) stopMatchingStream(turn string, gen uint64) {
 			st = nil
 		}
 	}
+	if st == nil {
+		for i, candidate := range p.draining {
+			candidate.mu.Lock()
+			matches := candidate.turnID == turn && candidate.gen == gen
+			candidate.mu.Unlock()
+			if matches {
+				st = candidate
+				p.draining = append(p.draining[:i], p.draining[i+1:]...)
+				break
+			}
+		}
+	}
 	p.mu.Unlock()
 	p.stopStream(st)
+}
+
+func (p *STTProcessor) trimDrainingLocked() *activeSTTStream {
+	const maxDrainingStreams = 8
+	if len(p.draining) <= maxDrainingStreams {
+		return nil
+	}
+	oldest := p.draining[0]
+	p.draining = p.draining[1:]
+	return oldest
+}
+
+func (p *STTProcessor) releaseStream(st *activeSTTStream) {
+	p.mu.Lock()
+	if p.active == st {
+		p.active = nil
+	}
+	for i, candidate := range p.draining {
+		if candidate == st {
+			p.draining = append(p.draining[:i], p.draining[i+1:]...)
+			break
+		}
+	}
+	p.mu.Unlock()
 }
 
 func boolStability(stable bool) float64 {

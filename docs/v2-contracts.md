@@ -252,8 +252,17 @@ faithfully even when words repeat, while text overlap is applied only to proven
 overlapping media intervals. Rotation media origins and overlap are per turn,
 not session-global. Assembly identities and segments are bounded; a newer
 generation reclaims fenced state and active-capacity exhaustion fails explicitly
-instead of returning an incomplete transcript. Interim output includes the
-committed segment prefix. xAI `is_final` is provider-final but does not close an
+instead of returning an incomplete transcript. A provider that exhausts these
+bounds emits a correlated `TranscriptInvalidationFrame` for the affected
+`(TurnID, Generation)` before its observable error. The transcript processor
+retires that identity without committing its partial prefix; unrelated turns
+continue. A sentinel `ErrorFrame` remains as a fail-closed compatibility
+fallback when a legacy provider cannot supply an identity, and stays on the
+ordered data lane so it cannot overtake prior candidates. Each Google response
+produces one complete raw snapshot after all consecutive result portions are
+assembled. Interim output includes the committed segment prefix. Rotation
+replays only audio sent before the triggering chunk, so that chunk is not
+replayed and sent twice. xAI `is_final` is provider-final but does not close an
 utterance; `speech_final` and `transcript.done` supply the stronger utterance
 boundary, with nonempty done text taking precedence over the prior partial.
 Streams retain the turn/generation bound when opened, so a draining old stream
@@ -262,8 +271,13 @@ adapter, decides commitment. Production server and demo assembly keep nonzero
 grace and timeout defaults because the lifecycle driver supplies due advances.
 Typed xAI completion sends the matching stream's audio-done signal and starts a
 bounded drain; typed interruption cancels only that immutable owner. Starting a
-new typed turn retires a completed drain before opening its replacement, and a
-failed supervised receiver start is returned to the pipeline.
+new V1 or typed turn moves the prior immutable owner to a bounded draining set,
+allowing its late final until completion, interruption, deadline, session close,
+or bounded eviction. A failed supervised receiver start is returned to the
+pipeline. An upstream barge-in `InterruptionFrame` reconciles the transcript
+processor's pending generation while preserving the active speech-owned turn,
+so the matching generation's stop can complete the candidate; late candidates
+still cannot steal that identity.
 
 **Acceptance criteria**
 
