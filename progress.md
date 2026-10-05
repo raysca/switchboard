@@ -501,8 +501,28 @@ closeout above.
 - [x] Task 11: Bounded ToolLoop behavior consuming Task 1 public types. Independent reviewer APPROVED and final independent tester PASS at `c38919d`.
 - [x] Task 12: Google/xAI tool adapters only; usage is P1 Task 32. Independent cross-provider reviewer APPROVED and final independent tester PASS at `ed3b930`.
 - [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.
-- [ ] Task 14: P0 eval harness and separate compatibility suites with protocol-specific debug adapters.
+- [x] Task 14: P0 eval harness and separate compatibility suites with protocol-specific debug adapters. Independent reviewer APPROVED and final independent tester PASS at `996ac7f`.
 - [ ] Independent Phase 3 tester gate; record Gates C and F.
+
+### Task 14 closeout
+
+- The deterministic `govoice.eval/v1` harness reports 23 P0 scenarios and
+  exits nonzero on failed scenarios. It exercises runtime barge-in, in-flight
+  flush, silence/no-speech, transcript invalidation, pacing/speaking, active
+  tool cancellation, mute admission, and supervised teardown.
+- Gate F evidence remains three separate suites: pinned official RTVI client
+  behavior, eleven Whisker semantic scenarios through the narrow Task 1
+  adapter, and pinned Pipecat paired behavior from production turn-manager
+  outcomes. The Whisker teardown observes a real processor `Close` callback
+  and supervised-worker exit. General observer delivery remains Task 35.
+- Independent review APPROVED `6dc0ee2..996ac7f`; the final tester passed
+  Whisker/eval race ×25, full compatibility/transport race and vet, Node/npm
+  checks, and the playback probe. The pinned client still cannot clear already
+  buffered playback and this is reported as unsupported. Pytest was unavailable,
+  so the paired Go suite validates the pinned revision/source and selected
+  outcomes without claiming the Python tests ran.
+- Task 14 is complete at `996ac7f`. Gate F remains open for the separate Phase
+  3 independent gate together with Gate C.
 
 ### Task 11 closeout
 

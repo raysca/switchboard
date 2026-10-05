@@ -84,6 +84,19 @@ recorded product decision; it is not a playback-clear pass.
 - CAVEAT: a broader concurrent `cd core && go test -race -count=1 ./turn ./transcript ./tools/...` run found `TestToolLoopTraceCarriesNeutralCallCorrelationOnly` failing with `trace events = 2`. This is in concurrently changing Task13 trace instrumentation, outside Task14-owned files; parent has been informed. Task14-specific and targeted tool interruption tests pass.
 - PASS: `git diff --check`; formatting checks passed for all Task14 Go files.
 
-## Review status
+## Independent closeout
 
-Not independently reviewed. Task14, Gate C, and Gate F remain open.
+- Corrections are documented in `docs/compatibility/task14-round1-report.md`,
+  `task14-round2-report.md`, and `task14-round3-report.md`.
+- Final independent review: **APPROVE** at `996ac7f`. Runtime outcomes now
+  drive Whisker flush/interruption/tool/teardown evidence, production turn
+  decisions drive paired Pipecat outcomes, adapters enforce bounded copied
+  values and safe error mapping, and the official-client harness rejects
+  unexpected errors.
+- Final independent test: **PASS**. Whisker/eval race passed 25 repetitions;
+  full compatibility/transport race and vet plus Node/npm/fixture/playback
+  checks passed. Playback clearing remains explicitly unsupported.
+- Pytest was unavailable. The paired Go suite validates the pinned Pipecat
+  revision/source and selected observed outcomes; it does not claim the Python
+  reference tests ran.
+- Task 14 is complete. Gates C and F remain open for the separate Phase 3 gate.
