@@ -609,3 +609,35 @@ func TestGoogleNativeContentsPreserveReplayOccurrences(t *testing.T) {
 		t.Fatalf("replayed native call occurrences changed: %#v", got)
 	}
 }
+
+func TestGoogleNativeExchangesStayAfterPriorToolResults(t *testing.T) {
+	call1 := core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c1", ToolName: "lookup", Content: `{}`}
+	result1 := core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c1", ToolName: "lookup", ToolStatus: core.ToolSucceeded, Content: `{}`}
+	call2 := core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c2", ToolName: "lookup", Content: `{}`}
+	result2 := core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c2", ToolName: "lookup", ToolStatus: core.ToolSucceeded, Content: `{}`}
+	exchanges := []GoogleNativeExchange{
+		{CallIDs: []string{"c1"}, Contents: []*genai.Content{{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}, ThoughtSignature: []byte{1}}}}}},
+		{CallIDs: []string{"c2"}, Contents: []*genai.Content{
+			{Role: "model", Parts: []*genai.Part{{Text: "second-round-prefix", ThoughtSignature: []byte{2}}}},
+			{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "c2", Name: "lookup"}, ThoughtSignature: []byte{3}}}},
+		}},
+	}
+	got := GoogleContentsWithNativeExchanges([]core.Message{call1, result1, call2, result2}, exchanges)
+	result1Index, prefixIndex := -1, -1
+	for index, content := range got {
+		for _, part := range content.Parts {
+			if part.FunctionResponse != nil && part.FunctionResponse.ID == "c1" {
+				result1Index = index
+			}
+			if part.Text == "second-round-prefix" {
+				prefixIndex = index
+				if len(part.ThoughtSignature) != 1 || part.ThoughtSignature[0] != 2 {
+					t.Fatalf("second response signature changed: %#v", part)
+				}
+			}
+		}
+	}
+	if result1Index < 0 || prefixIndex <= result1Index {
+		t.Fatalf("response boundary lost: result1 index=%d prefix index=%d contents=%#v", result1Index, prefixIndex, got)
+	}
+}

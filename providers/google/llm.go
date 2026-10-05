@@ -64,7 +64,14 @@ type LLMToolStreamClient interface {
 }
 
 type LLMNativeToolStreamClient interface {
-	GenerateStreamWithNativeTools(ctx context.Context, model string, systemPrompt string, history []core.Message, nativeHistory []*genai.Content, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error)
+	GenerateStreamWithNativeTools(ctx context.Context, model string, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error)
+}
+
+// GoogleNativeExchange retains one streamed model response occurrence for
+// continuation, including all original SDK content parts and call ordering.
+type GoogleNativeExchange struct {
+	CallIDs  []string
+	Contents []*genai.Content
 }
 
 // RealGoogleLLMClient uses google.golang.org/genai.
@@ -105,7 +112,7 @@ func (c *RealGoogleLLMClient) GenerateStreamWithTools(ctx context.Context, model
 	return c.generateStream(ctx, model, systemPrompt, history, definitions)
 }
 
-func (c *RealGoogleLLMClient) GenerateStreamWithNativeTools(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []*genai.Content, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
+func (c *RealGoogleLLMClient) GenerateStreamWithNativeTools(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
 	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nativeHistory, definitions, identity)
 }
 
@@ -113,8 +120,8 @@ func (c *RealGoogleLLMClient) generateStream(ctx context.Context, model, systemP
 	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nil, definitions, core.ToolCall{})
 }
 
-func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []*genai.Content, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
-	contents := GoogleContentsWithNative(history, nativeHistory)
+func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
+	contents := GoogleContentsWithNativeExchanges(history, nativeHistory)
 
 	var genConfig *genai.GenerateContentConfig
 	if systemPrompt != "" {
@@ -363,7 +370,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 
 		var committed bool
 		var fullTextBuilder strings.Builder
-		var nativeHistory []*genai.Content
+		var nativeHistory []GoogleNativeExchange
 		requestModel := func(requestCtx context.Context) ([]core.ToolCall, error) {
 			streamCtx, cancelStream := context.WithCancel(requestCtx)
 			defer cancelStream()
@@ -389,7 +396,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				return nil, errors.New("google: missing response stream")
 			}
 			var calls []core.ToolCall
-			var nativeCalls []*genai.Content
+			var nativeContents []*genai.Content
 			var requestText strings.Builder
 			for chunkCh != nil || errCh != nil {
 				select {
@@ -437,22 +444,27 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 							calls = append(calls, call)
 						}
 					}
-					nativeCalls = append(nativeCalls, chunk.NativeContents...)
+					nativeContents = append(nativeContents, chunk.NativeContents...)
 				}
 			}
 			if len(calls) > 0 {
 				// Native provider parts already contain the response text, including
 				// reasoning/signature-bearing and text-only chunks. Avoid replaying
 				// the SDK's accumulated text a second time.
-				if requestText.Len() > 0 && len(nativeCalls) == 0 {
+				if requestText.Len() > 0 && len(nativeContents) == 0 {
 					providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Content: requestText.String(), TurnID: turn})
 				}
 				for _, call := range calls {
 					providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, Content: string(call.Arguments), ToolCallID: call.ID, ToolName: call.Name, TurnID: turn, Generation: gen})
 				}
-				for _, content := range nativeCalls {
-					nativeHistory = append(nativeHistory, cloneGoogleContent(content))
+				exchange := GoogleNativeExchange{Contents: make([]*genai.Content, 0, len(nativeContents)), CallIDs: make([]string, 0, len(calls))}
+				for _, call := range calls {
+					exchange.CallIDs = append(exchange.CallIDs, call.ID)
 				}
+				for _, content := range nativeContents {
+					exchange.Contents = append(exchange.Contents, cloneGoogleContent(content))
+				}
+				nativeHistory = append(nativeHistory, exchange)
 			}
 			return calls, nil
 		}

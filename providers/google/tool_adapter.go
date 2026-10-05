@@ -182,6 +182,109 @@ func GoogleContentsWithNative(history []core.Message, nativeContents []*genai.Co
 	return contents
 }
 
+// GoogleContentsWithNativeExchanges maps history while keeping each completed
+// model response attached to the call batch it produced. A later response's
+// leading signed/text parts therefore cannot move ahead of an earlier batch's
+// tool result.
+func GoogleContentsWithNativeExchanges(history []core.Message, exchanges []GoogleNativeExchange) []*genai.Content {
+	contents := make([]*genai.Content, 0, len(history)+len(exchanges))
+	toolNames := make(map[string]string)
+	for _, message := range history {
+		if message.Kind == core.MessageToolCall && message.ToolCallID != "" && message.ToolName != "" {
+			toolNames[message.ToolCallID] = message.ToolName
+		}
+	}
+	exchangeIndex := 0
+	for i := 0; i < len(history); i++ {
+		message := history[i]
+		if message.Role == core.RoleSystem {
+			continue
+		}
+		if message.Kind == core.MessageToolCall {
+			batch := make([]core.Message, 0, 2)
+			for i < len(history) && history[i].Kind == core.MessageToolCall {
+				batch = append(batch, history[i])
+				i++
+			}
+			i--
+			if exchangeIndex < len(exchanges) && googleExchangeMatchesBatch(exchanges[exchangeIndex], batch) {
+				exchange := exchanges[exchangeIndex]
+				exchangeIndex++
+				matched := make(map[string]int, len(batch))
+				modelParts := make([]*genai.Part, 0, len(batch))
+				for _, native := range exchange.Contents {
+					copy := cloneGoogleContent(native)
+					if copy == nil {
+						continue
+					}
+					for _, part := range copy.Parts {
+						if part != nil && part.FunctionCall != nil {
+							matched[part.FunctionCall.ID]++
+						}
+						if part != nil {
+							modelParts = append(modelParts, part)
+						}
+					}
+				}
+				for _, call := range batch {
+					if matched[call.ToolCallID] > 0 {
+						matched[call.ToolCallID]--
+						continue
+					}
+					modelParts = append(modelParts, googleReconstructedCall(call).Parts...)
+				}
+				contents = append(contents, &genai.Content{Role: "model", Parts: modelParts})
+			} else {
+				for _, call := range batch {
+					contents = append(contents, googleReconstructedCall(call))
+				}
+			}
+			continue
+		}
+		if message.Kind == core.MessageToolResult || message.Role == core.RoleTool {
+			parts := make([]*genai.Part, 0, 2)
+			for i < len(history) && (history[i].Kind == core.MessageToolResult || history[i].Role == core.RoleTool) {
+				result := history[i]
+				response, err := GoogleFunctionResponse(core.ToolCall{ID: result.ToolCallID, Name: toolNames[result.ToolCallID]}, core.ToolResult{CallID: result.ToolCallID, Status: result.ToolStatus, Result: json.RawMessage(result.Content), ErrorCategory: result.ToolErrorCategory})
+				if err != nil {
+					response = &genai.FunctionResponse{ID: result.ToolCallID, Name: toolNames[result.ToolCallID], Response: map[string]any{"error": "invalid_result"}}
+				}
+				parts = append(parts, &genai.Part{FunctionResponse: response})
+				i++
+			}
+			contents = append(contents, &genai.Content{Role: "user", Parts: parts})
+			i--
+			continue
+		}
+		role := "user"
+		if message.Role == core.RoleAssistant {
+			role = "model"
+		}
+		contents = append(contents, &genai.Content{Role: role, Parts: []*genai.Part{{Text: message.Content}}})
+	}
+	return contents
+}
+
+func googleExchangeMatchesBatch(exchange GoogleNativeExchange, batch []core.Message) bool {
+	if len(exchange.CallIDs) != len(batch) {
+		return false
+	}
+	for i := range batch {
+		if exchange.CallIDs[i] != batch[i].ToolCallID {
+			return false
+		}
+	}
+	return true
+}
+
+func googleReconstructedCall(call core.Message) *genai.Content {
+	var args map[string]any
+	if json.Unmarshal([]byte(call.Content), &args) != nil || args == nil {
+		args = map[string]any{}
+	}
+	return &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: call.ToolCallID, Name: call.ToolName, Args: args}}}}
+}
+
 // googleNativeBatchParts consumes one native occurrence for each call in this
 // history batch. The cursor makes replay occurrence-based: a later identical
 // call ID consumes its later provider occurrence rather than overwriting it.

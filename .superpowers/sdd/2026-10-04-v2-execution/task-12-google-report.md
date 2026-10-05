@@ -155,3 +155,28 @@ Correction round 2 verification:
 - Google full race/vet, core ToolLoop race, and root `-tags xai` tests passed
   with the macOS 26 SDK override.
 - `gofmt` and `git diff --check` passed.
+
+## Correction round 3
+
+The third review found that flattening native contents across model requests
+could greedily attach the next response's signed prefix to an earlier call
+batch, placing it before that batch's tool result.
+
+- Native continuation state now records explicit response exchanges: the
+  ordered call IDs produced by that model request and all copied native
+  candidate contents from its stream. History mapping associates each
+  contiguous call batch with its own exchange, preserving the complete ordered
+  parts/signatures and placing the grouped model exchange at that batch's
+  chronological location relative to tool results.
+- Existing exact replay behavior remains occurrence-based: repeated call IDs
+  are resolved using the ordered exchange cursor, not a call-ID lookup.
+- Assumption: streamed chunks from one model request are represented as one
+  model `Content` with parts concatenated in their original order. This keeps
+  one model exchange grouped while preserving the SDK parts, signatures, and
+  boundaries between distinct model requests.
+
+Correction verification:
+
+- The round 3 reproduction failed before the change and passed after it.
+- Round 2 and round 3 review overlays passed under race; round 1 overlay and
+  the full regression matrix were rerun for this correction.
