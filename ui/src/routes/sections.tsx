@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router";
 import type { ApiError, ServerConfig } from "../api/client";
 import {
   DataTable,
@@ -118,7 +119,23 @@ export function SectionPage({
           </>
         )
       ) : (
-        <EmptyState title={section.emptyTitle}>{section.emptyBody}</EmptyState>
+        <>
+          <EmptyState title={section.emptyTitle}>{section.emptyBody}</EmptyState>
+          {section.path === "/dashboard" && keyValue && (
+            <div
+              className="message-panel"
+              style={{ marginTop: "24px", borderColor: "#007e82" }}
+            >
+              <h2>First-run onboarding</h2>
+              <p style={{ marginBottom: "14px" }}>
+                Connect your first provider and configure a voice agent with the guided setup.
+              </p>
+              <Link to="/onboarding" className="action-button-small">
+                Start onboarding
+              </Link>
+            </div>
+          )}
+        </>
       )}
     </>
   );

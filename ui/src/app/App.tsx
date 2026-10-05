@@ -17,6 +17,9 @@ import {
   Status,
 } from "../components/primitives";
 import { getBrowserCapabilities } from "./capabilities";
+import { OnboardingView } from "../routes/onboarding/OnboardingView";
+import { ProvidersView } from "../routes/providers/ProvidersView";
+import { AgentsView } from "../routes/agents/AgentsView";
 import { SectionPage, sections } from "../routes/sections";
 
 function RouteFocus() {
@@ -126,19 +129,41 @@ export function App({ initialPath }: { initialPath?: string }) {
                   path="/"
                   element={<Navigate to="/dashboard" replace />}
                 />
-                {sections.map((section) => (
-                  <Route
-                    key={section.path}
-                    path={section.path}
-                    element={
-                      <SectionPage
-                        section={section}
-                        keyValue={keyValue}
-                        readConfig={client.serverConfig}
-                      />
-                    }
-                  />
-                ))}
+                <Route
+                  path="/onboarding"
+                  element={
+                    <OnboardingView client={client} keyValue={keyValue} />
+                  }
+                />
+                <Route
+                  path="/providers"
+                  element={
+                    <ProvidersView client={client} keyValue={keyValue} />
+                  }
+                />
+                <Route
+                  path="/agents"
+                  element={<AgentsView client={client} keyValue={keyValue} />}
+                />
+                {sections
+                  .filter(
+                    (section) =>
+                      section.path !== "/providers" &&
+                      section.path !== "/agents",
+                  )
+                  .map((section) => (
+                    <Route
+                      key={section.path}
+                      path={section.path}
+                      element={
+                        <SectionPage
+                          section={section}
+                          keyValue={keyValue}
+                          readConfig={client.serverConfig}
+                        />
+                      }
+                    />
+                  ))}
                 <Route
                   path="*"
                   element={

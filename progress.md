@@ -684,12 +684,12 @@ re-review and tester review remain pending; Task11/GateC remain open.
 ## Phase 5 — Trace persistence and observability
 
 - [ ] Task 19: Framework-to-Server trace adapter/query API.
-- [ ] Task 20: Retention/privacy and optional OTel export.
+- [x] Task 20: Retention/privacy and optional OTel export.
 - [ ] Independent Phase 5 tester gate; record persistence/API evidence and leave Gate E open pending Phase 6 UI timeline correlation.
 
 ## Phase 6 — Admin UI product
 
-- [ ] Task 21: Onboarding, providers, agent configuration.
+- [x] Task 21: Onboarding, providers, agent configuration.
 - [ ] Task 22: Agent voice test and Pipecat debug panel.
 - [ ] Task 23: MCP and sessions/trace UI.
 - [ ] Task 24: Dashboard and read-only server operations view.
@@ -740,4 +740,5 @@ explicitly unsupported. Phase 3 Tasks 10–14 and its independent gate are
 complete; Gates C and F passed at `b8e42a3`. Phase 4 Tasks 15 and 16 are
 complete. Task 17 is complete at `480deff`; Task 18 is now the only remaining
 Phase 4 implementation task before the independent Gate D run. Gates D, E, and
-G remain open.
+G remain open. Phase 6 Task 21 is complete (onboarding, providers, agent
+configuration UI).
