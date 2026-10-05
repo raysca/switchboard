@@ -87,10 +87,15 @@ The Task 1 constructor defaults an unset mode to `metadata`, admits a fixed set 
 `ConversationContext` is the ordered provider-neutral history boundary. It
 stores system, user, assistant, tool-call, and tool-result messages. Inputs and
 returned JSON-safe metadata are recursively copied within fixed depth/node
-bounds; unsupported mutable values fail closed. Tool calls and results retain
+bounds; invalid raw JSON, non-finite numbers, and unsupported mutable values
+fail closed before mutation. Tool calls and results retain
 call, turn, generation, and result-status correlation; identical replay is
 idempotent, conflicting reuse or an unmatched result fails closed. Direct
 tool-kind `AddMessage` calls are rejected so this validation cannot be bypassed.
+Replay identities survive message-window eviction in a bounded ledger; once the
+ledger is full, new identities fail closed rather than weakening the fence.
+Generationless V1 user frames are normalized to the effective session
+generation before assistant cancellation matching.
 The `core/tools` values are aliases of the
 same core contracts carried by `ToolCallFrame` and `ToolResultFrame`, so the
 context and later ToolLoop do not require parallel adapter types.

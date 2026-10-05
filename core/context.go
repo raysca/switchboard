@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 )
@@ -15,6 +16,7 @@ var (
 	ErrUnmatchedToolResult  = errors.New("core: tool result has no matching call")
 	ErrToolCorrelation      = errors.New("core: conflicting tool call correlation")
 	ErrInvalidMetadata      = errors.New("core: message metadata must be bounded JSON-safe data")
+	ErrToolIdentityLimit    = errors.New("core: tool identity replay ledger is full")
 )
 
 // Role represents the conversational participant role.
@@ -53,8 +55,9 @@ type Message struct {
 
 // ContextConfig specifies the bounded message and token limits for conversation history.
 type ContextConfig struct {
-	MaxMessages int // Maximum total messages preserved in history (must be >= 2 if set)
-	MaxTokens   int // Maximum estimated tokens across active messages
+	MaxMessages       int // Maximum total messages preserved in history (must be >= 2 if set)
+	MaxTokens         int // Maximum estimated tokens across active messages
+	MaxToolIdentities int // Maximum retained tool replay identities (default: 256)
 }
 
 // EstimateTokens provides a deterministic, provider-neutral token count estimate.
@@ -84,14 +87,27 @@ type ConversationContext struct {
 	messages     []Message
 	evictions    int
 	evictedPairs []string
+	toolLedger   map[string]toolReplayIdentity
+}
+
+type toolReplayIdentity struct {
+	turn, name, arguments string
+	gen                   uint64
+	hasResult             bool
+	status                ToolStatus
+	result, safeError     string
 }
 
 // NewConversationContext creates an initialized conversation context with the given budget.
 func NewConversationContext(cfg ContextConfig) *ConversationContext {
+	if cfg.MaxToolIdentities <= 0 {
+		cfg.MaxToolIdentities = 256
+	}
 	return &ConversationContext{
 		cfg:          cfg,
 		messages:     make([]Message, 0, 16),
 		evictedPairs: make([]string, 0),
+		toolLedger:   make(map[string]toolReplayIdentity, cfg.MaxToolIdentities),
 	}
 }
 
@@ -232,19 +248,23 @@ func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, m := range c.messages {
-		if m.ToolCallID != callID {
-			continue
-		}
-		if m.Kind == MessageToolCall && m.TurnID == turn && m.Generation == gen && m.ToolName == name && m.Content == string(arguments) {
+	if identity, exists := c.toolLedger[callID]; exists {
+		if identity.turn == turn && identity.gen == gen && identity.name == name && identity.arguments == string(arguments) {
 			return nil
 		}
 		return ErrToolCorrelation
 	}
+	if len(c.toolLedger) >= c.cfg.MaxToolIdentities {
+		return ErrToolIdentityLimit
+	}
 	if at.IsZero() {
 		at = time.Now()
 	}
-	return c.addMessageLocked(Message{Role: RoleAssistant, Kind: MessageToolCall, Content: string(append([]byte(nil), arguments...)), TurnID: turn, ToolCallID: callID, ToolName: name, Generation: gen, CreatedAt: at})
+	if err := c.addMessageLocked(Message{Role: RoleAssistant, Kind: MessageToolCall, Content: string(append([]byte(nil), arguments...)), TurnID: turn, ToolCallID: callID, ToolName: name, Generation: gen, CreatedAt: at}); err != nil {
+		return err
+	}
+	c.toolLedger[callID] = toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments)}
+	return nil
 }
 
 // AddToolResult appends a result only after its matching call and at most once.
@@ -265,33 +285,32 @@ func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callI
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	found := false
-	for _, m := range c.messages {
-		if m.ToolCallID != callID {
-			continue
-		}
-		if m.TurnID != turn || m.Generation != gen {
-			return ErrToolCorrelation
-		}
-		if m.Kind == MessageToolCall {
-			found = true
-		}
-		if m.Kind == MessageToolResult {
-			content := string(result)
-			if m.Content == content && m.ToolStatus == status && m.ToolErrorCategory == safeError {
-				return nil
-			}
-			return ErrToolCorrelation
-		}
-	}
+	identity, found := c.toolLedger[callID]
 	if !found {
 		return ErrUnmatchedToolResult
+	}
+	if identity.turn != turn || identity.gen != gen {
+		return ErrToolCorrelation
+	}
+	if identity.hasResult {
+		if identity.status == status && identity.result == string(result) && identity.safeError == safeError {
+			return nil
+		}
+		return ErrToolCorrelation
 	}
 	content := string(append([]byte(nil), result...))
 	if at.IsZero() {
 		at = time.Now()
 	}
-	return c.addMessageLocked(Message{Role: RoleTool, Kind: MessageToolResult, Content: content, TurnID: turn, ToolCallID: callID, Generation: gen, ToolStatus: status, ToolErrorCategory: safeError, CreatedAt: at})
+	if err := c.addMessageLocked(Message{Role: RoleTool, Kind: MessageToolResult, Content: content, TurnID: turn, ToolCallID: callID, Generation: gen, ToolStatus: status, ToolErrorCategory: safeError, CreatedAt: at}); err != nil {
+		return err
+	}
+	identity.hasResult = true
+	identity.status = status
+	identity.result = string(result)
+	identity.safeError = safeError
+	c.toolLedger[callID] = identity
+	return nil
 }
 
 func cloneMessage(m Message) (Message, error) {
@@ -360,6 +379,9 @@ func cloneMetadataValue(v any, depth int, nodes *int) (any, error) {
 		*nodes += len(x)
 		return append([]byte(nil), x...), nil
 	case json.RawMessage:
+		if !json.Valid(x) {
+			return nil, ErrInvalidMetadata
+		}
 		if *nodes+len(x) > maxMetadataNodes {
 			return nil, ErrInvalidMetadata
 		}
@@ -370,6 +392,11 @@ func cloneMetadataValue(v any, depth int, nodes *int) (any, error) {
 			return nil, ErrInvalidMetadata
 		}
 		*nodes += len(x)
+		for _, n := range x {
+			if math.IsNaN(n) || math.IsInf(n, 0) {
+				return nil, ErrInvalidMetadata
+			}
+		}
 		return append([]float64(nil), x...), nil
 	case map[string]string:
 		if *nodes+len(x) > maxMetadataNodes {
@@ -381,7 +408,17 @@ func cloneMetadataValue(v any, depth int, nodes *int) (any, error) {
 			out[k] = v
 		}
 		return out, nil
-	case nil, string, bool, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+	case float64:
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return nil, ErrInvalidMetadata
+		}
+		return x, nil
+	case float32:
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return nil, ErrInvalidMetadata
+		}
+		return x, nil
+	case nil, string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return x, nil
 	default:
 		return nil, ErrInvalidMetadata

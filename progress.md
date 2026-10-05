@@ -460,6 +460,13 @@ result status; metadata cloning is bounded and rejects unsupported values;
 failed budget transactions restore eviction accounting; and rejected partial
 commits emit no assistant message. Focused race coverage passes 50 repetitions;
 independent re-review remains pending.
+
+Task 10 correction round 2 normalizes generationless V1 user turns to the
+session generation, retains bounded tool replay identities across history
+eviction with fail-closed saturation, and rejects invalid raw JSON or non-finite
+metadata atomically. The system-replacement rollback regression now proves an
+eligible old turn is tentatively evicted before rollback. Re-review remains
+pending.
 - [ ] Task 11: Bounded ToolLoop behavior consuming Task 1 public types.
 - [ ] Task 12: Google/xAI tool adapters only; usage is P1 Task 32.
 - [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.

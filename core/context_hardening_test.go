@@ -4,11 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
+	"reflect"
 	"testing"
 	"time"
 )
 
 type captureEmitter struct{ frames []Frame }
+
+type fixedGenerationSession struct{ gen uint64 }
+
+func (s *fixedGenerationSession) ID() uint64                { return 1 }
+func (s *fixedGenerationSession) Context() context.Context  { return context.Background() }
+func (s *fixedGenerationSession) CurrentGeneration() uint64 { return s.gen }
+func (s *fixedGenerationSession) Go(fn func(context.Context)) error {
+	go fn(context.Background())
+	return nil
+}
+func (s *fixedGenerationSession) Reenter(Frame, Direction, int, uint64) error { return nil }
+func (s *fixedGenerationSession) IncrementGeneration() uint64                 { s.gen++; return s.gen }
 
 func (e *captureEmitter) Push(f Frame) error { e.frames = append(e.frames, f); return nil }
 func (e *captureEmitter) PushDirection(f Frame, _ Direction) error {
@@ -47,6 +61,26 @@ func TestContextCopiesAllAcceptedMutableMetadata(t *testing.T) {
 	}
 	if err := ctx.AddMessage(Message{Role: RoleUser, Content: "bad", TurnID: "x", Metadata: map[string]any{"unsupported": make(chan int)}}); !errors.Is(err, ErrInvalidMetadata) {
 		t.Fatalf("unsupported metadata = %v", err)
+	}
+}
+
+func TestContextRejectsInvalidJSONAndNonFiniteMetadataAtomically(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 8, MaxTokens: 100})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "safe", TurnID: "t"})
+	before := ctx.Messages()
+	for _, metadata := range []map[string]any{{"raw": json.RawMessage(`{"broken":`)}, {"nan": math.NaN()}, {"inf": []float64{1, math.Inf(1)}}, {"nested": []any{map[string]any{"bad": math.Inf(-1)}}}} {
+		if err := ctx.AddMessage(Message{Role: RoleUser, Content: "bad", TurnID: "x", Metadata: metadata}); !errors.Is(err, ErrInvalidMetadata) {
+			t.Fatalf("metadata %#v = %v", metadata, err)
+		}
+		if !reflect.DeepEqual(ctx.Messages(), before) {
+			t.Fatal("invalid metadata changed context")
+		}
+	}
+	if err := ctx.AddMessage(Message{Role: RoleUser, Content: "finite", TurnID: "f", Metadata: map[string]any{"score": 1.25, "samples": []float64{1, 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := json.Marshal(ctx.Messages()); err != nil {
+		t.Fatalf("accepted metadata does not marshal: %v", err)
 	}
 }
 
@@ -140,6 +174,38 @@ func TestContextConcurrentToolReplayCommitsExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 4, MaxTokens: 1000, MaxToolIdentities: 4})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})
+	_ = ctx.AddToolCall("t1", 1, "c1", "lookup", []byte(`{}`), time.Now())
+	_ = ctx.AddToolResultStatus("t1", 1, "c1", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now())
+	_ = ctx.AddMessage(Message{Role: RoleAssistant, Content: "done", TurnID: "t1"})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "two", TurnID: "t2"})
+	if ctx.EvictionCount() != 1 {
+		t.Fatalf("turn one was not evicted: %#v", ctx.Messages())
+	}
+	before := ctx.Messages()
+	if err := ctx.AddToolCall("t1", 1, "c1", "lookup", []byte(`{}`), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.AddToolResultStatus("t1", 1, "c1", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ctx.Messages(), before) {
+		t.Fatal("exact replay after eviction re-entered history")
+	}
+	if err := ctx.AddToolCall("t2", 2, "c1", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrToolCorrelation) {
+		t.Fatalf("identity reuse = %v", err)
+	}
+	bounded := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000, MaxToolIdentities: 1})
+	if err := bounded.AddToolCall("t", 1, "one", "lookup", []byte(`{}`), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := bounded.AddToolCall("t", 1, "two", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrToolIdentityLimit) {
+		t.Fatalf("ledger bound = %v", err)
+	}
+}
+
 func TestAssistantContextWaitsForEveryDeliveryAndCommitsOnce(t *testing.T) {
 	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	p := NewAssistantContextProcessor(store, AssistantContextConfig{MinUnitLength: 2, MaxUnitLength: 100})
@@ -187,6 +253,29 @@ func TestAssistantContextCancelDropsUndeliveredAndLateFinality(t *testing.T) {
 	}
 }
 
+func TestAssistantContextGenerationlessUserCancelUsesSessionGeneration(t *testing.T) {
+	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	p := NewAssistantContextProcessor(store, DefaultAssistantContextConfig())
+	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
+	e := &captureEmitter{}
+	for _, f := range []Frame{&UserMessageFrame{Turn: "legacy"}, &LLMTextFrame{Turn: "legacy", Gen: 1, Text: "cancel me"}, &CancelFrame{Gen: 1}, &WriteCompletionFrame{Turn: "legacy", Gen: 1, UnitID: 1, IsFinal: true}} {
+		if err := p.ProcessFrame(context.Background(), f, Downstream, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(store.Messages()) != 0 {
+		t.Fatalf("generationless cancelled turn committed: %#v", store.Messages())
+	}
+	for _, f := range []Frame{&UserMessageFrame{Turn: "next", Gen: 1}, &LLMTextFrame{Turn: "next", Gen: 1, Text: "works"}, &WriteCompletionFrame{Turn: "next", Gen: 1, UnitID: 2, IsFinal: true}} {
+		if err := p.ProcessFrame(context.Background(), f, Downstream, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := store.Messages(); len(got) != 1 || got[0].Content != "works" {
+		t.Fatalf("next turn = %#v", got)
+	}
+}
+
 func TestAssistantContextLateFinalityWaitsForMiddleDelivery(t *testing.T) {
 	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	p := NewAssistantContextProcessor(store, AssistantContextConfig{MinUnitLength: 2, MaxUnitLength: 100})
@@ -224,22 +313,24 @@ func TestContextFailedBudgetTransactionRestoresEvictionAccounting(t *testing.T) 
 }
 
 func TestContextFailedSystemReplacementRestoresEvictionAccounting(t *testing.T) {
-	ctx := NewConversationContext(ContextConfig{MaxTokens: 20})
+	ctx := NewConversationContext(ContextConfig{MaxTokens: 30})
 	if err := ctx.SetSystemInstructionChecked("s", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "old", TurnID: "old"})
 	_ = ctx.AddMessage(Message{Role: RoleAssistant, Content: "ok", TurnID: "old"})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "active", TurnID: "new"})
 	before := ctx.Messages()
-	if err := ctx.SetSystemInstructionChecked("this replacement system instruction cannot fit even after eviction", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
-		t.Fatalf("replacement = %v", err)
-	}
-	if ctx.EvictionCount() != 0 || len(ctx.EvictedTurnPairs()) != 0 {
-		t.Fatal("failed system transaction leaked eviction state")
-	}
-	after := ctx.Messages()
-	if len(after) != len(before) || after[0].Content != "s" {
-		t.Fatalf("system rollback = %#v", after)
+	for i := 0; i < 2; i++ {
+		if err := ctx.SetSystemInstructionChecked("this replacement system instruction cannot fit even after the older completed turn is tentatively evicted", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
+			t.Fatalf("replacement = %v", err)
+		}
+		if ctx.EvictionCount() != 0 || len(ctx.EvictedTurnPairs()) != 0 {
+			t.Fatal("failed system transaction leaked eviction state")
+		}
+		if after := ctx.Messages(); !reflect.DeepEqual(after, before) {
+			t.Fatalf("system rollback = %#v", after)
+		}
 	}
 }
 

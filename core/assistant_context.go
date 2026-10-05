@@ -92,6 +92,9 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		um := f.(*UserMessageFrame)
 		p.activeTurn = um.Turn
 		p.activeGen = um.Gen
+		if p.activeGen == 0 && p.session != nil {
+			p.activeGen = p.session.CurrentGeneration()
+		}
 		p.textBuf.Reset()
 		p.totalTurnText.Reset()
 		p.firstUnitID = 0

@@ -77,3 +77,19 @@ on accepting output with an empty active turn.
 Correction verification: full core race/vet, Google race/vet, xAI-tagged
 provider race/vet, root xAI-tagged race/vet, and RTVI/WebSocket integration all
 PASS with the documented SDK override where CGO is involved.
+
+## Correction round 2
+
+RED covered a generationless V1 turn whose `Cancel(current)` missed generation
+zero, exact/conflicting tool replay after the original messages were evicted,
+invalid raw JSON and nested non-finite metadata, and a rollback case with an
+actually eligible older completed turn. The recommended policy is to normalize
+V1 generation zero at the user-turn boundary, retain tool replay identities in
+a configurable bounded ledger (default 256), and fail closed when that ledger
+is saturated rather than forget a replay fence. Metadata validation is atomic
+and all accepted values remain JSON-marshalable.
+
+Round 2 verification: focused context race x50, full core race/vet, Google
+race/vet, xAI-tagged provider race/vet, and root xAI-tagged race/vet including
+RTVI/WebSocket integration all PASS with the documented SDK override where
+required.
