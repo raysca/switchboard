@@ -174,6 +174,49 @@ func TestContextConcurrentToolReplayCommitsExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestContextClaimToolCallElectsOneExecutorAndReturnsCompletedReplay(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	call := ToolCall{ID: "once", Name: "lookup", Arguments: json.RawMessage(`{"q":1}`), TurnID: "turn", Generation: 1}
+	const workers = 12
+	claims := make(chan bool, workers)
+	errs := make(chan error, workers)
+	for range workers {
+		go func() {
+			_, claimed, err := ctx.ClaimToolCall(call, time.Now())
+			claims <- claimed
+			errs <- err
+		}()
+	}
+	claimCount := 0
+	for range workers {
+		err := <-errs
+		if err != nil && !errors.Is(err, ErrToolCallPending) {
+			t.Fatal(err)
+		}
+		if <-claims {
+			claimCount++
+		}
+	}
+	if claimCount != 1 {
+		t.Fatalf("executor claim count = %d, want 1", claimCount)
+	}
+	result := ToolResult{CallID: call.ID, Status: ToolSucceeded, Result: json.RawMessage(`{"ok":true}`)}
+	if err := ctx.AddToolResultStatus("turn", 1, call.ID, result.Status, result.Result, "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	replay, claimed, err := ctx.ClaimToolCall(call, time.Now())
+	if err != nil || claimed {
+		t.Fatalf("completed replay claim = %v, %v", claimed, err)
+	}
+	if replay.CallID != result.CallID || replay.Status != result.Status || string(replay.Result) != string(result.Result) {
+		t.Fatalf("replayed result = %#v", replay)
+	}
+	call.Arguments = json.RawMessage(`{"q":2}`)
+	if _, _, err := ctx.ClaimToolCall(call, time.Now()); !errors.Is(err, ErrToolCorrelation) {
+		t.Fatalf("conflicting replay = %v", err)
+	}
+}
+
 func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 4, MaxTokens: 1000, MaxToolIdentities: 4})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})

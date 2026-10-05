@@ -504,6 +504,15 @@ closeout above.
 - [ ] Task 14: P0 eval harness and separate compatibility suites with protocol-specific debug adapters.
 - [ ] Independent Phase 3 tester gate; record Gates C and F.
 
+Task 11 implementation handoff (pending independent review/test): added a
+native sequential multi-round loop, atomic context-backed tool-call claims,
+bounded argument/result JSON handling, context-derived cancellation and
+timeouts, generation fencing, panic/error normalization, and a continuation
+surface for adapters. The official-library evaluation and policy are in
+`docs/decisions/tool-loop.md`; focused RED/GREEN and verification evidence is
+in `.superpowers/sdd/2026-10-04-v2-execution/task-11-report.md`. Task 11 and
+Gate C remain open pending independent review and test.
+
 ## Phase 4 — Persistent Server product core
 
 - [ ] Task 15: Agents, immutable versions, runtime snapshots.

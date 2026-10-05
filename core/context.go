@@ -17,6 +17,7 @@ var (
 	ErrToolCorrelation      = errors.New("core: conflicting tool call correlation")
 	ErrInvalidMetadata      = errors.New("core: message metadata must be bounded JSON-safe data")
 	ErrToolIdentityLimit    = errors.New("core: tool identity replay ledger is full")
+	ErrToolCallPending      = errors.New("core: tool call is already in progress")
 )
 
 // Role represents the conversational participant role.
@@ -96,6 +97,7 @@ type toolReplayIdentity struct {
 	hasResult             bool
 	status                ToolStatus
 	result, safeError     string
+	startedAt, endedAt    time.Time
 }
 
 // NewConversationContext creates an initialized conversation context with the given budget.
@@ -272,8 +274,48 @@ func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name 
 		c.evictedPairs = originalPairs
 		return ErrContextLimitExceeded
 	}
-	c.toolLedger[callID] = toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments)}
+	c.toolLedger[callID] = toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments), startedAt: at}
 	return nil
+}
+
+// ClaimToolCall atomically records a first-seen tool call. It returns claimed
+// true only to the caller allowed to execute it. A completed exact replay
+// returns its copied prior result; an in-flight replay fails closed.
+func (c *ConversationContext) ClaimToolCall(call ToolCall, at time.Time) (ToolResult, bool, error) {
+	if call.TurnID == "" || call.Generation == 0 || call.ID == "" || call.Name == "" {
+		return ToolResult{}, false, ErrInvalidToolMessage
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if identity, exists := c.toolLedger[call.ID]; exists {
+		if identity.turn != string(call.TurnID) || identity.gen != uint64(call.Generation) || identity.name != call.Name || identity.arguments != string(call.Arguments) {
+			return ToolResult{}, false, ErrToolCorrelation
+		}
+		if !identity.hasResult {
+			return ToolResult{}, false, ErrToolCallPending
+		}
+		return ToolResult{CallID: call.ID, Status: identity.status, Result: json.RawMessage(append([]byte(nil), identity.result...)), ErrorCategory: identity.safeError, StartedAt: identity.startedAt, EndedAt: identity.endedAt}, false, nil
+	}
+	if len(c.toolLedger) >= c.cfg.MaxToolIdentities {
+		return ToolResult{}, false, ErrToolIdentityLimit
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	originalMessages := append([]Message(nil), c.messages...)
+	originalEvictions := c.evictions
+	originalPairs := append([]string(nil), c.evictedPairs...)
+	if err := c.addMessageLocked(Message{Role: RoleAssistant, Kind: MessageToolCall, Content: string(append([]byte(nil), call.Arguments...)), TurnID: string(call.TurnID), ToolCallID: call.ID, ToolName: call.Name, Generation: uint64(call.Generation), CreatedAt: at}); err != nil {
+		return ToolResult{}, false, err
+	}
+	if !c.hasToolMessageLocked(MessageToolCall, string(call.TurnID), uint64(call.Generation), call.ID) {
+		c.messages = originalMessages
+		c.evictions = originalEvictions
+		c.evictedPairs = originalPairs
+		return ToolResult{}, false, ErrContextLimitExceeded
+	}
+	c.toolLedger[call.ID] = toolReplayIdentity{turn: string(call.TurnID), gen: uint64(call.Generation), name: call.Name, arguments: string(call.Arguments), startedAt: at}
+	return ToolResult{}, true, nil
 }
 
 // AddToolResult appends a result only after its matching call and at most once.
@@ -330,6 +372,7 @@ func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callI
 	identity.status = status
 	identity.result = string(result)
 	identity.safeError = safeError
+	identity.endedAt = at
 	c.toolLedger[callID] = identity
 	return nil
 }
