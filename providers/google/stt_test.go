@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	coretranscript "govoice/core/transcript"
 )
 
 func TestSTT_RequestByteLimit(t *testing.T) {
@@ -21,7 +22,10 @@ func TestSTT_RequestByteLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pipe, _ := core.NewPipeline(proc)
+	finalCfg := coretranscript.DefaultConfig()
+	finalCfg.GracePeriod = 0
+	finalizer, _ := coretranscript.NewProcessor(finalCfg)
+	pipe, _ := core.NewPipeline(proc, finalizer)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = proc.Attach(session, 0)
 	_ = session.Start()
@@ -69,7 +73,10 @@ func TestSTT_AcceleratedFiveRotationsWithoutDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pipe, _ := core.NewPipeline(proc)
+	finalCfg := coretranscript.DefaultConfig()
+	finalCfg.GracePeriod = 0
+	finalizer, _ := coretranscript.NewProcessor(finalCfg)
+	pipe, _ := core.NewPipeline(proc, finalizer)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = proc.Attach(session, 0)
 
@@ -104,6 +111,7 @@ func TestSTT_AcceleratedFiveRotationsWithoutDuplicates(t *testing.T) {
 		})
 		time.Sleep(20 * time.Millisecond)
 	}
+	_ = session.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1, Timestamp: time.Now()})
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -115,16 +123,15 @@ func TestSTT_AcceleratedFiveRotationsWithoutDuplicates(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Verify deduplication: despite Stream 1 and Stream 2 both returning "hello world",
-	// exactly 1 FinalTranscriptionFrame was emitted and 0 duplicate turns!
+	// Common policy, rather than a provider-local wall clock, commits once.
 	if len(finals) != 1 {
 		t.Fatalf("expected exactly 1 deduplicated final transcript, got %d: %v", len(finals), finals)
 	}
 	if finals[0] != "hello world" {
 		t.Fatalf("unexpected transcript: %s", finals[0])
 	}
-	if proc.DeduplicatedResults.Load() < 1 {
-		t.Fatalf("expected at least 1 deduplicated result recorded in metrics, got %d", proc.DeduplicatedResults.Load())
+	if proc.DeduplicatedResults.Load() != 0 {
+		t.Fatalf("provider-local text dedupe must be disabled, got %d", proc.DeduplicatedResults.Load())
 	}
 
 	// Verify overlap: streams opened after stream 1 received overlap audio
@@ -186,5 +193,35 @@ func TestSTT_CancellationAndLateOutputFencing(t *testing.T) {
 	// Verify the stale transcript was fenced and not delivered to session output
 	if len(transcripts) != 0 {
 		t.Fatalf("expected 0 transcripts delivered for stale generation, got: %v", transcripts)
+	}
+}
+
+func TestGoogleSTTEmitsRawCandidatesWithProviderSemantics(t *testing.T) {
+	st := newMockSTTStream()
+	st.PushResult(&STTResult{Transcript: "unstable", Stability: 0.4})
+	st.PushResult(&STTResult{Transcript: "final", IsFinal: true})
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = &mockSTTOpener{onOpenStream: func(STTConfig) *mockSTTStream { return st }}
+	cfg.Now = func() time.Time { return time.Unix(30, 0) }
+	proc, _ := NewSTTProcessor(cfg)
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	session, _ := core.NewSession(30, pipe, core.DefaultResourceBudget())
+	_ = session.Start()
+	defer session.Close()
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 7, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	time.Sleep(50 * time.Millisecond)
+	var candidates []*core.TranscriptCandidateFrame
+	for _, frame := range sink.GetFrames() {
+		if c, ok := frame.(*core.TranscriptCandidateFrame); ok {
+			candidates = append(candidates, c)
+		}
+		if _, ok := frame.(*core.FinalTranscriptionFrame); ok {
+			t.Fatalf("provider emitted a committed-frame type directly: %T", frame)
+		}
+	}
+	if len(candidates) != 2 || candidates[0].Final || !candidates[0].HasStability || candidates[0].Stability < 0.39 || candidates[0].Stability > 0.41 || !candidates[1].Final {
+		t.Fatalf("Google IsFinal/Stability mapping mismatch: %#v", candidates)
 	}
 }

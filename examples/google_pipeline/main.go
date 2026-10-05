@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	coretranscript "govoice/core/transcript"
 	"govoice/examples/envload"
 	"govoice/providers/google"
 	"govoice/vad"
@@ -90,7 +91,10 @@ func main() {
 		MaxMessages: 20,
 		MaxTokens:   4096,
 	})
-	userCtxProc := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn"})
+	transcriptCfg := coretranscript.DefaultConfig()
+	transcriptCfg.GracePeriod = 0 // V1 VAD compatibility; V2 turn managers drive Advance explicitly.
+	transcriptProc, _ := coretranscript.NewProcessor(transcriptCfg)
+	userCtxProc := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	asstCtxProc := core.NewAssistantContextProcessor(convCtx, core.DefaultAssistantContextConfig())
 
 	// 4. Sink Processor (e.g. recording or output playback)
@@ -100,6 +104,7 @@ func main() {
 	pipeline, err := core.NewPipeline(
 		vadProc,
 		sttProc,
+		transcriptProc,
 		userCtxProc,
 		llmProc,
 		asstCtxProc,

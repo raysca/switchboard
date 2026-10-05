@@ -132,6 +132,27 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [ ] Task 9: STT commit/finalization.
 - [ ] Independent Phase 2 tester gate; record Gate B.
 
+### Task 9 implementation handoff
+
+- Implementation is prepared for independent review; Task 9 deliberately
+  remains unchecked and Gate B remains open. `core/transcript` now owns raw
+  candidate stabilization, explicit-time grace/timeout, late-final selection,
+  exactly-once commit, interruption/generation fencing, and bounded fail-closed
+  retirement. V2 context assembly accepts only finalizer-marked commits.
+- Google and tagged xAI adapters emit raw candidates. Google preserves the SDK's
+  audio-portion `IsFinal` and interim-only `Stability`; xAI preserves the
+  difference between chunk `is_final`, utterance `speech_final`, and
+  `transcript.done`. Google's provider-local five-second text/wall-clock dedupe
+  was removed.
+- The production server and demos insert the finalizer before UserContext. The
+  current V1 VAD assembly explicitly selects zero grace because it has no
+  transcript advance driver; configured nonzero grace/timeout is driven by
+  typed turn events and caller-supplied `TranscriptAdvanceFrame` timestamps.
+- Focused RED/GREEN evidence, verification commands, and assumptions are in
+  `.superpowers/sdd/2026-10-04-v2-execution/task-9-report.md`. Independent
+  review and the Phase 2 tester are still required before Task 9 or Gate B can
+  close.
+
 ### Task 8 closeout
 
 - Implementation and review commits: `cffcedc`, `1b4c1d3`, `059110d`,

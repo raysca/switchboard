@@ -30,6 +30,7 @@ type STTConfig struct {
 	APIKey         string // Bearer token
 	CircuitBreaker *CircuitBreaker
 	StreamOpener   STTStreamOpener
+	Now            func() time.Time // Receipt clock; policy time is carried in candidate frames.
 }
 
 // DefaultSTTConfig returns recommended default settings for xAI STT.
@@ -154,15 +155,14 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 }
 
 type activeSTTStream struct {
-	stream    STTStream
-	cancel    context.CancelFunc
-	ctx       context.Context
-	id        int
-	readyCh   chan struct{}
-	turnID    string
-	gen       uint64
-	lastText  string
-	finalSent bool
+	stream   STTStream
+	cancel   context.CancelFunc
+	ctx      context.Context
+	id       int
+	readyCh  chan struct{}
+	turnID   string
+	gen      uint64
+	lastText string
 
 	mu       sync.Mutex
 	audioBuf [][]byte
@@ -194,6 +194,9 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	}
 	if cfg.StreamOpener == nil {
 		cfg.StreamOpener = &RealXAISTTOpener{}
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
 	return &STTProcessor{
 		cfg: cfg,
@@ -243,6 +246,21 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.ErrorsTotal.Add(1)
 		}
 		return e.Push(f)
+
+	case *core.TurnEventFrame:
+		if frame.Kind == core.TurnEventStarted {
+			p.mu.Lock()
+			p.turnID = string(frame.Turn)
+			p.streamGen = uint64(frame.Gen)
+			if p.active != nil {
+				p.active.mu.Lock()
+				p.active.turnID = p.turnID
+				p.active.gen = p.streamGen
+				p.active.mu.Unlock()
+			}
+			p.mu.Unlock()
+		}
+		return e.PushDirection(f, dir)
 
 	case *core.InputAudioFrame:
 		return p.handleAudio(ctx, frame, e)
@@ -457,26 +475,20 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 				isUtteranceFinal := msg.SpeechFinal
 				st.mu.Unlock()
 
-				if isUtteranceFinal {
-					st.mu.Lock()
-					st.finalSent = true
-					st.mu.Unlock()
-					frame := &core.FinalTranscriptionFrame{
-						Text:      msg.Text,
-						Turn:      turn,
-						Gen:       turnGen,
-						Timestamp: time.Now(),
-					}
-					_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
-				} else {
-					frame := &core.InterimTranscriptionFrame{
-						Text:      msg.Text,
-						Turn:      turn,
-						Gen:       turnGen,
-						Timestamp: time.Now(),
-					}
-					_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
+				// is_final closes a chunk but does not close the utterance;
+				// speech_final is the utterance-final signal.
+				frame := &core.TranscriptCandidateFrame{
+					Text:           msg.Text,
+					Turn:           core.TurnID(turn),
+					Gen:            core.Generation(turnGen),
+					Timestamp:      p.cfg.Now(),
+					Final:          isUtteranceFinal,
+					EndOfUtterance: isUtteranceFinal,
+					Stability:      boolStability(msg.IsFinal),
+					HasStability:   msg.IsFinal && !isUtteranceFinal,
+					Provider:       "xai",
 				}
+				_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
 
 			case "transcript.done":
 				st.mu.Lock()
@@ -486,16 +498,14 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 					turnGen = p.session.CurrentGeneration()
 				}
 				lastText := st.lastText
-				finalSent := st.finalSent
 				st.mu.Unlock()
 
-				// If turn concluded and final transcript was not yet emitted, emit it now
-				if !finalSent && lastText != "" && p.session != nil {
-					frame := &core.FinalTranscriptionFrame{
-						Text:      lastText,
-						Turn:      turn,
-						Gen:       turnGen,
-						Timestamp: time.Now(),
+				// transcript.done closes the stream/utterance. Re-emitting the last
+				// text as a raw final candidate is safe; common policy deduplicates it.
+				if lastText != "" && p.session != nil {
+					frame := &core.TranscriptCandidateFrame{
+						Text: lastText, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
+						Timestamp: p.cfg.Now(), Final: true, EndOfUtterance: true, Provider: "xai",
 					}
 					_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
 				}
@@ -524,4 +534,11 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 			}
 		}
 	})
+}
+
+func boolStability(stable bool) float64 {
+	if stable {
+		return 1
+	}
+	return 0
 }

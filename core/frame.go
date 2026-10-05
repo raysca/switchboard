@@ -48,11 +48,13 @@ const (
 	FrameSettingsControl
 
 	// Internal async re-entry
-	FrameInternal        FrameType = 821
-	FrameWriteCompletion FrameType = 822
-	FrameTurnEvent       FrameType = 823
-	FrameSpeakingState   FrameType = 824
-	FrameOutputTurnFinal FrameType = 825
+	FrameInternal            FrameType = 821
+	FrameWriteCompletion     FrameType = 822
+	FrameTurnEvent           FrameType = 823
+	FrameSpeakingState       FrameType = 824
+	FrameOutputTurnFinal     FrameType = 825
+	FrameTranscriptCandidate FrameType = 826
+	FrameTranscriptAdvance   FrameType = 827
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.
@@ -174,10 +176,37 @@ type FinalTranscriptionFrame struct {
 	Timestamp time.Time
 	Turn      string
 	Gen       uint64
+	// Committed is set only by the provider-neutral transcript finalizer.
+	// Provider adapters emit TranscriptCandidateFrame instead.
+	Committed bool
 }
 
 func (f *FinalTranscriptionFrame) Type() FrameType    { return FrameFinalTranscription }
 func (f *FinalTranscriptionFrame) Generation() uint64 { return f.Gen }
+
+// TranscriptCandidateFrame carries a raw provider hypothesis into the common
+// transcript policy. Final means the provider will not revise this hypothesis;
+// EndOfUtterance is the stronger speech boundary.
+type TranscriptCandidateFrame struct {
+	Text           string
+	Timestamp      time.Time
+	Turn           TurnID
+	Gen            Generation
+	Final          bool
+	EndOfUtterance bool
+	Stability      float64
+	HasStability   bool
+	Provider       string
+}
+
+func (*TranscriptCandidateFrame) Type() FrameType      { return FrameTranscriptCandidate }
+func (f *TranscriptCandidateFrame) Generation() uint64 { return uint64(f.Gen) }
+
+// TranscriptAdvanceFrame supplies policy time explicitly. It is internal to
+// the transcript finalizer and is not a wall-clock timer notification.
+type TranscriptAdvanceFrame struct{ At time.Time }
+
+func (*TranscriptAdvanceFrame) Type() FrameType { return FrameTranscriptAdvance }
 
 // -------------------------------------------------------------------------
 // LLM and Text Frames

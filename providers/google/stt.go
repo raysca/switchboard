@@ -33,6 +33,7 @@ type STTConfig struct {
 	StreamOpener            STTStreamOpener
 	RetryPolicy             RetryPolicy
 	CircuitBreaker          *CircuitBreaker
+	Now                     func() time.Time // Receipt clock; policy time is carried in candidate frames.
 }
 
 // DefaultSTTConfig returns the configuration matching v1-lock.json.
@@ -223,10 +224,6 @@ type STTProcessor struct {
 	audioBuffer  []byte
 	overlapBytes int
 
-	// Deduplication across rotation boundary
-	lastFinalText string
-	lastFinalTime time.Time
-
 	// Metrics
 	RotationsCount      atomic.Uint64
 	RotationFailures    atomic.Uint64
@@ -254,6 +251,9 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	}
 	if cfg.CircuitBreaker == nil {
 		cfg.CircuitBreaker = NewCircuitBreaker(DefaultCircuitConfig())
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
 	}
 
 	// 16000 Hz * 2 bytes/sample * overlap_seconds
@@ -306,9 +306,17 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.mu.Lock()
 		p.turnID = fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq)
 		p.streamGen = frame.Gen
-		p.lastFinalText = ""
 		p.mu.Unlock()
 		return e.Push(f)
+
+	case *core.TurnEventFrame:
+		if frame.Kind == core.TurnEventStarted {
+			p.mu.Lock()
+			p.turnID = string(frame.Turn)
+			p.streamGen = uint64(frame.Gen)
+			p.mu.Unlock()
+		}
+		return e.PushDirection(f, dir)
 
 	case *core.InputAudioFrame:
 		return p.handleAudio(ctx, frame, e)
@@ -319,7 +327,6 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
-		p.lastFinalText = ""
 		if p.session != nil {
 			// Barge-in advances generation after this speech start was stamped.
 			// Later results for the new utterance belong to the new generation.
@@ -329,9 +336,6 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		return e.PushDirection(f, dir)
 
 	case *core.CancelFrame:
-		p.mu.Lock()
-		p.lastFinalText = ""
-		p.mu.Unlock()
 		return e.PushDirection(f, dir)
 
 	default:
@@ -360,7 +364,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 
 	// Check if active stream requires rotation
 	shouldRotate := false
-	if p.active != nil && time.Since(p.active.createdAt) >= p.cfg.StreamRotationThreshold {
+	if p.active != nil && p.cfg.Now().Sub(p.active.createdAt) >= p.cfg.StreamRotationThreshold {
 		shouldRotate = true
 	}
 	p.mu.Unlock()
@@ -446,7 +450,7 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		stream:    st,
 		cancel:    cancel,
 		ctx:       streamCtx,
-		createdAt: time.Now(),
+		createdAt: p.cfg.Now(),
 		id:        p.streamID,
 	}
 	p.active = newActive
@@ -507,7 +511,7 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 		stream:    newStream,
 		cancel:    cancel,
 		ctx:       streamCtx,
-		createdAt: time.Now(),
+		createdAt: p.cfg.Now(),
 		id:        p.streamID,
 	}
 	p.active = newActive
@@ -569,7 +573,8 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				continue
 			}
 
-			// Deduplication check across stream rotation
+			// Snapshot identity. The common transcript finalizer owns all text
+			// deduplication and late-candidate reconciliation across streams.
 			p.mu.Lock()
 			turn := p.turnID
 			turnGen := p.streamGen
@@ -584,36 +589,21 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				continue
 			}
 
-			// Deduplicate exact final transcripts across rotation boundary
-			if res.IsFinal {
-				if res.Transcript == p.lastFinalText && time.Since(p.lastFinalTime) < 5*time.Second {
-					p.DeduplicatedResults.Add(1)
-					p.mu.Unlock()
-					continue // Drop duplicate
-				}
-				p.lastFinalText = res.Transcript
-				p.lastFinalTime = time.Now()
-			}
 			p.mu.Unlock()
 
-			// Emit transcription frame into session
-			if res.IsFinal {
-				frame := &core.FinalTranscriptionFrame{
-					Text:      res.Transcript,
-					Turn:      turn,
-					Gen:       turnGen,
-					Timestamp: time.Now(),
-				}
-				_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
-			} else {
-				frame := &core.InterimTranscriptionFrame{
-					Text:      res.Transcript,
-					Turn:      turn,
-					Gen:       turnGen,
-					Timestamp: time.Now(),
-				}
-				_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
+			// Google documents IsFinal as final for this audio portion, while
+			// Stability is meaningful only for non-final hypotheses.
+			frame := &core.TranscriptCandidateFrame{
+				Text:         res.Transcript,
+				Turn:         core.TurnID(turn),
+				Gen:          core.Generation(turnGen),
+				Timestamp:    p.cfg.Now(),
+				Final:        res.IsFinal,
+				Stability:    float64(res.Stability),
+				HasStability: !res.IsFinal && res.Stability > 0,
+				Provider:     "google",
 			}
+			_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
 		}
 	})
 }

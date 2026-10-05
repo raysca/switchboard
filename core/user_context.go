@@ -2,14 +2,18 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
 )
 
+var ErrInvalidCommittedTranscript = errors.New("core: committed transcript requires turn, generation, text, and timestamp")
+
 // UserContextConfig configures the user context processor.
 type UserContextConfig struct {
-	TurnPrefix string // Prefix for auto-generated turn IDs (default: "turn")
+	TurnPrefix                 string // Prefix for auto-generated turn IDs (default: "turn")
+	RequireCommittedTranscript bool   // V2: only finalizer-marked finals may enter context
 }
 
 // UserContextProcessor receives final transcription frames, assigns stable turn IDs,
@@ -66,6 +70,12 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	if !ok {
 		return e.PushDirection(f, dir)
 	}
+	if p.cfg.RequireCommittedTranscript && !ft.Committed {
+		return e.PushDirection(f, dir)
+	}
+	if p.cfg.RequireCommittedTranscript && (ft.Turn == "" || ft.Gen == 0 || ft.Text == "" || ft.Timestamp.IsZero()) {
+		return ErrInvalidCommittedTranscript
+	}
 
 	// 1. Stale generation check
 	if ft.Gen != 0 && p.session != nil && ft.Gen < p.session.CurrentGeneration() {
@@ -75,8 +85,8 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 
 	// 2. Duplicate / late final transcript protection:
 	// A closed turn or identical transcript text for the active/closed turn must not create another user turn.
-	if (ft.Turn != "" && ft.Turn == p.lastFinalTurn) ||
-		(ft.Text != "" && ft.Text == p.lastFinalText && (ft.Turn == "" || ft.Turn == p.lastFinalTurn)) {
+	if !ft.Committed && ((ft.Turn != "" && ft.Turn == p.lastFinalTurn) ||
+		(ft.Text != "" && ft.Text == p.lastFinalText && (ft.Turn == "" || ft.Turn == p.lastFinalTurn))) {
 		p.DuplicateDropCount.Add(1)
 		return nil
 	}
@@ -92,11 +102,17 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	p.lastFinalText = ft.Text
 	p.lastFinalGen = ft.Gen
 
+	createdAt := ft.Timestamp
+	if createdAt.IsZero() {
+		// Explicit V1 compatibility: historical direct-final frames did not
+		// require a timestamp. V2 committed frames always carry policy time.
+		createdAt = time.Now()
+	}
 	userMsg := Message{
 		Role:      RoleUser,
 		Content:   ft.Text,
 		TurnID:    turnID,
-		CreatedAt: time.Now(),
+		CreatedAt: createdAt,
 	}
 
 	if err := p.ctxPool.AddMessage(userMsg); err != nil {

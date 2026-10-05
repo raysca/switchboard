@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	coretranscript "govoice/core/transcript"
 	"govoice/examples/envload"
 	"govoice/providers/google"
 	"govoice/providers/xai"
@@ -56,7 +57,10 @@ func main() {
 		MaxMessages: 20,
 		MaxTokens:   4096,
 	})
-	userCtxProc := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn"})
+	transcriptCfg := coretranscript.DefaultConfig()
+	transcriptCfg.GracePeriod = 0 // V1 VAD compatibility; V2 turn managers drive Advance explicitly.
+	transcriptProc, _ := coretranscript.NewProcessor(transcriptCfg)
+	userCtxProc := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 
 	// 4. xAI LLM Processor (Drop-in substitution for Google LLM)
 	model := "grok-2-1212"
@@ -94,6 +98,7 @@ func main() {
 	pipeline, err := core.NewPipeline(
 		vadProc,
 		sttProc,
+		transcriptProc,
 		userCtxProc,
 		xaiProc,
 		asstCtxProc,

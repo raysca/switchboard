@@ -13,18 +13,20 @@ import (
 	"time"
 
 	"govoice/core"
+	coretranscript "govoice/core/transcript"
 )
 
 // fullXAISink captures frames emitted at the end of the full xAI pipeline.
 type fullXAISink struct {
-	mu          sync.Mutex
-	session     core.SessionController
-	userTurns   []string
-	llmDeltas   string
-	outputAudio []*core.OutputAudioFrame
-	totalPCM    int
-	doneChan    chan struct{}
-	closeOnce   sync.Once
+	mu           sync.Mutex
+	session      core.SessionController
+	userTurns    []string
+	userMessages []string
+	llmDeltas    string
+	outputAudio  []*core.OutputAudioFrame
+	totalPCM     int
+	doneChan     chan struct{}
+	closeOnce    sync.Once
 }
 
 func newFullXAISink() *fullXAISink {
@@ -46,6 +48,8 @@ func (s *fullXAISink) ProcessFrame(ctx context.Context, f core.Frame, dir core.D
 	switch frame := f.(type) {
 	case *core.FinalTranscriptionFrame:
 		s.userTurns = append(s.userTurns, frame.Text)
+	case *core.UserMessageFrame:
+		s.userMessages = append(s.userMessages, frame.Content)
 	case *core.LLMTextDeltaFrame:
 		s.llmDeltas += frame.Delta
 	case *core.OutputAudioFrame:
@@ -124,7 +128,10 @@ func TestFullXAI_EndToEndPipeline(t *testing.T) {
 
 	// 2. User Context Processor
 	convCtx := core.NewConversationContext(core.ContextConfig{MaxMessages: 20, MaxTokens: 4000})
-	userCtx := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn-full-xai"})
+	finalCfg := coretranscript.DefaultConfig()
+	finalCfg.GracePeriod = 0
+	transcriptProc, _ := coretranscript.NewProcessor(finalCfg)
+	userCtx := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn-full-xai", RequireCommittedTranscript: true})
 
 	// 3. xAI LLM Processor
 	llmCfg := Config{
@@ -154,8 +161,8 @@ func TestFullXAI_EndToEndPipeline(t *testing.T) {
 	// 6. Sink
 	sink := newFullXAISink()
 
-	// Assemble Pipeline: STT -> UserCtx -> LLM -> AsstCtx -> TTS -> Sink
-	pipe, err := core.NewPipeline(sttProc, userCtx, llmProc, asstCtx, ttsProc, sink)
+	// Assemble Pipeline: STT -> Transcript finalizer -> UserCtx -> LLM -> AsstCtx -> TTS -> Sink
+	pipe, err := core.NewPipeline(sttProc, transcriptProc, userCtx, llmProc, asstCtx, ttsProc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
 	}
@@ -169,6 +176,10 @@ func TestFullXAI_EndToEndPipeline(t *testing.T) {
 	}
 	defer session.Close()
 
+	// Supply the stable turn identity before audio opens the STT stream.
+	if err := session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1}); err != nil {
+		t.Fatalf("post speech start: %v", err)
+	}
 	// Send an InputAudioFrame to trigger STT stream opening
 	err = session.Post(&core.InputAudioFrame{
 		Samples:    make([]byte, 640),
@@ -192,8 +203,11 @@ func TestFullXAI_EndToEndPipeline(t *testing.T) {
 	defer sink.mu.Unlock()
 
 	// Verify User Context received transcription
-	if len(sink.userTurns) == 0 || sink.userTurns[0] != "Hello Grok, can you hear me?" {
+	if len(sink.userTurns) != 1 || sink.userTurns[0] != "Hello Grok, can you hear me?" {
 		t.Errorf("unexpected user transcription: %v", sink.userTurns)
+	}
+	if len(sink.userMessages) != 1 || sink.userMessages[0] != "Hello Grok, can you hear me?" {
+		t.Errorf("expected exactly one xAI UserMessage, got %v", sink.userMessages)
 	}
 
 	// Verify LLM generated text deltas

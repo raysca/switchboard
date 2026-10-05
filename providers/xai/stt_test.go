@@ -110,7 +110,7 @@ func TestXAISTT_Success(t *testing.T) {
 	_ = session.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
 	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000})
 
-	// Wait for final transcription frame
+	// Wait for raw candidates; provider adapters do not commit transcripts.
 	deadline := time.After(2 * time.Second)
 	var finalSeen bool
 	var interimSeen bool
@@ -121,10 +121,10 @@ func TestXAISTT_Success(t *testing.T) {
 			t.Fatal("timed out waiting for transcription frames")
 		default:
 			for _, f := range sink.GetFrames() {
-				if it, ok := f.(*core.InterimTranscriptionFrame); ok && it.Text == "Hello" {
+				if it, ok := f.(*core.TranscriptCandidateFrame); ok && it.Text == "Hello" && !it.Final {
 					interimSeen = true
 				}
-				if ft, ok := f.(*core.FinalTranscriptionFrame); ok && ft.Text == "Hello world" {
+				if ft, ok := f.(*core.TranscriptCandidateFrame); ok && ft.Text == "Hello world" && ft.Final {
 					finalSeen = true
 				}
 			}
@@ -227,8 +227,8 @@ func TestXAISTT_TurnSemantics_IntermediateFinalVsSpeechFinal(t *testing.T) {
 	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000})
 
 	deadline := time.After(2 * time.Second)
-	var finalFrame *core.FinalTranscriptionFrame
-	var interimFrames []*core.InterimTranscriptionFrame
+	var finalFrame *core.TranscriptCandidateFrame
+	var interimFrames []*core.TranscriptCandidateFrame
 
 	for finalFrame == nil {
 		select {
@@ -236,10 +236,10 @@ func TestXAISTT_TurnSemantics_IntermediateFinalVsSpeechFinal(t *testing.T) {
 			t.Fatal("timed out waiting for transcription frames")
 		default:
 			for _, f := range sink.GetFrames() {
-				if it, ok := f.(*core.InterimTranscriptionFrame); ok {
+				if it, ok := f.(*core.TranscriptCandidateFrame); ok && !it.Final {
 					interimFrames = append(interimFrames, it)
 				}
-				if ft, ok := f.(*core.FinalTranscriptionFrame); ok {
+				if ft, ok := f.(*core.TranscriptCandidateFrame); ok && ft.Final {
 					finalFrame = ft
 				}
 			}
@@ -312,7 +312,7 @@ func TestXAISTT_AudioBufferingBeforeReady(t *testing.T) {
 			t.Fatal("timed out waiting for final transcript")
 		default:
 			for _, f := range sink.GetFrames() {
-				if ft, ok := f.(*core.FinalTranscriptionFrame); ok && ft.Text == "Received buffered audio" {
+				if ft, ok := f.(*core.TranscriptCandidateFrame); ok && ft.Text == "Received buffered audio" && ft.Final {
 					finalSeen = true
 					break
 				}
@@ -335,5 +335,36 @@ func TestXAISTT_AudioBufferingBeforeReady(t *testing.T) {
 			t.Fatalf("expected at least 5 audio chunks flushed to stream, got %d", audioChunksReceived)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestXAISTTEmitsRawCandidatesAndDoneIsUtteranceFinal(t *testing.T) {
+	mockStream := &mockSTTStream{messages: []*STTMessage{
+		{Type: "transcript.created"},
+		{Type: "transcript.partial", Text: "chunk", IsFinal: true, SpeechFinal: false},
+		{Type: "transcript.done"},
+	}}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = &mockSTTOpener{stream: mockStream}
+	cfg.Now = func() time.Time { return time.Unix(31, 0) }
+	proc, _ := NewSTTProcessor(cfg)
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	session, _ := core.NewSession(31, pipe, core.DefaultResourceBudget())
+	_ = session.Start()
+	defer session.Close()
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 8, Gen: 1})
+	time.Sleep(100 * time.Millisecond)
+	var candidates []*core.TranscriptCandidateFrame
+	for _, frame := range sink.GetFrames() {
+		if c, ok := frame.(*core.TranscriptCandidateFrame); ok {
+			candidates = append(candidates, c)
+		}
+		if _, ok := frame.(*core.FinalTranscriptionFrame); ok {
+			t.Fatalf("provider emitted a committed-frame type directly: %T", frame)
+		}
+	}
+	if len(candidates) != 2 || candidates[0].Final || !candidates[0].HasStability || candidates[0].Stability != 1 || !candidates[1].Final {
+		t.Fatalf("xAI is_final/speech_final/done mapping mismatch: %#v", candidates)
 	}
 }

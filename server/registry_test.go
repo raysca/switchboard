@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"govoice/core"
+	coretranscript "govoice/core/transcript"
 	"govoice/providers/google"
 	"govoice/providers/xai"
 	"govoice/vad"
@@ -74,7 +75,10 @@ func TestRegistry_BuildPipelineGoogleAndMixed(t *testing.T) {
 		t.Fatalf("programmatic stt: %v", err)
 	}
 	progCtx := core.NewConversationContext(core.ContextConfig{MaxMessages: 20, MaxTokens: 4000})
-	userCtx := core.NewUserContextProcessor(progCtx, core.UserContextConfig{TurnPrefix: "turn"})
+	transcriptCfg := coretranscript.DefaultConfig()
+	transcriptCfg.GracePeriod = 0
+	transcriptProc, _ := coretranscript.NewProcessor(transcriptCfg)
+	userCtx := core.NewUserContextProcessor(progCtx, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	llmProc, err := google.NewLLMProcessor(google.DefaultLLMConfig())
 	if err != nil {
 		t.Fatalf("programmatic llm: %v", err)
@@ -85,7 +89,7 @@ func TestRegistry_BuildPipelineGoogleAndMixed(t *testing.T) {
 		t.Fatalf("programmatic tts: %v", err)
 	}
 
-	progPipe, err := core.NewPipeline(vadProc, sttProc, userCtx, llmProc, asstCtx, ttsProc, sink)
+	progPipe, err := core.NewPipeline(vadProc, sttProc, transcriptProc, userCtx, llmProc, asstCtx, ttsProc, sink)
 	if err != nil {
 		t.Fatalf("programmatic pipeline: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	coretranscript "govoice/core/transcript"
 )
 
 // deterministicVAD simulates voice activity detection boundaries.
@@ -76,7 +77,10 @@ func TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD(t *testing.T) {
 	ttsProc, _ := NewTTSProcessor(ttsCfg)
 
 	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 20, MaxTokens: 4000})
-	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
+	finalCfg := coretranscript.DefaultConfig()
+	finalCfg.GracePeriod = 0
+	transcriptProc, _ := coretranscript.NewProcessor(finalCfg)
+	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	asstCtxProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 	vadProc := &deterministicVAD{}
 	fakeTransport := core.NewFakeTransportOutput(core.FakeTransportConfig{WriteDelay: 0})
@@ -84,6 +88,7 @@ func TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD(t *testing.T) {
 	pipe, err := core.NewPipeline(
 		vadProc,
 		sttProc,
+		transcriptProc,
 		userCtxProc,
 		llmProc,
 		asstCtxProc,
@@ -101,11 +106,11 @@ func TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD(t *testing.T) {
 
 	_ = vadProc.Attach(session, 0)
 	_ = sttProc.Attach(session, 1)
-	_ = userCtxProc.Attach(session, 2)
-	_ = llmProc.Attach(session, 3)
-	_ = asstCtxProc.Attach(session, 4)
-	_ = ttsProc.Attach(session, 5)
-	_ = fakeTransport.Attach(session, 6)
+	_ = userCtxProc.Attach(session, 3)
+	_ = llmProc.Attach(session, 4)
+	_ = asstCtxProc.Attach(session, 5)
+	_ = ttsProc.Attach(session, 6)
+	_ = fakeTransport.Attach(session, 7)
 
 	_ = session.Start()
 	defer session.Close()
@@ -120,7 +125,7 @@ func TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD(t *testing.T) {
 		Channels:   1,
 		Gen:        1,
 	})
-	_ = session.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	_ = session.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1, Timestamp: time.Now()})
 
 	// Wait for pipeline processing: STT -> UserContext -> LLM -> AssistantContext -> TTS -> OutputAudio
 	time.Sleep(300 * time.Millisecond)
@@ -158,7 +163,7 @@ func TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD(t *testing.T) {
 	}
 	streamMu.Unlock()
 
-	_ = session.Post(&core.UserStoppedSpeakingFrame{Seq: 4, Gen: 2})
+	_ = session.Post(&core.UserStoppedSpeakingFrame{Seq: 4, Gen: 2, Timestamp: time.Now()})
 
 	time.Sleep(300 * time.Millisecond)
 
@@ -168,6 +173,9 @@ func TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD(t *testing.T) {
 		t.Logf("Turns created: %d, duplicate drops: %d", userCtxProc.TurnsCreated.Load(), userCtxProc.DuplicateDropCount.Load())
 		t.Logf("Audio written turn 1: %d, total audio written: %d", audioWritten, newAudioWritten)
 		t.Fatal("expected new generation audio after interruption, got none")
+	}
+	if got := userCtxProc.TurnsCreated.Load(); got != 2 {
+		t.Fatalf("expected exactly one UserMessage per Google turn, got %d", got)
 	}
 }
 

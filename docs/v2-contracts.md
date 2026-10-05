@@ -220,7 +220,44 @@ this guarantee.
 Detailed concurrency and ordering rules are in
 `docs/output-pacing-and-flush.md`.
 
-### 2.9 Provider readiness and usage
+### 2.9 Transcript stabilization and commit
+
+Providers emit `core.TranscriptCandidateFrame`; they never emit a committed
+`FinalTranscriptionFrame`. `core/transcript.Finalizer` owns interim filtering,
+duplicate suppression, grace/timeout selection, interruption and generation
+fencing, and the one committed result for each `(TurnID, Generation)`. A
+committed final is explicitly marked, and the V2 `UserContextProcessor` path
+accepts only marked finals. Direct unmarked finals remain an opt-in-compatible
+V1 boundary and retain the historical generated-turn/timestamp fallback.
+
+All policy time is supplied in candidate, turn-decision, and
+`TranscriptAdvanceFrame` values. The finalizer does not read wall time, start a
+timer or goroutine, or invoke application/provider callbacks. Text must be
+non-empty valid UTF-8, is copied after trimming, and is limited to 32 KiB by
+default. Stability must be finite and in `[0,1]`. Active plus retired identities
+are bounded (128 by default); capacity fails closed rather than evicting a
+retired identity that could replay. A newer generation clears bounded state and
+permanently fences older-generation input.
+
+Google `IsFinal` is retained as a provider-final hypothesis for one audio
+portion; Google `Stability` is admitted only on non-final hypotheses, matching
+the generated Speech V2 contract. xAI `is_final` marks a stable chunk but does
+not close an utterance; `speech_final` and `transcript.done` supply the stronger
+utterance boundary. The common policy, not either adapter, decides commitment.
+The production V1 VAD assembly uses zero grace because it has no explicit
+advance driver; typed V2 turn decisions plus explicit advances enable the
+configured grace and timeout without hidden clocks.
+
+**Acceptance criteria**
+
+- Stable interims release once; unstable and duplicate interims remain raw.
+- A better candidate arriving before the grace deadline wins, while timeout can
+  commit the best bounded interim when no provider final arrives.
+- Completion, interruption, stale generations, duplicate finals, and
+  concurrent replay cannot produce more than one committed final/context row.
+- Same-generation turns remain distinct even when their text is identical.
+
+### 2.10 Provider readiness and usage
 
 Providers report typed readiness transitions and optional provider-neutral usage events. Readiness includes provider/component, state, timestamp, and safe reason category. Usage includes provider/model, session/turn IDs when available, unit name, quantity, and timestamp (for example LLM tokens, STT audio duration, TTS characters/audio duration, tool calls, or request count). These are observability values, not billing or admission decisions.
 

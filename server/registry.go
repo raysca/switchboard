@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"govoice/core"
+	coretranscript "govoice/core/transcript"
 	"govoice/providers/google"
 	"govoice/providers/xai"
 	"govoice/vad"
@@ -238,7 +239,16 @@ func (r *Registry) BuildPipeline(
 		MaxMessages: pCfg.MaxMessages,
 		MaxTokens:   pCfg.MaxTokens,
 	})
-	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
+	// The V1 VAD path has no caller-driven transcript Advance frames yet, so
+	// it uses zero grace while still routing every provider candidate through
+	// the V2 exactly-once commit boundary.
+	transcriptCfg := coretranscript.DefaultConfig()
+	transcriptCfg.GracePeriod = 0
+	transcriptProc, err := coretranscript.NewProcessor(transcriptCfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create transcript finalizer: %w", err)
+	}
+	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	asstCtxProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 	if sink, ok := llmProc.(interface {
 		SetContextProvider(func() []core.Message)
@@ -246,10 +256,11 @@ func (r *Registry) BuildPipeline(
 		sink.SetContextProvider(func() []core.Message { return ctxPool.Messages() })
 	}
 
-	// Assemble pipeline: VAD -> STT -> UserContext -> LLM -> AssistantContext -> TTS -> TransportOutput
+	// Assemble pipeline: VAD -> STT -> Transcript finalizer -> UserContext -> LLM -> AssistantContext -> TTS -> TransportOutput
 	pipe, err := core.NewPipeline(
 		vadProc,
 		sttProc,
+		transcriptProc,
 		userCtxProc,
 		llmProc,
 		asstCtxProc,
