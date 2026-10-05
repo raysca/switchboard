@@ -18,7 +18,9 @@ import (
 	"govoice/core"
 	"govoice/providers/google"
 	"govoice/providers/xai"
+	"govoice/server/api"
 	"govoice/server/auth"
+	"govoice/server/storage"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 	"govoice/vad"
@@ -35,9 +37,12 @@ type Server struct {
 	management            *auth.Management
 	providerManagementAPI http.Handler
 	agentManagementAPI    http.Handler
-	mcpManagementAPI      http.Handler
-	sessionManagementAPI  http.Handler
-	voiceSignKey          []byte
+	mcpManagementAPI        http.Handler
+	sessionManagementAPI    http.Handler
+	operationsManagementAPI http.Handler
+	store                   *storage.Store
+	startedAt               time.Time
+	voiceSignKey            []byte
 	voiceKeyID            string
 	voiceEpoch            string
 	vadExecutor           vad.SharedExecutor
@@ -143,6 +148,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		voiceKeyID:   tokenCfg.KeyID,
 		voiceEpoch:   validator.ScopeEpoch(),
 		logger:       logger,
+		startedAt:    metrics.StartTime,
 		activeCalls:  make(map[uint64]*activeCall),
 	}
 
@@ -214,6 +220,104 @@ func (s *Server) SetSessionManagementAPI(handler http.Handler) {
 // SetTraceManagementAPI is an alias for SetSessionManagementAPI.
 func (s *Server) SetTraceManagementAPI(handler http.Handler) {
 	s.sessionManagementAPI = handler
+}
+
+// SetOperationsManagementAPI installs the operations status route handler behind
+// management authentication. Configure it before serving requests.
+func (s *Server) SetOperationsManagementAPI(handler http.Handler) {
+	s.operationsManagementAPI = handler
+}
+
+// SetStore attaches a durable SQL store for operations inspection and diagnostics.
+func (s *Server) SetStore(store *storage.Store) {
+	s.store = store
+}
+
+func (s *Server) getOperationsStatus(ctx context.Context) api.OperationsStatus {
+	now := time.Now()
+	uptime := now.Sub(s.startedAt).Seconds()
+	if uptime < 0 {
+		uptime = 0
+	}
+	active := int(s.metrics.ActiveSessions.Load())
+	maxSessions := s.cfg.Limits.MaxSessions
+	var util float64
+	if maxSessions > 0 {
+		util = float64(active) / float64(maxSessions)
+	}
+
+	sessionsTotal := s.metrics.SessionsStartedTotal.Load()
+	turnsTotal := s.metrics.TurnsTotal.Load()
+	errorsTotal := s.metrics.ErrorsTotal()
+	avgLatency, p95Latency := s.metrics.LatencyStats()
+
+	var sessionRate float64
+	if uptime > 0 {
+		sessionRate = float64(sessionsTotal) / uptime
+	}
+
+	// Database diagnostics
+	dbStatus := api.DatabaseStatus{
+		Dialect: "none",
+		Status:  "unconfigured",
+	}
+	if s.store != nil {
+		diag := s.store.Diagnostics(ctx)
+		dbStatus.Dialect = string(diag.Dialect)
+		dbStatus.Status = diag.Status
+		dbStatus.OpenConnections = diag.OpenConnections
+		dbStatus.InUse = diag.InUse
+		dbStatus.MigrationVersion = diag.MigrationVersion
+	}
+
+	// VAD diagnostics
+	vadStatus := api.VADStatus{
+		WorkerStatus: "ready",
+		SampleRate:   16000,
+		FrameSize:    512,
+	}
+	if s.vadExecutor != nil {
+		if !s.vadExecutor.IsReady() {
+			vadStatus.WorkerStatus = "unavailable"
+		} else {
+			avail, total := s.vadExecutor.Capacity()
+			if avail == 0 && total > 0 {
+				vadStatus.WorkerStatus = "active"
+			}
+			st := s.vadExecutor.Stats()
+			if st.Streams > 0 {
+				vadStatus.WorkerStatus = "active"
+			}
+		}
+	}
+
+	// Health determination: healthy, degraded, or unhealthy
+	health := "healthy"
+	if dbStatus.Status == "error" || vadStatus.WorkerStatus == "unavailable" {
+		health = "unhealthy"
+	} else if util >= 1.0 || vadStatus.WorkerStatus == "degraded" || (sessionsTotal > 0 && errorsTotal > 10 && float64(errorsTotal)/float64(sessionsTotal) > 0.5) {
+		health = "degraded"
+	}
+
+	return api.OperationsStatus{
+		UptimeSeconds:                uptime,
+		StartedAt:                    s.startedAt,
+		Profile:                      string(s.cfg.Profile),
+		ActiveSessions:               active,
+		MaxSessions:                  maxSessions,
+		CapacityUtilization:          util,
+		SessionsTotal:                sessionsTotal,
+		TurnsTotal:                   turnsTotal,
+		ErrorsTotal:                  errorsTotal,
+		P95LatencyMs:                 p95Latency,
+		AverageLatencyMs:             avgLatency,
+		SessionRate:                  sessionRate,
+		MaxCallDurationSeconds:       int(s.cfg.Limits.MaxCallDuration.Seconds()),
+		VoiceTokenMaxLifetimeSeconds: int(s.effectiveVoiceTokenLifetime().Seconds()),
+		Database:                     dbStatus,
+		VAD:                          vadStatus,
+		Health:                       health,
+	}
 }
 
 // Metrics returns the server metrics.

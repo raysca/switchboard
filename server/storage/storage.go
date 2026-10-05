@@ -188,6 +188,41 @@ func sqliteConfiguredDSN(dsn string) (string, error) {
 func (s *Store) DB() *sql.DB      { return s.db }
 func (s *Store) Close() error     { return s.db.Close() }
 func (s *Store) Dialect() Dialect { return s.dialect }
+
+// Diagnostics contains safe operational metrics for database health and connection pooling.
+type Diagnostics struct {
+	Dialect          Dialect
+	Status           string
+	OpenConnections  int
+	InUse            int
+	MigrationVersion int64
+}
+
+// Diagnostics gathers current connection pool stats, ping health, and applied migration version.
+func (s *Store) Diagnostics(ctx context.Context) Diagnostics {
+	diag := Diagnostics{
+		Dialect: s.dialect,
+		Status:  "connected",
+	}
+	if s.db == nil {
+		diag.Status = "unconfigured"
+		return diag
+	}
+	stats := s.db.Stats()
+	diag.OpenConnections = stats.OpenConnections
+	diag.InUse = stats.InUse
+	if err := s.db.PingContext(ctx); err != nil {
+		diag.Status = "error"
+		return diag
+	}
+	var version int64
+	row := s.db.QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied")
+	if err := row.Scan(&version); err == nil {
+		diag.MigrationVersion = version
+	}
+	return diag
+}
+
 func (s *Store) bind(query string) string {
 	if s.dialect != Postgres {
 		return query

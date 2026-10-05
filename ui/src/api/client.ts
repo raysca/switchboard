@@ -24,6 +24,58 @@ const tokenEnvelope = z.object({
   }),
 });
 
+// Operations & telemetry schemas & types
+export const databaseStatusSchema = z.object({
+  dialect: z.string(),
+  status: z.string(),
+  open_connections: z.number(),
+  in_use: z.number(),
+  migration_version: z.number().optional(),
+});
+export type DatabaseStatus = z.infer<typeof databaseStatusSchema>;
+
+export const vadStatusSchema = z.object({
+  worker_status: z.string(),
+  sample_rate: z.number(),
+  frame_size: z.number(),
+});
+export type VADStatus = z.infer<typeof vadStatusSchema>;
+
+export const operationsStatusSchema = z.object({
+  uptime_seconds: z.number().default(0),
+  started_at: z.string().default(() => new Date().toISOString()),
+  profile: z.string(),
+  active_sessions: z.number().default(0),
+  max_sessions: z.number().default(0),
+  capacity_utilization: z.number().default(0),
+  sessions_total: z.number().default(0),
+  turns_total: z.number().default(0),
+  errors_total: z.number().default(0),
+  p95_latency_ms: z.number().default(0),
+  average_latency_ms: z.number().optional(),
+  session_rate: z.number().optional(),
+  max_call_duration_seconds: z.number().optional(),
+  voice_token_max_lifetime_seconds: z.number().optional(),
+  database: databaseStatusSchema.default({
+    dialect: "sqlite",
+    status: "connected",
+    open_connections: 0,
+    in_use: 0,
+  }),
+  vad: vadStatusSchema.default({
+    worker_status: "ready",
+    sample_rate: 16000,
+    frame_size: 512,
+  }),
+  health: z.enum(["healthy", "degraded", "unhealthy"]).default("healthy"),
+});
+export type OperationsStatus = z.infer<typeof operationsStatusSchema>;
+
+const operationsStatusEnvelope = z.object({
+  data: operationsStatusSchema,
+});
+
+
 // Provider schemas & types
 export const providerDefinitionSchema = z.object({
   id: z.string(),
@@ -700,6 +752,15 @@ export function createApiClient(
         )
       ).data;
     },
+
+    // Operations & telemetry
+    getOperationsStatus: async () =>
+      (
+        await request(
+          "/operations/status",
+          operationsStatusEnvelope,
+        )
+      ).data,
   };
 }
 

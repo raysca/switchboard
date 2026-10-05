@@ -533,6 +533,53 @@ describe("management client", () => {
       expect(turnTraces.events).toHaveLength(1);
       expect(fetcher).toHaveBeenLastCalledWith("/api/v1/sessions/sess-1/traces?turn_id=turn-1", expect.any(Object));
     });
+
+    it("fetches operational status and diagnostics", async () => {
+      const mockOperations = {
+        uptime_seconds: 3600,
+        started_at: "2026-10-05T12:00:00Z",
+        profile: "development",
+        active_sessions: 5,
+        max_sessions: 50,
+        capacity_utilization: 0.1,
+        sessions_total: 100,
+        turns_total: 450,
+        errors_total: 2,
+        p95_latency_ms: 180.5,
+        average_latency_ms: 120.2,
+        session_rate: 0.05,
+        database: {
+          dialect: "sqlite",
+          status: "connected",
+          open_connections: 1,
+          in_use: 0,
+          migration_version: 5,
+        },
+        vad: {
+          worker_status: "ready",
+          sample_rate: 16000,
+          frame_size: 512,
+        },
+        health: "healthy",
+      };
+
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: mockOperations }), { status: 200 }),
+      );
+
+      const client = createApiClient(
+        () => ({ key: "test-key", generation: 1 }),
+        fetcher,
+      );
+
+      const status = await client.getOperationsStatus();
+      expect(status.profile).toBe("development");
+      expect(status.active_sessions).toBe(5);
+      expect(status.health).toBe("healthy");
+      expect(status.database.dialect).toBe("sqlite");
+      expect(status.vad.worker_status).toBe("ready");
+      expect(fetcher).toHaveBeenCalledWith("/api/v1/operations/status", expect.any(Object));
+    });
   });
 });
 

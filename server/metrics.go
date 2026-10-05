@@ -3,8 +3,11 @@ package server
 import (
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"runtime"
+	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -79,6 +82,62 @@ type Metrics struct {
 	FlushTimeoutsTotal     atomic.Uint64
 	SlowClientTermTotal    atomic.Uint64
 	ProtocolErrorsTotal    atomic.Uint64
+
+	// Operational and Latency Tracking
+	TurnsTotal     atomic.Uint64
+	latencyMu      sync.Mutex
+	latencySamples []float64
+	latencyIdx     int
+}
+
+// RecordTurnLatency records turn processing latency in milliseconds and advances turn count.
+func (m *Metrics) RecordTurnLatency(latencyMs float64) {
+	if latencyMs < 0 || math.IsNaN(latencyMs) || math.IsInf(latencyMs, 0) {
+		return
+	}
+	m.TurnsTotal.Add(1)
+	m.latencyMu.Lock()
+	const maxSamples = 1024
+	if len(m.latencySamples) < maxSamples {
+		m.latencySamples = append(m.latencySamples, latencyMs)
+	} else {
+		m.latencySamples[m.latencyIdx] = latencyMs
+		m.latencyIdx = (m.latencyIdx + 1) % maxSamples
+	}
+	m.latencyMu.Unlock()
+}
+
+// LatencyStats returns average and 95th percentile latency in milliseconds across the bounded sample window.
+func (m *Metrics) LatencyStats() (avg float64, p95 float64) {
+	m.latencyMu.Lock()
+	n := len(m.latencySamples)
+	if n == 0 {
+		m.latencyMu.Unlock()
+		return 0, 0
+	}
+	copied := make([]float64, n)
+	copy(copied, m.latencySamples)
+	m.latencyMu.Unlock()
+
+	var sum float64
+	for _, v := range copied {
+		sum += v
+	}
+	avg = sum / float64(n)
+	sort.Float64s(copied)
+	p95Idx := int(float64(n-1) * 0.95)
+	p95 = copied[p95Idx]
+	return avg, p95
+}
+
+// ErrorsTotal returns the total count of failures and provider/protocol errors.
+func (m *Metrics) ErrorsTotal() uint64 {
+	return m.SessionsFailedTotal.Load() +
+		m.STTErrorsTotal.Load() +
+		m.LLMErrorsTotal.Load() +
+		m.TTSErrorsTotal.Load() +
+		m.ProtocolErrorsTotal.Load() +
+		m.AuthFailuresTotal.Load()
 }
 
 // NewMetrics initializes runtime metrics.
