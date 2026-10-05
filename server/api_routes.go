@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -73,6 +74,14 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Token: signed, ExpiresAt: claims.ExpiresAt.Time, Scope: "voice:connect",
 		}})
 	default:
+		if r.URL.Path == "/api/v1/providers" || strings.HasPrefix(r.URL.Path, "/api/v1/providers/") {
+			if s.providerManagementAPI == nil {
+				api.WriteError(w, http.StatusServiceUnavailable, "provider_management_unavailable", "provider management storage is unavailable", requestID)
+				return
+			}
+			s.providerManagementAPI.ServeHTTP(w, r)
+			return
+		}
 		api.WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 	}
 }

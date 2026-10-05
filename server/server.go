@@ -26,18 +26,19 @@ import (
 
 // Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
-	cfg          *Config
-	metrics      *Metrics
-	timelines    *TimelineRegistry
-	admission    *AdmissionController
-	registry     *Registry
-	validator    *token.Validator
-	management   *auth.Management
-	voiceSignKey []byte
-	voiceKeyID   string
-	voiceEpoch   string
-	vadExecutor  vad.SharedExecutor
-	logger       *slog.Logger
+	cfg                   *Config
+	metrics               *Metrics
+	timelines             *TimelineRegistry
+	admission             *AdmissionController
+	registry              *Registry
+	validator             *token.Validator
+	management            *auth.Management
+	providerManagementAPI http.Handler
+	voiceSignKey          []byte
+	voiceKeyID            string
+	voiceEpoch            string
+	vadExecutor           vad.SharedExecutor
+	logger                *slog.Logger
 
 	ready        atomic.Bool
 	shuttingDown atomic.Bool
@@ -180,6 +181,13 @@ func (s *Server) SetVADExecutor(exec vad.SharedExecutor) {
 // Registry returns the provider registry.
 func (s *Server) Registry() *Registry {
 	return s.registry
+}
+
+// SetProviderManagementAPI installs the authenticated management route handler.
+// Configure it before serving requests; the outer API boundary always performs
+// administrator authentication before this handler is called.
+func (s *Server) SetProviderManagementAPI(handler http.Handler) {
+	s.providerManagementAPI = handler
 }
 
 // Metrics returns the server metrics.

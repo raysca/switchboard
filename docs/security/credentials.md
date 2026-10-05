@@ -1,0 +1,19 @@
+# Provider credential security
+
+The server stores provider credentials as authenticated ciphertext. `server/credential` uses AES-256-GCM, a fresh cryptographically random nonce for every write, and an explicit key ID stored beside each ciphertext. The nonce is prefixed to the ciphertext. Associated data binds the credential ID, provider ID and key ID, so moving ciphertext between rows or changing its provider/key metadata fails authentication. Truncation, tampering and unknown key IDs fail closed.
+
+The host supplies a `Keyring` before serving management requests. It must contain a 32-byte key for the active key ID and every older key ID still present in storage. Keep these keys in deployment secret management or a KMS-backed host configuration, separate from the database and its backups. Never place encryption keys in the database, agent configuration, logs, traces or API responses. Loss of every key capable of decrypting a row makes that credential unrecoverable.
+
+To rotate keys, deploy the new key alongside all old keys and select the new key ID as active. Call `POST /api/v1/providers/credentials/{id}/rotate` for each credential, then verify that no stored row still references the retired key ID before removing that old key from the host keyring. Rotation uses compare-and-replace against the prior key ID and ciphertext, so a concurrent credential replacement cannot be overwritten. The rotation route returns only the masked DTO. Keep the old key available until migration is complete; encrypted database backups also require the matching historical key.
+
+The browser can submit a secret once when creating or replacing a credential. Management reads return a mask containing only the last four Unicode characters when the value is longer than four characters, otherwise only mask characters. No API accepts a plaintext retrieval operation. Provider IDs and capabilities are selected from a static registry; API-key contents are never inspected to guess capabilities.
+
+Validation is separate from storage and capability support. New or replaced credentials start as `unvalidated`; only an explicitly installed provider validator can mark them `valid`, `invalid` or `error`. The framework does not invent network probes or treat absent validation adapters as success. Validator errors are reduced to safe states before persistence and are not returned or logged. Validation runs with transient decrypted bytes that are cleared after the adapter returns. Provider implementations must honor context cancellation and must not log their input secret.
+
+Model and voice discovery uses provider-specific adapters behind a bounded registry boundary. Results are capped at 100 models and 100 voices, each option is length-limited and rejects control characters and duplicate IDs, then results are sorted for deterministic API output. Adapter errors are replaced by a generic discovery failure. Discovery capability metadata and agent readiness are independent of process liveness: missing or invalid provider credentials affect the relevant agent capability readiness, not whole-server liveness/readiness.
+
+Assumptions for this phase:
+
+- The server host remains responsible for loading encryption keys and injecting storage, validation and discovery adapters. This phase defines and tests that boundary; it does not add deployment-specific KMS or environment-variable configuration.
+- Google and xAI are the initial static registry entries, each declaring LLM, STT and TTS support. This is a selectable server capability contract, not a claim that every API key or account currently has each service enabled.
+- Live provider validation and network discovery are not inferred from stored-key shape. Until an adapter is configured, validation/discovery reports unavailable.

@@ -268,6 +268,81 @@ func (r CredentialRepository) Get(ctx context.Context, id string) (Credential, e
 	return c, nil
 }
 
+// ReplaceIfUnchanged prevents validation or key rotation from overwriting a
+// credential that was concurrently replaced or deleted.
+func (r CredentialRepository) ReplaceIfUnchanged(ctx context.Context, expectedKeyID string, expectedCiphertext []byte, c Credential) error {
+	if err := validID(c.ID); err != nil {
+		return err
+	}
+	if expectedKeyID == "" || len(expectedCiphertext) == 0 || len(c.Ciphertext) == 0 || c.KeyID == "" {
+		return errors.New("credential ciphertext and key id required")
+	}
+	canonical, err := CanonicalJSON([]byte(c.CapabilitiesJSON))
+	if err != nil {
+		return err
+	}
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE provider_credentials SET provider=?,masked_suffix=?,validation_state=?,validated_at=?,capabilities_json=?,ciphertext=?,key_id=?,updated_at=? WHERE id=? AND key_id=? AND ciphertext=?"), c.Provider, c.MaskedSuffix, c.ValidationState, nullTime(c.ValidatedAt), string(canonical), c.Ciphertext, c.KeyID, utc(time.Now()), c.ID, expectedKeyID, expectedCiphertext)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r CredentialRepository) Delete(ctx context.Context, id string) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("DELETE FROM provider_credentials WHERE id=?"), id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r CredentialRepository) List(ctx context.Context) ([]Credential, error) {
+	rows, err := r.s.db.QueryContext(ctx, "SELECT id,provider,masked_suffix,validation_state,validated_at,capabilities_json,ciphertext,key_id,created_at,updated_at FROM provider_credentials ORDER BY created_at,id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var credentials []Credential
+	for rows.Next() {
+		var c Credential
+		var validated sql.NullString
+		var created, updated string
+		if err := rows.Scan(&c.ID, &c.Provider, &c.MaskedSuffix, &c.ValidationState, &validated, &c.CapabilitiesJSON, &c.Ciphertext, &c.KeyID, &created, &updated); err != nil {
+			return nil, err
+		}
+		if validated.Valid {
+			if c.ValidatedAt, err = parseTime(validated.String); err != nil {
+				return nil, err
+			}
+		}
+		if c.CreatedAt, err = parseTime(created); err != nil {
+			return nil, err
+		}
+		if c.UpdatedAt, err = parseTime(updated); err != nil {
+			return nil, err
+		}
+		credentials = append(credentials, c)
+	}
+	return credentials, rows.Err()
+}
+
 type MCPServer struct {
 	ID, Name, Endpoint, Transport, AuthCredentialID, ValidationState, LatestDiscoveryID string
 	Enabled                                                                             bool
