@@ -28,7 +28,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 | Gate | Status | Evidence/remaining condition |
 |---|---|---|
 | A — Core Contracts Stable | Passed | Independent Phase 1 tester PASS at `00175a9`: core/server race and vet, focused API/auth, UI tests/typecheck/build, SQLite/PostgreSQL 18 repository contract, and `make verify`; dependency and Task 1 contract boundaries inspected. |
-| B — P0 Audio Path Stable | Open | Pinned client cannot clear already-buffered playback; P0 framework implementation remains open. |
+| B — P0 Audio Path Stable | Passed | Independent Phase 2 tester PASS at `48a8170`: core/Google/tagged-xAI/Server race and vet, root tagged test/build, RTVI/WebSocket race tests, focused audio/turn/pacing/flush/transcript repetitions, and mocked provider integrations. The pinned client still cannot clear already-buffered playback; this documented already-delivered-audio limitation is unsupported rather than represented as working. |
 | C — Tool Loop Stable | Open | Contract frozen; framework/provider implementation remains open. |
 | D — Persistent Agent Runtime | Open | Domain/snapshot contract frozen; server implementation remains open. |
 | E — Trace End-to-End | Open | Framework/server/UI persistence path not implemented. |
@@ -130,7 +130,24 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [x] Task 7: Silence, turn detection, manager. Independent reviewer APPROVED and final independent tester PASS at `3563c8b`.
 - [x] Task 8: Output pacing, speaking state, barge-in/flush. Independent reviewer APPROVED and final independent tester PASS at `f117b51`.
 - [x] Task 9: STT commit/finalization. Independent reviewer APPROVED and final independent tester PASS at `e9b96c2`.
-- [ ] Independent Phase 2 tester gate; record Gate B.
+- [x] Independent Phase 2 tester gate; Gate B passed at `48a8170`.
+
+### Gate B independent verification
+
+- At `48a8170`, full core, Google, tagged xAI, and Server race/vet suites
+  passed; root tagged test/build and RTVI/WebSocket race suites also passed.
+  Focused race repetitions covered audio normalization and conditioning,
+  silence/turn semantics, lifecycle/mute, pacing and speaking state, barge-in
+  and flush barriers, transcript finalization/invalidation, and mocked Google
+  and xAI multi-turn integrations.
+- `node tools/compat/probe_playback_clear.js` exited successfully only through
+  the recorded compatibility decision and reproduced
+  `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`. Client
+  buffer clearing remains explicitly unsupported; Gate B covers the bounded
+  server path and permits the documented already-delivered-audio exception.
+- Live credentialed providers were not run. Task 14's machine-readable eval
+  harness is a Phase 3 deliverable and was not required for this gate. The
+  tester left the worktree clean and `git diff --check` passed.
 
 ### Task 9 closeout
 
@@ -493,4 +510,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Tasks 1–8 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Next action is Task 9: STT commit/finalization, followed by the independent Phase 2 tester. Gates B–G remain open.
+Tasks 1–9 and the independent Phase 1–2 tester gates are complete. Gate A
+passed at `00175a9`; Gate B passed at `48a8170` with client playback clearing
+explicitly unsupported. Next action is Phase 3 Task 10: context aggregation
+and interruption reconciliation. Gates C–G remain open.
