@@ -890,6 +890,133 @@ func TestPacedWriterActiveUninterruptibleUnitSurvivesFutureRetirement(t *testing
 	}
 }
 
+func TestPacedWriterRetainedCriticalPendingMarkerSurvivesFlushOrdering(t *testing.T) {
+	for _, beforeFlush := range []bool{true, false} {
+		t.Run(fmt.Sprintf("marker_before_flush=%v", beforeFlush), func(t *testing.T) {
+			pacer := ws.NewPacedWriter(ws.DefaultPacerConfig(), func(context.Context, []byte) error { return nil })
+			defer pacer.Close()
+			first := outputFrame(1, 1, core.OutputUninterruptible)
+			if err := pacer.Enqueue(first); err != nil {
+				t.Fatal(err)
+			}
+			mark := func() {
+				if err := pacer.MarkTurnFinal("turn", 1, 1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if beforeFlush {
+				mark()
+			}
+			if err := pacer.MarkTurnFinal("future", 1, 2); err != nil {
+				t.Fatal(err)
+			}
+			if err := pacer.Flush(context.Background(), 1); err != nil {
+				t.Fatal(err)
+			}
+			if !beforeFlush {
+				mark()
+			}
+			if got := pacer.PendingFinalMarkers(); got != 1 {
+				t.Fatalf("retained critical marker count=%d, want 1", got)
+			}
+			last := outputFrame(2, 1, core.OutputUninterruptible)
+			last.IsFinal = true
+			if err := pacer.Enqueue(last); err != nil {
+				t.Fatal(err)
+			}
+			if pacer.PendingFinalMarkers() != 0 {
+				t.Fatal("final chunk did not consume marker")
+			}
+			events := make(chan core.SpeakingStateFrame, 4)
+			pacer.OnSpeakingState = func(event core.SpeakingStateFrame) { events <- event }
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- pacer.Run(ctx) }()
+			for i := 0; i < 2; i++ {
+				select {
+				case event := <-events:
+					if i == 0 && event.State != core.SpeakingStarted {
+						t.Fatalf("start=%#v", event)
+					}
+					if i == 1 && (event.State != core.SpeakingStopped || event.Reason != core.SpeakingStopDrained) {
+						t.Fatalf("stop=%#v", event)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("retained unit did not drain")
+				}
+			}
+			mark()
+			pacer.Close()
+			<-done
+			if len(events) != 0 || pacer.FramesWritten.Load() != 2 {
+				t.Fatal("duplicate transition or missing critical output")
+			}
+		})
+	}
+}
+
+func TestPacedWriterCompletedUnitCannotReplayAfterTurnDrain(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty_unit_final=%v", empty), func(t *testing.T) {
+			pacer := ws.NewPacedWriter(ws.DefaultPacerConfig(), func(context.Context, []byte) error { return nil })
+			defer pacer.Close()
+			completed := make(chan uint64, 4)
+			pacer.OnWriteComplete = func(frame *core.OutputAudioFrame, _ error) { completed <- frame.UnitID }
+			events := make(chan core.SpeakingStateFrame, 4)
+			pacer.OnSpeakingState = func(event core.SpeakingStateFrame) { events <- event }
+			first := outputFrame(1, 1, core.OutputInterruptible)
+			first.IsFinal = true
+			if empty {
+				first.Samples = nil
+			}
+			if err := pacer.Enqueue(first); err != nil {
+				t.Fatal(err)
+			}
+			last := outputFrame(2, 1, core.OutputInterruptible)
+			last.UnitID, last.IsFinal, last.TurnFinal = 2, true, true
+			if err := pacer.Enqueue(last); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- pacer.Run(ctx) }()
+			for i := 0; i < 2; i++ {
+				select {
+				case <-completed:
+				case <-time.After(time.Second):
+					t.Fatal("unit did not complete")
+				}
+			}
+			for i := 0; i < 2; i++ {
+				select {
+				case event := <-events:
+					if i == 1 && (event.State != core.SpeakingStopped || event.Reason != core.SpeakingStopDrained) {
+						t.Fatalf("stop=%#v", event)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("turn did not drain")
+				}
+			}
+			writes := pacer.FramesWritten.Load()
+			replay := outputFrame(3, 1, core.OutputInterruptible)
+			replay.IsFinal = true
+			if err := pacer.Enqueue(replay); !errors.Is(err, ws.ErrInvalidUnitID) {
+				t.Fatalf("completed unit replay=%v, want ErrInvalidUnitID", err)
+			}
+			if err := pacer.MarkTurnFinal("turn", 1, 1); err != nil {
+				t.Fatal(err)
+			}
+			pacer.Close()
+			<-done
+			if len(events) != 0 || pacer.FramesWritten.Load() != writes || pacer.PendingFinalMarkers() != 0 {
+				t.Fatal("completed unit revived output")
+			}
+		})
+	}
+}
+
 func TestPacedWriterOverlappingFlushWaitersShareTerminalFailure(t *testing.T) {
 	started := make(chan struct{})
 	pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 4096, MaxQueueFrames: 8, WriteTimeout: 300 * time.Millisecond}, func(ctx context.Context, _ []byte) error {

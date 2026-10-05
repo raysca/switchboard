@@ -1,6 +1,6 @@
 # Task 8 implementation report
 
-Status: review-round-1 fixes prepared for independent re-review; Task 8 and Gate B remain open.
+Status: review-round-4 escalation fixes prepared for independent re-review; Task 8 and Gate B remain open.
 
 Baseline: `451c103` on `codex/v2-implementation`.
 
@@ -191,3 +191,56 @@ core race/vet (with the macOS 26 SDK workaround), root RTVI/WebSocket race/vet,
 Google race/vet, and tagged xAI race/vet passed. The playback probe again
 reported `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; the
 recorded decision permits continuation but does not prove playback clear.
+
+## Review round 4 (escalation)
+
+Before production changes, this exact regression command failed all four cases:
+
+```text
+go test -run 'TestPacedWriter(RetainedCriticalPendingMarker|CompletedUnitCannotReplay)' ./transport/ws
+```
+
+Both marker orderings reported `retained critical marker count=0, want 1`:
+marker pending before flush, and marker arriving after flush but before the
+unit's final chunk. Each includes a future marker whose flush advances the
+retirement boundary. Empty and non-empty completed-unit replay both reported
+`completed unit replay=<nil>, want ErrInvalidUnitID` after unit 2 drained.
+
+The fix preserves the pending marker of a currently unfinished critical unit
+through flush and exempts that identity from all stale/retirement/order checks
+when accepting its marker. Its eventual final chunk consumes the marker and
+drains exactly once. Successful `IsFinal` or `TurnFinal` completion immediately
+retires admission for empty and non-empty frames; completed-unit metadata is
+kept separately for late markers. Terminal retirement centrally deletes the
+active admission exception. Older completed markers retain the existing guard
+against replacing a newer drain.
+
+Lifecycle audit: admission remains capped at 128 unfinished identities;
+pending and completed ledgers each remain capped at 64. Flush removes
+interruptible active identities and their markers while retaining critical
+ones. Final completion removes the active identity before callbacks. Metadata
+eviction and drain retirement cannot reopen admission. Close clears all three
+ledgers; Run defers Close on cancellation, encoder failure, and write failure.
+Selected/in-flight completion after close cannot recreate ledger entries.
+
+Verification commands:
+
+```text
+go test -race -count=100 -run 'TestPacedWriter(RetainedCriticalPendingMarker|CompletedUnitCannotReplay|FinalMarker|LateFinal|LateMarker|FinalIdentity|OlderCompleted|ActiveUninterruptible|UninterruptibleTurnFinal|CloseCancelsPendingLateDrain)' ./transport/ws
+cd core && SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS=-Wl,-w go test -race -count=1 ./... && SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS=-Wl,-w go vet ./...
+go test -race -count=1 ./transport/rtvi ./transport/ws && go vet ./transport/rtvi ./transport/ws
+cd providers/google && go test -race -count=1 ./... && go vet ./...
+cd providers/xai && go test -race -tags xaispeech -count=1 ./... && go vet -tags xaispeech ./...
+SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS=-Wl,-w go test -race -count=1 ./... && SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS=-Wl,-w go vet ./...
+node tools/compat/probe_playback_clear.js
+```
+
+The exact regressions and prior finality cases passed 100 repetitions under
+the race detector (`ok govoice/transport/ws 60.156s`). Full core, root,
+WebSocket/RTVI, Google, and tagged xAI race/vet passed. The
+first broader root run without the SDK workaround failed to link `govoice/vad`
+because the installed default SDK contains the unsupported `arm64e.x1`
+architecture; the full root rerun with the documented MacOSX26 workaround
+passed. The playback probe again returned
+`UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`. Its recorded
+decision permits continuation, not a playback-clear pass.

@@ -90,12 +90,14 @@ type PacedWriter struct {
 	lastMediaEnd    time.Time
 	pendingFinals   map[turnFinalKey]struct{}
 	completedFinals map[turnFinalKey]completedUnit
-	activeUnits     map[turnFinalKey]core.OutputDisposition
-	highestUnitID   uint64
-	highestUnitKey  turnFinalKey
-	retiredUnitID   uint64
-	drain           *finalDrain
-	terminalErr     error
+	// Admission exceptions exist only until a unit's final chunk completes.
+	// completedFinals retains late-marker metadata without reopening admission.
+	activeUnits    map[turnFinalKey]core.OutputDisposition
+	highestUnitID  uint64
+	highestUnitKey turnFinalKey
+	retiredUnitID  uint64
+	drain          *finalDrain
+	terminalErr    error
 
 	speaking *core.SpeakingTracker
 	eventMu  sync.Mutex
@@ -191,15 +193,16 @@ func (w *PacedWriter) MarkTurnFinal(turn string, gen, unitID uint64) error {
 		return nil
 	}
 	activeDisposition, active := w.activeUnits[key]
-	if gen != 0 && gen < w.activeGen && (!active || activeDisposition != core.OutputUninterruptible) {
+	retainedCritical := active && activeDisposition == core.OutputUninterruptible
+	if gen != 0 && gen < w.activeGen && !retainedCritical {
 		w.mu.Unlock()
 		return nil
 	}
-	if unitID <= w.retiredUnitID {
+	if !retainedCritical && unitID <= w.retiredUnitID {
 		w.mu.Unlock()
 		return nil
 	}
-	if unitID < w.highestUnitID || (unitID == w.highestUnitID && w.highestUnitID != 0 && key != w.highestUnitKey) {
+	if !retainedCritical && (unitID < w.highestUnitID || (unitID == w.highestUnitID && w.highestUnitID != 0 && key != w.highestUnitKey)) {
 		w.mu.Unlock()
 		return ErrInvalidUnitID
 	}
@@ -238,6 +241,7 @@ func (w *PacedWriter) acceptUnitIdentityLocked(key turnFinalKey) error {
 }
 
 func (w *PacedWriter) retireUnitLocked(key turnFinalKey) {
+	delete(w.activeUnits, key)
 	if key.unitID > w.retiredUnitID {
 		w.retiredUnitID = key.unitID
 	}
@@ -458,7 +462,8 @@ func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.Cance
 	}
 	w.queue = kept
 	for key := range w.pendingFinals {
-		if key.gen <= gen {
+		disposition, active := w.activeUnits[key]
+		if key.gen <= gen && (!active || disposition != core.OutputUninterruptible) {
 			delete(w.pendingFinals, key)
 			w.retireUnitLocked(key)
 		}
@@ -718,6 +723,9 @@ func (w *PacedWriter) finishWrite(entry *pacedFrame, writeErr error, mediaEnd ti
 			dispatch = w.queueSpeakingLocked(event)
 		}
 		key := frameKey(entry.frame)
+		if entry.frame.IsFinal || entry.frame.TurnFinal {
+			w.retireUnitLocked(key)
+		}
 		if entry.frame.IsFinal && !entry.frame.TurnFinal {
 			w.recordCompletedLocked(key, mediaEnd, entry.frame.Disposition)
 		}
@@ -745,6 +753,9 @@ func (w *PacedWriter) finishEmpty(entry *pacedFrame, mediaEnd time.Time) bool {
 	w.mu.Lock()
 	dropped := w.inflight != entry || w.dropInflight || staleInterruptible(entry.frame, w.activeGen)
 	w.clearInflightLocked(entry)
+	if !dropped && (entry.frame.IsFinal || entry.frame.TurnFinal) {
+		w.retireUnitLocked(frameKey(entry.frame))
+	}
 	if !dropped && entry.frame.IsFinal && !entry.frame.TurnFinal {
 		w.recordCompletedLocked(frameKey(entry.frame), mediaEnd, entry.frame.Disposition)
 	}

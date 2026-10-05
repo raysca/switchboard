@@ -218,6 +218,23 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   by every waiter. Close/cancel cleanup has a dedicated pending-late-drain test.
   FakeTTS units use a cancellation-safe admission-order chain.
 
+### Task 8 review round 4
+
+- The escalation fixes the remaining retained-critical marker and completed-unit
+  replay findings. Task 8 remains unchecked and Gate B remains open for review.
+- Exact REDs reproduced a lost marker both before flush and after flush before
+  the last chunk, plus accepted replay of a completed first unit after the
+  second unit drained (empty and non-empty first-unit finals).
+- Unfinished critical identities now retain pending markers across flush and
+  accept markers despite a newer retirement/order boundary. Successful final
+  completion retires admission immediately; bounded completed metadata remains
+  available for late markers without permitting audio replay.
+- Lifecycle audit: unfinished admission is capped at 128 identities, pending
+  and completed metadata at 64 each. Flush removes interruptible identities;
+  terminal retirement removes admission; Run's close path clears all ledgers on
+  cancellation, encoder/write failure, and shutdown. Verification and the
+  unresolved playback-clear result are recorded in the Task 8 report.
+
 ### Task 6 closeout
 
 - Implementation commits: `10d9c26` (`feat(core): add bounded streaming audio
