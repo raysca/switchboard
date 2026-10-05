@@ -1,12 +1,10 @@
 package xai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -15,6 +13,7 @@ import (
 	"time"
 
 	"govoice/core"
+	coretools "govoice/core/tools"
 )
 
 const (
@@ -29,6 +28,8 @@ type Config struct {
 	APIKey          string
 	SystemPrompt    string
 	ContextProvider func() []core.Message
+	ToolDefinitions []core.ToolDefinition
+	ToolLoop        *coretools.ToolLoop
 	Timeout         time.Duration
 	RetryPolicy     RetryPolicy
 	CircuitBreaker  *CircuitBreaker
@@ -100,6 +101,16 @@ func NewProcessor(cfg Config) (*Processor, error) {
 			Timeout: cfg.Timeout,
 		}
 	}
+	if _, err := MapToolDefinitions(cfg.ToolDefinitions); err != nil {
+		return nil, err
+	}
+	if len(cfg.ToolDefinitions) > 0 && cfg.ToolLoop == nil {
+		return nil, errors.New("xai: tool definitions require a shared ToolLoop")
+	}
+	if len(cfg.ToolDefinitions) > 0 && strings.Contains(cfg.Endpoint, "chat/completions") {
+		return nil, errors.New("xai: shared tool adapter requires the Responses API endpoint")
+	}
+	cfg.ToolDefinitions = cloneXAIToolDefinitions(cfg.ToolDefinitions)
 
 	return &Processor{
 		cfg: cfg,
@@ -164,16 +175,32 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string          `json:"role,omitempty"`
+	Content   string          `json:"content,omitempty"`
+	Type      string          `json:"type,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	CallID    string          `json:"call_id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Arguments string          `json:"arguments,omitempty"`
+	Output    string          `json:"output,omitempty"`
+	Raw       json.RawMessage `json:"-"`
+}
+
+func (m chatMessage) MarshalJSON() ([]byte, error) {
+	if len(m.Raw) > 0 {
+		return append([]byte(nil), m.Raw...), nil
+	}
+	type plain chatMessage
+	return json.Marshal(plain(m))
 }
 
 type responsesRequest struct {
-	Model    string        `json:"model"`
-	Store    bool          `json:"store"`
-	Stream   bool          `json:"stream"`
-	Input    []chatMessage `json:"input,omitempty"`
-	Messages []chatMessage `json:"messages,omitempty"`
+	Model    string              `json:"model"`
+	Store    bool                `json:"store"`
+	Stream   bool                `json:"stream"`
+	Tools    []XAIToolDefinition `json:"tools,omitempty"`
+	Input    []chatMessage       `json:"input,omitempty"`
+	Messages []chatMessage       `json:"messages,omitempty"`
 }
 
 type chatChunkChoice struct {
@@ -198,9 +225,11 @@ type chatChunkResponse struct {
 	Choices  []chatChunkChoice `json:"choices"`
 	Usage    *chatChunkUsage   `json:"usage"`
 	Response *struct {
-		OutputText string          `json:"output_text"`
-		Usage      *chatChunkUsage `json:"usage"`
+		OutputText string                  `json:"output_text"`
+		Usage      *chatChunkUsage         `json:"usage"`
+		Output     []XAIResponseOutputItem `json:"output"`
 	} `json:"response"`
+	Item *XAIResponseOutputItem `json:"item"`
 }
 
 func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame, e core.Emitter) error {
@@ -274,10 +303,16 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 		})
 	}
 
+	providerTools, err := MapToolDefinitions(p.cfg.ToolDefinitions)
+	if err != nil {
+		cancel()
+		return err
+	}
 	reqBody := responsesRequest{
 		Model:  p.cfg.Model,
 		Store:  false, // Spec: store: false MUST be sent on every request
 		Stream: true,
+		Tools:  providerTools,
 	}
 	if strings.Contains(p.cfg.Endpoint, "chat/completions") {
 		reqBody.Messages = messages
@@ -285,142 +320,56 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 		reqBody.Input = messages
 	}
 
-	jsonBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		cancel()
-		return fmt.Errorf("marshal xai request: %w", err)
-	}
-
 	// Supervised async execution
 	p.Requests.Add(1)
 	return s.Go(func(sessionCtx context.Context) {
 		defer cancel()
-
-		var committed bool
 		var fullText strings.Builder
-		var promptTok, outTok, totTok int
-
-		opErr := ExecuteWithRetry(streamCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, &committed, func(attempt int) error {
-			if attempt > 0 {
-				p.Retries.Add(1)
-			}
-			httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, p.cfg.Endpoint, bytes.NewReader(jsonBytes))
-			if err != nil {
-				return err
-			}
-			httpReq.Header.Set("Content-Type", "application/json")
-			httpReq.Header.Set("Accept", "text/event-stream")
-			if p.cfg.APIKey != "" {
-				httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
-			}
-
-			resp, err := p.cfg.HTTPClient.Do(httpReq)
-			if err != nil {
-				return MapHTTPError("llm", nil, "", err)
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-				return MapHTTPError("llm", resp, string(bodyBytes), nil)
-			}
-
-			sse := NewSSEReader(resp.Body, p.cfg.MaxLineLength, p.cfg.MaxEventSize, p.cfg.MaxTotalSize)
-
-			for {
-				select {
-				case <-streamCtx.Done():
-					return streamCtx.Err()
-				case <-sessionCtx.Done():
-					return sessionCtx.Err()
-				default:
-				}
-
-				event, err := sse.ReadEvent()
-				if err != nil {
-					if errors.Is(err, io.EOF) {
-						break
+		calls, promptTok, outTok, totTok, opErr := p.requestRound(streamCtx, sessionCtx, reqBody, gen, turn, s, &fullText)
+		if opErr == nil && !p.isCurrent(gen) {
+			p.Stale.Add(1)
+			return
+		}
+		initialCalls := ParseXAIToolCalls(calls, fmt.Sprint(s.ID()), turn, gen)
+		if opErr == nil && len(initialCalls) > 0 {
+			if p.cfg.ToolLoop == nil {
+				opErr = errors.New("xai: model returned tool calls but no shared ToolLoop is configured")
+			} else {
+				_, opErr = p.cfg.ToolLoop.Run(streamCtx, initialCalls, func(roundCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
+					if roundCtx.Err() != nil || sessionCtx.Err() != nil || !p.isCurrent(gen) {
+						return nil, false, context.Canceled
 					}
-					return err
-				}
-
-				if event == nil || event.Data == "" {
-					continue
-				}
-
-				var chunk chatChunkResponse
-				if err := json.Unmarshal([]byte(event.Data), &chunk); err != nil {
-					return fmt.Errorf("%w: %v", ErrInvalidEvent, err)
-				}
-
-				usage := chunk.Usage
-				if usage == nil && chunk.Response != nil {
-					usage = chunk.Response.Usage
-				}
-				if usage != nil {
-					if usage.PromptTokens > 0 {
-						promptTok = usage.PromptTokens
-					} else if usage.InputTokens > 0 {
-						promptTok = usage.InputTokens
+					byID := make(map[string]XAIResponseOutputItem, len(calls))
+					for _, item := range calls {
+						if item.Type == "function_call" {
+							byID[item.CallID] = item
+						}
 					}
-					if usage.CompletionTokens > 0 {
-						outTok = usage.CompletionTokens
-					} else if usage.OutputTokens > 0 {
-						outTok = usage.OutputTokens
+					for _, item := range calls {
+						var callInput chatMessage
+						if len(item.Raw) > 0 {
+							callInput.Raw = append(json.RawMessage(nil), item.Raw...)
+						} else {
+							callInput = chatMessage{Type: "function_call", ID: item.ID, CallID: item.CallID, Name: item.Name, Arguments: item.Arguments}
+						}
+						reqBody.Input = append(reqBody.Input, callInput)
 					}
-					if usage.TotalTokens > 0 {
-						totTok = usage.TotalTokens
-					} else {
-						totTok = promptTok + outTok
+					for _, result := range results {
+						if _, ok := byID[result.CallID]; !ok {
+							return nil, false, errors.New("xai: tool result has no matching provider call")
+						}
+						reqBody.Input = append(reqBody.Input, chatMessage{Type: "function_call_output", CallID: result.CallID, Output: string(result.Result)})
 					}
-				}
-				if chunk.Type == "response.failed" {
-					return fmt.Errorf("xai responses API returned response.failed")
-				}
-				if chunk.Type == "response.completed" || chunk.Type == "response.done" {
-					return nil
-				}
-
-				// Extract delta content
-				deltaText := chunk.Delta
-				if deltaText == "" {
-					deltaText = chunk.Text
-				}
-				if deltaText == "" && chunk.Response != nil {
-					deltaText = chunk.Response.OutputText
-				}
-				if deltaText == "" && len(chunk.Choices) > 0 {
-					deltaText = chunk.Choices[0].Delta.Content
-				}
-
-				if deltaText != "" {
-					committed = true
-					fullText.WriteString(deltaText)
-
-					// Generation fencing check
-					p.mu.Lock()
-					isStale := p.activeGen != gen || p.closed
-					p.mu.Unlock()
-
-					if isStale {
-						return nil // Discard stale delta
-					}
-
-					// Re-enter session run loop
-					_ = s.Reenter(&core.LLMTextDeltaFrame{
-						Delta: deltaText,
-						Turn:  turn,
-						Gen:   gen,
-					}, core.Downstream, p.index, gen)
-				}
+					nextCalls, pt, ot, tt, nextErr := p.requestRound(roundCtx, sessionCtx, reqBody, gen, turn, s, &fullText)
+					promptTok += pt
+					outTok += ot
+					totTok += tt
+					calls = nextCalls
+					nextToolCalls := ParseXAIToolCalls(nextCalls, fmt.Sprint(s.ID()), turn, gen)
+					return nextToolCalls, len(nextToolCalls) == 0, nextErr
+				})
 			}
-
-			if !sse.SawTerminal() {
-				return ErrMissingTerminalEvent
-			}
-
-			return nil
-		})
+		}
 
 		if opErr != nil {
 			if errors.Is(opErr, context.Canceled) || streamCtx.Err() != nil {
@@ -441,11 +390,7 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 		p.TotalTokens.Add(int64(totTok))
 
 		// Emit final LLMTextFrame
-		p.mu.Lock()
-		isStale := p.activeGen != gen || p.closed
-		p.mu.Unlock()
-
-		if isStale {
+		if !p.isCurrent(gen) {
 			p.Stale.Add(1)
 		} else {
 			_ = s.Reenter(&core.LLMTextFrame{
@@ -455,4 +400,21 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			}, core.Downstream, p.index, gen)
 		}
 	})
+}
+
+func (p *Processor) isCurrent(gen uint64) bool {
+	p.mu.Lock()
+	current := p.activeGen == gen && !p.closed
+	session := p.session
+	p.mu.Unlock()
+	return current && session != nil && session.CurrentGeneration() == gen
+}
+
+func cloneXAIToolDefinitions(definitions []core.ToolDefinition) []core.ToolDefinition {
+	cloned := make([]core.ToolDefinition, len(definitions))
+	for i, definition := range definitions {
+		cloned[i] = definition
+		cloned[i].InputSchema = append(json.RawMessage(nil), definition.InputSchema...)
+	}
+	return cloned
 }

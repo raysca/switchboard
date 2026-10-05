@@ -1,0 +1,294 @@
+package xai
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"govoice/core"
+	coretools "govoice/core/tools"
+)
+
+func TestMapToolDefinitionsCopiesJSONSchemaAndMapsRequired(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`)
+	got, err := MapToolDefinitions([]core.ToolDefinition{{Name: "weather", Description: "Find weather", InputSchema: schema}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Type != "function" || got[0].Name != "weather" || got[0].Description != "Find weather" || string(got[0].Parameters) != string(schema) {
+		t.Fatalf("unexpected mapping: %+v", got)
+	}
+	got[0].Parameters[0] = ' '
+	if schema[0] != '{' {
+		t.Fatal("provider schema aliases application memory")
+	}
+}
+
+func TestNewProcessorRequiresLoopAndCopiesToolDefinitions(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	definitions := []core.ToolDefinition{{Name: "weather", InputSchema: schema}}
+	if _, err := NewProcessor(Config{ToolDefinitions: definitions}); err == nil {
+		t.Fatal("definitions without shared ToolLoop accepted")
+	}
+	loop, err := coretools.NewToolLoop(definitions, core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) { return core.ToolResult{}, nil }), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err := NewProcessor(Config{ToolDefinitions: definitions, ToolLoop: loop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema[0] = ' '
+	if proc.cfg.ToolDefinitions[0].InputSchema[0] != '{' {
+		t.Fatal("processor config aliases caller's schema bytes")
+	}
+}
+
+func TestParseXAIToolCallsKeepsOrderAndMalformedPayload(t *testing.T) {
+	items := []XAIResponseOutputItem{
+		{Type: "function_call", CallID: "one", Name: "a", Arguments: `{"n":1}`},
+		{Type: "function_call", CallID: "two", Name: "b", Arguments: `{bad`},
+	}
+	calls := ParseXAIToolCalls(items, "session", "turn", 7)
+	if len(calls) != 2 || calls[0].ID != "one" || calls[0].Name != "a" || calls[1].ID != "two" || string(calls[0].Arguments) != `{"n":1}` || string(calls[1].Arguments) != `{bad` {
+		t.Fatalf("calls were not preserved for ToolLoop validation: %+v", calls)
+	}
+	if calls[0].SessionID != core.SessionID("session") || calls[0].TurnID != core.TurnID("turn") || calls[0].Generation != 7 {
+		t.Fatalf("identity mismatch: %+v", calls[0])
+	}
+}
+
+func TestParseXAIToolCallRequiresProviderCallID(t *testing.T) {
+	calls := ParseXAIToolCalls([]XAIResponseOutputItem{{Type: "function_call", ID: "fc-item", Name: "x", Arguments: `{}`}}, "s", "t", 1)
+	if len(calls) != 1 || calls[0].ID != "" {
+		t.Fatalf("item id must not be mistaken for Responses call_id: %+v", calls)
+	}
+}
+
+func TestMergeXAIOutputItemDeduplicatesExactEventReplayAndRejectsConflict(t *testing.T) {
+	item := XAIResponseOutputItem{Type: "function_call", ID: "fc1", CallID: "call1", Name: "lookup", Arguments: `{}`}
+	items, err := mergeOutputItem(nil, item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err = mergeOutputItem(items, item)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("exact replay was not idempotent: items=%v err=%v", items, err)
+	}
+	conflict := item
+	conflict.Arguments = `{"x":1}`
+	if _, err := mergeOutputItem(items, conflict); err == nil {
+		t.Fatal("conflicting call identity accepted")
+	}
+}
+
+func TestParseXAIToolCallsDoesNotAliasProviderOutput(t *testing.T) {
+	items := []XAIResponseOutputItem{{Type: "function_call", CallID: "one", Name: "a", Arguments: `{"x":1}`}}
+	calls := ParseXAIToolCalls(items, "s", "t", 1)
+	items[0].Arguments = "{}"
+	if reflect.DeepEqual(calls[0].Arguments, json.RawMessage(`{"x":1}`)) == false {
+		t.Fatalf("call arguments alias provider output: %s", calls[0].Arguments)
+	}
+}
+
+func TestMapToolDefinitionsRejectsInvalidDeepAndOversizedSchemas(t *testing.T) {
+	for name, schema := range map[string][]byte{
+		"invalid":         []byte(`{`),
+		"non-object-root": []byte(`{"type":"string"}`),
+		"oversized":       append([]byte(`{"type":"object","description":"`), append(make([]byte, 32<<10), []byte(`"}`)...)...),
+		"too-deep":        []byte(`{"type":"object","properties":{"a":{"type":"object","properties":{"b":{"type":"object","properties":{"c":{"type":"object","properties":{"d":{"type":"object","properties":{"e":{"type":"object","properties":{"f":{"type":"object","properties":{"g":{"type":"object","properties":{"h":{"type":"object","properties":{"i":{"type":"object","properties":{"j":{"type":"object","properties":{"k":{"type":"object","properties":{"l":{"type":"object","properties":{"m":{"type":"object","properties":{"n":{"type":"object","properties":{"o":{"type":"object","properties":{"p":{"type":"object","properties":{"q":{"type":"string"}}}}}}}}}}}}}}}}}}}}}}}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := MapToolDefinitions([]core.ToolDefinition{{Name: "bad", InputSchema: schema}}); err == nil {
+				t.Fatal("invalid schema accepted")
+			}
+		})
+	}
+}
+
+func TestXAIResponsesToolLoopExecutesOnceAndContinues(t *testing.T) {
+	var mu sync.Mutex
+	var bodies [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, append([]byte(nil), body...))
+		n := len(bodies)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"weather\",\"arguments\":\"{\\\"city\\\":\\\"London\\\"}\",\"extra\":{\"opaque\":true}}}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_2\",\"type\":\"function_call\",\"call_id\":\"call_2\",\"name\":\"weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Checking weather\"}]},{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"weather\",\"arguments\":\"{\\\"city\\\":\\\"London\\\"}\",\"extra\":{\"opaque\":true}},{\"id\":\"fc_2\",\"type\":\"function_call\",\"call_id\":\"call_2\",\"name\":\"weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\"}]}}\n\n")
+		} else {
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"It is sunny.\"}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"output_text\":\"It is sunny.\"}}\n\n")
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	ctx := core.NewConversationContext(core.ContextConfig{})
+	var executes []string
+	defs := []core.ToolDefinition{{Name: "weather", Description: "Get weather", InputSchema: json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`)}}
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
+		executes = append(executes, call.ID)
+		if call.ID == "call_2" {
+			return core.ToolResult{}, errors.New("private handler detail")
+		}
+		var args struct {
+			City string `json:"city"`
+		}
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			t.Fatal(err)
+		}
+		return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{"weather":"sunny","city":"` + args.City + `"}`)}, nil
+	}), ctx, coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err := NewProcessor(Config{Endpoint: server.URL, Model: "grok-test", HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newMockSessionController(3, 4)
+	if err := proc.Attach(session, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "turn-1", Gen: 4, Content: "weather"}, core.Downstream, &mockEmitter{}); err != nil {
+		t.Fatal(err)
+	}
+	session.taskWg.Wait()
+	if !reflect.DeepEqual(executes, []string{"call_1", "call_2"}) {
+		t.Fatalf("provider call order changed or calls duplicated: %v", executes)
+	}
+	mu.Lock()
+	gotBodies := append([][]byte(nil), bodies...)
+	mu.Unlock()
+	if len(gotBodies) != 2 {
+		t.Fatalf("expected initial and continuation request, got %d", len(gotBodies))
+	}
+	var first, second map[string]any
+	if err := json.Unmarshal(gotBodies[0], &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(gotBodies[1], &second); err != nil {
+		t.Fatal(err)
+	}
+	if first["store"] != false {
+		t.Fatalf("store must remain false: %s", gotBodies[0])
+	}
+	tools, ok := first["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tool schema missing: %s", gotBodies[0])
+	}
+	input := second["input"].([]any)
+	if len(input) < 5 {
+		t.Fatalf("continuation omitted history/call/output: %s", gotBodies[1])
+	}
+	callOne, _ := input[len(input)-4].(map[string]any)
+	callTwo, _ := input[len(input)-3].(map[string]any)
+	resultOne, _ := input[len(input)-2].(map[string]any)
+	resultTwo, _ := input[len(input)-1].(map[string]any)
+	if callOne["type"] != "function_call" || callOne["call_id"] != "call_1" || callTwo["type"] != "function_call" || callTwo["call_id"] != "call_2" || resultOne["type"] != "function_call_output" || resultOne["call_id"] != "call_1" || !strings.Contains(resultOne["output"].(string), "London") || resultTwo["call_id"] != "call_2" || resultTwo["output"] != `{"error":"executor_error"}` {
+		t.Fatalf("bad continuation mapping: %#v %#v %#v %#v", callOne, callTwo, resultOne, resultTwo)
+	}
+	if opaque, ok := callOne["extra"].(map[string]any); !ok || opaque["opaque"] != true {
+		t.Fatalf("Responses item fields were not preserved: %#v", callOne)
+	}
+	priorMessage, _ := input[1].(map[string]any)
+	if priorMessage["id"] != "msg_1" {
+		t.Fatalf("stateless continuation dropped prior model output: %#v", input)
+	}
+	if strings.Contains(string(gotBodies[1]), "private handler detail") {
+		t.Fatal("handler error leaked to provider continuation")
+	}
+	statuses := map[string]core.ToolStatus{}
+	for _, message := range ctx.Messages() {
+		if message.Role == core.RoleTool {
+			statuses[message.ToolCallID] = message.ToolStatus
+		}
+	}
+	if statuses["call_1"] != core.ToolSucceeded || statuses["call_2"] != core.ToolFailed {
+		t.Fatalf("tool result statuses not committed: %v", statuses)
+	}
+	var finalText bool
+	session.reenteredMu.Lock()
+	for _, f := range session.reentered {
+		if frame, ok := f.(*core.LLMTextFrame); ok && frame.Text == "It is sunny." {
+			finalText = true
+		}
+	}
+	session.reenteredMu.Unlock()
+	if !finalText {
+		t.Fatal("final assistant response missing")
+	}
+}
+
+func TestXAIResponsesToolLoopCancellationDoesNotContinue(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(time.Second):
+		}
+	}))
+	defer server.Close()
+	ctx := core.NewConversationContext(core.ContextConfig{})
+	defs := []core.ToolDefinition{{Name: "weather", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{}, errors.New("must not execute")
+	}), ctx, coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, _ := NewProcessor(Config{Endpoint: server.URL, HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	session := newMockSessionController(1, 1)
+	_ = proc.Attach(session, 0)
+	_ = proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "t", Gen: 1, Content: "x"}, core.Downstream, &mockEmitter{})
+	<-started
+	_ = proc.ProcessFrame(context.Background(), &core.InterruptionFrame{}, core.Downstream, &mockEmitter{})
+	session.taskWg.Wait()
+}
+
+func TestXAIResponsesStaleGenerationDoesNotRunTool(t *testing.T) {
+	started, finish := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-finish
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"weather\",\"arguments\":\"{}\"}]}}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+	defs := []core.ToolDefinition{{Name: "weather", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	var executed bool
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		executed = true
+		return core.ToolResult{}, nil
+	}), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, _ := NewProcessor(Config{Endpoint: server.URL, HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	session := newMockSessionController(2, 1)
+	_ = proc.Attach(session, 0)
+	_ = proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "turn", Gen: 1, Content: "query"}, core.Downstream, &mockEmitter{})
+	<-started
+	session.IncrementGeneration()
+	close(finish)
+	session.taskWg.Wait()
+	if executed {
+		t.Fatal("stale-generation function call executed")
+	}
+}
