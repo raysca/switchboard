@@ -45,12 +45,13 @@ func DefaultLLMConfig() LLMConfig {
 
 // LLMStreamChunk represents a single chunk from the LLM stream.
 type LLMStreamChunk struct {
-	Text         string
-	ToolCalls    []core.ToolCall
-	PromptTokens int
-	OutputTokens int
-	TotalTokens  int
-	IsDone       bool
+	Text               string
+	ToolCalls          []core.ToolCall
+	NativeToolContents []*genai.Content
+	PromptTokens       int
+	OutputTokens       int
+	TotalTokens        int
+	IsDone             bool
 }
 
 // LLMStreamClient abstracts streamed content generation.
@@ -60,6 +61,10 @@ type LLMStreamClient interface {
 
 type LLMToolStreamClient interface {
 	GenerateStreamWithTools(ctx context.Context, model string, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error)
+}
+
+type LLMNativeToolStreamClient interface {
+	GenerateStreamWithNativeTools(ctx context.Context, model string, systemPrompt string, history []core.Message, nativeHistory []*genai.Content, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error)
 }
 
 // RealGoogleLLMClient uses google.golang.org/genai.
@@ -100,8 +105,16 @@ func (c *RealGoogleLLMClient) GenerateStreamWithTools(ctx context.Context, model
 	return c.generateStream(ctx, model, systemPrompt, history, definitions)
 }
 
+func (c *RealGoogleLLMClient) GenerateStreamWithNativeTools(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []*genai.Content, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
+	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nativeHistory, definitions, identity)
+}
+
 func (c *RealGoogleLLMClient) generateStream(ctx context.Context, model, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
-	contents := GoogleContents(history)
+	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nil, definitions, core.ToolCall{})
+}
+
+func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []*genai.Content, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
+	contents := GoogleContentsWithNative(history, nativeHistory)
 
 	var genConfig *genai.GenerateContentConfig
 	if systemPrompt != "" {
@@ -130,6 +143,7 @@ func (c *RealGoogleLLMClient) generateStream(ctx context.Context, model, systemP
 		defer close(errCh)
 
 		seq := c.client.Models.GenerateContentStream(ctx, model, contents, genConfig)
+		streamCallOrdinal := 0
 		for resp, err := range seq {
 			if err != nil {
 				errCh <- MapError("llm", err)
@@ -140,11 +154,13 @@ func (c *RealGoogleLLMClient) generateStream(ctx context.Context, model, systemP
 			}
 
 			text := resp.Text()
-			toolCalls, callErr := GoogleToolCalls(resp, core.ToolCall{})
+			toolCalls, callErr := GoogleToolCallsAt(resp, identity, streamCallOrdinal)
 			if callErr != nil {
 				errCh <- errInvalidGoogleTool
 				return
 			}
+			nativeToolContents := googleNativeToolContents(resp, toolCalls)
+			streamCallOrdinal += len(toolCalls)
 			promptTok := 0
 			outTok := 0
 			totTok := 0
@@ -158,11 +174,12 @@ func (c *RealGoogleLLMClient) generateStream(ctx context.Context, model, systemP
 			case <-ctx.Done():
 				return
 			case chunkCh <- LLMStreamChunk{
-				Text:         text,
-				ToolCalls:    toolCalls,
-				PromptTokens: promptTok,
-				OutputTokens: outTok,
-				TotalTokens:  totTok,
+				Text:               text,
+				ToolCalls:          toolCalls,
+				NativeToolContents: nativeToolContents,
+				PromptTokens:       promptTok,
+				OutputTokens:       outTok,
+				TotalTokens:        totTok,
 			}:
 			}
 		}
@@ -214,6 +231,7 @@ func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
 		if cfg.ToolLoopConfig.MaxRounds == 0 {
 			cfg.ToolLoopConfig = tools.DefaultToolLoopConfig()
 		}
+		cfg.ToolDefinitions = cloneGoogleToolDefinitions(cfg.ToolDefinitions)
 		if _, err := tools.NewToolLoop(cfg.ToolDefinitions, cfg.ToolExecutor, cfg.ToolHistory, cfg.ToolLoopConfig); err != nil {
 			return nil, err
 		}
@@ -345,46 +363,52 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 
 		var committed bool
 		var fullTextBuilder strings.Builder
+		var nativeHistory []*genai.Content
 		requestModel := func(requestCtx context.Context) ([]core.ToolCall, error) {
+			streamCtx, cancelStream := context.WithCancel(requestCtx)
+			defer cancelStream()
 			var chunkCh <-chan LLMStreamChunk
 			var errCh <-chan error
 			var err error
 			if len(p.cfg.ToolDefinitions) > 0 {
-				client, ok := p.cfg.Client.(LLMToolStreamClient)
-				if !ok {
+				if nativeClient, ok := p.cfg.Client.(LLMNativeToolStreamClient); ok {
+					identity := core.ToolCall{SessionID: core.SessionID(strconv.FormatUint(p.session.ID(), 10)), TurnID: core.TurnID(turn), Generation: core.Generation(gen)}
+					chunkCh, errCh, err = nativeClient.GenerateStreamWithNativeTools(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), nativeHistory, p.cfg.ToolDefinitions, identity)
+				} else if client, ok := p.cfg.Client.(LLMToolStreamClient); ok {
+					chunkCh, errCh, err = client.GenerateStreamWithTools(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), p.cfg.ToolDefinitions)
+				} else {
 					return nil, errGoogleToolClientUnsupported
 				}
-				chunkCh, errCh, err = client.GenerateStreamWithTools(requestCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), p.cfg.ToolDefinitions)
 			} else {
-				chunkCh, errCh, err = p.cfg.Client.GenerateStream(requestCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory())
+				chunkCh, errCh, err = p.cfg.Client.GenerateStream(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory())
 			}
 			if err != nil {
 				return nil, err
 			}
+			if chunkCh == nil {
+				return nil, errors.New("google: missing response stream")
+			}
 			var calls []core.ToolCall
+			var nativeCalls []*genai.Content
 			var requestText strings.Builder
-			for {
+			for chunkCh != nil || errCh != nil {
 				select {
 				case <-requestCtx.Done():
 					return nil, requestCtx.Err()
 				case <-taskCtx.Done():
 					return nil, taskCtx.Err()
 				case streamErr, ok := <-errCh:
-					if ok && streamErr != nil {
+					if !ok {
+						errCh = nil
+						continue
+					}
+					if streamErr != nil {
 						return nil, streamErr
 					}
-					errCh = nil
 				case chunk, ok := <-chunkCh:
 					if !ok {
-						if len(calls) > 0 {
-							if requestText.Len() > 0 {
-								providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Content: requestText.String(), TurnID: turn})
-							}
-							for _, call := range calls {
-								providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, Content: string(call.Arguments), ToolCallID: call.ID, ToolName: call.Name, TurnID: turn, Generation: gen})
-							}
-						}
-						return calls, nil
+						chunkCh = nil
+						continue
 					}
 					if chunk.PromptTokens > 0 {
 						p.PromptTokens.Store(int64(chunk.PromptTokens))
@@ -413,8 +437,29 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 							calls = append(calls, call)
 						}
 					}
+					nativeCalls = append(nativeCalls, chunk.NativeToolContents...)
 				}
 			}
+			if len(calls) > 0 {
+				nativeText := strings.Builder{}
+				for _, content := range nativeCalls {
+					for _, part := range content.Parts {
+						if part != nil {
+							nativeText.WriteString(part.Text)
+						}
+					}
+				}
+				if requestText.Len() > 0 && requestText.String() != nativeText.String() {
+					providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Content: requestText.String(), TurnID: turn})
+				}
+				for _, call := range calls {
+					providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, Content: string(call.Arguments), ToolCallID: call.ID, ToolName: call.Name, TurnID: turn, Generation: gen})
+				}
+				for _, content := range nativeCalls {
+					nativeHistory = append(nativeHistory, cloneGoogleContent(content))
+				}
+			}
+			return calls, nil
 		}
 		requestWithRetry := func(requestCtx context.Context) ([]core.ToolCall, error) {
 			var calls []core.ToolCall
@@ -443,13 +488,12 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			return
 		}
 		if len(calls) > 0 {
-			loopConfig := p.cfg.ToolLoopConfig
-			loopConfig.IsCurrent = func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) }
-			loop, loopErr := tools.NewToolLoop(p.cfg.ToolDefinitions, p.cfg.ToolExecutor, p.cfg.ToolHistory, loopConfig)
+			loop, loopErr := tools.NewToolLoop(p.cfg.ToolDefinitions, p.cfg.ToolExecutor, p.cfg.ToolHistory, p.cfg.ToolLoopConfig)
 			if loopErr != nil {
 				p.Errors.Add(1)
 				return
 			}
+			loop = loop.WithCurrentFence(func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) })
 			_, loopErr = loop.Run(genCtx, calls, func(continueCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
 				committed = false
 				for _, result := range results {

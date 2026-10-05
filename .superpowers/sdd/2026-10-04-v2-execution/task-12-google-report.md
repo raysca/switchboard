@@ -16,14 +16,15 @@
   dependency update was needed for this adapter.
 - Framework tool names retain Task 11's 64-character `[A-Za-z0-9_.-]`
   contract even though Google's SDK accepts a broader name set. Schemas must
-  be JSON objects, at most 32 KiB and depth 16. The adapter preserves schema
-  keywords and does not attempt full JSON Schema validation; Task 11 applies
-  the same byte/depth limits to arguments before execution.
+  be valid JSON objects, at most 32 KiB and depth 16. These checks do not
+  validate nested schema semantics or type-check arguments against a schema;
+  Task 11 applies JSON validity, byte, and depth bounds to arguments before
+  execution.
 - Google provider call IDs are preserved. When Google omits one, the adapter
-  hashes the response ID, call index, name, arguments, and available turn
-  identity into a deterministic fallback ID. This supports exact replay; a
-  missing Google response ID still makes a provider-level replay indistinct
-  from a repeated identical call within the same turn.
+  hashes the response ID, request-wide stream ordinal, name, arguments, and
+  session/turn/generation identity into a deterministic fallback ID. The
+  ordinal advances across response chunks and resets for a retried request,
+  distinguishing separate calls while retaining replay identity.
 - Calls are accumulated in streamed candidate/part order, then passed to
   ToolLoop. Task 11 owns deterministic sequential execution, identity claims,
   cancellation, timeout, replay, and generation fencing. The LLM processor
@@ -69,3 +70,55 @@
 - `gofmt` and `git diff --check`: PASS.
 
 Task 12 and Gate C remain open for independent review and tester verification.
+
+## Correction round 1
+
+The independent Google review overlay initially reproduced five failures:
+the continuation dropped Google's native thought signature, a buffered tool
+call could execute after a terminal stream error, no-ID calls in separate
+stream chunks collided, successful arrays/scalars/large integers were changed
+or rejected, and processor configuration retained caller-owned tool
+definitions. The same review also required preserving the application's
+generation predicate while adding the provider session fence.
+
+Changes and assumptions:
+
+- Native SDK `Content` parts are now carried through the provider-owned active
+  continuation state. Tool-call IDs missing from native parts are filled from
+  the parsed framework calls on a copied `Content`, preserving signatures and
+  original other parts. A separate optional native-aware client interface
+  keeps older `LLMToolStreamClient` mocks source-compatible; the real GenAI
+  client uses the native-aware interface.
+- A model response is successful only after both the chunk and terminal error
+  channels close without an error. The processor gives each stream a child
+  context and cancels it on every exit; calls stay buffered until terminal
+  success, so a failed stream cannot trigger side effects.
+- Missing IDs include response scope and a request-wide ordinal. The ordinal
+  increments across response chunks, while retrying an identical request
+  starts at zero again. If Google omits response IDs, the turn/session identity
+  and ordinal still distinguish calls within the stream and remain replayable.
+- Successful JSON payloads decode with `UseNumber` and are passed through the
+  same `GoogleFunctionResponse` mapper used for public result conversion.
+  Arrays, strings, numbers, and object integers are preserved.
+- Tool definitions and schema bytes are copied when the processor is built.
+- Provider session generation is AND-composed through Task 11's immutable
+  `ToolLoop.WithCurrentFence`; the configured application predicate remains
+  active. Generation changes during handler execution stop continuation.
+- Existing Task 11 ordering and limits remain authoritative. This round adds
+  only root object/JSON/size/depth checks on schemas and JSON/size/depth checks
+  on arguments, not nested schema or argument conformance validation.
+
+Correction verification:
+
+- Initial `-overlay=/tmp/task12-cross-review.8l51Sa/overlay.json` review run:
+  failed on all five reproduced regressions before changes.
+- The exact overlay command passed after correction, including the streamed
+  native signature and fallback-ID HTTP fixtures.
+- Tracked correction tests passed under race x10 for JSON preservation,
+  config-copy isolation, failed-stream side-effect prevention, application
+  predicate composition, execution-time generation changes, thought-signature
+  preservation, and stream-wide fallback IDs.
+- Google full race/vet, core ToolLoop race, and root `-tags xai` tests passed
+  with the documented Xcode macOS 26 SDK override.
+- Public `GoogleFunctionResponse` and continuation history both passed the
+  array/string/scalar/large-integer preservation cases.

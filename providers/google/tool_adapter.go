@@ -57,6 +57,13 @@ func GoogleToolDeclarations(definitions []core.ToolDefinition) ([]*genai.Functio
 // Calls without provider IDs receive a deterministic response-scoped ID; core
 // fills the session/turn/generation identity before handing them to ToolLoop.
 func GoogleToolCalls(response *genai.GenerateContentResponse, identity core.ToolCall) ([]core.ToolCall, error) {
+	return GoogleToolCallsAt(response, identity, 0)
+}
+
+// GoogleToolCallsAt uses a request-wide ordinal so missing provider IDs remain
+// unique across streamed response chunks and stable when the same request is
+// replayed from its first chunk.
+func GoogleToolCallsAt(response *genai.GenerateContentResponse, identity core.ToolCall, streamOrdinal int) ([]core.ToolCall, error) {
 	if response == nil {
 		return nil, nil
 	}
@@ -79,7 +86,7 @@ func GoogleToolCalls(response *genai.GenerateContentResponse, identity core.Tool
 		}
 		id := call.ID
 		if id == "" {
-			seed := fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%d", response.ResponseID, index, identity.TurnID, call.Name, identity.Generation)
+			seed := fmt.Sprintf("%s\x00%d\x00%s\x00%s\x00%d\x00%s", response.ResponseID, streamOrdinal+index, identity.SessionID, identity.TurnID, identity.Generation, call.Name)
 			digest := sha256.Sum256([]byte(seed + "\x00" + string(args)))
 			id = "google-" + hex.EncodeToString(digest[:12])
 		}
@@ -100,8 +107,8 @@ func GoogleFunctionResponse(call core.ToolCall, result core.ToolResult) (*genai.
 	response := &genai.FunctionResponse{ID: call.ID, Name: call.Name}
 	switch result.Status {
 	case core.ToolSucceeded:
-		var value any
-		if len(result.Result) == 0 || !json.Valid(result.Result) || json.Unmarshal(result.Result, &value) != nil {
+		value, err := decodeGoogleJSON(result.Result)
+		if err != nil {
 			return nil, errInvalidGoogleTool
 		}
 		response.Response = map[string]any{"output": value}
@@ -119,8 +126,27 @@ func GoogleFunctionResponse(call core.ToolCall, result core.ToolResult) (*genai.
 // GoogleContents encodes framework history using the SDK's FunctionCall and
 // FunctionResponse parts so a follow-up model request can continue the loop.
 func GoogleContents(history []core.Message) []*genai.Content {
+	return GoogleContentsWithNative(history, nil)
+}
+
+// GoogleContentsWithNative substitutes original model content for reconstructed
+// tool-call messages when available, retaining provider fields such as thought
+// signatures required by some Gemini models.
+func GoogleContentsWithNative(history []core.Message, nativeContents []*genai.Content) []*genai.Content {
 	contents := make([]*genai.Content, 0, len(history))
 	toolNames := make(map[string]string)
+	nativeForCall := make(map[string]int)
+	for nativeIndex, content := range nativeContents {
+		if content == nil {
+			continue
+		}
+		for _, part := range content.Parts {
+			if part != nil && part.FunctionCall != nil && part.FunctionCall.ID != "" {
+				nativeForCall[part.FunctionCall.ID] = nativeIndex
+			}
+		}
+	}
+	emittedNative := make(map[int]bool)
 	for _, message := range history {
 		if message.Kind == core.MessageToolCall && message.ToolCallID != "" && message.ToolName != "" {
 			toolNames[message.ToolCallID] = message.ToolName
@@ -135,6 +161,14 @@ func GoogleContents(history []core.Message) []*genai.Content {
 			parts := make([]*genai.Part, 0, 2)
 			for i < len(history) && history[i].Kind == core.MessageToolCall {
 				call := history[i]
+				if nativeIndex, ok := nativeForCall[call.ToolCallID]; ok {
+					if !emittedNative[nativeIndex] {
+						contents = append(contents, cloneGoogleContent(nativeContents[nativeIndex]))
+						emittedNative[nativeIndex] = true
+					}
+					i++
+					continue
+				}
 				var args map[string]any
 				if json.Unmarshal([]byte(call.Content), &args) != nil {
 					args = map[string]any{}
@@ -142,7 +176,9 @@ func GoogleContents(history []core.Message) []*genai.Content {
 				parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{ID: call.ToolCallID, Name: call.ToolName, Args: args}})
 				i++
 			}
-			contents = append(contents, &genai.Content{Role: "model", Parts: parts})
+			if len(parts) > 0 {
+				contents = append(contents, &genai.Content{Role: "model", Parts: parts})
+			}
 			i--
 			continue
 		}
@@ -150,16 +186,11 @@ func GoogleContents(history []core.Message) []*genai.Content {
 			parts := make([]*genai.Part, 0, 2)
 			for i < len(history) && (history[i].Kind == core.MessageToolResult || history[i].Role == core.RoleTool) {
 				result := history[i]
-				var payload map[string]any
-				if json.Unmarshal([]byte(result.Content), &payload) != nil {
-					payload = map[string]any{"error": "invalid_result"}
+				functionResponse, err := GoogleFunctionResponse(core.ToolCall{ID: result.ToolCallID, Name: toolNames[result.ToolCallID]}, core.ToolResult{CallID: result.ToolCallID, Status: result.ToolStatus, Result: json.RawMessage(result.Content), ErrorCategory: result.ToolErrorCategory})
+				if err != nil {
+					functionResponse = &genai.FunctionResponse{ID: result.ToolCallID, Name: toolNames[result.ToolCallID], Response: map[string]any{"error": "invalid_result"}}
 				}
-				if result.ToolStatus == core.ToolSucceeded {
-					payload = map[string]any{"output": payload}
-				} else {
-					payload = map[string]any{"error": googleSafeCategory(result.ToolErrorCategory, "tool_failed")}
-				}
-				parts = append(parts, &genai.Part{FunctionResponse: &genai.FunctionResponse{ID: result.ToolCallID, Name: toolNames[result.ToolCallID], Response: payload}})
+				parts = append(parts, &genai.Part{FunctionResponse: functionResponse})
 				i++
 			}
 			contents = append(contents, &genai.Content{Role: "user", Parts: parts})
@@ -171,6 +202,66 @@ func GoogleContents(history []core.Message) []*genai.Content {
 			role = "model"
 		}
 		contents = append(contents, &genai.Content{Role: role, Parts: []*genai.Part{{Text: message.Content}}})
+	}
+	return contents
+}
+
+func decodeGoogleJSON(raw []byte) (any, error) {
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil, errInvalidGoogleTool
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, errInvalidGoogleTool
+	}
+	return value, nil
+}
+
+func cloneGoogleContent(content *genai.Content) *genai.Content {
+	if content == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(content)
+	if err != nil {
+		return nil
+	}
+	var cloned genai.Content
+	if json.Unmarshal(encoded, &cloned) != nil {
+		return nil
+	}
+	return &cloned
+}
+
+func googleNativeToolContents(response *genai.GenerateContentResponse, calls []core.ToolCall) []*genai.Content {
+	if response == nil || len(calls) == 0 {
+		return nil
+	}
+	contents := make([]*genai.Content, 0, len(response.Candidates))
+	callIndex := 0
+	for _, candidate := range response.Candidates {
+		if candidate == nil || candidate.Content == nil {
+			continue
+		}
+		content := cloneGoogleContent(candidate.Content)
+		if content == nil {
+			continue
+		}
+		hasFunctionCall := false
+		for _, part := range content.Parts {
+			if part == nil || part.FunctionCall == nil {
+				continue
+			}
+			hasFunctionCall = true
+			if part.FunctionCall.ID == "" && callIndex < len(calls) {
+				part.FunctionCall.ID = calls[callIndex].ID
+			}
+			callIndex++
+		}
+		if hasFunctionCall {
+			contents = append(contents, content)
+		}
 	}
 	return contents
 }
@@ -216,6 +307,15 @@ func cloneGoogleJSON(value any) any {
 	var copied any
 	_ = decoder.Decode(&copied)
 	return copied
+}
+
+func cloneGoogleToolDefinitions(definitions []core.ToolDefinition) []core.ToolDefinition {
+	cloned := make([]core.ToolDefinition, len(definitions))
+	copy(cloned, definitions)
+	for i := range cloned {
+		cloned[i].InputSchema = append(json.RawMessage(nil), definitions[i].InputSchema...)
+	}
+	return cloned
 }
 
 func googleSafeCategory(category, fallback string) string {
