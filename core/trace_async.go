@@ -161,6 +161,18 @@ type asyncSpan struct {
 	ready    chan struct{} // close publishes immutable resolved across dispatchers
 }
 
+// A rejected parent must not be reinstalled as the child's parent, nor be
+// replaced with a nil span value. Mask only the trace-parent key so the child
+// starts at the trace root while cancellation and other context values survive.
+type spanSuppressedContext struct{ context.Context }
+
+func (c spanSuppressedContext) Value(key any) any {
+	if _, ok := key.(spanContextKey); ok {
+		return nil
+	}
+	return c.Context.Value(key)
+}
+
 func (s *asyncSpan) SetAttribute(key string, value any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -232,7 +244,11 @@ func (t *AsyncTracer) run() {
 		if operation.kind == traceStart {
 			ctx := operation.ctx
 			if operation.parent != nil {
-				ctx = ContextWithSpan(ctx, spansFor(operation.parent, spans))
+				if parent := spansFor(operation.parent, spans); parent != nil {
+					ctx = ContextWithSpan(ctx, parent)
+				} else {
+					ctx = spanSuppressedContext{ctx}
+				}
 			}
 			spans[operation.proxy] = StartSpanSafe(ctx, t.tracer, operation.event)
 			operation.proxy.resolved = spans[operation.proxy]

@@ -164,3 +164,16 @@ and `go build -tags xaispeech ./...` passed. `gofmt -l` and
 `git diff --check` were clean; the production trace-value scan found no
 test sentinels, credentials, or raw-error trace emission. Platform link warnings
 about macOS 27 objects targeting the 26.5 SDK were non-fatal.
+
+## Final rejected-parent correction
+
+An async start can be rejected after its dispatcher closes or saturates. Its
+proxy publishes readiness with no resolved exporter span. A later accepted
+child on another (or the same) dispatcher must start at the trace root while
+retaining cancellation and unrelated context values. It must not install a
+nil span value over the rejected proxy. The dispatcher now masks only the
+span-parent context key in this case. Targeted tests reproduced the prior
+nil-value context behavior on both dispatcher paths before the change, then
+passed under race `-count=100`. Full core race/vet and focused tagged
+Google/xAI lifecycle race suites passed. Task 13 remains unchecked for
+independent review.
