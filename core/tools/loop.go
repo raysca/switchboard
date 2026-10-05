@@ -98,6 +98,32 @@ func NewToolLoop(definitions []ToolDefinition, executor ToolExecutor, history *c
 	return &ToolLoop{definitions: defs, executor: executor, history: history, cfg: cfg}, nil
 }
 
+// WithCurrentFence returns a derived loop whose generation predicate is the
+// logical AND of this loop's predicate and fence. The receiver is never
+// mutated. The derived loop shares immutable definitions, executor, history,
+// and tracer with the receiver; in particular, ConversationContext remains the
+// shared concurrency-safe replay/history owner. Caller-owned predicate state
+// must itself be safe for concurrent calls. A nil fence is a no-op derived
+// copy.
+func (l *ToolLoop) WithCurrentFence(fence func(ToolCall) bool) *ToolLoop {
+	if l == nil {
+		return nil
+	}
+	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg}
+	if fence == nil {
+		return derived
+	}
+	configured := l.cfg.IsCurrent
+	if configured == nil {
+		derived.cfg.IsCurrent = fence
+		return derived
+	}
+	derived.cfg.IsCurrent = func(call ToolCall) bool {
+		return configured(call) && fence(call)
+	}
+	return derived
+}
+
 func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Continuation) (ToolLoopResult, error) {
 	if ctx == nil {
 		ctx = context.Background()

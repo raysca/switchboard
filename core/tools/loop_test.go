@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -620,6 +621,123 @@ func TestToolLoopRechecksGenerationBeforeContinuation(t *testing.T) {
 	})
 	if !errors.Is(err, ErrStaleToolCall) || continued.Load() || got.Done || len(got.Results) != 1 || got.Results[0].ErrorCategory != "stale_generation" {
 		t.Fatalf("late stale loop = %#v err=%v continued=%v checks=%d", got, err, continued.Load(), checks.Load())
+	}
+}
+
+func TestToolLoopWithCurrentFenceComposesPredicates(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		configured, added bool
+		wantExecute       bool
+	}{
+		{name: "configured false rejects even if added true", configured: false, added: true},
+		{name: "added false rejects even if configured true", configured: true, added: false},
+		{name: "both true execute", configured: true, added: true, wantExecute: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var executions atomic.Int32
+			cfg := testLoopConfig()
+			cfg.IsCurrent = func(ToolCall) bool { return tc.configured }
+			history := core.NewConversationContext(core.ContextConfig{MaxMessages: 16, MaxTokens: 1000})
+			base, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage(`{"type":"object"}`)}}, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+				executions.Add(1)
+				return ToolResult{Status: ToolSucceeded, Result: json.RawMessage(`{"ok":true}`)}, nil
+			}), history, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			derived := base.WithCurrentFence(func(ToolCall) bool { return tc.added })
+			got, runErr := derived.Run(context.Background(), []ToolCall{testCall("compose-"+tc.name, "x", "{}")}, nil)
+			if tc.wantExecute {
+				if runErr != nil || got.Done != true || executions.Load() != 1 {
+					t.Fatalf("result=%#v err=%v executions=%d", got, runErr, executions.Load())
+				}
+			} else if !errors.Is(runErr, ErrStaleToolCall) || got.Done || executions.Load() != 0 {
+				t.Fatalf("fenced result=%#v err=%v executions=%d", got, runErr, executions.Load())
+			}
+			if _, err := base.Run(context.Background(), []ToolCall{testCall("base-"+tc.name, "x", "{}")}, nil); tc.configured {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(err, ErrStaleToolCall) {
+				t.Fatalf("base predicate changed: %v", err)
+			}
+		})
+	}
+}
+
+func TestToolLoopWithCurrentFenceDerivedLoopsAreConcurrentAndIndependent(t *testing.T) {
+	cfg := testLoopConfig()
+	cfg.IsCurrent = func(ToolCall) bool { return true }
+	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 32, MaxTokens: 2000})
+	var executions atomic.Int32
+	base, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage(`{"type":"object"}`)}}, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+		executions.Add(1)
+		return ToolResult{Status: ToolSucceeded, Result: json.RawMessage(`{}`)}, nil
+	}), history, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowA := base.WithCurrentFence(func(c ToolCall) bool { return c.ID == "derived-a" })
+	allowB := base.WithCurrentFence(func(c ToolCall) bool { return c.ID == "derived-b" })
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, item := range []struct {
+		loop *ToolLoop
+		id   string
+	}{{allowA, "derived-a"}, {allowB, "derived-b"}} {
+		wg.Add(1)
+		go func(loop *ToolLoop, id string) {
+			defer wg.Done()
+			_, runErr := loop.Run(context.Background(), []ToolCall{testCall(id, "x", "{}")}, nil)
+			errs <- runErr
+		}(item.loop, item.id)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if executions.Load() != 2 {
+		t.Fatalf("executions=%d", executions.Load())
+	}
+	if _, err := base.Run(context.Background(), []ToolCall{testCall("base-unfenced", "x", "{}")}, nil); err != nil {
+		t.Fatalf("base loop inherited derived fence: %v", err)
+	}
+}
+
+func TestToolLoopWithCurrentFenceRechecksGenerationAfterExecutor(t *testing.T) {
+	var generation atomic.Uint64
+	generation.Store(1)
+	cfg := testLoopConfig()
+	basePredicateCalls := atomic.Int32{}
+	cfg.IsCurrent = func(ToolCall) bool { basePredicateCalls.Add(1); return true }
+	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 16, MaxTokens: 1000})
+	base, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage(`{"type":"object"}`)}}, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+		generation.Store(2)
+		return ToolResult{Status: ToolSucceeded, Result: json.RawMessage(`{"old":true}`)}, nil
+	}), history, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived := base.WithCurrentFence(func(c ToolCall) bool { return uint64(c.Generation) == generation.Load() })
+	call := testCall("flips-during-execute", "x", "{}")
+	got, err := derived.Run(context.Background(), []ToolCall{call}, func(context.Context, []ToolResult) ([]ToolCall, bool, error) {
+		t.Fatal("stale generation continued")
+		return nil, true, nil
+	})
+	if !errors.Is(err, ErrStaleToolCall) || got.Done || len(got.Results) != 1 || got.Results[0].ErrorCategory != "stale_generation" {
+		t.Fatalf("generation flip result=%#v err=%v", got, err)
+	}
+	for _, message := range history.Messages() {
+		if message.Kind == core.MessageToolResult && message.Content == `{"old":true}` {
+			t.Fatal("stale executor payload committed")
+		}
+	}
+	if basePredicateCalls.Load() < 2 {
+		t.Fatalf("configured predicate was not rechecked: %d", basePredicateCalls.Load())
 	}
 }
 

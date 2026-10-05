@@ -148,3 +148,26 @@ Correction round 2 verification:
 - Task 11 is complete. Gate C remains open for Task 12 provider adapters and
   the Phase 3 independent gate. The claim-before-ContextAggregator ordering
   requirement remains an explicit Task 12 integration constraint.
+
+## Task 12 integration hardening
+
+Added `(*ToolLoop).WithCurrentFence(func(ToolCall) bool) *ToolLoop` for
+provider adapters to add their active-generation predicate without mutating
+the source loop's private config. The derived loop uses logical AND with the
+configured predicate and keeps the existing pre-execution, post-execution,
+replay, result-insertion, and continuation fence checks. It shares the
+immutable definitions, executor, context/history, and tracer with the source;
+the caller owns predicate state and must make it safe for concurrent calls.
+Nil fence returns a no-op derived copy. Regression tests cover both directions
+of predicate rejection, both-true acceptance, independent concurrent derived
+loops, source-loop independence, and a generation flip while an executor runs.
+
+Verification:
+
+- Focused `go test -race -count=50 -run TestToolLoop ./tools`: PASS.
+- Full core race with the documented MacOS26 SDK override: PASS.
+- Full core vet with the documented MacOS26 SDK override: PASS.
+- `gofmt` and `git diff --check`: PASS.
+
+Task 11 remains complete; Gate C remains open pending Task 12 and the Phase 3
+independent gate.
