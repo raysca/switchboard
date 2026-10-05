@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -167,10 +168,40 @@ type activeSTTStream struct {
 	closing    bool
 	stopOnce   sync.Once
 
-	sendMu   sync.Mutex
-	mu       sync.Mutex
-	audioBuf [][]byte
-	isReady  bool
+	sendMu       sync.Mutex
+	mu           sync.Mutex
+	audioBuf     [][]byte
+	isReady      bool
+	traceSpan    core.Span
+	tracePolicy  core.TracePolicy
+	traceSession core.SessionID
+	traceFinal   sync.Once
+	traceEnd     sync.Once
+}
+
+func (st *activeSTTStream) firstFinal(turn string, gen uint64) {
+	if st.traceSpan == nil {
+		return
+	}
+	st.traceFinal.Do(func() {
+		st.traceSpan.AddEvent(core.NewTraceEvent("stt.first_final", time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.tracePolicy, nil))
+	})
+}
+func (st *activeSTTStream) endTrace(err error) {
+	st.traceEnd.Do(func() {
+		if st.traceSpan == nil {
+			return
+		}
+		st.mu.Lock()
+		turn, gen := st.turnID, st.gen
+		st.mu.Unlock()
+		name := "stt.complete"
+		if err != nil {
+			name = "stt.failure"
+		}
+		st.traceSpan.AddEvent(core.NewTraceEvent(name, time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.tracePolicy, nil))
+		st.traceSpan.End(err)
+	})
 }
 
 // STTProcessor implements core.Processor for xAI Speech-to-Text.
@@ -393,6 +424,8 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	err := st.stream.SendAudio(sendCtx, f.Samples)
 	st.sendMu.Unlock()
 	if err != nil {
+		st.endTrace(errors.New("provider_failure"))
+		p.stopStream(st)
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
 			p.cfg.CircuitBreaker.RecordFailure()
@@ -420,11 +453,20 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 		p.mu.Unlock()
 		return nil
 	}
+	turn, gen := p.turnID, p.streamGen
 	p.mu.Unlock()
 
+	traceSession := core.SessionID("")
+	if p.session != nil {
+		traceSession = core.SessionID(strconv.FormatUint(p.session.ID(), 10))
+	}
+	span := core.StartContextSpan(ctx, "stt.stream", traceSession, core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "xai"})
+	policy := core.TraceContextFromContext(ctx).Policy
 	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
 	st, err := p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
 	if err != nil {
+		span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), traceSession, core.TurnID(turn), core.Generation(gen), policy, nil))
+		span.End(errors.New("provider_failure"))
 		cancel()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
@@ -443,6 +485,7 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 		p.mu.Unlock()
 		cancel()
 		_ = st.Close()
+		span.End(errors.New("canceled"))
 		if closed {
 			return core.ErrSessionClosed
 		}
@@ -450,17 +493,19 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 	}
 	p.streamID++
 	active := &activeSTTStream{
-		stream:   st,
-		cancel:   cancel,
-		ctx:      streamCtx,
-		id:       p.streamID,
-		readyCh:  make(chan struct{}),
-		turnID:   p.turnID,
-		gen:      p.streamGen,
-		audioBuf: make([][]byte, 0, 16),
+		stream:    st,
+		cancel:    cancel,
+		ctx:       streamCtx,
+		id:        p.streamID,
+		readyCh:   make(chan struct{}),
+		turnID:    p.turnID,
+		gen:       p.streamGen,
+		audioBuf:  make([][]byte, 0, 16),
+		traceSpan: span, tracePolicy: policy, traceSession: traceSession,
 	}
 	p.active = active
 	p.mu.Unlock()
+	span.AddEvent(core.NewTraceEvent("stt.start", time.Now(), traceSession, core.TurnID(active.turnID), core.Generation(active.gen), policy, nil))
 
 	if err := p.spawnReceiver(active); err != nil {
 		p.mu.Lock()
@@ -469,6 +514,7 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 		}
 		p.mu.Unlock()
 		p.stopStream(active)
+		active.endTrace(errors.New("canceled"))
 		return err
 	}
 	return nil
@@ -480,6 +526,15 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 	}
 
 	return p.session.Go(func(ctx context.Context) {
+		var traceFailure error
+		defer func() {
+			if v := recover(); v != nil {
+				traceFailure = errors.New("provider_failure")
+				st.endTrace(traceFailure)
+				panic(v)
+			}
+			st.endTrace(traceFailure)
+		}()
 		defer p.releaseStream(st)
 		defer p.stopStream(st)
 		for {
@@ -494,12 +549,17 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 			msg, err := st.stream.Recv(st.ctx)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || st.ctx.Err() != nil || errors.Is(err, io.EOF) {
+					if !errors.Is(err, io.EOF) {
+						traceFailure = errors.New("canceled")
+					}
 					return
 				}
 				if strings.Contains(err.Error(), "closed") || strings.Contains(err.Error(), "1006") || strings.Contains(err.Error(), "1000") {
+					traceFailure = errors.New("canceled")
 					return
 				}
 				p.ErrorsTotal.Add(1)
+				traceFailure = errors.New("provider_failure")
 				if p.session != nil {
 					st.mu.Lock()
 					turnGen := st.gen
@@ -542,9 +602,11 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 				st.sendMu.Unlock()
 				if sendErr != nil {
 					if st.ctx.Err() != nil {
+						traceFailure = errors.New("canceled")
 						return
 					}
 					p.ErrorsTotal.Add(1)
+					traceFailure = errors.New("provider_failure")
 					providerErr := MapError("stt", sendErr)
 					if p.cfg.CircuitBreaker != nil {
 						p.cfg.CircuitBreaker.RecordFailure()
@@ -599,7 +661,9 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 					HasStability:   false,
 					Provider:       "xai",
 				}
-				_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
+				if err := p.session.Reenter(frame, core.Downstream, p.index+1, turnGen); err == nil && isProviderFinal {
+					st.firstFinal(turn, turnGen)
+				}
 
 			case "transcript.done":
 				st.mu.Lock()
@@ -621,13 +685,16 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 						Text: lastText, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 						Timestamp: p.cfg.Now(), Final: true, EndOfUtterance: true, Provider: "xai",
 					}
-					_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
+					if err := p.session.Reenter(frame, core.Downstream, p.index+1, turnGen); err == nil {
+						st.firstFinal(turn, turnGen)
+					}
 				}
 
 				return
 
 			case "error":
 				p.ErrorsTotal.Add(1)
+				traceFailure = errors.New("provider_failure")
 				errMsg := msg.Message
 				if errMsg == "" {
 					errMsg = msg.Code
@@ -640,6 +707,7 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 						Err: MapError("stt", errors.New(errMsg)),
 					}, core.Downstream, p.index+1, turnGen)
 				}
+				return
 			}
 		}
 	})
@@ -676,6 +744,8 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 	err := st.stream.CloseSend(ctx)
 	st.sendMu.Unlock()
 	if err != nil {
+		st.endTrace(errors.New("provider_failure"))
+		p.stopStream(st)
 		st.mu.Lock()
 		st.closing = false
 		st.mu.Unlock()

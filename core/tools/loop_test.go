@@ -16,17 +16,42 @@ import (
 )
 
 type loopTraceRecorder struct {
-	mu     sync.Mutex
-	events []core.TraceEvent
-	ended  []error
+	mu      sync.Mutex
+	events  []core.TraceEvent
+	ended   []error
+	parents []core.Span
 }
 type loopTraceSpan struct{ recorder *loopTraceRecorder }
 
-func (r *loopTraceRecorder) StartSpan(_ context.Context, event core.TraceEvent) core.Span {
+func (r *loopTraceRecorder) StartSpan(ctx context.Context, event core.TraceEvent) core.Span {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
+	r.parents = append(r.parents, core.SpanFromContext(ctx))
 	return loopTraceSpan{recorder: r}
+}
+
+func TestToolLoopInheritsSessionTraceContextAndParent(t *testing.T) {
+	r := &loopTraceRecorder{}
+	loop, _ := newTestLoop(t, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+		return ToolResult{Status: ToolSucceeded, Result: json.RawMessage(`{}`)}, nil
+	}), ToolDefinition{Name: "lookup"})
+	defer loop.Close()
+	parent := loopTraceSpan{recorder: r}
+	ctx := core.ContextWithTraceContext(core.ContextWithSpan(context.Background(), parent), r, core.TracePolicy{})
+	derived := loop.WithTraceContext(ctx)
+	if _, err := derived.Run(ctx, []ToolCall{testCall("a", "lookup", "{}")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, ends := r.snapshot(t, 1)
+	if len(ends) != 1 {
+		t.Fatal("missing tool trace terminal")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.parents) != 1 || r.parents[0] != parent {
+		t.Fatalf("tool parent=%v", r.parents)
+	}
 }
 func (loopTraceSpan) SetAttribute(string, any) {}
 func (s loopTraceSpan) AddEvent(event core.TraceEvent) {

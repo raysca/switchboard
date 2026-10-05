@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -217,6 +218,40 @@ type activeStream struct {
 	offsetBase        time.Duration
 	lastFinalOffset   time.Duration
 	lastInterimOffset time.Duration
+	traceSpan         core.Span
+	tracePolicy       core.TracePolicy
+	traceSession      core.SessionID
+	traceEnd          sync.Once
+	traceFinal        sync.Once
+}
+
+func (st *activeStream) endTrace(turn core.TurnID, gen core.Generation, err error) {
+	st.traceEnd.Do(func() {
+		if st.traceSpan == nil {
+			return
+		}
+		name := "stt.complete"
+		if err != nil {
+			name = "stt.failure"
+		}
+		st.traceSpan.AddEvent(core.NewTraceEvent(name, time.Now(), st.traceSession, turn, gen, st.tracePolicy, nil))
+		st.traceSpan.End(err)
+	})
+}
+
+func (p *STTProcessor) traceSessionID() core.SessionID {
+	if p.session == nil {
+		return ""
+	}
+	return core.SessionID(strconv.FormatUint(p.session.ID(), 10))
+}
+
+func (p *STTProcessor) startStreamTrace(ctx context.Context, turn string, gen uint64) (core.Span, core.TracePolicy) {
+	policy := core.TraceContextFromContext(ctx).Policy
+	if p.session == nil {
+		return nil, policy
+	}
+	return core.StartContextSpan(ctx, "stt.stream", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "google"}), policy
 }
 
 type googleSegment struct {
@@ -447,6 +482,15 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 
 	// Send audio chunk
 	if err := st.stream.Send(f.Samples); err != nil {
+		p.mu.Lock()
+		turn, turnGen := st.turnID, st.gen
+		if p.active == st {
+			p.active = nil
+		}
+		p.mu.Unlock()
+		st.endTrace(core.TurnID(turn), core.Generation(turnGen), errors.New("provider_failure"))
+		st.cancel()
+		_ = st.stream.Close()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
 			p.cfg.CircuitBreaker.ReportFailure()
@@ -484,9 +528,17 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		return fmt.Errorf("no STTStreamOpener configured")
 	}
 
+	p.mu.Lock()
+	turn, gen := p.turnID, p.streamGen
+	p.mu.Unlock()
+	span, policy := p.startStreamTrace(ctx, turn, gen)
 	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
 	st, err := p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
 	if err != nil {
+		if span != nil {
+			span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), p.traceSessionID(), core.TurnID(turn), core.Generation(gen), policy, nil))
+			span.End(errors.New("provider_failure"))
+		}
 		cancel()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
@@ -502,16 +554,22 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 	p.mu.Lock()
 	p.streamID++
 	newActive := &activeStream{
-		stream:    st,
-		cancel:    cancel,
-		ctx:       streamCtx,
-		createdAt: p.cfg.Now(),
-		id:        p.streamID,
-		turnID:    p.turnID,
-		gen:       p.streamGen,
+		stream:       st,
+		cancel:       cancel,
+		ctx:          streamCtx,
+		createdAt:    p.cfg.Now(),
+		id:           p.streamID,
+		turnID:       p.turnID,
+		gen:          p.streamGen,
+		traceSpan:    span,
+		tracePolicy:  policy,
+		traceSession: p.traceSessionID(),
 	}
 	p.active = newActive
 	p.mu.Unlock()
+	if span != nil {
+		span.AddEvent(core.NewTraceEvent("stt.start", time.Now(), newActive.traceSession, core.TurnID(newActive.turnID), core.Generation(newActive.gen), policy, nil))
+	}
 
 	p.spawnReceiver(newActive)
 	return nil
@@ -538,9 +596,14 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	}
 
 	// Open replacement stream
+	span, policy := p.startStreamTrace(ctx, oldActive.turnID, oldActive.gen)
 	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
 	newStream, err := p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
 	if err != nil {
+		if span != nil {
+			span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), p.traceSessionID(), core.TurnID(oldActive.turnID), core.Generation(oldActive.gen), policy, nil))
+			span.End(errors.New("provider_failure"))
+		}
 		cancel()
 		return MapError("stt", err)
 	}
@@ -555,6 +618,10 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 				end = len(overlapData)
 			}
 			if err := newStream.Send(overlapData[i:end]); err != nil {
+				if span != nil {
+					span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), p.traceSessionID(), core.TurnID(oldActive.turnID), core.Generation(oldActive.gen), policy, nil))
+					span.End(errors.New("provider_failure"))
+				}
 				cancel()
 				_ = newStream.Close()
 				return MapError("stt", err)
@@ -565,14 +632,17 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	p.mu.Lock()
 	p.streamID++
 	newActive := &activeStream{
-		stream:     newStream,
-		cancel:     cancel,
-		ctx:        streamCtx,
-		createdAt:  p.cfg.Now(),
-		id:         p.streamID,
-		turnID:     oldActive.turnID,
-		gen:        oldActive.gen,
-		offsetBase: time.Duration(p.turnAudioBytes*int64(time.Second)/32000) - time.Duration(len(overlapData))*time.Second/32000,
+		stream:       newStream,
+		cancel:       cancel,
+		ctx:          streamCtx,
+		createdAt:    p.cfg.Now(),
+		id:           p.streamID,
+		turnID:       oldActive.turnID,
+		gen:          oldActive.gen,
+		traceSpan:    span,
+		tracePolicy:  policy,
+		traceSession: p.traceSessionID(),
+		offsetBase:   time.Duration(p.turnAudioBytes*int64(time.Second)/32000) - time.Duration(len(overlapData))*time.Second/32000,
 	}
 	if newActive.offsetBase < 0 {
 		newActive.offsetBase = 0
@@ -580,6 +650,9 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	p.active = newActive
 	p.RotationsCount.Add(1)
 	p.mu.Unlock()
+	if span != nil {
+		span.AddEvent(core.NewTraceEvent("stt.start", time.Now(), newActive.traceSession, core.TurnID(newActive.turnID), core.Generation(newActive.gen), policy, nil))
+	}
 
 	// Spawn receiver for the new stream
 	p.spawnReceiver(newActive)
@@ -600,12 +673,29 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 		return
 	}
 
-	_ = p.session.Go(func(ctx context.Context) {
+	if err := p.session.Go(func(ctx context.Context) {
+		var traceFailure error
+		defer func() {
+			if v := recover(); v != nil {
+				traceFailure = errors.New("provider_failure")
+				p.mu.Lock()
+				turn, gen := st.turnID, st.gen
+				p.mu.Unlock()
+				st.endTrace(core.TurnID(turn), core.Generation(gen), traceFailure)
+				panic(v)
+			}
+			p.mu.Lock()
+			turn, gen := st.turnID, st.gen
+			p.mu.Unlock()
+			st.endTrace(core.TurnID(turn), core.Generation(gen), traceFailure)
+		}()
 		for {
 			select {
 			case <-st.ctx.Done():
+				traceFailure = errors.New("canceled")
 				return
 			case <-ctx.Done():
+				traceFailure = errors.New("canceled")
 				return
 			default:
 			}
@@ -620,12 +710,14 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				p.mu.Unlock()
 
 				if errors.Is(err, context.Canceled) || st.ctx.Err() != nil {
+					traceFailure = errors.New("canceled")
 					return
 				}
 				if isSTTIdleOrClosed(err) {
 					return
 				}
 				p.Errors.Add(1)
+				traceFailure = errors.New("provider_failure")
 				if p.session != nil {
 					_ = p.session.Reenter(&core.ErrorFrame{
 						Err: MapError("stt", err),
@@ -646,6 +738,7 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 			p.resetInterimsLocked(st)
 			var text string
 			var latest *STTResult
+			var hasFinal bool
 			var assemblyErr error
 			for _, res := range results {
 				if res == nil || res.Transcript == "" {
@@ -653,12 +746,14 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				}
 				text, assemblyErr = p.assembleResultLocked(st, res)
 				latest = res
+				hasFinal = hasFinal || res.IsFinal
 				if assemblyErr != nil {
 					break
 				}
 			}
 			p.mu.Unlock()
 			if assemblyErr != nil {
+				traceFailure = errors.New("provider_failure")
 				if err := p.session.Reenter(&core.TranscriptInvalidationFrame{
 					Turn: core.TurnID(turn), Gen: core.Generation(turnGen), Err: assemblyErr,
 				}, core.Downstream, p.index+1, turnGen); err != nil {
@@ -675,6 +770,11 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 			if latest == nil {
 				continue
 			}
+			if hasFinal && st.traceSpan != nil {
+				st.traceFinal.Do(func() {
+					st.traceSpan.AddEvent(core.NewTraceEvent("stt.first_final", time.Now(), st.traceSession, core.TurnID(turn), core.Generation(turnGen), st.tracePolicy, nil))
+				})
+			}
 			frame := &core.TranscriptCandidateFrame{
 				Text: text, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 				Timestamp: p.cfg.Now(), Final: latest.IsFinal,
@@ -683,7 +783,14 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 			}
 			_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
 		}
-	})
+	}); err != nil {
+		p.mu.Lock()
+		turn, gen := st.turnID, st.gen
+		p.mu.Unlock()
+		st.endTrace(core.TurnID(turn), core.Generation(gen), errors.New("canceled"))
+		st.cancel()
+		_ = st.stream.Close()
+	}
 }
 
 func (p *STTProcessor) resetInterimsLocked(st *activeStream) {

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -304,6 +305,25 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			return
 		}
 		p.Requests.Add(1)
+		traceSession := core.SessionID(strconv.FormatUint(p.session.ID(), 10))
+		traceTurn, traceGen := core.TurnID(su.Turn), core.Generation(su.Gen)
+		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": "google"})
+		tracePolicy := core.TraceContextFromContext(ctx).Policy
+		traceFailure := error(errors.New("canceled"))
+		defer func() {
+			if recoverValue := recover(); recoverValue != nil {
+				traceFailure = errors.New("provider_failure")
+				span.AddEvent(core.NewTraceEvent("tts.failure", time.Now(), traceSession, traceTurn, traceGen, tracePolicy, nil))
+				span.End(traceFailure)
+				panic(recoverValue)
+			}
+			name := "tts.complete"
+			if traceFailure != nil {
+				name = "tts.failure"
+			}
+			span.AddEvent(core.NewTraceEvent(name, time.Now(), traceSession, traceTurn, traceGen, tracePolicy, nil))
+			span.End(traceFailure)
+		}()
 
 		var rawAudio []byte
 		var committed bool
@@ -326,6 +346,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			if errors.Is(err, context.Canceled) {
 				return
 			}
+			traceFailure = errors.New("provider_failure")
 			p.Errors.Add(1)
 			provErr := MapError("tts", err)
 			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false}, core.Downstream, p.index+1, gen)
@@ -334,6 +355,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 
 		// Critical verification check: verify rawAudio begins with PCM samples, NOT a WAV/RIFF container
 		if len(rawAudio) >= 4 && bytes.Equal(rawAudio[:4], []byte("RIFF")) {
+			traceFailure = errors.New("provider_failure")
 			err := fmt.Errorf("google tts returned WAV container instead of headerless PCM")
 			_ = p.session.Reenter(&core.ErrorFrame{Err: err, Fatal: true}, core.Downstream, p.index+1, gen)
 			return
@@ -351,11 +373,14 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		p.mu.Unlock()
 
 		// Emit TTSStartedFrame
-		_ = p.session.Reenter(&core.TTSStartedFrame{
+		if err := p.session.Reenter(&core.TTSStartedFrame{
 			Turn:   su.Turn,
 			Gen:    gen,
 			UnitID: su.UnitID,
-		}, core.Downstream, p.index+1, gen)
+		}, core.Downstream, p.index+1, gen); err != nil {
+			traceFailure = errors.New("transport_failure")
+			return
+		}
 
 		// Calculate 20ms chunk size in bytes:
 		// SampleRate (24000) * 2 bytes/sample (16-bit mono) * 0.02s = 960 bytes
@@ -366,6 +391,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		}
 
 		numChunks := (len(rawAudio) + chunkBytes - 1) / chunkBytes
+		firstAudio := true
 		for i := 0; i < len(rawAudio); i += chunkBytes {
 			end := i + chunkBytes
 			if end > len(rawAudio) {
@@ -402,7 +428,14 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 				TurnFinal:  su.IsFinal && isFinalChunk,
 			}
 
-			_ = p.session.Reenter(audioFrame, core.Downstream, p.index+1, gen)
+			if err := p.session.Reenter(audioFrame, core.Downstream, p.index+1, gen); err != nil {
+				traceFailure = errors.New("transport_failure")
+				return
+			}
+			if firstAudio {
+				firstAudio = false
+				span.AddEvent(core.NewTraceEvent("tts.first_audio", time.Now(), traceSession, traceTurn, traceGen, tracePolicy, nil))
+			}
 		}
 
 		if numChunks == 0 {
@@ -419,14 +452,21 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 				IsFinal:    true,
 				TurnFinal:  su.IsFinal,
 			}
-			_ = p.session.Reenter(emptyFrame, core.Downstream, p.index+1, gen)
+			if err := p.session.Reenter(emptyFrame, core.Downstream, p.index+1, gen); err != nil {
+				traceFailure = errors.New("transport_failure")
+				return
+			}
 		}
 
 		// Emit TTSStoppedFrame
-		_ = p.session.Reenter(&core.TTSStoppedFrame{
+		if err := p.session.Reenter(&core.TTSStoppedFrame{
 			Turn:   su.Turn,
 			Gen:    gen,
 			UnitID: su.UnitID,
-		}, core.Downstream, p.index+1, gen)
+		}, core.Downstream, p.index+1, gen); err != nil {
+			traceFailure = errors.New("transport_failure")
+			return
+		}
+		traceFailure = nil
 	})
 }

@@ -330,7 +330,7 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			if p.cfg.ToolLoop == nil {
 				opErr = errors.New("xai: model returned tool calls but no shared ToolLoop is configured")
 			} else {
-				currentLoop := p.cfg.ToolLoop.WithCurrentFence(func(call core.ToolCall) bool {
+				currentLoop := p.cfg.ToolLoop.WithTraceContext(streamCtx).WithCurrentFence(func(call core.ToolCall) bool {
 					return call.SessionID == core.SessionID(fmt.Sprint(s.ID())) && call.TurnID == core.TurnID(turn) && call.Generation == core.Generation(gen) && p.isCurrent(gen)
 				})
 				_, opErr = currentLoop.Run(streamCtx, initialCalls, func(roundCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {

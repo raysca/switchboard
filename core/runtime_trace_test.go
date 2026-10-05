@@ -106,6 +106,40 @@ func TestSessionTraceTurnParentAndRawErrorSafety(t *testing.T) {
 	}
 }
 
+func TestAsyncTracerKeepsEndedParentForLaterChild(t *testing.T) {
+	recorder := &traceRecorder{}
+	tracer := core.NewAsyncTracer(recorder, 8)
+	parent := tracer.StartSpan(context.Background(), core.NewTraceEvent("parent", time.Now(), "s", "t", 1, core.TracePolicy{}, nil))
+	parent.End(nil)
+	deadline := time.Now().Add(time.Second)
+	for {
+		recorder.mu.Lock()
+		ended := recorder.ends
+		recorder.mu.Unlock()
+		if ended == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	child := tracer.StartSpan(core.ContextWithSpan(context.Background(), parent), core.NewTraceEvent("child", time.Now(), "s", "t", 1, core.TracePolicy{}, nil))
+	child.End(nil)
+	tracer.Close()
+	deadline = time.Now().Add(time.Second)
+	for {
+		recorder.mu.Lock()
+		ended := recorder.ends
+		parents := append([]string(nil), recorder.parentNames...)
+		recorder.mu.Unlock()
+		if ended == 2 || time.Now().After(deadline) {
+			if len(parents) != 2 || parents[1] != "parent" {
+				t.Fatalf("child parent after end = %v", parents)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 type traceFailProcessor struct{ err error }
 
 func (p traceFailProcessor) ProcessFrame(context.Context, core.Frame, core.Direction, core.Emitter) error {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -86,8 +87,42 @@ type Connection struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	closed    atomic.Bool
-	closeOnce sync.Once
+	closed       atomic.Bool
+	closeOnce    sync.Once
+	acceptedAt   time.Time
+	traceMu      sync.Mutex
+	traceSpan    core.Span
+	traceSession core.SessionID
+	tracePolicy  core.TracePolicy
+}
+
+func (c *Connection) startTrace() {
+	if c.session == nil {
+		return
+	}
+	traceCtx := c.session.RootTraceContext()
+	span := core.StartContextSpan(traceCtx, "transport.connection", core.SessionID(strconv.FormatUint(c.session.ID(), 10)), "", core.Generation(c.session.CurrentGeneration()), map[string]any{"component": "ws"})
+	c.traceMu.Lock()
+	c.traceSpan = span
+	c.traceSession = core.SessionID(strconv.FormatUint(c.session.ID(), 10))
+	c.tracePolicy = core.TraceContextFromContext(traceCtx).Policy
+	c.traceMu.Unlock()
+	c.traceEventAt("transport.connect", c.acceptedAt, nil)
+	c.traceEvent("transport.rtvi_ready", nil)
+}
+func (c *Connection) traceEvent(name string, attrs map[string]any) {
+	c.traceEventAt(name, time.Now(), attrs)
+}
+func (c *Connection) traceEventAt(name string, at time.Time, attrs map[string]any) {
+	c.traceMu.Lock()
+	span, session, policy := c.traceSpan, c.traceSession, c.tracePolicy
+	c.traceMu.Unlock()
+	if span != nil {
+		span.AddEvent(core.NewTraceEvent(name, at, session, "", 0, policy, attrs))
+	}
+}
+func (c *Connection) traceError(category string) {
+	c.traceEvent("transport.error", map[string]any{"error.category": category})
 }
 
 type ipRateState struct {
@@ -371,6 +406,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rtvi:         rtvi.NewHandler(),
 		readyCh:      make(chan struct{}),
 		inResamplers: make(map[int]*resample.Resampler),
+		acceptedAt:   time.Now(),
 	}
 
 	// Initialize PacedWriter with thread-safe writeFn
@@ -432,6 +468,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				_ = session.Close()
 				return err
 			}
+			conn.startTrace()
 		}
 		return nil
 	}
@@ -446,6 +483,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Handshake completed successfully
 		case <-time.After(s.cfg.RTVIReadyTimeout):
 			if !conn.rtvi.IsReady() {
+				conn.traceError("timeout")
 				_ = wsConn.Close(websocket.StatusPolicyViolation, "rtvi ready timeout exceeded")
 				conn.cancel()
 			}
@@ -461,6 +499,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		if err := pacer.Run(conn.ctx); err != nil && !errors.Is(err, context.Canceled) {
+			conn.traceError("transport_failure")
 			if errors.Is(err, ErrSlowClient) {
 				s.observe("slow_client", 1)
 				_ = wsConn.Close(websocket.StatusPolicyViolation, "slow client terminated")
@@ -481,6 +520,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pacer.Close()
 	_ = wsConn.Close(websocket.StatusNormalClosure, "call concluded")
 	wg.Wait()
+	conn.Close()
 
 	if conn.session != nil {
 		_ = conn.session.Close()
@@ -501,6 +541,7 @@ func (c *Connection) readLoop() {
 		}
 		if err != nil {
 			c.observeDisconnect(err)
+			c.traceEvent("transport.disconnect", map[string]any{"reason": disconnectCategory(err)})
 			return
 		}
 
@@ -514,6 +555,7 @@ func (c *Connection) readLoop() {
 		}
 		frame, err := DecodeBinaryFrame(data, seq, time.Now())
 		if err != nil {
+			c.traceError("protocol_failure")
 			if c.cfg.Observe != nil {
 				c.cfg.Observe("protocol_error", 1)
 			}
@@ -525,6 +567,7 @@ func (c *Connection) readLoop() {
 		case *WireMessageFrame:
 			respFrame, err := c.rtvi.HandleIncomingJSON(f.Data)
 			if err != nil {
+				c.traceError("protocol_failure")
 				if errors.Is(err, rtvi.ErrIncompatibleProtocol) {
 					errJSON, _ := c.rtvi.FormatError(err.Error(), true)
 					_ = c.WriteWireMessage(c.ctx, errJSON)
@@ -536,6 +579,7 @@ func (c *Connection) readLoop() {
 			}
 			if respFrame != nil {
 				if _, ok := respFrame.(*core.EndFrame); ok {
+					c.traceEvent("transport.rtvi_disconnect", nil)
 					c.Close()
 					return
 				}
@@ -547,6 +591,7 @@ func (c *Connection) readLoop() {
 		case *core.InputAudioFrame:
 			// Audio input handling: require RTVI client-ready before accepting audio
 			if !c.rtvi.IsReady() {
+				c.traceError("protocol_failure")
 				_ = c.conn.Close(websocket.StatusPolicyViolation, "audio sent before rtvi client-ready handshake")
 				return
 			}
@@ -564,6 +609,7 @@ func (c *Connection) readLoop() {
 				if err := c.session.Post(f); err != nil {
 					// Queue full or session closed
 					if errors.Is(err, core.ErrControlQueueFull) {
+						c.traceError("backpressure")
 						_ = c.conn.Close(websocket.StatusPolicyViolation, "control queue full")
 						return
 					}
@@ -609,8 +655,29 @@ func (c *Connection) observeDisconnect(err error) {
 	}
 }
 
+func disconnectCategory(err error) string {
+	switch websocket.CloseStatus(err) {
+	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
+		return "normal"
+	case websocket.StatusPolicyViolation, websocket.StatusUnsupportedData, websocket.StatusInternalError:
+		return "server"
+	default:
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "timeout"
+		}
+		return "client"
+	}
+}
+
 func (c *Connection) Close() {
 	c.closeOnce.Do(func() {
+		c.traceEvent("transport.close", nil)
+		c.traceMu.Lock()
+		span := c.traceSpan
+		c.traceMu.Unlock()
+		if span != nil {
+			span.End(nil)
+		}
 		c.closed.Store(true)
 		if c.cfg.Observe != nil {
 			c.cfg.Observe("client_disconnected", 1)

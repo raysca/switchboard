@@ -150,23 +150,48 @@ func (t *AsyncTracer) enqueueTerminal(operation traceOperation) {
 type asyncSpan struct {
 	tracer   *AsyncTracer
 	accepted atomic.Bool
-	once     sync.Once
+	mu       sync.Mutex
+	ended    bool
+	pending  atomic.Int64
+	// Written and read only by the dispatcher worker. Child starts can arrive
+	// after the parent has ended and left the worker's active-span map.
+	resolved Span
 }
 
 func (s *asyncSpan) SetAttribute(key string, value any) {
-	s.tracer.enqueue(traceOperation{kind: traceAttribute, proxy: s, key: key, value: value})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
+	s.pending.Add(1)
+	if !s.tracer.enqueue(traceOperation{kind: traceAttribute, proxy: s, key: key, value: value}) {
+		s.pending.Add(-1)
+	}
 }
 
 func (s *asyncSpan) AddEvent(event TraceEvent) {
-	s.tracer.enqueue(traceOperation{kind: traceEvent, proxy: s, event: event})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
+	s.pending.Add(1)
+	if !s.tracer.enqueue(traceOperation{kind: traceEvent, proxy: s, event: event}) {
+		s.pending.Add(-1)
+	}
 }
 
 func (s *asyncSpan) End(err error) {
-	s.once.Do(func() {
-		if s.accepted.Load() {
-			s.tracer.enqueueTerminal(traceOperation{kind: traceEnd, proxy: s, err: err})
-		}
-	})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
+	s.ended = true
+	if s.accepted.Load() {
+		s.tracer.enqueueTerminal(traceOperation{kind: traceEnd, proxy: s, err: err})
+	}
 }
 
 func (t *AsyncTracer) run() {
@@ -209,6 +234,7 @@ func (t *AsyncTracer) run() {
 				}
 			}
 			spans[operation.proxy] = StartSpanSafe(ctx, t.tracer, operation.event)
+			operation.proxy.resolved = spans[operation.proxy]
 			continue
 		}
 		span := spans[operation.proxy]
@@ -224,6 +250,9 @@ func (t *AsyncTracer) run() {
 			span.End(operation.err)
 			delete(spans, operation.proxy)
 		}
+		if operation.kind == traceAttribute || operation.kind == traceEvent {
+			operation.proxy.pending.Add(-1)
+		}
 	}
 }
 
@@ -233,7 +262,7 @@ func (t *AsyncTracer) drainTerminals(spans map[*asyncSpan]Span) {
 	ready := make([]traceOperation, 0, len(t.terminals))
 	for _, operation := range t.terminals {
 		span := spans[operation.proxy]
-		if span == nil {
+		if span == nil || operation.proxy.pending.Load() != 0 {
 			deferred = append(deferred, operation)
 			continue
 		}
@@ -285,6 +314,9 @@ func (t *AsyncTracer) dropUnstartedTerminals(spans map[*asyncSpan]Span) {
 func spansFor(parent Span, spans map[*asyncSpan]Span) Span {
 	if proxy, ok := parent.(*asyncSpan); ok {
 		parent = spans[proxy]
+		if parent == nil {
+			parent = proxy.resolved
+		}
 	}
 	if guarded, ok := parent.(*guardedSpan); ok {
 		return guarded.inner

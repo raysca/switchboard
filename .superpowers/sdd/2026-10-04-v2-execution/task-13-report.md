@@ -1,6 +1,6 @@
 # Task 13 — Framework trace instrumentation and content policy
 
-Base: `69bb069` on `codex/v2-implementation`.
+Base: `69bb069` on `codex/v2-implementation`; fourth correction based on `8db25c7`.
 
 ## Scope delivered
 
@@ -62,11 +62,8 @@ GREEN:
 - PASS: `go test -race -count=1 ./transport/...` and `go build -tags xaispeech ./...` with the same SDK override.
 - PASS: sentinel scan found no test sentinel or secret-bearing production trace
   value; `gofmt -l` was empty for Task 13 Go files; `git diff --check` passed.
-- CAVEAT: root `go test -race -count=1 -tags xaispeech ./...` fails in
-  Task 14's `TestPinnedPipecatTurnInterruptionPairedBehavior`: the fixture
-  expects `started` states but the current Go trace reports only
-  `interrupted`/`active`. Task 13 files are not implicated and were left
-  untouched.
+- Historical caveat: an earlier Task 14 parity fixture failed on the root
+  tagged race command. The current root tagged test and build commands pass.
 
 ## Review status
 
@@ -97,3 +94,28 @@ Google/xAI LLM request spans at their asynchronous request boundaries, with one
 first-output event per request. This is intentionally only the first provider
 boundary slice; STT/TTS/VAD/transport operation spans remain outstanding and
 Task 13 must stay open.
+
+Round 4 fills those operation boundaries. Google and xAI STT span stream open
+through their asynchronous receiver, with one first-final event and a single
+completion/failure terminal; Google handles a final followed by an interim in
+one response. Google and xAI TTS span each synthesis request through emitted
+audio, marking first nonempty audio once and ending with a fixed status.
+VAD spans submitted detector jobs, records bounded result latency and speech
+transitions, and closes failed or rejected jobs. WebSocket/RTVI uses the
+session's immutable root trace context for correlated connect, readiness,
+disconnect, error, and close events. Google/xAI LLM failures now end their
+request spans with fixed categories; xAI's terminal response text can mark
+first output. Provider ToolLoops inherit the session tracer and parent context.
+
+Two async dispatcher corrections were required: a completed span proxy keeps
+its resolved exporter span for a later child start, and accepted ordinary
+operations preceding `End` drain before that terminal callback. The session
+turn context now retains the trace configuration when selecting a turn parent.
+These issues were reproduced by new tests before implementation.
+
+Round 4 verification: focused race `-count=50` passed for core/ToolLoop,
+Google/xAI mocked provider lifecycles, VAD, and WebSocket/RTVI. Full core,
+Google, xAI (`xaispeech`), and VAD/WS/RTVI race and vet suites passed with
+the MacOSX26 SDK override. Root tagged tests and build passed. The Task 14
+files were not edited or staged. Task 13 remains unchecked for independent
+review.

@@ -142,6 +142,21 @@ func (l *ToolLoop) WithCurrentFence(fence func(ToolCall) bool) *ToolLoop {
 	return derived
 }
 
+// WithTraceContext derives a loop using the session's shared dispatcher and
+// policy. The caller's context remains the parent of each execution span.
+func (l *ToolLoop) WithTraceContext(ctx context.Context) *ToolLoop {
+	if l == nil {
+		return nil
+	}
+	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg}
+	trace := core.TraceContextFromContext(ctx)
+	if _, noop := trace.Tracer.(core.NoopTracer); !noop {
+		derived.cfg.Tracer = trace.Tracer
+		derived.cfg.TracePolicy = trace.Policy
+	}
+	return derived
+}
+
 func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Continuation) (ToolLoopResult, error) {
 	if ctx == nil {
 		ctx = context.Background()

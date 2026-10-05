@@ -3,7 +3,10 @@ package vad
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"math"
+	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,7 +15,38 @@ import (
 
 // vadResultFrame re-enters the pipeline at the VAD processor when inference completes.
 type vadResultFrame struct {
-	j *Job
+	j     *Job
+	trace *vadJobTrace
+}
+
+type vadJobTrace struct {
+	span      core.Span
+	policy    core.TracePolicy
+	session   core.SessionID
+	gen       core.Generation
+	submitted time.Time
+	once      sync.Once
+}
+
+func (t *vadJobTrace) event(name string, attrs map[string]any) {
+	if t != nil && t.span != nil {
+		t.span.AddEvent(core.NewTraceEvent(name, time.Now(), t.session, "", t.gen, t.policy, attrs))
+	}
+}
+func (t *vadJobTrace) finish(err error) {
+	if t == nil {
+		return
+	}
+	t.once.Do(func() {
+		name := "vad.result"
+		if err != nil {
+			name = "vad.failure"
+		}
+		t.event(name, map[string]any{"latency_ms": time.Since(t.submitted).Milliseconds()})
+		if t.span != nil {
+			t.span.End(err)
+		}
+	})
 }
 
 func (*vadResultFrame) Type() core.FrameType { return core.FrameInternal }
@@ -42,9 +76,10 @@ func DefaultProcessorConfig() ProcessorConfig {
 }
 
 type pendingChunk struct {
-	samples [ChunkSamples]float32
-	seq     uint64
-	due     time.Time
+	samples  [ChunkSamples]float32
+	seq      uint64
+	due      time.Time
+	traceCtx context.Context
 }
 
 // Processor is an ordinary core.Processor that delegates inference to a shared Executor.
@@ -70,6 +105,8 @@ type Processor struct {
 	below    int
 
 	droppedCount atomic.Int64
+	traceMu      sync.Mutex
+	jobTrace     *vadJobTrace
 }
 
 // NewProcessor creates a VAD Processor backed by the given Executor.
@@ -86,7 +123,12 @@ func (p *Processor) Attach(s core.SessionController, index int) error {
 	p.idx = index
 	p.st = p.exec.Register(s.ID())
 	p.job.Done = func(j *Job) {
-		_ = s.Reenter(&vadResultFrame{j: j}, core.Downstream, index, s.CurrentGeneration())
+		p.traceMu.Lock()
+		trace := p.jobTrace
+		p.traceMu.Unlock()
+		if err := s.Reenter(&vadResultFrame{j: j, trace: trace}, core.Downstream, index, s.CurrentGeneration()); err != nil {
+			trace.finish(errors.New("canceled"))
+		}
 	}
 	return nil
 }
@@ -115,17 +157,17 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 			}
 		}
 
-		p.appendAudioSamples(v.Samples, v.Seq, v.Timestamp, e)
+		p.appendAudioSamples(ctx, v.Samples, v.Seq, v.Timestamp, e)
 		return p.trySubmit(e)
 
 	case *vadResultFrame:
-		return p.onResult(v.j, e)
+		return p.onTraceResult(v, e)
 	}
 
 	return e.PushDirection(f, dir)
 }
 
-func (p *Processor) appendAudioSamples(raw []byte, seq uint64, ts time.Time, e core.Emitter) {
+func (p *Processor) appendAudioSamples(ctx context.Context, raw []byte, seq uint64, ts time.Time, e core.Emitter) {
 	numSamples := len(raw) / 2
 	if numSamples == 0 {
 		return
@@ -148,7 +190,7 @@ func (p *Processor) appendAudioSamples(raw []byte, seq uint64, ts time.Time, e c
 			p.state = [StateLen]float32{}
 			p.checkpointState = [StateLen]float32{}
 			copy(p.ctx[:], chunk[ChunkSamples-ContextSamples:])
-			_ = p.detect(0, seq, ts, e)
+			_ = p.detect(0, seq, ts, e, nil)
 			continue
 		}
 
@@ -159,9 +201,10 @@ func (p *Processor) appendAudioSamples(raw []byte, seq uint64, ts time.Time, e c
 		}
 
 		p.pending = append(p.pending, pendingChunk{
-			samples: chunk,
-			seq:     seq,
-			due:     ts,
+			samples:  chunk,
+			seq:      seq,
+			due:      ts,
+			traceCtx: ctx,
 		})
 	}
 }
@@ -196,8 +239,29 @@ func (p *Processor) trySubmit(e core.Emitter) error {
 		if p.st == nil {
 			return nil
 		}
+		var trace *vadJobTrace
+		if p.s != nil {
+			trace = &vadJobTrace{span: core.StartContextSpan(pc.traceCtx, "vad.inference", core.SessionID(strconv.FormatUint(p.s.ID(), 10)), "", core.Generation(p.s.CurrentGeneration()), map[string]any{"component": "vad"}), policy: core.TraceContextFromContext(pc.traceCtx).Policy, session: core.SessionID(strconv.FormatUint(p.s.ID(), 10)), gen: core.Generation(p.s.CurrentGeneration()), submitted: time.Now()}
+			trace.event("vad.job", map[string]any{"sequence": pc.seq})
+		}
+		p.traceMu.Lock()
+		p.jobTrace = trace
+		p.traceMu.Unlock()
 
-		if err := p.st.Submit(j); err != nil {
+		submitErr := func() (err error) {
+			defer func() {
+				if v := recover(); v != nil {
+					trace.finish(errors.New("vad_failure"))
+					panic(v)
+				}
+			}()
+			return p.st.Submit(j)
+		}()
+		if submitErr != nil {
+			trace.finish(errors.New("vad_failure"))
+			p.traceMu.Lock()
+			p.jobTrace = nil
+			p.traceMu.Unlock()
 			p.droppedCount.Add(1)
 			continue
 		}
@@ -207,9 +271,28 @@ func (p *Processor) trySubmit(e core.Emitter) error {
 }
 
 func (p *Processor) onResult(j *Job, e core.Emitter) error {
+	return p.onTraceResult(&vadResultFrame{j: j}, e)
+}
+
+func (p *Processor) onTraceResult(frame *vadResultFrame, e core.Emitter) error {
+	j, trace := frame.j, frame.trace
+	p.traceMu.Lock()
+	if p.jobTrace == trace {
+		p.jobTrace = nil
+	}
+	p.traceMu.Unlock()
+	var traceFailure error
+	defer func() {
+		if v := recover(); v != nil {
+			trace.finish(errors.New("vad_failure"))
+			panic(v)
+		}
+		trace.finish(traceFailure)
+	}()
 	p.busy = false
 
 	if j.Err != nil {
+		traceFailure = errors.New("vad_failure")
 		// Recovery from parent-owned state checkpoint:
 		// Unknown or crashed response cannot corrupt session detector state
 		p.state = p.checkpointState
@@ -217,7 +300,8 @@ func (p *Processor) onResult(j *Job, e core.Emitter) error {
 	} else {
 		p.state = j.State
 		p.checkpointState = j.State // Update parent-owned checkpoint
-		if err := p.detect(j.Prob, j.Seq, j.Due, e); err != nil {
+		if err := p.detect(j.Prob, j.Seq, j.Due, e, trace); err != nil {
+			traceFailure = errors.New("vad_failure")
 			return err
 		}
 	}
@@ -225,7 +309,7 @@ func (p *Processor) onResult(j *Job, e core.Emitter) error {
 	return p.trySubmit(e)
 }
 
-func (p *Processor) detect(prob float32, seq uint64, due time.Time, e core.Emitter) error {
+func (p *Processor) detect(prob float32, seq uint64, due time.Time, e core.Emitter, trace *vadJobTrace) error {
 	if !p.speaking {
 		if prob >= p.cfg.StartThresh {
 			p.above++
@@ -233,6 +317,7 @@ func (p *Processor) detect(prob float32, seq uint64, due time.Time, e core.Emitt
 			p.above = 0
 		}
 		if p.above >= p.cfg.StartChunks {
+			trace.event("vad.speech_start", map[string]any{"sequence": seq})
 			p.speaking = true
 			p.below = 0
 			var gen uint64
@@ -254,6 +339,7 @@ func (p *Processor) detect(prob float32, seq uint64, due time.Time, e core.Emitt
 		p.below = 0
 	}
 	if p.below >= p.cfg.StopChunks {
+		trace.event("vad.speech_stop", map[string]any{"sequence": seq})
 		p.speaking = false
 		p.above = 0
 		var gen uint64

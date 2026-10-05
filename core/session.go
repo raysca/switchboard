@@ -117,6 +117,7 @@ type Session struct {
 	tracer         Tracer
 	tracePolicy    TracePolicy
 	traceCtx       context.Context // run-loop owned after Start
+	traceRootCtx   context.Context // immutable session parent for external async boundaries
 	sessionSpan    Span
 	traceQueue     *AsyncTracer
 	ownsTraceQueue bool
@@ -266,11 +267,22 @@ func (s *Session) Start() error {
 	s.traceCtx = s.ctx
 	s.sessionSpan = StartSpanSafe(s.ctx, tracer, NewTraceEvent("session.start", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), "", Generation(s.CurrentGeneration()), policy, nil))
 	s.traceCtx = ContextWithTraceContext(ContextWithSpan(s.ctx, s.sessionSpan), s.tracer, policy)
+	s.traceRootCtx = s.traceCtx
 	s.turnSpans = make(map[TurnID]Span)
 	close(s.ready)
 
 	go s.runLoop()
 	return nil
+}
+
+// RootTraceContext returns the immutable session parent context after Start.
+// External async components can create session-correlated child spans without
+// reading the run loop's transient processor context.
+func (s *Session) RootTraceContext() context.Context {
+	if s.traceRootCtx != nil {
+		return s.traceRootCtx
+	}
+	return s.ctx
 }
 
 // Post queues an incoming frame to the session run loop from outside the pipeline.
@@ -606,11 +618,11 @@ func (s *Session) processEnvelope(env Envelope) bool {
 			turn := traceTurnID(env.Frame)
 			if turn != "" {
 				if span, ok := s.turnSpans[turn]; ok && span != nil {
-					parent = ContextWithSpan(s.ctx, span)
+					parent = ContextWithSpan(s.traceCtx, span)
 				} else if !ok {
 					span := StartSpanSafe(parent, s.tracer, NewTraceEvent("turn.start", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), turn, traceGeneration(env.Frame), s.tracePolicy, nil))
 					s.turnSpans[turn] = span
-					parent = ContextWithSpan(s.ctx, span)
+					parent = ContextWithSpan(s.traceCtx, span)
 				}
 			}
 			frameSpan := StartSpanSafe(parent, s.tracer, s.traceEvent(env.Frame))
@@ -965,11 +977,11 @@ func (e *sessionEmitter) PushDirection(f Frame, dir Direction) error {
 	turn := traceTurnID(f)
 	if !forwarded && turn != "" {
 		if existing := e.s.turnSpans[turn]; existing != nil {
-			parent = ContextWithSpan(e.s.ctx, existing)
+			parent = ContextWithSpan(e.s.traceCtx, existing)
 		} else {
 			turnSpan := StartSpanSafe(parent, e.s.tracer, NewTraceEvent("turn.start", time.Now(), SessionID(strconv.FormatUint(e.s.id, 10)), turn, traceGeneration(f), e.s.tracePolicy, nil))
 			e.s.turnSpans[turn] = turnSpan
-			parent = ContextWithSpan(e.s.ctx, turnSpan)
+			parent = ContextWithSpan(e.s.traceCtx, turnSpan)
 		}
 	}
 	var span Span = noopSpan{}

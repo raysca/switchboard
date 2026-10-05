@@ -32,3 +32,13 @@ accepted, its one terminal operation is retained so the exporter observes a
 balanced span. Admission reserves terminal capacity before a start, so overload
 fails closed by declining new starts rather than retaining unbounded terminal
 work. Only canonical error categories are supplied to `Span.End`.
+
+Provider STT streams and TTS synthesis requests, VAD inference jobs, and
+session-backed WebSocket/RTVI connections use the same metadata policy. Their
+first-final, first-audio, speech-decision, connect/disconnect, and completion
+events contain correlation IDs and bounded numeric metadata only. Provider,
+executor, and transport failure spans receive fixed categories such as
+`provider_failure`, `vad_failure`, `transport_failure`, `protocol_failure`, and
+`canceled`; raw error messages are never passed to the tracer. A missing or
+dropped ordinary event does not expose content or prevent an accepted span's
+terminal operation.

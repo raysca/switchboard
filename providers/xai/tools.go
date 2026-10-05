@@ -311,9 +311,27 @@ func ParseXAIToolCalls(items []XAIResponseOutputItem, session, turn string, gene
 	return calls
 }
 
-func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesRequest, gen uint64, turn string, s core.SessionController, text *strings.Builder) ([]XAIResponseOutputItem, int, int, int, error) {
+func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesRequest, gen uint64, turn string, s core.SessionController, text *strings.Builder) (_ []XAIResponseOutputItem, _ int, _ int, _ int, traceErr error) {
 	span := core.StartContextSpan(ctx, "llm.request", core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "xai", "model": p.cfg.Model})
-	defer span.End(nil)
+	defer func() {
+		name := "llm.complete"
+		var endErr error
+		if v := recover(); v != nil {
+			span.AddEvent(core.NewTraceEvent("llm.failure", time.Now(), core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(ctx).Policy, nil))
+			span.End(errors.New("provider_failure"))
+			panic(v)
+		}
+		if traceErr != nil {
+			name = "llm.failure"
+			category := "provider_failure"
+			if errors.Is(traceErr, context.Canceled) {
+				category = "canceled"
+			}
+			endErr = errors.New(category)
+		}
+		span.AddEvent(core.NewTraceEvent(name, time.Now(), core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(ctx).Policy, nil))
+		span.End(endErr)
+	}()
 	firstOutput := false
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -471,7 +489,13 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 					roundText.WriteString(chunk.Response.OutputText)
 					text.WriteString(chunk.Response.OutputText)
 					if p.isCurrent(gen) {
-						_ = s.Reenter(&core.LLMTextDeltaFrame{Delta: chunk.Response.OutputText, Turn: turn, Gen: gen}, core.Downstream, p.index, gen)
+						if err := s.Reenter(&core.LLMTextDeltaFrame{Delta: chunk.Response.OutputText, Turn: turn, Gen: gen}, core.Downstream, p.index, gen); err != nil {
+							return err
+						}
+						if !firstOutput {
+							firstOutput = true
+							span.AddEvent(core.NewTraceEvent("llm.first_output", time.Now(), core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(ctx).Policy, nil))
+						}
 					}
 				}
 				continue
@@ -487,15 +511,17 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 				delta = chunk.Choices[0].Delta.Content
 			}
 			if delta != "" {
-				if !firstOutput {
-					firstOutput = true
-					span.AddEvent(core.NewTraceEvent("llm.first_output", time.Now(), core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(ctx).Policy, nil))
-				}
 				committed = true
 				roundText.WriteString(delta)
 				text.WriteString(delta)
 				if p.isCurrent(gen) {
-					_ = s.Reenter(&core.LLMTextDeltaFrame{Delta: delta, Turn: turn, Gen: gen}, core.Downstream, p.index, gen)
+					if err := s.Reenter(&core.LLMTextDeltaFrame{Delta: delta, Turn: turn, Gen: gen}, core.Downstream, p.index, gen); err != nil {
+						return err
+					}
+					if !firstOutput {
+						firstOutput = true
+						span.AddEvent(core.NewTraceEvent("llm.first_output", time.Now(), core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(ctx).Policy, nil))
+					}
 				}
 			}
 		}

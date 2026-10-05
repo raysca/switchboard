@@ -240,9 +240,11 @@ func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
 			cfg.ToolLoopConfig = tools.DefaultToolLoopConfig()
 		}
 		cfg.ToolDefinitions = cloneGoogleToolDefinitions(cfg.ToolDefinitions)
-		if _, err := tools.NewToolLoop(cfg.ToolDefinitions, cfg.ToolExecutor, cfg.ToolHistory, cfg.ToolLoopConfig); err != nil {
+		validationLoop, err := tools.NewToolLoop(cfg.ToolDefinitions, cfg.ToolExecutor, cfg.ToolHistory, cfg.ToolLoopConfig)
+		if err != nil {
 			return nil, err
 		}
+		validationLoop.Close()
 	}
 	return &LLMProcessor{
 		cfg: cfg,
@@ -374,9 +376,25 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		var committed bool
 		var fullTextBuilder strings.Builder
 		var nativeHistory []GoogleNativeExchange
-		requestModel := func(requestCtx context.Context) ([]core.ToolCall, error) {
+		requestModel := func(requestCtx context.Context) (_ []core.ToolCall, traceErr error) {
 			span := core.StartContextSpan(requestCtx, "llm.request", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "google", "model": p.cfg.Model})
-			defer span.End(nil)
+			defer func() {
+				if v := recover(); v != nil {
+					span.AddEvent(core.NewTraceEvent("llm.failure", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
+					span.End(errors.New("provider_failure"))
+					panic(v)
+				}
+				if traceErr != nil {
+					category := "provider_failure"
+					if errors.Is(traceErr, context.Canceled) {
+						category = "canceled"
+					}
+					span.AddEvent(core.NewTraceEvent("llm.failure", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
+					span.End(errors.New(category))
+					return
+				}
+				span.End(nil)
+			}()
 			firstOutput := false
 			streamCtx, cancelStream := context.WithCancel(requestCtx)
 			defer cancelStream()
@@ -433,10 +451,6 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 						p.TotalTokens.Store(int64(chunk.TotalTokens))
 					}
 					if chunk.Text != "" {
-						if !firstOutput {
-							firstOutput = true
-							span.AddEvent(core.NewTraceEvent("llm.first_output", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
-						}
 						if !p.isCurrentGeneration(gen) {
 							p.Stale.Add(1)
 							return nil, ErrGenerationMismatch
@@ -445,7 +459,13 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 						requestText.WriteString(chunk.Text)
 						fullTextBuilder.WriteString(chunk.Text)
 						deltaFrame := &core.LLMTextDeltaFrame{Delta: chunk.Text, Turn: turn, Gen: gen}
-						_ = p.session.Reenter(deltaFrame, core.Downstream, p.index+1, gen)
+						if err := p.session.Reenter(deltaFrame, core.Downstream, p.index+1, gen); err != nil {
+							return nil, err
+						}
+						if !firstOutput {
+							firstOutput = true
+							span.AddEvent(core.NewTraceEvent("llm.first_output", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
+						}
 					}
 					if len(chunk.ToolCalls) > 0 {
 						committed = true // Once a call is returned, do not retry this model request.
@@ -506,13 +526,19 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			return
 		}
 		if len(calls) > 0 {
-			loop, loopErr := tools.NewToolLoop(p.cfg.ToolDefinitions, p.cfg.ToolExecutor, p.cfg.ToolHistory, p.cfg.ToolLoopConfig)
+			loopCfg := p.cfg.ToolLoopConfig
+			if trace := core.TraceContextFromContext(genCtx); trace.Tracer != nil {
+				if _, noop := trace.Tracer.(core.NoopTracer); !noop {
+					loopCfg.Tracer, loopCfg.TracePolicy = trace.Tracer, trace.Policy
+				}
+			}
+			loop, loopErr := tools.NewToolLoop(p.cfg.ToolDefinitions, p.cfg.ToolExecutor, p.cfg.ToolHistory, loopCfg)
 			if loopErr != nil {
 				p.Errors.Add(1)
 				return
 			}
 			defer loop.Close()
-			loop = loop.WithCurrentFence(func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) })
+			loop = loop.WithTraceContext(genCtx).WithCurrentFence(func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) })
 			_, loopErr = loop.Run(genCtx, calls, func(continueCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
 				committed = false
 				for _, result := range results {
