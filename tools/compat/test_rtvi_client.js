@@ -32,6 +32,8 @@ async function runClientTest(wsUrl, token) {
   let botReadyReceived = false;
   let botReadyVersion = null;
   let userTranscriptReceived = false;
+  const transcriptEvents = [];
+  const eventOrder = [];
   let botLlmTextReceived = false;
   let botStartedSpeakingReceived = false;
   let botStoppedSpeakingReceived = false;
@@ -40,6 +42,7 @@ async function runClientTest(wsUrl, token) {
   let botAudioBuffersReceived = 0;
   let userAudioCallback = null;
   let fatalError = null;
+  let serverErrorReceived = false;
 
   const mockMediaManager = {
     initialize: async () => {},
@@ -68,6 +71,8 @@ async function runClientTest(wsUrl, token) {
       },
       onUserTranscript: (data) => {
         userTranscriptReceived = true;
+        transcriptEvents.push({text: data?.text, final: data?.final});
+        eventOrder.push(data?.final ? 'transcript-final' : 'transcript-interim');
         console.log(`[RTVI Client Test] onUserTranscript received: "${data?.text}"`);
       },
       onUserStartedSpeaking: () => { userStartedSpeakingReceived = true; },
@@ -86,7 +91,12 @@ async function runClientTest(wsUrl, token) {
       },
       onError: (err) => {
         console.error(`[RTVI Client Test] onError received:`, err);
-        fatalError = err;
+        if (err?.data?.error === 'compat_test_error' && err?.data?.fatal === false) {
+          serverErrorReceived = true;
+          eventOrder.push('server-error');
+        } else {
+          fatalError = err;
+        }
       }
     }
   });
@@ -125,7 +135,7 @@ async function runClientTest(wsUrl, token) {
   // Wait for round trip events
   const startTime = Date.now();
   while (Date.now() - startTime < 3000) {
-    if (userTranscriptReceived && userStartedSpeakingReceived && userStoppedSpeakingReceived && botLlmTextReceived && botStartedSpeakingReceived && botStoppedSpeakingReceived && botAudioBuffersReceived > 0) {
+    if (transcriptEvents.length >= 2 && serverErrorReceived && userStartedSpeakingReceived && userStoppedSpeakingReceived && botLlmTextReceived && botStartedSpeakingReceived && botStoppedSpeakingReceived && botAudioBuffersReceived > 0) {
       break;
     }
     await new Promise(r => setTimeout(r, 50));
@@ -143,6 +153,12 @@ async function runClientTest(wsUrl, token) {
   });
   if (!userTranscriptReceived || !userStartedSpeakingReceived || !userStoppedSpeakingReceived || !botLlmTextReceived || !botStartedSpeakingReceived || !botStoppedSpeakingReceived || botAudioBuffersReceived === 0) {
     throw new Error(`Incomplete client conformance: ${JSON.stringify({userTranscriptReceived, userStartedSpeakingReceived, userStoppedSpeakingReceived, botLlmTextReceived, botStartedSpeakingReceived, botStoppedSpeakingReceived, botAudioBuffersReceived})}`);
+  }
+  if (transcriptEvents.length !== 2 || transcriptEvents[0].final !== false || transcriptEvents[0].text !== 'Hello from' || transcriptEvents[1].final !== true || transcriptEvents[1].text !== 'Hello from unmodified client-js') {
+    throw new Error(`Interim/final transcript payload/order mismatch: ${JSON.stringify(transcriptEvents)}`);
+  }
+  if (!serverErrorReceived || eventOrder.indexOf('server-error') <= eventOrder.indexOf('transcript-final')) {
+    throw new Error(`Nonfatal server error missing or out of order: ${JSON.stringify(eventOrder)}`);
   }
 
   // Step 3: Disconnect cleanly

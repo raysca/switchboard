@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"govoice/core"
 )
@@ -19,6 +20,9 @@ var debugWireIDs atomic.Uint64
 // EncodeDebugEvent maps only the framework events understood by the RTVI 2.1
 // wire contract. It is intentionally protocol-specific, not a general serializer.
 func EncodeDebugEvent(event core.DebugEvent) (Message, error) {
+	if !validDebugScalar(event.Name, true) || !validDebugScalar(string(event.SessionID), false) || !validDebugScalar(string(event.TurnID), false) || !validDebugScalar(event.PipelineID, false) || !validDebugScalar(event.Processor, false) || !validDebugScalar(event.ToolCallID, false) || event.ProcessorIndex < 0 || (event.Direction != core.Downstream && event.Direction != core.Upstream) {
+		return Message{}, ErrInvalidRTVIMessage
+	}
 	var typ string
 	switch event.Name {
 	case "user.speech.started":
@@ -48,9 +52,8 @@ func EncodeDebugEvent(event core.DebugEvent) (Message, error) {
 		}
 	}
 	if typ == TypeError {
-		category, ok := attrs["category"].(string)
-		_, fatalOK := attrs["fatal"].(bool)
-		if !ok || category == "" || !fatalOK {
+		category, ok := attrs["error.category"].(string)
+		if !ok || category == "" {
 			return Message{}, ErrMissingDebugPayload
 		}
 	}
@@ -73,12 +76,25 @@ func EncodeDebugEvent(event core.DebugEvent) (Message, error) {
 		data["text"] = attrs["text"]
 	}
 	if typ == TypeError {
-		data["error"] = attrs["category"]
-		data["fatal"], _ = attrs["fatal"].(bool)
+		data["error"] = safeErrorCategory(attrs["error.category"].(string))
+		data["fatal"] = event.Name == "session.error"
 	}
 	b, err := json.Marshal(data)
 	if err != nil {
 		return Message{}, err
 	}
 	return Message{ID: "debug-" + fmt.Sprint(debugWireIDs.Add(1)), Label: LabelRTVI, Type: typ, Data: b}, nil
+}
+
+func validDebugScalar(s string, required bool) bool {
+	return (!required || s != "") && len(s) <= 256 && utf8.ValidString(s)
+}
+
+func safeErrorCategory(category string) string {
+	switch category {
+	case "provider_unavailable", "provider_error", "pipeline_error", "internal_error", "timeout", "cancelled":
+		return category
+	default:
+		return "internal_error"
+	}
 }

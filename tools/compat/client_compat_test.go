@@ -2,6 +2,7 @@ package compat_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
@@ -54,6 +55,7 @@ func (s *FakeSTTForCompat) ProcessFrame(ctx context.Context, f core.Frame, dir c
 	if _, ok := f.(*core.InputAudioFrame); ok {
 		if s.triggered.CompareAndSwap(false, true) {
 			_ = e.PushDirection(&core.UserStartedSpeakingFrame{Timestamp: time.Now()}, core.Downstream)
+			_ = e.PushDirection(&core.InterimTranscriptionFrame{Text: "Hello from", UserID: "user-js", Timestamp: time.Now(), Turn: "turn-1", Gen: 1}, core.Downstream)
 			_ = e.PushDirection(&core.FinalTranscriptionFrame{
 				Text:      "Hello from unmodified client-js",
 				UserID:    "user-js",
@@ -62,6 +64,7 @@ func (s *FakeSTTForCompat) ProcessFrame(ctx context.Context, f core.Frame, dir c
 				Gen:       1,
 			}, core.Downstream)
 			_ = e.PushDirection(&core.UserStoppedSpeakingFrame{Timestamp: time.Now()}, core.Downstream)
+			_ = e.PushDirection(&core.ErrorFrame{Err: errors.New("compat_test_error"), Fatal: false}, core.Downstream)
 		}
 		return nil
 	}

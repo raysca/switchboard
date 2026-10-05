@@ -32,7 +32,7 @@ func (e Event) Attributes() map[string]any { return cloneMap(e.attributes) }
 type Adapter struct{}
 
 func (Adapter) Adapt(in core.DebugEvent) (Event, error) {
-	if in.Name == "" || !utf8.ValidString(in.Name) || len(in.Name) > 256 || in.ProcessorIndex < 0 {
+	if !validScalar(in.Name, true) || !validScalar(string(in.SessionID), false) || !validScalar(string(in.TurnID), false) || !validScalar(in.PipelineID, false) || !validScalar(in.Processor, false) || !validScalar(in.ToolCallID, false) || in.ProcessorIndex < 0 || (in.Direction != core.Downstream && in.Direction != core.Upstream) {
 		return Event{}, ErrMalformedEvent
 	}
 	out := Event{Name: in.Name, SessionID: string(in.SessionID), TurnID: string(in.TurnID), Generation: uint64(in.Generation), PipelineID: in.PipelineID, Processor: in.Processor, ProcessorIndex: in.ProcessorIndex, FrameKind: uint16(in.FrameKind), Direction: in.Direction.String(), Sequence: in.Sequence, ToolCallID: in.ToolCallID, attributes: cloneMap(in.Attributes())}
@@ -48,22 +48,26 @@ func cloneMap(in map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(in))
 	for k, v := range in {
-		switch x := v.(type) {
-		case map[string]any:
-			out[k] = cloneMap(x)
-		case []any:
-			cp := make([]any, len(x))
-			for i, item := range x {
-				if child, ok := item.(map[string]any); ok {
-					cp[i] = cloneMap(child)
-				} else {
-					cp[i] = item
-				}
-			}
-			out[k] = cp
-		default:
-			out[k] = v
-		}
+		out[k] = cloneValue(v)
 	}
 	return out
+}
+
+func cloneValue(value any) any {
+	switch x := value.(type) {
+	case map[string]any:
+		return cloneMap(x)
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = cloneValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func validScalar(s string, required bool) bool {
+	return (!required || s != "") && len(s) <= 256 && utf8.ValidString(s)
 }

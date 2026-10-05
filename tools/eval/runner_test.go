@@ -18,6 +18,15 @@ func TestRunAllProducesDistinctDeterministicP0Results(t *testing.T) {
 	if len(first.Results) < 12 {
 		t.Fatalf("expected P0 and independent compatibility scenarios, got %d", len(first.Results))
 	}
+	whiskerCases := 0
+	for _, result := range first.Results {
+		if bytes.HasPrefix([]byte(result.Scenario), []byte("whisker_")) {
+			whiskerCases++
+		}
+	}
+	if whiskerCases != 11 {
+		t.Fatalf("expected eleven independent Whisker scenarios, got %d", whiskerCases)
+	}
 	var a, b bytes.Buffer
 	if err := json.NewEncoder(&a).Encode(first); err != nil {
 		t.Fatal(err)
@@ -46,6 +55,24 @@ func TestRunAllProducesDistinctDeterministicP0Results(t *testing.T) {
 	}
 	if first.Compatibility.PlaybackClear != "UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT" {
 		t.Fatalf("playback probe limitation was lost: %q", first.Compatibility.PlaybackClear)
+	}
+}
+
+func TestWhiskerStatusReflectsActualScenarioFailures(t *testing.T) {
+	if got := whiskerStatus([]Result{{Scenario: "whisker_audio_frame_flow", Passed: false}}); got != "fail" {
+		t.Fatalf("failed scenario status = %q", got)
+	}
+	if got := whiskerStatus([]Result{{Scenario: "whisker_audio_frame_flow", Passed: true}}); got != "pass" {
+		t.Fatalf("passing scenario status = %q", got)
+	}
+	if got := whiskerStatus(nil); got != "not_run" {
+		t.Fatalf("absent scenario status = %q", got)
+	}
+}
+
+func TestPacingSpeakingProbeObservesThreeTimedWrites(t *testing.T) {
+	if err := checkPacingSpeaking(); err != nil {
+		t.Fatal(err)
 	}
 }
 

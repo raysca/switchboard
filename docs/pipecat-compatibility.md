@@ -60,7 +60,7 @@ go test -race -count=1 ./transport/rtvi ./transport/ws
 
 Until an official Whisker package and protocol version are pinned, the V2 target is a semantic observer/debug adapter. The adapter translates `core.DebugEvent` values and does not add Whisker-specific concepts to core processors or the RTVI message vocabulary. Tests assert required semantics and event ordering, not a guessed byte-for-byte protocol. Pin an official package/protocol coordinate before any claim of wire compatibility.
 
-Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` directly carries pipeline/processor position, frame kind, direction, sequence, and tool call ID with session/turn/generation correlation. Namespaced structured metadata is restricted to copied numeric/boolean values. The Whisker adapter and its eleven conformance scenarios remain pending; the new core contract tests are not a Whisker conformance pass.
+Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` directly carries pipeline/processor position, frame kind, direction, sequence, and tool call ID with session/turn/generation correlation. Namespaced structured metadata is restricted to copied numeric/boolean values. The Task 14 semantic adapter deep-copies nested metadata and rejects malformed identifiers, processor indexes, and directions. Its eleven cases run frames through a live `core.Session` and a compatibility probe processor, then adapt the observed transitions to `DebugEvent` values. Tool start comes from the live tool executor callback. This validates the narrow adapter; a general runtime observer subscription/delivery API belongs to Task 35.
 
 The conformance scenario set is:
 
@@ -92,18 +92,21 @@ Compatibility remains three separately verifiable suites:
 
 | Suite | Command/evidence | Result interpretation |
 |---|---|---|
-| Pinned RTVI client | Go loopback integration runs `node tools/compat/test_rtvi_client.js`; `node tools/compat/verify_fixtures.js`; `npm test --prefix tools/compat` | The exact pinned client/transport exchange and fixture decoding pass. The Node script checks user speech/transcript, assistant text/speaking, audio, handshake, and disconnect. |
-| Whisker semantic | `go test -race ./tools/compat/whisker` and `whisker_semantic` eval scenario | The semantic adapter preserves event identity, ordering fields, and copied safe attributes. No wire protocol claim is made. |
-| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` against `pipecat-impl/` revision in `tools/compat/fixtures/pipecat-turn-parity.json` | The selected turn-interruption and cancellation outcomes are compared to named tests in the pinned checkout. This narrow suite does not imply complete Pipecat parity. |
+| Pinned RTVI client | Go loopback integration runs `node tools/compat/test_rtvi_client.js`; `node tools/compat/verify_fixtures.js`; `npm test --prefix tools/compat` | The exact pinned client/transport exchange and fixture decoding pass. The client integration checks interim/final transcript payload and order, a nonfatal server error, user speech, assistant text/speaking, audio, handshake, and disconnect. |
+| Whisker semantic | `go test -race ./tools/compat/whisker` and eleven `whisker_*` eval results | The semantic adapter preserves observed event identity, ordering fields, correlation, and copied safe attributes. No wire protocol or general observer-delivery claim is made. |
+| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` against `pipecat-impl/` revision in `tools/compat/fixtures/pipecat-turn-parity.json` | The fixture validator checks the exact checkout HEAD, file, and named tests. Equivalent Go frames pass through a live session; frame-derived turn states include turn two ending interrupted after EndFrame. This narrow suite does not imply complete Pipecat parity. |
 
 The JSON runner labels the official RTVI and Pipecat suites as `separate_suite`
 because those require their own package/reference test runs; it does not turn
-an unexecuted suite into a pass. The Whisker status reflects the local semantic
-adapter scenario only. The playback-clear probe remains
+an unexecuted suite into a pass. The Whisker status is computed from the eleven
+runtime semantic scenario results; any failed case makes eval exit nonzero. The playback-clear probe remains
 `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; it is reported
 as unsupported and never counted as a pass or a client clear.
 
-The RTVI `DebugEvent` encoder rejects transcript/text events when their
+The RTVI `DebugEvent` encoder maps the admitted `error.category` metadata to a
+bounded safe category. `session.error` is fatal and `provider.error` is
+nonfatal; arbitrary category text is emitted as `internal_error`. The encoder
+rejects malformed identifiers, processor indexes, and directions. The RTVI `DebugEvent` encoder rejects transcript/text events when their
 content is absent under Task 1's default metadata privacy policy. Callers that
 have explicitly authorized content use the existing typed
 `Handler.FormatUserTranscription` or `Handler.FormatBotLLMText` path. This

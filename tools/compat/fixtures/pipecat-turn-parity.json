@@ -8,12 +8,12 @@
     {
       "name": "user_interrupts_bot",
       "reference_test": "test_user_interrupts_bot",
-      "expected_turn_states": ["turn-1:interrupted", "turn-2:active"]
+      "expected_turn_states": ["turn-1:started", "turn-1:interrupted", "turn-2:started", "turn-2:interrupted"]
     },
     {
       "name": "cancel_flushes_active_turn",
       "reference_test": "test_cancel_frame_flushes_active_turn",
-      "expected_turn_states": ["turn-1:interrupted"]
+      "expected_turn_states": ["turn-1:started", "turn-1:interrupted"]
     }
   ]
 }

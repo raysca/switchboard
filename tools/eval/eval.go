@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"govoice/core"
@@ -50,19 +51,18 @@ type scenario struct {
 func RunAll() (Report, error) {
 	base := time.Unix(100, 0)
 	scenarios := []scenario{
-		{"barge_in", 40 * time.Millisecond, []string{"advance output generation", "discard old interruptible output"}, checkBargeIn},
-		{"flush", 100 * time.Millisecond, []string{"enqueue bounded output", "flush generation", "verify queue drained"}, checkFlush},
+		{"barge_in", 40 * time.Millisecond, []string{"observe runtime interruption", "advance output generation", "discard old output"}, checkBargeIn},
+		{"flush", 100 * time.Millisecond, []string{"enqueue queued and in-flight output", "wait for flush barrier", "verify new generation resumes"}, checkFlush},
 		{"turn_completion", 700 * time.Millisecond, []string{"start speech turn", "advance silence deadline", "observe completion"}, func() error { return checkTurn(base, true) }},
 		{"silence_timeout", 700 * time.Millisecond, []string{"observe activity", "advance silence deadline", "observe completion"}, func() error { return checkTurn(base, true) }},
 		{"no_speech_timeout", 10 * time.Second, []string{"start session without speech", "advance initial silence", "observe no-speech event"}, func() error { return checkTurn(base, false) }},
 		{"transcript_stabilization", 200 * time.Millisecond, []string{"observe final candidate", "complete turn", "advance grace", "verify one commit"}, checkTranscript},
 		{"late_final_and_invalidation", 200 * time.Millisecond, []string{"retire expired candidate", "reject late final", "invalidate incomplete turn"}, checkLateTranscript},
-		{"output_pacing_and_speaking", 20 * time.Millisecond, []string{"write paced turn-final audio", "verify output-derived speaking start and drain"}, checkPacingSpeaking},
+		{"output_pacing_and_speaking", 60 * time.Millisecond, []string{"write three paced audio frames", "verify order and media time", "verify speaking start and drain"}, checkPacingSpeaking},
 		{"tool_interruption_cancellation", time.Millisecond, []string{"interrupt active tool call", "verify executor cancellation"}, checkToolCancellation},
 		{"teardown_leak", time.Millisecond, []string{"start session runtime", "close and await teardown", "verify no supervised tasks leaked"}, checkSessionTeardown},
-		{"input_mute", time.Millisecond, []string{"mute turn manager", "verify observations do not advance", "unmute"}, func() error { return checkMute(base) }},
+		{"input_mute", time.Millisecond, []string{"mute turn manager and runtime admission", "verify input is dropped before processors", "unmute and resume audio"}, func() error { return checkMute(base) }},
 		{"rtvi_wire", time.Millisecond, []string{"encode semantic speech-start event", "verify RTVI envelope and identity"}, checkRTVI},
-		{"whisker_semantic", time.Millisecond, []string{"adapt debug event", "verify correlation and copied attributes"}, checkWhisker},
 	}
 	report := Report{Schema: "govoice.eval/v1", Results: make([]Result, 0, len(scenarios))}
 	for _, sc := range scenarios {
@@ -73,9 +73,16 @@ func RunAll() (Report, error) {
 		}
 		report.Results = append(report.Results, result)
 	}
+	for _, sc := range whisker.RunScenarios() {
+		result := Result{Scenario: "whisker_" + sc.Name, Passed: sc.Err == nil, DurationNS: int64(time.Millisecond), Steps: []string{"observe runtime frames", "adapt ordered semantic events", "verify correlation and privacy"}}
+		if sc.Err != nil {
+			result.Diagnostics = []string{safeDiagnostic(sc.Err)}
+		}
+		report.Results = append(report.Results, result)
+	}
 	report.Compatibility = Compatibility{
 		RTVI:          SuiteResult{Name: "pinned_rtvi_client", Status: "separate_suite", Evidence: []string{"node tools/compat/test_rtvi_client.js", "node tools/compat/verify_fixtures.js"}},
-		Whisker:       SuiteResult{Name: "whisker_semantic", Status: "pass", Evidence: []string{"tools/compat/whisker adapter scenarios"}},
+		Whisker:       SuiteResult{Name: "whisker_semantic", Status: whiskerStatus(report.Results), Evidence: []string{"tools/compat/whisker runtime frame scenarios"}},
 		Pipecat:       SuiteResult{Name: "pinned_pipecat_parity", Status: "separate_suite", Evidence: []string{"paired cases are maintained in docs/pipecat-compatibility.md"}},
 		PlaybackClear: "UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT",
 	}
@@ -85,6 +92,23 @@ func RunAll() (Report, error) {
 		}
 	}
 	return report, nil
+}
+
+func whiskerStatus(results []Result) string {
+	seen := false
+	for _, result := range results {
+		if len(result.Scenario) < len("whisker_") || result.Scenario[:len("whisker_")] != "whisker_" {
+			continue
+		}
+		seen = true
+		if !result.Passed {
+			return "fail"
+		}
+	}
+	if seen {
+		return "pass"
+	}
+	return "not_run"
 }
 
 func ExitCode(report Report) int {
@@ -117,6 +141,75 @@ func checkFlush() error {
 	}
 	if p.QueuedFrames() != 0 {
 		return fmt.Errorf("flush retained %d queued frames", p.QueuedFrames())
+	}
+	return checkInflightFlush()
+}
+
+func checkInflightFlush() error {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var writes atomic.Uint64
+	p := ws.NewPacedWriter(ws.DefaultPacerConfig(), func(context.Context, []byte) error {
+		if writes.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return nil
+	})
+	defer p.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx)
+	p.SetActiveGeneration(1)
+	frame := func(seq uint64, gen uint64) *core.OutputAudioFrame {
+		return &core.OutputAudioFrame{Samples: make([]byte, 960), SampleRate: 24000, Channels: 1, Duration: 20 * time.Millisecond, Turn: "eval", Gen: gen, Seq: seq}
+	}
+	if err := p.Enqueue(frame(1, 1)); err != nil {
+		return err
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		return errors.New("in-flight output never entered writer")
+	}
+	if err := p.Enqueue(frame(2, 1)); err != nil {
+		close(release)
+		return err
+	}
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- p.Flush(context.Background(), 1) }()
+	select {
+	case err := <-flushDone:
+		close(release)
+		return fmt.Errorf("flush acknowledged before in-flight write completed: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-flushDone:
+		if err != nil {
+			return err
+		}
+	case <-time.After(time.Second):
+		return errors.New("flush did not acknowledge completed write")
+	}
+	if p.QueuedFrames() != 0 || p.FramesDropped.Load() == 0 {
+		return errors.New("flush retained queued or in-flight generation-one output")
+	}
+	if err := p.Enqueue(frame(3, 2)); err != nil {
+		return err
+	}
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for writes.Load() < 2 {
+		select {
+		case <-deadline.C:
+			return errors.New("new-generation output did not resume after flush")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if writes.Load() != 2 {
+		return fmt.Errorf("stale queued output was written: %d writes", writes.Load())
 	}
 	return nil
 }
@@ -192,7 +285,100 @@ func checkMute(at time.Time) error {
 	if len(frames) != 0 {
 		return errors.New("muted observation emitted turn events")
 	}
-	return m.SetMuted(false, at.Add(3*time.Millisecond))
+	if err := m.SetMuted(false, at.Add(3*time.Millisecond)); err != nil {
+		return err
+	}
+	return checkRuntimeMuteGate()
+}
+
+type muteInputProbe struct{ audio atomic.Uint64 }
+
+func (p *muteInputProbe) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	if f.Type() == core.FrameInputAudio {
+		p.audio.Add(1)
+	}
+	return e.PushDirection(f, dir)
+}
+
+func checkRuntimeMuteGate() error {
+	probe := &muteInputProbe{}
+	pipe, err := core.NewPipeline(probe)
+	if err != nil {
+		return err
+	}
+	session, err := core.NewSession(9902, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		return err
+	}
+	if err := session.Start(); err != nil {
+		return err
+	}
+	defer session.Close()
+	select {
+	case <-session.Ready():
+	case <-time.After(time.Second):
+		return errors.New("mute probe session not ready")
+	}
+	states := make(chan bool, 2)
+	audioDelivered := make(chan struct{}, 1)
+	session.OnOutput = func(f core.Frame) {
+		if state, ok := f.(*core.InputMutedStateFrame); ok {
+			states <- state.Muted
+		}
+		if f.Type() == core.FrameInputAudio {
+			audioDelivered <- struct{}{}
+		}
+	}
+	if err := session.Post(&core.InputMuteFrame{}); err != nil {
+		return err
+	}
+	select {
+	case muted := <-states:
+		if !muted || !session.InputMuted() {
+			return errors.New("runtime mute state not admitted")
+		}
+	case <-time.After(time.Second):
+		return errors.New("runtime mute state not observed")
+	}
+	audio := &core.InputAudioFrame{Samples: make([]byte, 640), Encoding: core.EncodingPCM16LE, SampleRate: 16000, Channels: 1, Duration: 20 * time.Millisecond, Gen: 1}
+	if err := session.Post(audio); err != nil {
+		return err
+	}
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for session.AudioDropped.Load() == 0 {
+		select {
+		case <-deadline.C:
+			return errors.New("muted audio reached VAD/STT path")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if probe.audio.Load() != 0 {
+		return errors.New("muted audio reached processor")
+	}
+	if err := session.Post(&core.InputUnmuteFrame{}); err != nil {
+		return err
+	}
+	select {
+	case muted := <-states:
+		if muted || session.InputMuted() {
+			return errors.New("runtime unmute state not admitted")
+		}
+	case <-time.After(time.Second):
+		return errors.New("runtime unmute state not observed")
+	}
+	if err := session.Post(audio); err != nil {
+		return err
+	}
+	select {
+	case <-audioDelivered:
+	case <-time.After(time.Second):
+		return errors.New("audio did not resume after unmute")
+	}
+	if probe.audio.Load() != 1 {
+		return fmt.Errorf("unexpected VAD/STT input count %d", probe.audio.Load())
+	}
+	return nil
 }
 
 func checkTranscript() error {
@@ -287,6 +473,82 @@ func checkBargeIn() error {
 	if p.QueuedFrames() != 0 {
 		return fmt.Errorf("stale generation survived barge-in fence: queued=%d", p.QueuedFrames())
 	}
+	return checkRuntimeBargeIn()
+}
+
+func checkRuntimeBargeIn() error {
+	contextPool := core.NewConversationContext(core.ContextConfig{})
+	assistant := core.NewAssistantContextProcessor(contextPool, core.DefaultAssistantContextConfig())
+	transport := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+	pipe, err := core.NewPipeline(assistant, transport)
+	if err != nil {
+		return err
+	}
+	session, err := core.NewSession(9903, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		return err
+	}
+	observed := make(chan core.FrameType, 16)
+	session.OnFrame = func(f core.Frame, dir core.Direction) {
+		if dir == core.Downstream {
+			select {
+			case observed <- f.Type():
+			default:
+			}
+		}
+	}
+	if err := session.Start(); err != nil {
+		return err
+	}
+	defer session.Close()
+	select {
+	case <-session.Ready():
+	case <-time.After(time.Second):
+		return errors.New("barge-in session not ready")
+	}
+	if err := session.Post(&core.UserMessageFrame{Turn: "eval", Gen: 1}); err != nil {
+		return err
+	}
+	if err := session.Post(&core.UserStartedSpeakingFrame{Gen: 1}); err != nil {
+		return err
+	}
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	seenInterrupt := false
+	for !seenInterrupt {
+		select {
+		case kind := <-observed:
+			if kind == core.FrameInterruption {
+				seenInterrupt = true
+			}
+		case <-deadline.C:
+			return errors.New("runtime interruption was not observed")
+		}
+	}
+	if session.CurrentGeneration() != 2 || assistant.InterruptionCount.Load() != 1 {
+		return errors.New("interruption did not advance active generation")
+	}
+	for transport.FlushAcksSent.Load() == 0 {
+		select {
+		case <-deadline.C:
+			return errors.New("runtime flush acknowledgement absent")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	old := &core.OutputAudioFrame{Samples: []byte{1, 2}, SampleRate: 24000, Channels: 1, Turn: "eval", Gen: 1}
+	if err := session.Post(old); err != nil {
+		return err
+	}
+	for session.StaleDiscarded.Load() == 0 {
+		select {
+		case <-deadline.C:
+			return errors.New("stale output was not discarded after interruption")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if len(transport.GetWrittenFrames()) != 0 {
+		return errors.New("stale output was delivered after interruption")
+	}
 	return nil
 }
 
@@ -325,30 +587,54 @@ func checkToolCancellation() error {
 }
 
 func checkPacingSpeaking() error {
-	events := make(chan core.SpeakingStateFrame, 4)
-	p := ws.NewPacedWriter(ws.PacerConfig{}, func(context.Context, []byte) error { return nil })
+	writes := make(chan time.Time, 4)
+	completions := make(chan uint64, 4)
+	states := make(chan core.SpeakingStateFrame, 4)
+	p := ws.NewPacedWriter(ws.DefaultPacerConfig(), func(_ context.Context, samples []byte) error {
+		writes <- time.Now()
+		return nil
+	})
 	defer p.Close()
-	p.OnSpeakingState = func(event core.SpeakingStateFrame) { events <- event }
+	p.OnSpeakingState = func(event core.SpeakingStateFrame) { states <- event }
+	p.OnWriteComplete = func(frame *core.OutputAudioFrame, err error) {
+		if err == nil {
+			completions <- frame.Seq
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runDone := make(chan error, 1)
 	go func() { runDone <- p.Run(ctx) }()
 	p.SetActiveGeneration(1)
-	if err := p.Enqueue(&core.OutputAudioFrame{Samples: make([]byte, 960), SampleRate: 24000, Channels: 1, Duration: 20 * time.Millisecond, Turn: "eval", Gen: 1, UnitID: 1, IsFinal: true, TurnFinal: true}); err != nil {
-		p.Close()
-		cancel()
-		return err
+	for i := 0; i < 3; i++ {
+		samples := make([]byte, 960)
+		samples[0] = byte(i + 1)
+		if err := p.Enqueue(&core.OutputAudioFrame{Samples: samples, SampleRate: 24000, Channels: 1, Duration: 20 * time.Millisecond, Turn: "eval", Gen: 1, UnitID: 1, Seq: uint64(i + 1), IsFinal: i == 2, TurnFinal: i == 2}); err != nil {
+			return err
+		}
 	}
 	seenStart, seenStop := false, false
+	observed := make([]time.Time, 0, 3)
+	completed := make([]uint64, 0, 3)
 	deadline := time.NewTimer(time.Second)
 	defer deadline.Stop()
 	for !seenStop {
 		select {
-		case event := <-events:
+		case at := <-writes:
+			observed = append(observed, at)
+		case seq := <-completions:
+			completed = append(completed, seq)
+		case event := <-states:
 			if event.State == core.SpeakingStarted {
+				if seenStart {
+					return errors.New("speaking started more than once")
+				}
 				seenStart = true
 			}
 			if event.State == core.SpeakingStopped {
+				if !seenStart {
+					return errors.New("speaking stopped before start")
+				}
 				seenStop = true
 			}
 		case <-deadline.C:
@@ -361,6 +647,34 @@ func checkPacingSpeaking() error {
 	}
 	if !seenStart {
 		return errors.New("speaking stop observed without output-derived start")
+	}
+	// Channel delivery can select a state before a write that already happened.
+	for len(observed) < 3 {
+		select {
+		case at := <-writes:
+			observed = append(observed, at)
+		default:
+			return fmt.Errorf("speaking drained after %d/3 writes", len(observed))
+		}
+	}
+	for len(completed) < 3 {
+		select {
+		case seq := <-completions:
+			completed = append(completed, seq)
+		default:
+			return fmt.Errorf("only %d/3 frames completed", len(completed))
+		}
+	}
+	for i, seq := range completed {
+		if seq != uint64(i+1) {
+			return fmt.Errorf("paced write %d out of order: %d", i, seq)
+		}
+	}
+	if observed[2].Sub(observed[0]) < 30*time.Millisecond {
+		return errors.New("output frames were not paced against media time")
+	}
+	if p.FramesWritten.Load() != 3 {
+		return fmt.Errorf("expected three writes, got %d", p.FramesWritten.Load())
 	}
 	p.Close()
 	cancel()
@@ -405,17 +719,6 @@ func checkRTVI() error {
 	}
 	if m.Label != rtvi.LabelRTVI || m.Type != rtvi.TypeUserStartedSpeaking {
 		return errors.New("RTVI event mismatch")
-	}
-	return nil
-}
-func checkWhisker() error {
-	e := core.NewDebugEvent("turn.started", time.Unix(1, 0), "s", "t", 1, nil)
-	out, err := (whisker.Adapter{}).Adapt(e)
-	if err != nil {
-		return err
-	}
-	if out.SessionID != "s" || out.TurnID != "t" {
-		return errors.New("Whisker identity mismatch")
 	}
 	return nil
 }
