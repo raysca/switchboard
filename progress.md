@@ -128,9 +128,50 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 - [x] Task 6: Audio conditioning, filters, conversion, buffers.
 - [x] Task 7: Silence, turn detection, manager. Independent reviewer APPROVED and final independent tester PASS at `3563c8b`.
-- [ ] Task 8: Output pacing, speaking state, barge-in/flush.
+- [x] Task 8: Output pacing, speaking state, barge-in/flush. Independent reviewer APPROVED and final independent tester PASS at `f117b51`.
 - [ ] Task 9: STT commit/finalization.
 - [ ] Independent Phase 2 tester gate; record Gate B.
+
+### Task 8 closeout
+
+- Implementation and review commits: `cffcedc`, `1b4c1d3`, `059110d`,
+  `fa14406`, and `f117b51`. Independent reviewer APPROVED and final independent
+  tester PASS at `f117b51`. Task 8 is complete; Task 9 and the independent
+  Phase 2 tester remain open, so Gate B remains open. Next action is Task 9,
+  STT commit/finalization. The implementation and review-round entries below
+  are historical handoffs; their pending-review statuses are superseded here.
+- Four review rounds closed final-marker phase reconciliation, silent finals,
+  queue/admission races, callback re-entry, media-time drains and critical
+  retention, retirement/replay bounds, overlapping timeout outcomes, and
+  FakeTTS ordering. Round 4 escalated the two remaining defects: retained
+  critical markers lost around flush and completed units retaining admission
+  permission. Both received exact RED/GREEN regressions before final approval.
+- Final independent verification: critical-marker/replay regressions passed
+  race ×100 (400 cases), with marker counts 1 after flush and 0 after final
+  admission, 800 speaking transitions, 700 physical writes, all 200 completed
+  audio replays rejected with `ErrInvalidUnitID`, and 200 replayed markers
+  producing no effect. Broader Task 8 focused tests passed race ×25. Full
+  core/root/WebSocket/RTVI/Google/tagged-xAI race suites and vet passed, using
+  the documented macOS SDK workaround where needed. Detailed implementation
+  evidence remains in `.superpowers/sdd/2026-10-04-v2-execution/task-8-report.md`.
+- Durable design: one hardened `PacedWriter` owns copied, bounded queued output
+  and flush/write admission; speaking starts on successful non-empty writes
+  and ends once on whole-turn `TurnFinal` drain or terminal interruption.
+  Finality uses nonzero session-global monotonic `UnitID` values, bounded
+  pending/completed metadata (64 each), and unfinished admission identities
+  (128). Completion removes admission permission while preserving late-marker
+  metadata. Critical output, its media clock, and pending finality survive
+  flush; interruptible output remains fenced. Overlapping flush waiters share
+  one terminal failure result, and close/cancel clears all identity ledgers.
+- Real coder/websocket writes wait for completion and are not aborted by
+  default. The integration holds the writer wrapper after coder `Write`
+  returns, proving barrier waiting and same-connection reuse; it does not prove
+  recovery from cancellation of an actual in-progress coder write. The
+  separately tested timeout is terminal with no successful acknowledgement.
+  The playback probe remains unresolved:
+  `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`. Server flush
+  excludes bytes already accepted by the socket or buffered by the client;
+  neither RTVI stopped-speaking nor the recorded decision proves client clear.
 
 ### Task 8 initial implementation evidence
 
@@ -272,7 +313,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Review rounds addressed repeated stop/silence-origin drift, generation fencing, detector lock reentry and invalid decisions, old-turn retirement, dropped concurrent completions, stale pre-callback frames, unsafe confidence values, same-input suppression, reset timestamp leakage, and unbounded callback rescheduling. The escalation resolved no-op/rejected inputs invalidating queued work: preflight and commit now validate actual semantic state and epoch; every accepted eligible state change supplies a current successor, and identical positive or negative inputs reuse their result.
 - Final independent evidence passed the entire turn package under race ×100, the new 14-case queued-state table under race ×100, focused tests, full core race tests, and vet. Formatting/diff checks and the dependency/timer boundary passed: no provider, Server, storage, STT, transport, wall-clock timer, or manager-created goroutine dependency was introduced. Native audio verification used the documented Xcode macOS 26 SDK override for the SDK 27 linker issue.
 - Durable assumptions: deterministic caller-supplied timestamps and typed turn/generation identity; silence detection plus guarded hybrid semantic evidence only, with no model integration; at most two plugin callbacks per outer evaluation before `SilenceDetector` fallback; positive `MaxRetiredTurns` bounds retired IDs per generation and fails closed at capacity, with generation advance/reset clearing the ledger. No provider, session-termination, STT/context, transport, or output-flush integration is claimed.
-- Task 7 is complete. Tasks 8–9 and the independent Phase 2 tester remain open, so Gate B remains open. Next action: Task 8, output pacing, speaking state, and barge-in/flush. Historical RED/GREEN and review-round details follow and are also recorded in `.superpowers/sdd/2026-10-04-v2-execution/task-7-report.md`; their pending-review statuses describe those earlier handoffs.
+- Task 7 is complete. At its closeout, Tasks 8–9 and the independent Phase 2 tester remained open; Task 8 is now closed above. Task 9 and the independent Phase 2 tester remain open, so Gate B remains open. Historical RED/GREEN and review-round details follow and are also recorded in `.superpowers/sdd/2026-10-04-v2-execution/task-7-report.md`; their pending-review statuses describe those earlier handoffs.
 
 #### Task 7 initial implementation evidence
 
@@ -376,4 +417,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Tasks 1–7 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Next action is Task 8: output pacing, speaking state, and barge-in/flush, followed by Task 9 and the independent Phase 2 tester. Gates B–G remain open.
+Tasks 1–8 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Next action is Task 9: STT commit/finalization, followed by the independent Phase 2 tester. Gates B–G remain open.
