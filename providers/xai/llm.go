@@ -140,6 +140,9 @@ func (p *Processor) Close() error {
 		p.activeCancel()
 		p.activeCancel = nil
 	}
+	if p.cfg.ToolLoop != nil {
+		p.cfg.ToolLoop.Close()
+	}
 	return nil
 }
 

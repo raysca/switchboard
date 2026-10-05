@@ -502,6 +502,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				p.Errors.Add(1)
 				return
 			}
+			defer loop.Close()
 			loop = loop.WithCurrentFence(func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) })
 			_, loopErr = loop.Run(genCtx, calls, func(continueCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
 				committed = false

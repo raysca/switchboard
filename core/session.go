@@ -121,7 +121,8 @@ type Session struct {
 	traceQueue     *AsyncTracer
 	ownsTraceQueue bool
 	tracing        bool
-	turnSpans      map[TurnID]Span // run-loop owned; finalized after runLoopDone
+	turnSpans      map[TurnID]Span    // run-loop owned; finalized after runLoopDone
+	traceOrigins   map[Frame]struct{} // run-loop owned, reset for each envelope
 }
 
 // NewSession creates and initializes a new Session with the specified pipeline and budget.
@@ -588,6 +589,9 @@ func (s *Session) processEnvelope(env Envelope) bool {
 
 	// Reset per-envelope emit counter and set watchdog start time
 	s.emitsCount = 0
+	if s.tracing {
+		s.traceOrigins = map[Frame]struct{}{env.Frame: {}}
+	}
 	s.procStart.Store(time.Now().UnixNano())
 	defer s.procStart.Store(0)
 
@@ -947,13 +951,44 @@ func (e *sessionEmitter) PushDirection(f Frame, dir Direction) error {
 		}
 		return e.s.deliver(f, dir, e.index-1)
 	}
+	// A frame forwarded by a processor is the same object as its origin and
+	// must not produce a second semantic event. Fresh inline frames are traced
+	// at their emitting boundary exactly once.
+	_, forwarded := e.s.traceOrigins[f]
+	if !forwarded {
+		e.s.traceOrigins[f] = struct{}{}
+	}
 	parent := e.s.traceCtx
 	if parent == nil {
 		parent = e.s.ctx
 	}
-	span := StartSpanSafe(parent, e.s.tracer, e.s.traceEvent(f))
+	turn := traceTurnID(f)
+	if !forwarded && turn != "" {
+		if existing := e.s.turnSpans[turn]; existing != nil {
+			parent = ContextWithSpan(e.s.ctx, existing)
+		} else {
+			turnSpan := StartSpanSafe(parent, e.s.tracer, NewTraceEvent("turn.start", time.Now(), SessionID(strconv.FormatUint(e.s.id, 10)), turn, traceGeneration(f), e.s.tracePolicy, nil))
+			e.s.turnSpans[turn] = turnSpan
+			parent = ContextWithSpan(e.s.ctx, turnSpan)
+		}
+	}
+	var span Span = noopSpan{}
+	if !forwarded {
+		span = StartSpanSafe(parent, e.s.tracer, e.s.traceEvent(f))
+	}
 	var err error
-	defer func() { span.End(traceStatusError(err, "processor_error")) }()
+	previous := e.s.traceCtx
+	e.s.traceCtx = ContextWithSpan(parent, span)
+	defer func() {
+		e.s.traceCtx = previous
+		span.End(traceStatusError(err, "processor_error"))
+		if !forwarded && turn != "" && traceTurnTerminal(f) {
+			if turnSpan := e.s.turnSpans[turn]; turnSpan != nil {
+				turnSpan.End(traceStatusError(err, "processor_error"))
+				e.s.turnSpans[turn] = nil
+			}
+		}
+	}()
 	if dir == Downstream {
 		err = e.s.deliver(f, dir, e.index+1)
 		return err

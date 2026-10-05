@@ -82,3 +82,12 @@ path bypasses trace allocation/defer work entirely; this restored the xAI STT
 turn-semantics race stability (20/20 after five timeouts in the prior run).
 Task 13 remains
 unchecked pending follow-up review.
+
+Correction round 2 additionally restores exactly-once inline semantic origin
+delivery by suppressing same-frame pass-through duplicates, carries the inline
+semantic span into downstream processor context, and gives inline terminal turn
+events the same turn-span close path. ToolLoop now owns one bounded dispatcher
+per loop (rather than one per call), exposes `Close`, and both xAI and the
+per-request Google loop lifecycle close it. The provider-specific lifecycle
+span vocabulary requested by the second review remains pending; existing
+provider frame/reentry semantics are not claimed to replace that work.

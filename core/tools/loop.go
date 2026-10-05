@@ -70,6 +70,7 @@ type ToolLoop struct {
 	executor    ToolExecutor
 	history     *core.ConversationContext
 	cfg         ToolLoopConfig
+	ownedTracer *core.AsyncTracer
 }
 
 func NewToolLoop(definitions []ToolDefinition, executor ToolExecutor, history *core.ConversationContext, cfg ToolLoopConfig) (*ToolLoop, error) {
@@ -96,7 +97,23 @@ func NewToolLoop(definitions []ToolDefinition, executor ToolExecutor, history *c
 	if cfg.Tracer == nil {
 		cfg.Tracer = core.NoopTracer{}
 	}
-	return &ToolLoop{definitions: defs, executor: executor, history: history, cfg: cfg}, nil
+	loop := &ToolLoop{definitions: defs, executor: executor, history: history, cfg: cfg}
+	if _, noop := cfg.Tracer.(core.NoopTracer); !noop {
+		if _, async := cfg.Tracer.(*core.AsyncTracer); !async {
+			loop.ownedTracer = core.NewAsyncTracer(cfg.Tracer, 0)
+			loop.cfg.Tracer = loop.ownedTracer
+		}
+	}
+	return loop, nil
+}
+
+// Close releases the loop-owned asynchronous tracer. It is safe to call more
+// than once and is a no-op when the caller supplied an AsyncTracer or tracing
+// is disabled. Owners that retain a ToolLoop must call Close at teardown.
+func (l *ToolLoop) Close() {
+	if l != nil && l.ownedTracer != nil {
+		l.ownedTracer.Close()
+	}
 }
 
 // WithCurrentFence returns a derived loop whose generation predicate is the
@@ -269,16 +286,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		"tool.arguments": string(call.Arguments),
 	})
 	event.ToolCallID = call.ID
-	tracer := l.cfg.Tracer
-	var isolated *core.AsyncTracer
-	if _, alreadyAsync := tracer.(*core.AsyncTracer); !alreadyAsync {
-		// A loop can be used outside Session, so it must establish the same
-		// non-blocking exporter boundary itself. Close after End to drain this
-		// operation without retaining a worker for the loop's lifetime.
-		isolated = core.NewAsyncTracer(tracer, 0)
-		tracer = isolated
-	}
-	span := core.StartSpanSafe(callCtx, tracer, event)
+	span := core.StartSpanSafe(callCtx, l.cfg.Tracer, event)
 	traceEnded := false
 	endTrace := func(category string) {
 		if traceEnded {
@@ -287,16 +295,10 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		traceEnded = true
 		if category == "" {
 			span.End(nil)
-			if isolated != nil {
-				isolated.Close()
-			}
 			return
 		}
 		// Only canonical loop categories reach tracing, never executor text.
 		span.End(errors.New(category))
-		if isolated != nil {
-			isolated.Close()
-		}
 	}
 	func() {
 		defer func() {
