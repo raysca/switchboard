@@ -93,3 +93,17 @@ Round 2 verification: focused context race x50, full core race/vet, Google
 race/vet, xAI-tagged provider race/vet, and root xAI-tagged race/vet including
 RTVI/WebSocket integration all PASS with the documented SDK override where
 required.
+
+## Correction round 3
+
+RED reproduced two pending-call eviction holes: the replay ledger authorized a
+first result after its call message was gone, and budget enforcement could evict
+the newly completed exchange while returning success. The chosen policy keeps
+only completed call/result identities authoritative after message eviction.
+Pending calls require a retained call message, and first-result insertion is a
+transaction that restores messages plus eviction accounting if the call/result
+exchange does not remain in context.
+
+Round 3 verification: focused context race x50, full core race/vet, Google
+race/vet, xAI-tagged provider race/vet, and root xAI-tagged race/vet including
+RTVI/WebSocket integration all PASS.

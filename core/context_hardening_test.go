@@ -206,6 +206,54 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	}
 }
 
+func TestContextPendingToolCallCannotCompleteAfterCallEviction(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 3, MaxTokens: 1000})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})
+	_ = ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now())
+	_ = ctx.AddMessage(Message{Role: RoleAssistant, Content: "done", TurnID: "t1"})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "two", TurnID: "t2"})
+	before := ctx.Messages()
+	if err := ctx.AddToolResultStatus("t1", 1, "c", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); !errors.Is(err, ErrUnmatchedToolResult) {
+		t.Fatalf("retired pending call result = %v", err)
+	}
+	if !reflect.DeepEqual(ctx.Messages(), before) {
+		t.Fatal("retired pending result mutated context")
+	}
+}
+
+func TestContextToolResultTransactionRejectsSelfEviction(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 4, MaxTokens: 1000})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})
+	_ = ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now())
+	_ = ctx.AddMessage(Message{Role: RoleAssistant, Content: "done", TurnID: "t1"})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "two", TurnID: "t2"})
+	before := ctx.Messages()
+	beforeEvictions := ctx.EvictionCount()
+	beforePairs := ctx.EvictedTurnPairs()
+	if err := ctx.AddToolResultStatus("t1", 1, "c", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
+		t.Fatalf("self-evicted result = %v", err)
+	}
+	if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions || !reflect.DeepEqual(ctx.EvictedTurnPairs(), beforePairs) {
+		t.Fatal("self-evicted result transaction was not rolled back")
+	}
+	// The failed first result must not become an accepted completed replay.
+	if err := ctx.AddToolResultStatus("t1", 1, "c", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
+		t.Fatalf("failed result leaked into ledger: %v", err)
+	}
+}
+
+func TestContextPendingToolResultCommitsWhileCallRetained(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 4, MaxTokens: 1000})
+	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})
+	_ = ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now())
+	if err := ctx.AddToolResultStatus("t1", 1, "c", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := ctx.Messages(); len(got) != 3 || got[2].Kind != MessageToolResult {
+		t.Fatalf("retained result = %#v", got)
+	}
+}
+
 func TestAssistantContextWaitsForEveryDeliveryAndCommitsOnce(t *testing.T) {
 	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	p := NewAssistantContextProcessor(store, AssistantContextConfig{MinUnitLength: 2, MaxUnitLength: 100})

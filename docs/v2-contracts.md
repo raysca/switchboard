@@ -94,6 +94,10 @@ idempotent, conflicting reuse or an unmatched result fails closed. Direct
 tool-kind `AddMessage` calls are rejected so this validation cannot be bypassed.
 Replay identities survive message-window eviction in a bounded ledger; once the
 ledger is full, new identities fail closed rather than weakening the fence.
+Only completed call/result identities remain replay-authoritative after history
+eviction. A pending call whose message was evicted cannot authorize its first
+result, and a result insertion that would evict its own exchange is rolled back
+with all eviction accounting unchanged.
 Generationless V1 user frames are normalized to the effective session
 generation before assistant cancellation matching.
 The `core/tools` values are aliases of the

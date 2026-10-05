@@ -298,12 +298,24 @@ func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callI
 		}
 		return ErrToolCorrelation
 	}
+	if !c.hasToolMessageLocked(MessageToolCall, turn, gen, callID) {
+		return ErrUnmatchedToolResult
+	}
 	content := string(append([]byte(nil), result...))
 	if at.IsZero() {
 		at = time.Now()
 	}
+	originalMessages := append([]Message(nil), c.messages...)
+	originalEvictions := c.evictions
+	originalPairs := append([]string(nil), c.evictedPairs...)
 	if err := c.addMessageLocked(Message{Role: RoleTool, Kind: MessageToolResult, Content: content, TurnID: turn, ToolCallID: callID, Generation: gen, ToolStatus: status, ToolErrorCategory: safeError, CreatedAt: at}); err != nil {
 		return err
+	}
+	if !c.hasToolMessageLocked(MessageToolCall, turn, gen, callID) || !c.hasToolMessageLocked(MessageToolResult, turn, gen, callID) {
+		c.messages = originalMessages
+		c.evictions = originalEvictions
+		c.evictedPairs = originalPairs
+		return ErrContextLimitExceeded
 	}
 	identity.hasResult = true
 	identity.status = status
@@ -311,6 +323,15 @@ func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callI
 	identity.safeError = safeError
 	c.toolLedger[callID] = identity
 	return nil
+}
+
+func (c *ConversationContext) hasToolMessageLocked(kind MessageKind, turn string, gen uint64, callID string) bool {
+	for _, message := range c.messages {
+		if message.Kind == kind && message.TurnID == turn && message.Generation == gen && message.ToolCallID == callID {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneMessage(m Message) (Message, error) {

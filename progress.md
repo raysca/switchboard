@@ -467,6 +467,12 @@ eviction with fail-closed saturation, and rejects invalid raw JSON or non-finite
 metadata atomically. The system-replacement rollback regression now proves an
 eligible old turn is tentatively evicted before rollback. Re-review remains
 pending.
+
+Task 10 correction round 3 makes tool exchange insertion atomic with context
+retention: evicted pending calls cannot authorize first results, self-evicting
+result transactions roll back messages and eviction accounting, and only
+completed exchanges remain exact-replay fences after eviction. Re-review remains
+pending.
 - [ ] Task 11: Bounded ToolLoop behavior consuming Task 1 public types.
 - [ ] Task 12: Google/xAI tool adapters only; usage is P1 Task 32.
 - [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.
