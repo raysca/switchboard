@@ -345,12 +345,15 @@ func (r CredentialRepository) List(ctx context.Context) ([]Credential, error) {
 
 type MCPServer struct {
 	ID, Name, Endpoint, Transport, AuthCredentialID, ValidationState, LatestDiscoveryID string
+	Description                                                                         string
 	Enabled                                                                             bool
+	LastConnectedAt, LastDiscoveredAt, CreatedAt, UpdatedAt                             time.Time
 }
 type MCPTool struct {
-	RemoteName string
-	SchemaJSON []byte
-	SchemaHash string
+	RemoteName  string
+	Description string
+	SchemaJSON  []byte
+	SchemaHash  string
 }
 type MCPDiscovery struct {
 	ID, ServerID, DiscoveryHash string
@@ -368,8 +371,101 @@ func (r MCPRepository) CreateServer(ctx context.Context, m MCPServer) error {
 		return err
 	}
 	now := utc(time.Now())
-	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO mcp_servers(id,name,endpoint,transport,auth_credential_id,enabled,validation_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)"), m.ID, m.Name, m.Endpoint, m.Transport, nullable(m.AuthCredentialID), boolValue(r.s.dialect, m.Enabled), m.ValidationState, now, now)
+	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO mcp_servers(id,name,endpoint,transport,auth_credential_id,enabled,validation_state,created_at,updated_at,description) VALUES(?,?,?,?,?,?,?,?,?,?)"), m.ID, m.Name, m.Endpoint, m.Transport, nullable(m.AuthCredentialID), boolValue(r.s.dialect, m.Enabled), m.ValidationState, now, now, m.Description)
 	return err
+}
+
+func (r MCPRepository) Server(ctx context.Context, id string) (MCPServer, error) {
+	var m MCPServer
+	var auth, latest, connected, discovered sql.NullString
+	var enabled bool
+	var created, updated string
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,endpoint,transport,auth_credential_id,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at FROM mcp_servers WHERE id=?"), id).Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated)
+	if err != nil {
+		return m, err
+	}
+	m.AuthCredentialID, m.LatestDiscoveryID, m.Enabled = auth.String, latest.String, enabled
+	if m.CreatedAt, err = parseTime(created); err != nil {
+		return m, err
+	}
+	if m.UpdatedAt, err = parseTime(updated); err != nil {
+		return m, err
+	}
+	if connected.Valid {
+		if m.LastConnectedAt, err = parseTime(connected.String); err != nil {
+			return m, err
+		}
+	}
+	if discovered.Valid {
+		if m.LastDiscoveredAt, err = parseTime(discovered.String); err != nil {
+			return m, err
+		}
+	}
+	return m, nil
+}
+
+func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
+	rows, err := r.s.db.QueryContext(ctx, "SELECT id,name,description,endpoint,transport,auth_credential_id,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at FROM mcp_servers ORDER BY name,id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MCPServer
+	for rows.Next() {
+		var m MCPServer
+		var auth, latest, connected, discovered sql.NullString
+		var enabled bool
+		var created, updated string
+		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated); err != nil {
+			return nil, err
+		}
+		m.AuthCredentialID, m.LatestDiscoveryID, m.Enabled = auth.String, latest.String, enabled
+		if m.CreatedAt, err = parseTime(created); err != nil {
+			return nil, err
+		}
+		if m.UpdatedAt, err = parseTime(updated); err != nil {
+			return nil, err
+		}
+		if connected.Valid {
+			if m.LastConnectedAt, err = parseTime(connected.String); err != nil {
+				return nil, err
+			}
+		}
+		if discovered.Valid {
+			if m.LastDiscoveredAt, err = parseTime(discovered.String); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (r MCPRepository) LatestDiscovery(ctx context.Context, serverID string) (MCPDiscovery, error) {
+	var id sql.NullString
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT latest_discovery_id FROM mcp_servers WHERE id=?"), serverID).Scan(&id)
+	if err != nil {
+		return MCPDiscovery{}, err
+	}
+	if !id.Valid {
+		return MCPDiscovery{}, sql.ErrNoRows
+	}
+	return r.Discovery(ctx, id.String)
+}
+
+func (r MCPRepository) SetValidation(ctx context.Context, id, state string, connected, discovered time.Time) error {
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET validation_state=?,last_connected_at=COALESCE(?,last_connected_at),last_discovered_at=COALESCE(?,last_discovered_at),updated_at=? WHERE id=?"), state, nullTime(connected), nullTime(discovered), utc(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools []MCPTool) (MCPDiscovery, error) {
 	var out MCPDiscovery
@@ -409,7 +505,7 @@ func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools 
 			return err
 		}
 		for _, t := range sorted {
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO mcp_tools(discovery_id,remote_name,schema_json,schema_hash) VALUES(?,?,?,?)"), out.ID, t.RemoteName, string(t.SchemaJSON), t.SchemaHash); err != nil {
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO mcp_tools(discovery_id,remote_name,schema_json,schema_hash,description) VALUES(?,?,?,?,?)"), out.ID, t.RemoteName, string(t.SchemaJSON), t.SchemaHash, t.Description); err != nil {
 				return err
 			}
 		}
@@ -438,14 +534,14 @@ func (r MCPRepository) Discovery(ctx context.Context, id string) (MCPDiscovery, 
 	if d.CreatedAt, err = parseTime(created); err != nil {
 		return d, err
 	}
-	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT remote_name,schema_json,schema_hash FROM mcp_tools WHERE discovery_id=? ORDER BY remote_name"), id)
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT remote_name,description,schema_json,schema_hash FROM mcp_tools WHERE discovery_id=? ORDER BY remote_name"), id)
 	if err != nil {
 		return d, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var t MCPTool
-		if err := rows.Scan(&t.RemoteName, &t.SchemaJSON, &t.SchemaHash); err != nil {
+		if err := rows.Scan(&t.RemoteName, &t.Description, &t.SchemaJSON, &t.SchemaHash); err != nil {
 			return d, err
 		}
 		d.Tools = append(d.Tools, t)
