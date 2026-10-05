@@ -260,8 +260,17 @@ func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name 
 	if at.IsZero() {
 		at = time.Now()
 	}
+	originalMessages := append([]Message(nil), c.messages...)
+	originalEvictions := c.evictions
+	originalPairs := append([]string(nil), c.evictedPairs...)
 	if err := c.addMessageLocked(Message{Role: RoleAssistant, Kind: MessageToolCall, Content: string(append([]byte(nil), arguments...)), TurnID: turn, ToolCallID: callID, ToolName: name, Generation: gen, CreatedAt: at}); err != nil {
 		return err
+	}
+	if !c.hasToolMessageLocked(MessageToolCall, turn, gen, callID) {
+		c.messages = originalMessages
+		c.evictions = originalEvictions
+		c.evictedPairs = originalPairs
+		return ErrContextLimitExceeded
 	}
 	c.toolLedger[callID] = toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments)}
 	return nil

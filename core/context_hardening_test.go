@@ -242,6 +242,40 @@ func TestContextToolResultTransactionRejectsSelfEviction(t *testing.T) {
 	}
 }
 
+func TestContextToolCallTransactionRejectsSelfEviction(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 3, MaxTokens: 1000, MaxToolIdentities: 1})
+	for _, message := range []Message{
+		{Role: RoleUser, Content: "one", TurnID: "t1"},
+		{Role: RoleAssistant, Content: "done", TurnID: "t1"},
+		{Role: RoleUser, Content: "two", TurnID: "t2"},
+	} {
+		if err := ctx.AddMessage(message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := ctx.Messages()
+	beforeEvictions := ctx.EvictionCount()
+	beforePairs := ctx.EvictedTurnPairs()
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
+			t.Fatalf("self-evicted call attempt %d = %v", attempt, err)
+		}
+		if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions || !reflect.DeepEqual(ctx.EvictedTurnPairs(), beforePairs) {
+			t.Fatalf("self-evicted call attempt %d changed context or eviction accounting", attempt)
+		}
+	}
+	// A failed call must neither reserve its ID nor consume the sole ledger slot.
+	if err := ctx.AddToolCall("t2", 2, "c", "lookup", []byte(`{}`), time.Now()); err != nil {
+		t.Fatalf("failed call retained phantom identity or capacity: %v", err)
+	}
+	if err := ctx.AddToolResult("t2", 2, "c", []byte(`{"ok":true}`), "", time.Now()); err != nil {
+		t.Fatalf("retained call could not accept result: %v", err)
+	}
+	if got := ctx.Messages(); len(got) != 3 || got[1].Kind != MessageToolCall || got[2].Kind != MessageToolResult {
+		t.Fatalf("retained exchange = %#v", got)
+	}
+}
+
 func TestContextPendingToolResultCommitsWhileCallRetained(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 4, MaxTokens: 1000})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})

@@ -107,3 +107,19 @@ exchange does not remain in context.
 Round 3 verification: focused context race x50, full core race/vet, Google
 race/vet, xAI-tagged provider race/vet, and root xAI-tagged race/vet including
 RTVI/WebSocket integration all PASS.
+
+## Correction round 4
+
+RED: `TestContextToolCallTransactionRejectsSelfEviction` reproduced the
+`MaxMessages: 3` case: user t1, assistant t1, user t2, then a tool call for
+t1 returned nil even though insertion evicted that same call. GREEN: call
+insertion now verifies the new call remains in history before reserving its
+replay identity. Otherwise it restores messages, eviction count, and evicted
+turn pairs. The regression retries the rejected call, checks unchanged
+accounting, then reuses its ID and the sole ledger slot for a retained t2
+call/result exchange.
+
+Verification: focused context race x50; full core race/vet with the documented
+Xcode SDK override; Google race/vet; xAI-tagged provider race/vet; root
+xAI-tagged race/vet; and transport race tests all PASS. Task 10 remains
+unchecked pending independent review and testing.

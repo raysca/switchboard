@@ -473,6 +473,12 @@ retention: evicted pending calls cannot authorize first results, self-evicting
 result transactions roll back messages and eviction accounting, and only
 completed exchanges remain exact-replay fences after eviction. Re-review remains
 pending.
+
+Task 10 correction round 4 rejects a new tool call when budget enforcement
+evicts that same call. The rejected insertion restores messages, eviction
+accounting, and replay-ledger capacity; exact retries remain rejects. Focused
+context race x50, full core/provider/root-tagged race and vet, and transport
+race checks pass. Independent re-review remains pending.
 - [ ] Task 11: Bounded ToolLoop behavior consuming Task 1 public types.
 - [ ] Task 12: Google/xAI tool adapters only; usage is P1 Task 32.
 - [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.
