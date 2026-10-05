@@ -115,6 +115,43 @@ func (noopSpan) AddEvent(TraceEvent)                          {}
 func (noopSpan) End(error)                                    {}
 
 type spanContextKey struct{}
+type traceContextKey struct{}
+
+// TraceContext is the provider-safe tracing handle carried through processor
+// contexts. It exposes only the public tracer and immutable admission policy;
+// providers never depend on Session internals or persistence.
+type TraceContext struct {
+	Tracer Tracer
+	Policy TracePolicy
+}
+
+// ContextWithTraceContext carries the runtime trace configuration into async
+// processor work while normal context cancellation/value propagation remains
+// intact.
+func ContextWithTraceContext(ctx context.Context, tracer Tracer, policy TracePolicy) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, traceContextKey{}, TraceContext{Tracer: tracer, Policy: policy})
+}
+
+func TraceContextFromContext(ctx context.Context) TraceContext {
+	if ctx == nil {
+		return TraceContext{Tracer: NoopTracer{}}
+	}
+	trace, _ := ctx.Value(traceContextKey{}).(TraceContext)
+	if trace.Tracer == nil {
+		trace.Tracer = NoopTracer{}
+	}
+	return trace
+}
+
+// StartContextSpan applies the session-selected policy and parentage carried
+// by ctx. Exporter panics are isolated like all core runtime spans.
+func StartContextSpan(ctx context.Context, name string, session SessionID, turn TurnID, gen Generation, attributes map[string]any) Span {
+	trace := TraceContextFromContext(ctx)
+	return StartSpanSafe(ctx, trace.Tracer, NewTraceEvent(name, time.Now(), session, turn, gen, trace.Policy, attributes))
+}
 
 // ContextWithSpan carries a parent span into child work.
 func ContextWithSpan(ctx context.Context, span Span) context.Context {

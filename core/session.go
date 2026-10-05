@@ -265,7 +265,7 @@ func (s *Session) Start() error {
 	s.admissionMu.Unlock()
 	s.traceCtx = s.ctx
 	s.sessionSpan = StartSpanSafe(s.ctx, tracer, NewTraceEvent("session.start", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), "", Generation(s.CurrentGeneration()), policy, nil))
-	s.traceCtx = ContextWithSpan(s.ctx, s.sessionSpan)
+	s.traceCtx = ContextWithTraceContext(ContextWithSpan(s.ctx, s.sessionSpan), s.tracer, policy)
 	s.turnSpans = make(map[TurnID]Span)
 	close(s.ready)
 

@@ -91,3 +91,9 @@ per loop (rather than one per call), exposes `Close`, and both xAI and the
 per-request Google loop lifecycle close it. The provider-specific lifecycle
 span vocabulary requested by the second review remains pending; existing
 provider frame/reentry semantics are not claimed to replace that work.
+
+Round 3 adds `TraceContext` propagation through processor contexts and starts
+Google/xAI LLM request spans at their asynchronous request boundaries, with one
+first-output event per request. This is intentionally only the first provider
+boundary slice; STT/TTS/VAD/transport operation spans remain outstanding and
+Task 13 must stay open.

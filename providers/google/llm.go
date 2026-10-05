@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"govoice/core"
 	"govoice/core/tools"
@@ -374,6 +375,9 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		var fullTextBuilder strings.Builder
 		var nativeHistory []GoogleNativeExchange
 		requestModel := func(requestCtx context.Context) ([]core.ToolCall, error) {
+			span := core.StartContextSpan(requestCtx, "llm.request", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "google", "model": p.cfg.Model})
+			defer span.End(nil)
+			firstOutput := false
 			streamCtx, cancelStream := context.WithCancel(requestCtx)
 			defer cancelStream()
 			var chunkCh <-chan LLMStreamChunk
@@ -429,6 +433,10 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 						p.TotalTokens.Store(int64(chunk.TotalTokens))
 					}
 					if chunk.Text != "" {
+						if !firstOutput {
+							firstOutput = true
+							span.AddEvent(core.NewTraceEvent("llm.first_output", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
+						}
 						if !p.isCurrentGeneration(gen) {
 							p.Stale.Add(1)
 							return nil, ErrGenerationMismatch
@@ -449,6 +457,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 					nativeContents = append(nativeContents, chunk.NativeContents...)
 				}
 			}
+			span.AddEvent(core.NewTraceEvent("llm.complete", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
 			if len(calls) > 0 {
 				// Native provider parts already contain the response text, including
 				// reasoning/signature-bearing and text-only chunks. Avoid replaying

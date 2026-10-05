@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"govoice/core"
 )
@@ -311,6 +312,9 @@ func ParseXAIToolCalls(items []XAIResponseOutputItem, session, turn string, gene
 }
 
 func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesRequest, gen uint64, turn string, s core.SessionController, text *strings.Builder) ([]XAIResponseOutputItem, int, int, int, error) {
+	span := core.StartContextSpan(ctx, "llm.request", core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "xai", "model": p.cfg.Model})
+	defer span.End(nil)
+	firstOutput := false
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, 0, 0, 0, fmt.Errorf("marshal xai request: %w", err)
@@ -483,6 +487,10 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 				delta = chunk.Choices[0].Delta.Content
 			}
 			if delta != "" {
+				if !firstOutput {
+					firstOutput = true
+					span.AddEvent(core.NewTraceEvent("llm.first_output", time.Now(), core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(ctx).Policy, nil))
+				}
 				committed = true
 				roundText.WriteString(delta)
 				text.WriteString(delta)
