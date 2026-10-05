@@ -247,7 +247,12 @@ Google `IsFinal` is retained as a provider-final hypothesis for one audio
 portion; Google `Stability` is admitted only on non-final hypotheses, matching
 the generated Speech V2 contract. Every result in a response is consumed.
 Result-end offsets order sequential final segments, and text/offset overlap
-reconciles audio replay at stream rotation; interim output includes the
+reconciles audio replay at stream rotation; nonoverlapping segments are appended
+faithfully even when words repeat, while text overlap is applied only to proven
+overlapping media intervals. Rotation media origins and overlap are per turn,
+not session-global. Assembly identities and segments are bounded; a newer
+generation reclaims fenced state and active-capacity exhaustion fails explicitly
+instead of returning an incomplete transcript. Interim output includes the
 committed segment prefix. xAI `is_final` is provider-final but does not close an
 utterance; `speech_final` and `transcript.done` supply the stronger utterance
 boundary, with nonempty done text taking precedence over the prior partial.
@@ -255,6 +260,10 @@ Streams retain the turn/generation bound when opened, so a draining old stream
 cannot be relabeled by a later speech start. The common policy, not either
 adapter, decides commitment. Production server and demo assembly keep nonzero
 grace and timeout defaults because the lifecycle driver supplies due advances.
+Typed xAI completion sends the matching stream's audio-done signal and starts a
+bounded drain; typed interruption cancels only that immutable owner. Starting a
+new typed turn retires a completed drain before opening its replacement, and a
+failed supervised receiver start is returned to the pipeline.
 
 **Acceptance criteria**
 

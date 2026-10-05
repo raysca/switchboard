@@ -15,18 +15,19 @@ import (
 
 // Sentinel provider-neutral errors.
 var (
-	ErrProviderAuth        = errors.New("google provider: authentication failed")
-	ErrProviderRateLimit   = errors.New("google provider: rate limit exceeded")
-	ErrProviderUnavailable = errors.New("google provider: service unavailable")
-	ErrProviderTimeout     = errors.New("google provider: operation timed out")
-	ErrProviderInternal    = errors.New("google provider: internal provider error")
-	ErrProviderBadRequest  = errors.New("google provider: invalid request parameters")
-	ErrCircuitOpen         = errors.New("google provider: circuit breaker open")
-	ErrGenerationMismatch  = errors.New("google provider: stale generation rejected")
-	ErrRetryCommitted      = errors.New("google provider: retry prohibited after committed output")
-	ErrUnitTooLong         = errors.New("google provider: synthesis unit exceeds maximum character limit")
-	ErrRequestTooLarge     = errors.New("google provider: request payload exceeds maximum byte limit")
-	ErrQuotaExhausted      = errors.New("google provider: stream quota headroom exhausted")
+	ErrProviderAuth               = errors.New("google provider: authentication failed")
+	ErrProviderRateLimit          = errors.New("google provider: rate limit exceeded")
+	ErrProviderUnavailable        = errors.New("google provider: service unavailable")
+	ErrProviderTimeout            = errors.New("google provider: operation timed out")
+	ErrProviderInternal           = errors.New("google provider: internal provider error")
+	ErrProviderBadRequest         = errors.New("google provider: invalid request parameters")
+	ErrCircuitOpen                = errors.New("google provider: circuit breaker open")
+	ErrGenerationMismatch         = errors.New("google provider: stale generation rejected")
+	ErrRetryCommitted             = errors.New("google provider: retry prohibited after committed output")
+	ErrUnitTooLong                = errors.New("google provider: synthesis unit exceeds maximum character limit")
+	ErrRequestTooLarge            = errors.New("google provider: request payload exceeds maximum byte limit")
+	ErrQuotaExhausted             = errors.New("google provider: stream quota headroom exhausted")
+	ErrTranscriptAssemblyCapacity = errors.New("google provider: transcript assembly capacity exhausted")
 )
 
 // ProviderError represents a sanitized, provider-neutral error with classification.

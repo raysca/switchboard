@@ -150,7 +150,6 @@ func (p *Processor) ProcessFrame(_ context.Context, frame core.Frame, dir core.D
 	switch value := frame.(type) {
 	case *core.TranscriptCandidateFrame:
 		forward = false
-		p.legacyTurn, p.legacyGen = value.Turn, value.Gen
 		outputs, err = p.finalizer.Observe(Candidate{
 			Turn: value.Turn, Generation: value.Gen, Text: value.Text, At: policyAt, SourceAt: value.Timestamp,
 			Final: value.Final, EndOfUtterance: value.EndOfUtterance,

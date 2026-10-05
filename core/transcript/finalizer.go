@@ -152,21 +152,26 @@ func (f *Finalizer) Observe(candidate Candidate) ([]Output, error) {
 	if err != nil {
 		return nil, err
 	}
-	key, stale, err := f.acceptIdentityLocked(candidate.Turn, candidate.Generation)
-	if err != nil || stale {
+	if f.generation != 0 && candidate.Generation < f.generation {
+		return nil, nil
+	}
+	if err := f.validateTimeLocked(candidate.At); err != nil {
 		return nil, err
 	}
-	if err := f.acceptTimeLocked(candidate.At); err != nil {
-		return nil, err
+	key := turnKey{turn: candidate.Turn, gen: candidate.Generation}
+	advancing := candidate.Generation > f.generation
+	if !advancing {
+		if _, ok := f.retired[key]; ok {
+			f.lastAt = candidate.At
+			return f.expireDueLocked(candidate.At), nil
+		}
+		if f.turns[key] == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
+			return nil, ErrRetiredTurnLimit
+		}
 	}
+	f.commitIdentityTimeLocked(candidate.Generation, candidate.At)
 	outputs := f.expireDueLocked(candidate.At)
-	if _, ok := f.retired[key]; ok {
-		return outputs, nil
-	}
 	state := f.turns[key]
-	if state == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
-		return outputs, ErrRetiredTurnLimit
-	}
 	if state == nil {
 		state = &turnState{}
 		f.turns[key] = state
@@ -218,21 +223,26 @@ func (f *Finalizer) Complete(turn core.TurnID, generation core.Generation, at ti
 	if at.IsZero() {
 		return nil, ErrInvalidTimestamp
 	}
-	key, stale, err := f.acceptIdentityLocked(turn, generation)
-	if err != nil || stale {
+	if f.generation != 0 && generation < f.generation {
+		return nil, nil
+	}
+	if err := f.validateTimeLocked(at); err != nil {
 		return nil, err
 	}
-	if err := f.acceptTimeLocked(at); err != nil {
-		return nil, err
+	key := turnKey{turn: turn, gen: generation}
+	advancing := generation > f.generation
+	if !advancing {
+		if _, ok := f.retired[key]; ok {
+			f.lastAt = at
+			return f.expireDueLocked(at), nil
+		}
+		if f.turns[key] == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
+			return nil, ErrRetiredTurnLimit
+		}
 	}
+	f.commitIdentityTimeLocked(generation, at)
 	outputs := f.expireDueLocked(at)
-	if _, ok := f.retired[key]; ok {
-		return outputs, nil
-	}
 	state := f.turns[key]
-	if state == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
-		return outputs, ErrRetiredTurnLimit
-	}
 	if state == nil {
 		state = &turnState{}
 		f.turns[key] = state
@@ -255,9 +265,10 @@ func (f *Finalizer) Complete(turn core.TurnID, generation core.Generation, at ti
 func (f *Finalizer) Advance(at time.Time) ([]Output, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.acceptTimeLocked(at); err != nil {
+	if err := f.validateTimeLocked(at); err != nil {
 		return nil, err
 	}
+	f.lastAt = at
 	return f.expireDueLocked(at), nil
 }
 
@@ -304,48 +315,45 @@ func (f *Finalizer) Interrupt(turn core.TurnID, generation core.Generation, at t
 	if at.IsZero() {
 		return ErrInvalidTimestamp
 	}
-	key, stale, err := f.acceptIdentityLocked(turn, generation)
-	if err != nil || stale {
-		return err
-	}
-	if _, ok := f.retired[key]; ok {
+	if f.generation != 0 && generation < f.generation {
 		return nil
 	}
-	if f.turns[key] == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
-		return ErrRetiredTurnLimit
-	}
-	if err := f.acceptTimeLocked(at); err != nil {
+	if err := f.validateTimeLocked(at); err != nil {
 		return err
 	}
+	key := turnKey{turn: turn, gen: generation}
+	advancing := generation > f.generation
+	if !advancing {
+		if _, ok := f.retired[key]; ok {
+			f.lastAt = at
+			return nil
+		}
+		if f.turns[key] == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
+			return ErrRetiredTurnLimit
+		}
+	}
+	f.commitIdentityTimeLocked(generation, at)
 	delete(f.turns, key)
 	f.retired[key] = struct{}{}
 	return nil
 }
 
-func (f *Finalizer) acceptIdentityLocked(turn core.TurnID, generation core.Generation) (turnKey, bool, error) {
-	key := turnKey{turn: turn, gen: generation}
-	if turn == "" || generation == 0 {
-		return key, false, ErrInvalidIdentity
-	}
-	if f.generation != 0 && generation < f.generation {
-		return key, true, nil
-	}
+func (f *Finalizer) commitIdentityTimeLocked(generation core.Generation, at time.Time) {
 	if generation > f.generation {
 		f.generation = generation
 		clear(f.turns)
 		clear(f.retired)
 	}
-	return key, false, nil
+	f.lastAt = at
 }
 
-func (f *Finalizer) acceptTimeLocked(at time.Time) error {
+func (f *Finalizer) validateTimeLocked(at time.Time) error {
 	if at.IsZero() {
 		return ErrInvalidTimestamp
 	}
 	if !f.lastAt.IsZero() && at.Before(f.lastAt) {
 		return ErrTimestampRegression
 	}
-	f.lastAt = at
 	return nil
 }
 

@@ -156,6 +156,15 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   `.superpowers/sdd/2026-10-04-v2-execution/task-9-report.md`. Independent
   review and the Phase 2 tester are still required before Task 9 or Gate B can
   close.
+- Correction round 2 hardens the same boundary without closing it: candidate
+  frames can no longer seize the speech-start-owned V1 identity; rejected
+  higher-generation inputs cannot clear accepted state; Google applies text
+  overlap only when media intervals actually overlap, resets rotation media
+  origin per turn, updates pending generation on barge-in, and fails explicitly
+  at assembly bounds. xAI typed completion/interruption closes only its matching
+  immutable stream, bounds draining, restarts cleanly, and propagates receiver
+  task admission failure. All independent review probes are now tracked tests;
+  Task 9 and Gate B remain open for independent re-review.
 
 ### Task 8 closeout
 

@@ -155,14 +155,17 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 }
 
 type activeSTTStream struct {
-	stream   STTStream
-	cancel   context.CancelFunc
-	ctx      context.Context
-	id       int
-	readyCh  chan struct{}
-	turnID   string
-	gen      uint64
-	lastText string
+	stream     STTStream
+	cancel     context.CancelFunc
+	ctx        context.Context
+	id         int
+	readyCh    chan struct{}
+	turnID     string
+	gen        uint64
+	lastText   string
+	drainTimer *time.Timer
+	closing    bool
+	stopOnce   sync.Once
 
 	mu       sync.Mutex
 	audioBuf [][]byte
@@ -215,13 +218,11 @@ func (p *STTProcessor) Attach(s core.SessionController, index int) error {
 // Close gracefully closes the processor and terminates any active stream.
 func (p *STTProcessor) Close() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.closed = true
-	if p.active != nil {
-		p.active.cancel()
-		_ = p.active.stream.Close()
-		p.active = nil
-	}
+	active := p.active
+	p.active = nil
+	p.mu.Unlock()
+	p.stopStream(active)
 	return nil
 }
 
@@ -235,6 +236,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.mu.Lock()
 		p.turnID = fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq)
 		p.streamGen = frame.Gen
+		var old *activeSTTStream
 		if p.active != nil {
 			p.active.mu.Lock()
 			owned := p.active.turnID != "" && (p.active.turnID != p.turnID || p.active.gen != frame.Gen)
@@ -243,20 +245,30 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			}
 			p.active.mu.Unlock()
 			if owned {
-				p.active = nil // old receiver retains immutable ownership while draining
+				old, p.active = p.active, nil
+				old.mu.Lock()
+				closing := old.closing
+				old.mu.Unlock()
+				if !closing {
+					old = nil // immutable receiver drains an unfinished prior stream
+				}
 			}
 		}
 		p.mu.Unlock()
+		p.stopStream(old)
 		if err := p.ensureStream(ctx); err != nil {
 			p.ErrorsTotal.Add(1)
+			return err
 		}
 		return e.Push(f)
 
 	case *core.TurnEventFrame:
-		if frame.Kind == core.TurnEventStarted {
+		switch frame.Kind {
+		case core.TurnEventStarted:
 			p.mu.Lock()
 			p.turnID = string(frame.Turn)
 			p.streamGen = uint64(frame.Gen)
+			var old *activeSTTStream
 			if p.active != nil {
 				p.active.mu.Lock()
 				owned := p.active.turnID != "" && (p.active.turnID != p.turnID || p.active.gen != p.streamGen)
@@ -265,10 +277,23 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 				}
 				p.active.mu.Unlock()
 				if owned {
-					p.active = nil
+					old, p.active = p.active, nil
+					old.mu.Lock()
+					closing := old.closing
+					old.mu.Unlock()
+					if !closing {
+						old = nil
+					}
 				}
 			}
 			p.mu.Unlock()
+			p.stopStream(old)
+		case core.TurnEventCompleted:
+			if err := p.completeStream(ctx, string(frame.Turn), uint64(frame.Gen)); err != nil {
+				return err
+			}
+		case core.TurnEventInterrupted:
+			p.stopMatchingStream(string(frame.Turn), uint64(frame.Gen))
 		}
 		return e.PushDirection(f, dir)
 
@@ -280,28 +305,26 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		active := p.active
 		p.mu.Unlock()
 		if active != nil {
-			_ = active.stream.CloseSend(ctx)
+			if err := p.beginDrain(ctx, active); err != nil {
+				return err
+			}
 		}
 		return e.PushDirection(f, dir)
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
-		if p.active != nil {
-			p.active.cancel()
-			_ = p.active.stream.Close()
-			p.active = nil
-		}
+		active := p.active
+		p.active = nil
 		p.mu.Unlock()
+		p.stopStream(active)
 		return e.PushDirection(f, dir)
 
 	case *core.CancelFrame:
 		p.mu.Lock()
-		if p.active != nil {
-			p.active.cancel()
-			_ = p.active.stream.Close()
-			p.active = nil
-		}
+		active := p.active
+		p.active = nil
 		p.mu.Unlock()
+		p.stopStream(active)
 		return e.PushDirection(f, dir)
 
 	default:
@@ -405,16 +428,25 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 	p.active = active
 	p.mu.Unlock()
 
-	p.spawnReceiver(active)
+	if err := p.spawnReceiver(active); err != nil {
+		p.mu.Lock()
+		if p.active == active {
+			p.active = nil
+		}
+		p.mu.Unlock()
+		p.stopStream(active)
+		return err
+	}
 	return nil
 }
 
-func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
+func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 	if p.session == nil {
-		return
+		return nil
 	}
 
-	_ = p.session.Go(func(ctx context.Context) {
+	return p.session.Go(func(ctx context.Context) {
+		defer p.stopDrainTimer(st)
 		for {
 			select {
 			case <-st.ctx.Done():
@@ -548,6 +580,96 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) {
 			}
 		}
 	})
+}
+
+func (p *STTProcessor) completeStream(ctx context.Context, turn string, gen uint64) error {
+	p.mu.Lock()
+	st := p.active
+	p.mu.Unlock()
+	if st == nil {
+		return nil
+	}
+	st.mu.Lock()
+	matches := st.turnID == turn && st.gen == gen
+	st.mu.Unlock()
+	if !matches {
+		return nil
+	}
+	return p.beginDrain(ctx, st)
+}
+
+func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) error {
+	if st == nil {
+		return nil
+	}
+	st.mu.Lock()
+	if st.closing {
+		st.mu.Unlock()
+		return nil
+	}
+	st.closing = true
+	st.mu.Unlock()
+	if err := st.stream.CloseSend(ctx); err != nil {
+		st.mu.Lock()
+		st.closing = false
+		st.mu.Unlock()
+		return err
+	}
+	st.mu.Lock()
+	if st.drainTimer == nil {
+		st.drainTimer = time.AfterFunc(500*time.Millisecond, func() {
+			st.mu.Lock()
+			if st.drainTimer == nil {
+				st.mu.Unlock()
+				return
+			}
+			st.drainTimer = nil
+			st.mu.Unlock()
+			st.stopOnce.Do(func() {
+				st.cancel()
+				_ = st.stream.Close()
+			})
+		})
+	}
+	st.mu.Unlock()
+	return nil
+}
+
+func (p *STTProcessor) stopDrainTimer(st *activeSTTStream) {
+	st.mu.Lock()
+	if st.drainTimer != nil {
+		st.drainTimer.Stop()
+		st.drainTimer = nil
+	}
+	st.mu.Unlock()
+}
+
+func (p *STTProcessor) stopStream(st *activeSTTStream) {
+	if st == nil {
+		return
+	}
+	p.stopDrainTimer(st)
+	st.stopOnce.Do(func() {
+		st.cancel()
+		_ = st.stream.Close()
+	})
+}
+
+func (p *STTProcessor) stopMatchingStream(turn string, gen uint64) {
+	p.mu.Lock()
+	st := p.active
+	if st != nil {
+		st.mu.Lock()
+		matches := st.turnID == turn && st.gen == gen
+		st.mu.Unlock()
+		if matches {
+			p.active = nil
+		} else {
+			st = nil
+		}
+	}
+	p.mu.Unlock()
+	p.stopStream(st)
 }
 
 func boolStability(stable bool) float64 {
