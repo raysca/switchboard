@@ -67,9 +67,24 @@ func WithPolicy(policy core.TracePolicy) Option {
 	}
 }
 
+// Sink receives persisted trace records. Implementations must be non-blocking.
+type Sink interface {
+	RecordSpan(span storage.TraceSpan)
+	RecordEvent(event storage.TraceEvent)
+	RecordToolCall(call storage.ToolCallRecord)
+}
+
+// WithSink sets an optional sink for non-blocking trace export.
+func WithSink(sink Sink) Option {
+	return func(a *Adapter) {
+		a.sink = sink
+	}
+}
+
 // Adapter translates framework traces and events to server trace persistence.
 type Adapter struct {
 	repo      storage.TraceRepository
+	sink      Sink
 	policy    core.TracePolicy
 	queueSize int
 	queue     chan traceOp
@@ -225,14 +240,22 @@ func (a *Adapter) Flush(ctx context.Context) (err error) {
 		return ctx.Err()
 	}
 
+	var flushErr error
 	select {
 	case <-syncChan:
-		return nil
+		flushErr = nil
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-a.done:
-		return nil
+		flushErr = nil
 	}
+
+	if a.sink != nil {
+		if flusher, ok := a.sink.(interface{ Flush(context.Context) error }); ok {
+			_ = flusher.Flush(ctx)
+		}
+	}
+	return flushErr
 }
 
 // Close stops accepting new operations, drains queued work, and waits for the worker to exit.
@@ -243,6 +266,11 @@ func (a *Adapter) Close() error {
 		close(a.queue)
 		a.closeMu.Unlock()
 		<-a.done
+		if a.sink != nil {
+			if closer, ok := a.sink.(interface{ Close() error }); ok {
+				_ = closer.Close()
+			}
+		}
 	})
 	return nil
 }
@@ -277,8 +305,20 @@ func (a *Adapter) worker() {
 			}
 		case opEndSpan:
 			_ = a.repo.EndSpan(ctx, op.spanID, op.endedAt, op.attributes)
+			if a.sink != nil {
+				a.sink.RecordSpan(storage.TraceSpan{
+					ID:             op.spanID,
+					SessionID:      op.sessionID,
+					TurnID:         op.turnID,
+					ParentID:       op.parentID,
+					Name:           op.name,
+					StartedAt:      op.startedAt,
+					EndedAt:        op.endedAt,
+					AttributesJSON: op.attributes,
+				})
+			}
 		case opAddEvent:
-			_ = a.repo.AddEvent(ctx, storage.TraceEvent{
+			ev := storage.TraceEvent{
 				ID:             op.spanID,
 				SpanID:         op.parentID,
 				SessionID:      op.sessionID,
@@ -286,9 +326,16 @@ func (a *Adapter) worker() {
 				Name:           op.name,
 				OccurredAt:     op.occurredAt,
 				AttributesJSON: op.attributes,
-			})
+			}
+			_ = a.repo.AddEvent(ctx, ev)
+			if a.sink != nil {
+				a.sink.RecordEvent(ev)
+			}
 		case opRecordToolCall:
 			_ = a.repo.AddToolCall(ctx, op.toolCall)
+			if a.sink != nil {
+				a.sink.RecordToolCall(op.toolCall)
+			}
 		case opFlush:
 			if op.syncChan != nil {
 				close(op.syncChan)
@@ -594,6 +641,11 @@ func (s *adapterSpan) End(err error) {
 	s.adapter.enqueue(traceOp{
 		kind:       opEndSpan,
 		spanID:     s.id,
+		parentID:   s.parentID,
+		sessionID:  s.sessionID,
+		turnID:     s.turnID,
+		name:       s.name,
+		startedAt:  s.startedAt,
 		endedAt:    now,
 		attributes: string(attrJSON),
 	})

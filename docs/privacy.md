@@ -42,3 +42,47 @@ executor, and transport failure spans receive fixed categories such as
 `canceled`; raw error messages are never passed to the tracer. A missing or
 dropped ordinary event does not expose content or prevent an accepted span's
 terminal operation.
+
+## Server data retention and privacy controls
+
+The server enforces configurable data retention and privacy controls that
+distinguish operational metadata from conversational content:
+
+- **Metadata retention (`MetadataRetentionDays` / `MetadataRetention`):**
+  Defines the lifetime of session, turn, span, event, and tool call records.
+  When expired, ended sessions and their associated trace trees are safely
+  pruned.
+- **Content retention (`ContentRetentionDays` / `ContentRetention`):**
+  Defines the lifetime of conversation content (STT transcripts, LLM assistant
+  responses, tool argument summaries, and tool result summaries).
+  When content retention expires prior to metadata retention, the content purge
+  sets `transcript` and `assistant_text` to null, clears tool argument/result
+  payload summaries, and sanitizes text attributes in spans/events while
+  preserving session, turn, span, event timestamps, latencies, and structural
+  metadata for operational debugging.
+- **Deletion invariants:**
+  Active and draining sessions (`status IN ('active', 'draining')`), current
+  and historical agent versions, and MCP discoveries are never deleted by
+  retention jobs.
+- **Batch bounded execution:**
+  Purges execute in bounded batches (e.g. 500 records) to avoid database
+  contention or long locks on both SQLite and PostgreSQL.
+
+## OpenTelemetry trace export
+
+The server provides an optional OpenTelemetry export sink (`server/otel/`):
+
+- **Non-blocking:** Trace spans and events are enqueued to a bounded
+  asynchronous queue. Queue overflow drops events with observable metrics
+  rather than stalling voice calls.
+- **Outage isolation:** Errors, network timeouts, or crashes in the OTel
+  collector or exporter are isolated and never fail voice pipelines.
+- **ID correlation:** Internal UUIDv7 IDs are mapped to standard OpenTelemetry
+  constructs:
+  - `SessionID` maps to the 16-byte OpenTelemetry `TraceID` and span attribute `session_id`.
+  - `SpanID` maps to the OpenTelemetry `SpanID` and span attribute `span_id`.
+  - `ParentID` maps to parent `SpanID` and span attribute `parent_id`.
+  - `TurnID` maps to span attribute `turn_id`.
+- **Privacy compliance:** The exporter respects the configured trace policy.
+  By default (metadata-only), all transcripts, prompts, raw audio, credentials,
+  tokens, api keys, and tool payloads are excluded from exported spans.

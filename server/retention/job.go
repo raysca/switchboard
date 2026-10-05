@@ -1,0 +1,193 @@
+package retention
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"govoice/server/storage"
+)
+
+// Store defines repository operations required by the retention job.
+type Store interface {
+	PurgeContent(ctx context.Context, cutoff time.Time, limit int) (turnsPurged, toolCallsPurged int64, err error)
+	PurgeMetadata(ctx context.Context, cutoff time.Time, limit int) (stats storage.PurgeMetadataStats, err error)
+}
+
+// RunResult summarizes the outcome of a retention execution.
+type RunResult struct {
+	SessionsDeleted  int64
+	TurnsDeleted     int64
+	SpansDeleted     int64
+	EventsDeleted    int64
+	ToolCallsDeleted int64
+	TurnsPurged      int64
+	ToolCallsPurged  int64
+}
+
+// Option configures a Job.
+type Option func(*Job)
+
+// WithClock sets a custom clock function for deterministic time in tests.
+func WithClock(fn func() time.Time) Option {
+	return func(j *Job) {
+		if fn != nil {
+			j.clock = fn
+		}
+	}
+}
+
+// WithInterval sets the recurring job run interval.
+func WithInterval(d time.Duration) Option {
+	return func(j *Job) {
+		if d > 0 {
+			j.interval = d
+		}
+	}
+}
+
+// WithLogger sets the structured logger for retention operations.
+func WithLogger(logger *slog.Logger) Option {
+	return func(j *Job) {
+		if logger != nil {
+			j.logger = logger
+		}
+	}
+}
+
+// Job performs background retention purges in bounded batches.
+type Job struct {
+	store    Store
+	policy   Policy
+	clock    func() time.Time
+	interval time.Duration
+	logger   *slog.Logger
+
+	running  atomic.Bool
+	stopChan chan struct{}
+	doneChan chan struct{}
+	stopOnce sync.Once
+}
+
+// NewJob constructs a retention cleanup job.
+func NewJob(store Store, policy Policy, opts ...Option) *Job {
+	j := &Job{
+		store:    store,
+		policy:   policy,
+		clock:    func() time.Time { return time.Now().UTC() },
+		interval: 1 * time.Hour,
+		logger:   slog.Default(),
+		stopChan: make(chan struct{}),
+		doneChan: make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(j)
+	}
+	return j
+}
+
+// RunOnce performs one pass of content and metadata purges across all bounded batches.
+func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
+	if err := j.policy.Validate(); err != nil {
+		return RunResult{}, err
+	}
+
+	batchSize := j.policy.BatchSize
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+
+	var res RunResult
+	now := j.clock()
+
+	// 1. Content purge pass
+	if j.policy.ContentRetention > 0 || j.policy.MetadataOnly {
+		contentCutoff := now.Add(-j.policy.ContentRetention)
+		if j.policy.MetadataOnly {
+			contentCutoff = now
+		}
+
+		for {
+			if ctx.Err() != nil {
+				return res, ctx.Err()
+			}
+			tPurged, tcPurged, err := j.store.PurgeContent(ctx, contentCutoff, batchSize)
+			if err != nil {
+				return res, err
+			}
+			res.TurnsPurged += tPurged
+			res.ToolCallsPurged += tcPurged
+			if tPurged == 0 && tcPurged == 0 {
+				break
+			}
+		}
+	}
+
+	// 2. Metadata purge pass
+	if j.policy.MetadataRetention > 0 {
+		metadataCutoff := now.Add(-j.policy.MetadataRetention)
+
+		for {
+			if ctx.Err() != nil {
+				return res, ctx.Err()
+			}
+			stats, err := j.store.PurgeMetadata(ctx, metadataCutoff, batchSize)
+			if err != nil {
+				return res, err
+			}
+			res.SessionsDeleted += stats.SessionsDeleted
+			res.TurnsDeleted += stats.TurnsDeleted
+			res.SpansDeleted += stats.SpansDeleted
+			res.EventsDeleted += stats.EventsDeleted
+			res.ToolCallsDeleted += stats.ToolCallsDeleted
+
+			if stats.SessionsDeleted == 0 && stats.SpansDeleted == 0 && stats.EventsDeleted == 0 {
+				break
+			}
+		}
+	}
+
+	return res, nil
+}
+
+// Start launches a periodic background goroutine running RunOnce.
+func (j *Job) Start(ctx context.Context) {
+	if !j.running.CompareAndSwap(false, true) {
+		return
+	}
+
+	go func() {
+		defer close(j.doneChan)
+		ticker := time.NewTicker(j.interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-j.stopChan:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+				_, err := j.RunOnce(runCtx)
+				cancel()
+				if err != nil && j.logger != nil {
+					j.logger.Error("retention run failed", slog.String("err", err.Error()))
+				}
+			}
+		}
+	}()
+}
+
+// Stop stops the background retention job.
+func (j *Job) Stop() {
+	j.stopOnce.Do(func() {
+		if j.running.Load() {
+			close(j.stopChan)
+			<-j.doneChan
+			j.running.Store(false)
+		}
+	})
+}

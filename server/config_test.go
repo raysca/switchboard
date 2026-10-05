@@ -199,3 +199,43 @@ func TestResolveTokenSecret_ProductionRejectsPublicKey(t *testing.T) {
 		t.Fatalf("expected the configured secret, got %q %v", got, err)
 	}
 }
+
+func TestConfig_RetentionAndOTel(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+
+	if cfg.Retention.MetadataRetentionDays != 30 {
+		t.Errorf("expected default metadata retention 30 days, got %d", cfg.Retention.MetadataRetentionDays)
+	}
+	if cfg.Retention.ContentRetentionDays != 7 {
+		t.Errorf("expected default content retention 7 days, got %d", cfg.Retention.ContentRetentionDays)
+	}
+	if cfg.Retention.BatchSize <= 0 {
+		t.Errorf("expected positive retention batch size, got %d", cfg.Retention.BatchSize)
+	}
+	if cfg.OTel.Enabled {
+		t.Errorf("expected OTel to be disabled by default")
+	}
+
+	// Validation tests
+	invalidRetention := DefaultConfig(ProfileDevelopment)
+	invalidRetention.Retention.Enabled = true
+	invalidRetention.Retention.MetadataRetentionDays = -1
+	if err := ValidateConfig(invalidRetention); err == nil {
+		t.Errorf("expected error for negative metadata retention days")
+	}
+
+	invalidContent := DefaultConfig(ProfileDevelopment)
+	invalidContent.Retention.Enabled = true
+	invalidContent.Retention.MetadataRetentionDays = 7
+	invalidContent.Retention.ContentRetentionDays = 30
+	if err := ValidateConfig(invalidContent); err == nil {
+		t.Errorf("expected error when content retention exceeds metadata retention")
+	}
+
+	invalidOTel := DefaultConfig(ProfileDevelopment)
+	invalidOTel.OTel.Enabled = true
+	invalidOTel.OTel.Endpoint = ""
+	if err := ValidateConfig(invalidOTel); err == nil {
+		t.Errorf("expected error when OTel is enabled without endpoint")
+	}
+}

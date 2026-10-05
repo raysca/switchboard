@@ -140,6 +140,33 @@ type Config struct {
 		TimelineMaxEvents int           `yaml:"timeline_max_events"`
 		TimelineTTL       time.Duration `yaml:"timeline_ttl"`
 	} `yaml:"observability"`
+
+	// Retention
+	Retention RetentionConfig `yaml:"retention"`
+
+	// OpenTelemetry
+	OTel OTelConfig `yaml:"otel"`
+}
+
+// RetentionConfig defines trace and session retention policy.
+type RetentionConfig struct {
+	Enabled               bool          `yaml:"enabled"`
+	Interval              time.Duration `yaml:"interval"`
+	MetadataRetentionDays int           `yaml:"metadata_retention_days"`
+	ContentRetentionDays  int           `yaml:"content_retention_days"`
+	BatchSize             int           `yaml:"batch_size"`
+}
+
+// OTelConfig defines optional OpenTelemetry trace export settings.
+type OTelConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	Endpoint       string        `yaml:"endpoint"`
+	Protocol       string        `yaml:"protocol"` // "grpc" | "http"
+	Insecure       bool          `yaml:"insecure"`
+	QueueSize      int           `yaml:"queue_size"`
+	BatchTimeout   time.Duration `yaml:"batch_timeout"`
+	ExportInterval time.Duration `yaml:"export_interval"`
+	ServiceName    string        `yaml:"service_name"`
 }
 
 // PipelineConfig defines composition of a named pipeline.
@@ -242,6 +269,20 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Observability.LogLevel = "info"
 	cfg.Observability.TimelineMaxEvents = 500
 	cfg.Observability.TimelineTTL = 10 * time.Minute
+
+	// Retention defaults (sane defaults)
+	cfg.Retention.Enabled = false
+	cfg.Retention.Interval = 1 * time.Hour
+	cfg.Retention.MetadataRetentionDays = 30
+	cfg.Retention.ContentRetentionDays = 7
+	cfg.Retention.BatchSize = 500
+
+	// OTel defaults (disabled by default)
+	cfg.OTel.Enabled = false
+	cfg.OTel.ServiceName = "govoice"
+	cfg.OTel.QueueSize = 2048
+	cfg.OTel.BatchTimeout = 5 * time.Second
+	cfg.OTel.ExportInterval = 10 * time.Second
 
 	return cfg
 }
@@ -349,6 +390,29 @@ func ValidateConfig(cfg *Config) error {
 		}
 		if p.MaxTokens <= 0 {
 			return fmt.Errorf("pipeline %q max_tokens must be > 0", name)
+		}
+	}
+
+	// Retention validation
+	if cfg.Retention.Enabled {
+		if cfg.Retention.MetadataRetentionDays < 0 {
+			return errors.New("retention.metadata_retention_days must be >= 0")
+		}
+		if cfg.Retention.ContentRetentionDays < 0 {
+			return errors.New("retention.content_retention_days must be >= 0")
+		}
+		if cfg.Retention.MetadataRetentionDays > 0 && cfg.Retention.ContentRetentionDays > cfg.Retention.MetadataRetentionDays {
+			return errors.New("retention.content_retention_days cannot exceed retention.metadata_retention_days")
+		}
+		if cfg.Retention.BatchSize < 0 {
+			return errors.New("retention.batch_size must be >= 0")
+		}
+	}
+
+	// OTel validation
+	if cfg.OTel.Enabled {
+		if cfg.OTel.Endpoint == "" {
+			return errors.New("otel.endpoint must be specified when otel is enabled")
 		}
 	}
 
