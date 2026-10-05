@@ -179,6 +179,9 @@ func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
 	if spec.name == "flush" {
 		return runPacerFlushScenario(spec)
 	}
+	if spec.name == "session_teardown" {
+		return runTeardownScenario(false)
+	}
 	probe := &frameProbe{}
 	pipe, err := core.NewPipeline(probe)
 	if err != nil {
@@ -272,10 +275,6 @@ func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
 	case <-time.After(time.Second):
 		return probe.snapshot(), errors.New("session teardown timed out")
 	}
-	if spec.name == "session_teardown" && session.LeakedTasks() == 0 {
-		probe.runtimeCompleted("processor.shutdown")
-		probe.runtimeCompleted("session.resources.completed")
-	}
 	events := probe.snapshot()
 	matched := 0
 	for _, event := range events {
@@ -291,6 +290,100 @@ func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
 	}
 	if session.LeakedTasks() != 0 {
 		return events, errors.New("runtime leaked supervised tasks")
+	}
+	return events, nil
+}
+
+// teardownProbe records only callbacks the session actually invokes. Its
+// worker is registered with the session supervisor through the attached
+// controller's Go capability, then exits after Close releases it.
+type teardownProbe struct {
+	*frameProbe
+	closed               chan struct{}
+	workerStarted        chan struct{}
+	closeOnce            sync.Once
+	callbackCalled       atomic.Bool
+	closeObserved        atomic.Bool
+	workerExited         atomic.Bool
+	omitCloseObservation bool
+}
+
+func (p *teardownProbe) Attach(controller core.SessionController, _ int) error {
+	supervisor, ok := controller.(interface {
+		Go(func(context.Context)) error
+	})
+	if !ok {
+		return errors.New("session controller lacks supervised Go")
+	}
+	return supervisor.Go(func(ctx context.Context) {
+		close(p.workerStarted)
+		<-ctx.Done()
+		<-p.closed
+		p.runtimeCompleted("session.resources.completed")
+		p.workerExited.Store(true)
+	})
+}
+
+func (p *teardownProbe) Close() error {
+	p.closeOnce.Do(func() {
+		p.callbackCalled.Store(true)
+		if !p.omitCloseObservation {
+			p.runtimeCompleted("processor.shutdown")
+			p.closeObserved.Store(true)
+		}
+		close(p.closed)
+	})
+	return nil
+}
+
+func runTeardownScenario(omitCloseObservation bool) ([]Event, error) {
+	probe := &teardownProbe{frameProbe: &frameProbe{}, closed: make(chan struct{}), workerStarted: make(chan struct{}), omitCloseObservation: omitCloseObservation}
+	pipe, err := core.NewPipeline(probe)
+	if err != nil {
+		return nil, err
+	}
+	session, err := core.NewSession(1402, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		return nil, err
+	}
+	outputs := make(chan core.FrameType, 4)
+	session.OnOutput = func(f core.Frame) { outputs <- f.Type() }
+	if err := session.Start(); err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	select {
+	case <-probe.workerStarted:
+	case <-time.After(time.Second):
+		return probe.snapshot(), errors.New("supervised teardown worker did not start")
+	}
+	for _, frame := range []core.Frame{&core.StartFrame{}, &core.CancelFrame{Gen: 1}, &core.EndFrame{}} {
+		if err := session.Post(frame); err != nil {
+			return probe.snapshot(), err
+		}
+		select {
+		case kind := <-outputs:
+			if kind != frame.Type() {
+				return probe.snapshot(), fmt.Errorf("teardown delivered %v before %v", kind, frame.Type())
+			}
+		case <-time.After(time.Second):
+			return probe.snapshot(), fmt.Errorf("teardown did not deliver %T", frame)
+		}
+	}
+	select {
+	case <-session.Done():
+	case <-time.After(time.Second):
+		return probe.snapshot(), errors.New("session teardown did not finish")
+	}
+	events := probe.snapshot()
+	if !probe.callbackCalled.Load() || !probe.closeObserved.Load() {
+		return events, errors.New("processor Close observation missing")
+	}
+	if !probe.workerExited.Load() || session.LeakedTasks() != 0 {
+		return events, errors.New("supervised resource exit missing")
+	}
+	if err := requireEventOrder(events, []string{"session.cancelled", "session.ended", "processor.shutdown", "session.resources.completed"}); err != nil {
+		return events, err
 	}
 	return events, nil
 }

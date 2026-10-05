@@ -62,6 +62,8 @@ Until an official Whisker package and protocol version are pinned, the V2 target
 
 Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` directly carries pipeline/processor position, frame kind, direction, sequence, and tool call ID with session/turn/generation correlation. Namespaced structured metadata is restricted to copied numeric/boolean values. The Task 14 semantic adapter deep-copies nested metadata and rejects malformed identifiers, processor indexes, and directions. Its eleven cases use live session/probe processing or the actual paced writer, then adapt observed transitions to `DebugEvent` values. Interruption and transport flush acknowledgement come from the assistant/transport processors; queued and in-flight flush completion comes from the paced writer. Tool start and failure come from live executor outcomes. This validates the narrow adapter; a general runtime observer subscription/delivery API belongs to Task 35.
 
+The teardown probe implements `core.Closer` and records `processor.shutdown` only from its actual `Close` callback. Its session-supervised worker waits for cancellation and the close callback, then records `session.resources.completed` as it exits. The scenario requires both observations before session `Done` and zero leaked tasks. Suppressing the close observation fails the negative regression. This does not add a general processor shutdown event to core; Task 35 owns general observer delivery.
+
 The conformance scenario set is:
 
 1. Session and pipeline start: stable session ID, ordered start events, processor inventory/relationship.

@@ -87,3 +87,15 @@ func TestRuntimeSemanticConformanceScenarios(t *testing.T) {
 		}
 	}
 }
+
+func TestTeardownFailsWhenCloserDoesNotReportCleanup(t *testing.T) {
+	events, err := runTeardownScenario(true)
+	if err == nil {
+		t.Fatalf("missing Close observation passed: %#v", events)
+	}
+	for _, event := range events {
+		if event.Name == "processor.shutdown" {
+			t.Fatal("missing Close callback was synthesized")
+		}
+	}
+}
