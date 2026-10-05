@@ -189,6 +189,12 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - Pending work now stores a complete newest snapshot with input/revision/epoch and is cleared at every epoch, generation, reset, close, mute, speech-resume, and terminal boundary. A validated result crosses a revision only for semantically identical current state; all other queued snapshots run. Two plugin callbacks are allowed per outer evaluation before deterministic silence fallback handles the latest snapshot. Invalid semantic confidence is dropped before storage/equality.
 - Exact same-timestamp, reset A→B, and adversarial +1ns/NaN regressions passed 100 repetitions under the race detector; the all-package focused suite, full core race suite, vet, `gofmt`, and `git diff --check` also passed. Task 7 remains unchecked for independent re-review and Gate B remains open.
 
+#### Task 7 review round 4 escalation (independent review still pending)
+
+- RED reproduced dropped queued completion after no-op mute and identity-free observations at equal/later timestamps, plus unmute failing to queue fresh silence while a callback remained in flight.
+- One semantic state/epoch validation now governs preflight and commit, replacing raw revision counters. Rejected observations are filtered before timestamp mutation; no-op controls preserve eligible work. True mute/speech-resume transitions fence the epoch; unmute supplies a successor snapshot when detection remains eligible. Identical positive and negative inputs reuse their result, preserving the two-callback fallback bound.
+- Added a concurrent 14-case state-change table, negative-result reuse, and rejected-observation timestamp isolation regressions. Task 7 remains unchecked for independent re-review; Gate B remains open. Final verification is recorded in the Task 7 report.
+
 ## Phase 3 — Context, tools, tracing, compatibility
 
 - [ ] Task 10: Context aggregation/reconciliation.

@@ -72,13 +72,12 @@ type Manager struct {
 	detectionInFlight bool
 	pendingDetection  *detectionSnapshot
 
-	started  bool
-	closed   bool
-	muted    bool
-	lastAt   time.Time
-	hasLast  bool
-	revision uint64
-	epoch    uint64
+	started bool
+	closed  bool
+	muted   bool
+	lastAt  time.Time
+	hasLast bool
+	epoch   uint64
 
 	noSpeechSince  time.Time
 	noSpeechFired  bool
@@ -106,7 +105,6 @@ type Manager struct {
 
 type detectionSnapshot struct {
 	input         DetectionInput
-	revision      uint64
 	epoch         uint64
 	turn          core.TurnID
 	generation    core.Generation
@@ -158,13 +156,9 @@ func (m *Manager) Advance(at time.Time) ([]core.Frame, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
-	previousAt := m.lastAt
 	if err := m.acceptTimestamp(at); err != nil {
 		m.mu.Unlock()
 		return nil, err
-	}
-	if at.After(previousAt) {
-		m.bumpRevisionLocked()
 	}
 	if m.muted {
 		m.mu.Unlock()
@@ -185,15 +179,17 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 	if observation.Speaking && (observation.TurnID == "" || observation.Generation == 0) {
 		return nil, nil, ErrInvalidObservation
 	}
-	if observation.Generation == m.currentGen && (m.isRetiredLocked(observation.TurnID) ||
+	if observation.Generation <= m.currentGen && (m.isRetiredLocked(observation.TurnID) ||
 		(m.active && (observation.TurnID != m.currentID || observation.Generation != m.currentGen)) ||
 		(m.startCandidate && !observation.Speaking && (observation.TurnID != m.startTurn || observation.Generation != m.startGen))) {
 		return nil, nil, nil
 	}
+	if !m.muted && observation.Generation <= m.currentGen && observation.Speaking && !m.active && len(m.retiredTurns) >= m.cfg.MaxRetiredTurns {
+		return nil, nil, ErrRetiredTurnLimit
+	}
 	if err := m.acceptTimestamp(observation.At); err != nil {
 		return nil, nil, err
 	}
-	m.bumpRevisionLocked()
 
 	var frames []core.Frame
 	// A newer generation is authoritative even if this is a stop/idle snapshot
@@ -213,19 +209,6 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 		return frames, nil, nil
 	}
 
-	if m.active && (observation.TurnID != m.currentID || observation.Generation != m.currentGen) {
-		return frames, nil, nil
-	}
-	if m.startCandidate && !observation.Speaking && (observation.TurnID != m.startTurn || observation.Generation != m.startGen) {
-		return frames, nil, nil
-	}
-	if m.isRetiredLocked(observation.TurnID) {
-		return frames, nil, nil
-	}
-	if observation.Speaking && !m.active && len(m.retiredTurns) >= m.cfg.MaxRetiredTurns {
-		return frames, nil, ErrRetiredTurnLimit
-	}
-
 	if observation.Semantic == nil {
 		m.semantic = nil
 	} else {
@@ -236,6 +219,9 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 	}
 	if observation.Speaking {
 		if m.active {
+			if m.hasSilenceSince {
+				m.bumpEpochLocked()
+			}
 			m.stopCandidate = false
 			m.speaking = true
 			m.hasSilenceSince = false
@@ -306,7 +292,8 @@ func (m *Manager) finishDetection(frames []core.Frame, snapshot *detectionSnapsh
 		}
 		m.mu.Lock()
 		m.detectionInFlight = false
-		if done && (m.snapshotCurrentLocked(snapshot) || m.snapshotSemanticallyCurrentLocked(snapshot)) {
+		current := m.snapshotCurrentLocked(snapshot)
+		if done && current {
 			m.clearPendingDetectionLocked()
 			frames = append(frames, m.completeLocked(snapshot.input.At, decision.Reason, decision.Confidence, decision.HasConfidence)...)
 			m.mu.Unlock()
@@ -315,7 +302,10 @@ func (m *Manager) finishDetection(frames []core.Frame, snapshot *detectionSnapsh
 		if m.epoch != frameEpoch {
 			frames = nil
 		}
-		if m.snapshotCurrentLocked(snapshot) && m.pendingDetection == nil {
+		if current {
+			// An identical queued input has already been evaluated, including
+			// a negative result. Do not call the plugin again for that input.
+			m.clearPendingDetectionLocked()
 			m.mu.Unlock()
 			return frames
 		}
@@ -336,17 +326,19 @@ func sameDetectionInput(a, b DetectionInput) bool {
 	return aSemantic == nil || *aSemantic == *bSemantic
 }
 
-func (m *Manager) snapshotSemanticallyCurrentLocked(snapshot *detectionSnapshot) bool {
+// Current means the snapshot matches actual detector-relevant state, not just
+// an observation counter or another queued snapshot. Control timestamps alone
+// do not advance detection; an accepted Observe/Advance queues its own input.
+func (m *Manager) snapshotCurrentLocked(snapshot *detectionSnapshot) bool {
 	if m.closed || m.muted || !m.active || !m.hasSilenceSince ||
 		m.epoch != snapshot.epoch || m.currentID != snapshot.turn || m.currentGen != snapshot.generation ||
 		!m.turnStartedAt.Equal(snapshot.turnStartedAt) || !m.silenceSince.Equal(snapshot.silenceSince) {
 		return false
 	}
-	latest := m.pendingDetection
-	if latest == nil {
-		latest = m.newDetectionSnapshotLocked(m.lastAt)
+	if m.pendingDetection != nil && !sameDetectionInput(snapshot.input, m.pendingDetection.input) {
+		return false
 	}
-	return latest.epoch == snapshot.epoch && sameDetectionInput(snapshot.input, latest.input)
+	return sameDetectionInput(snapshot.input, m.newDetectionSnapshotLocked(snapshot.input.At).input)
 }
 
 func (m *Manager) takePendingDetectionLocked() *detectionSnapshot {
@@ -357,13 +349,6 @@ func (m *Manager) takePendingDetectionLocked() *detectionSnapshot {
 
 func (m *Manager) clearPendingDetectionLocked() {
 	m.pendingDetection = nil
-}
-
-func (m *Manager) snapshotCurrentLocked(snapshot *detectionSnapshot) bool {
-	return !m.closed && !m.muted && m.active && m.hasSilenceSince &&
-		m.revision == snapshot.revision && m.epoch == snapshot.epoch &&
-		m.currentID == snapshot.turn && m.currentGen == snapshot.generation &&
-		m.turnStartedAt.Equal(snapshot.turnStartedAt) && m.silenceSince.Equal(snapshot.silenceSince)
 }
 
 func detectSafely(detector TurnDetector, input DetectionInput) (decision DetectionDecision, done bool, panicked bool) {
@@ -409,10 +394,10 @@ func (m *Manager) SetMuted(muted bool, at time.Time) error {
 	if err := m.acceptTimestamp(at); err != nil {
 		return err
 	}
-	m.bumpRevisionLocked()
 	if muted == m.muted {
 		return nil
 	}
+	m.bumpEpochLocked()
 	if muted {
 		m.muted, m.muteSince = true, at
 		m.startCandidate = false
@@ -430,6 +415,9 @@ func (m *Manager) SetMuted(muted bool, at time.Time) error {
 		m.silenceSince, m.hasSilenceSince = at, true
 	}
 	m.muted = false
+	if m.detectionInFlight && m.active && m.hasSilenceSince {
+		m.pendingDetection = m.newDetectionSnapshotLocked(at)
+	}
 	return nil
 }
 
@@ -446,7 +434,6 @@ func (m *Manager) Interrupt(id core.TurnID, generation core.Generation, at time.
 	if err := m.acceptTimestamp(at); err != nil {
 		return nil, err
 	}
-	m.bumpRevisionLocked()
 	return m.interruptLocked(id, generation, at), nil
 }
 
@@ -510,7 +497,6 @@ func (m *Manager) advanceLocked(at time.Time) ([]core.Frame, *detectionSnapshot)
 	if m.active && m.stopCandidate && at.Sub(m.stopSince) >= m.cfg.StopDebounce {
 		m.stopCandidate, m.speaking = false, false
 		m.silenceSince, m.hasSilenceSince = m.stopSince, true
-		m.bumpRevisionLocked()
 		frames = append(frames, event(m.currentID, m.currentGen, core.TurnEventStopped, m.stopSince, core.TurnReasonNone, 0, false))
 	}
 	if m.active {
@@ -531,7 +517,6 @@ func (m *Manager) advanceLocked(at time.Time) ([]core.Frame, *detectionSnapshot)
 	}
 	if !m.speechAccepted && !m.noSpeechFired && at.Sub(m.noSpeechSince) >= m.cfg.InitialSilenceTimeout {
 		m.noSpeechFired = true
-		m.bumpRevisionLocked()
 		frames = append(frames, event("", m.currentGen, core.TurnEventNoSpeechTimeout, at, core.TurnReasonInitialNoSpeech, 0, false))
 	}
 	return frames, nil
@@ -549,7 +534,7 @@ func (m *Manager) newDetectionSnapshotLocked(at time.Time) *detectionSnapshot {
 		SemanticMaxAge: m.cfg.SemanticMaxAge, Semantic: semantic,
 	}
 	return &detectionSnapshot{
-		input: input, revision: m.revision, epoch: m.epoch, turn: m.currentID,
+		input: input, epoch: m.epoch, turn: m.currentID,
 		generation: m.currentGen, turnStartedAt: m.turnStartedAt, silenceSince: m.silenceSince,
 	}
 }
@@ -584,7 +569,6 @@ func (m *Manager) startLocked(at time.Time) []core.Frame {
 	m.turnStartedAt = m.startSince
 	m.speaking, m.startCandidate, m.stopCandidate = true, false, false
 	m.hasSilenceSince = false
-	m.bumpRevisionLocked()
 	return []core.Frame{event(m.currentID, m.currentGen, core.TurnEventStarted, at, core.TurnReasonNone, 0, false)}
 }
 
@@ -638,12 +622,9 @@ func (m *Manager) retireLocked(id core.TurnID) bool {
 	return true
 }
 
-func (m *Manager) bumpRevisionLocked() { m.revision++ }
-
 func (m *Manager) bumpEpochLocked() {
 	m.epoch++
 	m.clearPendingDetectionLocked()
-	m.bumpRevisionLocked()
 }
 
 func (m *Manager) clearPendingLocked() {
