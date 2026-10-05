@@ -144,4 +144,9 @@ describe("admin shell", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("renders sessions area for direct session link /sessions/:sessionId", () => {
+    render(<App initialPath="/sessions/test-session-123" />);
+    expect(screen.getByRole("heading", { name: "Sessions" })).toBeVisible();
+  });
 });

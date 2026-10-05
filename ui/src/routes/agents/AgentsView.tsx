@@ -15,6 +15,7 @@ import {
   LoadingState,
   Status,
 } from "../../components/primitives";
+import { AgentVoiceTest } from "./AgentVoiceTest";
 
 export type AgentsViewProps = {
   client: ApiClient;
@@ -882,6 +883,13 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                   </div>
                 </div>
               )}
+
+              {/* Live Voice Test Panel */}
+              <AgentVoiceTest
+                agent={selectedAgent}
+                client={client}
+                keyValue={keyValue}
+              />
 
               {/* Immutable Snapshot Explanation */}
               <div

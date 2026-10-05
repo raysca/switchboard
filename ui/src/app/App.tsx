@@ -145,7 +145,7 @@ export function App({ initialPath }: { initialPath?: string }) {
                   path="/agents"
                   element={<AgentsView client={client} keyValue={keyValue} />}
                 />
-                {sections
+                  {sections
                   .filter(
                     (section) =>
                       section.path !== "/providers" &&
@@ -164,6 +164,16 @@ export function App({ initialPath }: { initialPath?: string }) {
                       }
                     />
                   ))}
+                <Route
+                  path="/sessions/:sessionId"
+                  element={
+                    <SectionPage
+                      section={sections.find((s) => s.path === "/sessions")!}
+                      keyValue={keyValue}
+                      readConfig={client.serverConfig}
+                    />
+                  }
+                />
                 <Route
                   path="*"
                   element={

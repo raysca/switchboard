@@ -1,0 +1,409 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { AgentVoiceTest } from "./AgentVoiceTest";
+import {
+  type ApiClient,
+  type AgentDTO,
+} from "../../api/client";
+import { BrowserAudioController, BrowserAudioError } from "../../voice/audio";
+import {
+  decodeBinaryFrame,
+  encodeAudioFrame,
+  encodeRTVIMessage,
+  RTVI_TYPE_BOT_LLM_TEXT,
+  RTVI_TYPE_BOT_READY,
+  RTVI_TYPE_BOT_STARTED_SPEAKING,
+  RTVI_TYPE_BOT_STOPPED_SPEAKING,
+  RTVI_TYPE_CLIENT_READY,
+  RTVI_TYPE_DISCONNECT,
+  RTVI_TYPE_USER_STARTED_SPEAKING,
+  RTVI_TYPE_USER_STOPPED_SPEAKING,
+  RTVI_TYPE_USER_TRANSCRIPTION,
+} from "../../voice/protocol";
+
+// Mock WebSocket class
+class MockWebSocket {
+  public static instances: MockWebSocket[] = [];
+  public url: string;
+  public readyState: number = WebSocket.CONNECTING;
+  public binaryType = "blob";
+  public onopen: (() => void) | null = null;
+  public onmessage: ((event: MessageEvent) => void) | null = null;
+  public onerror: ((event: Event) => void) | null = null;
+  public onclose: ((event: CloseEvent) => void) | null = null;
+  public sentData: Uint8Array[] = [];
+
+  constructor(url: string) {
+    this.url = url;
+    MockWebSocket.instances.push(this);
+    // Simulate async open
+    setTimeout(() => {
+      if (this.readyState === WebSocket.CONNECTING) {
+        this.readyState = WebSocket.OPEN;
+        this.onopen?.();
+      }
+    }, 10);
+  }
+
+  send(data: unknown) {
+    if (data instanceof Uint8Array) {
+      this.sentData.push(data);
+    } else if (ArrayBuffer.isView(data)) {
+      this.sentData.push(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+    }
+  }
+
+  close(code = 1000, reason = "") {
+    this.readyState = WebSocket.CLOSED;
+    this.onclose?.({ code, reason } as CloseEvent);
+  }
+
+  receiveRTVIMessage(type: string, data?: unknown) {
+    const frame = encodeRTVIMessage(type, data);
+    this.onmessage?.({ data: frame.buffer } as MessageEvent);
+  }
+
+  receiveAudioFrame(samples: Uint8Array, rate = 24000) {
+    const frame = encodeAudioFrame(samples, rate, 1);
+    this.onmessage?.({ data: frame.buffer } as MessageEvent);
+  }
+}
+
+function createMockAgent(overrides: Partial<AgentDTO> = {}): AgentDTO {
+  return {
+    id: "agent-alpha",
+    name: "Customer Assistant",
+    description: "Helps users with account questions",
+    enabled: true,
+    archived: false,
+    current_version: {
+      id: "ver-1",
+      number: 1,
+      schema_version: 1,
+      config: { stt: "google", llm: "gemini-2.0-flash", tts: "journey", pipeline: "default" },
+      config_hash: "hash-1",
+      created_at: "2026-10-05T12:00:00Z",
+      mcp_tools: [],
+    },
+    readiness: {
+      state: "ready",
+      reasons: [],
+    },
+    created_at: "2026-10-05T12:00:00Z",
+    updated_at: "2026-10-05T12:00:00Z",
+    ...overrides,
+  };
+}
+
+function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
+  return {
+    serverConfig: vi.fn(),
+    issueVoiceToken: vi.fn().mockResolvedValue({
+      // Token contains jti: "test-session-uuid-999"
+      token:
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJ0ZXN0LXNlc3Npb24tdXVpZC05OTkiLCJzdWIiOiJhbGljZSIsInBpcGVsaW5lIjoiZGVmYXVsdCJ9.sig",
+      expires_at: "2026-10-05T13:00:00Z",
+      scope: "voice:connect",
+    }),
+    getProviders: vi.fn(),
+    getCredentials: vi.fn(),
+    createCredential: vi.fn(),
+    getCredential: vi.fn(),
+    updateCredential: vi.fn(),
+    deleteCredential: vi.fn(),
+    validateCredential: vi.fn(),
+    rotateCredential: vi.fn(),
+    getProviderDiscovery: vi.fn(),
+    getAgents: vi.fn(),
+    createAgent: vi.fn(),
+    getAgent: vi.fn(),
+    updateAgent: vi.fn(),
+    archiveAgent: vi.fn(),
+    duplicateAgent: vi.fn(),
+    updateAgentMCPTools: vi.fn(),
+    ...overrides,
+  };
+}
+
+describe("AgentVoiceTest", () => {
+  let originalWebSocket: typeof WebSocket;
+
+  beforeEach(() => {
+    MockWebSocket.instances = [];
+    originalWebSocket = globalThis.WebSocket;
+    globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  });
+
+  afterEach(() => {
+    globalThis.WebSocket = originalWebSocket;
+  });
+
+  it("handles microphone denied permission error gracefully with retry", async () => {
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockRejectedValue(
+      new BrowserAudioError(
+        "Microphone permission was denied. Please allow microphone access in your browser settings.",
+        "permission_denied",
+      ),
+    );
+
+    const client = createMockClient();
+    const agent = createMockAgent();
+
+    render(
+      <MemoryRouter>
+        <AgentVoiceTest
+          agent={agent}
+          client={client}
+          keyValue="mgmt-key-1"
+          audioController={mockAudio}
+        />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    const startBtn = screen.getByTestId("start-voice-test-btn");
+    await user.click(startBtn);
+
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.getByText(/Microphone Access Denied/i)).toBeVisible();
+    expect(
+      screen.getByText(/Microphone permission was denied/i),
+    ).toBeVisible();
+
+    // Has retry button
+    const retryBtn = screen.getByRole("button", { name: /retry connection/i });
+    expect(retryBtn).toBeVisible();
+
+    // Audio capture mock now succeeds on retry
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
+    await user.click(retryBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Microphone Access Denied/i)).toBeNull();
+    });
+  });
+
+  it("handles token creation or WebSocket connection failure gracefully", async () => {
+    const client = createMockClient({
+      issueVoiceToken: vi.fn().mockRejectedValue(new Error("Token service unavailable")),
+    });
+    const agent = createMockAgent();
+
+    render(
+      <MemoryRouter>
+        <AgentVoiceTest agent={agent} client={client} keyValue="mgmt-key-1" />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("start-voice-test-btn"));
+
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(screen.getByText(/Token Creation Failed/i)).toBeVisible();
+    expect(screen.getByText(/Token service unavailable/i)).toBeVisible();
+  });
+
+  it("executes normal conversational flow: connect -> bot-ready -> user speaks -> bot speaks -> barge-in -> disconnect -> trace link", async () => {
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
+    const stopPlaybackSpy = vi.spyOn(mockAudio, "stopPlayback");
+    const playChunkSpy = vi.spyOn(mockAudio, "playAudioChunk");
+
+    const client = createMockClient();
+    const agent = createMockAgent();
+
+    render(
+      <MemoryRouter initialEntries={["/agents/agent-alpha"]}>
+        <Routes>
+          <Route
+            path="/agents/agent-alpha"
+            element={
+              <AgentVoiceTest
+                agent={agent}
+                client={client}
+                keyValue="mgmt-key-1"
+                audioController={mockAudio}
+                wsBaseUrl="ws://127.0.0.1:9090/ws"
+              />
+            }
+          />
+          <Route
+            path="/sessions/:sessionId"
+            element={<div data-testid="sessions-page">Session Details Page</div>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+
+    // 1. Connect
+    await user.click(screen.getByTestId("start-voice-test-btn"));
+
+    expect(client.issueVoiceToken).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: "agent-test-agent-alpha",
+        pipeline: "default",
+      }),
+    );
+
+    // Wait for WS instance
+    await waitFor(() => {
+      expect(MockWebSocket.instances.length).toBe(1);
+    });
+    const ws = MockWebSocket.instances[0];
+
+    // Verify WebSocket connected with token query param
+    expect(ws.url).toContain("token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
+    expect(ws.url).toContain("pipeline=default");
+
+    // Client sends client-ready frame
+    await waitFor(() => {
+      expect(ws.sentData.length).toBeGreaterThan(0);
+    });
+    const firstSent = decodeBinaryFrame(ws.sentData[0]);
+    expect(firstSent?.kind).toBe("message");
+    if (firstSent?.kind === "message") {
+      expect(firstSent.parsed?.type).toBe(RTVI_TYPE_CLIENT_READY);
+    }
+
+    // 2. Server sends bot-ready frame
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_READY, { version: "2.1.0" });
+
+    // Status becomes READY / Live call
+    expect(await screen.findByText("READY")).toBeVisible();
+    expect(screen.getByText(/Live call active/i)).toBeVisible();
+    expect(screen.getByTestId("disconnect-btn")).toBeVisible();
+    expect(screen.getByTestId("mute-btn")).toBeVisible();
+
+    // 3. User speaks: user-started-speaking, interim transcript, user-stopped-speaking, final transcript
+    ws.receiveRTVIMessage(RTVI_TYPE_USER_STARTED_SPEAKING);
+    expect(await screen.findByText(/Listening \(user speaking\)…/i)).toBeVisible();
+
+    // Interim transcript
+    ws.receiveRTVIMessage(RTVI_TYPE_USER_TRANSCRIPTION, {
+      text: "How do I reset my",
+      final: false,
+    });
+    expect(await screen.findByTestId("interim-transcript")).toHaveTextContent(
+      "How do I reset my",
+    );
+
+    // User stops speaking
+    ws.receiveRTVIMessage(RTVI_TYPE_USER_STOPPED_SPEAKING);
+
+    // Final transcript
+    ws.receiveRTVIMessage(RTVI_TYPE_USER_TRANSCRIPTION, {
+      text: "How do I reset my password?",
+      final: true,
+    });
+    expect(await screen.findByText("How do I reset my password?")).toBeVisible();
+    expect(screen.queryByTestId("interim-transcript")).toBeNull();
+
+    // 4. Bot speaks: bot-llm-text, bot-started-speaking, audio frames, bot-stopped-speaking
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_LLM_TEXT, {
+      text: "You can reset your password ",
+    });
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_LLM_TEXT, {
+      text: "in account settings.",
+    });
+    expect(await screen.findByTestId("bot-streaming-text")).toHaveTextContent(
+      "You can reset your password in account settings.",
+    );
+
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_STARTED_SPEAKING);
+    expect(await screen.findByText(/Assistant speaking…/i)).toBeVisible();
+
+    // Server sends audio samples
+    const fakeSamples = new Uint8Array(480);
+    ws.receiveAudioFrame(fakeSamples, 24000);
+    expect(playChunkSpy).toHaveBeenCalled();
+
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_STOPPED_SPEAKING);
+    await waitFor(() => {
+      expect(screen.queryByTestId("bot-streaming-text")).toBeNull();
+    });
+    expect(
+      screen.getByText("You can reset your password in account settings."),
+    ).toBeVisible();
+
+    // 5. Barge-in test: while bot speaks, user speaks
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_STARTED_SPEAKING);
+    expect(await screen.findByText(/Assistant speaking…/i)).toBeVisible();
+
+    // User interrupts bot!
+    ws.receiveRTVIMessage(RTVI_TYPE_USER_STARTED_SPEAKING);
+    expect(
+      await screen.findByText(/Barge-in: user interrupted assistant!/i),
+    ).toBeVisible();
+    expect(stopPlaybackSpy).toHaveBeenCalled();
+    expect(screen.getByText(/Interrupted: 1x/i)).toBeVisible();
+
+    ws.receiveRTVIMessage(RTVI_TYPE_USER_STOPPED_SPEAKING);
+
+    // 6. Mic mute toggle
+    const muteBtn = screen.getByTestId("mute-btn");
+    expect(muteBtn).toHaveTextContent("Mute mic");
+    await user.click(muteBtn);
+    expect(screen.getByText(/\[Mic Muted\]/i)).toBeVisible();
+    expect(muteBtn).toHaveTextContent("Unmute mic");
+    await user.click(muteBtn);
+    expect(screen.queryByText(/\[Mic Muted\]/i)).toBeNull();
+
+    // 7. Session summary & Trace timeline link verification
+    const sessionSummary = screen.getByTestId("session-summary");
+    expect(sessionSummary).toBeVisible();
+    expect(sessionSummary).toHaveTextContent("test-session-uuid-999");
+
+    const traceLink = screen.getByTestId("view-trace-link");
+    expect(traceLink).toBeVisible();
+    expect(traceLink).toHaveAttribute("href", "/sessions/test-session-uuid-999");
+
+    // 8. Disconnect
+    const disconnectBtn = screen.getByTestId("disconnect-btn");
+    await user.click(disconnectBtn);
+
+    // Status becomes DISCONNECTED
+    expect(await screen.findByText("DISCONNECTED")).toBeVisible();
+    expect(screen.getByTestId("start-voice-test-btn")).toBeVisible();
+
+    // Verify disconnect-bot was sent
+    const lastSent = decodeBinaryFrame(ws.sentData[ws.sentData.length - 1]);
+    expect(lastSent?.kind).toBe("message");
+    if (lastSent?.kind === "message") {
+      expect(lastSent.parsed?.type).toBe(RTVI_TYPE_DISCONNECT);
+    }
+
+    // Trace link remains accessible after call disconnect
+    expect(screen.getByTestId("view-trace-link")).toBeVisible();
+
+    // Clicking trace link routes to /sessions/:sessionId
+    await user.click(screen.getByTestId("view-trace-link"));
+    expect(await screen.findByTestId("sessions-page")).toBeVisible();
+  });
+
+  it("toggles Pipecat debug panel visibility", async () => {
+    const client = createMockClient();
+    const agent = createMockAgent();
+
+    render(
+      <MemoryRouter>
+        <AgentVoiceTest agent={agent} client={client} keyValue="mgmt-key-1" />
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+    const toggleBtn = screen.getByTestId("toggle-debug-btn");
+
+    expect(screen.queryByLabelText(/Pipecat RTVI Debug Panel/i)).toBeNull();
+
+    await user.click(toggleBtn);
+    expect(screen.getByLabelText(/Pipecat RTVI Debug Panel/i)).toBeVisible();
+
+    await user.click(toggleBtn);
+    expect(screen.queryByLabelText(/Pipecat RTVI Debug Panel/i)).toBeNull();
+  });
+});
