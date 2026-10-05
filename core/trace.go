@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,7 +22,16 @@ const (
 type TracePolicy struct {
 	Content           TraceContentMode
 	RedactToolContent func(string) string
+	// MaxTextBytes bounds selected text and redactor output. Zero uses 4 KiB;
+	// values above 16 KiB are clamped.
+	MaxTextBytes int
 }
+
+const (
+	defaultTraceTextBytes = 4 << 10
+	maxTraceTextBytes     = 16 << 10
+	maxTraceLabelBytes    = 256
+)
 
 // TraceEvent is an immutable event value when constructed with NewTraceEvent.
 // Attributes returns a separate map on each call.
@@ -51,6 +61,49 @@ type Span interface {
 	SetAttribute(key string, value any)
 	AddEvent(event TraceEvent)
 	End(err error)
+}
+
+// StartSpanSafe contains tracer panics and returns a span whose callbacks are
+// also panic-isolated. Runtime instrumentation uses this boundary so an
+// exporter cannot fail session processing.
+func StartSpanSafe(ctx context.Context, tracer Tracer, event TraceEvent) Span {
+	if tracer == nil {
+		return noopSpan{}
+	}
+	var span Span
+	func() {
+		defer func() { _ = recover() }()
+		span = tracer.StartSpan(ctx, event)
+	}()
+	if span == nil {
+		return noopSpan{}
+	}
+	if _, asynchronous := tracer.(*AsyncTracer); asynchronous {
+		return span
+	}
+	return &guardedSpan{inner: span}
+}
+
+type guardedSpan struct {
+	inner Span
+	end   sync.Once
+}
+
+func (s *guardedSpan) SetAttribute(key string, value any) {
+	defer func() { _ = recover() }()
+	s.inner.SetAttribute(key, value)
+}
+
+func (s *guardedSpan) AddEvent(event TraceEvent) {
+	defer func() { _ = recover() }()
+	s.inner.AddEvent(event)
+}
+
+func (s *guardedSpan) End(err error) {
+	s.end.Do(func() {
+		defer func() { _ = recover() }()
+		s.inner.End(err)
+	})
 }
 
 type NoopTracer struct{}
@@ -94,19 +147,35 @@ func safeEventAttributes(policy TracePolicy, input map[string]any) map[string]an
 		case "transcript", "prompt", "text":
 			if mode == TraceText {
 				if s, ok := value.(string); ok {
-					out[key] = s
+					if bounded, ok := boundedTraceText(policy, s); ok {
+						out[key] = bounded
+					}
 				}
 			}
 		case "tool.arguments", "tool.result":
 			if mode == TraceText && policy.RedactToolContent != nil {
 				if s, ok := value.(string); ok {
-					out[key] = policy.RedactToolContent(s)
+					if bounded, ok := redactTraceText(policy, s); ok {
+						out[key] = bounded
+					}
 				}
 			}
 		case "count", "sample_rate", "channels", "duration_ms", "latency_ms", "sequence", "model", "provider", "format", "status", "error.category", "unit", "quantity", "reason", "component":
-			switch value.(type) {
-			case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			switch v := value.(type) {
+			case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 				out[key] = value
+			case string:
+				if len(v) <= maxTraceLabelBytes {
+					out[key] = v
+				}
+			case float32:
+				if !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0) {
+					out[key] = v
+				}
+			case float64:
+				if !math.IsNaN(v) && !math.IsInf(v, 0) {
+					out[key] = v
+				}
 			}
 		default:
 			if strings.HasPrefix(key, "custom.") && safeMetadataKey(key) {
@@ -129,6 +198,36 @@ func safeEventAttributes(policy TracePolicy, input map[string]any) map[string]an
 		}
 	}
 	return out
+}
+
+func traceTextLimit(policy TracePolicy) int {
+	if policy.MaxTextBytes <= 0 {
+		return defaultTraceTextBytes
+	}
+	if policy.MaxTextBytes > maxTraceTextBytes {
+		return maxTraceTextBytes
+	}
+	return policy.MaxTextBytes
+}
+
+func boundedTraceText(policy TracePolicy, text string) (string, bool) {
+	if len(text) > traceTextLimit(policy) {
+		return "", false
+	}
+	return text, true
+}
+
+func redactTraceText(policy TracePolicy, text string) (result string, ok bool) {
+	defer func() {
+		if recover() != nil {
+			result, ok = "", false
+		}
+	}()
+	result = policy.RedactToolContent(text)
+	if len(result) > traceTextLimit(policy) {
+		return "", false
+	}
+	return result, true
 }
 
 func cloneAttributes(input map[string]any) map[string]any {
@@ -161,6 +260,11 @@ func copyStructuredMetadata(value any, depth int, remaining *int) (any, bool) {
 	}
 	*remaining--
 	switch v := value.(type) {
+	case string:
+		if len(v) > maxTraceLabelBytes {
+			return nil, false
+		}
+		return v, true
 	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return v, true
 	case float32:

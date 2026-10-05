@@ -39,6 +39,7 @@ type ToolLoopConfig struct {
 	Now                func() time.Time
 	IsCurrent          func(ToolCall) bool
 	Tracer             core.Tracer
+	TracePolicy        core.TracePolicy
 }
 
 func DefaultToolLoopConfig() ToolLoopConfig {
@@ -264,9 +265,11 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 	defer cancel()
 	var toolResult ToolResult
 	var execErr error
-	event := core.NewTraceEvent("tool.execute", started, call.SessionID, call.TurnID, call.Generation, core.TracePolicy{Content: core.TraceNone}, nil)
+	event := core.NewTraceEvent("tool.execute", started, call.SessionID, call.TurnID, call.Generation, l.cfg.TracePolicy, map[string]any{
+		"tool.arguments": string(call.Arguments),
+	})
 	event.ToolCallID = call.ID
-	span := l.cfg.Tracer.StartSpan(callCtx, event)
+	span := core.StartSpanSafe(callCtx, l.cfg.Tracer, event)
 	traceEnded := false
 	endTrace := func(category string) {
 		if traceEnded {

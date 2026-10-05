@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -111,6 +113,14 @@ type Session struct {
 	StaleDiscarded atomic.Uint64
 	AudioDropped   atomic.Uint64
 	Created        time.Time
+
+	tracer         Tracer
+	tracePolicy    TracePolicy
+	traceCtx       context.Context // run-loop owned after Start
+	sessionSpan    Span
+	traceQueue     *AsyncTracer
+	ownsTraceQueue bool
+	turnSpans      map[TurnID]Span // run-loop owned; finalized after runLoopDone
 }
 
 // NewSession creates and initializes a new Session with the specified pipeline and budget.
@@ -140,8 +150,25 @@ func NewSession(id uint64, pipeline *Pipeline, budget ResourceBudget) (*Session,
 
 	s.state.Store(int32(StateStarting))
 	s.gen.Store(1) // Generation begins at 1
+	s.tracer = NoopTracer{}
 
 	return s, nil
+}
+
+// SetTracer configures provider-neutral runtime tracing before the session is
+// started. A nil tracer selects the no-op implementation.
+func (s *Session) SetTracer(tracer Tracer, policy TracePolicy) error {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	if s.State() != StateStarting {
+		return errors.New("core: tracer must be configured before session start")
+	}
+	if tracer == nil {
+		tracer = NoopTracer{}
+	}
+	s.tracer = tracer
+	s.tracePolicy = policy
+	return nil
 }
 
 // ID returns the unique session identifier.
@@ -218,7 +245,25 @@ func (s *Session) Start() error {
 		}
 	}
 
+	s.admissionMu.Lock()
 	s.state.Store(int32(StateRunning))
+	tracer, policy := s.tracer, s.tracePolicy
+	if _, noop := tracer.(NoopTracer); !noop {
+		if async, alreadyAsync := tracer.(*AsyncTracer); alreadyAsync {
+			s.traceQueue = async
+		} else {
+			s.traceQueue = NewAsyncTracer(tracer, defaultTraceQueueSize)
+			s.tracer = s.traceQueue
+			s.traceQueue = s.tracer.(*AsyncTracer)
+			s.ownsTraceQueue = true
+		}
+		tracer = s.tracer
+	}
+	s.admissionMu.Unlock()
+	s.traceCtx = s.ctx
+	s.sessionSpan = StartSpanSafe(s.ctx, tracer, NewTraceEvent("session.start", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), "", Generation(s.CurrentGeneration()), policy, nil))
+	s.traceCtx = ContextWithSpan(s.ctx, s.sessionSpan)
+	s.turnSpans = make(map[TurnID]Span)
 	close(s.ready)
 
 	go s.runLoop()
@@ -429,6 +474,23 @@ func (s *Session) Close() error {
 			s.state.Store(int32(StateLeaked))
 			s.recordErr(fmt.Errorf("%w: %d background tasks failed to exit", ErrTeardownTimeout, rem))
 		}
+		terminal := "session.end"
+		if s.Err() != nil {
+			terminal = "session.failure"
+		}
+		for _, span := range s.turnSpans {
+			if span != nil {
+				span.End(traceStatusError(s.Err(), "session_failure"))
+			}
+		}
+		terminalSpan := StartSpanSafe(s.traceCtx, s.tracer, NewTraceEvent(terminal, time.Now(), SessionID(strconv.FormatUint(s.id, 10)), "", Generation(s.CurrentGeneration()), s.tracePolicy, nil))
+		terminalSpan.End(traceStatusError(s.Err(), "session_failure"))
+		if s.sessionSpan != nil {
+			s.sessionSpan.End(traceStatusError(s.Err(), "session_failure"))
+		}
+		if s.ownsTraceQueue && s.traceQueue != nil {
+			s.traceQueue.Close()
+		}
 
 		close(s.stopped)
 	})
@@ -536,6 +598,33 @@ func (s *Session) processEnvelope(env Envelope) bool {
 				deliveryErr = fmt.Errorf("processor panic on frame %v: %v\nstack:\n%s", env.Frame.Type(), r, stack)
 			}
 		}()
+		parent := s.traceCtx
+		if parent == nil {
+			parent = s.ctx
+		}
+		turn := traceTurnID(env.Frame)
+		if turn != "" {
+			if span, ok := s.turnSpans[turn]; ok && span != nil {
+				parent = ContextWithSpan(s.ctx, span)
+			} else if !ok {
+				span := StartSpanSafe(parent, s.tracer, NewTraceEvent("turn.start", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), turn, traceGeneration(env.Frame), s.tracePolicy, nil))
+				s.turnSpans[turn] = span
+				parent = ContextWithSpan(s.ctx, span)
+			}
+		}
+		frameSpan := StartSpanSafe(parent, s.tracer, s.traceEvent(env.Frame))
+		previous := s.traceCtx
+		s.traceCtx = ContextWithSpan(parent, frameSpan)
+		defer func() {
+			s.traceCtx = previous
+			frameSpan.End(traceStatusError(deliveryErr, "processor_error"))
+			if turn != "" && traceTurnTerminal(env.Frame) {
+				if span := s.turnSpans[turn]; span != nil {
+					span.End(traceStatusError(deliveryErr, "processor_error"))
+					s.turnSpans[turn] = nil
+				}
+			}
+		}()
 		deliveryErr = s.deliver(env.Frame, env.Dir, env.ResumeIndex)
 	}()
 
@@ -554,7 +643,7 @@ func (s *Session) processEnvelope(env Envelope) bool {
 }
 
 // deliver dispatches a frame inline to the processor at index 'to'.
-func (s *Session) deliver(f Frame, dir Direction, to int) error {
+func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 	if intr, ok := f.(*InterruptionFrame); ok && intr.Gen != 0 && intr.Gen < s.CurrentGeneration() && (!intr.committed || intr.Gen+1 != s.CurrentGeneration()) {
 		s.StaleDiscarded.Add(1)
 		return nil
@@ -604,11 +693,219 @@ func (s *Session) deliver(f Frame, dir Direction, to int) error {
 
 	default:
 		proc := s.pipe.At(to)
+		parent := s.traceCtx
+		if parent == nil {
+			parent = s.ctx
+		}
+		component := reflect.TypeOf(proc).String()
+		span := StartSpanSafe(parent, s.tracer, NewTraceEvent("processor.frame", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), traceTurnID(f), traceGeneration(f), s.tracePolicy, map[string]any{"component": component, "frame": frameTraceLabel(f.Type()), "direction": dir.String()}))
 		e := &sessionEmitter{
 			s:     s,
 			index: to,
 		}
-		return proc.ProcessFrame(s.ctx, f, dir, e)
+		previous := s.traceCtx
+		s.traceCtx = ContextWithSpan(parent, span)
+		defer func() {
+			s.traceCtx = previous
+			span.End(traceStatusError(resultErr, "processor_error"))
+		}()
+		resultErr = proc.ProcessFrame(s.traceCtx, f, dir, e)
+		return resultErr
+	}
+}
+
+func (s *Session) traceEvent(f Frame) TraceEvent {
+	name, attributes := frameTrace(f)
+	event := NewTraceEvent(name, time.Now(), SessionID(strconv.FormatUint(s.id, 10)), traceTurnID(f), traceGeneration(f), s.tracePolicy, attributes)
+	if tool, ok := f.(*ToolCallFrame); ok {
+		event.ToolCallID = tool.Call.ID
+	}
+	if tool, ok := f.(*ToolResultFrame); ok {
+		event.ToolCallID = tool.Result.CallID
+	}
+	return event
+}
+
+func frameTrace(f Frame) (string, map[string]any) {
+	attrs := make(map[string]any)
+	switch v := f.(type) {
+	case *InputAudioFrame:
+		attrs["count"], attrs["sample_rate"], attrs["channels"], attrs["format"], attrs["duration_ms"] = len(v.Samples), v.SampleRate, v.Channels, string(v.Encoding), float64(v.Duration.Microseconds())/1000
+		return "frame.input_audio", attrs
+	case *OutputAudioFrame:
+		attrs["count"], attrs["sample_rate"], attrs["channels"], attrs["format"], attrs["duration_ms"] = len(v.Samples), v.SampleRate, v.Channels, string(v.Encoding), float64(v.Duration.Microseconds())/1000
+		return "transport.output_audio", attrs
+	case *UserStartedSpeakingFrame:
+		return "speech.start", attrs
+	case *UserStoppedSpeakingFrame:
+		return "speech.stop", attrs
+	case *InterimTranscriptionFrame:
+		attrs["transcript"] = v.Text
+		return "stt.partial", attrs
+	case *FinalTranscriptionFrame:
+		attrs["transcript"] = v.Text
+		return "stt.final", attrs
+	case *TranscriptCandidateFrame:
+		attrs["transcript"], attrs["provider"] = v.Text, v.Provider
+		if v.HasStability {
+			attrs["custom.stt.stability"] = v.Stability
+		}
+		if v.Final {
+			return "stt.final", attrs
+		}
+		return "stt.partial", attrs
+	case *TranscriptAdvanceFrame:
+		return "transcript.finalization", attrs
+	case *UserMessageFrame:
+		attrs["text"] = v.Content
+		return "context.user_commit", attrs
+	case *AssistantMessageFrame:
+		attrs["text"] = v.Content
+		attrs["status"] = "complete"
+		if v.Partial {
+			attrs["status"] = "partial"
+		}
+		return "context.assistant_commit", attrs
+	case *LLMTextDeltaFrame:
+		attrs["text"] = v.Delta
+		return "llm.first_output", attrs
+	case *LLMTextFrame:
+		attrs["text"] = v.Text
+		return "llm.complete", attrs
+	case *ToolCallFrame:
+		attrs["component"] = v.Call.Name
+		return "tool.requested", attrs
+	case *ToolResultFrame:
+		attrs["status"] = string(v.Result.Status)
+		if v.Result.Status == ToolSucceeded {
+			return "tool.complete", attrs
+		}
+		return "tool.failed", attrs
+	case *TTSStartedFrame:
+		return "tts.request", attrs
+	case *TTSAudioFrame:
+		attrs["count"], attrs["sample_rate"], attrs["channels"], attrs["duration_ms"] = len(v.Audio), v.SampleRate, v.Channels, float64(v.Duration.Microseconds())/1000
+		return "tts.first_audio", attrs
+	case *TTSStoppedFrame:
+		return "tts.complete", attrs
+	case *TurnEventFrame:
+		switch v.Kind {
+		case TurnEventStarted:
+			return "turn.event", attrs
+		case TurnEventStopped:
+			return "speech.stop", attrs
+		case TurnEventCompleted, TurnEventNoSpeechTimeout:
+			return "turn.complete", attrs
+		case TurnEventInterrupted:
+			return "turn.interrupted", attrs
+		}
+	case *InterruptionFrame:
+		return "turn.interrupted", attrs
+	case *FlushFrame:
+		return "output.flush", attrs
+	case *ErrorFrame:
+		attrs["error.category"] = "runtime"
+		return "session.failure", attrs
+	}
+	return "frame." + frameTraceLabel(f.Type()), attrs
+}
+
+func traceStatusError(err error, category string) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(category)
+}
+
+func traceTurnTerminal(frame Frame) bool {
+	switch value := frame.(type) {
+	case *TurnEventFrame:
+		return value.Kind == TurnEventCompleted || value.Kind == TurnEventInterrupted || value.Kind == TurnEventNoSpeechTimeout
+	case *InterruptionFrame:
+		return true
+	}
+	return false
+}
+
+func traceTurnID(f Frame) TurnID {
+	switch v := f.(type) {
+	case *OutputAudioFrame:
+		return TurnID(v.Turn)
+	case *LLMTextDeltaFrame:
+		return TurnID(v.Turn)
+	case *LLMTextFrame:
+		return TurnID(v.Turn)
+	case *SynthesisUnitFrame:
+		return TurnID(v.Turn)
+	case *TTSStartedFrame:
+		return TurnID(v.Turn)
+	case *TTSAudioFrame:
+		return TurnID(v.Turn)
+	case *TTSStoppedFrame:
+		return TurnID(v.Turn)
+	case *UserMessageFrame:
+		return TurnID(v.Turn)
+	case *AssistantMessageFrame:
+		return TurnID(v.Turn)
+	case *TranscriptCandidateFrame:
+		return v.Turn
+	case *TranscriptInvalidationFrame:
+		return v.Turn
+	case *FinalTranscriptionFrame:
+		return TurnID(v.Turn)
+	case *InterimTranscriptionFrame:
+		return TurnID(v.Turn)
+	case *TurnEventFrame:
+		return v.Turn
+	case *InterruptionFrame:
+		return TurnID(v.Turn)
+	case *SpeakingStateFrame:
+		return TurnID(v.Turn)
+	case *WriteCompletionFrame:
+		return TurnID(v.Turn)
+	case *ToolCallFrame:
+		return v.Call.TurnID
+	case *ToolResultFrame:
+		return v.Turn
+	}
+	return ""
+}
+
+func traceGeneration(f Frame) Generation {
+	if gf, ok := f.(GenerationalFrame); ok {
+		return Generation(gf.Generation())
+	}
+	return 0
+}
+
+func frameTraceLabel(frame FrameType) string {
+	switch frame {
+	case FrameInputAudio:
+		return "input_audio"
+	case FrameOutputAudio:
+		return "output_audio"
+	case FrameTurnEvent:
+		return "turn_event"
+	case FrameTranscriptCandidate:
+		return "transcript_candidate"
+	case FrameTranscriptAdvance:
+		return "transcript_advance"
+	case FrameTranscriptInvalidation:
+		return "transcript_invalidation"
+	case FrameUserStartedSpeaking:
+		return "speech_start"
+	case FrameUserStoppedSpeaking:
+		return "speech_stop"
+	case FrameInterruption:
+		return "interruption"
+	case FrameFlush:
+		return "flush"
+	case FrameToolCall:
+		return "tool_call"
+	case FrameToolResult:
+		return "tool_result"
+	default:
+		return strconv.Itoa(int(frame))
 	}
 }
 

@@ -2,8 +2,10 @@ package core_test
 
 import (
 	"context"
+	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +159,35 @@ func TestTraceContractPrivacyEnvelope(t *testing.T) {
 	invalid := core.NewTraceEvent("stt.final", time.Now(), "s", "t", 1, core.TracePolicy{Content: "unexpected"}, attrs)
 	if len(invalid.Attributes()) != 0 {
 		t.Fatal("unknown content mode must fail closed")
+	}
+}
+
+func TestTraceContractRedactorPanicFailsClosed(t *testing.T) {
+	const secret = "unique-tool-secret-914"
+	event := core.NewTraceEvent("tool.complete", time.Now(), "s", "t", 1, core.TracePolicy{
+		Content:           core.TraceText,
+		RedactToolContent: func(string) string { panic(secret) },
+	}, map[string]any{"tool.result": secret, "status": "ok"})
+	attrs := event.Attributes()
+	if _, ok := attrs["tool.result"]; ok || attrs["status"] != "ok" {
+		t.Fatalf("redactor panic must drop only sensitive content: %#v", attrs)
+	}
+}
+
+func TestTraceContractTextAndScalarValuesAreBoundedAndFinite(t *testing.T) {
+	const secret = "finite-check-secret"
+	event := core.NewTraceEvent("llm.complete", time.Now(), "s", "t", 1, core.TracePolicy{Content: core.TraceText, MaxTextBytes: 4}, map[string]any{
+		"text":           "too-long:" + secret,
+		"status":         strings.Repeat("x", 257),
+		"latency_ms":     math.NaN(),
+		"duration_ms":    math.Inf(1),
+		"sample_rate":    16000,
+		"transcript":     "ok",
+		"tool.arguments": secret,
+	})
+	attrs := event.Attributes()
+	if _, ok := attrs["text"]; ok || attrs["status"] != nil || attrs["latency_ms"] != nil || attrs["duration_ms"] != nil || attrs["tool.arguments"] != nil || attrs["sample_rate"] != 16000 || attrs["transcript"] != "ok" {
+		t.Fatalf("trace bounded-value policy failed: %#v", attrs)
 	}
 }
 

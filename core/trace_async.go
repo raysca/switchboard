@@ -1,0 +1,252 @@
+package core
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+)
+
+const defaultTraceQueueSize = 256
+
+type traceOperationKind uint8
+
+const (
+	traceStart traceOperationKind = iota + 1
+	traceAttribute
+	traceEvent
+	traceEnd
+)
+
+type traceOperation struct {
+	kind   traceOperationKind
+	ctx    context.Context
+	parent Span
+	proxy  *asyncSpan
+	event  TraceEvent
+	key    string
+	value  any
+	err    error
+}
+
+// AsyncTracer isolates runtime callers from slow exporters. It preserves
+// operation order and span parentage on one worker; a full queue drops the
+// incoming operation rather than blocking the voice runtime.
+type AsyncTracer struct {
+	tracer  Tracer
+	queue   chan traceOperation
+	wake    chan struct{}
+	mu      sync.Mutex
+	closed  bool
+	dropped atomic.Uint64
+
+	terminalMu      sync.Mutex
+	terminals       []traceOperation
+	terminalPending map[*asyncSpan]struct{}
+}
+
+// NewAsyncTracer creates a bounded asynchronous dispatcher. A non-positive
+// queue size selects the conservative 256-operation default.
+func NewAsyncTracer(tracer Tracer, queueSize int) *AsyncTracer {
+	if queueSize <= 0 {
+		queueSize = defaultTraceQueueSize
+	}
+	if tracer == nil {
+		tracer = NoopTracer{}
+	}
+	dispatcher := &AsyncTracer{
+		tracer:          tracer,
+		queue:           make(chan traceOperation, queueSize),
+		wake:            make(chan struct{}, 1),
+		terminalPending: make(map[*asyncSpan]struct{}),
+	}
+	go dispatcher.run()
+	return dispatcher
+}
+
+// DroppedOperations reports work discarded because the bounded queue was full
+// or the dispatcher had already closed. It is diagnostic only.
+func (t *AsyncTracer) DroppedOperations() uint64 { return t.dropped.Load() }
+
+// Close stops accepting new work and lets the worker drain queued operations.
+// It does not wait for exporter callbacks, which may be blocked independently.
+func (t *AsyncTracer) Close() {
+	t.mu.Lock()
+	if !t.closed {
+		t.closed = true
+		close(t.queue)
+	}
+	t.mu.Unlock()
+}
+
+func (t *AsyncTracer) StartSpan(ctx context.Context, event TraceEvent) Span {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	proxy := &asyncSpan{tracer: t}
+	if t.enqueue(traceOperation{kind: traceStart, ctx: ctx, parent: SpanFromContext(ctx), proxy: proxy, event: event}) {
+		proxy.accepted.Store(true)
+	}
+	return proxy
+}
+
+func (t *AsyncTracer) enqueue(operation traceOperation) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		t.dropped.Add(1)
+		return false
+	}
+	select {
+	case t.queue <- operation:
+		return true
+	default:
+		t.dropped.Add(1)
+		return false
+	}
+}
+
+// enqueueTerminal is deliberately separate from the bounded best-effort
+// operation queue. Once a start was accepted, its single terminal operation
+// is retained until the worker can pair it with that span. This prevents an
+// overloaded tracer from leaking accepted spans while keeping ordinary
+// attributes/events non-blocking and bounded.
+func (t *AsyncTracer) enqueueTerminal(operation traceOperation) {
+	t.terminalMu.Lock()
+	if _, exists := t.terminalPending[operation.proxy]; !exists {
+		t.terminalPending[operation.proxy] = struct{}{}
+		t.terminals = append(t.terminals, operation)
+	}
+	t.terminalMu.Unlock()
+	select {
+	case t.wake <- struct{}{}:
+	default:
+	}
+}
+
+type asyncSpan struct {
+	tracer   *AsyncTracer
+	accepted atomic.Bool
+	once     sync.Once
+}
+
+func (s *asyncSpan) SetAttribute(key string, value any) {
+	s.tracer.enqueue(traceOperation{kind: traceAttribute, proxy: s, key: key, value: value})
+}
+
+func (s *asyncSpan) AddEvent(event TraceEvent) {
+	s.tracer.enqueue(traceOperation{kind: traceEvent, proxy: s, event: event})
+}
+
+func (s *asyncSpan) End(err error) {
+	s.once.Do(func() {
+		if s.accepted.Load() {
+			s.tracer.enqueueTerminal(traceOperation{kind: traceEnd, proxy: s, err: err})
+		}
+	})
+}
+
+func (t *AsyncTracer) run() {
+	spans := make(map[*asyncSpan]Span)
+	queue := t.queue
+	for {
+		if queue == nil {
+			t.drainTerminals(spans)
+			if !t.hasTerminals() {
+				return
+			}
+			// A terminal without a started span can only belong to an operation
+			// that was not accepted. Drop it rather than retaining state forever.
+			t.dropUnstartedTerminals(spans)
+			continue
+		}
+		// Preserve normal-operation order before ending a span. In particular,
+		// a session close may enqueue terminals while child starts are still in
+		// the bounded queue. Terminals become eligible as soon as that queue is
+		// drained, including after Close closes it.
+		if len(queue) == 0 {
+			t.drainTerminals(spans)
+		}
+		var operation traceOperation
+		var ok bool
+		select {
+		case operation, ok = <-queue:
+			if !ok {
+				queue = nil
+				continue
+			}
+		case <-t.wake:
+			continue
+		}
+		if operation.kind == traceStart {
+			ctx := operation.ctx
+			if operation.parent != nil {
+				if parent := spansFor(operation.parent, spans); parent != nil {
+					ctx = ContextWithSpan(ctx, parent)
+				}
+			}
+			spans[operation.proxy] = StartSpanSafe(ctx, t.tracer, operation.event)
+			continue
+		}
+		span := spans[operation.proxy]
+		if span == nil {
+			continue
+		}
+		switch operation.kind {
+		case traceAttribute:
+			span.SetAttribute(operation.key, operation.value)
+		case traceEvent:
+			span.AddEvent(operation.event)
+		case traceEnd:
+			span.End(operation.err)
+			delete(spans, operation.proxy)
+		}
+	}
+}
+
+func (t *AsyncTracer) drainTerminals(spans map[*asyncSpan]Span) {
+	t.terminalMu.Lock()
+	deferred := t.terminals[:0]
+	for _, operation := range t.terminals {
+		span := spans[operation.proxy]
+		if span == nil {
+			deferred = append(deferred, operation)
+			continue
+		}
+		span.End(operation.err)
+		delete(spans, operation.proxy)
+		delete(t.terminalPending, operation.proxy)
+	}
+	t.terminals = deferred
+	t.terminalMu.Unlock()
+}
+
+func (t *AsyncTracer) hasTerminals() bool {
+	t.terminalMu.Lock()
+	defer t.terminalMu.Unlock()
+	return len(t.terminals) != 0
+}
+
+func (t *AsyncTracer) dropUnstartedTerminals(spans map[*asyncSpan]Span) {
+	t.terminalMu.Lock()
+	deferred := t.terminals[:0]
+	for _, operation := range t.terminals {
+		if _, started := spans[operation.proxy]; started {
+			deferred = append(deferred, operation)
+			continue
+		}
+		delete(t.terminalPending, operation.proxy)
+		t.dropped.Add(1)
+	}
+	t.terminals = deferred
+	t.terminalMu.Unlock()
+}
+
+func spansFor(parent Span, spans map[*asyncSpan]Span) Span {
+	if proxy, ok := parent.(*asyncSpan); ok {
+		parent = spans[proxy]
+	}
+	if guarded, ok := parent.(*guardedSpan); ok {
+		return guarded.inner
+	}
+	return parent
+}

@@ -1,0 +1,30 @@
+# Privacy policy
+
+## Runtime traces
+
+Core tracing is metadata-only unless a caller explicitly selects
+`TracePolicy{Content: TraceText}`. The runtime records lifecycle names,
+timestamps, opaque session/turn/call correlation, finite counts, formats, and
+safe status/category labels. It never records raw audio, credentials, raw
+provider/executor errors, unrestricted text, or arbitrary attributes.
+
+Text mode is bounded (4 KiB by default and 16 KiB maximum) and only admits the
+selected `transcript`, `prompt`, and `text` fields. Tool arguments and results
+need a caller-supplied redactor; the redactor is panic-isolated and over-limit
+or invalid output is dropped. The core ToolLoop records only the redacted
+argument at execution start. It intentionally does not trace a result payload:
+that value is untrusted until the loop has normalized it and committed it to
+the conversation context.
+
+Trace attributes are copied and recursively validate only finite scalar and
+bounded `custom.*` metadata. The trace policy is an admission boundary, not a
+retention policy: exporters and the Server remain responsible for access,
+storage, and deletion controls.
+
+## Failure isolation
+
+Runtime trace callbacks run through an asynchronous bounded dispatcher. A slow,
+failing, or panicking exporter cannot fail or hold the voice session. Normal
+attributes/events may be dropped when the queue is full; when a span start was
+accepted, its one terminal operation is retained so the exporter observes a
+balanced span. Only canonical error categories are supplied to `Span.End`.
