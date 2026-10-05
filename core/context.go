@@ -10,6 +10,9 @@ import (
 var (
 	ErrContextLimitExceeded = errors.New("core: conversation context exceeds budget limits even after complete turn-pair eviction")
 	ErrInvalidRole          = errors.New("core: invalid message role")
+	ErrInvalidToolMessage   = errors.New("core: invalid tool context message")
+	ErrUnmatchedToolResult  = errors.New("core: tool result has no matching call")
+	ErrToolCorrelation      = errors.New("core: conflicting tool call correlation")
 )
 
 // Role represents the conversational participant role.
@@ -19,16 +22,29 @@ const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool"
+)
+
+type MessageKind string
+
+const (
+	MessageText       MessageKind = "text"
+	MessageToolCall   MessageKind = "tool_call"
+	MessageToolResult MessageKind = "tool_result"
 )
 
 // Message is a provider-neutral representation of a conversation turn or instruction.
 type Message struct {
-	Role      Role           `json:"role"`
-	Content   string         `json:"content"`
-	TurnID    string         `json:"turn_id,omitempty"`
-	Partial   bool           `json:"partial,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
+	Role       Role           `json:"role"`
+	Content    string         `json:"content"`
+	TurnID     string         `json:"turn_id,omitempty"`
+	Partial    bool           `json:"partial,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	Kind       MessageKind    `json:"kind,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	ToolName   string         `json:"tool_name,omitempty"`
+	Generation uint64         `json:"generation,omitempty"`
 }
 
 // ContextConfig specifies the bounded message and token limits for conversation history.
@@ -77,22 +93,35 @@ func NewConversationContext(cfg ContextConfig) *ConversationContext {
 
 // SetSystemInstruction sets or replaces the initial system instruction message.
 func (c *ConversationContext) SetSystemInstruction(instruction string) {
+	_ = c.SetSystemInstructionChecked(instruction, time.Time{})
+}
+
+// SetSystemInstructionChecked replaces the system instruction atomically and
+// rolls back when the configured context budget cannot retain it.
+func (c *ConversationContext) SetSystemInstructionChecked(instruction string, at time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if at.IsZero() {
+		at = time.Now()
+	}
 
 	sysMsg := Message{
 		Role:      RoleSystem,
 		Content:   instruction,
-		CreatedAt: time.Now(),
+		CreatedAt: at,
 	}
 
+	original := append([]Message(nil), c.messages...)
 	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
 		c.messages[0] = sysMsg
-		return
+	} else {
+		c.messages = append([]Message{sysMsg}, c.messages...)
 	}
-
-	// Prepend system instruction
-	c.messages = append([]Message{sysMsg}, c.messages...)
+	if err := c.enforceBudgetLocked(); err != nil {
+		c.messages = original
+		return err
+	}
+	return nil
 }
 
 // Messages returns a copy of all current messages in context.
@@ -101,7 +130,9 @@ func (c *ConversationContext) Messages() []Message {
 	defer c.mu.RUnlock()
 
 	res := make([]Message, len(c.messages))
-	copy(res, c.messages)
+	for i := range c.messages {
+		res[i] = cloneMessage(c.messages[i])
+	}
 	return res
 }
 
@@ -140,8 +171,17 @@ func (c *ConversationContext) EvictedTurnPairs() []string {
 // If limits cannot be satisfied without evicting the system prompt or the new message itself,
 // the addition is rejected and context remains unchanged.
 func (c *ConversationContext) AddMessage(msg Message) error {
-	if msg.Role != RoleSystem && msg.Role != RoleUser && msg.Role != RoleAssistant {
+	if msg.Role != RoleSystem && msg.Role != RoleUser && msg.Role != RoleAssistant && msg.Role != RoleTool {
 		return fmt.Errorf("%w: %q", ErrInvalidRole, msg.Role)
+	}
+	if msg.Kind == MessageToolCall && (msg.Role != RoleAssistant || msg.ToolCallID == "" || msg.ToolName == "" || msg.TurnID == "") {
+		return ErrInvalidToolMessage
+	}
+	if msg.Kind == MessageToolResult && (msg.Role != RoleTool || msg.ToolCallID == "" || msg.TurnID == "") {
+		return ErrInvalidToolMessage
+	}
+	if msg.Role == RoleTool && msg.Kind != MessageToolResult {
+		return ErrInvalidToolMessage
 	}
 	if msg.CreatedAt.IsZero() {
 		msg.CreatedAt = time.Now()
@@ -149,10 +189,13 @@ func (c *ConversationContext) AddMessage(msg Message) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.addMessageLocked(msg)
+}
 
+func (c *ConversationContext) addMessageLocked(msg Message) error {
 	// Tentatively append message
-	originalMessages := c.messages
-	c.messages = append(c.messages, msg)
+	originalMessages := append([]Message(nil), c.messages...)
+	c.messages = append(c.messages, cloneMessage(msg))
 
 	// Apply eviction if needed
 	err := c.enforceBudgetLocked()
@@ -163,6 +206,107 @@ func (c *ConversationContext) AddMessage(msg Message) error {
 	}
 
 	return nil
+}
+
+// AddToolCall appends the provider-neutral context projection of a tool request.
+// Replays with the same turn/generation/call identity are idempotent; conflicting
+// reuse fails closed.
+func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name string, arguments []byte, at time.Time) error {
+	if turn == "" || gen == 0 || callID == "" || name == "" {
+		return ErrInvalidToolMessage
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, m := range c.messages {
+		if m.ToolCallID != callID {
+			continue
+		}
+		if m.Kind == MessageToolCall && m.TurnID == turn && m.Generation == gen && m.ToolName == name && m.Content == string(arguments) {
+			return nil
+		}
+		return ErrToolCorrelation
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return c.addMessageLocked(Message{Role: RoleAssistant, Kind: MessageToolCall, Content: string(append([]byte(nil), arguments...)), TurnID: turn, ToolCallID: callID, ToolName: name, Generation: gen, CreatedAt: at})
+}
+
+// AddToolResult appends a result only after its matching call and at most once.
+func (c *ConversationContext) AddToolResult(turn string, gen uint64, callID string, result []byte, safeError string, at time.Time) error {
+	if turn == "" || gen == 0 || callID == "" || (len(result) == 0 && safeError == "") {
+		return ErrInvalidToolMessage
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	found := false
+	for _, m := range c.messages {
+		if m.ToolCallID != callID {
+			continue
+		}
+		if m.TurnID != turn || m.Generation != gen {
+			return ErrToolCorrelation
+		}
+		if m.Kind == MessageToolCall {
+			found = true
+		}
+		if m.Kind == MessageToolResult {
+			content := string(result)
+			if safeError != "" {
+				content = safeError
+			}
+			if m.Content == content {
+				return nil
+			}
+			return ErrToolCorrelation
+		}
+	}
+	if !found {
+		return ErrUnmatchedToolResult
+	}
+	content := string(append([]byte(nil), result...))
+	if safeError != "" {
+		content = safeError
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return c.addMessageLocked(Message{Role: RoleTool, Kind: MessageToolResult, Content: content, TurnID: turn, ToolCallID: callID, Generation: gen, CreatedAt: at})
+}
+
+func cloneMessage(m Message) Message {
+	m.Metadata = cloneMetadata(m.Metadata)
+	return m
+}
+
+func cloneMetadata(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = cloneMetadataValue(v)
+	}
+	return dst
+}
+
+func cloneMetadataValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		return cloneMetadata(x)
+	case []any:
+		out := make([]any, len(x))
+		for i := range x {
+			out[i] = cloneMetadataValue(x[i])
+		}
+		return out
+	case []string:
+		return append([]string(nil), x...)
+	case []byte:
+		return append([]byte(nil), x...)
+	default:
+		return x
+	}
 }
 
 // enforceBudgetLocked evicts the oldest complete turn-pairs until budget is satisfied.
@@ -225,7 +369,7 @@ func (c *ConversationContext) findOldestCompleteTurnPairLocked() (string, bool) 
 			orderedTurns = append(orderedTurns, m.TurnID)
 			hasAssistant[m.TurnID] = false
 		}
-		if m.Role == RoleAssistant {
+		if m.Role == RoleAssistant && m.Kind != MessageToolCall {
 			hasAssistant[m.TurnID] = true
 		}
 	}

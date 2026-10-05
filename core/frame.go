@@ -38,6 +38,9 @@ const (
 	// Conversation context frames
 	FrameUserMessage FrameType = 600 + iota
 	FrameAssistantMessage
+	FrameSystemMessage
+	FrameToolCall
+	FrameToolResult
 
 	// Lifecycle and control frames
 	FrameStart FrameType = 700 + iota
@@ -340,6 +343,34 @@ type AssistantMessageFrame struct {
 
 func (f *AssistantMessageFrame) Type() FrameType    { return FrameAssistantMessage }
 func (f *AssistantMessageFrame) Generation() uint64 { return f.Gen }
+
+// SystemMessageFrame injects or replaces the provider-neutral system instruction.
+type SystemMessageFrame struct {
+	Content   string
+	Timestamp time.Time
+}
+
+func (f *SystemMessageFrame) Type() FrameType { return FrameSystemMessage }
+
+// ToolCallFrame and ToolResultFrame carry the public V2 tool contracts through
+// the pipeline while retaining turn/generation correlation on results.
+type ToolCallFrame struct {
+	Call      ToolCall
+	Timestamp time.Time
+}
+
+func (f *ToolCallFrame) Type() FrameType    { return FrameToolCall }
+func (f *ToolCallFrame) Generation() uint64 { return uint64(f.Call.Generation) }
+
+type ToolResultFrame struct {
+	Turn      TurnID
+	Gen       Generation
+	Result    ToolResult
+	Timestamp time.Time
+}
+
+func (f *ToolResultFrame) Type() FrameType    { return FrameToolResult }
+func (f *ToolResultFrame) Generation() uint64 { return uint64(f.Gen) }
 
 // -------------------------------------------------------------------------
 // Lifecycle and Control Frames

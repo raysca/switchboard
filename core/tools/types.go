@@ -2,58 +2,19 @@
 // execution policy are supplied by later framework and server integrations.
 package tools
 
-import (
-	"context"
-	"encoding/json"
-	"time"
+import "govoice/core"
 
-	"govoice/core"
-)
-
-type ToolDefinition struct {
-	Name        string
-	Description string
-	InputSchema json.RawMessage
-	Policy      ToolPolicy
-}
-
-type ToolPolicy struct {
-	Timeout  time.Duration
-	Required bool
-}
-
-type ToolCall struct {
-	ID         string
-	Name       string
-	Arguments  json.RawMessage
-	SessionID  core.SessionID
-	TurnID     core.TurnID
-	Generation core.Generation
-}
-
-type ToolStatus string
+type ToolDefinition = core.ToolDefinition
+type ToolPolicy = core.ToolPolicy
+type ToolCall = core.ToolCall
+type ToolStatus = core.ToolStatus
 
 const (
-	ToolSucceeded ToolStatus = "succeeded"
-	ToolFailed    ToolStatus = "failed"
-	ToolCancelled ToolStatus = "cancelled"
+	ToolSucceeded = core.ToolSucceeded
+	ToolFailed    = core.ToolFailed
+	ToolCancelled = core.ToolCancelled
 )
 
-type ToolResult struct {
-	CallID        string
-	Status        ToolStatus
-	Result        json.RawMessage
-	ErrorCategory string
-	StartedAt     time.Time
-	EndedAt       time.Time
-}
-
-type ToolExecutor interface {
-	Execute(ctx context.Context, call ToolCall) (ToolResult, error)
-}
-
-type ToolExecutorFunc func(context.Context, ToolCall) (ToolResult, error)
-
-func (fn ToolExecutorFunc) Execute(ctx context.Context, call ToolCall) (ToolResult, error) {
-	return fn(ctx, call)
-}
+type ToolResult = core.ToolResult
+type ToolExecutor = core.ToolExecutor
+type ToolExecutorFunc = core.ToolExecutorFunc

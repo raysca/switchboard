@@ -82,7 +82,29 @@ The Task 1 constructor defaults an unset mode to `metadata`, admits a fixed set 
 - Text inclusion requires explicit policy configuration and does not enable raw-audio capture.
 - Server retention controls decide whether selected content is persisted; the core policy only controls what the tracer is allowed to receive.
 
-### 2.4 Observer and semantic debug events
+### 2.4 Turn-scoped conversation context
+
+`ConversationContext` is the ordered provider-neutral history boundary. It
+stores system, user, assistant, tool-call, and tool-result messages. Inputs and
+returned metadata are copied. Tool calls and results retain call, turn, and
+generation correlation; identical replay is idempotent, conflicting reuse or
+an unmatched result fails closed. The `core/tools` values are aliases of the
+same core contracts carried by `ToolCallFrame` and `ToolResultFrame`, so the
+context and later ToolLoop do not require parallel adapter types.
+
+Committed user text enters through `UserContextProcessor`. Assistant text is
+committed exactly once only after every synthesis unit in the whole turn has a
+successful final write acknowledgement. Cancellation drops undelivered text.
+Interruption commits only the contiguous, fully delivered prefix as partial;
+late or stale generation work cannot extend it. Tool-call assistant messages do
+not by themselves mark a conversational turn complete for eviction.
+
+Budget enforcement preserves system instructions and the active user turn,
+evicts only the oldest complete turn, and rolls back additions that cannot fit.
+Task 10 provides this deterministic bounded behavior only. Summarization and
+application-provided compaction remain Task 28.
+
+### 2.5 Observer and semantic debug events
 
 `core.Observer` is a non-mutating observation boundary. Its immutable event values describe frame kind, direction, processor identity/index, session/turn/generation correlation, and monotonic timing/lifecycle. Observer APIs do not grant a mutable frame pointer or a callback that can replace, drop, reorder, or inject frames. Callbacks run in event order and must return promptly; observer failures are isolated from session execution and counted/reported through a safe diagnostic hook.
 
@@ -97,7 +119,7 @@ Task 1 defines `Observer`, `ObserverEvent`, and `DebugEvent` value surfaces. The
 - A semantic event can be serialized for a selected debug protocol without adding Whisker-specific types to core processors.
 - RTVI and Whisker conformance results are recorded independently.
 
-### 2.5 Runtime settings updates
+### 2.6 Runtime settings updates
 
 Runtime changes enter a session through a typed `RuntimeSettingsUpdate` control message. The update includes a monotonic revision and a typed set of supported values, is validated as a complete unit, and takes effect at a documented control boundary. An invalid update is rejected without partially changing processor state. Arbitrary mutation of processor internals is not public API. Initial updateable values are input mute, interruption enabled, silence/turn timeouts, language, and selected runtime thresholds.
 
@@ -107,7 +129,7 @@ Runtime changes enter a session through a typed `RuntimeSettingsUpdate` control 
 - An invalid or out-of-order revision leaves the prior settings active and produces a structured error/event.
 - Updates take effect without rebuilding a session for the supported fields.
 
-### 2.6 Audio filter
+### 2.7 Audio filter
 
 `core.AudioFilter` is a provider-neutral streaming abstraction with explicit input/output audio format, bounded per-stream state, cancellation-aware processing, reset, and close. The first implementation must include one real noise-suppression implementation; a noise gate alone does not satisfy this contract. Filter latency is observable. Resampling and channel/format conversion remain composable core audio utilities rather than provider-specific copies.
 
@@ -144,7 +166,7 @@ silence, and threshold-gate controls must fail the same predicate. This is a
 repeatable DSP regression, not a perceptual quality or real-speech corpus
 evaluation.
 
-### 2.7 Turn detector and manager
+### 2.8 Turn detector and manager
 
 `core/turn` provides the provider-neutral `TurnDetector` interface, `SilenceDetector`, `HybridDetector`, and a session-owned `Manager`. The manager receives caller-supplied `core.TurnID`, `core.Generation`, VAD/activity observations, and explicit timestamps through `Observe` and `Advance`; it does not read wall time, create timers/goroutines, mint IDs, or depend on providers, Server, storage, STT, or transports. A detector is synchronous, deterministic, fast, and side-effect free. It is called outside the manager state lock with an immutable snapshot (including copied, numerically valid semantic evidence); at most one callback is in flight. Concurrent/reentrant evaluations are coalesced into one complete newest snapshot, including its input and epoch. Both callback preflight and terminal commit compare that snapshot with actual current detector state and any newer queued input. Identical inputs reuse either a positive or negative result; otherwise queued snapshots run. No-op mute controls retain eligible detection even when their timestamp is later; rejected observations leave timestamps and detection unchanged. Genuine mute and speech-resume transitions fence the epoch, and unmute queues fresh silence state when a callback owner is still in flight. Each outer evaluation permits at most two plugin callbacks, after which the newest snapshot uses deterministic `SilenceDetector` fallback. Semantic state and epoch fencing prevent stale terminal commits. Pre-callback frames are discarded after an epoch change but retained across a time-only same-epoch advance. Panics and invalid suggestions are ignored in favor of silence fallback. Only silence and semantic completion reasons are accepted; confidence must always be finite, supplied confidence must be in `[0,1]`, semantic completion requires confidence, and absent confidence is normalized to zero for JSON-safe events.
 
@@ -159,7 +181,7 @@ This state machine does not commit transcripts or context, advance the session c
 - Semantic evidence can only shorten the silence path under its identity, timestamp, confidence, freshness, and guard checks; every rejected signal preserves deterministic silence fallback.
 - STT/context agreement, output cancellation, and generation-fence integration remain Gate B acceptance items and are not claimed by the state-machine package alone.
 
-### 2.8 Output pacing, speaking state, and flush
+### 2.9 Output pacing, speaking state, and flush
 
 `transport/ws.PacedWriter` is the single pacing engine. Enqueue owns a copy of
 each frame and its samples, records one normalized media duration for admission
@@ -220,7 +242,7 @@ this guarantee.
 Detailed concurrency and ordering rules are in
 `docs/output-pacing-and-flush.md`.
 
-### 2.9 Transcript stabilization and commit
+### 2.10 Transcript stabilization and commit
 
 Providers emit `core.TranscriptCandidateFrame`; they never emit a committed
 `FinalTranscriptionFrame`. `core/transcript.Finalizer` owns interim filtering,
@@ -298,7 +320,7 @@ still cannot steal that identity.
 - Replaying one marked commit cannot append context twice; the identity ledger
   is bounded and fails closed at capacity.
 
-### 2.10 Provider readiness and usage
+### 2.11 Provider readiness and usage
 
 Providers report typed readiness transitions and optional provider-neutral usage events. Readiness includes provider/component, state, timestamp, and safe reason category. Usage includes provider/model, session/turn IDs when available, unit name, quantity, and timestamp (for example LLM tokens, STT audio duration, TTS characters/audio duration, tool calls, or request count). These are observability values, not billing or admission decisions.
 
@@ -308,7 +330,7 @@ Providers report typed readiness transitions and optional provider-neutral usage
 - Readiness and usage can reach trace/observer consumers without a database dependency.
 - Provider errors and secret-bearing response text are redacted before event emission.
 
-### 2.10 Provider-neutral tools and ToolLoop
+### 2.12 Provider-neutral tools and ToolLoop
 
 Core defines `ToolDefinition` (stable name, description, JSON input schema, and policy metadata), `ToolCall` (call ID, name, raw JSON arguments, session/turn/generation correlation), and `ToolResult` (call ID, structured result or safe error, status, and timing). A provider adapter translates provider-native requests/results to these types. `ToolExecutor` invokes registered handlers using a `context.Context`; an MCP wrapper is one Server-supplied handler and is invisible to core.
 

@@ -154,7 +154,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 				p.deliveredUnits[wc.UnitID] = unitText
 			}
 			// If this was the final unit of the turn and LLM has completed, commit complete assistant turn
-			if p.llmComplete && p.finalUnitID > 0 && wc.UnitID == p.finalUnitID {
+			if p.llmComplete && p.finalUnitID > 0 && p.allPendingDelivered() {
 				return p.commitTurn(e, false)
 			}
 		}
@@ -174,6 +174,13 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		}
 		return e.PushDirection(f, dir)
 
+	case FrameCancel:
+		cancel := f.(*CancelFrame)
+		if p.activeTurn != "" && (cancel.Gen == 0 || cancel.Gen == p.activeGen) {
+			p.resetTurn()
+		}
+		return e.PushDirection(f, dir)
+
 	case FrameFlushProcessed:
 		fp := f.(*FlushProcessedFrame)
 		if p.pendingFlushGen.Load() == fp.Gen {
@@ -188,6 +195,18 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 	default:
 		return e.PushDirection(f, dir)
 	}
+}
+
+func (p *AssistantContextProcessor) allPendingDelivered() bool {
+	if len(p.pendingUnits) == 0 || len(p.deliveredUnits) != len(p.pendingUnits) {
+		return false
+	}
+	for id := range p.pendingUnits {
+		if _, ok := p.deliveredUnits[id]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *AssistantContextProcessor) appendFinalText(text string) {
@@ -344,9 +363,6 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 
 	content := strings.Join(parts, " ")
 	gen := p.activeGen
-	if p.session != nil {
-		gen = p.session.CurrentGeneration()
-	}
 
 	asstMsg := Message{
 		Role:      RoleAssistant,
@@ -371,30 +387,14 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	})
 
 	// Reset turn state
-	p.activeTurn = ""
-	p.textBuf.Reset()
-	p.firstUnitID = 0
-	p.finalUnitID = 0
-	p.finalSignalSent = false
-	p.llmComplete = false
-	p.ttsStopped = false
-	p.pendingUnits = make(map[uint64]string)
-	p.deliveredUnits = make(map[uint64]string)
+	p.resetTurn()
 
 	return nil
 }
 
 // failUndeliveredTurn refuses to commit assistant text when the final audio write failed.
 func (p *AssistantContextProcessor) failUndeliveredTurn(e Emitter, writeErr error) error {
-	p.activeTurn = ""
-	p.textBuf.Reset()
-	p.firstUnitID = 0
-	p.finalUnitID = 0
-	p.finalSignalSent = false
-	p.llmComplete = false
-	p.ttsStopped = false
-	p.pendingUnits = make(map[uint64]string)
-	p.deliveredUnits = make(map[uint64]string)
+	p.resetTurn()
 	return e.Push(&ErrorFrame{
 		Err:   fmt.Errorf("assistant audio was not delivered: %w", writeErr),
 		Fatal: true,
@@ -445,15 +445,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	// If len(delivered) == 0, no assistant text is committed to context.
 
 	// Clear active assistant state
-	p.activeTurn = ""
-	p.textBuf.Reset()
-	p.firstUnitID = 0
-	p.finalUnitID = 0
-	p.finalSignalSent = false
-	p.llmComplete = false
-	p.ttsStopped = false
-	p.pendingUnits = make(map[uint64]string)
-	p.deliveredUnits = make(map[uint64]string)
+	p.resetTurn()
 
 	// 2. Emit InterruptionFrame downstream and upstream
 	intrFrame := &InterruptionFrame{Turn: interruptedTurn, Gen: oldGen, committed: true}
@@ -473,6 +465,20 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	}
 
 	return nil
+}
+
+func (p *AssistantContextProcessor) resetTurn() {
+	p.activeTurn = ""
+	p.activeGen = 0
+	p.textBuf.Reset()
+	p.totalTurnText.Reset()
+	p.firstUnitID = 0
+	p.finalUnitID = 0
+	p.finalSignalSent = false
+	p.llmComplete = false
+	p.ttsStopped = false
+	p.pendingUnits = make(map[uint64]string)
+	p.deliveredUnits = make(map[uint64]string)
 }
 
 func (p *AssistantContextProcessor) startFlushBarrierTimeout(gen uint64) {

@@ -443,6 +443,15 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 ## Phase 3 — Context, tools, tracing, compatibility
 
 - [ ] Task 10: Context aggregation/reconciliation.
+
+Task 10 implementation candidate: provider-neutral system/tool frames now feed
+an ordered context aggregator; public tool contracts share one core type surface
+with the `core/tools` import path. Context copies mutable inputs, correlates and
+deduplicates tool exchanges, fails closed on malformed/unmatched results and
+budget overflow, and excludes tool-call messages from turn-completion eviction.
+Assistant commits wait for every delivery acknowledgement, commit once, retain
+only a fully delivered contiguous prefix on interruption, and discard cancelled
+or stale output. Focused race tests pass; independent review/test remain pending.
 - [ ] Task 11: Bounded ToolLoop behavior consuming Task 1 public types.
 - [ ] Task 12: Google/xAI tool adapters only; usage is P1 Task 32.
 - [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.
