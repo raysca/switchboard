@@ -9,6 +9,8 @@ import (
 
 type SessionRecord struct {
 	ID, AgentID, AgentVersionID, ConfigHash, Status, ProviderStackJSON, SafeSummary string
+	RuntimeSnapshotJSON                                                             string
+	RuntimeTools                                                                    []SelectedTool
 	StartedAt, EndedAt                                                              time.Time
 	TurnCount                                                                       int
 }
@@ -35,8 +37,114 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 	if err != nil {
 		return err
 	}
-	_, err = r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary) VALUES(?,?,?,?,?,?,?,?,?,?)"), v.ID, v.AgentID, v.AgentVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary)
-	return err
+	runtimeSnapshot := v.RuntimeSnapshotJSON
+	if runtimeSnapshot == "" {
+		runtimeSnapshot = "{}"
+	}
+	runtimeCanonical, err := CanonicalJSON([]byte(runtimeSnapshot))
+	if err != nil {
+		return err
+	}
+	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		query := "SELECT current_version_id FROM agents WHERE id=?"
+		if r.s.dialect == Postgres {
+			query += " FOR UPDATE"
+		}
+		var current sql.NullString
+		if err := tx.QueryRowContext(ctx, r.s.bind(query), v.AgentID).Scan(&current); err != nil {
+			return err
+		}
+		if !current.Valid || current.String != v.AgentVersionID {
+			return errors.New("agent version is no longer current")
+		}
+		runtimeTools := append([]SelectedTool(nil), v.RuntimeTools...)
+		selectedRows, err := tx.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=?"), v.AgentVersionID)
+		if err != nil {
+			return err
+		}
+		selected := map[string]SelectedTool{}
+		for selectedRows.Next() {
+			var tool SelectedTool
+			if err := selectedRows.Scan(&tool.ServerID, &tool.RemoteName, &tool.SchemaHash, &tool.Required); err != nil {
+				selectedRows.Close()
+				return err
+			}
+			selected[tool.ServerID+"\x00"+tool.RemoteName] = tool
+		}
+		if err := selectedRows.Err(); err != nil {
+			selectedRows.Close()
+			return err
+		}
+		selectedRows.Close()
+		if v.RuntimeTools == nil {
+			for _, tool := range selected {
+				runtimeTools = append(runtimeTools, tool)
+			}
+		}
+		included := map[string]bool{}
+		for _, tool := range runtimeTools {
+			key := tool.ServerID + "\x00" + tool.RemoteName
+			pinned, exists := selected[key]
+			if !exists || pinned.SchemaHash != tool.SchemaHash || pinned.Required != tool.Required {
+				return errors.New("runtime MCP tool does not match agent version selection")
+			}
+			included[key] = true
+			query := "SELECT s.enabled,s.pending_delete,mt.schema_hash FROM mcp_servers s LEFT JOIN mcp_tools mt ON mt.discovery_id=s.latest_discovery_id AND mt.remote_name=? WHERE s.id=?"
+			if r.s.dialect == Postgres {
+				query += " FOR SHARE OF s"
+			}
+			var enabled, pending bool
+			var schemaHash sql.NullString
+			if err := tx.QueryRowContext(ctx, r.s.bind(query), tool.RemoteName, tool.ServerID).Scan(&enabled, &pending, &schemaHash); err != nil {
+				return err
+			}
+			if !enabled || pending {
+				return errors.New("MCP dependency is unavailable for new sessions")
+			}
+			if !schemaHash.Valid || schemaHash.String != tool.SchemaHash {
+				return errors.New("MCP schema changed before session start")
+			}
+		}
+		for key, tool := range selected {
+			if tool.Required && !included[key] {
+				return errors.New("required MCP tool was not captured for session")
+			}
+		}
+		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.AgentID, v.AgentVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical))
+		if err != nil {
+			return err
+		}
+		for _, tool := range runtimeTools {
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO session_mcp_tools(session_id,mcp_server_id,remote_name,schema_hash,required) VALUES(?,?,?,?,?)"), v.ID, tool.ServerID, tool.RemoteName, tool.SchemaHash, boolValue(r.s.dialect, tool.Required)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r SessionRepository) End(ctx context.Context, id string) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	err := r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE sessions SET status='ended',ended_at=? WHERE id=? AND status IN ('active','draining')"), utc(time.Now()), id)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return r.s.MCP().FinalizePendingDeletes(ctx)
 }
 func (r SessionRepository) AddTurn(ctx context.Context, v TurnRecord) error {
 	for _, id := range []string{v.ID, v.SessionID} {
@@ -67,7 +175,7 @@ func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, e
 	var v SessionRecord
 	var started string
 	var ended sql.NullString
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON)
 	if err != nil {
 		return v, err
 	}

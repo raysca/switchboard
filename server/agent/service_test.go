@@ -151,6 +151,87 @@ func TestMetadataUpdatePreservesDisabledState(t *testing.T) {
 	}
 }
 
+func TestMCPSelectionsAreVersionScopedAndSchemaDriftRequiresExplicitReview(t *testing.T) {
+	svc := testService(t)
+	ctx := context.Background()
+	store := svc.store
+	m := storage.MCPServer{ID: storage.NewID(), Name: "orders", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := store.MCP().CreateServer(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.MCP().AddDiscovery(ctx, m.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object","properties":{"id":{"type":"string"}}}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := svc.Create(ctx, CreateRequest{Name: "with mcp", Config: validConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection := ToolSelection{ServerID: m.ID, RemoteName: "lookup", SchemaHash: first.Tools[0].SchemaHash, Required: true}
+	version1, err := svc.SetMCPTools(ctx, a.ID, []ToolSelection{selection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := svc.ResolveCurrent(ctx, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeJSON, _ := json.Marshal(snapshot.MCPTools)
+	session, err := svc.StartCapturedSession(ctx, snapshot, "", string(runtimeJSON), []ToolSelection{selection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.MCP().AddDiscovery(ctx, m.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object","properties":{"id":{"type":"integer"}}}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := svc.Get(ctx, a.ID)
+	if err != nil || current.Readiness.State != ReadinessNeedsToolReview {
+		t.Fatalf("schema drift readiness=%+v err=%v", current.Readiness, err)
+	}
+	if _, err := svc.ResolveCurrent(ctx, a.ID); err == nil {
+		t.Fatal("required schema drift accepted for new session")
+	}
+	if _, err := svc.SetMCPTools(ctx, a.ID, []ToolSelection{{ServerID: m.ID, RemoteName: "lookup", SchemaHash: second.Tools[0].SchemaHash, Required: true}}); err != nil {
+		t.Fatal(err)
+	}
+	pinned, err := svc.ResolveSession(ctx, session.ID)
+	if err != nil || pinned.Version.ID != version1.ID || len(pinned.MCPTools) != 1 || pinned.MCPTools[0].SchemaHash != first.Tools[0].SchemaHash {
+		t.Fatalf("historical snapshot changed: %+v err=%v", pinned, err)
+	}
+}
+
+func TestOptionalUnavailableMCPToolWarnsWithoutBlockingVoiceReadiness(t *testing.T) {
+	svc := testService(t)
+	ctx := context.Background()
+	store := svc.store
+	m := storage.MCPServer{ID: storage.NewID(), Name: "optional", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := store.MCP().CreateServer(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	d, err := store.MCP().AddDiscovery(ctx, m.ID, []storage.MCPTool{{RemoteName: "optional_tool", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := svc.Create(ctx, CreateRequest{Name: "optional", Config: validConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetMCPTools(ctx, a.ID, []ToolSelection{{ServerID: m.ID, RemoteName: "optional_tool", SchemaHash: d.Tools[0].SchemaHash, Required: false}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MCP().DisableServer(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, err := svc.Get(ctx, a.ID)
+	if err != nil || current.Readiness.State != ReadinessWithToolWarning {
+		t.Fatalf("optional disabled readiness=%+v err=%v", current.Readiness, err)
+	}
+	if _, err := svc.ResolveCurrent(ctx, a.ID); err != nil {
+		t.Fatalf("optional tool blocked voice readiness: %v", err)
+	}
+}
+
 func TestCreateAndUpdatePublishAtomicallyOnDatabaseFailure(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()

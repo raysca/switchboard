@@ -57,8 +57,21 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 			return
 		}
 		id := requestID(w, r)
+		if r.Method == http.MethodDelete {
+			if err := service.Delete(r.Context(), r.PathValue("id")); err != nil {
+				if errors.Is(err, storage.ErrMCPReferenced) {
+					refs, _ := service.store.MCP().CurrentReferences(r.Context(), r.PathValue("id"))
+					api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "mcp_server_in_use", Message: "MCP server is referenced by agents or active sessions", RequestID: id, Details: refs}})
+					return
+				}
+				api.WriteError(w, 404, "not_found", "MCP server not found", id)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", "GET")
+			w.Header().Set("Allow", "GET, DELETE")
 			api.WriteError(w, 405, "method_not_allowed", "method is not supported", id)
 			return
 		}
@@ -75,6 +88,68 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 			}
 		}
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerDetail]{Data: response})
+	})
+	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
+		if !authorize(w, r, management) {
+			return
+		}
+		id := requestID(w, r)
+		serverID := r.PathValue("id")
+		if err := service.Disable(r.Context(), serverID); err != nil {
+			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			return
+		}
+		m, err := service.Get(r.Context(), serverID)
+		if err != nil {
+			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			return
+		}
+		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
+	})
+	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/enable", func(w http.ResponseWriter, r *http.Request) {
+		if !authorize(w, r, management) {
+			return
+		}
+		id := requestID(w, r)
+		serverID := r.PathValue("id")
+		if err := service.Enable(r.Context(), serverID); err != nil {
+			api.WriteError(w, 409, "mcp_server_unavailable", "MCP server cannot be enabled while deletion is pending", id)
+			return
+		}
+		m, err := service.Get(r.Context(), serverID)
+		if err != nil {
+			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			return
+		}
+		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
+	})
+	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/detach-delete", func(w http.ResponseWriter, r *http.Request) {
+		if !authorize(w, r, management) {
+			return
+		}
+		id := requestID(w, r)
+		var input struct {
+			Confirm bool `json:"confirm"`
+		}
+		if err := api.DecodeJSON(r, &input); err != nil || !input.Confirm {
+			api.WriteError(w, 400, "confirmation_required", "explicit confirmation is required to detach and delete this MCP server", id)
+			return
+		}
+		serverID := r.PathValue("id")
+		if err := service.DetachAndDelete(r.Context(), serverID); err != nil {
+			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			return
+		}
+		m, err := service.Get(r.Context(), serverID)
+		if errors.Is(err, storage.ErrMCPReferenced) {
+			api.WriteError(w, 409, "mcp_server_in_use", "MCP server is still in use", id)
+			return
+		}
+		if err != nil {
+			api.WriteJSON(w, 200, api.SuccessResponse[DetachResult]{Data: DetachResult{Deleted: true}})
+			return
+		}
+		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: view(m)}})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/validate", func(w http.ResponseWriter, r *http.Request) {
 		if !authorize(w, r, management) {
@@ -131,8 +206,14 @@ type ServerView struct {
 	ValidationState   string     `json:"validation_state"`
 	LatestDiscoveryID string     `json:"latest_discovery_id,omitempty"`
 	Enabled           bool       `json:"enabled"`
+	PendingDeletion   bool       `json:"pending_deletion"`
 	LastConnectedAt   *time.Time `json:"last_connected_at,omitempty"`
 	LastDiscoveredAt  *time.Time `json:"last_discovered_at,omitempty"`
+}
+type DetachResult struct {
+	Pending bool       `json:"pending"`
+	Deleted bool       `json:"deleted"`
+	Server  ServerView `json:"server,omitempty"`
 }
 type ServerDetail struct {
 	ServerView
@@ -169,7 +250,7 @@ func view(m storage.MCPServer) ServerView {
 		t := m.LastDiscoveredAt
 		discovered = &t
 	}
-	return ServerView{ID: m.ID, Name: m.Name, Description: m.Description, Endpoint: safeEndpoint(m.Endpoint), Transport: m.Transport, CredentialID: m.AuthCredentialID, ValidationState: m.ValidationState, LatestDiscoveryID: m.LatestDiscoveryID, Enabled: m.Enabled, LastConnectedAt: connected, LastDiscoveredAt: discovered}
+	return ServerView{ID: m.ID, Name: m.Name, Description: m.Description, Endpoint: safeEndpoint(m.Endpoint), Transport: m.Transport, CredentialID: m.AuthCredentialID, ValidationState: m.ValidationState, LatestDiscoveryID: m.LatestDiscoveryID, Enabled: m.Enabled, PendingDeletion: m.PendingDelete, LastConnectedAt: connected, LastDiscoveredAt: discovered}
 }
 func safeEndpoint(raw string) string {
 	u, err := url.Parse(raw)

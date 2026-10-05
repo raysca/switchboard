@@ -28,6 +28,23 @@ type SelectedTool struct {
 	Required                         bool
 }
 
+func (r AgentRepository) SelectedTools(ctx context.Context, versionID string) ([]SelectedTool, error) {
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=? ORDER BY mcp_server_id,remote_name"), versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SelectedTool
+	for rows.Next() {
+		var tool SelectedTool
+		if err := rows.Scan(&tool.ServerID, &tool.RemoteName, &tool.SchemaHash, &tool.Required); err != nil {
+			return nil, err
+		}
+		out = append(out, tool)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Agents() AgentRepository { return AgentRepository{s} }
 func (r AgentRepository) Create(ctx context.Context, a Agent) error {
 	if err := validID(a.ID); err != nil {
@@ -370,7 +387,7 @@ func (r CredentialRepository) List(ctx context.Context) ([]Credential, error) {
 type MCPServer struct {
 	ID, Name, Endpoint, Transport, AuthCredentialID, ValidationState, LatestDiscoveryID string
 	Description                                                                         string
-	Enabled                                                                             bool
+	Enabled, PendingDelete                                                              bool
 	LastConnectedAt, LastDiscoveredAt, CreatedAt, UpdatedAt                             time.Time
 }
 type MCPTool struct {
@@ -404,7 +421,7 @@ func (r MCPRepository) Server(ctx context.Context, id string) (MCPServer, error)
 	var auth, latest, connected, discovered sql.NullString
 	var enabled bool
 	var created, updated string
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,endpoint,transport,auth_credential_id,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at FROM mcp_servers WHERE id=?"), id).Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,endpoint,transport,auth_credential_id,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at,pending_delete FROM mcp_servers WHERE id=?"), id).Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated, &m.PendingDelete)
 	if err != nil {
 		return m, err
 	}
@@ -429,7 +446,7 @@ func (r MCPRepository) Server(ctx context.Context, id string) (MCPServer, error)
 }
 
 func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
-	rows, err := r.s.db.QueryContext(ctx, "SELECT id,name,description,endpoint,transport,auth_credential_id,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at FROM mcp_servers ORDER BY name,id")
+	rows, err := r.s.db.QueryContext(ctx, "SELECT id,name,description,endpoint,transport,auth_credential_id,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at,pending_delete FROM mcp_servers ORDER BY name,id")
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +457,7 @@ func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
 		var auth, latest, connected, discovered sql.NullString
 		var enabled bool
 		var created, updated string
-		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated, &m.PendingDelete); err != nil {
 			return nil, err
 		}
 		m.AuthCredentialID, m.LatestDiscoveryID, m.Enabled = auth.String, latest.String, enabled
@@ -490,6 +507,254 @@ func (r MCPRepository) SetValidation(ctx context.Context, id, state string, conn
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+var ErrMCPReferenced = errors.New("MCP server is referenced by a current agent or active session")
+
+type MCPAgentReference struct {
+	AgentID, AgentName, AgentVersionID, RemoteName string
+	Required                                       bool
+}
+
+func (r MCPRepository) CurrentReferences(ctx context.Context, id string) ([]MCPAgentReference, error) {
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT a.id,a.name,a.current_version_id,t.remote_name,t.required FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.name,a.id,t.remote_name"), id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MCPAgentReference
+	for rows.Next() {
+		var ref MCPAgentReference
+		if err := rows.Scan(&ref.AgentID, &ref.AgentName, &ref.AgentVersionID, &ref.RemoteName, &ref.Required); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
+func (r MCPRepository) DisableServer(ctx context.Context, id string) error {
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET enabled=?,validation_state=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, false), "disabled", utc(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r MCPRepository) EnableServer(ctx context.Context, id string) error {
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET enabled=?,validation_state=CASE WHEN validation_state='disabled' THEN 'not_validated' ELSE validation_state END,updated_at=? WHERE id=? AND pending_delete=?"), boolValue(r.s.dialect, true), utc(time.Now()), id, boolValue(r.s.dialect, false))
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r MCPRepository) DeleteServer(ctx context.Context, id string) error {
+	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		if r.s.dialect == Postgres {
+			var locked string
+			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT id FROM mcp_servers WHERE id=? FOR UPDATE"), id).Scan(&locked); err != nil {
+				return err
+			}
+		}
+		current, active, err := mcpReferenceCounts(ctx, tx, r.s, id)
+		if err != nil {
+			return err
+		}
+		if current != 0 || active != 0 {
+			return ErrMCPReferenced
+		}
+		result, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM mcp_servers WHERE id=?"), id)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
+}
+
+// DetachAndDelete creates a new immutable version for each current agent that
+// removes this server's selections. Historical versions and sessions are kept.
+// The live server remains disabled and pending deletion while old active
+// sessions still depend on it.
+func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Match publication/session-start lock order: agent rows first, then the
+		// MCP server row. This makes detach serialize with new assignments without
+		// holding the server lock while waiting on an agent.
+		rows, err := tx.QueryContext(ctx, r.s.bind("SELECT DISTINCT a.id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
+		if err != nil {
+			return err
+		}
+		var agentIDs []string
+		for rows.Next() {
+			var agentID string
+			if err := rows.Scan(&agentID); err != nil {
+				rows.Close()
+				return err
+			}
+			agentIDs = append(agentIDs, agentID)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if r.s.dialect == Postgres {
+			for _, agentID := range agentIDs {
+				var locked string
+				if err := tx.QueryRowContext(ctx, r.s.bind("SELECT id FROM agents WHERE id=? FOR UPDATE"), agentID).Scan(&locked); err != nil {
+					return err
+				}
+			}
+		}
+		var serverID string
+		lock := "SELECT id FROM mcp_servers WHERE id=?"
+		if r.s.dialect == Postgres {
+			lock += " FOR UPDATE"
+		}
+		if err := tx.QueryRowContext(ctx, r.s.bind(lock), id).Scan(&serverID); err != nil {
+			return err
+		}
+		rows, err = tx.QueryContext(ctx, r.s.bind("SELECT a.id,a.current_version_id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
+		if err != nil {
+			return err
+		}
+		type currentAgent struct{ id, versionID string }
+		var agents []currentAgent
+		for rows.Next() {
+			var a currentAgent
+			if err := rows.Scan(&a.id, &a.versionID); err != nil {
+				rows.Close()
+				return err
+			}
+			agents = append(agents, a)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, a := range agents {
+			query := "SELECT config_json,config_hash FROM agent_versions WHERE id=?"
+			var config, hash string
+			if err := tx.QueryRowContext(ctx, r.s.bind(query), a.versionID).Scan(&config, &hash); err != nil {
+				return err
+			}
+			var latest int
+			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM agent_versions WHERE agent_id=?"), a.id).Scan(&latest); err != nil {
+				return err
+			}
+			versionID := NewID()
+			now := utc(time.Now())
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), versionID, a.id, latest+1, 1, config, hash, now); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) SELECT ?,mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=? AND mcp_server_id<>?"), versionID, a.versionID, id); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, r.s.bind("UPDATE agents SET current_version_id=?,updated_at=? WHERE id=? AND current_version_id=?"), versionID, now, a.id, a.versionID); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET enabled=?,validation_state='disabled',pending_delete=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, false), boolValue(r.s.dialect, true), utc(time.Now()), id); err != nil {
+			return err
+		}
+		_, active, err := mcpReferenceCounts(ctx, tx, r.s, id)
+		if err != nil {
+			return err
+		}
+		if active != 0 {
+			return nil
+		}
+		_, err = tx.ExecContext(ctx, r.s.bind("DELETE FROM mcp_servers WHERE id=?"), id)
+		return err
+	})
+}
+
+func (r MCPRepository) FinalizePendingDeletes(ctx context.Context) error {
+	query := "SELECT id FROM mcp_servers WHERE pending_delete=TRUE ORDER BY id"
+	if r.s.dialect == SQLite {
+		query = "SELECT id FROM mcp_servers WHERE pending_delete=1 ORDER BY id"
+	}
+	rows, err := r.s.db.QueryContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, id := range ids {
+		current, active, err := countMCPReferences(ctx, r.s, id)
+		if err != nil {
+			return err
+		}
+		if current == 0 && active == 0 {
+			if err := r.DeleteServer(ctx, id); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func countMCPReferences(ctx context.Context, s *Store, id string) (int, int, error) {
+	var current, active int
+	err := s.db.QueryRowContext(ctx, s.bind("SELECT count(*) FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
+	if err != nil {
+		return 0, 0, err
+	}
+	err = s.db.QueryRowContext(ctx, s.bind("SELECT count(*) FROM sessions s JOIN session_mcp_tools t ON t.session_id=s.id WHERE t.mcp_server_id=? AND s.status IN ('active','draining')"), id).Scan(&active)
+	return current, active, err
+}
+func mcpReferenceCounts(ctx context.Context, tx *sql.Tx, s *Store, id string) (int, int, error) {
+	var current, active int
+	err := tx.QueryRowContext(ctx, s.bind("SELECT count(*) FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
+	if err != nil {
+		return 0, 0, err
+	}
+	err = tx.QueryRowContext(ctx, s.bind("SELECT count(*) FROM sessions s JOIN session_mcp_tools t ON t.session_id=s.id WHERE t.mcp_server_id=? AND s.status IN ('active','draining')"), id).Scan(&active)
+	return current, active, err
+}
+
+func (r MCPRepository) Schema(ctx context.Context, serverID, name, schemaHash string) ([]byte, error) {
+	var schema string
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT t.schema_json FROM mcp_tools t JOIN mcp_discoveries d ON d.id=t.discovery_id WHERE d.server_id=? AND t.remote_name=? AND t.schema_hash=? ORDER BY d.created_at DESC LIMIT 1"), serverID, name, schemaHash).Scan(&schema)
+	return []byte(schema), err
 }
 func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools []MCPTool) (MCPDiscovery, error) {
 	var out MCPDiscovery

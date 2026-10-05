@@ -38,6 +38,7 @@ type CreateRequest struct {
 	Description string          `json:"description"`
 	Config      json.RawMessage `json:"config"`
 	Enabled     *bool           `json:"enabled,omitempty"`
+	MCPTools    []ToolSelection `json:"mcp_tools,omitempty"`
 }
 
 type UpdateRequest struct {
@@ -54,11 +55,42 @@ type Version struct {
 	Config     json.RawMessage `json:"config"`
 	ConfigHash string          `json:"config_hash"`
 	CreatedAt  time.Time       `json:"created_at"`
+	MCPTools   []ToolSelection `json:"mcp_tools"`
+}
+
+type ToolSelection struct {
+	ServerID   string `json:"mcp_server_id"`
+	RemoteName string `json:"remote_name"`
+	SchemaHash string `json:"schema_hash"`
+	Required   bool   `json:"required"`
+}
+
+type MCPToolSnapshot struct {
+	ServerID     string          `json:"mcp_server_id"`
+	ServerName   string          `json:"server_name"`
+	Endpoint     string          `json:"endpoint"`
+	Transport    string          `json:"transport"`
+	CredentialID string          `json:"credential_id,omitempty"`
+	RemoteName   string          `json:"remote_name"`
+	Description  string          `json:"description"`
+	SchemaJSON   json.RawMessage `json:"input_schema"`
+	SchemaHash   string          `json:"schema_hash"`
+	Required     bool            `json:"required"`
+}
+
+type ToolDependency struct {
+	ServerID           string `json:"mcp_server_id"`
+	RemoteName         string `json:"remote_name"`
+	Required           bool   `json:"required"`
+	State              string `json:"state"`
+	SelectedSchemaHash string `json:"selected_schema_hash"`
+	CurrentSchemaHash  string `json:"current_schema_hash,omitempty"`
 }
 
 type Readiness struct {
-	State   string   `json:"state"`
-	Reasons []string `json:"reasons"`
+	State            string           `json:"state"`
+	Reasons          []string         `json:"reasons"`
+	ToolDependencies []ToolDependency `json:"tool_dependencies,omitempty"`
 }
 
 type Agent struct {
@@ -74,9 +106,10 @@ type Agent struct {
 }
 
 type Snapshot struct {
-	AgentID    string  `json:"agent_id"`
-	Version    Version `json:"version"`
-	ConfigHash string  `json:"config_hash"`
+	AgentID    string            `json:"agent_id"`
+	Version    Version           `json:"version"`
+	ConfigHash string            `json:"config_hash"`
+	MCPTools   []MCPToolSnapshot `json:"mcp_tools"`
 }
 
 type SessionPin struct {
@@ -109,7 +142,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Agent, error) 
 		enabled = *req.Enabled
 	}
 	row := storage.Agent{ID: storage.NewID(), Name: name, Description: req.Description, Enabled: enabled}
-	if _, err := s.store.Agents().CreateWithVersion(ctx, row, config); err != nil {
+	selected, err := toStorageSelections(req.MCPTools)
+	if err != nil {
+		return Agent{}, err
+	}
+	if _, err := s.store.Agents().CreateWithVersionAndTools(ctx, row, config, selected); err != nil {
 		return Agent{}, err
 	}
 	return s.Get(ctx, row.ID)
@@ -171,7 +208,7 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Agent, error)
 	if strings.TrimSpace(name) == "" {
 		name = source.Name + " copy"
 	}
-	return s.Create(ctx, CreateRequest{Name: name, Description: source.Description, Config: source.Version.Config, Enabled: boolPointer(source.Enabled)})
+	return s.Create(ctx, CreateRequest{Name: name, Description: source.Description, Config: source.Version.Config, Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools})
 }
 
 func (s *Service) GetVersion(ctx context.Context, agentID, versionID string) (Version, error) {
@@ -198,11 +235,16 @@ func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, erro
 		return Snapshot{}, err
 	}
 	version := toVersion(v)
-	readiness := s.agentReadiness(ctx, row.ID, version.Config, row.Enabled, row.Archived)
-	if readiness.State == ReadinessNotReady {
+	selections, err := s.store.Agents().SelectedTools(ctx, v.ID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	version.MCPTools = fromStorageSelections(selections)
+	readiness, tools := s.agentReadiness(ctx, row.ID, v.ID, version.Config, row.Enabled, row.Archived)
+	if readiness.State == ReadinessNotReady || readiness.State == ReadinessNeedsToolReview || readiness.State == ReadinessToolUnavailable {
 		return Snapshot{}, errors.New("agent not ready")
 	}
-	return Snapshot{AgentID: row.ID, Version: version, ConfigHash: v.ConfigHash}, nil
+	return Snapshot{AgentID: row.ID, Version: version, ConfigHash: v.ConfigHash, MCPTools: tools}, nil
 }
 
 // StartSession resolves and persists one immutable version reference. A later
@@ -215,13 +257,35 @@ func (s *Service) StartSession(ctx context.Context, id, sessionID string) (Sessi
 	if sessionID == "" {
 		sessionID = storage.NewID()
 	}
+	if len(snapshot.Version.MCPTools) > 0 {
+		return SessionPin{}, errors.New("agent MCP tools require runtime session capture")
+	}
+	return s.StartCapturedSession(ctx, snapshot, sessionID, "", nil)
+}
+
+func (s *Service) StartCapturedSession(ctx context.Context, snapshot Snapshot, sessionID, runtimeJSON string, references []ToolSelection) (SessionPin, error) {
+	if sessionID == "" {
+		sessionID = storage.NewID()
+	}
+	if runtimeJSON == "" {
+		raw, _ := json.Marshal(snapshot.MCPTools)
+		runtimeJSON = string(raw)
+	}
+	runtimeTools := make([]storage.SelectedTool, 0, len(references))
+	for _, tool := range references {
+		runtimeTools = append(runtimeTools, storage.SelectedTool{ServerID: tool.ServerID, RemoteName: tool.RemoteName, SchemaHash: tool.SchemaHash, Required: tool.Required})
+	}
 	if err := s.store.Sessions().Create(ctx, storage.SessionRecord{
 		ID: sessionID, AgentID: snapshot.AgentID, AgentVersionID: snapshot.Version.ID,
-		ConfigHash: snapshot.ConfigHash, StartedAt: time.Now().UTC(), Status: "active",
+		ConfigHash: snapshot.ConfigHash, StartedAt: time.Now().UTC(), Status: "active", RuntimeSnapshotJSON: runtimeJSON, RuntimeTools: runtimeTools,
 	}); err != nil {
 		return SessionPin{}, err
 	}
 	return SessionPin{ID: sessionID, AgentID: snapshot.AgentID, AgentVersionID: snapshot.Version.ID, ConfigHash: snapshot.ConfigHash}, nil
+}
+
+func (s *Service) EndSession(ctx context.Context, sessionID string) error {
+	return s.store.Sessions().End(ctx, sessionID)
 }
 
 func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapshot, error) {
@@ -236,7 +300,48 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 	if v.AgentID != session.AgentID || v.ConfigHash != session.ConfigHash {
 		return Snapshot{}, errors.New("session agent snapshot is inconsistent")
 	}
-	return Snapshot{AgentID: session.AgentID, Version: toVersion(v), ConfigHash: session.ConfigHash}, nil
+	version := toVersion(v)
+	selections, err := s.store.Agents().SelectedTools(ctx, v.ID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	version.MCPTools = fromStorageSelections(selections)
+	var runtimeTools []MCPToolSnapshot
+	if strings.TrimSpace(session.RuntimeSnapshotJSON) != "" && strings.TrimSpace(session.RuntimeSnapshotJSON) != "{}" {
+		if err := json.Unmarshal([]byte(session.RuntimeSnapshotJSON), &runtimeTools); err != nil {
+			return Snapshot{}, errors.New("session runtime snapshot is invalid")
+		}
+	}
+	if runtimeTools == nil {
+		_, runtimeTools = s.agentReadiness(ctx, session.AgentID, v.ID, version.Config, true, false)
+	}
+	return Snapshot{AgentID: session.AgentID, Version: version, ConfigHash: session.ConfigHash, MCPTools: runtimeTools}, nil
+}
+
+// SetMCPTools publishes a new immutable agent version. Existing versions and
+// sessions keep their prior associations; every requested schema must match
+// the server's latest discovery at publication time.
+func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelection) (Version, error) {
+	row, err := s.store.Agents().Current(ctx, id)
+	if err != nil {
+		return Version{}, err
+	}
+	if row.Archived || row.CurrentVersionID == "" {
+		return Version{}, errors.New("agent unavailable")
+	}
+	current, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
+	if err != nil {
+		return Version{}, err
+	}
+	selected, err := toStorageSelections(tools)
+	if err != nil {
+		return Version{}, err
+	}
+	version, err := s.store.Agents().PublishVersion(ctx, id, current.Version+1, current.ConfigJSON, selected)
+	if err != nil {
+		return Version{}, err
+	}
+	return toVersionWithTools(version, selected), nil
 }
 
 func (s *Service) ImportV1(ctx context.Context, legacyName, name, description string, pipeline V1Pipeline) (Agent, error) {
@@ -258,8 +363,13 @@ func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error)
 			return Agent{}, err
 		}
 		converted := toVersion(v)
+		selected, err := s.store.Agents().SelectedTools(ctx, converted.ID)
+		if err != nil {
+			return Agent{}, err
+		}
+		converted.MCPTools = fromStorageSelections(selected)
+		a.Readiness, _ = s.agentReadiness(ctx, row.ID, converted.ID, converted.Config, row.Enabled, row.Archived)
 		a.Version = &converted
-		a.Readiness = s.agentReadiness(ctx, row.ID, converted.Config, row.Enabled, row.Archived)
 	} else {
 		a.Readiness = Readiness{State: ReadinessNotReady, Reasons: []string{"missing_configuration"}}
 	}
@@ -267,15 +377,18 @@ func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error)
 }
 
 const (
-	ReadinessReady      = "ready"
-	ReadinessConfigured = "configured"
-	ReadinessNotReady   = "not_ready"
+	ReadinessReady           = "ready"
+	ReadinessConfigured      = "configured"
+	ReadinessNotReady        = "not_ready"
+	ReadinessWithToolWarning = "ready_with_tool_warning"
+	ReadinessNeedsToolReview = "needs_tool_review"
+	ReadinessToolUnavailable = "tool_dependency_unavailable"
 )
 
-func (s *Service) agentReadiness(ctx context.Context, agentID string, config json.RawMessage, enabled, archived bool) Readiness {
+func (s *Service) agentReadiness(ctx context.Context, agentID, versionID string, config json.RawMessage, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
 	var settings map[string]json.RawMessage
 	if json.Unmarshal(config, &settings) != nil {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_configuration"}}
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_configuration"}}, nil
 	}
 	reasons := make([]string, 0, maxReadinessReasons)
 	for _, field := range []string{"stt", "llm", "tts"} {
@@ -293,20 +406,93 @@ func (s *Service) agentReadiness(ctx context.Context, agentID string, config jso
 		reasons = reasons[:maxReadinessReasons]
 	}
 	if len(reasons) > 0 {
-		return Readiness{State: ReadinessNotReady, Reasons: reasons}
+		return Readiness{State: ReadinessNotReady, Reasons: reasons}, nil
+	}
+	selections, err := s.store.Agents().SelectedTools(ctx, versionID)
+	if err != nil {
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, nil
+	}
+	dependencies := make([]ToolDependency, 0, len(selections))
+	snapshots := make([]MCPToolSnapshot, 0, len(selections))
+	requiredFailure := ""
+	optionalWarning := false
+	for _, selection := range selections {
+		state := "ready"
+		currentHash := ""
+		server, serverErr := s.store.MCP().Server(ctx, selection.ServerID)
+		if serverErr != nil {
+			state = "server_unavailable"
+		} else if !server.Enabled {
+			state = "server_disabled"
+		} else if server.ValidationState != "healthy" || server.LatestDiscoveryID == "" {
+			state = "server_unavailable"
+		} else {
+			discovery, discoveryErr := s.store.MCP().LatestDiscovery(ctx, selection.ServerID)
+			if discoveryErr != nil {
+				state = "server_unavailable"
+			} else {
+				for _, tool := range discovery.Tools {
+					if tool.RemoteName == selection.RemoteName {
+						currentHash = tool.SchemaHash
+						break
+					}
+				}
+				if currentHash == "" {
+					state = "tool_missing"
+				} else if currentHash != selection.SchemaHash {
+					state = "schema_drift"
+				}
+			}
+		}
+		dependencies = append(dependencies, ToolDependency{ServerID: selection.ServerID, RemoteName: selection.RemoteName, Required: selection.Required, State: state, SelectedSchemaHash: selection.SchemaHash, CurrentSchemaHash: currentHash})
+		if state != "ready" {
+			if selection.Required {
+				if state == "schema_drift" || state == "tool_missing" {
+					requiredFailure = ReadinessNeedsToolReview
+				} else if requiredFailure == "" {
+					requiredFailure = ReadinessToolUnavailable
+				}
+			} else {
+				optionalWarning = true
+			}
+			continue
+		}
+		schema, schemaErr := s.store.MCP().Schema(ctx, selection.ServerID, selection.RemoteName, selection.SchemaHash)
+		if schemaErr != nil {
+			if selection.Required {
+				requiredFailure = ReadinessNeedsToolReview
+			} else {
+				optionalWarning = true
+			}
+			continue
+		}
+		snapshots = append(snapshots, MCPToolSnapshot{ServerID: server.ID, ServerName: server.Name, Endpoint: server.Endpoint, Transport: server.Transport, CredentialID: server.AuthCredentialID, RemoteName: selection.RemoteName, SchemaJSON: json.RawMessage(schema), SchemaHash: selection.SchemaHash, Required: selection.Required})
+	}
+	base := Readiness{State: ReadinessConfigured, Reasons: []string{}, ToolDependencies: dependencies}
+	if requiredFailure != "" {
+		base.State = requiredFailure
+		base.Reasons = []string{"required_tool_unavailable"}
+		return base, snapshots
+	}
+	if optionalWarning {
+		base.State = ReadinessWithToolWarning
+		base.Reasons = []string{"optional_tool_unavailable"}
 	}
 	if s.evaluator == nil {
 		// Configuration presence is not provider or MCP capability validation.
-		return Readiness{State: ReadinessConfigured, Reasons: []string{}}
+		return base, snapshots
 	}
 	ready, err := s.evaluator(ctx, agentID, append(json.RawMessage(nil), config...))
 	if err != nil {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, snapshots
 	}
 	if !ready {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"external_dependency_unavailable"}}
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"external_dependency_unavailable"}}, snapshots
 	}
-	return Readiness{State: ReadinessReady, Reasons: []string{}}
+	if base.State == ReadinessConfigured {
+		base.State = ReadinessReady
+	}
+	return base, snapshots
 }
 
 func validateDetails(name, description string) error {
@@ -333,6 +519,34 @@ func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 
 func toVersion(v storage.AgentVersion) Version {
 	return Version{ID: v.ID, Number: v.Version, Schema: v.SchemaVersion, Config: append(json.RawMessage(nil), v.ConfigJSON...), ConfigHash: v.ConfigHash, CreatedAt: v.CreatedAt}
+}
+
+func fromStorageSelections(selections []storage.SelectedTool) []ToolSelection {
+	out := make([]ToolSelection, 0, len(selections))
+	for _, selection := range selections {
+		out = append(out, ToolSelection{ServerID: selection.ServerID, RemoteName: selection.RemoteName, SchemaHash: selection.SchemaHash, Required: selection.Required})
+	}
+	return out
+}
+
+func toStorageSelections(tools []ToolSelection) ([]storage.SelectedTool, error) {
+	selected := make([]storage.SelectedTool, 0, len(tools))
+	seen := map[string]bool{}
+	for _, tool := range tools {
+		key := tool.ServerID + "\x00" + tool.RemoteName
+		if tool.ServerID == "" || tool.RemoteName == "" || tool.SchemaHash == "" || seen[key] {
+			return nil, errors.New("invalid MCP tool selection")
+		}
+		seen[key] = true
+		selected = append(selected, storage.SelectedTool{ServerID: tool.ServerID, RemoteName: tool.RemoteName, SchemaHash: tool.SchemaHash, Required: tool.Required})
+	}
+	return selected, nil
+}
+
+func toVersionWithTools(v storage.AgentVersion, selections []storage.SelectedTool) Version {
+	version := toVersion(v)
+	version.MCPTools = fromStorageSelections(selections)
+	return version
 }
 
 func boolPointer(value bool) *bool { return &value }

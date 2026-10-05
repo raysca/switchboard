@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io/fs"
 	"net/url"
 	"os"
@@ -35,7 +36,7 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 			t.Fatal(err)
 		}
 		var n int
-		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 3 {
+		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 4 {
 			t.Fatalf("version=%d err=%v", n, err)
 		}
 		s.Close()
@@ -522,19 +523,19 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var n int
-	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 3 {
+	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 4 {
 		t.Fatalf("upgrade version=%d err=%v", n, err)
 	}
 	// Goose runs each migration transactionally: failed DDL must not survive.
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql"} {
 		body, err := fs.ReadFile(initial, name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["004_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["005_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectSQLite3, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -607,11 +608,11 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 3 {
+	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 4 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql"} {
 		body, err := fs.ReadFile(migrationFS, name)
 		if err != nil {
 			t.Fatal(err)
@@ -693,6 +694,9 @@ func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
 	if _, err := s.Agents().AddVersion(ctx, a.ID, 3, []byte(`{"x":3}`)); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.Sessions().End(ctx, sess.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.DB().Exec("DELETE FROM mcp_servers WHERE id=?", m.ID); err != nil {
 		t.Fatalf("detached MCP delete: %v", err)
 	}
@@ -705,6 +709,116 @@ func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
 	}
 	if _, err := s.DB().Exec("DELETE FROM mcp_tools WHERE discovery_id=? AND remote_name='a'", d.ID); err == nil {
 		t.Fatal("historical tool removed")
+	}
+}
+
+func TestMCPDisableAndDeleteRespectCurrentAndActiveVersionReferences(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	m := MCPServer{ID: NewID(), Name: "pinned", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true}
+	if err := s.MCP().CreateServer(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := s.MCP().AddDiscovery(ctx, m.ID, []MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := Agent{ID: NewID(), Name: "uses-mcp", Enabled: true}
+	if err := s.Agents().Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":"s","llm":"l","tts":"t"}`), []SelectedTool{{ServerID: m.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := NewID()
+	if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MCP().DeleteServer(ctx, m.ID); err == nil {
+		t.Fatal("delete of current association was allowed")
+	}
+	if err := s.MCP().DisableServer(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := s.MCP().Server(ctx, m.ID)
+	if err != nil || disabled.Enabled || disabled.LatestDiscoveryID != discovery.ID {
+		t.Fatalf("disable changed catalog: %+v %v", disabled, err)
+	}
+	if err := s.MCP().DeleteServer(ctx, m.ID); err == nil {
+		t.Fatal("disabled server with current association was deleted")
+	}
+	if err := s.MCP().DetachAndDelete(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MCP().Server(ctx, m.ID); err != nil {
+		t.Fatalf("server with an active historical snapshot should be pending: %v", err)
+	}
+	if err := s.MCP().DeleteServer(ctx, m.ID); err == nil {
+		t.Fatal("direct delete bypassed active runtime reference")
+	}
+	if err := s.Sessions().End(ctx, sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.MCP().Server(ctx, m.ID); err == nil {
+		t.Fatal("pending delete was not finalized after the last active session ended")
+	}
+	var count int
+	if err := s.DB().QueryRow("SELECT count(*) FROM agent_mcp_tools WHERE agent_version_id=?", v.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("historical selection count=%d err=%v", count, err)
+	}
+}
+
+func TestConcurrentSessionCloseAndMCPDeleteAlwaysDrainsSafely(t *testing.T) {
+	s := testStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for i := 0; i < 10; i++ {
+		m := MCPServer{ID: NewID(), Name: "race", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+		if err := s.MCP().CreateServer(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+		d, err := s.MCP().AddDiscovery(ctx, m.ID, []MCPTool{{RemoteName: "tool", SchemaJSON: []byte(`{"type":"object"}`)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := Agent{ID: NewID(), Name: "race", Enabled: true}
+		if err := s.Agents().Create(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":"s","llm":"l","tts":"t"}`), []SelectedTool{{ServerID: m.ID, RemoteName: "tool", SchemaHash: d.Tools[0].SchemaHash, Required: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sessionID := NewID()
+		if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MCP().DetachAndDelete(ctx, m.ID); err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		errs := make(chan error, 2)
+		go func() { defer wg.Done(); errs <- s.Sessions().End(ctx, sessionID) }()
+		go func() {
+			defer wg.Done()
+			err := s.MCP().DeleteServer(ctx, m.ID)
+			if errors.Is(err, ErrMCPReferenced) || errors.Is(err, sql.ErrNoRows) {
+				err = nil
+			}
+			errs <- err
+		}()
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("iteration %d concurrent close/delete: %v", i, err)
+			}
+		}
+		if _, err := s.MCP().Server(ctx, m.ID); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("iteration %d MCP row survived drain: %v", i, err)
+		}
 	}
 }
 
@@ -911,6 +1025,9 @@ func TestRepositoryContract(t *testing.T) {
 			}
 			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE sessions SET agent_version_id=?,config_hash=? WHERE id=?"), v2.ID, v2.ConfigHash, active); err == nil {
 				t.Fatal("session provenance mutated")
+			}
+			if err := s.Sessions().End(ctx, active); err != nil {
+				t.Fatal(err)
 			}
 			if _, err := s.DB().ExecContext(ctx, s.bind("DELETE FROM mcp_servers WHERE id=?"), m.ID); err != nil {
 				t.Fatal(err)

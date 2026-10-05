@@ -61,6 +61,39 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 	}
 }
 
+func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/api-mcp.db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server := storage.MCPServer{ID: storage.NewID(), Name: "orders", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := store.MCP().CreateServer(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := store.MCP().AddDiscovery(context.Background(), server.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := agent.NewService(store)
+	created, err := service.Create(context.Background(), agent.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":"s","llm":"l","tts":"t"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"tools":[{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `","required":true}]}`
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID+"/mcp-tools", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	NewAgentsHandler(service).ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"number":2`) || !strings.Contains(w.Body.String(), discovery.Tools[0].SchemaHash) {
+		t.Fatalf("selection response=%d %s", w.Code, w.Body.String())
+	}
+	current, err := service.Get(context.Background(), created.ID)
+	if err != nil || len(current.Version.MCPTools) != 1 || !current.Version.MCPTools[0].Required {
+		t.Fatalf("current agent=%+v err=%v", current, err)
+	}
+}
+
 func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {
 	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agent-api.db")})
 	if err != nil {

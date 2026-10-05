@@ -122,6 +122,122 @@ type ToolResult struct {
 	Status      string
 }
 
+// CapturedTool is an in-memory execution lease for one immutable agent/session
+// snapshot. It intentionally has no JSON representation and never exposes the
+// resolved bearer token. Server disable and discovery refresh do not change it;
+// pending deletion waits for the owning session to drain.
+type CapturedTool struct {
+	owner                                                                                         *Service
+	serverID, serverName, name, description, schemaHash, endpoint, token, transport, credentialID string
+	schema                                                                                        json.RawMessage
+}
+
+func (t *CapturedTool) String() string {
+	if t == nil {
+		return "MCP captured tool <nil>"
+	}
+	return "MCP captured tool " + traceSafeToolName(t.name) + " (server " + t.serverID + ")"
+}
+func (t *CapturedTool) GoString() string { return t.String() }
+
+func (t *CapturedTool) Name() string {
+	if t == nil {
+		return ""
+	}
+	return t.name
+}
+func (t *CapturedTool) Description() string {
+	if t == nil {
+		return ""
+	}
+	return t.description
+}
+func (t *CapturedTool) Schema() json.RawMessage {
+	if t == nil {
+		return nil
+	}
+	return append(json.RawMessage(nil), t.schema...)
+}
+func (t *CapturedTool) ServerID() string {
+	if t == nil {
+		return ""
+	}
+	return t.serverID
+}
+func (t *CapturedTool) ServerName() string {
+	if t == nil {
+		return ""
+	}
+	return t.serverName
+}
+func (t *CapturedTool) SchemaHash() string {
+	if t == nil {
+		return ""
+	}
+	return t.schemaHash
+}
+func (t *CapturedTool) Endpoint() string {
+	if t == nil {
+		return ""
+	}
+	return t.endpoint
+}
+func (t *CapturedTool) Transport() string {
+	if t == nil {
+		return ""
+	}
+	return t.transport
+}
+func (t *CapturedTool) CredentialID() string {
+	if t == nil {
+		return ""
+	}
+	return t.credentialID
+}
+
+func (s *Service) CaptureTool(ctx context.Context, id, name, schemaHash string) (*CapturedTool, error) {
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, ErrNotFound
+	}
+	if !m.Enabled || m.ValidationState != StateHealthy || m.LatestDiscoveryID == "" {
+		return nil, ErrUnavailable
+	}
+	d, err := s.store.MCP().LatestDiscovery(ctx, id)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	var selected storage.MCPTool
+	for _, tool := range d.Tools {
+		if tool.RemoteName == name {
+			selected = tool
+			break
+		}
+	}
+	if selected.RemoteName == "" {
+		return nil, ErrNotFound
+	}
+	if schemaHash != "" && selected.SchemaHash != schemaHash {
+		return nil, ErrInvalidSchema
+	}
+	u, err := s.endpoint(ctx, m)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	token, err := s.credential(ctx, m)
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	return &CapturedTool{owner: s, serverID: m.ID, serverName: m.Name, name: selected.RemoteName, description: selected.Description, schemaHash: selected.SchemaHash, endpoint: u.String(), token: token, transport: m.Transport, credentialID: m.AuthCredentialID, schema: append(json.RawMessage(nil), selected.SchemaJSON...)}, nil
+}
+
+func (t *CapturedTool) Execute(ctx context.Context, args json.RawMessage) (ToolResult, error) {
+	if t == nil || t.owner == nil {
+		return ToolResult{}, ErrUnavailable
+	}
+	return t.owner.executeCaptured(ctx, t, args)
+}
+
 func NewService(cfg ServiceConfig) (*Service, error) {
 	if cfg.Store == nil || cfg.Remote == nil {
 		return nil, errors.New("MCP storage and client required")
@@ -212,6 +328,19 @@ func (s *Service) Get(ctx context.Context, id string) (storage.MCPServer, error)
 		return m, ErrNotFound
 	}
 	return m, nil
+}
+
+func (s *Service) Disable(ctx context.Context, id string) error {
+	return s.store.MCP().DisableServer(ctx, id)
+}
+func (s *Service) Enable(ctx context.Context, id string) error {
+	return s.store.MCP().EnableServer(ctx, id)
+}
+func (s *Service) Delete(ctx context.Context, id string) error {
+	return s.store.MCP().DeleteServer(ctx, id)
+}
+func (s *Service) DetachAndDelete(ctx context.Context, id string) error {
+	return s.store.MCP().DetachAndDelete(ctx, id)
 }
 
 func (s *Service) credential(ctx context.Context, m storage.MCPServer) (string, error) {
@@ -337,6 +466,40 @@ func (s *Service) Validate(ctx context.Context, id string) (storage.MCPServer, e
 }
 
 func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMessage) (ToolResult, error) {
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return ToolResult{}, ErrNotFound
+	}
+	d, err := s.store.MCP().LatestDiscovery(ctx, id)
+	if err != nil {
+		return ToolResult{}, ErrNotFound
+	}
+	var hash string
+	for _, tool := range d.Tools {
+		if tool.RemoteName == name {
+			hash = tool.SchemaHash
+			break
+		}
+	}
+	if hash == "" {
+		started := time.Now()
+		event := core.NewTraceEvent("mcp.tool.execute", started, "", "", 0, core.TracePolicy{Content: core.TraceMetadata}, nil)
+		event.ToolCallID = storage.NewID()
+		span := core.StartSpanSafe(ctx, s.tracer, event)
+		span.SetAttribute("mcp.server_id", m.ID)
+		span.SetAttribute("mcp.tool_name", traceSafeToolName(name))
+		span.SetAttribute("mcp.duration_ms", time.Since(started).Milliseconds())
+		span.End(ErrNotFound)
+		return ToolResult{}, ErrNotFound
+	}
+	captured, err := s.CaptureTool(ctx, m.ID, name, hash)
+	if err != nil {
+		return ToolResult{}, err
+	}
+	return captured.Execute(ctx, args)
+}
+
+func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, args json.RawMessage) (ToolResult, error) {
 	ctx, cancel := s.timed(ctx)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
@@ -356,35 +519,8 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 		}
 	}
 	defer end(nil)
-	m, err := s.Get(ctx, id)
-	if err != nil {
-		end(ErrNotFound)
-		return ToolResult{}, ErrNotFound
-	}
-	if !m.Enabled {
-		end(ErrUnavailable)
-		return ToolResult{}, ErrUnavailable
-	}
-	d, err := s.store.MCP().LatestDiscovery(ctx, id)
-	if err != nil {
-		end(ErrNotFound)
-		return ToolResult{}, ErrNotFound
-	}
-	var schema json.RawMessage
-	var selectedName string
-	for _, tool := range d.Tools {
-		if tool.RemoteName == name {
-			schema = tool.SchemaJSON
-			selectedName = tool.RemoteName
-			break
-		}
-	}
-	if len(schema) == 0 {
-		end(ErrNotFound)
-		return ToolResult{}, ErrNotFound
-	}
-	span.SetAttribute("mcp.server_id", m.ID)
-	span.SetAttribute("mcp.tool_name", traceSafeToolName(selectedName))
+	span.SetAttribute("mcp.server_id", captured.serverID)
+	span.SetAttribute("mcp.tool_name", traceSafeToolName(captured.name))
 	if len(args) > s.maxArguments {
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
@@ -394,22 +530,12 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
 	}
-	resolved, err := validateSchemaContext(ctx, schema, s.maxSchema)
+	resolved, err := validateSchemaContext(ctx, captured.schema, s.maxSchema)
 	if err != nil || resolved.Validate(instance) != nil {
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
 	}
-	u, err := s.endpoint(ctx, m)
-	if err != nil {
-		end(ErrUnavailable)
-		return ToolResult{}, ErrUnavailable
-	}
-	token, err := s.credential(ctx, m)
-	if err != nil {
-		end(ErrUnavailable)
-		return ToolResult{}, ErrUnavailable
-	}
-	result, err := s.remote.CallTool(ctx, u.String(), token, name, args)
+	result, err := s.remote.CallTool(ctx, captured.endpoint, captured.token, captured.name, args)
 	if err != nil {
 		end(safeCategory(err))
 		return ToolResult{}, ErrRemoteFailure
@@ -422,13 +548,13 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 		end(ErrRemoteFailure)
 		return ToolResult{}, ErrRemoteFailure
 	}
-	clean, sanitizeErr := sanitizeResult(result.JSON, token, s.maxResult)
+	clean, sanitizeErr := sanitizeResult(result.JSON, captured.token, s.maxResult)
 	if sanitizeErr != nil {
 		end(ErrResultTooLarge)
 		return ToolResult{}, ErrResultTooLarge
 	}
 	end(nil)
-	return ToolResult{ExecutionID: executionID, MCPServerID: m.ID, ToolName: selectedName, JSON: clean, Duration: time.Since(started), Status: "success"}, nil
+	return ToolResult{ExecutionID: executionID, MCPServerID: captured.serverID, ToolName: captured.name, JSON: clean, Duration: time.Since(started), Status: "success"}, nil
 }
 
 func safeCategory(err error) error {

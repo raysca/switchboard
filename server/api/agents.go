@@ -19,6 +19,7 @@ type AgentService interface {
 	Archive(context.Context, string) error
 	Duplicate(context.Context, string, string) (agent.Agent, error)
 	ImportV1(context.Context, string, string, string, agent.V1Pipeline) (agent.Agent, error)
+	SetMCPTools(context.Context, string, []agent.ToolSelection) (agent.Version, error)
 }
 
 // NewAgentsHandler constructs the authenticated management route handler for
@@ -69,7 +70,31 @@ func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.duplicate(w, r, parts[0], requestID)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "mcp-tools" {
+		h.mcpTools(w, r, parts[0], requestID)
+		return
+	}
 	WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
+}
+
+func (h agentsHandler) mcpTools(w http.ResponseWriter, r *http.Request, id, requestID string) {
+	if r.Method != http.MethodPut {
+		agentMethodNotAllowed(w, requestID, "PUT")
+		return
+	}
+	var req struct {
+		Tools []agent.ToolSelection `json:"tools"`
+	}
+	if err := DecodeJSON(r, &req); err != nil {
+		WriteError(w, 400, "invalid_request", err.Error(), requestID)
+		return
+	}
+	version, err := h.service.SetMCPTools(r.Context(), id, req.Tools)
+	if err != nil {
+		h.writeServiceError(w, err, requestID)
+		return
+	}
+	WriteJSON(w, 200, SuccessResponse[agent.Version]{Data: version})
 }
 
 func (h agentsHandler) collection(w http.ResponseWriter, r *http.Request, requestID string) {

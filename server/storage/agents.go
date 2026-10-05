@@ -17,6 +17,10 @@ type AgentMutation struct {
 // CreateWithVersion creates the agent and its initial immutable version in one
 // transaction. An initial publication failure leaves neither row behind.
 func (r AgentRepository) CreateWithVersion(ctx context.Context, a Agent, config []byte) (AgentVersion, error) {
+	return r.CreateWithVersionAndTools(ctx, a, config, nil)
+}
+
+func (r AgentRepository) CreateWithVersionAndTools(ctx context.Context, a Agent, config []byte, selections []SelectedTool) (AgentVersion, error) {
 	if err := validID(a.ID); err != nil {
 		return AgentVersion{}, err
 	}
@@ -38,8 +42,36 @@ func (r AgentRepository) CreateWithVersion(ctx context.Context, a Agent, config 
 		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agents(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, a.Enabled), boolValue(r.s.dialect, a.Archived), created, created); err != nil {
 			return err
 		}
+		for _, sel := range selections {
+			if err := validID(sel.ServerID); err != nil {
+				return err
+			}
+			query := "SELECT latest_discovery_id FROM mcp_servers WHERE id=? AND enabled=? AND pending_delete=?"
+			if r.s.dialect == Postgres {
+				query += " FOR SHARE"
+			}
+			var discovery sql.NullString
+			if err := tx.QueryRowContext(ctx, r.s.bind(query), sel.ServerID, boolValue(r.s.dialect, true), boolValue(r.s.dialect, false)).Scan(&discovery); err != nil {
+				return err
+			}
+			if !discovery.Valid {
+				return errors.New("MCP server has no discovery")
+			}
+			var actual string
+			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT schema_hash FROM mcp_tools WHERE discovery_id=? AND remote_name=?"), discovery.String, sel.RemoteName).Scan(&actual); err != nil {
+				return err
+			}
+			if actual != sel.SchemaHash {
+				return errors.New("MCP schema hash changed")
+			}
+		}
 		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), v.ID, a.ID, v.Version, v.SchemaVersion, string(v.ConfigJSON), v.ConfigHash, utc(v.CreatedAt)); err != nil {
 			return err
+		}
+		for _, sel := range selections {
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) VALUES(?,?,?,?,?)"), v.ID, sel.ServerID, sel.RemoteName, sel.SchemaHash, boolValue(r.s.dialect, sel.Required)); err != nil {
+				return err
+			}
 		}
 		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE agents SET current_version_id=?,updated_at=? WHERE id=?"), v.ID, utc(now), a.ID)
 		if err != nil {
@@ -76,13 +108,14 @@ func (r AgentRepository) MutateAndPublish(ctx context.Context, id string, mutati
 		}
 	}
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		query := "SELECT name,description,enabled,archived FROM agents WHERE id=?"
+		query := "SELECT name,description,enabled,archived,current_version_id FROM agents WHERE id=?"
 		if r.s.dialect == Postgres {
 			query += " FOR UPDATE"
 		}
 		var name, description string
+		var currentVersion sql.NullString
 		var enabled, archived bool
-		if err := tx.QueryRowContext(ctx, r.s.bind(query), id).Scan(&name, &description, &enabled, &archived); err != nil {
+		if err := tx.QueryRowContext(ctx, r.s.bind(query), id).Scan(&name, &description, &enabled, &archived, &currentVersion); err != nil {
 			return err
 		}
 		if archived {
@@ -109,6 +142,11 @@ func (r AgentRepository) MutateAndPublish(ctx context.Context, id string, mutati
 			next = AgentVersion{ID: NewID(), AgentID: id, Version: latest + 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC()}
 			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), next.ID, next.AgentID, next.Version, next.SchemaVersion, string(next.ConfigJSON), next.ConfigHash, utc(next.CreatedAt)); err != nil {
 				return err
+			}
+			if currentVersion.Valid {
+				if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) SELECT ?,mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=?"), next.ID, currentVersion.String); err != nil {
+					return err
+				}
 			}
 			result, err := tx.ExecContext(ctx, r.s.bind("UPDATE agents SET name=?,description=?,enabled=?,current_version_id=?,updated_at=? WHERE id=? AND archived=?"), name, description, boolValue(r.s.dialect, enabled), next.ID, updatedAt, id, boolValue(r.s.dialect, false))
 			if err != nil {

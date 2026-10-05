@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"context"
+	"govoice/server/agent"
 	"govoice/server/auth"
 )
 
@@ -64,6 +66,72 @@ func TestManagementHandlerProtectsMCPAndNeverReturnsSecretEndpointQuery(t *testi
 	if strings.Contains(response.Body.String(), "mcp-secret-sentinel") {
 		t.Fatalf("credential leaked: %s", response.Body.String())
 	}
+}
+
+func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
+	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
+	svc, _ := newTestService(t, remote, testCredential{})
+	management, _ := auth.NewManagement("management-test-secret-which-is-long-enough")
+	discovery, err := svc.Refresh(context.Background(), mustCreateMCP(t, svc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Resolve the created server from its latest discovery owner.
+	servers, err := svc.store.MCP().ListServers(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("servers=%+v err=%v", servers, err)
+	}
+	agentService := agent.NewService(svc.store)
+	created, err := agentService.Create(context.Background(), agent.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":"s","llm":"l","tts":"t"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agentService.SetMCPTools(context.Background(), created.ID, []agent.ToolSelection{{ServerID: servers[0].ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(svc, management)
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	disabled := do("POST", "/api/v1/mcp-servers/"+servers[0].ID+"/disable", "")
+	if disabled.Code != 200 || !strings.Contains(disabled.Body.String(), `"enabled":false`) {
+		t.Fatalf("disable=%d %s", disabled.Code, disabled.Body.String())
+	}
+	blocked := do("DELETE", "/api/v1/mcp-servers/"+servers[0].ID, "")
+	if blocked.Code != 409 || !strings.Contains(blocked.Body.String(), created.ID) || !strings.Contains(blocked.Body.String(), "lookup") {
+		t.Fatalf("delete conflict=%d %s", blocked.Code, blocked.Body.String())
+	}
+	if _, err := svc.store.MCP().Server(context.Background(), servers[0].ID); err != nil {
+		t.Fatalf("blocked delete removed server: %v", err)
+	}
+	missingConfirmation := do("POST", "/api/v1/mcp-servers/"+servers[0].ID+"/detach-delete", `{"confirm":false}`)
+	if missingConfirmation.Code != 400 {
+		t.Fatalf("confirmation status=%d body=%s", missingConfirmation.Code, missingConfirmation.Body.String())
+	}
+	detached := do("POST", "/api/v1/mcp-servers/"+servers[0].ID+"/detach-delete", `{"confirm":true}`)
+	if detached.Code != 200 || !strings.Contains(detached.Body.String(), `"deleted":true`) {
+		t.Fatalf("detach=%d %s", detached.Code, detached.Body.String())
+	}
+	updated, err := agentService.Get(context.Background(), created.ID)
+	if err != nil || len(updated.Version.MCPTools) != 0 || updated.Version.Number != 3 {
+		t.Fatalf("detached agent=%+v err=%v", updated, err)
+	}
+}
+
+func mustCreateMCP(t *testing.T, svc *Service) string {
+	t.Helper()
+	server, err := svc.Create(context.Background(), ServerConfig{Name: "orders", Endpoint: "https://mcp.example/rpc", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server.ID
 }
 
 func TestManagementHandlerFailsClosedWithoutAuth(t *testing.T) {
