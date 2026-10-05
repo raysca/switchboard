@@ -29,10 +29,10 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 |---|---|---|
 | A — Core Contracts Stable | Passed | Independent Phase 1 tester PASS at `00175a9`: core/server race and vet, focused API/auth, UI tests/typecheck/build, SQLite/PostgreSQL 18 repository contract, and `make verify`; dependency and Task 1 contract boundaries inspected. |
 | B — P0 Audio Path Stable | Passed | Independent Phase 2 tester PASS at `48a8170`: core/Google/tagged-xAI/Server race and vet, root tagged test/build, RTVI/WebSocket race tests, focused audio/turn/pacing/flush/transcript repetitions, and mocked provider integrations. The pinned client still cannot clear already-buffered playback; this documented already-delivered-audio limitation is unsupported rather than represented as working. |
-| C — Tool Loop Stable | Open | Contract frozen; framework/provider implementation remains open. |
+| C — Tool Loop Stable | Passed | Independent Phase 3 tester PASS at `b8e42a3`: core ToolLoop/context and Google/tagged-xAI adapter race/vet suites, repeated contract stress, and root tagged test/build/vet all passed. |
 | D — Persistent Agent Runtime | Open | Domain/snapshot contract frozen; server implementation remains open. |
 | E — Trace End-to-End | Open | Framework/server/UI persistence path not implemented. |
-| F — Compatibility | Open | V1 evidence pinned; V2 RTVI, Whisker semantic, and P0 parity suites remain to be implemented and passed separately. |
+| F — Compatibility | Passed | Independent Phase 3 tester PASS at `b8e42a3`: pinned RTVI client loopback, Whisker semantic/runtime eval, and pinned Pipecat paired Go/source evidence passed as three distinct results. Playback clearing remains explicitly unsupported; Python pytest was unavailable and is not claimed. |
 | G — Product Release | Open | Product implementation and seven vertical scenarios remain open. |
 
 ### Phase 0 assumptions and rulings
@@ -502,7 +502,24 @@ closeout above.
 - [x] Task 12: Google/xAI tool adapters only; usage is P1 Task 32. Independent cross-provider reviewer APPROVED and final independent tester PASS at `ed3b930`.
 - [x] Task 13: Runtime trace instrumentation/content policy; no usage implementation. Independent reviewer APPROVED and final independent tester PASS at `7114682`.
 - [x] Task 14: P0 eval harness and separate compatibility suites with protocol-specific debug adapters. Independent reviewer APPROVED and final independent tester PASS at `996ac7f`.
-- [ ] Independent Phase 3 tester gate; record Gates C and F.
+- [x] Independent Phase 3 tester gate; Gates C and F passed at `b8e42a3`.
+
+### Phase 3 independent gate
+
+- Gate C passed after full race and vet suites for core, Google, and tagged xAI,
+  repeated core tool/turn/transcript contract tests, and root tagged tests,
+  build, and vet with the documented macOS SDK override.
+- Gate F passed as three separate results: the pinned official RTVI client
+  loopback regression, Whisker semantic/runtime evaluation, and pinned Pipecat
+  paired Go/source behavior. The deterministic evaluator reported all 23 named
+  scenarios passing, while retaining RTVI and Pipecat as separate suites.
+- Compatibility npm tests, manifest/fixture checks, transport race/vet, and
+  25 repeated eval/Whisker runs passed. The playback probe still reports
+  `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; its zero
+  exit records the accepted unsupported limitation, not a successful clear.
+  Python pytest was unavailable, so no Python reference-suite run is claimed.
+- The independent tester made no changes; `git status` and `git diff --check`
+  were clean at `b8e42a3`.
 
 ### Task 13 closeout
 
@@ -668,6 +685,6 @@ re-review and tester review remain pending; Task11/GateC remain open.
 
 Tasks 1–9 and the independent Phase 1–2 tester gates are complete. Gate A
 passed at `00175a9`; Gate B passed at `48a8170` with client playback clearing
-explicitly unsupported. Phase 3 Tasks 10–14 are complete. Next action is the
-independent Phase 3 gate for Gates C and F; after it passes, Phase 4 Tasks 15
-and 16 are unblocked. Gates C–G remain open.
+explicitly unsupported. Phase 3 Tasks 10–14 and its independent gate are
+complete; Gates C and F passed at `b8e42a3`. Phase 4 Tasks 15 and 16 are now
+unblocked and may run in parallel. Gates D, E, and G remain open.
