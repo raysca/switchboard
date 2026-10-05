@@ -177,3 +177,16 @@ nil-value context behavior on both dispatcher paths before the change, then
 passed under race `-count=100`. Full core race/vet and focused tagged
 Google/xAI lifecycle race suites passed. Task 13 remains unchecked for
 independent review.
+
+## Independent closeout
+
+Independent review APPROVED the final implementation at `7114682`. The final
+tester passed the rejected-parent race regression for 100 repetitions,
+focused trace lifecycle, parentage, panic, content-policy, and privacy stress
+suites, full core/provider/VAD/transport race and vet suites, and root tagged
+tests and builds using the documented macOS SDK override.
+
+Task 13 is complete. Its scope is framework and provider runtime tracing plus
+safe content policy. Provider usage remains Task 32, readiness Task 43, the
+general observer API Task 35, and persistence/OTel export Tasks 19–20. Gates C
+and F still require the separate independent Phase 3 gate.

@@ -500,9 +500,23 @@ race checks pass. This historical handoff was superseded by the approved
 closeout above.
 - [x] Task 11: Bounded ToolLoop behavior consuming Task 1 public types. Independent reviewer APPROVED and final independent tester PASS at `c38919d`.
 - [x] Task 12: Google/xAI tool adapters only; usage is P1 Task 32. Independent cross-provider reviewer APPROVED and final independent tester PASS at `ed3b930`.
-- [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.
+- [x] Task 13: Runtime trace instrumentation/content policy; no usage implementation. Independent reviewer APPROVED and final independent tester PASS at `7114682`.
 - [x] Task 14: P0 eval harness and separate compatibility suites with protocol-specific debug adapters. Independent reviewer APPROVED and final independent tester PASS at `996ac7f`.
 - [ ] Independent Phase 3 tester gate; record Gates C and F.
+
+### Task 13 closeout
+
+- Independent review APPROVED the final `7114682` result. The reviewed trace
+  surface keeps attributes numeric/boolean or fixed-category strings, preserves
+  causal parentage across asynchronous dispatchers, and fails safely when a
+  parent start is rejected or a processor/provider boundary panics.
+- The final independent tester passed the rejected-parent race regression for
+  100 repetitions, focused trace/lifecycle/privacy stress suites, full core,
+  Google, xAI, VAD, and transport race/vet suites, and the root tagged test and
+  build checks with the documented macOS SDK override.
+- Task 13 is complete at `7114682`. Usage remains Task 32, readiness Task 43,
+  the general observer API Task 35, and persistence/OTel export Tasks 19–20.
+  Gates C and F remain open for the independent Phase 3 gate.
 
 ### Task 14 closeout
 
@@ -654,5 +668,6 @@ re-review and tester review remain pending; Task11/GateC remain open.
 
 Tasks 1–9 and the independent Phase 1–2 tester gates are complete. Gate A
 passed at `00175a9`; Gate B passed at `48a8170` with client playback clearing
-explicitly unsupported. Next action is Phase 3 Task 10: context aggregation
-and interruption reconciliation. Gates C–G remain open.
+explicitly unsupported. Phase 3 Tasks 10–14 are complete. Next action is the
+independent Phase 3 gate for Gates C and F; after it passes, Phase 4 Tasks 15
+and 16 are unblocked. Gates C–G remain open.
