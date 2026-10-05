@@ -45,13 +45,13 @@ func DefaultLLMConfig() LLMConfig {
 
 // LLMStreamChunk represents a single chunk from the LLM stream.
 type LLMStreamChunk struct {
-	Text               string
-	ToolCalls          []core.ToolCall
-	NativeToolContents []*genai.Content
-	PromptTokens       int
-	OutputTokens       int
-	TotalTokens        int
-	IsDone             bool
+	Text           string
+	ToolCalls      []core.ToolCall
+	NativeContents []*genai.Content
+	PromptTokens   int
+	OutputTokens   int
+	TotalTokens    int
+	IsDone         bool
 }
 
 // LLMStreamClient abstracts streamed content generation.
@@ -159,7 +159,7 @@ func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Contex
 				errCh <- errInvalidGoogleTool
 				return
 			}
-			nativeToolContents := googleNativeToolContents(resp, toolCalls)
+			nativeContents := googleNativeContents(resp, toolCalls)
 			streamCallOrdinal += len(toolCalls)
 			promptTok := 0
 			outTok := 0
@@ -174,12 +174,12 @@ func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Contex
 			case <-ctx.Done():
 				return
 			case chunkCh <- LLMStreamChunk{
-				Text:               text,
-				ToolCalls:          toolCalls,
-				NativeToolContents: nativeToolContents,
-				PromptTokens:       promptTok,
-				OutputTokens:       outTok,
-				TotalTokens:        totTok,
+				Text:           text,
+				ToolCalls:      toolCalls,
+				NativeContents: nativeContents,
+				PromptTokens:   promptTok,
+				OutputTokens:   outTok,
+				TotalTokens:    totTok,
 			}:
 			}
 		}
@@ -437,19 +437,14 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 							calls = append(calls, call)
 						}
 					}
-					nativeCalls = append(nativeCalls, chunk.NativeToolContents...)
+					nativeCalls = append(nativeCalls, chunk.NativeContents...)
 				}
 			}
 			if len(calls) > 0 {
-				nativeText := strings.Builder{}
-				for _, content := range nativeCalls {
-					for _, part := range content.Parts {
-						if part != nil {
-							nativeText.WriteString(part.Text)
-						}
-					}
-				}
-				if requestText.Len() > 0 && requestText.String() != nativeText.String() {
+				// Native provider parts already contain the response text, including
+				// reasoning/signature-bearing and text-only chunks. Avoid replaying
+				// the SDK's accumulated text a second time.
+				if requestText.Len() > 0 && len(nativeCalls) == 0 {
 					providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Content: requestText.String(), TurnID: turn})
 				}
 				for _, call := range calls {

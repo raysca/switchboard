@@ -550,3 +550,62 @@ func TestGoogleFallbackIDsUseStreamWideOrdinal(t *testing.T) {
 		t.Fatalf("separate streamed calls collided on fallback ID %q", first[0].ID)
 	}
 }
+
+func TestGoogleNativeContentsPreserveCompleteStreamedModelTurn(t *testing.T) {
+	call := core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c1", ToolName: "lookup", Content: `{}`}
+	result := core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c1", ToolStatus: core.ToolSucceeded, Content: `{}`}
+	native := []*genai.Content{
+		{Role: "model", Parts: []*genai.Part{{Text: "Before ", ThoughtSignature: []byte{1, 2, 3}}}},
+		{Role: "model", Parts: []*genai.Part{{Text: "calling"}, {FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}, ThoughtSignature: []byte{4, 5, 6}}}},
+		{Role: "model", Parts: []*genai.Part{{Text: " after", ThoughtSignature: []byte{7, 8, 9}}}},
+	}
+	got := GoogleContentsWithNative([]core.Message{call, result}, native)
+	if len(got) != 2 {
+		t.Fatalf("contents=%#v", got)
+	}
+	var text strings.Builder
+	signatures := 0
+	for _, content := range got {
+		if content.Role == "model" {
+			for _, part := range content.Parts {
+				text.WriteString(part.Text)
+				if len(part.ThoughtSignature) > 0 {
+					signatures++
+				}
+			}
+		}
+	}
+	if text.String() != "Before calling after" || signatures != 3 {
+		t.Fatalf("native model turn changed: text=%q signatures=%d contents=%#v", text.String(), signatures, got)
+	}
+}
+
+func TestGoogleNativeContentsGroupStreamedCallsIntoOneModelTurn(t *testing.T) {
+	history := []core.Message{
+		{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c1", ToolName: "lookup", Content: `{}`},
+		{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c2", ToolName: "lookup", Content: `{}`},
+		{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c1", ToolStatus: core.ToolSucceeded, Content: `{}`},
+		{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c2", ToolStatus: core.ToolSucceeded, Content: `{}`},
+	}
+	native := []*genai.Content{
+		{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}}}},
+		{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "c2", Name: "lookup"}}}},
+	}
+	got := GoogleContentsWithNative(history, native)
+	if len(got) != 2 || got[0].Role != "model" || len(got[0].Parts) != 2 || len(got[1].Parts) != 2 {
+		t.Fatalf("stream fragments were not represented as one model turn and result turn: %#v", got)
+	}
+}
+
+func TestGoogleNativeContentsPreserveReplayOccurrences(t *testing.T) {
+	call := core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c1", ToolName: "lookup", Content: `{}`}
+	result := core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c1", ToolStatus: core.ToolSucceeded, Content: `{}`}
+	native := []*genai.Content{
+		{Role: "model", Parts: []*genai.Part{{ThoughtSignature: []byte{1}, FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}}}},
+		{Role: "model", Parts: []*genai.Part{{ThoughtSignature: []byte{2}, FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}}}},
+	}
+	got := GoogleContentsWithNative([]core.Message{call, result, call, result}, native)
+	if len(got) != 4 || got[0].Parts[0].ThoughtSignature[0] != 1 || got[2].Parts[0].ThoughtSignature[0] != 2 {
+		t.Fatalf("replayed native call occurrences changed: %#v", got)
+	}
+}

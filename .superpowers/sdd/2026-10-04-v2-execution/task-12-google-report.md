@@ -122,3 +122,36 @@ Correction verification:
   with the documented Xcode macOS 26 SDK override.
 - Public `GoogleFunctionResponse` and continuation history both passed the
   array/string/scalar/large-integer preservation cases.
+
+## Correction round 2
+
+The second independent review found that native state retained only chunks
+containing function calls and keyed those chunks by call ID, which lost
+surrounding text/signatures and collapsed replayed occurrences.
+
+- The real GenAI stream adapter now copies every candidate `Content` in
+  provider order, including text-only/reasoning/signature-bearing chunks. It
+  fills omitted call IDs on the copies using the already-parsed call order.
+- During continuation mapping, contiguous framework call messages consume
+  native call occurrences with a cursor rather than a call-ID map. This keeps
+  each repeated exchange/signature and groups streamed parallel call fragments
+  into one model turn. Original parts and signatures are copied in order;
+  trailing text-only chunks remain on that turn.
+- When native contents exist, accumulated SDK text is not appended again as a
+  separate assistant message. The native parts are authoritative for text and
+  provider state; clients without native content retain the text-only fallback.
+- Assumption: separate SDK `Content` fragments that collectively represent
+  one streamed tool-call batch are flattened into one model `Content`, in their
+  original part order, because that batch is represented by contiguous
+  ToolLoop calls. Separate replayed exchanges remain separate model contents.
+
+Correction round 2 verification:
+
+- Both exact review overlays (`overlay.json` and `overlay-round2.json`) passed
+  under `-race`; round 2 covers complete streamed model content, parallel
+  fragments, and repeated call-ID exchanges.
+- Tracked native-content/continuation/fallback-ID regressions passed under
+  race x10.
+- Google full race/vet, core ToolLoop race, and root `-tags xai` tests passed
+  with the macOS 26 SDK override.
+- `gofmt` and `git diff --check` passed.

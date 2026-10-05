@@ -135,18 +135,7 @@ func GoogleContents(history []core.Message) []*genai.Content {
 func GoogleContentsWithNative(history []core.Message, nativeContents []*genai.Content) []*genai.Content {
 	contents := make([]*genai.Content, 0, len(history))
 	toolNames := make(map[string]string)
-	nativeForCall := make(map[string]int)
-	for nativeIndex, content := range nativeContents {
-		if content == nil {
-			continue
-		}
-		for _, part := range content.Parts {
-			if part != nil && part.FunctionCall != nil && part.FunctionCall.ID != "" {
-				nativeForCall[part.FunctionCall.ID] = nativeIndex
-			}
-		}
-	}
-	emittedNative := make(map[int]bool)
+	nativeCursor := 0
 	for _, message := range history {
 		if message.Kind == core.MessageToolCall && message.ToolCallID != "" && message.ToolName != "" {
 			toolNames[message.ToolCallID] = message.ToolName
@@ -158,27 +147,14 @@ func GoogleContentsWithNative(history []core.Message, nativeContents []*genai.Co
 			continue
 		}
 		if message.Kind == core.MessageToolCall {
-			parts := make([]*genai.Part, 0, 2)
+			batch := make([]core.Message, 0, 2)
 			for i < len(history) && history[i].Kind == core.MessageToolCall {
-				call := history[i]
-				if nativeIndex, ok := nativeForCall[call.ToolCallID]; ok {
-					if !emittedNative[nativeIndex] {
-						contents = append(contents, cloneGoogleContent(nativeContents[nativeIndex]))
-						emittedNative[nativeIndex] = true
-					}
-					i++
-					continue
-				}
-				var args map[string]any
-				if json.Unmarshal([]byte(call.Content), &args) != nil {
-					args = map[string]any{}
-				}
-				parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{ID: call.ToolCallID, Name: call.ToolName, Args: args}})
+				batch = append(batch, history[i])
 				i++
 			}
-			if len(parts) > 0 {
-				contents = append(contents, &genai.Content{Role: "model", Parts: parts})
-			}
+			parts, nextNative := googleNativeBatchParts(batch, nativeContents, nativeCursor)
+			nativeCursor = nextNative
+			contents = append(contents, &genai.Content{Role: "model", Parts: parts})
 			i--
 			continue
 		}
@@ -204,6 +180,116 @@ func GoogleContentsWithNative(history []core.Message, nativeContents []*genai.Co
 		contents = append(contents, &genai.Content{Role: role, Parts: []*genai.Part{{Text: message.Content}}})
 	}
 	return contents
+}
+
+// googleNativeBatchParts consumes one native occurrence for each call in this
+// history batch. The cursor makes replay occurrence-based: a later identical
+// call ID consumes its later provider occurrence rather than overwriting it.
+// Text-only chunks before/after calls remain attached to their original turn.
+func googleNativeBatchParts(batch []core.Message, native []*genai.Content, cursor int) ([]*genai.Part, int) {
+	needed := make(map[string]int, len(batch))
+	for _, call := range batch {
+		needed[call.ToolCallID]++
+	}
+	matched := make(map[string]int, len(needed))
+	parts := make([]*genai.Part, 0, len(batch))
+	for cursor < len(native) {
+		content := native[cursor]
+		if content == nil {
+			cursor++
+			continue
+		}
+		hasCall, hasNeeded := false, false
+		for _, part := range content.Parts {
+			if part == nil || part.FunctionCall == nil {
+				continue
+			}
+			hasCall = true
+			id := part.FunctionCall.ID
+			if matched[id] < needed[id] {
+				hasNeeded = true
+			}
+		}
+		allMatched := true
+		for id, count := range needed {
+			if matched[id] < count {
+				allMatched = false
+				break
+			}
+		}
+		if hasCall && (allMatched || !hasNeeded) {
+			break
+		}
+		for _, part := range content.Parts {
+			if part == nil {
+				continue
+			}
+			copy := cloneGooglePart(part)
+			parts = append(parts, copy)
+			if copy.FunctionCall != nil && matched[copy.FunctionCall.ID] < needed[copy.FunctionCall.ID] {
+				matched[copy.FunctionCall.ID]++
+			}
+		}
+		cursor++
+		allMatched = true
+		for id, count := range needed {
+			if matched[id] < count {
+				allMatched = false
+				break
+			}
+		}
+		if allMatched {
+			// Keep subsequent non-call parts from this response, but stop at the
+			// next function-call occurrence, which belongs to another exchange.
+			for cursor < len(native) && !googleContentHasFunctionCall(native[cursor]) {
+				if native[cursor] != nil {
+					for _, part := range native[cursor].Parts {
+						if part != nil {
+							parts = append(parts, cloneGooglePart(part))
+						}
+					}
+				}
+				cursor++
+			}
+			break
+		}
+	}
+	for _, call := range batch {
+		if matched[call.ToolCallID] > 0 {
+			matched[call.ToolCallID]--
+			continue
+		}
+		var args map[string]any
+		if json.Unmarshal([]byte(call.Content), &args) != nil || args == nil {
+			args = map[string]any{}
+		}
+		parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{ID: call.ToolCallID, Name: call.ToolName, Args: args}})
+	}
+	return parts, cursor
+}
+
+func googleContentHasFunctionCall(content *genai.Content) bool {
+	if content == nil {
+		return false
+	}
+	for _, part := range content.Parts {
+		if part != nil && part.FunctionCall != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneGooglePart(part *genai.Part) *genai.Part {
+	encoded, err := json.Marshal(part)
+	if err != nil {
+		return nil
+	}
+	var cloned genai.Part
+	if json.Unmarshal(encoded, &cloned) != nil {
+		return nil
+	}
+	return &cloned
 }
 
 func decodeGoogleJSON(raw []byte) (any, error) {
@@ -234,8 +320,8 @@ func cloneGoogleContent(content *genai.Content) *genai.Content {
 	return &cloned
 }
 
-func googleNativeToolContents(response *genai.GenerateContentResponse, calls []core.ToolCall) []*genai.Content {
-	if response == nil || len(calls) == 0 {
+func googleNativeContents(response *genai.GenerateContentResponse, calls []core.ToolCall) []*genai.Content {
+	if response == nil {
 		return nil
 	}
 	contents := make([]*genai.Content, 0, len(response.Candidates))
@@ -248,20 +334,16 @@ func googleNativeToolContents(response *genai.GenerateContentResponse, calls []c
 		if content == nil {
 			continue
 		}
-		hasFunctionCall := false
 		for _, part := range content.Parts {
 			if part == nil || part.FunctionCall == nil {
 				continue
 			}
-			hasFunctionCall = true
 			if part.FunctionCall.ID == "" && callIndex < len(calls) {
 				part.FunctionCall.ID = calls[callIndex].ID
 			}
 			callIndex++
 		}
-		if hasFunctionCall {
-			contents = append(contents, content)
-		}
+		contents = append(contents, content)
 	}
 	return contents
 }
