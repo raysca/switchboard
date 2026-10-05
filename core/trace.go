@@ -160,7 +160,7 @@ func safeEventAttributes(policy TracePolicy, input map[string]any) map[string]an
 					}
 				}
 			}
-		case "count", "sample_rate", "channels", "duration_ms", "latency_ms", "sequence", "model", "provider", "format", "status", "error.category", "unit", "quantity", "reason", "component":
+		case "count", "sample_rate", "channels", "duration_ms", "latency_ms", "sequence", "model", "provider", "format", "status", "error.category", "unit", "quantity", "reason", "component", "frame", "direction":
 			switch v := value.(type) {
 			case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 				out[key] = value
@@ -260,11 +260,6 @@ func copyStructuredMetadata(value any, depth int, remaining *int) (any, bool) {
 	}
 	*remaining--
 	switch v := value.(type) {
-	case string:
-		if len(v) > maxTraceLabelBytes {
-			return nil, false
-		}
-		return v, true
 	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 		return v, true
 	case float32:

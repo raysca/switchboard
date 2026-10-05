@@ -16,20 +16,43 @@ import (
 )
 
 type loopTraceRecorder struct {
+	mu     sync.Mutex
 	events []core.TraceEvent
 	ended  []error
 }
 type loopTraceSpan struct{ recorder *loopTraceRecorder }
 
 func (r *loopTraceRecorder) StartSpan(_ context.Context, event core.TraceEvent) core.Span {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 	return loopTraceSpan{recorder: r}
 }
 func (loopTraceSpan) SetAttribute(string, any) {}
 func (s loopTraceSpan) AddEvent(event core.TraceEvent) {
+	s.recorder.mu.Lock()
+	defer s.recorder.mu.Unlock()
 	s.recorder.events = append(s.recorder.events, event)
 }
-func (s loopTraceSpan) End(err error) { s.recorder.ended = append(s.recorder.ended, err) }
+func (s loopTraceSpan) End(err error) {
+	s.recorder.mu.Lock()
+	defer s.recorder.mu.Unlock()
+	s.recorder.ended = append(s.recorder.ended, err)
+}
+
+func (r *loopTraceRecorder) snapshot(t *testing.T, ends int) ([]core.TraceEvent, []error) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		r.mu.Lock()
+		events, ended := append([]core.TraceEvent(nil), r.events...), append([]error(nil), r.ended...)
+		r.mu.Unlock()
+		if len(ended) >= ends || time.Now().After(deadline) {
+			return events, ended
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 func testLoopConfig() ToolLoopConfig {
 	return ToolLoopConfig{MaxRounds: 3, MaxCalls: 4, MaxArgumentBytes: 4096, MaxResultBytes: 1024, MaxJSONDepth: 8, DefaultCallTimeout: time.Second, RoundTimeout: 2 * time.Second}
@@ -111,8 +134,9 @@ func TestToolLoopTraceRedactsOptInArgumentsWithoutRecordingResults(t *testing.T)
 	if _, err := loop.Run(context.Background(), []ToolCall{testCall("call-1", "lookup", `{"value":"`+sentinel+`"}`)}, nil); err != nil {
 		t.Fatal(err)
 	}
+	events, _ := recorder.snapshot(t, 1)
 	var sawArguments bool
-	for _, event := range recorder.events {
+	for _, event := range events {
 		attrs := event.Attributes()
 		if value, ok := attrs["tool.arguments"].(string); ok {
 			sawArguments = true
@@ -125,7 +149,7 @@ func TestToolLoopTraceRedactsOptInArgumentsWithoutRecordingResults(t *testing.T)
 		}
 	}
 	if !sawArguments {
-		t.Fatalf("opt-in trace content missing: %#v", recorder.events)
+		t.Fatalf("opt-in trace content missing: %#v", events)
 	}
 }
 
@@ -315,10 +339,11 @@ func TestToolLoopTraceCarriesNeutralCallCorrelationOnly(t *testing.T) {
 	if _, err := loop.Run(context.Background(), []ToolCall{call}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(trace.events) != 1 {
-		t.Fatalf("trace events = %d", len(trace.events))
+	events, ended := trace.snapshot(t, 1)
+	if len(events) != 1 {
+		t.Fatalf("trace events = %d", len(events))
 	}
-	for i, event := range trace.events {
+	for i, event := range events {
 		if event.ToolCallID != call.ID || event.SessionID != call.SessionID || event.TurnID != call.TurnID || event.Generation != call.Generation {
 			t.Fatalf("trace correlation for event %d = %#v", i, event)
 		}
@@ -329,8 +354,8 @@ func TestToolLoopTraceCarriesNeutralCallCorrelationOnly(t *testing.T) {
 			t.Fatalf("tool result leaked into event %d", i)
 		}
 	}
-	if trace.events[0].Name != "tool.execute" || len(trace.ended) != 1 {
-		t.Fatalf("tool trace order or terminal span invalid: events=%#v ends=%d", trace.events, len(trace.ended))
+	if events[0].Name != "tool.execute" || len(ended) != 1 {
+		t.Fatalf("tool trace order or terminal span invalid: events=%#v ends=%d", events, len(ended))
 	}
 }
 
@@ -355,12 +380,13 @@ func TestToolLoopTraceDropsRawInvalidResultAndExecutorError(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, event := range trace.events {
+	events, ended := trace.snapshot(t, 2)
+	for _, event := range events {
 		if strings.Contains(fmt.Sprint(event.Attributes()), secret) {
 			t.Fatalf("raw result leaked: %#v", event)
 		}
 	}
-	for _, err := range trace.ended {
+	for _, err := range ended {
 		if err != nil && strings.Contains(err.Error(), secret) {
 			t.Fatalf("raw executor error leaked: %v", err)
 		}
@@ -622,18 +648,19 @@ func TestToolLoopTracerGetsSafeOutcomeClassification(t *testing.T) {
 					t.Fatalf("results = %#v", got.Results)
 				}
 			}
-			if len(trace.ended) != 1 {
-				t.Fatalf("span endings = %#v", trace.ended)
+			_, ended := trace.snapshot(t, 1)
+			if len(ended) != 1 {
+				t.Fatalf("span endings = %#v", ended)
 			}
 			if tc.want == "" {
-				if trace.ended[0] != nil {
-					t.Fatalf("success trace outcome = %v", trace.ended[0])
+				if ended[0] != nil {
+					t.Fatalf("success trace outcome = %v", ended[0])
 				}
-			} else if trace.ended[0] == nil || trace.ended[0].Error() != tc.want {
-				t.Fatalf("trace outcome = %v, want safe category %q", trace.ended[0], tc.want)
+			} else if ended[0] == nil || ended[0].Error() != tc.want {
+				t.Fatalf("trace outcome = %v, want safe category %q", ended[0], tc.want)
 			}
-			if strings.Contains(fmt.Sprint(trace.ended), secret) {
-				t.Fatalf("tracer saw secret: %#v", trace.ended)
+			if strings.Contains(fmt.Sprint(ended), secret) {
+				t.Fatalf("tracer saw secret: %#v", ended)
 			}
 		})
 	}

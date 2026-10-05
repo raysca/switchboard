@@ -17,7 +17,9 @@ that value is untrusted until the loop has normalized it and committed it to
 the conversation context.
 
 Trace attributes are copied and recursively validate only finite scalar and
-bounded `custom.*` metadata. The trace policy is an admission boundary, not a
+bounded `custom.*` numeric/boolean metadata. Custom metadata never admits
+strings, even under innocent-looking keys; selected text must use the explicit
+bounded text/redaction policy. The trace policy is an admission boundary, not a
 retention policy: exporters and the Server remain responsible for access,
 storage, and deletion controls.
 
@@ -27,4 +29,6 @@ Runtime trace callbacks run through an asynchronous bounded dispatcher. A slow,
 failing, or panicking exporter cannot fail or hold the voice session. Normal
 attributes/events may be dropped when the queue is full; when a span start was
 accepted, its one terminal operation is retained so the exporter observes a
-balanced span. Only canonical error categories are supplied to `Span.End`.
+balanced span. Admission reserves terminal capacity before a start, so overload
+fails closed by declining new starts rather than retaining unbounded terminal
+work. Only canonical error categories are supplied to `Span.End`.

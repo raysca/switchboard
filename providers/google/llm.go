@@ -324,9 +324,11 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 	}
 	turn := um.Turn
 
-	parent := context.Background()
-	if p.session != nil {
-		parent = p.session.Context()
+	// Keep the pipeline's trace/span values while deriving cancellation for the
+	// provider request; Session.Context alone would discard that parentage.
+	parent := ctx
+	if parent == nil {
+		parent = context.Background()
 	}
 	genCtx, cancel := context.WithCancel(parent)
 	p.activeCancel = cancel

@@ -269,7 +269,16 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		"tool.arguments": string(call.Arguments),
 	})
 	event.ToolCallID = call.ID
-	span := core.StartSpanSafe(callCtx, l.cfg.Tracer, event)
+	tracer := l.cfg.Tracer
+	var isolated *core.AsyncTracer
+	if _, alreadyAsync := tracer.(*core.AsyncTracer); !alreadyAsync {
+		// A loop can be used outside Session, so it must establish the same
+		// non-blocking exporter boundary itself. Close after End to drain this
+		// operation without retaining a worker for the loop's lifetime.
+		isolated = core.NewAsyncTracer(tracer, 0)
+		tracer = isolated
+	}
+	span := core.StartSpanSafe(callCtx, tracer, event)
 	traceEnded := false
 	endTrace := func(category string) {
 		if traceEnded {
@@ -278,10 +287,16 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		traceEnded = true
 		if category == "" {
 			span.End(nil)
+			if isolated != nil {
+				isolated.Close()
+			}
 			return
 		}
 		// Only canonical loop categories reach tracing, never executor text.
 		span.End(errors.New(category))
+		if isolated != nil {
+			isolated.Close()
+		}
 	}
 	func() {
 		defer func() {

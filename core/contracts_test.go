@@ -90,6 +90,17 @@ func TestTraceContractStructuredCustomMetadata(t *testing.T) {
 	}
 }
 
+func TestTraceContractCustomMetadataRejectsInnocentStringsEverywhere(t *testing.T) {
+	const innocent = "ordinary-label-that-is-not-a-secret"
+	attrs := map[string]any{"custom.vad": map[string]any{"label": innocent, "score": 0.8}}
+	trace := core.NewTraceEvent("custom.vad", time.Now(), "s", "t", 1, core.TracePolicy{}, attrs)
+	observer := core.NewObserverEvent("custom.vad", time.Now(), "s", "t", 1, core.FrameInputAudio, core.Downstream, "vad", 0, attrs)
+	debug := core.NewDebugEvent("custom.vad", time.Now(), "s", "t", 1, attrs)
+	if len(trace.Attributes()) != 0 || len(observer.Attributes()) != 0 || len(debug.Attributes()) != 0 {
+		t.Fatalf("custom string content must be rejected: trace=%#v observer=%#v debug=%#v", trace.Attributes(), observer.Attributes(), debug.Attributes())
+	}
+}
+
 func TestTraceContractConcurrentToolCorrelation(t *testing.T) {
 	first := core.NewTraceEvent("tool.start", time.Now(), "s", "t", 2, core.TracePolicy{}, nil)
 	first.ToolCallID = "call-a"

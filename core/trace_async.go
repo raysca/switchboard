@@ -32,12 +32,14 @@ type traceOperation struct {
 // operation order and span parentage on one worker; a full queue drops the
 // incoming operation rather than blocking the voice runtime.
 type AsyncTracer struct {
-	tracer  Tracer
-	queue   chan traceOperation
-	wake    chan struct{}
-	mu      sync.Mutex
-	closed  bool
-	dropped atomic.Uint64
+	tracer   Tracer
+	queue    chan traceOperation
+	wake     chan struct{}
+	capacity int
+	mu       sync.Mutex
+	closed   bool
+	active   int
+	dropped  atomic.Uint64
 
 	terminalMu      sync.Mutex
 	terminals       []traceOperation
@@ -54,9 +56,11 @@ func NewAsyncTracer(tracer Tracer, queueSize int) *AsyncTracer {
 		tracer = NoopTracer{}
 	}
 	dispatcher := &AsyncTracer{
-		tracer:          tracer,
-		queue:           make(chan traceOperation, queueSize),
-		wake:            make(chan struct{}, 1),
+		tracer: tracer,
+		queue:  make(chan traceOperation, queueSize),
+		wake:   make(chan struct{}, 1),
+		// One callback can be active while the bounded queue is full.
+		capacity:        queueSize + 1,
 		terminalPending: make(map[*asyncSpan]struct{}),
 	}
 	go dispatcher.run()
@@ -83,10 +87,30 @@ func (t *AsyncTracer) StartSpan(ctx context.Context, event TraceEvent) Span {
 		ctx = context.Background()
 	}
 	proxy := &asyncSpan{tracer: t}
-	if t.enqueue(traceOperation{kind: traceStart, ctx: ctx, parent: SpanFromContext(ctx), proxy: proxy, event: event}) {
+	if t.enqueueStart(traceOperation{kind: traceStart, ctx: ctx, parent: SpanFromContext(ctx), proxy: proxy, event: event}) {
 		proxy.accepted.Store(true)
 	}
 	return proxy
+}
+
+// enqueueStart reserves one bounded terminal slot before admitting a start.
+// A caller that never ends a span therefore eventually disables new trace
+// starts rather than allowing an unbounded terminal backlog.
+func (t *AsyncTracer) enqueueStart(operation traceOperation) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed || t.active >= t.capacity {
+		t.dropped.Add(1)
+		return false
+	}
+	select {
+	case t.queue <- operation:
+		t.active++
+		return true
+	default:
+		t.dropped.Add(1)
+		return false
+	}
 }
 
 func (t *AsyncTracer) enqueue(operation traceOperation) bool {
@@ -206,18 +230,34 @@ func (t *AsyncTracer) run() {
 func (t *AsyncTracer) drainTerminals(spans map[*asyncSpan]Span) {
 	t.terminalMu.Lock()
 	deferred := t.terminals[:0]
+	ready := make([]traceOperation, 0, len(t.terminals))
 	for _, operation := range t.terminals {
 		span := spans[operation.proxy]
 		if span == nil {
 			deferred = append(deferred, operation)
 			continue
 		}
-		span.End(operation.err)
-		delete(spans, operation.proxy)
+		ready = append(ready, operation)
 		delete(t.terminalPending, operation.proxy)
 	}
 	t.terminals = deferred
 	t.terminalMu.Unlock()
+	// Exporter code is always invoked after the dispatcher lock is released;
+	// exporters may block or re-enter tracing without deadlocking admission.
+	for _, operation := range ready {
+		span := spans[operation.proxy]
+		span.End(operation.err)
+		delete(spans, operation.proxy)
+		t.releaseStart()
+	}
+}
+
+func (t *AsyncTracer) releaseStart() {
+	t.mu.Lock()
+	if t.active > 0 {
+		t.active--
+	}
+	t.mu.Unlock()
 }
 
 func (t *AsyncTracer) hasTerminals() bool {
@@ -236,6 +276,7 @@ func (t *AsyncTracer) dropUnstartedTerminals(spans map[*asyncSpan]Span) {
 		}
 		delete(t.terminalPending, operation.proxy)
 		t.dropped.Add(1)
+		t.releaseStart()
 	}
 	t.terminals = deferred
 	t.terminalMu.Unlock()

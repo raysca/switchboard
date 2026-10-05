@@ -258,9 +258,12 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 	p.activeTurn = turn
 	p.activeGen = gen
 
-	parent := context.Background()
-	if s != nil {
-		parent = s.Context()
+	// The ProcessFrame context carries the session/turn span. Preserve it when
+	// making this cancellable provider request instead of replacing it with the
+	// lifetime-only session context.
+	parent := ctx
+	if parent == nil {
+		parent = context.Background()
 	}
 	streamCtx, cancel := context.WithTimeout(parent, p.cfg.Timeout)
 	p.activeCancel = cancel

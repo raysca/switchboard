@@ -70,4 +70,15 @@ GREEN:
 
 ## Review status
 
-Not independently reviewed. Task 13 remains unchecked pending review.
+Correction round 1 addressed independent review findings: custom metadata is
+numeric/boolean-only across trace, observer, and debug constructors; terminal
+capacity is reserved at start admission; exporter End runs after dispatcher
+locks are released; inline emitter frames receive semantic spans; panic
+recovery supplies the safe processor category; ToolLoop exporter callbacks are
+asynchronous; and Google/xAI retain the ProcessFrame trace context when they
+derive cancellable request contexts. Focused race x50 plus full core and
+provider race/vet suites passed after this correction. The default NoopTracer
+path bypasses trace allocation/defer work entirely; this restored the xAI STT
+turn-semantics race stability (20/20 after five timeouts in the prior run).
+Task 13 remains
+unchecked pending follow-up review.

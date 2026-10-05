@@ -120,6 +120,7 @@ type Session struct {
 	sessionSpan    Span
 	traceQueue     *AsyncTracer
 	ownsTraceQueue bool
+	tracing        bool
 	turnSpans      map[TurnID]Span // run-loop owned; finalized after runLoopDone
 }
 
@@ -258,6 +259,7 @@ func (s *Session) Start() error {
 			s.ownsTraceQueue = true
 		}
 		tracer = s.tracer
+		s.tracing = true
 	}
 	s.admissionMu.Unlock()
 	s.traceCtx = s.ctx
@@ -589,44 +591,56 @@ func (s *Session) processEnvelope(env Envelope) bool {
 	s.procStart.Store(time.Now().UnixNano())
 	defer s.procStart.Store(0)
 
-	// Panic containment for inline processor execution
+	// Panic containment for inline processor execution.
 	var deliveryErr error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				stack := string(debug.Stack())
-				deliveryErr = fmt.Errorf("processor panic on frame %v: %v\nstack:\n%s", env.Frame.Type(), r, stack)
+	if s.tracing {
+		func() {
+			parent := s.traceCtx
+			if parent == nil {
+				parent = s.ctx
 			}
-		}()
-		parent := s.traceCtx
-		if parent == nil {
-			parent = s.ctx
-		}
-		turn := traceTurnID(env.Frame)
-		if turn != "" {
-			if span, ok := s.turnSpans[turn]; ok && span != nil {
-				parent = ContextWithSpan(s.ctx, span)
-			} else if !ok {
-				span := StartSpanSafe(parent, s.tracer, NewTraceEvent("turn.start", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), turn, traceGeneration(env.Frame), s.tracePolicy, nil))
-				s.turnSpans[turn] = span
-				parent = ContextWithSpan(s.ctx, span)
-			}
-		}
-		frameSpan := StartSpanSafe(parent, s.tracer, s.traceEvent(env.Frame))
-		previous := s.traceCtx
-		s.traceCtx = ContextWithSpan(parent, frameSpan)
-		defer func() {
-			s.traceCtx = previous
-			frameSpan.End(traceStatusError(deliveryErr, "processor_error"))
-			if turn != "" && traceTurnTerminal(env.Frame) {
-				if span := s.turnSpans[turn]; span != nil {
-					span.End(traceStatusError(deliveryErr, "processor_error"))
-					s.turnSpans[turn] = nil
+			turn := traceTurnID(env.Frame)
+			if turn != "" {
+				if span, ok := s.turnSpans[turn]; ok && span != nil {
+					parent = ContextWithSpan(s.ctx, span)
+				} else if !ok {
+					span := StartSpanSafe(parent, s.tracer, NewTraceEvent("turn.start", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), turn, traceGeneration(env.Frame), s.tracePolicy, nil))
+					s.turnSpans[turn] = span
+					parent = ContextWithSpan(s.ctx, span)
 				}
 			}
+			frameSpan := StartSpanSafe(parent, s.tracer, s.traceEvent(env.Frame))
+			previous := s.traceCtx
+			s.traceCtx = ContextWithSpan(parent, frameSpan)
+			defer func() {
+				s.traceCtx = previous
+				frameSpan.End(traceStatusError(deliveryErr, "processor_error"))
+				if turn != "" && traceTurnTerminal(env.Frame) {
+					if span := s.turnSpans[turn]; span != nil {
+						span.End(traceStatusError(deliveryErr, "processor_error"))
+						s.turnSpans[turn] = nil
+					}
+				}
+			}()
+			defer func() {
+				if r := recover(); r != nil {
+					stack := string(debug.Stack())
+					deliveryErr = fmt.Errorf("processor panic on frame %v: %v\nstack:\n%s", env.Frame.Type(), r, stack)
+				}
+			}()
+			deliveryErr = s.deliver(env.Frame, env.Dir, env.ResumeIndex)
 		}()
-		deliveryErr = s.deliver(env.Frame, env.Dir, env.ResumeIndex)
-	}()
+	} else {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					stack := string(debug.Stack())
+					deliveryErr = fmt.Errorf("processor panic on frame %v: %v\nstack:\n%s", env.Frame.Type(), r, stack)
+				}
+			}()
+			deliveryErr = s.deliver(env.Frame, env.Dir, env.ResumeIndex)
+		}()
+	}
 
 	if deliveryErr != nil {
 		s.fail(deliveryErr)
@@ -693,6 +707,9 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 
 	default:
 		proc := s.pipe.At(to)
+		if !s.tracing {
+			return proc.ProcessFrame(s.ctx, f, dir, &sessionEmitter{s: s, index: to})
+		}
 		parent := s.traceCtx
 		if parent == nil {
 			parent = s.ctx
@@ -924,10 +941,25 @@ func (e *sessionEmitter) PushDirection(f Frame, dir Direction) error {
 		return ErrRunawayEmits
 	}
 
-	if dir == Downstream {
-		return e.s.deliver(f, dir, e.index+1)
+	if !e.s.tracing {
+		if dir == Downstream {
+			return e.s.deliver(f, dir, e.index+1)
+		}
+		return e.s.deliver(f, dir, e.index-1)
 	}
-	return e.s.deliver(f, dir, e.index-1)
+	parent := e.s.traceCtx
+	if parent == nil {
+		parent = e.s.ctx
+	}
+	span := StartSpanSafe(parent, e.s.tracer, e.s.traceEvent(f))
+	var err error
+	defer func() { span.End(traceStatusError(err, "processor_error")) }()
+	if dir == Downstream {
+		err = e.s.deliver(f, dir, e.index+1)
+		return err
+	}
+	err = e.s.deliver(f, dir, e.index-1)
+	return err
 }
 
 func (s *Session) fail(err error) {
