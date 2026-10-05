@@ -659,11 +659,16 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 			}
 			p.mu.Unlock()
 			if assemblyErr != nil {
-				_ = p.session.Reenter(&core.TranscriptInvalidationFrame{
+				if err := p.session.Reenter(&core.TranscriptInvalidationFrame{
 					Turn: core.TurnID(turn), Gen: core.Generation(turnGen), Err: assemblyErr,
-				}, core.Downstream, p.index+1, turnGen)
+				}, core.Downstream, p.index+1, turnGen); err != nil {
+					// Admission of this terminal frame fails the Session closed.
+					// An error frame cannot safely stand in for it out of order.
+					continue
+				}
 				_ = p.session.Reenter(&core.ErrorFrame{
-					Err: fmt.Errorf("google transcript assembly failed: %v", assemblyErr),
+					Err:  fmt.Errorf("%w: google transcript assembly failed: %v", core.ErrTranscriptInvalidated, assemblyErr),
+					Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 				}, core.Downstream, p.index+1, turnGen)
 				continue
 			}
@@ -762,7 +767,18 @@ func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult)
 			a.interims = append(a.interims, googleSegment{start: start, end: end, streamID: st.id, text: text})
 			sort.Slice(a.interims, func(i, j int) bool { return a.interims[i].end < a.interims[j].end })
 		}
-		composed := composeGoogleSegments(a.prefix, a.interims)
+		// Compose from media intervals, including settled portions. A rotated
+		// stream can replay the end of a final portion, so flattening that final
+		// to a text prefix would duplicate words in the overlapping interim.
+		segments := make([]googleSegment, 0, len(a.segments)+len(a.interims))
+		segments = append(segments, a.segments...)
+		segments = append(segments, a.interims...)
+		sort.SliceStable(segments, func(i, j int) bool { return segments[i].end < segments[j].end })
+		prefix := ""
+		if len(a.segments) == 0 {
+			prefix = a.prefix // Results without media offsets have no interval provenance.
+		}
+		composed := composeGoogleSegments(prefix, segments)
 		if len(composed) > maxTranscriptBytes {
 			return "", ErrTranscriptAssemblyCapacity
 		}

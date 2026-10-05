@@ -131,3 +131,21 @@ All linked commands used `SDKROOT=/Applications/Xcode.app/Contents/Developer/Pla
 - PASS one-UserMessage integrations: Google `TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD`; tagged xAI `TestFullXAI`.
 - PASS promoted regression repetitions: `go test -race -tags xaispeech -run '^TestRound3' -count=10 ./core/transcript ./providers/google ./providers/xai`; PASS tracked round-2 regressions: the corresponding `-run '^TestReview' -count=1` command.
 - PASS `gofmt` and `git diff --check`. No live-provider test was run. The playback-clear probe limitation is unchanged. Task 9 and Gate B remain open for independent re-review and the Phase 2 tester.
+
+## Correction round 4 (base `7c5b5a2`)
+
+Correction commit message: `fix(providers): harden transcript transition safety`.
+
+### RED evidence and decisions
+
+- The exact round-4 overlay command (`go test -race -tags xaispeech -overlay=/tmp/go-voice-task9-round4.rcAbaG/overlay.json -run '^TestRound4' -count=3 -timeout=15s ./providers/google ./providers/xai`) failed all six reported probes on each repetition. Both overlay files were promoted to tracked tests and failed again without the overlay before production edits.
+- Google capacity invalidation is terminal data ordered after earlier candidates. Admission waits for the bounded frame-processing interval; if the data queue cannot drain, the concrete session fails closed. A separate observable error retains `ErrTranscriptInvalidated`, turn, and generation in the same data lane and uses the same bounded admission rule. Correlated errors retire only their turn, while legacy uncorrelated sentinel errors keep the fail-all fallback. An invalidation admission failure does not send an out-of-order substitute error. The strengthened one-slot queue test was RED when the error frame was dropped, then GREEN with candidate → invalidation → error ordering.
+- A Google provider final settles the text prefix, not an entire evolving turn snapshot. An interim can extend or correct only the mutable tail that follows that prefix. Utterance-final text remains stronger. Google composes rotated interim snapshots from final and interim media intervals, so replay overlap removes duplicate words while nonoverlapping repeated speech remains intact.
+- xAI adopts the session's advanced generation at the interruption control boundary for future streams, without relabeling the old stream. Provider sends are serialized by a dedicated wire mutex, separate from ownership and lifecycle locks; cancellation can therefore interrupt a blocked context-aware buffered send. The receiver cancels and closes exactly once before removing stream ownership on every exit, including `transcript.done`; session-close cancellation cannot make the socket unreachable. A socket returned by an in-flight open after Close is closed immediately.
+
+### Verification
+
+- PASS round-4 overlay and tracked regressions under race, count 3 and count 20 respectively. The added close-during-open test was RED before its narrow fix and GREEN for 10 race repetitions. Core correlated-error test was RED at the missing scoped fields before implementation.
+- PASS preserved round-2 and round-3 overlays under race; PASS `go test -race -count=100 ./core/transcript`.
+- PASS full core, Google, tagged xAI, and server race suites and vet; PASS root tagged test/build; PASS transport RTVI/WebSocket race suites; PASS Google and xAI one-UserMessage integrations.
+- No live-provider test was run. The playback-clear probe remains unresolved. Task 9 and Gate B remain open for independent review and the Phase 2 tester.

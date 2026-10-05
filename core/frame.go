@@ -368,6 +368,10 @@ func (f *CancelFrame) Generation() uint64 { return f.Gen }
 type ErrorFrame struct {
 	Err   error
 	Fatal bool
+	// Turn and Gen scope a transcript invalidation error when set. Legacy
+	// uncorrelated errors leave both zero.
+	Turn TurnID
+	Gen  Generation
 }
 
 func (f *ErrorFrame) Type() FrameType { return FrameError }

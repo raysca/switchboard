@@ -107,6 +107,7 @@ type turnState struct {
 	completedAt     time.Time
 	deadline        time.Time
 	strength        candidateStrength
+	settledPrefix   string
 	sourceAt        time.Time
 }
 
@@ -186,11 +187,21 @@ func (f *Finalizer) Observe(candidate Candidate) ([]Output, error) {
 	} else if candidate.Final {
 		strength = strengthProviderFinal
 	}
-	if strength >= state.strength {
+	// A provider final can settle one audio portion while a later interim
+	// extends the whole-turn snapshot. Keep the settled prefix authoritative,
+	// but permit its mutable tail to grow or change before retirement.
+	extendsSettledPrefix := strength == strengthInterim && state.strength == strengthProviderFinal &&
+		state.settledPrefix != "" && (text == state.settledPrefix || strings.HasPrefix(text, state.settledPrefix+" "))
+	if strength >= state.strength || extendsSettledPrefix {
 		state.text = text
 		state.hasCandidate = true
-		state.strength = strength
-		state.hasFinal = strength >= strengthProviderFinal
+		if !extendsSettledPrefix {
+			state.strength = strength
+			state.hasFinal = strength >= strengthProviderFinal
+			if strength >= strengthProviderFinal {
+				state.settledPrefix = text
+			}
+		}
 		state.sourceAt = candidate.SourceAt
 		if state.sourceAt.IsZero() {
 			state.sourceAt = candidate.At

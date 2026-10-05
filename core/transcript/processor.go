@@ -173,7 +173,11 @@ func (p *Processor) ProcessFrame(_ context.Context, frame core.Frame, dir core.D
 		err = p.finalizer.Interrupt(value.Turn, value.Gen, policyAt)
 	case *core.ErrorFrame:
 		if errors.Is(value.Err, core.ErrTranscriptInvalidated) {
-			err = p.finalizer.InvalidateAll(policyAt)
+			if value.Turn != "" && value.Gen != 0 {
+				err = p.finalizer.Interrupt(value.Turn, value.Gen, policyAt)
+			} else {
+				err = p.finalizer.InvalidateAll(policyAt)
+			}
 		}
 	case *core.TurnEventFrame:
 		switch value.Kind {

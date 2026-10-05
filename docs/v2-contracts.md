@@ -246,19 +246,24 @@ permanently fences older-generation input.
 Google `IsFinal` is retained as a provider-final hypothesis for one audio
 portion; Google `Stability` is admitted only on non-final hypotheses, matching
 the generated Speech V2 contract. Every result in a response is consumed.
+The finalizer retains provider-final text as a settled prefix while a later
+whole-turn interim may extend or correct only the tail after that prefix.
+Utterance-final text still outranks any subsequent interim.
 Result-end offsets order sequential final segments, and text/offset overlap
 reconciles audio replay at stream rotation; nonoverlapping segments are appended
 faithfully even when words repeat, while text overlap is applied only to proven
-overlapping media intervals. Rotation media origins and overlap are per turn,
+overlapping media intervals, including interim results after rotation. Rotation media origins and overlap are per turn,
 not session-global. Assembly identities and segments are bounded; a newer
 generation reclaims fenced state and active-capacity exhaustion fails explicitly
 instead of returning an incomplete transcript. A provider that exhausts these
 bounds emits a correlated `TranscriptInvalidationFrame` for the affected
 `(TurnID, Generation)` before its observable error. The transcript processor
 retires that identity without committing its partial prefix; unrelated turns
-continue. A sentinel `ErrorFrame` remains as a fail-closed compatibility
-fallback when a legacy provider cannot supply an identity, and stays on the
-ordered data lane so it cannot overtake prior candidates. Each Google response
+continue. Terminal invalidation uses the ordered data lane and waits for bounded
+admission; if the queue cannot drain, the session fails closed. The separate
+observable `ErrorFrame` retains `ErrTranscriptInvalidated` and the correlated
+`Turn`/`Gen` fields in the same lane and uses the same bounded admission rule. An uncorrelated sentinel `ErrorFrame`
+remains a fail-all compatibility fallback for legacy providers. Each Google response
 produces one complete raw snapshot after all consecutive result portions are
 assembled. Interim output includes the committed segment prefix. Rotation
 replays only audio sent before the triggering chunk, so that chunk is not
@@ -266,7 +271,10 @@ replayed and sent twice. xAI `is_final` is provider-final but does not close an
 utterance; `speech_final` and `transcript.done` supply the stronger utterance
 boundary, with nonempty done text taking precedence over the prior partial.
 Streams retain the turn/generation bound when opened, so a draining old stream
-cannot be relabeled by a later speech start. The common policy, not either
+cannot be relabeled by a later speech start. The interruption control boundary
+updates the pending generation for future xAI streams. xAI serializes provider
+writes separately from lifecycle state, so cancel can unblock context-aware I/O,
+and closes a receiver's socket before removing its owner. The common policy, not either
 adapter, decides commitment. Production server and demo assembly keep nonzero
 grace and timeout defaults because the lifecycle driver supplies due advances.
 Typed xAI completion sends the matching stream's audio-done signal and starts a

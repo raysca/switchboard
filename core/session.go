@@ -320,6 +320,26 @@ func (s *Session) enqueueData(env Envelope) error {
 		s.AudioDropped.Add(1)
 		return nil
 	}
+	terminalTranscript := env.Frame.Type() == FrameTranscriptInvalidation
+	if errFrame, ok := env.Frame.(*ErrorFrame); ok && errors.Is(errFrame.Err, ErrTranscriptInvalidated) {
+		terminalTranscript = true
+	}
+	if terminalTranscript {
+		// Keep terminal invalidation and its observable error behind already
+		// admitted candidates. If the queue cannot drain, close the session so
+		// a partial candidate cannot later become a committed transcript.
+		timer := time.NewTimer(s.budget.MaxFrameProcessing)
+		defer timer.Stop()
+		select {
+		case s.data <- env:
+			return nil
+		case <-timer.C:
+			s.fail(ErrQueueFull)
+			return ErrQueueFull
+		case <-s.ctx.Done():
+			return ErrSessionClosed
+		}
+	}
 	if env.Frame.Type() != FrameOutputAudio {
 		return ErrQueueFull
 	}

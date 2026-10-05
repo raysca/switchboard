@@ -167,6 +167,7 @@ type activeSTTStream struct {
 	closing    bool
 	stopOnce   sync.Once
 
+	sendMu   sync.Mutex
 	mu       sync.Mutex
 	audioBuf [][]byte
 	isReady  bool
@@ -312,6 +313,15 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
+		generation := uint64(frame.Gen)
+		if p.session != nil && p.session.CurrentGeneration() > generation {
+			generation = p.session.CurrentGeneration()
+		}
+		if generation > p.streamGen {
+			// The session has advanced after barge-in. New streams inherit the
+			// new generation; streams below remain owned by their original one.
+			p.streamGen = generation
+		}
 		streams := append([]*activeSTTStream(nil), p.draining...)
 		if p.active != nil {
 			streams = append(streams, p.active)
@@ -379,7 +389,10 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	sendCtx, sendCancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
 	defer sendCancel()
 
-	if err := st.stream.SendAudio(sendCtx, f.Samples); err != nil {
+	st.sendMu.Lock()
+	err := st.stream.SendAudio(sendCtx, f.Samples)
+	st.sendMu.Unlock()
+	if err != nil {
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
 			p.cfg.CircuitBreaker.RecordFailure()
@@ -425,6 +438,16 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 	}
 
 	p.mu.Lock()
+	if p.closed || p.active != nil {
+		closed := p.closed
+		p.mu.Unlock()
+		cancel()
+		_ = st.Close()
+		if closed {
+			return core.ErrSessionClosed
+		}
+		return nil
+	}
 	p.streamID++
 	active := &activeSTTStream{
 		stream:   st,
@@ -457,8 +480,8 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 	}
 
 	return p.session.Go(func(ctx context.Context) {
-		defer p.stopDrainTimer(st)
 		defer p.releaseStream(st)
+		defer p.stopStream(st)
 		for {
 			select {
 			case <-st.ctx.Done():
@@ -470,12 +493,6 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 
 			msg, err := st.stream.Recv(st.ctx)
 			if err != nil {
-				p.mu.Lock()
-				if p.active == st {
-					p.active = nil
-				}
-				p.mu.Unlock()
-
 				if errors.Is(err, context.Canceled) || st.ctx.Err() != nil || errors.Is(err, io.EOF) {
 					return
 				}
@@ -500,6 +517,7 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 
 			switch msg.Type {
 			case "transcript.created":
+				st.sendMu.Lock()
 				st.mu.Lock()
 				st.isReady = true
 				select {
@@ -507,12 +525,20 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 				default:
 					close(st.readyCh)
 				}
-				// Flush buffered audio captured before transcript.created arrived
-				for _, chunk := range st.audioBuf {
-					_ = st.stream.SendAudio(st.ctx, chunk)
-				}
+				// Publish readiness while sendMu reserves the wire. New audio
+				// waits until these earlier buffered chunks have been sent.
+				buffered := st.audioBuf
 				st.audioBuf = nil
 				st.mu.Unlock()
+				for _, chunk := range buffered {
+					sendCtx, cancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
+					err := st.stream.SendAudio(sendCtx, chunk)
+					cancel()
+					if err != nil {
+						break
+					}
+				}
+				st.sendMu.Unlock()
 
 			case "transcript.partial":
 				if msg.Text == "" {
@@ -568,11 +594,6 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 					_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
 				}
 
-				p.mu.Lock()
-				if p.active == st {
-					p.active = nil
-				}
-				p.mu.Unlock()
 				return
 
 			case "error":
@@ -621,7 +642,10 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 	}
 	st.closing = true
 	st.mu.Unlock()
-	if err := st.stream.CloseSend(ctx); err != nil {
+	st.sendMu.Lock()
+	err := st.stream.CloseSend(ctx)
+	st.sendMu.Unlock()
+	if err != nil {
 		st.mu.Lock()
 		st.closing = false
 		st.mu.Unlock()

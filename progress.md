@@ -174,6 +174,15 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   and automatic rotation replays only previously sent audio. Both preserved
   review overlays are promoted or covered by tracked regressions and pass under
   the race detector. Task 9 and Gate B remain open for independent re-review.
+- Correction round 4 hardens terminal transcript transitions: Google now admits
+  correlated capacity invalidation in data order or fails the session closed,
+  retains scoped sentinel errors, accepts interim tail changes after a settled
+  final prefix, and reconciles rotated interim overlap using media intervals.
+  xAI reconciles barge-in generation for new streams, releases blocked buffered
+  sends without lifecycle-lock contention, and closes receiver sockets before
+  dropping ownership, including during session cancellation and in-flight open.
+  The six round-4 probes and additional lifecycle/policy regressions are tracked
+  and pass under race. Task 9 and Gate B remain open for independent re-review.
 
 ### Task 8 closeout
 
