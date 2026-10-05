@@ -253,11 +253,13 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 	if err := ctx.Err(); err != nil {
 		return storage.MCPDiscovery{}, err
 	}
+	started := time.Now()
 	span := s.span(ctx, "mcp.discovery")
 	ended := false
 	end := func(err error) {
 		if !ended {
 			ended = true
+			span.SetAttribute("mcp.duration_ms", time.Since(started).Milliseconds())
 			span.End(err)
 		}
 	}
@@ -284,7 +286,6 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 		end(err)
 		return storage.MCPDiscovery{}, ErrUnavailable
 	}
-	started := time.Now()
 	tools, err := s.remote.ListTools(ctx, u.String(), token)
 	if err != nil {
 		state := validationStateForError(err, true)
@@ -324,7 +325,6 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 	}
 	_ = s.store.MCP().SetValidation(ctx, m.ID, StateHealthy, time.Now(), time.Now())
 	span.SetAttribute("mcp.tool_count", len(items))
-	span.SetAttribute("mcp.duration_ms", time.Since(started).Milliseconds())
 	return d, nil
 }
 
@@ -351,10 +351,11 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 	end := func(err error) {
 		if !ended {
 			ended = true
+			span.SetAttribute("mcp.duration_ms", time.Since(started).Milliseconds())
 			span.End(err)
 		}
 	}
-	defer func() { span.SetAttribute("mcp.duration_ms", time.Since(started).Milliseconds()); end(nil) }()
+	defer end(nil)
 	m, err := s.Get(ctx, id)
 	if err != nil {
 		end(ErrNotFound)
@@ -454,6 +455,9 @@ func validationStateForError(err error, duringList bool) string {
 	if errors.Is(err, ErrAuthenticationFailed) {
 		return StateAuthenticationFailed
 	}
+	if errors.Is(err, ErrConnectionFailed) || errors.Is(err, ErrInitializeFailed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return StateConnectionFailed
+	}
 	if duringList || errors.Is(err, ErrDiscoveryFailed) {
 		return StateDiscoveryFailed
 	}
@@ -475,11 +479,12 @@ func traceSafeToolName(name string) string {
 }
 
 const (
-	maxSchemaDepth   = 64
-	maxSchemaNodes   = 4096
-	maxSchemaRefs    = 128
-	maxSanitizeDepth = 64
-	maxSanitizeNodes = 16384
+	maxSchemaDepth         = 64
+	maxSchemaNodes         = 4096
+	maxSchemaRefs          = 128
+	maxExpandedSchemaNodes = 16384
+	maxSanitizeDepth       = 64
+	maxSanitizeNodes       = 16384
 )
 
 type refEdge struct{ from, to string }
@@ -519,54 +524,21 @@ func validateSchemaContext(ctx context.Context, raw []byte, maxBytes int) (resol
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	rootMap, ok := root.(map[string]any)
-	if !ok {
-		return nil, ErrInvalidSchema
-	}
-	if dialect, exists := rootMap["$schema"]; exists {
-		value, ok := dialect.(string)
-		if !ok || !supportedDialect(value) {
-			return nil, ErrInvalidSchema
-		}
-	}
-	graphs := make(map[string][]string)
-	nodes := make(map[string]map[string]any)
-	refs := make([]refEdge, 0)
-	budget := maxSchemaNodes
-	if err := indexSchemaJSON(root, "", 0, &budget, nodes, graphs, &refs); err != nil {
+	if err := preflightSchemaJSON(root); err != nil {
 		return nil, err
-	}
-	if len(refs) > maxSchemaRefs {
-		return nil, ErrInvalidSchema
-	}
-	for _, ref := range refs {
-		if !strings.HasPrefix(ref.to, "#") {
-			return nil, ErrInvalidSchema
-		}
-		target, err := resolveLocalRef(root, ref.to)
-		if err != nil {
-			return nil, ErrInvalidSchema
-		}
-		if _, ok := target.(map[string]any); !ok {
-			return nil, ErrInvalidSchema
-		}
-		path, err := referencePath(ref.to)
-		if err != nil {
-			return nil, ErrInvalidSchema
-		}
-		if _, ok := nodes[path]; !ok {
-			return nil, ErrInvalidSchema
-		}
-		graphs[ref.from] = append(graphs[ref.from], path)
-	}
-	if graphHasCycle(graphs) {
-		return nil, ErrInvalidSchema
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	// Decode exactly the tree preflight inspected. Decoding the original bytes
+	// directly into Schema would merge duplicate object fields that the JSON
+	// map decoder replaced, potentially retaining an unchecked reference.
+	normalized, err := json.Marshal(root)
+	if err != nil {
+		return nil, ErrInvalidSchema
+	}
 	var schema jsonschema.Schema
-	if err = json.Unmarshal(raw, &schema); err != nil {
+	if err = json.Unmarshal(normalized, &schema); err != nil {
 		return nil, ErrInvalidSchema
 	}
 	if schema.Type != "object" && len(schema.Types) == 0 {
@@ -583,6 +555,23 @@ func validateSchemaContext(ctx context.Context, raw []byte, maxBytes int) (resol
 			return nil, ErrInvalidSchema
 		}
 	}
+	// Schema's struct decoder also accepts case-insensitive keyword aliases.
+	// Recheck its canonical representation before Resolve so merged aliases
+	// cannot hide cycles or expansion behind different JSON Pointer paths.
+	canonical, err := json.Marshal(&schema)
+	if err != nil {
+		return nil, ErrInvalidSchema
+	}
+	canonicalRoot, err := decodeJSON(canonical)
+	if err != nil {
+		return nil, ErrInvalidSchema
+	}
+	if err := preflightSchemaJSON(canonicalRoot); err != nil {
+		return nil, err
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	resolved, err = schema.Resolve(nil)
 	if err != nil {
 		return nil, ErrInvalidSchema
@@ -593,11 +582,64 @@ func validateSchemaContext(ctx context.Context, raw []byte, maxBytes int) (resol
 	return resolved, nil
 }
 
-func supportedDialect(dialect string) bool {
-	return dialect == "https://json-schema.org/draft/2020-12/schema" || dialect == "https://json-schema.org/draft/2020-12/schema#" || dialect == "http://json-schema.org/draft-07/schema#" || dialect == "http://json-schema.org/draft-07/schema"
+func preflightSchemaJSON(root any) error {
+	rootMap, ok := root.(map[string]any)
+	if !ok {
+		return ErrInvalidSchema
+	}
+	if dialect, exists := rootMap["$schema"]; exists {
+		value, ok := dialect.(string)
+		if !ok || !supportedDialect(value) {
+			return ErrInvalidSchema
+		}
+	}
+	graphs := make(map[string][]string)
+	nodes := make(map[string]any)
+	refs := make([]refEdge, 0)
+	budget := maxSchemaNodes
+	if err := indexSchemaJSON(root, "", 0, &budget, nodes, graphs, &refs); err != nil {
+		return err
+	}
+	if len(refs) > maxSchemaRefs {
+		return ErrInvalidSchema
+	}
+	for _, ref := range refs {
+		if !strings.HasPrefix(ref.to, "#") {
+			return ErrInvalidSchema
+		}
+		target, err := resolveLocalRef(root, ref.to)
+		if err != nil {
+			return ErrInvalidSchema
+		}
+		switch target.(type) {
+		case map[string]any, bool:
+			// Boolean schemas are leaves; the validator also canonicalizes
+			// empty schema objects to true and {"not": {}} to false.
+		default:
+			return ErrInvalidSchema
+		}
+		path, err := referencePath(ref.to)
+		if err != nil {
+			return ErrInvalidSchema
+		}
+		if _, ok := nodes[path]; !ok {
+			return ErrInvalidSchema
+		}
+		graphs[ref.from] = append(graphs[ref.from], path)
+	}
+	if !schemaGraphWithinBounds(graphs) {
+		return ErrInvalidSchema
+	}
+	return nil
 }
 
-func indexSchemaJSON(value any, path string, depth int, budget *int, nodes map[string]map[string]any, graph map[string][]string, refs *[]refEdge) error {
+func supportedDialect(dialect string) bool {
+	// Match jsonschema-go v0.4.3's validation dialects exactly. Resolve alone
+	// also accepts versions that Validate subsequently rejects.
+	return dialect == "https://json-schema.org/draft/2020-12/schema" || dialect == "http://json-schema.org/draft-07/schema#" || dialect == "https://json-schema.org/draft-07/schema#"
+}
+
+func indexSchemaJSON(value any, path string, depth int, budget *int, nodes map[string]any, graph map[string][]string, refs *[]refEdge) error {
 	if depth > maxSchemaDepth {
 		return ErrInvalidSchema
 	}
@@ -605,9 +647,9 @@ func indexSchemaJSON(value any, path string, depth int, budget *int, nodes map[s
 	if *budget < 0 {
 		return ErrInvalidSchema
 	}
+	nodes[path] = value
 	switch item := value.(type) {
 	case map[string]any:
-		nodes[path] = item
 		if raw, ok := item["$ref"]; ok {
 			target, ok := raw.(string)
 			if !ok {
@@ -616,25 +658,25 @@ func indexSchemaJSON(value any, path string, depth int, budget *int, nodes map[s
 			*refs = append(*refs, refEdge{from: path, to: target})
 		}
 		for key, child := range item {
+			// Only root-local JSON Pointer references are supported. Anchors,
+			// resource IDs, dynamic/recursive refs and alternate dollar-key
+			// spellings must never change the graph the validator will follow.
+			if strings.HasPrefix(key, "$") && key != "$ref" && key != "$schema" && key != "$defs" && key != "$comment" {
+				return ErrInvalidSchema
+			}
 			childPath := path + "/" + pointerEscape(key)
 			if err := indexSchemaJSON(child, childPath, depth+1, budget, nodes, graph, refs); err != nil {
 				return err
 			}
-			if _, ok := child.(map[string]any); ok {
-				graph[path] = append(graph[path], childPath)
-			} else if children, ok := child.([]any); ok {
-				for i, entry := range children {
-					if _, ok := entry.(map[string]any); ok {
-						graph[path] = append(graph[path], childPath+"/"+strconv.Itoa(i))
-					}
-				}
-			}
+			graph[path] = append(graph[path], childPath)
 		}
 	case []any:
 		for i, child := range item {
-			if err := indexSchemaJSON(child, path+"/"+strconv.Itoa(i), depth+1, budget, nodes, graph, refs); err != nil {
+			childPath := path + "/" + strconv.Itoa(i)
+			if err := indexSchemaJSON(child, childPath, depth+1, budget, nodes, graph, refs); err != nil {
 				return err
 			}
+			graph[path] = append(graph[path], childPath)
 		}
 	}
 	return nil
@@ -686,31 +728,43 @@ func resolveLocalRef(root any, ref string) (any, error) {
 	}
 	return current, nil
 }
-func graphHasCycle(graph map[string][]string) bool {
+
+// schemaGraphWithinBounds charges every reference occurrence and combinator
+// branch, including repeated visits to shared definitions. Unique-node limits
+// and cycle detection alone do not bound the expansion of an acyclic DAG.
+// Memoized costs make this check linear in the stored graph, and subtraction
+// before addition caps the cost without integer overflow.
+func schemaGraphWithinBounds(graph map[string][]string) bool {
 	state := make(map[string]uint8, len(graph))
+	costs := make(map[string]int, len(graph))
+	depths := make(map[string]int, len(graph))
 	var visit func(string) bool
 	visit = func(node string) bool {
 		if state[node] == 1 {
-			return true
-		}
-		if state[node] == 2 {
 			return false
 		}
-		state[node] = 1
-		for _, next := range graph[node] {
-			if visit(next) {
-				return true
-			}
-		}
-		state[node] = 2
-		return false
-	}
-	for node := range graph {
-		if visit(node) {
+		if state[node] == 2 {
 			return true
 		}
+		state[node] = 1
+		cost, depth := 1, 1
+		for _, next := range graph[node] {
+			if !visit(next) || costs[next] > maxExpandedSchemaNodes-cost {
+				return false
+			}
+			cost += costs[next]
+			depth = max(depth, 1+depths[next])
+			if depth > maxSchemaDepth {
+				return false
+			}
+		}
+		costs[node], depths[node] = cost, depth
+		state[node] = 2
+		return true
 	}
-	return false
+	// The containment edges connect every JSON value to the root, including
+	// unused definitions and annotations, intentionally overestimating work.
+	return visit("")
 }
 func decodeJSON(raw []byte) (any, error) {
 	if len(raw) == 0 {

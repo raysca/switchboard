@@ -230,6 +230,39 @@ func TestTypedAuthenticationFailureUpdatesValidationState(t *testing.T) {
 	}
 }
 
+func TestTypedConnectionAndInitializeFailuresPrecedeDiscoveryFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		err   error
+		state string
+	}{
+		{name: "connection", err: ErrConnectionFailed, state: StateConnectionFailed},
+		{name: "initialize", err: ErrInitializeFailed, state: StateConnectionFailed},
+		{name: "discovery", err: ErrDiscoveryFailed, state: StateDiscoveryFailed},
+		{name: "wrapped connection", err: fmt.Errorf("transport: %w", remoteError(ErrConnectionFailed)), state: StateConnectionFailed},
+		{name: "wrapped initialize", err: fmt.Errorf("client: %w", remoteError(ErrInitializeFailed)), state: StateConnectionFailed},
+		{name: "canceled", err: context.Canceled, state: StateConnectionFailed},
+		{name: "deadline", err: context.DeadlineExceeded, state: StateConnectionFailed},
+		{name: "unknown list failure", err: errors.New("remote body"), state: StateDiscoveryFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			remote := &testRemote{list: func(context.Context) ([]RemoteTool, error) { return nil, tc.err }}
+			svc, _ := newTestService(t, remote, testCredential{})
+			server := createTestServer(t, svc, "https://mcp.example/rpc", "")
+			if _, err := svc.Refresh(context.Background(), server.ID); err == nil {
+				t.Fatal("expected refresh failure")
+			}
+			updated, err := svc.Get(context.Background(), server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if updated.ValidationState != tc.state {
+				t.Fatalf("state=%q, want %q", updated.ValidationState, tc.state)
+			}
+		})
+	}
+}
+
 func TestSchemaPreflightRejectsRecursiveRefsUnsupportedDialectsAndExcessComplexity(t *testing.T) {
 	for _, raw := range []string{
 		`{"type":"object","properties":{"next":{"$ref":"#"}}}`,
@@ -242,6 +275,176 @@ func TestSchemaPreflightRejectsRecursiveRefsUnsupportedDialectsAndExcessComplexi
 	deep := `{"type":"object","properties":{"x":` + strings.Repeat(`{"properties":{"x":`, 70) + `{"type":"string"}` + strings.Repeat(`}}`, 70) + `}}`
 	if _, err := validateSchema([]byte(deep)); err == nil {
 		t.Fatal("accepted excessive schema depth")
+	}
+}
+
+func TestSchemaDialectAllowlistMatchesValidatorAndAcceptedSchemasValidate(t *testing.T) {
+	for _, tc := range []struct {
+		uri string
+		ok  bool
+	}{
+		{"https://json-schema.org/draft/2020-12/schema", true},
+		{"http://json-schema.org/draft-07/schema#", true},
+		{"https://json-schema.org/draft-07/schema#", true},
+		{"https://json-schema.org/draft/2020-12/schema#", false},
+		{"http://json-schema.org/draft-07/schema", false},
+		{"https://json-schema.org/draft-07/schema", false},
+		{"https://json-schema.org/draft/2020-12/schema/", false},
+		{"https://json-schema.org/draft/2020-12/schema?x=1", false},
+	} {
+		t.Run(tc.uri, func(t *testing.T) {
+			raw := []byte(`{"$schema":` + fmt.Sprintf("%q", tc.uri) + `,"type":"object"}`)
+			resolved, err := validateSchema(raw)
+			if !tc.ok {
+				if err == nil {
+					t.Fatal("accepted unsupported or noncanonical dialect URI")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("rejected supported dialect: %v", err)
+			}
+			if err := resolved.Validate(map[string]any{}); err != nil {
+				t.Fatalf("accepted dialect did not execute: %v", err)
+			}
+			remote := &testRemote{tools: []RemoteTool{{Name: "echo", InputSchema: raw}}}
+			svc, _ := newTestService(t, remote, testCredential{})
+			server := createTestServer(t, svc, "https://mcp.example/rpc", "")
+			if _, err := svc.Refresh(context.Background(), server.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.Execute(context.Background(), server.ID, "echo", json.RawMessage(`{}`)); err != nil {
+				t.Fatalf("accepted discovery could not execute empty object: %v", err)
+			}
+		})
+	}
+}
+
+func TestRefreshRejectsUnsupportedReferenceKeywordsWithoutReplacingDiscovery(t *testing.T) {
+	for _, keyword := range []string{"$dynamicRef", "$recursiveRef", "$dynamicAnchor", "$recursiveAnchor", "$anchor", "$id", "$REF", "$DynamicRef"} {
+		t.Run(keyword, func(t *testing.T) {
+			remote := &testRemote{tools: []RemoteTool{{Name: "echo", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
+			svc, store := newTestService(t, remote, testCredential{})
+			server := createTestServer(t, svc, "https://mcp.example/rpc", "")
+			previous, err := svc.Refresh(context.Background(), server.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			remote.tools[0].InputSchema = json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{"next":{%q:""}}}`, keyword))
+			if _, err := svc.Refresh(context.Background(), server.ID); !errors.Is(err, ErrInvalidSchema) {
+				t.Fatalf("unsupported keyword was accepted: %v", err)
+			}
+			latest, err := store.MCP().LatestDiscovery(context.Background(), server.ID)
+			if err != nil || latest.ID != previous.ID {
+				t.Fatalf("invalid schema replaced discovery: latest=%q previous=%q err=%v", latest.ID, previous.ID, err)
+			}
+			updated, err := svc.Get(context.Background(), server.ID)
+			if err != nil || updated.ValidationState != StateSchemaInvalid {
+				t.Fatalf("schema failure state=%q err=%v", updated.ValidationState, err)
+			}
+		})
+	}
+}
+
+func expandedReferenceSchema(combinator string, levels int) []byte {
+	var schema strings.Builder
+	schema.WriteString(`{"type":"object","$defs":{`)
+	for i := 0; i < levels; i++ {
+		if i > 0 {
+			schema.WriteByte(',')
+		}
+		fmt.Fprintf(&schema, `"n%d":{%q:[{"$ref":"#/$defs/n%d"},{"$ref":"#/$defs/n%d"}]}`, i, combinator, i+1, i+1)
+	}
+	fmt.Fprintf(&schema, `,"n%d":{"type":"object"}},"allOf":[{"$ref":"#/$defs/n0"}]}`, levels)
+	return []byte(schema.String())
+}
+
+func TestSchemaAcceptsSmallSharedReferenceGraph(t *testing.T) {
+	resolved, err := validateSchema(expandedReferenceSchema("allOf", 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resolved.Validate(map[string]any{}); err != nil {
+		t.Fatalf("bounded shared refs did not execute: %v", err)
+	}
+}
+
+func TestSchemaAcceptsReferenceToEmptySchema(t *testing.T) {
+	// jsonschema-go serializes an empty schema object as the boolean true.
+	resolved, err := validateSchema([]byte(`{"type":"object","$defs":{"anything":{}},"properties":{"value":{"$ref":"#/$defs/anything"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resolved.Validate(map[string]any{"value": 42}); err != nil {
+		t.Fatalf("empty referenced schema rejected value: %v", err)
+	}
+}
+
+func TestSchemaPreflightAndValidatorUseSameDecodedJSON(t *testing.T) {
+	// encoding/json merges repeated objects when decoding into struct maps.
+	// Preflight's JSON map uses the last value, which must also reach validation.
+	resolved, err := validateSchema([]byte(`{"type":"object","properties":{"blocked":false},"properties":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resolved.Validate(map[string]any{"blocked": true}); err != nil {
+		t.Fatalf("validator retained a schema discarded by preflight: %v", err)
+	}
+}
+
+func TestSchemaRejectsNoncanonicalStructuralKeywords(t *testing.T) {
+	// The lowercase alias overwrites gate in the validator's struct map, making
+	// the ref recursive even though the graph of the raw JSON is acyclic.
+	raw := []byte(`{"type":"object","dependentSchemas":{"gate":{"type":"object"}},"dependentschemas":{"gate":{"$ref":"#/dependentSchemas/gate"}}}`)
+	if _, err := validateSchema(raw); err == nil {
+		t.Fatal("accepted structural keyword alias that changes reference targets")
+	}
+}
+
+func TestSchemaRejectsExcessiveExpandedReferenceDepth(t *testing.T) {
+	var schema strings.Builder
+	schema.WriteString(`{"type":"object","$defs":{`)
+	for i := 0; i < 80; i++ {
+		fmt.Fprintf(&schema, `"n%d":{"$ref":"#/$defs/n%d"},`, i, i+1)
+	}
+	schema.WriteString(`"n80":{"type":"object"}},"$ref":"#/$defs/n0"}`)
+	if _, err := validateSchema([]byte(schema.String())); err == nil {
+		t.Fatal("accepted excessive expanded reference depth")
+	}
+}
+
+func TestDynamicReferenceCannotCrashProcess(t *testing.T) {
+	if os.Getenv("MCP_DYNAMIC_SCHEMA_SUBPROCESS") == "1" {
+		_, err := validateSchema([]byte(`{"$dynamicAnchor":"node","type":"object","properties":{"next":{"$dynamicRef":"#node"}}}`))
+		if err == nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestDynamicReferenceCannotCrashProcess$")
+	cmd.Env = append(os.Environ(), "MCP_DYNAMIC_SCHEMA_SUBPROCESS=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("dynamic ref subprocess crashed or hung: err=%v output=%s", err, output)
+	}
+}
+
+func TestExpandedReferenceWorkCannotCrashProcess(t *testing.T) {
+	if os.Getenv("MCP_EXPANDED_SCHEMA_SUBPROCESS") == "1" {
+		for _, combinator := range []string{"allOf", "anyOf", "oneOf"} {
+			if _, err := validateSchema(expandedReferenceSchema(combinator, 28)); err == nil {
+				os.Exit(2)
+			}
+		}
+		os.Exit(0)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestExpandedReferenceWorkCannotCrashProcess$")
+	cmd.Env = append(os.Environ(), "MCP_EXPANDED_SCHEMA_SUBPROCESS=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("expanded ref subprocess crashed or hung: err=%v output=%s", err, output)
 	}
 }
 
@@ -359,6 +562,75 @@ func (s recordingSpan) SetAttribute(k string, v any) {
 }
 func (recordingSpan) AddEvent(core.TraceEvent) {}
 func (recordingSpan) End(error)                {}
+
+type asyncDurationTracer struct{ ended chan map[string]any }
+
+func (t *asyncDurationTracer) StartSpan(context.Context, core.TraceEvent) core.Span {
+	return &asyncDurationSpan{tracer: t, attrs: make(map[string]any)}
+}
+
+type asyncDurationSpan struct {
+	tracer *asyncDurationTracer
+	mu     sync.Mutex
+	attrs  map[string]any
+}
+
+func (s *asyncDurationSpan) SetAttribute(key string, value any) {
+	s.mu.Lock()
+	s.attrs[key] = value
+	s.mu.Unlock()
+}
+func (*asyncDurationSpan) AddEvent(core.TraceEvent) {}
+func (s *asyncDurationSpan) End(error) {
+	s.mu.Lock()
+	attrs := make(map[string]any, len(s.attrs))
+	for key, value := range s.attrs {
+		attrs[key] = value
+	}
+	s.mu.Unlock()
+	s.tracer.ended <- attrs
+}
+
+func TestExecuteAsyncTraceExportsDurationBeforeSpanEnd(t *testing.T) {
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/mcp-async-trace.db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	exporter := &asyncDurationTracer{ended: make(chan map[string]any, 1)}
+	asyncTracer := core.NewAsyncTracer(exporter, 16)
+	defer asyncTracer.Close()
+	svc, err := NewService(ServiceConfig{Store: store, Remote: safeConcurrentRemote{}, Destinations: allowHTTP{}, Tracer: asyncTracer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := svc.Create(context.Background(), ServerConfig{Name: "async trace", Endpoint: "https://mcp.example/rpc", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Refresh(context.Background(), server.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-exporter.ended: // consume the discovery span; the next is execution.
+	case <-time.After(2 * time.Second):
+		t.Fatal("async exporter did not finish the discovery span")
+	}
+	for _, name := range []string{"echo", "missing"} {
+		_, err := svc.Execute(context.Background(), server.ID, name, json.RawMessage(`{}`))
+		if (name == "echo" && err != nil) || (name == "missing" && !errors.Is(err, ErrNotFound)) {
+			t.Fatalf("execute %s error=%v", name, err)
+		}
+		select {
+		case attrs := <-exporter.ended:
+			if duration, ok := attrs["mcp.duration_ms"].(int64); !ok || duration < 0 {
+				t.Fatalf("duration missing from ended async span for %s: %#v", name, attrs)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("async exporter did not finish the execution span")
+		}
+	}
+}
 
 func TestConcurrentExecutionsHaveDistinctTraceAndResponseIdentityWithParent(t *testing.T) {
 	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/mcp-concurrency.db"})
