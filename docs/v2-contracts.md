@@ -159,7 +159,43 @@ This state machine does not commit transcripts or context, advance the session c
 - Semantic evidence can only shorten the silence path under its identity, timestamp, confidence, freshness, and guard checks; every rejected signal preserves deterministic silence fallback.
 - STT/context agreement, output cancellation, and generation-fence integration remain Gate B acceptance items and are not claimed by the state-machine package alone.
 
-### 2.8 Provider readiness and usage
+### 2.8 Output pacing, speaking state, and flush
+
+`transport/ws.PacedWriter` is the single pacing engine. Enqueue owns a copy of
+each frame and its samples, records one normalized media duration for admission
+and removal, and rejects byte/duration overflow without changing retained
+accounting. The default residual server queue remains 100 ms / 4,800 bytes for
+24-kHz PCM16 mono. Pacing, encoding, writes, and callbacks occur without the
+queue lock. Close and cancellation wake pacing and idle waits and cancel an
+abortable write.
+
+`core.SpeakingTracker` and `SpeakingStateFrame` provide typed provider-neutral
+started/stopped transitions. A successful non-empty transport write starts
+speaking. A true whole-turn paced drain, flush, fatal write failure, or close
+stops it once. `TTSStarted`, enqueue, empty/error/stale frames, and synthesis
+unit boundaries do not start or flicker speaking. RTVI maps these same typed
+transitions to `bot-started-speaking` and `bot-stopped-speaking`; neither event
+acknowledges client playback.
+
+`OutputAudioFrame.IsFinal` remains synthesis-unit finality. `TurnFinal` is
+whole-turn finality. Providers and the deterministic fake propagate known
+`SynthesisUnitFrame.IsFinal`; an ordered `OutputTurnFinalFrame` covers a last
+unit that was streamed before LLM completion. The pacer bounds pending markers
+to 64 and consumes one only for the matching turn, generation, and unit.
+
+Flush drops queued and abortable in-flight interruptible output through the
+target generation and acknowledges only after that in-flight work is
+quiescent. Repeated/overlapping calls keep generation-specific callbacks; late
+write returns cannot emit completion or revive speaking. Explicitly
+uninterruptible queued or in-flight media survives in relative order even when
+older than the active fence, and new-generation output resumes normally. The
+bounded slow-writer path closes the connection instead of falsely
+acknowledging. Already written client audio remains outside this guarantee.
+
+Detailed concurrency and ordering rules are in
+`docs/output-pacing-and-flush.md`.
+
+### 2.9 Provider readiness and usage
 
 Providers report typed readiness transitions and optional provider-neutral usage events. Readiness includes provider/component, state, timestamp, and safe reason category. Usage includes provider/model, session/turn IDs when available, unit name, quantity, and timestamp (for example LLM tokens, STT audio duration, TTS characters/audio duration, tool calls, or request count). These are observability values, not billing or admission decisions.
 
@@ -169,7 +205,7 @@ Providers report typed readiness transitions and optional provider-neutral usage
 - Readiness and usage can reach trace/observer consumers without a database dependency.
 - Provider errors and secret-bearing response text are redacted before event emission.
 
-### 2.9 Provider-neutral tools and ToolLoop
+### 2.10 Provider-neutral tools and ToolLoop
 
 Core defines `ToolDefinition` (stable name, description, JSON input schema, and policy metadata), `ToolCall` (call ID, name, raw JSON arguments, session/turn/generation correlation), and `ToolResult` (call ID, structured result or safe error, status, and timing). A provider adapter translates provider-native requests/results to these types. `ToolExecutor` invokes registered handlers using a `context.Context`; an MCP wrapper is one Server-supplied handler and is invisible to core.
 

@@ -78,8 +78,6 @@ type Connection struct {
 	writeMu   sync.Mutex
 	readyCh   chan struct{}
 	readyOnce sync.Once
-	speaking  atomic.Bool
-
 	// Resamplers
 	resamplersMu sync.Mutex
 	inResamplers map[int]*resample.Resampler // inRate -> 16000
@@ -383,23 +381,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	conn.pacer = pacer
 
-	// Hook write completion re-entry and speech state
+	// Completion and speaking callbacks run outside pacer locks. Speaking is
+	// derived only from successful non-empty output writes and final drain.
 	pacer.OnWriteComplete = func(f *core.OutputAudioFrame, err error) {
-		if f.IsFinal {
-			if conn.speaking.CompareAndSwap(true, false) {
-				msg, _ := conn.rtvi.FormatBotStoppedSpeaking()
-				_ = conn.WriteWireMessage(conn.ctx, msg)
-			}
-		}
 		if conn.session != nil {
 			_ = conn.session.Reenter(&core.WriteCompletionFrame{
-				Turn:    f.Turn,
-				Gen:     f.Gen,
-				UnitID:  f.UnitID,
-				Seq:     f.Seq,
-				IsFinal: f.IsFinal,
-				Err:     err,
+				Turn:      f.Turn,
+				Gen:       f.Gen,
+				UnitID:    f.UnitID,
+				Seq:       f.Seq,
+				IsFinal:   f.IsFinal,
+				TurnFinal: f.TurnFinal,
+				Err:       err,
 			}, core.Downstream, 0, f.Gen)
+		}
+	}
+	pacer.OnSpeakingState = func(event core.SpeakingStateFrame) {
+		msg, err := conn.rtvi.FormatSpeakingState(event)
+		if err == nil {
+			_ = conn.WriteWireMessage(conn.ctx, msg)
+		}
+		if conn.session != nil {
+			frame := event
+			_ = conn.session.Reenter(&frame, core.Upstream, conn.session.TailIndex(), 0)
 		}
 	}
 
@@ -623,11 +627,6 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 	switch f.Type() {
 	case core.FrameOutputAudio:
 		oaf := f.(*core.OutputAudioFrame)
-		if c.speaking.CompareAndSwap(false, true) {
-			msg, _ := c.rtvi.FormatBotStartedSpeaking()
-			_ = c.WriteWireMessage(ctx, msg)
-		}
-
 		// Convert provider rate to fixed player rate if necessary
 		if oaf.SampleRate != c.cfg.FixedPlayerRate {
 			c.resamplersMu.Lock()
@@ -649,6 +648,13 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		}
 
 		return c.enqueueOutput(ctx, oaf)
+
+	case core.FrameOutputTurnFinal:
+		marker := f.(*core.OutputTurnFinalFrame)
+		if err := c.pacer.MarkTurnFinal(marker.Turn, marker.Gen, marker.UnitID); err != nil {
+			return err
+		}
+		return e.PushDirection(f, dir)
 
 	case core.FrameUserStartedSpeaking:
 		msg, _ := c.rtvi.FormatUserStartedSpeaking()
@@ -687,24 +693,14 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		return e.PushDirection(f, dir)
 
 	case core.FrameTTSStarted:
-		if c.speaking.CompareAndSwap(false, true) {
-			msg, _ := c.rtvi.FormatBotStartedSpeaking()
-			_ = c.WriteWireMessage(ctx, msg)
-		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameTTSStopped:
-		if c.speaking.CompareAndSwap(true, false) {
-			msg, _ := c.rtvi.FormatBotStoppedSpeaking()
-			_ = c.WriteWireMessage(ctx, msg)
-		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameInterruption:
-		c.speaking.Store(false)
-		// The server stops sending. The pinned client does not clear audio it already buffered.
-		msg, _ := c.rtvi.FormatBotStoppedSpeaking()
-		_ = c.WriteWireMessage(ctx, msg)
+		// The following flush drives an output-derived stopped transition. The
+		// pinned client still does not clear audio it already buffered.
 		return e.PushDirection(f, dir)
 
 	case core.FrameFlush:

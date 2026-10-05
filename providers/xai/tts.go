@@ -394,6 +394,7 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 					UnitID:     unit.UnitID,
 					Seq:        seq,
 					IsFinal:    isFinal,
+					TurnFinal:  unit.IsFinal && isFinal,
 				}
 
 				p.AudioFrames.Add(1)

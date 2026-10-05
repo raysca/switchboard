@@ -399,6 +399,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 				Gen:        gen,
 				UnitID:     su.UnitID,
 				IsFinal:    isFinalChunk,
+				TurnFinal:  su.IsFinal && isFinalChunk,
 			}
 
 			_ = p.session.Reenter(audioFrame, core.Downstream, p.index+1, gen)
@@ -416,6 +417,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 				Gen:        gen,
 				UnitID:     su.UnitID,
 				IsFinal:    true,
+				TurnFinal:  su.IsFinal,
 			}
 			_ = p.session.Reenter(emptyFrame, core.Downstream, p.index+1, gen)
 		}

@@ -34,16 +34,17 @@ type AssistantContextProcessor struct {
 	ctxPool *ConversationContext
 	cfg     AssistantContextConfig
 
-	activeTurn     string
-	activeGen      uint64
-	textBuf        strings.Builder
-	totalTurnText  strings.Builder
-	unitCounter    uint64
-	finalUnitID    uint64 // 0 until final unit is emitted
-	llmComplete    bool   // true once complete LLMText has been received
-	ttsStopped     bool
-	pendingUnits   map[uint64]string
-	deliveredUnits map[uint64]string
+	activeTurn      string
+	activeGen       uint64
+	textBuf         strings.Builder
+	totalTurnText   strings.Builder
+	unitCounter     uint64
+	finalUnitID     uint64 // 0 until final unit is emitted
+	finalSignalSent bool
+	llmComplete     bool // true once complete LLMText has been received
+	ttsStopped      bool
+	pendingUnits    map[uint64]string
+	deliveredUnits  map[uint64]string
 
 	// Flush barrier coordination
 	flushAckCh        chan uint64
@@ -94,6 +95,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		p.totalTurnText.Reset()
 		p.unitCounter = 0
 		p.finalUnitID = 0
+		p.finalSignalSent = false
 		p.llmComplete = false
 		p.ttsStopped = false
 		p.pendingUnits = make(map[uint64]string)
@@ -266,7 +268,6 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 				break
 			}
 		}
-
 		unitText := strings.TrimSpace(buf[:splitIdx])
 		buf = buf[splitIdx:]
 
@@ -278,6 +279,7 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 			isFinalUnit := isLastChunk && len(buf) == 0
 			if isFinalUnit {
 				p.finalUnitID = unitID
+				p.finalSignalSent = true
 			}
 
 			gen := uint64(0)
@@ -303,6 +305,16 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 
 	if isLastChunk && len(buf) == 0 && p.unitCounter > 0 {
 		p.finalUnitID = p.unitCounter
+		if !p.finalSignalSent {
+			gen := p.activeGen
+			if p.session != nil {
+				gen = p.session.CurrentGeneration()
+			}
+			if err := e.Push(&OutputTurnFinalFrame{Turn: p.activeTurn, Gen: gen, UnitID: p.finalUnitID}); err != nil {
+				return err
+			}
+			p.finalSignalSent = true
+		}
 		if _, delivered := p.deliveredUnits[p.finalUnitID]; delivered {
 			return p.commitTurn(e, false)
 		}
@@ -359,6 +371,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	p.textBuf.Reset()
 	p.unitCounter = 0
 	p.finalUnitID = 0
+	p.finalSignalSent = false
 	p.llmComplete = false
 	p.ttsStopped = false
 	p.pendingUnits = make(map[uint64]string)
@@ -373,6 +386,7 @@ func (p *AssistantContextProcessor) failUndeliveredTurn(e Emitter, writeErr erro
 	p.textBuf.Reset()
 	p.unitCounter = 0
 	p.finalUnitID = 0
+	p.finalSignalSent = false
 	p.llmComplete = false
 	p.ttsStopped = false
 	p.pendingUnits = make(map[uint64]string)
@@ -431,6 +445,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	p.textBuf.Reset()
 	p.unitCounter = 0
 	p.finalUnitID = 0
+	p.finalSignalSent = false
 	p.llmComplete = false
 	p.ttsStopped = false
 	p.pendingUnits = make(map[uint64]string)

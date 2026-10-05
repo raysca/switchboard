@@ -364,6 +364,7 @@ func TestRTVI_BargeIn_PlaybackClearAndGenerationFence(t *testing.T) {
 		Turn:       "turn-2",
 		Seq:        100,
 		IsFinal:    true,
+		TurnFinal:  true,
 	})
 
 	// Client reads wire events

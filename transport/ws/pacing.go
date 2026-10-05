@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,166 +13,222 @@ import (
 )
 
 var (
-	ErrSlowClient      = errors.New("ws: client buffer overflow or write deadline breach (slow client)")
-	ErrWriterClosed    = errors.New("ws: paced writer closed")
-	ErrQueueBufferFull = errors.New("ws: output audio queue budget exceeded")
+	ErrSlowClient       = errors.New("ws: client buffer overflow or write deadline breach (slow client)")
+	ErrWriterClosed     = errors.New("ws: paced writer closed")
+	ErrQueueBufferFull  = errors.New("ws: output audio queue budget exceeded")
+	ErrFinalMarkerLimit = errors.New("ws: pending whole-turn final marker limit exceeded")
 )
 
-// PacerConfig configures media clock pacing and queue limits.
 type PacerConfig struct {
-	MaxQueueDuration time.Duration // Maximum queued audio duration (100ms residual bound)
-	MaxQueueBytes    int           // Maximum queued audio bytes at 24 kHz PCM16 mono
-	WriteTimeout     time.Duration // Maximum duration per socket write (e.g. 2s)
-	EnablePacing     bool          // If true, pace against real media time (default: true)
+	MaxQueueDuration time.Duration
+	MaxQueueBytes    int
+	WriteTimeout     time.Duration
+	EnablePacing     bool
 }
 
-// DefaultPacerConfig returns production-tuned pacer parameters.
 func DefaultPacerConfig() PacerConfig {
-	return PacerConfig{
-		MaxQueueDuration: 100 * time.Millisecond,
-		MaxQueueBytes:    4800, // 100ms of 24 kHz 16-bit mono
-		WriteTimeout:     2 * time.Second,
-		EnablePacing:     true,
-	}
+	return PacerConfig{MaxQueueDuration: 100 * time.Millisecond, MaxQueueBytes: 4800, WriteTimeout: 2 * time.Second, EnablePacing: true}
 }
 
-// PacedWriter queues output audio frames, enforces bounded memory, discards stale
-// generations, paces writes against real media time, and terminates slow clients explicitly.
+type pacedFrame struct {
+	frame    *core.OutputAudioFrame
+	bytes    int
+	duration time.Duration
+}
+
+type turnFinalKey struct {
+	turn   string
+	gen    uint64
+	unitID uint64
+}
+
+const maxPendingTurnFinals = 64
+
+// PacedWriter is the single output pacing implementation. It owns immutable
+// queue entries, strict accounting, flush barriers, and speaking transitions.
 type PacedWriter struct {
 	cfg     PacerConfig
-	writeFn func(ctx context.Context, data []byte) error
+	writeFn func(context.Context, []byte) error
 
-	mu           sync.Mutex
-	cond         *sync.Cond
-	queue        []*core.OutputAudioFrame
-	queuedBytes  int
-	queuedDur    time.Duration
-	activeGen    uint64
-	inflight     *core.OutputAudioFrame
-	dropInflight bool
-	abortCh      chan struct{}
-	inWrite      bool
-	writeGen     uint64
-	writeCancel  context.CancelFunc
-	writeDoneCh  chan struct{}
-	closed       bool
-	lastMediaEnd time.Time
+	mu            sync.Mutex
+	cond          *sync.Cond
+	queue         []*pacedFrame
+	queuedBytes   int
+	queuedDur     time.Duration
+	activeGen     uint64
+	inflight      *pacedFrame
+	dropInflight  bool
+	inflightAbort chan struct{}
+	inflightDone  chan struct{}
+	inWrite       bool
+	writeCancel   context.CancelFunc
+	closed        bool
+	lastMediaEnd  time.Time
+	pendingFinals map[turnFinalKey]struct{}
 
-	// Metrics
+	speaking *core.SpeakingTracker
+	eventMu  sync.Mutex
+	events   []core.SpeakingStateFrame
+	dispatch bool
+
 	FramesWritten atomic.Uint64
 	FramesDropped atomic.Uint64
 	FlushesDone   atomic.Uint64
 
-	OnWriteComplete func(f *core.OutputAudioFrame, err error)
+	OnWriteComplete func(*core.OutputAudioFrame, error)
+	OnSpeakingState func(core.SpeakingStateFrame)
 }
 
-// NewPacedWriter creates an initialized PacedWriter.
-func NewPacedWriter(cfg PacerConfig, writeFn func(ctx context.Context, data []byte) error) *PacedWriter {
-	pw := &PacedWriter{
-		cfg:     cfg,
-		writeFn: writeFn,
-		queue:   make([]*core.OutputAudioFrame, 0, 32),
-		abortCh: make(chan struct{}),
-	}
-	pw.cond = sync.NewCond(&pw.mu)
-	return pw
+func NewPacedWriter(cfg PacerConfig, writeFn func(context.Context, []byte) error) *PacedWriter {
+	w := &PacedWriter{cfg: cfg, writeFn: writeFn, queue: make([]*pacedFrame, 0, 32), pendingFinals: make(map[turnFinalKey]struct{}), speaking: core.NewSpeakingTracker()}
+	w.cond = sync.NewCond(&w.mu)
+	return w
 }
 
-// SetActiveGeneration updates the current generation ID. Older frames will be discarded.
-func (w *PacedWriter) SetActiveGeneration(gen uint64) {
+// MarkTurnFinal records bounded whole-turn finality for a synthesis unit that
+// was already streamed before the LLM completion boundary was known.
+func (w *PacedWriter) MarkTurnFinal(turn string, gen, unitID uint64) error {
+	key := turnFinalKey{turn: turn, gen: gen, unitID: unitID}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.activeGen = gen
-}
-
-// Enqueue adds an output audio frame to the pacing queue.
-// Stale generations are discarded. Current-generation overflow triggers ErrSlowClient.
-func (w *PacedWriter) Enqueue(f *core.OutputAudioFrame) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
 	if w.closed {
 		return ErrWriterClosed
 	}
-
-	// 1. Stale generation discard
-	if f.Gen != 0 && f.Gen < w.activeGen {
-		w.FramesDropped.Add(1)
+	if gen != 0 && gen < w.activeGen {
 		return nil
 	}
-
-	// 2. Current-generation queue limits check (NO silent truncation)
-	frameBytes := len(f.Samples)
-	frameDur := f.Duration
-	if frameDur <= 0 && f.SampleRate > 0 {
-		samples := frameBytes / 2
-		frameDur = time.Duration(samples) * time.Second / time.Duration(f.SampleRate)
+	if _, exists := w.pendingFinals[key]; exists {
+		return nil
 	}
-
-	if w.queuedDur+frameDur > w.cfg.MaxQueueDuration || w.queuedBytes+frameBytes > w.cfg.MaxQueueBytes {
-		return fmt.Errorf("%w: queue duration %v > max %v or bytes %d > max %d",
-			ErrSlowClient, w.queuedDur+frameDur, w.cfg.MaxQueueDuration, w.queuedBytes+frameBytes, w.cfg.MaxQueueBytes)
+	if len(w.pendingFinals) >= maxPendingTurnFinals {
+		return ErrFinalMarkerLimit
 	}
-
-	w.queue = append(w.queue, f)
-	w.queuedBytes += frameBytes
-	w.queuedDur += frameDur
-	w.cond.Signal()
-
+	w.pendingFinals[key] = struct{}{}
 	return nil
 }
 
-// BeginFlush drops queued audio for gen and aborts an in-flight write without
-// blocking the caller. done runs after the in-flight write has stopped, or
-// immediately on another goroutine when nothing is in flight.
+func (w *PacedWriter) SetActiveGeneration(gen uint64) {
+	w.mu.Lock()
+	if gen > w.activeGen {
+		w.activeGen = gen
+	}
+	w.mu.Unlock()
+}
+
+// Enqueue copies and normalizes a frame before applying both budgets. A
+// rejected enqueue leaves accounting and retained frames unchanged.
+func (w *PacedWriter) Enqueue(f *core.OutputAudioFrame) error {
+	entry, err := normalizePacedFrame(f)
+	if err != nil {
+		return err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return ErrWriterClosed
+	}
+	if staleInterruptible(entry.frame, w.activeGen) {
+		w.FramesDropped.Add(1)
+		return nil
+	}
+	key := turnFinalKey{turn: entry.frame.Turn, gen: entry.frame.Gen, unitID: entry.frame.UnitID}
+	if entry.frame.IsFinal {
+		if _, marked := w.pendingFinals[key]; marked {
+			entry.frame.TurnFinal = true
+			delete(w.pendingFinals, key)
+		}
+	}
+	nextBytes := w.queuedBytes + entry.bytes
+	nextDuration := w.queuedDur + entry.duration
+	if nextBytes < w.queuedBytes || nextDuration < w.queuedDur ||
+		(w.cfg.MaxQueueBytes >= 0 && nextBytes > w.cfg.MaxQueueBytes) ||
+		(w.cfg.MaxQueueDuration >= 0 && nextDuration > w.cfg.MaxQueueDuration) {
+		return fmt.Errorf("%w: %w: queue duration %v > max %v or bytes %d > max %d", ErrSlowClient, ErrQueueBufferFull, nextDuration, w.cfg.MaxQueueDuration, nextBytes, w.cfg.MaxQueueBytes)
+	}
+	w.queue = append(w.queue, entry)
+	w.queuedBytes = nextBytes
+	w.queuedDur = nextDuration
+	w.cond.Signal()
+	return nil
+}
+
+func normalizePacedFrame(f *core.OutputAudioFrame) (*pacedFrame, error) {
+	if f == nil {
+		return nil, errors.New("ws: nil output audio frame")
+	}
+	clone := *f
+	clone.Samples = append([]byte(nil), f.Samples...)
+	n := len(clone.Samples)
+	duration := clone.Duration
+	if n == 0 {
+		duration = 0
+	} else if duration <= 0 {
+		if clone.SampleRate <= 0 || clone.Channels <= 0 || n%(2*clone.Channels) != 0 {
+			return nil, fmt.Errorf("ws: cannot derive PCM16 duration from %d bytes, rate %d, channels %d", n, clone.SampleRate, clone.Channels)
+		}
+		duration = time.Duration(n/(2*clone.Channels)) * time.Second / time.Duration(clone.SampleRate)
+	}
+	if duration < 0 {
+		return nil, errors.New("ws: negative output duration")
+	}
+	clone.Duration = duration
+	return &pacedFrame{frame: &clone, bytes: n, duration: duration}, nil
+}
+
+func staleInterruptible(f *core.OutputAudioFrame, active uint64) bool {
+	return f.Gen != 0 && f.Gen < active && f.Disposition != core.OutputUninterruptible
+}
+
+// BeginFlush acknowledges asynchronously only after targeted interruptible
+// in-flight work has quiesced. Repeated calls retain their own acknowledgements.
 func (w *PacedWriter) BeginFlush(gen uint64, done func(error)) {
-	waitCh, cancelFn := w.dropGeneration(gen)
-	if cancelFn != nil {
-		cancelFn()
+	wait, cancel, abort, dispatch := w.dropGeneration(gen)
+	if abort != nil {
+		close(abort)
+	}
+	if cancel != nil {
+		cancel()
+	}
+	if dispatch {
+		w.dispatchSpeaking()
 	}
 	if done == nil {
 		return
 	}
-	if waitCh == nil {
-		go done(nil)
+	if wait == nil {
+		go safeFlushCallback(done, nil)
 		return
 	}
 	go func() {
-		// Bound matches the interruption-to-flush target. The session loop must not wait on the write timeout.
-		flushTimeout := 200 * time.Millisecond
-		timer := time.NewTimer(flushTimeout)
+		timer := time.NewTimer(w.flushTimeout())
 		defer timer.Stop()
 		select {
-		case <-waitCh:
-			done(nil)
+		case <-wait:
+			safeFlushCallback(done, nil)
 		case <-timer.C:
-			done(fmt.Errorf("%w: flush timed out waiting for in-flight write cancellation", ErrSlowClient))
+			safeFlushCallback(done, fmt.Errorf("%w: flush timed out waiting for in-flight write cancellation", ErrSlowClient))
 		}
 	}()
 }
 
-// Flush removes all queued audio frames belonging to the specified generation.
-// Flush drops all queued and inflight frames matching generation gen (or older),
-// resets the media clock, and aborts any active sleep or in-flight write for that generation.
-// If an in-flight write for that generation does not terminate within the write timeout,
-// it returns ErrSlowClient, guaranteeing no Flush acknowledgement is emitted while
-// old-generation audio is still being transmitted.
 func (w *PacedWriter) Flush(ctx context.Context, gen uint64) error {
-	waitCh, cancelFn := w.dropGeneration(gen)
-	if cancelFn != nil {
-		cancelFn()
+	wait, cancel, abort, dispatch := w.dropGeneration(gen)
+	if abort != nil {
+		close(abort)
 	}
-	if waitCh == nil {
+	if cancel != nil {
+		cancel()
+	}
+	if dispatch {
+		w.dispatchSpeaking()
+	}
+	if wait == nil {
 		return nil
 	}
-	flushTimeout := w.cfg.WriteTimeout
-	if flushTimeout <= 0 {
-		flushTimeout = 5 * time.Second
-	}
-	timer := time.NewTimer(flushTimeout)
+	timer := time.NewTimer(w.flushTimeout())
 	defer timer.Stop()
 	select {
-	case <-waitCh:
+	case <-wait:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -180,191 +237,415 @@ func (w *PacedWriter) Flush(ctx context.Context, gen uint64) error {
 	}
 }
 
-func (w *PacedWriter) dropGeneration(gen uint64) (chan struct{}, context.CancelFunc) {
-	w.mu.Lock()
-
-	active := make([]*core.OutputAudioFrame, 0, len(w.queue))
-	for _, f := range w.queue {
-		if f.Gen <= gen {
-			w.queuedBytes -= len(f.Samples)
-			w.queuedDur -= f.Duration
-			w.FramesDropped.Add(1)
-		} else {
-			active = append(active, f)
-		}
+func (w *PacedWriter) flushTimeout() time.Duration {
+	if w.cfg.WriteTimeout > 0 && w.cfg.WriteTimeout < 200*time.Millisecond {
+		return w.cfg.WriteTimeout
 	}
-	w.queue = active
-	if w.inflight != nil && w.inflight.Gen <= gen {
-		w.dropInflight = true
-	}
-	if gen+1 > w.activeGen {
-		w.activeGen = gen + 1
-	}
-	w.lastMediaEnd = time.Time{} // Reset media clock
-	oldAbort := w.abortCh
-	w.abortCh = make(chan struct{})
-	w.FlushesDone.Add(1)
-	w.cond.Broadcast()
-
-	var cancelFn context.CancelFunc
-	var waitCh chan struct{}
-	if w.inWrite && w.writeGen <= gen {
-		cancelFn = w.writeCancel
-		waitCh = w.writeDoneCh
-	}
-	w.mu.Unlock()
-	close(oldAbort)
-
-	return waitCh, cancelFn
+	return 200 * time.Millisecond
 }
 
-// Run executes the media-clock pacing loop until the context is canceled or the writer is closed.
-func (w *PacedWriter) Run(ctx context.Context) error {
-	for {
-		w.mu.Lock()
-		for len(w.queue) == 0 && !w.closed && ctx.Err() == nil {
-			w.cond.Wait()
-		}
-
-		if ctx.Err() != nil {
-			w.mu.Unlock()
-			return ctx.Err()
-		}
-		if w.closed {
-			w.mu.Unlock()
-			return nil
-		}
-
-		// Pop next frame
-		frame := w.queue[0]
-		w.queue = w.queue[1:]
-		w.queuedBytes -= len(frame.Samples)
-		w.queuedDur -= frame.Duration
-		w.inflight = frame
-		w.dropInflight = false
-		abortCh := w.abortCh
-		activeGen := w.activeGen
-
-		var waitDur time.Duration
-		if w.cfg.EnablePacing && frame.Duration > 0 {
-			now := time.Now()
-			if w.lastMediaEnd.IsZero() || now.Sub(w.lastMediaEnd) > 100*time.Millisecond {
-				// Gap or first frame: schedule from now
-				w.lastMediaEnd = now.Add(frame.Duration)
-			} else {
-				// Consecutive frames: schedule smoothly against media clock
-				waitDur = time.Until(w.lastMediaEnd)
-				w.lastMediaEnd = w.lastMediaEnd.Add(frame.Duration)
-			}
-		}
-		w.mu.Unlock()
-
-		dropFrame := func() bool {
-			w.mu.Lock()
-			defer w.mu.Unlock()
-			drop := w.dropInflight || (frame.Gen != 0 && frame.Gen < w.activeGen)
-			if w.inflight == frame {
-				w.inflight = nil
-				w.dropInflight = false
-			}
-			return drop
-		}
-
-		if frame.Gen != 0 && frame.Gen < activeGen {
+func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.CancelFunc, chan struct{}, bool) {
+	w.mu.Lock()
+	kept := w.queue[:0]
+	for _, entry := range w.queue {
+		if entry.frame.Gen <= gen && entry.frame.Disposition != core.OutputUninterruptible {
+			w.queuedBytes -= entry.bytes
+			w.queuedDur -= entry.duration
 			w.FramesDropped.Add(1)
-			_ = dropFrame()
 			continue
 		}
+		kept = append(kept, entry)
+	}
+	w.queue = kept
+	for key := range w.pendingFinals {
+		if key.gen <= gen {
+			delete(w.pendingFinals, key)
+		}
+	}
 
-		// Media clock pacing: wait until media time arrives. Flush closes abortCh.
-		if waitDur > 0 {
-			timer := time.NewTimer(waitDur)
+	var wait <-chan struct{}
+	var cancel context.CancelFunc
+	var abort chan struct{}
+	if entry := w.inflight; entry != nil && entry.frame.Gen <= gen && entry.frame.Disposition != core.OutputUninterruptible {
+		if !w.dropInflight {
+			w.dropInflight = true
+			abort = w.inflightAbort
+			w.inflightAbort = nil
+		}
+		wait = w.inflightDone
+		if w.inWrite {
+			cancel = w.writeCancel
+		}
+	}
+	if gen < math.MaxUint64 && gen+1 > w.activeGen {
+		w.activeGen = gen + 1
+	}
+	w.lastMediaEnd = time.Time{}
+	w.FlushesDone.Add(1)
+	w.cond.Broadcast()
+	dispatch := false
+	if event, ok := w.speaking.StopThrough(gen, core.SpeakingStopFlushed); ok {
+		dispatch = w.queueSpeakingLocked(event)
+	}
+	w.mu.Unlock()
+	return wait, cancel, abort, dispatch
+}
+
+// Run paces and writes until cancellation or close. No queue lock is held
+// during waits, encoding, writes, or callbacks.
+func (w *PacedWriter) Run(ctx context.Context) error {
+	wakeDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			w.mu.Lock()
+			w.cond.Broadcast()
+			w.mu.Unlock()
+		case <-wakeDone:
+		}
+	}()
+	defer close(wakeDone)
+
+	for {
+		entry, waitDuration, mediaEnd, abort, err := w.next(ctx)
+		if err != nil {
+			return err
+		}
+		if entry == nil {
+			return nil
+		}
+		if waitDuration > 0 {
+			timer := time.NewTimer(waitDuration)
 			select {
 			case <-timer.C:
-			case <-abortCh:
-				timer.Stop()
+			case <-abort:
+				stopAndDrainTimer(timer)
 			case <-ctx.Done():
-				timer.Stop()
-				_ = dropFrame()
+				stopAndDrainTimer(timer)
+				w.finishDropped(entry)
 				return ctx.Err()
 			}
 		}
-
-		if dropFrame() {
-			w.FramesDropped.Add(1)
+		if w.dropBeforeWrite(entry) {
 			continue
 		}
 
-		// Encode audio to protobuf
-		wireBytes, err := EncodeAudioFrame(frame.Samples, frame.SampleRate, frame.Channels)
+		if entry.bytes == 0 {
+			w.safeWriteComplete(entry.frame, nil)
+			w.finishFinalDrain(ctx, entry, mediaEnd, abort)
+			continue
+		}
+		wireBytes, err := EncodeAudioFrame(entry.frame.Samples, entry.frame.SampleRate, entry.frame.Channels)
 		if err != nil {
-			if w.OnWriteComplete != nil {
-				w.OnWriteComplete(frame, err)
+			dispatch := w.finishFatal(entry, core.SpeakingStopWriteError)
+			if dispatch {
+				w.dispatchSpeaking()
 			}
+			w.safeWriteComplete(entry.frame, err)
 			return err
 		}
-
-		w.mu.Lock()
-		if w.dropInflight || (frame.Gen != 0 && frame.Gen < w.activeGen) {
-			w.mu.Unlock()
-			w.FramesDropped.Add(1)
+		if w.dropBeforeWrite(entry) {
 			continue
 		}
-		writeCtx, writeCancel := context.WithTimeout(ctx, w.cfg.WriteTimeout)
-		doneCh := make(chan struct{})
-		w.inWrite = true
-		w.writeGen = frame.Gen
-		w.writeCancel = writeCancel
-		w.writeDoneCh = doneCh
-		w.mu.Unlock()
 
-		err = w.writeFn(writeCtx, wireBytes)
+		writeCtx, writeCancel := w.beginWrite(ctx, entry)
+		err = w.callWrite(writeCtx, wireBytes)
 		writeCancel()
-
-		w.mu.Lock()
-		w.inWrite = false
-		w.writeCancel = nil
-		w.writeDoneCh = nil
-		close(doneCh)
-		w.mu.Unlock()
-
+		dropped, dispatch := w.finishWrite(entry, err)
+		if dispatch {
+			w.dispatchSpeaking()
+		}
+		if dropped {
+			continue
+		}
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				w.FramesDropped.Add(1)
-				continue
-			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf("%w: write deadline exceeded (%v)", ErrSlowClient, w.cfg.WriteTimeout)
 			}
-			if w.OnWriteComplete != nil {
-				w.OnWriteComplete(frame, err)
-			}
+			w.safeWriteComplete(entry.frame, err)
 			return err
 		}
-
 		w.FramesWritten.Add(1)
-		if w.OnWriteComplete != nil {
-			w.OnWriteComplete(frame, nil)
+		w.safeWriteComplete(entry.frame, nil)
+		if entry.frame.TurnFinal {
+			w.finishFinalDrain(ctx, entry, mediaEnd, abort)
 		}
 	}
 }
 
-// Close gracefully closes the writer and unblocks waiting goroutines.
-func (w *PacedWriter) Close() {
+func (w *PacedWriter) next(ctx context.Context) (*pacedFrame, time.Duration, time.Time, chan struct{}, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.closed = true
-	w.cond.Broadcast()
+	for len(w.queue) == 0 && !w.closed && ctx.Err() == nil {
+		w.cond.Wait()
+	}
+	if ctx.Err() != nil {
+		return nil, 0, time.Time{}, nil, ctx.Err()
+	}
+	if w.closed {
+		return nil, 0, time.Time{}, nil, nil
+	}
+	entry := w.queue[0]
+	w.queue = w.queue[1:]
+	w.queuedBytes -= entry.bytes
+	w.queuedDur -= entry.duration
+	w.inflight = entry
+	w.dropInflight = false
+	w.inflightAbort = make(chan struct{})
+	w.inflightDone = make(chan struct{})
+	abort := w.inflightAbort
+
+	now := time.Now()
+	mediaEnd := w.lastMediaEnd
+	var waitDuration time.Duration
+	if w.cfg.EnablePacing {
+		if mediaEnd.IsZero() || now.Sub(mediaEnd) > 100*time.Millisecond {
+			mediaEnd = now
+		}
+		if mediaEnd.After(now) {
+			waitDuration = time.Until(mediaEnd)
+		}
+		mediaEnd = mediaEnd.Add(entry.duration)
+		w.lastMediaEnd = mediaEnd
+	}
+	return entry, waitDuration, mediaEnd, abort, nil
 }
 
-// QueuedDuration returns the total audio duration currently waiting in queue.
+func (w *PacedWriter) dropBeforeWrite(entry *pacedFrame) bool {
+	w.mu.Lock()
+	drop := w.inflight != entry || w.dropInflight || staleInterruptible(entry.frame, w.activeGen)
+	if drop {
+		w.clearInflightLocked(entry)
+		w.FramesDropped.Add(1)
+	}
+	w.mu.Unlock()
+	return drop
+}
+
+func (w *PacedWriter) beginWrite(ctx context.Context, entry *pacedFrame) (context.Context, context.CancelFunc) {
+	var writeCtx context.Context
+	var cancel context.CancelFunc
+	if w.cfg.WriteTimeout > 0 {
+		writeCtx, cancel = context.WithTimeout(ctx, w.cfg.WriteTimeout)
+	} else {
+		writeCtx, cancel = context.WithCancel(ctx)
+	}
+	w.mu.Lock()
+	if w.inflight == entry {
+		w.inWrite = true
+		w.writeCancel = cancel
+	}
+	w.mu.Unlock()
+	return writeCtx, cancel
+}
+
+func (w *PacedWriter) callWrite(ctx context.Context, data []byte) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("ws: writer panic: %v", recovered)
+		}
+	}()
+	if w.writeFn == nil {
+		return errors.New("ws: nil writer")
+	}
+	return w.writeFn(ctx, data)
+}
+
+func (w *PacedWriter) finishWrite(entry *pacedFrame, writeErr error) (bool, bool) {
+	w.mu.Lock()
+	w.inWrite = false
+	w.writeCancel = nil
+	dropped := w.inflight != entry || w.dropInflight || staleInterruptible(entry.frame, w.activeGen)
+	dispatch := false
+	if dropped {
+		w.clearInflightLocked(entry)
+		w.FramesDropped.Add(1)
+	} else if writeErr != nil {
+		w.clearInflightLocked(entry)
+		if event, ok := w.speaking.Stop(core.SpeakingStopWriteError); ok {
+			dispatch = w.queueSpeakingLocked(event)
+		}
+	} else {
+		if event, ok := w.speaking.ObserveWrite(entry.frame.Turn, entry.frame.Gen, entry.frame.Disposition); ok {
+			dispatch = w.queueSpeakingLocked(event)
+		}
+		if !entry.frame.TurnFinal {
+			w.clearInflightLocked(entry)
+		}
+	}
+	w.mu.Unlock()
+	return dropped, dispatch
+}
+
+func (w *PacedWriter) finishFatal(entry *pacedFrame, reason core.SpeakingStopReason) bool {
+	w.mu.Lock()
+	w.clearInflightLocked(entry)
+	dispatch := false
+	if event, ok := w.speaking.Stop(reason); ok {
+		dispatch = w.queueSpeakingLocked(event)
+	}
+	w.mu.Unlock()
+	return dispatch
+}
+
+func (w *PacedWriter) finishDropped(entry *pacedFrame) {
+	w.mu.Lock()
+	if w.inflight == entry {
+		w.clearInflightLocked(entry)
+		w.FramesDropped.Add(1)
+	}
+	w.mu.Unlock()
+}
+
+func (w *PacedWriter) finishFinalDrain(ctx context.Context, entry *pacedFrame, mediaEnd time.Time, abort <-chan struct{}) {
+	if entry.frame.TurnFinal && w.cfg.EnablePacing {
+		if wait := time.Until(mediaEnd); wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-timer.C:
+			case <-abort:
+				stopAndDrainTimer(timer)
+			case <-ctx.Done():
+				stopAndDrainTimer(timer)
+			}
+		}
+	}
+	w.mu.Lock()
+	dropped := w.inflight != entry || w.dropInflight || staleInterruptible(entry.frame, w.activeGen)
+	w.clearInflightLocked(entry)
+	dispatch := false
+	if !dropped && entry.frame.TurnFinal {
+		if event, ok := w.speaking.Stop(core.SpeakingStopDrained); ok {
+			dispatch = w.queueSpeakingLocked(event)
+		}
+	}
+	w.mu.Unlock()
+	if dispatch {
+		w.dispatchSpeaking()
+	}
+}
+
+func stopAndDrainTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+}
+
+func (w *PacedWriter) clearInflightLocked(entry *pacedFrame) {
+	if w.inflight != entry {
+		return
+	}
+	done := w.inflightDone
+	w.inflight = nil
+	w.dropInflight = false
+	w.inflightAbort = nil
+	w.inflightDone = nil
+	w.inWrite = false
+	w.writeCancel = nil
+	if done != nil {
+		close(done)
+	}
+}
+
+func (w *PacedWriter) Close() {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
+	w.closed = true
+	for range w.queue {
+		w.FramesDropped.Add(1)
+	}
+	w.queue = nil
+	w.queuedBytes = 0
+	w.queuedDur = 0
+	clear(w.pendingFinals)
+	var abort chan struct{}
+	var cancel context.CancelFunc
+	if w.inflight != nil {
+		w.dropInflight = true
+		abort = w.inflightAbort
+		w.inflightAbort = nil
+		if w.inWrite {
+			cancel = w.writeCancel
+		}
+	}
+	dispatch := false
+	if event, ok := w.speaking.Stop(core.SpeakingStopClosed); ok {
+		dispatch = w.queueSpeakingLocked(event)
+	}
+	w.cond.Broadcast()
+	w.mu.Unlock()
+	if abort != nil {
+		close(abort)
+	}
+	if cancel != nil {
+		cancel()
+	}
+	if dispatch {
+		w.dispatchSpeaking()
+	}
+}
+
+// queueSpeakingLocked queues an event without invoking user code. The caller
+// holds the pacing mutex so state changes are ordered with flush/write fences.
+func (w *PacedWriter) queueSpeakingLocked(event core.SpeakingStateFrame) bool {
+	w.eventMu.Lock()
+	w.events = append(w.events, event)
+	if w.dispatch {
+		w.eventMu.Unlock()
+		return false
+	}
+	w.dispatch = true
+	w.eventMu.Unlock()
+	return true
+}
+
+func (w *PacedWriter) dispatchSpeaking() {
+	for {
+		w.eventMu.Lock()
+		if len(w.events) == 0 {
+			w.dispatch = false
+			w.eventMu.Unlock()
+			return
+		}
+		event := w.events[0]
+		w.events = w.events[1:]
+		callback := w.OnSpeakingState
+		w.eventMu.Unlock()
+		if callback != nil {
+			func() {
+				defer func() { _ = recover() }()
+				callback(event)
+			}()
+		}
+	}
+}
+
+func (w *PacedWriter) safeWriteComplete(frame *core.OutputAudioFrame, err error) {
+	callback := w.OnWriteComplete
+	if callback == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	callback(frame, err)
+}
+
+func safeFlushCallback(callback func(error), err error) {
+	defer func() { _ = recover() }()
+	callback(err)
+}
+
 func (w *PacedWriter) QueuedDuration() time.Duration {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.queuedDur
 }
 
-// QueuedBytes returns the total audio bytes currently waiting in queue.
 func (w *PacedWriter) QueuedBytes() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()

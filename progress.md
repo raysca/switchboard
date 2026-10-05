@@ -132,6 +132,31 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [ ] Task 9: STT commit/finalization.
 - [ ] Independent Phase 2 tester gate; record Gate B.
 
+### Task 8 initial implementation evidence
+
+- Implementation is prepared for independent review; Task 8 remains unchecked
+  and Gate B remains open. The existing `transport/ws.PacedWriter` is the only
+  pacing engine. Core adds typed speaking state and an explicit bounded
+  whole-turn marker; Google, xAI, and deterministic fakes propagate finality.
+- RED: the focused core, WebSocket, Google, and xAI commands failed to compile
+  for the missing `SpeakingTracker`, typed transition, `TurnFinal`, and pacer
+  callback. A second recorded RED failed for the missing explicit
+  `OutputTurnFinalFrame` / `MarkTurnFinal` path after the punctuation-aligned
+  streaming race was reproduced. Exact commands and outputs are recorded in
+  `.superpowers/sdd/2026-10-04-v2-execution/task-8-report.md`.
+- GREEN: focused pacing/RTVI race tests passed 20 repetitions. Full core race
+  tests passed with the documented macOS 26 SDK workaround; root RTVI/WebSocket
+  race tests and Google/xAI (with `xaispeech`) race tests passed. Core, root
+  transport, and affected-provider vet passed. The playback-clear probe was
+  rerun and again reported
+  `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; this remains
+  unresolved and is not a pass.
+- Durable limits: server queue defaults remain 100 ms / 4,800 bytes; pending
+  whole-turn markers are capped at 64; flush guarantees only server-side
+  queued/in-flight interruptible quiescence. Bytes already accepted by the
+  socket or buffered by a client remain outside the guarantee. Task 8 and Gate
+  B await independent review/test; Task 9 also remains open.
+
 ### Task 6 closeout
 
 - Implementation commits: `10d9c26` (`feat(core): add bounded streaming audio

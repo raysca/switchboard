@@ -192,6 +192,19 @@ func (h *Handler) FormatBotStoppedSpeaking() (string, error) {
 	return h.formatMessage(TypeBotStoppedSpeaking, nil)
 }
 
+// FormatSpeakingState maps the provider-neutral, output-derived framework
+// transition to the matching RTVI lifecycle event.
+func (h *Handler) FormatSpeakingState(event core.SpeakingStateFrame) (string, error) {
+	switch event.State {
+	case core.SpeakingStarted:
+		return h.FormatBotStartedSpeaking()
+	case core.SpeakingStopped:
+		return h.FormatBotStoppedSpeaking()
+	default:
+		return "", fmt.Errorf("%w: invalid speaking state %d", ErrInvalidRTVIMessage, event.State)
+	}
+}
+
 // FormatError produces safe error messages.
 func (h *Handler) FormatError(errStr string, fatal bool) (string, error) {
 	data, _ := json.Marshal(ErrorData{

@@ -211,6 +211,9 @@ func TestTTS_HeaderlessPCM20msChunking(t *testing.T) {
 	if len(audioFrames[2].Samples) != 480 || !audioFrames[2].IsFinal {
 		t.Fatalf("chunk 2 invalid: len=%d isFinal=%v", len(audioFrames[2].Samples), audioFrames[2].IsFinal)
 	}
+	if audioFrames[0].TurnFinal || audioFrames[1].TurnFinal || !audioFrames[2].TurnFinal {
+		t.Fatalf("whole-turn final marker was not limited to the last chunk: %v %v %v", audioFrames[0].TurnFinal, audioFrames[1].TurnFinal, audioFrames[2].TurnFinal)
+	}
 
 	// Reassembled samples must match exactly
 	var reassembled []byte

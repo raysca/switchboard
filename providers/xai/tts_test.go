@@ -62,10 +62,11 @@ func TestXAITTS_Success(t *testing.T) {
 	defer session.Close()
 
 	unit := &core.SynthesisUnitFrame{
-		Text:   "Hello world",
-		Turn:   "turn-1",
-		Gen:    1,
-		UnitID: 101,
+		Text:    "Hello world",
+		Turn:    "turn-1",
+		Gen:     1,
+		UnitID:  101,
+		IsFinal: true,
 	}
 
 	if err := session.Post(unit); err != nil {
@@ -99,6 +100,9 @@ func TestXAITTS_Success(t *testing.T) {
 	}
 	if !audioFrames[1].IsFinal {
 		t.Error("frame 1 should be final")
+	}
+	if audioFrames[0].TurnFinal || !audioFrames[1].TurnFinal {
+		t.Errorf("whole-turn final marker = [%v %v], want [false true]", audioFrames[0].TurnFinal, audioFrames[1].TurnFinal)
 	}
 	if len(audioFrames[0].Samples) != 960 {
 		t.Errorf("expected 960 bytes in frame 0, got %d", len(audioFrames[0].Samples))

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -207,6 +208,7 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 		}
 
 		return p.session.Go(func(c context.Context) {
+			var complete strings.Builder
 			for _, chunk := range p.cfg.ResponseChunks {
 				if p.cfg.ChunkDelay > 0 {
 					select {
@@ -221,6 +223,7 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 				if !p.cfg.IgnoreCancel && taskCtx.Err() != nil {
 					return
 				}
+				complete.WriteString(chunk)
 
 				_ = p.session.Reenter(&LLMTextDeltaFrame{
 					Delta: chunk,
@@ -228,6 +231,11 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 					Gen:   gen,
 				}, Downstream, 0, gen)
 			}
+			_ = p.session.Reenter(&LLMTextFrame{
+				Text: complete.String(),
+				Turn: um.Turn,
+				Gen:  gen,
+			}, Downstream, 0, gen)
 		})
 
 	case FrameInterruption:
@@ -314,6 +322,7 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 					Turn:       su.Turn,
 					UnitID:     su.UnitID,
 					IsFinal:    isFinal,
+					TurnFinal:  su.IsFinal && isFinal,
 				}
 
 				_ = p.session.Reenter(audioFrame, Downstream, p.index+1, su.Gen)
@@ -390,11 +399,12 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 
 			// Report write completion immediately back to session
 			return p.session.Reenter(&WriteCompletionFrame{
-				Turn:    oaf.Turn,
-				Gen:     oaf.Gen,
-				UnitID:  oaf.UnitID,
-				Seq:     oaf.Seq,
-				IsFinal: oaf.IsFinal,
+				Turn:      oaf.Turn,
+				Gen:       oaf.Gen,
+				UnitID:    oaf.UnitID,
+				Seq:       oaf.Seq,
+				IsFinal:   oaf.IsFinal,
+				TurnFinal: oaf.TurnFinal,
 			}, Downstream, 0, oaf.Gen)
 		}
 
@@ -413,11 +423,12 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 				p.mu.Unlock()
 				// Send write completion with old Gen to verify session rejects it
 				_ = p.session.Reenter(&WriteCompletionFrame{
-					Turn:    oaf.Turn,
-					Gen:     oaf.Gen,
-					UnitID:  oaf.UnitID,
-					Seq:     oaf.Seq,
-					IsFinal: oaf.IsFinal,
+					Turn:      oaf.Turn,
+					Gen:       oaf.Gen,
+					UnitID:    oaf.UnitID,
+					Seq:       oaf.Seq,
+					IsFinal:   oaf.IsFinal,
+					TurnFinal: oaf.TurnFinal,
 				}, Downstream, 0, oaf.Gen)
 				return
 			}
@@ -425,11 +436,12 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 			p.mu.Unlock()
 
 			_ = p.session.Reenter(&WriteCompletionFrame{
-				Turn:    oaf.Turn,
-				Gen:     oaf.Gen,
-				UnitID:  oaf.UnitID,
-				Seq:     oaf.Seq,
-				IsFinal: oaf.IsFinal,
+				Turn:      oaf.Turn,
+				Gen:       oaf.Gen,
+				UnitID:    oaf.UnitID,
+				Seq:       oaf.Seq,
+				IsFinal:   oaf.IsFinal,
+				TurnFinal: oaf.TurnFinal,
 			}, Downstream, 0, oaf.Gen)
 		})
 

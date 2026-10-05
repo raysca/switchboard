@@ -51,6 +51,8 @@ const (
 	FrameInternal        FrameType = 821
 	FrameWriteCompletion FrameType = 822
 	FrameTurnEvent       FrameType = 823
+	FrameSpeakingState   FrameType = 824
+	FrameOutputTurnFinal FrameType = 825
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.
@@ -118,6 +120,7 @@ type OutputAudioFrame struct {
 	Turn        string
 	UnitID      uint64
 	IsFinal     bool // true if this is the final audio frame of the synthesis unit
+	TurnFinal   bool // true only on the final output marker for the whole assistant turn
 	Disposition OutputDisposition
 }
 
@@ -211,6 +214,18 @@ type SynthesisUnitFrame struct {
 
 func (f *SynthesisUnitFrame) Type() FrameType    { return FrameSynthesisUnit }
 func (f *SynthesisUnitFrame) Generation() uint64 { return f.Gen }
+
+// OutputTurnFinalFrame marks an already-streamed synthesis unit as the final
+// unit of the whole assistant turn. It carries no audio and is ordered through
+// providers to the transport before queued async audio re-entry is delivered.
+type OutputTurnFinalFrame struct {
+	Turn   string
+	Gen    uint64
+	UnitID uint64
+}
+
+func (f *OutputTurnFinalFrame) Type() FrameType    { return FrameOutputTurnFinal }
+func (f *OutputTurnFinalFrame) Generation() uint64 { return f.Gen }
 
 // -------------------------------------------------------------------------
 // TTS Frames
@@ -339,13 +354,26 @@ func (f *FlushProcessedFrame) Generation() uint64 { return f.Gen }
 
 // WriteCompletionFrame reports asynchronous completion of an audio frame write.
 type WriteCompletionFrame struct {
-	Turn    string
-	Gen     uint64
-	UnitID  uint64
-	Seq     uint64
-	IsFinal bool // true if this completed the final audio frame of the synthesis unit
-	Err     error
+	Turn      string
+	Gen       uint64
+	UnitID    uint64
+	Seq       uint64
+	IsFinal   bool // true if this completed the final audio frame of the synthesis unit
+	TurnFinal bool // true if this completed the final output marker for the whole assistant turn
+	Err       error
 }
 
 func (f *WriteCompletionFrame) Type() FrameType    { return FrameWriteCompletion }
 func (f *WriteCompletionFrame) Generation() uint64 { return f.Gen }
+
+// SpeakingStateFrame is a provider-neutral transition derived from actual
+// transport output. It is not a client playback acknowledgement.
+type SpeakingStateFrame struct {
+	State  SpeakingState
+	Turn   string
+	Gen    uint64
+	Reason SpeakingStopReason
+}
+
+func (f *SpeakingStateFrame) Type() FrameType    { return FrameSpeakingState }
+func (f *SpeakingStateFrame) Generation() uint64 { return f.Gen }

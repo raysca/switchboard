@@ -628,7 +628,7 @@ func (s *Session) recordErr(err error) {
 
 func isControlFrame(f Frame) bool {
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
+	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
 		return true
 	default:
 		return false
@@ -637,7 +637,7 @@ func isControlFrame(f Frame) bool {
 
 func isFenceSurvivingControl(f Frame) bool {
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
+	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
 		return true
 	}
 	return false
@@ -663,7 +663,7 @@ func isInterruptibleOutput(f Frame) bool {
 		return false
 	}
 	switch f.Type() {
-	case FrameLLMTextDelta, FrameLLMText, FrameSynthesisUnit, FrameTTSStarted, FrameTTSAudio, FrameTTSStopped, FrameOutputAudio, FrameAssistantMessage:
+	case FrameLLMTextDelta, FrameLLMText, FrameSynthesisUnit, FrameOutputTurnFinal, FrameTTSStarted, FrameTTSAudio, FrameTTSStopped, FrameOutputAudio, FrameAssistantMessage:
 		return !isUninterruptibleOutput(f)
 	}
 	return false
