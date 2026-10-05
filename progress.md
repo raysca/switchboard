@@ -624,11 +624,42 @@ re-review and tester review remain pending; Task11/GateC remain open.
 
 ## Phase 4 — Persistent Server product core
 
-- [ ] Task 15: Agents, immutable versions, runtime snapshots.
-- [ ] Task 16: Credentials, capability registry, discovery.
+- [x] Task 15: Agents, immutable versions, runtime snapshots. Independent reviewer APPROVED and final independent tester PASS at `c3aed11`.
+- [x] Task 16: Credentials, capability registry, discovery. Independent security reviewer APPROVED and final independent tester PASS at `4afffeb`.
 - [ ] Task 17: MCP client, immutable discovery, validation.
 - [ ] Task 18: Agent/MCP association and safe lifecycle.
 - [ ] Independent Phase 4 tester gate; record Gate D.
+
+### Task 15 closeout
+
+- Agent management now provides authenticated CRUD, archive/duplicate and V1
+  import, canonical immutable versions, bounded readiness, and session-bound
+  version/hash snapshots. Creation and updates publish metadata and versions in
+  one transaction; concurrent allocation remains contiguous and failed
+  publication cannot leave partial metadata.
+- Independent correction review APPROVED `c7c2dad..c3aed11`. The final tester
+  passed 25 repeated race runs for lifecycle, concurrent publication, PATCH
+  preservation, readiness/session fencing, authenticated routing, and trusted
+  request IDs, plus full Server race/vet/build and standalone handler compile.
+  PostgreSQL 18 repository and migration upgrade/rollback contracts passed in a
+  disposable container; high-repetition service fixtures remain SQLite-backed.
+- Task 15 is complete at `c3aed11`. External provider/MCP readiness composition
+  remains Task 18, while the immutable runtime snapshot contract is ready for it.
+
+### Task 16 closeout
+
+- Provider credentials use authenticated encryption with explicit key IDs,
+  masked-only DTOs, panic-safe validation, non-clobbering key rotation, bounded
+  discovery, stable capability metadata, and readiness that requires the
+  credential's actually verified capability subset.
+- Independent security re-review APPROVED the corrections at `4afffeb`. The
+  final tester passed 25 repeated credential/API/provider/storage/agent race
+  suites, full Server race/vet, a readonly Server build, documentation checks,
+  and clean exact-commit checks. PostgreSQL was unavailable for this final
+  tester; the SQLite storage suite passed.
+- Task 16 is complete at `4afffeb`. Deployment-specific key loading, concrete
+  live validators, and discovery adapters remain explicit composition inputs
+  for onboarding/integration work rather than simulated readiness claims.
 
 ## Phase 5 — Trace persistence and observability
 
@@ -686,5 +717,6 @@ re-review and tester review remain pending; Task11/GateC remain open.
 Tasks 1–9 and the independent Phase 1–2 tester gates are complete. Gate A
 passed at `00175a9`; Gate B passed at `48a8170` with client playback clearing
 explicitly unsupported. Phase 3 Tasks 10–14 and its independent gate are
-complete; Gates C and F passed at `b8e42a3`. Phase 4 Tasks 15 and 16 are now
-unblocked and may run in parallel. Gates D, E, and G remain open.
+complete; Gates C and F passed at `b8e42a3`. Phase 4 Tasks 15 and 16 are
+complete. Task 17's MCP security correction is in progress; Task 18 remains
+blocked on its final contract. Gates D, E, and G remain open.
