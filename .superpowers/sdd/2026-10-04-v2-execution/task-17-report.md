@@ -42,3 +42,17 @@ The server had no MCP SDK dependency. The official `github.com/modelcontextproto
 ## Review
 
 Independent review findings were remediated: bounded/cycle-safe schema preflight, recursive result redaction, wire DTO/integer preservation, typed SDK failures, authenticated root-listener mounting and request-ID propagation, bounded session DELETE cleanup, common DNS/dial public-egress enforcement, and correlation-safe execution identity/tracing. The additional correction bounds expanded reference/combinator work, excludes unsupported reference semantics, matches the validator's actual dialect support, preserves typed connection/initialization state priority, and records trace duration before every span end.
+
+## Independent closeout
+
+The final independent security review APPROVED `480deff` after adversarial
+schema probes confirmed canonical parser/preflight alignment, rejection of
+dynamic and noncanonical reference semantics, conservative expanded-work
+bounds, exact supported-dialect admission, corrected failure-state priority,
+and duration-before-End trace export.
+
+The final independent tester passed MCP race tests five times, the full Server
+race suite, vet/build, dependency isolation, and clean exact-commit checks. A
+first detached checkout under `/tmp` exposed only the pre-existing macOS
+`/tmp`→`/private/tmp` storage-path assertion; the identical full suite passed
+from a checkout under `/Users/raymondottun/Projects`. Task 17 is complete.

@@ -626,7 +626,7 @@ re-review and tester review remain pending; Task11/GateC remain open.
 
 - [x] Task 15: Agents, immutable versions, runtime snapshots. Independent reviewer APPROVED and final independent tester PASS at `c3aed11`.
 - [x] Task 16: Credentials, capability registry, discovery. Independent security reviewer APPROVED and final independent tester PASS at `4afffeb`.
-- [ ] Task 17: MCP client, immutable discovery, validation.
+- [x] Task 17: MCP client, immutable discovery, validation. Independent security reviewer APPROVED and final independent tester PASS at `480deff`.
 - [ ] Task 18: Agent/MCP association and safe lifecycle.
 - [ ] Independent Phase 4 tester gate; record Gate D.
 
@@ -660,6 +660,26 @@ re-review and tester review remain pending; Task11/GateC remain open.
 - Task 16 is complete at `4afffeb`. Deployment-specific key loading, concrete
   live validators, and discovery adapters remain explicit composition inputs
   for onboarding/integration work rather than simulated readiness claims.
+
+### Task 17 closeout
+
+- The Server-owned official MCP SDK adapter supports authenticated remote
+  Streamable HTTP, immutable sorted discovery snapshots and schema hashes,
+  bounded validation-console execution, sanitized DTO/results/errors,
+  availability state, authenticated management routes, and correlated safe
+  trace identity. Local/process transport remains deliberately rejected.
+- Two independent security rounds closed recursive/dynamic and exponentially
+  expanding schema hazards, canonical parser/preflight mismatches, result
+  redaction, exact JSON-number transport, typed failure classification, public
+  egress/DNS-rebinding policy, bounded session cleanup, and trace termination
+  ordering. Final review APPROVED `480deff`.
+- The final tester passed MCP race tests five times, the full Server race suite,
+  vet/build, dependency isolation, and clean exact-commit checks. A first temp
+  checkout under `/tmp` hit the pre-existing macOS `/tmp`→`/private/tmp` path
+  assertion; the same full suite passed from a detached checkout under
+  `/Users/raymondottun/Projects`.
+- Task 17 is complete at `480deff`. Task 18 may now bind selected immutable
+  schema snapshots into agent versions and implement lifecycle/deletion safety.
 
 ## Phase 5 — Trace persistence and observability
 
@@ -718,5 +738,6 @@ Tasks 1–9 and the independent Phase 1–2 tester gates are complete. Gate A
 passed at `00175a9`; Gate B passed at `48a8170` with client playback clearing
 explicitly unsupported. Phase 3 Tasks 10–14 and its independent gate are
 complete; Gates C and F passed at `b8e42a3`. Phase 4 Tasks 15 and 16 are
-complete. Task 17's MCP security correction is in progress; Task 18 remains
-blocked on its final contract. Gates D, E, and G remain open.
+complete. Task 17 is complete at `480deff`; Task 18 is now the only remaining
+Phase 4 implementation task before the independent Gate D run. Gates D, E, and
+G remain open.
