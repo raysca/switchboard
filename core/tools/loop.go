@@ -18,7 +18,10 @@ var (
 	ErrMalformedToolCall     = errors.New("tools: malformed tool call")
 	ErrMaxToolCalls          = errors.New("tools: maximum total tool calls exceeded")
 	ErrMaxToolRounds         = errors.New("tools: maximum tool rounds exceeded")
+	ErrStaleToolCall         = errors.New("tools: tool call belongs to a stale generation")
 )
+
+const minimumToolResultBytes = len("{\"error\":\"arguments_too_deep\"}")
 
 var toolNamePattern = regexp.MustCompile("^[A-Za-z0-9_.-]{1,64}$")
 
@@ -42,7 +45,7 @@ func DefaultToolLoopConfig() ToolLoopConfig {
 }
 
 func (c ToolLoopConfig) validate() error {
-	if c.MaxRounds <= 0 || c.MaxCalls <= 0 || c.MaxArgumentBytes <= 0 || c.MaxResultBytes <= 0 || c.MaxJSONDepth <= 0 || c.DefaultCallTimeout <= 0 || c.RoundTimeout <= 0 {
+	if c.MaxRounds <= 0 || c.MaxCalls <= 0 || c.MaxArgumentBytes <= 0 || c.MaxResultBytes < minimumToolResultBytes || c.MaxJSONDepth <= 0 || c.DefaultCallTimeout <= 0 || c.RoundTimeout <= 0 {
 		return ErrInvalidToolLoopConfig
 	}
 	return nil
@@ -98,7 +101,7 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	result := ToolLoopResult{Done: true}
+	result := ToolLoopResult{Done: len(initial) == 0}
 	calls := cloneCalls(initial)
 	for len(calls) > 0 {
 		if err := ctx.Err(); err != nil {
@@ -109,6 +112,7 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 		}
 		roundCtx, cancelRound := context.WithTimeout(ctx, l.cfg.RoundTimeout)
 		result.Rounds++
+		roundResultStart := len(result.Results)
 		roundResults := make([]ToolResult, 0, len(calls))
 		for _, call := range calls {
 			if result.Calls == l.cfg.MaxCalls {
@@ -123,6 +127,10 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 			}
 			roundResults = append(roundResults, cloneToolResult(toolResult))
 			result.Results = append(result.Results, cloneToolResult(toolResult))
+			if toolResult.Status == ToolCancelled && toolResult.ErrorCategory == "stale_generation" {
+				cancelRound()
+				return result, ErrStaleToolCall
+			}
 			if err := ctx.Err(); err != nil {
 				cancelRound()
 				return result, err
@@ -132,8 +140,17 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 				return result, err
 			}
 		}
+		for i, call := range calls {
+			if !l.isCurrent(call) {
+				started := result.Results[roundResultStart+i].StartedAt
+				result.Results[roundResultStart+i] = staleToolResult(call, started, l.cfg.Now())
+				cancelRound()
+				return result, ErrStaleToolCall
+			}
+		}
 		if continuation == nil {
 			cancelRound()
+			result.Done = true
 			return result, nil
 		}
 		if err := roundCtx.Err(); err != nil {
@@ -181,6 +198,9 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		return ToolResult{}, err
 	}
 	if !claimed {
+		if !l.isCurrent(call) {
+			return staleToolResult(call, prior.StartedAt, l.cfg.Now()), nil
+		}
 		return cloneToolResult(prior), nil
 	}
 	if !toolNamePattern.MatchString(call.Name) {
@@ -195,7 +215,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 	if _, ok := l.definitions[call.Name]; !ok {
 		return l.commit(call, ToolFailed, errorPayload("unknown_tool"), "unknown_tool", started)
 	}
-	if l.cfg.IsCurrent != nil && !l.cfg.IsCurrent(call) {
+	if !l.isCurrent(call) {
 		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
 	}
 	if err := roundCtx.Err(); err != nil {
@@ -226,7 +246,12 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		toolResult, execErr = l.executor.Execute(callCtx, cloneCall(call))
 	}()
 	ended := l.cfg.Now()
-	span.End(execErr)
+	// Executor errors can contain arbitrary provider or application details.
+	// Trace only normalized loop outcomes through the existing event fields.
+	span.End(nil)
+	if !l.isCurrent(call) {
+		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
+	}
 	if callCtx.Err() != nil {
 		category := "timeout"
 		if errors.Is(roundCtx.Err(), context.Canceled) {
@@ -262,10 +287,21 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		toolResult.Status, toolResult.ErrorCategory = ToolFailed, category
 	}
 	toolResult.Result = payload
+	if !l.isCurrent(call) {
+		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
+	}
 	if err := l.history.AddToolResultStatus(string(call.TurnID), uint64(call.Generation), call.ID, toolResult.Status, payload, toolResult.ErrorCategory, ended); err != nil {
 		return ToolResult{}, err
 	}
 	return cloneToolResult(toolResult), nil
+}
+
+func (l *ToolLoop) isCurrent(call ToolCall) bool {
+	return l.cfg.IsCurrent == nil || l.cfg.IsCurrent(call)
+}
+
+func staleToolResult(call ToolCall, started, ended time.Time) ToolResult {
+	return ToolResult{CallID: call.ID, Status: ToolCancelled, Result: errorPayload("stale_generation"), ErrorCategory: "stale_generation", StartedAt: started, EndedAt: ended}
 }
 
 var errExecutorPanic = errors.New("tools: executor panic")

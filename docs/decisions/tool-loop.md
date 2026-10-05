@@ -30,18 +30,27 @@ the small policy surface directly. The core module's `go.mod` is unchanged.
   belongs to the provider adapter and can return another batch or finish.
 - Defaults bound a loop to four rounds, sixteen calls, 32 KiB per argument,
   64 KiB per result, depth 16, 30 seconds per call, and two minutes per round.
-  Applications can tune each bound explicitly; non-positive values are
-  rejected rather than silently repaired.
+  Generated safe error payloads are capped by the configured result bound;
+  configurations must allow at least 30 bytes, enough for the largest
+  canonical loop error payload. Applications can tune each bound explicitly;
+  invalid bounds are rejected rather than silently repaired.
 - Exact replay uses the context's bounded tool identity ledger. Its atomic
-	claim permits only one executor for a pending call, returns the stored result
-	for a completed exact replay, and rejects conflicting IDs or an in-flight
-	replay. Failed call insertion rolls back message and eviction changes before
-	any executor runs. A failed result insertion retains the pending replay fence
-	so an already-run side effect cannot be invoked twice.
+  claim permits only one executor for a pending call, returns the stored result
+  for a completed exact replay, and rejects conflicting IDs or an in-flight
+  replay. Failed call insertion rolls back message and eviction changes before
+  any executor runs. A failed result insertion retains the pending replay fence
+  so an already-run side effect cannot be invoked twice.
 - Invalid arguments, invalid tool names, unknown definitions, executor errors
-	and panics, stale generation checks, and timeouts become small safe JSON
-	results. Call identity failures, context insertion failures, cancellation,
-	and exhausted limits stop the loop.
+  and panics, stale generation checks, and timeouts become small safe JSON
+  results. Call identity failures, context insertion failures, cancellation,
+  and exhausted limits stop the loop.
+- Generation fences run before execution, after the handler returns, before
+  context result insertion and continuation, and before a completed replay is returned. A call
+  that becomes stale during execution records a normalized cancellation result
+  and terminates the loop without passing the executor payload to context or
+  invoking continuation. A stale replay returns the same safe outcome without
+  rewriting its previously committed context exchange. Span end receives nil;
+  raw executor errors are never handed to tracing.
 - Each executor receives a child context with its effective tool timeout; each
   round and continuation receives a round context. Executors and continuation
   callbacks must honor cancellation. The loop runs them synchronously and
@@ -63,3 +72,9 @@ history eviction. The native loop does not parse provider response formats,
 convert JSON Schema, issue model requests, implement confirmation UX, or
 provide process isolation; those responsibilities remain with adapters and
 applications.
+
+Task 12 integration must invoke the ToolLoop atomic claim before projecting
+the same provider ToolCall into the existing context aggregator, or add an
+explicit distinction between an already recorded call and a newly claimed
+call. If the aggregator inserts first, ToolLoop sees a pending replay and
+correctly refuses to execute it. Task 11 does not change aggregator behavior.

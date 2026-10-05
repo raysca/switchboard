@@ -513,6 +513,18 @@ surface for adapters. The official-library evaluation and policy are in
 in `.superpowers/sdd/2026-10-04-v2-execution/task-11-report.md`. Task 11 and
 Gate C remain open pending independent review and test.
 
+Task 11 correction round 1 addresses the independent review's four findings:
+stale generation is rechecked around execution/replay, span end no longer sees
+raw executor errors, the minimum result payload size is validated, and limit
+errors leave Done false. Task 12 must order ToolLoop's atomic claim before a
+duplicate ContextAggregator projection or distinguish previously recorded
+calls; Task11/GateC remain open pending corrected commit review/test.
+
+Correction verification passed focused ToolLoop race x50, full core race/vet
+with the documented MacOS26 SDK override, Google/xAI provider race/vet, and
+root xAI-tagged race/vet including RTVI/WebSocket transports. Independent
+correction review and tester are still pending; Task11/GateC remain open.
+
 ## Phase 4 — Persistent Server product core
 
 - [ ] Task 15: Agents, immutable versions, runtime snapshots.

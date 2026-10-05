@@ -360,6 +360,11 @@ The Task 1 signatures live in `govoice/core/tools`: `ToolExecutor.Execute(contex
 - Tool call/result events correlate to the originating turn; content follows trace policy.
 - A tool handler cannot keep a session alive past cancellation or its configured timeout.
 
+Generated safe ToolLoop errors obey the configured result-byte cap, which must
+be at least 30 bytes. Before provider adapters project calls through
+ContextAggregator, they must invoke the ToolLoop atomic claim or explicitly
+distinguish a previously recorded call from a new claim.
+
 ## 3. Server concepts and ownership
 
 Server owns the following durable domain records. All durable IDs are UUIDv7 strings; wire and repository APIs treat IDs as opaque. Framework `SessionID`/`TurnID` types may carry the corresponding durable value but remain framework types.

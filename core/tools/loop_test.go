@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,16 +14,19 @@ import (
 	core "govoice/core"
 )
 
-type loopTraceRecorder struct{ events []core.TraceEvent }
-type loopTraceSpan struct{}
+type loopTraceRecorder struct {
+	events []core.TraceEvent
+	ended  []error
+}
+type loopTraceSpan struct{ recorder *loopTraceRecorder }
 
 func (r *loopTraceRecorder) StartSpan(_ context.Context, event core.TraceEvent) core.Span {
 	r.events = append(r.events, event)
-	return loopTraceSpan{}
+	return loopTraceSpan{recorder: r}
 }
 func (loopTraceSpan) SetAttribute(string, any) {}
 func (loopTraceSpan) AddEvent(core.TraceEvent) {}
-func (loopTraceSpan) End(error)                {}
+func (s loopTraceSpan) End(err error)          { s.recorder.ended = append(s.recorder.ended, err) }
 
 func testLoopConfig() ToolLoopConfig {
 	return ToolLoopConfig{MaxRounds: 3, MaxCalls: 4, MaxArgumentBytes: 4096, MaxResultBytes: 1024, MaxJSONDepth: 8, DefaultCallTimeout: time.Second, RoundTimeout: 2 * time.Second}
@@ -124,7 +129,7 @@ func TestToolLoopConflictingDuplicateAndMalformedIdentityFailClosed(t *testing.T
 
 func TestToolLoopNormalizesExecutorErrorPanicAndInvalidOrOversizedResult(t *testing.T) {
 	cfg := testLoopConfig()
-	cfg.MaxResultBytes = 20
+	cfg.MaxResultBytes = minimumToolResultBytes
 	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 32, MaxTokens: 10000})
 	exec := ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
 		switch c.ID {
@@ -221,7 +226,7 @@ func TestToolLoopHonorsCancellationInterruptionAndStaleGeneration(t *testing.T) 
 	}), ToolDefinition{Name: "x"})
 	stale.cfg.IsCurrent = func(ToolCall) bool { return false }
 	got, err := stale.Run(context.Background(), []ToolCall{testCall("stale", "x", "{}")}, nil)
-	if err != nil || got.Results[0].ErrorCategory != "stale_generation" {
+	if !errors.Is(err, ErrStaleToolCall) || got.Results[0].ErrorCategory != "stale_generation" {
 		t.Fatalf("stale result = %#v, %v", got, err)
 	}
 }
@@ -419,5 +424,193 @@ func TestToolLoopRejectsDeepArgumentsAndClearsSuccessErrorCategory(t *testing.T)
 	}
 	if executions.Load() != 1 || got.Results[0].ErrorCategory != "arguments_too_deep" || got.Results[1].ErrorCategory != "" {
 		t.Fatalf("arguments/success normalization = %#v, calls=%d", got.Results, executions.Load())
+	}
+}
+
+func TestToolLoopGenerationChangeDuringExecutionFencesResultAndContinuation(t *testing.T) {
+	var generation atomic.Uint64
+	generation.Store(1)
+	continued := atomic.Bool{}
+	loop, history := newTestLoop(t, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+		generation.Store(2)
+		return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage("{\"private\":true}")}, nil
+	}), ToolDefinition{Name: "x"})
+	loop.cfg.IsCurrent = func(c ToolCall) bool { return uint64(c.Generation) == generation.Load() }
+	got, err := loop.Run(context.Background(), []ToolCall{testCall("flip", "x", "{}")}, func(context.Context, []ToolResult) ([]ToolCall, bool, error) {
+		continued.Store(true)
+		return nil, true, nil
+	})
+	if !errors.Is(err, ErrStaleToolCall) || continued.Load() {
+		t.Fatalf("stale execution = %#v err=%v continued=%v", got, err, continued.Load())
+	}
+	if len(got.Results) != 1 || got.Results[0].Status != ToolCancelled || got.Results[0].ErrorCategory != "stale_generation" || string(got.Results[0].Result) != "{\"error\":\"stale_generation\"}" {
+		t.Fatalf("stale result = %#v", got.Results)
+	}
+	for _, message := range history.Messages() {
+		if message.Kind == core.MessageToolResult && message.Content == "{\"private\":true}" {
+			t.Fatal("stale executor payload entered context")
+		}
+	}
+}
+
+func TestToolLoopCompletedReplayIsFencedWhenGenerationTurnsStale(t *testing.T) {
+	var generation atomic.Uint64
+	generation.Store(1)
+	var executions atomic.Int32
+	loop, history := newTestLoop(t, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+		executions.Add(1)
+		return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage("{\"ok\":true}")}, nil
+	}), ToolDefinition{Name: "x"})
+	loop.cfg.IsCurrent = func(c ToolCall) bool { return uint64(c.Generation) == generation.Load() }
+	call := testCall("replay-stale", "x", "{}")
+	if _, err := loop.Run(context.Background(), []ToolCall{call}, nil); err != nil {
+		t.Fatal(err)
+	}
+	generation.Store(2)
+	got, err := loop.Run(context.Background(), []ToolCall{call}, nil)
+	if !errors.Is(err, ErrStaleToolCall) || executions.Load() != 1 {
+		t.Fatalf("stale replay = %#v err=%v executions=%d", got, err, executions.Load())
+	}
+	if len(got.Results) != 1 || got.Results[0].Status != ToolCancelled || got.Results[0].ErrorCategory != "stale_generation" {
+		t.Fatalf("stale replay result = %#v", got.Results)
+	}
+	if len(history.Messages()) != 2 || history.Messages()[1].Content != "{\"ok\":true}" {
+		t.Fatalf("replay changed committed history: %#v", history.Messages())
+	}
+}
+
+func TestToolLoopTracerNeverReceivesRawExecutorError(t *testing.T) {
+	const secret = "executor-private-sentinel"
+	trace := &loopTraceRecorder{}
+	cfg := testLoopConfig()
+	cfg.Tracer = trace
+	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 8, MaxTokens: 1000})
+	loop, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage("{\"type\":\"object\"}")}}, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) { return ToolResult{}, errors.New(secret) }), history, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loop.Run(context.Background(), []ToolCall{testCall("trace-error", "x", "{}")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Results) != 1 || got.Results[0].ErrorCategory != "executor_error" {
+		t.Fatalf("normalized executor result = %#v", got.Results)
+	}
+	if len(trace.ended) != 1 || trace.ended[0] != nil || strings.Contains(fmt.Sprint(trace.ended), secret) {
+		t.Fatalf("tracer saw unsafe error: %#v", trace.ended)
+	}
+}
+
+func TestToolLoopRechecksGenerationBeforeContinuation(t *testing.T) {
+	var checks atomic.Int32
+	continued := atomic.Bool{}
+	loop, _ := newTestLoop(t, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+		return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage("{\"ok\":true}")}, nil
+	}), ToolDefinition{Name: "x"})
+	loop.cfg.IsCurrent = func(ToolCall) bool { return checks.Add(1) < 4 }
+	got, err := loop.Run(context.Background(), []ToolCall{testCall("stales-late", "x", "{}")}, func(context.Context, []ToolResult) ([]ToolCall, bool, error) {
+		continued.Store(true)
+		return nil, true, nil
+	})
+	if !errors.Is(err, ErrStaleToolCall) || continued.Load() || got.Done || len(got.Results) != 1 || got.Results[0].ErrorCategory != "stale_generation" {
+		t.Fatalf("late stale loop = %#v err=%v continued=%v checks=%d", got, err, continued.Load(), checks.Load())
+	}
+}
+
+func TestToolLoopResultByteMinimumCoversEveryFallback(t *testing.T) {
+	for _, category := range []string{"invalid_tool_name", "invalid_arguments", "arguments_too_deep", "unknown_tool", "stale_generation", "timeout", "cancelled", "executor_error", "executor_panic", "invalid_status", "invalid_result", "result_too_large", "result_too_deep"} {
+		payload := errorPayload(category)
+		if len(payload) > minimumToolResultBytes || !json.Valid(payload) {
+			t.Fatalf("fallback %s is not bounded JSON: %s", category, payload)
+		}
+	}
+	for _, maxBytes := range []int{0, minimumToolResultBytes - 1} {
+		cfg := testLoopConfig()
+		cfg.MaxResultBytes = maxBytes
+		if _, err := NewToolLoop(nil, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) { return ToolResult{}, nil }), core.NewConversationContext(core.ContextConfig{}), cfg); !errors.Is(err, ErrInvalidToolLoopConfig) {
+			t.Fatalf("MaxResultBytes=%d accepted: %v", maxBytes, err)
+		}
+	}
+	cfg := testLoopConfig()
+	cfg.MaxResultBytes = minimumToolResultBytes
+	for _, mode := range []string{"error", "panic", "timeout", "oversized", "bad-args"} {
+		history := core.NewConversationContext(core.ContextConfig{MaxMessages: 32, MaxTokens: 10000})
+		loop, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage("{\"type\":\"object\"}"), Policy: ToolPolicy{Timeout: 5 * time.Millisecond}}}, ToolExecutorFunc(func(ctx context.Context, c ToolCall) (ToolResult, error) {
+			switch c.ID {
+			case "error":
+				return ToolResult{}, errors.New("secret")
+			case "panic":
+				panic("private")
+			case "timeout":
+				<-ctx.Done()
+				return ToolResult{}, ctx.Err()
+			case "oversized":
+				return ToolResult{Status: ToolSucceeded, Result: json.RawMessage("{\"too\":\"large payload\"}")}, nil
+			default:
+				return ToolResult{Status: ToolSucceeded, Result: json.RawMessage("{}")}, nil
+			}
+		}), history, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		args := "{}"
+		if mode == "bad-args" {
+			args = "{broken"
+		}
+		got, err := loop.Run(context.Background(), []ToolCall{testCall(mode, "x", args)}, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		if len(got.Results) != 1 || len(got.Results[0].Result) > minimumToolResultBytes || !json.Valid(got.Results[0].Result) {
+			t.Fatalf("%s fallback is not bounded JSON: %#v", mode, got.Results)
+		}
+	}
+}
+
+func TestToolLoopDoneIsFalseWhenCallOrRoundLimitErrors(t *testing.T) {
+	cfg := testLoopConfig()
+	cfg.MaxCalls = 1
+	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 32, MaxTokens: 10000})
+	loop, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage("{\"type\":\"object\"}")}}, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+		return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage("{}")}, nil
+	}), history, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loop.Run(context.Background(), []ToolCall{testCall("first", "x", "{}"), testCall("second", "x", "{}")}, nil)
+	if !errors.Is(err, ErrMaxToolCalls) || got.Done {
+		t.Fatalf("first-round limit = %#v %v", got, err)
+	}
+
+	cfg = testLoopConfig()
+	cfg.MaxCalls = 1
+	history = core.NewConversationContext(core.ContextConfig{MaxMessages: 32, MaxTokens: 10000})
+	loop, err = NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage("{\"type\":\"object\"}")}}, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+		return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage("{}")}, nil
+	}), history, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = loop.Run(context.Background(), []ToolCall{testCall("only", "x", "{}")}, func(context.Context, []ToolResult) ([]ToolCall, bool, error) {
+		return []ToolCall{testCall("over", "x", "{}")}, false, nil
+	})
+	if !errors.Is(err, ErrMaxToolCalls) || got.Done {
+		t.Fatalf("later-round call limit = %#v %v", got, err)
+	}
+
+	cfg = testLoopConfig()
+	cfg.MaxRounds = 1
+	history = core.NewConversationContext(core.ContextConfig{MaxMessages: 32, MaxTokens: 10000})
+	loop, err = NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage("{\"type\":\"object\"}")}}, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+		return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage("{}")}, nil
+	}), history, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = loop.Run(context.Background(), []ToolCall{testCall("round1", "x", "{}")}, func(context.Context, []ToolResult) ([]ToolCall, bool, error) {
+		return []ToolCall{testCall("round2", "x", "{}")}, false, nil
+	})
+	if !errors.Is(err, ErrMaxToolRounds) || got.Done {
+		t.Fatalf("later-round limit = %#v %v", got, err)
 	}
 }

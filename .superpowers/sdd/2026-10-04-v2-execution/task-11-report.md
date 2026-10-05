@@ -67,3 +67,36 @@ links are in `docs/decisions/tool-loop.md`.
 - `gofmt` and `git diff --check`: PASS.
 
 Task 11 remains unchecked pending independent code review and tester review.
+
+## Correction round 1
+
+The independent reviewer required terminal generation fencing, trace error
+sanitization, a result-byte minimum covering every generated fallback, and
+accurate Done reporting on errors. RED regressions first failed to compile on
+the new stale-call sentinel and byte-minimum contract; the prior suite also
+reproduced the stale result behavior and too-small fallback configuration.
+
+GREEN changes recheck the caller's generation after execution and before result
+insertion, and reject stale completed replays before returning their cached
+payload. A stale outcome is a bounded cancelled result and stops continuation.
+Trace spans now end with nil rather than raw handler errors. Configurations
+below the 30-byte canonical fallback requirement are rejected. Done begins
+false for active loops and changes to true only on successful terminal
+completion (or an empty initial request).
+
+Task 12 integration caveat: the provider adapter must call the ToolLoop atomic
+claim before projecting the same ToolCall through ContextAggregator, or provide
+an explicit way to distinguish already-recorded calls from new claims.
+Otherwise the loop sees the context's pending replay and correctly fails
+closed. Task 11 leaves ContextAggregator unchanged.
+
+Correction verification:
+
+- `cd core && go test -race -count=50 -run TestToolLoop ./tools`: PASS.
+- Full core race/vet with the documented Xcode MacOS26 SDK override: PASS.
+- Google provider race/vet: PASS.
+- xAI provider race/vet: PASS.
+- Root xAI-tagged race/vet: PASS, including RTVI and WebSocket transport tests.
+- `gofmt` and `git diff --check`: PASS.
+
+Task 11 and Gate C remain open pending independent re-review and tester.
