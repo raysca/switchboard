@@ -49,8 +49,14 @@ the small policy surface directly. The core module's `go.mod` is unchanged.
   that becomes stale during execution records a normalized cancellation result
   and terminates the loop without passing the executor payload to context or
   invoking continuation. A stale replay returns the same safe outcome without
-  rewriting its previously committed context exchange. Span end receives nil;
-  raw executor errors are never handed to tracing.
+  rewriting its previously committed context exchange. Completed replay also
+  rechecks the current result byte/depth bounds; if the cached payload violates
+  a stricter loop policy, replay fails closed with
+  `ErrReplayResultOutOfBounds`, without execution, continuation, or history
+  rewrite. Trace span end distinguishes success from safe normalized outcome
+  categories (for example `executor_error`, `executor_panic`, `cancelled`, and
+  `timeout`). It never receives raw handler errors or handler-provided error
+  categories.
 - Each executor receives a child context with its effective tool timeout; each
   round and continuation receives a round context. Executors and continuation
   callbacks must honor cancellation. The loop runs them synchronously and

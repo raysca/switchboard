@@ -479,25 +479,131 @@ func TestToolLoopCompletedReplayIsFencedWhenGenerationTurnsStale(t *testing.T) {
 	}
 }
 
-func TestToolLoopTracerNeverReceivesRawExecutorError(t *testing.T) {
+func TestToolLoopTracerGetsSafeOutcomeClassification(t *testing.T) {
 	const secret = "executor-private-sentinel"
-	trace := &loopTraceRecorder{}
-	cfg := testLoopConfig()
-	cfg.Tracer = trace
-	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 8, MaxTokens: 1000})
-	loop, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage("{\"type\":\"object\"}")}}, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) { return ToolResult{}, errors.New(secret) }), history, cfg)
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name    string
+		want    string
+		exec    ToolExecutor
+		ctx     func() (context.Context, func())
+		timeout time.Duration
+	}{
+		{name: "success", exec: ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+			return ToolResult{Result: json.RawMessage("{}")}, nil
+		})},
+		{name: "executor_error", want: "executor_error", exec: ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) { return ToolResult{}, errors.New(secret) })},
+		{name: "panic", want: "executor_panic", exec: ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) { panic(secret) })},
+		{name: "timeout", want: "timeout", timeout: 5 * time.Millisecond, exec: ToolExecutorFunc(func(ctx context.Context, _ ToolCall) (ToolResult, error) {
+			<-ctx.Done()
+			return ToolResult{}, ctx.Err()
+		})},
+		{name: "cancelled", want: "cancelled", ctx: func() (context.Context, func()) {
+			ctx, cancel := context.WithCancel(context.Background())
+			return ctx, cancel
+		}, exec: ToolExecutorFunc(func(ctx context.Context, _ ToolCall) (ToolResult, error) {
+			<-ctx.Done()
+			return ToolResult{}, ctx.Err()
+		})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			trace := &loopTraceRecorder{}
+			cfg := testLoopConfig()
+			cfg.Tracer = trace
+			if tc.timeout > 0 {
+				cfg.DefaultCallTimeout, cfg.RoundTimeout = tc.timeout, time.Second
+			}
+			history := core.NewConversationContext(core.ContextConfig{MaxMessages: 8, MaxTokens: 1000})
+			loop, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage("{\"type\":\"object\"}")}}, tc.exec, history, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.Background(), func() {}
+			if tc.ctx != nil {
+				ctx, cancel = tc.ctx()
+			}
+			defer cancel()
+			if tc.name == "cancelled" {
+				started := make(chan struct{})
+				loop.executor = ToolExecutorFunc(func(ctx context.Context, _ ToolCall) (ToolResult, error) {
+					close(started)
+					<-ctx.Done()
+					return ToolResult{}, ctx.Err()
+				})
+				done := make(chan struct{})
+				go func() { defer close(done); _, _ = loop.Run(ctx, []ToolCall{testCall(tc.name, "x", "{}")}, nil) }()
+				<-started
+				cancel()
+				<-done
+			} else {
+				got, runErr := loop.Run(ctx, []ToolCall{testCall(tc.name, "x", "{}")}, nil)
+				if runErr != nil {
+					t.Fatal(runErr)
+				}
+				if len(got.Results) != 1 {
+					t.Fatalf("results = %#v", got.Results)
+				}
+			}
+			if len(trace.ended) != 1 {
+				t.Fatalf("span endings = %#v", trace.ended)
+			}
+			if tc.want == "" {
+				if trace.ended[0] != nil {
+					t.Fatalf("success trace outcome = %v", trace.ended[0])
+				}
+			} else if trace.ended[0] == nil || trace.ended[0].Error() != tc.want {
+				t.Fatalf("trace outcome = %v, want safe category %q", trace.ended[0], tc.want)
+			}
+			if strings.Contains(fmt.Sprint(trace.ended), secret) {
+				t.Fatalf("tracer saw secret: %#v", trace.ended)
+			}
+		})
 	}
-	got, err := loop.Run(context.Background(), []ToolCall{testCall("trace-error", "x", "{}")}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Results) != 1 || got.Results[0].ErrorCategory != "executor_error" {
-		t.Fatalf("normalized executor result = %#v", got.Results)
-	}
-	if len(trace.ended) != 1 || trace.ended[0] != nil || strings.Contains(fmt.Sprint(trace.ended), secret) {
-		t.Fatalf("tracer saw unsafe error: %#v", trace.ended)
+}
+
+func TestToolLoopReplayFailsClosedWhenCurrentBoundsAreStricter(t *testing.T) {
+	for _, tc := range []struct {
+		name, payload      string
+		maxBytes, maxDepth int
+	}{
+		{name: "bytes", payload: `{"value":"a payload comfortably longer than thirty bytes"}`, maxBytes: minimumToolResultBytes, maxDepth: 8},
+		{name: "depth", payload: `{"a":{"b":{"c":1}}}`, maxBytes: 1024, maxDepth: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			history := core.NewConversationContext(core.ContextConfig{MaxMessages: 8, MaxTokens: 1000})
+			var executions atomic.Int32
+			exec := ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+				executions.Add(1)
+				return ToolResult{Result: json.RawMessage(tc.payload)}, nil
+			})
+			defs := []ToolDefinition{{Name: "x", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+			firstCfg := testLoopConfig()
+			first, err := NewToolLoop(defs, exec, history, firstCfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			call := testCall("bounded-replay-"+tc.name, "x", "{}")
+			if _, err := first.Run(context.Background(), []ToolCall{call}, nil); err != nil {
+				t.Fatal(err)
+			}
+			before := history.Messages()
+			strictCfg := testLoopConfig()
+			strictCfg.MaxResultBytes, strictCfg.MaxJSONDepth = tc.maxBytes, tc.maxDepth
+			strict, err := NewToolLoop(defs, exec, history, strictCfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			continued := false
+			got, err := strict.Run(context.Background(), []ToolCall{call}, func(context.Context, []ToolResult) ([]ToolCall, bool, error) { continued = true; return nil, true, nil })
+			if !errors.Is(err, ErrReplayResultOutOfBounds) || got.Done || continued {
+				t.Fatalf("strict replay = %#v err=%v continued=%v", got, err, continued)
+			}
+			if executions.Load() != 1 {
+				t.Fatalf("re-executed cached call: %d", executions.Load())
+			}
+			if !reflect.DeepEqual(history.Messages(), before) {
+				t.Fatalf("replay rewrote committed history: before=%#v after=%#v", before, history.Messages())
+			}
+		})
 	}
 }
 
@@ -545,7 +651,7 @@ func TestToolLoopResultByteMinimumCoversEveryFallback(t *testing.T) {
 				<-ctx.Done()
 				return ToolResult{}, ctx.Err()
 			case "oversized":
-				return ToolResult{Status: ToolSucceeded, Result: json.RawMessage("{\"too\":\"large payload\"}")}, nil
+				return ToolResult{Status: ToolSucceeded, Result: json.RawMessage(`{"too":"a payload that exceeds the configured thirty-byte bound"}`)}, nil
 			default:
 				return ToolResult{Status: ToolSucceeded, Result: json.RawMessage("{}")}, nil
 			}
@@ -563,6 +669,9 @@ func TestToolLoopResultByteMinimumCoversEveryFallback(t *testing.T) {
 		}
 		if len(got.Results) != 1 || len(got.Results[0].Result) > minimumToolResultBytes || !json.Valid(got.Results[0].Result) {
 			t.Fatalf("%s fallback is not bounded JSON: %#v", mode, got.Results)
+		}
+		if mode == "oversized" && got.Results[0].ErrorCategory != "result_too_large" {
+			t.Fatalf("oversized category = %q", got.Results[0].ErrorCategory)
 		}
 	}
 }

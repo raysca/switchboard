@@ -525,6 +525,14 @@ with the documented MacOS26 SDK override, Google/xAI provider race/vet, and
 root xAI-tagged race/vet including RTVI/WebSocket transports. Independent
 correction review and tester are still pending; Task11/GateC remain open.
 
+Task 11 correction round 2 addresses trace classification and replay policy:
+spans expose only normalized safe categories; cached results outside stricter
+current byte/depth bounds fail closed without execution or history mutation.
+The oversized result regression now exceeds its configured cap. Focused x50,
+full core race/vet, provider race/vet, root xAI-tagged race/vet, and transport
+race passed with the documented MacOS26 SDK override where needed. Independent
+re-review and tester review remain pending; Task11/GateC remain open.
+
 ## Phase 4 — Persistent Server product core
 
 - [ ] Task 15: Agents, immutable versions, runtime snapshots.

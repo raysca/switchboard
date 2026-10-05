@@ -14,11 +14,12 @@ import (
 )
 
 var (
-	ErrInvalidToolLoopConfig = errors.New("tools: invalid tool loop configuration")
-	ErrMalformedToolCall     = errors.New("tools: malformed tool call")
-	ErrMaxToolCalls          = errors.New("tools: maximum total tool calls exceeded")
-	ErrMaxToolRounds         = errors.New("tools: maximum tool rounds exceeded")
-	ErrStaleToolCall         = errors.New("tools: tool call belongs to a stale generation")
+	ErrInvalidToolLoopConfig   = errors.New("tools: invalid tool loop configuration")
+	ErrMalformedToolCall       = errors.New("tools: malformed tool call")
+	ErrMaxToolCalls            = errors.New("tools: maximum total tool calls exceeded")
+	ErrMaxToolRounds           = errors.New("tools: maximum tool rounds exceeded")
+	ErrStaleToolCall           = errors.New("tools: tool call belongs to a stale generation")
+	ErrReplayResultOutOfBounds = errors.New("tools: cached result exceeds current loop bounds")
 )
 
 const minimumToolResultBytes = len("{\"error\":\"arguments_too_deep\"}")
@@ -201,6 +202,9 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		if !l.isCurrent(call) {
 			return staleToolResult(call, prior.StartedAt, l.cfg.Now()), nil
 		}
+		if _, category := normalizePayload(prior.Result, l.cfg.MaxResultBytes, l.cfg.MaxJSONDepth); category != "" {
+			return ToolResult{}, ErrReplayResultOutOfBounds
+		}
 		return cloneToolResult(prior), nil
 	}
 	if !toolNamePattern.MatchString(call.Name) {
@@ -237,6 +241,19 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 	event := core.NewTraceEvent("tool.execute", started, call.SessionID, call.TurnID, call.Generation, core.TracePolicy{Content: core.TraceNone}, nil)
 	event.ToolCallID = call.ID
 	span := l.cfg.Tracer.StartSpan(callCtx, event)
+	traceEnded := false
+	endTrace := func(category string) {
+		if traceEnded {
+			return
+		}
+		traceEnded = true
+		if category == "" {
+			span.End(nil)
+			return
+		}
+		// Only canonical loop categories reach tracing, never executor text.
+		span.End(errors.New(category))
+	}
 	func() {
 		defer func() {
 			if recover() != nil {
@@ -246,10 +263,8 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		toolResult, execErr = l.executor.Execute(callCtx, cloneCall(call))
 	}()
 	ended := l.cfg.Now()
-	// Executor errors can contain arbitrary provider or application details.
-	// Trace only normalized loop outcomes through the existing event fields.
-	span.End(nil)
 	if !l.isCurrent(call) {
+		endTrace("stale_generation")
 		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
 	}
 	if callCtx.Err() != nil {
@@ -257,6 +272,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		if errors.Is(roundCtx.Err(), context.Canceled) {
 			category = "cancelled"
 		}
+		endTrace(category)
 		return l.commit(call, ToolCancelled, errorPayload(category), category, started)
 	}
 	if execErr != nil {
@@ -264,6 +280,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		if errors.Is(execErr, errExecutorPanic) {
 			category = "executor_panic"
 		}
+		endTrace(category)
 		return l.commit(call, ToolFailed, errorPayload(category), category, started)
 	}
 	toolResult.CallID, toolResult.StartedAt, toolResult.EndedAt = call.ID, started, ended
@@ -271,6 +288,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		toolResult.Status = ToolSucceeded
 	}
 	if toolResult.Status != ToolSucceeded && toolResult.Status != ToolFailed && toolResult.Status != ToolCancelled {
+		endTrace("invalid_status")
 		return l.commit(call, ToolFailed, errorPayload("invalid_status"), "invalid_status", started)
 	}
 	if toolResult.Status == ToolFailed || toolResult.Status == ToolCancelled {
@@ -283,16 +301,26 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		toolResult.ErrorCategory = ""
 	}
 	payload, category := normalizePayload(toolResult.Result, l.cfg.MaxResultBytes, l.cfg.MaxJSONDepth)
+	traceCategory := ""
+	if toolResult.Status == ToolFailed {
+		traceCategory = "tool_failed"
+	} else if toolResult.Status == ToolCancelled {
+		traceCategory = "cancelled"
+	}
 	if category != "" {
 		toolResult.Status, toolResult.ErrorCategory = ToolFailed, category
+		traceCategory = category
 	}
 	toolResult.Result = payload
 	if !l.isCurrent(call) {
+		endTrace("stale_generation")
 		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
 	}
 	if err := l.history.AddToolResultStatus(string(call.TurnID), uint64(call.Generation), call.ID, toolResult.Status, payload, toolResult.ErrorCategory, ended); err != nil {
+		endTrace("context_error")
 		return ToolResult{}, err
 	}
+	endTrace(traceCategory)
 	return cloneToolResult(toolResult), nil
 }
 

@@ -353,6 +353,8 @@ The Task 1 signatures live in `govoice/core/tools`: `ToolExecutor.Execute(contex
 
 `ToolLoop` owns sequential model/tool rounds, multiple calls returned in one round, maximum rounds, maximum total calls and payload sizes, per-call and per-round context deadlines, context cancellation, result normalization, generation-fence callbacks, exact call replay, and tool-call trace correlation through the existing trace values. It commits ordered call/results to `ConversationContext` before asking a provider adapter to continue. Malformed arguments, unknown names, executor errors/panics, timeouts, cancellation, and stale generations produce bounded safe results; malformed or conflicting identities and exhausted policy limits return typed errors. Tool execution is synchronous and handlers must honor the supplied context; core does not spawn detached per-call goroutines to try to kill handlers that ignore cancellation. The bounded replay ledger and exchange insertion/rollback rules belong to `ConversationContext`. `ToolLoop` does not own session lifecycle, pipeline execution, provider SDKs, persistence, MCP, or a provider-specific continuation protocol.
 
+Completed replay is checked against the current loop's result byte/depth bounds. If stricter current bounds reject the cached result, the loop returns `ErrReplayResultOutOfBounds`, does not execute again or invoke continuation, and leaves committed context unchanged. Trace spans end with nil on success and safe normalized categories on failure; raw executor errors and handler-provided categories never reach tracing.
+
 **Acceptance criteria**
 
 - Google, xAI, and server-supplied handlers share the same framework tool types.

@@ -100,3 +100,39 @@ Correction verification:
 - `gofmt` and `git diff --check`: PASS.
 
 Task 11 and Gate C remain open pending independent re-review and tester.
+
+## Correction round 2
+
+The second independent review found that ending every span with nil discarded
+useful outcome classification, and that completed replay bypassed a new loop's
+stricter result byte/depth bounds. It also identified that an earlier test's
+supposed oversized payload fit within its 30-byte limit.
+
+RED: trace tests observed nil for executor error, panic, timeout, and cancellation;
+strict byte/depth replay tests returned the cached payload and invoked
+continuation; the oversized test now uses a payload longer than its configured
+bound and checks the `result_too_large` category.
+
+GREEN: spans end with nil on success and only safe normalized loop categories on
+failure; neither raw executor errors nor handler-provided categories are sent
+to tracing. Completed replay revalidates the cached payload against the current
+loop's byte/depth policy and fails closed with `ErrReplayResultOutOfBounds`.
+This does not re-execute the handler, invoke continuation, or modify committed
+context history. The original committed result remains available to loops whose
+current bounds accept it.
+
+Task 12 ordering caveat from round 1 remains: the adapter must atomically claim
+before ContextAggregator projects the same call, or distinguish prior
+projection from a new claim.
+
+Correction round 2 verification:
+
+- `go test -race -count=50 -run TestToolLoop ./core/tools`: PASS.
+- Full core race and vet with the documented Xcode MacOS26 SDK override: PASS.
+- Google and xAI provider vet/race: PASS.
+- Root `-tags xai` race/vet and transport race tests: PASS. The first root
+  attempt without the SDK override hit the known MacOS27 command-line tools
+  linker incompatibility; the same matrix passed with the documented override.
+- `gofmt` and `git diff --check`: PASS.
+
+Task 11 and Gate C remain open pending independent review and tester.
