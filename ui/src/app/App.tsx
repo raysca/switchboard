@@ -20,6 +20,9 @@ import { getBrowserCapabilities } from "./capabilities";
 import { OnboardingView } from "../routes/onboarding/OnboardingView";
 import { ProvidersView } from "../routes/providers/ProvidersView";
 import { AgentsView } from "../routes/agents/AgentsView";
+import { MCPView } from "../routes/mcp/MCPView";
+import { SessionsView } from "../routes/sessions/SessionsView";
+import { SessionDetailView } from "../routes/sessions/SessionDetailView";
 import { SectionPage, sections } from "../routes/sections";
 
 function RouteFocus() {
@@ -145,11 +148,31 @@ export function App({ initialPath }: { initialPath?: string }) {
                   path="/agents"
                   element={<AgentsView client={client} keyValue={keyValue} />}
                 />
-                  {sections
+                <Route
+                  path="/mcp-servers"
+                  element={<MCPView client={client} keyValue={keyValue} />}
+                />
+                <Route
+                  path="/mcp-servers/:serverId"
+                  element={<MCPView client={client} keyValue={keyValue} />}
+                />
+                <Route
+                  path="/sessions"
+                  element={<SessionsView client={client} keyValue={keyValue} />}
+                />
+                <Route
+                  path="/sessions/:sessionId"
+                  element={
+                    <SessionDetailView client={client} keyValue={keyValue} />
+                  }
+                />
+                {sections
                   .filter(
                     (section) =>
                       section.path !== "/providers" &&
-                      section.path !== "/agents",
+                      section.path !== "/agents" &&
+                      section.path !== "/mcp-servers" &&
+                      section.path !== "/sessions",
                   )
                   .map((section) => (
                     <Route
@@ -164,16 +187,6 @@ export function App({ initialPath }: { initialPath?: string }) {
                       }
                     />
                   ))}
-                <Route
-                  path="/sessions/:sessionId"
-                  element={
-                    <SectionPage
-                      section={sections.find((s) => s.path === "/sessions")!}
-                      keyValue={keyValue}
-                      readConfig={client.serverConfig}
-                    />
-                  }
-                />
                 <Route
                   path="*"
                   element={

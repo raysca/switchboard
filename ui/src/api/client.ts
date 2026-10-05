@@ -5,6 +5,7 @@ const errorEnvelope = z.object({
     code: z.string(),
     message: z.string(),
     request_id: z.string(),
+    details: z.unknown().optional(),
   }),
 });
 const configEnvelope = z.object({
@@ -159,6 +160,200 @@ export type UpdateAgentInput = {
   config?: Record<string, unknown>;
 };
 
+// MCP schemas & types
+export const mcpServerSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional().default(""),
+  endpoint: z.string(),
+  transport: z.string().optional().default("streamable-http"),
+  credential_id: z.string().nullish(),
+  validation_state: z.string(),
+  latest_discovery_id: z.string().nullish(),
+  enabled: z.boolean(),
+  pending_deletion: z.boolean().optional(),
+  last_connected_at: z.string().nullish(),
+  last_discovered_at: z.string().nullish(),
+});
+export type MCPServerDTO = z.infer<typeof mcpServerSchema>;
+
+export const mcpToolSchema = z.object({
+  remote_name: z.string(),
+  description: z.string().optional().default(""),
+  input_schema: z.unknown().optional(),
+  schema_hash: z.string(),
+});
+export type MCPToolDTO = z.infer<typeof mcpToolSchema>;
+
+export const mcpDiscoverySchema = z.object({
+  id: z.string(),
+  discovery_hash: z.string(),
+  created_at: z.string(),
+  tools: z.array(mcpToolSchema),
+});
+export type MCPDiscoveryDTO = z.infer<typeof mcpDiscoverySchema>;
+
+export const mcpServerDetailSchema = mcpServerSchema.extend({
+  discovery: mcpDiscoverySchema.nullish(),
+});
+export type MCPServerDetailDTO = z.infer<typeof mcpServerDetailSchema>;
+
+export const mcpExecutionSchema = z.object({
+  execution_id: z.string(),
+  mcp_server_id: z.string(),
+  tool_name: z.string(),
+  status: z.string(),
+  duration_ms: z.number(),
+  result: z.unknown().optional(),
+});
+export type MCPToolExecutionResultDTO = z.infer<typeof mcpExecutionSchema>;
+
+export const mcpDetachResultSchema = z.object({
+  pending: z.boolean().optional(),
+  deleted: z.boolean().optional(),
+  server: mcpServerSchema.optional(),
+});
+export type MCPDetachResultDTO = z.infer<typeof mcpDetachResultSchema>;
+
+export type CreateMCPServerInput = {
+  name: string;
+  description?: string;
+  endpoint: string;
+  transport?: string;
+  credential_id?: string;
+  enabled?: boolean;
+};
+
+export type UpdateMCPServerInput = {
+  name?: string;
+  description?: string;
+  endpoint?: string;
+  transport?: string;
+  credential_id?: string;
+  enabled?: boolean;
+};
+
+const mcpServersEnvelope = z.object({
+  data: z.array(mcpServerSchema),
+});
+const mcpServerEnvelope = z.object({
+  data: mcpServerSchema,
+});
+const mcpServerDetailEnvelope = z.object({
+  data: mcpServerDetailSchema,
+});
+const mcpExecutionEnvelope = z.object({
+  data: mcpExecutionSchema,
+});
+const mcpDetachResultEnvelope = z.object({
+  data: mcpDetachResultSchema,
+});
+
+// Session & Trace schemas & types
+export const sessionTraceSpanSchema = z.object({
+  id: z.string(),
+  session_id: z.string().optional(),
+  turn_id: z.string().nullish(),
+  parent_id: z.string().nullish(),
+  name: z.string(),
+  started_at: z.string(),
+  ended_at: z.string().nullish(),
+  attributes: z.unknown().optional(),
+});
+export type TraceSpanDTO = z.infer<typeof sessionTraceSpanSchema>;
+
+export const sessionTraceEventSchema = z.object({
+  id: z.string(),
+  span_id: z.string().optional(),
+  session_id: z.string().optional(),
+  turn_id: z.string().nullish(),
+  name: z.string(),
+  occurred_at: z.string(),
+  attributes: z.unknown().optional(),
+});
+export type TraceEventDTO = z.infer<typeof sessionTraceEventSchema>;
+
+export const sessionToolCallSchema = z.object({
+  id: z.string(),
+  session_id: z.string(),
+  turn_id: z.string().nullish(),
+  mcp_server_id: z.string().optional(),
+  remote_name: z.string(),
+  schema_hash: z.string(),
+  started_at: z.string(),
+  ended_at: z.string().nullish(),
+  status: z.string(),
+  arguments_summary: z.string().optional().default(""),
+  result_summary: z.string().optional().default(""),
+});
+export type ToolCallDTO = z.infer<typeof sessionToolCallSchema>;
+
+export const sessionTracesSchema = z.object({
+  session_id: z.string(),
+  spans: z.array(sessionTraceSpanSchema),
+  events: z.array(sessionTraceEventSchema),
+  tool_calls: z.array(sessionToolCallSchema),
+});
+export type SessionTracesDTO = z.infer<typeof sessionTracesSchema>;
+
+export const turnSchema = z.object({
+  id: z.string(),
+  session_id: z.string(),
+  ordinal: z.number(),
+  started_at: z.string(),
+  ended_at: z.string().nullish(),
+  transcript: z.string().optional().default(""),
+  assistant_text: z.string().optional().default(""),
+  interrupted: z.boolean().default(false),
+  latencies: z.unknown().optional(),
+  tools: z.unknown().optional(),
+});
+export type TurnDTO = z.infer<typeof turnSchema>;
+
+export const sessionRuntimeToolSchema = z.object({
+  mcp_server_id: z.string(),
+  remote_name: z.string(),
+  schema_hash: z.string(),
+  required: z.boolean(),
+});
+export type SessionRuntimeToolDTO = z.infer<typeof sessionRuntimeToolSchema>;
+
+export const sessionSchema = z.object({
+  id: z.string(),
+  agent_id: z.string(),
+  agent_version_id: z.string(),
+  config_hash: z.string(),
+  started_at: z.string(),
+  ended_at: z.string().nullish(),
+  status: z.string(),
+  turn_count: z.number(),
+  safe_summary: z.string().optional().default(""),
+  provider_stack: z.unknown().optional(),
+  runtime_snapshot: z.unknown().optional(),
+  runtime_tools: z.array(sessionRuntimeToolSchema).nullish(),
+});
+export type SessionDTO = z.infer<typeof sessionSchema>;
+
+export type SessionFilterParams = {
+  limit?: number;
+  offset?: number;
+  status?: string;
+  agent_id?: string;
+};
+
+const sessionsEnvelope = z.object({
+  data: z.array(sessionSchema),
+});
+const sessionEnvelope = z.object({
+  data: sessionSchema,
+});
+const turnsEnvelope = z.object({
+  data: z.array(turnSchema),
+});
+const sessionTracesEnvelope = z.object({
+  data: sessionTracesSchema,
+});
+
 export type ServerConfig = z.infer<typeof configEnvelope>["data"];
 export type VoiceToken = z.infer<typeof tokenEnvelope>["data"];
 export type AuthSnapshot = { key: string | null; generation: number };
@@ -169,6 +364,7 @@ export class ApiError extends Error {
     public code: string,
     public status: number,
     public requestId: string,
+    public details?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -237,6 +433,7 @@ export function createApiClient(
         parsed.success ? parsed.data.error.code : "invalid_error",
         response.status,
         requestId || (parsed.success ? parsed.data.error.request_id : ""),
+        parsed.success ? parsed.data.error.details : undefined,
       );
       if (response.status === 401) onUnauthorized?.(error, generation);
       throw error;
@@ -369,6 +566,140 @@ export function createApiClient(
           },
         )
       ).data,
+
+    // MCP endpoints
+    getMCPServers: async () =>
+      (await request("/mcp-servers", mcpServersEnvelope)).data,
+    getMCPServer: async (id: string) =>
+      (
+        await request(
+          `/mcp-servers/${encodeURIComponent(id)}`,
+          mcpServerDetailEnvelope,
+        )
+      ).data,
+    createMCPServer: async (payload: CreateMCPServerInput) =>
+      (
+        await request("/mcp-servers", mcpServerEnvelope, {
+          method: "POST",
+          body: payload,
+        })
+      ).data,
+    updateMCPServer: async (id: string, payload: UpdateMCPServerInput) =>
+      (
+        await request(
+          `/mcp-servers/${encodeURIComponent(id)}`,
+          mcpServerEnvelope,
+          {
+            method: "PUT",
+            body: payload,
+          },
+        )
+      ).data,
+    deleteMCPServer: async (id: string, confirmedDetach?: boolean) => {
+      if (confirmedDetach) {
+        return (
+          await request(
+            `/mcp-servers/${encodeURIComponent(id)}/detach-delete`,
+            mcpDetachResultEnvelope,
+            { method: "POST", body: { confirm: true } },
+          )
+        ).data;
+      }
+      await request(
+        `/mcp-servers/${encodeURIComponent(id)}`,
+        z.unknown(),
+        { method: "DELETE" },
+      );
+      return { deleted: true };
+    },
+    disableMCPServer: async (id: string) =>
+      (
+        await request(
+          `/mcp-servers/${encodeURIComponent(id)}/disable`,
+          mcpServerEnvelope,
+          { method: "POST" },
+        )
+      ).data,
+    enableMCPServer: async (id: string) =>
+      (
+        await request(
+          `/mcp-servers/${encodeURIComponent(id)}/enable`,
+          mcpServerEnvelope,
+          { method: "POST" },
+        )
+      ).data,
+    discoverMCPServer: async (id: string) =>
+      (
+        await request(
+          `/mcp-servers/${encodeURIComponent(id)}/validate`,
+          mcpServerEnvelope,
+          { method: "POST" },
+        )
+      ).data,
+    testMCPTool: async (
+      id: string,
+      toolOrPayload:
+        | string
+        | { tool_name: string; arguments?: Record<string, unknown> },
+      args?: Record<string, unknown>,
+    ) => {
+      const toolName =
+        typeof toolOrPayload === "string"
+          ? toolOrPayload
+          : toolOrPayload.tool_name;
+      const toolArgs =
+        typeof toolOrPayload === "string"
+          ? (args ?? {})
+          : (toolOrPayload.arguments ?? {});
+      return (
+        await request(
+          `/mcp-servers/${encodeURIComponent(id)}/tools/${encodeURIComponent(toolName)}/test`,
+          mcpExecutionEnvelope,
+          {
+            method: "POST",
+            body: { arguments: toolArgs },
+          },
+        )
+      ).data;
+    },
+
+    // Session & Trace endpoints
+    getSessions: async (params?: SessionFilterParams) => {
+      const searchParams = new URLSearchParams();
+      if (params?.limit !== undefined)
+        searchParams.set("limit", String(params.limit));
+      if (params?.offset !== undefined)
+        searchParams.set("offset", String(params.offset));
+      if (params?.status) searchParams.set("status", params.status);
+      if (params?.agent_id) searchParams.set("agent_id", params.agent_id);
+      const qs = searchParams.toString();
+      return (
+        await request(`/sessions${qs ? `?${qs}` : ""}`, sessionsEnvelope)
+      ).data;
+    },
+    getSession: async (id: string) =>
+      (
+        await request(
+          `/sessions/${encodeURIComponent(id)}`,
+          sessionEnvelope,
+        )
+      ).data,
+    getSessionTurns: async (id: string) =>
+      (
+        await request(
+          `/sessions/${encodeURIComponent(id)}/turns`,
+          turnsEnvelope,
+        )
+      ).data,
+    getSessionTraces: async (id: string, turnId?: string) => {
+      const qs = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : "";
+      return (
+        await request(
+          `/sessions/${encodeURIComponent(id)}/traces${qs}`,
+          sessionTracesEnvelope,
+        )
+      ).data;
+    },
   };
 }
 

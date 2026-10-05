@@ -124,7 +124,7 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     duplicateAgent: vi.fn(),
     updateAgentMCPTools: vi.fn(),
     ...overrides,
-  };
+  } as ApiClient;
 }
 
 describe("AgentVoiceTest", () => {

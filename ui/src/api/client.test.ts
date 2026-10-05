@@ -361,6 +361,178 @@ describe("management client", () => {
       expect(version.number).toBe(2);
       expect(version.mcp_tools).toHaveLength(1);
     });
+
+    it("handles MCP server management operations", async () => {
+      const mockServer = {
+        id: "mcp-1",
+        name: "Order Service",
+        description: "Order lookup and mutation",
+        endpoint: "https://mcp.example.com/rpc",
+        transport: "streamable-http",
+        validation_state: "valid",
+        enabled: true,
+      };
+
+      const fetcher = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [mockServer] }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          data: {
+            ...mockServer,
+            discovery: {
+              id: "disc-1",
+              discovery_hash: "dhash123",
+              created_at: "2026-10-05T12:00:00Z",
+              tools: [{
+                remote_name: "lookup_order",
+                description: "Find an order",
+                input_schema: { type: "object", properties: { id: { type: "string" } } },
+                schema_hash: "shash123",
+              }],
+            },
+          },
+        }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: mockServer }), { status: 201 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...mockServer, name: "Updated" } }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: { deleted: true } }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...mockServer, enabled: false } }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...mockServer, enabled: true } }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: mockServer }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({
+          data: {
+            execution_id: "exec-1",
+            mcp_server_id: "mcp-1",
+            tool_name: "lookup_order",
+            status: "completed",
+            duration_ms: 45,
+            result: { found: true },
+          },
+        }), { status: 200 }));
+
+      const client = createApiClient(
+        () => ({ key: "test-key", generation: 1 }),
+        fetcher,
+      );
+
+      const servers = await client.getMCPServers();
+      expect(servers).toHaveLength(1);
+      expect(fetcher).toHaveBeenCalledWith("/api/v1/mcp-servers", expect.any(Object));
+
+      const detail = await client.getMCPServer("mcp-1");
+      expect(detail.discovery?.tools).toHaveLength(1);
+
+      const created = await client.createMCPServer({
+        name: "Order Service",
+        endpoint: "https://mcp.example.com/rpc",
+      });
+      expect(created.id).toBe("mcp-1");
+
+      const updated = await client.updateMCPServer("mcp-1", { name: "Updated" });
+      expect(updated.name).toBe("Updated");
+
+      const deleted = await client.deleteMCPServer("mcp-1");
+      expect(deleted.deleted).toBe(true);
+
+      const detached = await client.deleteMCPServer("mcp-1", true);
+      expect(detached.deleted).toBe(true);
+
+      const disabled = await client.disableMCPServer("mcp-1");
+      expect(disabled.enabled).toBe(false);
+
+      const enabled = await client.enableMCPServer("mcp-1");
+      expect(enabled.enabled).toBe(true);
+
+      const discovered = await client.discoverMCPServer("mcp-1");
+      expect(discovered.id).toBe("mcp-1");
+
+      const executed = await client.testMCPTool("mcp-1", "lookup_order", { id: "123" });
+      expect(executed.status).toBe("completed");
+      expect(executed.duration_ms).toBe(45);
+    });
+
+    it("handles sessions and traces query operations", async () => {
+      const mockSession = {
+        id: "sess-1",
+        agent_id: "agent-1",
+        agent_version_id: "ver-1",
+        config_hash: "chash123",
+        started_at: "2026-10-05T12:00:00Z",
+        status: "completed",
+        turn_count: 2,
+        safe_summary: "Test session",
+      };
+
+      const mockTurn = {
+        id: "turn-1",
+        session_id: "sess-1",
+        ordinal: 1,
+        started_at: "2026-10-05T12:00:01Z",
+        transcript: "Hello",
+        assistant_text: "Hi there!",
+        interrupted: false,
+        latencies: { llm_ms: 120 },
+      };
+
+      const mockTraces = {
+        session_id: "sess-1",
+        spans: [{
+          id: "span-1",
+          session_id: "sess-1",
+          turn_id: "turn-1",
+          name: "llm.request",
+          started_at: "2026-10-05T12:00:02Z",
+        }],
+        events: [{
+          id: "event-1",
+          session_id: "sess-1",
+          turn_id: "turn-1",
+          name: "first_token",
+          occurred_at: "2026-10-05T12:00:02Z",
+        }],
+        tool_calls: [{
+          id: "tc-1",
+          session_id: "sess-1",
+          turn_id: "turn-1",
+          remote_name: "lookup_order",
+          schema_hash: "sh1",
+          started_at: "2026-10-05T12:00:02Z",
+          status: "completed",
+          arguments_summary: `{"id":"123"}`,
+          result_summary: `{"found":true}`,
+        }],
+      };
+
+      const fetcher = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [mockSession] }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: mockSession }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: [mockTurn] }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: mockTraces }), { status: 200 }))
+        .mockResolvedValueOnce(new Response(JSON.stringify({ data: mockTraces }), { status: 200 }));
+
+      const client = createApiClient(
+        () => ({ key: "test-key", generation: 1 }),
+        fetcher,
+      );
+
+      const sessions = await client.getSessions({ limit: 10, offset: 0, status: "completed", agent_id: "agent-1" });
+      expect(sessions).toHaveLength(1);
+      expect(fetcher).toHaveBeenCalledWith("/api/v1/sessions?limit=10&offset=0&status=completed&agent_id=agent-1", expect.any(Object));
+
+      const single = await client.getSession("sess-1");
+      expect(single.id).toBe("sess-1");
+
+      const turns = await client.getSessionTurns("sess-1");
+      expect(turns).toHaveLength(1);
+      expect(turns[0].transcript).toBe("Hello");
+
+      const traces = await client.getSessionTraces("sess-1");
+      expect(traces.spans).toHaveLength(1);
+      expect(traces.tool_calls).toHaveLength(1);
+
+      const turnTraces = await client.getSessionTraces("sess-1", "turn-1");
+      expect(turnTraces.events).toHaveLength(1);
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/sessions/sess-1/traces?turn_id=turn-1", expect.any(Object));
+    });
   });
 });
 

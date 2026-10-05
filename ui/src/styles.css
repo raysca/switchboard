@@ -409,3 +409,241 @@ td:last-child {
   margin-top: 2px;
 }
 
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: #e7edeb;
+  color: #15262a;
+}
+.badge--good {
+  background: #e0f2f1;
+  color: #005b5e;
+}
+.badge--bad {
+  background: #fde8e7;
+  color: #a43e30;
+}
+.badge--warning {
+  background: #fff4e5;
+  color: #b25e00;
+}
+.badge--neutral {
+  background: #e7edeb;
+  color: #53666b;
+}
+
+/* Conflict & Warning Alerts */
+.alert-box {
+  background: #fff8f5;
+  border-left: 4px solid #a43e30;
+  padding: 16px 20px;
+  margin-top: 16px;
+  margin-bottom: 16px;
+  border-radius: 2px;
+}
+.alert-box h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  color: #a43e30;
+}
+.alert-box p {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: #53666b;
+}
+
+/* Filter bar & Pagination */
+.filter-bar {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-top: 24px;
+  margin-bottom: 24px;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #c9d3d2;
+  border-radius: 2px;
+}
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 20px;
+  padding: 12px 0;
+  font-size: 0.9rem;
+  color: #53666b;
+}
+.pagination-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Detail & Metadata cards */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+  margin-bottom: 24px;
+}
+.meta-card {
+  background: #ffffff;
+  border: 1px solid #c9d3d2;
+  border-radius: 2px;
+  padding: 16px;
+}
+.meta-card .label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #53666b;
+  margin-bottom: 4px;
+}
+.meta-card .value {
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: #15262a;
+}
+
+/* Timeline */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin-top: 24px;
+}
+.turn-card {
+  background: #ffffff;
+  border: 1px solid #c9d3d2;
+  border-radius: 2px;
+  padding: 20px;
+}
+.turn-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e7edeb;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+.turn-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.turn-number {
+  font-weight: 600;
+  font-size: 1rem;
+}
+.turn-bubbles {
+  display: grid;
+  gap: 12px;
+}
+.turn-bubble {
+  padding: 12px 16px;
+  border-radius: 4px;
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+.turn-bubble--user {
+  background: #f3f5f4;
+  border-left: 3px solid #53666b;
+}
+.turn-bubble--bot {
+  background: #eef6f5;
+  border-left: 3px solid #007e82;
+}
+.bubble-speaker {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #53666b;
+  margin-bottom: 4px;
+}
+.turn-bubble--bot .bubble-speaker {
+  color: #007e82;
+}
+.bubble-text {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.latency-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed #c9d3d2;
+}
+.latency-pill {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.76rem;
+  background: #f3f5f4;
+  border: 1px solid #c9d3d2;
+  padding: 2px 8px;
+  border-radius: 2px;
+  color: #53666b;
+}
+
+/* Traces & Trace Tree */
+.trace-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e7edeb;
+}
+.trace-tree {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  padding-left: 12px;
+  border-left: 2px solid #c9d3d2;
+}
+.trace-item {
+  background: #f8faf9;
+  border: 1px solid #dde3e2;
+  border-radius: 2px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+}
+.trace-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+/* Console */
+.console-box {
+  background: #15262a;
+  color: #e7edeb;
+  border-radius: 3px;
+  padding: 16px;
+  margin-top: 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+.console-input {
+  width: 100%;
+  min-height: 80px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+  background: #ffffff;
+  color: #15262a;
+  border: 1px solid #879b9c;
+  padding: 8px;
+  border-radius: 2px;
+}
+
