@@ -35,6 +35,9 @@ async function runClientTest(wsUrl, token) {
   let botLlmTextReceived = false;
   let botStartedSpeakingReceived = false;
   let botStoppedSpeakingReceived = false;
+  let userStartedSpeakingReceived = false;
+  let userStoppedSpeakingReceived = false;
+  let botAudioBuffersReceived = 0;
   let userAudioCallback = null;
   let fatalError = null;
 
@@ -47,10 +50,9 @@ async function runClientTest(wsUrl, token) {
     },
     setClientOptions: () => {},
     tracks: () => ({}),
-    userStartedSpeaking: async () => {},
-    bufferBotAudio: (data) => {
-      // Received audio buffer from server
-    }
+    userStartedSpeaking: async () => { userStartedSpeakingReceived = true; },
+    userStoppedSpeaking: async () => { userStoppedSpeakingReceived = true; },
+    bufferBotAudio: () => { botAudioBuffersReceived++; }
   };
 
   const transport = new WebSocketTransport({ mediaManager: mockMediaManager });
@@ -68,6 +70,8 @@ async function runClientTest(wsUrl, token) {
         userTranscriptReceived = true;
         console.log(`[RTVI Client Test] onUserTranscript received: "${data?.text}"`);
       },
+      onUserStartedSpeaking: () => { userStartedSpeakingReceived = true; },
+      onUserStoppedSpeaking: () => { userStoppedSpeakingReceived = true; },
       onBotLlmText: (data) => {
         botLlmTextReceived = true;
         console.log(`[RTVI Client Test] onBotLlmText received: "${data?.text}"`);
@@ -121,7 +125,7 @@ async function runClientTest(wsUrl, token) {
   // Wait for round trip events
   const startTime = Date.now();
   while (Date.now() - startTime < 3000) {
-    if (botLlmTextReceived && botStartedSpeakingReceived && botStoppedSpeakingReceived) {
+    if (userTranscriptReceived && userStartedSpeakingReceived && userStoppedSpeakingReceived && botLlmTextReceived && botStartedSpeakingReceived && botStoppedSpeakingReceived && botAudioBuffersReceived > 0) {
       break;
     }
     await new Promise(r => setTimeout(r, 50));
@@ -130,10 +134,16 @@ async function runClientTest(wsUrl, token) {
   console.log(`[RTVI Client Test] Events received:`, {
     botReady: botReadyReceived,
     userTranscript: userTranscriptReceived,
+    userStartedSpeaking: userStartedSpeakingReceived,
+    userStoppedSpeaking: userStoppedSpeakingReceived,
     botLlmText: botLlmTextReceived,
     botStartedSpeaking: botStartedSpeakingReceived,
-    botStoppedSpeaking: botStoppedSpeakingReceived
+    botStoppedSpeaking: botStoppedSpeakingReceived,
+    botAudioBuffers: botAudioBuffersReceived
   });
+  if (!userTranscriptReceived || !userStartedSpeakingReceived || !userStoppedSpeakingReceived || !botLlmTextReceived || !botStartedSpeakingReceived || !botStoppedSpeakingReceived || botAudioBuffersReceived === 0) {
+    throw new Error(`Incomplete client conformance: ${JSON.stringify({userTranscriptReceived, userStartedSpeakingReceived, userStoppedSpeakingReceived, botLlmTextReceived, botStartedSpeakingReceived, botStoppedSpeakingReceived, botAudioBuffersReceived})}`);
+  }
 
   // Step 3: Disconnect cleanly
   console.log('[RTVI Client Test] Disconnecting...');

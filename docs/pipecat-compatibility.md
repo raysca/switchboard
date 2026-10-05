@@ -78,6 +78,38 @@ The conformance scenario set is:
 
 For every scenario assert event/message type, required fields, sequence, direction where applicable, stable identifier/correlation, processor/pipeline relationship, and privacy-policy behavior. Run the same behavior against Pipecat reference scenarios where a matching behavior exists; document Go-specific internal events as intentional differences.
 
+## P0 eval harness and independent suite results
+
+`go run ./tools/eval/cmd/govoice-eval` emits one JSON object with a result for
+each deterministic P0 scenario. `duration_ns` is the scenario's declared
+logical duration, so repeated runs have stable machine-readable output;
+`steps` records the checked transitions and `diagnostics` contains safe failure
+details. Any failed scenario produces a nonzero process exit. The runner uses
+framework turn/transcript/tool/pacing/session APIs and does not request live
+provider credentials.
+
+Compatibility remains three separately verifiable suites:
+
+| Suite | Command/evidence | Result interpretation |
+|---|---|---|
+| Pinned RTVI client | Go loopback integration runs `node tools/compat/test_rtvi_client.js`; `node tools/compat/verify_fixtures.js`; `npm test --prefix tools/compat` | The exact pinned client/transport exchange and fixture decoding pass. The Node script checks user speech/transcript, assistant text/speaking, audio, handshake, and disconnect. |
+| Whisker semantic | `go test -race ./tools/compat/whisker` and `whisker_semantic` eval scenario | The semantic adapter preserves event identity, ordering fields, and copied safe attributes. No wire protocol claim is made. |
+| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` against `pipecat-impl/` revision in `tools/compat/fixtures/pipecat-turn-parity.json` | The selected turn-interruption and cancellation outcomes are compared to named tests in the pinned checkout. This narrow suite does not imply complete Pipecat parity. |
+
+The JSON runner labels the official RTVI and Pipecat suites as `separate_suite`
+because those require their own package/reference test runs; it does not turn
+an unexecuted suite into a pass. The Whisker status reflects the local semantic
+adapter scenario only. The playback-clear probe remains
+`UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; it is reported
+as unsupported and never counted as a pass or a client clear.
+
+The RTVI `DebugEvent` encoder rejects transcript/text events when their
+content is absent under Task 1's default metadata privacy policy. Callers that
+have explicitly authorized content use the existing typed
+`Handler.FormatUserTranscription` or `Handler.FormatBotLLMText` path. This
+prevents the compatibility adapter from fabricating empty content or widening
+debug-event privacy policy.
+
 ## Selected Pipecat behavioral parity
 
 The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status describes the V2 target as of this contract freeze. Acceptance evidence must be attached to the owning phase task; a planned test is not a passing result.

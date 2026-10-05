@@ -1,0 +1,19 @@
+{
+  "reference": {
+    "repository": "pipecat-impl",
+    "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9",
+    "file": "tests/test_turn_tracking_observer.py"
+  },
+  "cases": [
+    {
+      "name": "user_interrupts_bot",
+      "reference_test": "test_user_interrupts_bot",
+      "expected_turn_states": ["turn-1:interrupted", "turn-2:active"]
+    },
+    {
+      "name": "cancel_flushes_active_turn",
+      "reference_test": "test_cancel_frame_flushes_active_turn",
+      "expected_turn_states": ["turn-1:interrupted"]
+    }
+  ]
+}
