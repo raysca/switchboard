@@ -1,6 +1,7 @@
 package rtvi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -9,6 +10,31 @@ import (
 
 	"govoice/core"
 )
+
+func TestDebugEventWireErrorDropsUnsafeOriginalMetadata(t *testing.T) {
+	const sentinel = "credential-secret-8842"
+	e := core.NewDebugEvent("provider.error", time.Unix(12, 0), "s", "t", 1, map[string]any{"error.category": sentinel, "reason": sentinel, "component": sentinel})
+	msg, err := EncodeDebugEvent(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(msg.Data, []byte(sentinel)) {
+		t.Fatalf("serialized error leaked source metadata: %s", msg.Data)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data["error"] != "internal_error" || data["fatal"] != false {
+		t.Fatalf("unexpected safe error payload: %#v", data)
+	}
+	if _, ok := data["error.category"]; ok {
+		t.Fatalf("raw category retained: %#v", data)
+	}
+	if _, ok := data["reason"]; ok {
+		t.Fatalf("raw reason retained: %#v", data)
+	}
+}
 
 func TestDebugEventWireEncoderPreservesRTVISemanticsAndCorrelation(t *testing.T) {
 	event := core.NewDebugEvent("user.speech.started", time.Unix(12, 0), "session-1", "turn-2", 3, map[string]any{"source": "vad"})

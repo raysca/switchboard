@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"govoice/core"
 	coretools "govoice/core/tools"
+	"govoice/transport/ws"
 )
 
 // ScenarioResult is based on frames observed inside a running session, then
@@ -33,6 +35,18 @@ func (p *frameProbe) toolStarted(call core.ToolCall) {
 	e := core.NewDebugEvent("tool.started", time.Unix(1, int64(p.sequence)), "compat-session", call.TurnID, call.Generation, nil)
 	e.PipelineID, e.Processor, e.ProcessorIndex = "compat-pipeline", "frame-probe", 0
 	e.Direction, e.FrameKind, e.Sequence, e.ToolCallID = core.Downstream, core.FrameToolCall, p.sequence, call.ID
+	if out, err := (Adapter{}).Adapt(e); err == nil {
+		p.events = append(p.events, out)
+	}
+}
+
+func (p *frameProbe) runtimeCompleted(name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sequence++
+	e := core.NewDebugEvent(name, time.Unix(1, int64(p.sequence)), "compat-session", p.turn, 0, nil)
+	e.PipelineID, e.Processor, e.ProcessorIndex = "compat-pipeline", "frame-probe", 0
+	e.Direction, e.FrameKind, e.Sequence = core.Downstream, core.FrameEnd, p.sequence
 	if out, err := (Adapter{}).Adapt(e); err == nil {
 		p.events = append(p.events, out)
 	}
@@ -114,6 +128,9 @@ func observedFrameDetails(f core.Frame) (string, map[string]any, core.TurnID, co
 	case *core.ToolCallFrame:
 		return "tool.requested", nil, x.Call.TurnID, x.Call.Generation, x.Call.ID
 	case *core.ToolResultFrame:
+		if x.Result.Status != core.ToolSucceeded {
+			return "tool.failed", map[string]any{"status": string(x.Result.Status)}, x.Turn, x.Gen, x.Result.CallID
+		}
 		return "tool.completed", map[string]any{"status": string(x.Result.Status)}, x.Turn, x.Gen, x.Result.CallID
 	case *core.ErrorFrame:
 		if x.Fatal {
@@ -141,11 +158,11 @@ func RunScenarios() []ScenarioResult {
 		{"stt_interim_final", []core.Frame{&core.InterimTranscriptionFrame{Text: "private interim", Turn: "turn-1", Gen: 1}, &core.FinalTranscriptionFrame{Text: "private final", Turn: "turn-1", Gen: 1}}, []string{"stt.interim", "stt.final"}},
 		{"llm_output", []core.Frame{&core.UserMessageFrame{Content: "private prompt", Turn: "turn-1", Gen: 1}, &core.LLMTextDeltaFrame{Delta: "private", Turn: "turn-1", Gen: 1}, &core.LLMTextFrame{Text: "private", Turn: "turn-1", Gen: 1}, &core.ErrorFrame{Err: errors.New("credential secret"), Fatal: false, Turn: "turn-1", Gen: 1}}, []string{"llm.requested", "llm.output", "llm.completed", "provider.error"}},
 		{"tts_lifecycle_audio", []core.Frame{&core.TTSStartedFrame{Turn: "turn-1", Gen: 1}, &core.TTSAudioFrame{Audio: audio, Turn: "turn-1", Gen: 1, SampleRate: 24000, Channels: 1}, &core.SpeakingStateFrame{State: core.SpeakingStarted, Turn: "turn-1", Gen: 1}, &core.TTSStoppedFrame{Turn: "turn-1", Gen: 1}, &core.SpeakingStateFrame{State: core.SpeakingStopped, Turn: "turn-1", Gen: 1}}, []string{"tts.started", "tts.audio", "assistant.speaking.started", "tts.completed", "assistant.speaking.stopped"}},
-		{"barge_in", []core.Frame{&core.InterruptionFrame{Turn: "turn-1", Gen: 1}}, []string{"turn.interrupted"}},
-		{"flush", []core.Frame{&core.FlushFrame{Gen: 1}, &core.FlushProcessedFrame{Gen: 1}}, []string{"output.flush.started", "output.flush.completed"}},
-		{"tool_call_result", []core.Frame{&core.ToolCallFrame{Call: core.ToolCall{ID: "call-1", Name: "probe", Arguments: []byte(`{}`), SessionID: "compat-session", TurnID: "turn-1", Generation: 1}}}, []string{"tool.requested", "tool.started", "tool.completed"}},
+		{"barge_in", nil, []string{"turn.interrupted", "output.flush.started", "output.flush.completed"}},
+		{"flush", nil, []string{"output.flush.started", "output.flush.completed"}},
+		{"tool_call_result", []core.Frame{&core.ToolCallFrame{Call: core.ToolCall{ID: "call-1", Name: "probe", Arguments: []byte(`{}`), SessionID: "compat-session", TurnID: "turn-1", Generation: 1}}}, []string{"tool.requested", "tool.started", "tool.completed", "tool.requested", "tool.started", "tool.failed"}},
 		{"provider_pipeline_errors", []core.Frame{&core.ErrorFrame{Err: errors.New("credential secret"), Fatal: false}, &core.ErrorFrame{Err: errors.New("credential secret"), Fatal: true}}, []string{"provider.error", "session.error"}},
-		{"session_teardown", []core.Frame{&core.CancelFrame{Gen: 1}}, []string{"session.cancelled", "session.ended"}},
+		{"session_teardown", []core.Frame{&core.CancelFrame{Gen: 1}}, []string{"session.cancelled", "session.ended", "processor.shutdown", "session.resources.completed"}},
 	}
 	results := make([]ScenarioResult, 0, len(specs))
 	for _, spec := range specs {
@@ -156,6 +173,12 @@ func RunScenarios() []ScenarioResult {
 }
 
 func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
+	if spec.name == "barge_in" {
+		return runBargeScenario(spec)
+	}
+	if spec.name == "flush" {
+		return runPacerFlushScenario(spec)
+	}
 	probe := &frameProbe{}
 	pipe, err := core.NewPipeline(probe)
 	if err != nil {
@@ -198,6 +221,9 @@ func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
 		call := spec.frames[0].(*core.ToolCallFrame).Call
 		loop, err := coretools.NewToolLoop([]core.ToolDefinition{{Name: "probe", InputSchema: []byte(`{"type":"object"}`)}}, core.ToolExecutorFunc(func(_ context.Context, c core.ToolCall) (core.ToolResult, error) {
 			probe.toolStarted(c)
+			if c.ID == "call-2" {
+				return core.ToolResult{}, errors.New("tool backend unavailable")
+			}
 			return core.ToolResult{CallID: c.ID, Status: core.ToolSucceeded, Result: []byte(`{"ok":true}`)}, nil
 		}), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
 		if err != nil {
@@ -215,6 +241,28 @@ func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
 		case <-time.After(time.Second):
 			return probe.snapshot(), errors.New("tool result not delivered")
 		}
+		failed := call
+		failed.ID = "call-2"
+		if err := session.Post(&core.ToolCallFrame{Call: failed}); err != nil {
+			return probe.snapshot(), err
+		}
+		select {
+		case <-outputs:
+		case <-time.After(time.Second):
+			return probe.snapshot(), errors.New("failed tool request not delivered")
+		}
+		failure, err := loop.Run(context.Background(), []core.ToolCall{failed}, nil)
+		if err != nil || len(failure.Results) != 1 || failure.Results[0].Status != core.ToolFailed {
+			return probe.snapshot(), fmt.Errorf("tool failure not observed: %v", err)
+		}
+		if err := session.Post(&core.ToolResultFrame{Turn: failed.TurnID, Gen: failed.Generation, Result: failure.Results[0]}); err != nil {
+			return probe.snapshot(), err
+		}
+		select {
+		case <-outputs:
+		case <-time.After(time.Second):
+			return probe.snapshot(), errors.New("failed tool result not delivered")
+		}
 	}
 	if err := session.Post(&core.EndFrame{}); err != nil {
 		return probe.snapshot(), err
@@ -223,6 +271,10 @@ func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
 	case <-session.Done():
 	case <-time.After(time.Second):
 		return probe.snapshot(), errors.New("session teardown timed out")
+	}
+	if spec.name == "session_teardown" && session.LeakedTasks() == 0 {
+		probe.runtimeCompleted("processor.shutdown")
+		probe.runtimeCompleted("session.resources.completed")
 	}
 	events := probe.snapshot()
 	matched := 0
@@ -241,4 +293,186 @@ func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
 		return events, errors.New("runtime leaked supervised tasks")
 	}
 	return events, nil
+}
+
+func runBargeScenario(spec scenarioSpec) ([]Event, error) {
+	assistant := core.NewAssistantContextProcessor(core.NewConversationContext(core.ContextConfig{}), core.DefaultAssistantContextConfig())
+	probe := &frameProbe{}
+	transport := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+	pipe, err := core.NewPipeline(assistant, probe, transport)
+	if err != nil {
+		return nil, err
+	}
+	session, err := core.NewSession(1401, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		return nil, err
+	}
+	delivered := make(chan core.FrameType, 16)
+	session.OnOutput = func(f core.Frame) { delivered <- f.Type() }
+	if err := session.Start(); err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	postAndWait := func(f core.Frame) error {
+		if err := session.Post(f); err != nil {
+			return err
+		}
+		deadline := time.NewTimer(time.Second)
+		defer deadline.Stop()
+		for {
+			select {
+			case kind := <-delivered:
+				if kind == f.Type() {
+					return nil
+				}
+			case <-deadline.C:
+				return fmt.Errorf("runtime did not deliver %T", f)
+			}
+		}
+	}
+	if err := postAndWait(&core.StartFrame{}); err != nil {
+		return probe.snapshot(), err
+	}
+	if err := postAndWait(&core.UserMessageFrame{Turn: "turn-1", Gen: 1}); err != nil {
+		return probe.snapshot(), err
+	}
+	if err := session.Post(&core.UserStartedSpeakingFrame{Gen: 1}); err != nil {
+		return probe.snapshot(), err
+	}
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		events := probe.snapshot()
+		found := false
+		for _, e := range events {
+			if e.Name == "output.flush.completed" && e.Direction == core.Upstream.String() {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+		select {
+		case <-deadline.C:
+			return events, errors.New("runtime transport flush acknowledgement absent")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if session.CurrentGeneration() != 2 || assistant.InterruptionCount.Load() != 1 || transport.FlushAcksSent.Load() != 1 {
+		return probe.snapshot(), errors.New("runtime interruption/flush state mismatch")
+	}
+	if err := session.Post(&core.OutputAudioFrame{Samples: []byte{1, 2}, SampleRate: 24000, Channels: 1, Turn: "turn-1", Gen: 1}); err != nil {
+		return probe.snapshot(), err
+	}
+	for session.StaleDiscarded.Load() == 0 {
+		select {
+		case <-deadline.C:
+			return probe.snapshot(), errors.New("stale output was not rejected")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if len(transport.GetWrittenFrames()) != 0 {
+		return probe.snapshot(), errors.New("stale output reached transport")
+	}
+	if err := session.Post(&core.EndFrame{}); err != nil {
+		return probe.snapshot(), err
+	}
+	select {
+	case <-session.Done():
+	case <-deadline.C:
+		return probe.snapshot(), errors.New("barge scenario did not tear down")
+	}
+	events := probe.snapshot()
+	return events, requireEventOrder(events, spec.expected)
+}
+
+func runPacerFlushScenario(spec scenarioSpec) ([]Event, error) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var writes atomic.Uint64
+	p := ws.NewPacedWriter(ws.DefaultPacerConfig(), func(_ context.Context, _ []byte) error {
+		if writes.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return nil
+	})
+	defer p.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.Run(ctx)
+	p.SetActiveGeneration(1)
+	frame := func(seq, gen uint64) *core.OutputAudioFrame {
+		return &core.OutputAudioFrame{Samples: make([]byte, 960), SampleRate: 24000, Channels: 1, Duration: 20 * time.Millisecond, Turn: "turn-1", Gen: gen, Seq: seq}
+	}
+	if err := p.Enqueue(frame(1, 1)); err != nil {
+		return nil, err
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		return nil, errors.New("pacer did not enter write")
+	}
+	if err := p.Enqueue(frame(2, 1)); err != nil {
+		close(release)
+		return nil, err
+	}
+	events := []Event{runtimePacerEvent("output.flush.started", 1, 1, nil)}
+	flushed := make(chan error, 1)
+	go func() { flushed <- p.Flush(context.Background(), 1) }()
+	select {
+	case err := <-flushed:
+		close(release)
+		return events, fmt.Errorf("flush acknowledged in-flight write early: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-flushed:
+		if err != nil {
+			return events, err
+		}
+	case <-time.After(time.Second):
+		return events, errors.New("pacer flush barrier timed out")
+	}
+	if p.QueuedFrames() != 0 || p.FramesDropped.Load() == 0 {
+		return events, errors.New("pacer failed to flush queued output")
+	}
+	events = append(events, runtimePacerEvent("output.flush.completed", 2, 1, map[string]any{"count": int(p.FramesDropped.Load())}))
+	if err := p.Enqueue(frame(3, 2)); err != nil {
+		return events, err
+	}
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for writes.Load() < 2 {
+		select {
+		case <-deadline.C:
+			return events, errors.New("new generation did not resume")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if writes.Load() != 2 {
+		return events, errors.New("stale queued output was written")
+	}
+	return events, requireEventOrder(events, spec.expected)
+}
+
+func runtimePacerEvent(name string, sequence, gen uint64, attrs map[string]any) Event {
+	e := core.NewDebugEvent(name, time.Unix(1, int64(sequence)), "compat-session", "turn-1", core.Generation(gen), attrs)
+	e.PipelineID, e.Processor, e.ProcessorIndex = "compat-pipeline", "paced-writer", 0
+	e.FrameKind, e.Direction, e.Sequence = core.FrameFlush, core.Downstream, sequence
+	out, _ := (Adapter{}).Adapt(e)
+	return out
+}
+
+func requireEventOrder(events []Event, expected []string) error {
+	matched := 0
+	for _, e := range events {
+		if matched < len(expected) && e.Name == expected[matched] {
+			matched++
+		}
+	}
+	if matched != len(expected) {
+		return fmt.Errorf("observed %d/%d required runtime transitions", matched, len(expected))
+	}
+	return nil
 }

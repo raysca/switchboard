@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node verify_fixtures.js && node validate_manifest.js"
+    "test": "node verify_fixtures.js && node validate_manifest.js && node test_rtvi_client_errors.js"
   },
   "keywords": [],
   "author": "",

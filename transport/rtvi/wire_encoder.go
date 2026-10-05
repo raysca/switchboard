@@ -58,8 +58,10 @@ func EncodeDebugEvent(event core.DebugEvent) (Message, error) {
 		}
 	}
 	data := make(map[string]any, len(attrs)+7)
-	for key, value := range attrs {
-		data[key] = value
+	if typ != TypeError {
+		for key, value := range attrs {
+			data[key] = value
+		}
 	}
 	data["session_id"], data["turn_id"], data["generation"] = event.SessionID, event.TurnID, uint64(event.Generation)
 	data["sequence"], data["direction"] = event.Sequence, event.Direction.String()

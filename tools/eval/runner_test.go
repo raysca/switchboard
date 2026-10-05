@@ -76,6 +76,12 @@ func TestPacingSpeakingProbeObservesThreeTimedWrites(t *testing.T) {
 	}
 }
 
+func TestToolCancellationProbeUsesSessionInterruption(t *testing.T) {
+	if err := checkToolCancellation(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFailedScenarioMakesExitCodeNonzero(t *testing.T) {
 	code := ExitCode(Report{Results: []Result{{Scenario: "probe", Passed: false}}})
 	if code == 0 {

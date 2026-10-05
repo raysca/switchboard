@@ -449,6 +449,21 @@ func checkLateTranscript() error {
 	if len(invalid) != 0 {
 		return errors.New("interrupted incomplete transcript emitted output")
 	}
+	lateInvalid, err := f.Observe(transcript.Candidate{Turn: "invalid", Generation: 1, Text: "late after interruption", At: at.Add(time.Second + 5*time.Millisecond), Final: true})
+	if err != nil {
+		return err
+	}
+	completed, err := f.Complete("invalid", 1, at.Add(time.Second+6*time.Millisecond))
+	if err != nil {
+		return err
+	}
+	advanced, err := f.Advance(at.Add(2 * time.Second))
+	if err != nil {
+		return err
+	}
+	if len(lateInvalid) != 0 || len(completed) != 0 || len(advanced) != 0 {
+		return errors.New("late interrupted transcript committed after invalidation")
+	}
 	return nil
 }
 
@@ -553,16 +568,56 @@ func checkRuntimeBargeIn() error {
 }
 
 func checkToolCancellation() error {
-	started := make(chan struct{})
-	loop, err := coretools.NewToolLoop([]core.ToolDefinition{{Name: "wait", InputSchema: []byte(`{"type":"object"}`)}}, core.ToolExecutorFunc(func(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
-		close(started)
-		<-ctx.Done()
-		return core.ToolResult{CallID: call.ID, Status: core.ToolCancelled}, ctx.Err()
-	}), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	assistant := core.NewAssistantContextProcessor(core.NewConversationContext(core.ContextConfig{}), core.DefaultAssistantContextConfig())
+	transport := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+	pipe, err := core.NewPipeline(assistant, transport)
+	if err != nil {
+		return err
+	}
+	session, err := core.NewSession(9904, pipe, core.DefaultResourceBudget())
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	interrupted := make(chan struct{}, 1)
+	session.OnFrame = func(f core.Frame, dir core.Direction) {
+		if f.Type() == core.FrameInterruption && dir == core.Downstream {
+			cancel()
+			select {
+			case interrupted <- struct{}{}:
+			default:
+			}
+		}
+	}
+	delivered := make(chan core.FrameType, 8)
+	session.OnOutput = func(f core.Frame) { delivered <- f.Type() }
+	if err := session.Start(); err != nil {
+		return err
+	}
+	defer session.Close()
+	if err := session.Post(&core.UserMessageFrame{Turn: "t", Gen: 1}); err != nil {
+		return err
+	}
+	select {
+	case kind := <-delivered:
+		if kind != core.FrameUserMessage {
+			return fmt.Errorf("tool session observed %v before user turn", kind)
+		}
+	case <-time.After(time.Second):
+		return errors.New("tool session did not activate turn")
+	}
+	started := make(chan struct{})
+	cfg := coretools.DefaultToolLoopConfig()
+	cfg.IsCurrent = func(call core.ToolCall) bool { return session.CurrentGeneration() == uint64(call.Generation) }
+	loop, err := coretools.NewToolLoop([]core.ToolDefinition{{Name: "wait", InputSchema: []byte(`{"type":"object"}`)}}, core.ToolExecutorFunc(func(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
+		close(started)
+		<-ctx.Done()
+		return core.ToolResult{CallID: call.ID, Status: core.ToolCancelled}, ctx.Err()
+	}), core.NewConversationContext(core.ContextConfig{}), cfg)
+	if err != nil {
+		return err
+	}
 	done := make(chan error, 1)
 	go func() {
 		_, runErr := loop.Run(ctx, []core.ToolCall{{ID: "call", Name: "wait", Arguments: []byte(`{}`), SessionID: "s", TurnID: "t", Generation: 1}}, nil)
@@ -571,13 +626,22 @@ func checkToolCancellation() error {
 	select {
 	case <-started:
 	case <-time.After(time.Second):
-		cancel()
 		return errors.New("tool executor did not start")
 	}
-	cancel()
+	if err := session.Post(&core.UserStartedSpeakingFrame{Gen: 1}); err != nil {
+		return err
+	}
+	select {
+	case <-interrupted:
+	case <-time.After(time.Second):
+		return errors.New("active tool was not interrupted by session")
+	}
+	if session.CurrentGeneration() != 2 || assistant.InterruptionCount.Load() != 1 {
+		return errors.New("tool interruption did not advance session generation")
+	}
 	select {
 	case runErr := <-done:
-		if !errors.Is(runErr, context.Canceled) {
+		if !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, coretools.ErrStaleToolCall) {
 			return fmt.Errorf("tool interruption returned %v", runErr)
 		}
 		return nil

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/turn"
 )
 
 type parityFixture struct {
@@ -28,9 +29,33 @@ type parityFixture struct {
 	} `json:"cases"`
 }
 
-type parityForwarder struct{}
+type parityTurnProcessor struct {
+	manager *turn.Manager
+	clock   time.Time
+	turn    int
+}
 
-func (parityForwarder) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+func (p *parityTurnProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	p.clock = p.clock.Add(time.Millisecond)
+	var decisions []core.Frame
+	var err error
+	switch f.Type() {
+	case core.FrameUserStartedSpeaking:
+		p.turn++
+		decisions, err = p.manager.Observe(turn.Observation{At: p.clock, TurnID: core.TurnID(fmt.Sprintf("turn-%d", p.turn)), Generation: core.Generation(p.turn), Speaking: true, Activity: true})
+	case core.FrameUserStoppedSpeaking:
+		decisions, err = p.manager.Observe(turn.Observation{At: p.clock, TurnID: core.TurnID(fmt.Sprintf("turn-%d", p.turn)), Generation: core.Generation(p.turn), Speaking: false})
+	case core.FrameEnd, core.FrameCancel:
+		decisions, err = p.manager.Interrupt(core.TurnID(fmt.Sprintf("turn-%d", p.turn)), core.Generation(p.turn), p.clock)
+	}
+	if err != nil {
+		return err
+	}
+	for _, decision := range decisions {
+		if err := e.PushDirection(decision, core.Downstream); err != nil {
+			return err
+		}
+	}
 	return e.PushDirection(f, dir)
 }
 
@@ -76,9 +101,50 @@ func TestPinnedPipecatTurnInterruptionPairedBehavior(t *testing.T) {
 	}
 }
 
+func TestParityDecisionsComeFromRuntimeTurnEvents(t *testing.T) {
+	events := observedParityEvents(t, "user_interrupts_bot")
+	want := []struct {
+		turn core.TurnID
+		kind core.TurnEventKind
+	}{{"turn-1", core.TurnEventStarted}, {"turn-1", core.TurnEventInterrupted}, {"turn-2", core.TurnEventStarted}, {"turn-2", core.TurnEventInterrupted}}
+	if len(events) != len(want) {
+		t.Fatalf("got %d controller events, want %d", len(events), len(want))
+	}
+	for i, event := range events {
+		if event.Turn != want[i].turn || event.Kind != want[i].kind {
+			t.Fatalf("controller event %d: %#v", i, event)
+		}
+	}
+}
+
 func observedParityStates(t *testing.T, name string) []string {
+	events := observedParityEvents(t, name)
+	states := make([]string, 0, len(events))
+	for _, event := range events {
+		switch event.Kind {
+		case core.TurnEventStarted:
+			states = append(states, string(event.Turn)+":started")
+		case core.TurnEventInterrupted:
+			states = append(states, string(event.Turn)+":interrupted")
+		}
+	}
+	return states
+}
+
+func observedParityEvents(t *testing.T, name string) []core.TurnEventFrame {
 	t.Helper()
-	pipe, err := core.NewPipeline(parityForwarder{})
+	cfg := turn.DefaultConfig()
+	cfg.StartDebounce, cfg.StopDebounce, cfg.MinimumSpeechDuration = 0, 0, 0
+	cfg.SilenceTimeout = 5 * time.Second
+	manager, err := turn.NewManager(cfg, turn.SilenceDetector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(time.Unix(100, 0)); err != nil {
+		t.Fatal(err)
+	}
+	bridge := &parityTurnProcessor{manager: manager, clock: time.Unix(100, 0)}
+	pipe, err := core.NewPipeline(bridge)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +152,8 @@ func observedParityStates(t *testing.T, name string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frames := make(chan core.FrameType, 12)
-	session.OnOutput = func(f core.Frame) { frames <- f.Type() }
+	frames := make(chan core.Frame, 24)
+	session.OnOutput = func(f core.Frame) { frames <- f }
 	if err := session.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -103,48 +169,27 @@ func observedParityStates(t *testing.T, name string) []string {
 	} else {
 		sequence = append(sequence, &core.CancelFrame{})
 	}
-	observed := make([]core.FrameType, 0, len(sequence))
+	observed := make([]core.TurnEventFrame, 0, 4)
 	for _, f := range sequence {
 		if err := session.Post(f); err != nil {
 			t.Fatal(err)
 		}
-		select {
-		case kind := <-frames:
-			observed = append(observed, kind)
-		case <-time.After(time.Second):
-			t.Fatalf("runtime did not deliver %T", f)
-		}
-	}
-	var lifecycle core.TurnLifecycle
-	states := []string{}
-	turn := 0
-	botSpeaking := false
-	for _, kind := range observed {
-		switch kind {
-		case core.FrameUserStartedSpeaking:
-			if botSpeaking && turn > 0 {
-				id := core.TurnID(fmt.Sprintf("turn-%d", turn))
-				if !lifecycle.Interrupt(id) {
-					t.Fatalf("turn %d did not interrupt", turn)
+		for {
+			select {
+			case delivered := <-frames:
+				if event, ok := delivered.(*core.TurnEventFrame); ok {
+					if event.Kind == core.TurnEventStarted || event.Kind == core.TurnEventInterrupted {
+						observed = append(observed, *event)
+					}
 				}
-				states = append(states, string(id)+":interrupted")
-				botSpeaking = false
+				if delivered.Type() == f.Type() {
+					goto nextFrame
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("runtime did not deliver %T", f)
 			}
-			turn++
-			id := core.TurnID(fmt.Sprintf("turn-%d", turn))
-			if !lifecycle.Start(id, core.Generation(turn)) {
-				t.Fatalf("turn %d did not start", turn)
-			}
-			states = append(states, string(id)+":started")
-		case core.FrameSpeakingState:
-			botSpeaking = true
-		case core.FrameEnd, core.FrameCancel:
-			id := core.TurnID(fmt.Sprintf("turn-%d", turn))
-			if !lifecycle.Interrupt(id) {
-				t.Fatalf("terminal frame did not interrupt turn %d", turn)
-			}
-			states = append(states, string(id)+":interrupted")
 		}
+	nextFrame:
 	}
-	return states
+	return observed
 }

@@ -60,7 +60,7 @@ go test -race -count=1 ./transport/rtvi ./transport/ws
 
 Until an official Whisker package and protocol version are pinned, the V2 target is a semantic observer/debug adapter. The adapter translates `core.DebugEvent` values and does not add Whisker-specific concepts to core processors or the RTVI message vocabulary. Tests assert required semantics and event ordering, not a guessed byte-for-byte protocol. Pin an official package/protocol coordinate before any claim of wire compatibility.
 
-Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` directly carries pipeline/processor position, frame kind, direction, sequence, and tool call ID with session/turn/generation correlation. Namespaced structured metadata is restricted to copied numeric/boolean values. The Task 14 semantic adapter deep-copies nested metadata and rejects malformed identifiers, processor indexes, and directions. Its eleven cases run frames through a live `core.Session` and a compatibility probe processor, then adapt the observed transitions to `DebugEvent` values. Tool start comes from the live tool executor callback. This validates the narrow adapter; a general runtime observer subscription/delivery API belongs to Task 35.
+Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` directly carries pipeline/processor position, frame kind, direction, sequence, and tool call ID with session/turn/generation correlation. Namespaced structured metadata is restricted to copied numeric/boolean values. The Task 14 semantic adapter deep-copies nested metadata and rejects malformed identifiers, processor indexes, and directions. Its eleven cases use live session/probe processing or the actual paced writer, then adapt observed transitions to `DebugEvent` values. Interruption and transport flush acknowledgement come from the assistant/transport processors; queued and in-flight flush completion comes from the paced writer. Tool start and failure come from live executor outcomes. This validates the narrow adapter; a general runtime observer subscription/delivery API belongs to Task 35.
 
 The conformance scenario set is:
 
@@ -92,9 +92,9 @@ Compatibility remains three separately verifiable suites:
 
 | Suite | Command/evidence | Result interpretation |
 |---|---|---|
-| Pinned RTVI client | Go loopback integration runs `node tools/compat/test_rtvi_client.js`; `node tools/compat/verify_fixtures.js`; `npm test --prefix tools/compat` | The exact pinned client/transport exchange and fixture decoding pass. The client integration checks interim/final transcript payload and order, a nonfatal server error, user speech, assistant text/speaking, audio, handshake, and disconnect. |
+| Pinned RTVI client | Go loopback integration runs `node tools/compat/test_rtvi_client.js`; `node tools/compat/verify_fixtures.js`; `npm test --prefix tools/compat` | The exact pinned client/transport exchange and fixture decoding pass. The client integration checks interim/final transcript payload and order, a nonfatal server error, user speech, assistant text/speaking, audio, handshake, and disconnect. Error-callback tests reject unexpected, fatal, duplicate, and late callbacks. |
 | Whisker semantic | `go test -race ./tools/compat/whisker` and eleven `whisker_*` eval results | The semantic adapter preserves observed event identity, ordering fields, correlation, and copied safe attributes. No wire protocol or general observer-delivery claim is made. |
-| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` against `pipecat-impl/` revision in `tools/compat/fixtures/pipecat-turn-parity.json` | The fixture validator checks the exact checkout HEAD, file, and named tests. Equivalent Go frames pass through a live session; frame-derived turn states include turn two ending interrupted after EndFrame. This narrow suite does not imply complete Pipecat parity. |
+| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` against `pipecat-impl/` revision in `tools/compat/fixtures/pipecat-turn-parity.json` | The fixture validator checks the exact checkout HEAD, file, and named tests. Equivalent Go frames pass through a live session and production turn manager; emitted `TurnEventFrame` decisions include turn two ending interrupted after EndFrame. This narrow suite does not imply complete Pipecat parity. |
 
 The JSON runner labels the official RTVI and Pipecat suites as `separate_suite`
 because those require their own package/reference test runs; it does not turn
@@ -105,7 +105,9 @@ as unsupported and never counted as a pass or a client clear.
 
 The RTVI `DebugEvent` encoder maps the admitted `error.category` metadata to a
 bounded safe category. `session.error` is fatal and `provider.error` is
-nonfatal; arbitrary category text is emitted as `internal_error`. The encoder
+nonfatal; arbitrary category text is emitted as `internal_error`. The wire
+error payload omits the original category and every other source attribute.
+The encoder
 rejects malformed identifiers, processor indexes, and directions. The RTVI `DebugEvent` encoder rejects transcript/text events when their
 content is absent under Task 1's default metadata privacy policy. Callers that
 have explicitly authorized content use the existing typed

@@ -26,6 +26,26 @@ if (typeof globalThis.navigator === 'undefined') {
 const { WebSocketTransport } = require('@pipecat-ai/websocket-transport');
 const { PipecatClient } = require('@pipecat-ai/client-js');
 
+function createErrorTracker(eventOrder) {
+  let expected = false;
+  let disconnected = false;
+  let unexpected = 0;
+  return {
+    onError(err) {
+      if (!disconnected && !expected && err?.data?.error === 'compat_test_error' && err?.data?.fatal === false) {
+        expected = true;
+        eventOrder.push('server-error');
+        return true;
+      }
+      unexpected++;
+      return false;
+    },
+    expectedSeen() { return expected; },
+    markDisconnected() { disconnected = true; },
+    assertNoUnexpected() { if (unexpected) throw new Error(`Unexpected RTVI error callback count: ${unexpected}`); }
+  };
+}
+
 async function runClientTest(wsUrl, token) {
   console.log(`[RTVI Client Test] Connecting to ${wsUrl}...`);
 
@@ -42,7 +62,7 @@ async function runClientTest(wsUrl, token) {
   let botAudioBuffersReceived = 0;
   let userAudioCallback = null;
   let fatalError = null;
-  let serverErrorReceived = false;
+  const errors = createErrorTracker(eventOrder);
 
   const mockMediaManager = {
     initialize: async () => {},
@@ -91,12 +111,7 @@ async function runClientTest(wsUrl, token) {
       },
       onError: (err) => {
         console.error(`[RTVI Client Test] onError received:`, err);
-        if (err?.data?.error === 'compat_test_error' && err?.data?.fatal === false) {
-          serverErrorReceived = true;
-          eventOrder.push('server-error');
-        } else {
-          fatalError = err;
-        }
+        if (!errors.onError(err)) fatalError = err;
       }
     }
   });
@@ -119,6 +134,7 @@ async function runClientTest(wsUrl, token) {
   });
 
   await Promise.race([connectPromise, timeoutPromise]);
+  errors.assertNoUnexpected();
 
   if (!botReadyReceived || botReadyVersion !== "2.1.0") {
     throw new Error(`Bot ready failed: received=${botReadyReceived}, version=${botReadyVersion}`);
@@ -135,7 +151,7 @@ async function runClientTest(wsUrl, token) {
   // Wait for round trip events
   const startTime = Date.now();
   while (Date.now() - startTime < 3000) {
-    if (transcriptEvents.length >= 2 && serverErrorReceived && userStartedSpeakingReceived && userStoppedSpeakingReceived && botLlmTextReceived && botStartedSpeakingReceived && botStoppedSpeakingReceived && botAudioBuffersReceived > 0) {
+    if (transcriptEvents.length >= 2 && errors.expectedSeen() && userStartedSpeakingReceived && userStoppedSpeakingReceived && botLlmTextReceived && botStartedSpeakingReceived && botStoppedSpeakingReceived && botAudioBuffersReceived > 0) {
       break;
     }
     await new Promise(r => setTimeout(r, 50));
@@ -157,13 +173,17 @@ async function runClientTest(wsUrl, token) {
   if (transcriptEvents.length !== 2 || transcriptEvents[0].final !== false || transcriptEvents[0].text !== 'Hello from' || transcriptEvents[1].final !== true || transcriptEvents[1].text !== 'Hello from unmodified client-js') {
     throw new Error(`Interim/final transcript payload/order mismatch: ${JSON.stringify(transcriptEvents)}`);
   }
-  if (!serverErrorReceived || eventOrder.indexOf('server-error') <= eventOrder.indexOf('transcript-final')) {
+  errors.assertNoUnexpected();
+  if (!errors.expectedSeen() || eventOrder.indexOf('server-error') <= eventOrder.indexOf('transcript-final')) {
     throw new Error(`Nonfatal server error missing or out of order: ${JSON.stringify(eventOrder)}`);
   }
 
   // Step 3: Disconnect cleanly
   console.log('[RTVI Client Test] Disconnecting...');
   await client.disconnect();
+  errors.markDisconnected();
+  await new Promise(r => setTimeout(r, 50));
+  errors.assertNoUnexpected();
   console.log('[RTVI Client Test] Disconnected successfully.');
 
   return {
@@ -201,4 +221,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { runClientTest };
+module.exports = { runClientTest, createErrorTracker };
