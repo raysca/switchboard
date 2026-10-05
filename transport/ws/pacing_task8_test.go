@@ -3,9 +3,15 @@ package ws_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"govoice/core"
 	"govoice/transport/rtvi"
@@ -265,7 +271,7 @@ func TestPacedWriterFlushPreservesOldUninterruptibleOrderAndFencesLateCompletion
 func TestPacedWriterRepeatedOverlappingFlushesAckOwnGenerationAndRecover(t *testing.T) {
 	writeStarted := make(chan struct{})
 	pacer := ws.NewPacedWriter(ws.PacerConfig{
-		MaxQueueDuration: time.Second, MaxQueueBytes: 8192, WriteTimeout: time.Second,
+		MaxQueueDuration: time.Second, MaxQueueBytes: 8192, WriteTimeout: time.Second, AbortInProgressWrite: true,
 	}, func(ctx context.Context, _ []byte) error {
 		select {
 		case <-writeStarted:
@@ -373,6 +379,530 @@ func TestRTVISpeakingTransitionAgreement(t *testing.T) {
 	if _, err := h.FormatSpeakingState(core.SpeakingStateFrame{}); err == nil {
 		t.Fatal("invalid speaking transition must be rejected")
 	}
+}
+
+func TestPacedWriterFinalMarkerSurvivesOverflowUntilAdmission(t *testing.T) {
+	pacer := ws.NewPacedWriter(ws.PacerConfig{
+		MaxQueueDuration: time.Second, MaxQueueBytes: 960, MaxQueueFrames: 2, WriteTimeout: time.Second,
+	}, func(context.Context, []byte) error { return nil })
+	if err := pacer.MarkTurnFinal("turn", 1, 9); err != nil {
+		t.Fatal(err)
+	}
+	filler := outputFrame(1, 1, core.OutputUninterruptible)
+	if err := pacer.Enqueue(filler); err != nil {
+		t.Fatal(err)
+	}
+	target := outputFrame(2, 1, core.OutputInterruptible)
+	target.UnitID = 9
+	target.IsFinal = true
+	if err := pacer.Enqueue(target); !errors.Is(err, ws.ErrQueueBufferFull) {
+		t.Fatalf("overflow = %v, want queue full", err)
+	}
+	if pacer.PendingFinalMarkers() != 1 {
+		t.Fatalf("overflow consumed final marker: pending=%d", pacer.PendingFinalMarkers())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = pacer.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for pacer.QueuedBytes() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if err := pacer.Enqueue(target); err != nil {
+		t.Fatalf("retry admission: %v", err)
+	}
+	if pacer.PendingFinalMarkers() != 0 {
+		t.Fatalf("successful retry did not consume marker: pending=%d", pacer.PendingFinalMarkers())
+	}
+	pacer.Close()
+}
+
+func TestPacedWriterFinalMarkerReconcilesQueuedSelectedInflightAndCompleted(t *testing.T) {
+	tests := []struct {
+		name string
+		mark func(t *testing.T, pacer *ws.PacedWriter, selected, registered <-chan struct{})
+	}{
+		{name: "before enqueue", mark: func(t *testing.T, pacer *ws.PacedWriter, _, _ <-chan struct{}) {
+			if err := pacer.MarkTurnFinal("turn", 1, 5); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "while queued", mark: func(t *testing.T, pacer *ws.PacedWriter, _, _ <-chan struct{}) {
+			if err := pacer.MarkTurnFinal("turn", 1, 5); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "selected prewrite", mark: func(t *testing.T, pacer *ws.PacedWriter, selected, _ <-chan struct{}) {
+			select {
+			case <-selected:
+			case <-time.After(time.Second):
+				t.Fatal("not selected")
+			}
+			if err := pacer.MarkTurnFinal("turn", 1, 5); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "registered write", mark: func(t *testing.T, pacer *ws.PacedWriter, _, registered <-chan struct{}) {
+			select {
+			case <-registered:
+			case <-time.After(time.Second):
+				t.Fatal("write not registered")
+			}
+			if err := pacer.MarkTurnFinal("turn", 1, 5); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			selected := make(chan struct{})
+			registered := make(chan struct{})
+			releaseSelected := make(chan struct{})
+			releaseWrite := make(chan struct{})
+			pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 4096, MaxQueueFrames: 8, WriteTimeout: time.Second}, func(context.Context, []byte) error {
+				select {
+				case <-registered:
+				default:
+					close(registered)
+				}
+				<-releaseWrite
+				return nil
+			})
+			pacer.AfterSelect = func() {
+				select {
+				case <-selected:
+				default:
+					close(selected)
+				}
+				<-releaseSelected
+			}
+			if tc.name == "before enqueue" {
+				tc.mark(t, pacer, selected, registered)
+			}
+			frame := outputFrame(1, 1, core.OutputInterruptible)
+			frame.UnitID = 5
+			frame.IsFinal = true
+			if err := pacer.Enqueue(frame); err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "while queued" {
+				tc.mark(t, pacer, selected, registered)
+			}
+			var transitionsMu sync.Mutex
+			var transitions []core.SpeakingStateFrame
+			pacer.OnSpeakingState = func(event core.SpeakingStateFrame) {
+				transitionsMu.Lock()
+				transitions = append(transitions, event)
+				transitionsMu.Unlock()
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- pacer.Run(ctx) }()
+			if tc.name == "selected prewrite" {
+				tc.mark(t, pacer, selected, registered)
+			}
+			close(releaseSelected)
+			if tc.name == "registered write" {
+				tc.mark(t, pacer, selected, registered)
+			}
+			close(releaseWrite)
+			deadline := time.Now().Add(time.Second)
+			for time.Now().Before(deadline) {
+				transitionsMu.Lock()
+				n := len(transitions)
+				transitionsMu.Unlock()
+				if n == 2 {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+			pacer.Close()
+			<-done
+			transitionsMu.Lock()
+			defer transitionsMu.Unlock()
+			if len(transitions) != 2 || transitions[0].State != core.SpeakingStarted || transitions[1].State != core.SpeakingStopped {
+				t.Fatalf("transitions = %#v", transitions)
+			}
+			if pacer.PendingFinalMarkers() != 0 {
+				t.Fatalf("leaked final marker: %d", pacer.PendingFinalMarkers())
+			}
+		})
+	}
+}
+
+func TestPacedWriterLateFinalMarkerStopsCompletedUnitOnce(t *testing.T) {
+	pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 4096, MaxQueueFrames: 8, WriteTimeout: time.Second}, func(context.Context, []byte) error { return nil })
+	frame := outputFrame(1, 1, core.OutputInterruptible)
+	frame.UnitID = 7
+	frame.IsFinal = true
+	var mu sync.Mutex
+	var transitions []core.SpeakingStateFrame
+	pacer.OnSpeakingState = func(event core.SpeakingStateFrame) { mu.Lock(); transitions = append(transitions, event); mu.Unlock() }
+	if err := pacer.Enqueue(frame); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = pacer.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for pacer.FramesWritten.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if err := pacer.MarkTurnFinal("turn", 1, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := pacer.MarkTurnFinal("turn", 1, 7); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(transitions)
+		mu.Unlock()
+		if n == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	pacer.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(transitions) != 2 {
+		t.Fatalf("late marker transitions = %#v", transitions)
+	}
+	if pacer.PendingFinalMarkers() != 0 {
+		t.Fatalf("late marker leaked: %d", pacer.PendingFinalMarkers())
+	}
+}
+
+func TestPacedWriterFlushWinsBeforeWriteAdmission(t *testing.T) {
+	admissionReached := make(chan struct{})
+	releaseAdmission := make(chan struct{})
+	var writes atomic.Int32
+	pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 4096, MaxQueueFrames: 8, WriteTimeout: time.Second}, func(context.Context, []byte) error {
+		writes.Add(1)
+		return nil
+	})
+	pacer.BeforeWriteAdmission = func() { close(admissionReached); <-releaseAdmission }
+	if err := pacer.Enqueue(outputFrame(1, 1, core.OutputInterruptible)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = pacer.Run(ctx) }()
+	<-admissionReached
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- pacer.Flush(context.Background(), 1) }()
+	deadline := time.Now().Add(time.Second)
+	for pacer.ActiveGeneration() != 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if pacer.ActiveGeneration() != 2 {
+		t.Fatal("flush did not commit generation fence")
+	}
+	close(releaseAdmission)
+	select {
+	case err := <-flushDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("flush blocked")
+	}
+	if got := writes.Load(); got != 0 {
+		t.Fatalf("flush lost admission race: writes=%d", got)
+	}
+}
+
+func TestPacedWriterSynchronousCallbacksCanFlush(t *testing.T) {
+	t.Run("started callback removes subsequent queued write", func(t *testing.T) {
+		var writes atomic.Int32
+		pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 4096, MaxQueueFrames: 8, WriteTimeout: time.Second}, func(context.Context, []byte) error { writes.Add(1); return nil })
+		flushErr := make(chan error, 1)
+		pacer.OnSpeakingState = func(event core.SpeakingStateFrame) {
+			if event.State == core.SpeakingStarted {
+				flushErr <- pacer.Flush(context.Background(), event.Gen)
+			}
+		}
+		if err := pacer.Enqueue(outputFrame(1, 1, core.OutputInterruptible)); err != nil {
+			t.Fatal(err)
+		}
+		if err := pacer.Enqueue(outputFrame(2, 1, core.OutputInterruptible)); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() { _ = pacer.Run(ctx) }()
+		select {
+		case err := <-flushErr:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("started callback flush deadlocked")
+		}
+		time.Sleep(20 * time.Millisecond)
+		if got := writes.Load(); got != 1 {
+			t.Fatalf("writes=%d, want 1", got)
+		}
+		pacer.Close()
+	})
+	t.Run("turn-final completion callback flushes without timeout", func(t *testing.T) {
+		pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 4096, MaxQueueFrames: 8, WriteTimeout: 50 * time.Millisecond}, func(context.Context, []byte) error { return nil })
+		result := make(chan error, 1)
+		pacer.OnWriteComplete = func(frame *core.OutputAudioFrame, _ error) { result <- pacer.Flush(context.Background(), frame.Gen) }
+		frame := outputFrame(1, 1, core.OutputInterruptible)
+		frame.TurnFinal = true
+		if err := pacer.Enqueue(frame); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() { _ = pacer.Run(ctx) }()
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("completion callback flush deadlocked")
+		}
+		pacer.Close()
+	})
+}
+
+func TestPacedWriterNoopFlushPreservesMediaClock(t *testing.T) {
+	var mu sync.Mutex
+	var times []time.Time
+	pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 4096, MaxQueueFrames: 8, WriteTimeout: time.Second, EnablePacing: true}, func(context.Context, []byte) error {
+		mu.Lock()
+		times = append(times, time.Now())
+		mu.Unlock()
+		return nil
+	})
+	pacer.OnWriteComplete = func(frame *core.OutputAudioFrame, _ error) {
+		if frame.Seq == 1 {
+			_ = pacer.Flush(context.Background(), 1)
+		}
+	}
+	first := outputFrame(1, 2, core.OutputUninterruptible)
+	first.Seq = 1
+	second := outputFrame(2, 2, core.OutputUninterruptible)
+	second.Seq = 2
+	if err := pacer.Enqueue(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := pacer.Enqueue(second); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = pacer.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(times)
+		mu.Unlock()
+		if n == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	pacer.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(times) != 2 {
+		t.Fatalf("writes=%d", len(times))
+	}
+	if spacing := times[1].Sub(times[0]); spacing < 15*time.Millisecond {
+		t.Fatalf("no-op flush collapsed pacing: %v", spacing)
+	}
+}
+
+func TestPacedWriterCancellationClearsQueueAndBalancesSpeaking(t *testing.T) {
+	tests := []struct {
+		name   string
+		pacing bool
+	}{
+		{name: "idle after speaking start"},
+		{name: "selected pacing with queued output", pacing: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 8192, MaxQueueFrames: 8, WriteTimeout: time.Second, EnablePacing: tc.pacing}, func(context.Context, []byte) error { return nil })
+			var mu sync.Mutex
+			var transitions []core.SpeakingStateFrame
+			pacer.OnSpeakingState = func(event core.SpeakingStateFrame) { mu.Lock(); transitions = append(transitions, event); mu.Unlock() }
+			first := outputFrame(1, 1, core.OutputInterruptible)
+			first.Duration = 200 * time.Millisecond
+			if err := pacer.Enqueue(first); err != nil {
+				t.Fatal(err)
+			}
+			secondSelected := make(chan struct{})
+			if tc.pacing {
+				var selections atomic.Int32
+				pacer.AfterSelect = func() {
+					if selections.Add(1) == 2 {
+						close(secondSelected)
+					}
+				}
+				second := outputFrame(2, 1, core.OutputInterruptible)
+				second.Duration = 200 * time.Millisecond
+				if err := pacer.Enqueue(second); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- pacer.Run(ctx) }()
+			if tc.pacing {
+				select {
+				case <-secondSelected:
+				case <-time.After(time.Second):
+					t.Fatal("second frame was not selected for pacing")
+				}
+			} else {
+				deadline := time.Now().Add(time.Second)
+				for pacer.FramesWritten.Load() == 0 && time.Now().Before(deadline) {
+					time.Sleep(time.Millisecond)
+				}
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("Run leaked after cancellation")
+			}
+			if pacer.QueuedBytes() != 0 || pacer.QueuedDuration() != 0 || pacer.QueuedFrames() != 0 {
+				t.Fatalf("cancellation left queue accounting")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(transitions) != 2 || transitions[0].State != core.SpeakingStarted || transitions[1].State != core.SpeakingStopped {
+				t.Fatalf("unbalanced transitions: %#v", transitions)
+			}
+		})
+	}
+}
+
+func TestPacedWriterDefaultsInvalidBudgetsAndBoundsEmptyFrames(t *testing.T) {
+	pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: -1, MaxQueueBytes: -1, MaxQueueFrames: 2, WriteTimeout: -1}, func(context.Context, []byte) error { return nil })
+	for i := 0; i < 2; i++ {
+		frame := outputFrame(byte(i), 1, core.OutputInterruptible)
+		frame.Samples = nil
+		if err := pacer.Enqueue(frame); err != nil {
+			t.Fatalf("empty enqueue %d: %v", i, err)
+		}
+	}
+	frame := outputFrame(3, 1, core.OutputInterruptible)
+	frame.Samples = nil
+	if err := pacer.Enqueue(frame); !errors.Is(err, ws.ErrQueueBufferFull) {
+		t.Fatalf("empty-frame overflow=%v", err)
+	}
+	if pacer.QueuedFrames() != 2 || pacer.QueuedBytes() != 0 || pacer.QueuedDuration() != 0 {
+		t.Fatalf("frame overflow changed accounting")
+	}
+	pacer.Close()
+}
+
+func TestPacedWriterRealWebSocketWaitsForStartedWriteAndRecovers(t *testing.T) {
+	serverConnCh := make(chan *websocket.Conn, 1)
+	handlerDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		serverConnCh <- conn
+		<-handlerDone
+	}))
+	defer server.Close()
+
+	client, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close(websocket.StatusNormalClosure, "")
+	serverConn := <-serverConnCh
+	defer func() { close(handlerDone); serverConn.Close(websocket.StatusNormalClosure, "") }()
+
+	firstAccepted := make(chan struct{})
+	releaseReturn := make(chan struct{})
+	var writesMu sync.Mutex
+	writes := 0
+	pacer := ws.NewPacedWriter(ws.PacerConfig{
+		MaxQueueDuration: time.Second, MaxQueueBytes: 4096, MaxQueueFrames: 8, WriteTimeout: time.Second,
+		// AbortInProgressWrite deliberately remains false for coder/websocket.
+	}, func(ctx context.Context, data []byte) error {
+		if err := serverConn.Write(ctx, websocket.MessageBinary, data); err != nil {
+			return err
+		}
+		writesMu.Lock()
+		writes++
+		call := writes
+		writesMu.Unlock()
+		if call == 1 {
+			close(firstAccepted)
+			<-releaseReturn
+		}
+		return nil
+	})
+	if err := pacer.Enqueue(outputFrame(1, 1, core.OutputInterruptible)); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, runCancel := context.WithCancel(context.Background())
+	defer runCancel()
+	go func() { _ = pacer.Run(runCtx) }()
+	select {
+	case <-firstAccepted:
+	case <-time.After(time.Second):
+		t.Fatal("real websocket write was not accepted")
+	}
+	flushDone := make(chan error, 1)
+	pacer.BeginFlush(1, func(err error) { flushDone <- err })
+	select {
+	case err := <-flushDone:
+		t.Fatalf("flush acknowledged before started websocket write returned: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(releaseReturn)
+	select {
+	case err := <-flushDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("flush did not acknowledge completed websocket write")
+	}
+
+	second := outputFrame(2, 2, core.OutputInterruptible)
+	second.TurnFinal = true
+	if err := pacer.Enqueue(second); err != nil {
+		t.Fatal(err)
+	}
+	var markers []byte
+	for len(markers) < 2 {
+		readCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		kind, data, err := client.Read(readCtx)
+		cancel()
+		if err != nil {
+			t.Fatalf("same websocket did not recover: %v", err)
+		}
+		if kind != websocket.MessageBinary {
+			continue
+		}
+		decoded, err := ws.DecodeBinaryFrame(data, 1, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		markers = append(markers, decoded.(*core.InputAudioFrame).Samples[0])
+	}
+	if markers[0] != 1 || markers[1] != 2 {
+		t.Fatalf("real websocket markers=%v", markers)
+	}
+	pacer.Close()
 }
 
 func containsType(message, typ string) bool {

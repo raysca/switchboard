@@ -404,6 +404,17 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 					return
 				}
 			}
+		} else {
+			// Preserve the whole-turn drain boundary even when the provider
+			// returns no samples for the final synthesis unit.
+			empty := &core.OutputAudioFrame{
+				Encoding: core.EncodingPCM16LE, SampleRate: sampleRate, Channels: 1,
+				Turn: unit.Turn, Gen: unit.Gen, UnitID: unit.UnitID,
+				IsFinal: true, TurnFinal: unit.IsFinal,
+			}
+			if err := s.Reenter(empty, core.Downstream, p.index+1, unit.Gen); err != nil {
+				return
+			}
 		}
 
 		// Emit TTSStoppedFrame

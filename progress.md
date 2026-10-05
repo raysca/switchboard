@@ -157,6 +157,31 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   socket or buffered by a client remain outside the guarantee. Task 8 and Gate
   B await independent review/test; Task 9 also remains open.
 
+### Task 8 review round 1
+
+- Independent review required changes and the tester failed the initial
+  implementation. Fixes are prepared for re-review; Task 8 remains unchecked
+  and Gate B remains open.
+- New REDs reproduced missing reconciliation for late/phase-dependent final
+  markers and xAI's silent final unit, then failed to compile for the required
+  frame bound, pending-marker visibility, and deterministic admission hooks.
+  Exact commands and captured outputs are recorded in the Task 8 report.
+- Final markers now reconcile before enqueue, while queued, selected, writing,
+  or just after completion; overflow does not consume a marker. The queue has a
+  64-frame default in addition to byte/duration bounds. Flush/write admission
+  is atomic, callback re-entry cannot self-wait, cancellation/close clears
+  accounting, and stale/no-op flush leaves retained pacing intact.
+- coder/websocket writes are not canceled by default because context
+  cancellation closes the connection. A real `httptest` WebSocket regression
+  proves flush waits for a started write, then new-generation output succeeds
+  on the same connection. Recoverable non-WebSocket writers may explicitly opt
+  into write cancellation; timeout remains terminal and never a successful ack.
+- Focused review regressions passed 20 race repetitions; the real-WebSocket
+  integration passed under race. Full core, root RTVI/WebSocket, Google, and
+  tagged xAI race suites and vet passed. The playback probe again returned
+  `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; its exit 0
+  is only the recorded product decision, not a playback-clear pass.
+
 ### Task 6 closeout
 
 - Implementation commits: `10d9c26` (`feat(core): add bounded streaming audio

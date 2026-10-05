@@ -112,6 +112,49 @@ func TestXAITTS_Success(t *testing.T) {
 	}
 }
 
+func TestXAITTS_MultiUnitAudibleThenEmptyFinal(t *testing.T) {
+	mockClient := &mockTTSClient{pcmData: make([]byte, 960)}
+	cfg := DefaultTTSConfig()
+	cfg.Client = mockClient
+	proc, err := NewTTSProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	session, _ := core.NewSession(11, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if err := session.Post(&core.SynthesisUnitFrame{Text: "audible", Turn: "turn", Gen: 1, UnitID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for proc.AudioFrames.Load() < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	mockClient.mu.Lock()
+	mockClient.pcmData = nil
+	mockClient.mu.Unlock()
+	if err := session.Post(&core.SynthesisUnitFrame{Text: "", Turn: "turn", Gen: 1, UnitID: 2, IsFinal: true}); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		for _, frame := range sink.GetFrames() {
+			if audio, ok := frame.(*core.OutputAudioFrame); ok && audio.UnitID == 2 {
+				if len(audio.Samples) != 0 || !audio.IsFinal || !audio.TurnFinal {
+					t.Fatalf("empty final=%#v", audio)
+				}
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("xAI did not emit empty whole-turn final output")
+}
+
 func TestXAITTS_StaleGenerationDrop(t *testing.T) {
 	mockClient := &mockTTSClient{pcmData: make([]byte, 960)}
 	cfg := DefaultTTSConfig()

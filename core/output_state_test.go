@@ -48,6 +48,22 @@ func TestSpeakingTrackerFlushPreservesNewGenerationAndUninterruptibleOutput(t *t
 	}
 }
 
+func TestSpeakingTrackerLateDrainCannotStopDifferentOutput(t *testing.T) {
+	tracker := NewSpeakingTracker()
+	if _, ok := tracker.ObserveWrite("turn-2", 2, OutputInterruptible); !ok {
+		t.Fatal("expected start")
+	}
+	if _, ok := tracker.StopOutput("turn-1", 1, SpeakingStopDrained); ok {
+		t.Fatal("late drain stopped newer output")
+	}
+	if !tracker.IsSpeaking() {
+		t.Fatal("newer output should remain speaking")
+	}
+	if _, ok := tracker.StopOutput("turn-2", 2, SpeakingStopDrained); !ok {
+		t.Fatal("matching drain did not stop output")
+	}
+}
+
 func TestFakeLLMEmitsWholeTurnCompletion(t *testing.T) {
 	llm := NewFakeLLMProcessor(FakeLLMConfig{ResponseChunks: []string{"hello ", "world"}})
 	sink := &PassthroughProcessor{}

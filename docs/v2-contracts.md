@@ -163,11 +163,13 @@ This state machine does not commit transcripts or context, advance the session c
 
 `transport/ws.PacedWriter` is the single pacing engine. Enqueue owns a copy of
 each frame and its samples, records one normalized media duration for admission
-and removal, and rejects byte/duration overflow without changing retained
-accounting. The default residual server queue remains 100 ms / 4,800 bytes for
-24-kHz PCM16 mono. Pacing, encoding, writes, and callbacks occur without the
-queue lock. Close and cancellation wake pacing and idle waits and cancel an
-abortable write.
+and removal, and rejects frame/byte/duration overflow without changing retained
+accounting or consuming a pending final marker. The default residual server
+queue remains 100 ms / 4,800 bytes / 64 frames for 24-kHz PCM16 mono;
+non-positive budgets receive bounded defaults. Pacing, encoding, writes, and
+callbacks occur without the queue lock. Close and cancellation wake pacing and
+idle waits, clear accounting, and cancel a write only for terminal close or an
+explicitly abortable writer.
 
 `core.SpeakingTracker` and `SpeakingStateFrame` provide typed provider-neutral
 started/stopped transitions. A successful non-empty transport write starts
@@ -180,13 +182,21 @@ acknowledges client playback.
 `OutputAudioFrame.IsFinal` remains synthesis-unit finality. `TurnFinal` is
 whole-turn finality. Providers and the deterministic fake propagate known
 `SynthesisUnitFrame.IsFinal`; an ordered `OutputTurnFinalFrame` covers a last
-unit that was streamed before LLM completion. The pacer bounds pending markers
-to 64 and consumes one only for the matching turn, generation, and unit.
+unit that was streamed before LLM completion. xAI preserves this boundary with
+an empty final frame when a final unit has no audio. The pacer reconciles a
+marker before admission, while queued, selected, or writing, and immediately
+after successful completion. It bounds pending/completed marker state to 64,
+consumes a pending marker only after successful admission, and makes duplicate
+or stale completion markers no-ops.
 
-Flush drops queued and abortable in-flight interruptible output through the
-target generation and acknowledges only after that in-flight work is
-quiescent. Repeated/overlapping calls keep generation-specific callbacks; late
-write returns cannot emit completion or revive speaking. Explicitly
+Flush drops queued and selected/pacing interruptible output through the target
+generation. Final validation and transport-write registration are atomic with
+the flush fence. A transport-bound real WebSocket write is not canceled because
+coder/websocket cancellation closes the connection; flush waits for its return
+before acknowledging. Explicitly recoverable writers may opt into cancellation.
+Repeated/overlapping calls keep generation-specific callbacks; late write
+returns cannot emit completion or revive speaking, and stale/no-op flushes do
+not reset the retained media clock. Explicitly
 uninterruptible queued or in-flight media survives in relative order even when
 older than the active fence, and new-generation output resumes normally. The
 bounded slow-writer path closes the connection instead of falsely

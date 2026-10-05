@@ -70,6 +70,17 @@ func (t *SpeakingTracker) Stop(reason SpeakingStopReason) (SpeakingStateFrame, b
 	return t.stopLocked(reason)
 }
 
+// StopOutput stops only the exact output identity. It is used by late
+// whole-turn final markers without allowing them to stop newer output.
+func (t *SpeakingTracker) StopOutput(turn string, gen uint64, reason SpeakingStopReason) (SpeakingStateFrame, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.speaking || t.turn != turn || t.gen != gen {
+		return SpeakingStateFrame{}, false
+	}
+	return t.stopLocked(reason)
+}
+
 func (t *SpeakingTracker) stopLocked(reason SpeakingStopReason) (SpeakingStateFrame, bool) {
 	event := SpeakingStateFrame{
 		State: SpeakingStopped, Turn: t.turn, Gen: t.gen, Reason: reason,
