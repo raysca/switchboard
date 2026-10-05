@@ -37,3 +37,22 @@ func TestCredentialRepositoryUpdateCASListAndDelete(t *testing.T) {
 		t.Fatal("deleted credential remained available")
 	}
 }
+
+func TestCredentialRotationOnlyChangesEncryptionFields(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	c := Credential{ID: NewID(), Provider: "google", MaskedSuffix: "old!", ValidationState: "valid", CapabilitiesJSON: "[\"stt\"]", Ciphertext: []byte("old-cipher"), KeyID: "old"}
+	if err := s.Credentials().Put(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Credentials().RotateIfUnchanged(ctx, c.ID, "old", []byte("old-cipher"), "new", []byte("new-cipher"), "new!"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Credentials().Get(ctx, c.ID)
+	if err != nil || got.KeyID != "new" || string(got.Ciphertext) != "new-cipher" || got.MaskedSuffix != "new!" || got.ValidationState != "valid" || got.CapabilitiesJSON != "[\"stt\"]" {
+		t.Fatalf("rotation row=%+v err=%v", got, err)
+	}
+	if err := s.Credentials().RotateIfUnchanged(ctx, c.ID, "old", []byte("old-cipher"), "newer", []byte("newer-cipher"), "x"); err == nil {
+		t.Fatal("stale rotation snapshot replaced current key")
+	}
+}

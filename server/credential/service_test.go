@@ -6,7 +6,9 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"govoice/server/provider"
 	"govoice/server/storage"
@@ -117,6 +119,7 @@ func (r *memoryRepository) Put(_ context.Context, c storage.Credential) error {
 	if _, exists := r.rows[c.ID]; exists {
 		return errors.New("duplicate")
 	}
+	c.CreatedAt, c.UpdatedAt = time.Now().UTC(), time.Now().UTC()
 	r.rows[c.ID] = cloneCredential(c)
 	return nil
 }
@@ -125,7 +128,17 @@ func (r *memoryRepository) ReplaceIfUnchanged(_ context.Context, expectedKeyID s
 	if !exists || old.KeyID != expectedKeyID || !bytes.Equal(old.Ciphertext, expectedCiphertext) {
 		return errors.New("credential changed")
 	}
+	c.UpdatedAt = time.Now().UTC()
 	r.rows[c.ID] = cloneCredential(c)
+	return nil
+}
+func (r *memoryRepository) RotateIfUnchanged(_ context.Context, id, expectedKeyID string, expectedCiphertext []byte, keyID string, ciphertext []byte, maskedSuffix string) error {
+	old, exists := r.rows[id]
+	if !exists || old.KeyID != expectedKeyID || !bytes.Equal(old.Ciphertext, expectedCiphertext) {
+		return errors.New("credential changed")
+	}
+	old.KeyID, old.Ciphertext, old.MaskedSuffix, old.UpdatedAt = keyID, append([]byte(nil), ciphertext...), maskedSuffix, time.Now().UTC()
+	r.rows[id] = old
 	return nil
 }
 func (r *memoryRepository) Get(_ context.Context, id string) (storage.Credential, error) {
@@ -157,7 +170,7 @@ func cloneCredential(c storage.Credential) storage.Credential {
 func TestCredentialInvalidValidationAndCapabilityReadiness(t *testing.T) {
 	registry := provider.NewRegistry(provider.Definitions())
 	repo := newMemoryRepository()
-	validator := ValidatorFunc(func(_ context.Context, _ string, _ string) (ValidationResult, error) {
+	validator := ValidatorFunc(func(_ context.Context, _ string, _ []byte) (ValidationResult, error) {
 		return ValidationResult{}, ErrInvalidCredential
 	})
 	svc, err := NewService(repo, Keyring{ActiveID: "k", Keys: map[string][]byte{"k": bytesOf(32, 5)}}, registry, validator)
@@ -187,7 +200,19 @@ func TestCredentialInvalidValidationAndCapabilityReadiness(t *testing.T) {
 	if ready := Readiness(registry, map[provider.Capability]CredentialReadiness{provider.CapabilityMCP: {Provider: "google", Present: true, Valid: true}}); ready[provider.CapabilityMCP].Ready {
 		t.Fatal("unsupported capability reported ready")
 	}
-	validSvc, _ := NewService(newMemoryRepository(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": bytesOf(32, 6)}}, registry, ValidatorFunc(func(context.Context, string, string) (ValidationResult, error) {
+	verified := []provider.Capability{provider.CapabilitySTT}
+	readiness := Readiness(registry, map[provider.Capability]CredentialReadiness{
+		provider.CapabilitySTT: {Provider: "google", Present: true, Valid: true, Capabilities: verified},
+		provider.CapabilityTTS: {Provider: "google", Present: true, Valid: true, Capabilities: verified},
+	})
+	if !readiness[provider.CapabilitySTT].Ready || readiness[provider.CapabilityTTS].Ready {
+		t.Fatalf("readiness ignored verified capability membership: %+v", readiness)
+	}
+	emptyReadiness := Readiness(registry, map[provider.Capability]CredentialReadiness{provider.CapabilitySTT: {Provider: "google", Present: true, Valid: true}})
+	if emptyReadiness[provider.CapabilitySTT].Ready {
+		t.Fatal("empty verified capabilities reported ready")
+	}
+	validSvc, _ := NewService(newMemoryRepository(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": bytesOf(32, 6)}}, registry, ValidatorFunc(func(context.Context, string, []byte) (ValidationResult, error) {
 		return ValidationResult{Capabilities: []provider.Capability{provider.CapabilitySTT}}, nil
 	}))
 	valid, err := validSvc.Create(context.Background(), CreateInput{Provider: "google", Secret: "supported-key-value"})
@@ -198,7 +223,7 @@ func TestCredentialInvalidValidationAndCapabilityReadiness(t *testing.T) {
 	if err != nil || valid.ValidationState != ValidationValid || len(valid.Capabilities) != 1 || valid.Capabilities[0] != provider.CapabilitySTT {
 		t.Fatalf("valid credential=%+v err=%v", valid, err)
 	}
-	unsupportedSvc, _ := NewService(newMemoryRepository(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": bytesOf(32, 7)}}, registry, ValidatorFunc(func(context.Context, string, string) (ValidationResult, error) {
+	unsupportedSvc, _ := NewService(newMemoryRepository(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": bytesOf(32, 7)}}, registry, ValidatorFunc(func(context.Context, string, []byte) (ValidationResult, error) {
 		return ValidationResult{Capabilities: []provider.Capability{provider.CapabilityMCP}}, nil
 	}))
 	unsupported, _ := unsupportedSvc.Create(context.Background(), CreateInput{Provider: "google", Secret: "unsupported-result-key"})
@@ -223,9 +248,17 @@ func TestCredentialUpdateDeleteAndInputValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	persisted, _ := repo.Get(context.Background(), created.ID)
+	if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() || !created.UpdatedAt.Equal(persisted.UpdatedAt) {
+		t.Fatalf("create DTO timestamps are not persisted values: dto=%+v row=%+v", created, persisted)
+	}
 	updated, err := svc.Update(context.Background(), created.ID, UpdateInput{Secret: "replacement-secret"})
 	if err != nil || updated.ValidationState != ValidationUnvalidated || updated.MaskedValue != "••••••cret" {
 		t.Fatalf("updated=%+v err=%v", updated, err)
+	}
+	persisted, _ = repo.Get(context.Background(), created.ID)
+	if updated.UpdatedAt.IsZero() || !updated.UpdatedAt.Equal(persisted.UpdatedAt) {
+		t.Fatalf("update DTO timestamp stale: dto=%s row=%s", updated.UpdatedAt, persisted.UpdatedAt)
 	}
 	plain, err := svc.decrypt(repo.rows[created.ID])
 	if err != nil || string(plain) != "replacement-secret" {
@@ -237,4 +270,67 @@ func TestCredentialUpdateDeleteAndInputValidation(t *testing.T) {
 	if _, err := svc.Get(context.Background(), created.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted credential read error=%v", err)
 	}
+}
+
+func TestRotationDoesNotRestoreValidationMetadataFromStaleSnapshot(t *testing.T) {
+	base := newMemoryRepository()
+	oldKeys := Keyring{ActiveID: "old", Keys: map[string][]byte{"old": bytesOf(32, 31)}}
+	registry := provider.NewRegistry(provider.Definitions())
+	creator, err := NewService(base, oldKeys, registry, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := creator.Create(context.Background(), CreateInput{Provider: "google", Secret: "interleaved-rotation-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	barrier := &rotationBarrierRepository{base: base, atRotate: make(chan struct{}), resumeRotate: make(chan struct{})}
+	rotator, err := NewService(barrier, Keyring{ActiveID: "new", Keys: map[string][]byte{"old": bytesOf(32, 31), "new": bytesOf(32, 32)}}, registry, ValidatorFunc(func(context.Context, string, []byte) (ValidationResult, error) {
+		return ValidationResult{Capabilities: []provider.Capability{provider.CapabilitySTT}}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotateDone := make(chan error, 1)
+	go func() { rotateDone <- rotator.Rotate(context.Background(), created.ID) }()
+	<-barrier.atRotate
+	validated, err := rotator.Validate(context.Background(), created.ID)
+	if err != nil || validated.ValidationState != ValidationValid {
+		t.Fatalf("validation=%+v err=%v", validated, err)
+	}
+	close(barrier.resumeRotate)
+	if err := <-rotateDone; err != nil {
+		t.Fatal(err)
+	}
+	row, err := base.Get(context.Background(), created.ID)
+	if err != nil || row.KeyID != "new" || row.ValidationState != ValidationValid || row.CapabilitiesJSON != "[\"stt\"]" {
+		t.Fatalf("rotation lost concurrent validation: row=%+v err=%v", row, err)
+	}
+}
+
+type rotationBarrierRepository struct {
+	base         *memoryRepository
+	atRotate     chan struct{}
+	resumeRotate chan struct{}
+	once         sync.Once
+}
+
+func (r *rotationBarrierRepository) Put(ctx context.Context, c storage.Credential) error {
+	return r.base.Put(ctx, c)
+}
+func (r *rotationBarrierRepository) ReplaceIfUnchanged(ctx context.Context, k string, b []byte, c storage.Credential) error {
+	return r.base.ReplaceIfUnchanged(ctx, k, b, c)
+}
+func (r *rotationBarrierRepository) RotateIfUnchanged(ctx context.Context, id, oldKey string, oldCipher []byte, newKey string, newCipher []byte, masked string) error {
+	r.once.Do(func() { close(r.atRotate); <-r.resumeRotate })
+	return r.base.RotateIfUnchanged(ctx, id, oldKey, oldCipher, newKey, newCipher, masked)
+}
+func (r *rotationBarrierRepository) Get(ctx context.Context, id string) (storage.Credential, error) {
+	return r.base.Get(ctx, id)
+}
+func (r *rotationBarrierRepository) Delete(ctx context.Context, id string) error {
+	return r.base.Delete(ctx, id)
+}
+func (r *rotationBarrierRepository) List(ctx context.Context) ([]storage.Credential, error) {
+	return r.base.List(ctx)
 }

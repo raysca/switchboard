@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"govoice/server/credential"
 	"govoice/server/provider"
 )
@@ -24,10 +25,11 @@ type updateCredentialRequest struct {
 }
 
 func (h *ProviderManagement) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	requestID := r.Header.Get("X-Request-ID")
+	requestID := RequestIDFromContext(r.Context())
 	if requestID == "" {
-		requestID = "provider-management"
+		requestID = uuid.NewString()
 	}
+	w.Header().Set("X-Request-ID", requestID)
 	if h == nil || h.Credentials == nil || h.Registry == nil {
 		WriteError(w, http.StatusServiceUnavailable, "provider_management_unavailable", "provider management storage is unavailable", requestID)
 		return

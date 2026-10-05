@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,5 +40,21 @@ func TestProviderCredentialRoutesRemainManagementAuthenticated(t *testing.T) {
 	s.publicMux.ServeHTTP(public, httptest.NewRequest("GET", path, nil))
 	if public.Code != http.StatusNotFound {
 		t.Fatalf("provider management route exposed on public listener: %d", public.Code)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/providers/google/discovery?capability=mcp", nil)
+	request.Header.Set("Authorization", "Bearer management-test-key-32-bytes-long-and-separate")
+	request.Header.Set("X-Request-ID", "client-forged-request-id")
+	responseRecorder := httptest.NewRecorder()
+	s.adminMux.ServeHTTP(responseRecorder, request)
+	var failure struct {
+		Error struct {
+			RequestID string `json:"request_id"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(responseRecorder.Body.Bytes(), &failure); err != nil {
+		t.Fatal(err)
+	}
+	if responseRecorder.Code != http.StatusBadRequest || responseRecorder.Header().Get("X-Request-ID") == "client-forged-request-id" || failure.Error.RequestID != responseRecorder.Header().Get("X-Request-ID") {
+		t.Fatalf("outer request ID mismatch: %d header=%q error=%q body=%s", responseRecorder.Code, responseRecorder.Header().Get("X-Request-ID"), failure.Error.RequestID, responseRecorder.Body.String())
 	}
 }

@@ -39,6 +39,7 @@ var (
 	ErrDecrypt               = errors.New("credential ciphertext authentication failed")
 	ErrUnknownKey            = errors.New("credential encryption key is unavailable")
 	ErrUnsupportedProvider   = errors.New("provider is not supported")
+	errValidatorFailed       = errors.New("provider validation failed")
 )
 
 type Keyring struct {
@@ -65,17 +66,18 @@ type CreateInput struct{ Provider, Secret string }
 type UpdateInput struct{ Secret string }
 type ValidationResult struct{ Capabilities []provider.Capability }
 type Validator interface {
-	Validate(context.Context, string, string) (ValidationResult, error)
+	Validate(context.Context, string, []byte) (ValidationResult, error)
 }
-type ValidatorFunc func(context.Context, string, string) (ValidationResult, error)
+type ValidatorFunc func(context.Context, string, []byte) (ValidationResult, error)
 
-func (f ValidatorFunc) Validate(ctx context.Context, providerID, secret string) (ValidationResult, error) {
+func (f ValidatorFunc) Validate(ctx context.Context, providerID string, secret []byte) (ValidationResult, error) {
 	return f(ctx, providerID, secret)
 }
 
 type Repository interface {
 	Put(context.Context, storage.Credential) error
 	ReplaceIfUnchanged(context.Context, string, []byte, storage.Credential) error
+	RotateIfUnchanged(context.Context, string, string, []byte, string, []byte, string) error
 	Get(context.Context, string) (storage.Credential, error)
 	Delete(context.Context, string) error
 	List(context.Context) ([]storage.Credential, error)
@@ -112,7 +114,9 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (CredentialDTO,
 	}
 	id := storage.NewID()
 	keyID := s.keys.ActiveID
-	ciphertext, err := s.encrypt(id, providerID, keyID, []byte(input.Secret))
+	plaintext := []byte(input.Secret)
+	defer zero(plaintext)
+	ciphertext, err := s.encrypt(id, providerID, keyID, plaintext)
 	if err != nil {
 		return CredentialDTO{}, err
 	}
@@ -123,7 +127,11 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (CredentialDTO,
 	if err := s.repo.Put(ctx, row); err != nil {
 		return CredentialDTO{}, errors.New("credential could not be stored")
 	}
-	return toDTO(row), nil
+	persisted, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return CredentialDTO{}, errors.New("credential could not be read after storage")
+	}
+	return toDTO(persisted), nil
 }
 
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (CredentialDTO, error) {
@@ -137,7 +145,9 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Cre
 	oldKeyID := row.KeyID
 	oldCiphertext := append([]byte(nil), row.Ciphertext...)
 	row.KeyID = s.keys.ActiveID
-	row.Ciphertext, err = s.encrypt(row.ID, row.Provider, row.KeyID, []byte(input.Secret))
+	plaintext := []byte(input.Secret)
+	defer zero(plaintext)
+	row.Ciphertext, err = s.encrypt(row.ID, row.Provider, row.KeyID, plaintext)
 	if err != nil {
 		return CredentialDTO{}, err
 	}
@@ -148,7 +158,11 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Cre
 	if err := s.repo.ReplaceIfUnchanged(ctx, oldKeyID, oldCiphertext, row); err != nil {
 		return CredentialDTO{}, errors.New("credential could not be updated")
 	}
-	return toDTO(row), nil
+	persisted, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return CredentialDTO{}, errors.New("credential could not be read after update")
+	}
+	return toDTO(persisted), nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
@@ -193,10 +207,8 @@ func (s *Service) Validate(ctx context.Context, id string) (CredentialDTO, error
 	if err != nil {
 		return CredentialDTO{}, err
 	}
-	result, validationErr := s.validator.Validate(ctx, row.Provider, string(secret))
-	for i := range secret {
-		secret[i] = 0
-	}
+	defer zero(secret)
+	result, validationErr := invokeValidator(ctx, s.validator, row.Provider, secret)
 	row.ValidatedAt = time.Now().UTC()
 	switch {
 	case errors.Is(validationErr, ErrInvalidCredential):
@@ -216,7 +228,11 @@ func (s *Service) Validate(ctx context.Context, id string) (CredentialDTO, error
 	if err := s.repo.ReplaceIfUnchanged(ctx, row.KeyID, row.Ciphertext, row); err != nil {
 		return CredentialDTO{}, errors.New("credential validation state could not be stored")
 	}
-	return toDTO(row), nil
+	persisted, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return CredentialDTO{}, errors.New("credential validation state could not be read")
+	}
+	return toDTO(persisted), nil
 }
 
 func (s *Service) Rotate(ctx context.Context, id string) error {
@@ -234,12 +250,21 @@ func (s *Service) Rotate(ctx context.Context, id string) error {
 	defer zero(secret)
 	oldKeyID := row.KeyID
 	oldCiphertext := append([]byte(nil), row.Ciphertext...)
-	row.KeyID = s.keys.ActiveID
-	row.Ciphertext, err = s.encrypt(row.ID, row.Provider, row.KeyID, secret)
+	newCiphertext, err := s.encrypt(row.ID, row.Provider, s.keys.ActiveID, secret)
 	if err != nil {
 		return err
 	}
-	return s.repo.ReplaceIfUnchanged(ctx, oldKeyID, oldCiphertext, row)
+	return s.repo.RotateIfUnchanged(ctx, row.ID, oldKeyID, oldCiphertext, s.keys.ActiveID, newCiphertext, maskBytes(secret))
+}
+
+func invokeValidator(ctx context.Context, validator Validator, providerID string, secret []byte) (result ValidationResult, err error) {
+	defer func() {
+		if recover() != nil {
+			result = ValidationResult{}
+			err = errValidatorFailed
+		}
+	}()
+	return validator.Validate(ctx, providerID, secret)
 }
 
 func (s *Service) encrypt(id, providerID, keyID string, plaintext []byte) ([]byte, error) {
@@ -301,11 +326,23 @@ func providerHasControl(value string) bool {
 	return false
 }
 func mask(secret string) string {
-	runes := []rune(secret)
-	if len(runes) <= 4 {
+	return maskBytes([]byte(secret))
+}
+func maskBytes(secret []byte) string {
+	end := len(secret)
+	start, count := end, 0
+	for start > 0 && count < 4 {
+		_, width := utf8.DecodeLastRune(secret[:start])
+		if width == 0 {
+			break
+		}
+		start -= width
+		count++
+	}
+	if start == 0 {
 		return ""
 	}
-	return string(runes[len(runes)-4:])
+	return string(secret[start:end])
 }
 func toDTO(row storage.Credential) CredentialDTO {
 	var caps []provider.Capability
@@ -346,9 +383,10 @@ type CapabilityReadiness struct {
 	Reason string `json:"reason,omitempty"`
 }
 type CredentialReadiness struct {
-	Present  bool
-	Valid    bool
-	Provider string
+	Present      bool
+	Valid        bool
+	Provider     string
+	Capabilities []provider.Capability
 }
 
 func Readiness(registry *provider.Registry, required map[provider.Capability]CredentialReadiness) map[provider.Capability]CapabilityReadiness {
@@ -361,9 +399,20 @@ func Readiness(registry *provider.Registry, required map[provider.Capability]Cre
 			out[capability] = CapabilityReadiness{Reason: "missing credential"}
 		case !state.Valid:
 			out[capability] = CapabilityReadiness{Reason: "credential is not validated"}
+		case !hasCapability(state.Capabilities, capability):
+			out[capability] = CapabilityReadiness{Reason: "credential is not verified for this capability"}
 		default:
 			out[capability] = CapabilityReadiness{Ready: true}
 		}
 	}
 	return out
+}
+
+func hasCapability(capabilities []provider.Capability, want provider.Capability) bool {
+	for _, capability := range capabilities {
+		if capability == want {
+			return true
+		}
+	}
+	return false
 }

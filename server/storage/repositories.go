@@ -295,6 +295,30 @@ func (r CredentialRepository) ReplaceIfUnchanged(ctx context.Context, expectedKe
 	return nil
 }
 
+// RotateIfUnchanged changes only encryption material and the masked suffix.
+// It deliberately preserves validation and capability metadata written after
+// the caller read its rotation snapshot.
+func (r CredentialRepository) RotateIfUnchanged(ctx context.Context, id, expectedKeyID string, expectedCiphertext []byte, keyID string, ciphertext []byte, maskedSuffix string) error {
+	if err := validID(id); err != nil {
+		return err
+	}
+	if expectedKeyID == "" || len(expectedCiphertext) == 0 || keyID == "" || len(ciphertext) == 0 {
+		return errors.New("credential ciphertext and key id required")
+	}
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE provider_credentials SET key_id=?,ciphertext=?,masked_suffix=?,updated_at=? WHERE id=? AND key_id=? AND ciphertext=?"), keyID, ciphertext, maskedSuffix, utc(time.Now()), id, expectedKeyID, expectedCiphertext)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (r CredentialRepository) Delete(ctx context.Context, id string) error {
 	if err := validID(id); err != nil {
 		return err

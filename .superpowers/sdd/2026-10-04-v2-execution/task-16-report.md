@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation and focused verification are complete. The full server race suite and `go vet` pass. An independent security review is still pending before this task's commit.
+Initial implementation was committed as `abbbfad`. The independent security review identified five findings; the follow-up is implementing and testing those corrections in a separate fix commit.
 
 ## Delivered
 
@@ -38,3 +38,11 @@ From `server/`, with `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platfor
 - Confirm AES-GCM key provisioning and rotation procedure are sufficient for deployment operations, since key loading intentionally remains host-owned.
 - Confirm the initial static Google/xAI capability set matches the target provider integrations.
 - Consider whether provider credential deletion should map database foreign-key restrictions to a dedicated `409 in_use` response when credentials are associated with MCP servers.
+
+## Independent review corrections
+
+- Validator inputs are transient `[]byte`; a deferred wipe runs after normal returns and recovered panics. Validator panics become a generic `error` validation state and never reach `net/http`'s panic logger.
+- Rotation uses a dedicated conditional repository update that only changes key ID, ciphertext, mask and update time. A deterministic barrier test completes credential validation between the rotation read and write and checks its state/capabilities survive.
+- Capability readiness requires the specific capability to appear in the credential's verified capability set; static provider support and generic validity alone are insufficient.
+- Outer management request IDs are placed in context by `handleAPI`; provider and agent handlers use the shared API context helper, ignore request-provided IDs, and keep error body/header IDs equal.
+- Create, update and validate return the persisted row after mutation so DTO timestamps match database timestamps.

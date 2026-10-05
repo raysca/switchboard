@@ -79,6 +79,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 				api.WriteError(w, http.StatusServiceUnavailable, "provider_management_unavailable", "provider management storage is unavailable", requestID)
 				return
 			}
+			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
 			s.providerManagementAPI.ServeHTTP(w, r)
 			return
 		}

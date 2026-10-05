@@ -3,6 +3,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,6 +14,20 @@ import (
 )
 
 const MaxBodyBytes = 64 << 10
+
+type requestIDContextKey struct{}
+
+// WithRequestID binds a server-generated request identifier to an API call.
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDContextKey{}, id)
+}
+
+// RequestIDFromContext retrieves the trusted request identifier installed by
+// the outer management boundary. It intentionally never reads HTTP headers.
+func RequestIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDContextKey{}).(string)
+	return id
+}
 
 type Error struct {
 	Code      string `json:"code"`
