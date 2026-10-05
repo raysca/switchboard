@@ -235,7 +235,16 @@ func (t *CapturedTool) Execute(ctx context.Context, args json.RawMessage) (ToolR
 	if t == nil || t.owner == nil {
 		return ToolResult{}, ErrUnavailable
 	}
-	return t.owner.executeCaptured(ctx, t, args)
+	return t.owner.executeCaptured(ctx, t, args, "", "", "", 0)
+}
+
+// ExecuteCall carries provider-neutral conversation identity into MCP tracing.
+// Console and other standalone callers can continue to use Execute.
+func (t *CapturedTool) ExecuteCall(ctx context.Context, args json.RawMessage, callID, sessionID, turnID string, generation uint64) (ToolResult, error) {
+	if t == nil || t.owner == nil {
+		return ToolResult{}, ErrUnavailable
+	}
+	return t.owner.executeCaptured(ctx, t, args, callID, sessionID, turnID, generation)
 }
 
 func NewService(cfg ServiceConfig) (*Service, error) {
@@ -499,17 +508,25 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 	return captured.Execute(ctx, args)
 }
 
-func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, args json.RawMessage) (ToolResult, error) {
+func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, args json.RawMessage, callID, sessionID, turnID string, generation uint64) (ToolResult, error) {
 	ctx, cancel := s.timed(ctx)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return ToolResult{}, err
 	}
 	started := time.Now()
-	executionID := storage.NewID()
-	event := core.NewTraceEvent("mcp.tool.execute", time.Now(), "", "", 0, core.TracePolicy{Content: core.TraceMetadata}, nil)
+	executionID := callID
+	if executionID == "" {
+		executionID = storage.NewID()
+	}
+	event := core.NewTraceEvent("mcp.tool.execute", time.Now(), core.SessionID(sessionID), core.TurnID(turnID), core.Generation(generation), core.TracePolicy{Content: core.TraceMetadata}, nil)
 	event.ToolCallID = executionID
-	span := core.StartSpanSafe(ctx, s.tracer, event)
+	trace := core.TraceContextFromContext(ctx)
+	tracer := s.tracer
+	if _, noTraceContext := trace.Tracer.(core.NoopTracer); !noTraceContext {
+		tracer = trace.Tracer
+	}
+	span := core.StartSpanSafe(ctx, tracer, event)
 	ended := false
 	end := func(err error) {
 		if !ended {

@@ -49,13 +49,14 @@ type UpdateRequest struct {
 }
 
 type Version struct {
-	ID         string          `json:"id"`
-	Number     int             `json:"number"`
-	Schema     int             `json:"schema_version"`
-	Config     json.RawMessage `json:"config"`
-	ConfigHash string          `json:"config_hash"`
-	CreatedAt  time.Time       `json:"created_at"`
-	MCPTools   []ToolSelection `json:"mcp_tools"`
+	ID                string          `json:"id"`
+	Number            int             `json:"number"`
+	Schema            int             `json:"schema_version"`
+	Config            json.RawMessage `json:"config"`
+	ConfigHash        string          `json:"config_hash"`
+	CreatedAt         time.Time       `json:"created_at"`
+	MCPTools          []ToolSelection `json:"mcp_tools"`
+	MCPReviewRequired bool            `json:"mcp_review_required,omitempty"`
 }
 
 type ToolSelection struct {
@@ -386,6 +387,13 @@ const (
 )
 
 func (s *Service) agentReadiness(ctx context.Context, agentID, versionID string, config json.RawMessage, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
+	version, versionErr := s.store.Agents().Version(ctx, versionID)
+	if versionErr != nil {
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, nil
+	}
+	if version.MCPReviewRequired {
+		return Readiness{State: ReadinessNeedsToolReview, Reasons: []string{"mcp_tools_detached_review_required"}, ToolDependencies: []ToolDependency{}}, nil
+	}
 	var settings map[string]json.RawMessage
 	if json.Unmarshal(config, &settings) != nil {
 		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_configuration"}}, nil
@@ -518,7 +526,11 @@ func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 }
 
 func toVersion(v storage.AgentVersion) Version {
-	return Version{ID: v.ID, Number: v.Version, Schema: v.SchemaVersion, Config: append(json.RawMessage(nil), v.ConfigJSON...), ConfigHash: v.ConfigHash, CreatedAt: v.CreatedAt}
+	tools := make([]ToolSelection, 0, len(v.MCPTools))
+	for _, tool := range v.MCPTools {
+		tools = append(tools, ToolSelection{ServerID: tool.ServerID, RemoteName: tool.RemoteName, SchemaHash: tool.SchemaHash, Required: tool.Required})
+	}
+	return Version{ID: v.ID, Number: v.Version, Schema: v.SchemaVersion, Config: append(json.RawMessage(nil), v.ConfigJSON...), ConfigHash: v.ConfigHash, CreatedAt: v.CreatedAt, MCPTools: tools, MCPReviewRequired: v.MCPReviewRequired}
 }
 
 func fromStorageSelections(selections []storage.SelectedTool) []ToolSelection {

@@ -139,8 +139,14 @@ func (r AgentRepository) MutateAndPublish(ctx context.Context, id string, mutati
 			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM agent_versions WHERE agent_id=?"), id).Scan(&latest); err != nil {
 				return err
 			}
-			next = AgentVersion{ID: NewID(), AgentID: id, Version: latest + 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC()}
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), next.ID, next.AgentID, next.Version, next.SchemaVersion, string(next.ConfigJSON), next.ConfigHash, utc(next.CreatedAt)); err != nil {
+			reviewRequired := false
+			if currentVersion.Valid {
+				if err := tx.QueryRowContext(ctx, r.s.bind("SELECT mcp_review_required FROM agent_versions WHERE id=?"), currentVersion.String).Scan(&reviewRequired); err != nil {
+					return err
+				}
+			}
+			next = AgentVersion{ID: NewID(), AgentID: id, Version: latest + 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC(), MCPReviewRequired: reviewRequired}
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), next.ID, next.AgentID, next.Version, next.SchemaVersion, string(next.ConfigJSON), next.ConfigHash, utc(next.CreatedAt), boolValue(r.s.dialect, reviewRequired)); err != nil {
 				return err
 			}
 			if currentVersion.Valid {

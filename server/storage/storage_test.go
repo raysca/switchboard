@@ -36,7 +36,7 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 			t.Fatal(err)
 		}
 		var n int
-		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 4 {
+		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 5 {
 			t.Fatalf("version=%d err=%v", n, err)
 		}
 		s.Close()
@@ -46,7 +46,7 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 func TestRepositoryAgentVersionImmutabilityAndHistorySafety(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A", CreatedAt: time.Now()}
+	a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +80,65 @@ func TestRepositoryAgentVersionImmutabilityAndHistorySafety(t *testing.T) {
 	got, err = s.Agents().Current(ctx, a.ID)
 	if err != nil || !got.Archived {
 		t.Fatalf("archive=%+v err=%v", got, err)
+	}
+}
+
+func TestSessionAdmissionRejectsDisabledOrArchivedAgent(t *testing.T) {
+	s := testStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for _, mode := range []string{"disabled", "archived"} {
+		t.Run(mode, func(t *testing.T) {
+			a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
+			if err := s.Agents().Create(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "archived" {
+				if err := s.Agents().Archive(ctx, a.ID); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := s.DB().ExecContext(ctx, "UPDATE agents SET enabled=0 WHERE id=?", a.ID); err != nil {
+				t.Fatal(err)
+			}
+			err = s.Sessions().Create(ctx, SessionRecord{ID: NewID(), AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"})
+			if err == nil {
+				t.Fatal("session admitted after agent became unavailable")
+			}
+		})
+	}
+}
+
+func TestSessionEndRetriesPendingDeleteFinalization(t *testing.T) {
+	s := testStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Agents().Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionID := NewID()
+	if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	s.finalizePendingDeletesHook = func(context.Context) error { return errors.New("transient injected failure") }
+	if err := s.Sessions().End(ctx, sessionID); err == nil {
+		t.Fatal("expected injected finalization failure")
+	}
+	var status string
+	if err := s.DB().QueryRowContext(ctx, "SELECT status FROM sessions WHERE id=?", sessionID).Scan(&status); err != nil || status != "ended" {
+		t.Fatalf("status=%q err=%v", status, err)
+	}
+	s.finalizePendingDeletesHook = nil
+	if err := s.Sessions().End(ctx, sessionID); err != nil {
+		t.Fatalf("retry End: %v", err)
 	}
 }
 
@@ -351,7 +410,7 @@ func TestStorageRejectsInvalidIDs(t *testing.T) {
 func TestRepositoryRejectsInvalidDurableIDs(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A"}
+	a := Agent{ID: NewID(), Name: "A", Enabled: true}
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +458,7 @@ func TestRepositoryAgentCreateHonorsFlags(t *testing.T) {
 func TestRepositoryRejectsCorruptTimestamp(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A"}
+	a := Agent{ID: NewID(), Name: "A", Enabled: true}
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
@@ -523,19 +582,19 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var n int
-	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 4 {
+	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 5 {
 		t.Fatalf("upgrade version=%d err=%v", n, err)
 	}
 	// Goose runs each migration transactionally: failed DDL must not survive.
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_agent_mcp_review.sql"} {
 		body, err := fs.ReadFile(initial, name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["005_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["006_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectSQLite3, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -601,6 +660,18 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := provider.UpTo(ctx, 3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 4); err != nil {
+		t.Fatalf("PostgreSQL 003->004 upgrade: %v", err)
+	}
+	if _, err := provider.DownTo(ctx, 3); err != nil {
+		t.Fatalf("PostgreSQL 004->003 rollback: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 5); err != nil {
+		t.Fatalf("PostgreSQL re-upgrade through 005: %v", err)
+	}
 	db.Close()
 	s, err := Open(ctx, Config{Dialect: Postgres, DSN: scoped})
 	if err != nil {
@@ -608,18 +679,18 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 4 {
+	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 5 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_agent_mcp_review.sql"} {
 		body, err := fs.ReadFile(migrationFS, name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["004_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["006_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectPostgres, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -636,7 +707,7 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A"}
+	a := Agent{ID: NewID(), Name: "A", Enabled: true}
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
@@ -1028,6 +1099,9 @@ func TestRepositoryContract(t *testing.T) {
 			}
 			if err := s.Sessions().End(ctx, active); err != nil {
 				t.Fatal(err)
+			}
+			if err := s.Sessions().End(ctx, active); err != nil {
+				t.Fatalf("idempotent session end: %v", err)
 			}
 			if _, err := s.DB().ExecContext(ctx, s.bind("DELETE FROM mcp_servers WHERE id=?"), m.ID); err != nil {
 				t.Fatal(err)

@@ -68,7 +68,7 @@ func (e *sessionExecutor) Execute(ctx context.Context, call core.ToolCall) (core
 	if !ok {
 		return core.ToolResult{CallID: call.ID, Status: core.ToolFailed, ErrorCategory: "unknown_tool", Result: json.RawMessage(`{"error":"unknown_tool"}`), StartedAt: started, EndedAt: time.Now()}, nil
 	}
-	result, err := handler.Execute(ctx, call.Arguments)
+	result, err := handler.ExecuteCall(ctx, call.Arguments, call.ID, string(call.SessionID), string(call.TurnID), uint64(call.Generation))
 	ended := time.Now()
 	if err != nil {
 		return core.ToolResult{CallID: call.ID, Status: core.ToolFailed, ErrorCategory: "mcp_tool_failed", Result: json.RawMessage(`{"error":"mcp_tool_failed"}`), StartedAt: started, EndedAt: ended}, nil

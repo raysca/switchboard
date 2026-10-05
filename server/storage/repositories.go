@@ -21,6 +21,8 @@ type AgentVersion struct {
 	ConfigJSON             []byte
 	ConfigHash             string
 	CreatedAt              time.Time
+	MCPReviewRequired      bool
+	MCPTools               []SelectedTool
 }
 type AgentRepository struct{ s *Store }
 type SelectedTool struct {
@@ -215,11 +217,15 @@ func (r AgentRepository) UpdateDetails(ctx context.Context, id, name, descriptio
 func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, error) {
 	var v AgentVersion
 	var created string
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,version,schema_version,config_json,config_hash,created_at FROM agent_versions WHERE id=?"), id).Scan(&v.ID, &v.AgentID, &v.Version, &v.SchemaVersion, &v.ConfigJSON, &v.ConfigHash, &created)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required FROM agent_versions WHERE id=?"), id).Scan(&v.ID, &v.AgentID, &v.Version, &v.SchemaVersion, &v.ConfigJSON, &v.ConfigHash, &created, &v.MCPReviewRequired)
 	if err != nil {
 		return v, err
 	}
 	if v.CreatedAt, err = parseTime(created); err != nil {
+		return v, err
+	}
+	v.MCPTools, err = r.SelectedTools(ctx, id)
+	if err != nil {
 		return v, err
 	}
 	return v, nil
@@ -670,7 +676,7 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 			}
 			versionID := NewID()
 			now := utc(time.Now())
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), versionID, a.id, latest+1, 1, config, hash, now); err != nil {
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), versionID, a.id, latest+1, 1, config, hash, now, boolValue(r.s.dialect, true)); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) SELECT ?,mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=? AND mcp_server_id<>?"), versionID, a.versionID, id); err != nil {
@@ -696,6 +702,11 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 }
 
 func (r MCPRepository) FinalizePendingDeletes(ctx context.Context) error {
+	if r.s.finalizePendingDeletesHook != nil {
+		if err := r.s.finalizePendingDeletesHook(ctx); err != nil {
+			return err
+		}
+	}
 	query := "SELECT id FROM mcp_servers WHERE pending_delete=TRUE ORDER BY id"
 	if r.s.dialect == SQLite {
 		query = "SELECT id FROM mcp_servers WHERE pending_delete=1 ORDER BY id"

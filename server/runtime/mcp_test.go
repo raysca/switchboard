@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	coretools "govoice/core/tools"
 	"govoice/server/agent"
 	"govoice/server/mcp"
 	"govoice/server/storage"
@@ -51,6 +52,23 @@ func (r *runtimeRemote) setSchema(schema string) {
 type allowAllDestinations struct{}
 
 func (allowAllDestinations) Validate(context.Context, *url.URL) error { return nil }
+
+type runtimeTraceRecorder struct {
+	events  chan core.TraceEvent
+	parents chan bool
+}
+
+func (r *runtimeTraceRecorder) StartSpan(ctx context.Context, event core.TraceEvent) core.Span {
+	r.events <- event
+	r.parents <- core.SpanFromContext(ctx) != nil
+	return runtimeTraceSpan{}
+}
+
+type runtimeTraceSpan struct{}
+
+func (runtimeTraceSpan) SetAttribute(string, any) {}
+func (runtimeTraceSpan) AddEvent(core.TraceEvent) {}
+func (runtimeTraceSpan) End(error)                {}
 
 func TestSessionUsesCapturedMCPWrapperAfterDisableAndRefresh(t *testing.T) {
 	ctx := context.Background()
@@ -153,5 +171,93 @@ func TestSessionUsesCapturedMCPWrapperAfterDisableAndRefresh(t *testing.T) {
 	defer cancel()
 	if err := session.Close(closeCtx); err != nil {
 		t.Fatalf("idempotent close: %v", err)
+	}
+}
+
+func TestToolLoopPreservesMCPCallIdentityAndAsyncTraceParent(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/trace.db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	remote := &runtimeRemote{schema: json.RawMessage(`{"type":"object"}`)}
+	trace := &runtimeTraceRecorder{events: make(chan core.TraceEvent, 8), parents: make(chan bool, 8)}
+	async := core.NewAsyncTracer(trace, 32)
+	defer async.Close()
+	mcpSvc, err := mcp.NewService(mcp.ServiceConfig{Store: store, Remote: remote, Destinations: allowAllDestinations{}, Tracer: async})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := mcpSvc.Create(ctx, mcp.ServerConfig{Name: "trace", Endpoint: "https://mcp.example/rpc", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := mcpSvc.Refresh(ctx, server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents := agent.NewService(store)
+	created, err := agents.Create(ctx, agent.CreateRequest{Name: "trace", Config: json.RawMessage(`{"stt":"s","llm":"l","tts":"t"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := agents.SetMCPTools(ctx, created.ID, []agent.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-trace.events: // Discard discovery span recorded during setup.
+	case <-time.After(time.Second):
+		t.Fatal("discovery span was not recorded")
+	}
+	<-trace.parents
+	session, err := StartSession(ctx, agents, mcpSvc, created.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop, err := coretools.NewToolLoop(session.Definitions, session.Executor, core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer loop.Close()
+	loop = loop.WithTraceContext(core.ContextWithTraceContext(ctx, async, core.TracePolicy{}))
+	call := core.ToolCall{ID: "mcp-call-42", Name: session.Definitions[0].Name, SessionID: core.SessionID(session.Pin.ID), TurnID: "turn-9", Generation: 7, Arguments: json.RawMessage(`{}`)}
+	if _, err := loop.Run(ctx, []core.ToolCall{call}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var got []core.TraceEvent
+	var parentFlags []bool
+	deadline := time.After(time.Second)
+	for len(got) < 2 {
+		select {
+		case event := <-trace.events:
+			got = append(got, event)
+		case <-deadline:
+			t.Fatalf("trace events=%+v", got)
+		}
+	}
+	for range got {
+		parentFlags = append(parentFlags, <-trace.parents)
+	}
+	var loopEvent, mcpEvent *core.TraceEvent
+	for i := range got {
+		event := &got[i]
+		if event.Name == "tool.execute" {
+			loopEvent = event
+		}
+		if event.Name == "mcp.tool.execute" {
+			mcpEvent = event
+		}
+	}
+	if loopEvent == nil || mcpEvent == nil {
+		t.Fatalf("unexpected trace events=%+v", got)
+	}
+	for _, event := range []*core.TraceEvent{loopEvent, mcpEvent} {
+		if event.ToolCallID != call.ID || event.SessionID != call.SessionID || event.TurnID != call.TurnID || event.Generation != call.Generation {
+			t.Fatalf("lost call correlation: %+v", *event)
+		}
+	}
+	if !parentFlags[1] {
+		t.Fatalf("MCP trace did not inherit ToolLoop span parent; parent flags=%v", parentFlags)
 	}
 }

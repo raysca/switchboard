@@ -40,6 +40,9 @@ type Config struct {
 type Store struct {
 	db      *sql.DB
 	dialect Dialect
+	// finalizePendingDeletesHook is a package-test fault injection seam for
+	// exercising retry behavior after the session status transaction commits.
+	finalizePendingDeletesHook func(context.Context) error
 }
 
 func Open(ctx context.Context, cfg Config) (*Store, error) {

@@ -46,13 +46,17 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 		return err
 	}
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		query := "SELECT current_version_id FROM agents WHERE id=?"
+		query := "SELECT current_version_id,enabled,archived FROM agents WHERE id=?"
 		if r.s.dialect == Postgres {
 			query += " FOR UPDATE"
 		}
 		var current sql.NullString
-		if err := tx.QueryRowContext(ctx, r.s.bind(query), v.AgentID).Scan(&current); err != nil {
+		var enabled, archived bool
+		if err := tx.QueryRowContext(ctx, r.s.bind(query), v.AgentID).Scan(&current, &enabled, &archived); err != nil {
 			return err
+		}
+		if !enabled || archived {
+			return errors.New("agent unavailable for new sessions")
 		}
 		if !current.Valid || current.String != v.AgentVersionID {
 			return errors.New("agent version is no longer current")
@@ -137,7 +141,13 @@ func (r SessionRepository) End(ctx context.Context, id string) error {
 			return err
 		}
 		if n != 1 {
-			return sql.ErrNoRows
+			var status string
+			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT status FROM sessions WHERE id=?"), id).Scan(&status); err != nil {
+				return err
+			}
+			if status != "ended" {
+				return sql.ErrNoRows
+			}
 		}
 		return nil
 	})

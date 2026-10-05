@@ -232,6 +232,55 @@ func TestOptionalUnavailableMCPToolWarnsWithoutBlockingVoiceReadiness(t *testing
 	}
 }
 
+func TestDetachRequiresExplicitMCPReviewAndHistoricalSelectionsRemainReadable(t *testing.T) {
+	svc := testService(t)
+	ctx := context.Background()
+	m := storage.MCPServer{ID: storage.NewID(), Name: "review", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := svc.store.MCP().CreateServer(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	d, err := svc.store.MCP().AddDiscovery(ctx, m.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := svc.Create(ctx, CreateRequest{Name: "review", Config: validConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection := ToolSelection{ServerID: m.ID, RemoteName: "lookup", SchemaHash: d.Tools[0].SchemaHash, Required: true}
+	v1, err := svc.SetMCPTools(ctx, a.ID, []ToolSelection{selection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.store.MCP().DetachAndDelete(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, err := svc.Get(ctx, a.ID)
+	if err != nil || current.Readiness.State != ReadinessNeedsToolReview || len(current.Readiness.Reasons) == 0 {
+		t.Fatalf("detached required tool lost review requirement: readiness=%+v err=%v", current.Readiness, err)
+	}
+	if _, err := svc.ResolveCurrent(ctx, a.ID); err == nil {
+		t.Fatal("new session admitted before explicit review")
+	}
+	historical, err := svc.GetVersion(ctx, a.ID, v1.ID)
+	if err != nil || len(historical.MCPTools) != 1 || historical.MCPTools[0] != selection {
+		t.Fatalf("historical selection=%+v err=%v", historical.MCPTools, err)
+	}
+	if _, err := svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":"s2","llm":"l2","tts":"t2"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := svc.Get(ctx, a.ID); err != nil || changed.Readiness.State != ReadinessNeedsToolReview {
+		t.Fatalf("configuration publish silently cleared MCP review: %+v err=%v", changed.Readiness, err)
+	}
+	updated, err := svc.SetMCPTools(ctx, a.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.Get(ctx, a.ID); err != nil || got.Readiness.State != ReadinessConfigured || updated.MCPReviewRequired {
+		t.Fatalf("explicit review did not clear marker: readiness=%+v version=%+v err=%v", got.Readiness, updated, err)
+	}
+}
+
 func TestCreateAndUpdatePublishAtomicallyOnDatabaseFailure(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
