@@ -135,4 +135,16 @@ Correction round 2 verification:
   linker incompatibility; the same matrix passed with the documented override.
 - `gofmt` and `git diff --check`: PASS.
 
-Task 11 and Gate C remain open pending independent review and tester.
+## Independent closeout
+
+- Final independent review: **APPROVE** for `9f569fb..c38919d`. Safe trace
+  classifications distinguish success, executor error, panic, cancellation,
+  timeout, and stale generation without exposing raw handler data. Completed
+  replay respects each loop's current byte/depth limits and fails closed
+  without execution, continuation, or history mutation.
+- Final independent test: **PASS** at `c38919d`. Focused ToolLoop race tests
+  passed 50 repetitions; full core/root race and vet, Google/xAI provider
+  suites, transport race tests, and the tagged xAI compile probe passed.
+- Task 11 is complete. Gate C remains open for Task 12 provider adapters and
+  the Phase 3 independent gate. The claim-before-ContextAggregator ordering
+  requirement remains an explicit Task 12 integration constraint.

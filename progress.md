@@ -498,13 +498,30 @@ accounting, and replay-ledger capacity; exact retries remain rejects. Focused
 context race x50, full core/provider/root-tagged race and vet, and transport
 race checks pass. This historical handoff was superseded by the approved
 closeout above.
-- [ ] Task 11: Bounded ToolLoop behavior consuming Task 1 public types.
+- [x] Task 11: Bounded ToolLoop behavior consuming Task 1 public types. Independent reviewer APPROVED and final independent tester PASS at `c38919d`.
 - [ ] Task 12: Google/xAI tool adapters only; usage is P1 Task 32.
 - [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.
 - [ ] Task 14: P0 eval harness and separate compatibility suites with protocol-specific debug adapters.
 - [ ] Independent Phase 3 tester gate; record Gates C and F.
 
-Task 11 implementation handoff (pending independent review/test): added a
+### Task 11 closeout
+
+- Independent review APPROVED `9f569fb..c38919d`. The final policy rechecks
+  generation around execution and replay, exposes only safe trace outcome
+  categories, enforces current byte/depth bounds on cached replay without
+  re-execution, and reports incomplete/error runs with `Done=false`.
+- The final independent tester passed focused ToolLoop race tests for 50
+  repetitions plus full core/root race and vet, provider suites, transport
+  race tests, and the tagged xAI compile probe. No detached worker goroutines
+  are used; executors and continuation callbacks must honor their contexts.
+- Task 11 is complete at `c38919d`. Gate C remains open for Task 12's Google
+  and xAI adapters and the Phase 3 independent tester. Task 12 must claim a
+  call through ToolLoop before projecting it through ContextAggregator, or
+  explicitly distinguish an already recorded call.
+
+### Task 11 implementation history
+
+Task 11 implementation handoff (historical): added a
 native sequential multi-round loop, atomic context-backed tool-call claims,
 bounded argument/result JSON handling, context-derived cancellation and
 timeouts, generation fencing, panic/error normalization, and a continuation
