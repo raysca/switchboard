@@ -203,6 +203,21 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   `AbortInProgressWrite` remains false for coder/websocket; the separately
   tested slow-writer timeout closes the pacer and never acknowledges success.
 
+### Task 8 review round 3
+
+- Re-review found ordering gaps between older completed markers and newer
+  drains, monotonic retirement and retained uninterruptible chunks, overlapping
+  timeout waiters, and concurrent FakeTTS units. Task 8 remains unchecked and
+  Gate B remains open for independent review.
+- RED reproduced B's drain being replaced by A, a later critical unit-1 chunk
+  rejected after marker 2 advanced retirement, a second flush waiter returning
+  success after the first timed out, and FakeTTS order `1,2,1`.
+- The pacer now keeps a bounded active-unit ledger, reconciles retained
+  uninterruptible identities before stale rejection, retires older markers
+  without replacing newer drains, and stores one terminal flush result shared
+  by every waiter. Close/cancel cleanup has a dedicated pending-late-drain test.
+  FakeTTS units use a cancellation-safe admission-order chain.
+
 ### Task 6 closeout
 
 - Implementation commits: `10d9c26` (`feat(core): add bounded streaming audio

@@ -165,3 +165,29 @@ workaround, root RTVI/WebSocket race and vet, Google race and vet, and tagged
 xAI race and vet. The playback probe again returned
 `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; its exit zero
 comes only from the recorded decision and is not playback-clear evidence.
+
+## Review round 3
+
+`/tmp/task8-r3-red.log` records four behavioral REDs: older completed A
+replaced B's active drain, a retained uninterruptible unit-1 rejected its later
+chunk after marker 2 retirement, the second overlapping flush waiter returned
+nil after the first timed out terminally, and concurrent FakeTTS work emitted
+unit order `1,2,1`.
+
+The pacer now maintains a fixed-size active-unit identity ledger in addition to
+its pending/completed ledgers. Accepted uninterruptible units remain valid
+across later high-water retirement, while interruptible units are removed by
+the flush fence. Marker reconciliation checks retained queued, selected,
+in-flight, completed, and drain state before stale rejection. An older terminal
+marker retires without replacing a newer drain. Flush timeout stores one
+terminal error before close; every overlapping waiter returns that same failure.
+FakeTTS synthesis is admission-ordered through a cancellation-safe chain, with
+interruption and session teardown releasing queued work. A dedicated regression
+closes while an asynchronous late drain is pending and proves no delayed drain
+event escapes teardown.
+
+The round-3 regressions passed 50 repetitions under the race detector. Full
+core race/vet (with the macOS 26 SDK workaround), root RTVI/WebSocket race/vet,
+Google race/vet, and tagged xAI race/vet passed. The playback probe again
+reported `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; the
+recorded decision permits continuation but does not prove playback clear.

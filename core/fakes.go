@@ -266,7 +266,9 @@ type FakeTTSProcessor struct {
 	cfg     FakeTTSConfig
 
 	mu            sync.Mutex
-	activeCancel  context.CancelFunc
+	tail          chan struct{}
+	nextTaskID    uint64
+	cancels       map[uint64]context.CancelFunc
 	Synthesized   atomic.Uint64
 	CanceledCount atomic.Uint64
 }
@@ -275,7 +277,9 @@ func NewFakeTTSProcessor(cfg FakeTTSConfig) *FakeTTSProcessor {
 	if cfg.FramesPerUnit <= 0 {
 		cfg.FramesPerUnit = 2
 	}
-	return &FakeTTSProcessor{cfg: cfg}
+	ready := make(chan struct{})
+	close(ready)
+	return &FakeTTSProcessor{cfg: cfg, tail: ready, cancels: make(map[uint64]context.CancelFunc)}
 }
 
 func (p *FakeTTSProcessor) Attach(s SessionController, index int) error {
@@ -290,18 +294,69 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 		su := f.(*SynthesisUnitFrame)
 		p.mu.Lock()
 		taskCtx, cancel := context.WithCancel(ctx)
-		p.activeCancel = cancel
+		previous := p.tail
+		done := make(chan struct{})
+		p.tail = done
+		p.nextTaskID++
+		taskID := p.nextTaskID
+		p.cancels[taskID] = cancel
 		p.mu.Unlock()
 
 		return p.session.Go(func(c context.Context) {
+			defer close(done)
+			defer func() {
+				p.mu.Lock()
+				delete(p.cancels, taskID)
+				p.mu.Unlock()
+				cancel()
+			}()
+			if p.cfg.IgnoreCancel {
+				select {
+				case <-previous:
+				case <-c.Done():
+					return
+				}
+			} else {
+				select {
+				case <-previous:
+				case <-taskCtx.Done():
+					return
+				case <-c.Done():
+					return
+				}
+			}
 			for i := 1; i <= p.cfg.FramesPerUnit; i++ {
 				if p.cfg.FrameDelay > 0 {
-					select {
-					case <-taskCtx.Done():
-						if !p.cfg.IgnoreCancel {
+					timer := time.NewTimer(p.cfg.FrameDelay)
+					if p.cfg.IgnoreCancel {
+						select {
+						case <-timer.C:
+						case <-c.Done():
+							if !timer.Stop() {
+								<-timer.C
+							}
 							return
 						}
-					case <-time.After(p.cfg.FrameDelay):
+					} else {
+						select {
+						case <-timer.C:
+						case <-taskCtx.Done():
+							if !timer.Stop() {
+								select {
+								case <-timer.C:
+								default:
+								}
+							}
+							return
+						case <-c.Done():
+							if !timer.Stop() {
+								select {
+								case <-timer.C:
+								default:
+								}
+							}
+							return
+						}
 					}
 				}
 
@@ -331,8 +386,10 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 
 	case FrameInterruption:
 		p.mu.Lock()
-		if p.activeCancel != nil {
-			p.activeCancel()
+		if len(p.cancels) > 0 {
+			for _, cancel := range p.cancels {
+				cancel()
+			}
 			p.CanceledCount.Add(1)
 		}
 		p.mu.Unlock()

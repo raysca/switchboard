@@ -192,7 +192,12 @@ marker state to 64 and consumes a pending marker only after successful
 admission. Finality-producing adapters must use nonzero session-monotonic unit
 IDs; core supplies them globally across turns. A monotonic terminal high-water
 mark makes replayed IDs permanent no-ops without unbounded retained state, and
-nonmonotonic final identities fail closed.
+nonmonotonic final identities fail closed. A bounded active-unit ledger permits
+later chunks of an already admitted uninterruptible unit even after a future
+marker advances retirement; interruptible units remain fenced. Retained
+uninterruptible identities are reconciled before stale-generation rejection,
+and an older completed marker never replaces a newer drain. FakeTTS serializes
+synthesis units in admission order and cancels both active and queued work.
 
 Flush drops queued and selected/pacing interruptible output through the target
 generation. Final validation and transport-write registration are atomic with
@@ -204,7 +209,8 @@ waiting and same-connection reuse rather than in-progress coder cancellation.
 Explicitly recoverable writers may opt into cancellation.
 Repeated/overlapping calls keep generation-specific callbacks; late write
 returns cannot emit completion or revive speaking, and stale/no-op flushes do
-not reset the retained media clock. Explicitly
+not reset the retained media clock. All waiters observe the same stored terminal
+failure when one timeout closes the pacer, so none can acknowledge success. Explicitly
 uninterruptible queued, in-flight, or final-drain media survives in relative order even when
 older than the active fence, and new-generation output resumes normally. The
 separately tested bounded slow-writer path closes the pacer before returning its
