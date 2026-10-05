@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"govoice/core"
+	"govoice/core/tools"
 
 	"google.golang.org/genai"
 )
@@ -25,6 +27,10 @@ type LLMConfig struct {
 	RetryPolicy     RetryPolicy
 	CircuitBreaker  *CircuitBreaker
 	ContextProvider func() []core.Message
+	ToolDefinitions []core.ToolDefinition
+	ToolExecutor    core.ToolExecutor
+	ToolHistory     *core.ConversationContext
+	ToolLoopConfig  tools.ToolLoopConfig
 }
 
 // DefaultLLMConfig returns configuration matching v1-lock.json.
@@ -40,6 +46,7 @@ func DefaultLLMConfig() LLMConfig {
 // LLMStreamChunk represents a single chunk from the LLM stream.
 type LLMStreamChunk struct {
 	Text         string
+	ToolCalls    []core.ToolCall
 	PromptTokens int
 	OutputTokens int
 	TotalTokens  int
@@ -49,6 +56,10 @@ type LLMStreamChunk struct {
 // LLMStreamClient abstracts streamed content generation.
 type LLMStreamClient interface {
 	GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error)
+}
+
+type LLMToolStreamClient interface {
+	GenerateStreamWithTools(ctx context.Context, model string, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error)
 }
 
 // RealGoogleLLMClient uses google.golang.org/genai.
@@ -82,21 +93,15 @@ func NewRealGoogleLLMClient(ctx context.Context, creds *ResolvedCredentials) (*R
 }
 
 func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
-	var contents []*genai.Content
-	for _, m := range history {
-		role := "user"
-		if m.Role == core.RoleAssistant {
-			role = "model"
-		} else if m.Role == core.RoleSystem {
-			continue // System instructions passed via config
-		}
-		contents = append(contents, &genai.Content{
-			Role: role,
-			Parts: []*genai.Part{
-				{Text: m.Content},
-			},
-		})
-	}
+	return c.generateStream(ctx, model, systemPrompt, history, nil)
+}
+
+func (c *RealGoogleLLMClient) GenerateStreamWithTools(ctx context.Context, model, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
+	return c.generateStream(ctx, model, systemPrompt, history, definitions)
+}
+
+func (c *RealGoogleLLMClient) generateStream(ctx context.Context, model, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
+	contents := GoogleContents(history)
 
 	var genConfig *genai.GenerateContentConfig
 	if systemPrompt != "" {
@@ -105,6 +110,16 @@ func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, 
 				Parts: []*genai.Part{{Text: systemPrompt}},
 			},
 		}
+	}
+	if len(definitions) > 0 {
+		declarations, err := GoogleToolDeclarations(definitions)
+		if err != nil {
+			return nil, nil, errInvalidGoogleTool
+		}
+		if genConfig == nil {
+			genConfig = &genai.GenerateContentConfig{}
+		}
+		genConfig.Tools = []*genai.Tool{{FunctionDeclarations: declarations}}
 	}
 
 	chunkCh := make(chan LLMStreamChunk, 32)
@@ -125,6 +140,11 @@ func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, 
 			}
 
 			text := resp.Text()
+			toolCalls, callErr := GoogleToolCalls(resp, core.ToolCall{})
+			if callErr != nil {
+				errCh <- errInvalidGoogleTool
+				return
+			}
 			promptTok := 0
 			outTok := 0
 			totTok := 0
@@ -139,6 +159,7 @@ func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, 
 				return
 			case chunkCh <- LLMStreamChunk{
 				Text:         text,
+				ToolCalls:    toolCalls,
 				PromptTokens: promptTok,
 				OutputTokens: outTok,
 				TotalTokens:  totTok,
@@ -173,6 +194,8 @@ type LLMProcessor struct {
 	TotalTokens  atomic.Int64
 }
 
+var errGoogleToolClientUnsupported = errors.New("google: tool streaming client unsupported")
+
 // NewLLMProcessor creates a new LLMProcessor.
 func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
 	if cfg.Model == "" {
@@ -180,6 +203,20 @@ func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
 	}
 	if cfg.CircuitBreaker == nil {
 		cfg.CircuitBreaker = NewCircuitBreaker(DefaultCircuitConfig())
+	}
+	if len(cfg.ToolDefinitions) > 0 {
+		if cfg.ToolExecutor == nil || cfg.ToolHistory == nil {
+			return nil, errors.New("google: tool definitions require executor and history")
+		}
+		if _, err := GoogleToolDeclarations(cfg.ToolDefinitions); err != nil {
+			return nil, errInvalidGoogleTool
+		}
+		if cfg.ToolLoopConfig.MaxRounds == 0 {
+			cfg.ToolLoopConfig = tools.DefaultToolLoopConfig()
+		}
+		if _, err := tools.NewToolLoop(cfg.ToolDefinitions, cfg.ToolExecutor, cfg.ToolHistory, cfg.ToolLoopConfig); err != nil {
+			return nil, err
+		}
 	}
 	return &LLMProcessor{
 		cfg: cfg,
@@ -283,13 +320,22 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		return nil
 	}
 
-	history := []core.Message{
+	initialHistory := []core.Message{
 		{Role: core.RoleUser, Content: um.Content, TurnID: um.Turn},
 	}
 	if p.cfg.ContextProvider != nil {
 		if provided := p.cfg.ContextProvider(); len(provided) > 0 {
-			history = provided
+			initialHistory = provided
 		}
+	} else if p.cfg.ToolHistory != nil {
+		if provided := p.cfg.ToolHistory.Messages(); len(provided) > 0 {
+			initialHistory = provided
+		}
+	}
+	providerHistory := append([]core.Message(nil), initialHistory...)
+
+	getHistory := func() []core.Message {
+		return append([]core.Message(nil), providerHistory...)
 	}
 
 	// Launch async generation task on session supervisor
@@ -299,33 +345,47 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 
 		var committed bool
 		var fullTextBuilder strings.Builder
-
-		err := ExecuteWithRetry(genCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
-			return committed
-		}, func(attemptCtx context.Context, attempt int) error {
-			if attempt > 0 {
-				p.Retries.Add(1)
+		requestModel := func(requestCtx context.Context) ([]core.ToolCall, error) {
+			var chunkCh <-chan LLMStreamChunk
+			var errCh <-chan error
+			var err error
+			if len(p.cfg.ToolDefinitions) > 0 {
+				client, ok := p.cfg.Client.(LLMToolStreamClient)
+				if !ok {
+					return nil, errGoogleToolClientUnsupported
+				}
+				chunkCh, errCh, err = client.GenerateStreamWithTools(requestCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), p.cfg.ToolDefinitions)
+			} else {
+				chunkCh, errCh, err = p.cfg.Client.GenerateStream(requestCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory())
 			}
-			chunkCh, errCh, err := p.cfg.Client.GenerateStream(attemptCtx, p.cfg.Model, p.cfg.SystemPrompt, history)
 			if err != nil {
-				return err
+				return nil, err
 			}
-
+			var calls []core.ToolCall
+			var requestText strings.Builder
 			for {
 				select {
-				case <-attemptCtx.Done():
-					return attemptCtx.Err()
+				case <-requestCtx.Done():
+					return nil, requestCtx.Err()
 				case <-taskCtx.Done():
-					return taskCtx.Err()
-				case err, ok := <-errCh:
-					if ok && err != nil {
-						return err
+					return nil, taskCtx.Err()
+				case streamErr, ok := <-errCh:
+					if ok && streamErr != nil {
+						return nil, streamErr
 					}
+					errCh = nil
 				case chunk, ok := <-chunkCh:
 					if !ok {
-						return nil // Stream complete
+						if len(calls) > 0 {
+							if requestText.Len() > 0 {
+								providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Content: requestText.String(), TurnID: turn})
+							}
+							for _, call := range calls {
+								providerHistory = append(providerHistory, core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, Content: string(call.Arguments), ToolCallID: call.ID, ToolName: call.Name, TurnID: turn, Generation: gen})
+							}
+						}
+						return calls, nil
 					}
-
 					if chunk.PromptTokens > 0 {
 						p.PromptTokens.Store(int64(chunk.PromptTokens))
 					}
@@ -335,36 +395,43 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 					if chunk.TotalTokens > 0 {
 						p.TotalTokens.Store(int64(chunk.TotalTokens))
 					}
-
 					if chunk.Text != "" {
-						p.mu.Lock()
-						currentGen := p.activeGen
-						if p.session != nil {
-							currentGen = p.session.CurrentGeneration()
-						}
-						// Fence late output from old generation
-						if gen != currentGen {
-							p.mu.Unlock()
+						if !p.isCurrentGeneration(gen) {
 							p.Stale.Add(1)
-							return ErrGenerationMismatch
+							return nil, ErrGenerationMismatch
 						}
-						p.mu.Unlock()
-
 						committed = true
+						requestText.WriteString(chunk.Text)
 						fullTextBuilder.WriteString(chunk.Text)
-
-						// Reenter delta into pipeline
-						deltaFrame := &core.LLMTextDeltaFrame{
-							Delta: chunk.Text,
-							Turn:  turn,
-							Gen:   gen,
-						}
+						deltaFrame := &core.LLMTextDeltaFrame{Delta: chunk.Text, Turn: turn, Gen: gen}
 						_ = p.session.Reenter(deltaFrame, core.Downstream, p.index+1, gen)
+					}
+					if len(chunk.ToolCalls) > 0 {
+						committed = true // Once a call is returned, do not retry this model request.
+						for _, call := range chunk.ToolCalls {
+							call.SessionID, call.TurnID, call.Generation = core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen)
+							calls = append(calls, call)
+						}
 					}
 				}
 			}
-		}, nil)
+		}
+		requestWithRetry := func(requestCtx context.Context) ([]core.ToolCall, error) {
+			var calls []core.ToolCall
+			err := ExecuteWithRetry(requestCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
+				return committed
+			}, func(attemptCtx context.Context, attempt int) error {
+				if attempt > 0 {
+					p.Retries.Add(1)
+				}
+				var requestErr error
+				calls, requestErr = requestModel(attemptCtx)
+				return requestErr
+			}, nil)
+			return calls, err
+		}
 
+		calls, err := requestWithRetry(genCtx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrGenerationMismatch) {
 				return // Normal interruption / stale generation
@@ -374,6 +441,38 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			provErr := MapError("llm", err)
 			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false}, core.Downstream, p.index+1, gen)
 			return
+		}
+		if len(calls) > 0 {
+			loopConfig := p.cfg.ToolLoopConfig
+			loopConfig.IsCurrent = func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) }
+			loop, loopErr := tools.NewToolLoop(p.cfg.ToolDefinitions, p.cfg.ToolExecutor, p.cfg.ToolHistory, loopConfig)
+			if loopErr != nil {
+				p.Errors.Add(1)
+				return
+			}
+			_, loopErr = loop.Run(genCtx, calls, func(continueCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
+				committed = false
+				for _, result := range results {
+					name := ""
+					for i := len(providerHistory) - 1; i >= 0; i-- {
+						if providerHistory[i].Kind == core.MessageToolCall && providerHistory[i].ToolCallID == result.CallID {
+							name = providerHistory[i].ToolName
+							break
+						}
+					}
+					providerHistory = append(providerHistory, core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, Content: string(result.Result), ToolCallID: result.CallID, ToolName: name, ToolStatus: result.Status, ToolErrorCategory: result.ErrorCategory, TurnID: turn, Generation: gen})
+				}
+				next, requestErr := requestWithRetry(continueCtx)
+				return next, len(next) == 0, requestErr
+			})
+			if loopErr != nil {
+				if errors.Is(loopErr, context.Canceled) || errors.Is(loopErr, ErrGenerationMismatch) || errors.Is(loopErr, tools.ErrStaleToolCall) {
+					return
+				}
+				p.Errors.Add(1)
+				_ = p.session.Reenter(&core.ErrorFrame{Err: errors.New("google: tool execution failed"), Fatal: false}, core.Downstream, p.index+1, gen)
+				return
+			}
 		}
 
 		// Stream completed successfully, emit complete LLMTextFrame
@@ -395,4 +494,14 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		}
 		_ = p.session.Reenter(fullFrame, core.Downstream, p.index+1, gen)
 	})
+}
+
+func (p *LLMProcessor) isCurrentGeneration(generation uint64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	current := p.activeGen
+	if p.session != nil {
+		current = p.session.CurrentGeneration()
+	}
+	return generation == current
 }
