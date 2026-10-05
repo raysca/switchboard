@@ -23,7 +23,7 @@ func (p *ContextAggregator) ProcessFrame(_ context.Context, f Frame, dir Directi
 		if v.Result.Status != ToolSucceeded && v.Result.ErrorCategory == "" {
 			return ErrInvalidToolMessage
 		}
-		if err := p.Context.AddToolResult(string(v.Turn), uint64(v.Gen), v.Result.CallID, v.Result.Result, v.Result.ErrorCategory, v.Timestamp); err != nil {
+		if err := p.Context.AddToolResultStatus(string(v.Turn), uint64(v.Gen), v.Result.CallID, v.Result.Status, v.Result.Result, v.Result.ErrorCategory, v.Timestamp); err != nil {
 			return err
 		}
 	}

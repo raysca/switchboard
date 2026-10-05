@@ -86,9 +86,12 @@ The Task 1 constructor defaults an unset mode to `metadata`, admits a fixed set 
 
 `ConversationContext` is the ordered provider-neutral history boundary. It
 stores system, user, assistant, tool-call, and tool-result messages. Inputs and
-returned metadata are copied. Tool calls and results retain call, turn, and
-generation correlation; identical replay is idempotent, conflicting reuse or
-an unmatched result fails closed. The `core/tools` values are aliases of the
+returned JSON-safe metadata are recursively copied within fixed depth/node
+bounds; unsupported mutable values fail closed. Tool calls and results retain
+call, turn, generation, and result-status correlation; identical replay is
+idempotent, conflicting reuse or an unmatched result fails closed. Direct
+tool-kind `AddMessage` calls are rejected so this validation cannot be bypassed.
+The `core/tools` values are aliases of the
 same core contracts carried by `ToolCallFrame` and `ToolResultFrame`, so the
 context and later ToolLoop do not require parallel adapter types.
 
@@ -101,6 +104,9 @@ not by themselves mark a conversational turn complete for eviction.
 
 Budget enforcement preserves system instructions and the active user turn,
 evicts only the oldest complete turn, and rolls back additions that cannot fit.
+Rollback includes eviction counters and history, so failed mutations leave no
+phantom accounting. A context-budget failure during interrupted partial commit
+is returned and no assistant commit frame is emitted.
 Task 10 provides this deterministic bounded behavior only. Summarization and
 application-provided compaction remain Task 28.
 

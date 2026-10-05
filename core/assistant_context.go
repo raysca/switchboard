@@ -135,7 +135,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 			return nil
 		}
 		p.ttsStopped = true
-		if p.llmComplete && p.finalUnitID > 0 && len(p.deliveredUnits) >= len(p.pendingUnits) {
+		if p.llmComplete && p.finalUnitID > 0 && p.allPendingDelivered() {
 			return p.commitTurn(e, false)
 		}
 		return e.PushDirection(f, dir)
@@ -250,6 +250,9 @@ func (p *AssistantContextProcessor) isStaleTurn(turn string, gen uint64) bool {
 	if p.activeTurn != "" && turn != "" && turn != p.activeTurn {
 		return true
 	}
+	if p.activeTurn == "" {
+		return true
+	}
 	return false
 }
 
@@ -338,7 +341,7 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 			}
 			p.finalSignalSent = true
 		}
-		if _, delivered := p.deliveredUnits[p.finalUnitID]; delivered {
+		if p.allPendingDelivered() {
 			return p.commitTurn(e, false)
 		}
 	}
@@ -378,7 +381,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 		}
 	}
 
-	_ = e.Push(&AssistantMessageFrame{
+	emitErr := e.Push(&AssistantMessageFrame{
 		Turn:      p.activeTurn,
 		Content:   content,
 		Gen:       gen,
@@ -389,7 +392,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	// Reset turn state
 	p.resetTurn()
 
-	return nil
+	return emitErr
 }
 
 // failUndeliveredTurn refuses to commit assistant text when the final audio write failed.
@@ -433,14 +436,19 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 			Partial:   true,
 			CreatedAt: time.Now(),
 		}
-		_ = p.ctxPool.AddMessage(asstMsg)
-		_ = e.Push(&AssistantMessageFrame{
+		if err := p.ctxPool.AddMessage(asstMsg); err != nil {
+			return err
+		}
+		if err := e.Push(&AssistantMessageFrame{
 			Turn:      interruptedTurn,
 			Content:   partialText,
 			Gen:       oldGen,
 			Partial:   true,
 			Timestamp: asstMsg.CreatedAt,
-		})
+		}); err != nil {
+			p.resetTurn()
+			return err
+		}
 	}
 	// If len(delivered) == 0, no assistant text is committed to context.
 

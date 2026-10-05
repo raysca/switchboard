@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -13,6 +14,7 @@ var (
 	ErrInvalidToolMessage   = errors.New("core: invalid tool context message")
 	ErrUnmatchedToolResult  = errors.New("core: tool result has no matching call")
 	ErrToolCorrelation      = errors.New("core: conflicting tool call correlation")
+	ErrInvalidMetadata      = errors.New("core: message metadata must be bounded JSON-safe data")
 )
 
 // Role represents the conversational participant role.
@@ -35,16 +37,18 @@ const (
 
 // Message is a provider-neutral representation of a conversation turn or instruction.
 type Message struct {
-	Role       Role           `json:"role"`
-	Content    string         `json:"content"`
-	TurnID     string         `json:"turn_id,omitempty"`
-	Partial    bool           `json:"partial,omitempty"`
-	CreatedAt  time.Time      `json:"created_at"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-	Kind       MessageKind    `json:"kind,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	ToolName   string         `json:"tool_name,omitempty"`
-	Generation uint64         `json:"generation,omitempty"`
+	Role              Role           `json:"role"`
+	Content           string         `json:"content"`
+	TurnID            string         `json:"turn_id,omitempty"`
+	Partial           bool           `json:"partial,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	Metadata          map[string]any `json:"metadata,omitempty"`
+	Kind              MessageKind    `json:"kind,omitempty"`
+	ToolCallID        string         `json:"tool_call_id,omitempty"`
+	ToolName          string         `json:"tool_name,omitempty"`
+	Generation        uint64         `json:"generation,omitempty"`
+	ToolStatus        ToolStatus     `json:"tool_status,omitempty"`
+	ToolErrorCategory string         `json:"tool_error_category,omitempty"`
 }
 
 // ContextConfig specifies the bounded message and token limits for conversation history.
@@ -112,6 +116,8 @@ func (c *ConversationContext) SetSystemInstructionChecked(instruction string, at
 	}
 
 	original := append([]Message(nil), c.messages...)
+	originalEvictions := c.evictions
+	originalEvictedPairs := append([]string(nil), c.evictedPairs...)
 	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
 		c.messages[0] = sysMsg
 	} else {
@@ -119,6 +125,8 @@ func (c *ConversationContext) SetSystemInstructionChecked(instruction string, at
 	}
 	if err := c.enforceBudgetLocked(); err != nil {
 		c.messages = original
+		c.evictions = originalEvictions
+		c.evictedPairs = originalEvictedPairs
 		return err
 	}
 	return nil
@@ -131,7 +139,7 @@ func (c *ConversationContext) Messages() []Message {
 
 	res := make([]Message, len(c.messages))
 	for i := range c.messages {
-		res[i] = cloneMessage(c.messages[i])
+		res[i], _ = cloneMessage(c.messages[i])
 	}
 	return res
 }
@@ -174,13 +182,12 @@ func (c *ConversationContext) AddMessage(msg Message) error {
 	if msg.Role != RoleSystem && msg.Role != RoleUser && msg.Role != RoleAssistant && msg.Role != RoleTool {
 		return fmt.Errorf("%w: %q", ErrInvalidRole, msg.Role)
 	}
-	if msg.Kind == MessageToolCall && (msg.Role != RoleAssistant || msg.ToolCallID == "" || msg.ToolName == "" || msg.TurnID == "") {
+	if msg.Kind != "" && msg.Kind != MessageText && msg.Kind != MessageToolCall && msg.Kind != MessageToolResult {
 		return ErrInvalidToolMessage
 	}
-	if msg.Kind == MessageToolResult && (msg.Role != RoleTool || msg.ToolCallID == "" || msg.TurnID == "") {
-		return ErrInvalidToolMessage
-	}
-	if msg.Role == RoleTool && msg.Kind != MessageToolResult {
+	// Tool messages must use AddToolCall/AddToolResult so correlation and replay
+	// validation has one authoritative path.
+	if msg.Kind == MessageToolCall || msg.Kind == MessageToolResult || msg.Role == RoleTool {
 		return ErrInvalidToolMessage
 	}
 	if msg.CreatedAt.IsZero() {
@@ -193,15 +200,23 @@ func (c *ConversationContext) AddMessage(msg Message) error {
 }
 
 func (c *ConversationContext) addMessageLocked(msg Message) error {
+	cloned, err := cloneMessage(msg)
+	if err != nil {
+		return err
+	}
 	// Tentatively append message
 	originalMessages := append([]Message(nil), c.messages...)
-	c.messages = append(c.messages, cloneMessage(msg))
+	originalEvictions := c.evictions
+	originalEvictedPairs := append([]string(nil), c.evictedPairs...)
+	c.messages = append(c.messages, cloned)
 
 	// Apply eviction if needed
-	err := c.enforceBudgetLocked()
+	err = c.enforceBudgetLocked()
 	if err != nil {
 		// Rollback on rejection
 		c.messages = originalMessages
+		c.evictions = originalEvictions
+		c.evictedPairs = originalEvictedPairs
 		return err
 	}
 
@@ -234,7 +249,18 @@ func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name 
 
 // AddToolResult appends a result only after its matching call and at most once.
 func (c *ConversationContext) AddToolResult(turn string, gen uint64, callID string, result []byte, safeError string, at time.Time) error {
+	status := ToolSucceeded
+	if safeError != "" {
+		status = ToolFailed
+	}
+	return c.AddToolResultStatus(turn, gen, callID, status, result, safeError, at)
+}
+
+func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callID string, status ToolStatus, result []byte, safeError string, at time.Time) error {
 	if turn == "" || gen == 0 || callID == "" || (len(result) == 0 && safeError == "") {
+		return ErrInvalidToolMessage
+	}
+	if status != ToolSucceeded && status != ToolFailed && status != ToolCancelled {
 		return ErrInvalidToolMessage
 	}
 	c.mu.Lock()
@@ -252,10 +278,7 @@ func (c *ConversationContext) AddToolResult(turn string, gen uint64, callID stri
 		}
 		if m.Kind == MessageToolResult {
 			content := string(result)
-			if safeError != "" {
-				content = safeError
-			}
-			if m.Content == content {
+			if m.Content == content && m.ToolStatus == status && m.ToolErrorCategory == safeError {
 				return nil
 			}
 			return ErrToolCorrelation
@@ -265,47 +288,103 @@ func (c *ConversationContext) AddToolResult(turn string, gen uint64, callID stri
 		return ErrUnmatchedToolResult
 	}
 	content := string(append([]byte(nil), result...))
-	if safeError != "" {
-		content = safeError
-	}
 	if at.IsZero() {
 		at = time.Now()
 	}
-	return c.addMessageLocked(Message{Role: RoleTool, Kind: MessageToolResult, Content: content, TurnID: turn, ToolCallID: callID, Generation: gen, CreatedAt: at})
+	return c.addMessageLocked(Message{Role: RoleTool, Kind: MessageToolResult, Content: content, TurnID: turn, ToolCallID: callID, Generation: gen, ToolStatus: status, ToolErrorCategory: safeError, CreatedAt: at})
 }
 
-func cloneMessage(m Message) Message {
-	m.Metadata = cloneMetadata(m.Metadata)
-	return m
-}
-
-func cloneMetadata(src map[string]any) map[string]any {
-	if src == nil {
-		return nil
+func cloneMessage(m Message) (Message, error) {
+	metadata, err := cloneMetadata(m.Metadata, 0, new(int))
+	if err != nil {
+		return Message{}, err
 	}
+	m.Metadata = metadata
+	return m, nil
+}
+
+const maxMetadataNodes = 4096
+const maxMetadataDepth = 16
+
+func cloneMetadata(src map[string]any, depth int, nodes *int) (map[string]any, error) {
+	if src == nil {
+		return nil, nil
+	}
+	if depth > maxMetadataDepth || *nodes+len(src) > maxMetadataNodes {
+		return nil, ErrInvalidMetadata
+	}
+	*nodes += len(src)
 	dst := make(map[string]any, len(src))
 	for k, v := range src {
-		dst[k] = cloneMetadataValue(v)
+		cloned, err := cloneMetadataValue(v, depth+1, nodes)
+		if err != nil {
+			return nil, err
+		}
+		dst[k] = cloned
 	}
-	return dst
+	return dst, nil
 }
 
-func cloneMetadataValue(v any) any {
+func cloneMetadataValue(v any, depth int, nodes *int) (any, error) {
+	if depth > maxMetadataDepth || *nodes >= maxMetadataNodes {
+		return nil, ErrInvalidMetadata
+	}
+	*nodes = *nodes + 1
 	switch x := v.(type) {
 	case map[string]any:
-		return cloneMetadata(x)
+		return cloneMetadata(x, depth, nodes)
 	case []any:
+		if *nodes+len(x) > maxMetadataNodes {
+			return nil, ErrInvalidMetadata
+		}
+		*nodes += len(x)
 		out := make([]any, len(x))
 		for i := range x {
-			out[i] = cloneMetadataValue(x[i])
+			var err error
+			out[i], err = cloneMetadataValue(x[i], depth+1, nodes)
+			if err != nil {
+				return nil, err
+			}
 		}
-		return out
+		return out, nil
 	case []string:
-		return append([]string(nil), x...)
+		if *nodes+len(x) > maxMetadataNodes {
+			return nil, ErrInvalidMetadata
+		}
+		*nodes += len(x)
+		return append([]string(nil), x...), nil
 	case []byte:
-		return append([]byte(nil), x...)
+		if *nodes+len(x) > maxMetadataNodes {
+			return nil, ErrInvalidMetadata
+		}
+		*nodes += len(x)
+		return append([]byte(nil), x...), nil
+	case json.RawMessage:
+		if *nodes+len(x) > maxMetadataNodes {
+			return nil, ErrInvalidMetadata
+		}
+		*nodes += len(x)
+		return append(json.RawMessage(nil), x...), nil
+	case []float64:
+		if *nodes+len(x) > maxMetadataNodes {
+			return nil, ErrInvalidMetadata
+		}
+		*nodes += len(x)
+		return append([]float64(nil), x...), nil
+	case map[string]string:
+		if *nodes+len(x) > maxMetadataNodes {
+			return nil, ErrInvalidMetadata
+		}
+		*nodes += len(x)
+		out := make(map[string]string, len(x))
+		for k, v := range x {
+			out[k] = v
+		}
+		return out, nil
+	case nil, string, bool, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return x, nil
 	default:
-		return x
+		return nil, ErrInvalidMetadata
 	}
 }
 

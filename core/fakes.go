@@ -197,6 +197,12 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 	switch f.Type() {
 	case FrameUserMessage:
 		um := f.(*UserMessageFrame)
+		// Preserve the same provider contract as production LLM processors: the
+		// assistant context must observe the valid user-turn boundary before any
+		// asynchronous model output can re-enter.
+		if err := e.PushDirection(f, dir); err != nil {
+			return err
+		}
 		p.mu.Lock()
 		taskCtx, cancel := context.WithCancel(ctx)
 		p.activeCancel = cancel

@@ -452,6 +452,14 @@ budget overflow, and excludes tool-call messages from turn-completion eviction.
 Assistant commits wait for every delivery acknowledgement, commit once, retain
 only a fully delivered contiguous prefix on interruption, and discard cancelled
 or stale output. Focused race tests pass; independent review/test remain pending.
+
+Task 10 correction round 1 closes the initial review findings: late finality now
+uses the same all-unit barrier; cancelled/retired turns cannot resume without a
+new user turn; tool context has one correlation-checked mutation path and keeps
+result status; metadata cloning is bounded and rejects unsupported values;
+failed budget transactions restore eviction accounting; and rejected partial
+commits emit no assistant message. Focused race coverage passes 50 repetitions;
+independent re-review remains pending.
 - [ ] Task 11: Bounded ToolLoop behavior consuming Task 1 public types.
 - [ ] Task 12: Google/xAI tool adapters only; usage is P1 Task 32.
 - [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.

@@ -54,3 +54,26 @@ repeated turns, committed transcript replay, and deterministic eviction.
 - RTVI/WebSocket race suites: PASS.
 
 Task 10 remains unchecked pending independent review and testing.
+
+## Correction round 1
+
+Independent review found seven commit-invariant gaps. RED regressions covered
+the late-final three-unit `ack 1 + ack 3` case, direct tool-message bypass,
+post-cancel frame emission, typed mutable metadata, conflicting tool-result
+statuses, phantom eviction accounting after rollback, and interrupted partial
+commit rejection. The fixes make both assistant finality paths use the all-unit
+barrier; reject LLM output while no user turn is active; centralize tool writes;
+retain result status; recursively copy bounded JSON-safe metadata and reject
+unsupported values; restore messages plus all eviction accounting; and return
+partial-commit failures before emitting a commit frame.
+
+`go test -race -count=50 -run 'Test(Context|AssistantContext|InterruptedAssistant)' ./core`: PASS.
+
+The cancellation fix requires an actual user-turn boundary before model output.
+Production Google and xAI processors already forward `UserMessageFrame`; the
+fake LLM was aligned with that contract so integration tests no longer depended
+on accepting output with an empty active turn.
+
+Correction verification: full core race/vet, Google race/vet, xAI-tagged
+provider race/vet, root xAI-tagged race/vet, and RTVI/WebSocket integration all
+PASS with the documented SDK override where CGO is involved.
