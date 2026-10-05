@@ -121,5 +121,18 @@ call/result exchange.
 
 Verification: focused context race x50; full core race/vet with the documented
 Xcode SDK override; Google race/vet; xAI-tagged provider race/vet; root
-xAI-tagged race/vet; and transport race tests all PASS. Task 10 remains
-unchecked pending independent review and testing.
+xAI-tagged race/vet; and transport race tests all PASS.
+
+## Independent closeout
+
+- Final independent review: **APPROVE** for `daf5fa6..1425276`. The reviewer
+  verified transactional tool-call insertion, unchanged eviction accounting,
+  replay-ID reuse, related result rollback, completed replay after eviction,
+  conflicting status rejection, and concurrent replay under the race detector.
+- Final independent test: **PASS** at `1425276`. Focused context race tests
+  passed 50 repetitions; the self-evicted-call regression passed 100; sibling
+  replay/result/saturation cases passed 50; and full core race/vet passed.
+  Prior correction rounds also passed the provider, tagged-root, and transport
+  integration suites affected by shared contract changes.
+- Task 10 is complete. ToolLoop execution, provider adapters, and context
+  summarization/compaction remain assigned to Tasks 11, 12, and 28.
