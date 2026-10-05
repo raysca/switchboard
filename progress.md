@@ -127,7 +127,7 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 ## Phase 2 — P0 audio/call parity
 
 - [x] Task 6: Audio conditioning, filters, conversion, buffers.
-- [ ] Task 7: Silence, turn detection, manager (implementation committed; independent review pending).
+- [x] Task 7: Silence, turn detection, manager. Independent reviewer APPROVED and final independent tester PASS at `3563c8b`.
 - [ ] Task 8: Output pacing, speaking state, barge-in/flush.
 - [ ] Task 9: STT commit/finalization.
 - [ ] Independent Phase 2 tester gate; record Gate B.
@@ -163,37 +163,45 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   player's inability to clear already-buffered playback. Tasks 7–9 and the
   independent Phase 2 Gate B remain open.
 
-### Task 7 implementation evidence (independent review pending)
+### Task 7 closeout
+
+- Implementation and fixes: `31a4818` (`feat(core): add pluggable turn detection and management`), `376a787` (`fix(core): harden turn manager ordering`), `c801183` (`fix(core): drain concurrent turn decisions`), `ef4ef50` (`fix(core): bound turn detector coalescing`), and `3563c8b` (`fix(core): preserve queued turn detection`). The original implementer was interrupted at its timebox and the task restarted; after three fix rounds, the remaining ordering issue went to a fresh escalation implementer. Independent review APPROVED and final independent tester PASS at `3563c8b`.
+- Review rounds addressed repeated stop/silence-origin drift, generation fencing, detector lock reentry and invalid decisions, old-turn retirement, dropped concurrent completions, stale pre-callback frames, unsafe confidence values, same-input suppression, reset timestamp leakage, and unbounded callback rescheduling. The escalation resolved no-op/rejected inputs invalidating queued work: preflight and commit now validate actual semantic state and epoch; every accepted eligible state change supplies a current successor, and identical positive or negative inputs reuse their result.
+- Final independent evidence passed the entire turn package under race ×100, the new 14-case queued-state table under race ×100, focused tests, full core race tests, and vet. Formatting/diff checks and the dependency/timer boundary passed: no provider, Server, storage, STT, transport, wall-clock timer, or manager-created goroutine dependency was introduced. Native audio verification used the documented Xcode macOS 26 SDK override for the SDK 27 linker issue.
+- Durable assumptions: deterministic caller-supplied timestamps and typed turn/generation identity; silence detection plus guarded hybrid semantic evidence only, with no model integration; at most two plugin callbacks per outer evaluation before `SilenceDetector` fallback; positive `MaxRetiredTurns` bounds retired IDs per generation and fails closed at capacity, with generation advance/reset clearing the ledger. No provider, session-termination, STT/context, transport, or output-flush integration is claimed.
+- Task 7 is complete. Tasks 8–9 and the independent Phase 2 tester remain open, so Gate B remains open. Next action: Task 8, output pacing, speaking state, and barge-in/flush. Historical RED/GREEN and review-round details follow and are also recorded in `.superpowers/sdd/2026-10-04-v2-execution/task-7-report.md`; their pending-review statuses describe those earlier handoffs.
+
+#### Task 7 initial implementation evidence
 
 - RED: the required focused command first failed because `core/turn` and the typed `TurnEventFrame` API did not exist. Its all-package run also hit the known Command Line Tools SDK 27 `tapi error: malformed file` while linking `core/audio`; the documented Xcode macOS 26 SDK override was used for subsequent verification.
 - GREEN: `cd core && SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS=-Wl,-w go test -run 'Test(TurnDetector|TurnManager|Silence|NoSpeech)' ./...` passed. Focused turn-manager/hybrid race tests passed 25 repetitions; `go test -race -count=1 ./...` and `go vet ./...` passed in `core` with the same SDK override. `gofmt` and `git diff --check` passed.
 - The implementation adds `core/turn` deterministic detection/management and a typed normal framework event frame. Configured caller timestamps drive no-speech, start/stop debounce, silence completion, active-turn maximum, mute pauses, interruption, and reset. Hybrid evidence has turn/generation/time/confidence/freshness/silence guards and always falls back to silence. Full details and rulings are in `.superpowers/sdd/2026-10-04-v2-execution/task-7-report.md`.
-- Task 7 remains unchecked pending independent review. Gate B remains open pending Tasks 8–9 and the Phase 2 independent tester; this task has no provider, STT/context, transport, output-flush, or session-termination integration.
+- At the initial handoff, Task 7 remained unchecked pending independent review. Gate B remained open pending Tasks 8–9 and the Phase 2 independent tester; this task has no provider, STT/context, transport, output-flush, or session-termination integration.
 
-#### Task 7 review round 1 fixes (independent review still pending)
+#### Task 7 review round 1 fixes (historical handoff)
 
 - RED regressions reproduced four findings: continuous idle reset the silence origin/re-emitted `Stopped`; a higher-generation idle snapshot failed to fence a pending old candidate; injected detector execution under the manager lock deadlocked reentrant/concurrent state operations and accepted invalid decisions; and retaining only one terminal ID allowed an older turn to be revived after another turn completed.
 - Fixes add one-shot speaking-to-idle stop detection; generation-first fencing and automatic interruption; snapshot-based detector invocation outside the state lock with copied semantic evidence, revision/epoch fencing, nonblocking in-flight coordination, panic/decision validation, and safe silence fallback; and bounded per-generation retired IDs. `Config.MaxRetiredTurns` defaults to 128, must be positive, and exhaustion returns `ErrRetiredTurnLimit` without evicting an ID. Generation advance and `Reset` clear retired IDs. Added regressions cover continuous idle completion, higher-gen idle/active transitions, close rejection, reentrant controls/`Observe`/`Advance`, blocked detector invalidation, defensive evidence copying, invalid/panicking detectors, retirement across A→B→late-A, and capacity/reset behavior.
-- Assumption: when a concurrent/reentrant update invalidates an in-flight detector snapshot, no recursive or background retry occurs; the next caller-driven `Observe`/`Advance` reevaluates. Gate B remains open and Task 7 unchecked pending independent review. No Task 8/9/14/27 behavior is included.
+- Initial assumption, superseded by later review fixes: when a concurrent/reentrant update invalidated an in-flight detector snapshot, no recursive or background retry occurred; the next caller-driven `Observe`/`Advance` reevaluated. Gate B remained open and Task 7 unchecked pending independent review. No Task 8/9/14/27 behavior was included.
 - RED/GREEN and test evidence for this review round is maintained in `.superpowers/sdd/2026-10-04-v2-execution/task-7-report.md`. The focused suite, 25 race repetitions of the review regressions, full core race suite, vet, `gofmt`, and `git diff --check` passed with the documented SDK workaround; the follow-up commit is `fix(core): harden turn manager ordering`.
 
-#### Task 7 review round 2 fixes (independent review still pending)
+#### Task 7 review round 2 fixes (historical handoff)
 
 - RED regressions showed two overlapping advances could both return without completion, reentrant epoch changes could leak an outer `Stopped` frame, and NaN/Inf confidence with `HasConfidence=false` could enter a terminal frame and fail JSON encoding.
 - The detector owner now drains a single coalesced newest-input slot after a stale callback; identical deterministic snapshots are not rerun, preventing reentrant self-rescheduling. Same-epoch time-only advancement preserves valid pre-callback frames, while reset, close, interruption, and generation changes invalidate them. Terminal confidence is always finite and absent confidence is normalized to zero.
-- Review regressions passed 50 repetitions under the race detector; the all-package focused suite, full core race suite, vet, `gofmt`, and `git diff --check` also passed. Task 7 remains unchecked for independent re-review and Gate B remains open.
+- Review regressions passed 50 repetitions under the race detector; the all-package focused suite, full core race suite, vet, `gofmt`, and `git diff --check` also passed. Task 7 remained unchecked for independent re-review and Gate B remained open.
 
-#### Task 7 review round 3 fixes (independent review still pending)
+#### Task 7 review round 3 fixes (historical handoff)
 
 - RED regressions proved the equal-snapshot shortcut could suppress a due validated result, reset could leave a previous epoch's `pendingDetectAt` and complete the new turn beyond its caller timestamp, and continually advancing detector reentry was not independently bounded.
 - Pending work now stores a complete newest snapshot with input/revision/epoch and is cleared at every epoch, generation, reset, close, mute, speech-resume, and terminal boundary. A validated result crosses a revision only for semantically identical current state; all other queued snapshots run. Two plugin callbacks are allowed per outer evaluation before deterministic silence fallback handles the latest snapshot. Invalid semantic confidence is dropped before storage/equality.
-- Exact same-timestamp, reset A→B, and adversarial +1ns/NaN regressions passed 100 repetitions under the race detector; the all-package focused suite, full core race suite, vet, `gofmt`, and `git diff --check` also passed. Task 7 remains unchecked for independent re-review and Gate B remains open.
+- Exact same-timestamp, reset A→B, and adversarial +1ns/NaN regressions passed 100 repetitions under the race detector; the all-package focused suite, full core race suite, vet, `gofmt`, and `git diff --check` also passed. Task 7 remained unchecked for independent re-review and Gate B remained open.
 
-#### Task 7 review round 4 escalation (independent review still pending)
+#### Task 7 review round 4 escalation (approved at closeout)
 
 - RED reproduced dropped queued completion after no-op mute and identity-free observations at equal/later timestamps, plus unmute failing to queue fresh silence while a callback remained in flight.
 - One semantic state/epoch validation now governs preflight and commit, replacing raw revision counters. Rejected observations are filtered before timestamp mutation; no-op controls preserve eligible work. True mute/speech-resume transitions fence the epoch; unmute supplies a successor snapshot when detection remains eligible. Identical positive and negative inputs reuse their result, preserving the two-callback fallback bound.
-- Added a concurrent 14-case state-change table, negative-result reuse, and rejected-observation timestamp isolation regressions. Task 7 remains unchecked for independent re-review; Gate B remains open. Final verification is recorded in the Task 7 report.
+- Added a concurrent 14-case state-change table, negative-result reuse, and rejected-observation timestamp isolation regressions. Independent re-review approved the final state and the final tester passed at `3563c8b`; Gate B remains open. Final verification is recorded in the Task 7 report.
 
 ## Phase 3 — Context, tools, tracing, compatibility
 
@@ -265,4 +273,4 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 
 ## Next unblocked work
 
-Tasks 1–6 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Task 7 implementation is committed and awaits independent review. Gates B–G remain open; after that review, Phase 2 continues with Tasks 8–9 and its independent tester gate.
+Tasks 1–7 and the independent Phase 1 tester gate are complete; Gate A passed at `00175a9`. Next action is Task 8: output pacing, speaking state, and barge-in/flush, followed by Task 9 and the independent Phase 2 tester. Gates B–G remain open.
