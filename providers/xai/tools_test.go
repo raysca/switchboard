@@ -159,7 +159,7 @@ func TestXAIToolResultOutputPreservesStatusAndSanitizesCategory(t *testing.T) {
 	}
 }
 
-func TestXAIToolResultOutputPreservesLargeNumbersAndRejectsOversize(t *testing.T) {
+func TestXAIToolResultOutputPreservesLargeNumbersAndRejectsInvalidJSON(t *testing.T) {
 	got, err := XAIToolResultOutput(core.ToolResult{Status: core.ToolSucceeded, Result: json.RawMessage(`{"id":9007199254740993}`)})
 	if err != nil || got != `{"output":{"id":9007199254740993}}` {
 		t.Fatalf("numeric result changed: output=%s err=%v", got, err)
@@ -170,9 +170,44 @@ func TestXAIToolResultOutputPreservesLargeNumbersAndRejectsOversize(t *testing.T
 			t.Fatalf("result %s was not preserved: output=%s err=%v", raw, got, err)
 		}
 	}
-	oversized, _ := json.Marshal(strings.Repeat("x", 64<<10))
-	if _, err := XAIToolResultOutput(core.ToolResult{Status: core.ToolSucceeded, Result: oversized}); err == nil {
-		t.Fatal("oversized successful result accepted")
+	if _, err := XAIToolResultOutput(core.ToolResult{Status: core.ToolSucceeded, Result: json.RawMessage(`{"invalid":`)}); err == nil {
+		t.Fatal("malformed successful result accepted")
+	}
+}
+
+func TestXAIToolResultOutputHonorsConfiguredToolLoopResultBound(t *testing.T) {
+	payload, err := json.Marshal(strings.Repeat("x", 70<<10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := core.NewConversationContext(core.ContextConfig{MaxTokens: 1000000})
+	cfg := coretools.DefaultToolLoopConfig()
+	cfg.MaxResultBytes = 128 << 10
+	loop, err := coretools.NewToolLoop([]core.ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}, core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{Result: append(json.RawMessage(nil), payload...)}, nil
+	}), ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = loop.Run(context.Background(), []core.ToolCall{{ID: "c1", Name: "lookup", Arguments: json.RawMessage(`{}`), SessionID: "s", TurnID: "t", Generation: 1}}, func(_ context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
+		if len(results) != 1 || results[0].Status != core.ToolSucceeded {
+			t.Fatalf("configured result bound was not honored by ToolLoop: %+v", results)
+		}
+		wire, err := XAIToolResultOutput(results[0])
+		if err == nil && !strings.Contains(wire, string(payload)) {
+			t.Fatalf("provider continuation changed %d-byte result", len(payload))
+		}
+		return nil, true, err
+	})
+	if err != nil {
+		t.Fatalf("accepted %d-byte result failed provider mapping: %v", len(payload), err)
+	}
+	items := xaiHistoryItems(ctx.Messages())
+	if len(items) != 2 {
+		t.Fatalf("history did not retain tool call and result: items=%d", len(items))
+	}
+	if items[1].Output == "" || !strings.Contains(items[1].Output, string(payload)) {
+		t.Fatalf("history did not preserve configured-size result: output-bytes=%d", len(items[1].Output))
 	}
 }
 

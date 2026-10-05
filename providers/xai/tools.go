@@ -56,7 +56,7 @@ func MapToolDefinitions(definitions []core.ToolDefinition) ([]XAIToolDefinition,
 func XAIToolResultOutput(result core.ToolResult) (string, error) {
 	switch result.Status {
 	case core.ToolSucceeded:
-		if len(result.Result) == 0 || len(result.Result) > 64<<10 || !json.Valid(result.Result) {
+		if len(result.Result) == 0 || !json.Valid(result.Result) {
 			return "", errors.New("xai: invalid successful tool result")
 		}
 		// Keep the provider-neutral JSON value raw: decoding through interface{}

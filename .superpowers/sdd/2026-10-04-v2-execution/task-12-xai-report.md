@@ -148,12 +148,11 @@ assembled arguments when completed items omit them, and rejects conflicting
 stream/final payloads. Duplicate item lifecycle events remain idempotent at the
 canonical call list.
 
-Successful result envelopes now splice validated, bounded raw JSON into the
-envelope rather than decode/re-encode through an interface value. This keeps
+Successful result envelopes splice validated raw JSON into the envelope rather
+than decode/re-encode through an interface value. This keeps
 integers such as `9007199254740993` exact in both historical Responses items
 and active continuation output while retaining support for arbitrary JSON
-scalars, arrays, and objects. The 64 KiB successful-result bound matches the
-shared tool result contract.
+scalars, arrays, and objects.
 
 Recommended ambiguity choices: Responses events do not provide a stable event
 sequence identifier in the current SDK-facing event payload, so exact duplicate
@@ -187,3 +186,29 @@ Round-two verification:
 
 Task 12 and Gate C remain open pending the cross-provider gate and independent
 closeout. This correction does not change Task 12 status.
+
+## Correction round 3
+
+The third review probe showed that the adapter's fixed 64 KiB check ran after
+ToolLoop had already accepted and committed a result under an application
+configured 128 KiB result bound. Removed that second, stricter provider cap.
+Core ToolLoop remains responsible for enforcing the active result policy;
+provider mapping still requires non-empty valid JSON and preserves its exact
+bytes for both continuation and later history reconstruction. This prevents an
+accepted execution from being replaced with an adapter error during commit.
+
+The promoted regression configures `MaxResultBytes` to 128 KiB, returns a
+70 KiB JSON string, and verifies exact preservation in both the active
+continuation callback and historical Responses output items. A separate
+assertion continues to reject malformed successful JSON. Verification follows
+after the round-three matrix.
+
+Round-three verification:
+
+- Review overlays for rounds one, two, and three each pass with race
+  `-count=10`.
+- `cd providers/xai && go test -race ./...`: PASS.
+- `cd providers/xai && go vet ./...`: PASS.
+- `cd providers/xai && go test -race -tags xai ./...`: PASS.
+- `cd providers/xai && go vet -tags xai ./...`: PASS.
+- `gofmt` and scoped `git diff --check`: PASS.
