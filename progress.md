@@ -129,10 +129,27 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
 - [x] Task 6: Audio conditioning, filters, conversion, buffers.
 - [x] Task 7: Silence, turn detection, manager. Independent reviewer APPROVED and final independent tester PASS at `3563c8b`.
 - [x] Task 8: Output pacing, speaking state, barge-in/flush. Independent reviewer APPROVED and final independent tester PASS at `f117b51`.
-- [ ] Task 9: STT commit/finalization.
+- [x] Task 9: STT commit/finalization. Independent reviewer APPROVED and final independent tester PASS at `e9b96c2`.
 - [ ] Independent Phase 2 tester gate; record Gate B.
 
-### Task 9 implementation handoff
+### Task 9 closeout
+
+- Independent review APPROVED the bounded final correction range
+  `6835637..e9b96c2`; the reviewer also reran the promoted Round 2–5
+  regressions under the race detector and found no concrete regression in the
+  corrected Google repetition/rotation or xAI invalidation/cleanup paths.
+- The final independent tester passed the tracked Round 5 race suite for 20
+  repetitions, all promoted Review/Round3/Round4/Round5 regressions, Google
+  repetition/rotation focus, and tagged xAI buffered-write, invalidation,
+  cleanup, barge-in, and late-owner focus. The temporary overlay files had
+  expired before this last tester run; their tracked equivalents passed and
+  the reviewer had already replayed the exact Round 5 overlay successfully.
+- Task 9 is complete at `e9b96c2`. Live credentialed provider tests were not
+  run. The client playback-clear limitation remains unresolved and is not
+  represented as supported. Gate B remains open for its separate phase-wide
+  independent tester run.
+
+### Task 9 implementation history
 
 - Implementation is prepared for independent review; Task 9 deliberately
   remains unchecked and Gate B remains open. `core/transcript` now owns raw

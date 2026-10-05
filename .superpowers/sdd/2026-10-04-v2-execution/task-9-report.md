@@ -165,4 +165,22 @@ Correction commit message: `fix(providers): preserve transcript completeness`.
 - The tracked xAI integration test first establishes a real pending interim, then fails the second buffered chunk, observes the correlated provider error, sends a late `transcript.done`, and crosses a serialized turn-completion barrier. It asserts no committed transcript, one provider error, and exactly one socket close.
 - PASS exact round-5 overlay with `-race -count=3`; PASS tracked Round5 focused race with `-count=100`; PASS preserved Round2/3/4 overlays; PASS tracked Review/Round3/Round4/Round5 race with `-count=3`.
 - PASS `go test -race -count=100 ./core/transcript`; full core, Google, tagged xAI, and server race suites; corresponding vet checks; root tagged test/build; transport RTVI/WebSocket race; Google and xAI provider integrations; Google and tagged xAI focused race repetitions (`-count=20`). All linked commands used `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS=-Wl,-w` where linking was required.
-- No live-provider test was run and no playback-clear or Gate B claim is made. Task 9 remains unchecked, and Gate B remains open for independent review and the Phase 2 tester.
+- No live-provider test was run and no playback-clear or Gate B claim is made.
+
+## Independent closeout
+
+- Final independent review: **APPROVE** for `6835637..e9b96c2`. The reviewer
+  replayed the Round 5 overlay under the race detector, reran the earlier
+  promoted regressions, and verified the Google final-to-interim media origin,
+  rotation overlap preservation, correlated xAI invalidation/error ordering,
+  no partial commit, and exactly-once cleanup.
+- Final independent test: **PASS** at `e9b96c2`. The tracked Round 5 race suite
+  passed 20 repetitions; the Review/Round3/Round4/Round5 suites, Google
+  repetition/rotation focus, and tagged xAI buffered-write, invalidation,
+  cleanup, barge-in, and late-owner focus all passed under the race detector.
+  The final tester could not replay the temporary overlay files after they
+  expired from `/tmp`, but the tracked promoted equivalents passed and the
+  independent reviewer had already replayed the exact Round 5 overlay.
+- Task 9 is complete. Gate B remains open for the separate phase-wide tester.
+  Live credentialed providers were not exercised, and the playback-clear
+  limitation remains unresolved and explicitly unsupported.
