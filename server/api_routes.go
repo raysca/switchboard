@@ -101,6 +101,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			s.mcpManagementAPI.ServeHTTP(w, r)
 			return
 		}
+		if r.URL.Path == "/api/v1/sessions" || strings.HasPrefix(r.URL.Path, "/api/v1/sessions/") {
+			if s.sessionManagementAPI == nil {
+				api.WriteError(w, http.StatusServiceUnavailable, "session_management_unavailable", "session management storage is unavailable", requestID)
+				return
+			}
+			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
+			s.sessionManagementAPI.ServeHTTP(w, r)
+			return
+		}
 		api.WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 	}
 }

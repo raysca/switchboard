@@ -36,6 +36,7 @@ type Server struct {
 	providerManagementAPI http.Handler
 	agentManagementAPI    http.Handler
 	mcpManagementAPI      http.Handler
+	sessionManagementAPI  http.Handler
 	voiceSignKey          []byte
 	voiceKeyID            string
 	voiceEpoch            string
@@ -202,6 +203,17 @@ func (s *Server) SetAgentManagementAPI(handler http.Handler) {
 // authentication boundary. Configure it before serving requests.
 func (s *Server) SetMCPManagementAPI(handler http.Handler) {
 	s.mcpManagementAPI = handler
+}
+
+// SetSessionManagementAPI installs the session and traces route handler behind
+// management authentication. Configure it before serving requests.
+func (s *Server) SetSessionManagementAPI(handler http.Handler) {
+	s.sessionManagementAPI = handler
+}
+
+// SetTraceManagementAPI is an alias for SetSessionManagementAPI.
+func (s *Server) SetTraceManagementAPI(handler http.Handler) {
+	s.sessionManagementAPI = handler
 }
 
 // Metrics returns the server metrics.

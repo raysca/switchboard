@@ -106,6 +106,10 @@ func (s *guardedSpan) End(err error) {
 	})
 }
 
+func (s *guardedSpan) Unwrap() Span {
+	return s.inner
+}
+
 type NoopTracer struct{}
 type noopSpan struct{}
 
