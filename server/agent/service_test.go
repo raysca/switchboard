@@ -281,6 +281,48 @@ func TestDetachRequiresExplicitMCPReviewAndHistoricalSelectionsRemainReadable(t 
 	}
 }
 
+func TestDuplicatePreservesMCPReviewRequirementUntilExplicitReview(t *testing.T) {
+	svc := testService(t)
+	ctx := context.Background()
+	m := storage.MCPServer{ID: storage.NewID(), Name: "duplicate-review", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := svc.store.MCP().CreateServer(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	d, err := svc.store.MCP().AddDiscovery(ctx, m.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := svc.Create(ctx, CreateRequest{Name: "review source", Config: validConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetMCPTools(ctx, a.ID, []ToolSelection{{ServerID: m.ID, RemoteName: "lookup", SchemaHash: d.Tools[0].SchemaHash, Required: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.store.MCP().DetachAndDelete(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := svc.Duplicate(ctx, a.ID, "review copy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate.Version == nil || !duplicate.Version.MCPReviewRequired || duplicate.Readiness.State != ReadinessNeedsToolReview {
+		t.Fatalf("duplicate lost explicit-review requirement: version=%+v readiness=%+v", duplicate.Version, duplicate.Readiness)
+	}
+	if _, err := svc.ResolveCurrent(ctx, duplicate.ID); err == nil {
+		t.Fatal("duplicate resolved before explicit MCP review")
+	}
+	if _, err := svc.StartSession(ctx, duplicate.ID, ""); err == nil {
+		t.Fatal("duplicate admitted a session before explicit MCP review")
+	}
+	if _, err := svc.SetMCPTools(ctx, duplicate.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.StartSession(ctx, duplicate.ID, ""); err != nil {
+		t.Fatalf("explicitly reviewed duplicate did not admit a session: %v", err)
+	}
+}
+
 func TestCreateAndUpdatePublishAtomicallyOnDatabaseFailure(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()

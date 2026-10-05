@@ -21,6 +21,10 @@ func (r AgentRepository) CreateWithVersion(ctx context.Context, a Agent, config 
 }
 
 func (r AgentRepository) CreateWithVersionAndTools(ctx context.Context, a Agent, config []byte, selections []SelectedTool) (AgentVersion, error) {
+	return r.CreateWithVersionAndToolsAndReviewRequired(ctx, a, config, selections, false)
+}
+
+func (r AgentRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.Context, a Agent, config []byte, selections []SelectedTool, mcpReviewRequired bool) (AgentVersion, error) {
 	if err := validID(a.ID); err != nil {
 		return AgentVersion{}, err
 	}
@@ -29,7 +33,7 @@ func (r AgentRepository) CreateWithVersionAndTools(ctx context.Context, a Agent,
 		return AgentVersion{}, err
 	}
 	now := time.Now().UTC()
-	v := AgentVersion{ID: NewID(), AgentID: a.ID, Version: 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: now}
+	v := AgentVersion{ID: NewID(), AgentID: a.ID, Version: 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: now, MCPReviewRequired: mcpReviewRequired}
 	a.Name = strings.TrimSpace(a.Name)
 	if a.Name == "" {
 		return AgentVersion{}, errors.New("agent name required")
@@ -65,7 +69,7 @@ func (r AgentRepository) CreateWithVersionAndTools(ctx context.Context, a Agent,
 				return errors.New("MCP schema hash changed")
 			}
 		}
-		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), v.ID, a.ID, v.Version, v.SchemaVersion, string(v.ConfigJSON), v.ConfigHash, utc(v.CreatedAt)); err != nil {
+		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), v.ID, a.ID, v.Version, v.SchemaVersion, string(v.ConfigJSON), v.ConfigHash, utc(v.CreatedAt), boolValue(r.s.dialect, v.MCPReviewRequired)); err != nil {
 			return err
 		}
 		for _, sel := range selections {

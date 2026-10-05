@@ -130,6 +130,10 @@ type V1Pipeline struct {
 }
 
 func (s *Service) Create(ctx context.Context, req CreateRequest) (Agent, error) {
+	return s.create(ctx, req, false)
+}
+
+func (s *Service) create(ctx context.Context, req CreateRequest, mcpReviewRequired bool) (Agent, error) {
 	name := strings.TrimSpace(req.Name)
 	if err := validateDetails(name, req.Description); err != nil {
 		return Agent{}, err
@@ -147,7 +151,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Agent, error) 
 	if err != nil {
 		return Agent{}, err
 	}
-	if _, err := s.store.Agents().CreateWithVersionAndTools(ctx, row, config, selected); err != nil {
+	if _, err := s.store.Agents().CreateWithVersionAndToolsAndReviewRequired(ctx, row, config, selected, mcpReviewRequired); err != nil {
 		return Agent{}, err
 	}
 	return s.Get(ctx, row.ID)
@@ -209,7 +213,7 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Agent, error)
 	if strings.TrimSpace(name) == "" {
 		name = source.Name + " copy"
 	}
-	return s.Create(ctx, CreateRequest{Name: name, Description: source.Description, Config: source.Version.Config, Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools})
+	return s.create(ctx, CreateRequest{Name: name, Description: source.Description, Config: source.Version.Config, Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools}, source.Version.MCPReviewRequired)
 }
 
 func (s *Service) GetVersion(ctx context.Context, agentID, versionID string) (Version, error) {
