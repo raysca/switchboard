@@ -1,6 +1,6 @@
 # Task 17: MCP discovery and validation
 
-Status: implementation and focused/full server verification complete; independent MCP/security review pending.
+Status: implementation and review remediations complete; final race/vet verification pending.
 
 ## Delivered
 
@@ -8,7 +8,7 @@ Status: implementation and focused/full server verification complete; independen
 - Added persistent descriptive metadata and validation timestamps for MCP servers and discovered tools, plus repository reads, latest-snapshot lookup, and validation-state updates. Discovery/tool rows remain immutable under existing storage triggers; refresh appends snapshots and updates only the latest pointer.
 - Added schema validation with local `$ref` resolution only, deterministic sorting/canonical hashing through the existing storage canonicalizer, and bounded discovery/argument/result policies.
 - Added bearer authentication through opaque server-side credential references, safe error categories, result redaction, per-operation deadlines/cancellation, and metadata-only MCP traces.
-- Added a management-authenticated, host-injected HTTP handler for list/create/detail/validate/tool-test routes. The current config-driven root server has no persistent Store composition; the handler therefore requires its owning management layer to mount it.
+- Added a management-authenticated, host-injected HTTP handler for list/create/detail/validate/tool-test routes. `Server.SetMCPManagementAPI` mounts it through the admin listener after outer auth and propagates the trusted request ID. The config-driven root server does not instantiate MCP automatically because it has no persistent Store composition.
 - Added API and threat-policy docs. Local/process transport is explicitly rejected. Remote endpoint configuration requires HTTPS and forbids user-info and query parameters.
 
 ## SDK decision and adapter boundary
@@ -20,7 +20,9 @@ The server had no MCP SDK dependency. The official `github.com/modelcontextproto
 - v2 Task 17 supports remote Streamable HTTP only. `stdio` is rejected pending a separate executable allowlist, sandbox, filesystem policy, and threat review.
 - Authentication currently supports a resolved Bearer token only. OAuth refresh and arbitrary auth headers are deferred behind `CredentialResolver`.
 - Remote `$ref` schemas are rejected unless all references resolve within the supplied schema. This prevents schema-triggered network fetches but excludes remote schema catalogs.
+- Schema preflight accepts Draft 7 and 2020-12 only, rejects every `$ref` cycle (including recursive schemas), and caps depth/nodes/references before validator execution. This intentionally narrows JSON Schema compatibility to guarantee bounded preflight and avoid a validator recursion crash.
 - The SDK client blocks ambient proxies and redirects and rejects private/reserved destination addresses at DNS resolution and dial time. This prevents internal-network requests and credential forwarding but requires reachable public hosts without proxy-only routing.
+- Server/tool names in trace metadata are sanitized; a generated opaque execution ID is shared across the trace event and response. Caller span context is preserved. Results are parsed and reserialized after recursive secret-key and decoded-credential redaction.
 - API handler mounting into the root management listener is owned by the server composition task. Until wired, the MCP handler is an injectable, independently authenticated route set and not reachable from the default listener.
 
 ## Tests and verification

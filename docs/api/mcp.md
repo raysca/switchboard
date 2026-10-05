@@ -1,6 +1,6 @@
 # MCP management API
 
-The MCP API is mounted under `/api/v1` behind the existing management bearer authentication. The `server/mcp.Handler` accepts the configured `auth.Management` instance and independently fails closed if authentication is absent. Request and response bodies use JSON; responses are `no-store` through the shared API writer.
+The MCP API is mounted under `/api/v1` behind the existing management bearer authentication. Compose the service and call `Server.SetMCPManagementAPI(mcp.Handler(service, management))`; the management listener authenticates first and propagates its trusted request ID. The `server/mcp.Handler` also independently fails closed if authentication is absent. Request and response bodies use JSON; responses are `no-store` through the shared API writer.
 
 | Method and path | Purpose |
 |---|---|
@@ -12,6 +12,6 @@ The MCP API is mounted under `/api/v1` behind the existing management bearer aut
 
 The server DTO contains the opaque credential reference, never credential bytes. Endpoint query values are masked in responses. Validation and tool execution errors are bounded safe category messages and omit remote response details. Discovery results are sorted by remote tool name and include the canonical schema hash per tool plus the snapshot hash.
 
-Management body parsing is bounded by the shared 64 KiB API decoder. Tool arguments, schema, and result limits are independently enforced by the MCP service. A successful test returns `status`, `duration`, and sanitized structured JSON.
+Management body parsing is bounded by the shared 64 KiB API decoder. Tool arguments, schema, and result limits are independently enforced by the MCP service. A successful test returns `execution_id`, `mcp_server_id`, `tool_name`, `status`, `duration_ms` (integer milliseconds), and sanitized JSON in `result`.
 
-Task 17 does not mount the handler automatically into the config-driven voice server because that runtime does not yet own a configured persistent storage handle. The service and authenticated handler are ready for composition by the management-server owner; mounting requires supplying the configured `storage.Store`, credential resolver, and remote client.
+The config-driven voice server does not construct the MCP service automatically because that runtime does not own a configured persistent storage handle. The injectable route can be mounted by supplying a composed service with the configured `storage.Store`, credential resolver, and remote client.

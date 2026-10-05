@@ -92,6 +92,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			s.providerManagementAPI.ServeHTTP(w, r)
 			return
 		}
+		if r.URL.Path == "/api/v1/mcp-servers" || strings.HasPrefix(r.URL.Path, "/api/v1/mcp-servers/") {
+			if s.mcpManagementAPI == nil {
+				api.WriteError(w, http.StatusServiceUnavailable, "mcp_management_unavailable", "MCP management storage is unavailable", requestID)
+				return
+			}
+			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
+			s.mcpManagementAPI.ServeHTTP(w, r)
+			return
+		}
 		api.WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 	}
 }

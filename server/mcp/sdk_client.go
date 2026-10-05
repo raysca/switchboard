@@ -15,44 +15,47 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const sdkResponseLimit = defaultMaxResultBytes + (64 << 10)
+const (
+	sdkResponseLimit = defaultMaxResultBytes + (64 << 10)
+	sdkCloseBudget   = 300 * time.Millisecond
+)
 
 // SDKClient is the production remote Streamable HTTP adapter. It opens one
 // bounded request-scoped session per operation and forwards only a resolved
 // server-side bearer credential. Local/process execution is deliberately not
 // implemented.
 type SDKClient struct {
-	client       *http.Client
-	allowPrivate bool // package-private test seam; production constructor never sets this.
+	client               *http.Client
+	testOnlyAllowPrivate bool // Explicit loopback seam used only by the simulated-server tests.
 }
 
 func NewSDKClient() *SDKClient {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.Proxy = nil // Explicit remote destination policy; do not inherit ambient proxy routing.
 	base.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, errors.New("invalid MCP destination")
-		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil || len(ips) == 0 {
-			return nil, errors.New("MCP destination resolution failed")
-		}
-		for _, entry := range ips {
-			ip := entry.IP
-			if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
-				return nil, errors.New("MCP destination denied")
-			}
-		}
-		for _, entry := range ips {
-			conn, err := (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext(ctx, network, net.JoinHostPort(entry.IP.String(), port))
-			if err == nil {
-				return conn, nil
-			}
-		}
-		return nil, errors.New("MCP destination connection failed")
+		dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+		return dialPublicEgress(ctx, network, address, net.DefaultResolver.LookupIPAddr, dialer.DialContext)
 	}
-	return &SDKClient{client: &http.Client{Transport: boundedBodyTransport{next: bearerTransport{next: base}}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	transport := closeBudgetTransport{next: boundedBodyTransport{next: classifiedStatusTransport{next: bearerTransport{next: base}}}}
+	return &SDKClient{client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+}
+
+func dialPublicEgress(ctx context.Context, network, address string, lookup func(context.Context, string) ([]net.IPAddr, error), dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, errors.New("invalid MCP destination")
+	}
+	ips, err := publicEgressIPs(ctx, host, lookup)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range ips {
+		conn, err := dial(ctx, network, net.JoinHostPort(entry.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+	}
+	return nil, errors.New("MCP destination connection failed")
 }
 
 type bearerContextKey struct{}
@@ -81,6 +84,49 @@ func (t boundedBodyTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	return rsp, nil
 }
 
+type classifiedStatusTransport struct{ next http.RoundTripper }
+
+func (t classifiedStatusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	rsp, err := t.next.RoundTrip(req)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		return nil, remoteError(ErrConnectionFailed)
+	}
+	if rsp.StatusCode == http.StatusUnauthorized || rsp.StatusCode == http.StatusForbidden {
+		if rsp.Body != nil {
+			rsp.Body.Close()
+		}
+		return nil, remoteError(ErrAuthenticationFailed)
+	}
+	if rsp.StatusCode == http.StatusNotFound {
+		if rsp.Body != nil {
+			rsp.Body.Close()
+		}
+		return nil, remoteError(ErrInitializeFailed)
+	}
+	if rsp.StatusCode >= 500 {
+		if rsp.Body != nil {
+			rsp.Body.Close()
+		}
+		return nil, remoteError(ErrConnectionFailed)
+	}
+	return rsp, nil
+}
+
+type closeBudgetTransport struct{ next http.RoundTripper }
+
+func (t closeBudgetTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodDelete {
+		return t.next.RoundTrip(req)
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), sdkCloseBudget)
+	defer cancel()
+	clone := req.Clone(ctx)
+	return t.next.RoundTrip(clone)
+}
+
 type limitedReadCloser struct {
 	io.Reader
 	io.Closer
@@ -88,10 +134,10 @@ type limitedReadCloser struct {
 
 func (c *SDKClient) requestContext(ctx context.Context, token string, endpoint string) (context.Context, *mcp.ClientSession, error) {
 	u, err := url.ParseRequestURI(endpoint)
-	if err != nil || u.Scheme != "https" || u.User != nil {
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, nil, errors.New("invalid remote MCP endpoint")
 	}
-	if !c.allowPrivate {
+	if !c.testOnlyAllowPrivate {
 		if err = validatePublicIPs(ctx, u.Hostname()); err != nil {
 			return nil, nil, err
 		}
@@ -101,7 +147,10 @@ func (c *SDKClient) requestContext(ctx context.Context, token string, endpoint s
 	transport := &mcp.StreamableClientTransport{Endpoint: endpoint, HTTPClient: c.client, MaxRetries: -1, DisableStandaloneSSE: true, MaxEventSize: sdkResponseLimit}
 	session, err := client.Connect(requestCtx, transport, nil)
 	if err != nil {
-		return nil, nil, errors.New("MCP protocol connection failed")
+		if errors.Is(err, ErrAuthenticationFailed) || errors.Is(err, ErrConnectionFailed) || errors.Is(err, ErrInitializeFailed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, err
+		}
+		return nil, nil, remoteError(ErrInitializeFailed)
 	}
 	return requestCtx, session, nil
 }
@@ -115,7 +164,10 @@ func (c *SDKClient) ListTools(ctx context.Context, endpoint, token string) ([]Re
 	var result []RemoteTool
 	for tool, err := range session.Tools(requestCtx, nil) {
 		if err != nil {
-			return nil, errors.New("MCP discovery failed")
+			if errors.Is(err, ErrAuthenticationFailed) || errors.Is(err, ErrConnectionFailed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
+			return nil, remoteError(ErrDiscoveryFailed)
 		}
 		schema, err := json.Marshal(tool.InputSchema)
 		if err != nil {
@@ -135,13 +187,17 @@ func (c *SDKClient) CallTool(ctx context.Context, endpoint, token, name string, 
 		return RemoteResult{}, err
 	}
 	defer session.Close()
-	var arguments map[string]any
-	if err = json.Unmarshal(args, &arguments); err != nil {
+	value, err := decodeJSON(args)
+	arguments, ok := value.(map[string]any)
+	if err != nil || !ok {
 		return RemoteResult{}, errors.New("invalid tool arguments")
 	}
 	result, err := session.CallTool(requestCtx, &mcp.CallToolParams{Name: name, Arguments: arguments})
 	if err != nil {
-		return RemoteResult{}, errors.New("MCP tool request failed")
+		if errors.Is(err, ErrAuthenticationFailed) || errors.Is(err, ErrConnectionFailed) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return RemoteResult{}, err
+		}
+		return RemoteResult{}, remoteError(ErrExecutionFailed)
 	}
 	if result == nil {
 		return RemoteResult{}, errors.New("MCP returned an empty result")

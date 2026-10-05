@@ -8,8 +8,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
-	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,13 +38,18 @@ const (
 )
 
 var (
-	ErrNotFound         = errors.New("MCP resource not found")
-	ErrUnavailable      = errors.New("MCP server unavailable")
-	ErrInvalidSchema    = errors.New("MCP tool schema invalid")
-	ErrInvalidArguments = errors.New("tool arguments do not match schema")
-	ErrRemoteFailure    = errors.New("MCP tool execution failed")
-	ErrResultTooLarge   = errors.New("MCP result exceeds size limit")
-	ErrLocalDisabled    = errors.New("local MCP process transport is disabled")
+	ErrNotFound             = errors.New("MCP resource not found")
+	ErrUnavailable          = errors.New("MCP server unavailable")
+	ErrInvalidSchema        = errors.New("MCP tool schema invalid")
+	ErrInvalidArguments     = errors.New("tool arguments do not match schema")
+	ErrRemoteFailure        = errors.New("MCP tool execution failed")
+	ErrResultTooLarge       = errors.New("MCP result exceeds size limit")
+	ErrLocalDisabled        = errors.New("local MCP process transport is disabled")
+	ErrAuthenticationFailed = errors.New("MCP authentication failed")
+	ErrInitializeFailed     = errors.New("MCP initialization failed")
+	ErrDiscoveryFailed      = errors.New("MCP discovery failed")
+	ErrConnectionFailed     = errors.New("MCP connection failed")
+	ErrExecutionFailed      = errors.New("MCP remote execution failed")
 )
 
 type RemoteTool struct {
@@ -51,6 +57,22 @@ type RemoteTool struct {
 	InputSchema       json.RawMessage
 }
 type RemoteResult struct{ JSON json.RawMessage }
+
+type RemoteError struct{ Category error }
+
+func (e *RemoteError) Error() string {
+	if e == nil || e.Category == nil {
+		return "MCP remote operation failed"
+	}
+	return e.Category.Error()
+}
+func (e *RemoteError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Category
+}
+func remoteError(category error) error { return &RemoteError{Category: category} }
 
 // RemoteClient is the narrow SDK adapter boundary. All MCP SDK types and
 // protocol-version details stay in this Server-owned package.
@@ -84,13 +106,20 @@ type Service struct {
 	maxSchema, maxResult, maxArguments int
 }
 type ServerConfig struct {
-	Name, Description, Endpoint, Transport, CredentialID string
-	Enabled                                              bool
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Endpoint     string `json:"endpoint"`
+	Transport    string `json:"transport,omitempty"`
+	CredentialID string `json:"credential_id,omitempty"`
+	Enabled      bool   `json:"enabled"`
 }
 type ToolResult struct {
-	JSON     json.RawMessage
-	Duration time.Duration
-	Status   string
+	ExecutionID string
+	MCPServerID string
+	ToolName    string
+	JSON        json.RawMessage
+	Duration    time.Duration
+	Status      string
 }
 
 func NewService(cfg ServiceConfig) (*Service, error) {
@@ -125,9 +154,16 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 // a host, and no embedded user-info. Deployments can apply stricter egress rules.
 type HTTPSDestinationPolicy struct{}
 
-func (HTTPSDestinationPolicy) Validate(_ context.Context, u *url.URL) error {
+func (HTTPSDestinationPolicy) Validate(ctx context.Context, u *url.URL) error {
 	if u == nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return errors.New("remote MCP endpoint must be an HTTPS URL without embedded credentials")
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		if !isPublicEgressIP(ip) {
+			return errors.New("MCP destination denied")
+		}
+	} else if err := validatePublicIPs(ctx, u.Hostname()); err != nil {
+		return errors.New("MCP destination denied")
 	}
 	return nil
 }
@@ -212,6 +248,11 @@ func (s *Service) span(ctx context.Context, name string) core.Span {
 }
 
 func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery, error) {
+	ctx, cancel := s.timed(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return storage.MCPDiscovery{}, err
+	}
 	span := s.span(ctx, "mcp.discovery")
 	ended := false
 	end := func(err error) {
@@ -243,17 +284,12 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 		end(err)
 		return storage.MCPDiscovery{}, ErrUnavailable
 	}
-	callCtx, cancel := s.timed(ctx)
-	defer cancel()
 	started := time.Now()
-	tools, err := s.remote.ListTools(callCtx, u.String(), token)
+	tools, err := s.remote.ListTools(ctx, u.String(), token)
 	if err != nil {
-		state := StateConnectionFailed
-		if strings.Contains(strings.ToLower(err.Error()), "auth") || strings.Contains(strings.ToLower(err.Error()), "401") || strings.Contains(strings.ToLower(err.Error()), "403") {
-			state = StateAuthenticationFailed
-		}
-		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, state, time.Now(), time.Time{})
-		end(safeCategory(state))
+		state := validationStateForError(err, true)
+		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, state, time.Time{}, time.Time{})
+		end(safeCategory(err))
 		return storage.MCPDiscovery{}, ErrUnavailable
 	}
 	if len(tools) > maxToolsPerDiscovery {
@@ -268,17 +304,17 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 			end(ErrInvalidSchema)
 			return storage.MCPDiscovery{}, ErrInvalidSchema
 		}
-		if _, err := validateSchema(tool.InputSchema); err != nil {
+		if _, err := validateSchemaContext(ctx, tool.InputSchema, s.maxSchema); err != nil {
 			_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateSchemaInvalid, time.Now(), time.Time{})
-			span.End(ErrInvalidSchema)
+			end(ErrInvalidSchema)
 			return storage.MCPDiscovery{}, ErrInvalidSchema
 		}
 		items = append(items, storage.MCPTool{RemoteName: tool.Name, Description: tool.Description, SchemaJSON: tool.InputSchema})
 	}
-	if callCtx.Err() != nil {
+	if ctx.Err() != nil {
 		_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateConnectionFailed, time.Now(), time.Time{})
-		end(callCtx.Err())
-		return storage.MCPDiscovery{}, ErrUnavailable
+		end(ctx.Err())
+		return storage.MCPDiscovery{}, ctx.Err()
 	}
 	d, err := s.store.MCP().AddDiscovery(ctx, m.ID, items)
 	if err != nil {
@@ -301,8 +337,16 @@ func (s *Service) Validate(ctx context.Context, id string) (storage.MCPServer, e
 }
 
 func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMessage) (ToolResult, error) {
+	ctx, cancel := s.timed(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return ToolResult{}, err
+	}
 	started := time.Now()
-	span := s.span(ctx, "mcp.tool.execute")
+	executionID := storage.NewID()
+	event := core.NewTraceEvent("mcp.tool.execute", time.Now(), "", "", 0, core.TracePolicy{Content: core.TraceMetadata}, nil)
+	event.ToolCallID = executionID
+	span := core.StartSpanSafe(ctx, s.tracer, event)
 	ended := false
 	end := func(err error) {
 		if !ended {
@@ -326,9 +370,11 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 		return ToolResult{}, ErrNotFound
 	}
 	var schema json.RawMessage
+	var selectedName string
 	for _, tool := range d.Tools {
 		if tool.RemoteName == name {
 			schema = tool.SchemaJSON
+			selectedName = tool.RemoteName
 			break
 		}
 	}
@@ -336,6 +382,8 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 		end(ErrNotFound)
 		return ToolResult{}, ErrNotFound
 	}
+	span.SetAttribute("mcp.server_id", m.ID)
+	span.SetAttribute("mcp.tool_name", traceSafeToolName(selectedName))
 	if len(args) > s.maxArguments {
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
@@ -345,7 +393,7 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
 	}
-	resolved, err := validateSchema(schema)
+	resolved, err := validateSchemaContext(ctx, schema, s.maxSchema)
 	if err != nil || resolved.Validate(instance) != nil {
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
@@ -360,11 +408,9 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 		end(ErrUnavailable)
 		return ToolResult{}, ErrUnavailable
 	}
-	callCtx, cancel := s.timed(ctx)
-	defer cancel()
-	result, err := s.remote.CallTool(callCtx, u.String(), token, name, args)
+	result, err := s.remote.CallTool(ctx, u.String(), token, name, args)
 	if err != nil {
-		end(ErrRemoteFailure)
+		end(safeCategory(err))
 		return ToolResult{}, ErrRemoteFailure
 	}
 	if len(result.JSON) > s.maxResult {
@@ -375,28 +421,156 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 		end(ErrRemoteFailure)
 		return ToolResult{}, ErrRemoteFailure
 	}
-	clean := redactResult(result.JSON, token)
+	clean, sanitizeErr := sanitizeResult(result.JSON, token, s.maxResult)
+	if sanitizeErr != nil {
+		end(ErrResultTooLarge)
+		return ToolResult{}, ErrResultTooLarge
+	}
 	end(nil)
-	return ToolResult{JSON: clean, Duration: time.Since(started), Status: "success"}, nil
+	return ToolResult{ExecutionID: executionID, MCPServerID: m.ID, ToolName: selectedName, JSON: clean, Duration: time.Since(started), Status: "success"}, nil
 }
 
-func safeCategory(state string) error {
-	switch state {
-	case StateAuthenticationFailed:
-		return errors.New("authentication_failed")
-	case StateSchemaInvalid:
+func safeCategory(err error) error {
+	switch {
+	case errors.Is(err, ErrAuthenticationFailed):
+		return ErrAuthenticationFailed
+	case errors.Is(err, ErrInitializeFailed):
+		return ErrInitializeFailed
+	case errors.Is(err, ErrDiscoveryFailed):
+		return ErrDiscoveryFailed
+	case errors.Is(err, ErrExecutionFailed):
+		return ErrExecutionFailed
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, ErrInvalidSchema):
 		return ErrInvalidSchema
 	default:
 		return ErrUnavailable
 	}
 }
+func validationStateForError(err error, duringList bool) string {
+	if errors.Is(err, ErrAuthenticationFailed) {
+		return StateAuthenticationFailed
+	}
+	if duringList || errors.Is(err, ErrDiscoveryFailed) {
+		return StateDiscoveryFailed
+	}
+	return StateConnectionFailed
+}
+func traceSafeToolName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+		if b.Len() >= 96 {
+			break
+		}
+	}
+	return b.String()
+}
+
+const (
+	maxSchemaDepth   = 64
+	maxSchemaNodes   = 4096
+	maxSchemaRefs    = 128
+	maxSanitizeDepth = 64
+	maxSanitizeNodes = 16384
+)
+
+type refEdge struct{ from, to string }
+
 func validateSchema(raw []byte) (*jsonschema.Resolved, error) {
-	var schema jsonschema.Schema
-	if err := json.Unmarshal(raw, &schema); err != nil {
+	return validateSchemaContext(context.Background(), raw, defaultMaxSchemaBytes)
+}
+
+func validateSchemaContext(ctx context.Context, raw []byte, maxBytes int) (resolved *jsonschema.Resolved, err error) {
+	defer func() {
+		if recover() != nil {
+			resolved = nil
+			err = ErrInvalidSchema
+		}
+	}()
+	if ctx == nil || ctx.Err() != nil {
+		if ctx == nil {
+			return nil, context.Canceled
+		}
+		return nil, ctx.Err()
+	}
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxSchemaBytes
+	}
+	if len(raw) == 0 || len(raw) > maxBytes {
+		return nil, ErrInvalidSchema
+	}
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.UseNumber()
+	var root any
+	if err = dec.Decode(&root); err != nil {
+		return nil, ErrInvalidSchema
+	}
+	if dec.Decode(new(any)) != io.EOF {
+		return nil, ErrInvalidSchema
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	rootMap, ok := root.(map[string]any)
+	if !ok {
+		return nil, ErrInvalidSchema
+	}
+	if dialect, exists := rootMap["$schema"]; exists {
+		value, ok := dialect.(string)
+		if !ok || !supportedDialect(value) {
+			return nil, ErrInvalidSchema
+		}
+	}
+	graphs := make(map[string][]string)
+	nodes := make(map[string]map[string]any)
+	refs := make([]refEdge, 0)
+	budget := maxSchemaNodes
+	if err := indexSchemaJSON(root, "", 0, &budget, nodes, graphs, &refs); err != nil {
 		return nil, err
 	}
+	if len(refs) > maxSchemaRefs {
+		return nil, ErrInvalidSchema
+	}
+	for _, ref := range refs {
+		if !strings.HasPrefix(ref.to, "#") {
+			return nil, ErrInvalidSchema
+		}
+		target, err := resolveLocalRef(root, ref.to)
+		if err != nil {
+			return nil, ErrInvalidSchema
+		}
+		if _, ok := target.(map[string]any); !ok {
+			return nil, ErrInvalidSchema
+		}
+		path, err := referencePath(ref.to)
+		if err != nil {
+			return nil, ErrInvalidSchema
+		}
+		if _, ok := nodes[path]; !ok {
+			return nil, ErrInvalidSchema
+		}
+		graphs[ref.from] = append(graphs[ref.from], path)
+	}
+	if graphHasCycle(graphs) {
+		return nil, ErrInvalidSchema
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	var schema jsonschema.Schema
+	if err = json.Unmarshal(raw, &schema); err != nil {
+		return nil, ErrInvalidSchema
+	}
 	if schema.Type != "object" && len(schema.Types) == 0 {
-		return nil, errors.New("root schema must declare object type")
+		return nil, ErrInvalidSchema
 	}
 	if schema.Type != "object" && len(schema.Types) > 0 {
 		found := false
@@ -406,10 +580,137 @@ func validateSchema(raw []byte) (*jsonschema.Resolved, error) {
 			}
 		}
 		if !found {
-			return nil, errors.New("root schema must allow object type")
+			return nil, ErrInvalidSchema
 		}
 	}
-	return schema.Resolve(nil)
+	resolved, err = schema.Resolve(nil)
+	if err != nil {
+		return nil, ErrInvalidSchema
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return resolved, nil
+}
+
+func supportedDialect(dialect string) bool {
+	return dialect == "https://json-schema.org/draft/2020-12/schema" || dialect == "https://json-schema.org/draft/2020-12/schema#" || dialect == "http://json-schema.org/draft-07/schema#" || dialect == "http://json-schema.org/draft-07/schema"
+}
+
+func indexSchemaJSON(value any, path string, depth int, budget *int, nodes map[string]map[string]any, graph map[string][]string, refs *[]refEdge) error {
+	if depth > maxSchemaDepth {
+		return ErrInvalidSchema
+	}
+	*budget--
+	if *budget < 0 {
+		return ErrInvalidSchema
+	}
+	switch item := value.(type) {
+	case map[string]any:
+		nodes[path] = item
+		if raw, ok := item["$ref"]; ok {
+			target, ok := raw.(string)
+			if !ok {
+				return ErrInvalidSchema
+			}
+			*refs = append(*refs, refEdge{from: path, to: target})
+		}
+		for key, child := range item {
+			childPath := path + "/" + pointerEscape(key)
+			if err := indexSchemaJSON(child, childPath, depth+1, budget, nodes, graph, refs); err != nil {
+				return err
+			}
+			if _, ok := child.(map[string]any); ok {
+				graph[path] = append(graph[path], childPath)
+			} else if children, ok := child.([]any); ok {
+				for i, entry := range children {
+					if _, ok := entry.(map[string]any); ok {
+						graph[path] = append(graph[path], childPath+"/"+strconv.Itoa(i))
+					}
+				}
+			}
+		}
+	case []any:
+		for i, child := range item {
+			if err := indexSchemaJSON(child, path+"/"+strconv.Itoa(i), depth+1, budget, nodes, graph, refs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func pointerEscape(value string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(value, "~", "~0"), "/", "~1")
+}
+func referencePath(ref string) (string, error) {
+	if ref == "#" {
+		return "", nil
+	}
+	if !strings.HasPrefix(ref, "#/") {
+		return "", ErrInvalidSchema
+	}
+	decoded, err := url.PathUnescape(ref[1:])
+	if err != nil {
+		return "", err
+	}
+	return decoded, nil
+}
+func resolveLocalRef(root any, ref string) (any, error) {
+	path, err := referencePath(ref)
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return root, nil
+	}
+	var current any = root
+	for _, part := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+		part = strings.ReplaceAll(strings.ReplaceAll(part, "~1", "/"), "~0", "~")
+		switch node := current.(type) {
+		case map[string]any:
+			next, ok := node[part]
+			if !ok {
+				return nil, ErrInvalidSchema
+			}
+			current = next
+		case []any:
+			i, err := strconv.Atoi(part)
+			if err != nil || i < 0 || i >= len(node) {
+				return nil, ErrInvalidSchema
+			}
+			current = node[i]
+		default:
+			return nil, ErrInvalidSchema
+		}
+	}
+	return current, nil
+}
+func graphHasCycle(graph map[string][]string) bool {
+	state := make(map[string]uint8, len(graph))
+	var visit func(string) bool
+	visit = func(node string) bool {
+		if state[node] == 1 {
+			return true
+		}
+		if state[node] == 2 {
+			return false
+		}
+		state[node] = 1
+		for _, next := range graph[node] {
+			if visit(next) {
+				return true
+			}
+		}
+		state[node] = 2
+		return false
+	}
+	for node := range graph {
+		if visit(node) {
+			return true
+		}
+	}
+	return false
 }
 func decodeJSON(raw []byte) (any, error) {
 	if len(raw) == 0 {
@@ -430,29 +731,132 @@ func decodeJSON(raw []byte) (any, error) {
 	return value, nil
 }
 
-var secretPattern = regexp.MustCompile(`(?i)("?(?:password|secret|token|api[_-]?key|authorization)"?\s*[:=]\s*")([^"\r\n]{1,512})(")`)
-
 func redactResult(raw []byte, token string) json.RawMessage {
-	clean := string(raw)
-	if token != "" {
-		clean = strings.ReplaceAll(clean, token, "[redacted]")
+	clean, err := sanitizeResult(raw, token, defaultMaxResultBytes)
+	if err != nil {
+		return nil
 	}
-	clean = secretPattern.ReplaceAllString(clean, "$1[redacted]$3")
-	return json.RawMessage(clean)
+	return clean
+}
+
+func sanitizeResult(raw []byte, credential string, maxBytes int) (json.RawMessage, error) {
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxResultBytes
+	}
+	if len(raw) == 0 || len(raw) > maxBytes {
+		return nil, ErrResultTooLarge
+	}
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.UseNumber()
+	var value any
+	if err := dec.Decode(&value); err != nil || dec.Decode(new(any)) != io.EOF {
+		return nil, ErrRemoteFailure
+	}
+	budget := maxSanitizeNodes
+	clean, err := sanitizeJSONValue(value, credential, 0, &budget)
+	if err != nil {
+		return nil, ErrResultTooLarge
+	}
+	encoded, err := json.Marshal(clean)
+	if err != nil || len(encoded) > maxBytes {
+		return nil, ErrResultTooLarge
+	}
+	return encoded, nil
+}
+func sanitizeJSONValue(value any, credential string, depth int, budget *int) (any, error) {
+	if depth > maxSanitizeDepth {
+		return nil, ErrResultTooLarge
+	}
+	*budget--
+	if *budget < 0 {
+		return nil, ErrResultTooLarge
+	}
+	switch item := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(item))
+		for key, child := range item {
+			safeKey := redactCredential(key, credential)
+			if sensitiveJSONKey(key) {
+				out[safeKey] = "[redacted]"
+				continue
+			}
+			sanitized, err := sanitizeJSONValue(child, credential, depth+1, budget)
+			if err != nil {
+				return nil, err
+			}
+			out[safeKey] = sanitized
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(item))
+		for i, child := range item {
+			sanitized, err := sanitizeJSONValue(child, credential, depth+1, budget)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = sanitized
+		}
+		return out, nil
+	case string:
+		return redactCredential(item, credential), nil
+	default:
+		return value, nil
+	}
+}
+func sensitiveJSONKey(key string) bool {
+	k := strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(key))
+	for _, needle := range []string{"password", "secret", "token", "apikey", "authorization", "credential", "privatekey", "accesskey", "clientsecret"} {
+		if strings.Contains(k, needle) {
+			return true
+		}
+	}
+	return false
+}
+func redactCredential(value, credential string) string {
+	if credential != "" {
+		return strings.ReplaceAll(value, credential, "[redacted]")
+	}
+	return value
 }
 
 // Validates a destination before each operation. The SDK adapter also pins
 // checked public IP addresses at dial time to resist DNS rebinding.
 func validatePublicIPs(ctx context.Context, host string) error {
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	_, err := publicEgressIPs(ctx, host, net.DefaultResolver.LookupIPAddr)
+	return err
+}
+
+func publicEgressIPs(ctx context.Context, host string, lookup func(context.Context, string) ([]net.IPAddr, error)) ([]net.IPAddr, error) {
+	ips, err := lookup(ctx, host)
 	if err != nil || len(ips) == 0 {
-		return errors.New("MCP destination resolution failed")
+		return nil, errors.New("MCP destination resolution failed")
 	}
 	for _, addr := range ips {
-		ip := addr.IP
-		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
-			return errors.New("MCP destination denied")
+		if !isPublicEgressIP(addr.IP) {
+			return nil, errors.New("MCP destination denied")
 		}
 	}
-	return nil
+	return ips, nil
+}
+
+var deniedEgressPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"), netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("169.254.0.0/16"), netip.MustParsePrefix("172.16.0.0/12"), netip.MustParsePrefix("192.0.0.0/24"), netip.MustParsePrefix("192.0.2.0/24"), netip.MustParsePrefix("192.31.196.0/24"), netip.MustParsePrefix("192.52.193.0/24"), netip.MustParsePrefix("192.88.99.0/24"), netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("192.175.48.0/24"), netip.MustParsePrefix("198.18.0.0/15"), netip.MustParsePrefix("198.51.100.0/24"), netip.MustParsePrefix("203.0.113.0/24"), netip.MustParsePrefix("224.0.0.0/4"), netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/128"), netip.MustParsePrefix("::1/128"), netip.MustParsePrefix("64:ff9b::/96"), netip.MustParsePrefix("64:ff9b:1::/48"), netip.MustParsePrefix("100::/64"), netip.MustParsePrefix("2001::/23"), netip.MustParsePrefix("2001:db8::/32"), netip.MustParsePrefix("2002::/16"), netip.MustParsePrefix("fc00::/7"), netip.MustParsePrefix("fe80::/10"), netip.MustParsePrefix("fec0::/10"), netip.MustParsePrefix("ff00::/8"),
+}
+
+func isPublicEgressIP(raw net.IP) bool {
+	addr, ok := netip.AddrFromSlice(raw)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	if !addr.IsGlobalUnicast() {
+		return false
+	}
+	for _, prefix := range deniedEgressPrefixes {
+		if prefix.Contains(addr) {
+			return false
+		}
+	}
+	return true
 }

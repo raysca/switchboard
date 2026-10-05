@@ -76,3 +76,62 @@ func TestManagementHandlerFailsClosedWithoutAuth(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthenticatedMCPCreateValidateDetailAndExecuteJSONContract(t *testing.T) {
+	remote := &testRemote{tools: []RemoteTool{{Name: "lookup_order", Description: "lookup", InputSchema: json.RawMessage(`{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}`)}}}
+	svc, _ := newTestService(t, remote, testCredential{})
+	management, _ := auth.NewManagement("management-test-secret-which-is-long-enough")
+	h := Handler(svc, management)
+	do := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	created := do("POST", "/api/v1/mcp-servers", `{"name":"orders","endpoint":"https://mcp.example/rpc","enabled":true}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create=%d %s", created.Code, created.Body.String())
+	}
+	var createdDTO struct {
+		Data struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Endpoint string `json:"endpoint"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdDTO); err != nil {
+		t.Fatal(err)
+	}
+	if createdDTO.Data.ID == "" || createdDTO.Data.Name != "orders" || createdDTO.Data.Endpoint != "https://mcp.example/rpc" {
+		t.Fatalf("non snake_case server DTO: %s", created.Body.String())
+	}
+	validated := do("POST", "/api/v1/mcp-servers/"+createdDTO.Data.ID+"/validate", "")
+	if validated.Code != http.StatusOK {
+		t.Fatalf("validate=%d %s", validated.Code, validated.Body.String())
+	}
+	detail := do("GET", "/api/v1/mcp-servers/"+createdDTO.Data.ID, "")
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"input_schema":{"properties"`) || !strings.Contains(detail.Body.String(), `"remote_name":"lookup_order"`) {
+		t.Fatalf("detail schema DTO=%d %s", detail.Code, detail.Body.String())
+	}
+	executed := do("POST", "/api/v1/mcp-servers/"+createdDTO.Data.ID+"/tools/lookup_order/test", `{"arguments":{"id":"42"}}`)
+	if executed.Code != http.StatusOK {
+		t.Fatalf("execute=%d %s", executed.Code, executed.Body.String())
+	}
+	var output map[string]any
+	if err := json.Unmarshal(executed.Body.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	data := output["data"].(map[string]any)
+	for _, field := range []string{"execution_id", "mcp_server_id", "tool_name", "duration_ms", "result"} {
+		if _, ok := data[field]; !ok {
+			t.Errorf("missing %s in %s", field, executed.Body.String())
+		}
+	}
+	if _, old := data["Duration"]; old || data["duration"] != nil {
+		t.Fatalf("duration contract is ambiguous: %#v", data)
+	}
+}

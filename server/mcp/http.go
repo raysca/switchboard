@@ -22,7 +22,7 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		if !authorize(w, r, management) {
 			return
 		}
-		id := requestID(w)
+		id := requestID(w, r)
 		switch r.Method {
 		case http.MethodGet:
 			servers, err := service.store.MCP().ListServers(r.Context())
@@ -56,7 +56,7 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		if !authorize(w, r, management) {
 			return
 		}
-		id := requestID(w)
+		id := requestID(w, r)
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
 			api.WriteError(w, 405, "method_not_allowed", "method is not supported", id)
@@ -71,7 +71,7 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		if m.LatestDiscoveryID != "" {
 			d, err := service.store.MCP().Discovery(r.Context(), m.LatestDiscoveryID)
 			if err == nil {
-				response.Discovery = &DiscoveryView{ID: d.ID, Hash: d.DiscoveryHash, CreatedAt: d.CreatedAt, Tools: d.Tools}
+				response.Discovery = &DiscoveryView{ID: d.ID, Hash: d.DiscoveryHash, CreatedAt: d.CreatedAt, Tools: toolViews(d.Tools)}
 			}
 		}
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerDetail]{Data: response})
@@ -80,7 +80,7 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		if !authorize(w, r, management) {
 			return
 		}
-		id := requestID(w)
+		id := requestID(w, r)
 		m, err := service.Validate(r.Context(), r.PathValue("id"))
 		if errors.Is(err, ErrNotFound) {
 			api.WriteError(w, 404, "not_found", "MCP server not found", id)
@@ -96,7 +96,7 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		if !authorize(w, r, management) {
 			return
 		}
-		id := requestID(w)
+		id := requestID(w, r)
 		var input struct {
 			Arguments json.RawMessage `json:"arguments"`
 		}
@@ -116,7 +116,7 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 			api.WriteError(w, status, "mcp_tool_failed", err.Error(), id)
 			return
 		}
-		api.WriteJSON(w, 200, api.SuccessResponse[ToolResult]{Data: result})
+		api.WriteJSON(w, 200, api.SuccessResponse[ExecutionView]{Data: executionView(result)})
 	})
 	return mux
 }
@@ -139,10 +139,24 @@ type ServerDetail struct {
 	Discovery *DiscoveryView `json:"discovery,omitempty"`
 }
 type DiscoveryView struct {
-	ID        string            `json:"id"`
-	Hash      string            `json:"discovery_hash"`
-	CreatedAt time.Time         `json:"created_at"`
-	Tools     []storage.MCPTool `json:"tools"`
+	ID        string     `json:"id"`
+	Hash      string     `json:"discovery_hash"`
+	CreatedAt time.Time  `json:"created_at"`
+	Tools     []ToolView `json:"tools"`
+}
+type ToolView struct {
+	RemoteName  string          `json:"remote_name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
+	SchemaHash  string          `json:"schema_hash"`
+}
+type ExecutionView struct {
+	ExecutionID string          `json:"execution_id"`
+	MCPServerID string          `json:"mcp_server_id"`
+	ToolName    string          `json:"tool_name"`
+	Status      string          `json:"status"`
+	DurationMS  int64           `json:"duration_ms"`
+	Result      json.RawMessage `json:"result"`
 }
 
 func view(m storage.MCPServer) ServerView {
@@ -169,20 +183,34 @@ func safeEndpoint(raw string) string {
 	u.RawQuery = q.Encode()
 	return u.String()
 }
-func requestID(w http.ResponseWriter) string {
-	id := uuid.NewString()
+func requestID(w http.ResponseWriter, r *http.Request) string {
+	id := api.RequestIDFromContext(r.Context())
+	if id == "" {
+		id = uuid.NewString()
+	}
 	w.Header().Set("X-Request-ID", id)
 	return id
 }
 func authorize(w http.ResponseWriter, r *http.Request, management *auth.Management) bool {
 	if management == nil || !management.Enabled() {
-		api.WriteError(w, 503, "management_unavailable", "management API is not configured", requestID(w))
+		api.WriteError(w, 503, "management_unavailable", "management API is not configured", requestID(w, r))
 		return false
 	}
 	if !management.Authenticate(r) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="management"`)
-		api.WriteError(w, 401, "unauthorized", "valid management credential required", requestID(w))
+		api.WriteError(w, 401, "unauthorized", "valid management credential required", requestID(w, r))
 		return false
 	}
 	return true
+}
+
+func toolViews(tools []storage.MCPTool) []ToolView {
+	out := make([]ToolView, 0, len(tools))
+	for _, tool := range tools {
+		out = append(out, ToolView{RemoteName: tool.RemoteName, Description: tool.Description, InputSchema: json.RawMessage(tool.SchemaJSON), SchemaHash: tool.SchemaHash})
+	}
+	return out
+}
+func executionView(result ToolResult) ExecutionView {
+	return ExecutionView{ExecutionID: result.ExecutionID, MCPServerID: result.MCPServerID, ToolName: result.ToolName, Status: result.Status, DurationMS: result.Duration.Milliseconds(), Result: result.JSON}
 }

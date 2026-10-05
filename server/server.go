@@ -35,6 +35,7 @@ type Server struct {
 	management            *auth.Management
 	providerManagementAPI http.Handler
 	agentManagementAPI    http.Handler
+	mcpManagementAPI      http.Handler
 	voiceSignKey          []byte
 	voiceKeyID            string
 	voiceEpoch            string
@@ -195,6 +196,12 @@ func (s *Server) SetProviderManagementAPI(handler http.Handler) {
 // authentication. Configure it before serving requests.
 func (s *Server) SetAgentManagementAPI(handler http.Handler) {
 	s.agentManagementAPI = handler
+}
+
+// SetMCPManagementAPI installs the MCP handler behind the management listener
+// authentication boundary. Configure it before serving requests.
+func (s *Server) SetMCPManagementAPI(handler http.Handler) {
+	s.mcpManagementAPI = handler
 }
 
 // Metrics returns the server metrics.
