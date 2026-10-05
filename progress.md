@@ -499,7 +499,7 @@ context race x50, full core/provider/root-tagged race and vet, and transport
 race checks pass. This historical handoff was superseded by the approved
 closeout above.
 - [x] Task 11: Bounded ToolLoop behavior consuming Task 1 public types. Independent reviewer APPROVED and final independent tester PASS at `c38919d`.
-- [ ] Task 12: Google/xAI tool adapters only; usage is P1 Task 32.
+- [x] Task 12: Google/xAI tool adapters only; usage is P1 Task 32. Independent cross-provider reviewer APPROVED and final independent tester PASS at `ed3b930`.
 - [ ] Task 13: Runtime trace instrumentation/content policy; no usage implementation.
 - [ ] Task 14: P0 eval harness and separate compatibility suites with protocol-specific debug adapters.
 - [ ] Independent Phase 3 tester gate; record Gates C and F.
@@ -549,6 +549,27 @@ The oversized result regression now exceeds its configured cap. Focused x50,
 full core race/vet, provider race/vet, root xAI-tagged race/vet, and transport
 race passed with the documented MacOS26 SDK override where needed. Independent
 re-review and tester review remain pending; Task11/GateC remain open.
+
+### Task 12 closeout
+
+- Google and xAI consume the shared Task 11 ToolLoop and Task 10 context
+  contracts without duplicate execution. Both claim calls before context
+  projection, compose application/provider generation fences, preserve ordered
+  multiple calls, normalize safe result statuses, and retain provider-native
+  continuation history.
+- Google preserves complete response-occurrence boundaries, ordered signed
+  native parts, stream-wide fallback call identities, arbitrary JSON results,
+  and verified successful stream termination before tool side effects. xAI
+  correlates added/delta/done identities, filters private argument/reasoning
+  deltas from assistant text, preserves native later-turn tool history, and
+  honors the configured core result-size policy without numeric precision loss.
+- Independent cross-provider review APPROVED `a042dff..ed3b930`. The final
+  independent tester passed full Google/xAI tagged and untagged race/vet,
+  full core/root tagged checks, ToolLoop/fence stress, three generations of
+  promoted native-protocol regressions, and mocked end-to-end continuation.
+- Task 12 is complete at `ed3b930`. Usage metrics remain P1 Task 32;
+  readiness remains P2 Task 43; MCP remains Task 17. Gate C remains open for
+  the Phase 3 independent tester after Tasks 13–14.
 
 ## Phase 4 — Persistent Server product core
 

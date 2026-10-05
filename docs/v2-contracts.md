@@ -367,6 +367,18 @@ be at least 30 bytes. Before provider adapters project calls through
 ContextAggregator, they must invoke the ToolLoop atomic claim or explicitly
 distinguish a previously recorded call from a new claim.
 
+Google and xAI adapters compose their session-generation fence with any
+application `IsCurrent` predicate through an immutable derived ToolLoop. Google
+retains complete response-occurrence boundaries and provider-native signed
+parts in their original order; xAI retains native `function_call` and
+`function_call_output` items across stateless continuation and later context
+reconstruction. Provider streaming may assemble native argument fragments, but
+argument/reasoning deltas are never assistant text. Both adapters preserve
+arbitrary valid JSON results (including integers beyond IEEE-754 exact range),
+map failure/cancellation with safe categories, and defer result-size policy to
+the configured ToolLoop. Nested JSON-Schema and argument conformance beyond
+the documented root/depth/size checks remain application/executor policy.
+
 ## 3. Server concepts and ownership
 
 Server owns the following durable domain records. All durable IDs are UUIDv7 strings; wire and repository APIs treat IDs as opaque. Framework `SessionID`/`TurnID` types may carry the corresponding durable value but remain framework types.
