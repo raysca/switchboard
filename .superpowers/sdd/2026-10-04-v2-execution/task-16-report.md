@@ -2,7 +2,7 @@
 
 ## Status
 
-Initial implementation was committed as `abbbfad`. The independent security review identified five findings; the follow-up is implementing and testing those corrections in a separate fix commit.
+Initial implementation was committed as `abbbfad`. The independent security review's five findings were addressed in `690fb04 fix(server): harden provider credential lifecycle`. Focused race stress and vet passed. A post-fix full server run reached the shared MCP package and was blocked by concurrent Task17 compile errors listed below; the package-level outputs for server, agent, API, credentials, provider and storage passed before that compile failure.
 
 ## Delivered
 
@@ -21,9 +21,9 @@ Before implementation, `go test ./credential ./provider` failed to build because
 
 From `server/`, with `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk` and `CGO_LDFLAGS=-Wl,-w`:
 
-- `go test -race -count=1 ./...` — PASS (including agent/MCP sibling packages present in the shared workspace)
-- `go vet ./...` — PASS
-- `git diff --check` — PASS
+- Initial implementation at `abbbfad`: `go test -race -count=1 ./...`, `go vet ./...`, and `git diff --check` all passed.
+- Security fix at `690fb04`: `go test -race -count=25 ./credential ./api` — PASS; `go test -race -count=25 ./storage` — PASS; `go vet ./credential ./api ./storage` — PASS; `git diff --check` — PASS.
+- Post-fix integrated `go test -race -count=1 ./...` — server, agent, API, credential, provider and storage packages passed, but the command failed to compile concurrent Task17 changes in `server/mcp` (`isPublicEgressIP`, `regexp`, and `classifiedStatusTransport` undefined; an unused `net/netip`; missing `errors` import). Therefore the post-fix full-server vet gate remains unverified until Task17 compiles.
 
 ## Assumptions and boundaries
 
@@ -31,7 +31,7 @@ From `server/`, with `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platfor
 - Google and xAI are the initial registry entries, each statically advertising LLM/STT/TTS support as selectable capabilities. This catalog does not assert account-level entitlement.
 - There is no built-in live provider key validation. Without an explicitly configured adapter, validation/discovery is unavailable; creating a credential does not silently make it valid.
 - Discovery adapters must honor context cancellation. Result counts and output fields are bounded/sanitized after return; a Go adapter that ignores cancellation can still hold its calling goroutine.
-- Shared files `server/storage/repositories.go` and `docs/api/v1.md` also contain concurrent Task15/17 material in this checkout. No files have been staged by this worker; commit ownership must be reconciled with the parent before staging shared paths.
+- Shared files `server/storage/repositories.go` and `docs/api/v1.md` also contain concurrent Task15/17 material. Commits `abbbfad` and `690fb04` selectively staged only Task16 hunks; no sibling edits or `go.work.sum` were included.
 
 ## Review risks to check
 
