@@ -148,3 +148,47 @@ func TestAssistantContextEmitsExplicitFinalMarkerForAlreadyStreamedUnit(t *testi
 	}
 	t.Fatal("assistant context did not emit an explicit whole-turn final marker")
 }
+
+func TestAssistantContextUnitIDsAreSessionMonotonicAcrossTurns(t *testing.T) {
+	contextStore := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	assistant := NewAssistantContextProcessor(contextStore, DefaultAssistantContextConfig())
+	sink := &PassthroughProcessor{}
+	pipe, err := NewPipeline(assistant, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := NewSession(12, pipe, DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	for i, turn := range []string{"turn-1", "turn-2"} {
+		if err := session.Post(&UserMessageFrame{Turn: turn, Gen: 1}); err != nil {
+			t.Fatal(err)
+		}
+		text := []string{"First response.", "Second response."}[i]
+		if err := session.Post(&LLMTextFrame{Text: text, Turn: turn, Gen: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		var ids []uint64
+		for _, frame := range sink.GetFrames() {
+			if unit, ok := frame.(*SynthesisUnitFrame); ok {
+				ids = append(ids, unit.UnitID)
+			}
+		}
+		if len(ids) == 2 {
+			if ids[0] != 1 || ids[1] != 2 {
+				t.Fatalf("unit IDs = %v, want globally monotonic [1 2]", ids)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("did not observe both synthesis units")
+}

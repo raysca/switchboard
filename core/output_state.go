@@ -29,6 +29,7 @@ type SpeakingTracker struct {
 	speaking    bool
 	turn        string
 	gen         uint64
+	unitID      uint64
 	disposition OutputDisposition
 }
 
@@ -36,11 +37,14 @@ func NewSpeakingTracker() *SpeakingTracker { return &SpeakingTracker{} }
 
 // ObserveWrite records a successful, non-empty transport write. The first
 // write starts speaking; later writes only refresh the active output metadata.
-func (t *SpeakingTracker) ObserveWrite(turn string, gen uint64, disposition OutputDisposition) (SpeakingStateFrame, bool) {
+func (t *SpeakingTracker) ObserveWrite(turn string, gen uint64, disposition OutputDisposition, unitID ...uint64) (SpeakingStateFrame, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.turn = turn
 	t.gen = gen
+	if len(unitID) > 0 {
+		t.unitID = unitID[0]
+	}
 	t.disposition = disposition
 	if t.speaking {
 		return SpeakingStateFrame{}, false
@@ -72,10 +76,10 @@ func (t *SpeakingTracker) Stop(reason SpeakingStopReason) (SpeakingStateFrame, b
 
 // StopOutput stops only the exact output identity. It is used by late
 // whole-turn final markers without allowing them to stop newer output.
-func (t *SpeakingTracker) StopOutput(turn string, gen uint64, reason SpeakingStopReason) (SpeakingStateFrame, bool) {
+func (t *SpeakingTracker) StopOutput(turn string, gen uint64, reason SpeakingStopReason, unitID ...uint64) (SpeakingStateFrame, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.speaking || t.turn != turn || t.gen != gen {
+	if !t.speaking || t.turn != turn || t.gen != gen || (len(unitID) > 0 && t.unitID != unitID[0]) {
 		return SpeakingStateFrame{}, false
 	}
 	return t.stopLocked(reason)
@@ -88,6 +92,7 @@ func (t *SpeakingTracker) stopLocked(reason SpeakingStopReason) (SpeakingStateFr
 	t.speaking = false
 	t.turn = ""
 	t.gen = 0
+	t.unitID = 0
 	t.disposition = OutputInterruptible
 	return event, true
 }

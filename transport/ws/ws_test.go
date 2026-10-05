@@ -805,6 +805,9 @@ func TestPhase3_Flush_TimeoutFailsOnUnresponsiveWriter(t *testing.T) {
 	if !errors.Is(err, ws.ErrSlowClient) {
 		t.Fatalf("expected ErrSlowClient from Flush, got: %v", err)
 	}
+	if err := pacer.Enqueue(&core.OutputAudioFrame{Samples: make([]byte, 960), SampleRate: 24000, Channels: 1, Gen: 2}); !errors.Is(err, ws.ErrWriterClosed) {
+		t.Fatalf("flush timeout was not terminal: enqueue error = %v", err)
+	}
 }
 
 func TestSecurity_ClientIPSpoofing_RightToLeftTraversal(t *testing.T) {

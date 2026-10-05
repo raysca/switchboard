@@ -345,6 +345,7 @@ func TestRTVI_BargeIn_PlaybackClearAndGenerationFence(t *testing.T) {
 			Duration:   20 * time.Millisecond,
 			Gen:        1,
 			Turn:       "turn-1",
+			UnitID:     1,
 			Seq:        uint64(i),
 			IsFinal:    i == 5,
 		})
@@ -362,6 +363,7 @@ func TestRTVI_BargeIn_PlaybackClearAndGenerationFence(t *testing.T) {
 		Duration:   20 * time.Millisecond,
 		Gen:        2,
 		Turn:       "turn-2",
+		UnitID:     2,
 		Seq:        100,
 		IsFinal:    true,
 		TurnFinal:  true,

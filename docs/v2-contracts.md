@@ -185,22 +185,31 @@ whole-turn finality. Providers and the deterministic fake propagate known
 unit that was streamed before LLM completion. xAI preserves this boundary with
 an empty final frame when a final unit has no audio. The pacer reconciles a
 marker before admission, while queued, selected, or writing, and immediately
-after successful completion. It bounds pending/completed marker state to 64,
-consumes a pending marker only after successful admission, and makes duplicate
-or stale completion markers no-ops.
+after successful completion. Late reconciliation schedules an abortable drain
+at the recorded media end and does not block the transport processor. Empty
+unit-finals enter the same completed lifecycle. It bounds pending/completed
+marker state to 64 and consumes a pending marker only after successful
+admission. Finality-producing adapters must use nonzero session-monotonic unit
+IDs; core supplies them globally across turns. A monotonic terminal high-water
+mark makes replayed IDs permanent no-ops without unbounded retained state, and
+nonmonotonic final identities fail closed.
 
 Flush drops queued and selected/pacing interruptible output through the target
 generation. Final validation and transport-write registration are atomic with
-the flush fence. A transport-bound real WebSocket write is not canceled because
-coder/websocket cancellation closes the connection; flush waits for its return
-before acknowledging. Explicitly recoverable writers may opt into cancellation.
+the flush fence. A transport-bound real WebSocket writer wrapper is not canceled
+because canceling an actual in-progress coder/websocket write closes the
+connection; flush waits for the wrapper's return before acknowledging. The
+integration holds that wrapper only after coder `Write` returns, proving barrier
+waiting and same-connection reuse rather than in-progress coder cancellation.
+Explicitly recoverable writers may opt into cancellation.
 Repeated/overlapping calls keep generation-specific callbacks; late write
 returns cannot emit completion or revive speaking, and stale/no-op flushes do
 not reset the retained media clock. Explicitly
-uninterruptible queued or in-flight media survives in relative order even when
+uninterruptible queued, in-flight, or final-drain media survives in relative order even when
 older than the active fence, and new-generation output resumes normally. The
-bounded slow-writer path closes the connection instead of falsely
-acknowledging. Already written client audio remains outside this guarantee.
+separately tested bounded slow-writer path closes the pacer before returning its
+terminal error instead of falsely acknowledging. Already written client audio remains outside
+this guarantee.
 
 Detailed concurrency and ordering rules are in
 `docs/output-pacing-and-flush.md`.

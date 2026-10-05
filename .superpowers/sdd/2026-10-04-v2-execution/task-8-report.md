@@ -129,3 +129,39 @@ cd providers/xai && go test -race -tags xaispeech -count=1 ./... && go vet -tags
 All passed. The playback probe was rerun and again returned
 `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; continuation
 under the recorded decision is not evidence that client playback was cleared.
+
+## Review round 2
+
+RED was recorded before production changes in `/tmp/task8-r2-red.log` and
+`/tmp/task8-r2-core-red.log`. The focused WebSocket run failed because late
+finality stopped immediately, an uninterruptible callback flush left speaking
+stuck, a completed empty unit could not drain, and replay after 160 terminal
+turns exhausted the marker cap. The core regression observed IDs `[1 1]`
+instead of session-monotonic `[1 2]`.
+
+The finality lifecycle now records media end and disposition for completed
+units and drains. A late marker installs one abortable timer-backed drain and
+returns immediately; flush/close/cancel clean it, while an uninterruptible drain
+survives flush and stops once with `drained` at media time. Empty unit-finals
+enter the same completed ledger. Core unit IDs no longer reset across turns.
+The pacer requires nonzero session-monotonic IDs for finality, retires terminal
+IDs with a high-water mark, and fails closed on nonmonotonic identities. This
+keeps pending/completed state bounded and makes old duplicate replay a no-op
+after more than twice the ledger capacity.
+
+The coder/websocket claim is narrower than the earlier report wording. The
+integration's real coder `Write` completes before the test holds the writer
+wrapper; the test proves that flush waits for that transport-bound wrapper and
+that the same connection is reusable afterward. It does not attempt to cancel
+an actual in-progress coder write. `AbortInProgressWrite` remains false, and the
+separate unresponsive-writer timeout exercises the terminal/no-success-ack
+policy. A dedicated RED in `/tmp/task8-r2-timeout-red.log` showed the pacer
+still accepted output after that timeout; it now closes before returning the
+terminal `ErrSlowClient`.
+
+Round-2 verification passed the new WebSocket regressions 50 times under the
+race detector, the full core race suite and vet with the macOS 26 SDK
+workaround, root RTVI/WebSocket race and vet, Google race and vet, and tagged
+xAI race and vet. The playback probe again returned
+`UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; its exit zero
+comes only from the recorded decision and is not playback-clear evidence.

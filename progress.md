@@ -182,6 +182,27 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; its exit 0
   is only the recorded product decision, not a playback-clear pass.
 
+### Task 8 review round 2
+
+- Independent re-review required further finality lifecycle changes. Task 8
+  remains unchecked and Gate B remains open pending another independent review.
+- RED reproduced four defects: an uninterruptible turn-final callback flush
+  suppressed the drain, a completed empty final could not accept a late marker,
+  a completed audible unit stopped before its scheduled media end, and more
+  than 129 terminal turns allowed forgotten duplicate markers to fill the
+  pending ledger. Core RED also showed unit IDs restarting at one each turn.
+- Final drains now retain output disposition and recorded media end. Late
+  markers schedule one abortable nonblocking drain; flush preserves
+  uninterruptible finality, while close/cancel cleans scheduled work. Empty
+  unit-finals use the completed ledger. Core unit IDs are session-global, and a
+  monotonic retirement high-water makes old marker replay bounded and permanent.
+  External finality producers must provide nonzero session-monotonic unit IDs.
+- The real-WebSocket evidence is deliberately narrow: its barrier holds the
+  wrapper after coder `Write` has returned and proves wait plus same-connection
+  reuse, not cancellation/recovery of an actual in-progress coder write.
+  `AbortInProgressWrite` remains false for coder/websocket; the separately
+  tested slow-writer timeout closes the pacer and never acknowledges success.
+
 ### Task 6 closeout
 
 - Implementation commits: `10d9c26` (`feat(core): add bounded streaming audio

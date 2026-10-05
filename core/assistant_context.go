@@ -38,7 +38,8 @@ type AssistantContextProcessor struct {
 	activeGen       uint64
 	textBuf         strings.Builder
 	totalTurnText   strings.Builder
-	unitCounter     uint64
+	unitCounter     uint64 // session-global; never reused within this processor
+	firstUnitID     uint64 // first unit in the active turn
 	finalUnitID     uint64 // 0 until final unit is emitted
 	finalSignalSent bool
 	llmComplete     bool // true once complete LLMText has been received
@@ -93,7 +94,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		p.activeGen = um.Gen
 		p.textBuf.Reset()
 		p.totalTurnText.Reset()
-		p.unitCounter = 0
+		p.firstUnitID = 0
 		p.finalUnitID = 0
 		p.finalSignalSent = false
 		p.llmComplete = false
@@ -274,6 +275,9 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 		if len(unitText) > 0 {
 			p.unitCounter++
 			unitID := p.unitCounter
+			if p.firstUnitID == 0 {
+				p.firstUnitID = unitID
+			}
 			p.pendingUnits[unitID] = unitText
 
 			isFinalUnit := isLastChunk && len(buf) == 0
@@ -303,7 +307,7 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 	p.textBuf.Reset()
 	p.textBuf.WriteString(buf)
 
-	if isLastChunk && len(buf) == 0 && p.unitCounter > 0 {
+	if isLastChunk && len(buf) == 0 && p.firstUnitID > 0 {
 		p.finalUnitID = p.unitCounter
 		if !p.finalSignalSent {
 			gen := p.activeGen
@@ -330,7 +334,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 
 	// Reconstruct delivered content in sequential unit order
 	var parts []string
-	for id := uint64(1); id <= p.unitCounter; id++ {
+	for id := p.firstUnitID; id != 0 && id <= p.unitCounter; id++ {
 		if text, exists := p.deliveredUnits[id]; exists {
 			parts = append(parts, text)
 		} else {
@@ -369,7 +373,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	// Reset turn state
 	p.activeTurn = ""
 	p.textBuf.Reset()
-	p.unitCounter = 0
+	p.firstUnitID = 0
 	p.finalUnitID = 0
 	p.finalSignalSent = false
 	p.llmComplete = false
@@ -384,7 +388,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 func (p *AssistantContextProcessor) failUndeliveredTurn(e Emitter, writeErr error) error {
 	p.activeTurn = ""
 	p.textBuf.Reset()
-	p.unitCounter = 0
+	p.firstUnitID = 0
 	p.finalUnitID = 0
 	p.finalSignalSent = false
 	p.llmComplete = false
@@ -412,7 +416,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	// Only complete synthesis units whose final audio frame was successfully written
 	// before the barrier are included. A partly written unit is excluded in full.
 	var delivered []string
-	for id := uint64(1); id <= p.unitCounter; id++ {
+	for id := p.firstUnitID; id != 0 && id <= p.unitCounter; id++ {
 		if text, exists := p.deliveredUnits[id]; exists {
 			delivered = append(delivered, text)
 		} else {
@@ -443,7 +447,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	// Clear active assistant state
 	p.activeTurn = ""
 	p.textBuf.Reset()
-	p.unitCounter = 0
+	p.firstUnitID = 0
 	p.finalUnitID = 0
 	p.finalSignalSent = false
 	p.llmComplete = false

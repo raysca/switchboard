@@ -17,6 +17,7 @@ var (
 	ErrWriterClosed     = errors.New("ws: paced writer closed")
 	ErrQueueBufferFull  = errors.New("ws: output audio queue budget exceeded")
 	ErrFinalMarkerLimit = errors.New("ws: pending whole-turn final marker limit exceeded")
+	ErrInvalidUnitID    = errors.New("ws: finality unit ID must be nonzero and session-monotonic")
 )
 
 type PacerConfig struct {
@@ -46,14 +47,19 @@ type turnFinalKey struct {
 	unitID uint64
 }
 
-type completedUnit struct{}
+type completedUnit struct {
+	mediaEnd    time.Time
+	disposition core.OutputDisposition
+}
 
 type finalDrain struct {
-	key     turnFinalKey
-	gen     uint64
-	abort   chan struct{}
-	aborted bool
-	dropped bool
+	key         turnFinalKey
+	gen         uint64
+	disposition core.OutputDisposition
+	mediaEnd    time.Time
+	abort       chan struct{}
+	aborted     bool
+	dropped     bool
 }
 
 const maxPendingTurnFinals = 64
@@ -80,7 +86,9 @@ type PacedWriter struct {
 	lastMediaEnd    time.Time
 	pendingFinals   map[turnFinalKey]struct{}
 	completedFinals map[turnFinalKey]completedUnit
-	finalized       map[turnFinalKey]struct{}
+	highestUnitID   uint64
+	highestUnitKey  turnFinalKey
+	retiredUnitID   uint64
 	drain           *finalDrain
 
 	speaking *core.SpeakingTracker
@@ -117,7 +125,7 @@ func NewPacedWriter(cfg PacerConfig, writeFn func(context.Context, []byte) error
 	w := &PacedWriter{
 		cfg: cfg, writeFn: writeFn, queue: make([]*pacedFrame, 0, 32),
 		pendingFinals: make(map[turnFinalKey]struct{}), completedFinals: make(map[turnFinalKey]completedUnit),
-		finalized: make(map[turnFinalKey]struct{}), speaking: core.NewSpeakingTracker(),
+		speaking: core.NewSpeakingTracker(),
 	}
 	w.cond = sync.NewCond(&w.mu)
 	return w
@@ -136,9 +144,9 @@ func (w *PacedWriter) MarkTurnFinal(turn string, gen, unitID uint64) error {
 		w.mu.Unlock()
 		return nil
 	}
-	if _, done := w.finalized[key]; done {
+	if unitID == 0 {
 		w.mu.Unlock()
-		return nil
+		return ErrInvalidUnitID
 	}
 	for _, entry := range w.queue {
 		if frameKey(entry.frame) == key && entry.frame.IsFinal {
@@ -154,18 +162,32 @@ func (w *PacedWriter) MarkTurnFinal(turn string, gen, unitID uint64) error {
 		w.mu.Unlock()
 		return nil
 	}
-	if _, completed := w.completedFinals[key]; completed {
-		delete(w.completedFinals, key)
-		w.rememberFinalizedLocked(key)
-		dispatch := false
-		if event, ok := w.speaking.StopOutput(turn, gen, core.SpeakingStopDrained); ok {
-			dispatch = w.queueSpeakingLocked(event)
-		}
+	if w.drain != nil && w.drain.key == key {
 		w.mu.Unlock()
-		if dispatch {
-			w.dispatchSpeaking()
-		}
 		return nil
+	}
+	if completed, ok := w.completedFinals[key]; ok {
+		delete(w.completedFinals, key)
+		drain := &finalDrain{key: key, gen: gen, disposition: completed.disposition, mediaEnd: completed.mediaEnd, abort: make(chan struct{})}
+		var oldAbort chan struct{}
+		if w.drain != nil {
+			oldAbort = w.retireDrainLocked(w.drain)
+		}
+		w.drain = drain
+		w.mu.Unlock()
+		if oldAbort != nil {
+			close(oldAbort)
+		}
+		go w.awaitFinalDrain(context.Background(), drain)
+		return nil
+	}
+	if unitID <= w.retiredUnitID {
+		w.mu.Unlock()
+		return nil
+	}
+	if unitID < w.highestUnitID || (unitID == w.highestUnitID && w.highestUnitID != 0 && key != w.highestUnitKey) {
+		w.mu.Unlock()
+		return ErrInvalidUnitID
 	}
 	if _, exists := w.pendingFinals[key]; exists {
 		w.mu.Unlock()
@@ -184,14 +206,41 @@ func frameKey(frame *core.OutputAudioFrame) turnFinalKey {
 	return turnFinalKey{turn: frame.Turn, gen: frame.Gen, unitID: frame.UnitID}
 }
 
-func (w *PacedWriter) rememberFinalizedLocked(key turnFinalKey) {
-	if len(w.finalized) >= maxPendingTurnFinals {
-		for old := range w.finalized {
-			delete(w.finalized, old)
-			break
-		}
+func (w *PacedWriter) acceptUnitIdentityLocked(key turnFinalKey) error {
+	if key.unitID == 0 {
+		return ErrInvalidUnitID
 	}
-	w.finalized[key] = struct{}{}
+	if key.unitID <= w.retiredUnitID {
+		return ErrInvalidUnitID
+	}
+	if key.unitID < w.highestUnitID || (key.unitID == w.highestUnitID && w.highestUnitID != 0 && key != w.highestUnitKey) {
+		return ErrInvalidUnitID
+	}
+	if key.unitID > w.highestUnitID {
+		w.highestUnitID = key.unitID
+		w.highestUnitKey = key
+	}
+	return nil
+}
+
+func (w *PacedWriter) retireUnitLocked(key turnFinalKey) {
+	if key.unitID > w.retiredUnitID {
+		w.retiredUnitID = key.unitID
+	}
+}
+
+func (w *PacedWriter) recordCompletedLocked(key turnFinalKey, mediaEnd time.Time, disposition core.OutputDisposition) {
+	if len(w.completedFinals) >= maxPendingTurnFinals {
+		var oldest turnFinalKey
+		for candidate := range w.completedFinals {
+			if oldest.unitID == 0 || candidate.unitID < oldest.unitID {
+				oldest = candidate
+			}
+		}
+		delete(w.completedFinals, oldest)
+		w.retireUnitLocked(oldest)
+	}
+	w.completedFinals[key] = completedUnit{mediaEnd: mediaEnd, disposition: disposition}
 }
 
 func (w *PacedWriter) SetActiveGeneration(gen uint64) {
@@ -227,6 +276,13 @@ func (w *PacedWriter) Enqueue(f *core.OutputAudioFrame) error {
 		return fmt.Errorf("%w: %w: queue duration %v > max %v or bytes %d > max %d", ErrSlowClient, ErrQueueBufferFull, nextDuration, w.cfg.MaxQueueDuration, nextBytes, w.cfg.MaxQueueBytes)
 	}
 	key := frameKey(entry.frame)
+	if entry.frame.UnitID != 0 {
+		if err := w.acceptUnitIdentityLocked(key); err != nil {
+			return err
+		}
+	} else if entry.frame.IsFinal || entry.frame.TurnFinal {
+		return ErrInvalidUnitID
+	}
 	if entry.frame.IsFinal {
 		if _, marked := w.pendingFinals[key]; marked {
 			entry.frame.TurnFinal = true
@@ -294,6 +350,7 @@ func (w *PacedWriter) BeginFlush(gen uint64, done func(error)) {
 		case <-wait:
 			safeFlushCallback(done, nil)
 		case <-timer.C:
+			w.Close()
 			safeFlushCallback(done, fmt.Errorf("%w: flush timed out waiting for in-flight write cancellation", ErrSlowClient))
 		}
 	}()
@@ -321,6 +378,7 @@ func (w *PacedWriter) Flush(ctx context.Context, gen uint64) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
+		w.Close()
 		return fmt.Errorf("%w: flush timed out waiting for in-flight write cancellation", ErrSlowClient)
 	}
 }
@@ -341,6 +399,9 @@ func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.Cance
 			w.queuedBytes -= entry.bytes
 			w.queuedDur -= entry.duration
 			w.FramesDropped.Add(1)
+			if entry.frame.IsFinal {
+				w.retireUnitLocked(frameKey(entry.frame))
+			}
 			continue
 		}
 		kept = append(kept, entry)
@@ -349,11 +410,13 @@ func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.Cance
 	for key := range w.pendingFinals {
 		if key.gen <= gen {
 			delete(w.pendingFinals, key)
+			w.retireUnitLocked(key)
 		}
 	}
-	for key := range w.completedFinals {
-		if key.gen <= gen {
+	for key, completed := range w.completedFinals {
+		if key.gen <= gen && completed.disposition != core.OutputUninterruptible {
 			delete(w.completedFinals, key)
+			w.retireUnitLocked(key)
 		}
 	}
 
@@ -374,13 +437,14 @@ func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.Cance
 			cancel = w.writeCancel
 		}
 	}
-	if w.drain != nil && w.drain.gen <= gen {
+	if w.drain != nil && w.drain.gen <= gen && w.drain.disposition != core.OutputUninterruptible {
 		w.drain.dropped = true
 		if !w.drain.aborted {
-			abort = w.drain.abort
 			w.drain.aborted = true
+			close(w.drain.abort)
 		}
 		scheduleChanged = true
+		w.retireUnitLocked(w.drain.key)
 	}
 	if gen < math.MaxUint64 && gen+1 > w.activeGen {
 		w.activeGen = gen + 1
@@ -592,23 +656,21 @@ func (w *PacedWriter) finishWrite(entry *pacedFrame, writeErr error, mediaEnd ti
 			dispatch = w.queueSpeakingLocked(event)
 		}
 	} else {
-		if event, ok := w.speaking.ObserveWrite(entry.frame.Turn, entry.frame.Gen, entry.frame.Disposition); ok {
+		if event, ok := w.speaking.ObserveWrite(entry.frame.Turn, entry.frame.Gen, entry.frame.Disposition, entry.frame.UnitID); ok {
 			dispatch = w.queueSpeakingLocked(event)
 		}
 		key := frameKey(entry.frame)
 		if entry.frame.IsFinal && !entry.frame.TurnFinal {
-			if len(w.completedFinals) >= maxPendingTurnFinals {
-				for old := range w.completedFinals {
-					delete(w.completedFinals, old)
-					break
-				}
-			}
-			w.completedFinals[key] = completedUnit{}
+			w.recordCompletedLocked(key, mediaEnd, entry.frame.Disposition)
 		}
 		w.clearInflightLocked(entry)
 		if entry.frame.TurnFinal {
-			w.rememberFinalizedLocked(key)
-			w.drain = &finalDrain{key: key, gen: entry.frame.Gen, abort: make(chan struct{})}
+			if w.drain != nil {
+				if abort := w.retireDrainLocked(w.drain); abort != nil {
+					close(abort)
+				}
+			}
+			w.drain = &finalDrain{key: key, gen: entry.frame.Gen, disposition: entry.frame.Disposition, mediaEnd: mediaEnd, abort: make(chan struct{})}
 		}
 	}
 	w.mu.Unlock()
@@ -625,10 +687,17 @@ func (w *PacedWriter) finishEmpty(entry *pacedFrame, mediaEnd time.Time) bool {
 	w.mu.Lock()
 	dropped := w.inflight != entry || w.dropInflight || staleInterruptible(entry.frame, w.activeGen)
 	w.clearInflightLocked(entry)
+	if !dropped && entry.frame.IsFinal && !entry.frame.TurnFinal {
+		w.recordCompletedLocked(frameKey(entry.frame), mediaEnd, entry.frame.Disposition)
+	}
 	if !dropped && entry.frame.TurnFinal {
 		key := frameKey(entry.frame)
-		w.rememberFinalizedLocked(key)
-		w.drain = &finalDrain{key: key, gen: entry.frame.Gen, abort: make(chan struct{})}
+		if w.drain != nil {
+			if abort := w.retireDrainLocked(w.drain); abort != nil {
+				close(abort)
+			}
+		}
+		w.drain = &finalDrain{key: key, gen: entry.frame.Gen, disposition: entry.frame.Disposition, mediaEnd: mediaEnd, abort: make(chan struct{})}
 	}
 	w.mu.Unlock()
 	return dropped
@@ -650,6 +719,9 @@ func (w *PacedWriter) finishDropped(entry *pacedFrame) {
 	if w.inflight == entry {
 		w.clearInflightLocked(entry)
 		w.FramesDropped.Add(1)
+		if entry.frame.IsFinal {
+			w.retireUnitLocked(frameKey(entry.frame))
+		}
 	}
 	w.mu.Unlock()
 }
@@ -657,17 +729,19 @@ func (w *PacedWriter) finishDropped(entry *pacedFrame) {
 func (w *PacedWriter) finishFinalDrain(ctx context.Context, entry *pacedFrame, mediaEnd time.Time) {
 	w.mu.Lock()
 	drain := w.drain
-	var abort <-chan struct{}
-	if drain != nil && drain.key == frameKey(entry.frame) {
-		abort = drain.abort
-	}
 	w.mu.Unlock()
-	if entry.frame.TurnFinal && w.cfg.EnablePacing {
-		if wait := time.Until(mediaEnd); wait > 0 {
+	if drain != nil && drain.key == frameKey(entry.frame) {
+		w.awaitFinalDrain(ctx, drain)
+	}
+}
+
+func (w *PacedWriter) awaitFinalDrain(ctx context.Context, drain *finalDrain) {
+	if w.cfg.EnablePacing {
+		if wait := time.Until(drain.mediaEnd); wait > 0 {
 			timer := time.NewTimer(wait)
 			select {
 			case <-timer.C:
-			case <-abort:
+			case <-drain.abort:
 				stopAndDrainTimer(timer)
 			case <-ctx.Done():
 				stopAndDrainTimer(timer)
@@ -675,13 +749,14 @@ func (w *PacedWriter) finishFinalDrain(ctx context.Context, entry *pacedFrame, m
 		}
 	}
 	w.mu.Lock()
-	dropped := w.closed || w.drain != drain || drain == nil || drain.dropped || staleInterruptible(entry.frame, w.activeGen)
+	dropped := w.closed || w.drain != drain || drain.dropped || (drain.gen != 0 && drain.gen < w.activeGen && drain.disposition != core.OutputUninterruptible)
 	if w.drain == drain {
 		w.drain = nil
 	}
+	w.retireUnitLocked(drain.key)
 	dispatch := false
-	if !dropped && entry.frame.TurnFinal {
-		if event, ok := w.speaking.Stop(core.SpeakingStopDrained); ok {
+	if !dropped {
+		if event, ok := w.speaking.StopOutput(drain.key.turn, drain.key.gen, core.SpeakingStopDrained); ok {
 			dispatch = w.queueSpeakingLocked(event)
 		}
 	}
@@ -689,6 +764,16 @@ func (w *PacedWriter) finishFinalDrain(ctx context.Context, entry *pacedFrame, m
 	if dispatch {
 		w.dispatchSpeaking()
 	}
+}
+
+func (w *PacedWriter) retireDrainLocked(drain *finalDrain) chan struct{} {
+	drain.dropped = true
+	w.retireUnitLocked(drain.key)
+	if drain.aborted {
+		return nil
+	}
+	drain.aborted = true
+	return drain.abort
 }
 
 func stopAndDrainTimer(timer *time.Timer) {
@@ -731,7 +816,6 @@ func (w *PacedWriter) Close() {
 	w.queuedDur = 0
 	clear(w.pendingFinals)
 	clear(w.completedFinals)
-	clear(w.finalized)
 	var abort chan struct{}
 	var cancel context.CancelFunc
 	if w.inflight != nil {
@@ -746,9 +830,7 @@ func (w *PacedWriter) Close() {
 		w.drain.dropped = true
 		if !w.drain.aborted {
 			w.drain.aborted = true
-			if abort == nil {
-				abort = w.drain.abort
-			}
+			close(w.drain.abort)
 		}
 		w.drain = nil
 	}

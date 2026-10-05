@@ -667,8 +667,9 @@ func TestPhase2_NextTurnSucceedsInSameSessionWithCoherentContext(t *testing.T) {
 	})
 	time.Sleep(20 * time.Millisecond)
 
-	// Complete write for Turn 2 unit 1 (final unit)
-	_ = sess.Post(&core.WriteCompletionFrame{Turn: "turn-2", Gen: gen2, UnitID: 1, IsFinal: true})
+	// Complete write for Turn 2's final unit. Unit IDs remain monotonic across
+	// turns, including the interrupted turn's two emitted units.
+	_ = sess.Post(&core.WriteCompletionFrame{Turn: "turn-2", Gen: gen2, UnitID: 3, IsFinal: true})
 	time.Sleep(30 * time.Millisecond)
 
 	// Verify coherent multi-turn context
