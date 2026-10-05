@@ -74,6 +74,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Token: signed, ExpiresAt: claims.ExpiresAt.Time, Scope: "voice:connect",
 		}})
 	default:
+		if r.URL.Path == "/api/v1/agents" || strings.HasPrefix(r.URL.Path, "/api/v1/agents/") {
+			if s.agentManagementAPI == nil {
+				api.WriteError(w, http.StatusServiceUnavailable, "agent_management_unavailable", "agent management storage is unavailable", requestID)
+				return
+			}
+			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
+			s.agentManagementAPI.ServeHTTP(w, r)
+			return
+		}
 		if r.URL.Path == "/api/v1/providers" || strings.HasPrefix(r.URL.Path, "/api/v1/providers/") {
 			if s.providerManagementAPI == nil {
 				api.WriteError(w, http.StatusServiceUnavailable, "provider_management_unavailable", "provider management storage is unavailable", requestID)

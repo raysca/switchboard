@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"govoice/server/agent"
 )
 
@@ -29,12 +30,16 @@ func NewAgentsHandler(service AgentService) http.Handler {
 type agentsHandler struct{ service AgentService }
 
 func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	requestID := RequestIDFromContext(r.Context())
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
+	w.Header().Set("X-Request-ID", requestID)
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/agents"), "/")
 	if r.URL.Path != "/api/v1/agents" && !strings.HasPrefix(r.URL.Path, "/api/v1/agents/") {
-		WriteError(w, http.StatusNotFound, "not_found", "route not found", r.Header.Get("X-Request-ID"))
+		WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 		return
 	}
-	requestID := r.Header.Get("X-Request-ID")
 	if path == "" {
 		h.collection(w, r, requestID)
 		return
@@ -50,7 +55,7 @@ func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "archive" {
 		if r.Method != http.MethodPost {
-			methodNotAllowed(w, requestID, "POST")
+			agentMethodNotAllowed(w, requestID, "POST")
 			return
 		}
 		if err := h.service.Archive(r.Context(), parts[0]); err != nil {
@@ -94,7 +99,7 @@ func (h agentsHandler) collection(w http.ResponseWriter, r *http.Request, reques
 		}
 		WriteJSON(w, http.StatusCreated, SuccessResponse[agent.Agent]{Data: created})
 	default:
-		methodNotAllowed(w, requestID, "GET, POST")
+		agentMethodNotAllowed(w, requestID, "GET, POST")
 	}
 }
 
@@ -120,13 +125,13 @@ func (h agentsHandler) item(w http.ResponseWriter, r *http.Request, id, requestI
 		}
 		WriteJSON(w, http.StatusOK, SuccessResponse[agent.Agent]{Data: item})
 	default:
-		methodNotAllowed(w, requestID, "GET, PUT, PATCH")
+		agentMethodNotAllowed(w, requestID, "GET, PUT, PATCH")
 	}
 }
 
 func (h agentsHandler) duplicate(w http.ResponseWriter, r *http.Request, id, requestID string) {
 	if r.Method != http.MethodPost {
-		methodNotAllowed(w, requestID, "POST")
+		agentMethodNotAllowed(w, requestID, "POST")
 		return
 	}
 	var req struct {
@@ -148,7 +153,7 @@ func (h agentsHandler) duplicate(w http.ResponseWriter, r *http.Request, id, req
 
 func (h agentsHandler) importV1(w http.ResponseWriter, r *http.Request, requestID string) {
 	if r.Method != http.MethodPost {
-		methodNotAllowed(w, requestID, "POST")
+		agentMethodNotAllowed(w, requestID, "POST")
 		return
 	}
 	var req struct {
@@ -167,6 +172,11 @@ func (h agentsHandler) importV1(w http.ResponseWriter, r *http.Request, requestI
 		return
 	}
 	WriteJSON(w, http.StatusCreated, SuccessResponse[agent.Agent]{Data: item})
+}
+
+func agentMethodNotAllowed(w http.ResponseWriter, requestID, allow string) {
+	w.Header().Set("Allow", allow)
+	WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported", requestID)
 }
 
 func (h agentsHandler) writeServiceError(w http.ResponseWriter, err error, requestID string) {

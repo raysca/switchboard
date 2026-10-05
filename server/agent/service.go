@@ -18,9 +18,20 @@ const maxReadinessReasons = 8
 
 var ErrNotFound = sql.ErrNoRows
 
-type Service struct{ store *storage.Store }
+type ReadinessEvaluator func(context.Context, string, json.RawMessage) (bool, error)
 
-func NewService(store *storage.Store) *Service { return &Service{store: store} }
+type Service struct {
+	store     *storage.Store
+	evaluator ReadinessEvaluator
+}
+
+func NewService(store *storage.Store, evaluators ...ReadinessEvaluator) *Service {
+	s := &Service{store: store}
+	if len(evaluators) > 0 {
+		s.evaluator = evaluators[0]
+	}
+	return s
+}
 
 type CreateRequest struct {
 	Name        string          `json:"name"`
@@ -98,10 +109,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Agent, error) 
 		enabled = *req.Enabled
 	}
 	row := storage.Agent{ID: storage.NewID(), Name: name, Description: req.Description, Enabled: enabled}
-	if err := s.store.Agents().Create(ctx, row); err != nil {
-		return Agent{}, err
-	}
-	if _, err := s.store.Agents().PublishVersion(ctx, row.ID, 1, config, nil); err != nil {
+	if _, err := s.store.Agents().CreateWithVersion(ctx, row, config); err != nil {
 		return Agent{}, err
 	}
 	return s.Get(ctx, row.ID)
@@ -132,46 +140,18 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Agent, error) 
 }
 
 func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Agent, error) {
-	row, err := s.store.Agents().Current(ctx, id)
-	if err != nil {
-		return Agent{}, err
-	}
-	if row.Archived {
-		return Agent{}, errors.New("agent unavailable")
-	}
-	name := row.Name
-	if req.Name != nil {
-		name = strings.TrimSpace(*req.Name)
-	}
-	description := row.Description
-	if req.Description != nil {
-		description = *req.Description
-	}
-	if err := validateDetails(name, description); err != nil {
-		return Agent{}, err
-	}
 	var config json.RawMessage
+	var err error
 	if len(req.Config) > 0 {
 		config, err = normalizeConfig(req.Config)
 		if err != nil {
 			return Agent{}, err
 		}
 	}
-	if err := s.store.Agents().UpdateDetails(ctx, id, name, description, req.Enabled); err != nil {
+	if _, _, err := s.store.Agents().MutateAndPublish(ctx, id, storage.AgentMutation{
+		Name: req.Name, Description: req.Description, Enabled: req.Enabled,
+	}, config); err != nil {
 		return Agent{}, err
-	}
-	if len(config) > 0 {
-		next := 1
-		if row.CurrentVersionID != "" {
-			current, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
-			if err != nil {
-				return Agent{}, err
-			}
-			next = current.Version + 1
-		}
-		if _, err := s.store.Agents().PublishVersion(ctx, id, next, config, nil); err != nil {
-			return Agent{}, err
-		}
 	}
 	return s.Get(ctx, id)
 }
@@ -217,7 +197,12 @@ func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, erro
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{AgentID: row.ID, Version: toVersion(v), ConfigHash: v.ConfigHash}, nil
+	version := toVersion(v)
+	readiness := s.agentReadiness(ctx, row.ID, version.Config, row.Enabled, row.Archived)
+	if readiness.State == ReadinessNotReady {
+		return Snapshot{}, errors.New("agent not ready")
+	}
+	return Snapshot{AgentID: row.ID, Version: version, ConfigHash: v.ConfigHash}, nil
 }
 
 // StartSession resolves and persists one immutable version reference. A later
@@ -274,7 +259,7 @@ func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error)
 		}
 		converted := toVersion(v)
 		a.Version = &converted
-		a.Readiness = readiness(converted.Config, row.Enabled, row.Archived)
+		a.Readiness = s.agentReadiness(ctx, row.ID, converted.Config, row.Enabled, row.Archived)
 	} else {
 		a.Readiness = Readiness{State: ReadinessNotReady, Reasons: []string{"missing_configuration"}}
 	}
@@ -282,13 +267,12 @@ func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error)
 }
 
 const (
-	ReadinessReady    = "ready"
-	ReadinessDegraded = "degraded"
-	ReadinessNotReady = "not_ready"
+	ReadinessReady      = "ready"
+	ReadinessConfigured = "configured"
+	ReadinessNotReady   = "not_ready"
 )
 
-func readiness(config json.RawMessage, enabled, archived bool) Readiness {
-	state := ReadinessReady
+func (s *Service) agentReadiness(ctx context.Context, agentID string, config json.RawMessage, enabled, archived bool) Readiness {
 	var settings map[string]json.RawMessage
 	if json.Unmarshal(config, &settings) != nil {
 		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_configuration"}}
@@ -309,9 +293,20 @@ func readiness(config json.RawMessage, enabled, archived bool) Readiness {
 		reasons = reasons[:maxReadinessReasons]
 	}
 	if len(reasons) > 0 {
-		state = ReadinessNotReady
+		return Readiness{State: ReadinessNotReady, Reasons: reasons}
 	}
-	return Readiness{State: state, Reasons: reasons}
+	if s.evaluator == nil {
+		// Configuration presence is not provider or MCP capability validation.
+		return Readiness{State: ReadinessConfigured, Reasons: []string{}}
+	}
+	ready, err := s.evaluator(ctx, agentID, append(json.RawMessage(nil), config...))
+	if err != nil {
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}
+	}
+	if !ready {
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"external_dependency_unavailable"}}
+	}
+	return Readiness{State: ReadinessReady, Reasons: []string{}}
 }
 
 func validateDetails(name, description string) error {

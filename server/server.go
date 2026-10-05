@@ -34,6 +34,7 @@ type Server struct {
 	validator             *token.Validator
 	management            *auth.Management
 	providerManagementAPI http.Handler
+	agentManagementAPI    http.Handler
 	voiceSignKey          []byte
 	voiceKeyID            string
 	voiceEpoch            string
@@ -188,6 +189,12 @@ func (s *Server) Registry() *Registry {
 // administrator authentication before this handler is called.
 func (s *Server) SetProviderManagementAPI(handler http.Handler) {
 	s.providerManagementAPI = handler
+}
+
+// SetAgentManagementAPI installs the agent route handler behind management
+// authentication. Configure it before serving requests.
+func (s *Server) SetAgentManagementAPI(handler http.Handler) {
+	s.agentManagementAPI = handler
 }
 
 // Metrics returns the server metrics.
