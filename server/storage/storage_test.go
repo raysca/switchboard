@@ -82,6 +82,36 @@ func TestRepositoryAgentVersionImmutabilityAndHistorySafety(t *testing.T) {
 	}
 }
 
+func TestRepositoryAgentVersionsAreMonotonicAndAgentListUpdateWork(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	a := Agent{ID: NewID(), Name: "before"}
+	if err := s.Agents().Create(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Agents().PublishVersion(ctx, a.ID, 2, []byte(`{}`), nil); err == nil {
+		t.Fatal("first version may not skip version 1")
+	}
+	v1, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2, err := s.Agents().PublishVersion(ctx, a.ID, 2, []byte(`{"x":2}`), nil)
+	if err != nil || v2.Version != v1.Version+1 {
+		t.Fatalf("second version=%+v err=%v", v2, err)
+	}
+	if _, err := s.Agents().PublishVersion(ctx, a.ID, 4, []byte(`{}`), nil); err == nil {
+		t.Fatal("version may not skip a number")
+	}
+	if err := s.Agents().UpdateDetails(ctx, a.ID, "after", "updated", nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Agents().List(ctx, 10, 0)
+	if err != nil || len(got) != 1 || got[0].Name != "after" || got[0].CurrentVersionID != v2.ID {
+		t.Fatalf("list=%+v err=%v", got, err)
+	}
+}
+
 func TestRepositoryTransactionRollback(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

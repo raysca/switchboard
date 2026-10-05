@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -53,6 +54,26 @@ func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, ver
 	}
 	out = AgentVersion{ID: NewID(), AgentID: agentID, Version: version, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC()}
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Serialize version allocation per agent. Version numbers are contiguous
+		// and never change once published, including under concurrent writers.
+		lockAgent := "SELECT archived FROM agents WHERE id=?"
+		if r.s.dialect == Postgres {
+			lockAgent += " FOR UPDATE"
+		}
+		var archived bool
+		if err := tx.QueryRowContext(ctx, r.s.bind(lockAgent), agentID).Scan(&archived); err != nil {
+			return err
+		}
+		if archived {
+			return errors.New("agent unavailable")
+		}
+		var latest int
+		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM agent_versions WHERE agent_id=?"), agentID).Scan(&latest); err != nil {
+			return err
+		}
+		if version != latest+1 {
+			return errors.New("agent version must increment monotonically")
+		}
 		// The same transaction validates every selected schema and publishes the version.
 		// SQLite begins IMMEDIATE; PostgreSQL row locks block refresh or delete races.
 		for _, sel := range selections {
@@ -118,6 +139,61 @@ func (r AgentRepository) Current(ctx context.Context, id string) (Agent, error) 
 		return a, err
 	}
 	return a, nil
+}
+
+// List returns a stable ID-ordered page of agents, including archived ones.
+func (r AgentRepository) List(ctx context.Context, limit, offset int) ([]Agent, error) {
+	if limit < 1 || limit > 100 || offset < 0 {
+		return nil, errors.New("invalid agent pagination")
+	}
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id,name,description,enabled,archived,current_version_id,created_at,updated_at FROM agents ORDER BY id LIMIT ? OFFSET ?"), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []Agent
+	for rows.Next() {
+		var a Agent
+		var current sql.NullString
+		var created, updated string
+		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.Enabled, &a.Archived, &current, &created, &updated); err != nil {
+			return nil, err
+		}
+		a.CurrentVersionID = current.String
+		if a.CreatedAt, err = parseTime(created); err != nil {
+			return nil, err
+		}
+		if a.UpdatedAt, err = parseTime(updated); err != nil {
+			return nil, err
+		}
+		agents = append(agents, a)
+	}
+	return agents, rows.Err()
+}
+
+// UpdateDetails changes mutable agent metadata without rewriting any version.
+func (r AgentRepository) UpdateDetails(ctx context.Context, id, name, description string, enabled *bool) error {
+	if strings.TrimSpace(name) == "" || len(name) > 128 || len(description) > 1024 {
+		return errors.New("invalid agent details")
+	}
+	query := "UPDATE agents SET name=?,description=?,updated_at=? WHERE id=? AND archived=?"
+	args := []any{strings.TrimSpace(name), description, utc(time.Now()), id, boolValue(r.s.dialect, false)}
+	if enabled != nil {
+		query = "UPDATE agents SET name=?,description=?,enabled=?,updated_at=? WHERE id=? AND archived=?"
+		args = []any{strings.TrimSpace(name), description, boolValue(r.s.dialect, *enabled), utc(time.Now()), id, boolValue(r.s.dialect, false)}
+	}
+	result, err := r.s.db.ExecContext(ctx, r.s.bind(query), args...)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, error) {
 	var v AgentVersion
