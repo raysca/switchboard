@@ -135,3 +135,55 @@ The local schema boundary is intentionally limited to JSON validity, byte/depth
 bounds, tool identity and xAI's root object/object-union shape. Neither the
 adapter nor Task 11 ToolLoop evaluates nested JSON Schema constraints against
 tool arguments.
+
+## Correction round 2
+
+The independent round-two probe reproduced three issues: streamed argument
+state was keyed inconsistently across item/call/output-index identifiers,
+completed arguments could disagree with the argument stream, and success
+results were decoded through `float64`, rounding large JSON integers. The
+stream adapter now resolves those identifiers as aliases of one assembly,
+supports argument deltas arriving before the item lifecycle event, attaches
+assembled arguments when completed items omit them, and rejects conflicting
+stream/final payloads. Duplicate item lifecycle events remain idempotent at the
+canonical call list.
+
+Successful result envelopes now splice validated, bounded raw JSON into the
+envelope rather than decode/re-encode through an interface value. This keeps
+integers such as `9007199254740993` exact in both historical Responses items
+and active continuation output while retaining support for arbitrary JSON
+scalars, arrays, and objects. The 64 KiB successful-result bound matches the
+shared tool result contract.
+
+Recommended ambiguity choices: Responses events do not provide a stable event
+sequence identifier in the current SDK-facing event payload, so exact duplicate
+item lifecycle updates are merged idempotently, while argument deltas remain
+ordered byte fragments and are never de-duplicated by content (identical
+adjacent fragments can be legitimate). Argument `done` is treated as the full
+assembled argument value and must agree with prior streamed fragments; this
+avoids silently discarding conflicting provider state.
+
+Round-two regression tests cover call/item/output-index alias correlation,
+delta-before-item ordering, omitted final arguments, conflicting `done` versus
+completed output, duplicate completed items, exact large-number preservation,
+scalar/array/object payloads, and oversized results. Verification is recorded
+after the round-two matrix below.
+
+Round-two verification:
+
+- xAI review overlays: both the round-one and round-two overlay suites pass
+  with `go test -race -count=10`.
+- `cd providers/xai && go test -race ./...`: PASS.
+- `cd providers/xai && go vet ./...`: PASS.
+- `cd providers/xai && go test -race -tags xai ./...`: PASS.
+- `cd providers/xai && go vet -tags xai ./...`: PASS.
+- `cd core && go test -race -count=50 ./tools`: PASS.
+- `cd core && go vet ./tools`: PASS.
+- Root `go vet -tags xai ./...`: PASS.
+- Root `go test -race -tags xai ./...` with
+  `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk`: PASS; the
+  linker reports the existing MacOS27-built object/MacOS26.5 target warnings.
+- `gofmt` and scoped `git diff --check`: PASS.
+
+Task 12 and Gate C remain open pending the cross-provider gate and independent
+closeout. This correction does not change Task 12 status.

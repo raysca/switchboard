@@ -54,23 +54,27 @@ func MapToolDefinitions(definitions []core.ToolDefinition) ([]XAIToolDefinition,
 // XAIToolResultOutput encodes statuses so successful payloads and failures
 // remain distinguishable even when a failed handler returned useful JSON.
 func XAIToolResultOutput(result core.ToolResult) (string, error) {
-	var envelope map[string]any
 	switch result.Status {
 	case core.ToolSucceeded:
-		var value any
-		if len(result.Result) == 0 || json.Unmarshal(result.Result, &value) != nil {
+		if len(result.Result) == 0 || len(result.Result) > 64<<10 || !json.Valid(result.Result) {
 			return "", errors.New("xai: invalid successful tool result")
 		}
-		envelope = map[string]any{"output": value}
+		// Keep the provider-neutral JSON value raw: decoding through interface{}
+		// would round integers above 2^53 and mutate historical tool results.
+		encoded := make([]byte, 0, len(result.Result)+12)
+		encoded = append(encoded, `{"output":`...)
+		encoded = append(encoded, result.Result...)
+		encoded = append(encoded, '}')
+		return string(encoded), nil
 	case core.ToolFailed:
-		envelope = map[string]any{"error": safeXAIErrorCategory(result.ErrorCategory, "tool_failed")}
+		encoded, _ := json.Marshal(map[string]string{"error": safeXAIErrorCategory(result.ErrorCategory, "tool_failed")})
+		return string(encoded), nil
 	case core.ToolCancelled:
-		envelope = map[string]any{"error": safeXAIErrorCategory(result.ErrorCategory, "cancelled")}
+		encoded, _ := json.Marshal(map[string]string{"error": safeXAIErrorCategory(result.ErrorCategory, "cancelled")})
+		return string(encoded), nil
 	default:
 		return "", errors.New("xai: invalid tool result status")
 	}
-	encoded, err := json.Marshal(envelope)
-	return string(encoded), err
 }
 
 func safeXAIErrorCategory(category, fallback string) string {
@@ -202,14 +206,84 @@ func (a *xaiFunctionCallAssembly) mergeIdentity(item XAIResponseOutputItem) erro
 	return nil
 }
 
-func xaiOutputItemKey(item XAIResponseOutputItem, outputIndex int) string {
+func (a *xaiFunctionCallAssembly) merge(other *xaiFunctionCallAssembly) error {
+	if other == a {
+		return nil
+	}
+	if err := a.mergeIdentity(other.item); err != nil {
+		return err
+	}
+	if other.arguments.Len() > 0 {
+		if a.arguments.Len() > 0 && a.arguments.String() != other.arguments.String() {
+			return errors.New("xai: conflicting streamed function call arguments")
+		}
+		if a.arguments.Len() == 0 {
+			a.arguments.WriteString(other.arguments.String())
+		}
+	}
+	return nil
+}
+
+// xaiCallAssemblyIndex correlates the distinct identifiers used by Responses
+// lifecycle events (output index, item id, and function call id).
+type xaiCallAssemblyIndex map[string]*xaiFunctionCallAssembly
+
+func (index xaiCallAssemblyIndex) get(item XAIResponseOutputItem, outputIndex int, itemID string, hasOutputIndex bool) (*xaiFunctionCallAssembly, error) {
+	var assembly *xaiFunctionCallAssembly
+	keys := make([]string, 0, 4)
+	if item.ID != "" {
+		keys = append(keys, "item:"+item.ID)
+	}
+	if itemID != "" {
+		keys = append(keys, "item:"+itemID)
+	}
 	if item.CallID != "" {
-		return "call:" + item.CallID
+		keys = append(keys, "call:"+item.CallID)
+	}
+	if hasOutputIndex {
+		keys = append(keys, fmt.Sprintf("output:%d", outputIndex))
+	}
+	for _, key := range keys {
+		candidate := index[key]
+		if candidate == nil {
+			continue
+		}
+		if assembly == nil {
+			assembly = candidate
+			continue
+		}
+		if candidate != assembly {
+			if err := assembly.merge(candidate); err != nil {
+				return nil, err
+			}
+			for alias, old := range index {
+				if old == candidate {
+					index[alias] = assembly
+				}
+			}
+		}
+	}
+	if assembly == nil {
+		assembly = &xaiFunctionCallAssembly{}
+	}
+	for _, key := range keys {
+		index[key] = assembly
 	}
 	if item.ID != "" {
-		return "item:" + item.ID
+		index["item:"+item.ID] = assembly
 	}
-	return fmt.Sprintf("output:%d", outputIndex)
+	if item.CallID != "" {
+		index["call:"+item.CallID] = assembly
+	}
+	if hasOutputIndex {
+		index[fmt.Sprintf("output:%d", outputIndex)] = assembly
+	}
+	return assembly, nil
+}
+
+func eventHasOutputIndex(raw []byte) bool {
+	var fields map[string]json.RawMessage
+	return json.Unmarshal(raw, &fields) == nil && len(fields["output_index"]) > 0
 }
 
 func (item *XAIResponseOutputItem) UnmarshalJSON(data []byte) error {
@@ -244,7 +318,7 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 	var committed bool
 	var items []XAIResponseOutputItem
 	var roundText strings.Builder
-	callAssemblies := make(map[string]*xaiFunctionCallAssembly)
+	callAssemblies := make(xaiCallAssemblyIndex)
 	var prompt, output, total int
 	err = ExecuteWithRetry(ctx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, &committed, func(attempt int) error {
 		if attempt > 0 {
@@ -314,11 +388,9 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 			}
 			if chunk.Type == "response.output_item.added" || chunk.Type == "response.output_item.done" {
 				if chunk.Item != nil && chunk.Item.Type == "function_call" {
-					key := xaiOutputItemKey(*chunk.Item, chunk.OutputIndex)
-					assembly := callAssemblies[key]
-					if assembly == nil {
-						assembly = &xaiFunctionCallAssembly{}
-						callAssemblies[key] = assembly
+					assembly, err := callAssemblies.get(*chunk.Item, chunk.OutputIndex, "", eventHasOutputIndex([]byte(event.Data)))
+					if err != nil {
+						return err
 					}
 					if err := assembly.mergeIdentity(*chunk.Item); err != nil {
 						return err
@@ -338,18 +410,17 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 				}
 			}
 			if chunk.Type == "response.function_call_arguments.delta" || chunk.Type == "response.function_call_arguments.done" {
-				key := chunk.ItemID
-				if key == "" {
-					key = fmt.Sprintf("output:%d", chunk.OutputIndex)
-				}
-				assembly := callAssemblies[key]
-				if assembly == nil {
-					assembly = &xaiFunctionCallAssembly{}
-					callAssemblies[key] = assembly
+				assembly, err := callAssemblies.get(XAIResponseOutputItem{}, chunk.OutputIndex, chunk.ItemID, eventHasOutputIndex([]byte(event.Data)))
+				if err != nil {
+					return err
 				}
 				if chunk.Type == "response.function_call_arguments.done" {
-					assembly.arguments.Reset()
-					assembly.arguments.WriteString(chunk.Arguments)
+					if assembly.arguments.Len() > 0 && assembly.arguments.String() != chunk.Arguments {
+						return errors.New("xai: conflicting function call arguments.done payload")
+					}
+					if assembly.arguments.Len() == 0 {
+						assembly.arguments.WriteString(chunk.Arguments)
+					}
 				} else {
 					assembly.arguments.WriteString(chunk.Delta)
 				}
@@ -359,11 +430,9 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 				canonical := make([]XAIResponseOutputItem, 0, len(chunk.Response.Output))
 				for index, item := range chunk.Response.Output {
 					if item.Type == "function_call" {
-						key := xaiOutputItemKey(item, index)
-						assembly := callAssemblies[key]
-						if assembly == nil {
-							assembly = &xaiFunctionCallAssembly{}
-							callAssemblies[key] = assembly
+						assembly, err := callAssemblies.get(item, index, "", true)
+						if err != nil {
+							return err
 						}
 						if err := assembly.mergeIdentity(item); err != nil {
 							return err

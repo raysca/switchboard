@@ -159,6 +159,113 @@ func TestXAIToolResultOutputPreservesStatusAndSanitizesCategory(t *testing.T) {
 	}
 }
 
+func TestXAIToolResultOutputPreservesLargeNumbersAndRejectsOversize(t *testing.T) {
+	got, err := XAIToolResultOutput(core.ToolResult{Status: core.ToolSucceeded, Result: json.RawMessage(`{"id":9007199254740993}`)})
+	if err != nil || got != `{"output":{"id":9007199254740993}}` {
+		t.Fatalf("numeric result changed: output=%s err=%v", got, err)
+	}
+	for _, raw := range []string{`null`, `42`, `"text"`, `[1,9007199254740993]`} {
+		got, err := XAIToolResultOutput(core.ToolResult{Status: core.ToolSucceeded, Result: json.RawMessage(raw)})
+		if err != nil || !strings.Contains(got, raw) {
+			t.Fatalf("result %s was not preserved: output=%s err=%v", raw, got, err)
+		}
+	}
+	oversized, _ := json.Marshal(strings.Repeat("x", 64<<10))
+	if _, err := XAIToolResultOutput(core.ToolResult{Status: core.ToolSucceeded, Result: oversized}); err == nil {
+		t.Fatal("oversized successful result accepted")
+	}
+}
+
+func TestXAIStreamCorrelatesCallItemAndIndexAliases(t *testing.T) {
+	wire := `data: {"type":"response.function_call_arguments.delta","output_index":7,"item_id":"fc1","delta":"{\"x\":"}
+
+data: {"type":"response.output_item.added","output_index":7,"item":{"type":"function_call","id":"fc1","name":"lookup","arguments":"","status":"in_progress"}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc1","delta":"1}"}
+
+data: {"type":"response.output_item.done","output_index":7,"item":{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","status":"completed"}}
+
+data: {"type":"response.completed","response":{"output":[{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","status":"completed"}]}}
+
+data: [DONE]
+
+`
+	calls, err := runXAIToolStream(t, wire)
+	if err != nil || len(calls) != 1 || calls[0].ID != "c1" || string(calls[0].Arguments) != `{"x":1}` {
+		t.Fatalf("aliases failed to correlate: calls=%+v err=%v", calls, err)
+	}
+}
+
+func TestXAIStreamRejectsConflictingArgumentsDoneAndCompleted(t *testing.T) {
+	wire := `data: {"type":"response.function_call_arguments.done","item_id":"fc1","arguments":"{\"x\":1}"}
+
+data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":"","status":"in_progress"}}
+
+data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":"{\"x\":2}","status":"completed"}}
+
+data: [DONE]
+
+`
+	if _, err := runXAIToolStream(t, wire); err == nil {
+		t.Fatal("conflicting completed arguments accepted")
+	}
+}
+
+func TestXAIStreamRejectsArgumentsDoneVsCompletedConflict(t *testing.T) {
+	wire := `data: {"type":"response.function_call_arguments.done","item_id":"fc1","arguments":"{\"x\":1}"}
+
+data: {"type":"response.completed","response":{"output":[{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":"{\"x\":2}","status":"completed"}]}}
+
+data: [DONE]
+
+`
+	if _, err := runXAIToolStream(t, wire); err == nil {
+		t.Fatal("completed output conflicting with arguments.done accepted")
+	}
+}
+
+func TestXAIStreamDuplicateOutputItemsRemainSingleCall(t *testing.T) {
+	item := `{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":"{}","status":"completed"}`
+	wire := `data: {"type":"response.output_item.added","output_index":0,"item":` + item + `}
+
+data: {"type":"response.output_item.done","output_index":0,"item":` + item + `}
+
+data: {"type":"response.output_item.done","output_index":0,"item":` + item + `}
+
+data: [DONE]
+
+`
+	calls, err := runXAIToolStream(t, wire)
+	if err != nil || len(calls) != 1 {
+		t.Fatalf("duplicate output items changed call count: calls=%+v err=%v", calls, err)
+	}
+}
+
+func runXAIToolStream(t *testing.T, wire string) ([]core.ToolCall, error) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, wire)
+	}))
+	defer srv.Close()
+	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: RetryPolicy{MaxAttempts: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newMockSessionController(1, 1)
+	if err = proc.Attach(session, 0); err != nil {
+		t.Fatal(err)
+	}
+	proc.activeGen = 1
+	var text strings.Builder
+	calls, _, _, _, err := proc.requestRound(context.Background(), context.Background(), responsesRequest{}, 1, "t", session, &text)
+	return coreCalls(calls), err
+}
+
+func coreCalls(items []XAIResponseOutputItem) []core.ToolCall {
+	return ParseXAIToolCalls(items, "s", "t", 1)
+}
+
 func TestXAIStreamingLifecycleAssemblesArgumentsWithoutSpeakingThem(t *testing.T) {
 	wire := `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":"","status":"in_progress"}}
 
@@ -215,6 +322,14 @@ func TestXAIHistoryUsesResponsesFunctionCallItems(t *testing.T) {
 	}
 }
 
+func TestXAIHistoryPreservesLargeResultNumber(t *testing.T) {
+	history := []core.Message{{Role: core.RoleTool, Kind: core.MessageToolResult, Content: `{"id":9007199254740993}`, ToolCallID: "c1", ToolStatus: core.ToolSucceeded}}
+	items := xaiHistoryItems(history)
+	if len(items) != 1 || items[0].Output != `{"output":{"id":9007199254740993}}` {
+		t.Fatalf("historical result number changed: %+v", items)
+	}
+}
+
 func TestXAIResponsesToolLoopExecutesOnceAndContinues(t *testing.T) {
 	var mu sync.Mutex
 	var bodies [][]byte
@@ -251,7 +366,7 @@ func TestXAIResponsesToolLoopExecutesOnceAndContinues(t *testing.T) {
 		if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			t.Fatal(err)
 		}
-		return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{"weather":"sunny","city":"` + args.City + `"}`)}, nil
+		return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{"weather":"sunny","city":"` + args.City + `","id":9007199254740993}`)}, nil
 	}), ctx, coretools.DefaultToolLoopConfig())
 	if err != nil {
 		t.Fatal(err)
@@ -311,6 +426,9 @@ func TestXAIResponsesToolLoopExecutesOnceAndContinues(t *testing.T) {
 	}
 	if strings.Contains(string(gotBodies[1]), "private handler detail") {
 		t.Fatal("handler error leaked to provider continuation")
+	}
+	if !strings.Contains(string(gotBodies[1]), `9007199254740993`) {
+		t.Fatalf("active continuation rounded result number: %s", gotBodies[1])
 	}
 	statuses := map[string]core.ToolStatus{}
 	for _, message := range ctx.Messages() {
