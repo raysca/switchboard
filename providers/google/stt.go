@@ -687,7 +687,8 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 }
 
 func (p *STTProcessor) resetInterimsLocked(st *activeStream) {
-	st.lastInterimOffset = 0
+	// A new response can begin after a final portion in this same stream.
+	st.lastInterimOffset = st.lastFinalOffset
 	if assembly := p.assemblies[googleAssemblyKey{turn: st.turnID, gen: st.gen}]; assembly != nil {
 		assembly.interims = nil
 	}
@@ -785,11 +786,12 @@ func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult)
 		return composed, nil
 	}
 	a.interims = nil
-	st.lastInterimOffset = 0
 	relativeStart := st.lastFinalOffset
 	if result.ResultEndOffset > st.lastFinalOffset {
 		st.lastFinalOffset = result.ResultEndOffset
 	}
+	// A following interim in this response starts after the settled portion.
+	st.lastInterimOffset = st.lastFinalOffset
 	start := st.offsetBase + relativeStart
 	end := st.offsetBase + result.ResultEndOffset
 	if end <= 0 {

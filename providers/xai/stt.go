@@ -530,15 +530,45 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 				buffered := st.audioBuf
 				st.audioBuf = nil
 				st.mu.Unlock()
+				var sendErr error
 				for _, chunk := range buffered {
 					sendCtx, cancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
-					err := st.stream.SendAudio(sendCtx, chunk)
+					sendErr = st.stream.SendAudio(sendCtx, chunk)
 					cancel()
-					if err != nil {
+					if sendErr != nil {
 						break
 					}
 				}
 				st.sendMu.Unlock()
+				if sendErr != nil {
+					if st.ctx.Err() != nil {
+						return
+					}
+					p.ErrorsTotal.Add(1)
+					providerErr := MapError("stt", sendErr)
+					if p.cfg.CircuitBreaker != nil {
+						p.cfg.CircuitBreaker.RecordFailure()
+					}
+					st.mu.Lock()
+					turn, turnGen := st.turnID, st.gen
+					st.mu.Unlock()
+					if turnGen == 0 {
+						turnGen = p.session.CurrentGeneration()
+					}
+					// Retire any earlier partial before publishing the provider error.
+					if turn != "" && turnGen != 0 {
+						if err := p.session.Reenter(&core.TranscriptInvalidationFrame{
+							Turn: core.TurnID(turn), Gen: core.Generation(turnGen), Err: providerErr,
+						}, core.Downstream, p.index+1, turnGen); err != nil {
+							return
+						}
+					}
+					_ = p.session.Reenter(&core.ErrorFrame{
+						Err:  fmt.Errorf("%w: xai buffered audio send failed: %v", core.ErrTranscriptInvalidated, providerErr),
+						Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
+					}, core.Downstream, p.index+1, turnGen)
+					return
+				}
 
 			case "transcript.partial":
 				if msg.Text == "" {

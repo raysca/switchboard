@@ -149,3 +149,20 @@ Correction commit message: `fix(providers): harden transcript transition safety`
 - PASS preserved round-2 and round-3 overlays under race; PASS `go test -race -count=100 ./core/transcript`.
 - PASS full core, Google, tagged xAI, and server race suites and vet; PASS root tagged test/build; PASS transport RTVI/WebSocket race suites; PASS Google and xAI one-UserMessage integrations.
 - No live-provider test was run. The playback-clear probe remains unresolved. Task 9 and Gate B remain open for independent review and the Phase 2 tester.
+
+## Correction round 5 (base `6835637`)
+
+Correction commit message: `fix(providers): preserve transcript completeness`.
+
+### RED evidence and decisions
+
+- The exact round-5 overlay failed both providers on all three race repetitions. Google committed `go again` for a 0–1 s final `go` followed by a 1–2 s interim `go again`, losing the first spoken `go`. xAI silently committed `first chunk only` after its second buffered audio send failed during `transcript.created` flush, with no session error or provider error count. The probes were promoted to tracked tests before production edits; those failed for the same missing transcript/error behaviors. The Google tracked test additionally covered a final and interim in one response.
+- Google offsets describe portions of a particular stream's audio. The next interim begins at that stream's last final offset, including after a response boundary and within a mixed response. A rotated stream still uses its own `offsetBase` and final offset; interval overlap continues to drive replay dedupe. Text alone is insufficient evidence for dedupe when media intervals are consecutive.
+- A failed xAI buffered send is terminal for that stream's immutable turn. The receiver first admits a correlated `TranscriptInvalidationFrame`, then a correlated sentinel `ErrorFrame` in data order, and returns; its existing deferred stop cancels and closes the socket exactly once before ownership release. If terminal admission fails, the session's bounded admission path fails closed. A send canceled by intentional stream shutdown exits without reporting a new provider fault. The error is mapped and counted like an ordinary audio-send failure.
+
+### GREEN behavior and verification
+
+- The tracked xAI integration test first establishes a real pending interim, then fails the second buffered chunk, observes the correlated provider error, sends a late `transcript.done`, and crosses a serialized turn-completion barrier. It asserts no committed transcript, one provider error, and exactly one socket close.
+- PASS exact round-5 overlay with `-race -count=3`; PASS tracked Round5 focused race with `-count=100`; PASS preserved Round2/3/4 overlays; PASS tracked Review/Round3/Round4/Round5 race with `-count=3`.
+- PASS `go test -race -count=100 ./core/transcript`; full core, Google, tagged xAI, and server race suites; corresponding vet checks; root tagged test/build; transport RTVI/WebSocket race; Google and xAI provider integrations; Google and tagged xAI focused race repetitions (`-count=20`). All linked commands used `SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.sdk CGO_LDFLAGS=-Wl,-w` where linking was required.
+- No live-provider test was run and no playback-clear or Gate B claim is made. Task 9 remains unchecked, and Gate B remains open for independent review and the Phase 2 tester.

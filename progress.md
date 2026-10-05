@@ -183,6 +183,13 @@ Supplemental execution plan: [`docs/superpowers/plans/2026-10-04-v2-execution.md
   dropping ownership, including during session cancellation and in-flight open.
   The six round-4 probes and additional lifecycle/policy regressions are tracked
   and pass under race. Task 9 and Gate B remain open for independent re-review.
+- Correction round 5 preserves repeated words in consecutive Google audio
+  portions by starting each interim at that stream's last final offset, including
+  final-plus-interim responses. xAI treats a failed buffered audio send as a
+  terminal error for its immutable turn: it admits correlated invalidation and
+  an observable error in data order, then closes the stream without accepting
+  a partial `transcript.done`. Round-5 probes are tracked and pass under race;
+  Task 9 and Gate B remain open for independent re-review and the Phase 2 tester.
 
 ### Task 8 closeout
 
