@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -112,6 +113,105 @@ func TestMapToolDefinitionsRejectsInvalidDeepAndOversizedSchemas(t *testing.T) {
 				t.Fatal("invalid schema accepted")
 			}
 		})
+	}
+}
+
+func TestMapToolDefinitionsSupportsObjectUnionsAndToolLimit(t *testing.T) {
+	union := json.RawMessage(`{"oneOf":[{"type":"object","properties":{"a":{"type":"string"}}},{"type":"object","properties":{"b":{"type":"integer"}}}]}`)
+	if _, err := MapToolDefinitions([]core.ToolDefinition{{Name: "union", InputSchema: union}}); err != nil {
+		t.Fatalf("object union rejected: %v", err)
+	}
+	// This task transports schemas and bounds their representation; it does not
+	// locally evaluate required/property conformance for provider arguments.
+	if _, err := MapToolDefinitions([]core.ToolDefinition{{Name: "unvalidated", InputSchema: json.RawMessage(`{"type":"object","required":["not-declared"],"properties":{}}`)}}); err != nil {
+		t.Fatalf("nested schema was locally validated: %v", err)
+	}
+	defs := make([]core.ToolDefinition, 350)
+	for i := range defs {
+		defs[i] = core.ToolDefinition{Name: fmt.Sprintf("tool-%d", i), InputSchema: json.RawMessage(`{"type":"object"}`)}
+	}
+	if _, err := MapToolDefinitions(defs); err != nil {
+		t.Fatalf("350 tools rejected: %v", err)
+	}
+	defs = append(defs, core.ToolDefinition{Name: "tool-extra", InputSchema: json.RawMessage(`{"type":"object"}`)})
+	if _, err := MapToolDefinitions(defs); err == nil {
+		t.Fatal("tool count above xAI cap accepted")
+	}
+}
+
+func TestXAIToolResultOutputPreservesStatusAndSanitizesCategory(t *testing.T) {
+	cases := []struct {
+		name   string
+		result core.ToolResult
+		want   string
+	}{
+		{"success", core.ToolResult{CallID: "c", Status: core.ToolSucceeded, Result: json.RawMessage(`{"ok":true}`)}, `{"output":{"ok":true}}`},
+		{"failure", core.ToolResult{CallID: "c", Status: core.ToolFailed, ErrorCategory: "denied", Result: json.RawMessage(`{"data":"partial"}`)}, `{"error":"denied"}`},
+		{"cancelled", core.ToolResult{CallID: "c", Status: core.ToolCancelled, ErrorCategory: "private detail", Result: json.RawMessage(`{"ok":true}`)}, `{"error":"cancelled"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := XAIToolResultOutput(tc.result)
+			if err != nil || got != tc.want {
+				t.Fatalf("got=%q err=%v want=%q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestXAIStreamingLifecycleAssemblesArgumentsWithoutSpeakingThem(t *testing.T) {
+	wire := `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":"","status":"in_progress"}}
+
+data: {"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc1","delta":"{"}
+
+data: {"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc1","delta":"}"}
+
+data: {"type":"response.function_call_arguments.done","output_index":0,"item_id":"fc1","arguments":"{}"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":"{}","status":"completed"}}
+
+data: {"type":"response.reasoning_text.delta","delta":"private reasoning"}
+
+data: {"delta":"private untyped payload"}
+
+data: {"type":"response.completed","response":{"output":[{"type":"function_call","id":"fc1","call_id":"c1","name":"lookup","arguments":"{}","status":"completed"}]}}
+
+data: [DONE]
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, wire)
+	}))
+	defer srv.Close()
+	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: RetryPolicy{MaxAttempts: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newMockSessionController(1, 1)
+	_ = proc.Attach(session, 0)
+	proc.activeGen = 1
+	var text strings.Builder
+	calls, _, _, _, err := proc.requestRound(context.Background(), context.Background(), responsesRequest{}, 1, "t", session, &text)
+	if err != nil || len(calls) != 1 || calls[0].Arguments != "{}" {
+		t.Fatalf("calls=%+v err=%v", calls, err)
+	}
+	if text.Len() != 0 || len(session.reentered) != 0 {
+		t.Fatalf("non-text payload reached assistant: text=%q frames=%d", text.String(), len(session.reentered))
+	}
+}
+
+func TestXAIHistoryUsesResponsesFunctionCallItems(t *testing.T) {
+	history := []core.Message{
+		{Role: core.RoleAssistant, Kind: core.MessageToolCall, Content: `{"city":"London"}`, ToolCallID: "c1", ToolName: "weather"},
+		{Role: core.RoleTool, Kind: core.MessageToolResult, Content: `{"ok":true}`, ToolCallID: "c1", ToolStatus: core.ToolSucceeded},
+		{Role: core.RoleAssistant, Kind: core.MessageToolCall, Content: `{"city":"Paris"}`, ToolCallID: "c2", ToolName: "weather"},
+		{Role: core.RoleTool, Kind: core.MessageToolResult, Content: `{"data":"partial"}`, ToolCallID: "c2", ToolStatus: core.ToolFailed, ToolErrorCategory: "denied"},
+		{Role: core.RoleUser, Content: "continue"},
+	}
+	items := xaiHistoryItems(history)
+	if len(items) != 5 || items[0].Type != "function_call" || items[0].CallID != "c1" || items[0].Name != "weather" || items[0].Arguments != `{"city":"London"}` || items[1].Type != "function_call_output" || items[1].CallID != "c1" || items[1].Output != `{"output":{"ok":true}}` || items[2].CallID != "c2" || items[3].Output != `{"error":"denied"}` || items[4].Content != "continue" {
+		t.Fatalf("history not kept in native Responses form: %+v", items)
 	}
 }
 
@@ -290,5 +390,75 @@ func TestXAIResponsesStaleGenerationDoesNotRunTool(t *testing.T) {
 	session.taskWg.Wait()
 	if executed {
 		t.Fatal("stale-generation function call executed")
+	}
+}
+
+func TestXAIProviderFencePreservesApplicationToolFence(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"lookup\",\"arguments\":\"{}\"}]}}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	defs := []core.ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	var executed bool
+	cfg := coretools.DefaultToolLoopConfig()
+	cfg.IsCurrent = func(core.ToolCall) bool { return false }
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
+		executed = true
+		return core.ToolResult{}, nil
+	}), core.NewConversationContext(core.ContextConfig{}), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newMockSessionController(1, 1)
+	_ = proc.Attach(session, 0)
+	_ = proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "t", Gen: 1, Content: "lookup"}, core.Downstream, &mockEmitter{})
+	session.taskWg.Wait()
+	if executed {
+		t.Fatal("provider fence replaced an application generation rejection")
+	}
+}
+
+func TestXAIProviderFenceStopsBatchWhenGenerationChangesDuringHandler(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"lookup\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"call_id\":\"c2\",\"name\":\"lookup\",\"arguments\":\"{}\"}]}}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	defs := []core.ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	session := newMockSessionController(1, 1)
+	var runs []string
+	history := core.NewConversationContext(core.ContextConfig{})
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
+		runs = append(runs, call.ID)
+		if call.ID == "c1" {
+			session.IncrementGeneration()
+		}
+		return core.ToolResult{Status: core.ToolSucceeded, Result: json.RawMessage(`{"secret":"old"}`)}, nil
+	}), history, coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = proc.Attach(session, 0)
+	_ = proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "t", Gen: 1, Content: "lookup"}, core.Downstream, &mockEmitter{})
+	session.taskWg.Wait()
+	if !reflect.DeepEqual(runs, []string{"c1"}) {
+		t.Fatalf("stale batch still executed: %v", runs)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("stale batch continued with provider: %d requests", requests.Load())
+	}
+	for _, message := range history.Messages() {
+		if message.Kind == core.MessageToolResult && message.ToolStatus != core.ToolCancelled {
+			t.Fatalf("stale successful result committed: %+v", message)
+		}
 	}
 }

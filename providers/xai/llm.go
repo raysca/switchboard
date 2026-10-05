@@ -219,12 +219,15 @@ type chatChunkUsage struct {
 }
 
 type chatChunkResponse struct {
-	Type     string            `json:"type"`
-	Delta    string            `json:"delta"`
-	Text     string            `json:"text"`
-	Choices  []chatChunkChoice `json:"choices"`
-	Usage    *chatChunkUsage   `json:"usage"`
-	Response *struct {
+	Type        string            `json:"type"`
+	Delta       string            `json:"delta"`
+	Text        string            `json:"text"`
+	ItemID      string            `json:"item_id"`
+	OutputIndex int               `json:"output_index"`
+	Arguments   string            `json:"arguments"`
+	Choices     []chatChunkChoice `json:"choices"`
+	Usage       *chatChunkUsage   `json:"usage"`
+	Response    *struct {
 		OutputText string                  `json:"output_text"`
 		Usage      *chatChunkUsage         `json:"usage"`
 		Output     []XAIResponseOutputItem `json:"output"`
@@ -287,21 +290,7 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 		})
 	}
 
-	for _, m := range history {
-		role := "user"
-		switch m.Role {
-		case core.RoleSystem:
-			role = "system"
-		case core.RoleAssistant:
-			role = "assistant"
-		case core.RoleUser:
-			role = "user"
-		}
-		messages = append(messages, chatMessage{
-			Role:    role,
-			Content: m.Content,
-		})
-	}
+	messages = append(messages, xaiHistoryItems(history)...)
 
 	providerTools, err := MapToolDefinitions(p.cfg.ToolDefinitions)
 	if err != nil {
@@ -335,7 +324,10 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			if p.cfg.ToolLoop == nil {
 				opErr = errors.New("xai: model returned tool calls but no shared ToolLoop is configured")
 			} else {
-				_, opErr = p.cfg.ToolLoop.Run(streamCtx, initialCalls, func(roundCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
+				currentLoop := p.cfg.ToolLoop.WithCurrentFence(func(call core.ToolCall) bool {
+					return call.SessionID == core.SessionID(fmt.Sprint(s.ID())) && call.TurnID == core.TurnID(turn) && call.Generation == core.Generation(gen) && p.isCurrent(gen)
+				})
+				_, opErr = currentLoop.Run(streamCtx, initialCalls, func(roundCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
 					if roundCtx.Err() != nil || sessionCtx.Err() != nil || !p.isCurrent(gen) {
 						return nil, false, context.Canceled
 					}
@@ -358,7 +350,11 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 						if _, ok := byID[result.CallID]; !ok {
 							return nil, false, errors.New("xai: tool result has no matching provider call")
 						}
-						reqBody.Input = append(reqBody.Input, chatMessage{Type: "function_call_output", CallID: result.CallID, Output: string(result.Result)})
+						wireOutput, encodeErr := XAIToolResultOutput(result)
+						if encodeErr != nil {
+							return nil, false, encodeErr
+						}
+						reqBody.Input = append(reqBody.Input, chatMessage{Type: "function_call_output", CallID: result.CallID, Output: wireOutput})
 					}
 					nextCalls, pt, ot, tt, nextErr := p.requestRound(roundCtx, sessionCtx, reqBody, gen, turn, s, &fullText)
 					promptTok += pt
@@ -400,6 +396,33 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			}, core.Downstream, p.index, gen)
 		}
 	})
+}
+
+func xaiHistoryItems(history []core.Message) []chatMessage {
+	items := make([]chatMessage, 0, len(history))
+	for _, message := range history {
+		switch {
+		case message.Kind == core.MessageToolCall:
+			items = append(items, chatMessage{Type: "function_call", CallID: message.ToolCallID, Name: message.ToolName, Arguments: message.Content})
+		case message.Kind == core.MessageToolResult || message.Role == core.RoleTool:
+			status := message.ToolStatus
+			if status == "" {
+				status = core.ToolSucceeded
+			}
+			wire, err := XAIToolResultOutput(core.ToolResult{CallID: message.ToolCallID, Status: status, Result: json.RawMessage(message.Content), ErrorCategory: message.ToolErrorCategory})
+			if err != nil {
+				wire = `{"error":"invalid_result"}`
+			}
+			items = append(items, chatMessage{Type: "function_call_output", CallID: message.ToolCallID, Output: wire})
+		case message.Role == core.RoleSystem:
+			items = append(items, chatMessage{Role: "system", Content: message.Content})
+		case message.Role == core.RoleAssistant:
+			items = append(items, chatMessage{Role: "assistant", Content: message.Content})
+		case message.Role == core.RoleUser:
+			items = append(items, chatMessage{Role: "user", Content: message.Content})
+		}
+	}
+	return items
 }
 
 func (p *Processor) isCurrent(gen uint64) bool {

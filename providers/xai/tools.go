@@ -51,6 +51,56 @@ func MapToolDefinitions(definitions []core.ToolDefinition) ([]XAIToolDefinition,
 	return out, nil
 }
 
+// XAIToolResultOutput encodes statuses so successful payloads and failures
+// remain distinguishable even when a failed handler returned useful JSON.
+func XAIToolResultOutput(result core.ToolResult) (string, error) {
+	var envelope map[string]any
+	switch result.Status {
+	case core.ToolSucceeded:
+		var value any
+		if len(result.Result) == 0 || json.Unmarshal(result.Result, &value) != nil {
+			return "", errors.New("xai: invalid successful tool result")
+		}
+		envelope = map[string]any{"output": value}
+	case core.ToolFailed:
+		envelope = map[string]any{"error": safeXAIErrorCategory(result.ErrorCategory, "tool_failed")}
+	case core.ToolCancelled:
+		envelope = map[string]any{"error": safeXAIErrorCategory(result.ErrorCategory, "cancelled")}
+	default:
+		return "", errors.New("xai: invalid tool result status")
+	}
+	encoded, err := json.Marshal(envelope)
+	return string(encoded), err
+}
+
+func safeXAIErrorCategory(category, fallback string) string {
+	if len(category) == 0 || len(category) > 64 {
+		return fallback
+	}
+	for _, char := range category {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '-' || char == '.') {
+			return fallback
+		}
+	}
+	return category
+}
+
+func xaiItemRawWithArguments(item XAIResponseOutputItem, arguments string) json.RawMessage {
+	if len(item.Raw) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(item.Raw, &fields) != nil {
+		return append(json.RawMessage(nil), item.Raw...)
+	}
+	fields["arguments"], _ = json.Marshal(arguments)
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return append(json.RawMessage(nil), item.Raw...)
+	}
+	return raw
+}
+
 func validRootSchema(root map[string]json.RawMessage) bool {
 	var typ string
 	_ = json.Unmarshal(root["type"], &typ)
@@ -107,6 +157,61 @@ type XAIResponseOutputItem struct {
 	Raw       json.RawMessage `json:"-"`
 }
 
+type xaiFunctionCallAssembly struct {
+	item      XAIResponseOutputItem
+	arguments strings.Builder
+}
+
+func (a *xaiFunctionCallAssembly) mergeIdentity(item XAIResponseOutputItem) error {
+	if a.item.Type != "" && a.item.Type != item.Type {
+		return errors.New("xai: conflicting function call type")
+	}
+	if a.item.ID != "" && item.ID != "" && a.item.ID != item.ID {
+		return errors.New("xai: conflicting function call id")
+	}
+	if a.item.CallID != "" && item.CallID != "" && a.item.CallID != item.CallID {
+		return errors.New("xai: conflicting function call id")
+	}
+	if a.item.Name != "" && item.Name != "" && a.item.Name != item.Name {
+		return errors.New("xai: conflicting function call name")
+	}
+	if a.item.Arguments != "" && item.Arguments != "" && a.item.Arguments != item.Arguments {
+		return errors.New("xai: conflicting function call arguments")
+	}
+	if item.Arguments != "" && a.arguments.Len() > 0 && a.arguments.String() != item.Arguments {
+		return errors.New("xai: assembled function call arguments conflict with final item")
+	}
+	if item.Type != "" {
+		a.item.Type = item.Type
+	}
+	if item.ID != "" {
+		a.item.ID = item.ID
+	}
+	if item.CallID != "" {
+		a.item.CallID = item.CallID
+	}
+	if item.Name != "" {
+		a.item.Name = item.Name
+	}
+	if item.Arguments != "" {
+		a.item.Arguments = item.Arguments
+	}
+	if len(item.Raw) > 0 {
+		a.item.Raw = append(json.RawMessage(nil), item.Raw...)
+	}
+	return nil
+}
+
+func xaiOutputItemKey(item XAIResponseOutputItem, outputIndex int) string {
+	if item.CallID != "" {
+		return "call:" + item.CallID
+	}
+	if item.ID != "" {
+		return "item:" + item.ID
+	}
+	return fmt.Sprintf("output:%d", outputIndex)
+}
+
 func (item *XAIResponseOutputItem) UnmarshalJSON(data []byte) error {
 	type plain XAIResponseOutputItem
 	var decoded plain
@@ -139,6 +244,7 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 	var committed bool
 	var items []XAIResponseOutputItem
 	var roundText strings.Builder
+	callAssemblies := make(map[string]*xaiFunctionCallAssembly)
 	var prompt, output, total int
 	err = ExecuteWithRetry(ctx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, &committed, func(attempt int) error {
 		if attempt > 0 {
@@ -206,18 +312,69 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 					total = prompt + output
 				}
 			}
-			if chunk.Item != nil {
-				items, err = mergeOutputItem(items, *chunk.Item)
-				if err != nil {
-					return err
+			if chunk.Type == "response.output_item.added" || chunk.Type == "response.output_item.done" {
+				if chunk.Item != nil && chunk.Item.Type == "function_call" {
+					key := xaiOutputItemKey(*chunk.Item, chunk.OutputIndex)
+					assembly := callAssemblies[key]
+					if assembly == nil {
+						assembly = &xaiFunctionCallAssembly{}
+						callAssemblies[key] = assembly
+					}
+					if err := assembly.mergeIdentity(*chunk.Item); err != nil {
+						return err
+					}
+					if chunk.Type == "response.output_item.done" {
+						completed := assembly.item
+						if completed.Arguments == "" {
+							completed.Arguments = assembly.arguments.String()
+							completed.Raw = xaiItemRawWithArguments(completed, completed.Arguments)
+						}
+						items, err = mergeOutputItem(items, completed)
+						if err != nil {
+							return err
+						}
+						committed = true
+					}
 				}
-				if chunk.Item.Type == "function_call" {
-					committed = true
+			}
+			if chunk.Type == "response.function_call_arguments.delta" || chunk.Type == "response.function_call_arguments.done" {
+				key := chunk.ItemID
+				if key == "" {
+					key = fmt.Sprintf("output:%d", chunk.OutputIndex)
 				}
+				assembly := callAssemblies[key]
+				if assembly == nil {
+					assembly = &xaiFunctionCallAssembly{}
+					callAssemblies[key] = assembly
+				}
+				if chunk.Type == "response.function_call_arguments.done" {
+					assembly.arguments.Reset()
+					assembly.arguments.WriteString(chunk.Arguments)
+				} else {
+					assembly.arguments.WriteString(chunk.Delta)
+				}
+				committed = true
 			}
 			if chunk.Response != nil {
 				canonical := make([]XAIResponseOutputItem, 0, len(chunk.Response.Output))
-				for _, item := range chunk.Response.Output {
+				for index, item := range chunk.Response.Output {
+					if item.Type == "function_call" {
+						key := xaiOutputItemKey(item, index)
+						assembly := callAssemblies[key]
+						if assembly == nil {
+							assembly = &xaiFunctionCallAssembly{}
+							callAssemblies[key] = assembly
+						}
+						if err := assembly.mergeIdentity(item); err != nil {
+							return err
+						}
+						if item.Arguments == "" {
+							item.Arguments = assembly.arguments.String()
+						}
+						if len(item.Raw) > 0 && item.Arguments != "" {
+							item.Raw = xaiItemRawWithArguments(item, item.Arguments)
+						}
+					}
 					if _, err = mergeOutputItem(items, item); err != nil {
 						return err
 					}
@@ -246,24 +403,21 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 				}
 				continue
 			}
-			delta := chunk.Delta
-			if delta == "" {
-				delta = chunk.Text
+			delta := ""
+			if chunk.Type == "response.output_text.delta" || chunk.Type == "response.text.delta" {
+				delta = chunk.Delta
+				if delta == "" {
+					delta = chunk.Text
+				}
 			}
-			if delta == "" && chunk.Response != nil {
-				delta = chunk.Response.OutputText
-			}
-			if delta == "" && len(chunk.Choices) > 0 {
+			if delta == "" && chunk.Type == "" && len(chunk.Choices) > 0 {
 				delta = chunk.Choices[0].Delta.Content
 			}
 			if delta != "" {
 				committed = true
 				roundText.WriteString(delta)
 				text.WriteString(delta)
-				p.mu.Lock()
-				current := p.activeGen == gen && !p.closed
-				p.mu.Unlock()
-				if current {
+				if p.isCurrent(gen) {
 					_ = s.Reenter(&core.LLMTextDeltaFrame{Delta: delta, Turn: turn, Gen: gen}, core.Downstream, p.index, gen)
 				}
 			}
@@ -277,16 +431,20 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 }
 
 func mergeOutputItem(items []XAIResponseOutputItem, item XAIResponseOutputItem) ([]XAIResponseOutputItem, error) {
-	for _, existing := range items {
+	for i, existing := range items {
 		if (item.CallID != "" && existing.CallID == item.CallID) || (item.ID != "" && existing.ID == item.ID) {
-			exact := item.Type == existing.Type && item.ID == existing.ID && item.CallID == existing.CallID && item.Name == existing.Name && item.Arguments == existing.Arguments
-			if len(item.Raw) > 0 && len(existing.Raw) > 0 {
-				exact = bytes.Equal(bytes.TrimSpace(item.Raw), bytes.TrimSpace(existing.Raw))
+			if item.Type != existing.Type {
+				return nil, errors.New("xai: conflicting output item type")
 			}
-			if exact {
-				return items, nil
+			if item.Type == "function_call" {
+				if (item.ID != "" && existing.ID != "" && item.ID != existing.ID) || (item.CallID != "" && existing.CallID != "" && item.CallID != existing.CallID) || (item.Name != "" && existing.Name != "" && item.Name != existing.Name) || (item.Arguments != "" && existing.Arguments != "" && item.Arguments != existing.Arguments) {
+					return nil, fmt.Errorf("xai: conflicting provider tool call identity")
+				}
+				if item.Arguments != "" || item.Name != "" {
+					items[i] = item
+				}
 			}
-			return nil, fmt.Errorf("xai: conflicting provider tool call identity")
+			return items, nil
 		}
 	}
 	item.Arguments = strings.Clone(item.Arguments)
