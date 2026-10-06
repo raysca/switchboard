@@ -36,6 +36,8 @@ export class BrowserAudioController {
   private isMuted = false;
   private activeSources: AudioBufferSourceNode[] = [];
   private nextPlaybackTime = 0;
+  // Bumped by stopCapture(); a startCapture() that sees it change mid-getUserMedia gives the mic back.
+  private captureGen = 0;
 
   /**
    * Requests microphone access and begins streaming 16kHz PCM16LE mono audio chunks.
@@ -51,8 +53,10 @@ export class BrowserAudioController {
       );
     }
 
+    const gen = this.captureGen;
+    let stream: MediaStream;
     try {
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: options.echoCancellation ?? true,
           noiseSuppression: options.noiseSuppression ?? true,
@@ -83,6 +87,11 @@ export class BrowserAudioController {
         err,
       );
     }
+    if (gen !== this.captureGen) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    this.mediaStream = stream;
 
     try {
       const AudioCtx =
@@ -93,7 +102,7 @@ export class BrowserAudioController {
         await this.inputContext.resume();
       }
 
-      this.mediaSource = this.inputContext.createMediaStreamSource(this.mediaStream);
+      this.mediaSource = this.inputContext.createMediaStreamSource(stream);
       // ScriptProcessorNode: 512 samples per chunk (32ms @ 16kHz) matches 10-40ms chunk requirement
       this.scriptProcessor = this.inputContext.createScriptProcessor(512, 1, 1);
 
@@ -121,6 +130,7 @@ export class BrowserAudioController {
    * Stops microphone capture and releases hardware devices.
    */
   public stopCapture(): void {
+    this.captureGen++;
     if (this.mediaStream) {
       for (const track of this.mediaStream.getTracks()) {
         try {
