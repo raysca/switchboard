@@ -3,7 +3,6 @@
 package turn
 
 import (
-	"math"
 	"time"
 
 	"govoice/core"
@@ -60,39 +59,4 @@ type SemanticEvidence struct {
 	Generation core.Generation
 	At         time.Time
 	Confidence float64
-}
-
-// HybridDetector accepts valid high-confidence semantic evidence only after a
-// minimum silence guard; every other case delegates to the silence fallback.
-type HybridDetector struct {
-	fallback  TurnDetector
-	guard     time.Duration
-	threshold float64
-}
-
-var _ TurnDetector = HybridDetector{}
-
-// NewHybridDetector composes a semantic confidence guard with a deterministic
-// fallback. A nil fallback, negative guard, or invalid threshold is rejected.
-func NewHybridDetector(fallback TurnDetector, guard time.Duration, threshold float64) (HybridDetector, error) {
-	if fallback == nil || guard < 0 || math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold <= 0 || threshold > 1 {
-		return HybridDetector{}, ErrInvalidConfig
-	}
-	return HybridDetector{fallback: fallback, guard: guard, threshold: threshold}, nil
-}
-
-func (d HybridDetector) Detect(input DetectionInput) (DetectionDecision, bool) {
-	if evidence := input.Semantic; evidence != nil &&
-		evidence.TurnID == input.TurnID && evidence.Generation == input.Generation &&
-		!evidence.At.Before(input.TurnStartedAt) && !evidence.At.After(input.At) &&
-		input.SemanticMaxAge > 0 && input.At.Sub(evidence.At) <= input.SemanticMaxAge &&
-		!math.IsNaN(evidence.Confidence) && !math.IsInf(evidence.Confidence, 0) &&
-		evidence.Confidence >= d.threshold && evidence.Confidence <= 1 && input.SilenceFor >= d.guard {
-		return DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: evidence.Confidence, HasConfidence: true}, true
-	}
-	fallback := d.fallback
-	if fallback == nil {
-		fallback = SilenceDetector{}
-	}
-	return fallback.Detect(input)
 }
