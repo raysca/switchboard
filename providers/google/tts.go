@@ -15,7 +15,6 @@ import (
 
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
 	texttospeechpb "cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
-	"google.golang.org/api/option"
 )
 
 // TTSConfig configures Google Cloud Text-to-Speech V1.
@@ -26,6 +25,7 @@ type TTSConfig struct {
 	MaxSynthesisUnitChars int           // Pinned: 250
 	ChunkDuration         time.Duration // Default: 20ms
 	CredentialsFile       string
+	CredentialsJSON       []byte // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                string
 	Client                TTSClient
 	RetryPolicy           RetryPolicy
@@ -56,14 +56,7 @@ type RealGoogleTTSClient struct {
 }
 
 func NewRealGoogleTTSClient(ctx context.Context, cfg TTSConfig) (*RealGoogleTTSClient, error) {
-	var opts []option.ClientOption
-	if cfg.CredentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(cfg.CredentialsFile))
-	} else if cfg.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(cfg.APIKey))
-	}
-
-	c, err := texttospeech.NewClient(ctx, opts...)
+	c, err := texttospeech.NewClient(ctx, clientAuthOptions(cfg.CredentialsJSON, cfg.CredentialsFile, cfg.APIKey)...)
 	if err != nil {
 		return nil, MapError("tts", err)
 	}

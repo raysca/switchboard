@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"google.golang.org/api/option"
 )
 
 // AuthMode represents the Google authentication mechanism.
@@ -20,6 +22,7 @@ const (
 type CredentialConfig struct {
 	Mode                   AuthMode // "vertex_adc" or "gemini_api_key"
 	CredentialsFile        string   // Path to service account JSON (falls back to GOOGLE_APPLICATION_CREDENTIALS)
+	CredentialsJSON        []byte   // In-memory service account JSON (vertex_adc); preferred over CredentialsFile when set
 	APIKey                 string   // Direct API key or env var name (falls back to GOOGLE_API_KEY)
 	ProductionProfile      bool     // If true, enforces strict 0600/0400 file permissions
 	AllowInsecureFilePerms bool     // Override to permit group/world readable files in production
@@ -31,6 +34,7 @@ type CredentialConfig struct {
 type ResolvedCredentials struct {
 	Mode            AuthMode
 	CredentialsFile string
+	CredentialsJSON []byte // In-memory service account JSON; set instead of CredentialsFile
 	APIKey          string
 	ProjectID       string
 	Location        string
@@ -54,6 +58,28 @@ type ServiceAccountKey struct {
 func ResolveCredentials(cfg CredentialConfig) (*ResolvedCredentials, error) {
 	switch cfg.Mode {
 	case AuthModeVertexADC:
+		if len(cfg.CredentialsJSON) > 0 {
+			// In-memory JSON never touches disk, so file-permission policy does not apply.
+			sa, err := parseServiceAccountJSON(cfg.CredentialsJSON)
+			if err != nil {
+				return nil, err
+			}
+			projectID := cfg.ProjectID
+			if projectID == "" {
+				projectID = sa.ProjectID
+			}
+			location := cfg.Location
+			if location == "" {
+				location = "us-central1"
+			}
+			return &ResolvedCredentials{
+				Mode:            AuthModeVertexADC,
+				CredentialsJSON: cfg.CredentialsJSON,
+				ProjectID:       projectID,
+				Location:        location,
+			}, nil
+		}
+
 		filePath := cfg.CredentialsFile
 		if filePath == "" {
 			filePath = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -141,4 +167,66 @@ func ResolveCredentials(cfg CredentialConfig) (*ResolvedCredentials, error) {
 	default:
 		return nil, fmt.Errorf("unsupported google auth mode: %q (must be %q or %q)", cfg.Mode, AuthModeVertexADC, AuthModeGeminiAPIKey)
 	}
+}
+
+// CredentialMaterial is a stored Google credential interpreted for use in memory.
+// Exactly one of APIKey or ServiceAccountJSON is set.
+type CredentialMaterial struct {
+	APIKey             string
+	ServiceAccountJSON []byte
+	ProjectID          string // From the service account JSON; empty for API keys
+}
+
+// CredentialMaterialFromSecret classifies a stored secret as service-account JSON
+// or a Gemini/Cloud API key. Errors never include secret contents.
+func CredentialMaterialFromSecret(secret []byte) (CredentialMaterial, error) {
+	trimmed := strings.TrimSpace(string(secret))
+	if trimmed == "" {
+		return CredentialMaterial{}, errors.New("google credential secret is empty")
+	}
+	if strings.HasPrefix(trimmed, "{") {
+		sa, err := parseServiceAccountJSON([]byte(trimmed))
+		if err != nil {
+			return CredentialMaterial{}, err
+		}
+		return CredentialMaterial{ServiceAccountJSON: []byte(trimmed), ProjectID: sa.ProjectID}, nil
+	}
+	if strings.ContainsAny(trimmed, " \t\r\n") {
+		return CredentialMaterial{}, errors.New("google credential secret is neither service account JSON nor a single-token API key")
+	}
+	// ResolveCredentials reads "$NAME" API keys from the environment; a stored
+	// secret must never be able to make the server read and send its own env.
+	if strings.HasPrefix(trimmed, "$") {
+		return CredentialMaterial{}, errors.New("google API key must not start with '$'")
+	}
+	return CredentialMaterial{APIKey: trimmed}, nil
+}
+
+// parseServiceAccountJSON validates in-memory service account JSON without echoing it.
+func parseServiceAccountJSON(b []byte) (ServiceAccountKey, error) {
+	var sa ServiceAccountKey
+	if err := json.Unmarshal(b, &sa); err != nil {
+		return ServiceAccountKey{}, errors.New("google credential JSON is invalid")
+	}
+	if sa.Type != "service_account" {
+		return ServiceAccountKey{}, errors.New("google credential JSON must have type \"service_account\"")
+	}
+	if sa.PrivateKey == "" || sa.ClientEmail == "" {
+		return ServiceAccountKey{}, errors.New("google service account JSON is missing private_key or client_email")
+	}
+	return sa, nil
+}
+
+// clientAuthOptions picks the auth option for STT/TTS clients: in-memory JSON,
+// then credentials file, then API key; none means ADC.
+func clientAuthOptions(credentialsJSON []byte, credentialsFile, apiKey string) []option.ClientOption {
+	switch {
+	case len(credentialsJSON) > 0:
+		return []option.ClientOption{option.WithAuthCredentialsJSON(option.ServiceAccount, credentialsJSON)}
+	case credentialsFile != "":
+		return []option.ClientOption{option.WithCredentialsFile(credentialsFile)}
+	case apiKey != "":
+		return []option.ClientOption{option.WithAPIKey(apiKey)}
+	}
+	return nil
 }

@@ -30,6 +30,7 @@ type STTConfig struct {
 	ProjectID               string        // Google Cloud project ID
 	Location                string        // Speech v2 location (chirp_2 is not in "global")
 	CredentialsFile         string        // Path to service account key JSON
+	CredentialsJSON         []byte        // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                  string        // Fallback API key if supported
 	QuotaManager            *QuotaManager // Headroom manager (multiplier 2.0)
 	StreamOpener            STTStreamOpener
@@ -92,15 +93,23 @@ func speechEndpoint(cfg STTConfig) string {
 	return loc + "-speech.googleapis.com"
 }
 
+// sttProjectID returns the recognizer project: explicit, else from in-memory JSON, else "_".
+func sttProjectID(cfg STTConfig) string {
+	if cfg.ProjectID != "" {
+		return cfg.ProjectID
+	}
+	if len(cfg.CredentialsJSON) > 0 {
+		if sa, err := parseServiceAccountJSON(cfg.CredentialsJSON); err == nil && sa.ProjectID != "" {
+			return sa.ProjectID
+		}
+	}
+	return "_"
+}
+
 func NewRealGoogleSTTOpener(ctx context.Context, cfg STTConfig) (*RealGoogleSTTOpener, error) {
-	opts := []option.ClientOption{
+	opts := append([]option.ClientOption{
 		option.WithEndpoint(speechEndpoint(cfg) + ":443"),
-	}
-	if cfg.CredentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(cfg.CredentialsFile))
-	} else if cfg.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(cfg.APIKey))
-	}
+	}, clientAuthOptions(cfg.CredentialsJSON, cfg.CredentialsFile, cfg.APIKey)...)
 
 	c, err := speech.NewClient(ctx, opts...)
 	if err != nil {
@@ -122,10 +131,7 @@ func (o *RealGoogleSTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (ST
 		return nil, MapError("stt", err)
 	}
 
-	project := cfg.ProjectID
-	if project == "" {
-		project = "_"
-	}
+	project := sttProjectID(cfg)
 	location := cfg.Location
 	if location == "" {
 		location = "us-central1"

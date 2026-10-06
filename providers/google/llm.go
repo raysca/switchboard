@@ -13,6 +13,7 @@ import (
 	"govoice/core"
 	"govoice/core/tools"
 
+	"cloud.google.com/go/auth/credentials"
 	"google.golang.org/genai"
 )
 
@@ -91,6 +92,15 @@ func NewRealGoogleLLMClient(ctx context.Context, creds *ResolvedCredentials) (*R
 		cfg.Backend = genai.BackendVertexAI
 		cfg.Project = creds.ProjectID
 		cfg.Location = creds.Location
+		if len(creds.CredentialsJSON) > 0 {
+			ac, err := credentials.NewCredentialsFromJSON(credentials.ServiceAccount, creds.CredentialsJSON, &credentials.DetectOptions{
+				Scopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+			})
+			if err != nil {
+				return nil, errors.New("google llm: invalid service account credentials")
+			}
+			cfg.Credentials = ac
+		}
 	case AuthModeGeminiAPIKey:
 		cfg.Backend = genai.BackendGeminiAPI
 		cfg.APIKey = creds.APIKey
