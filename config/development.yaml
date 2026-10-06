@@ -1,7 +1,6 @@
 profile: development
 insecure_overrides:
   allow_plain_ws_in_production: false
-  skip_credential_perms_check: true
 
 public_listen_addr: "127.0.0.1:8080"
 admin_listen_addr: "127.0.0.1:9090"

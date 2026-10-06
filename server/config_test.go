@@ -131,6 +131,7 @@ func TestConfig_RejectsRemovedPipelineAndAgentKeys(t *testing.T) {
 		{"\nobservability:", "\npipelines:\n\nobservability:", "`pipelines` is no longer supported"},
 		{"\nobservability:", "\notel:\n  enabled: true\n\nobservability:", "`otel` is not supported"},
 		{"\n  google_tts:\n", "\n  google_llm:\n    model: gemini\n  google_tts:\n", "providers.google_llm.model is no longer supported"},
+		{"\ninsecure_overrides:\n", "\ninsecure_overrides:\n  skip_credential_perms_check: true\n", "skip_credential_perms_check is no longer supported"},
 	} {
 		doc := strings.Replace(string(base), tc.old, tc.new, 1)
 		path := filepath.Join(t.TempDir(), "cfg.yaml")

@@ -21,7 +21,6 @@ const (
 // InsecureOverrides allows explicit bypassing of production safety checks.
 type InsecureOverrides struct {
 	AllowPlainWSInProduction bool `yaml:"allow_plain_ws_in_production"`
-	SkipCredentialPermsCheck bool `yaml:"skip_credential_perms_check"`
 }
 
 // Config represents complete server configuration matching spec §28.
@@ -144,7 +143,8 @@ type RetentionConfig struct {
 	BatchSize             int           `yaml:"batch_size"`
 }
 
-// DefaultConfig returns a production-ready configuration with safe defaults.
+// DefaultConfig returns a base configuration. Its origin allowlist includes
+// "*", so production deployments must set their own.
 func DefaultConfig(profile Profile) *Config {
 	cfg := &Config{
 		Profile:          profile,
@@ -362,8 +362,12 @@ func rejectRemovedKeys(data []byte) error {
 	}
 	var doc struct {
 		Providers map[string]map[string]any `yaml:"providers"`
+		Overrides map[string]any            `yaml:"insecure_overrides"`
 	}
 	_ = yaml.Unmarshal(data, &doc)
+	if _, ok := doc.Overrides["skip_credential_perms_check"]; ok {
+		return errors.New("config: insecure_overrides.skip_credential_perms_check is no longer supported; there is no credential file check. Remove the key")
+	}
 	if _, ok := top["otel"]; ok {
 		return errors.New("config: `otel` is not supported; there is no trace exporter")
 	}
