@@ -172,7 +172,6 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 		}
 		roundCtx, cancelRound := context.WithTimeout(ctx, l.cfg.RoundTimeout)
 		result.Rounds++
-		roundResultStart := len(result.Results)
 		roundResults := make([]ToolResult, 0, len(calls))
 		for _, call := range calls {
 			if result.Calls == l.cfg.MaxCalls {
@@ -200,10 +199,11 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 				return result, err
 			}
 		}
-		for i, call := range calls {
+		// A generation that moved on after the round still aborts the loop, but
+		// results already committed to history are returned as recorded: history
+		// results are immutable, so rewriting them here would contradict context.
+		for _, call := range calls {
 			if !l.isCurrent(call) {
-				started := result.Results[roundResultStart+i].StartedAt
-				result.Results[roundResultStart+i] = staleToolResult(call, started, l.cfg.Now())
 				cancelRound()
 				return result, ErrStaleToolCall
 			}

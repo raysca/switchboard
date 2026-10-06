@@ -741,7 +741,7 @@ func TestToolLoopReplayFailsClosedWhenCurrentBoundsAreStricter(t *testing.T) {
 func TestToolLoopRechecksGenerationBeforeContinuation(t *testing.T) {
 	var checks atomic.Int32
 	continued := atomic.Bool{}
-	loop, _ := newTestLoop(t, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+	loop, history := newTestLoop(t, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
 		return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage("{\"ok\":true}")}, nil
 	}), ToolDefinition{Name: "x"})
 	loop.cfg.IsCurrent = func(ToolCall) bool { return checks.Add(1) < 4 }
@@ -749,8 +749,19 @@ func TestToolLoopRechecksGenerationBeforeContinuation(t *testing.T) {
 		continued.Store(true)
 		return nil, true, nil
 	})
-	if !errors.Is(err, ErrStaleToolCall) || continued.Load() || got.Done || len(got.Results) != 1 || got.Results[0].ErrorCategory != "stale_generation" {
+	if !errors.Is(err, ErrStaleToolCall) || continued.Load() || got.Done || len(got.Results) != 1 {
 		t.Fatalf("late stale loop = %#v err=%v continued=%v checks=%d", got, err, continued.Load(), checks.Load())
+	}
+	// The result returned must be the one history recorded, not a rewrite.
+	var recorded *core.Message
+	for _, m := range history.Messages() {
+		if m.Kind == core.MessageToolResult && m.ToolCallID == "stales-late" {
+			m := m
+			recorded = &m
+		}
+	}
+	if recorded == nil || recorded.ToolStatus != got.Results[0].Status || recorded.Content != string(got.Results[0].Result) {
+		t.Fatalf("returned result %#v disagrees with history %#v", got.Results[0], recorded)
 	}
 }
 
