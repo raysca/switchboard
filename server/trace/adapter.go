@@ -17,9 +17,8 @@ import (
 )
 
 const (
-	defaultQueueSize           = 2048
+	queueSize                  = 2048
 	maxLabelLength             = 256
-	maxTextLength              = 16 << 10
 	maxStructuredMetadataNodes = 1024
 )
 
@@ -29,8 +28,6 @@ const (
 	opStartSpan traceOpKind = iota + 1
 	opEndSpan
 	opAddEvent
-	opRecordToolCall
-	opFlush
 )
 
 type traceOp struct {
@@ -44,51 +41,12 @@ type traceOp struct {
 	endedAt    time.Time
 	occurredAt time.Time
 	attributes string
-	toolCall   storage.ToolCallRecord
-	syncChan   chan struct{}
-}
-
-// Option configures an Adapter.
-type Option func(*Adapter)
-
-// WithQueueSize sets the bounded asynchronous queue capacity.
-func WithQueueSize(size int) Option {
-	return func(a *Adapter) {
-		if size > 0 {
-			a.queueSize = size
-		}
-	}
-}
-
-// WithPolicy sets the trace content policy.
-func WithPolicy(policy core.TracePolicy) Option {
-	return func(a *Adapter) {
-		a.policy = policy
-	}
-}
-
-// Sink receives persisted trace records. Implementations must be non-blocking.
-type Sink interface {
-	RecordSpan(span storage.TraceSpan)
-	RecordEvent(event storage.TraceEvent)
-	RecordToolCall(call storage.ToolCallRecord)
-}
-
-// WithSink sets an optional sink for non-blocking trace export.
-func WithSink(sink Sink) Option {
-	return func(a *Adapter) {
-		a.sink = sink
-	}
 }
 
 // Adapter translates framework traces and events to server trace persistence.
 type Adapter struct {
 	repo      storage.TraceRepository
-	sink      Sink
-	policy    core.TracePolicy
-	queueSize int
 	queue     chan traceOp
-	dropped   atomic.Uint64
 	closed    atomic.Bool
 	done      chan struct{}
 	closeOnce sync.Once
@@ -96,24 +54,14 @@ type Adapter struct {
 }
 
 // NewAdapter creates a new non-blocking trace adapter.
-func NewAdapter(repo storage.TraceRepository, opts ...Option) *Adapter {
+func NewAdapter(repo storage.TraceRepository) *Adapter {
 	a := &Adapter{
-		repo:      repo,
-		policy:    core.TracePolicy{Content: core.TraceMetadata},
-		queueSize: defaultQueueSize,
-		done:      make(chan struct{}),
+		repo:  repo,
+		queue: make(chan traceOp, queueSize),
+		done:  make(chan struct{}),
 	}
-	for _, opt := range opts {
-		opt(a)
-	}
-	a.queue = make(chan traceOp, a.queueSize)
 	go a.worker()
 	return a
-}
-
-// DroppedOperations returns the number of operations discarded due to queue overflow or closure.
-func (a *Adapter) DroppedOperations() uint64 {
-	return a.dropped.Load()
 }
 
 // StartSpan implements core.Tracer.
@@ -180,12 +128,10 @@ func (a *Adapter) StartSpan(ctx context.Context, event core.TraceEvent) core.Spa
 
 func (a *Adapter) enqueue(op traceOp) (sent bool) {
 	if a.closed.Load() {
-		a.dropped.Add(1)
 		return false
 	}
 	defer func() {
 		if recover() != nil {
-			a.dropped.Add(1)
 			sent = false
 		}
 	}()
@@ -194,68 +140,14 @@ func (a *Adapter) enqueue(op traceOp) (sent bool) {
 	defer a.closeMu.RUnlock()
 
 	if a.closed.Load() {
-		a.dropped.Add(1)
 		return false
 	}
 	select {
 	case a.queue <- op:
 		return true
 	default:
-		a.dropped.Add(1)
 		return false
 	}
-}
-
-// RecordToolCall enqueues a tool call record for non-blocking persistence.
-func (a *Adapter) RecordToolCall(record storage.ToolCallRecord) bool {
-	return a.enqueue(traceOp{
-		kind:     opRecordToolCall,
-		toolCall: record,
-	})
-}
-
-// Flush blocks until all currently enqueued trace operations have been processed or ctx cancels.
-func (a *Adapter) Flush(ctx context.Context) (err error) {
-	if a.closed.Load() {
-		return nil
-	}
-	defer func() {
-		if recover() != nil {
-			err = nil
-		}
-	}()
-
-	syncChan := make(chan struct{})
-
-	a.closeMu.RLock()
-	if a.closed.Load() {
-		a.closeMu.RUnlock()
-		return nil
-	}
-	select {
-	case a.queue <- traceOp{kind: opFlush, syncChan: syncChan}:
-		a.closeMu.RUnlock()
-	case <-ctx.Done():
-		a.closeMu.RUnlock()
-		return ctx.Err()
-	}
-
-	var flushErr error
-	select {
-	case <-syncChan:
-		flushErr = nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-a.done:
-		flushErr = nil
-	}
-
-	if a.sink != nil {
-		if flusher, ok := a.sink.(interface{ Flush(context.Context) error }); ok {
-			_ = flusher.Flush(ctx)
-		}
-	}
-	return flushErr
 }
 
 // Close stops accepting new operations, drains queued work, and waits for the worker to exit.
@@ -266,11 +158,6 @@ func (a *Adapter) Close() error {
 		close(a.queue)
 		a.closeMu.Unlock()
 		<-a.done
-		if a.sink != nil {
-			if closer, ok := a.sink.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		}
 	})
 	return nil
 }
@@ -305,18 +192,6 @@ func (a *Adapter) worker() {
 			}
 		case opEndSpan:
 			_ = a.repo.EndSpan(ctx, op.spanID, op.endedAt, op.attributes)
-			if a.sink != nil {
-				a.sink.RecordSpan(storage.TraceSpan{
-					ID:             op.spanID,
-					SessionID:      op.sessionID,
-					TurnID:         op.turnID,
-					ParentID:       op.parentID,
-					Name:           op.name,
-					StartedAt:      op.startedAt,
-					EndedAt:        op.endedAt,
-					AttributesJSON: op.attributes,
-				})
-			}
 		case opAddEvent:
 			ev := storage.TraceEvent{
 				ID:             op.spanID,
@@ -328,66 +203,18 @@ func (a *Adapter) worker() {
 				AttributesJSON: op.attributes,
 			}
 			_ = a.repo.AddEvent(ctx, ev)
-			if a.sink != nil {
-				a.sink.RecordEvent(ev)
-			}
-		case opRecordToolCall:
-			_ = a.repo.AddToolCall(ctx, op.toolCall)
-			if a.sink != nil {
-				a.sink.RecordToolCall(op.toolCall)
-			}
-		case opFlush:
-			if op.syncChan != nil {
-				close(op.syncChan)
-			}
 		}
 	}
-}
-
-func (a *Adapter) safeRedact(s string) (result string) {
-	defer func() {
-		if recover() != nil {
-			result = ""
-		}
-	}()
-	if a.policy.RedactToolContent != nil {
-		return a.policy.RedactToolContent(s)
-	}
-	return ""
 }
 
 func (a *Adapter) filterAttributes(input map[string]any) map[string]any {
-	mode := a.policy.Content
-	if mode == "" {
-		mode = core.TraceMetadata
-	}
-	if mode == core.TraceNone {
-		return make(map[string]any)
-	}
-
+	// ponytail: metadata-only; transcript/prompt/text/tool content never persists.
 	out := make(map[string]any)
 	var customKeys []string
 	tooManyCustom := false
 
 	for k, v := range input {
 		switch k {
-		case "transcript", "prompt", "text":
-			if mode == core.TraceText {
-				if s, ok := v.(string); ok {
-					if len(s) <= maxTextLength {
-						out[k] = s
-					}
-				}
-			}
-		case "tool.arguments", "tool.result":
-			if mode == core.TraceText && a.policy.RedactToolContent != nil {
-				if s, ok := v.(string); ok {
-					redacted := a.safeRedact(s)
-					if len(redacted) <= maxTextLength {
-						out[k] = redacted
-					}
-				}
-			}
 		case "count", "sample_rate", "channels", "duration_ms", "latency_ms", "sequence", "model", "provider", "format", "status", "error.category", "unit", "quantity", "reason", "component", "frame", "direction":
 			switch val := v.(type) {
 			case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:

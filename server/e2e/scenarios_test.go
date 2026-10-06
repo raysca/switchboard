@@ -649,7 +649,7 @@ func TestScenario3_MCPToolLifecycle(t *testing.T) {
 	}))
 	turnSpan.End(nil)
 
-	if err := traceAdapter.Flush(ctx); err != nil {
+	if err := traceAdapter.Close(); err != nil {
 		t.Fatalf("flush traces: %v", err)
 	}
 

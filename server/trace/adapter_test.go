@@ -84,8 +84,8 @@ func TestAdapterParentOrdering(t *testing.T) {
 	parentSpan.SetAttribute("status", "completed")
 	parentSpan.End(nil)
 
-	if err := adapter.Flush(context.Background()); err != nil {
-		t.Fatalf("flush failed: %v", err)
+	if err := adapter.Close(); err != nil {
+		t.Fatal(err)
 	}
 
 	spans, err := s.Traces().Spans(ctx, sessID, "")
@@ -137,8 +137,8 @@ func TestAdapterConcurrentWrites(t *testing.T) {
 	}
 
 	wg.Wait()
-	if err := adapter.Flush(context.Background()); err != nil {
-		t.Fatalf("flush: %v", err)
+	if err := adapter.Close(); err != nil {
+		t.Fatal(err)
 	}
 
 	spans, err := s.Traces().Spans(ctx, sessID, "")
@@ -195,7 +195,7 @@ func TestAdapterMetadataOnly(t *testing.T) {
 
 	// Explicit metadata-only policy
 	policy := core.TracePolicy{Content: core.TraceMetadata}
-	adapter := trace.NewAdapter(s.Traces(), trace.WithPolicy(policy))
+	adapter := trace.NewAdapter(s.Traces())
 	defer adapter.Close()
 
 	ctx := context.Background()
@@ -211,7 +211,7 @@ func TestAdapterMetadataOnly(t *testing.T) {
 	span.SetAttribute("model", "gpt-4o")
 	span.End(nil)
 
-	if err := adapter.Flush(context.Background()); err != nil {
+	if err := adapter.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -238,53 +238,11 @@ func TestAdapterMetadataOnly(t *testing.T) {
 	}
 }
 
-func TestAdapterRedaction(t *testing.T) {
-	s := newTestStore(t)
-	sessID := createTestSession(t, s)
-
-	policy := core.TracePolicy{
-		Content: core.TraceText,
-		RedactToolContent: func(s string) string {
-			return "[REDACTED]"
-		},
-	}
-	adapter := trace.NewAdapter(s.Traces(), trace.WithPolicy(policy))
-	defer adapter.Close()
-
-	ctx := context.Background()
-	ev := core.NewTraceEvent("tool.execute", time.Now().UTC(), core.SessionID(sessID), "", 1, policy, map[string]any{
-		"tool.arguments": `{"api_token":"xyz123"}`,
-	})
-	span := adapter.StartSpan(ctx, ev)
-	span.End(nil)
-
-	if err := adapter.Flush(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	spans, err := s.Traces().Spans(ctx, sessID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
-	}
-
-	attrs := spans[0].AttributesJSON
-	if contains(attrs, "xyz123") {
-		t.Fatalf("unredacted argument leaked: %s", attrs)
-	}
-	if !contains(attrs, "[REDACTED]") {
-		t.Fatalf("redacted marker missing: %s", attrs)
-	}
-}
-
 func TestAdapterNonBlockingQueueOverflow(t *testing.T) {
 	s := newTestStore(t)
 	sessID := createTestSession(t, s)
 
-	// Tiny queue of 2 items
-	adapter := trace.NewAdapter(s.Traces(), trace.WithQueueSize(2))
+	adapter := trace.NewAdapter(s.Traces())
 	defer adapter.Close()
 
 	ctx := context.Background()
@@ -294,9 +252,6 @@ func TestAdapterNonBlockingQueueOverflow(t *testing.T) {
 		span := adapter.StartSpan(ctx, ev)
 		span.End(nil)
 	}
-
-	// Operations did not block; some may have been dropped safely
-	_ = adapter.DroppedOperations()
 }
 
 func TestAdapterConcurrentCloseNoPanic(t *testing.T) {
@@ -304,7 +259,7 @@ func TestAdapterConcurrentCloseNoPanic(t *testing.T) {
 	sessID := createTestSession(t, s)
 
 	for iter := 0; iter < 10; iter++ {
-		adapter := trace.NewAdapter(s.Traces(), trace.WithQueueSize(16))
+		adapter := trace.NewAdapter(s.Traces())
 		ctx := context.Background()
 		var wg sync.WaitGroup
 		concurrency := 8
@@ -320,19 +275,6 @@ func TestAdapterConcurrentCloseNoPanic(t *testing.T) {
 					span.SetAttribute("custom.worker", workerID)
 					span.AddEvent(core.NewTraceEvent("stress.event", time.Now().UTC(), core.SessionID(sessID), "", 1, core.TracePolicy{}, map[string]any{"latency_ms": 10}))
 					span.End(nil)
-
-					adapter.RecordToolCall(storage.ToolCallRecord{
-						ID:         storage.NewID(),
-						SessionID:  sessID,
-						RemoteName: "stress_tool",
-						StartedAt:  time.Now().UTC(),
-					})
-
-					if j%5 == 0 {
-						flushCtx, cancel := context.WithTimeout(ctx, 5*time.Millisecond)
-						_ = adapter.Flush(flushCtx)
-						cancel()
-					}
 				}
 			}(i)
 		}
@@ -356,7 +298,7 @@ func TestAdapterFilterAttributesPrivacyPolicy(t *testing.T) {
 	sessID := createTestSession(t, s)
 
 	policy := core.TracePolicy{Content: core.TraceMetadata}
-	adapter := trace.NewAdapter(s.Traces(), trace.WithPolicy(policy))
+	adapter := trace.NewAdapter(s.Traces())
 	defer adapter.Close()
 
 	ctx := context.Background()
@@ -445,8 +387,8 @@ func TestAdapterFilterAttributesPrivacyPolicy(t *testing.T) {
 
 	span.End(nil)
 
-	if err := adapter.Flush(context.Background()); err != nil {
-		t.Fatalf("flush: %v", err)
+	if err := adapter.Close(); err != nil {
+		t.Fatal(err)
 	}
 
 	spans, err := s.Traces().Spans(ctx, sessID, "")
