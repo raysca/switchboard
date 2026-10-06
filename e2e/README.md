@@ -51,7 +51,7 @@ Ports avoid 8080/9090/3000/5173. Random `GOVOICE_MANAGEMENT_API_KEY` and
 via the `stack` fixture:
 
 ```ts
-import { test, expect, fakeMic } from "../lib/stack";
+import { test, expect } from "../lib/stack";
 import { step } from "../lib/evidence";
 
 test("…", async ({ page, stack }) => {
@@ -64,11 +64,9 @@ test("…", async ({ page, stack }) => {
 
 Chromium runs with `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream
 --use-file-for-fake-audio-capture=fixtures/voice-debug.wav` and microphone
-permission granted. Switch the WAV per spec file with
-`test.use(fakeMic("voice-custom.wav"))`.
+permission granted.
 
 - `fixtures/voice-debug.wav`: "What is two plus two?"
-- `fixtures/voice-custom.wav`: "What is the capital of France?"
 
 16 kHz mono PCM16 from macOS `say`, with 1 s silence before and 20 s after.
 Regenerate with `scripts/make-fixtures.sh` (needs `say` and `ffmpeg`).
