@@ -137,7 +137,7 @@ The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status des
 | P1 — Context summarization/compaction hook | P1 tracked | Context tests prove compaction is provider-neutral, preserves required system/tool state, and leaves the session usable when an application hook declines. |
 | P1 — Audio recording/capture processor | removed | Deleted from core: it had no production users. |
 | P1 — Urgent control frames/priority lane | P1 tracked | Congestion tests prove cancel/interruption/flush/end/critical error pass queued media while preserving control ordering. |
-| P1 — Processor failure/unusable policy | P1 tracked | Tests cover fail-session, disable, degrade, safe retry, error propagation, and side-effect safety for each supported policy. |
+| P1 — Processor failure/unusable policy | removed | Deleted from core: it had no production users. |
 | P1 — Usage metrics | P1 tracked | Provider contract tests record available token/audio/character/request units, omit unavailable values, and correlate them to session/turn without billing logic. |
 | P1 — Bot output/playback state observer | P1 tracked | Observer/eval tests distinguish generating, buffered, playing, drained, interrupted, and completed states with ordered events. |
 | P1 — Serializer abstraction | P1 tracked | Round-trip/negative tests map semantic events and frames to selected serializers while preserving RTVI and debug boundaries. |
