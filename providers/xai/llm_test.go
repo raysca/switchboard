@@ -177,12 +177,15 @@ func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 
 	var textDeltas []string
 	var fullText string
+	var usageFrames []*core.UsageMetricsFrame
 	for _, f := range reentered {
 		switch df := f.(type) {
 		case *core.LLMTextDeltaFrame:
 			textDeltas = append(textDeltas, df.Delta)
 		case *core.LLMTextFrame:
 			fullText = df.Text
+		case *core.UsageMetricsFrame:
+			usageFrames = append(usageFrames, df)
 		}
 	}
 
@@ -197,6 +200,27 @@ func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 	if proc.PromptTokens.Load() != 10 || proc.OutputTokens.Load() != 2 || proc.TotalTokens.Load() != 12 {
 		t.Fatalf("token usage mismatch: p=%d, o=%d, t=%d",
 			proc.PromptTokens.Load(), proc.OutputTokens.Load(), proc.TotalTokens.Load())
+	}
+
+	// Verify UsageMetricsFrame emission and correlation
+	if len(usageFrames) != 1 {
+		t.Fatalf("expected 1 UsageMetricsFrame, got %d", len(usageFrames))
+	}
+	uf := usageFrames[0]
+	if uf.Turn != "turn-1" || uf.Gen != 1 || uf.Provider != "xai" || uf.Service != "llm" {
+		t.Fatalf("usage frame correlation mismatch: %+v", uf)
+	}
+	if uf.PromptTokens == nil || *uf.PromptTokens != 10 {
+		t.Fatalf("expected prompt tokens 10, got %v", uf.PromptTokens)
+	}
+	if uf.CompletionTokens == nil || *uf.CompletionTokens != 2 {
+		t.Fatalf("expected completion tokens 2, got %v", uf.CompletionTokens)
+	}
+	if uf.TotalTokens == nil || *uf.TotalTokens != 12 {
+		t.Fatalf("expected total tokens 12, got %v", uf.TotalTokens)
+	}
+	if uf.Characters != nil {
+		t.Fatalf("expected characters to remain absent, got %v", uf.Characters)
 	}
 }
 

@@ -582,6 +582,37 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			Gen:  gen,
 		}
 		_ = p.session.Reenter(fullFrame, core.Downstream, p.index+1, gen)
+
+		// Emit optional usage metrics if available
+		pTok := p.PromptTokens.Load()
+		oTok := p.OutputTokens.Load()
+		tTok := p.TotalTokens.Load()
+		if pTok > 0 || oTok > 0 || tTok > 0 {
+			var pTokPtr, oTokPtr, tTokPtr *int64
+			if pTok > 0 {
+				pTokPtr = core.Int64Ptr(pTok)
+			}
+			if oTok > 0 {
+				oTokPtr = core.Int64Ptr(oTok)
+			}
+			if tTok > 0 {
+				tTokPtr = core.Int64Ptr(tTok)
+			}
+			usageFrame := &core.UsageMetricsFrame{
+				SessionID:        core.SessionID(strconv.FormatUint(p.session.ID(), 10)),
+				Turn:             turn,
+				Gen:              gen,
+				Provider:         "google",
+				Model:            p.cfg.Model,
+				Service:          "llm",
+				Timestamp:        time.Now(),
+				PromptTokens:     pTokPtr,
+				CompletionTokens: oTokPtr,
+				TotalTokens:      tTokPtr,
+				Requests:         core.Int64Ptr(1),
+			}
+			_ = p.session.Reenter(usageFrame, core.Downstream, p.index+1, gen)
+		}
 	})
 }
 

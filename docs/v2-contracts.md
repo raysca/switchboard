@@ -498,3 +498,28 @@ Available policies:
 3. `PolicyDegrade`: Temporarily bypasses the failing processor for the current frame. Emits a non-fatal `*core.ErrorFrame{Fatal: false}` and passes the frame to the next processor. The processor remains active for future frames.
 4. `PolicySafeRetry`: Retries processing the frame once before failing the session. If the processor already emitted one or more output frames during the current attempt before failing, retrying is considered unsafe and the session aborts immediately with `ErrRetryUnsafe` to prevent duplicate external side effects.
 
+### 2.11 Provider usage metrics
+
+`core.UsageMetricsFrame` carries optional typed token, audio duration, character, request, or tool usage events emitted by providers:
+```go
+type UsageMetricsFrame struct {
+    SessionID        SessionID
+    Turn             string
+    Gen              uint64
+    Provider         string
+    Model            string
+    Service          string // "llm", "stt", "tts", "tool"
+    Timestamp        time.Time
+    PromptTokens     *int64
+    CompletionTokens *int64
+    TotalTokens      *int64
+    Characters       *int64
+    AudioDurationMs  *int64
+    Requests         *int64
+}
+```
+- **Correlation**: Frames correlate to the active `SessionID`, `TurnID`, and `Generation`.
+- **Absence Integrity**: Unavailable units remain `nil` rather than zero-inflated (e.g. TTS omits token fields; LLM omits character/audio fields).
+- **Billing Boundary**: No billing or charging decisions are made inside core; usage is an observability/telemetry event mapped to trace attribute `usage.metrics`.
+
+

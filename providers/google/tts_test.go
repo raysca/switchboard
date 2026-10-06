@@ -230,6 +230,30 @@ func TestTTS_HeaderlessPCM20msChunking(t *testing.T) {
 	if stopped.UnitID != 10 {
 		t.Fatalf("expected stopped UnitID 10, got %d", stopped.UnitID)
 	}
+
+	// Verify UsageMetricsFrame emission and correlation
+	var usageFrames []*core.UsageMetricsFrame
+	for _, f := range frames {
+		if uf, ok := f.(*core.UsageMetricsFrame); ok {
+			usageFrames = append(usageFrames, uf)
+		}
+	}
+	if len(usageFrames) != 1 {
+		t.Fatalf("expected 1 UsageMetricsFrame from TTS, got %d", len(usageFrames))
+	}
+	uf := usageFrames[0]
+	if uf.Turn != "turn-1" || uf.Gen != 1 || uf.Provider != "google" || uf.Service != "tts" {
+		t.Fatalf("usage frame correlation mismatch: %+v", uf)
+	}
+	if uf.Characters == nil || *uf.Characters != int64(len("Valid synthesis unit.")) {
+		t.Fatalf("expected characters %d, got %v", len("Valid synthesis unit."), uf.Characters)
+	}
+	if uf.AudioDurationMs == nil || *uf.AudioDurationMs != 50 { // 2400 bytes / 2 = 1200 samples; 1200*1000/24000 = 50ms
+		t.Fatalf("expected audio duration 50ms, got %v", uf.AudioDurationMs)
+	}
+	if uf.PromptTokens != nil || uf.TotalTokens != nil {
+		t.Fatalf("token metrics must be absent for TTS: %+v", uf)
+	}
 }
 
 func TestTTS_CancellationAndLateOutputFencing(t *testing.T) {

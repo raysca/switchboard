@@ -468,5 +468,27 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			return
 		}
 		traceFailure = nil
+
+		// Emit optional TTS usage metrics (character count and audio duration)
+		chars := int64(len([]rune(su.Text)))
+		var durationMs int64
+		if p.cfg.SampleRate > 0 && len(rawAudio) > 0 {
+			// 16-bit mono = 2 bytes per sample
+			samples := len(rawAudio) / 2
+			durationMs = int64(samples * 1000 / p.cfg.SampleRate)
+		}
+		usageFrame := &core.UsageMetricsFrame{
+			SessionID:       traceSession,
+			Turn:            su.Turn,
+			Gen:             gen,
+			Provider:        "google",
+			Model:           p.cfg.Voice,
+			Service:         "tts",
+			Timestamp:       time.Now(),
+			Characters:      core.Int64Ptr(chars),
+			AudioDurationMs: core.Int64Ptr(durationMs),
+			Requests:        core.Int64Ptr(1),
+		}
+		_ = p.session.Reenter(usageFrame, core.Downstream, p.index+1, gen)
 	})
 }

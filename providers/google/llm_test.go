@@ -28,6 +28,7 @@ func TestLLM_StreamedTextAndUsage(t *testing.T) {
 
 	var deltas []string
 	var fullText string
+	var usageFrames []*core.UsageMetricsFrame
 	var mu sync.Mutex
 
 	session.OnOutput = func(f core.Frame) {
@@ -38,6 +39,8 @@ func TestLLM_StreamedTextAndUsage(t *testing.T) {
 			deltas = append(deltas, frame.Delta)
 		case *core.LLMTextFrame:
 			fullText = frame.Text
+		case *core.UsageMetricsFrame:
+			usageFrames = append(usageFrames, frame)
 		}
 	}
 
@@ -75,6 +78,27 @@ func TestLLM_StreamedTextAndUsage(t *testing.T) {
 	}
 	if proc.TotalTokens.Load() != 12 {
 		t.Fatalf("expected 12 total tokens, got %d", proc.TotalTokens.Load())
+	}
+
+	// Verify UsageMetricsFrame emission and correlation
+	if len(usageFrames) != 1 {
+		t.Fatalf("expected 1 UsageMetricsFrame, got %d", len(usageFrames))
+	}
+	uf := usageFrames[0]
+	if uf.Turn != "turn-1" || uf.Gen != 1 || uf.Provider != "google" || uf.Service != "llm" {
+		t.Fatalf("usage frame correlation mismatch: %+v", uf)
+	}
+	if uf.PromptTokens == nil || *uf.PromptTokens != 10 {
+		t.Fatalf("expected prompt tokens 10, got %v", uf.PromptTokens)
+	}
+	if uf.CompletionTokens == nil || *uf.CompletionTokens != 2 {
+		t.Fatalf("expected completion tokens 2, got %v", uf.CompletionTokens)
+	}
+	if uf.TotalTokens == nil || *uf.TotalTokens != 12 {
+		t.Fatalf("expected total tokens 12, got %v", uf.TotalTokens)
+	}
+	if uf.Characters != nil {
+		t.Fatalf("expected characters to remain absent, got %v", uf.Characters)
 	}
 }
 

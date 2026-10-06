@@ -400,6 +400,37 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 				Turn: turn,
 				Gen:  gen,
 			}, core.Downstream, p.index, gen)
+
+			// Emit optional usage metrics if tracked
+			pTok := int64(promptTok)
+			oTok := int64(outTok)
+			tTok := int64(totTok)
+			if pTok > 0 || oTok > 0 || tTok > 0 {
+				var pTokPtr, oTokPtr, tTokPtr *int64
+				if pTok > 0 {
+					pTokPtr = core.Int64Ptr(pTok)
+				}
+				if oTok > 0 {
+					oTokPtr = core.Int64Ptr(oTok)
+				}
+				if tTok > 0 {
+					tTokPtr = core.Int64Ptr(tTok)
+				}
+				usageFrame := &core.UsageMetricsFrame{
+					SessionID:        core.SessionID(fmt.Sprint(s.ID())),
+					Turn:             turn,
+					Gen:              gen,
+					Provider:         "xai",
+					Model:            p.cfg.Model,
+					Service:          "llm",
+					Timestamp:        time.Now(),
+					PromptTokens:     pTokPtr,
+					CompletionTokens: oTokPtr,
+					TotalTokens:      tTokPtr,
+					Requests:         core.Int64Ptr(1),
+				}
+				_ = s.Reenter(usageFrame, core.Downstream, p.index, gen)
+			}
 		}
 	})
 }

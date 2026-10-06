@@ -975,6 +975,31 @@ func frameTrace(f Frame) (string, map[string]any) {
 	case *ErrorFrame:
 		attrs["error.category"] = "runtime"
 		return "session.failure", attrs
+	case *UsageMetricsFrame:
+		attrs["provider"] = v.Provider
+		attrs["service"] = v.Service
+		if v.Model != "" {
+			attrs["model"] = v.Model
+		}
+		if v.PromptTokens != nil {
+			attrs["usage.prompt_tokens"] = *v.PromptTokens
+		}
+		if v.CompletionTokens != nil {
+			attrs["usage.completion_tokens"] = *v.CompletionTokens
+		}
+		if v.TotalTokens != nil {
+			attrs["usage.total_tokens"] = *v.TotalTokens
+		}
+		if v.Characters != nil {
+			attrs["usage.characters"] = *v.Characters
+		}
+		if v.AudioDurationMs != nil {
+			attrs["usage.audio_duration_ms"] = *v.AudioDurationMs
+		}
+		if v.Requests != nil {
+			attrs["usage.requests"] = *v.Requests
+		}
+		return "usage.metrics", attrs
 	}
 	return "frame." + frameTraceLabel(f.Type()), attrs
 }
@@ -1036,6 +1061,8 @@ func traceTurnID(f Frame) TurnID {
 		return v.Call.TurnID
 	case *ToolResultFrame:
 		return v.Turn
+	case *UsageMetricsFrame:
+		return TurnID(v.Turn)
 	}
 	return ""
 }
@@ -1073,6 +1100,8 @@ func frameTraceLabel(frame FrameType) string {
 		return "tool_call"
 	case FrameToolResult:
 		return "tool_result"
+	case FrameUsageMetrics:
+		return "usage_metrics"
 	default:
 		return strconv.Itoa(int(frame))
 	}
