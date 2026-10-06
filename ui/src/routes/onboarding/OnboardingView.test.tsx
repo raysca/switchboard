@@ -252,6 +252,30 @@ describe("OnboardingView", () => {
     expect(screen.getByRole("link", { name: /manage providers/i })).toBeVisible();
   });
 
+  it("explains why Create agent cannot run when no credential covers every stage", async () => {
+    const client = createMockClient({
+      getCredentials: vi.fn().mockResolvedValue([
+        {
+          id: "cred-x",
+          provider: "xai",
+          masked_value: "••••••••9999",
+          validation_state: "valid",
+          capabilities: ["llm"],
+          created_at: "2026-10-05T12:00:00Z",
+          updated_at: "2026-10-05T12:00:00Z",
+        },
+      ]),
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
+    await screen.findByRole("heading", { name: /step 2: create your first agent/i });
+    await waitFor(() => expect(client.getProviders).toHaveBeenCalled());
+    await user.type(screen.getByLabelText(/agent name/i), "Concierge");
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+    expect(await screen.findByText(/no connected credential can run/i)).toBeVisible();
+    expect(client.createAgent).not.toHaveBeenCalled();
+  });
+
   it("treats an install whose only agent is archived as having no agents", async () => {
     const client = createMockClient({
       getCredentials: vi.fn().mockResolvedValue([

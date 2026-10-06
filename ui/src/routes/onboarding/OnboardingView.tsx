@@ -107,7 +107,20 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     const stt = agentSttDraft.trim();
     const llm = agentLlmDraft.trim();
     const tts = agentTtsDraft.trim();
-    if (!name || !agentCredential || !stt || !llm || !tts) return;
+    if (!name || !stt || !llm || !tts) return;
+    if (!agentCredential) {
+      setAgentError(
+        new ApiError(
+          providersQuery.isSuccess
+            ? "No connected credential can run speech-to-text, LLM and text-to-speech. Add one (for example Google) on the Providers page."
+            : "The provider list has not loaded yet. Reload the page and try again.",
+          "no_credential",
+          0,
+          "",
+        ),
+      );
+      return;
+    }
     // ponytail: onboarding uses the step-1 credential for every stage; the Agents page edits each stage.
     const { provider, id: credential_id } = agentCredential;
     createAgentMutation.mutate({
