@@ -34,9 +34,8 @@ async function connectAdmin(page: Page, stack: Stack) {
 async function openAgentDetail(page: Page) {
   const heading = page.getByRole("heading", { name: AGENT });
   if (await heading.isVisible()) return;
+  // The sidebar link always returns the Agents page to its list.
   await page.getByRole("link", { name: "Agents", exact: true }).first().click();
-  const back = page.getByRole("button", { name: "Back to list" });
-  if (await back.isVisible()) await back.click();
   await page.getByRole("row").filter({ hasText: AGENT }).getByRole("button", { name: "View detail" }).click();
   await expect(heading).toBeVisible();
 }
