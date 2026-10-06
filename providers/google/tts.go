@@ -364,7 +364,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 				}
 				rawAudio = append(rawAudio, audio...)
 				return nil
-			}, nil)
+			})
 			if err != nil {
 				break
 			}

@@ -519,7 +519,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				var requestErr error
 				calls, requestErr = requestModel(attemptCtx)
 				return requestErr
-			}, nil)
+			})
 			return calls, err
 		}
 

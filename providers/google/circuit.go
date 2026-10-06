@@ -142,34 +142,3 @@ func (cb *CircuitBreaker) release() {
 	cb.probing = false
 	cb.mu.Unlock()
 }
-
-// State returns the current circuit state.
-func (cb *CircuitBreaker) State() CircuitState {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	now := time.Now()
-	if cb.state == CircuitOpen && now.Sub(cb.lastFailure) >= cb.cfg.CooldownDuration {
-		return CircuitHalfOpen
-	}
-	return cb.state
-}
-
-// Failures returns the consecutive failure count.
-func (cb *CircuitBreaker) Failures() int {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.failures
-}
-
-// LastFailure returns the timestamp of the last recorded failure.
-func (cb *CircuitBreaker) LastFailure() time.Time {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.lastFailure
-}
-
-// IsReady reports whether the circuit is healthy enough to accept new calls.
-func (cb *CircuitBreaker) IsReady() bool {
-	return cb.State() != CircuitOpen
-}

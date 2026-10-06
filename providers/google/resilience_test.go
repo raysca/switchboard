@@ -99,9 +99,6 @@ func TestCircuitBreaker_StateTransitions(t *testing.T) {
 	if cb.Allow() {
 		t.Fatal("expected Allow() to be false for OPEN circuit")
 	}
-	if cb.IsReady() {
-		t.Fatal("expected IsReady() to be false when circuit is OPEN")
-	}
 
 	// Wait for cooldown
 	time.Sleep(60 * time.Millisecond)
@@ -145,9 +142,15 @@ type mockSleeper struct {
 	sleptDurations []time.Duration
 }
 
-func (m *mockSleeper) Sleep(ctx context.Context, d time.Duration) error {
-	m.sleptDurations = append(m.sleptDurations, d)
-	return nil
+// mockSleep records backoff delays instead of sleeping for the test's duration.
+func mockSleep(t *testing.T) *mockSleeper {
+	m, real := &mockSleeper{}, sleep
+	sleep = func(_ context.Context, d time.Duration) error {
+		m.sleptDurations = append(m.sleptDurations, d)
+		return nil
+	}
+	t.Cleanup(func() { sleep = real })
+	return m
 }
 
 func TestRetry_TransientErrorsAndJitter(t *testing.T) {
@@ -159,7 +162,7 @@ func TestRetry_TransientErrorsAndJitter(t *testing.T) {
 		MaxAttempts:    3,
 	}
 
-	sleeper := &mockSleeper{}
+	sleeper := mockSleep(t)
 	attemptsCount := 0
 
 	err := ExecuteWithRetry(context.Background(), cb, policy, nil, func(ctx context.Context, attempt int) error {
@@ -174,7 +177,7 @@ func TestRetry_TransientErrorsAndJitter(t *testing.T) {
 			}
 		}
 		return nil // Success on 3rd attempt
-	}, sleeper)
+	})
 
 	if err != nil {
 		t.Fatalf("expected success on 3rd attempt, got: %v", err)
@@ -199,7 +202,7 @@ func TestRetry_HonorsRetryAfter(t *testing.T) {
 		MaxAttempts:    2,
 	}
 
-	sleeper := &mockSleeper{}
+	sleeper := mockSleep(t)
 	_ = ExecuteWithRetry(context.Background(), cb, policy, nil, func(ctx context.Context, attempt int) error {
 		if attempt == 1 {
 			return &ProviderError{
@@ -210,7 +213,7 @@ func TestRetry_HonorsRetryAfter(t *testing.T) {
 			}
 		}
 		return nil
-	}, sleeper)
+	})
 
 	if len(sleeper.sleptDurations) != 1 {
 		t.Fatalf("expected 1 sleep, got %d", len(sleeper.sleptDurations))
@@ -227,7 +230,7 @@ func TestRetry_NonRetryableErrorFailsImmediately(t *testing.T) {
 		InitialBackoff: 100 * time.Millisecond,
 		MaxAttempts:    3,
 	}
-	sleeper := &mockSleeper{}
+	sleeper := mockSleep(t)
 	attemptsCount := 0
 
 	err := ExecuteWithRetry(context.Background(), cb, policy, nil, func(ctx context.Context, attempt int) error {
@@ -238,7 +241,7 @@ func TestRetry_NonRetryableErrorFailsImmediately(t *testing.T) {
 			StatusCode: 401,
 			Retryable:  false,
 		}
-	}, sleeper)
+	})
 
 	if !errors.Is(err, ErrProviderAuth) {
 		t.Fatalf("expected ErrProviderAuth, got: %v", err)
@@ -260,7 +263,7 @@ func TestRetry_ProhibitedAfterCommittedOutput(t *testing.T) {
 		MaxAttempts:    3,
 	}
 
-	sleeper := &mockSleeper{}
+	sleeper := mockSleep(t)
 	attemptsCount := 0
 	var committed bool
 
@@ -278,7 +281,7 @@ func TestRetry_ProhibitedAfterCommittedOutput(t *testing.T) {
 			StatusCode: 503,
 			Retryable:  true,
 		}
-	}, sleeper)
+	})
 
 	if !errors.Is(err, ErrRetryCommitted) {
 		t.Fatalf("expected ErrRetryCommitted, got: %v", err)
@@ -297,7 +300,7 @@ func TestRetry_CancellationIsNotAProviderFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for _, err := range []error{context.Canceled, ErrGenerationMismatch} {
-		got := ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 3}, nil, func(context.Context, int) error { return err }, nil)
+		got := ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 3}, nil, func(context.Context, int) error { return err })
 		if !errors.Is(got, err) {
 			t.Fatalf("ExecuteWithRetry() = %v, want %v", got, err)
 		}
