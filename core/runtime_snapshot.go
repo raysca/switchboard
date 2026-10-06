@@ -7,10 +7,11 @@ import (
 
 // ProcessorSnapshot captures read-only diagnostic information about a processor in the pipeline.
 type ProcessorSnapshot struct {
-	Index       int    `json:"index"`
-	Type        string `json:"type"`
-	Disabled    bool   `json:"disabled"`
-	Description string `json:"description,omitempty"`
+	Index        int                   `json:"index"`
+	Type         string                `json:"type"`
+	Disabled     bool                  `json:"disabled"`
+	Description  string                `json:"description,omitempty"`
+	Capabilities ProcessorCapabilities `json:"capabilities"`
 }
 
 // SessionSnapshot provides an immutable, read-only diagnostic view of a session's current runtime state.
@@ -42,8 +43,9 @@ func (s *Session) Snapshot() SessionSnapshot {
 	if s.pipe != nil {
 		for i, p := range s.pipe.Processors() {
 			ps := ProcessorSnapshot{
-				Index: i,
-				Type:  fmt.Sprintf("%T", p),
+				Index:        i,
+				Type:         fmt.Sprintf("%T", p),
+				Capabilities: GetProcessorCapabilities(p),
 			}
 			if describer, ok := p.(interface{ Description() string }); ok {
 				ps.Description = describer.Description()

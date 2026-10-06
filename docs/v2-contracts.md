@@ -682,6 +682,29 @@ type SessionSnapshot struct {
 - **Thread Safety & Immutability**: All counters and settings are atomically or lock-protected and copied by value; mutations cannot affect the active session run loop.
 - **Diagnostic Transparency**: Exposes exact processor pipeline topologies, indices, descriptions, and active observer counts.
 
+### 2.21 Processor capability metadata
+
+`core.CapableProcessor` allows pipeline processors to declare functional capabilities and contract guarantees:
+```go
+type ProcessorCapabilities struct {
+    Name         string
+    Version      string
+    Description  string
+    Capabilities []ProcessorCapability // audio_input, audio_output, speech_to_text, llm, vad, etc.
+    InputFrames  []FrameType
+    OutputFrames []FrameType
+    SideEffects  bool                  // true if processor executes external RPCs/network calls
+}
+
+type CapableProcessor interface {
+    Processor
+    Capabilities() ProcessorCapabilities
+}
+```
+- **Introspection Helpers**: `GetProcessorCapabilities(p)`, `HasCapability(p, cap)`, and `Pipeline.FindProcessorsWithCapability(cap)` allow pipeline introspection without tight coupling to concrete types.
+- **Side Effect Tracking**: `SideEffects` flag explicitly identifies processors with side-effecting operations (e.g. LLM/TTS/network calls) to guide retry policies and state rollback.
+
+
 
 
 
