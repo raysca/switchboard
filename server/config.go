@@ -133,7 +133,6 @@ type Config struct {
 	Retention RetentionConfig `yaml:"retention"`
 
 	// OpenTelemetry
-	OTel OTelConfig `yaml:"otel"`
 }
 
 // RetentionConfig defines trace and session retention policy.
@@ -143,18 +142,6 @@ type RetentionConfig struct {
 	MetadataRetentionDays int           `yaml:"metadata_retention_days"`
 	ContentRetentionDays  int           `yaml:"content_retention_days"`
 	BatchSize             int           `yaml:"batch_size"`
-}
-
-// OTelConfig defines optional OpenTelemetry trace export settings.
-type OTelConfig struct {
-	Enabled        bool          `yaml:"enabled"`
-	Endpoint       string        `yaml:"endpoint"`
-	Protocol       string        `yaml:"protocol"` // "grpc" | "http"
-	Insecure       bool          `yaml:"insecure"`
-	QueueSize      int           `yaml:"queue_size"`
-	BatchTimeout   time.Duration `yaml:"batch_timeout"`
-	ExportInterval time.Duration `yaml:"export_interval"`
-	ServiceName    string        `yaml:"service_name"`
 }
 
 // DefaultConfig returns a production-ready configuration with safe defaults.
@@ -227,13 +214,6 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Retention.MetadataRetentionDays = 30
 	cfg.Retention.ContentRetentionDays = 7
 	cfg.Retention.BatchSize = 500
-
-	// OTel defaults (disabled by default)
-	cfg.OTel.Enabled = false
-	cfg.OTel.ServiceName = "govoice"
-	cfg.OTel.QueueSize = 2048
-	cfg.OTel.BatchTimeout = 5 * time.Second
-	cfg.OTel.ExportInterval = 10 * time.Second
 
 	return cfg
 }
@@ -343,13 +323,6 @@ func ValidateConfig(cfg *Config) error {
 		}
 	}
 
-	// OTel validation
-	if cfg.OTel.Enabled {
-		if cfg.OTel.Endpoint == "" {
-			return errors.New("otel.endpoint must be specified when otel is enabled")
-		}
-	}
-
 	return nil
 }
 
@@ -391,6 +364,9 @@ func rejectRemovedKeys(data []byte) error {
 		Providers map[string]map[string]any `yaml:"providers"`
 	}
 	_ = yaml.Unmarshal(data, &doc)
+	if _, ok := top["otel"]; ok {
+		return errors.New("config: `otel` is not supported; there is no trace exporter")
+	}
 	if _, ok := top["pipelines"]; ok {
 		return errors.New("config: `pipelines` is no longer supported; calls run stored agents. Create agents via /api/v1/agents and remove the pipelines section")
 	}

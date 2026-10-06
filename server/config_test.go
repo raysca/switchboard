@@ -129,6 +129,7 @@ func TestConfig_RejectsRemovedPipelineAndAgentKeys(t *testing.T) {
 	for _, tc := range []struct{ old, new, want string }{
 		{"\nobservability:", "\npipelines:\n  default:\n    stt: google.stt\n\nobservability:", "`pipelines` is no longer supported"},
 		{"\nobservability:", "\npipelines:\n\nobservability:", "`pipelines` is no longer supported"},
+		{"\nobservability:", "\notel:\n  enabled: true\n\nobservability:", "`otel` is not supported"},
 		{"\n  google_tts:\n", "\n  google_llm:\n    model: gemini\n  google_tts:\n", "providers.google_llm.model is no longer supported"},
 	} {
 		doc := strings.Replace(string(base), tc.old, tc.new, 1)
@@ -189,7 +190,7 @@ func TestResolveTokenSecret_ProductionRejectsPublicKey(t *testing.T) {
 	}
 }
 
-func TestConfig_RetentionAndOTel(t *testing.T) {
+func TestConfig_Retention(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 
 	if cfg.Retention.MetadataRetentionDays != 30 {
@@ -200,9 +201,6 @@ func TestConfig_RetentionAndOTel(t *testing.T) {
 	}
 	if cfg.Retention.BatchSize <= 0 {
 		t.Errorf("expected positive retention batch size, got %d", cfg.Retention.BatchSize)
-	}
-	if cfg.OTel.Enabled {
-		t.Errorf("expected OTel to be disabled by default")
 	}
 
 	// Validation tests
@@ -219,12 +217,5 @@ func TestConfig_RetentionAndOTel(t *testing.T) {
 	invalidContent.Retention.ContentRetentionDays = 30
 	if err := ValidateConfig(invalidContent); err == nil {
 		t.Errorf("expected error when content retention exceeds metadata retention")
-	}
-
-	invalidOTel := DefaultConfig(ProfileDevelopment)
-	invalidOTel.OTel.Enabled = true
-	invalidOTel.OTel.Endpoint = ""
-	if err := ValidateConfig(invalidOTel); err == nil {
-		t.Errorf("expected error when OTel is enabled without endpoint")
 	}
 }
