@@ -5,10 +5,6 @@ import (
 	"time"
 )
 
-var (
-	ErrInvalidBudget = errors.New("invalid resource budget configuration")
-)
-
 // ResourceBudget defines the operational bounds and limits for a voice session.
 type ResourceBudget struct {
 	MaxQueuedFrames    int           // Bounded data inbox capacity
@@ -18,7 +14,6 @@ type ResourceBudget struct {
 	MaxFrameProcessing time.Duration // Watchdog timeout for a single envelope delivery
 	MaxSessionDuration time.Duration // Maximum call duration before orderly termination
 	TeardownTimeout    time.Duration // Maximum wait time during session shutdown
-	MaxBufferedAudio   time.Duration // Maximum audio buffered before shedding
 }
 
 // DefaultResourceBudget returns a production-safe baseline budget.
@@ -31,7 +26,6 @@ func DefaultResourceBudget() ResourceBudget {
 		MaxFrameProcessing: 2 * time.Second,
 		MaxSessionDuration: 1 * time.Hour,
 		TeardownTimeout:    2 * time.Second,
-		MaxBufferedAudio:   256 * time.Millisecond,
 	}
 }
 

@@ -43,7 +43,6 @@ type AssistantContextProcessor struct {
 	finalUnitID     uint64 // 0 until final unit is emitted
 	finalSignalSent bool
 	llmComplete     bool // true once complete LLMText has been received
-	ttsStopped      bool
 	pendingUnits    map[uint64]string
 	deliveredUnits  map[uint64]string
 
@@ -52,7 +51,6 @@ type AssistantContextProcessor struct {
 	ackedFlushGen     atomic.Uint64
 	FlushAcks         atomic.Uint64
 	FlushTimeouts     atomic.Uint64
-	Degraded          atomic.Uint64
 	InterruptionCount atomic.Uint64
 }
 
@@ -100,7 +98,6 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		p.finalUnitID = 0
 		p.finalSignalSent = false
 		p.llmComplete = false
-		p.ttsStopped = false
 		p.pendingUnits = make(map[uint64]string)
 		p.deliveredUnits = make(map[uint64]string)
 		return e.PushDirection(f, dir)
@@ -130,17 +127,6 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 			return err
 		}
 		return p.segmentBuffer(e, true)
-
-	case FrameTTSStopped:
-		ts := f.(*TTSStoppedFrame)
-		if p.isStaleTurn(ts.Turn, ts.Gen) {
-			return nil
-		}
-		p.ttsStopped = true
-		if p.llmComplete && p.finalUnitID > 0 && p.allPendingDelivered() {
-			return p.commitTurn(e, false)
-		}
-		return e.PushDirection(f, dir)
 
 	case FrameWriteCompletion:
 		wc := f.(*WriteCompletionFrame)
@@ -487,7 +473,6 @@ func (p *AssistantContextProcessor) resetTurn() {
 	p.finalUnitID = 0
 	p.finalSignalSent = false
 	p.llmComplete = false
-	p.ttsStopped = false
 	p.pendingUnits = make(map[uint64]string)
 	p.deliveredUnits = make(map[uint64]string)
 }
@@ -504,7 +489,6 @@ func (p *AssistantContextProcessor) startFlushBarrierTimeout(gen uint64) {
 				return
 			}
 			p.FlushTimeouts.Add(1)
-			p.Degraded.Add(1)
 			// Non-fatal, generation 0 so the fence does not drop the degradation.
 			_ = p.session.Reenter(&ErrorFrame{
 				Err:   fmt.Errorf("flush barrier timed out for generation %d; session degraded", gen),

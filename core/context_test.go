@@ -572,9 +572,6 @@ func TestPhase2_FlushTimeoutFailsOrDegradesExplicitlyWithoutBlocking(t *testing.
 	if asstProc.FlushTimeouts.Load() != 1 {
 		t.Fatalf("expected FlushTimeouts == 1, got %d", asstProc.FlushTimeouts.Load())
 	}
-	if asstProc.Degraded.Load() != 1 {
-		t.Fatalf("expected flush timeout to degrade the session, degraded=%d", asstProc.Degraded.Load())
-	}
 
 	// Crucial invariant: session run loop is NOT blocked!
 	// Next turn must process normally

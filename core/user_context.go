@@ -30,7 +30,6 @@ type UserContextProcessor struct {
 	turnCounter        uint64
 	lastFinalTurn      string
 	lastFinalText      string
-	lastFinalGen       uint64
 	committedTurns     map[committedTurnKey]struct{}
 	committedOrder     []committedTurnKey // ring of committedTurns keys, oldest at committedNext
 	committedNext      int
@@ -140,7 +139,6 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	}
 	p.lastFinalTurn = turnID
 	p.lastFinalText = ft.Text
-	p.lastFinalGen = ft.Gen
 
 	p.TurnsCreated.Add(1)
 
