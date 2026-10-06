@@ -323,6 +323,7 @@ export function MCPView({ client, keyValue, initialServerId }: MCPViewProps) {
   const getToolDriftInfo = (tool: MCPToolDTO, serverId: string): boolean => {
     if (!agentsQuery.data) return false;
     for (const agent of agentsQuery.data) {
+      if (agent.archived) continue;
       const selections = agent.current_version?.mcp_tools ?? [];
       for (const sel of selections) {
         if (sel.mcp_server_id === serverId && sel.remote_name === tool.remote_name) {

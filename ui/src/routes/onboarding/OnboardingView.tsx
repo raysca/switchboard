@@ -128,7 +128,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     ["stt", "llm", "tts"].every((cap) => p.capabilities.includes(cap)),
   );
   const credentials = credentialsQuery.data ?? [];
-  const agents = agentsQuery.data ?? [];
+  const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
   // The credential connected in step 1: the first one whose provider can run every stage.
   const agentCredential = credentials.find((c) => providers.some((p) => p.id === c.provider));
 

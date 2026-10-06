@@ -332,9 +332,9 @@ describe("management client", () => {
         fetcher,
       );
 
-      const agents = await client.getAgents({ limit: 10, offset: 0 });
+      const agents = await client.getAgents();
       expect(agents).toHaveLength(1);
-      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/agents?limit=10&offset=0", expect.any(Object));
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/agents?limit=100", expect.any(Object));
 
       const created = await client.createAgent({
         name: "Customer Support",

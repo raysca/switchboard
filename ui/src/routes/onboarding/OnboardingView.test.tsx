@@ -251,4 +251,37 @@ describe("OnboardingView", () => {
     expect(screen.getByRole("link", { name: /manage agents/i })).toBeVisible();
     expect(screen.getByRole("link", { name: /manage providers/i })).toBeVisible();
   });
+
+  it("treats an install whose only agent is archived as having no agents", async () => {
+    const client = createMockClient({
+      getCredentials: vi.fn().mockResolvedValue([
+        {
+          id: "cred-1",
+          provider: "google",
+          masked_value: "••••••••1234",
+          validation_state: "valid",
+          capabilities: ["llm", "stt", "tts"],
+          created_at: "2026-10-05T12:00:00Z",
+          updated_at: "2026-10-05T12:00:00Z",
+        },
+      ]),
+      getAgents: vi.fn().mockResolvedValue([
+        {
+          id: "agent-1",
+          name: "Deleted Bot",
+          description: "",
+          enabled: true,
+          archived: true,
+          current_version: null,
+          readiness: { state: "ready", reasons: [] },
+          created_at: "2026-10-05T12:00:00Z",
+          updated_at: "2026-10-05T12:00:00Z",
+        },
+      ]),
+    });
+
+    renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
+    expect(await screen.findByRole("heading", { name: /step 2: create your first agent/i })).toBeVisible();
+    expect(screen.queryByText("Deleted Bot")).toBeNull();
+  });
 });

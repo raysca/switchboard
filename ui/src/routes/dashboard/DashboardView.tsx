@@ -129,7 +129,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
   }
 
   const op = operationsQuery.data;
-  const agents = agentsQuery.data ?? [];
+  const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
   const providers = providersQuery.data ?? [];
   const credentials = credentialsQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];

@@ -45,7 +45,8 @@ async function credentialFor(secret) {
   return existing?.id ?? (await api("POST", "/providers/credentials", { provider: "google", secret })).id;
 }
 
-const existing = (await api("GET", "/agents")).find((a) => a.name === AGENT);
+// Archived (deleted in the UI) agents are still listed; never reuse one.
+const existing = (await api("GET", "/agents?limit=100")).find((a) => !a.archived && a.name === AGENT);
 if (existing) {
   log(`using existing agent "${AGENT}"`);
   console.log(existing.id);

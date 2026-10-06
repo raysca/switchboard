@@ -595,16 +595,10 @@ export function createApiClient(
           discoveryEnvelope,
         )
       ).data,
-    getAgents: async (pagination?: { limit?: number; offset?: number }) => {
-      const params = new URLSearchParams();
-      if (pagination?.limit !== undefined)
-        params.set("limit", String(pagination.limit));
-      if (pagination?.offset !== undefined)
-        params.set("offset", String(pagination.offset));
-      const qs = params.toString();
-      return (await request(`/agents${qs ? `?${qs}` : ""}`, agentsEnvelope))
-        .data;
-    },
+    // ponytail: one page of the server max (100); page through when someone has more agents.
+    // Includes archived agents (sessions still name them); list views filter them out.
+    getAgents: async () =>
+      (await request("/agents?limit=100", agentsEnvelope)).data,
     createAgent: async (input: CreateAgentInput) =>
       (
         await request("/agents", agentEnvelope, {
