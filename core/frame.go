@@ -65,6 +65,7 @@ const (
 	FrameTranscriptAdvance      FrameType = 827
 	FrameTranscriptInvalidation FrameType = 828
 	FrameUsageMetrics           FrameType = 829
+	FramePlaybackState          FrameType = 830
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.

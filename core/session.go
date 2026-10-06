@@ -1000,6 +1000,12 @@ func frameTrace(f Frame) (string, map[string]any) {
 			attrs["usage.requests"] = *v.Requests
 		}
 		return "usage.metrics", attrs
+	case *PlaybackStateFrame:
+		attrs["state"] = string(v.State)
+		if v.UnitID > 0 {
+			attrs["unit_id"] = v.UnitID
+		}
+		return "playback.state", attrs
 	}
 	return "frame." + frameTraceLabel(f.Type()), attrs
 }
@@ -1063,6 +1069,8 @@ func traceTurnID(f Frame) TurnID {
 		return v.Turn
 	case *UsageMetricsFrame:
 		return TurnID(v.Turn)
+	case *PlaybackStateFrame:
+		return TurnID(v.Turn)
 	}
 	return ""
 }
@@ -1102,6 +1110,8 @@ func frameTraceLabel(frame FrameType) string {
 		return "tool_result"
 	case FrameUsageMetrics:
 		return "usage_metrics"
+	case FramePlaybackState:
+		return "playback_state"
 	default:
 		return strconv.Itoa(int(frame))
 	}

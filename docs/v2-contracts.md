@@ -522,4 +522,24 @@ type UsageMetricsFrame struct {
 - **Absence Integrity**: Unavailable units remain `nil` rather than zero-inflated (e.g. TTS omits token fields; LLM omits character/audio fields).
 - **Billing Boundary**: No billing or charging decisions are made inside core; usage is an observability/telemetry event mapped to trace attribute `usage.metrics`.
 
+### 2.12 Bot output and playback-state observer
+
+`core.PlaybackStateFrame` and `core.PlaybackTracker` provide fine-grained, ordered bot output and playback lifecycle observations:
+```go
+type PlaybackState string
+
+const (
+    PlaybackGenerating  PlaybackState = "generating"  // LLM / TTS generating speech content
+    PlaybackBuffered    PlaybackState = "buffered"    // Pacer has received/buffered audio frames
+    PlaybackPlaying     PlaybackState = "playing"     // First audio chunk dispatched to transport
+    PlaybackDrained     PlaybackState = "drained"     // Pacer queue completely drained to client
+    PlaybackInterrupted PlaybackState = "interrupted" // Output was cancelled or interrupted mid-playback
+    PlaybackCompleted   PlaybackState = "completed"   // Turn output cleanly finished
+)
+```
+- **Ordered Lifecycle**: `generating` → `buffered` → `playing` → (`drained` | `interrupted`) → `completed`.
+- **Fault & Cancellation Isolation**: Interruptions fence subsequent buffered/playing transitions for the interrupted turn while allowing new generations to restart cleanly.
+- **Empty Output**: Silent turns or pure tool-execution turns advance directly from `generating` to `completed` without spurious buffering or playing states.
+
+
 
