@@ -66,7 +66,7 @@ func DefaultConfig(issuer, audience string, secret []byte) Config {
 type Claims struct {
 	jwt.RegisteredClaims
 	Principal   string `json:"principal,omitempty"`
-	Pipeline    string `json:"pipeline,omitempty"`
+	AgentID     string `json:"agent_id,omitempty"` // stored agent the call runs
 	Scope       string `json:"scope,omitempty"`
 	IssuerEpoch string `json:"issuer_epoch,omitempty"`
 }

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"govoice/server/provider"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -105,32 +106,36 @@ func TestScenarioA_DeployedGoogleStack(t *testing.T) {
 }
 
 // Scenario C - Interchangeability (spec §41 Scenario C)
-// Verifies xAI LLM swapped with Google LLM in server pipeline with zero core changes.
+// Providers are chosen per stored agent; the server offers Google and xAI LLMs
+// interchangeably behind the same pipeline shape (see BuildCallPipeline tests).
 func TestScenarioC_InterchangeabilityDeployed(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Token.Secret = "test-scenario-secret-key-1234567890"
-
 	srv, err := NewServer(cfg)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
-
-	// Verify both Google and xAI pipelines exist in server configuration
-	if _, ok := srv.cfg.Pipelines["default"]; !ok {
-		t.Fatal("missing default (google) pipeline")
-	}
-	if _, ok := srv.cfg.Pipelines["xai"]; !ok {
-		t.Fatal("missing xai pipeline")
-	}
-	if srv.cfg.Pipelines["xai"].LLM != "xai.llm" {
-		t.Fatalf("expected xai pipeline to use xai.llm, got: %s", srv.cfg.Pipelines["xai"].LLM)
+	for _, stage := range [][2]string{{"google", "stt"}, {"google", "llm"}, {"google", "tts"}, {"xai", "llm"}} {
+		if !srv.registry.Supports(stage[0], stage[1]) {
+			t.Fatalf("server cannot run %s %s", stage[0], stage[1])
+		}
 	}
 }
 
+// xAI speech is experimental: neither offered to agents nor buildable by default.
 func TestFullXAI_NotAdvertised(t *testing.T) {
-	cfg := DefaultConfig(ProfileDevelopment)
-	if _, ok := cfg.Pipelines["full_xai"]; ok {
-		t.Fatal("xAI speech pipeline must not be part of the default server")
+	srv, err := NewServer(DefaultConfig(ProfileDevelopment))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What agents are offered must match what this build can run.
+	reg := provider.NewRegistry(provider.Definitions())
+	for _, stage := range []string{"stt", "tts"} {
+		built := srv.registry.Supports("xai", stage)
+		advertised := reg.Supports("xai", provider.Capability(stage))
+		if built != xaiSpeechEnabled || advertised != xaiSpeechEnabled {
+			t.Fatalf("xai %s: built=%v advertised=%v, want %v", stage, built, advertised, xaiSpeechEnabled)
+		}
 	}
 }
 

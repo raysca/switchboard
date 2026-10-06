@@ -2,13 +2,13 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"strings"
 	"sync"
 
 	"govoice/core"
+	coretools "govoice/core/tools"
 	coretranscript "govoice/core/transcript"
 	"govoice/providers/google"
 	"govoice/providers/xai"
@@ -16,14 +16,42 @@ import (
 )
 
 // ProcessorFactory instantiates a core.Processor for a specific provider.
-type ProcessorFactory func(cfg *Config) (core.Processor, error)
+// StageSpec is one provider stage of a call, resolved from the stored agent.
+// Secret is the decrypted credential for this stage's provider only.
+type StageSpec struct {
+	Provider     string
+	Model        string
+	Language     string
+	Voice        string
+	SystemPrompt string
+	Secret       []byte
 
-// Registry manages available provider factories and builds pipelines.
+	// LLM stage only: the agent's captured MCP tools and the call history
+	// the tool loop records into.
+	Tools        []core.ToolDefinition
+	ToolExecutor core.ToolExecutor
+	History      *core.ConversationContext
+}
+
+// CallSpec is everything a call needs, resolved from a pinned agent version.
+type CallSpec struct {
+	STT, LLM, TTS StageSpec
+	MaxMessages   int
+	MaxTokens     int
+	// ToolDefinitions and ToolExecutor carry the agent's captured MCP tools.
+	ToolDefinitions []core.ToolDefinition
+	ToolExecutor    core.ToolExecutor
+}
+
+// ProcessorFactory builds one stage processor. cfg supplies provider
+// infrastructure settings only (project, region, endpoints, quotas); models,
+// voices, prompts and credentials come from the agent via spec.
+type ProcessorFactory func(cfg *Config, spec StageSpec) (core.Processor, error)
+
+// Registry maps "<provider>.<stage>" to processor factories.
 type Registry struct {
-	mu         sync.RWMutex
-	factories  map[string]ProcessorFactory
-	live       map[string]bool
-	assumeLive bool
+	mu        sync.RWMutex
+	factories map[string]ProcessorFactory
 
 	googleLLMBreaker *google.CircuitBreaker
 	googleTTSBreaker *google.CircuitBreaker
@@ -31,54 +59,41 @@ type Registry struct {
 	xaiBreaker       *xai.CircuitBreaker
 }
 
-// NewRegistry initializes the provider registry with default factories.
+func factoryKey(provider, stage string) string { return provider + "." + stage }
+
 func NewRegistry() *Registry {
 	r := &Registry{
 		factories:        make(map[string]ProcessorFactory),
-		live:             make(map[string]bool),
 		googleLLMBreaker: google.NewCircuitBreaker(google.DefaultCircuitConfig()),
 		googleTTSBreaker: google.NewCircuitBreaker(google.DefaultCircuitConfig()),
 		googleSTTBreaker: google.NewCircuitBreaker(google.DefaultCircuitConfig()),
 		xaiBreaker:       xai.NewCircuitBreaker(xai.DefaultCircuitConfig()),
 	}
 
-	// Register default production providers
-	r.Register("google.stt", func(cfg *Config) (core.Processor, error) {
+	r.Register("google.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		material, err := google.CredentialMaterialFromSecret(spec.Secret)
+		if err != nil {
+			return nil, fmt.Errorf("google.stt: %w", err)
+		}
 		sttCfg := google.DefaultSTTConfig()
-		if cfg.Providers.GoogleSTT.Model != "" {
-			sttCfg.Model = cfg.Providers.GoogleSTT.Model
+		if spec.Model != "" {
+			sttCfg.Model = spec.Model
 		}
-		if cfg.Providers.GoogleSTT.LanguageCode != "" {
-			sttCfg.LanguageCode = cfg.Providers.GoogleSTT.LanguageCode
+		if spec.Language != "" {
+			sttCfg.LanguageCode = spec.Language
 		}
-		if cfg.Providers.GoogleSTT.RotationThreshold > 0 {
-			sttCfg.StreamRotationThreshold = cfg.Providers.GoogleSTT.RotationThreshold
+		infra := cfg.Providers.GoogleSTT
+		if infra.RotationThreshold > 0 {
+			sttCfg.StreamRotationThreshold = infra.RotationThreshold
 		}
-		if cfg.Providers.GoogleSTT.CredentialsFile != "" {
-			sttCfg.CredentialsFile = cfg.Providers.GoogleSTT.CredentialsFile
+		if infra.Location != "" {
+			sttCfg.Location = infra.Location
 		}
-		if cfg.Providers.GoogleSTT.ProjectID != "" {
-			sttCfg.ProjectID = cfg.Providers.GoogleSTT.ProjectID
+		sttCfg.ProjectID = infra.ProjectID
+		if sttCfg.ProjectID == "" {
+			sttCfg.ProjectID = material.ProjectID
 		}
-		if cfg.Providers.GoogleSTT.Location != "" {
-			sttCfg.Location = cfg.Providers.GoogleSTT.Location
-		}
-		if sttCfg.CredentialsFile == "" {
-			if env := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); env != "" {
-				sttCfg.CredentialsFile = env
-			}
-		}
-		if sttCfg.ProjectID == "" && sttCfg.CredentialsFile != "" {
-			if project := projectIDFromCredentials(sttCfg.CredentialsFile); project != "" {
-				sttCfg.ProjectID = project
-			}
-		}
-		if apiKey := os.Getenv("GOOGLE_API_KEY"); apiKey != "" {
-			sttCfg.APIKey = apiKey
-		}
-		if sttCfg.CredentialsFile == "" && sttCfg.APIKey == "" {
-			return nil, fmt.Errorf("google.stt: no credentials")
-		}
+		sttCfg.CredentialsJSON, sttCfg.APIKey = material.ServiceAccountJSON, material.APIKey
 		sttCfg.CircuitBreaker = r.googleSTTBreaker
 		opener, err := google.NewRealGoogleSTTOpener(context.Background(), sttCfg)
 		if err != nil {
@@ -88,66 +103,47 @@ func NewRegistry() *Registry {
 		return google.NewSTTProcessor(sttCfg)
 	})
 
-	r.Register("google.llm", func(cfg *Config) (core.Processor, error) {
-		llmCfg := google.DefaultLLMConfig()
-		if cfg.Providers.GoogleLLM.Model != "" {
-			llmCfg.Model = cfg.Providers.GoogleLLM.Model
+	r.Register("google.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		material, err := google.CredentialMaterialFromSecret(spec.Secret)
+		if err != nil {
+			return nil, fmt.Errorf("google.llm: %w", err)
 		}
-		if cfg.Providers.GoogleLLM.SystemPrompt != "" {
-			llmCfg.SystemPrompt = cfg.Providers.GoogleLLM.SystemPrompt
+		cc := google.CredentialConfig{Mode: google.AuthModeGeminiAPIKey, APIKey: material.APIKey}
+		if len(material.ServiceAccountJSON) > 0 {
+			cc = google.CredentialConfig{Mode: google.AuthModeVertexADC, CredentialsJSON: material.ServiceAccountJSON, ProductionProfile: cfg.Profile == ProfileProduction}
 		}
-		apiKeyVar := cfg.Providers.GoogleLLM.APIKeyEnv
-		if apiKeyVar == "" {
-			apiKeyVar = "GOOGLE_API_KEY"
-		}
-		var creds *google.ResolvedCredentials
-		var credErr error
-		if apiKey := os.Getenv(apiKeyVar); apiKey != "" {
-			creds, credErr = google.ResolveCredentials(google.CredentialConfig{
-				Mode:   google.AuthModeGeminiAPIKey,
-				APIKey: apiKey,
-			})
-		} else if credFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credFile != "" {
-			creds, credErr = google.ResolveCredentials(google.CredentialConfig{
-				Mode:                   google.AuthModeVertexADC,
-				CredentialsFile:        credFile,
-				AllowInsecureFilePerms: cfg.InsecureOverrides.SkipCredentialPermsCheck,
-				ProductionProfile:      cfg.Profile == ProfileProduction,
-			})
-		} else {
-			return nil, fmt.Errorf("google.llm: no credentials (set %s or GOOGLE_APPLICATION_CREDENTIALS)", apiKeyVar)
-		}
-		if credErr != nil {
-			return nil, fmt.Errorf("google.llm: %w", credErr)
+		creds, err := google.ResolveCredentials(cc)
+		if err != nil {
+			return nil, fmt.Errorf("google.llm: %w", err)
 		}
 		client, err := google.NewRealGoogleLLMClient(context.Background(), creds)
 		if err != nil {
 			return nil, fmt.Errorf("google.llm: %w", err)
+		}
+		llmCfg := google.DefaultLLMConfig()
+		llmCfg.Model, llmCfg.SystemPrompt = spec.Model, spec.SystemPrompt
+		if len(spec.Tools) > 0 {
+			llmCfg.ToolDefinitions, llmCfg.ToolExecutor, llmCfg.ToolHistory = spec.Tools, spec.ToolExecutor, spec.History
+			llmCfg.ToolLoopConfig = coretools.DefaultToolLoopConfig()
 		}
 		llmCfg.Client = client
 		llmCfg.CircuitBreaker = r.googleLLMBreaker
 		return google.NewLLMProcessor(llmCfg)
 	})
 
-	r.Register("google.tts", func(cfg *Config) (core.Processor, error) {
+	r.Register("google.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		material, err := google.CredentialMaterialFromSecret(spec.Secret)
+		if err != nil {
+			return nil, fmt.Errorf("google.tts: %w", err)
+		}
 		ttsCfg := google.DefaultTTSConfig()
-		if cfg.Providers.GoogleTTS.Voice != "" {
-			ttsCfg.Voice = cfg.Providers.GoogleTTS.Voice
+		if spec.Voice != "" {
+			ttsCfg.Voice = spec.Voice
 		}
 		if cfg.Providers.GoogleTTS.SampleRate > 0 {
 			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
 		}
-		if cfg.Providers.GoogleTTS.CredentialsFile != "" {
-			ttsCfg.CredentialsFile = cfg.Providers.GoogleTTS.CredentialsFile
-		} else if env := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); env != "" {
-			ttsCfg.CredentialsFile = env
-		}
-		if apiKey := os.Getenv("GOOGLE_API_KEY"); apiKey != "" {
-			ttsCfg.APIKey = apiKey
-		}
-		if ttsCfg.CredentialsFile == "" && ttsCfg.APIKey == "" {
-			return nil, fmt.Errorf("google.tts: no credentials")
-		}
+		ttsCfg.CredentialsJSON, ttsCfg.APIKey = material.ServiceAccountJSON, material.APIKey
 		client, err := google.NewRealGoogleTTSClient(context.Background(), ttsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("google.tts: %w", err)
@@ -157,92 +153,96 @@ func NewRegistry() *Registry {
 		return google.NewTTSProcessor(ttsCfg)
 	})
 
-	r.Register("xai.llm", func(cfg *Config) (core.Processor, error) {
-		model := cfg.Providers.XAILLM.Model
-		if envModel := os.Getenv("XAI_MODEL"); envModel != "" {
-			model = envModel
+	r.Register("xai.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		key, err := xaiKey(spec.Secret)
+		if err != nil {
+			return nil, fmt.Errorf("xai.llm: %w", err)
 		}
-		endpoint := cfg.Providers.XAILLM.Endpoint
-		if envEndpoint := os.Getenv("XAI_ENDPOINT"); envEndpoint != "" {
-			endpoint = envEndpoint
+		xaiCfg := xai.Config{Model: spec.Model, Endpoint: cfg.Providers.XAILLM.Endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: r.xaiBreaker}
+		if len(spec.Tools) > 0 {
+			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, coretools.DefaultToolLoopConfig())
+			if err != nil {
+				return nil, fmt.Errorf("xai.llm tools: %w", err)
+			}
+			xaiCfg.ToolDefinitions, xaiCfg.ToolLoop = spec.Tools, loop
 		}
-		xaiCfg := xai.Config{
-			Model:        model,
-			Endpoint:     endpoint,
-			SystemPrompt: cfg.Providers.XAILLM.SystemPrompt,
-		}
-		apiKeyVar := cfg.Providers.XAILLM.APIKeyEnv
-		if apiKeyVar == "" {
-			apiKeyVar = "XAI_API_KEY"
-		}
-		xaiCfg.APIKey = os.Getenv(apiKeyVar)
-		if xaiCfg.APIKey == "" {
-			return nil, fmt.Errorf("xai.llm: %s is empty", apiKeyVar)
-		}
-		xaiCfg.CircuitBreaker = r.xaiBreaker
 		return xai.NewProcessor(xaiCfg)
 	})
+
+	registerXAISpeech(r)
 
 	return r
 }
 
-// Register adds or overrides a provider processor factory.
+// xaiKey validates a stored xAI API key: a single non-empty token.
+func xaiKey(secret []byte) (string, error) {
+	key := strings.TrimSpace(string(secret))
+	if key == "" || strings.ContainsAny(key, " \t\r\n") {
+		return "", errors.New("stored xAI credential must be a single API key")
+	}
+	return key, nil
+}
+
+// Register adds or overrides a provider stage factory ("<provider>.<stage>").
 func (r *Registry) Register(name string, factory ProcessorFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.factories[name] = factory
 }
 
-// BuildPipeline constructs the programmatic pipeline for a named pipeline configuration.
-func (r *Registry) BuildPipeline(
-	cfg *Config,
-	pipelineName string,
-	vadProc *vad.Processor,
-	transportOutput core.Processor,
-) (*core.Pipeline, *core.ConversationContext, error) {
+// Supports reports whether a factory exists for provider and stage.
+func (r *Registry) Supports(provider, stage string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	_, ok := r.factories[factoryKey(provider, stage)]
+	return ok
+}
 
-	pCfg, ok := cfg.Pipelines[pipelineName]
-	if !ok {
-		return nil, nil, fmt.Errorf("pipeline configuration %q not found", pipelineName)
+// BuildCallPipeline builds VAD -> STT -> transcript -> user context -> LLM ->
+// assistant context -> TTS -> transport for one call of a stored agent.
+func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, *core.ConversationContext, error) {
+	build := func(stage string, spec StageSpec) (core.Processor, error) {
+		r.mu.RLock()
+		factory, ok := r.factories[factoryKey(spec.Provider, stage)]
+		r.mu.RUnlock()
+		if !ok {
+			return nil, fmt.Errorf("%s provider %q is not available", stage, spec.Provider)
+		}
+		return factory(cfg, spec)
 	}
+	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: call.MaxMessages, MaxTokens: call.MaxTokens})
+	// Processors hold provider clients; close those already built if a later
+	// stage fails, or a bad credential would leak a client per connect attempt.
+	var built []core.Processor
+	fail := func(err error) (*core.Pipeline, *core.ConversationContext, error) {
+		for _, p := range built {
+			if c, ok := p.(interface{ Close() error }); ok {
+				_ = c.Close()
+			}
+		}
+		return nil, nil, err
+	}
+	sttProc, err := build("stt", call.STT)
+	if err != nil {
+		return fail(fmt.Errorf("create stt processor: %w", err))
+	}
+	built = append(built, sttProc)
+	llmSpec := call.LLM
+	llmSpec.Tools, llmSpec.ToolExecutor, llmSpec.History = call.ToolDefinitions, call.ToolExecutor, ctxPool
+	llmProc, err := build("llm", llmSpec)
+	if err != nil {
+		return fail(fmt.Errorf("create llm processor: %w", err))
+	}
+	built = append(built, llmProc)
+	ttsProc, err := build("tts", call.TTS)
+	if err != nil {
+		return fail(fmt.Errorf("create tts processor: %w", err))
+	}
+	built = append(built, ttsProc)
 
-	sttFactory, ok := r.factories[pCfg.STT]
-	if !ok {
-		return nil, nil, fmt.Errorf("stt provider factory %q not registered", pCfg.STT)
-	}
-	llmFactory, ok := r.factories[pCfg.LLM]
-	if !ok {
-		return nil, nil, fmt.Errorf("llm provider factory %q not registered", pCfg.LLM)
-	}
-	ttsFactory, ok := r.factories[pCfg.TTS]
-	if !ok {
-		return nil, nil, fmt.Errorf("tts provider factory %q not registered", pCfg.TTS)
-	}
-
-	sttProc, err := sttFactory(cfg)
+	transcriptProc, err := coretranscript.NewProcessor(coretranscript.DefaultConfig())
 	if err != nil {
-		return nil, nil, fmt.Errorf("create stt processor: %w", err)
-	}
-	llmProc, err := llmFactory(cfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create llm processor: %w", err)
-	}
-	ttsProc, err := ttsFactory(cfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create tts processor: %w", err)
-	}
-
-	// Build context and bounded context processors
-	ctxPool := core.NewConversationContext(core.ContextConfig{
-		MaxMessages: pCfg.MaxMessages,
-		MaxTokens:   pCfg.MaxTokens,
-	})
-	transcriptCfg := coretranscript.DefaultConfig()
-	transcriptProc, err := coretranscript.NewProcessor(transcriptCfg)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create transcript finalizer: %w", err)
+		return fail(fmt.Errorf("create transcript finalizer: %w", err))
 	}
 	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	asstCtxProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
@@ -252,66 +252,11 @@ func (r *Registry) BuildPipeline(
 		sink.SetContextProvider(func() []core.Message { return ctxPool.Messages() })
 	}
 
-	// Assemble pipeline: VAD -> STT -> Transcript finalizer -> UserContext -> LLM -> AssistantContext -> TTS -> TransportOutput
-	pipe, err := core.NewPipeline(
-		vadProc,
-		sttProc,
-		transcriptProc,
-		userCtxProc,
-		llmProc,
-		asstCtxProc,
-		ttsProc,
-		transportOutput,
-	)
+	pipe, err := core.NewPipeline(vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc, transportOutput)
 	if err != nil {
-		return nil, nil, fmt.Errorf("assemble pipeline: %w", err)
+		return fail(fmt.Errorf("assemble pipeline: %w", err))
 	}
-
 	return pipe, ctxPool, nil
-}
-
-// Prepare constructs every configured provider once. Production startup must
-// fail if this returns an error. A successful provider is marked live.
-func (r *Registry) Prepare(cfg *Config) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	seen := map[string]struct{}{}
-	var errs []error
-	for _, p := range cfg.Pipelines {
-		for _, name := range []string{p.STT, p.LLM, p.TTS} {
-			if _, ok := seen[name]; ok {
-				continue
-			}
-			seen[name] = struct{}{}
-			factory, ok := r.factories[name]
-			if !ok {
-				r.live[name] = false
-				errs = append(errs, fmt.Errorf("provider %q is not registered", name))
-				continue
-			}
-			proc, err := factory(cfg)
-			if err != nil || proc == nil {
-				r.live[name] = false
-				if err == nil {
-					err = fmt.Errorf("provider %q returned nil", name)
-				}
-				errs = append(errs, err)
-				continue
-			}
-			r.live[name] = true
-			if closer, ok := proc.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
-		}
-	}
-	if r.pipelinesLiveLocked(cfg) {
-		return nil
-	}
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-	return nil
 }
 
 // BindMetrics copies circuit transitions onto the process metrics used by /ready.
@@ -331,48 +276,6 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	r.xaiBreaker.SetObserver(func(st xai.CircuitState) {
 		m.LLMCircuitStateXAI.Store(circuitCode(string(st)))
 	})
-}
-
-func (r *Registry) pipelinesLiveLocked(cfg *Config) bool {
-	if r.assumeLive {
-		return true
-	}
-	for _, p := range cfg.Pipelines {
-		if r.live[p.STT] && r.live[p.LLM] && r.live[p.TTS] {
-			return true
-		}
-	}
-	return false
-}
-
-// PipelinesLive reports whether every provider in every pipeline initialized.
-func (r *Registry) PipelinesLive(cfg *Config) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.pipelinesLiveLocked(cfg)
-}
-
-func (r *Registry) pipelineProvidersLive(p PipelineConfig) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if r.assumeLive {
-		return true
-	}
-	return r.live[p.STT] && r.live[p.LLM] && r.live[p.TTS]
-}
-
-func projectIDFromCredentials(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var doc struct {
-		ProjectID string `json:"project_id"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return ""
-	}
-	return doc.ProjectID
 }
 
 func circuitCode(state string) int64 {

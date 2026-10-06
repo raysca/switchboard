@@ -56,7 +56,7 @@ func TestReady_CompoundReadinessSemantics(t *testing.T) {
 
 	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
 	srv.SetVADExecutor(mockExec)
-	srv.registry.assumeLive = true
+	enableTestManagement(t, srv)
 
 	// 1. Before Start (ready == false)
 	req := httptest.NewRequest("GET", "/ready", nil)
@@ -133,67 +133,35 @@ func TestNetworkSurface_PublicAdminSeparation(t *testing.T) {
 	}
 }
 
-func TestReady_CircuitsAndPipelineUsability(t *testing.T) {
-	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.Pipelines = map[string]PipelineConfig{
-		"default": {STT: "google.stt", LLM: "google.llm", TTS: "google.tts", MaxMessages: 10, MaxTokens: 1000},
-		"xai":     {STT: "google.stt", LLM: "xai.llm", TTS: "google.tts", MaxMessages: 10, MaxTokens: 1000},
-	}
-
-	srv, err := NewServer(cfg)
+func TestReady_RequiresAgentStoreAndReportsCircuits(t *testing.T) {
+	srv, err := NewServer(DefaultConfig(ProfileDevelopment))
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
-
-	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
-	srv.SetVADExecutor(mockExec)
-	srv.registry.assumeLive = true
+	srv.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	srv.ready.Store(true)
 
-	// Both pipelines usable -> 200
-	req := httptest.NewRequest("GET", "/ready", nil)
-	w := httptest.NewRecorder()
-	srv.adminMux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 when all circuits closed, got %d", w.Code)
+	ready := func() (int, map[string]any) {
+		w := httptest.NewRecorder()
+		srv.adminMux.ServeHTTP(w, httptest.NewRequest("GET", "/ready", nil))
+		var body map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		return w.Code, body
 	}
-
-	// Trip Google LLM circuit (open = 1). xAI pipeline remains usable -> still 200!
+	// Calls run stored agents, so a host without the agent store is not ready.
+	if code, body := ready(); code != http.StatusServiceUnavailable {
+		t.Fatalf("ready without agent store: %d %v", code, body)
+	}
+	enableTestManagement(t, srv)
+	if code, body := ready(); code != http.StatusOK {
+		t.Fatalf("ready with agent store: %d %v", code, body)
+	}
+	// An open provider circuit is reported but only affects agents using that
+	// provider, so the host stays ready.
 	srv.metrics.LLMCircuitStateGoogle.Store(1)
-	w = httptest.NewRecorder()
-	srv.adminMux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 when alternate pipeline (xai) is usable, got %d", w.Code)
-	}
-
-	var resp struct {
-		Status          string            `json:"status"`
-		UsablePipelines []string          `json:"usable_pipelines"`
-		Circuits        map[string]string `json:"circuits"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(resp.UsablePipelines) != 1 || resp.UsablePipelines[0] != "xai" {
-		t.Fatalf("expected usable pipelines to be [xai], got: %v", resp.UsablePipelines)
-	}
-	if resp.Circuits["google_llm"] != "open" {
-		t.Fatalf("expected google_llm circuit to report open, got: %s", resp.Circuits["google_llm"])
-	}
-
-	// Now trip xAI LLM circuit as well (open = 1). NO pipeline is usable -> 503!
-	srv.metrics.LLMCircuitStateXAI.Store(1)
-	w = httptest.NewRecorder()
-	srv.adminMux.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when no configured pipeline is usable, got %d", w.Code)
-	}
-
-	// Recover Google LLM circuit (closed = 0) -> 200
-	srv.metrics.LLMCircuitStateGoogle.Store(0)
-	w = httptest.NewRecorder()
-	srv.adminMux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 when Google LLM circuit recovers, got %d", w.Code)
+	code, body := ready()
+	circuits, _ := body["circuits"].(map[string]any)
+	if code != http.StatusOK || circuits["google_llm"] != "open" {
+		t.Fatalf("open circuit: %d %v", code, body)
 	}
 }

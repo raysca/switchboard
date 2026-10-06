@@ -1,7 +1,12 @@
 package server
 
 import (
+	"encoding/json"
+	"os"
+
 	"encoding/base64"
+	"govoice/server/agent"
+	"govoice/server/credential"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -41,12 +46,90 @@ func TestEnableManagementFailsClosedWithoutSecrets(t *testing.T) {
 	s := apiTestServer(t)
 	s.cfg.Storage.Dialect = "sqlite"
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
-	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "")
-	if err := s.EnableManagement(t.Context()); err == nil {
-		t.Fatal("expected failure without a credential keyring")
-	}
 	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "k1:short")
 	if err := s.EnableManagement(t.Context()); err == nil {
 		t.Fatal("expected failure with an invalid key")
+	}
+}
+
+// enableTestManagement wires a throwaway SQLite agent store into s.
+func enableTestManagement(t *testing.T, s *Server) {
+	t.Helper()
+	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
+	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "k1:"+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
+	s.cfg.Storage.Dialect = "sqlite"
+	if err := s.EnableManagement(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.closeManagement)
+}
+
+// readyTestAgent enables the agent store and creates a complete agent backed
+// by a stored Google credential; it returns the agent ID.
+func readyTestAgent(t *testing.T, s *Server) string {
+	t.Helper()
+	if s.agents == nil {
+		enableTestManagement(t, s)
+	}
+	cred, err := s.credentials.Create(t.Context(), credential.CreateInput{Provider: "google", Secret: "test-google-api-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Support", Config: json.RawMessage(strings.ReplaceAll(
+		`{"stt":{"provider":"google","model":"chirp_2","credential_id":"CRED"},"llm":{"provider":"google","model":"gemini-2.0-flash","credential_id":"CRED"},"tts":{"provider":"google","voice":"en-US-Journey-F","credential_id":"CRED"}}`, "CRED", cred.ID))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("test agent not ready: %+v", a.Readiness)
+	}
+	return a.ID
+}
+
+func credentialInput(provider, secret string) credential.CreateInput {
+	return credential.CreateInput{Provider: provider, Secret: secret}
+}
+
+// Development needs no setup: a local store and a persisted key are created,
+// and credentials stored in one run are still decryptable in the next.
+func TestDevelopmentAutoCreatesLocalStoreAndKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GOVOICE_DEV_DIR", dir)
+	t.Setenv("GOVOICE_DATABASE_DSN", "")
+	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "")
+
+	first := apiTestServer(t)
+	if err := first.EnableManagement(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cred, err := first.credentials.Create(t.Context(), credential.CreateInput{Provider: "google", Secret: "dev-google-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.closeManagement()
+	info, err := os.Stat(filepath.Join(dir, "credential.key"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("dev key file: %v mode=%v", err, info.Mode())
+	}
+
+	second := apiTestServer(t)
+	if err := second.EnableManagement(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(second.closeManagement)
+	if got, err := second.credentials.ProviderSecret(t.Context(), cred.ID, "google"); err != nil || string(got) != "dev-google-key" {
+		t.Fatalf("credential not readable after restart: %q %v", got, err)
+	}
+}
+
+func TestProductionRequiresExplicitStoreAndKey(t *testing.T) {
+	t.Setenv("GOVOICE_DEV_DIR", t.TempDir())
+	t.Setenv("GOVOICE_DATABASE_DSN", "")
+	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "")
+	s := apiTestServer(t)
+	s.cfg.Profile = ProfileProduction
+	if err := s.EnableManagement(t.Context()); err == nil {
+		s.closeManagement()
+		t.Fatal("production enabled storage without explicit DSN and keyring")
 	}
 }

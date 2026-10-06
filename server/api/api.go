@@ -50,7 +50,7 @@ type Pagination struct {
 
 type VoiceTokenRequest struct {
 	Principal string `json:"principal"`
-	Pipeline  string `json:"pipeline"`
+	AgentID   string `json:"agent_id"`
 }
 type VoiceTokenResponse struct {
 	Token     string    `json:"token"`

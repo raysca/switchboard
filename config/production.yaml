@@ -48,44 +48,19 @@ vad:
   ort_lib_path: "/opt/govoice/lib/libonnxruntime.so"
   queue_cap: 8192
 
+# Provider infrastructure only. Models, voices, prompts and credentials belong to
+# stored agents and provider credentials (see /api/v1/agents, /api/v1/providers).
 providers:
   google_stt:
     project_id: ""
     location: "us-central1"
-    model: "chirp_2"
-    language_code: "en-US"
     max_streams: 250
     rotation_threshold: 240s
     rotation_headroom_multiplier: 2.0
-    credentials_file: ""
-  google_llm:
-    model: "gemini-2.5-flash"
-    auth_mode: "vertex_adc"
-    system_prompt: "You are a professional voice assistant."
-    api_key_env: "GOOGLE_API_KEY"
   google_tts:
-    voice: "en-US-Journey-F"
     sample_rate: 24000
-    credentials_file: ""
   xai_llm:
-    model: "grok-2-1212"
     endpoint: "https://api.x.ai/v1/responses"
-    api_key_env: "XAI_API_KEY"
-    system_prompt: "You are a professional voice assistant powered by Grok."
-
-pipelines:
-  default:
-    stt: "google.stt"
-    llm: "google.llm"
-    tts: "google.tts"
-    max_messages: 20
-    max_tokens: 4000
-  xai:
-    stt: "google.stt"
-    llm: "xai.llm"
-    tts: "google.tts"
-    max_messages: 20
-    max_tokens: 4000
 
 observability:
   log_level: "info"
@@ -93,14 +68,14 @@ observability:
   timeline_max_events: 1000
   timeline_ttl: 15m
 
-# Durable management plane (agents, provider credentials, MCP servers, session
-# history). Disabled while dialect is empty. When enabled the server requires:
+# Agent store (required): calls run stored agents with stored provider
+# credentials. The server requires:
 #   GOVOICE_DATABASE_DSN     storage DSN (file path for sqlite, URL for postgres)
 #   GOVOICE_CREDENTIAL_KEYS  "id:base64(32-byte key)[,id:...]", first is active
 storage:
-  dialect: ""   # "sqlite" | "postgres"
+  dialect: "postgres"
 
-# Content/metadata purge job; only runs when storage is enabled.
+# Content/metadata purge job.
 retention:
   enabled: true
   interval: 1h

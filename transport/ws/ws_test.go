@@ -850,55 +850,49 @@ func TestSecurity_ClientIPSpoofing_RightToLeftTraversal(t *testing.T) {
 	}
 }
 
-func TestPipeline_AuthorizationCheck(t *testing.T) {
+// The agent a call runs comes only from the signed token; query parameters
+// (including the removed `pipeline`) cannot redirect a call.
+func TestAgentID_ComesOnlyFromToken(t *testing.T) {
 	now := time.Now()
 	val, err := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	serverCfg := ws.DefaultServerConfig(val)
-	srv := ws.NewServer(serverCfg)
-
+	srv := ws.NewServer(ws.DefaultServerConfig(val))
+	got := make(chan string, 1)
+	srv.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
+		got <- conn.AgentID()
+		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		return core.NewSession(1, pipe, core.DefaultResourceBudget())
+	}
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	// Mint token with pipeline: "xai"
 	claims := token.Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			ID:        "jti-pipe-xai",
-			Issuer:    testIssuer,
-			Audience:  jwt.ClaimStrings{testAudience},
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
+			ID: "jti-agent", Issuer: testIssuer, Audience: jwt.ClaimStrings{testAudience}, Subject: "user-1",
+			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
 		},
 		Principal: "user-1",
-		Pipeline:  "xai",
+		AgentID:   "agent-from-token",
 	}
-	claims.Subject = "user-1"
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokStr, _ := tok.SignedString([]byte(testSecret))
+	tokStr, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testSecret))
 
-	// 1. Client requests authorized pipeline "xai": succeeds
-	wsURL := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=xai", ts.Listener.Addr().String(), tokStr)
-	c, _, err := websocket.Dial(context.Background(), wsURL, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wsURL := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=other&agent_id=other", ts.Listener.Addr().String(), tokStr)
+	c, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
-		t.Fatalf("expected connection to succeed for authorized pipeline, got: %v", err)
+		t.Fatal(err)
 	}
-	c.Close(websocket.StatusNormalClosure, "")
-
-	// 2. Client requests unauthorized override "default": rejected with 403
-	claims2 := claims
-	claims2.ID = "jti-pipe-xai-2"
-	tok2 := jwt.NewWithClaims(jwt.SigningMethodHS256, claims2)
-	tokStr2, _ := tok2.SignedString([]byte(testSecret))
-
-	wsURLUnauthorized := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=default", ts.Listener.Addr().String(), tokStr2)
-	_, resp, err := websocket.Dial(context.Background(), wsURLUnauthorized, nil)
-	if err == nil {
-		t.Fatal("expected unauthorized pipeline request to fail, but succeeded")
-	}
-	if resp != nil && resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected 403 Forbidden, got %d", resp.StatusCode)
+	defer c.Close(websocket.StatusNormalClosure, "")
+	performHandshake(t, ctx, c)
+	select {
+	case id := <-got:
+		if id != "agent-from-token" {
+			t.Fatalf("call runs agent %q, want the token's agent", id)
+		}
+	case <-ctx.Done():
+		t.Fatal("session never allocated")
 	}
 }

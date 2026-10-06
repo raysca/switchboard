@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"govoice/server/agent"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,7 +82,8 @@ func TestAPIAuthRouteSeparationAndEnvelope(t *testing.T) {
 func TestAPITokenExpiryScopeReplay(t *testing.T) {
 	s := apiTestServer(t)
 	key := "management-test-key-32-bytes-long-and-separate"
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", key, `{"principal":"alice","pipeline":"default"}`)
+	agentID := readyTestAgent(t, s)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", key, `{"principal":"alice","agent_id":"`+agentID+`"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("issue status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -160,7 +162,8 @@ func TestAPITokenProductionDefaultKeyID(t *testing.T) {
 	}
 	s.voiceKeyID = configured.KeyID
 	s.voiceEpoch = s.validator.ScopeEpoch()
-	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","pipeline":"default"}`)
+	agentID := readyTestAgent(t, s)
+	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -184,11 +187,11 @@ func TestAPIHandlerValidationAndCanonicalErrors(t *testing.T) {
 		name, path, contentType, body string
 		want                          int
 	}{
-		{"missing content type", "/api/v1/voice-tokens", "", `{"principal":"alice","pipeline":"default"}`, 400},
+		{"missing content type", "/api/v1/voice-tokens", "", `{"principal":"alice","agent_id":"a"}`, 400},
 		{"malformed", "/api/v1/voice-tokens", "application/json", `{`, 400},
 		{"trailing", "/api/v1/voice-tokens", "application/json", `{"principal":"alice","pipeline":"default"} {}`, 400},
-		{"oversized whitespace", "/api/v1/voice-tokens", "application/json", `{"principal":"alice","pipeline":"default"}` + strings.Repeat(" ", 65536), 400},
-		{"hidden second value", "/api/v1/voice-tokens", "application/json", `{"principal":"alice","pipeline":"default"}` + strings.Repeat(" ", 65536) + `{}`, 400},
+		{"oversized whitespace", "/api/v1/voice-tokens", "application/json", `{"principal":"alice","agent_id":"a"}` + strings.Repeat(" ", 65536), 400},
+		{"hidden second value", "/api/v1/voice-tokens", "application/json", `{"principal":"alice","agent_id":"a"}` + strings.Repeat(" ", 65536) + `{}`, 400},
 		{"bare version", "/api/v1", "", "", 404},
 		{"double slash", "/api/v1//server-config", "", "", 404},
 	} {
@@ -232,7 +235,8 @@ func TestConfigRejectsSubsecondVoiceLifetime(t *testing.T) {
 func TestAPITokenFractionalLifetimeIsBounded(t *testing.T) {
 	s := apiTestServer(t)
 	s.cfg.Token.MaxLifetime = 2500 * time.Millisecond
-	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","pipeline":"default"}`)
+	agentID := readyTestAgent(t, s)
+	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -294,9 +298,8 @@ func TestAuthDefaultEnvironmentForLoadedConfig(t *testing.T) {
 
 func TestAPIConfigSecretRedactionAndJSONErrors(t *testing.T) {
 	s := apiTestServer(t)
-	s.cfg.Providers.GoogleLLM.SystemPrompt = "secret-prompt-sentinel"
 	w := apiRequest(s, "GET", "/api/v1/server-config", "management-test-key-32-bytes-long-and-separate", "")
-	for _, secret := range []string{s.cfg.Token.Secret, "management-test-key-32-bytes-long-and-separate", "secret-prompt-sentinel", s.cfg.Providers.GoogleLLM.APIKeyEnv} {
+	for _, secret := range []string{s.cfg.Token.Secret, "management-test-key-32-bytes-long-and-separate"} {
 		if strings.Contains(w.Body.String(), secret) {
 			t.Fatalf("config leaked secret: %s", secret)
 		}
@@ -304,5 +307,47 @@ func TestAPIConfigSecretRedactionAndJSONErrors(t *testing.T) {
 	w = apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","unexpected":1}`)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"code":"invalid_request"`) {
 		t.Fatalf("invalid JSON: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Voice tokens name a stored agent; unknown, unready and legacy requests are refused.
+func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
+	s := apiTestServer(t)
+	key := "management-test-key-32-bytes-long-and-separate"
+	issue := func(body string) *httptest.ResponseRecorder {
+		return apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", key, body)
+	}
+	if w := issue(`{"principal":"alice","agent_id":"x"}`); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("without agent store: %d %s", w.Code, w.Body)
+	}
+	agentID := readyTestAgent(t, s)
+	if w := issue(`{"principal":"alice","pipeline":"default"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("legacy pipeline body: %d %s", w.Code, w.Body)
+	}
+	if w := issue(`{"principal":"alice","agent_id":"missing"}`); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown agent: %d %s", w.Code, w.Body)
+	}
+	disabled := false
+	if _, err := s.agents.Update(t.Context(), agentID, agent.UpdateRequest{Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	if w := issue(`{"principal":"alice","agent_id":"` + agentID + `"}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "agent_not_ready") {
+		t.Fatalf("disabled agent: %d %s", w.Code, w.Body)
+	}
+	enabled := true
+	if _, err := s.agents.Update(t.Context(), agentID, agent.UpdateRequest{Enabled: &enabled}); err != nil {
+		t.Fatal(err)
+	}
+	w := issue(`{"principal":"alice","agent_id":"` + agentID + `"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("ready agent: %d %s", w.Code, w.Body)
+	}
+	var resp struct {
+		Data struct{ Token string } `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	claims, err := s.validator.ValidateAndConsume(resp.Data.Token)
+	if err != nil || claims.AgentID != agentID {
+		t.Fatalf("token claims agent=%q err=%v", claims.AgentID, err)
 	}
 }

@@ -2,14 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"govoice/core"
 	coretranscript "govoice/core/transcript"
-	"govoice/providers/google"
-	"govoice/providers/xai"
 	"govoice/vad"
 )
 
@@ -85,110 +84,87 @@ func (p *contextSinkProc) ProcessFrame(ctx context.Context, frame core.Frame, di
 }
 func (p *contextSinkProc) SetContextProvider(fn func() []core.Message) { p.provider = fn }
 
-func TestRegistry_BuildPipelineGoogleAndMixed(t *testing.T) {
-	cfg, err := LoadConfig("../config/development.yaml")
-	if err != nil {
-		t.Fatalf("load config: %v", err)
-	}
-
+func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
 	reg := NewRegistry()
 	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
 	vadProc := vad.NewProcessor(mockExec, vad.DefaultProcessorConfig())
 	sink := &fakeTransportSink{}
-
-	// Missing credentials must fail closed rather than returning a nil-backed processor.
-	if _, _, err := reg.BuildPipeline(cfg, "default", vadProc, sink); err == nil {
-		t.Fatal("expected default pipeline to fail without provider credentials")
+	call := CallSpec{
+		STT:         StageSpec{Provider: "google", Model: "chirp_2", Language: "en-US"},
+		LLM:         StageSpec{Provider: "xai", Model: "grok-test", SystemPrompt: "be brief"},
+		TTS:         StageSpec{Provider: "google", Voice: "en-US-Journey-F"},
+		MaxMessages: 10, MaxTokens: 1000,
 	}
 
-	stub := func(c *Config) (core.Processor, error) { return &fakeTransportSink{}, nil }
-	reg.Register("google.stt", stub)
-	reg.Register("google.llm", func(c *Config) (core.Processor, error) { return &contextSinkProc{}, nil })
-	reg.Register("google.tts", stub)
-	reg.Register("xai.llm", func(c *Config) (core.Processor, error) { return &contextSinkProc{}, nil })
-
-	// 1. Build default (Google STT -> Google LLM -> Google TTS) pipeline
-	pipeDefault, ctxPoolDefault, err := reg.BuildPipeline(cfg, "default", vadProc, sink)
-	if err != nil {
-		t.Fatalf("build default pipeline: %v", err)
+	// Real factories fail closed without a stored credential.
+	if _, _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
+		t.Fatal("expected build to fail without provider credentials")
 	}
-	if pipeDefault == nil || ctxPoolDefault == nil {
-		t.Fatal("expected non-nil pipeline and conversation context")
+	call.STT.Secret, call.LLM.Secret, call.TTS.Secret = []byte("$ENV_REF"), []byte("bad key with spaces"), nil
+	if _, _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
+		t.Fatal("expected build to reject unusable secrets")
 	}
 
-	// 2. Build mixed (Google STT -> xAI LLM -> Google TTS) pipeline
-	pipeXAI, ctxPoolXAI, err := reg.BuildPipeline(cfg, "xai", vadProc, sink)
-	if err != nil {
-		t.Fatalf("build xai pipeline: %v", err)
+	// Factories receive exactly the agent's stage settings and credential.
+	got := map[string]StageSpec{}
+	stub := func(stage string, proc core.Processor) ProcessorFactory {
+		return func(c *Config, spec StageSpec) (core.Processor, error) { got[stage] = spec; return proc, nil }
 	}
-	if pipeXAI == nil || ctxPoolXAI == nil {
-		t.Fatal("expected non-nil xai pipeline and conversation context")
+	llm := &contextSinkProc{}
+	reg.Register("google.stt", stub("stt", &fakeTransportSink{}))
+	reg.Register("xai.llm", stub("llm", llm))
+	reg.Register("google.tts", stub("tts", &fakeTransportSink{}))
+	call.STT.Secret, call.LLM.Secret, call.TTS.Secret = []byte("stt-key"), []byte("llm-key"), []byte("tts-key")
+	call.ToolDefinitions = []core.ToolDefinition{{Name: "lookup"}}
+	pipe, ctxPool, err := reg.BuildCallPipeline(cfg, call, vadProc, sink)
+	if err != nil || pipe == nil || ctxPool == nil {
+		t.Fatalf("build: pipe=%v ctx=%v err=%v", pipe, ctxPool, err)
 	}
-
-	// 3. Programmatic construction equivalence
-	// Programmatic core API directly constructs processors:
-	sttProc, err := google.NewSTTProcessor(google.DefaultSTTConfig())
-	if err != nil {
-		t.Fatalf("programmatic stt: %v", err)
+	if got["stt"].Model != "chirp_2" || got["stt"].Language != "en-US" || string(got["stt"].Secret) != "stt-key" {
+		t.Fatalf("stt spec = %+v", got["stt"])
 	}
-	progCtx := core.NewConversationContext(core.ContextConfig{MaxMessages: 20, MaxTokens: 4000})
-	transcriptCfg := coretranscript.DefaultConfig()
-	transcriptProc, _ := coretranscript.NewProcessor(transcriptCfg)
-	userCtx := core.NewUserContextProcessor(progCtx, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
-	llmProc, err := google.NewLLMProcessor(google.DefaultLLMConfig())
-	if err != nil {
-		t.Fatalf("programmatic llm: %v", err)
+	if got["llm"].Model != "grok-test" || got["llm"].SystemPrompt != "be brief" || string(got["llm"].Secret) != "llm-key" ||
+		len(got["llm"].Tools) != 1 || got["llm"].History != ctxPool {
+		t.Fatalf("llm spec = %+v", got["llm"])
 	}
-	asstCtx := core.NewAssistantContextProcessor(progCtx, core.DefaultAssistantContextConfig())
-	ttsProc, err := google.NewTTSProcessor(google.DefaultTTSConfig())
-	if err != nil {
-		t.Fatalf("programmatic tts: %v", err)
+	if got["tts"].Voice != "en-US-Journey-F" || string(got["tts"].Secret) != "tts-key" {
+		t.Fatalf("tts spec = %+v", got["tts"])
 	}
-
-	progPipe, err := core.NewPipeline(vadProc, sttProc, transcriptProc, userCtx, llmProc, asstCtx, ttsProc, sink)
-	if err != nil {
-		t.Fatalf("programmatic pipeline: %v", err)
+	if llm.provider == nil {
+		t.Fatal("LLM did not receive the conversation context provider")
 	}
 
-	if progPipe == nil {
-		t.Fatal("expected non-nil programmatic pipeline")
+	// A provider with no factory for a stage is rejected.
+	call.TTS.Provider = "acme"
+	if _, _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
+		t.Fatal("expected error for unknown provider")
 	}
+	if reg.Supports("xai", "tts") != xaiSpeechEnabled {
+		t.Fatalf("xAI TTS availability must follow the xaispeech build tag (%v)", xaiSpeechEnabled)
+	}
+}
 
-	// 4. Test error handling for nonexistent pipeline
-	_, _, err = reg.BuildPipeline(cfg, "nonexistent", vadProc, sink)
-	if err == nil {
-		t.Fatal("expected error for nonexistent pipeline")
-	}
+type closeCounter struct {
+	fakeTransportSink
+	closed *int
+}
 
-	// 5. Test error handling for missing provider factory
-	cfg.Pipelines["broken"] = PipelineConfig{
-		STT:         "unknown.stt",
-		LLM:         "google.llm",
-		TTS:         "google.tts",
-		MaxMessages: 10,
-		MaxTokens:   1000,
-	}
-	_, _, err = reg.BuildPipeline(cfg, "broken", vadProc, sink)
-	if err == nil {
-		t.Fatal("expected error for missing provider factory")
-	}
+func (c closeCounter) Close() error { *c.closed++; return nil }
 
-	// 6. Test custom factory registration
-	reg.Register("custom.llm", func(c *Config) (core.Processor, error) {
-		return xai.NewProcessor(xai.Config{Model: "custom-model", Endpoint: "http://localhost"})
-	})
-	cfg.Pipelines["custom"] = PipelineConfig{
-		STT:         "google.stt",
-		LLM:         "custom.llm",
-		TTS:         "google.tts",
-		MaxMessages: 10,
-		MaxTokens:   1000,
+// A later stage failing must close the provider clients already built.
+func TestBuildCallPipelineClosesBuiltStagesOnFailure(t *testing.T) {
+	reg := NewRegistry()
+	closed := 0
+	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &closeCounter{closed: &closed}, nil })
+	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return &closeCounter{closed: &closed}, nil })
+	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return nil, errors.New("bad credential") })
+	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}}
+	if _, _, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, &fakeTransportSink{}); err == nil {
+		t.Fatal("expected build failure")
 	}
-	pipeCustom, _, err := reg.BuildPipeline(cfg, "custom", vadProc, sink)
-	if err != nil {
-		t.Fatalf("build custom pipeline: %v", err)
-	}
-	if pipeCustom == nil {
-		t.Fatal("expected non-nil custom pipeline")
+	if closed != 2 {
+		t.Fatalf("closed %d built stages, want 2", closed)
 	}
 }

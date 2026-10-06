@@ -20,6 +20,11 @@ func TestAgentRoutesUseManagementBoundaryAndTrustedRequestID(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	for p, id := range map[string]string{"google": "018f0000-0000-7000-8000-000000000001", "xai": "018f0000-0000-7000-8000-000000000002"} {
+		if err := store.Credentials().Put(t.Context(), storage.Credential{ID: id, Provider: p, MaskedSuffix: "abcd", ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	s.SetAgentManagementAPI(api.NewAgentsHandler(agent.NewService(store)))
 	key := "management-test-key-32-bytes-long-and-separate"
 	path := "/api/v1/agents"
@@ -63,7 +68,7 @@ func TestAgentRoutesUseManagementBoundaryAndTrustedRequestID(t *testing.T) {
 		t.Fatalf("request id header=%q body=%q", generated, response.Error.RequestID)
 	}
 
-	created := apiRequest(s, http.MethodPost, path, key, `{"name":"Mounted","config":{"stt":"g.stt","llm":"g.llm","tts":"g.tts"}}`)
+	created := apiRequest(s, http.MethodPost, path, key, `{"name":"Mounted","config":{"stt":{"provider":"google","model":"g.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"g.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"g.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}}`)
 	if created.Code != http.StatusCreated || created.Header().Get("X-Request-ID") == "" || strings.Contains(created.Body.String(), key) {
 		t.Fatalf("authenticated route status=%d headers=%v body=%s", created.Code, created.Header(), created.Body)
 	}

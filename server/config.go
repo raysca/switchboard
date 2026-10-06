@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -94,54 +93,33 @@ type Config struct {
 	} `yaml:"vad"`
 
 	// Provider Configurations
+	// Provider infrastructure only. What a call runs (models, voices, prompts)
+	// and its credentials come from the stored agent, never from YAML.
 	Providers struct {
 		GoogleSTT struct {
 			ProjectID                  string        `yaml:"project_id"`
 			Location                   string        `yaml:"location"`
-			Model                      string        `yaml:"model"`
-			LanguageCode               string        `yaml:"language_code"`
 			MaxStreams                 int           `yaml:"max_streams"`
 			RotationThreshold          time.Duration `yaml:"rotation_threshold"`
 			RotationHeadroomMultiplier float64       `yaml:"rotation_headroom_multiplier"`
-			CredentialsFile            string        `yaml:"credentials_file"`
 		} `yaml:"google_stt"`
 
-		GoogleLLM struct {
-			Model        string `yaml:"model"`
-			AuthMode     string `yaml:"auth_mode"` // "vertex_adc" | "gemini_api_key"
-			SystemPrompt string `yaml:"system_prompt"`
-			APIKeyEnv    string `yaml:"api_key_env"`
-		} `yaml:"google_llm"`
-
 		GoogleTTS struct {
-			Voice           string `yaml:"voice"`
-			SampleRate      int    `yaml:"sample_rate"`
-			CredentialsFile string `yaml:"credentials_file"`
+			SampleRate int `yaml:"sample_rate"`
 		} `yaml:"google_tts"`
 
 		XAILLM struct {
-			Model        string `yaml:"model"`
-			Endpoint     string `yaml:"endpoint"`
-			APIKeyEnv    string `yaml:"api_key_env"`
-			SystemPrompt string `yaml:"system_prompt"`
+			Endpoint string `yaml:"endpoint"`
 		} `yaml:"xai_llm"`
 
 		XAISTT struct {
-			Endpoint  string `yaml:"endpoint"`
-			APIKeyEnv string `yaml:"api_key_env"`
-			Language  string `yaml:"language"`
+			Endpoint string `yaml:"endpoint"`
 		} `yaml:"xai_stt"`
 
 		XAITTS struct {
-			Endpoint  string `yaml:"endpoint"`
-			APIKeyEnv string `yaml:"api_key_env"`
-			Voice     string `yaml:"voice"`
-			Language  string `yaml:"language"`
+			Endpoint string `yaml:"endpoint"`
 		} `yaml:"xai_tts"`
 	} `yaml:"providers"`
-
-	// Pipeline Definitions
-	Pipelines map[string]PipelineConfig `yaml:"pipelines"`
 
 	// Observability
 	Observability struct {
@@ -179,15 +157,6 @@ type OTelConfig struct {
 	ServiceName    string        `yaml:"service_name"`
 }
 
-// PipelineConfig defines composition of a named pipeline.
-type PipelineConfig struct {
-	STT         string `yaml:"stt"` // e.g. "google.stt"
-	LLM         string `yaml:"llm"` // e.g. "google.llm" or "xai.llm"
-	TTS         string `yaml:"tts"` // e.g. "google.tts"
-	MaxMessages int    `yaml:"max_messages"`
-	MaxTokens   int    `yaml:"max_tokens"`
-}
-
 // DefaultConfig returns a production-ready configuration with safe defaults.
 func DefaultConfig(profile Profile) *Config {
 	cfg := &Config{
@@ -195,10 +164,10 @@ func DefaultConfig(profile Profile) *Config {
 		PublicListenAddr: "127.0.0.1:8080",
 		AdminListenAddr:  "127.0.0.1:9090",
 		OriginAllowlist:  []string{"http://localhost:3000", "https://localhost:3000", "*"},
-		Pipelines:        make(map[string]PipelineConfig),
 	}
 
 	// Token defaults
+	cfg.Storage.Dialect = "sqlite" // DSN comes from GOVOICE_DATABASE_DSN when enabled
 	cfg.Token.SecretEnv = "TOKEN_SECRET"
 	cfg.Management.APIKeyEnv = "GOVOICE_MANAGEMENT_API_KEY"
 	cfg.Token.Issuer = "govoice-v1"
@@ -232,48 +201,20 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.VAD.ModelPath = "third_party/silero_vad.onnx"
 
 	// Providers
-	cfg.Providers.GoogleSTT.Model = "chirp_2"
 	cfg.Providers.GoogleSTT.Location = "us-central1"
-	cfg.Providers.GoogleSTT.LanguageCode = "en-US"
 	cfg.Providers.GoogleSTT.MaxStreams = 100
 	cfg.Providers.GoogleSTT.RotationThreshold = 240 * time.Second
 	cfg.Providers.GoogleSTT.RotationHeadroomMultiplier = 2.0
 
-	cfg.Providers.GoogleLLM.Model = "gemini-2.5-flash"
-	cfg.Providers.GoogleLLM.AuthMode = "vertex_adc"
-	cfg.Providers.GoogleLLM.APIKeyEnv = "GOOGLE_API_KEY"
-
-	cfg.Providers.GoogleTTS.Voice = "en-US-Journey-F"
 	cfg.Providers.GoogleTTS.SampleRate = 24000
 
-	cfg.Providers.XAILLM.Model = "grok-2-1212"
 	cfg.Providers.XAILLM.Endpoint = "https://api.x.ai/v1/responses"
-	cfg.Providers.XAILLM.APIKeyEnv = "XAI_API_KEY"
 
 	cfg.Providers.XAISTT.Endpoint = "wss://api.x.ai/v1/stt"
-	cfg.Providers.XAISTT.APIKeyEnv = "XAI_API_KEY"
-	cfg.Providers.XAISTT.Language = "en"
 
 	cfg.Providers.XAITTS.Endpoint = "https://api.x.ai/v1/tts"
-	cfg.Providers.XAITTS.APIKeyEnv = "XAI_API_KEY"
-	cfg.Providers.XAITTS.Voice = "eve"
-	cfg.Providers.XAITTS.Language = "en"
 
 	// Default pipeline
-	cfg.Pipelines["default"] = PipelineConfig{
-		STT:         "google.stt",
-		LLM:         "google.llm",
-		TTS:         "google.tts",
-		MaxMessages: 20,
-		MaxTokens:   4000,
-	}
-	cfg.Pipelines["xai"] = PipelineConfig{
-		STT:         "google.stt",
-		LLM:         "xai.llm",
-		TTS:         "google.tts",
-		MaxMessages: 20,
-		MaxTokens:   4000,
-	}
 
 	// Observability
 	cfg.Observability.LogLevel = "info"
@@ -304,6 +245,10 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
 
+	if err := rejectRemovedKeys(data); err != nil {
+		return nil, err
+	}
+
 	var cfg Config
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true) // Reject unknown fields per spec §28 & Phase 8 checklist
@@ -328,7 +273,7 @@ func ValidateConfig(cfg *Config) error {
 	}
 
 	switch cfg.Storage.Dialect {
-	case "", "sqlite", "postgres":
+	case "", "sqlite", "postgres": // empty is reported below as required
 	default:
 		return fmt.Errorf("invalid storage.dialect %q: must be 'sqlite' or 'postgres'", cfg.Storage.Dialect)
 	}
@@ -363,21 +308,6 @@ func ValidateConfig(cfg *Config) error {
 		}
 	}
 
-	// Credential file security permissions check
-	if cfg.Profile == ProfileProduction && !cfg.InsecureOverrides.SkipCredentialPermsCheck {
-		credFiles := []string{
-			cfg.Providers.GoogleSTT.CredentialsFile,
-			cfg.Providers.GoogleTTS.CredentialsFile,
-		}
-		for _, file := range credFiles {
-			if file != "" {
-				if err := checkFileSecurity(file); err != nil {
-					return fmt.Errorf("credential file %s security check failed: %w", file, err)
-				}
-			}
-		}
-	}
-
 	// Limits validation
 	if cfg.Limits.MaxPendingHandshakes <= 0 {
 		return errors.New("max_pending_handshakes must be > 0")
@@ -392,20 +322,9 @@ func ValidateConfig(cfg *Config) error {
 		return errors.New("max_call_duration must be > 0")
 	}
 
-	// Pipeline validation
-	if len(cfg.Pipelines) == 0 {
-		return errors.New("at least one pipeline must be configured")
-	}
-	for name, p := range cfg.Pipelines {
-		if p.STT == "" || p.LLM == "" || p.TTS == "" {
-			return fmt.Errorf("pipeline %q must specify stt, llm, and tts providers", name)
-		}
-		if p.MaxMessages <= 0 {
-			return fmt.Errorf("pipeline %q max_messages must be > 0", name)
-		}
-		if p.MaxTokens <= 0 {
-			return fmt.Errorf("pipeline %q max_tokens must be > 0", name)
-		}
+	// Calls run stored agents only: the agent store is mandatory.
+	if cfg.Storage.Dialect == "" {
+		return errors.New("storage.dialect is required: calls run stored agents (set sqlite or postgres)")
 	}
 
 	// Retention validation
@@ -461,19 +380,26 @@ func ResolveTokenSecret(cfg *Config) (string, error) {
 	return secret, nil
 }
 
-func checkFileSecurity(filePath string) error {
-	cleanPath := filepath.Clean(filePath)
-	info, err := os.Stat(cleanPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("file does not exist: %s", cleanPath)
-		}
-		return err
+// rejectRemovedKeys turns keys removed with YAML pipelines into an actionable
+// error instead of a generic unknown-field failure.
+func rejectRemovedKeys(data []byte) error {
+	var top map[string]any
+	if err := yaml.Unmarshal(data, &top); err != nil {
+		return nil // the strict decode reports syntax errors
 	}
-	mode := info.Mode().Perm()
-	// Refuse group- or world-readable (mask 0077)
-	if mode&0077 != 0 {
-		return fmt.Errorf("file permissions %#o are insecure; must not be group- or world-accessible (e.g. 0600 or 0400)", mode)
+	var doc struct {
+		Providers map[string]map[string]any `yaml:"providers"`
+	}
+	_ = yaml.Unmarshal(data, &doc)
+	if _, ok := top["pipelines"]; ok {
+		return errors.New("config: `pipelines` is no longer supported; calls run stored agents. Create agents via /api/v1/agents and remove the pipelines section")
+	}
+	for provider, settings := range doc.Providers {
+		for _, key := range []string{"model", "language_code", "language", "voice", "system_prompt", "api_key_env", "credentials_file", "auth_mode"} {
+			if _, ok := settings[key]; ok {
+				return fmt.Errorf("config: providers.%s.%s is no longer supported; models, voices, prompts and credentials belong to stored agents and provider credentials", provider, key)
+			}
+		}
 	}
 	return nil
 }

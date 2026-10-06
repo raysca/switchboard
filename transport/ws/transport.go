@@ -69,7 +69,6 @@ type Connection struct {
 	id         uint64
 	conn       *websocket.Conn
 	claims     *token.Claims
-	pipeline   string
 	cfg        ServerConfig
 	pacer      *PacedWriter
 	session    atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
@@ -354,27 +353,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 6. Pipeline authorization: enforce token pipeline claims and forbid unauthorized override
-	queryPipeline := r.URL.Query().Get("pipeline")
-	tokenPipeline := ""
-	if claims != nil {
-		tokenPipeline = claims.Pipeline
-	}
-
-	pipeline := "default"
-	if tokenPipeline != "" {
-		if queryPipeline != "" && queryPipeline != tokenPipeline {
-			s.observe("auth_failure", 1)
-			http.Error(w, fmt.Sprintf("unauthorized pipeline: token authorizes %q but requested %q", tokenPipeline, queryPipeline), http.StatusForbidden)
-			return
-		}
-		pipeline = tokenPipeline
-	} else if queryPipeline != "" && queryPipeline != "default" {
-		s.observe("auth_failure", 1)
-		http.Error(w, fmt.Sprintf("unauthorized pipeline: token missing claim authorizing non-default pipeline %q", queryPipeline), http.StatusForbidden)
-		return
-	}
-
 	// 7. Upgrade WebSocket connection
 	connCtx, connCancel := context.WithTimeout(r.Context(), s.cfg.HandshakeTimeout)
 	defer connCancel()
@@ -400,7 +378,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		id:           s.idCounter.Add(1),
 		conn:         wsConn,
 		claims:       claims,
-		pipeline:     pipeline,
 		cfg:          s.cfg,
 		ctx:          sessCtx,
 		cancel:       sessCancel,
@@ -871,12 +848,15 @@ func (c *Connection) Claims() *token.Claims {
 	return c.claims
 }
 
-// Pipeline returns the target pipeline requested by token or query parameter.
-func (c *Connection) Pipeline() string {
-	if c.pipeline == "" {
-		return "default"
+// Context is the connection's lifetime context; it ends when the client goes away.
+func (c *Connection) Context() context.Context { return c.ctx }
+
+// AgentID returns the stored agent the token authorizes this call to run.
+func (c *Connection) AgentID() string {
+	if c.claims == nil {
+		return ""
 	}
-	return c.pipeline
+	return c.claims.AgentID
 }
 
 // ID returns the unique connection identifier.

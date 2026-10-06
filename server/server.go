@@ -18,8 +18,12 @@ import (
 	"govoice/core"
 	"govoice/providers/google"
 	"govoice/providers/xai"
+	"govoice/server/agent"
 	"govoice/server/api"
 	"govoice/server/auth"
+	"govoice/server/credential"
+	"govoice/server/mcp"
+	"govoice/server/provider"
 	"govoice/server/storage"
 	"govoice/transport/token"
 	"govoice/transport/ws"
@@ -47,6 +51,10 @@ type Server struct {
 	voiceEpoch              string
 	vadExecutor             vad.SharedExecutor
 	mgmt                    *management
+	agents                  *agent.Service
+	mcpService              *mcp.Service
+	credentials             *credential.Service
+	providerDefs            *provider.Registry
 	logger                  *slog.Logger
 
 	ready        atomic.Bool
@@ -106,12 +114,6 @@ func NewServer(cfg *Config) (*Server, error) {
 	admission := NewAdmissionController(cfg, metrics)
 	registry := NewRegistry()
 	registry.BindMetrics(metrics)
-	if err := registry.Prepare(cfg); err != nil {
-		if cfg.Profile == ProfileProduction {
-			return nil, fmt.Errorf("provider initialization: %w", err)
-		}
-		logger.Warn("providers not initialized; readiness will stay false", slog.String("err", err.Error()))
-	}
 
 	tokenSecret, err := ResolveTokenSecret(cfg)
 	if err != nil {
@@ -413,24 +415,36 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	timeline.Record(TimelineEvent{Type: EventAuthenticate, Details: fmt.Sprintf("principal=%s", principal)})
 	timeline.Record(TimelineEvent{Type: EventReady, Details: "rtvi ready"})
 
-	// 2. Build VAD Processor
-	vadProc := vad.NewProcessor(s.vadExecutor, vad.DefaultProcessorConfig())
-
-	// 3. Assemble Pipeline
-	pipe, _, err := s.registry.BuildPipeline(s.cfg, conn.Pipeline(), vadProc, conn)
+	// 2. Pin the token's stored agent and resolve providers and credentials
+	resolveCtx, cancelResolve := context.WithTimeout(conn.Context(), resolveTimeout)
+	call, releaseCall, err := s.resolveCall(resolveCtx, conn.AgentID())
+	cancelResolve()
 	if err != nil {
 		s.admission.ReleaseSession(principal)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: err.Error()})
-		return nil, fmt.Errorf("build pipeline: %w", err)
+		return nil, fmt.Errorf("resolve agent: %w", err)
+	}
+	fail := func(err error) (*core.Session, error) {
+		releaseCall()
+		s.admission.ReleaseSession(principal)
+		s.metrics.SessionsFailedTotal.Add(1)
+		timeline.Record(TimelineEvent{Type: EventError, Details: err.Error()})
+		return nil, err
+	}
+
+	// 3. Build VAD processor and the agent's pipeline
+	vadProc := vad.NewProcessor(s.vadExecutor, vad.DefaultProcessorConfig())
+	pipe, _, err := s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
+	call.wipeSecrets()
+	if err != nil {
+		return fail(fmt.Errorf("build pipeline: %w", err))
 	}
 
 	// 4. Construct Core Session
 	session, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
 	if err != nil {
-		s.admission.ReleaseSession(principal)
-		s.metrics.SessionsFailedTotal.Add(1)
-		return nil, fmt.Errorf("create session: %w", err)
+		return fail(fmt.Errorf("create session: %w", err))
 	}
 
 	active := &activeCall{
@@ -535,6 +549,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		s.mu.Lock()
 		delete(s.activeCalls, sessionID)
 		s.mu.Unlock()
+		releaseCall() // bounded: drains MCP tools and ends the session row
 		timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "session closed"})
 		s.metrics.SessionsStoppedTotal.Add(1)
 	}()
@@ -596,16 +611,14 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if !s.registry.PipelinesLive(s.cfg) {
+	if s.agents == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "unready",
-			"reason": "configured providers are not initialized",
-		})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "agent storage is not enabled"})
 		return
 	}
 
-	// Check provider circuits and usable pipelines (spec §31)
+	// Provider circuits are reported for diagnosis; calls are per agent, so an
+	// open circuit only affects agents using that provider.
 	circuits := map[string]string{
 		"google_stt": circuitStateName(s.metrics.STTCircuitStateGoogle.Load()),
 		"google_llm": circuitStateName(s.metrics.LLMCircuitStateGoogle.Load()),
@@ -615,54 +628,11 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		"xai_tts":    circuitStateName(s.metrics.TTSCircuitStateXAI.Load()),
 	}
 
-	usablePipelines := make([]string, 0, len(s.cfg.Pipelines))
-	for name, pipe := range s.cfg.Pipelines {
-		if s.isPipelineUsable(pipe) {
-			usablePipelines = append(usablePipelines, name)
-		}
-	}
-
-	if len(s.cfg.Pipelines) > 0 && len(usablePipelines) == 0 {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":   "unready",
-			"reason":   "no configured pipeline can accept a call (provider circuits open)",
-			"circuits": circuits,
-		})
-		return
-	}
-
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":           "ready",
-		"usable_pipelines": usablePipelines,
-		"circuits":         circuits,
+		"status":   "ready",
+		"circuits": circuits,
 	})
-}
-
-func (s *Server) isPipelineUsable(pipe PipelineConfig) bool {
-	if !s.registry.pipelineProvidersLive(pipe) {
-		return false
-	}
-	if pipe.STT == "google.stt" && s.metrics.STTCircuitStateGoogle.Load() == 1 {
-		return false
-	}
-	if pipe.STT == "xai.stt" && s.metrics.STTCircuitStateXAI.Load() == 1 {
-		return false
-	}
-	if pipe.LLM == "google.llm" && s.metrics.LLMCircuitStateGoogle.Load() == 1 {
-		return false
-	}
-	if pipe.LLM == "xai.llm" && s.metrics.LLMCircuitStateXAI.Load() == 1 {
-		return false
-	}
-	if pipe.TTS == "google.tts" && s.metrics.TTSCircuitStateGoogle.Load() == 1 {
-		return false
-	}
-	if pipe.TTS == "xai.tts" && s.metrics.TTSCircuitStateXAI.Load() == 1 {
-		return false
-	}
-	return true
 }
 
 func circuitStateName(val int64) string {

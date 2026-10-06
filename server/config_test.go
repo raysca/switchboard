@@ -99,11 +99,11 @@ func TestConfig_ValidationFailures(t *testing.T) {
 			wantErr: "max_sessions must be > 0",
 		},
 		{
-			name: "no pipelines configured",
+			name: "no agent store configured",
 			modify: func(c *Config) {
-				c.Pipelines = nil
+				c.Storage.Dialect = ""
 			},
-			wantErr: "at least one pipeline must be configured",
+			wantErr: "storage.dialect is required",
 		},
 	}
 
@@ -119,34 +119,26 @@ func TestConfig_ValidationFailures(t *testing.T) {
 	}
 }
 
-func TestConfig_ProductionFileSecurityCheck(t *testing.T) {
-	tmpDir := t.TempDir()
-	credPath := filepath.Join(tmpDir, "insecure_creds.json")
-
-	// Create world-readable file (mode 0644)
-	if err := os.WriteFile(credPath, []byte("{}"), 0644); err != nil {
+// YAML pipelines and per-provider models/credentials were removed: loading a
+// config that still has them fails with an actionable message.
+func TestConfig_RejectsRemovedPipelineAndAgentKeys(t *testing.T) {
+	base, err := os.ReadFile("../config/development.yaml")
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	cfg := DefaultConfig(ProfileProduction)
-	cfg.TLS.TrustedProxyMode = true
-	cfg.TLS.TrustedProxies = []string{"127.0.0.1/32"}
-	cfg.Token.Secret = "production-test-secret-not-the-dev-key-123456"
-	cfg.Providers.GoogleSTT.CredentialsFile = credPath
-	cfg.InsecureOverrides.SkipCredentialPermsCheck = false
-
-	err := ValidateConfig(cfg)
-	if err == nil {
-		t.Fatal("expected failure on group/world-readable credential file in production profile")
-	}
-
-	// Change to secure mode 0600
-	if err := os.Chmod(credPath, 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := ValidateConfig(cfg); err != nil {
-		t.Fatalf("expected success with 0600 permissions, got: %v", err)
+	for _, tc := range []struct{ old, new, want string }{
+		{"\nobservability:", "\npipelines:\n  default:\n    stt: google.stt\n\nobservability:", "`pipelines` is no longer supported"},
+		{"\nobservability:", "\npipelines:\n\nobservability:", "`pipelines` is no longer supported"},
+		{"\n  google_tts:\n", "\n  google_llm:\n    model: gemini\n  google_tts:\n", "providers.google_llm.model is no longer supported"},
+	} {
+		doc := strings.Replace(string(base), tc.old, tc.new, 1)
+		path := filepath.Join(t.TempDir(), "cfg.yaml")
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%q: err=%v, want %q", tc.new, err, tc.want)
+		}
 	}
 }
 
@@ -158,11 +150,8 @@ func TestConfig_LoadDevelopmentYAML(t *testing.T) {
 	if cfg.Profile != ProfileDevelopment {
 		t.Fatalf("expected profile development, got %s", cfg.Profile)
 	}
-	if cfg.Pipelines["default"].STT != "google.stt" {
-		t.Fatalf("expected default pipeline google.stt")
-	}
-	if cfg.Pipelines["xai"].LLM != "xai.llm" {
-		t.Fatalf("expected xai pipeline xai.llm")
+	if cfg.Storage.Dialect == "" {
+		t.Fatalf("development config must enable the agent store")
 	}
 }
 

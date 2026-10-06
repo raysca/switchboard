@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,15 +34,21 @@ type management struct {
 // configured. Call it before Start.
 func (s *Server) EnableManagement(ctx context.Context) error {
 	if s.cfg.Storage.Dialect == "" {
-		s.logger.Warn("storage not configured; management APIs disabled")
-		return nil
+		return errors.New("storage.dialect is required: calls run stored agents")
 	}
 	dsnEnv := envOr(s.cfg.Storage.DSNEnv, "GOVOICE_DATABASE_DSN")
-	dsn := os.Getenv(dsnEnv)
+	keyEnv := envOr(s.cfg.Credentials.KeyringEnv, "GOVOICE_CREDENTIAL_KEYS")
+	dsn, rawKeyring := os.Getenv(dsnEnv), os.Getenv(keyEnv)
+	if s.cfg.Profile == ProfileDevelopment && (dsn == "" || rawKeyring == "") {
+		var err error
+		if dsn, rawKeyring, err = s.developmentStore(dsn, rawKeyring); err != nil {
+			return err
+		}
+	}
 	if dsn == "" {
 		return fmt.Errorf("storage enabled but %s is empty", dsnEnv)
 	}
-	keyring, err := parseKeyring(os.Getenv(envOr(s.cfg.Credentials.KeyringEnv, "GOVOICE_CREDENTIAL_KEYS")))
+	keyring, err := parseKeyring(rawKeyring)
 	if err != nil {
 		return err
 	}
@@ -78,8 +86,10 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	}
 
 	s.SetStore(store)
+	s.credentials, s.mcpService, s.providerDefs = creds, mcpService, registry
 	s.SetProviderManagementAPI(&api.ProviderManagement{Credentials: creds, Registry: registry})
-	s.SetAgentManagementAPI(api.NewAgentsHandler(agent.NewService(store)))
+	s.agents = agent.NewService(store)
+	s.SetAgentManagementAPI(api.NewAgentsHandler(s.agents))
 	s.SetMCPManagementAPI(mcp.Handler(mcpService, s.management))
 	s.SetSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
@@ -144,4 +154,58 @@ func parseKeyring(raw string) (credential.Keyring, error) {
 func (s *Server) closeManagement() {
 	s.mgmt.close()
 	s.mgmt = nil
+}
+
+// developmentStore fills in a local SQLite DSN and a persisted credential key
+// for the development profile, so a fresh checkout runs without setup. The
+// directory defaults to .govoice-dev (override with GOVOICE_DEV_DIR). Production
+// never reaches this path and fails closed without explicit secrets.
+func (s *Server) developmentStore(dsn, rawKeyring string) (string, string, error) {
+	dir := os.Getenv("GOVOICE_DEV_DIR")
+	if dir == "" {
+		dir = ".govoice-dev"
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", "", fmt.Errorf("development store: %w", err)
+	}
+	if dsn == "" {
+		dsn = filepath.Join(dir, "govoice.db")
+	}
+	if rawKeyring == "" {
+		key, err := loadOrCreateDevKey(filepath.Join(dir, "credential.key"))
+		if err != nil {
+			return "", "", fmt.Errorf("development credential key: %w", err)
+		}
+		rawKeyring = key
+	}
+	s.logger.Warn("development profile: using a local agent store and credential key; never use these in production", slog.String("dir", dir))
+	return dsn, rawKeyring, nil
+}
+
+// loadOrCreateDevKey returns the keyring entry stored at path, creating a new
+// random 32-byte key (mode 0600) on first use so stored credentials stay
+// decryptable across restarts.
+func loadOrCreateDevKey(path string) (string, error) {
+	if b, err := os.ReadFile(path); err == nil {
+		return strings.TrimSpace(string(b)), nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return "", err
+	}
+	entry := "dev:" + base64.StdEncoding.EncodeToString(key)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) { // created concurrently: use that one
+		return loadOrCreateDevKey(path)
+	}
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(entry + "\n"); err != nil {
+		return "", err
+	}
+	return entry, nil
 }
