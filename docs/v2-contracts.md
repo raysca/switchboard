@@ -627,6 +627,23 @@ type EarconControlFrame struct {
 - **Classification & Disposition**: Earcons support explicit `OutputDisposition` (`OutputInterruptible` vs `OutputUninterruptible`).
 - **Interruption Behavior**: Interruption frames cancel active interruptible earcons and reset ducking states while preserving uninterruptible cues.
 
+### 2.18 Generic audio source
+
+`core/audio.GenericAudioSource` injects externally provided `io.Reader` audio streams into the pipeline:
+```go
+type AudioSourceConfig struct {
+    SampleRate  int
+    Channels    int
+    ChunkDur    time.Duration
+    Disposition core.OutputDisposition
+    Direction   core.Direction // Downstream (output) or Upstream (injected input)
+}
+```
+- **Pacing & Streaming**: Streams audio continuously across timed intervals matching `ChunkDur`, avoiding bursts and honoring pipeline rate requirements.
+- **Interruption Fencing**: Downstream interruptible sources immediately halt reading and chunk emission upon receiving an `InterruptionFrame`.
+- **Directional Flexibility**: Supports both upstream injected user speech (e.g. testing, dial-in gateways) and downstream assistant audio playback.
+
+
 
 
 

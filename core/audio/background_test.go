@@ -2,6 +2,7 @@ package audio
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -9,17 +10,30 @@ import (
 )
 
 type mockEmitter struct {
+	mu     sync.Mutex
 	frames []core.Frame
 }
 
 func (m *mockEmitter) Push(f core.Frame) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.frames = append(m.frames, f)
 	return nil
 }
 
 func (m *mockEmitter) PushDirection(f core.Frame, dir core.Direction) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.frames = append(m.frames, f)
 	return nil
+}
+
+func (m *mockEmitter) Frames() []core.Frame {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copied := make([]core.Frame, len(m.frames))
+	copy(copied, m.frames)
+	return copied
 }
 
 func TestBackgroundAndEarconProcessor_Lifecycle(t *testing.T) {
