@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,7 +21,7 @@ import (
 // TTSConfig configures Google Cloud Text-to-Speech V1.
 type TTSConfig struct {
 	Voice                 string        // Pinned: "en-US-Journey-F"
-	LanguageCode          string        // Default: "en-US"
+	LanguageCode          string        // Used when the voice name has no xx-YY prefix (default "en-US")
 	SampleRate            int           // Pinned: 24000 Hz
 	MaxSynthesisUnitChars int           // Pinned: 250
 	ChunkDuration         time.Duration // Default: 20ms
@@ -52,7 +53,8 @@ type TTSClient interface {
 
 // RealGoogleTTSClient wraps cloud.google.com/go/texttospeech/apiv1.
 type RealGoogleTTSClient struct {
-	client *texttospeech.Client
+	client       *texttospeech.Client
+	languageCode string
 }
 
 func NewRealGoogleTTSClient(ctx context.Context, cfg TTSConfig) (*RealGoogleTTSClient, error) {
@@ -60,7 +62,19 @@ func NewRealGoogleTTSClient(ctx context.Context, cfg TTSConfig) (*RealGoogleTTSC
 	if err != nil {
 		return nil, MapError("tts", err)
 	}
-	return &RealGoogleTTSClient{client: c}, nil
+	return &RealGoogleTTSClient{client: c, languageCode: cfg.LanguageCode}, nil
+}
+
+// voiceLanguage returns the language a Google voice name starts with
+// ("en-GB-Neural2-A" -> "en-GB"), else fallback, else "en-US".
+func voiceLanguage(voice, fallback string) string {
+	if parts := strings.SplitN(voice, "-", 3); len(parts) == 3 {
+		return parts[0] + "-" + parts[1]
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return "en-US"
 }
 
 func (c *RealGoogleTTSClient) SynthesizeSpeech(ctx context.Context, text string, voice string, sampleRate int) ([]byte, error) {
@@ -69,7 +83,7 @@ func (c *RealGoogleTTSClient) SynthesizeSpeech(ctx context.Context, text string,
 			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
 		},
 		Voice: &texttospeechpb.VoiceSelectionParams{
-			LanguageCode: "en-US",
+			LanguageCode: voiceLanguage(voice, c.languageCode),
 			Name:         voice,
 		},
 		AudioConfig: &texttospeechpb.AudioConfig{
