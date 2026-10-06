@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
@@ -20,7 +21,6 @@ import {
 export type MCPViewProps = {
   client: ApiClient;
   keyValue: string | null;
-  initialServerId?: string | null;
 };
 
 type ViewMode = "list" | "create" | "detail";
@@ -72,7 +72,8 @@ export function formatApiError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-export function MCPView({ client, keyValue, initialServerId }: MCPViewProps) {
+export function MCPView({ client, keyValue }: MCPViewProps) {
+  const { serverId: initialServerId } = useParams();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ViewMode>(initialServerId ? "detail" : "list");
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId ?? null);
