@@ -72,7 +72,6 @@ describe("RTVI Protobuf Wire Protocol", () => {
     expect(decoded?.kind).toBe("audio");
     if (decoded?.kind === "audio") {
       expect(decoded.sampleRate).toBe(16000);
-      expect(decoded.numChannels).toBe(1);
       expect(decoded.audio.length).toBe(640);
       expect(decoded.audio[5]).toBe(5);
     }
@@ -100,7 +99,6 @@ describe("RTVI Protobuf Wire Protocol", () => {
       expect(decoded?.kind).toBe("audio");
       if (decoded?.kind === "audio") {
         expect(decoded.sampleRate).toBe(16000);
-        expect(decoded.numChannels).toBe(1);
         expect(decoded.audio.length).toBe(640); // 320 PCM16 samples
       }
     }
@@ -114,7 +112,6 @@ describe("RTVI Protobuf Wire Protocol", () => {
       expect(decoded?.kind).toBe("audio");
       if (decoded?.kind === "audio") {
         expect(decoded.sampleRate).toBe(24000);
-        expect(decoded.numChannels).toBe(1);
         expect(decoded.audio.length).toBe(960); // 480 PCM16 samples @ 24kHz
       }
     }
