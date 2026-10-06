@@ -554,6 +554,19 @@ type Serializer interface {
 - **Semantic Separation**: Decouples semantic events (such as `DebugEvent` and `ObserverEvent`) from specific transports or wire formats. RTVI remains a separate adapter without injecting wire types into processors.
 - **Validation & Bounds**: Implementations (e.g. `JSONEventSerializer`) enforce payload size limits, reject malformed payloads with `ErrMalformedPayload`, and reject unknown fields when configured with `DisallowUnknownFields`.
 
+### 2.14 Frame and pipeline observer API
+
+`core.Session` exposes `AddObserver(o Observer)` allowing registration of non-mutating observers:
+```go
+type Observer interface {
+    Observe(ObserverEvent)
+}
+```
+- **Mutation Impossibility**: `ObserverEvent` contains value semantics and cloned attributes. Observers receive no mutable frame references or delivery mutation hooks.
+- **Ordered Delivery**: `ObserverEvent` values are emitted in exact pipeline dispatch sequence with processor position and timing.
+- **Fault & Panic Isolation**: Any panics thrown within observer callbacks are recovered and isolated from the session run-loop, ensuring zero degradation of active calls.
+
+
 
 
 

@@ -129,6 +129,7 @@ type Session struct {
 	turnSpans          map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
 	traceOrigins       map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
 	disabledProcessors map[int]bool                    // run-loop owned; processors disabled via PolicyDisable
+	observers          []Observer                      // immutable observers configured before Start
 }
 
 // A Frame interface can contain a non-comparable concrete value. The two
@@ -186,6 +187,19 @@ func (s *Session) SetTracer(tracer Tracer, policy TracePolicy) error {
 	}
 	s.tracer = tracer
 	s.tracePolicy = policy
+	return nil
+}
+
+// AddObserver registers a non-mutating observer before session start.
+func (s *Session) AddObserver(o Observer) error {
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	if s.State() != StateStarting {
+		return errors.New("core: observers must be configured before session start")
+	}
+	if o != nil {
+		s.observers = append(s.observers, o)
+	}
 	return nil
 }
 
@@ -795,6 +809,24 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 		policy := PolicyFailSession
 		if pp, ok := proc.(FailurePolicyProvider); ok {
 			policy = pp.FailurePolicy()
+		}
+
+		// Dispatch to non-mutating observers with panic isolation
+		if len(s.observers) > 0 {
+			component := reflect.TypeOf(proc).String()
+			obsEv := NewObserverEvent("pipeline.deliver", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), traceTurnID(f), traceGeneration(f), f.Type(), dir, component, to, map[string]any{
+				"component": component,
+				"frame":     frameTraceLabel(f.Type()),
+				"direction": dir.String(),
+			})
+			for _, obs := range s.observers {
+				func(o Observer) {
+					defer func() {
+						_ = recover() // Isolate observer panic from session execution
+					}()
+					o.Observe(obsEv)
+				}(obs)
+			}
 		}
 
 		invokeProc := func() error {
