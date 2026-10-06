@@ -158,9 +158,6 @@ func (s *Server) observe(event string, n uint64) {
 
 func (s *Server) allowHandshakeRate(ip string) bool {
 	rate := s.cfg.HandshakeRateLimit
-	if rate <= 0 {
-		return true
-	}
 	burst := int(rate * 2)
 	if burst < 5 {
 		burst = 5
@@ -280,12 +277,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer releasePending()
 
 	// 2. Concurrency limit. Reserve the slot in the same critical section as the check.
-	maxSessionsPerIP := s.cfg.MaxConcurrentSessionsPerIP
-	if maxSessionsPerIP <= 0 {
-		maxSessionsPerIP = 10
-	}
 	s.activeMu.Lock()
-	if s.activeSess >= s.cfg.MaxConcurrentSessions || s.activePerIP[clientIP] >= maxSessionsPerIP {
+	if s.activeSess >= s.cfg.MaxConcurrentSessions || s.activePerIP[clientIP] >= s.cfg.MaxConcurrentSessionsPerIP {
 		s.activeMu.Unlock()
 		http.Error(w, ErrMaxSessionsExceeded.Error(), http.StatusTooManyRequests)
 		return
