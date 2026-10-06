@@ -117,9 +117,7 @@
       "ready_timeout_seconds": 10,
       "max_call_duration_seconds": 3600,
       "idle_timeout_seconds": 30,
-      "drain_timeout_seconds": 45,
-      "google_stt_max_streams": 250,
-      "google_stt_rotation_headroom_multiplier": 2.0
+      "drain_timeout_seconds": 45
     },
     "default_websocket": {
       "handshake_timeout_seconds": 5,

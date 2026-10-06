@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useLocation, useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
@@ -432,11 +432,13 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
   const { agentId } = useParams();
   const [mode, setMode] = useState<ViewMode>(agentId ? "detail" : "list");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(agentId ?? null);
-  // Follow the URL: /agents/:agentId opens that agent, /agents shows the list.
+  // Follow the URL on every navigation (including re-clicking "Agents"):
+  // /agents/:agentId opens that agent, /agents shows the list.
+  const { key: locationKey } = useLocation();
   useEffect(() => {
     setMode(agentId ? "detail" : "list");
     setSelectedAgentId(agentId ?? null);
-  }, [agentId]);
+  }, [agentId, locationKey]);
 
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);

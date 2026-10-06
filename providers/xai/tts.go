@@ -263,7 +263,7 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 	}
 
 	parent := s.Context()
-	synthCtx, cancel := context.WithTimeout(parent, p.cfg.Timeout)
+	synthCtx, cancel := context.WithTimeoutCause(parent, p.cfg.Timeout, ErrRequestTimeout)
 	seq := p.nextSeq + 1
 	p.nextSeq = seq
 	p.cancels = append(p.cancels, ttsCancel{seq: seq, cancel: cancel})

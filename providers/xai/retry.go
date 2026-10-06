@@ -87,9 +87,9 @@ func ExecuteWithRetry(
 
 		lastErr = err
 
-		// A cancelled request (barge-in) is not a provider failure; a missed
-		// deadline is (xAI hung).
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		// A cancelled request (barge-in) or a caller's deadline is not a provider
+		// failure; xAI's own request deadline is (xAI hung).
+		if errors.Is(context.Cause(ctx), ErrRequestTimeout) {
 			if cb != nil {
 				cb.RecordFailure()
 			}

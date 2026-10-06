@@ -70,13 +70,15 @@ func TestStaleCallCannotReleaseAnotherProbe(t *testing.T) {
 	}
 }
 
-// A missed deadline means the provider hung: it counts.
-func TestDeadlineCountsAsFailure(t *testing.T) {
+// A caller's deadline (e.g. a slow tool round) and a cancelled STT stream
+// (hang-up) are not provider outages.
+func TestCallerDeadlineAndCancellationDoNotCount(t *testing.T) {
 	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Hour})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	defer cancel()
 	_ = ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 1}, nil, func(ctx context.Context, _ int) error { <-ctx.Done(); return ctx.Err() })
-	if cb.Allow() {
-		t.Fatal("a provider timeout did not count")
+	cb.reportError(MapError("stt", context.Canceled), 0)
+	if !cb.Allow() {
+		t.Fatal("a caller deadline or a hang-up opened the shared breaker")
 	}
 }

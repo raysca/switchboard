@@ -32,10 +32,13 @@ func (c ErrorClassification) String() string {
 }
 
 var (
-	ErrCircuitOpen          = errors.New("xai: circuit breaker is open")
-	ErrRetryCommitted       = errors.New("xai: retry prohibited after output committed")
-	ErrMissingAPIKey        = errors.New("xai: missing API key (XAI_API_KEY)")
-	ErrProviderUnavailable  = errors.New("xai: provider unavailable")
+	ErrCircuitOpen         = errors.New("xai: circuit breaker is open")
+	ErrRetryCommitted      = errors.New("xai: retry prohibited after output committed")
+	ErrMissingAPIKey       = errors.New("xai: missing API key (XAI_API_KEY)")
+	ErrProviderUnavailable = errors.New("xai: provider unavailable")
+	// ErrRequestTimeout is the cause of xAI's own per-request deadline; only
+	// that deadline (not a caller's, e.g. a tool round's) is a provider failure.
+	ErrRequestTimeout       = errors.New("xai: request timed out")
 	ErrMissingTerminalEvent = errors.New("xai sse: stream ended without terminal completion event")
 	ErrOversizedLine        = errors.New("xai sse: line exceeded maximum size")
 	ErrOversizedEvent       = errors.New("xai sse: event exceeded maximum size")

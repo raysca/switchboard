@@ -55,14 +55,23 @@ func TestStaleCallCannotReleaseAnotherProbe(t *testing.T) {
 	}
 }
 
-// A missed per-round deadline means xAI hung: it counts.
-func TestDeadlineCountsAsFailure(t *testing.T) {
-	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Hour})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+// xAI's own request deadline means xAI hung and counts; a caller's deadline
+// (e.g. a slow tool round) does not.
+func TestOnlyProviderDeadlineCounts(t *testing.T) {
+	run := func(ctx context.Context) *CircuitBreaker {
+		cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Hour})
+		committed := false
+		_ = ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 1}, &committed, func(int) error { <-ctx.Done(); return ctx.Err() })
+		return cb
+	}
+	own, cancel := context.WithTimeoutCause(context.Background(), time.Millisecond, ErrRequestTimeout)
 	defer cancel()
-	committed := false
-	_ = ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 1}, &committed, func(int) error { <-ctx.Done(); return ctx.Err() })
-	if cb.Allow() {
-		t.Fatal("an xAI timeout did not count")
+	if run(own).Allow() {
+		t.Fatal("an xAI request timeout did not count")
+	}
+	caller, cancel2 := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel2()
+	if !run(caller).Allow() {
+		t.Fatal("a caller's deadline opened the shared breaker")
 	}
 }

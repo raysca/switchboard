@@ -82,14 +82,8 @@ func ExecuteWithRetry(
 			return nil
 		}
 
-		// A cancelled or superseded request (barge-in) is not a provider failure;
-		// a missed deadline is (the provider hung).
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			if cb != nil {
-				cb.ReportFailure()
-			}
-			return err
-		}
+		// A cancelled or superseded request (barge-in), or a caller's deadline
+		// (e.g. a slow tool round), is not a provider failure.
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrGenerationMismatch) {
 			if cb != nil {
 				cb.release(probe)

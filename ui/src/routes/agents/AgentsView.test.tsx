@@ -342,6 +342,13 @@ describe("AgentsView", () => {
     await user.click(screen.getByRole("link", { name: "Missing agent" }));
     expect(await screen.findByText("That agent was not found.")).toBeVisible();
     expect(screen.getByRole("button", { name: "+ Create agent" })).toBeVisible();
+
+    // Opening an agent from the list keeps the URL; re-clicking "All agents" still returns to the list.
+    await user.click(screen.getByRole("link", { name: "All agents" }));
+    await user.click(await screen.findByRole("button", { name: "View detail" }));
+    expect(await screen.findByRole("heading", { name: /linked agent/i })).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "All agents" }));
+    expect(await screen.findByRole("button", { name: "+ Create agent" })).toBeVisible();
   });
 
   it("duplicates an agent", async () => {

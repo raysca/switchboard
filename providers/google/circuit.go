@@ -1,6 +1,8 @@
 package google
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -139,7 +141,7 @@ func (cb *CircuitBreaker) ReportFailure() {
 // tenant's mistake cannot open the shared breaker; it just frees the call's
 // half-open probe. Outages (5xx, Internal, Unavailable, timeouts) all count.
 func (cb *CircuitBreaker) reportError(err error, probe uint64) {
-	if isClientError(err) {
+	if isClientError(err) || errors.Is(err, context.Canceled) { // hang-ups and teardown are not outages
 		cb.release(probe)
 		return
 	}
