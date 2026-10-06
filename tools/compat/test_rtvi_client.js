@@ -32,7 +32,7 @@ function createErrorTracker(eventOrder) {
   let unexpected = 0;
   return {
     onError(err) {
-      if (!disconnected && !expected && err?.data?.error === 'compat_test_error' && err?.data?.fatal === false) {
+      if (!disconnected && !expected && err?.data?.error === 'provider_error' && err?.data?.fatal === false) {
         expected = true;
         eventOrder.push('server-error');
         return true;

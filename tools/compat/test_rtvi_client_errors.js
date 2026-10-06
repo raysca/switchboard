@@ -6,7 +6,7 @@ function expectRejected(tracker, label) {
 }
 
 const expected = createErrorTracker([]);
-expected.onError({data:{error:'compat_test_error',fatal:false}});
+expected.onError({data:{error:'provider_error',fatal:false}});
 expected.assertNoUnexpected();
 assert.equal(expected.expectedSeen(), true);
 
@@ -15,12 +15,12 @@ fatal.onError({data:{error:'fatal_provider',fatal:true}});
 expectRejected(fatal, 'fatal callback after connection must fail');
 
 const late = createErrorTracker([]);
-late.onError({data:{error:'compat_test_error',fatal:false}});
+late.onError({data:{error:'provider_error',fatal:false}});
 late.markDisconnected();
 late.onError({data:{error:'late_failure',fatal:false}});
 expectRejected(late, 'unexpected callback after disconnect must fail');
 
 const duplicate = createErrorTracker([]);
-duplicate.onError({data:{error:'compat_test_error',fatal:false}});
-duplicate.onError({data:{error:'compat_test_error',fatal:false}});
+duplicate.onError({data:{error:'provider_error',fatal:false}});
+duplicate.onError({data:{error:'provider_error',fatal:false}});
 expectRejected(duplicate, 'duplicate expected error must fail');
