@@ -53,9 +53,7 @@ providers:
   google_stt:
     project_id: ""
     location: "us-central1"
-    max_streams: 250
     rotation_threshold: 240s
-    rotation_headroom_multiplier: 2.0
   google_tts:
     sample_rate: 24000
   xai_llm:

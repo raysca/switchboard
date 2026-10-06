@@ -50,7 +50,11 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID string) (Call
 		// teardown budget: a stuck remote tool must not pin the call forever.
 		ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
 		defer cancel()
-		history.close(ctx) // turn rows land before the session is ended
+		// Turn rows land before the session is ended, on their own budget so a
+		// slow drain cannot leave the session row active.
+		historyCtx, cancelHistory := context.WithTimeout(context.Background(), 2*time.Second)
+		history.close(historyCtx)
+		cancelHistory()
 		if err := rs.Close(ctx); err != nil {
 			s.logger.Warn("agent session did not end cleanly", "session", rs.Pin.ID, "err", err.Error())
 		}

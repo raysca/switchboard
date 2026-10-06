@@ -9,7 +9,6 @@ func TestAdmission_LimitsAndRejections(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Limits.MaxSessions = 2
 	cfg.Limits.MaxSessionsPerPrincipal = 1
-	cfg.Providers.GoogleSTT.MaxStreams = 2 // no longer halves capacity
 	ac := NewAdmissionController(cfg, NewMetrics())
 
 	if err := ac.AcquireSession("user-1", false); !errors.Is(err, ErrVADUnavailable) {

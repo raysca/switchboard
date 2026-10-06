@@ -130,6 +130,7 @@ func TestConfig_RejectsRemovedPipelineAndAgentKeys(t *testing.T) {
 		{"\nobservability:", "\npipelines:\n  default:\n    stt: google.stt\n\nobservability:", "`pipelines` is no longer supported"},
 		{"\nobservability:", "\npipelines:\n\nobservability:", "`pipelines` is no longer supported"},
 		{"\nobservability:", "\notel:\n  enabled: true\n\nobservability:", "`otel` is not supported"},
+		{"\n  google_tts:\n", "\n  google_stt_extra:\n    max_streams: 250\n  google_tts:\n", "max_streams is no longer supported"},
 		{"\n  google_tts:\n", "\n  google_llm:\n    model: gemini\n  google_tts:\n", "providers.google_llm.model is no longer supported"},
 		{"\ninsecure_overrides:\n", "\ninsecure_overrides:\n  skip_credential_perms_check: true\n", "skip_credential_perms_check is no longer supported"},
 	} {

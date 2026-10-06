@@ -158,10 +158,13 @@ func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
 
 // Start launches a periodic background goroutine running RunOnce.
 func (j *Job) Start(ctx context.Context) {
+	if j.running.Load() {
+		return
+	}
+	ctx, j.cancel = context.WithCancel(ctx) // set before running is visible to Stop
 	if !j.running.CompareAndSwap(false, true) {
 		return
 	}
-	ctx, j.cancel = context.WithCancel(ctx)
 
 	go func() {
 		defer close(j.doneChan)

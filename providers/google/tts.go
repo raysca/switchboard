@@ -248,10 +248,19 @@ func splitUnit(text string, max int) []string {
 				break
 			}
 		}
-		pieces = append(pieces, string(r[:cut]))
+		pieces = appendPiece(pieces, r[:cut])
 		r = r[cut:]
 	}
-	return append(pieces, string(r))
+	return appendPiece(pieces, r)
+}
+
+// appendPiece adds the trimmed piece unless it is only whitespace (TTS rejects
+// empty input).
+func appendPiece(pieces []string, r []rune) []string {
+	if s := strings.TrimSpace(string(r)); s != "" {
+		return append(pieces, s)
+	}
+	return pieces
 }
 
 func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.SynthesisUnitFrame, e core.Emitter) error {

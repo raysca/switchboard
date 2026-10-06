@@ -70,7 +70,7 @@ func TestTTS_UnitOverLimitIsSynthesizedInPieces(t *testing.T) {
 	mockClient.mu.Lock()
 	calls := append([]string(nil), mockClient.calls...)
 	mockClient.mu.Unlock()
-	if len(calls) != 2 || calls[0]+calls[1] != words || len([]rune(calls[0])) > 250 || strings.HasSuffix(calls[0], "wor") {
+	if len(calls) != 2 || calls[0]+" "+calls[1] != strings.TrimSpace(words) || len([]rune(calls[0])) > 250 || strings.HasSuffix(calls[0], "wor") {
 		t.Fatalf("pieces = %q", calls)
 	}
 	mu.Lock()

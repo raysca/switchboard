@@ -567,6 +567,12 @@ func (c *Connection) readLoop() {
 					_ = c.conn.Close(websocket.StatusPolicyViolation, "incompatible rtvi protocol")
 					return
 				}
+				if errors.Is(err, rtvi.ErrSessionSetup) {
+					errJSON, _ := c.rtvi.FormatError("session_setup_failed", true)
+					_ = c.WriteWireMessage(c.ctx, errJSON)
+					_ = c.conn.Close(websocket.StatusInternalError, "session setup failed")
+					return
+				}
 				_ = c.conn.Close(websocket.StatusUnsupportedData, "invalid rtvi message")
 				return
 			}

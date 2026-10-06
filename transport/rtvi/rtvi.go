@@ -38,6 +38,9 @@ var (
 	// ErrRejectedMessage marks a well-formed client message the bot refuses;
 	// the connection stays open and the client receives a non-fatal error.
 	ErrRejectedMessage = errors.New("rtvi: message rejected")
+	// ErrSessionSetup: client-ready was valid but the server could not start
+	// the call (capacity, agent, providers). Not the client's fault.
+	ErrSessionSetup = errors.New("rtvi: session setup failed")
 )
 
 // Message is the standard RTVI envelope structure.
@@ -142,7 +145,7 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 		}
 		if h.OnClientReady != nil {
 			if err := h.OnClientReady(readyData.Version); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%w: %w", ErrSessionSetup, err)
 			}
 		}
 		return nil, nil
@@ -166,7 +169,8 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 			return nil, fmt.Errorf("%w: send-text rate limit exceeded; wait and retry", ErrRejectedMessage)
 		}
 		if err := h.OnSendText(content); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrRejectedMessage, err)
+			// The server's reason stays server-side; the client gets a fixed message.
+			return nil, fmt.Errorf("%w: text turn could not be accepted", ErrRejectedMessage)
 		}
 		return nil, nil
 

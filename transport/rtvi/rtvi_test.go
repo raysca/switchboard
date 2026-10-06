@@ -247,3 +247,24 @@ func TestRTVI_RepeatClientReadyIsRejectedNotReRun(t *testing.T) {
 		t.Fatalf("OnClientReady ran %d times, want 1", calls)
 	}
 }
+
+// A server-side setup failure is distinguishable from a malformed message, and
+// a refused text turn never echoes the server's reason to the client.
+func TestServerErrorsAreClassifiedAndNotEchoed(t *testing.T) {
+	h := rtvi.NewHandler()
+	h.OnClientReady = func(string) error { return errors.New("db password wrong") }
+	ready := `{"id":"r","label":"rtvi-ai","type":"client-ready","data":{"version":"` + rtvi.ProtocolVersion + `"}}`
+	if _, err := h.HandleIncomingJSON(ready); !errors.Is(err, rtvi.ErrSessionSetup) {
+		t.Fatalf("setup failure = %v, want ErrSessionSetup", err)
+	}
+
+	h = rtvi.NewHandler()
+	h.OnSendText = func(string) error { return errors.New("internal detail") }
+	if _, err := h.HandleIncomingJSON(ready); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.HandleIncomingJSON(`{"id":"t","label":"rtvi-ai","type":"send-text","data":{"content":"hi"}}`)
+	if !errors.Is(err, rtvi.ErrRejectedMessage) || strings.Contains(err.Error(), "internal detail") {
+		t.Fatalf("rejected text turn = %v", err)
+	}
+}

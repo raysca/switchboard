@@ -96,11 +96,9 @@ type Config struct {
 	// and its credentials come from the stored agent, never from YAML.
 	Providers struct {
 		GoogleSTT struct {
-			ProjectID                  string        `yaml:"project_id"`
-			Location                   string        `yaml:"location"`
-			MaxStreams                 int           `yaml:"max_streams"`
-			RotationThreshold          time.Duration `yaml:"rotation_threshold"`
-			RotationHeadroomMultiplier float64       `yaml:"rotation_headroom_multiplier"`
+			ProjectID         string        `yaml:"project_id"`
+			Location          string        `yaml:"location"`
+			RotationThreshold time.Duration `yaml:"rotation_threshold"`
 		} `yaml:"google_stt"`
 
 		GoogleTTS struct {
@@ -189,9 +187,7 @@ func DefaultConfig(profile Profile) *Config {
 
 	// Providers
 	cfg.Providers.GoogleSTT.Location = "us-central1"
-	cfg.Providers.GoogleSTT.MaxStreams = 100
 	cfg.Providers.GoogleSTT.RotationThreshold = 240 * time.Second
-	cfg.Providers.GoogleSTT.RotationHeadroomMultiplier = 2.0
 
 	cfg.Providers.GoogleTTS.SampleRate = 24000
 
@@ -375,6 +371,11 @@ func rejectRemovedKeys(data []byte) error {
 		return errors.New("config: `pipelines` is no longer supported; calls run stored agents. Create agents via /api/v1/agents and remove the pipelines section")
 	}
 	for provider, settings := range doc.Providers {
+		for _, key := range []string{"max_streams", "rotation_headroom_multiplier"} {
+			if _, ok := settings[key]; ok {
+				return fmt.Errorf("config: providers.%s.%s is no longer supported; limits.max_sessions caps concurrent calls (keep it within your STT stream quota)", provider, key)
+			}
+		}
 		for _, key := range []string{"model", "language_code", "language", "voice", "system_prompt", "api_key_env", "credentials_file", "auth_mode"} {
 			if _, ok := settings[key]; ok {
 				return fmt.Errorf("config: providers.%s.%s is no longer supported; models, voices, prompts and credentials belong to stored agents and provider credentials", provider, key)
