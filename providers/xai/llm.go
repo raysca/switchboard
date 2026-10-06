@@ -268,7 +268,8 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 	if parent == nil {
 		parent = context.Background()
 	}
-	streamCtx, cancel := context.WithTimeout(parent, p.cfg.Timeout)
+	// Barge-in cancels the whole turn; the timeout applies per request round.
+	streamCtx, cancel := context.WithCancel(parent)
 	p.activeCancel = cancel
 	p.mu.Unlock()
 
