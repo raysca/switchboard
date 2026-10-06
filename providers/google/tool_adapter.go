@@ -53,13 +53,6 @@ func GoogleToolDeclarations(definitions []core.ToolDefinition) ([]*genai.Functio
 	return declarations, nil
 }
 
-// GoogleToolCalls converts every SDK function call in candidate/part order.
-// Calls without provider IDs receive a deterministic response-scoped ID; core
-// fills the session/turn/generation identity before handing them to ToolLoop.
-func GoogleToolCalls(response *genai.GenerateContentResponse, identity core.ToolCall) ([]core.ToolCall, error) {
-	return GoogleToolCallsAt(response, identity, 0)
-}
-
 // GoogleToolCallsAt uses a request-wide ordinal so missing provider IDs remain
 // unique across streamed response chunks and stable when the same request is
 // replayed from its first chunk.
@@ -121,65 +114,6 @@ func GoogleFunctionResponse(call core.ToolCall, result core.ToolResult) (*genai.
 		return nil, errInvalidGoogleTool
 	}
 	return response, nil
-}
-
-// GoogleContents encodes framework history using the SDK's FunctionCall and
-// FunctionResponse parts so a follow-up model request can continue the loop.
-func GoogleContents(history []core.Message) []*genai.Content {
-	return GoogleContentsWithNative(history, nil)
-}
-
-// GoogleContentsWithNative substitutes original model content for reconstructed
-// tool-call messages when available, retaining provider fields such as thought
-// signatures required by some Gemini models.
-func GoogleContentsWithNative(history []core.Message, nativeContents []*genai.Content) []*genai.Content {
-	contents := make([]*genai.Content, 0, len(history))
-	toolNames := make(map[string]string)
-	nativeCursor := 0
-	for _, message := range history {
-		if message.Kind == core.MessageToolCall && message.ToolCallID != "" && message.ToolName != "" {
-			toolNames[message.ToolCallID] = message.ToolName
-		}
-	}
-	for i := 0; i < len(history); i++ {
-		message := history[i]
-		if message.Role == core.RoleSystem {
-			continue
-		}
-		if message.Kind == core.MessageToolCall {
-			batch := make([]core.Message, 0, 2)
-			for i < len(history) && history[i].Kind == core.MessageToolCall {
-				batch = append(batch, history[i])
-				i++
-			}
-			parts, nextNative := googleNativeBatchParts(batch, nativeContents, nativeCursor)
-			nativeCursor = nextNative
-			contents = append(contents, &genai.Content{Role: "model", Parts: parts})
-			i--
-			continue
-		}
-		if message.Kind == core.MessageToolResult || message.Role == core.RoleTool {
-			parts := make([]*genai.Part, 0, 2)
-			for i < len(history) && (history[i].Kind == core.MessageToolResult || history[i].Role == core.RoleTool) {
-				result := history[i]
-				functionResponse, err := GoogleFunctionResponse(core.ToolCall{ID: result.ToolCallID, Name: toolNames[result.ToolCallID]}, core.ToolResult{CallID: result.ToolCallID, Status: result.ToolStatus, Result: json.RawMessage(result.Content), ErrorCategory: result.ToolErrorCategory})
-				if err != nil {
-					functionResponse = &genai.FunctionResponse{ID: result.ToolCallID, Name: toolNames[result.ToolCallID], Response: map[string]any{"error": "invalid_result"}}
-				}
-				parts = append(parts, &genai.Part{FunctionResponse: functionResponse})
-				i++
-			}
-			contents = append(contents, &genai.Content{Role: "user", Parts: parts})
-			i--
-			continue
-		}
-		role := "user"
-		if message.Role == core.RoleAssistant {
-			role = "model"
-		}
-		contents = append(contents, &genai.Content{Role: role, Parts: []*genai.Part{{Text: message.Content}}})
-	}
-	return contents
 }
 
 // GoogleContentsWithNativeExchanges maps history while keeping each completed
@@ -283,116 +217,6 @@ func googleReconstructedCall(call core.Message) *genai.Content {
 		args = map[string]any{}
 	}
 	return &genai.Content{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: call.ToolCallID, Name: call.ToolName, Args: args}}}}
-}
-
-// googleNativeBatchParts consumes one native occurrence for each call in this
-// history batch. The cursor makes replay occurrence-based: a later identical
-// call ID consumes its later provider occurrence rather than overwriting it.
-// Text-only chunks before/after calls remain attached to their original turn.
-func googleNativeBatchParts(batch []core.Message, native []*genai.Content, cursor int) ([]*genai.Part, int) {
-	needed := make(map[string]int, len(batch))
-	for _, call := range batch {
-		needed[call.ToolCallID]++
-	}
-	matched := make(map[string]int, len(needed))
-	parts := make([]*genai.Part, 0, len(batch))
-	for cursor < len(native) {
-		content := native[cursor]
-		if content == nil {
-			cursor++
-			continue
-		}
-		hasCall, hasNeeded := false, false
-		for _, part := range content.Parts {
-			if part == nil || part.FunctionCall == nil {
-				continue
-			}
-			hasCall = true
-			id := part.FunctionCall.ID
-			if matched[id] < needed[id] {
-				hasNeeded = true
-			}
-		}
-		allMatched := true
-		for id, count := range needed {
-			if matched[id] < count {
-				allMatched = false
-				break
-			}
-		}
-		if hasCall && (allMatched || !hasNeeded) {
-			break
-		}
-		for _, part := range content.Parts {
-			if part == nil {
-				continue
-			}
-			copy := cloneGooglePart(part)
-			parts = append(parts, copy)
-			if copy.FunctionCall != nil && matched[copy.FunctionCall.ID] < needed[copy.FunctionCall.ID] {
-				matched[copy.FunctionCall.ID]++
-			}
-		}
-		cursor++
-		allMatched = true
-		for id, count := range needed {
-			if matched[id] < count {
-				allMatched = false
-				break
-			}
-		}
-		if allMatched {
-			// Keep subsequent non-call parts from this response, but stop at the
-			// next function-call occurrence, which belongs to another exchange.
-			for cursor < len(native) && !googleContentHasFunctionCall(native[cursor]) {
-				if native[cursor] != nil {
-					for _, part := range native[cursor].Parts {
-						if part != nil {
-							parts = append(parts, cloneGooglePart(part))
-						}
-					}
-				}
-				cursor++
-			}
-			break
-		}
-	}
-	for _, call := range batch {
-		if matched[call.ToolCallID] > 0 {
-			matched[call.ToolCallID]--
-			continue
-		}
-		var args map[string]any
-		if json.Unmarshal([]byte(call.Content), &args) != nil || args == nil {
-			args = map[string]any{}
-		}
-		parts = append(parts, &genai.Part{FunctionCall: &genai.FunctionCall{ID: call.ToolCallID, Name: call.ToolName, Args: args}})
-	}
-	return parts, cursor
-}
-
-func googleContentHasFunctionCall(content *genai.Content) bool {
-	if content == nil {
-		return false
-	}
-	for _, part := range content.Parts {
-		if part != nil && part.FunctionCall != nil {
-			return true
-		}
-	}
-	return false
-}
-
-func cloneGooglePart(part *genai.Part) *genai.Part {
-	encoded, err := json.Marshal(part)
-	if err != nil {
-		return nil
-	}
-	var cloned genai.Part
-	if json.Unmarshal(encoded, &cloned) != nil {
-		return nil
-	}
-	return &cloned
 }
 
 func decodeGoogleJSON(raw []byte) (any, error) {

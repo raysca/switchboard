@@ -56,10 +56,6 @@ type LLMStreamClient interface {
 	GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error)
 }
 
-type LLMToolStreamClient interface {
-	GenerateStreamWithTools(ctx context.Context, model string, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error)
-}
-
 type LLMNativeToolStreamClient interface {
 	GenerateStreamWithNativeTools(ctx context.Context, model string, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error)
 }
@@ -111,19 +107,11 @@ func NewRealGoogleLLMClient(ctx context.Context, creds *ResolvedCredentials) (*R
 }
 
 func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.generateStream(ctx, model, systemPrompt, history, nil)
-}
-
-func (c *RealGoogleLLMClient) GenerateStreamWithTools(ctx context.Context, model, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.generateStream(ctx, model, systemPrompt, history, definitions)
+	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nil, nil, core.ToolCall{})
 }
 
 func (c *RealGoogleLLMClient) GenerateStreamWithNativeTools(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
 	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nativeHistory, definitions, identity)
-}
-
-func (c *RealGoogleLLMClient) generateStream(ctx context.Context, model, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nil, definitions, core.ToolCall{})
 }
 
 func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
@@ -407,8 +395,6 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				if nativeClient, ok := p.cfg.Client.(LLMNativeToolStreamClient); ok {
 					identity := core.ToolCall{SessionID: core.SessionID(strconv.FormatUint(p.session.ID(), 10)), TurnID: core.TurnID(turn), Generation: core.Generation(gen)}
 					chunkCh, errCh, err = nativeClient.GenerateStreamWithNativeTools(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), nativeHistory, p.cfg.ToolDefinitions, identity)
-				} else if client, ok := p.cfg.Client.(LLMToolStreamClient); ok {
-					chunkCh, errCh, err = client.GenerateStreamWithTools(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), p.cfg.ToolDefinitions)
 				} else {
 					return nil, errGoogleToolClientUnsupported
 				}
