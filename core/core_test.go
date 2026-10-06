@@ -247,6 +247,51 @@ func TestCore_QueueOverflowPolicies(t *testing.T) {
 	}
 }
 
+// LLM text produced faster than a slow run loop drains (TTS pacing at media
+// time) must wait for room, not fail the turn with ErrQueueFull.
+func TestCore_DataFramesWaitForSlowRunLoop(t *testing.T) {
+	budget := DefaultResourceBudget()
+	budget.MaxQueuedFrames = 2
+	pipe, _ := NewPipeline(&LatencyProcessor{Delay: 30 * time.Millisecond})
+	s, _ := NewSession(55, pipe, budget)
+	_ = s.Start()
+	defer s.Close()
+
+	for i := 0; i < 6; i++ {
+		if err := s.Post(&LLMTextDeltaFrame{Delta: "x", Turn: "t1"}); err != nil {
+			t.Fatalf("delta %d: Post() = %v, want nil (backpressure)", i, err)
+		}
+	}
+	if err := s.Err(); err != nil {
+		t.Fatalf("session failed: %v", err)
+	}
+}
+
+type internalTestFrame struct{}
+
+func (*internalTestFrame) Type() FrameType { return FrameInternal }
+
+// Internal frames come from shared workers (VAD); a full inbox fails them at
+// once instead of stalling the worker for every other session.
+func TestCore_InternalFramesFailFastWhenFull(t *testing.T) {
+	budget := DefaultResourceBudget()
+	budget.MaxQueuedFrames = 1
+	pipe, _ := NewPipeline(&LatencyProcessor{Delay: time.Second})
+	s, _ := NewSession(56, pipe, budget)
+	_ = s.Start()
+	defer s.Close()
+
+	_ = s.Post(&LLMTextDeltaFrame{Delta: "busy"}) // run loop now busy for 1s
+	_ = s.Post(&LLMTextDeltaFrame{Delta: "fills the inbox"})
+	start := time.Now()
+	if err := s.Post(&internalTestFrame{}); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("Post(internal) = %v, want ErrQueueFull", err)
+	}
+	if waited := time.Since(start); waited > 200*time.Millisecond {
+		t.Fatalf("internal frame waited %v for room", waited)
+	}
+}
+
 // 6. Test processor and session.Go panic containment
 func TestCore_PanicContainment(t *testing.T) {
 	// 6a. Inline processor panic

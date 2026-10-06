@@ -198,6 +198,10 @@ func (r *Registry) Supports(provider, stage string) bool {
 	return ok
 }
 
+// CallUserContextIndex is the position of the user context processor in a
+// call pipeline; committed user turns (including client text) enter there.
+const CallUserContextIndex = 3
+
 // BuildCallPipeline builds VAD -> STT -> transcript -> user context -> LLM ->
 // assistant context -> TTS -> transport for one call of a stored agent.
 func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, *core.ConversationContext, error) {

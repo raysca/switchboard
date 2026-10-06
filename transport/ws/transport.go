@@ -145,6 +145,9 @@ type Server struct {
 
 	// Session factory callback
 	OnSessionReady func(conn *Connection) (*core.Session, error)
+	// OnText receives a validated client text turn for conn's session. Nil
+	// means text input is not supported and send-text is rejected.
+	OnText func(conn *Connection, text string) error
 }
 
 func (s *Server) observe(event string, n uint64) {
@@ -421,6 +424,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Client text turns enter the conversation as a committed final transcription;
+	// that frame reaches the client as a user transcription like a spoken turn.
+	conn.rtvi.OnSendText = func(text string) error {
+		session := conn.session.Load()
+		if session == nil {
+			return errors.New("no active session")
+		}
+		if s.OnText == nil {
+			return errors.New("text input is not supported")
+		}
+		return s.OnText(conn, text)
+	}
+
 	// Protocol-ready handshake callback: allocate session ONLY after valid RTVI readiness!
 	conn.rtvi.OnClientReady = func(version string) error {
 		conn.readyOnce.Do(func() {
@@ -544,6 +560,13 @@ func (c *Connection) readLoop() {
 		switch f := frame.(type) {
 		case *WireMessageFrame:
 			respFrame, err := c.rtvi.HandleIncomingJSON(f.Data)
+			if errors.Is(err, rtvi.ErrRejectedMessage) {
+				// A refused client message is not a protocol failure: report it
+				// and keep the call running.
+				errJSON, _ := c.rtvi.FormatError(err.Error(), false)
+				_ = c.WriteWireMessage(c.ctx, errJSON)
+				continue
+			}
 			if err != nil {
 				c.traceError("protocol_failure")
 				if errors.Is(err, rtvi.ErrIncompatibleProtocol) {
@@ -734,6 +757,13 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 	case core.FrameLLMTextDelta:
 		ltf := f.(*core.LLMTextDeltaFrame)
 		msg, _ := c.rtvi.FormatBotLLMText(ltf.Delta)
+		_ = c.WriteWireMessage(ctx, msg)
+		return e.PushDirection(f, dir)
+
+	case core.FrameLLMText:
+		// The complete reply text follows its deltas: tell the client the
+		// turn's text is done.
+		msg, _ := c.rtvi.FormatBotLLMStopped()
 		_ = c.WriteWireMessage(ctx, msg)
 		return e.PushDirection(f, dir)
 

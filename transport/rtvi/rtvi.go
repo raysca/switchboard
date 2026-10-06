@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"govoice/core"
 )
@@ -19,18 +21,23 @@ const (
 	TypeUserStoppedSpeaking = "user-stopped-speaking"
 	TypeUserTranscription   = "user-transcription"
 	TypeBotLLMText          = "bot-llm-text"
-	TypeBotText             = "bot-llm-text" // Alias for TypeBotLLMText
+	TypeBotText             = "bot-llm-text"    // Alias for TypeBotLLMText
+	TypeBotLLMStopped       = "bot-llm-stopped" // the reply text for a turn is complete
 	TypeBotStartedSpeaking  = "bot-started-speaking"
 	TypeBotStoppedSpeaking  = "bot-stopped-speaking"
 	TypeError               = "error"
 	TypeDisconnectBot       = "disconnect-bot"
+	TypeSendText            = "send-text"      // client text turn: {"content": "..."}
 	TypeDisconnect          = "disconnect-bot" // Alias for TypeDisconnectBot
 )
 
 var (
 	ErrIncompatibleProtocol = errors.New("rtvi: incompatible client protocol version")
 	ErrInvalidRTVIMessage   = errors.New("rtvi: invalid or malformed RTVI message")
-	ErrNotReady             = errors.New("rtvi: client sent audio/data before client-ready handshake")
+	// ErrRejectedMessage marks a well-formed client message the bot refuses;
+	// the connection stays open and the client receives a non-fatal error.
+	ErrRejectedMessage = errors.New("rtvi: message rejected")
+	ErrNotReady        = errors.New("rtvi: client sent audio/data before client-ready handshake")
 )
 
 // Message is the standard RTVI envelope structure.
@@ -79,6 +86,16 @@ type Handler struct {
 
 	OnClientReady func(version string) error
 	OnDisconnect  func()
+	// OnSendText receives a validated client text turn.
+	OnSendText func(content string) error
+}
+
+// MaxSendTextBytes bounds one client text turn.
+const MaxSendTextBytes = 4096
+
+// SendTextData is the payload of a send-text client message.
+type SendTextData struct {
+	Content string `json:"content"`
 }
 
 // NewHandler initializes a new RTVI Handler.
@@ -117,6 +134,26 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 			if err := h.OnClientReady(readyData.Version); err != nil {
 				return nil, err
 			}
+		}
+		return nil, nil
+
+	case TypeSendText:
+		if !h.ready.Load() {
+			return nil, fmt.Errorf("%w: send-text before client-ready", ErrRejectedMessage)
+		}
+		var data SendTextData
+		if err := json.Unmarshal(msg.Data, &data); err != nil {
+			return nil, fmt.Errorf("%w: send-text payload is invalid", ErrRejectedMessage)
+		}
+		content := strings.TrimSpace(data.Content)
+		if content == "" || len(content) > MaxSendTextBytes || !utf8.ValidString(content) {
+			return nil, fmt.Errorf("%w: send-text content must be 1 to %d bytes of text", ErrRejectedMessage, MaxSendTextBytes)
+		}
+		if h.OnSendText == nil {
+			return nil, fmt.Errorf("%w: text input is not supported", ErrRejectedMessage)
+		}
+		if err := h.OnSendText(content); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrRejectedMessage, err)
 		}
 		return nil, nil
 
@@ -175,6 +212,12 @@ func (h *Handler) FormatBotLLMText(text string) (string, error) {
 		Text: text,
 	})
 	return h.formatMessage(TypeBotLLMText, data)
+}
+
+// FormatBotLLMStopped marks the end of a reply's LLM text, so clients know a
+// turn's text is complete without waiting on audio or timeouts.
+func (h *Handler) FormatBotLLMStopped() (string, error) {
+	return h.formatMessage(TypeBotLLMStopped, nil)
 }
 
 // FormatBotText is an alias for FormatBotLLMText.

@@ -3,6 +3,7 @@ package credential
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -406,5 +407,28 @@ func TestMultilineSecretsAcceptedButOtherControlsRejected(t *testing.T) {
 		if err := validateSecret(p, "{\n\"token\": 1}"); err == nil {
 			t.Fatalf("%s accepted a multi-line secret", p)
 		}
+	}
+}
+
+// A credential with no validated capabilities serialises "capabilities": [],
+// never null (the admin UI's schema rejects null).
+func TestCredentialDTOCapabilitiesNeverNull(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, storage.Config{Dialect: storage.SQLite, DSN: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto, err := svc.Create(ctx, CreateInput{Provider: "google", Secret: "abc-key-123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(dto)
+	if !strings.Contains(string(b), `"capabilities":[]`) {
+		t.Fatalf("capabilities not an empty array: %s", b)
 	}
 }

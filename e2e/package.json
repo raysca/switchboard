@@ -1,0 +1,14 @@
+{
+  "name": "go-voice-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "test": "playwright test",
+    "fixtures": "scripts/make-fixtures.sh",
+    "report": "playwright show-report playwright-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.5"
+  }
+}

@@ -180,3 +180,20 @@ func TestResilience_SecretRedaction(t *testing.T) {
 		t.Fatalf("SanitizeError failed to redact Bearer token: %s", sanitizedErr.Error())
 	}
 }
+
+// Barge-ins cancel requests constantly; they must never open the breaker.
+func TestResilience_CancellationIsNotAProviderFailure(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Minute})
+	ctx, cancel := context.WithCancel(context.Background())
+	committed := false
+	err := ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 3}, &committed, func(int) error {
+		cancel() // the caller barges in mid-request
+		return context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ExecuteWithRetry() = %v, want context.Canceled", err)
+	}
+	if !cb.Allow() || cb.Failures() != 0 {
+		t.Fatalf("breaker recorded a cancellation: failures=%d", cb.Failures())
+	}
+}

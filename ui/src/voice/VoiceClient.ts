@@ -10,6 +10,7 @@ import {
   encodeAudioFrame,
   encodeClientReadyFrame,
   encodeDisconnectFrame,
+  encodeSendTextFrame,
   extractSessionIdFromToken,
   RTVI_TYPE_BOT_LLM_TEXT,
   RTVI_TYPE_BOT_READY,
@@ -18,6 +19,7 @@ import {
   RTVI_TYPE_CLIENT_READY,
   RTVI_TYPE_DISCONNECT,
   RTVI_TYPE_ERROR,
+  RTVI_TYPE_SEND_TEXT,
   RTVI_TYPE_USER_STARTED_SPEAKING,
   RTVI_TYPE_USER_STOPPED_SPEAKING,
   RTVI_TYPE_USER_TRANSCRIPTION,
@@ -339,6 +341,20 @@ export class VoiceClient {
       isBotSpeaking: false,
       isBargeInActive: false,
     });
+  }
+
+  /** Sends a typed user turn. Returns false when the socket is not open or the text is blank. */
+  public sendText(text: string): boolean {
+    const content = text.trim();
+    if (!content || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(encodeSendTextFrame(content) as unknown as ArrayBufferView<ArrayBuffer>);
+    this.recordEvent(
+      "out",
+      RTVI_TYPE_SEND_TEXT,
+      JSON.stringify({ label: "rtvi-ai", type: RTVI_TYPE_SEND_TEXT, data: { content } }),
+      { content },
+    );
+    return true;
   }
 
   /**

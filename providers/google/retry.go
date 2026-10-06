@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"errors"
 	"math/rand/v2"
 	"time"
 )
@@ -85,6 +86,11 @@ func ExecuteWithRetry(
 				cb.ReportSuccess()
 			}
 			return nil
+		}
+
+		// A cancelled or superseded request (barge-in) is not a provider failure.
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrGenerationMismatch) {
+			return err
 		}
 
 		// Map error to classified ProviderError

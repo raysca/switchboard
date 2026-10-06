@@ -349,3 +349,19 @@ func TestQuotaManager_HeadroomAndAdmission(t *testing.T) {
 		t.Fatal("expected new session to be admissible after release")
 	}
 }
+
+// Barge-ins cancel LLM requests constantly; they must never open the breaker.
+func TestRetry_CancellationIsNotAProviderFailure(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Minute})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, err := range []error{context.Canceled, ErrGenerationMismatch} {
+		got := ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 3}, nil, func(context.Context, int) error { return err }, nil)
+		if !errors.Is(got, err) {
+			t.Fatalf("ExecuteWithRetry() = %v, want %v", got, err)
+		}
+	}
+	if !cb.Allow() || cb.Failures() != 0 {
+		t.Fatalf("breaker recorded cancellations: failures=%d", cb.Failures())
+	}
+}

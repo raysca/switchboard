@@ -168,3 +168,19 @@ func TestBuildCallPipelineClosesBuiltStagesOnFailure(t *testing.T) {
 		t.Fatalf("closed %d built stages, want 2", closed)
 	}
 }
+
+func TestCallUserContextIndexMatchesPipeline(t *testing.T) {
+	reg := NewRegistry()
+	for _, stage := range []string{"stt", "llm", "tts"} {
+		reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	}
+	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}}
+	pipe, _, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, &fakeTransportSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := pipe.Processors()[CallUserContextIndex].(*core.UserContextProcessor); !ok {
+		t.Fatalf("processor %d is %T, want *core.UserContextProcessor", CallUserContextIndex, pipe.Processors()[CallUserContextIndex])
+	}
+}

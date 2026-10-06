@@ -18,6 +18,7 @@ import {
   RTVI_TYPE_BOT_STOPPED_SPEAKING,
   RTVI_TYPE_CLIENT_READY,
   RTVI_TYPE_DISCONNECT,
+  RTVI_TYPE_SEND_TEXT,
   RTVI_TYPE_USER_STARTED_SPEAKING,
   RTVI_TYPE_USER_STOPPED_SPEAKING,
   RTVI_TYPE_USER_TRANSCRIPTION,
@@ -383,6 +384,63 @@ describe("AgentVoiceTest", () => {
     // Clicking trace link routes to /sessions/:sessionId
     await user.click(screen.getByTestId("view-trace-link"));
     expect(await screen.findByTestId("sessions-page")).toBeVisible();
+  });
+
+  it("sends a typed text turn and shows user and bot transcript entries", async () => {
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
+    const client = createMockClient();
+
+    render(
+      <MemoryRouter>
+        <AgentVoiceTest
+          agent={createMockAgent()}
+          client={client}
+          keyValue="mgmt-key-1"
+          audioController={mockAudio}
+          wsBaseUrl="ws://127.0.0.1:9090/ws"
+        />
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+
+    expect(screen.getByTestId("agent-readiness")).toHaveTextContent("ready");
+    expect(screen.getByTestId("connection-state")).toHaveTextContent("DISCONNECTED");
+    const input = screen.getByLabelText("Message");
+    expect(input).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send text" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Start voice test" }));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    await waitFor(() => expect(ws.sentData.length).toBeGreaterThan(0));
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_READY, { version: "2.1.0" });
+    await waitFor(() =>
+      expect(screen.getByTestId("connection-state")).toHaveTextContent("READY"),
+    );
+
+    await user.type(screen.getByLabelText("Message"), "What are your hours?");
+    await user.click(screen.getByRole("button", { name: "Send text" }));
+
+    const sent = ws.sentData
+      .map((d) => decodeBinaryFrame(d))
+      .find((f) => f?.kind === "message" && f.parsed?.type === RTVI_TYPE_SEND_TEXT);
+    expect(sent?.kind === "message" && sent.parsed).toMatchObject({
+      label: "rtvi-ai",
+      type: RTVI_TYPE_SEND_TEXT,
+      data: { content: "What are your hours?" },
+    });
+    expect(sent?.kind === "message" && sent.parsed?.id).toBeTruthy();
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+
+    // Server answers like a voice turn.
+    ws.receiveRTVIMessage(RTVI_TYPE_USER_TRANSCRIPTION, { text: "What are your hours?", final: true });
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_LLM_TEXT, { text: "We are open 9 to 5." });
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_STARTED_SPEAKING);
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_STOPPED_SPEAKING);
+
+    expect(await screen.findByTestId("transcript-user")).toHaveTextContent("What are your hours?");
+    expect(await screen.findByTestId("transcript-bot")).toHaveTextContent("We are open 9 to 5.");
   });
 
   it("toggles Pipecat debug panel visibility", async () => {

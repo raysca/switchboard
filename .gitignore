@@ -32,3 +32,10 @@ examples/secrets
 .agents/
 progress.md
 .govoice-dev/
+
+# e2e (Playwright)
+e2e/node_modules/
+e2e/evidence/
+e2e/test-results/
+e2e/playwright-report/
+e2e/.stack.json

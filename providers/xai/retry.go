@@ -82,6 +82,11 @@ func ExecuteWithRetry(
 
 		lastErr = err
 
+		// A cancelled request (barge-in) is not a provider failure.
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			return err
+		}
+
 		// Strict invariant: no retries after committed user-visible output
 		if committed != nil && *committed {
 			if cb != nil {

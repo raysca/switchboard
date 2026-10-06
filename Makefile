@@ -95,3 +95,10 @@ test-postgres:
 	fi
 
 .PHONY: test-postgres
+
+# Full-stack browser e2e (Playwright) against real Google providers; see e2e/README.md.
+# Skips every test when no Google secret is configured.
+e2e:
+	cd e2e && npm install --no-audit --no-fund && npx playwright install chromium && npx playwright test
+
+.PHONY: e2e

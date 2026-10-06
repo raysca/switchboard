@@ -156,3 +156,121 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// userTurnRecorder stands in for the LLM and records the user turns it receives.
+type userTurnRecorder struct {
+	mu    sync.Mutex
+	turns []string
+}
+
+func (r *userTurnRecorder) ProcessFrame(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+	if m, ok := f.(*core.UserMessageFrame); ok {
+		r.mu.Lock()
+		r.turns = append(r.turns, m.Content)
+		r.mu.Unlock()
+		if err := e.PushDirection(f, d); err != nil {
+			return err
+		}
+		// Reply like an LLM: deltas, then the complete text.
+		if err := e.Push(&core.LLMTextDeltaFrame{Delta: "Four.", Turn: m.Turn, Gen: m.Gen}); err != nil {
+			return err
+		}
+		return e.Push(&core.LLMTextFrame{Text: "Four.", Turn: m.Turn, Gen: m.Gen})
+	}
+	return e.PushDirection(f, d)
+}
+
+// A client text turn (RTVI send-text) is echoed back as a final user
+// transcription and reaches the agent's LLM as a committed user turn.
+func TestTextTurnReachesAgentLLM(t *testing.T) {
+	s := apiTestServer(t)
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	agentID := readyTestAgent(t, s)
+	llm := &userTurnRecorder{}
+	s.registry.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	s.registry.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
+	s.registry.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+
+	ts := httptest.NewServer(s.wsServer)
+	defer ts.Close()
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
+	var resp struct {
+		Data struct{ Token string } `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"?token="+resp.Data.Token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	send := func(raw string) {
+		frame, _ := ws.EncodeMessageFrame(raw)
+		if err := conn.Write(ctx, websocket.MessageBinary, frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`)
+	if _, _, err := conn.Read(ctx); err != nil { // bot-ready
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return activeSessionCount(t, s, agentID) == 1 })
+
+	send(`{"id":"2","label":"rtvi-ai","type":"send-text","data":{"content":"What is two plus two?"}}`)
+	echoed := false
+	for !echoed {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("no echo: %v", err)
+		}
+		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
+			if m, ok := f.(*ws.WireMessageFrame); ok && strings.Contains(m.Data, "user-transcription") && strings.Contains(m.Data, "What is two plus two?") {
+				echoed = true
+			}
+		}
+	}
+	waitFor(t, func() bool {
+		llm.mu.Lock()
+		defer llm.mu.Unlock()
+		return len(llm.turns) == 1 && llm.turns[0] == "What is two plus two?"
+	})
+	// The client sees the reply text and an explicit end-of-reply marker.
+	for sawText, sawStop := false, false; !sawText || !sawStop; {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("reply events missing (text=%v stop=%v): %v", sawText, sawStop, err)
+		}
+		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
+			if m, ok := f.(*ws.WireMessageFrame); ok {
+				sawText = sawText || (strings.Contains(m.Data, "bot-llm-text") && strings.Contains(m.Data, "Four."))
+				sawStop = sawStop || strings.Contains(m.Data, "bot-llm-stopped")
+			}
+		}
+	}
+
+	// An empty text turn is refused without ending the call.
+	send(`{"id":"3","label":"rtvi-ai","type":"send-text","data":{"content":"  "}}`)
+	for {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("call ended after a rejected text turn: %v", err)
+		}
+		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
+			if m, ok := f.(*ws.WireMessageFrame); ok && strings.Contains(m.Data, `"error"`) {
+				break
+			}
+		}
+	}
+	send(`{"id":"4","label":"rtvi-ai","type":"send-text","data":{"content":"And three plus three?"}}`)
+	waitFor(t, func() bool { llm.mu.Lock(); defer llm.mu.Unlock(); return len(llm.turns) == 2 })
+}
+
+func activeSessionCount(t *testing.T, s *Server, agentID string) int {
+	t.Helper()
+	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: agentID, Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(rows)
+}

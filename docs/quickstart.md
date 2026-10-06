@@ -111,7 +111,7 @@ AGENT_ID=$(curl -fsS -X POST "$ADMIN/api/v1/agents" \
     "name": "Quickstart agent",
     "config": {
       "stt": {"provider": "google", "model": "chirp_2", "language": "en-US"},
-      "llm": {"provider": "google", "model": "gemini-2.0-flash", "system_prompt": "You are a friendly voice assistant. Keep answers short."},
+      "llm": {"provider": "google", "model": "gemini-2.5-flash", "system_prompt": "You are a friendly voice assistant. Keep answers short."},
       "tts": {"provider": "google", "voice": "en-US-Journey-F"}
     }
   }' | jq -r .data.id)

@@ -433,8 +433,8 @@ func (s *Session) admit(f Frame, dir Direction, resumeIndex int, suppliedGen uin
 	}
 }
 
-// enqueueData sheds input audio when the inbox is full. Current-generation output
-// waits for the run loop to drain, then terminates the session if it does not.
+// enqueueData sheds input audio when the inbox is full. Other frames wait for the
+// run loop to drain; output audio that does not fit terminates the session.
 func (s *Session) enqueueData(env Envelope) error {
 	select {
 	case s.data <- env:
@@ -465,15 +465,22 @@ func (s *Session) enqueueData(env Envelope) error {
 			return ErrSessionClosed
 		}
 	}
-	if env.Frame.Type() != FrameOutputAudio {
+	// Internal frames come from shared workers (VAD) serving every session; one
+	// slow session must not stall them.
+	if env.Frame.Type() == FrameInternal {
 		return ErrQueueFull
 	}
+	// Producers (LLM streams, TTS) block here while the run loop drains at media
+	// pace; only output audio that still cannot fit ends the session.
 	timer := time.NewTimer(s.budget.MaxFrameProcessing)
 	defer timer.Stop()
 	select {
 	case s.data <- env:
 		return nil
 	case <-timer.C:
+		if env.Frame.Type() != FrameOutputAudio {
+			return ErrQueueFull
+		}
 		s.fail(ErrSlowOutput)
 		return ErrSlowOutput
 	case <-s.ctx.Done():

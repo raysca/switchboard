@@ -331,8 +331,11 @@ describe("AgentsView", () => {
     expect(await screen.findByText("Original Agent (Copy)")).toBeVisible();
   });
 
-  it("archives an agent", async () => {
-    let agents = [createMockAgent({ id: "agent-1", name: "Archivable Agent" })];
+  it("deletes (archives) an agent after confirmation and hides it from the list", async () => {
+    let agents = [
+      createMockAgent({ id: "agent-1", name: "Doomed Agent" }),
+      createMockAgent({ id: "agent-2", name: "Keeper Agent" }),
+    ];
     const client = createMockClient({
       getAgents: vi.fn().mockImplementation(() => Promise.resolve(agents)),
       archiveAgent: vi.fn().mockImplementation(async (id) => {
@@ -344,11 +347,35 @@ describe("AgentsView", () => {
     const user = userEvent.setup();
     renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
 
-    expect(await screen.findByText("Archivable Agent")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /archive/i }));
+    expect(await screen.findByText("Doomed Agent")).toBeVisible();
+    await user.click(screen.getAllByRole("button", { name: "View detail" })[0]);
+    await user.click(screen.getByRole("button", { name: "Delete agent" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/history .*kept/i);
+    expect(client.archiveAgent).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Confirm delete" }));
 
     expect(client.archiveAgent).toHaveBeenCalledWith("agent-1");
-    expect(await screen.findByText(/archived/i)).toBeVisible();
+    expect(await screen.findByRole("heading", { name: /configured agents \(1\)/i })).toBeVisible();
+    expect(screen.queryByText("Doomed Agent")).toBeNull();
+    expect(screen.getByText("Keeper Agent")).toBeVisible();
+  });
+
+  it("cancels agent deletion", async () => {
+    const client = createMockClient({
+      getAgents: vi.fn().mockResolvedValue([createMockAgent({ id: "agent-1", name: "Safe Agent" })]),
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "View detail" }));
+    await user.click(screen.getByRole("button", { name: "Delete agent" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(client.archiveAgent).not.toHaveBeenCalled();
   });
 
   it("blocks save and lists missing required stage fields", async () => {

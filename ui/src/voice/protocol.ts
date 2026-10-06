@@ -16,6 +16,7 @@ export const RTVI_TYPE_BOT_STARTED_SPEAKING = "bot-started-speaking";
 export const RTVI_TYPE_BOT_STOPPED_SPEAKING = "bot-stopped-speaking";
 export const RTVI_TYPE_ERROR = "error";
 export const RTVI_TYPE_DISCONNECT = "disconnect-bot";
+export const RTVI_TYPE_SEND_TEXT = "send-text";
 
 export interface RTVIMessage<T = unknown> {
   id?: string;
@@ -157,6 +158,13 @@ export function encodeClientReadyFrame(
  */
 export function encodeDisconnectFrame(): Uint8Array {
   return encodeRTVIMessage(RTVI_TYPE_DISCONNECT);
+}
+
+/**
+ * Encodes an RTVI send-text frame: a typed user turn the server treats like a final transcription.
+ */
+export function encodeSendTextFrame(content: string): Uint8Array {
+  return encodeRTVIMessage(RTVI_TYPE_SEND_TEXT, { content });
 }
 
 /**

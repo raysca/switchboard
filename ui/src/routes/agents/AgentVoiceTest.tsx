@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import type { ApiClient, AgentDTO } from "../../api/client";
 import {
@@ -25,6 +25,7 @@ export function AgentVoiceTest({
   audioController,
 }: AgentVoiceTestProps) {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [textMessage, setTextMessage] = useState("");
   const voiceClientRef = useRef<VoiceClient | null>(null);
 
   // Initialize or maintain VoiceClient instance
@@ -66,6 +67,11 @@ export function AgentVoiceTest({
 
   const handleDisconnect = async () => {
     await voiceClient.disconnect();
+  };
+
+  const handleSendText = (e: FormEvent) => {
+    e.preventDefault();
+    if (voiceClient.sendText(textMessage)) setTextMessage("");
   };
 
   const handleToggleMute = () => {
@@ -123,6 +129,13 @@ export function AgentVoiceTest({
           <span style={{ fontSize: "0.82rem", color: "#53666b" }}>
             Agent: <code>{agent.id}</code>
           </span>
+          <span style={{ fontSize: "0.82rem", color: "#53666b" }}>
+            Readiness:{" "}
+            <code data-testid="agent-readiness">
+              {agent.readiness.state}
+            </code>
+          </span>
+          <span data-testid="connection-state">
           <Status
             tone={
               state.sessionState === "ready"
@@ -134,6 +147,7 @@ export function AgentVoiceTest({
           >
             {state.sessionState.toUpperCase()}
           </Status>
+          </span>
         </div>
       </div>
 
@@ -346,6 +360,7 @@ export function AgentVoiceTest({
             {state.transcripts.map((item) => (
               <div
                 key={item.id}
+                data-testid={item.speaker === "user" ? "transcript-user" : "transcript-bot"}
                 style={{
                   alignSelf: item.speaker === "user" ? "flex-end" : "flex-start",
                   maxWidth: "80%",
@@ -430,6 +445,34 @@ export function AgentVoiceTest({
           </div>
         )}
       </div>
+
+      {/* Typed user turns: sent as RTVI send-text; the server echoes a final user transcription. */}
+      <form
+        onSubmit={handleSendText}
+        aria-label="Send text message"
+        style={{ display: "flex", gap: "8px", marginBottom: "20px" }}
+      >
+        <label htmlFor="voice-test-text" style={{ alignSelf: "center", fontSize: "0.85rem" }}>
+          Message
+        </label>
+        <input
+          id="voice-test-text"
+          type="text"
+          value={textMessage}
+          onChange={(e) => setTextMessage(e.target.value)}
+          disabled={!isConnectedOrReady}
+          placeholder={isConnectedOrReady ? "Type a message to the agent" : "Connect to send text"}
+          style={{ flex: 1, padding: "6px 8px", border: "1px solid #c9d3d2" }}
+        />
+        <button
+          type="submit"
+          className="action-button-small"
+          disabled={!isConnectedOrReady || !textMessage.trim()}
+          data-testid="send-text-btn"
+        >
+          Send text
+        </button>
+      </form>
 
       {/* Session Summary & Trace Timeline Link */}
       {state.sessionId && (

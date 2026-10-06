@@ -54,7 +54,7 @@ unset secret
 # credential_id is explicit so credentials left by earlier runs cannot make it ambiguous.
 agent="$(jq -n --arg c "$cred_id" '{name: "smoke", config: {
   stt: {provider: "google", model: "chirp_2", language: "en-US", credential_id: $c},
-  llm: {provider: "google", model: "gemini-2.0-flash", system_prompt: "You are a release smoke test.", credential_id: $c},
+  llm: {provider: "google", model: "gemini-2.5-flash", system_prompt: "You are a release smoke test.", credential_id: $c},
   tts: {provider: "google", voice: "en-US-Journey-F", credential_id: $c}}}' |
   api POST /api/v1/agents)"
 agent_id="$(jq -er .data.id <<<"$agent")"

@@ -12,7 +12,6 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
 
 // Browser polyfills for Node runtime
 if (typeof globalThis.window === 'undefined') {
@@ -43,38 +42,56 @@ function getArg(flag, defaultValue) {
   return defaultValue;
 }
 
-const pipeline = getArg('--pipeline', 'default'); // "default" (Google) or "xai"
-const wsBaseUrl = getArg('--url', 'ws://127.0.0.1:8080/ws');
-const audioPath = getArg('--audio', path.resolve(__dirname, '../../assets/speech/clip1.wav'));
-const secretKey = getArg('--secret', 'dev-insecure-secret-key-for-testing-only-12345');
-let explicitToken = getArg('--token', null);
+const usage = `Usage: node cli.js --agent <id> [--text "<message>"] [--audio <wav>]
+  --agent <id>      stored agent to call (required)
+  --admin <url>     management API base URL (default http://127.0.0.1:9090)
+  --ws <url>        public WebSocket URL (default ws://127.0.0.1:8080/ws)
+  --principal <p>   token principal (default rtvi-cli-tester)
+  --key <key>       management API key (default $GOVOICE_MANAGEMENT_API_KEY)
+  --text "<msg>"    send a text turn instead of audio
+  --audio <wav>     16kHz mono PCM16 WAV for the voice turn (default assets/speech/clip1.wav)
+  --timeout <ms>    reply timeout (default 20000)`;
 
-// Mint admission token if not explicitly provided
-if (!explicitToken) {
-  const now = Math.floor(Date.now() / 1000);
-  explicitToken = jwt.sign(
-    {
-      jti: crypto.randomUUID(),
-      sub: 'rtvi-cli-tester',
-      aud: 'govoice-v1-client',
-      iss: 'govoice-v1',
-      exp: now + 300,
-      iat: now,
-      pipeline: pipeline
-    },
-    secretKey,
-    { algorithm: 'HS256', keyid: 'v1' }
-  );
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(usage);
+  process.exit(0);
 }
 
-const targetWsUrl = `${wsBaseUrl}?token=${explicitToken}&pipeline=${pipeline}`;
+const agentId = getArg('--agent', null);
+const adminUrl = getArg('--admin', 'http://127.0.0.1:9090').replace(/\/+$/, '');
+const wsBaseUrl = getArg('--ws', 'ws://127.0.0.1:8080/ws');
+const principal = getArg('--principal', 'rtvi-cli-tester');
+const managementKey = getArg('--key', process.env.GOVOICE_MANAGEMENT_API_KEY);
+const textTurn = getArg('--text', null);
+const audioPath = getArg('--audio', path.resolve(__dirname, '../../assets/speech/clip1.wav'));
+const replyTimeoutMs = Number(getArg('--timeout', '20000'));
+
+if (!agentId || !managementKey) {
+  console.error(!agentId ? 'Missing --agent <id>' : 'Missing management key: set GOVOICE_MANAGEMENT_API_KEY or pass --key');
+  console.error(usage);
+  process.exit(2);
+}
+
+// Issues a single-use voice token for the agent through the management API.
+async function issueVoiceToken() {
+  const res = await fetch(`${adminUrl}/api/v1/voice-tokens`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${managementKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ principal, agent_id: agentId })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body?.data?.token) {
+    const code = body?.error?.code || `http_${res.status}`;
+    throw new Error(`voice token refused (${res.status} ${code}): ${body?.error?.message || res.statusText}`);
+  }
+  return body.data.token;
+}
 
 async function main() {
   console.log('================================================================');
   console.log(` Voice Framework V1: Standalone RTVI Client Test Driver`);
-  const pipelineDesc = pipeline === 'full_xai' ? '100% Native xAI (xAI STT -> xAI Grok LLM -> xAI TTS)' : (pipeline === 'xai' ? 'Mixed (Google STT -> xAI Grok LLM -> Google TTS)' : 'Google Stack (Google STT -> Gemini LLM -> Google TTS)');
-  console.log(` Pipeline:    ${pipeline} (${pipelineDesc})`);
-  console.log(` Audio Input: ${audioPath}`);
+  console.log(` Agent:       ${agentId}`);
+  console.log(` Turn:        ${textTurn !== null ? 'text: "' + textTurn + '"' : 'audio: ' + audioPath}`);
   console.log('================================================================\n');
 
   let botReadyReceived = false;
@@ -89,6 +106,7 @@ async function main() {
   let botAudioBytes = 0;
   let userAudioCallback = null;
   let fatalError = null;
+  let t_last_llm_token = 0;
 
   // Latency markers
   const t0_connect = Date.now();
@@ -153,6 +171,7 @@ async function main() {
           t_first_llm_token = Date.now();
           process.stdout.write(`\n[LLM STREAM] `);
         }
+        t_last_llm_token = Date.now();
         if (data?.text) {
           botLlmText += data.text;
           process.stdout.write(data.text);
@@ -173,12 +192,20 @@ async function main() {
     }
   });
 
-  // Step 1: Connect
+  // Step 1: Issue a voice token and connect
+  let targetWsUrl;
+  try {
+    const token = await issueVoiceToken();
+    targetWsUrl = `${wsBaseUrl}?token=${encodeURIComponent(token)}`;
+  } catch (err) {
+    console.error(`Failed to issue voice token from ${adminUrl}:`, err.message);
+    process.exit(1);
+  }
   console.log(`Connecting to server...`);
   try {
     await client.connect({ wsUrl: targetWsUrl });
   } catch (err) {
-    console.error(`Failed to connect to ${targetWsUrl}:`, err.message);
+    console.error(`Failed to connect to ${wsBaseUrl}:`, err.message);
     process.exit(1);
   }
 
@@ -192,8 +219,17 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 2: Stream audio file if available
-  if (fs.existsSync(audioPath) && userAudioCallback) {
+  // Step 2: Send a text turn, or stream audio file if available
+  if (textTurn !== null) {
+    console.log(`\n[USER TEXT] "${textTurn}"`);
+    // Same transport path (and protobuf wire encoding) the client uses for client-ready.
+    transport.sendMessage({
+      id: crypto.randomUUID(),
+      label: 'rtvi-ai',
+      type: 'send-text',
+      data: { content: textTurn }
+    });
+  } else if (fs.existsSync(audioPath) && userAudioCallback) {
     console.log(`\nStreaming speech audio file (${audioPath})...`);
     // Extract raw PCM audio from WAV data chunk if RIFF
     const fileBytes = fs.readFileSync(audioPath);
@@ -253,8 +289,13 @@ async function main() {
   // Step 3: Wait for assistant response and audio
   console.log(`\nWaiting for assistant response...`);
   const waitResponseStart = Date.now();
-  while (Date.now() - waitResponseStart < 20000) {
-    if (botLlmText && botAudioFrames > 0 && botStoppedSpeaking) {
+  // Reply is complete when the bot stops speaking after LLM text, or (text-only
+  // agents, which never speak) after 3s without a new LLM token.
+  // ponytail: quiet-period heuristic; switch to bot-llm-stopped if the server emits it.
+  let replyComplete = false;
+  while (Date.now() - waitResponseStart < replyTimeoutMs && !fatalError) {
+    if (botLlmText && (botStoppedSpeaking || Date.now() - t_last_llm_token > 3000)) {
+      replyComplete = true;
       break;
     }
     await new Promise(r => setTimeout(r, 100));
@@ -265,13 +306,13 @@ async function main() {
   await client.disconnect();
 
   console.log('\n================================================================');
-  console.log(` Call Test Results Summary: [${pipeline.toUpperCase()}]`);
+  console.log(` Call Test Results Summary: [agent ${agentId}]`);
   console.log('================================================================');
   console.log(` Handshake Success:       ${botReadyReceived ? 'PASS (' + (t_bot_ready - t0_connect) + 'ms)' : 'FAIL'}`);
   console.log(` User Speech Detected:    ${userStartedSpeaking ? 'PASS' : 'SKIPPED'}`);
   console.log(` User Transcript:         ${userTranscript ? '"' + userTranscript + '"' : '(none)'}`);
   console.log(` Bot LLM Response:        ${botLlmText ? '"' + botLlmText.trim() + '"' : '(none)'}`);
-  console.log(` Bot Audio Synthesized:   ${botAudioFrames > 0 ? 'PASS (' + botAudioFrames + ' frames, ' + botAudioBytes + ' bytes)' : 'FAIL'}`);
+  console.log(` Bot Audio Synthesized:   ${botAudioFrames > 0 ? 'PASS (' + botAudioFrames + ' frames, ' + botAudioBytes + ' bytes)' : 'NONE'}`);
   if (t_transcript && t_first_llm_token) {
     console.log(` STT -> First LLM Token:  ${t_first_llm_token - t_transcript} ms`);
   }
@@ -282,6 +323,10 @@ async function main() {
 
   if (fatalError) {
     console.error(`Call completed with fatal error:`, fatalError);
+    process.exit(1);
+  }
+  if (!replyComplete) {
+    console.error(`Timed out after ${replyTimeoutMs}ms waiting for a complete bot reply`);
     process.exit(1);
   }
   process.exit(0);

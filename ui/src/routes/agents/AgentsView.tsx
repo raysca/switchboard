@@ -358,7 +358,7 @@ function AgentForm({
             type="text"
             value={draft.llmModel}
             onChange={(e) => set({ llmModel: e.target.value })}
-            placeholder="e.g. gemini-2.0-flash"
+            placeholder="e.g. gemini-2.5-flash"
             required
           />
         </label>
@@ -437,6 +437,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const agentsQuery = useQuery({
     queryKey: ["agents"],
@@ -504,6 +505,9 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
     mutationFn: (id: string) => client.archiveAgent(id),
     onSuccess: () => {
       setActionError(null);
+      setConfirmDelete(false);
+      setSelectedAgentId(null);
+      setMode("list");
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => {
@@ -555,7 +559,8 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
     />
   ) : null;
 
-  const agents = agentsQuery.data ?? [];
+  // "Delete" archives on the server; archived agents are hidden from the UI.
+  const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
 
   return (
@@ -685,9 +690,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                               <code>v{versionNum}</code>
                             </td>
                             <td>
-                              {agent.archived ? (
-                                <Status tone="bad">Archived</Status>
-                              ) : agent.enabled ? (
+                              {agent.enabled ? (
                                 <Status tone="good">Enabled</Status>
                               ) : (
                                 <Status tone="neutral">Disabled</Status>
@@ -700,6 +703,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                                   onClick={() => {
                                     setSelectedAgentId(agent.id);
                                     setSaveSuccessMessage(null);
+                                    setConfirmDelete(false);
                                     setMode("detail");
                                   }}
                                 >
@@ -718,15 +722,6 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                                 >
                                   Duplicate
                                 </button>
-                                {!agent.archived && (
-                                  <button
-                                    className="action-button-small action-button-danger"
-                                    onClick={() => archiveMutation.mutate(agent.id)}
-                                    disabled={archiveMutation.isPending}
-                                  >
-                                    Archive
-                                  </button>
-                                )}
                               </div>
                             </td>
                           </tr>
@@ -846,22 +841,57 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                   >
                     Duplicate
                   </button>
-                  {!selectedAgent.archived && (
-                    <button
-                      className="action-button-small action-button-danger"
-                      onClick={() => archiveMutation.mutate(selectedAgent.id)}
-                    >
-                      Archive
-                    </button>
-                  )}
+                  <button
+                    className="action-button-small action-button-danger"
+                    onClick={() => setConfirmDelete(true)}
+                    disabled={confirmDelete}
+                  >
+                    Delete agent
+                  </button>
                   <button
                     className="action-button-small"
-                    onClick={() => setMode("list")}
+                    onClick={() => {
+                      setConfirmDelete(false);
+                      setMode("list");
+                    }}
                   >
                     Back to list
                   </button>
                 </div>
               </div>
+
+              {confirmDelete && (
+                <div
+                  role="alertdialog"
+                  aria-labelledby="delete-agent-title"
+                  aria-describedby="delete-agent-desc"
+                  className="message-panel"
+                  style={{ marginBottom: "24px", borderColor: "#a43e30" }}
+                >
+                  <h3 id="delete-agent-title" style={{ marginTop: 0 }}>
+                    Delete {selectedAgent.name}?
+                  </h3>
+                  <p id="delete-agent-desc">
+                    The agent is removed from the list and can no longer take calls.
+                    Its version history and past session history are kept.
+                  </p>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button
+                      className="action-button-small action-button-danger"
+                      onClick={() => archiveMutation.mutate(selectedAgent.id)}
+                      disabled={archiveMutation.isPending}
+                    >
+                      {archiveMutation.isPending ? "Deleting…" : "Confirm delete"}
+                    </button>
+                    <button
+                      className="action-button-small"
+                      onClick={() => setConfirmDelete(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Status and Readiness overview */}
               <div

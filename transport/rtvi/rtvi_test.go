@@ -3,6 +3,7 @@ package rtvi_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"govoice/core"
@@ -177,5 +178,36 @@ func TestRTVI_FormatMessages(t *testing.T) {
 	var errData rtvi.ErrorData
 	if err := json.Unmarshal(msg.Data, &errData); err != nil || errData.Error != "something went wrong" || !errData.Fatal {
 		t.Fatalf("Unexpected errData: %v", errData)
+	}
+}
+
+func TestSendText(t *testing.T) {
+	h := rtvi.NewHandler()
+	var got []string
+	h.OnSendText = func(c string) error { got = append(got, c); return nil }
+	msg := func(content string) string {
+		b, _ := json.Marshal(map[string]any{"id": "1", "label": rtvi.LabelRTVI, "type": rtvi.TypeSendText, "data": map[string]string{"content": content}})
+		return string(b)
+	}
+	if _, err := h.HandleIncomingJSON(msg("hi")); !errors.Is(err, rtvi.ErrRejectedMessage) {
+		t.Fatalf("send-text before client-ready: %v", err)
+	}
+	if _, err := h.HandleIncomingJSON(`{"id":"r","label":"rtvi-ai","type":"client-ready","data":{"version":"` + rtvi.ProtocolVersion + `"}}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"", "   ", strings.Repeat("x", rtvi.MaxSendTextBytes+1)} {
+		if _, err := h.HandleIncomingJSON(msg(bad)); !errors.Is(err, rtvi.ErrRejectedMessage) {
+			t.Fatalf("content %q accepted: %v", bad[:min(len(bad), 10)], err)
+		}
+	}
+	if _, err := h.HandleIncomingJSON(msg("  What is two plus two?  ")); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "What is two plus two?" {
+		t.Fatalf("delivered %q", got)
+	}
+	h.OnSendText = func(string) error { return errors.New("no active session") }
+	if _, err := h.HandleIncomingJSON(msg("hello")); !errors.Is(err, rtvi.ErrRejectedMessage) {
+		t.Fatalf("callback error must be a rejection: %v", err)
 	}
 }

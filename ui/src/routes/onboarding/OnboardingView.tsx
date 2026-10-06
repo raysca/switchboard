@@ -33,7 +33,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const [agentNameDraft, setAgentNameDraft] = useState("");
   const [agentDescDraft, setAgentDescDraft] = useState("");
   const [agentSttDraft, setAgentSttDraft] = useState("chirp_2");
-  const [agentLlmDraft, setAgentLlmDraft] = useState("gemini-2.0-flash");
+  const [agentLlmDraft, setAgentLlmDraft] = useState("gemini-2.5-flash");
   const [agentTtsDraft, setAgentTtsDraft] = useState("en-US-Journey-F");
   const [agentError, setAgentError] = useState<ApiError | null>(null);
 

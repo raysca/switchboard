@@ -69,6 +69,7 @@ type Server struct {
 	mu          sync.Mutex
 	activeCalls map[uint64]*activeCall
 	nextCallID  atomic.Uint64
+	textTurns   atomic.Uint64
 	pruneStop   chan struct{}
 }
 
@@ -364,6 +365,7 @@ func (s *Server) setupRoutes() {
 
 	s.wsServer = ws.NewServer(wsCfg)
 	s.wsServer.OnSessionReady = s.onSessionReady
+	s.wsServer.OnText = s.onText
 
 	// Public Listener: /health and /ws
 	s.publicMux = http.NewServeMux()
@@ -904,4 +906,23 @@ func hasOriginWildcard(origins []string) bool {
 		}
 	}
 	return false
+}
+
+// onText enters a client text turn into the call as a committed user turn: it
+// skips VAD/STT and reaches the conversation context and LLM exactly like a
+// finalized spoken transcript, so the reply is text and audio as usual.
+func (s *Server) onText(conn *ws.Connection, text string) error {
+	session := conn.Session()
+	if session == nil {
+		return errors.New("no active session")
+	}
+	gen := session.CurrentGeneration()
+	frame := &core.FinalTranscriptionFrame{
+		Text:      text,
+		Timestamp: time.Now(),
+		Turn:      fmt.Sprintf("text-%d", s.textTurns.Add(1)),
+		Gen:       gen,
+		Committed: true,
+	}
+	return session.Reenter(frame, core.Downstream, CallUserContextIndex, gen)
 }

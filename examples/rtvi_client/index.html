@@ -63,10 +63,24 @@
       align-items: center;
       justify-content: space-between;
     }
-    .pipeline-select {
-      display: flex;
-      gap: 8px;
-      align-items: center;
+    .fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      width: 100%;
+    }
+    .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-muted); }
+    .error { color: var(--danger); font-size: 13px; min-height: 1em; width: 100%; }
+    .text-row { display: flex; gap: 10px; margin-top: 12px; }
+    .text-row input { flex: 1; }
+    input {
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--text);
+      min-width: 0;
     }
     select, button {
       padding: 10px 16px;
@@ -162,29 +176,37 @@
   <div class="container">
     <header>
       <h1>Voice Framework V1 — Pipecat RTVI Test Client</h1>
-      <p class="subtitle">End-to-End WebSocket Voice Conversation Demo (Google & xAI Pipelines)</p>
+      <p class="subtitle">End-to-End WebSocket Voice &amp; Text Conversation with a Stored Agent</p>
     </header>
 
     <div class="card controls">
-      <div class="pipeline-select">
-        <label for="pipeline">Pipeline:</label>
-        <select id="pipeline">
-          <option value="default">Google (Chirp 2 STT + Gemini 2.5 Flash + Journey TTS)</option>
-          <option value="xai">xAI Grok (Chirp 2 STT + xAI Grok LLM + Journey TTS)</option>
-        </select>
+      <div class="fields">
+        <label class="field">Admin URL
+          <input id="adminUrl" type="url" value="http://127.0.0.1:9090" autocomplete="off">
+        </label>
+        <label class="field">Management key
+          <input id="managementKey" type="password" autocomplete="off">
+        </label>
+        <label class="field">Agent ID
+          <input id="agentId" type="text" autocomplete="off">
+        </label>
+        <label class="field">Server WebSocket URL
+          <input id="wsUrl" type="url" value="ws://127.0.0.1:8080/ws" autocomplete="off">
+        </label>
       </div>
 
       <div style="display: flex; gap: 10px;">
-        <button id="btnConnect" class="primary">Connect & Start Talking</button>
+        <button id="btnConnect" class="primary">Connect</button>
         <button id="btnDisconnect" class="danger" disabled>Disconnect</button>
       </div>
+      <div id="errorMsg" class="error" role="alert" data-testid="connection-error"></div>
     </div>
 
     <div class="card">
       <div class="status-bar">
         <div>
           <span>Status: </span>
-          <span id="connBadge" class="badge disconnected"><span class="dot"></span> Disconnected</span>
+          <span id="connBadge" class="badge disconnected" data-testid="connection-status" role="status">Disconnected</span>
         </div>
         <div>
           <span>Speech State: </span>
@@ -194,12 +216,17 @@
 
       <div style="margin-top: 16px;">
         <div class="meta">Conversation Stream</div>
-        <div id="transcriptBox" class="transcript-box">
+        <div id="transcriptBox" class="transcript-box" aria-live="polite">
           <div class="message bot">
             <div class="meta">System</div>
-            Select a pipeline and click <strong>"Connect & Start Talking"</strong> to test live audio conversation.
+            Enter the admin URL, management key and agent ID, then click <strong>Connect</strong>. Speak, or type a message and click <strong>Send text</strong>.
           </div>
         </div>
+        <form id="textForm" class="text-row">
+          <label for="messageInput" class="meta" style="align-self: center; margin: 0;">Message</label>
+          <input id="messageInput" type="text" autocomplete="off" disabled>
+          <button id="btnSendText" type="submit" class="primary" disabled>Send text</button>
+        </form>
       </div>
     </div>
   </div>
@@ -213,7 +240,23 @@
 
     const btnConnect = document.getElementById('btnConnect');
     const btnDisconnect = document.getElementById('btnDisconnect');
-    const selectPipeline = document.getElementById('pipeline');
+    const configInputs = ['adminUrl', 'managementKey', 'agentId', 'wsUrl'].map(id => document.getElementById(id));
+    const [adminUrlInput, managementKeyInput, agentIdInput, wsUrlInput] = configInputs;
+    const errorMsg = document.getElementById('errorMsg');
+    const textForm = document.getElementById('textForm');
+    const messageInput = document.getElementById('messageInput');
+    const btnSendText = document.getElementById('btnSendText');
+    let textSeq = 0;
+
+    function setStatus(text, cls) {
+      connBadge.className = `badge ${cls}`;
+      connBadge.textContent = text;
+    }
+
+    function setTextEnabled(enabled) {
+      messageInput.disabled = !enabled;
+      btnSendText.disabled = !enabled;
+    }
     const connBadge = document.getElementById('connBadge');
     const speechState = document.getElementById('speechState');
     const transcriptBox = document.getElementById('transcriptBox');
@@ -238,7 +281,8 @@
 
       const msg = document.createElement('div');
       msg.className = `message ${role}`;
-      msg.innerHTML = `<div class="meta">${role === 'user' ? 'User' : 'Assistant'}</div>${escapeHtml(text)}`;
+      msg.dataset.testid = `transcript-${role}`;
+      msg.innerHTML = `<div class="meta">${role === 'user' ? 'User' : 'Assistant'}</div><span class="text">${escapeHtml(text)}</span>`;
       transcriptBox.appendChild(msg);
       transcriptBox.scrollTop = transcriptBox.scrollHeight;
       return msg;
@@ -248,29 +292,38 @@
       return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
-    // Connect handler
+    // Connect handler: issue a single-use voice token via server.js, then open the WebSocket.
     btnConnect.addEventListener('click', async () => {
       btnConnect.disabled = true;
-      selectPipeline.disabled = true;
-      connBadge.className = 'badge disconnected';
-      connBadge.textContent = 'Connecting...';
+      configInputs.forEach(i => i.disabled = true);
+      errorMsg.textContent = '';
+      setStatus('Connecting...', 'disconnected');
 
       try {
-        const pipeline = selectPipeline.value;
-        const res = await fetch(`/api/token?pipeline=${pipeline}`);
-        const data = await res.json();
+        const res = await fetch('/api/voice-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            adminUrl: adminUrlInput.value.trim(),
+            managementKey: managementKeyInput.value,
+            agentId: agentIdInput.value.trim()
+          })
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body?.data?.token) {
+          const code = body?.error?.code || `http_${res.status}`;
+          throw new Error(`voice token refused (${res.status} ${code}): ${body?.error?.message || res.statusText}`);
+        }
 
         // 1. Initialize Audio Context for 24kHz output and microphone capture
         audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
         await audioCtx.resume();
 
         // 2. Open WebSocket
-        ws = new WebSocket(data.wsUrl);
+        ws = new WebSocket(`${wsUrlInput.value.trim()}?token=${encodeURIComponent(body.data.token)}`);
         ws.binaryType = 'arraybuffer';
 
         ws.onopen = () => {
-          connBadge.className = 'badge connected';
-          connBadge.innerHTML = '<span class="dot"></span> Connected';
           btnDisconnect.disabled = false;
 
           // Send client-ready RTVI event
@@ -293,7 +346,10 @@
           }
         };
 
-        ws.onclose = () => {
+        ws.onclose = (event) => {
+          if (event.code !== 1000 && event.code !== 1005 && !errorMsg.textContent) {
+            errorMsg.textContent = `Connection closed (${event.code}${event.reason ? ': ' + event.reason : ''})`;
+          }
           cleanup();
         };
 
@@ -303,7 +359,7 @@
         };
 
       } catch (err) {
-        alert('Connection error: ' + err.message);
+        errorMsg.textContent = 'Connection error: ' + err.message;
         cleanup();
       }
     });
@@ -311,6 +367,21 @@
     btnDisconnect.addEventListener('click', () => {
       if (ws) ws.close();
       cleanup();
+    });
+
+    textForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const text = messageInput.value.trim();
+      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+      sendRtviMessage({
+        id: `text-${Date.now()}-${++textSeq}`,
+        label: 'rtvi-ai',
+        type: 'send-text',
+        data: { content: text }
+      });
+      // The server echoes the turn back as a final user-transcription.
+      currentBotMsgEl = null;
+      messageInput.value = '';
     });
 
     function cleanup() {
@@ -329,9 +400,9 @@
       ws = null;
       btnConnect.disabled = false;
       btnDisconnect.disabled = true;
-      selectPipeline.disabled = false;
-      connBadge.className = 'badge disconnected';
-      connBadge.innerHTML = '<span class="dot"></span> Disconnected';
+      configInputs.forEach(i => i.disabled = false);
+      setTextEnabled(false);
+      setStatus('Disconnected', 'disconnected');
       speechState.textContent = 'Idle';
       speechState.style.color = 'var(--text-muted)';
       currentBotMsgEl = null;
@@ -372,44 +443,10 @@
       }
     }
 
-    // Protobuf Encoders (Minimal binary framing matching frames.proto)
-    function sendAudioFrame(pcmBuffer, sampleRate) {
-      // Protobuf wire format: Tag 1 (audio) -> FrameAudio (bytes audio = 1, sample_rate = 2, channels = 3)
-      const audioBytes = new Uint8Array(pcmBuffer);
-      // Construct tag 1 length-delimited FrameAudio
-      const inner = [];
-      // Field 1: bytes audio (tag 1: (1 << 3) | 2 = 10)
-      inner.push(10);
-      writeVarint(inner, audioBytes.length);
-      for (let b of audioBytes) inner.push(b);
-      // Field 2: uint32 sample_rate (tag 2: (2 << 3) | 0 = 16)
-      inner.push(16);
-      writeVarint(inner, sampleRate);
-      // Field 3: uint32 channels = 1 (tag 3: (3 << 3) | 0 = 24)
-      inner.push(24);
-      writeVarint(inner, 1);
-
-      // Outer Frame: tag 1 length-delimited (tag 1: (1 << 3) | 2 = 10)
-      const outer = [10];
-      writeVarint(outer, inner.length);
-      const payload = new Uint8Array(outer.concat(inner));
-      ws.send(payload.buffer);
-    }
-
-    function sendRtviMessage(jsonObj) {
-      const str = JSON.stringify(jsonObj);
-      const strBytes = new TextEncoder().encode(str);
-      // Inner FrameMessage: string data = 1 (tag 1: (1 << 3) | 2 = 10)
-      const inner = [10];
-      writeVarint(inner, strBytes.length);
-      for (let b of strBytes) inner.push(b);
-      // Outer Frame: tag 2 length-delimited (tag 2: (2 << 3) | 2 = 18)
-      const outer = [18];
-      writeVarint(outer, inner.length);
-      const payload = new Uint8Array(outer.concat(inner));
-      ws.send(payload.buffer);
-    }
-
+    // Minimal protobuf codec for proto/frames.proto:
+    //   Frame         { AudioRawFrame audio = 2; MessageFrame message = 4; }
+    //   AudioRawFrame { bytes audio = 3; uint32 sample_rate = 4; uint32 num_channels = 5; }
+    //   MessageFrame  { string data = 1; }
     function writeVarint(arr, val) {
       while (val >= 0x80) {
         arr.push((val & 0x7F) | 0x80);
@@ -418,57 +455,82 @@
       arr.push(val);
     }
 
-    // Binary / RTVI Incoming Parsers
-    function handleBinaryFrame(buf) {
-      const u8 = new Uint8Array(buf);
-      if (u8.length === 0) return;
-      const tag = u8[0] >> 3;
-
-      if (tag === 2) {
-        // Nested RTVI Message
-        let pos = 1;
-        let [len, lenBytes] = readVarint(u8, pos);
-        pos += lenBytes;
-        // Inner FrameMessage
-        if (u8[pos] === 10) {
-          pos++;
-          let [strLen, strBytes] = readVarint(u8, pos);
-          pos += strBytes;
-          const jsonStr = new TextDecoder().decode(u8.subarray(pos, pos + strLen));
-          try {
-            handleRtviJson(JSON.parse(jsonStr));
-          } catch(e) {}
-        }
-      } else if (tag === 1) {
-        // Audio Frame: extract raw audio bytes and play via Web Audio
-        playAudioBuffer(u8);
-      }
+    function writeBytesField(arr, field, bytes) {
+      arr.push((field << 3) | 2);
+      writeVarint(arr, bytes.length);
+      for (const b of bytes) arr.push(b);
     }
 
-    function readVarint(arr, offset) {
-      let res = 0, shift = 0, count = 0;
-      while (offset < arr.length) {
-        let b = arr[offset++];
-        count++;
-        res |= (b & 0x7F) << shift;
+    function sendAudioFrame(pcmBuffer, sampleRate) {
+      const audio = [];
+      writeBytesField(audio, 3, new Uint8Array(pcmBuffer));
+      audio.push(4 << 3); writeVarint(audio, sampleRate);
+      audio.push(5 << 3); writeVarint(audio, 1);
+      const frame = [];
+      writeBytesField(frame, 2, audio);
+      ws.send(new Uint8Array(frame));
+    }
+
+    function sendRtviMessage(jsonObj) {
+      const message = [];
+      writeBytesField(message, 1, new TextEncoder().encode(JSON.stringify(jsonObj)));
+      const frame = [];
+      writeBytesField(frame, 4, message);
+      ws.send(new Uint8Array(frame));
+    }
+
+    function readVarint(arr, pos) {
+      let res = 0, mul = 1;
+      while (pos < arr.length) {
+        const b = arr[pos++];
+        res += (b & 0x7F) * mul;
         if ((b & 0x80) === 0) break;
-        shift += 7;
+        mul *= 128;
       }
-      return [res, count];
+      return [res, pos];
+    }
+
+    // Returns {fieldNumber: value}: varints as numbers, length-delimited as Uint8Array.
+    function readFields(u8) {
+      const fields = {};
+      let pos = 0;
+      while (pos < u8.length) {
+        let key, len;
+        [key, pos] = readVarint(u8, pos);
+        const field = Math.floor(key / 8), wire = key & 7;
+        if (wire === 0) [fields[field], pos] = readVarint(u8, pos);
+        else if (wire === 2) { [len, pos] = readVarint(u8, pos); fields[field] = u8.subarray(pos, pos + len); pos += len; }
+        else if (wire === 1) pos += 8;
+        else if (wire === 5) pos += 4;
+        else break;
+      }
+      return fields;
+    }
+
+    function handleBinaryFrame(buf) {
+      const frame = readFields(new Uint8Array(buf));
+      if (frame[4]) {
+        const data = readFields(frame[4])[1];
+        if (data) {
+          try { handleRtviJson(JSON.parse(new TextDecoder().decode(data))); } catch (e) {}
+        }
+      } else if (frame[2]) {
+        const audio = readFields(frame[2]);
+        if (audio[3]) playAudioBuffer(audio[3], audio[4] || 24000);
+      }
     }
 
     let nextPlayTime = 0;
-    function playAudioBuffer(u8) {
+    function playAudioBuffer(pcmBytes, sampleRate) {
       if (!audioCtx) return;
-      // Extract audio bytes from protobuf FrameAudio (approximate payload offset)
-      let pcmBytes = u8.subarray(4); // Payload offset
-      const int16 = new Int16Array(pcmBytes.buffer, pcmBytes.byteOffset, Math.floor(pcmBytes.byteLength / 2));
+      // Copy: PCM16 needs 2-byte alignment, and a subarray offset may be odd.
+      const int16 = new Int16Array(pcmBytes.slice(0, pcmBytes.byteLength & ~1).buffer);
       const float32 = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) {
         float32[i] = int16[i] / 32768.0;
       }
 
-      const audioBuf = audioCtx.createBuffer(1, float32.length, 24000);
+      const audioBuf = audioCtx.createBuffer(1, float32.length, sampleRate);
       audioBuf.copyToChannel(float32, 0);
       const node = audioCtx.createBufferSource();
       node.buffer = audioBuf;
@@ -484,6 +546,11 @@
       switch (msg.type) {
         case 'bot-ready':
           console.log('Bot ready:', msg);
+          setStatus('Connected', 'connected');
+          setTextEnabled(true);
+          break;
+        case 'error':
+          errorMsg.textContent = `Server error: ${msg.data?.error || 'unknown'}${msg.data?.fatal ? ' (fatal)' : ''}`;
           break;
         case 'user-started-speaking':
           speechState.textContent = 'Speaking...';
@@ -497,6 +564,7 @@
           break;
         case 'user-transcription':
           if (msg.data && msg.data.final) {
+            currentBotMsgEl = null;
             appendMessage('user', msg.data.text);
           } else if (msg.data && msg.data.text) {
             appendMessage('user', msg.data.text, true);
@@ -507,7 +575,7 @@
             if (!currentBotMsgEl) {
               currentBotMsgEl = appendMessage('bot', '');
             }
-            currentBotMsgEl.innerHTML = `<div class="meta">Assistant</div>${escapeHtml(currentBotMsgEl.textContent.replace('Assistant', '') + msg.data.text)}`;
+            currentBotMsgEl.querySelector('.text').textContent += msg.data.text;
             transcriptBox.scrollTop = transcriptBox.scrollHeight;
           }
           break;

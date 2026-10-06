@@ -177,7 +177,7 @@ describe("OnboardingView", () => {
         description: "Primary concierge agent",
         config: {
           stt: { provider: "google", credential_id: "cred-1", model: "chirp_2", language: "en-US" },
-          llm: { provider: "google", credential_id: "cred-1", model: "gemini-2.0-flash" },
+          llm: { provider: "google", credential_id: "cred-1", model: "gemini-2.5-flash" },
           tts: { provider: "google", credential_id: "cred-1", voice: "en-US-Journey-F" },
         },
       }),
