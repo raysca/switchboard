@@ -25,3 +25,9 @@ examples/secrets
 
 # Isolated implementation worktrees
 .worktrees/
+
+# Agent working notes (kept local, not shipped)
+.superpowers/
+.goalpulse/
+.agents/
+progress.md
