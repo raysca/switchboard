@@ -296,11 +296,16 @@ async function main() {
   // Step 3: Wait for assistant response and audio
   console.log(`\nWaiting for assistant response...`);
   const waitResponseStart = Date.now();
-  // Reply is complete when the server marks the LLM text done (bot-llm-stopped)
-  // and the bot is not mid-speech, or when a spoken reply stops speaking.
+  // A spoken reply is complete when the bot stops speaking. bot-llm-stopped
+  // arrives before the speech does, so it ends the reply only if no speech
+  // starts within SPEECH_GRACE_MS (an agent that does not speak).
+  const SPEECH_GRACE_MS = 3000;
+  let llmStoppedAt = 0;
   let replyComplete = false;
   while (Date.now() - waitResponseStart < replyTimeoutMs && !fatalError) {
-    if ((botLlmStopped && !botStartedSpeaking) || (botLlmText && botStoppedSpeaking)) {
+    if (botLlmStopped && !llmStoppedAt) llmStoppedAt = Date.now();
+    const textOnly = llmStoppedAt && !botStartedSpeaking && Date.now() - llmStoppedAt > SPEECH_GRACE_MS;
+    if (textOnly || (botLlmText && botStoppedSpeaking)) {
       replyComplete = true;
       break;
     }
