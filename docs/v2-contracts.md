@@ -604,6 +604,30 @@ type MixerConfig struct {
 - **Clipping Protection**: Sums scaled 16-bit linear PCM samples and strictly saturates outputs within `[-32768, 32767]`, eliminating integer wraparound distortion.
 - **Generation Fencing**: Discards obsolete source frames across turn transitions via `SetGeneration`.
 
+### 2.17 Background audio and earcons
+
+`core/audio.BackgroundAndEarconProcessor` orchestrates non-blocking ambient tracks and acoustic prompts (earcons):
+```go
+type BackgroundControlFrame struct {
+    Action   BackgroundAction // start, stop, pause, resume
+    TrackID  string
+    Volume   float64
+    Loop     bool
+    PCM16LE  []byte
+}
+
+type EarconControlFrame struct {
+    EarconID    string
+    Volume      float64
+    PCM16LE     []byte
+    Disposition core.OutputDisposition // Interruptible vs Uninterruptible
+}
+```
+- **Paced Output & Volume Ducking**: Paces PCM background audio chunk-by-chunk and attenuates gain automatically (`DuckOnSpeech`) when assistant speech begins (`TTSStartedFrame`), restoring volume on `TTSStoppedFrame`.
+- **Classification & Disposition**: Earcons support explicit `OutputDisposition` (`OutputInterruptible` vs `OutputUninterruptible`).
+- **Interruption Behavior**: Interruption frames cancel active interruptible earcons and reset ducking states while preserving uninterruptible cues.
+
+
 
 
 

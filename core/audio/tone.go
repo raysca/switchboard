@@ -39,14 +39,6 @@ var dtmfFrequencies = map[rune][2]float64{
 	'D': {941, 1633},
 }
 
-// DTMFFrame represents a transport-neutral DTMF digit event (e.g., telephone keypad input).
-type DTMFFram struct {
-	Digit    rune          `json:"digit"`
-	Duration time.Duration `json:"duration"`
-	Turn     string        `json:"turn,omitempty"`
-	Gen      uint64        `json:"gen,omitempty"`
-}
-
 // DTMFFrame implements core.Frame and core.GenerationalFrame.
 type DTMFFrame struct {
 	Digit    rune          `json:"digit"`
@@ -55,8 +47,8 @@ type DTMFFrame struct {
 	Gen      uint64        `json:"gen,omitempty"`
 }
 
-func (f *DTMFFrame) Type() core.FrameType    { return core.FrameDTMF }
-func (f *DTMFFrame) Generation() uint64      { return f.Gen }
+func (f *DTMFFrame) Type() core.FrameType { return core.FrameDTMF }
+func (f *DTMFFrame) Generation() uint64   { return f.Gen }
 
 // Validate verifies that the DTMF digit and duration conform to standards.
 func (f *DTMFFrame) Validate() error {
@@ -96,8 +88,8 @@ type ToneFrame struct {
 	Gen         uint64        `json:"gen,omitempty"`
 }
 
-func (f *ToneFrame) Type() core.FrameType    { return core.FrameTone }
-func (f *ToneFrame) Generation() uint64      { return f.Gen }
+func (f *ToneFrame) Type() core.FrameType { return core.FrameTone }
+func (f *ToneFrame) Generation() uint64   { return f.Gen }
 
 // Validate verifies the frequencies, volume, and duration.
 func (f *ToneFrame) Validate() error {

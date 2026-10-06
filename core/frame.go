@@ -68,6 +68,8 @@ const (
 	FramePlaybackState          FrameType = 830
 	FrameDTMF                   FrameType = 831
 	FrameTone                   FrameType = 832
+	FrameBackgroundAudioControl FrameType = 833
+	FrameEarconControl          FrameType = 834
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.
