@@ -176,9 +176,75 @@ func SevenScenarios() []Scenario {
 	}
 }
 
+// ExtendedParityScenarios returns the Phase 10 P2 extended parity scenarios (8, 9, 10).
+func ExtendedParityScenarios() []Scenario {
+	return []Scenario{
+		{
+			ID:          "audio_mixing_and_earcons",
+			Number:      8,
+			Name:        "Bounded Audio Mixing & Paced Earcons",
+			Description: "Multi-source audio mixing combines speech output and ambient audio with saturation clipping prevention; earcon cues fire with interruptible and uninterruptible disposition handling.",
+			Invariants: []string{
+				"AudioMixer bounds concurrent streams to configured capacity",
+				"Summed 16-bit PCM samples saturate without wraparound distortion",
+				"Uninterruptible earcons complete playback during turn interruptions",
+				"Interruptible earcons immediately cease upon interruption frames",
+				"Background audio automatically ducks during active assistant speech",
+			},
+			Steps: []string{
+				"configure AudioMixer with multiple input sources",
+				"mix concurrent signals exceeding int16 bounds and verify clean saturation clipping",
+				"play uninterruptible earcon cue across interruption and verify complete delivery",
+				"start ambient background audio and verify automatic gain ducking upon TTS speech",
+			},
+			Timeout: 5 * time.Second,
+		},
+		{
+			ID:          "runtime_introspection_and_readiness",
+			Number:      9,
+			Name:        "Runtime Introspection & Readiness Events",
+			Description: "Pipeline dynamically emits structured readiness events and provides point-in-time diagnostic snapshots and processor capability discovery.",
+			Invariants: []string{
+				"Session.Snapshot provides immutable read-only view of runtime state and pipeline processors",
+				"Processors advertise capability flags and side-effect metadata",
+				"Readiness frames announce component health transitions without blocking active calls",
+			},
+			Steps: []string{
+				"initialize pipeline with capable processors and start session",
+				"query pipeline capabilities for speech_to_text, llm, and vad",
+				"capture point-in-time session snapshot and verify diagnostics agreement",
+				"emit readiness state transition and verify non-blocking observer delivery",
+			},
+			Timeout: 5 * time.Second,
+		},
+		{
+			ID:          "deterministic_turn_replay",
+			Number:      10,
+			Name:        "Deterministic Turn Recording & Replay",
+			Description: "TurnRecorder captures real-time conversation turns into portable JSON logs; TurnReplayer accurately simulates the recorded turn in headless regression testing.",
+			Invariants: []string{
+				"TurnRecorder serializes exact event timestamps, offsets, and directions",
+				"JSON serialization round-trip maintains zero loss of metadata",
+				"TurnReplayer faithfully reproduces event ordering and directionality",
+			},
+			Steps: []string{
+				"record conversation turn with multiple input/output frames",
+				"serialize recorded turn to JSON and deserialize back to struct",
+				"replay recorded turn into mock recipient and verify exact event count and sequence",
+			},
+			Timeout: 5 * time.Second,
+		},
+	}
+}
+
+// AllScenarios returns both vertical scenarios (1-7) and extended P2 parity scenarios (8-10).
+func AllScenarios() []Scenario {
+	return append(SevenScenarios(), ExtendedParityScenarios()...)
+}
+
 // GetScenario returns a scenario definition by 1-based number or ID.
 func GetScenario(numberOrID any) (Scenario, error) {
-	all := SevenScenarios()
+	all := AllScenarios()
 	for _, sc := range all {
 		switch v := numberOrID.(type) {
 		case int:

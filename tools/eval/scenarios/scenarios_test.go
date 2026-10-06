@@ -53,3 +53,28 @@ func TestSevenVerticalScenariosDefinitions(t *testing.T) {
 		}
 	}
 }
+
+func TestExtendedParityScenariosDefinitions(t *testing.T) {
+	all := scenarios.AllScenarios()
+	if len(all) != 10 {
+		t.Fatalf("expected 10 total scenarios (7 vertical + 3 extended parity), got %d", len(all))
+	}
+
+	p2 := scenarios.ExtendedParityScenarios()
+	if len(p2) != 3 {
+		t.Fatalf("expected 3 extended parity scenarios, got %d", len(p2))
+	}
+
+	for _, sc := range p2 {
+		if sc.Number < 8 || sc.Number > 10 {
+			t.Errorf("expected scenario number between 8 and 10, got %d", sc.Number)
+		}
+		if sc.ID == "" || sc.Name == "" || len(sc.Invariants) == 0 {
+			t.Errorf("invalid extended scenario definition: %+v", sc)
+		}
+		retrieved, err := scenarios.GetScenario(sc.Number)
+		if err != nil || retrieved.ID != sc.ID {
+			t.Errorf("GetScenario(%d) failed: %v", sc.Number, err)
+		}
+	}
+}

@@ -746,6 +746,14 @@ func (p *TurnReplayer) Replay(ctx context.Context, onEntry func(entry RecordedTu
 - **Serialization Fidelity**: Full JSON round-trip serialization (`SerializeJSON` / `DeserializeJSON`) preserves relative event offsets and directionality.
 - **Configurable Replay Speed**: Supports real-time pacing (`speed = 1.0`) or accelerated headless simulation (`speed = 0.0`) for fast continuous integration regression test suites.
 
+### 2.24 Extended behavioral parity scenarios
+
+Phase 10 introduces three extended parity scenarios (8, 9, 10) in `tools/eval/scenarios/` complementing the original seven vertical scenarios:
+1. **Scenario 8 (`audio_mixing_and_earcons`)**: Bounded multi-source audio mixing, sample saturation clipping control, uninterruptible earcon delivery through barge-in, and automatic background audio ducking.
+2. **Scenario 9 (`runtime_introspection_and_readiness`)**: Dynamic processor readiness notifications (`ReadinessFrame`), capability flag queries (`CapableProcessor`), and point-in-time runtime snapshot diagnostics (`Session.Snapshot`).
+3. **Scenario 10 (`deterministic_turn_replay`)**: End-to-end conversation turn recording (`TurnRecorder`), JSON serialization fidelity, and headless regression replay (`TurnReplayer`).
+
+
 
 
 
