@@ -239,3 +239,19 @@ func TestSendTextRateLimit(t *testing.T) {
 		t.Fatalf("turn after refill: %v", err)
 	}
 }
+
+func TestRTVI_RepeatClientReadyIsRejectedNotReRun(t *testing.T) {
+	h := rtvi.NewHandler()
+	calls := 0
+	h.OnClientReady = func(string) error { calls++; return nil }
+	ready := `{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`
+	if _, err := h.HandleIncomingJSON(ready); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.HandleIncomingJSON(ready); !errors.Is(err, rtvi.ErrRejectedMessage) {
+		t.Fatalf("repeat client-ready: err = %v, want ErrRejectedMessage", err)
+	}
+	if calls != 1 {
+		t.Fatalf("OnClientReady ran %d times, want 1", calls)
+	}
+}

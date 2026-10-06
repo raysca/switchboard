@@ -140,7 +140,10 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 		if readyData.Version == "" || !isCompatibleVersion(readyData.Version) {
 			return nil, fmt.Errorf("%w: expected %s, got %s", ErrIncompatibleProtocol, ProtocolVersion, readyData.Version)
 		}
-		h.ready.Store(true)
+		if h.ready.Swap(true) {
+			// Session setup runs once per connection; a repeat would leak the first session.
+			return nil, fmt.Errorf("%w: duplicate client-ready", ErrRejectedMessage)
+		}
 		if h.OnClientReady != nil {
 			if err := h.OnClientReady(readyData.Version); err != nil {
 				return nil, err
