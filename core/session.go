@@ -1144,6 +1144,10 @@ func frameTraceLabel(frame FrameType) string {
 		return "usage_metrics"
 	case FramePlaybackState:
 		return "playback_state"
+	case FrameDTMF:
+		return "dtmf"
+	case FrameTone:
+		return "tone"
 	default:
 		return strconv.Itoa(int(frame))
 	}

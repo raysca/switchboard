@@ -566,6 +566,29 @@ type Observer interface {
 - **Ordered Delivery**: `ObserverEvent` values are emitted in exact pipeline dispatch sequence with processor position and timing.
 - **Fault & Panic Isolation**: Any panics thrown within observer callbacks are recovered and isolated from the session run-loop, ensuring zero degradation of active calls.
 
+### 2.15 DTMF and transport-neutral tone frames
+
+`core/audio.DTMFFrame` and `core/audio.ToneFrame` provide transport-neutral telephony and audible signaling representations:
+```go
+type DTMFFrame struct {
+    Digit    rune          // '0'-'9', '*', '#', 'A'-'D'
+    Duration time.Duration // bounded positive duration (<= 5s)
+    Turn     string
+    Gen      uint64
+}
+
+type ToneFrame struct {
+    Frequencies []float64     // 20 Hz to 20,000 Hz
+    Duration    time.Duration // bounded positive duration (<= 5s)
+    Volume      float64       // 0.0 to 1.0
+    Turn        string
+    Gen         uint64
+}
+```
+- **Validation**: Enforces standard DTMF dual-tone frequencies (`Frequencies()`) and audible frequency boundaries (`Validate()`).
+- **Transport Neutrality**: Conveys telephone keypad interaction and signaling tones across the pipeline without implying specific SIP/PSTN transport coupling.
+
+
 
 
 
