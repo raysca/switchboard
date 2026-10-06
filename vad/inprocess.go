@@ -14,6 +14,7 @@ type inProcessBackend struct {
 	wg           sync.WaitGroup
 	statCounters atomicStats
 	closed       atomic.Bool
+	closeMu      sync.RWMutex // Submit (R) vs closing the queues (W)
 }
 
 type inProcessStream struct {
@@ -24,6 +25,8 @@ type inProcessStream struct {
 }
 
 func (s *inProcessStream) Submit(j *Job) error {
+	s.backend.closeMu.RLock()
+	defer s.backend.closeMu.RUnlock()
 	if s.backend.closed.Load() {
 		return ErrWorker
 	}
@@ -60,40 +63,15 @@ func NewInProcessShardedExecutor(cfg Config) (*Executor, error) {
 	}
 	e.backend = b
 
-	nq := 1
-	if cfg.Mode == "sharded" {
-		nq = cfg.Workers
-	}
-	for i := 0; i < nq; i++ {
-		b.queues = append(b.queues, make(chan *Job, max(1, cfg.QueueCap/nq)))
-	}
-
 	for i := 0; i < cfg.Workers; i++ {
-		q := b.queues[i%nq]
-		var run func([]*Job) error
-		var closer func()
-
-		switch cfg.Mode {
-		case "global", "sharded":
-			r, err := NewRunner(cfg.Batch, cfg.IntraOp)
-			if err != nil {
-				return nil, fmt.Errorf("in-process runner: %w", err)
-			}
-			run, closer = r.Run, r.Close
-		case "stub":
-			cost := cfg.StubCost
-			run = func(jobs []*Job) error {
-				for t := time.Now(); time.Since(t) < cost*time.Duration(len(jobs)); {
-				}
-				return nil
-			}
-			closer = func() {}
-		default:
-			return nil, fmt.Errorf("unknown in-process mode %q", cfg.Mode)
+		r, err := NewRunner(cfg.Batch, cfg.IntraOp)
+		if err != nil {
+			return nil, fmt.Errorf("in-process runner: %w", err)
 		}
-
+		q := make(chan *Job, max(1, cfg.QueueCap/cfg.Workers))
+		b.queues = append(b.queues, q)
 		b.wg.Add(1)
-		go b.worker(q, run, closer)
+		go b.worker(q, r.Run, r.Close)
 	}
 
 	return e, nil
@@ -132,20 +110,13 @@ func (b *inProcessBackend) queueDepth() int {
 	return depth
 }
 
-func (b *inProcessBackend) pids() []int {
-	return nil // in-process; no child PIDs
-}
-
-func (b *inProcessBackend) injectFault(workerIdx int) error {
-	return fmt.Errorf("fault injection not supported on in-process executor (would crash host process)")
-}
-
-func (b *inProcessBackend) hardKill(workerIdx int) error {
-	return fmt.Errorf("hard kill not supported on in-process executor")
-}
-
 func (b *inProcessBackend) close() error {
-	if b.closed.Swap(true) {
+	// Swap under the write lock: once it is released no Submit can still be
+	// between its closed check and its send, so closing the queues is safe.
+	b.closeMu.Lock()
+	wasClosed := b.closed.Swap(true)
+	b.closeMu.Unlock()
+	if wasClosed {
 		return nil
 	}
 	for _, q := range b.queues {

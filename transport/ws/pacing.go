@@ -27,9 +27,6 @@ type PacerConfig struct {
 	MaxQueueFrames   int
 	WriteTimeout     time.Duration
 	EnablePacing     bool
-	// AbortInProgressWrite is for writers whose cancellation is recoverable.
-	// coder/websocket must leave this false: canceling Write closes the connection.
-	AbortInProgressWrite bool
 }
 
 func DefaultPacerConfig() PacerConfig {
@@ -106,7 +103,6 @@ type PacedWriter struct {
 
 	FramesWritten atomic.Uint64
 	FramesDropped atomic.Uint64
-	FlushesDone   atomic.Uint64
 
 	OnWriteComplete func(*core.OutputAudioFrame, error)
 	OnSpeakingState func(core.SpeakingStateFrame)
@@ -362,12 +358,9 @@ func staleInterruptible(f *core.OutputAudioFrame, active uint64) bool {
 // BeginFlush acknowledges asynchronously only after targeted interruptible
 // in-flight work has quiesced. Repeated calls retain their own acknowledgements.
 func (w *PacedWriter) BeginFlush(gen uint64, done func(error)) {
-	wait, cancel, abort, dispatch := w.dropGeneration(gen)
+	wait, abort, dispatch := w.dropGeneration(gen)
 	if abort != nil {
 		close(abort)
-	}
-	if cancel != nil {
-		cancel()
 	}
 	if dispatch {
 		w.dispatchSpeaking()
@@ -393,31 +386,15 @@ func (w *PacedWriter) BeginFlush(gen uint64, done func(error)) {
 	}()
 }
 
+// Flush is BeginFlush that waits for the acknowledgement or ctx.
 func (w *PacedWriter) Flush(ctx context.Context, gen uint64) error {
-	wait, cancel, abort, dispatch := w.dropGeneration(gen)
-	if abort != nil {
-		close(abort)
-	}
-	if cancel != nil {
-		cancel()
-	}
-	if dispatch {
-		w.dispatchSpeaking()
-	}
-	if wait == nil {
-		return w.flushResult()
-	}
-	timer := time.NewTimer(w.flushTimeout())
-	defer timer.Stop()
+	done := make(chan error, 1)
+	w.BeginFlush(gen, func(err error) { done <- err })
 	select {
-	case <-wait:
-		return w.flushResult()
+	case err := <-done:
+		return err
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-timer.C:
-		err := fmt.Errorf("%w: flush timed out waiting for in-flight write cancellation", ErrSlowClient)
-		w.closeWithError(err)
-		return w.flushResult()
 	}
 }
 
@@ -443,7 +420,7 @@ func (w *PacedWriter) flushTimeout() time.Duration {
 	return 200 * time.Millisecond
 }
 
-func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.CancelFunc, chan struct{}, bool) {
+func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, chan struct{}, bool) {
 	w.mu.Lock()
 	scheduleChanged := false
 	kept := w.queue[:0]
@@ -483,7 +460,6 @@ func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.Cance
 	}
 
 	var wait <-chan struct{}
-	var cancel context.CancelFunc
 	var abort chan struct{}
 	if entry := w.inflight; entry != nil && entry.frame.Gen <= gen && entry.frame.Disposition != core.OutputUninterruptible {
 		if !w.dropInflight {
@@ -495,9 +471,6 @@ func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.Cance
 			}
 		}
 		wait = w.inflightDone
-		if w.inWrite && w.cfg.AbortInProgressWrite {
-			cancel = w.writeCancel
-		}
 	}
 	if w.drain != nil && w.drain.gen <= gen && w.drain.disposition != core.OutputUninterruptible {
 		w.drain.dropped = true
@@ -515,14 +488,13 @@ func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, context.Cance
 	if scheduleChanged {
 		w.lastMediaEnd = time.Time{}
 	}
-	w.FlushesDone.Add(1)
 	w.cond.Broadcast()
 	dispatch := false
 	if event, ok := w.speaking.StopThrough(gen, core.SpeakingStopFlushed); ok {
 		dispatch = w.queueSpeakingLocked(event)
 	}
 	w.mu.Unlock()
-	return wait, cancel, abort, dispatch
+	return wait, abort, dispatch
 }
 
 // Run paces and writes until cancellation or close. No queue lock is held
@@ -973,32 +945,8 @@ func safeFlushCallback(callback func(error), err error) {
 	callback(err)
 }
 
-func (w *PacedWriter) QueuedDuration() time.Duration {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.queuedDur
-}
-
-func (w *PacedWriter) QueuedBytes() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.queuedBytes
-}
-
 func (w *PacedWriter) QueuedFrames() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return len(w.queue)
-}
-
-func (w *PacedWriter) PendingFinalMarkers() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return len(w.pendingFinals)
-}
-
-func (w *PacedWriter) ActiveGeneration() uint64 {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.activeGen
 }

@@ -187,11 +187,6 @@ func TestScenarioC_MixedProviderInterchangeability(t *testing.T) {
 		t.Fatal("no output audio delivered to transport output")
 	}
 
-	// Verify token usage tracked on xAI processor
-	if xaiProc.TotalTokens.Load() != 23 {
-		t.Fatalf("expected 23 total tokens on xAI processor, got %d", xaiProc.TotalTokens.Load())
-	}
-
 	// Verify assistant turn was committed to conversation context
 	msgs := ctxPool.Messages()
 	var hasAssistantMsg bool

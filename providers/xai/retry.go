@@ -66,10 +66,11 @@ func ExecuteWithRetry(
 			return ErrCircuitOpen
 		}
 
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
+			if cb != nil {
+				cb.release()
+			}
 			return ctx.Err()
-		default:
 		}
 
 		err := fn(attempt)
@@ -84,30 +85,25 @@ func ExecuteWithRetry(
 
 		// A cancelled request (barge-in) is not a provider failure.
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+			if cb != nil {
+				cb.release()
+			}
 			return err
+		}
+
+		if cb != nil {
+			cb.recordError(err)
 		}
 
 		// Strict invariant: no retries after committed user-visible output
 		if committed != nil && *committed {
-			if cb != nil {
-				cb.RecordFailure()
-			}
 			return errors.Join(ErrRetryCommitted, lastErr)
 		}
 
 		// Check if error is retryable
 		var pe *ProviderError
-		if errors.As(err, &pe) {
-			if pe.Class == ClassificationNonRetryable {
-				if cb != nil {
-					cb.RecordFailure()
-				}
-				return lastErr
-			}
-		}
-
-		if cb != nil {
-			cb.RecordFailure()
+		if errors.As(err, &pe) && pe.Class == ClassificationNonRetryable {
+			return lastErr
 		}
 
 		if attempt == policy.MaxAttempts-1 {

@@ -69,11 +69,6 @@ type Processor struct {
 	Errors   atomic.Uint64
 	Retries  atomic.Uint64
 	Stale    atomic.Uint64
-
-	// Token usage telemetry
-	PromptTokens atomic.Int64
-	OutputTokens atomic.Int64
-	TotalTokens  atomic.Int64
 }
 
 // NewProcessor creates an xAI LLM Processor.
@@ -268,7 +263,8 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 	if parent == nil {
 		parent = context.Background()
 	}
-	streamCtx, cancel := context.WithTimeout(parent, p.cfg.Timeout)
+	// Barge-in cancels the whole turn; the timeout applies per request round.
+	streamCtx, cancel := context.WithCancel(parent)
 	p.activeCancel = cancel
 	p.mu.Unlock()
 
@@ -385,11 +381,6 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			}, core.Downstream, p.index, gen)
 			return
 		}
-
-		// Update token telemetry
-		p.PromptTokens.Add(int64(promptTok))
-		p.OutputTokens.Add(int64(outTok))
-		p.TotalTokens.Add(int64(totTok))
 
 		// Emit final LLMTextFrame
 		if !p.isCurrent(gen) {

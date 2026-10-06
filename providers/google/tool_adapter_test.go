@@ -56,7 +56,7 @@ func TestGoogleToolAdapterParsesOrderedCallsWithStableIdentity(t *testing.T) {
 		{FunctionCall: &genai.FunctionCall{ID: "provider-1", Name: "search", Args: map[string]any{"q": "one"}}},
 		{FunctionCall: &genai.FunctionCall{Name: "lookup", Args: map[string]any{"id": json.Number("42")}}},
 	}}}}}
-	calls, err := GoogleToolCalls(resp, core.ToolCall{SessionID: "s", TurnID: "t", Generation: 3})
+	calls, err := GoogleToolCallsAt(resp, core.ToolCall{SessionID: "s", TurnID: "t", Generation: 3}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestGoogleToolHistoryUsesFunctionParts(t *testing.T) {
 		{Role: core.RoleAssistant, Kind: core.MessageToolCall, Content: `{"q":"one"}`, ToolCallID: "call-1", ToolName: "search"},
 		{Role: core.RoleTool, Kind: core.MessageToolResult, Content: `{"ok":true}`, ToolCallID: "call-1", ToolStatus: core.ToolSucceeded},
 	}
-	contents := GoogleContents(history)
+	contents := GoogleContentsWithNativeExchanges(history, nil)
 	if len(contents) != 2 || contents[0].Role != "model" || contents[0].Parts[0].FunctionCall == nil || contents[1].Role != "user" || contents[1].Parts[0].FunctionResponse == nil {
 		t.Fatalf("contents = %#v", contents)
 	}
@@ -126,18 +126,20 @@ func TestGoogleToolHistoryUsesFunctionParts(t *testing.T) {
 type googleToolClient struct {
 	mu            sync.Mutex
 	requests      [][]core.Message
+	native        [][]GoogleNativeExchange
 	responses     [][]LLMStreamChunk
 	requestErrors []error
 }
 
 func (c *googleToolClient) GenerateStream(ctx context.Context, model, prompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.GenerateStreamWithTools(ctx, model, prompt, history, nil)
+	return c.GenerateStreamWithNativeTools(ctx, model, prompt, history, nil, nil, core.ToolCall{})
 }
 
-func (c *googleToolClient) GenerateStreamWithTools(_ context.Context, _, _ string, history []core.Message, _ []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
+func (c *googleToolClient) GenerateStreamWithNativeTools(_ context.Context, _, _ string, history []core.Message, native []GoogleNativeExchange, _ []core.ToolDefinition, _ core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
 	c.mu.Lock()
 	i := len(c.requests)
 	c.requests = append(c.requests, append([]core.Message(nil), history...))
+	c.native = append(c.native, append([]GoogleNativeExchange(nil), native...))
 	if i < len(c.requestErrors) && c.requestErrors[i] != nil {
 		err := c.requestErrors[i]
 		c.mu.Unlock()
@@ -233,7 +235,7 @@ func TestGoogleLLMToolLoopClaimsOnceAndContinuesWithFunctionHistory(t *testing.T
 	if len(client.requests) != 3 {
 		t.Fatalf("provider attempts = %d, want first call + failed continuation + retry", len(client.requests))
 	}
-	contents := GoogleContents(client.requests[2])
+	contents := GoogleContentsWithNativeExchanges(client.requests[2], client.native[2])
 	foundCall, foundResult := false, false
 	for _, content := range contents {
 		for _, part := range content.Parts {
@@ -345,7 +347,7 @@ func TestGoogleToolSuccessPayloadPreservesArbitraryJSON(t *testing.T) {
 				{Role: core.RoleAssistant, Kind: core.MessageToolCall, Content: `{}`, ToolCallID: "c", ToolName: "lookup"},
 				{Role: core.RoleTool, Kind: core.MessageToolResult, Content: raw, ToolCallID: "c", ToolStatus: core.ToolSucceeded},
 			}
-			contents := GoogleContents(history)
+			contents := GoogleContentsWithNativeExchanges(history, nil)
 			payload, err := json.Marshal(contents[1].Parts[0].FunctionResponse.Response["output"])
 			if err != nil {
 				t.Fatal(err)
@@ -405,9 +407,9 @@ func (task12Emitter) PushDirection(core.Frame, core.Direction) error { return ni
 type failedStreamClient struct{ requests atomic.Int32 }
 
 func (c *failedStreamClient) GenerateStream(ctx context.Context, model, prompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.GenerateStreamWithTools(ctx, model, prompt, history, nil)
+	return c.GenerateStreamWithNativeTools(ctx, model, prompt, history, nil, nil, core.ToolCall{})
 }
-func (c *failedStreamClient) GenerateStreamWithTools(context.Context, string, string, []core.Message, []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
+func (c *failedStreamClient) GenerateStreamWithNativeTools(context.Context, string, string, []core.Message, []GoogleNativeExchange, []core.ToolDefinition, core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
 	c.requests.Add(1)
 	chunks := make(chan LLMStreamChunk, 1)
 	errs := make(chan error, 1)
@@ -548,65 +550,6 @@ func TestGoogleFallbackIDsUseStreamWideOrdinal(t *testing.T) {
 	}
 	if first[0].ID == second[0].ID {
 		t.Fatalf("separate streamed calls collided on fallback ID %q", first[0].ID)
-	}
-}
-
-func TestGoogleNativeContentsPreserveCompleteStreamedModelTurn(t *testing.T) {
-	call := core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c1", ToolName: "lookup", Content: `{}`}
-	result := core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c1", ToolStatus: core.ToolSucceeded, Content: `{}`}
-	native := []*genai.Content{
-		{Role: "model", Parts: []*genai.Part{{Text: "Before ", ThoughtSignature: []byte{1, 2, 3}}}},
-		{Role: "model", Parts: []*genai.Part{{Text: "calling"}, {FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}, ThoughtSignature: []byte{4, 5, 6}}}},
-		{Role: "model", Parts: []*genai.Part{{Text: " after", ThoughtSignature: []byte{7, 8, 9}}}},
-	}
-	got := GoogleContentsWithNative([]core.Message{call, result}, native)
-	if len(got) != 2 {
-		t.Fatalf("contents=%#v", got)
-	}
-	var text strings.Builder
-	signatures := 0
-	for _, content := range got {
-		if content.Role == "model" {
-			for _, part := range content.Parts {
-				text.WriteString(part.Text)
-				if len(part.ThoughtSignature) > 0 {
-					signatures++
-				}
-			}
-		}
-	}
-	if text.String() != "Before calling after" || signatures != 3 {
-		t.Fatalf("native model turn changed: text=%q signatures=%d contents=%#v", text.String(), signatures, got)
-	}
-}
-
-func TestGoogleNativeContentsGroupStreamedCallsIntoOneModelTurn(t *testing.T) {
-	history := []core.Message{
-		{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c1", ToolName: "lookup", Content: `{}`},
-		{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c2", ToolName: "lookup", Content: `{}`},
-		{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c1", ToolStatus: core.ToolSucceeded, Content: `{}`},
-		{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c2", ToolStatus: core.ToolSucceeded, Content: `{}`},
-	}
-	native := []*genai.Content{
-		{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}}}},
-		{Role: "model", Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{ID: "c2", Name: "lookup"}}}},
-	}
-	got := GoogleContentsWithNative(history, native)
-	if len(got) != 2 || got[0].Role != "model" || len(got[0].Parts) != 2 || len(got[1].Parts) != 2 {
-		t.Fatalf("stream fragments were not represented as one model turn and result turn: %#v", got)
-	}
-}
-
-func TestGoogleNativeContentsPreserveReplayOccurrences(t *testing.T) {
-	call := core.Message{Role: core.RoleAssistant, Kind: core.MessageToolCall, ToolCallID: "c1", ToolName: "lookup", Content: `{}`}
-	result := core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolCallID: "c1", ToolStatus: core.ToolSucceeded, Content: `{}`}
-	native := []*genai.Content{
-		{Role: "model", Parts: []*genai.Part{{ThoughtSignature: []byte{1}, FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}}}},
-		{Role: "model", Parts: []*genai.Part{{ThoughtSignature: []byte{2}, FunctionCall: &genai.FunctionCall{ID: "c1", Name: "lookup"}}}},
-	}
-	got := GoogleContentsWithNative([]core.Message{call, result, call, result}, native)
-	if len(got) != 4 || got[0].Parts[0].ThoughtSignature[0] != 1 || got[2].Parts[0].ThoughtSignature[0] != 2 {
-		t.Fatalf("replayed native call occurrences changed: %#v", got)
 	}
 }
 

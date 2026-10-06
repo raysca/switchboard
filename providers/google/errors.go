@@ -26,9 +26,7 @@ var (
 	ErrCircuitOpen                = errors.New("google provider: circuit breaker open")
 	ErrGenerationMismatch         = errors.New("google provider: stale generation rejected")
 	ErrRetryCommitted             = errors.New("google provider: retry prohibited after committed output")
-	ErrUnitTooLong                = errors.New("google provider: synthesis unit exceeds maximum character limit")
 	ErrRequestTooLarge            = errors.New("google provider: request payload exceeds maximum byte limit")
-	ErrQuotaExhausted             = errors.New("google provider: stream quota headroom exhausted")
 	ErrTranscriptAssemblyCapacity = core.ErrTranscriptInvalidated
 )
 

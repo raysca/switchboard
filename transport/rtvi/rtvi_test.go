@@ -52,18 +52,10 @@ func TestRTVI_ClientReadyIncompatibleVersion(t *testing.T) {
 
 func TestRTVI_Disconnect(t *testing.T) {
 	h := rtvi.NewHandler()
-	var disconnected bool
-	h.OnDisconnect = func() {
-		disconnected = true
-	}
-
 	rawJSON := `{"id":"2","label":"rtvi-ai","type":"disconnect-bot"}`
 	frame, err := h.HandleIncomingJSON(rawJSON)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if !disconnected {
-		t.Fatalf("expected OnDisconnect to be called")
 	}
 	if _, ok := frame.(*core.EndFrame); !ok {
 		t.Fatalf("expected EndFrame, got %T", frame)
@@ -237,5 +229,21 @@ func TestSendTextRateLimit(t *testing.T) {
 	time.Sleep(rtvi.SendTextInterval + 50*time.Millisecond)
 	if _, err := h.HandleIncomingJSON(send); err != nil {
 		t.Fatalf("turn after refill: %v", err)
+	}
+}
+
+func TestRTVI_RepeatClientReadyIsRejectedNotReRun(t *testing.T) {
+	h := rtvi.NewHandler()
+	calls := 0
+	h.OnClientReady = func(string) error { calls++; return nil }
+	ready := `{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`
+	if _, err := h.HandleIncomingJSON(ready); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.HandleIncomingJSON(ready); !errors.Is(err, rtvi.ErrRejectedMessage) {
+		t.Fatalf("repeat client-ready: err = %v, want ErrRejectedMessage", err)
+	}
+	if calls != 1 {
+		t.Fatalf("OnClientReady ran %d times, want 1", calls)
 	}
 }

@@ -99,9 +99,6 @@ func TestCircuitBreaker_StateTransitions(t *testing.T) {
 	if cb.Allow() {
 		t.Fatal("expected Allow() to be false for OPEN circuit")
 	}
-	if cb.IsReady() {
-		t.Fatal("expected IsReady() to be false when circuit is OPEN")
-	}
 
 	// Wait for cooldown
 	time.Sleep(60 * time.Millisecond)
@@ -145,9 +142,15 @@ type mockSleeper struct {
 	sleptDurations []time.Duration
 }
 
-func (m *mockSleeper) Sleep(ctx context.Context, d time.Duration) error {
-	m.sleptDurations = append(m.sleptDurations, d)
-	return nil
+// mockSleep records backoff delays instead of sleeping for the test's duration.
+func mockSleep(t *testing.T) *mockSleeper {
+	m, real := &mockSleeper{}, sleep
+	sleep = func(_ context.Context, d time.Duration) error {
+		m.sleptDurations = append(m.sleptDurations, d)
+		return nil
+	}
+	t.Cleanup(func() { sleep = real })
+	return m
 }
 
 func TestRetry_TransientErrorsAndJitter(t *testing.T) {
@@ -159,7 +162,7 @@ func TestRetry_TransientErrorsAndJitter(t *testing.T) {
 		MaxAttempts:    3,
 	}
 
-	sleeper := &mockSleeper{}
+	sleeper := mockSleep(t)
 	attemptsCount := 0
 
 	err := ExecuteWithRetry(context.Background(), cb, policy, nil, func(ctx context.Context, attempt int) error {
@@ -174,7 +177,7 @@ func TestRetry_TransientErrorsAndJitter(t *testing.T) {
 			}
 		}
 		return nil // Success on 3rd attempt
-	}, sleeper)
+	})
 
 	if err != nil {
 		t.Fatalf("expected success on 3rd attempt, got: %v", err)
@@ -199,7 +202,7 @@ func TestRetry_HonorsRetryAfter(t *testing.T) {
 		MaxAttempts:    2,
 	}
 
-	sleeper := &mockSleeper{}
+	sleeper := mockSleep(t)
 	_ = ExecuteWithRetry(context.Background(), cb, policy, nil, func(ctx context.Context, attempt int) error {
 		if attempt == 1 {
 			return &ProviderError{
@@ -210,7 +213,7 @@ func TestRetry_HonorsRetryAfter(t *testing.T) {
 			}
 		}
 		return nil
-	}, sleeper)
+	})
 
 	if len(sleeper.sleptDurations) != 1 {
 		t.Fatalf("expected 1 sleep, got %d", len(sleeper.sleptDurations))
@@ -227,7 +230,7 @@ func TestRetry_NonRetryableErrorFailsImmediately(t *testing.T) {
 		InitialBackoff: 100 * time.Millisecond,
 		MaxAttempts:    3,
 	}
-	sleeper := &mockSleeper{}
+	sleeper := mockSleep(t)
 	attemptsCount := 0
 
 	err := ExecuteWithRetry(context.Background(), cb, policy, nil, func(ctx context.Context, attempt int) error {
@@ -238,7 +241,7 @@ func TestRetry_NonRetryableErrorFailsImmediately(t *testing.T) {
 			StatusCode: 401,
 			Retryable:  false,
 		}
-	}, sleeper)
+	})
 
 	if !errors.Is(err, ErrProviderAuth) {
 		t.Fatalf("expected ErrProviderAuth, got: %v", err)
@@ -260,7 +263,7 @@ func TestRetry_ProhibitedAfterCommittedOutput(t *testing.T) {
 		MaxAttempts:    3,
 	}
 
-	sleeper := &mockSleeper{}
+	sleeper := mockSleep(t)
 	attemptsCount := 0
 	var committed bool
 
@@ -278,7 +281,7 @@ func TestRetry_ProhibitedAfterCommittedOutput(t *testing.T) {
 			StatusCode: 503,
 			Retryable:  true,
 		}
-	}, sleeper)
+	})
 
 	if !errors.Is(err, ErrRetryCommitted) {
 		t.Fatalf("expected ErrRetryCommitted, got: %v", err)
@@ -291,72 +294,13 @@ func TestRetry_ProhibitedAfterCommittedOutput(t *testing.T) {
 	}
 }
 
-func TestQuotaManager_HeadroomAndAdmission(t *testing.T) {
-	// Headroom multiplier 2.0. Max streams = 4.
-	// Capacity for active calls = 4 / 2.0 = 2 sessions.
-	qm := NewQuotaManager(4, 2.0)
-
-	// Session 1: allowed
-	if !qm.CanAdmitSession() {
-		t.Fatal("expected session 1 to be admitted")
-	}
-	if err := qm.AdmitSession(); err != nil {
-		t.Fatalf("unexpected error admitting session 1: %v", err)
-	}
-
-	// Session 2: allowed
-	if !qm.CanAdmitSession() {
-		t.Fatal("expected session 2 to be admitted")
-	}
-	if err := qm.AdmitSession(); err != nil {
-		t.Fatalf("unexpected error admitting session 2: %v", err)
-	}
-
-	// Session 3: must be REJECTED before quota exhaustion because (2+1)*2.0 = 6 > 4!
-	if qm.CanAdmitSession() {
-		t.Fatal("expected session 3 to be rejected due to lack of rotation headroom")
-	}
-	if err := qm.AdmitSession(); !errors.Is(err, ErrQuotaExhausted) {
-		t.Fatalf("expected ErrQuotaExhausted for session 3, got: %v", err)
-	}
-
-	// Rotation test: active sessions = 2, active streams = 2.
-	// Session 1 rotates -> reserves 1 extra stream.
-	if err := qm.ReserveRotationStream(); err != nil {
-		t.Fatalf("unexpected error reserving rotation stream: %v", err)
-	}
-	if qm.ActiveStreams() != 3 {
-		t.Fatalf("expected 3 active streams, got %d", qm.ActiveStreams())
-	}
-	if qm.ReservedStreams() != 1 {
-		t.Fatalf("expected 1 reserved rotation stream, got %d", qm.ReservedStreams())
-	}
-
-	// Finish rotation -> release stream
-	qm.ReleaseRotationStream()
-	if qm.ActiveStreams() != 2 {
-		t.Fatalf("expected 2 active streams after rotation release, got %d", qm.ActiveStreams())
-	}
-
-	// Release session 1
-	qm.ReleaseSession()
-	if qm.ActiveSessions() != 1 {
-		t.Fatalf("expected 1 active session, got %d", qm.ActiveSessions())
-	}
-
-	// Now session 3 can be admitted
-	if !qm.CanAdmitSession() {
-		t.Fatal("expected new session to be admissible after release")
-	}
-}
-
 // Barge-ins cancel LLM requests constantly; they must never open the breaker.
 func TestRetry_CancellationIsNotAProviderFailure(t *testing.T) {
 	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Minute})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for _, err := range []error{context.Canceled, ErrGenerationMismatch} {
-		got := ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 3}, nil, func(context.Context, int) error { return err }, nil)
+		got := ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 3}, nil, func(context.Context, int) error { return err })
 		if !errors.Is(got, err) {
 			t.Fatalf("ExecuteWithRetry() = %v, want %v", got, err)
 		}

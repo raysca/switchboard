@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"govoice/core"
 
@@ -20,7 +22,7 @@ import (
 // TTSConfig configures Google Cloud Text-to-Speech V1.
 type TTSConfig struct {
 	Voice                 string        // Pinned: "en-US-Journey-F"
-	LanguageCode          string        // Default: "en-US"
+	LanguageCode          string        // Used when the voice name has no xx-YY prefix (default "en-US")
 	SampleRate            int           // Pinned: 24000 Hz
 	MaxSynthesisUnitChars int           // Pinned: 250
 	ChunkDuration         time.Duration // Default: 20ms
@@ -52,7 +54,8 @@ type TTSClient interface {
 
 // RealGoogleTTSClient wraps cloud.google.com/go/texttospeech/apiv1.
 type RealGoogleTTSClient struct {
-	client *texttospeech.Client
+	client       *texttospeech.Client
+	languageCode string
 }
 
 func NewRealGoogleTTSClient(ctx context.Context, cfg TTSConfig) (*RealGoogleTTSClient, error) {
@@ -60,7 +63,19 @@ func NewRealGoogleTTSClient(ctx context.Context, cfg TTSConfig) (*RealGoogleTTSC
 	if err != nil {
 		return nil, MapError("tts", err)
 	}
-	return &RealGoogleTTSClient{client: c}, nil
+	return &RealGoogleTTSClient{client: c, languageCode: cfg.LanguageCode}, nil
+}
+
+// voiceLanguage returns the language a Google voice name starts with
+// ("en-GB-Neural2-A" -> "en-GB"), else fallback, else "en-US".
+func voiceLanguage(voice, fallback string) string {
+	if parts := strings.SplitN(voice, "-", 3); len(parts) == 3 {
+		return parts[0] + "-" + parts[1]
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return "en-US"
 }
 
 func (c *RealGoogleTTSClient) SynthesizeSpeech(ctx context.Context, text string, voice string, sampleRate int) ([]byte, error) {
@@ -69,7 +84,7 @@ func (c *RealGoogleTTSClient) SynthesizeSpeech(ctx context.Context, text string,
 			InputSource: &texttospeechpb.SynthesisInput_Text{Text: text},
 		},
 		Voice: &texttospeechpb.VoiceSelectionParams{
-			LanguageCode: "en-US",
+			LanguageCode: voiceLanguage(voice, c.languageCode),
 			Name:         voice,
 		},
 		AudioConfig: &texttospeechpb.AudioConfig{
@@ -220,12 +235,26 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 	}
 }
 
-func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.SynthesisUnitFrame, e core.Emitter) error {
-	// Validate character length <= 250 chars
-	if len([]rune(su.Text)) > p.cfg.MaxSynthesisUnitChars {
-		return fmt.Errorf("%w: length %d exceeds limit %d", ErrUnitTooLong, len([]rune(su.Text)), p.cfg.MaxSynthesisUnitChars)
+// splitUnit cuts text into pieces of at most max runes, at the last space
+// when there is one, so a long unit is synthesized piece by piece.
+func splitUnit(text string, max int) []string {
+	r := []rune(text)
+	var pieces []string
+	for len(r) > max {
+		cut := max
+		for i := max - 1; i > 0; i-- {
+			if unicode.IsSpace(r[i]) {
+				cut = i
+				break
+			}
+		}
+		pieces = append(pieces, string(r[:cut]))
+		r = r[cut:]
 	}
+	return append(pieces, string(r))
+}
 
+func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.SynthesisUnitFrame, e core.Emitter) error {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -319,21 +348,27 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		}()
 
 		var rawAudio []byte
-		var committed bool
 
-		err := ExecuteWithRetry(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
-			return committed
-		}, func(attemptCtx context.Context, attempt int) error {
-			if attempt > 0 {
-				p.Retries.Add(1)
-			}
-			audio, err := p.cfg.Client.SynthesizeSpeech(attemptCtx, su.Text, p.cfg.Voice, p.cfg.SampleRate)
+		// A unit over the provider limit is synthesized in order, piece by
+		// piece, and played as one unit.
+		var err error
+		for _, piece := range splitUnit(su.Text, p.cfg.MaxSynthesisUnitChars) {
+			// Nothing is emitted until synthesis is done, so every attempt may retry.
+			err = ExecuteWithRetry(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, nil, func(attemptCtx context.Context, attempt int) error {
+				if attempt > 0 {
+					p.Retries.Add(1)
+				}
+				audio, err := p.cfg.Client.SynthesizeSpeech(attemptCtx, piece, p.cfg.Voice, p.cfg.SampleRate)
+				if err != nil {
+					return err
+				}
+				rawAudio = append(rawAudio, audio...)
+				return nil
+			})
 			if err != nil {
-				return err
+				break
 			}
-			rawAudio = audio
-			return nil
-		}, nil)
+		}
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -343,14 +378,6 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			p.Errors.Add(1)
 			provErr := MapError("tts", err)
 			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false}, core.Downstream, p.index+1, gen)
-			return
-		}
-
-		// Critical verification check: verify rawAudio begins with PCM samples, NOT a WAV/RIFF container
-		if len(rawAudio) >= 4 && bytes.Equal(rawAudio[:4], []byte("RIFF")) {
-			traceFailure = errors.New("provider_failure")
-			err := fmt.Errorf("google tts returned WAV container instead of headerless PCM")
-			_ = p.session.Reenter(&core.ErrorFrame{Err: err, Fatal: true}, core.Downstream, p.index+1, gen)
 			return
 		}
 
@@ -403,8 +430,6 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 				return // Interrupted mid-synthesis: stop immediately
 			}
 			p.mu.Unlock()
-
-			committed = true
 
 			// Emit 24kHz PCM16LE OutputAudioFrame
 			audioFrame := &core.OutputAudioFrame{

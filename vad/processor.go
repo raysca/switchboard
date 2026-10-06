@@ -292,10 +292,6 @@ func (p *Processor) trySubmit(e core.Emitter) error {
 	return nil
 }
 
-func (p *Processor) onResult(j *Job, e core.Emitter) error {
-	return p.onTraceResult(&vadResultFrame{j: j}, e)
-}
-
 func (p *Processor) onTraceResult(frame *vadResultFrame, e core.Emitter) error {
 	j, trace := frame.j, frame.trace
 	p.traceMu.Lock()

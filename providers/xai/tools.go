@@ -312,6 +312,8 @@ func ParseXAIToolCalls(items []XAIResponseOutputItem, session, turn string, gene
 }
 
 func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesRequest, gen uint64, turn string, s core.SessionController, text *strings.Builder) (_ []XAIResponseOutputItem, _ int, _ int, _ int, traceErr error) {
+	ctx, cancel := context.WithTimeout(ctx, p.cfg.Timeout)
+	defer cancel()
 	span := core.StartContextSpan(ctx, "llm.request", core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "xai", "model": p.cfg.Model})
 	defer func() {
 		name := "llm.complete"

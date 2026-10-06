@@ -24,14 +24,8 @@ func DefaultRetryPolicy() RetryPolicy {
 	}
 }
 
-// Sleeper is an abstraction over time.Sleep for deterministic testing.
-type Sleeper interface {
-	Sleep(ctx context.Context, d time.Duration) error
-}
-
-type realSleeper struct{}
-
-func (realSleeper) Sleep(ctx context.Context, d time.Duration) error {
+// sleep waits d or until ctx ends. Tests swap it to observe backoff.
+var sleep = func(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
@@ -53,11 +47,7 @@ func ExecuteWithRetry(
 	policy RetryPolicy,
 	committed func() bool,
 	op func(ctx context.Context, attempt int) error,
-	sleeper Sleeper,
 ) error {
-	if sleeper == nil {
-		sleeper = realSleeper{}
-	}
 	if policy.MaxAttempts <= 0 {
 		policy.MaxAttempts = 1
 	}
@@ -90,15 +80,17 @@ func ExecuteWithRetry(
 
 		// A cancelled or superseded request (barge-in) is not a provider failure.
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrGenerationMismatch) {
+			if cb != nil {
+				cb.release()
+			}
 			return err
 		}
 
 		// Map error to classified ProviderError
 		provErr := MapError("retry", err)
 
-		// Record failure on circuit breaker
 		if cb != nil {
-			cb.ReportFailure()
+			cb.reportError(provErr)
 		}
 
 		// Check if user-visible output has been committed
@@ -124,7 +116,7 @@ func ExecuteWithRetry(
 		}
 
 		// Sleep
-		if err := sleeper.Sleep(ctx, delay); err != nil {
+		if err := sleep(ctx, delay); err != nil {
 			return err
 		}
 

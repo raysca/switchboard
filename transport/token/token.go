@@ -40,13 +40,12 @@ type Config struct {
 	Issuer            string
 	Audience          string
 	AllowedAlgorithms []string
-	MaxLifetime       time.Duration     // Maximum acceptable exp - iat duration (e.g. 60s)
-	ClockSkew         time.Duration     // Acceptable clock skew allowance (default: 5s)
-	ReplayCacheSize   int               // Max entries before aggressive pruning
-	HMACSecret        []byte            // Secret key for HMAC algorithms (e.g. HS256)
-	Keys              map[string][]byte // Optional key-id (kid) -> HMAC secret mapping
-	RequireKeyID      bool              // Require kid in token header (v1-lock.json required_claims)
-	KeyID             string            // Expected key ID if RequireKeyID is true and Keys is empty
+	MaxLifetime       time.Duration // Maximum acceptable exp - iat duration (e.g. 60s)
+	ClockSkew         time.Duration // Acceptable clock skew allowance (default: 5s)
+	ReplayCacheSize   int           // Max entries before aggressive pruning
+	HMACSecret        []byte        // Secret key for HMAC algorithms (e.g. HS256)
+	RequireKeyID      bool          // Require kid in token header (v1-lock.json required_claims)
+	KeyID             string        // Expected key ID if RequireKeyID is true
 }
 
 // DefaultConfig provides production-grade defaults.
@@ -137,28 +136,9 @@ func (v *Validator) ValidateAndConsume(tokenStr string) (*Claims, error) {
 			if kid == "" {
 				return nil, fmt.Errorf("%w: missing kid in header", ErrTokenInvalid)
 			}
-			if len(v.cfg.Keys) > 0 {
-				sec, ok := v.cfg.Keys[kid]
-				if !ok {
-					return nil, fmt.Errorf("%w: unknown kid %s", ErrTokenInvalid, kid)
-				}
-				return sec, nil
-			}
 			if v.cfg.KeyID != "" && kid != v.cfg.KeyID {
 				return nil, fmt.Errorf("%w: mismatch kid %s (expected %s)", ErrTokenInvalid, kid, v.cfg.KeyID)
 			}
-			return v.cfg.HMACSecret, nil
-		}
-		if len(v.cfg.Keys) > 0 {
-			kid, _ := t.Header["kid"].(string)
-			if kid == "" {
-				return nil, fmt.Errorf("%w: missing kid in header", ErrTokenInvalid)
-			}
-			sec, ok := v.cfg.Keys[kid]
-			if !ok {
-				return nil, fmt.Errorf("%w: unknown kid %s", ErrTokenInvalid, kid)
-			}
-			return sec, nil
 		}
 		return v.cfg.HMACSecret, nil
 	}, jwt.WithAudience(v.cfg.Audience), jwt.WithIssuer(v.cfg.Issuer))

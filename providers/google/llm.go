@@ -21,10 +21,6 @@ import (
 type LLMConfig struct {
 	Model           string // Pinned: "gemini-2.5-flash"
 	SystemPrompt    string // System instructions
-	MaxTokens       int    // Output token limit
-	Temperature     float32
-	AuthMode        AuthMode
-	Credentials     *ResolvedCredentials
 	Client          LLMStreamClient
 	RetryPolicy     RetryPolicy
 	CircuitBreaker  *CircuitBreaker
@@ -39,7 +35,6 @@ type LLMConfig struct {
 func DefaultLLMConfig() LLMConfig {
 	return LLMConfig{
 		Model:          "gemini-2.5-flash",
-		Temperature:    0.7,
 		RetryPolicy:    DefaultRetryPolicy(),
 		CircuitBreaker: NewCircuitBreaker(DefaultCircuitConfig()),
 	}
@@ -59,10 +54,6 @@ type LLMStreamChunk struct {
 // LLMStreamClient abstracts streamed content generation.
 type LLMStreamClient interface {
 	GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error)
-}
-
-type LLMToolStreamClient interface {
-	GenerateStreamWithTools(ctx context.Context, model string, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error)
 }
 
 type LLMNativeToolStreamClient interface {
@@ -116,19 +107,11 @@ func NewRealGoogleLLMClient(ctx context.Context, creds *ResolvedCredentials) (*R
 }
 
 func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.generateStream(ctx, model, systemPrompt, history, nil)
-}
-
-func (c *RealGoogleLLMClient) GenerateStreamWithTools(ctx context.Context, model, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.generateStream(ctx, model, systemPrompt, history, definitions)
+	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nil, nil, core.ToolCall{})
 }
 
 func (c *RealGoogleLLMClient) GenerateStreamWithNativeTools(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
 	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nativeHistory, definitions, identity)
-}
-
-func (c *RealGoogleLLMClient) generateStream(ctx context.Context, model, systemPrompt string, history []core.Message, definitions []core.ToolDefinition) (<-chan LLMStreamChunk, <-chan error, error) {
-	return c.generateStreamWithNativeHistory(ctx, model, systemPrompt, history, nil, definitions, core.ToolCall{})
 }
 
 func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Context, model, systemPrompt string, history []core.Message, nativeHistory []GoogleNativeExchange, definitions []core.ToolDefinition, identity core.ToolCall) (<-chan LLMStreamChunk, <-chan error, error) {
@@ -222,11 +205,6 @@ type LLMProcessor struct {
 	Errors   atomic.Uint64
 	Retries  atomic.Uint64
 	Stale    atomic.Uint64
-
-	// Usage tracking
-	PromptTokens atomic.Int64
-	OutputTokens atomic.Int64
-	TotalTokens  atomic.Int64
 }
 
 var errGoogleToolClientUnsupported = errors.New("google: tool streaming client unsupported")
@@ -386,6 +364,8 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		var committed bool
 		var fullTextBuilder strings.Builder
 		var nativeHistory []GoogleNativeExchange
+		// Turn usage: the sum over every model request of the tool loop.
+		var pTok, oTok, tTok, requests int64
 		requestModel := func(requestCtx context.Context) (_ []core.ToolCall, traceErr error) {
 			span := core.StartContextSpan(requestCtx, "llm.request", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "google", "model": p.cfg.Model})
 			defer func() {
@@ -415,8 +395,6 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				if nativeClient, ok := p.cfg.Client.(LLMNativeToolStreamClient); ok {
 					identity := core.ToolCall{SessionID: core.SessionID(strconv.FormatUint(p.session.ID(), 10)), TurnID: core.TurnID(turn), Generation: core.Generation(gen)}
 					chunkCh, errCh, err = nativeClient.GenerateStreamWithNativeTools(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), nativeHistory, p.cfg.ToolDefinitions, identity)
-				} else if client, ok := p.cfg.Client.(LLMToolStreamClient); ok {
-					chunkCh, errCh, err = client.GenerateStreamWithTools(streamCtx, p.cfg.Model, p.cfg.SystemPrompt, getHistory(), p.cfg.ToolDefinitions)
 				} else {
 					return nil, errGoogleToolClientUnsupported
 				}
@@ -432,6 +410,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			var calls []core.ToolCall
 			var nativeContents []*genai.Content
 			var requestText strings.Builder
+			var reqP, reqO, reqT int64 // cumulative within a response: keep the latest
 			for chunkCh != nil || errCh != nil {
 				select {
 				case <-requestCtx.Done():
@@ -452,13 +431,13 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 						continue
 					}
 					if chunk.PromptTokens > 0 {
-						p.PromptTokens.Store(int64(chunk.PromptTokens))
+						reqP = int64(chunk.PromptTokens)
 					}
 					if chunk.OutputTokens > 0 {
-						p.OutputTokens.Store(int64(chunk.OutputTokens))
+						reqO = int64(chunk.OutputTokens)
 					}
 					if chunk.TotalTokens > 0 {
-						p.TotalTokens.Store(int64(chunk.TotalTokens))
+						reqT = int64(chunk.TotalTokens)
 					}
 					if chunk.Text != "" {
 						if !p.isCurrentGeneration(gen) {
@@ -488,6 +467,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				}
 			}
 			span.AddEvent(core.NewTraceEvent("llm.complete", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
+			pTok, oTok, tTok, requests = pTok+reqP, oTok+reqO, tTok+reqT, requests+1
 			if len(calls) > 0 {
 				// Native provider parts already contain the response text, including
 				// reasoning/signature-bearing and text-only chunks. Avoid replaying
@@ -520,7 +500,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				var requestErr error
 				calls, requestErr = requestModel(attemptCtx)
 				return requestErr
-			}, nil)
+			})
 			return calls, err
 		}
 
@@ -594,9 +574,6 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		_ = p.session.Reenter(fullFrame, core.Downstream, p.index+1, gen)
 
 		// Emit optional usage metrics if available
-		pTok := p.PromptTokens.Load()
-		oTok := p.OutputTokens.Load()
-		tTok := p.TotalTokens.Load()
 		if pTok > 0 || oTok > 0 || tTok > 0 {
 			var pTokPtr, oTokPtr, tTokPtr *int64
 			if pTok > 0 {
@@ -619,7 +596,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				PromptTokens:     pTokPtr,
 				CompletionTokens: oTokPtr,
 				TotalTokens:      tTokPtr,
-				Requests:         core.Int64Ptr(1),
+				Requests:         core.Int64Ptr(requests),
 			}
 			_ = p.session.Reenter(usageFrame, core.Downstream, p.index+1, gen)
 		}

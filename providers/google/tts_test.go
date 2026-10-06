@@ -3,7 +3,6 @@ package google
 import (
 	"bytes"
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -12,80 +11,26 @@ import (
 	"govoice/core"
 )
 
-func TestTTS_RejectsWAVContainer(t *testing.T) {
-	// Pinned requirement: "TTS bytes begin with PCM samples, not a WAV container"
-	// Create mock that returns WAV bytes beginning with "RIFF"
-	wavBytes := []byte("RIFF\x24\x08\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x40\x1f\x00\x00")
-	mockClient := &mockTTSClient{
-		synthesizeFn: func(ctx context.Context, text string, voice string, sampleRate int) ([]byte, error) {
-			return wavBytes, nil
-		},
+func TestTTS_StripsWAVContainer(t *testing.T) {
+	// Pinned requirement: "TTS bytes begin with PCM samples, not a WAV container".
+	// LINEAR16 responses are WAV; the real client strips the container.
+	pcm := []byte{1, 2, 3, 4}
+	wav := append([]byte("RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data\x04\x00\x00\x00"), pcm...)
+	got, err := stripWAV(wav)
+	if err != nil || !bytes.Equal(got, pcm) {
+		t.Fatalf("stripWAV = %v, %v; want %v", got, err, pcm)
 	}
-
-	cfg := DefaultTTSConfig()
-	cfg.Client = mockClient
-
-	proc, err := NewTTSProcessor(cfg)
-	if err != nil {
-		t.Fatal(err)
+	if got, _ := stripWAV(pcm); !bytes.Equal(got, pcm) {
+		t.Fatalf("headerless PCM changed: %v", got)
 	}
-
-	pipe, _ := core.NewPipeline(proc)
-	session, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = proc.Attach(session, 0)
-
-	var emittedFrames []core.Frame
-	var mu sync.Mutex
-	session.OnOutput = func(f core.Frame) {
-		mu.Lock()
-		defer mu.Unlock()
-		emittedFrames = append(emittedFrames, f)
-	}
-
-	_ = session.Start()
-	defer session.Close()
-
-	// Push valid SynthesisUnitFrame
-	su := &core.SynthesisUnitFrame{
-		Turn:    "turn-1",
-		Gen:     1,
-		UnitID:  1,
-		Text:    "Hello world.",
-		IsFinal: true,
-	}
-	_ = session.Post(su)
-
-	// Wait for processing
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	// Verify that NO OutputAudioFrame was emitted, and an ErrorFrame was emitted instead
-	hasAudio := false
-	hasError := false
-	for _, f := range emittedFrames {
-		if f.Type() == core.FrameOutputAudio {
-			hasAudio = true
-		}
-		if f.Type() == core.FrameError {
-			hasError = true
-		}
-	}
-
-	if hasAudio {
-		t.Fatal("audio frames were emitted even though TTS returned WAV container!")
-	}
-	if !hasError {
-		t.Fatal("expected ErrorFrame when TTS returned WAV container, got none")
+	if _, err := stripWAV(wav[:len(wav)-1]); err == nil {
+		t.Fatal("truncated WAV data accepted")
 	}
 }
 
-func TestTTS_UnitSizeBounds(t *testing.T) {
-	// Pinned requirement: max 250 characters
+func TestTTS_UnitOverLimitIsSynthesizedInPieces(t *testing.T) {
+	// Pinned requirement: max 250 characters per provider request. A longer
+	// unit is split, synthesized in order and played as one unit.
 	cfg := DefaultTTSConfig()
 	cfg.MaxSynthesisUnitChars = 250
 	mockClient := &mockTTSClient{}
@@ -99,22 +44,39 @@ func TestTTS_UnitSizeBounds(t *testing.T) {
 	pipe, _ := core.NewPipeline(proc)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = proc.Attach(session, 0)
+	var mu sync.Mutex
+	var finals, turnFinals int
+	session.OnOutput = func(f core.Frame) {
+		if a, ok := f.(*core.OutputAudioFrame); ok {
+			mu.Lock()
+			if a.IsFinal {
+				finals++
+			}
+			if a.TurnFinal {
+				turnFinals++
+			}
+			mu.Unlock()
+		}
+	}
 	_ = session.Start()
 	defer session.Close()
 
-	// 1. Text with 251 characters must be rejected immediately
-	tooLongText := strings.Repeat("a", 251)
-	err = session.Post(&core.SynthesisUnitFrame{
-		Turn:    "turn-1",
-		Gen:     1,
-		UnitID:  1,
-		Text:    tooLongText,
-		IsFinal: true,
-	})
-	// Session run loop fails with ErrUnitTooLong
-	time.Sleep(50 * time.Millisecond)
-	if session.Err() == nil || !errors.Is(session.Err(), ErrUnitTooLong) {
-		t.Fatalf("expected ErrUnitTooLong, got %v", session.Err())
+	words := strings.Repeat("word ", 60) // 300 runes
+	_ = session.Post(&core.SynthesisUnitFrame{Turn: "turn-1", Gen: 1, UnitID: 1, Text: words, IsFinal: true})
+	time.Sleep(100 * time.Millisecond)
+	if err := session.Err(); err != nil {
+		t.Fatalf("a long unit failed the session: %v", err)
+	}
+	mockClient.mu.Lock()
+	calls := append([]string(nil), mockClient.calls...)
+	mockClient.mu.Unlock()
+	if len(calls) != 2 || calls[0]+calls[1] != words || len([]rune(calls[0])) > 250 || strings.HasSuffix(calls[0], "wor") {
+		t.Fatalf("pieces = %q", calls)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if finals != 1 || turnFinals != 1 {
+		t.Fatalf("unit finals = %d, turn finals = %d; want one of each", finals, turnFinals)
 	}
 }
 

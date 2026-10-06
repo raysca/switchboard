@@ -123,33 +123,22 @@ func (cb *CircuitBreaker) ReportFailure() {
 	}
 }
 
-// State returns the current circuit state.
-func (cb *CircuitBreaker) State() CircuitState {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	now := time.Now()
-	if cb.state == CircuitOpen && now.Sub(cb.lastFailure) >= cb.cfg.CooldownDuration {
-		return CircuitHalfOpen
+// reportError counts only availability failures (retryable: 5xx, timeout,
+// rate limit). A bad credential, bad request or unknown model says nothing
+// about the provider, so one tenant's mistake cannot open the shared breaker;
+// it just frees a half-open probe.
+func (cb *CircuitBreaker) reportError(err error) {
+	if MapError("", err).Retryable {
+		cb.ReportFailure()
+		return
 	}
-	return cb.state
+	cb.release()
 }
 
-// Failures returns the consecutive failure count.
-func (cb *CircuitBreaker) Failures() int {
+// release frees the half-open probe slot of a call that ended without an
+// outcome (cancelled, superseded), so the breaker does not stay half-open forever.
+func (cb *CircuitBreaker) release() {
 	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.failures
-}
-
-// LastFailure returns the timestamp of the last recorded failure.
-func (cb *CircuitBreaker) LastFailure() time.Time {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-	return cb.lastFailure
-}
-
-// IsReady reports whether the circuit is healthy enough to accept new calls.
-func (cb *CircuitBreaker) IsReady() bool {
-	return cb.State() != CircuitOpen
+	cb.probing = false
+	cb.mu.Unlock()
 }

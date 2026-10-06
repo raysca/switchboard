@@ -231,9 +231,9 @@ func TestScenarioF_NativeFaultIsolationWithPipeline(t *testing.T) {
 	// Stream audio
 	time.Sleep(100 * time.Millisecond)
 
-	// Deliberately trigger native fault on Worker 0
-	if err := exec.InjectFault(0); err != nil {
-		t.Fatalf("inject fault on worker 0: %v", err)
+	// Kill Worker 0 mid-stream
+	if err := exec.HardKill(0); err != nil {
+		t.Fatalf("kill worker 0: %v", err)
 	}
 
 	// Continue streaming during worker 0 crash and recovery

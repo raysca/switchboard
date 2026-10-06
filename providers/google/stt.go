@@ -32,7 +32,6 @@ type STTConfig struct {
 	CredentialsFile         string        // Path to service account key JSON
 	CredentialsJSON         []byte        // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                  string        // Fallback API key if supported
-	QuotaManager            *QuotaManager // Headroom manager (multiplier 2.0)
 	StreamOpener            STTStreamOpener
 	RetryPolicy             RetryPolicy
 	CircuitBreaker          *CircuitBreaker
@@ -307,7 +306,6 @@ type STTProcessor struct {
 	RotationsCount      atomic.Uint64
 	RotationFailures    atomic.Uint64
 	DeduplicatedResults atomic.Uint64
-	TotalRequestsSent   atomic.Uint64
 	Errors              atomic.Uint64
 }
 
@@ -405,7 +403,17 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		return p.handleAudio(ctx, frame, e)
 
 	case *core.UserStoppedSpeakingFrame:
-		// Speech ended for current turn
+		// Detach the finished utterance's stream so the next one opens unbound:
+		// VAD reports speech start only after the onset audio was sent, and that
+		// audio must reach the next utterance's stream, not this one.
+		p.mu.Lock()
+		old := p.active
+		p.active = nil
+		p.turnID = ""
+		p.mu.Unlock()
+		if old != nil {
+			_ = old.stream.CloseSend()
+		}
 		return e.Push(f)
 
 	case *core.InterruptionFrame:
@@ -499,12 +507,11 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		_ = st.stream.Close()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.ReportFailure()
+			p.cfg.CircuitBreaker.reportError(provErr)
 		}
 		return provErr
 	}
 
-	p.TotalRequestsSent.Add(1)
 	return e.Push(f)
 }
 
@@ -560,7 +567,7 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		cancel()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.ReportFailure()
+			p.cfg.CircuitBreaker.reportError(provErr)
 		}
 		return provErr
 	}
@@ -604,14 +611,6 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	overlapData := make([]byte, len(p.audioBuffer))
 	copy(overlapData, p.audioBuffer)
 	p.mu.Unlock()
-
-	// Reserve temporary second-stream quota
-	if p.cfg.QuotaManager != nil {
-		if err := p.cfg.QuotaManager.ReserveRotationStream(); err != nil {
-			return err
-		}
-		defer p.cfg.QuotaManager.ReleaseRotationStream()
-	}
 
 	// Open replacement stream
 	span, policy := p.startStreamTrace(ctx, oldActive.turnID, oldActive.gen)
@@ -716,6 +715,7 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 
 	if err := p.session.Go(func(ctx context.Context) {
 		var traceFailure error
+		defer st.cancel() // a detached stream only got CloseSend; free its context too
 		defer func() {
 			if v := recover(); v != nil {
 				traceFailure = errors.New("provider_failure")
