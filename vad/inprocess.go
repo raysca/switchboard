@@ -14,6 +14,7 @@ type inProcessBackend struct {
 	wg           sync.WaitGroup
 	statCounters atomicStats
 	closed       atomic.Bool
+	closeMu      sync.RWMutex // Submit (R) vs closing the queues (W)
 }
 
 type inProcessStream struct {
@@ -24,6 +25,8 @@ type inProcessStream struct {
 }
 
 func (s *inProcessStream) Submit(j *Job) error {
+	s.backend.closeMu.RLock()
+	defer s.backend.closeMu.RUnlock()
 	if s.backend.closed.Load() {
 		return ErrWorker
 	}
@@ -145,7 +148,12 @@ func (b *inProcessBackend) hardKill(workerIdx int) error {
 }
 
 func (b *inProcessBackend) close() error {
-	if b.closed.Swap(true) {
+	// Swap under the write lock: once it is released no Submit can still be
+	// between its closed check and its send, so closing the queues is safe.
+	b.closeMu.Lock()
+	wasClosed := b.closed.Swap(true)
+	b.closeMu.Unlock()
+	if wasClosed {
 		return nil
 	}
 	for _, q := range b.queues {

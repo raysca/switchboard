@@ -28,6 +28,7 @@ type workerProcessBackend struct {
 	queues       []chan *Job
 	statCounters atomicStats
 	closed       atomic.Bool
+	closeMu      sync.RWMutex // Submit (R) vs closing the queues (W)
 	nextReqID    atomic.Uint64
 	availCount   atomic.Int32
 }
@@ -40,6 +41,8 @@ type workerStream struct {
 }
 
 func (s *workerStream) Submit(j *Job) error {
+	s.backend.closeMu.RLock()
+	defer s.backend.closeMu.RUnlock()
 	if s.backend.closed.Load() {
 		return ErrWorker
 	}
@@ -273,14 +276,21 @@ func (b *workerProcessBackend) hardKill(workerIdx int) error {
 }
 
 func (b *workerProcessBackend) close() error {
-	if b.closed.Swap(true) {
+	// Swap under the write lock: once it is released no Submit can still be
+	// between its closed check and its send, so closing the queues is safe.
+	b.closeMu.Lock()
+	wasClosed := b.closed.Swap(true)
+	b.closeMu.Unlock()
+	if wasClosed {
 		return nil
 	}
 	for _, wp := range b.workers {
 		wp.close()
 	}
 	for _, q := range b.queues {
-		close(q)
+		if q != nil { // nil when a later worker failed its startup handshake
+			close(q)
+		}
 	}
 	for _, wp := range b.workers {
 		wp.wg.Wait()
