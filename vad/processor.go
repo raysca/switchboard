@@ -252,9 +252,13 @@ func (p *Processor) trySubmit(e core.Emitter) error {
 		if p.st == nil {
 			return nil
 		}
+		// Every chunk passes here (~31/s per call), so build the trace only when
+		// the session is actually tracing; vadJobTrace methods are nil-safe.
 		var trace *vadJobTrace
-		if p.s != nil {
-			trace = &vadJobTrace{span: core.StartContextSpan(pc.traceCtx, "vad.inference", core.SessionID(strconv.FormatUint(p.s.ID(), 10)), "", core.Generation(p.s.CurrentGeneration()), map[string]any{"component": "vad"}), policy: core.TraceContextFromContext(pc.traceCtx).Policy, session: core.SessionID(strconv.FormatUint(p.s.ID(), 10)), gen: core.Generation(p.s.CurrentGeneration()), submitted: time.Now()}
+		if tc := core.TraceContextFromContext(pc.traceCtx); p.s != nil && !isNoopTracer(tc.Tracer) {
+			session := core.SessionID(strconv.FormatUint(p.s.ID(), 10))
+			gen := core.Generation(p.s.CurrentGeneration())
+			trace = &vadJobTrace{span: core.StartContextSpan(pc.traceCtx, "vad.inference", session, "", gen, map[string]any{"component": "vad"}), policy: tc.Policy, session: session, gen: gen, submitted: time.Now()}
 			trace.event("vad.job", map[string]any{"sequence": pc.seq})
 		}
 		p.traceMu.Lock()
@@ -371,4 +375,9 @@ func (p *Processor) detect(prob float32, seq uint64, due time.Time, e core.Emitt
 		})
 	}
 	return nil
+}
+
+func isNoopTracer(t core.Tracer) bool {
+	_, noop := t.(core.NoopTracer)
+	return noop
 }
