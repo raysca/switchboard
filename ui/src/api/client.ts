@@ -33,33 +33,26 @@ export const vadStatusSchema = z.object({
 });
 export type VADStatus = z.infer<typeof vadStatusSchema>;
 
+// The server always sends every non-optional field; a missing one is an error,
+// never a made-up healthy value.
 export const operationsStatusSchema = z.object({
-  uptime_seconds: z.number().default(0),
-  started_at: z.string().default(() => new Date().toISOString()),
+  uptime_seconds: z.number(),
+  started_at: z.string(),
   profile: z.string(),
-  active_sessions: z.number().default(0),
-  max_sessions: z.number().default(0),
-  capacity_utilization: z.number().default(0),
-  sessions_total: z.number().default(0),
-  turns_total: z.number().default(0),
-  errors_total: z.number().default(0),
-  p95_latency_ms: z.number().default(0),
+  active_sessions: z.number(),
+  max_sessions: z.number(),
+  capacity_utilization: z.number(),
+  sessions_total: z.number(),
+  turns_total: z.number(),
+  errors_total: z.number(),
+  p95_latency_ms: z.number(),
   average_latency_ms: z.number().optional(),
   session_rate: z.number().optional(),
   max_call_duration_seconds: z.number().optional(),
   voice_token_max_lifetime_seconds: z.number().optional(),
-  database: databaseStatusSchema.default({
-    dialect: "sqlite",
-    status: "connected",
-    open_connections: 0,
-    in_use: 0,
-  }),
-  vad: vadStatusSchema.default({
-    worker_status: "ready",
-    sample_rate: 16000,
-    frame_size: 512,
-  }),
-  health: z.enum(["healthy", "degraded", "unhealthy"]).default("healthy"),
+  database: databaseStatusSchema,
+  vad: vadStatusSchema,
+  health: z.enum(["healthy", "degraded", "unhealthy"]),
 });
 export type OperationsStatus = z.infer<typeof operationsStatusSchema>;
 
