@@ -13,7 +13,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// Browser polyfills for Node runtime
+// Browser polyfills for Node runtime (Node 20 has no global WebSocket)
+globalThis.WebSocket ??= require('ws');
 if (typeof globalThis.window === 'undefined') {
   globalThis.window = {
     addEventListener: () => {},
@@ -106,7 +107,7 @@ async function main() {
   let botAudioBytes = 0;
   let userAudioCallback = null;
   let fatalError = null;
-  let t_last_llm_token = 0;
+  let botLlmStopped = false;
 
   // Latency markers
   const t0_connect = Date.now();
@@ -171,11 +172,13 @@ async function main() {
           t_first_llm_token = Date.now();
           process.stdout.write(`\n[LLM STREAM] `);
         }
-        t_last_llm_token = Date.now();
         if (data?.text) {
           botLlmText += data.text;
           process.stdout.write(data.text);
         }
+      },
+      onBotLlmStopped: () => {
+        botLlmStopped = true;
       },
       onBotStartedSpeaking: () => {
         botStartedSpeaking = true;
@@ -229,7 +232,11 @@ async function main() {
       type: 'send-text',
       data: { content: textTurn }
     });
-  } else if (fs.existsSync(audioPath) && userAudioCallback) {
+  } else if (!userAudioCallback) {
+    console.error('The transport never registered an audio callback; cannot stream audio (try --text).');
+    await client.disconnect();
+    process.exit(1);
+  } else if (fs.existsSync(audioPath)) {
     console.log(`\nStreaming speech audio file (${audioPath})...`);
     // Extract raw PCM audio from WAV data chunk if RIFF
     const fileBytes = fs.readFileSync(audioPath);
@@ -269,7 +276,7 @@ async function main() {
       await new Promise(r => setTimeout(r, 20));
     }
   } else {
-    console.log(`No audio file found or userAudioCallback unavailable; sending synthetic audio tone...`);
+    console.log(`No audio file found; sending synthetic audio tone...`);
     // Send 1 second of synthetic speech
     for (let i = 0; i < 50; i++) {
       const tone = new Int16Array(320);
@@ -289,12 +296,11 @@ async function main() {
   // Step 3: Wait for assistant response and audio
   console.log(`\nWaiting for assistant response...`);
   const waitResponseStart = Date.now();
-  // Reply is complete when the bot stops speaking after LLM text, or (text-only
-  // agents, which never speak) after 3s without a new LLM token.
-  // ponytail: quiet-period heuristic; switch to bot-llm-stopped if the server emits it.
+  // Reply is complete when the server marks the LLM text done (bot-llm-stopped)
+  // and the bot is not mid-speech, or when a spoken reply stops speaking.
   let replyComplete = false;
   while (Date.now() - waitResponseStart < replyTimeoutMs && !fatalError) {
-    if (botLlmText && (botStoppedSpeaking || Date.now() - t_last_llm_token > 3000)) {
+    if ((botLlmStopped && !botStartedSpeaking) || (botLlmText && botStoppedSpeaking)) {
       replyComplete = true;
       break;
     }
