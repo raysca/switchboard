@@ -291,65 +291,6 @@ func TestRetry_ProhibitedAfterCommittedOutput(t *testing.T) {
 	}
 }
 
-func TestQuotaManager_HeadroomAndAdmission(t *testing.T) {
-	// Headroom multiplier 2.0. Max streams = 4.
-	// Capacity for active calls = 4 / 2.0 = 2 sessions.
-	qm := NewQuotaManager(4, 2.0)
-
-	// Session 1: allowed
-	if !qm.CanAdmitSession() {
-		t.Fatal("expected session 1 to be admitted")
-	}
-	if err := qm.AdmitSession(); err != nil {
-		t.Fatalf("unexpected error admitting session 1: %v", err)
-	}
-
-	// Session 2: allowed
-	if !qm.CanAdmitSession() {
-		t.Fatal("expected session 2 to be admitted")
-	}
-	if err := qm.AdmitSession(); err != nil {
-		t.Fatalf("unexpected error admitting session 2: %v", err)
-	}
-
-	// Session 3: must be REJECTED before quota exhaustion because (2+1)*2.0 = 6 > 4!
-	if qm.CanAdmitSession() {
-		t.Fatal("expected session 3 to be rejected due to lack of rotation headroom")
-	}
-	if err := qm.AdmitSession(); !errors.Is(err, ErrQuotaExhausted) {
-		t.Fatalf("expected ErrQuotaExhausted for session 3, got: %v", err)
-	}
-
-	// Rotation test: active sessions = 2, active streams = 2.
-	// Session 1 rotates -> reserves 1 extra stream.
-	if err := qm.ReserveRotationStream(); err != nil {
-		t.Fatalf("unexpected error reserving rotation stream: %v", err)
-	}
-	if qm.ActiveStreams() != 3 {
-		t.Fatalf("expected 3 active streams, got %d", qm.ActiveStreams())
-	}
-	if qm.ReservedStreams() != 1 {
-		t.Fatalf("expected 1 reserved rotation stream, got %d", qm.ReservedStreams())
-	}
-
-	// Finish rotation -> release stream
-	qm.ReleaseRotationStream()
-	if qm.ActiveStreams() != 2 {
-		t.Fatalf("expected 2 active streams after rotation release, got %d", qm.ActiveStreams())
-	}
-
-	// Release session 1
-	qm.ReleaseSession()
-	if qm.ActiveSessions() != 1 {
-		t.Fatalf("expected 1 active session, got %d", qm.ActiveSessions())
-	}
-
-	// Now session 3 can be admitted
-	if !qm.CanAdmitSession() {
-		t.Fatal("expected new session to be admissible after release")
-	}
-}
-
 // Barge-ins cancel LLM requests constantly; they must never open the breaker.
 func TestRetry_CancellationIsNotAProviderFailure(t *testing.T) {
 	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Minute})

@@ -32,7 +32,6 @@ type STTConfig struct {
 	CredentialsFile         string        // Path to service account key JSON
 	CredentialsJSON         []byte        // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                  string        // Fallback API key if supported
-	QuotaManager            *QuotaManager // Headroom manager (multiplier 2.0)
 	StreamOpener            STTStreamOpener
 	RetryPolicy             RetryPolicy
 	CircuitBreaker          *CircuitBreaker
@@ -614,14 +613,6 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	overlapData := make([]byte, len(p.audioBuffer))
 	copy(overlapData, p.audioBuffer)
 	p.mu.Unlock()
-
-	// Reserve temporary second-stream quota
-	if p.cfg.QuotaManager != nil {
-		if err := p.cfg.QuotaManager.ReserveRotationStream(); err != nil {
-			return err
-		}
-		defer p.cfg.QuotaManager.ReleaseRotationStream()
-	}
 
 	// Open replacement stream
 	span, policy := p.startStreamTrace(ctx, oldActive.turnID, oldActive.gen)
