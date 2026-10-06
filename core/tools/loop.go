@@ -230,8 +230,9 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 			result.Done = true
 			return result, nil
 		}
-		if len(next) == 0 {
-			return result, ErrMaxToolRounds
+		if len(next) == 0 { // nothing left to call: the loop is complete
+			result.Done = true
+			return result, nil
 		}
 		if result.Rounds == l.cfg.MaxRounds {
 			return result, ErrMaxToolRounds

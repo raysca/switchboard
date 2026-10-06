@@ -765,6 +765,18 @@ func TestToolLoopRechecksGenerationBeforeContinuation(t *testing.T) {
 	}
 }
 
+func TestToolLoopEmptyContinuationCompletes(t *testing.T) {
+	loop, _ := newTestLoop(t, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+		return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage("{\"ok\":true}")}, nil
+	}), ToolDefinition{Name: "x"})
+	got, err := loop.Run(context.Background(), []ToolCall{testCall("final-text", "x", "{}")}, func(context.Context, []ToolResult) ([]ToolCall, bool, error) {
+		return nil, false, nil // provider answered with text, no further calls
+	})
+	if err != nil || !got.Done {
+		t.Fatalf("empty continuation = %#v err=%v, want done without error", got, err)
+	}
+}
+
 func TestToolLoopWithCurrentFenceComposesPredicates(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
