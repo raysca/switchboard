@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/golang-jwt/jwt/v5"
 
 	"govoice/core"
 	"govoice/server/agent"
@@ -55,6 +57,7 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
+	lastTokenID := ""
 	call := func(agentID string) (*websocket.Conn, error) {
 		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
 		if w.Code != http.StatusCreated {
@@ -64,6 +67,11 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 			Data struct{ Token string } `json:"data"`
 		}
 		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		claims := jwt.MapClaims{}
+		if _, _, err := jwt.NewParser().ParseUnverified(resp.Data.Token, claims); err != nil {
+			t.Fatal(err)
+		}
+		lastTokenID, _ = claims["jti"].(string)
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"?token="+resp.Data.Token, nil)
@@ -90,6 +98,10 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 		return len(rows)
 	}
 	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(got) == 3 && activeSessions("active") == 1 })
+	// The session is stored under the token's jti, so the caller can find it.
+	if rows, _ := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: created.ID}); len(rows) != 1 || rows[0].ID != lastTokenID {
+		t.Fatalf("session id %v, want the token jti %q", rows, lastTokenID)
+	}
 
 	mu.Lock()
 	stt, llm, tts := got["stt"], got["llm"], got["tts"]
@@ -273,4 +285,48 @@ func activeSessionCount(t *testing.T, s *Server, agentID string) int {
 		t.Fatal(err)
 	}
 	return len(rows)
+}
+
+// Shutdown must end the session rows of calls it cancels before it closes the
+// store; otherwise they stay "active" forever (blocking MCP deletes and purge).
+func TestShutdownEndsActiveSessionRows(t *testing.T) {
+	s := apiTestServer(t)
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	agentID := readyTestAgent(t, s)
+	for _, stage := range []string{"stt", "llm", "tts"} {
+		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	}
+	ts := httptest.NewServer(s.wsServer)
+	defer ts.Close()
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
+	var resp struct {
+		Data struct{ Token string } `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"?token="+resp.Data.Token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	ready, _ := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`)
+	_ = conn.Write(ctx, websocket.MessageBinary, ready)
+	if _, _, err := conn.Read(ctx); err != nil { // bot-ready
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return activeSessionCount(t, s, agentID) == 1 })
+
+	s.cfg.Limits.ImmediateCancel = true // force-cancel the live call
+	_ = s.Shutdown(ctx)
+
+	store, err := storage.Open(ctx, storage.Config{Dialect: storage.SQLite, DSN: os.Getenv("GOVOICE_DATABASE_DSN")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	rows, err := store.Sessions().List(ctx, storage.SessionFilter{AgentID: agentID})
+	if err != nil || len(rows) != 1 || rows[0].Status != "ended" {
+		t.Fatalf("session rows after shutdown = %+v (err %v), want one ended", rows, err)
+	}
 }

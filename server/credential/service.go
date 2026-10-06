@@ -374,6 +374,7 @@ func validCapabilities(registry *provider.Registry, providerID string, caps []pr
 	}
 	return true
 }
+
 // sortedCapabilities returns a sorted copy; never nil, so the API always
 // serialises an array (clients reject "capabilities": null).
 func sortedCapabilities(caps []provider.Capability) []provider.Capability {

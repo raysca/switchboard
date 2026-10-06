@@ -285,6 +285,9 @@ func NewID() string {
 	return id.String()
 }
 
+// IsID reports whether id is a canonical UUIDv7, the form of every stored id.
+func IsID(id string) bool { return validID(id) == nil }
+
 func validID(id string) error {
 	u, err := uuid.Parse(id)
 	if err != nil || u.Version() != 7 || u.Variant() != uuid.RFC4122 || u.String() != id {

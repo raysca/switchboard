@@ -68,6 +68,7 @@ type Server struct {
 
 	mu          sync.Mutex
 	activeCalls map[uint64]*activeCall
+	connecting  sync.WaitGroup // calls admitted but not yet in activeCalls
 	nextCallID  atomic.Uint64
 	textTurns   atomic.Uint64
 	pruneStop   chan struct{}
@@ -391,9 +392,16 @@ func (s *Server) setupRoutes() {
 }
 
 func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
+	// Under s.mu so Shutdown either refuses this call or waits for it to
+	// register: a call still resolving its agent is not yet in activeCalls.
+	s.mu.Lock()
 	if s.shuttingDown.Load() {
+		s.mu.Unlock()
 		return nil, errors.New("server shutting down")
 	}
+	s.connecting.Add(1)
+	s.mu.Unlock()
+	defer s.connecting.Done()
 
 	principal := conn.Claims().Principal
 	if principal == "" {
@@ -419,7 +427,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 
 	// 2. Pin the token's stored agent and resolve providers and credentials
 	resolveCtx, cancelResolve := context.WithTimeout(conn.Context(), resolveTimeout)
-	call, releaseCall, err := s.resolveCall(resolveCtx, conn.AgentID())
+	tokenID := ""
+	if claims := conn.Claims(); claims != nil {
+		tokenID = claims.ID
+	}
+	call, releaseCall, err := s.resolveCall(resolveCtx, conn.AgentID(), tokenID)
 	cancelResolve()
 	if err != nil {
 		s.admission.ReleaseSession(principal)
@@ -548,10 +560,12 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			conn.Close()
 		}
 		s.admission.ReleaseSession(principal)
+		// End the session row before the call stops counting as active, so a
+		// draining Shutdown cannot close the store first.
+		releaseCall() // bounded: drains MCP tools and ends the session row
 		s.mu.Lock()
 		delete(s.activeCalls, sessionID)
 		s.mu.Unlock()
-		releaseCall() // bounded: drains MCP tools and ends the session row
 		timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "session closed"})
 		s.metrics.SessionsStoppedTotal.Add(1)
 	}()
@@ -710,7 +724,9 @@ func (s *Server) Start() error {
 
 // Shutdown performs orderly drain-then-cancel shutdown per spec §37.
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
 	s.shuttingDown.Store(true)
+	s.mu.Unlock()
 	s.ready.Store(false)
 	if s.pruneStop != nil {
 		select {
@@ -726,6 +742,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.publicServer != nil {
 		_ = s.publicServer.Close()
 	}
+
+	// Calls admitted before shutdown finish registering (bounded by resolveTimeout).
+	waitUntil(ctx, resolveTimeout+time.Second, func() bool { s.connecting.Wait(); return true })
 
 	// 2. Drain active calls or immediate cancel
 	drainDeadline := s.cfg.Limits.DrainTimeout
@@ -779,6 +798,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 	s.mu.Unlock()
+
+	// Their teardown ends each session row (bounded by releaseTimeout); wait for
+	// it before closing the store.
+	waitUntil(ctx, releaseTimeout+time.Second, func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return len(s.activeCalls) == 0
+	})
 
 	// 4. Release VAD Executor
 	if s.vadExecutor != nil {
@@ -925,4 +952,23 @@ func (s *Server) onText(conn *ws.Connection, text string) error {
 		Committed: true,
 	}
 	return session.Reenter(frame, core.Downstream, CallUserContextIndex, gen)
+}
+
+// waitUntil polls done (or, if it blocks, waits for it) until it reports true,
+// max elapses, or ctx ends.
+func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
+	finished := make(chan struct{})
+	go func() {
+		for !done() {
+			time.Sleep(20 * time.Millisecond)
+		}
+		close(finished)
+	}()
+	timer := time.NewTimer(max)
+	defer timer.Stop()
+	select {
+	case <-finished:
+	case <-timer.C:
+	case <-ctx.Done():
+	}
 }

@@ -22,14 +22,20 @@ const resolveTimeout = 10 * time.Second
 // resolveCall pins the token's agent for a new call: it captures the agent's
 // MCP tools, persists the session row, and resolves each stage's provider and
 // credential. release ends the persisted session and must run exactly once.
-func (s *Server) resolveCall(ctx context.Context, agentID string) (CallSpec, func(), error) {
+// The session row takes the token's single-use jti as its id, so a client that
+// holds the token can find its session (the admin voice test links to it).
+func (s *Server) resolveCall(ctx context.Context, agentID, tokenID string) (CallSpec, func(), error) {
 	if s.agents == nil || s.mcpService == nil || s.credentials == nil || s.store == nil {
 		return CallSpec{}, nil, errAgentsUnavailable
 	}
 	if agentID == "" {
 		return CallSpec{}, nil, errors.New("token does not name an agent")
 	}
-	rs, err := runtime.StartSession(ctx, s.agents, s.mcpService, agentID, storage.NewID())
+	sessionID := tokenID
+	if !storage.IsID(sessionID) { // legacy tokens carry a random UUIDv4 or no jti
+		sessionID = storage.NewID()
+	}
+	rs, err := runtime.StartSession(ctx, s.agents, s.mcpService, agentID, sessionID)
 	if err != nil {
 		return CallSpec{}, nil, fmt.Errorf("start agent session: %w", err)
 	}

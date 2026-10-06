@@ -165,16 +165,23 @@ func (s *Session) Close(ctx context.Context) error {
 	if s.closed {
 		return nil
 	}
+	var drainErr error
 	if s.runner != nil {
-		if err := s.runner.close(ctx); err != nil {
-			return err
-		}
+		drainErr = s.runner.close(ctx)
 	}
-	if err := s.end(ctx, s.Pin.ID); err != nil {
-		return err
+	// The row is ended even when the tool drain timed out; a stuck MCP tool must
+	// not leave the session active forever.
+	endCtx := ctx
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		endCtx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+	if err := s.end(endCtx, s.Pin.ID); err != nil {
+		return errors.Join(drainErr, err)
 	}
 	s.closed = true
-	return nil
+	return drainErr
 }
 
 var invalidToolName = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)

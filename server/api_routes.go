@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"govoice/server/agent"
 	"govoice/server/api"
+	"govoice/server/storage"
 	"govoice/transport/token"
 )
 
@@ -87,7 +88,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		lifetime := s.effectiveVoiceTokenLifetime()
 		claims := token.Claims{RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: s.cfg.Token.Issuer, Audience: jwt.ClaimStrings{s.cfg.Token.Audience},
-			Subject: input.Principal, ID: uuid.NewString(),
+			Subject: input.Principal, ID: storage.NewID(), // becomes the session id
 			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
 		}, Principal: input.Principal, AgentID: target.ID, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
 		jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
