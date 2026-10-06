@@ -1118,6 +1118,20 @@ func isControlFrame(f Frame) bool {
 	}
 }
 
+// IsUrgentControl reports whether a frame belongs to the P1 priority control lane
+// (cancel, interruption, flush, end, and critical error).
+func IsUrgentControl(f Frame) bool {
+	if f == nil {
+		return false
+	}
+	switch f.Type() {
+	case FrameCancel, FrameInterruption, FrameFlush, FrameEnd, FrameError:
+		return true
+	default:
+		return false
+	}
+}
+
 func isFenceSurvivingControl(f Frame) bool {
 	switch f.Type() {
 	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
