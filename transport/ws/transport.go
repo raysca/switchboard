@@ -553,7 +553,7 @@ func (c *Connection) readLoop() {
 			if c.cfg.Observe != nil {
 				c.cfg.Observe("protocol_error", 1)
 			}
-			_ = c.conn.Close(websocket.StatusUnsupportedData, err.Error())
+			_ = c.conn.Close(websocket.StatusUnsupportedData, "invalid frame")
 			return
 		}
 
@@ -572,10 +572,10 @@ func (c *Connection) readLoop() {
 				if errors.Is(err, rtvi.ErrIncompatibleProtocol) {
 					errJSON, _ := c.rtvi.FormatError(err.Error(), true)
 					_ = c.WriteWireMessage(c.ctx, errJSON)
-					_ = c.conn.Close(websocket.StatusPolicyViolation, err.Error())
+					_ = c.conn.Close(websocket.StatusPolicyViolation, "incompatible rtvi protocol")
 					return
 				}
-				_ = c.conn.Close(websocket.StatusUnsupportedData, err.Error())
+				_ = c.conn.Close(websocket.StatusUnsupportedData, "invalid rtvi message")
 				return
 			}
 			if respFrame != nil {
@@ -799,11 +799,20 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 
 	case core.FrameError:
 		ef := f.(*core.ErrorFrame)
-		text := "unknown error"
-		if ef.Err != nil {
-			text = ef.Err.Error()
+		// The client gets a category only: ef.Err can carry provider bodies and
+		// project paths, and keeps travelling downstream for logs and the timeline.
+		// ponytail: non-fatal errors are almost all provider failures; add a typed
+		// category on ErrorFrame if the client needs finer detail.
+		category := "provider_error"
+		switch {
+		case errors.Is(ef.Err, context.DeadlineExceeded):
+			category = "timeout"
+		case errors.Is(ef.Err, context.Canceled):
+			category = "cancelled"
+		case ef.Fatal:
+			category = "pipeline_error"
 		}
-		msg, _ := c.rtvi.FormatError(text, ef.Fatal)
+		msg, _ := c.rtvi.FormatError(category, ef.Fatal)
 		_ = c.WriteWireMessage(ctx, msg)
 		if ef.Fatal {
 			c.Close()
