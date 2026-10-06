@@ -31,3 +31,4 @@ examples/secrets
 .goalpulse/
 .agents/
 progress.md
+.govoice-dev/

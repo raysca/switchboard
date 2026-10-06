@@ -3450,6 +3450,8 @@ At minimum, Server V2 should be able to create/import an agent from an existing 
 
 This avoids forcing users to reconstruct configurations manually.
 
+> **Superseded:** YAML `pipelines:` has since been removed and is rejected at startup, and the `/api/v1/agents/import-v1` route was removed with it. Calls run stored agents only; create them with `POST /api/v1/agents` (schema v2, see `docs/api/v1.md`).
+
 ---
 
 # 70. API Versioning

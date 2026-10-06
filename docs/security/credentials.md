@@ -14,6 +14,7 @@ Model and voice discovery uses provider-specific adapters behind a bounded regis
 
 Assumptions for this phase:
 
-- The server host remains responsible for loading encryption keys and injecting storage, validation and discovery adapters. This phase defines and tests that boundary; it does not add deployment-specific KMS or environment-variable configuration.
-- Google and xAI are the initial static registry entries, each declaring LLM, STT and TTS support. This is a selectable server capability contract, not a claim that every API key or account currently has each service enabled.
+- The server loads the keyring from `GOVOICE_CREDENTIAL_KEYS` (`id:base64(32-byte key)[,id:...]`, first entry active) and refuses to start without it. KMS integration is not provided.
+- Google declares LLM, STT and TTS support; xAI declares LLM only, plus STT and TTS in builds tagged `xaispeech`. This is a selectable server capability contract, not a claim that every API key or account currently has each service enabled.
+- Calls decrypt only the credentials their agent's stages resolve to (explicit `credential_id`, or the provider's only usable credential) and hold them in memory; the server no longer reads `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` or `XAI_API_KEY`. A Google secret is an API key or service-account JSON. Credentials for provider `mcp` are bearer tokens for MCP servers and are never used by agent stages.
 - Live provider validation and network discovery are not inferred from stored-key shape. Until an adapter is configured, validation/discovery reports unavailable.

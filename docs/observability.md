@@ -28,19 +28,19 @@ All health endpoints are served exclusively on the protected admin listener (def
 ### Liveness Probe: `GET /health`
 - **Purpose**: Local process liveness for orchestrators (Kubernetes / Docker Compose / Systemd).
 - **Semantics**: Ultra-cheap local check. It executes **zero external network calls**, zero provider queries, and zero VAD inferences.
-- **Response**: `HTTP 200 OK` with `{"status":"ok"}`.
+- **Response**: `HTTP 200 OK` with `{"status":"live"}`.
 
 ### Compound Readiness Probe: `GET /ready`
 - **Purpose**: Verifies the server can safely admit new customer calls.
-- **Inspection Logic**:
-  1. `startup`: Verifies the server has finished initialization.
-  2. `shutdown`: Fails immediately if the server is in draining or shutdown state.
-  3. `admission`: Fails if admission has been manually disabled or limits are saturated.
-  4. `vad_capacity`: Verifies that at least one native VAD worker is online and reporting capacity.
-  5. `circuits`: Verifies that critical provider circuit breakers (STT, LLM, TTS) are not Tripped/Open.
+- **Inspection Logic** (first failure wins):
+  1. Startup/shutdown: unready until initialization finishes and while draining or shutting down.
+  2. Admission: unready if admission has been globally disabled.
+  3. VAD capacity: unready if no native VAD worker is online.
+  4. Agent store: unready if agent storage is not enabled (calls run stored agents only).
+- **Provider circuits** (`google_stt`, `google_llm`, `google_tts`, `xai_llm`, `xai_stt`, `xai_tts`) are reported as `closed`, `open` or `half_open` for diagnosis but do not make the server unready: an open circuit only affects agents that use that provider. Per-agent call readiness is reported by `GET /api/v1/agents/{id}` (`readiness`). `/ready` no longer reports `usable_pipelines`.
 - **Response**:
-  - Ready: `HTTP 200 OK` with `{"status":"ready", "uptime":"...", "checks":{...}}`
-  - Unready: `HTTP 503 Service Unavailable` with `{"status":"unready", "checks":{...}}`
+  - Ready: `HTTP 200 OK` with `{"status":"ready", "circuits":{...}}`
+  - Unready: `HTTP 503 Service Unavailable` with `{"status":"unready", "reason":"..."}`
 
 ---
 

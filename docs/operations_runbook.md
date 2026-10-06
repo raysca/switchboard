@@ -44,12 +44,23 @@ openssl rand -hex 32 | sudo tee /etc/govoice/secrets/auth_secret.key
 sudo chmod 600 /etc/govoice/secrets/auth_secret.key
 ```
 
+The server also requires the agent store and its secrets. It refuses to start without them:
+
+| Variable | Value |
+|---|---|
+| `TOKEN_SECRET` | Voice token signing secret (32+ characters). |
+| `GOVOICE_MANAGEMENT_API_KEY` | Management API bearer key, at least 32 bytes, different from `TOKEN_SECRET`. |
+| `GOVOICE_DATABASE_DSN` | Agent store DSN: a `postgres://` URL (`config/production.yaml` uses `storage.dialect: postgres`) or a SQLite file path. |
+| `GOVOICE_CREDENTIAL_KEYS` | `id:base64(32-byte key)[,id:...]`; the first entry encrypts new provider secrets. Generate a key with `openssl rand -base64 32`. Back it up: stored credentials cannot be decrypted without it. To rotate, put the new key first, keep the old one, then call `POST /api/v1/providers/credentials/{id}/rotate`. |
+
+Provider credentials (Google API key or service-account JSON, xAI API key) are not environment variables or mounted files. Add them after start-up with `POST /api/v1/providers/credentials`, then create agents with `POST /api/v1/agents` (see `docs/quickstart.md`). `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` and `XAI_API_KEY` are ignored.
+
 ### Step 3: Run with Docker Compose
 Use the reference compose configuration in `deploy/docker-compose.yaml`:
 ```bash
 docker compose -f deploy/docker-compose.yaml up -d
 ```
-The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at `/tmp`.
+The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at `/tmp`. The compose file also starts a `postgres` service for the agent store; set `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY`, `GOVOICE_CREDENTIAL_KEYS` and `POSTGRES_PASSWORD` before `up`. `deploy/smoke.sh` runs this stack end to end: it adds a credential, creates an agent and issues a voice token.
 
 ---
 
@@ -79,6 +90,8 @@ sudo cp config/production.yaml /etc/govoice/config.yaml
 
 # Copy and enable systemd unit
 sudo cp deploy/govoice.service /etc/systemd/system/govoice.service
+# /etc/govoice/env (mode 600) must set TOKEN_SECRET, GOVOICE_MANAGEMENT_API_KEY,
+# GOVOICE_DATABASE_DSN and GOVOICE_CREDENTIAL_KEYS (see Path A, Step 2).
 sudo systemctl daemon-reload
 sudo systemctl enable --now govoice.service
 ```
@@ -152,9 +165,9 @@ docker stop -t 45 govoice
 - **Action Required**: Query `/timeline?session_id=<ID>` for the affected session. Check if an external provider call hung without respecting context cancellation.
 
 ### Incident 3: Cloud Provider Circuit Breakers Tripped
-- **Symptoms**: `/ready` returns 503; `provider_circuit_state{provider="..."} == 2`.
+- **Symptoms**: `provider_circuit_state{provider="..."} == 2`; `/ready` lists the circuit as `open` under `circuits` (it stays 200, because only agents using that provider are affected).
 - **Underlying Mechanism**: 5 consecutive failures occurred against Google Cloud STT, LLM, or TTS within 60 seconds.
 - **Action Required**:
   1. Check GCP Service Health status for Speech-to-Text or Vertex AI.
-  2. Verify credentials and IAM permissions.
+  2. Verify the stored credential (`POST /api/v1/providers/credentials/{id}/validate`) and IAM permissions.
   3. Circuits will automatically probe the provider in Half-Open state after 30 seconds of cooldown.

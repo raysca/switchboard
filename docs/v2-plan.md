@@ -895,7 +895,7 @@ By this point the Framework contracts required by the product should be stable e
 - Agent CRUD,
 - AgentVersion/Snapshot,
 - stable runtime snapshot creation,
-- migration/import from V1 config,
+- migration/import from V1 config (later removed together with YAML `pipelines:`; agents come only from storage),
 - readiness calculation,
 - archive/duplicate.
 

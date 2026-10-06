@@ -8,8 +8,11 @@ This guide gets you up and running with a real, live voice conversation using Vo
 
 - **Go**: Version 1.27.1 or higher
 - **Node.js**: Version 20+ (Node 22 LTS recommended)
-- **Google Cloud Credentials**: Service account key with `Speech-to-Text API`, `Cloud Text-to-Speech API`, and `Vertex AI` (or Gemini API key `GEMINI_API_KEY`) enabled.
-- **xAI API Key** (optional, for Scenario C): `XAI_API_KEY`
+- **Google credential**: either a Gemini/Google API key, or a service-account JSON key with `Speech-to-Text API`, `Cloud Text-to-Speech API`, and `Vertex AI` enabled.
+- **xAI API key** (optional): xAI can serve the LLM stage. xAI STT/TTS exist only in builds made with `-tags xaispeech`.
+- `curl`, `openssl` and `jq` for the commands below.
+
+Provider credentials are not read from the environment. `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` and `XAI_API_KEY` are ignored by the server. You add credentials through the management API, and the server stores them encrypted.
 
 ---
 
@@ -24,69 +27,32 @@ make build
 ```
 
 This generates:
-- `bin/server`: Config-driven voice edge & pipeline server
+- `bin/server`: Config-driven voice edge server that runs stored agents
 - `bin/vadworker`: Isolated child worker process for Silero VAD
 
 ---
 
-## 3. Configuration
+## 3. Configuration and Secrets
 
-In development, you can run with the provided development configuration:
+`config/development.yaml` works as-is. YAML holds only infrastructure: listeners, TLS, limits, VAD, the token issuer, provider infrastructure (Google project/location/stream quotas, xAI endpoints) and `storage.dialect`. Models, voices, prompts and credentials belong to stored agents. A `pipelines:` section is rejected at startup.
+
+The agent store is required. Set its DSN, the credential encryption keyring and the management API key:
+
+In the development profile you can skip the first two variables: the server then creates `.govoice-dev/govoice.db` and a persisted credential key in `.govoice-dev/credential.key`. Production always requires both.
 
 ```bash
-cp config/development.yaml config/my-development.yaml
-```
-
-Set your credentials:
-```bash
-export GEMINI_API_KEY="your-gemini-api-key"
-# Or for GCP Service Account:
-# export GOOGLE_APPLICATION_CREDENTIALS="/path/to/sa-key.json"
-```
-
-Verify that `config/development.yaml` contains:
-```yaml
-environment: "development"
-server:
-  public_address: ":8080"
-  admin_address: ":9090"
-auth:
-  secret: "dev-insecure-secret-key-at-least-32-chars-long"
-  allow_missing_origin: true
+mkdir -p data
+# SQLite file (development.yaml uses storage.dialect: sqlite). For postgres use a postgres:// URL.
+export GOVOICE_DATABASE_DSN="$PWD/data/govoice.db"
+# "id:base64(32-byte key)[,id:...]"; the first entry encrypts new secrets. Keep it: losing it makes stored credentials unreadable.
+export GOVOICE_CREDENTIAL_KEYS="k1:$(openssl rand -base64 32)"
+# Management API bearer key, at least 32 bytes.
+export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"
 ```
 
 ---
 
-## 4. Minting an Admission Token
-
-Voice Framework V1 requires a short-lived single-use HMAC-SHA256 JWT admission token to connect.
-You can mint a test token using Go or Node.js:
-
-```bash
-# Mint a token valid for 5 minutes using the development secret
-node -e '
-const jwt = require("jsonwebtoken");
-const token = jwt.sign(
-  {
-    jti: require("crypto").randomUUID(),
-    sub: "user-1234",
-    aud: "govoice-v1-client",
-    iss: "govoice-v1",
-    exp: Math.floor(Date.now() / 1000) + 300,
-    iat: Math.floor(Date.now() / 1000)
-  },
-  "dev-insecure-secret-key-for-testing-only-12345",
-  { algorithm: "HS256", keyid: "v1" }
-);
-console.log(token);
-'
-```
-
----
-
-## 5. Starting the Voice Server
-
-Start the server using `bin/server`:
+## 4. Starting the Voice Server
 
 ```bash
 ./bin/server -config config/development.yaml
@@ -94,16 +60,77 @@ Start the server using `bin/server`:
 
 The server initializes:
 - Public listener at `http://127.0.0.1:8080` (WebSocket endpoint `/ws`)
-- Admin listener at `http://127.0.0.1:9090` (`/health`, `/ready`, `/metrics`, `/timeline`)
+- Admin listener at `http://127.0.0.1:9090` (`/health`, `/ready`, `/metrics`, `/debug/timeline` and the management API `/api/v1/*`)
 
 Check server readiness:
 ```bash
 curl http://127.0.0.1:9090/health
-# {"status":"ok"}
+# {"status":"live"}
 
 curl http://127.0.0.1:9090/ready
-# {"status":"ready","uptime":"2s","checks":{"admission":true,"circuits":true,"shutdown":false,"startup":true,"vad_capacity":true}}
+# {"circuits":{"google_llm":"closed",...},"status":"ready"}
 ```
+
+`/ready` is unready if the agent store is not enabled.
+
+The remaining steps use the management API on the admin listener:
+
+```bash
+ADMIN=http://127.0.0.1:9090
+AUTH="Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY"
+```
+
+---
+
+## 5. Add a Provider Credential, Create an Agent, Issue a Token
+
+### 5a. Add a Google credential
+
+The secret is either an API key or a service-account JSON key (`"type": "service_account"`). Pretty-printed JSON is accepted; API keys must be a single token.
+
+```bash
+# API key:
+SECRET="your-google-api-key"
+# Or a service-account key:
+# SECRET="$(jq -c . /path/to/sa-key.json)"
+
+CRED_ID=$(jq -n --arg s "$SECRET" '{provider: "google", secret: $s}' |
+  curl -fsS -X POST "$ADMIN/api/v1/providers/credentials" \
+    -H "$AUTH" -H 'Content-Type: application/json' --data-binary @- | jq -r .data.id)
+echo "$CRED_ID"
+```
+
+The response holds only a masked suffix. `GET /api/v1/providers/credentials` lists credentials. For xAI, post `{"provider": "xai", "secret": "<xai-api-key>"}`.
+
+### 5b. Create an agent
+
+```bash
+AGENT_ID=$(curl -fsS -X POST "$ADMIN/api/v1/agents" \
+  -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{
+    "name": "Quickstart agent",
+    "config": {
+      "stt": {"provider": "google", "model": "chirp_2", "language": "en-US"},
+      "llm": {"provider": "google", "model": "gemini-2.0-flash", "system_prompt": "You are a friendly voice assistant. Keep answers short."},
+      "tts": {"provider": "google", "voice": "en-US-Journey-F"}
+    }
+  }' | jq -r .data.id)
+
+curl -fsS "$ADMIN/api/v1/agents/$AGENT_ID" -H "$AUTH" | jq -r .data.readiness.state
+# ready
+```
+
+Each stage must name its `credential_id`: an agent is attached to its providers and their credentials when it is created, and creation fails with `400 agent_not_attached` if a stage has no provider, no credential, or a credential of another provider. If an attached credential is later deleted or marked invalid, the agent becomes not ready (`missing_credential_<stage>` / `invalid_credential_<stage>`). To use xAI for the LLM, set `"llm": {"provider": "xai", "model": "<grok-model>", ...}` after adding an xAI credential.
+
+### 5c. Issue a voice token
+
+```bash
+TOKEN=$(curl -fsS -X POST "$ADMIN/api/v1/voice-tokens" \
+  -H "$AUTH" -H 'Content-Type: application/json' \
+  -d "{\"principal\": \"user-1234\", \"agent_id\": \"$AGENT_ID\"}" | jq -r .data.token)
+```
+
+The token is single-use and lasts at most 60 seconds, so connect right away. An unknown agent returns 404. An agent that is not ready returns 409 `agent_not_ready`, with the readiness reasons in `error.details`. Each call pins the agent's current version, so later edits do not change a running call.
 
 ---
 
@@ -121,7 +148,7 @@ Connect and converse in your web or Node.js application:
 import { PipecatClient } from "@pipecat-ai/client-js";
 import { WebSocketTransport } from "@pipecat-ai/websocket-transport";
 
-const token = "<MINTED_ADMISSION_TOKEN>";
+const token = "<TOKEN_FROM_STEP_5C>";
 const wsUrl = `ws://127.0.0.1:8080/ws?token=${token}`;
 
 const transport = new WebSocketTransport({
@@ -173,7 +200,7 @@ await client.connect();
 
 ## 7. Running Independent Examples
 
-Voice Framework V1 includes runnable standalone examples in `examples/` that construct complete voice pipelines programmatically without the HTTP/WebSocket server:
+Voice Framework V1 includes runnable standalone examples in `examples/` that construct complete voice pipelines programmatically without the HTTP/WebSocket server. Unlike the server, these examples read provider credentials from the environment (`GOOGLE_API_KEY` or `GOOGLE_APPLICATION_CREDENTIALS`, and `XAI_API_KEY`):
 
 ```bash
 # 1. Complete Google Voice Pipeline (Silero VAD + Google STT + Gemini LLM + Cloud TTS)

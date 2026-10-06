@@ -33,7 +33,7 @@ The voice test panel enables operators to test conversational voice agents direc
 ┌───────────────────────────────┐             ┌───────────────────────────────┐
 │ Voice Admission Token Request │             │  WebSocket Connection (`/ws`) │
 │ POST /api/v1/voice-tokens     │             │  - Protobuf Frame envelope    │
-│ - Principal & pipeline auth   │             │  - RTVI JSON messages         │
+│ - Principal & agent_id        │             │  - RTVI JSON messages         │
 │ - Returns short-lived token   │             │  - 16kHz input / 24kHz output │
 └───────────────────────────────┘             └───────────────────────────────┘
 ```
@@ -43,9 +43,9 @@ The voice test panel enables operators to test conversational voice agents direc
 Voice testing runs through four deterministic stages:
 
 1. **Token Minting (`POST /api/v1/voice-tokens`):**
-   - The UI requests an admission token with `principal: "agent-test-${agent.id}"` and `pipeline: agent.pipeline || "default"`.
-   - The token contains claims with the session's unique identifier (`jti`), pipeline permissions, and lifetime.
-   - The token is passed as a query parameter when establishing the WebSocket connection (`/ws?token=${token}&pipeline=${pipeline}`).
+   - The UI requests an admission token with `principal: "agent-test-${agent.id}"` and `agent_id: agent.id`. The server returns 409 `agent_not_ready` if the agent cannot take calls.
+   - The token contains claims with the session's unique identifier (`jti`), the `agent_id` the call runs, and lifetime.
+   - The token is passed as a query parameter when establishing the WebSocket connection (`/ws?token=${token}`). The call runs the agent's current version with its stored provider credentials.
 
 2. **WebSocket Upgrade & RTVI Handshake:**
    - Client connects via WebSocket (`ws://` or `wss://`).
@@ -133,7 +133,7 @@ The audio subsystem (`ui/src/voice/audio.ts`) handles device capture and playbac
 |---|---|---|
 | Microphone Permission Denied (`NotAllowedError`) | Displays warning alert: *"Microphone Access Denied: Microphone permission was denied. Please allow microphone access in your browser settings."* | Operator enables permission in browser bar and clicks **Retry Connection**. |
 | Microphone Not Found (`NotFoundError`) | Displays warning alert: *"No microphone device was detected on your system."* | Operator connects audio device and retries. |
-| Token Minting Failure | Displays error alert with server error details. | Operator verifies management key and active pipeline in configuration. |
+| Token Minting Failure | Displays error alert with server error details. | Operator verifies the management key and that the agent is ready (readiness reasons such as `missing_credential_llm`). |
 | WebSocket Connection Timeout / Failure | Displays error alert: *"WebSocket connection failed. Verify server is reachable."* | Session resources are cleanly torn down; operator can click **Retry Connection**. |
 | Unexpected Server Closure | Displays closure banner with close code and server reason. Session summary and trace link remain accessible. | Operator inspects trace timeline or reconnects. |
 

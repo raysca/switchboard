@@ -9,7 +9,8 @@ Voice Framework V1 is a high-performance, low-latency, resilient voice agent run
 - **Unmodified Pipecat Compatibility**: Integrates seamlessly with official, unmodified `@pipecat-ai/client-js@1.13.1` and `@pipecat-ai/websocket-transport@1.7.2` using binary Protobuf frames and the RTVI 2.1.0 protocol.
 - **Sub-200ms Barge-In Interruption**: On user speech the server stops sending assistant audio. The pinned Pipecat client does not clear audio it has already buffered; residual playback is bounded by the 100 ms server pacing queue.
 - **Fault-Isolated Neural VAD**: Runs Silero VAD inside supervised worker child processes, ensuring that native C/C++ or ONNX faults or segmentation faults cannot crash the Go server.
-- **Provider Interchangeability**: Supports complete Google Cloud pipelines (Chirp 2 STT + Gemini 2.5 Flash LLM + Journey TTS) and drop-in xAI Grok LLM interchangeability (Scenario C) with zero core runtime modifications.
+- **Stored Agents**: Every call runs a stored agent (STT, LLM and TTS provider, model, voice, prompt, MCP tools) managed through the `/api/v1` management API. Provider credentials are stored encrypted, and each call pins the agent version it started with.
+- **Provider Interchangeability**: Agents can use Google Cloud for every stage (Chirp 2 STT + Gemini LLM + Journey TTS) or swap in xAI Grok for the LLM (Scenario C) with zero core runtime modifications. xAI STT/TTS are only available in builds made with `-tags xaispeech`.
 - **Bounded Resource Safety**: Enforces message and token context budgets, async task budgets, priority control queues, and data shedding under backpressure.
 - **Production-Ready Observability**: Provides separation of public (`:8080`) and administrative (`:9090`) listeners, cheap local `/health`, compound `/ready`, Prometheus metrics conforming to Spec §35 without high-cardinality labels, and a per-session circular diagnostic timeline.
 
@@ -35,24 +36,40 @@ make verify
 Validates code formatting, runs all tests with `-race` across all modules (`core`, `providers/google`, `providers/xai`, `server`, `vad`, `transport`), verifies Protobuf binary fixtures, and confirms the compatibility manifest.
 
 ### 3. Launch Development Server
+The agent store is required. Provide its DSN, the credential encryption keyring and a management API key:
 ```bash
+mkdir -p data
+export GOVOICE_DATABASE_DSN="$PWD/data/govoice.db"            # sqlite path, or a postgres:// URL with storage.dialect: postgres
+export GOVOICE_CREDENTIAL_KEYS="k1:$(openssl rand -base64 32)"  # id:base64(32-byte key)[,id:...]; first is active
+export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"     # >= 32 bytes
 ./bin/server -config config/development.yaml
 ```
 
 Check health:
 ```bash
 curl http://127.0.0.1:9090/health
-# {"status":"ok"}
+# {"status":"live"}
 
 curl http://127.0.0.1:9090/ready
-# {"status":"ready","uptime":"2s","checks":{...}}
+# {"circuits":{...},"status":"ready"}
 ```
+
+### 4. Add a Credential, Create an Agent, Connect
+YAML no longer defines pipelines, models, voices or provider keys, and the server does not read `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` or `XAI_API_KEY`. Instead:
+
+1. `POST /api/v1/providers/credentials` with `{"provider": "google", "secret": "<api key or service-account JSON>"}`.
+2. `POST /api/v1/agents` with a `config` naming the `stt`, `llm` and `tts` providers.
+3. `POST /api/v1/voice-tokens` with `{"principal": "...", "agent_id": "..."}`.
+4. Connect to `ws://127.0.0.1:8080/ws?token=<token>`.
+
+[docs/quickstart.md](docs/quickstart.md) has the full commands.
 
 ---
 
 ## Documentation Index
 
-- [Quick Start Guide](docs/quickstart.md): Step-by-step guide to minting an admission token, starting the server, and connecting with the Pipecat JS client.
+- [Quick Start Guide](docs/quickstart.md): Step-by-step guide to starting the server with its agent store, adding a provider credential, creating an agent, issuing a voice token, and connecting with the Pipecat JS client.
+- [Management API v1](docs/api/v1.md): Agents, provider credentials, voice tokens, MCP servers and sessions.
 - [Architecture Overview](docs/architecture.md): Core runtime model, 7-stage pipeline, generations, interruption barriers, and memory bounds.
 - [Wire Protocol & RTVI](docs/wire_protocol.md): Protobuf framing, RTVI 2.1.0 event dictionary, audio formats, resampling, and media-clock pacing.
 - [Providers & Lifecycle](docs/providers.md): Google Cloud STT/LLM/TTS, xAI Grok LLM, stream rotation, retries, and circuit breakers.

@@ -9,7 +9,8 @@ Type=simple
 User=govoice
 Group=govoice
 
-# Binary and configuration. TOKEN_SECRET must be set in the environment file.
+# Binary and configuration. The environment file must set TOKEN_SECRET,
+# GOVOICE_MANAGEMENT_API_KEY, GOVOICE_DATABASE_DSN and GOVOICE_CREDENTIAL_KEYS.
 WorkingDirectory=/opt/govoice
 EnvironmentFile=-/etc/govoice/env
 Environment=GOVOICE_ROOT=/opt/govoice

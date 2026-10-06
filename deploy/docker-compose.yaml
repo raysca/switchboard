@@ -19,14 +19,19 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256M
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - govoice_logs:/var/log/govoice:rw
-      - ${GOOGLE_APPLICATION_CREDENTIALS_FILE:-./credentials/gcp.json}:/etc/govoice/credentials/gcp.json:ro
+    # Provider credentials are not passed in here: add them through
+    # POST /api/v1/providers/credentials; they are stored encrypted in the agent store.
     environment:
       - TOKEN_SECRET=${TOKEN_SECRET:?TOKEN_SECRET is required and must not be the public development key}
-      - GOOGLE_APPLICATION_CREDENTIALS=/etc/govoice/credentials/gcp.json
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
-      - XAI_API_KEY=${XAI_API_KEY:-}
+      - GOVOICE_MANAGEMENT_API_KEY=${GOVOICE_MANAGEMENT_API_KEY:?GOVOICE_MANAGEMENT_API_KEY is required (>= 32 bytes)}
+      - GOVOICE_CREDENTIAL_KEYS=${GOVOICE_CREDENTIAL_KEYS:?GOVOICE_CREDENTIAL_KEYS is required (id:base64 32-byte key)}
+      # POSTGRES_PASSWORD must be URL-safe (e.g. openssl rand -hex 24).
+      - GOVOICE_DATABASE_DSN=postgres://govoice:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/govoice?sslmode=disable
     ports:
       - "127.0.0.1:8080:8080" # Public WebSocket / Health (proxied via NGINX)
       - "127.0.0.1:9090:9090" # Admin Metrics / Readiness (internal only)
@@ -45,6 +50,23 @@ services:
         reservations:
           cpus: "1.0"
           memory: 1024M
+
+  # Agent store (config/production.yaml: storage.dialect postgres).
+  postgres:
+    image: postgres:16-alpine
+    container_name: govoice-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=govoice
+      - POSTGRES_DB=govoice
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - govoice_db:/var/lib/postgresql/data:rw
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "govoice", "-d", "govoice"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
 
   proxy:
     image: nginx:1.25-alpine
@@ -65,6 +87,7 @@ services:
 
 volumes:
   govoice_logs:
+  govoice_db:
 
 networks:
   default:
