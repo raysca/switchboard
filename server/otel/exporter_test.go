@@ -405,4 +405,3 @@ func TestStructuredMetadataPreserved(t *testing.T) {
 		t.Errorf("expected scores attribute to be preserved, got nil")
 	}
 }
-

@@ -28,25 +28,25 @@ import (
 
 // Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
-	cfg                   *Config
-	metrics               *Metrics
-	timelines             *TimelineRegistry
-	admission             *AdmissionController
-	registry              *Registry
-	validator             *token.Validator
-	management            *auth.Management
-	providerManagementAPI http.Handler
-	agentManagementAPI    http.Handler
+	cfg                     *Config
+	metrics                 *Metrics
+	timelines               *TimelineRegistry
+	admission               *AdmissionController
+	registry                *Registry
+	validator               *token.Validator
+	management              *auth.Management
+	providerManagementAPI   http.Handler
+	agentManagementAPI      http.Handler
 	mcpManagementAPI        http.Handler
 	sessionManagementAPI    http.Handler
 	operationsManagementAPI http.Handler
 	store                   *storage.Store
 	startedAt               time.Time
 	voiceSignKey            []byte
-	voiceKeyID            string
-	voiceEpoch            string
-	vadExecutor           vad.SharedExecutor
-	logger                *slog.Logger
+	voiceKeyID              string
+	voiceEpoch              string
+	vadExecutor             vad.SharedExecutor
+	logger                  *slog.Logger
 
 	ready        atomic.Bool
 	shuttingDown atomic.Bool

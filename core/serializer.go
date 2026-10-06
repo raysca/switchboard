@@ -136,4 +136,3 @@ func (s *JSONEventSerializer) Decode(data []byte) (any, error) {
 	}
 	return ev, nil
 }
-

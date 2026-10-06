@@ -227,4 +227,3 @@ func (t *PlaybackTracker) CurrentState() PlaybackState {
 	defer t.mu.Unlock()
 	return t.state
 }
-

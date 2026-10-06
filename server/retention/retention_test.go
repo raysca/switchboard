@@ -640,5 +640,3 @@ func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 		}
 	}
 }
-
-

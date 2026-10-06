@@ -290,4 +290,3 @@ func TestPlaybackTracker_EmptyOutputDirectCompletion(t *testing.T) {
 		t.Fatalf("expected completed, got %s", tracker.CurrentState())
 	}
 }
-

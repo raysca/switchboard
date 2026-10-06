@@ -92,4 +92,3 @@ func TestDockerfileProductionHardening(t *testing.T) {
 		t.Fatal("docker-compose must set no-new-privileges:true")
 	}
 }
-

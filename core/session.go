@@ -118,14 +118,14 @@ type Session struct {
 	AudioDropped   atomic.Uint64
 	Created        time.Time
 
-	tracer         Tracer
-	tracePolicy    TracePolicy
-	traceCtx       context.Context // run-loop owned after Start
-	traceRootCtx   context.Context // immutable session parent for external async boundaries
-	sessionSpan    Span
-	traceQueue     *AsyncTracer
-	ownsTraceQueue bool
-	tracing        bool
+	tracer             Tracer
+	tracePolicy        TracePolicy
+	traceCtx           context.Context // run-loop owned after Start
+	traceRootCtx       context.Context // immutable session parent for external async boundaries
+	sessionSpan        Span
+	traceQueue         *AsyncTracer
+	ownsTraceQueue     bool
+	tracing            bool
 	turnSpans          map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
 	traceOrigins       map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
 	disabledProcessors map[int]bool                    // run-loop owned; processors disabled via PolicyDisable
@@ -152,15 +152,15 @@ func NewSession(id uint64, pipeline *Pipeline, budget ResourceBudget) (*Session,
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Session{
-		id:          id,
-		budget:      budget,
-		pipe:        pipeline,
-		ctx:         ctx,
-		cancel:      cancel,
-		control:     make(chan Envelope, budget.MaxControlFrames),
-		data:        make(chan Envelope, budget.MaxQueuedFrames),
-		runLoopDone: make(chan struct{}),
-		ready:       make(chan struct{}),
+		id:                 id,
+		budget:             budget,
+		pipe:               pipeline,
+		ctx:                ctx,
+		cancel:             cancel,
+		control:            make(chan Envelope, budget.MaxControlFrames),
+		data:               make(chan Envelope, budget.MaxQueuedFrames),
+		runLoopDone:        make(chan struct{}),
+		ready:              make(chan struct{}),
 		stopped:            make(chan struct{}),
 		Created:            time.Now(),
 		settings:           DefaultRuntimeSettings(),

@@ -355,4 +355,3 @@ func (p *testFnProcessor) ProcessFrame(ctx context.Context, f Frame, dir Directi
 func (p *testFnProcessor) FailurePolicy() FailurePolicy {
 	return p.policy
 }
-

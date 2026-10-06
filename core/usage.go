@@ -6,13 +6,13 @@ import "time"
 // (such as LLM token counts, TTS character counts, STT audio duration, requests, or tools executed).
 // Unavailable metrics remain absent (nil pointer). No billing decisions are made in core.
 type UsageMetricsFrame struct {
-	SessionID  SessionID `json:"session_id,omitempty"`
-	Turn       string    `json:"turn,omitempty"`
-	Gen        uint64    `json:"gen,omitempty"`
-	Provider   string    `json:"provider"`
-	Model      string    `json:"model,omitempty"`
-	Service    string    `json:"service"` // "llm", "stt", "tts", "tool"
-	Timestamp  time.Time `json:"timestamp"`
+	SessionID SessionID `json:"session_id,omitempty"`
+	Turn      string    `json:"turn,omitempty"`
+	Gen       uint64    `json:"gen,omitempty"`
+	Provider  string    `json:"provider"`
+	Model     string    `json:"model,omitempty"`
+	Service   string    `json:"service"` // "llm", "stt", "tts", "tool"
+	Timestamp time.Time `json:"timestamp"`
 
 	// Token metrics (LLM)
 	PromptTokens     *int64 `json:"prompt_tokens,omitempty"`

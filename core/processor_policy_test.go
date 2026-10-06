@@ -312,4 +312,3 @@ func TestProcessorFailure_ContextCancelledDuringExecution(t *testing.T) {
 		t.Fatal("timed out waiting for session close after context cancellation")
 	}
 }
-

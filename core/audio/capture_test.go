@@ -274,7 +274,7 @@ func TestAudioCapture_CancellationTeardown(t *testing.T) {
 
 type noopEmitter struct{}
 
-func (n *noopEmitter) Push(f core.Frame) error                       { return nil }
+func (n *noopEmitter) Push(f core.Frame) error                            { return nil }
 func (n *noopEmitter) PushDirection(f core.Frame, d core.Direction) error { return nil }
 
 type blockingSink struct {

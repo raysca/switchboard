@@ -683,40 +683,40 @@ re-review and tester review remain pending; Task11/GateC remain open.
 
 ## Phase 5 — Trace persistence and observability
 
-- [ ] Task 19: Framework-to-Server trace adapter/query API.
+- [x] Task 19: Framework-to-Server trace adapter/query API.
 - [x] Task 20: Retention/privacy and optional OTel export.
-- [ ] Independent Phase 5 tester gate; record persistence/API evidence and leave Gate E open pending Phase 6 UI timeline correlation.
+- [x] Independent Phase 5 tester gate; record persistence/API evidence and leave Gate E open pending Phase 6 UI timeline correlation.
 
 ## Phase 6 — Admin UI product
 
 - [x] Task 21: Onboarding, providers, agent configuration.
-- [ ] Task 22: Agent voice test and Pipecat debug panel.
-- [ ] Task 23: MCP and sessions/trace UI.
-- [ ] Task 24: Dashboard and read-only server operations view.
-- [ ] Independent Phase 6 tester gate.
+- [x] Task 22: Agent voice test and Pipecat debug panel.
+- [x] Task 23: MCP and sessions/trace UI.
+- [x] Task 24: Dashboard and read-only server operations view.
+- [x] Independent Phase 6 tester gate; Gate E passed.
 
 ## Phase 7 — Vertical integration
 
-- [ ] Task 25: Seven product scenarios: fresh install, mixed providers, MCP, agent versioning, MCP deletion safety, barge-in, failure isolation.
-- [ ] Independent Phase 7 tester gate; record the seven vertical scenario results as Gate G inputs.
+- [x] Task 25: Seven product scenarios: fresh install, mixed providers, MCP, agent versioning, MCP deletion safety, barge-in, failure isolation.
+- [x] Independent Phase 7 tester gate; record the seven vertical scenario results as Gate G inputs.
 
 ## Phase 8 — Production hardening
 
-- [ ] Task 26: Security, persistence reliability, operations, packaging, Linux performance.
-- [ ] Independent Phase 8 tester gate; pass Gate G only after combining Phase 7 scenario results with security and production packaging evidence.
+- [x] Task 26: Security, persistence reliability, operations, packaging, Linux performance.
+- [x] Independent Phase 8 tester gate; Gate G passed.
 
 ## Phase 9 — P1 parity (after P0)
 
-- [ ] Task 27: Atomic runtime settings updates.
-- [ ] Task 28: Context summarization/compaction hook.
-- [ ] Task 29: Opt-in audio recording/capture sink.
-- [ ] Task 30: Urgent control lane.
-- [ ] Task 31: Processor failure/unusable policies.
-- [ ] Task 32: Provider usage metrics.
-- [ ] Task 33: Bot output/playback-state observer.
-- [ ] Task 34: Serializer abstraction.
-- [ ] Task 35: Frame/pipeline observer API.
-- [ ] Independent Phase 9 tester gate.
+- [x] Task 27: Atomic runtime settings updates.
+- [x] Task 28: Context summarization/compaction hook.
+- [x] Task 29: Opt-in audio recording/capture sink.
+- [x] Task 30: Urgent control lane.
+- [x] Task 31: Processor failure/unusable policies.
+- [x] Task 32: Provider usage metrics.
+- [x] Task 33: Bot output/playback-state observer.
+- [x] Task 34: Serializer abstraction.
+- [x] Task 35: Frame/pipeline observer API.
+- [x] Independent Phase 9 tester gate: All P1 suites (Tasks 27–35) and `make verify` pass cleanly under race detector.
 
 ## Phase 10 — P2 parity (after P1)
 
