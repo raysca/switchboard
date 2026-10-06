@@ -17,7 +17,6 @@ var (
 	ErrUnmatchedToolResult  = errors.New("core: tool result has no matching call")
 	ErrToolCorrelation      = errors.New("core: conflicting tool call correlation")
 	ErrInvalidMetadata      = errors.New("core: message metadata must be bounded JSON-safe data")
-	ErrToolIdentityLimit    = errors.New("core: tool identity replay ledger is full")
 	ErrToolCallPending      = errors.New("core: tool call is already in progress")
 	ErrInvalidCompaction    = errors.New("core: invalid compaction result")
 )
@@ -60,7 +59,7 @@ type Message struct {
 type ContextConfig struct {
 	MaxMessages       int // Maximum total messages preserved in history (must be >= 2 if set)
 	MaxTokens         int // Maximum estimated tokens across active messages
-	MaxToolIdentities int // Maximum retained tool replay identities (default: 256)
+	MaxToolIdentities int // Recent tool replay identities remembered (default: 256)
 }
 
 // EstimateTokens provides a deterministic, provider-neutral token count estimate.
@@ -110,6 +109,7 @@ type ConversationContext struct {
 	evictions      int
 	evictedPairs   []string
 	toolLedger     map[string]toolReplayIdentity
+	toolOrder      []string // FIFO of toolLedger keys, oldest first
 	compactionHook CompactionHook
 }
 
@@ -363,9 +363,6 @@ func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name 
 		}
 		return ErrToolCorrelation
 	}
-	if len(c.toolLedger) >= c.cfg.MaxToolIdentities {
-		return ErrToolIdentityLimit
-	}
 	if at.IsZero() {
 		at = time.Now()
 	}
@@ -381,7 +378,7 @@ func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name 
 		c.evictedPairs = originalPairs
 		return ErrContextLimitExceeded
 	}
-	c.toolLedger[callID] = toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments), startedAt: at}
+	c.rememberToolLocked(callID, toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments), startedAt: at})
 	return nil
 }
 
@@ -403,9 +400,6 @@ func (c *ConversationContext) ClaimToolCall(call ToolCall, at time.Time) (ToolRe
 		}
 		return ToolResult{CallID: call.ID, Status: identity.status, Result: json.RawMessage(append([]byte(nil), identity.result...)), ErrorCategory: identity.safeError, StartedAt: identity.startedAt, EndedAt: identity.endedAt}, false, nil
 	}
-	if len(c.toolLedger) >= c.cfg.MaxToolIdentities {
-		return ToolResult{}, false, ErrToolIdentityLimit
-	}
 	if at.IsZero() {
 		at = time.Now()
 	}
@@ -421,7 +415,7 @@ func (c *ConversationContext) ClaimToolCall(call ToolCall, at time.Time) (ToolRe
 		c.evictedPairs = originalPairs
 		return ToolResult{}, false, ErrContextLimitExceeded
 	}
-	c.toolLedger[call.ID] = toolReplayIdentity{turn: string(call.TurnID), gen: uint64(call.Generation), name: call.Name, arguments: string(call.Arguments), startedAt: at}
+	c.rememberToolLocked(call.ID, toolReplayIdentity{turn: string(call.TurnID), gen: uint64(call.Generation), name: call.Name, arguments: string(call.Arguments), startedAt: at})
 	return ToolResult{}, true, nil
 }
 
@@ -482,6 +476,19 @@ func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callI
 	identity.endedAt = at
 	c.toolLedger[callID] = identity
 	return nil
+}
+
+// rememberToolLocked records a new tool identity, forgetting the oldest once
+// MaxToolIdentities are held, so long calls never hit a tool-call limit.
+// ponytail: a replay older than the window re-executes; a result for a call
+// that old (MaxToolIdentities calls still in flight) is rejected as unmatched.
+func (c *ConversationContext) rememberToolLocked(callID string, identity toolReplayIdentity) {
+	if len(c.toolOrder) >= c.cfg.MaxToolIdentities {
+		delete(c.toolLedger, c.toolOrder[0])
+		c.toolOrder = c.toolOrder[1:]
+	}
+	c.toolLedger[callID] = identity
+	c.toolOrder = append(c.toolOrder, callID)
 }
 
 func (c *ConversationContext) hasToolMessageLocked(kind MessageKind, turn string, gen uint64, callID string) bool {

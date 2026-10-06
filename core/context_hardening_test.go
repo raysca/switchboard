@@ -245,8 +245,16 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	if err := bounded.AddToolCall("t", 1, "one", "lookup", []byte(`{}`), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := bounded.AddToolCall("t", 1, "two", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrToolIdentityLimit) {
-		t.Fatalf("ledger bound = %v", err)
+	// The ledger is a FIFO window: a full ledger forgets the oldest call
+	// instead of failing every later tool call.
+	if err := bounded.AddToolCall("t", 1, "two", "lookup", []byte(`{}`), time.Now()); err != nil {
+		t.Fatalf("full ledger rejected new call: %v", err)
+	}
+	if err := bounded.AddToolResult("t", 1, "two", []byte(`{}`), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(bounded.toolLedger) != 1 || len(bounded.toolOrder) != 1 {
+		t.Fatalf("ledger not bounded: %d/%d", len(bounded.toolLedger), len(bounded.toolOrder))
 	}
 }
 
