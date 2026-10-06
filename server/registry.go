@@ -41,6 +41,8 @@ type CallSpec struct {
 	// ToolDefinitions and ToolExecutor carry the agent's captured MCP tools.
 	ToolDefinitions []core.ToolDefinition
 	ToolExecutor    core.ToolExecutor
+	// History, when set, sees every frame just before the transport (turn rows).
+	History core.Processor
 }
 
 // ProcessorFactory builds one stage processor. cfg supplies provider
@@ -256,7 +258,11 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		sink.SetContextProvider(func() []core.Message { return ctxPool.Messages() })
 	}
 
-	pipe, err := core.NewPipeline(vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc, transportOutput)
+	procs := []core.Processor{vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc}
+	if call.History != nil {
+		procs = append(procs, call.History)
+	}
+	pipe, err := core.NewPipeline(append(procs, transportOutput)...)
 	if err != nil {
 		return fail(fmt.Errorf("assemble pipeline: %w", err))
 	}

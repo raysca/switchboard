@@ -40,6 +40,9 @@ type sessionExecutor struct {
 	inFlight int
 	drained  chan struct{}
 	handlers map[string]*mcp.CapturedTool
+	// sessionID is the stored session's id. Calls carry the core session's
+	// numeric id, which history and trace rows cannot reference.
+	sessionID string
 }
 
 func (e *sessionExecutor) Execute(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
@@ -68,7 +71,7 @@ func (e *sessionExecutor) Execute(ctx context.Context, call core.ToolCall) (core
 	if !ok {
 		return core.ToolResult{CallID: call.ID, Status: core.ToolFailed, ErrorCategory: "unknown_tool", Result: json.RawMessage(`{"error":"unknown_tool"}`), StartedAt: started, EndedAt: time.Now()}, nil
 	}
-	result, err := handler.ExecuteCall(ctx, call.Arguments, call.ID, string(call.SessionID), string(call.TurnID), uint64(call.Generation))
+	result, err := handler.ExecuteCall(ctx, call.Arguments, call.ID, e.sessionID, string(call.TurnID), uint64(call.Generation))
 	ended := time.Now()
 	if err != nil {
 		return core.ToolResult{CallID: call.ID, Status: core.ToolFailed, ErrorCategory: "mcp_tool_failed", Result: json.RawMessage(`{"error":"mcp_tool_failed"}`), StartedAt: started, EndedAt: ended}, nil
@@ -153,6 +156,7 @@ func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Se
 	if err != nil {
 		return nil, err
 	}
+	runner.sessionID = pin.ID
 	return &Session{Pin: pin, Snapshot: snapshot, Definitions: definitions, Executor: runner, end: agents.EndSession, runner: runner}, nil
 }
 
@@ -165,23 +169,25 @@ func (s *Session) Close(ctx context.Context) error {
 	if s.closed {
 		return nil
 	}
-	var drainErr error
 	if s.runner != nil {
-		drainErr = s.runner.close(ctx)
+		if err := s.runner.close(ctx); err != nil {
+			// A tool call is still running, so the session keeps pinning its MCP
+			// servers. End the row once the call finishes instead of never (a
+			// retried Close may end it first; ending twice is harmless).
+			go func() {
+				_ = s.runner.close(context.Background())
+				endCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = s.end(endCtx, s.Pin.ID)
+			}()
+			return err
+		}
 	}
-	// The row is ended even when the tool drain timed out; a stuck MCP tool must
-	// not leave the session active forever.
-	endCtx := ctx
-	if ctx.Err() != nil {
-		var cancel context.CancelFunc
-		endCtx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-	}
-	if err := s.end(endCtx, s.Pin.ID); err != nil {
-		return errors.Join(drainErr, err)
+	if err := s.end(ctx, s.Pin.ID); err != nil {
+		return err
 	}
 	s.closed = true
-	return drainErr
+	return nil
 }
 
 var invalidToolName = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)

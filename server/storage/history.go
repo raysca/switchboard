@@ -179,8 +179,13 @@ func (r SessionRepository) AddTurn(ctx context.Context, v TurnRecord) error {
 	if err != nil {
 		return err
 	}
-	_, err = r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO turns(id,session_id,ordinal,started_at,ended_at,transcript,assistant_text,latencies_json,interrupted,tools_json) VALUES(?,?,?,?,?,?,?,?,?,?)"), v.ID, v.SessionID, v.Ordinal, utc(v.StartedAt), nullTime(v.EndedAt), nullable(v.Transcript), nullable(v.AssistantText), string(latencyJSON), boolValue(r.s.dialect, v.Interrupted), string(toolsJSON))
-	return err
+	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO turns(id,session_id,ordinal,started_at,ended_at,transcript,assistant_text,latencies_json,interrupted,tools_json) VALUES(?,?,?,?,?,?,?,?,?,?)"), v.ID, v.SessionID, v.Ordinal, utc(v.StartedAt), nullTime(v.EndedAt), nullable(v.Transcript), nullable(v.AssistantText), string(latencyJSON), boolValue(r.s.dialect, v.Interrupted), string(toolsJSON)); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, r.s.bind("UPDATE sessions SET turn_count=turn_count+1 WHERE id=?"), v.SessionID)
+		return err
+	})
 }
 
 type SessionFilter struct {

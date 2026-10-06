@@ -221,6 +221,9 @@ func TestSessionRepositoryGetDetailAndTurns(t *testing.T) {
 	if !turns[0].Interrupted || turns[1].Interrupted {
 		t.Fatalf("turn interruption mismatch")
 	}
+	if got, err := s.Sessions().Get(ctx, sessID); err != nil || got.TurnCount != 4 { // created with 2, plus the two turns added
+		t.Fatalf("session turn_count = %d (err %v), want 4", got.TurnCount, err)
+	}
 }
 
 func TestTraceRepositorySpansEventsAndToolCalls(t *testing.T) {

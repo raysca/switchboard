@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -328,5 +330,42 @@ func TestShutdownEndsActiveSessionRows(t *testing.T) {
 	rows, err := store.Sessions().List(ctx, storage.SessionFilter{AgentID: agentID})
 	if err != nil || len(rows) != 1 || rows[0].Status != "ended" {
 		t.Fatalf("session rows after shutdown = %+v (err %v), want one ended", rows, err)
+	}
+}
+
+// Each assistant reply becomes one turn row paired with the user message that
+// started it; an interrupted reply is marked so.
+func TestTurnRecorderPairsUserAndAssistant(t *testing.T) {
+	var mu sync.Mutex
+	var rows []storage.TurnRecord
+	r := newTurnRecorder(func(_ context.Context, row storage.TurnRecord) error {
+		mu.Lock()
+		rows = append(rows, row)
+		mu.Unlock()
+		return nil
+	}, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	pipe, _ := core.NewPipeline(r)
+	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	_ = session.Start()
+	at := time.Unix(100, 0)
+	_ = session.Post(&core.UserMessageFrame{Turn: "t1", Content: "Hi", Timestamp: at})
+	_ = session.Post(&core.AssistantMessageFrame{Turn: "t1", Content: "Hello!", Timestamp: at.Add(time.Second)})
+	_ = session.Post(&core.UserMessageFrame{Turn: "t2", Content: "Tell me a story", Timestamp: at.Add(2 * time.Second)})
+	_ = session.Post(&core.AssistantMessageFrame{Turn: "t2", Content: "Once", Partial: true, Timestamp: at.Add(3 * time.Second)})
+	time.Sleep(50 * time.Millisecond)
+	_ = session.Close()
+	r.close(t.Context())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want 2", rows)
+	}
+	first, second := rows[0], rows[1]
+	if first.SessionID != "sess" || first.Ordinal != 1 || first.Transcript != "Hi" || first.AssistantText != "Hello!" || !first.StartedAt.Equal(at) || first.Interrupted {
+		t.Fatalf("first turn = %+v", first)
+	}
+	if second.Ordinal != 2 || second.Transcript != "Tell me a story" || second.AssistantText != "Once" || !second.Interrupted {
+		t.Fatalf("second turn = %+v", second)
 	}
 }

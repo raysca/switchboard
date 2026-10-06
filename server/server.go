@@ -818,11 +818,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	s.closeManagement()
 
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("shutdown deadline exceeded: %w", err)
-	}
 	if drainTimedOut {
 		return fmt.Errorf("server shutdown timed out: forced cancellation of %d sessions", remainingCount)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("shutdown deadline exceeded: %w", err)
 	}
 
 	s.logger.Info("server shutdown complete")

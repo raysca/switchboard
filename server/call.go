@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"govoice/core"
 	"govoice/server/agent"
 	"govoice/server/runtime"
 	"govoice/server/storage"
@@ -39,11 +41,13 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID string) (Call
 	if err != nil {
 		return CallSpec{}, nil, fmt.Errorf("start agent session: %w", err)
 	}
+	history := newTurnRecorder(s.store.Sessions().AddTurn, rs.Pin.ID, s.logger)
 	release := func() {
 		// In-flight MCP tool calls are waited for, but never past the session
 		// teardown budget: a stuck remote tool must not pin the call forever.
 		ctx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
 		defer cancel()
+		history.close(ctx) // turn rows land before the session is ended
 		if err := rs.Close(ctx); err != nil {
 			s.logger.Warn("agent session did not end cleanly", "session", rs.Pin.ID, "err", err.Error())
 		}
@@ -53,7 +57,67 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID string) (Call
 		release()
 		return CallSpec{}, nil, err
 	}
+	call.History = history
 	return call, release, nil
+}
+
+// turnRecorder stores one turn row per assistant reply, complete or
+// interrupted, pairing it with the user message that started it. Rows are
+// written by one goroutine per call so the session run loop never waits on
+// the database.
+type turnRecorder struct {
+	users   map[string]*core.UserMessageFrame // run-loop only
+	ordinal int
+	rows    chan storage.TurnRecord
+	done    chan struct{}
+}
+
+func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, sessionID string, logger *slog.Logger) *turnRecorder {
+	r := &turnRecorder{users: map[string]*core.UserMessageFrame{}, rows: make(chan storage.TurnRecord, 64), done: make(chan struct{})}
+	go func() {
+		defer close(r.done)
+		for row := range r.rows {
+			row.SessionID = sessionID
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := addTurn(ctx, row); err != nil {
+				logger.Warn("turn not recorded", "session", sessionID, "err", err.Error())
+			}
+			cancel()
+		}
+	}()
+	return r
+}
+
+func (r *turnRecorder) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	switch m := f.(type) {
+	case *core.UserMessageFrame:
+		if len(r.users) >= 32 { // ponytail: replies never came for these; forget them
+			clear(r.users)
+		}
+		r.users[m.Turn] = m
+	case *core.AssistantMessageFrame:
+		user := r.users[m.Turn]
+		delete(r.users, m.Turn)
+		row := storage.TurnRecord{ID: storage.NewID(), Ordinal: r.ordinal + 1, StartedAt: m.Timestamp, EndedAt: m.Timestamp, AssistantText: m.Content, Interrupted: m.Partial}
+		if user != nil {
+			row.Transcript, row.StartedAt = user.Content, user.Timestamp
+		}
+		select {
+		case r.rows <- row:
+			r.ordinal++
+		default: // ponytail: history is best effort; never stall the call on the DB
+		}
+	}
+	return e.PushDirection(f, dir)
+}
+
+// close stops accepting rows and waits (bounded by ctx) for queued ones.
+func (r *turnRecorder) close(ctx context.Context) {
+	close(r.rows)
+	select {
+	case <-r.done:
+	case <-ctx.Done():
+	}
 }
 
 func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, error) {

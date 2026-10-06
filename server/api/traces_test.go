@@ -55,7 +55,7 @@ func setupTracesHandler(t *testing.T) (*storage.Store, http.Handler, string, str
 		ConfigHash:          hash,
 		Status:              "active",
 		StartedAt:           now,
-		TurnCount:           1,
+		TurnCount:           0, // AddTurn below counts the turn
 		SafeSummary:         "test session",
 		ProviderStackJSON:   `{"llm":"test"}`,
 		RuntimeSnapshotJSON: `{}`,
