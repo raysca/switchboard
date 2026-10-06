@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router";
+import { Link, useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
@@ -431,8 +431,9 @@ function AgentForm({
 
 export function AgentsView({ client, keyValue }: AgentsViewProps) {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<ViewMode>("list");
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const { agentId } = useParams();
+  const [mode, setMode] = useState<ViewMode>(agentId ? "detail" : "list");
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(agentId ?? null);
 
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);

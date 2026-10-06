@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { AgentsView } from "./AgentsView";
 import { ApiError, type ApiClient, type AgentDTO } from "../../api/client";
 
@@ -305,6 +305,22 @@ describe("AgentsView", () => {
     expect(screen.getByText("sha256-abcdef012345")).toBeVisible();
     expect(screen.getByText("weather_lookup")).toBeVisible();
     expect(screen.getByRole("heading", { name: /immutable snapshot architecture/i })).toBeVisible();
+  });
+
+  it("opens the agent named in /agents/:agentId", async () => {
+    const client = createMockClient({
+      getAgents: vi.fn().mockResolvedValue([createMockAgent({ id: "agent-7", name: "Linked Agent" })]),
+    });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/agents/agent-7"]}>
+          <Routes>
+            <Route path="/agents/:agentId" element={<AgentsView client={client} keyValue="key-1" />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("heading", { name: /linked agent/i })).toBeVisible();
   });
 
   it("duplicates an agent", async () => {

@@ -151,6 +151,10 @@ export function App({ initialPath }: { initialPath?: string }) {
                   element={<AgentsView client={client} keyValue={keyValue} />}
                 />
                 <Route
+                  path="/agents/:agentId"
+                  element={<AgentsView client={client} keyValue={keyValue} />}
+                />
+                <Route
                   path="/mcp-servers"
                   element={<MCPView client={client} keyValue={keyValue} />}
                 />
