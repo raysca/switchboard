@@ -134,7 +134,7 @@ The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status des
 | P0 — Turn-scoped audio buffer | removed | Deleted from core: it had no production users. |
 | P0 — Behavioral eval harness | P0 gate | Machine-readable scenarios pass for barge-in, turn completion, silence/no-speech timeout, flush, transcript stabilization, tool interruption, pacing, teardown, RTVI, and Whisker. |
 | P1 — Runtime service settings updates | removed | Deleted from core: it had no production users. |
-| P1 — Context summarization/compaction hook | P1 tracked | Context tests prove compaction is provider-neutral, preserves required system/tool state, and leaves the session usable when an application hook declines. |
+| P1 — Context summarization/compaction hook | removed | Deleted from core: it had no production users. |
 | P1 — Audio recording/capture processor | removed | Deleted from core: it had no production users. |
 | P1 — Urgent control frames/priority lane | P1 tracked | Congestion tests prove cancel/interruption/flush/end/critical error pass queued media while preserving control ordering. |
 | P1 — Processor failure/unusable policy | removed | Deleted from core: it had no production users. |

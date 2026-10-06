@@ -117,22 +117,17 @@ Committed user text enters through `UserContextProcessor`. Assistant text is
 committed exactly once only after every synthesis unit in the whole turn has a
 successful final write acknowledgement. Cancellation drops undelivered text.
 Interruption commits only the contiguous, fully delivered prefix as partial;
-late or stale generation work cannot extend it. Tool-call assistant messages do
-not by themselves mark a conversational turn complete for eviction.
+late or stale generation work cannot extend it.
 
 Budget enforcement preserves system instructions and the active user turn,
-evicts only the oldest complete turn, and rolls back additions that cannot fit.
+evicts the oldest other turn whole (answered or not, with its tool calls and
+results), and rolls back additions that cannot fit. The tool replay ledger
+remembers the most recent `MaxToolIdentities` calls (FIFO).
 Rollback includes eviction counters and history, so failed mutations leave no
 phantom accounting. A context-budget failure during interrupted partial commit
 is returned and no assistant commit frame is emitted.
 
-**Implementation Note (Task 28 — Context Compaction Hook)**
-
-`core.ConversationContext` provides an application-extensible, provider-neutral compaction hook boundary via `CompactionHook` / `CompactionHookFunc` and `cc.SetCompactionHook(hook)`.
-- **Atomic Execution & Failure Isolation**: `cc.Compact(ctx)` captures an immutable snapshot of messages and invokes the hook. If the hook returns `applied=false` (declining compaction) or returns an error, the context remains completely untouched and immediately usable for subsequent turns.
-- **System Instruction Preservation**: Any compaction result must preserve the original system instruction at index 0. Results omitting or mutating system prompt fail with `ErrInvalidCompaction` and roll back.
-- **Tool Ledger Retention**: Tool replay ledgers and idempotency tracking are maintained through compaction, ensuring tool call identification and conflict detection remain valid across summarized histories.
-- **Budget Bound Enforcement**: The compacted message list is strictly validated against `MaxMessages` and `MaxTokens`. Results exceeding limits fail closed without partial application.
+The context compaction hook (`CompactionHook`, `Compact`) was removed: it had no production users.
 
 ### 2.5 Observer and semantic debug events
 

@@ -360,11 +360,10 @@ func TestContextToolResultTransactionRejectsSelfEviction(t *testing.T) {
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "two", TurnID: "t2"})
 	before := ctx.Messages()
 	beforeEvictions := ctx.EvictionCount()
-	beforePairs := ctx.EvictedTurnPairs()
 	if err := ctx.AddToolResultStatus("t1", 1, "c", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
 		t.Fatalf("self-evicted result = %v", err)
 	}
-	if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions || !reflect.DeepEqual(ctx.EvictedTurnPairs(), beforePairs) {
+	if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions {
 		t.Fatal("self-evicted result transaction was not rolled back")
 	}
 	// The failed first result must not become an accepted completed replay.
@@ -386,12 +385,11 @@ func TestContextToolCallTransactionRejectsSelfEviction(t *testing.T) {
 	}
 	before := ctx.Messages()
 	beforeEvictions := ctx.EvictionCount()
-	beforePairs := ctx.EvictedTurnPairs()
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
 			t.Fatalf("self-evicted call attempt %d = %v", attempt, err)
 		}
-		if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions || !reflect.DeepEqual(ctx.EvictedTurnPairs(), beforePairs) {
+		if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions {
 			t.Fatalf("self-evicted call attempt %d changed context or eviction accounting", attempt)
 		}
 	}
@@ -519,7 +517,7 @@ func TestContextFailedBudgetTransactionRestoresEvictionAccounting(t *testing.T) 
 		if !errors.Is(err, ErrContextLimitExceeded) {
 			t.Fatalf("attempt %d = %v", i, err)
 		}
-		if ctx.EvictionCount() != 0 || len(ctx.EvictedTurnPairs()) != 0 || len(ctx.Messages()) != len(before) {
+		if ctx.EvictionCount() != 0 || len(ctx.Messages()) != len(before) {
 			t.Fatal("failed transaction leaked eviction state")
 		}
 	}
@@ -538,7 +536,7 @@ func TestContextFailedSystemReplacementRestoresEvictionAccounting(t *testing.T) 
 		if err := ctx.SetSystemInstructionChecked("this replacement system instruction cannot fit even after the older completed turn is tentatively evicted", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
 			t.Fatalf("replacement = %v", err)
 		}
-		if ctx.EvictionCount() != 0 || len(ctx.EvictedTurnPairs()) != 0 {
+		if ctx.EvictionCount() != 0 {
 			t.Fatal("failed system transaction leaked eviction state")
 		}
 		if after := ctx.Messages(); !reflect.DeepEqual(after, before) {

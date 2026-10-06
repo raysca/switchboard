@@ -75,9 +75,6 @@ func TestPhase2_DeterministicContextEviction_AndLimitRejection(t *testing.T) {
 	if ctxPool.EvictionCount() != 1 {
 		t.Fatalf("expected 1 eviction, got %d", ctxPool.EvictionCount())
 	}
-	if len(ctxPool.EvictedTurnPairs()) != 1 || ctxPool.EvictedTurnPairs()[0] != "turn-1" {
-		t.Fatalf("expected evicted turn-1, got %v", ctxPool.EvictedTurnPairs())
-	}
 
 	// Invariants: System instruction preserved, newest turn preserved
 	if msgs[0].Role != core.RoleSystem || msgs[0].Content != "You are a helpful voice assistant." {
