@@ -657,6 +657,32 @@ func (fc *FilterChain) Process(ctx context.Context, in []byte) ([]byte, error)
 - **Dynamic Bypass**: Allows toggling filters on/off dynamically at runtime without pipeline disruption, provided formats match.
 - **Latency Accounting**: Computes cumulative pipeline DSP latency across all active (non-bypassed) filters for end-to-end timing correlation.
 
+### 2.20 Read-only runtime pipeline settings introspection
+
+`core.Session` exposes `Snapshot() SessionSnapshot` providing a point-in-time, read-only diagnostic inspection:
+```go
+type SessionSnapshot struct {
+    SessionID       uint64
+    State           string
+    Generation      uint64
+    InputMuted      bool
+    CreatedAt       time.Time
+    Uptime          time.Duration
+    FramesIn        uint64
+    FramesOut       uint64
+    StaleDiscarded  uint64
+    AudioDropped    uint64
+    ActiveTasks     int
+    LeakedTasks     int
+    Settings        RuntimeSettings
+    Processors      []ProcessorSnapshot
+    ObserverCount   int
+}
+```
+- **Thread Safety & Immutability**: All counters and settings are atomically or lock-protected and copied by value; mutations cannot affect the active session run loop.
+- **Diagnostic Transparency**: Exposes exact processor pipeline topologies, indices, descriptions, and active observer counts.
+
+
 
 
 
