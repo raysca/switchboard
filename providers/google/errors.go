@@ -220,7 +220,7 @@ func mapGRPCStatus(capability string, st *status.Status) *ProviderError {
 			StatusCode:  int(code),
 			Retryable:   true,
 		}
-	case codes.InvalidArgument:
+	case codes.InvalidArgument, codes.NotFound: // NotFound: e.g. an unknown model
 		return &ProviderError{
 			Capability:  capability,
 			BaseErr:     ErrProviderBadRequest,

@@ -62,13 +62,17 @@ func ExecuteWithRetry(
 	var lastErr error
 
 	for attempt := 0; attempt < policy.MaxAttempts; attempt++ {
-		if cb != nil && !cb.Allow() {
-			return ErrCircuitOpen
+		var probe uint64
+		if cb != nil {
+			var ok bool
+			if ok, probe = cb.allow(); !ok {
+				return ErrCircuitOpen
+			}
 		}
 
 		if ctx.Err() != nil {
 			if cb != nil {
-				cb.release()
+				cb.release(probe)
 			}
 			return ctx.Err()
 		}
@@ -83,16 +87,23 @@ func ExecuteWithRetry(
 
 		lastErr = err
 
-		// A cancelled request (barge-in) is not a provider failure.
+		// A cancelled request (barge-in) is not a provider failure; a missed
+		// deadline is (xAI hung).
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if cb != nil {
+				cb.RecordFailure()
+			}
+			return err
+		}
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 			if cb != nil {
-				cb.release()
+				cb.release(probe)
 			}
 			return err
 		}
 
 		if cb != nil {
-			cb.recordError(err)
+			cb.recordError(err, probe)
 		}
 
 		// Strict invariant: no retries after committed user-visible output

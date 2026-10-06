@@ -507,7 +507,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		_ = st.stream.Close()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.reportError(provErr)
+			p.cfg.CircuitBreaker.reportError(provErr, 0) // STT holds no probe
 		}
 		return provErr
 	}
@@ -567,7 +567,7 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		cancel()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.reportError(provErr)
+			p.cfg.CircuitBreaker.reportError(provErr, 0) // STT holds no probe
 		}
 		return provErr
 	}

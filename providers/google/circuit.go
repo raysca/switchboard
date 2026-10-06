@@ -1,6 +1,7 @@
 package google
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,6 +36,7 @@ type CircuitBreaker struct {
 	failures    int
 	lastFailure time.Time
 	probing     bool
+	probe       uint64 // token of the granted half-open probe; 0 when none
 	onChange    func(CircuitState)
 }
 
@@ -52,34 +54,43 @@ func NewCircuitBreaker(cfg CircuitConfig) *CircuitBreaker {
 	}
 }
 
-// Allow reports whether a request is allowed to proceed.
+// Allow reports whether a request may proceed.
 func (cb *CircuitBreaker) Allow() bool {
+	ok, _ := cb.allow()
+	return ok
+}
+
+// allow also returns the probe token when it grants the half-open probe (0
+// otherwise); only that token can release the probe.
+func (cb *CircuitBreaker) allow() (bool, uint64) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
 	now := time.Now()
 	switch cb.state {
 	case CircuitClosed:
-		return true
+		return true, 0
 
 	case CircuitOpen:
 		if now.Sub(cb.lastFailure) >= cb.cfg.CooldownDuration {
 			cb.state = CircuitHalfOpen
 			cb.probing = true
-			return true
+			cb.probe++
+			return true, cb.probe
 		}
-		return false
+		return false, 0
 
 	case CircuitHalfOpen:
 		// In HalfOpen, allow only one probe request at a time
 		if !cb.probing {
 			cb.probing = true
-			return true
+			cb.probe++
+			return true, cb.probe
 		}
-		return false
+		return false, 0
 
 	default:
-		return true
+		return true, 0
 	}
 }
 
@@ -123,22 +134,35 @@ func (cb *CircuitBreaker) ReportFailure() {
 	}
 }
 
-// reportError counts only availability failures (retryable: 5xx, timeout,
-// rate limit). A bad credential, bad request or unknown model says nothing
-// about the provider, so one tenant's mistake cannot open the shared breaker;
-// it just frees a half-open probe.
-func (cb *CircuitBreaker) reportError(err error) {
-	if MapError("", err).Retryable {
-		cb.ReportFailure()
+// reportError counts every failure except a client error: a bad credential,
+// bad request or unknown model says nothing about the provider, so one
+// tenant's mistake cannot open the shared breaker; it just frees the call's
+// half-open probe. Outages (5xx, Internal, Unavailable, timeouts) all count.
+func (cb *CircuitBreaker) reportError(err error, probe uint64) {
+	if isClientError(err) {
+		cb.release(probe)
 		return
 	}
-	cb.release()
+	cb.ReportFailure()
+}
+
+func isClientError(err error) bool {
+	if pe := MapError("", err); pe != nil {
+		switch pe.BaseErr {
+		case ErrProviderAuth, ErrProviderBadRequest, ErrRequestTooLarge:
+			return true
+		}
+	}
+	// ponytail: same substring classification MapError uses for HTTP errors.
+	return strings.Contains(err.Error(), "404")
 }
 
 // release frees the half-open probe slot of a call that ended without an
 // outcome (cancelled, superseded), so the breaker does not stay half-open forever.
-func (cb *CircuitBreaker) release() {
+func (cb *CircuitBreaker) release(probe uint64) {
 	cb.mu.Lock()
-	cb.probing = false
+	if probe != 0 && probe == cb.probe { // a stale call must not free another call's probe
+		cb.probing = false
+	}
 	cb.mu.Unlock()
 }

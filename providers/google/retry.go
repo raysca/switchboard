@@ -65,8 +65,12 @@ func ExecuteWithRetry(
 
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 		// Circuit breaker check
-		if cb != nil && !cb.Allow() {
-			return ErrCircuitOpen
+		var probe uint64
+		if cb != nil {
+			var ok bool
+			if ok, probe = cb.allow(); !ok {
+				return ErrCircuitOpen
+			}
 		}
 
 		// Execute operation
@@ -78,10 +82,17 @@ func ExecuteWithRetry(
 			return nil
 		}
 
-		// A cancelled or superseded request (barge-in) is not a provider failure.
+		// A cancelled or superseded request (barge-in) is not a provider failure;
+		// a missed deadline is (the provider hung).
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			if cb != nil {
+				cb.ReportFailure()
+			}
+			return err
+		}
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrGenerationMismatch) {
 			if cb != nil {
-				cb.release()
+				cb.release(probe)
 			}
 			return err
 		}
@@ -90,7 +101,7 @@ func ExecuteWithRetry(
 		provErr := MapError("retry", err)
 
 		if cb != nil {
-			cb.reportError(provErr)
+			cb.reportError(provErr, probe)
 		}
 
 		// Check if user-visible output has been committed
