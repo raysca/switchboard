@@ -18,7 +18,6 @@ type AgentService interface {
 	Update(context.Context, string, agent.UpdateRequest) (agent.Agent, error)
 	Archive(context.Context, string) error
 	Duplicate(context.Context, string, string) (agent.Agent, error)
-	ImportV1(context.Context, string, string, string, agent.V1Pipeline) (agent.Agent, error)
 	SetMCPTools(context.Context, string, []agent.ToolSelection) (agent.Version, error)
 }
 
@@ -46,10 +45,7 @@ func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(path, "/")
-	if len(parts) == 1 && parts[0] == "import-v1" {
-		h.importV1(w, r, requestID)
-		return
-	}
+
 	if len(parts) == 1 {
 		h.item(w, r, parts[0], requestID)
 		return
@@ -176,29 +172,6 @@ func (h agentsHandler) duplicate(w http.ResponseWriter, r *http.Request, id, req
 	WriteJSON(w, http.StatusCreated, SuccessResponse[agent.Agent]{Data: item})
 }
 
-func (h agentsHandler) importV1(w http.ResponseWriter, r *http.Request, requestID string) {
-	if r.Method != http.MethodPost {
-		agentMethodNotAllowed(w, requestID, "POST")
-		return
-	}
-	var req struct {
-		LegacyName  string           `json:"legacy_name"`
-		Name        string           `json:"name"`
-		Description string           `json:"description"`
-		Pipeline    agent.V1Pipeline `json:"pipeline"`
-	}
-	if err := DecodeJSON(r, &req); err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
-		return
-	}
-	item, err := h.service.ImportV1(r.Context(), req.LegacyName, req.Name, req.Description, req.Pipeline)
-	if err != nil {
-		h.writeServiceError(w, err, requestID)
-		return
-	}
-	WriteJSON(w, http.StatusCreated, SuccessResponse[agent.Agent]{Data: item})
-}
-
 func agentMethodNotAllowed(w http.ResponseWriter, requestID, allow string) {
 	w.Header().Set("Allow", allow)
 	WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported", requestID)
@@ -209,7 +182,11 @@ func (h agentsHandler) writeServiceError(w http.ResponseWriter, err error, reque
 		WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
 		return
 	}
-	if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "must be") {
+	if errors.Is(err, agent.ErrNotAttached) {
+		WriteError(w, http.StatusBadRequest, "agent_not_attached", err.Error(), requestID)
+		return
+	}
+	if errors.Is(err, agent.ErrInvalidConfig) || strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "must be") {
 		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 		return
 	}

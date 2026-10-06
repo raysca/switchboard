@@ -76,6 +76,9 @@ func TestSessionUsesCapturedMCPWrapperAfterDisableAndRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Credentials().Put(ctx, storage.Credential{ID: "018f0000-0000-7000-8000-000000000001", Provider: "google", MaskedSuffix: "abcd", ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
+		t.Fatal(err)
+	}
 	defer store.Close()
 	remote := &runtimeRemote{schema: json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}`)}
 	mcpSvc, err := mcp.NewService(mcp.ServiceConfig{Store: store, Remote: remote, Destinations: allowAllDestinations{}})
@@ -91,7 +94,7 @@ func TestSessionUsesCapturedMCPWrapperAfterDisableAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	agents := agent.NewService(store)
-	created, err := agents.Create(ctx, agent.CreateRequest{Name: "support", Config: json.RawMessage(`{"stt":"s","llm":"l","tts":"t"}`)})
+	created, err := agents.Create(ctx, agent.CreateRequest{Name: "support", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"l","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"t","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,6 +183,9 @@ func TestToolLoopPreservesMCPCallIdentityAndAsyncTraceParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := store.Credentials().Put(ctx, storage.Credential{ID: "018f0000-0000-7000-8000-000000000001", Provider: "google", MaskedSuffix: "abcd", ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
+		t.Fatal(err)
+	}
 	defer store.Close()
 	remote := &runtimeRemote{schema: json.RawMessage(`{"type":"object"}`)}
 	trace := &runtimeTraceRecorder{events: make(chan core.TraceEvent, 8), parents: make(chan bool, 8)}
@@ -198,7 +204,7 @@ func TestToolLoopPreservesMCPCallIdentityAndAsyncTraceParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	agents := agent.NewService(store)
-	created, err := agents.Create(ctx, agent.CreateRequest{Name: "trace", Config: json.RawMessage(`{"stt":"s","llm":"l","tts":"t"}`)})
+	created, err := agents.Create(ctx, agent.CreateRequest{Name: "trace", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"l","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"t","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

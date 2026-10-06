@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"govoice/server/provider"
 	"govoice/server/storage"
 )
 
@@ -23,10 +24,11 @@ type ReadinessEvaluator func(context.Context, string, json.RawMessage) (bool, er
 type Service struct {
 	store     *storage.Store
 	evaluator ReadinessEvaluator
+	providers *provider.Registry
 }
 
 func NewService(store *storage.Store, evaluators ...ReadinessEvaluator) *Service {
-	s := &Service{store: store}
+	s := &Service{store: store, providers: provider.NewRegistry(provider.Definitions())}
 	if len(evaluators) > 0 {
 		s.evaluator = evaluators[0]
 	}
@@ -120,15 +122,6 @@ type SessionPin struct {
 	ConfigHash     string
 }
 
-// V1Pipeline is the import shape used by the existing config-driven server.
-type V1Pipeline struct {
-	STT         string `json:"stt"`
-	LLM         string `json:"llm"`
-	TTS         string `json:"tts"`
-	MaxMessages int    `json:"max_messages,omitempty"`
-	MaxTokens   int    `json:"max_tokens,omitempty"`
-}
-
 func (s *Service) Create(ctx context.Context, req CreateRequest) (Agent, error) {
 	return s.create(ctx, req, false)
 }
@@ -138,7 +131,7 @@ func (s *Service) create(ctx context.Context, req CreateRequest, mcpReviewRequir
 	if err := validateDetails(name, req.Description); err != nil {
 		return Agent{}, err
 	}
-	config, err := normalizeConfig(req.Config)
+	config, err := s.attachedConfig(ctx, req.Config)
 	if err != nil {
 		return Agent{}, err
 	}
@@ -185,7 +178,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Age
 	var config json.RawMessage
 	var err error
 	if len(req.Config) > 0 {
-		config, err = normalizeConfig(req.Config)
+		config, err = s.attachedConfig(ctx, req.Config)
 		if err != nil {
 			return Agent{}, err
 		}
@@ -349,17 +342,6 @@ func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelect
 	return toVersionWithTools(version, selected), nil
 }
 
-func (s *Service) ImportV1(ctx context.Context, legacyName, name, description string, pipeline V1Pipeline) (Agent, error) {
-	if strings.TrimSpace(legacyName) == "" || len(legacyName) > 128 {
-		return Agent{}, errors.New("invalid V1 pipeline name")
-	}
-	config, err := json.Marshal(pipeline)
-	if err != nil {
-		return Agent{}, errors.New("invalid V1 pipeline configuration")
-	}
-	return s.Create(ctx, CreateRequest{Name: name, Description: description, Config: config})
-}
-
 func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error) {
 	a := Agent{ID: row.ID, Name: row.Name, Description: row.Description, Enabled: row.Enabled, Archived: row.Archived, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.CurrentVersionID != "" {
@@ -398,17 +380,17 @@ func (s *Service) agentReadiness(ctx context.Context, agentID, versionID string,
 	if version.MCPReviewRequired {
 		return Readiness{State: ReadinessNeedsToolReview, Reasons: []string{"mcp_tools_detached_review_required"}, ToolDependencies: []ToolDependency{}}, nil
 	}
-	var settings map[string]json.RawMessage
-	if json.Unmarshal(config, &settings) != nil {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_configuration"}}, nil
+	parsed, parseErr := DecodeConfig(config)
+	if parseErr != nil {
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_config"}}, nil
 	}
-	reasons := make([]string, 0, maxReadinessReasons)
-	for _, field := range []string{"stt", "llm", "tts"} {
-		var value string
-		if json.Unmarshal(settings[field], &value) != nil || strings.TrimSpace(value) == "" {
-			reasons = append(reasons, "missing_"+field)
-		}
+	creds, credErr := s.store.Credentials().List(ctx)
+	if credErr != nil {
+		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, nil
 	}
+	// A stored agent can stop being callable later, e.g. when an attached
+	// credential is deleted or marked invalid.
+	reasons := append(make([]string, 0, maxReadinessReasons), AttachmentProblems(parsed, s.providers, creds)...)
 	if archived {
 		reasons = append(reasons, "archived")
 	} else if !enabled {
@@ -491,7 +473,10 @@ func (s *Service) agentReadiness(ctx context.Context, agentID, versionID string,
 		base.Reasons = []string{"optional_tool_unavailable"}
 	}
 	if s.evaluator == nil {
-		// Configuration presence is not provider or MCP capability validation.
+		// Providers, capabilities and credentials were checked above.
+		if base.State == ReadinessConfigured {
+			base.State = ReadinessReady
+		}
 		return base, snapshots
 	}
 	ready, err := s.evaluator(ctx, agentID, append(json.RawMessage(nil), config...))
@@ -514,6 +499,31 @@ func validateDetails(name, description string) error {
 	return nil
 }
 
+// ErrNotAttached is returned when an agent config is not attached to a usable
+// set of providers and credentials.
+var ErrNotAttached = errors.New("agent must be attached to providers")
+
+// attachedConfig validates that raw names a provider and an existing matching
+// credential for every stage, then returns its canonical form.
+func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	canonical, err := normalizeConfig(raw)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := DecodeConfig(canonical)
+	if err != nil {
+		return nil, err
+	}
+	creds, err := s.store.Credentials().List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list credentials: %w", err)
+	}
+	if problems := AttachmentProblems(cfg, s.providers, creds); len(problems) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrNotAttached, strings.Join(problems, ", "))
+	}
+	return canonical, nil
+}
+
 func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("agent config is required")
@@ -521,6 +531,9 @@ func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return nil, errors.New("agent config must be a JSON object")
+	}
+	if _, err := DecodeConfig(raw); err != nil {
+		return nil, err
 	}
 	canonical, err := storage.CanonicalJSON(raw)
 	if err != nil {

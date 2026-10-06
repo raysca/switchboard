@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -17,11 +18,24 @@ func testService(t *testing.T) *Service {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
+	seedCredentials(t, s, "google", "xai")
 	return NewService(s)
 }
 
+// seedCredentials stores one credential per provider so complete agents are
+// ready; readiness requires a resolvable credential for every stage.
+func seedCredentials(t *testing.T, s *storage.Store, providers ...string) {
+	t.Helper()
+	for _, p := range providers {
+		if err := s.Credentials().Put(context.Background(), storage.Credential{ID: testCredentialID(p), Provider: p, MaskedSuffix: "abcd",
+			ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func validConfig() json.RawMessage {
-	return json.RawMessage(`{"stt":"google.stt","llm":"google.llm","tts":"google.tts"}`)
+	return json.RawMessage(`{"stt":{"provider":"google","model":"google.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"google.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"google.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)
 }
 
 func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
@@ -31,10 +45,10 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Version == nil || a.Version.Number != 1 || a.Readiness.State != ReadinessConfigured {
+	if a.Version == nil || a.Version.Number != 1 || a.Readiness.State != ReadinessReady {
 		t.Fatalf("created agent=%+v", a)
 	}
-	changed := json.RawMessage(`{"tts":"google.tts","llm":"google.llm","stt":"google.stt"}`)
+	changed := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"google.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"google.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)
 	updated, err := svc.Update(ctx, a.ID, UpdateRequest{Name: stringPointer("Support v2"), Config: changed})
 	if err != nil {
 		t.Fatal(err)
@@ -52,18 +66,24 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 	}
 }
 
-func TestReadinessHasBoundedSafeReasonsForInvalidConfig(t *testing.T) {
+// Agents are attached to providers at creation; an incomplete config is
+// rejected with bounded, content-free reasons.
+func TestCreateRequiresAttachedProvidersWithSafeReasons(t *testing.T) {
 	svc := testService(t)
-	a, err := svc.Create(context.Background(), CreateRequest{Name: "Incomplete", Config: json.RawMessage(`{"system_prompt":"private user text"}`)})
-	if err != nil {
-		t.Fatal(err)
+	_, err := svc.Create(context.Background(), CreateRequest{Name: "Incomplete", Config: json.RawMessage(`{"llm":{"system_prompt":"private user text"}}`)})
+	if !errors.Is(err, ErrNotAttached) || strings.Contains(err.Error(), "private user text") {
+		t.Fatalf("err=%v", err)
 	}
-	if a.Readiness.State != ReadinessNotReady || len(a.Readiness.Reasons) != 3 {
-		t.Fatalf("readiness=%+v", a.Readiness)
+	for _, want := range []string{"missing_stt", "missing_llm", "missing_tts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err %q lacks %s", err, want)
+		}
 	}
-	for _, reason := range a.Readiness.Reasons {
-		if len(reason) > 64 || reason == "private user text" {
-			t.Fatalf("unsafe readiness reason %q", reason)
+	bad := `{"stt":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000002"},"llm":{"provider":"google","model":"m","credential_id":"018f0000-0000-7000-8000-0000000000ff"},"tts":{"provider":"google"}}`
+	_, err = svc.Create(context.Background(), CreateRequest{Name: "Wrong creds", Config: json.RawMessage(bad)})
+	for _, want := range []string{"invalid_credential_stt", "missing_credential_llm", "missing_credential_tts"} {
+		if !errors.Is(err, ErrNotAttached) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("err %v lacks %s", err, want)
 		}
 	}
 }
@@ -79,7 +99,7 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":"x","llm":"y","tts":"z"}`)})
+	_, err = svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":{"provider":"google","model":"x","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"y","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"z","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,21 +120,6 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 	}
 	if _, err := svc.StartSession(ctx, a.ID, "new"); err == nil {
 		t.Fatal("archived agent accepted a new session")
-	}
-}
-
-func TestImportV1Pipeline(t *testing.T) {
-	svc := testService(t)
-	a, err := svc.ImportV1(context.Background(), "legacy", "Imported", "Existing V1 pipeline", V1Pipeline{STT: "google.stt", LLM: "xai.llm", TTS: "google.tts", MaxMessages: 20, MaxTokens: 200})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var imported map[string]any
-	if err := json.Unmarshal(a.Version.Config, &imported); err != nil {
-		t.Fatal(err)
-	}
-	if imported["llm"] != "xai.llm" || imported["max_messages"] != float64(20) || imported["max_tokens"] != float64(200) {
-		t.Fatalf("imported V1 config=%s", a.Version.Config)
 	}
 }
 
@@ -266,7 +271,7 @@ func TestDetachRequiresExplicitMCPReviewAndHistoricalSelectionsRemainReadable(t 
 	if err != nil || len(historical.MCPTools) != 1 || historical.MCPTools[0] != selection {
 		t.Fatalf("historical selection=%+v err=%v", historical.MCPTools, err)
 	}
-	if _, err := svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":"s2","llm":"l2","tts":"t2"}`)}); err != nil {
+	if _, err := svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":{"provider":"google","model":"s2","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"l2","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"t2","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if changed, err := svc.Get(ctx, a.ID); err != nil || changed.Readiness.State != ReadinessNeedsToolReview {
@@ -276,7 +281,7 @@ func TestDetachRequiresExplicitMCPReviewAndHistoricalSelectionsRemainReadable(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := svc.Get(ctx, a.ID); err != nil || got.Readiness.State != ReadinessConfigured || updated.MCPReviewRequired {
+	if got, err := svc.Get(ctx, a.ID); err != nil || got.Readiness.State != ReadinessReady || updated.MCPReviewRequired {
 		t.Fatalf("explicit review did not clear marker: readiness=%+v version=%+v err=%v", got.Readiness, updated, err)
 	}
 }
@@ -360,7 +365,7 @@ func TestConcurrentConfigUpdatesAllocateContiguousVersions(t *testing.T) {
 	errCh := make(chan error, updates)
 	for i := 0; i < updates; i++ {
 		go func(i int) {
-			config := json.RawMessage(fmt.Sprintf(`{"revision":%d,"stt":"g.stt","llm":"g.llm","tts":"g.tts"}`, i))
+			config := json.RawMessage(fmt.Sprintf(`{"stt":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"m%d","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`, i))
 			_, err := svc.Update(ctx, created.ID, UpdateRequest{Config: config})
 			errCh <- err
 		}(i)
@@ -415,13 +420,21 @@ func TestConcurrentPartialUpdatesPreserveOmittedFields(t *testing.T) {
 func TestRuntimeResolutionRejectsIncompleteConfigAndCanUseReadinessEvaluator(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
-	incomplete, err := svc.Create(ctx, CreateRequest{Name: "Draft", Config: json.RawMessage(`{"stt":"g.stt"}`)})
+	// An attached credential that disappears later makes the agent uncallable.
+	attached, err := svc.Create(ctx, CreateRequest{Name: "Loses credential", Config: validConfig()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.ResolveCurrent(ctx, incomplete.ID); err == nil {
-		t.Fatal("runtime resolved an incomplete draft")
+	if err := svc.store.Credentials().Delete(ctx, testCredentialID("google")); err != nil {
+		t.Fatal(err)
 	}
+	if _, err := svc.ResolveCurrent(ctx, attached.ID); err == nil {
+		t.Fatal("runtime resolved an agent whose credential was deleted")
+	}
+	if got, _ := svc.Get(ctx, attached.ID); got.Readiness.State != ReadinessNotReady || !strings.Contains(strings.Join(got.Readiness.Reasons, ","), "missing_credential_") {
+		t.Fatalf("readiness after credential deletion = %+v", got.Readiness)
+	}
+	seedCredentials(t, svc.store, "google")
 	readySvc := NewService(svc.store, ReadinessEvaluator(func(context.Context, string, json.RawMessage) (bool, error) {
 		return false, nil
 	}))
@@ -458,3 +471,11 @@ func TestRuntimeResolutionRejectsIncompleteConfigAndCanUseReadinessEvaluator(t *
 }
 
 func stringPointer(value string) *string { return &value }
+
+// testCredentialID is the fixed UUIDv7 of the seeded credential for provider p.
+func testCredentialID(p string) string {
+	if p == "xai" {
+		return "018f0000-0000-7000-8000-000000000002"
+	}
+	return "018f0000-0000-7000-8000-000000000001"
+}

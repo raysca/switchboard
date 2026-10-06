@@ -10,6 +10,7 @@ import (
 	"context"
 	"govoice/server/agent"
 	"govoice/server/auth"
+	"govoice/server/storage"
 )
 
 func TestManagementHandlerProtectsMCPAndNeverReturnsSecretEndpointQuery(t *testing.T) {
@@ -81,8 +82,12 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if err != nil || len(servers) != 1 {
 		t.Fatalf("servers=%+v err=%v", servers, err)
 	}
+	if err := svc.store.Credentials().Put(context.Background(), storage.Credential{ID: "018f0000-0000-7000-8000-000000000001", Provider: "google", MaskedSuffix: "abcd",
+		ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
+		t.Fatal(err)
+	}
 	agentService := agent.NewService(svc.store)
-	created, err := agentService.Create(context.Background(), agent.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":"s","llm":"l","tts":"t"}`)})
+	created, err := agentService.Create(context.Background(), agent.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"l","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"t","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

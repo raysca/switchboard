@@ -18,6 +18,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedAPICredentials(t, store)
 	defer store.Close()
 	handler := NewAgentsHandler(agent.NewService(store))
 	request := func(method, path, body string) *httptest.ResponseRecorder {
@@ -28,7 +29,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	created := request(http.MethodPost, "/api/v1/agents", `{"name":"Voice","config":{"stt":"g.stt","llm":"g.llm","tts":"g.tts"}}`)
+	created := request(http.MethodPost, "/api/v1/agents", `{"name":"Voice","config":{"stt":{"provider":"google","model":"g.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"g.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"g.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
 	}
@@ -39,7 +40,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 		t.Fatalf("create response=%s err=%v", created.Body, err)
 	}
 	id := envelope.Data.ID
-	updated := request(http.MethodPut, "/api/v1/agents/"+id, `{"name":"Revised","config":{"tts":"g.tts","stt":"g.stt","llm":"g.llm"}}`)
+	updated := request(http.MethodPut, "/api/v1/agents/"+id, `{"name":"Revised","config":{"stt":{"provider":"google","model":"g.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"g.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"g.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}}`)
 	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"number":2`) {
 		t.Fatalf("update status=%d body=%s", updated.Code, updated.Body)
 	}
@@ -55,10 +56,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 	if archived.Code != http.StatusOK {
 		t.Fatalf("archive status=%d body=%s", archived.Code, archived.Body)
 	}
-	imported := request(http.MethodPost, "/api/v1/agents/import-v1", `{"legacy_name":"old-default","name":"Imported","pipeline":{"stt":"g.stt","llm":"x.llm","tts":"g.tts","max_messages":12}}`)
-	if imported.Code != http.StatusCreated || !strings.Contains(imported.Body.String(), `"max_messages":12`) {
-		t.Fatalf("import status=%d body=%s", imported.Code, imported.Body)
-	}
+
 }
 
 func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
@@ -66,6 +64,7 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedAPICredentials(t, store)
 	defer store.Close()
 	server := storage.MCPServer{ID: storage.NewID(), Name: "orders", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
 	if err := store.MCP().CreateServer(context.Background(), server); err != nil {
@@ -76,7 +75,7 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := agent.NewService(store)
-	created, err := service.Create(context.Background(), agent.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":"s","llm":"l","tts":"t"}`)})
+	created, err := service.Create(context.Background(), agent.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"l","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"t","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +98,7 @@ func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	seedAPICredentials(t, store)
 	defer store.Close()
 	handler := NewAgentsHandler(agent.NewService(store))
 	for _, tc := range []struct {
@@ -121,6 +121,17 @@ func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		if w.Code != tc.want {
 			t.Errorf("%s status=%d want=%d body=%s", tc.path, w.Code, tc.want, w.Body)
+		}
+	}
+}
+
+// seedAPICredentials stores the credentials agent fixtures attach to.
+func seedAPICredentials(t *testing.T, s *storage.Store) {
+	t.Helper()
+	for p, id := range map[string]string{"google": "018f0000-0000-7000-8000-000000000001", "xai": "018f0000-0000-7000-8000-000000000002"} {
+		if err := s.Credentials().Put(context.Background(), storage.Credential{ID: id, Provider: p, MaskedSuffix: "abcd",
+			ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
