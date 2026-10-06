@@ -147,3 +147,19 @@ func TestTimeline_FaultAndMetricIncrement(t *testing.T) {
 		t.Fatalf("missing voice_llm_errors_total metric:\n%s", metricsOutput)
 	}
 }
+
+// A timeline that is still receiving events outlives its TTL; an idle one goes.
+func TestTimelinePruneKeepsActiveTimelines(t *testing.T) {
+	r := NewTimelineRegistry(10, 50*time.Millisecond)
+	live, idle := r.GetOrCreate(1), r.GetOrCreate(2)
+	idle.Record(TimelineEvent{Type: EventConnect})
+	time.Sleep(80 * time.Millisecond)
+	live.Record(TimelineEvent{Type: EventReady})
+	r.PruneExpired()
+	if r.Get(1) == nil {
+		t.Fatal("live call's timeline was pruned")
+	}
+	if r.Get(2) != nil {
+		t.Fatal("idle timeline was kept")
+	}
+}

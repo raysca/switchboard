@@ -732,3 +732,31 @@ func TestPurgeContent_UnsanitizableRowsDoNotStall(t *testing.T) {
 		t.Fatalf("nested content key not removed: %+v", spans)
 	}
 }
+
+// blockingStore stalls a purge until its context ends.
+type blockingStore struct{ entered chan struct{} }
+
+func (b blockingStore) PurgeContent(ctx context.Context, _ time.Time, _ int, _ storage.ContentCursor) (storage.ContentPurgeResult, error) {
+	close(b.entered)
+	<-ctx.Done()
+	return storage.ContentPurgeResult{}, ctx.Err()
+}
+
+func (b blockingStore) PurgeMetadata(ctx context.Context, _ time.Time, _ int) (storage.PurgeMetadataStats, error) {
+	return storage.PurgeMetadataStats{}, ctx.Err()
+}
+
+// Stop must end an in-flight run instead of waiting up to its 15 minute budget.
+func TestJobStopCancelsInFlightRun(t *testing.T) {
+	store := blockingStore{entered: make(chan struct{})}
+	job := retention.NewJob(store, retention.Policy{ContentRetention: time.Hour, MetadataRetention: 2 * time.Hour, BatchSize: 10}, retention.WithInterval(time.Millisecond))
+	job.Start(context.Background())
+	<-store.entered
+	stopped := make(chan struct{})
+	go func() { job.Stop(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop waited for the in-flight run")
+	}
+}

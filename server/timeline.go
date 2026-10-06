@@ -59,6 +59,7 @@ type SessionTimeline struct {
 	count        int
 	droppedCount atomic.Uint64
 	createdAt    time.Time
+	lastEventAt  time.Time // guarded by mu
 }
 
 // NewSessionTimeline initializes a bounded ring buffer for a call.
@@ -87,6 +88,7 @@ func (t *SessionTimeline) Record(e TimelineEvent) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.lastEventAt = e.Timestamp
 
 	idx := (t.head + t.count) % t.maxEvents
 	if t.count < t.maxEvents {
@@ -159,14 +161,21 @@ func (r *TimelineRegistry) Get(sessionID uint64) *SessionTimeline {
 	return r.timelines[sessionID]
 }
 
-// PruneExpired removes timelines older than TTL.
+// PruneExpired removes timelines idle for longer than TTL, so a long live call
+// keeps its timeline.
 func (r *TimelineRegistry) PruneExpired() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	now := time.Now()
 	for id, tl := range r.timelines {
-		if now.Sub(tl.createdAt) > tl.ttl {
+		tl.mu.Lock()
+		last := tl.lastEventAt
+		tl.mu.Unlock()
+		if last.IsZero() {
+			last = tl.createdAt
+		}
+		if now.Sub(last) > tl.ttl {
 			delete(r.timelines, id)
 		}
 	}

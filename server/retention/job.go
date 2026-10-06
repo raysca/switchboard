@@ -67,6 +67,7 @@ type Job struct {
 	logger   *slog.Logger
 
 	running  atomic.Bool
+	cancel   context.CancelFunc // ends an in-flight run on Stop
 	stopChan chan struct{}
 	doneChan chan struct{}
 	stopOnce sync.Once
@@ -163,6 +164,7 @@ func (j *Job) Start(ctx context.Context) {
 	if !j.running.CompareAndSwap(false, true) {
 		return
 	}
+	ctx, j.cancel = context.WithCancel(ctx)
 
 	go func() {
 		defer close(j.doneChan)
@@ -191,6 +193,7 @@ func (j *Job) Start(ctx context.Context) {
 func (j *Job) Stop() {
 	j.stopOnce.Do(func() {
 		if j.running.Load() {
+			j.cancel()
 			close(j.stopChan)
 			<-j.doneChan
 			j.running.Store(false)
