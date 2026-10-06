@@ -60,7 +60,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	fail := func(err error) error { m.close(); return err }
 
 	registry := provider.NewRegistry(provider.Definitions())
-	creds, err := credential.NewService(store.Credentials(), keyring, registry, nil)
+	creds, err := credential.NewService(store.Credentials(), keyring, registry)
 	if err != nil {
 		return fail(fmt.Errorf("credential service: %w", err))
 	}

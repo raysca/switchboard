@@ -12,9 +12,8 @@ import (
 )
 
 type ProviderManagement struct {
-	Credentials       *credential.Service
-	Registry          *provider.Registry
-	DiscoveryAdapters map[string]provider.DiscoveryAdapter
+	Credentials *credential.Service
+	Registry    *provider.Registry
 }
 
 type createCredentialRequest struct {
@@ -71,39 +70,11 @@ func (h *ProviderManagement) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(path, "/")
-	if len(parts) == 2 && parts[1] == "discovery" {
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w, requestID, http.MethodGet)
-			return
-		}
-		capability := provider.Capability(r.URL.Query().Get("capability"))
-		providerID := parts[0]
-		item, err := h.Registry.Discover(r.Context(), providerID, capability, h.DiscoveryAdapters[providerID])
-		if err != nil {
-			providerError(w, requestID, err)
-			return
-		}
-		WriteJSON(w, 200, SuccessResponse[provider.DiscoveryResult]{Data: item})
-		return
-	}
 	if parts[0] != "credentials" || len(parts) < 2 || len(parts) > 3 {
 		WriteError(w, 404, "not_found", "route not found", requestID)
 		return
 	}
 	id := parts[1]
-	if len(parts) == 3 && parts[2] == "validate" {
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, requestID, http.MethodPost)
-			return
-		}
-		item, err := h.Credentials.Validate(r.Context(), id)
-		if err != nil {
-			credentialError(w, requestID, err)
-			return
-		}
-		WriteJSON(w, 200, SuccessResponse[credential.CredentialDTO]{Data: item})
-		return
-	}
 	if len(parts) == 3 && parts[2] == "rotate" {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, requestID, http.MethodPost)
@@ -179,19 +150,6 @@ func credentialError(w http.ResponseWriter, requestID string, err error) {
 		WriteError(w, 500, "credential_unavailable", "credential could not be decrypted", requestID)
 	default:
 		WriteError(w, 500, "internal_error", "credential operation failed", requestID)
-	}
-}
-
-func providerError(w http.ResponseWriter, requestID string, err error) {
-	switch {
-	case errors.Is(err, provider.ErrUnknownProvider):
-		WriteError(w, 404, "not_found", "provider not found", requestID)
-	case errors.Is(err, provider.ErrUnsupportedCapability):
-		WriteError(w, 400, "unsupported_capability", "provider does not support this capability", requestID)
-	case errors.Is(err, provider.ErrDiscoveryLimit):
-		WriteError(w, 502, "discovery_limit", "provider returned too many discovery results", requestID)
-	default:
-		WriteError(w, 502, "discovery_failed", "provider discovery failed", requestID)
 	}
 }
 

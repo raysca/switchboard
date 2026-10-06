@@ -64,16 +64,6 @@ func (d CredentialDTO) String() string {
 
 type CreateInput struct{ Provider, Secret string }
 type UpdateInput struct{ Secret string }
-type ValidationResult struct{ Capabilities []provider.Capability }
-type Validator interface {
-	Validate(context.Context, string, []byte) (ValidationResult, error)
-}
-type ValidatorFunc func(context.Context, string, []byte) (ValidationResult, error)
-
-func (f ValidatorFunc) Validate(ctx context.Context, providerID string, secret []byte) (ValidationResult, error) {
-	return f(ctx, providerID, secret)
-}
-
 type Repository interface {
 	Put(context.Context, storage.Credential) error
 	ReplaceIfUnchanged(context.Context, string, []byte, storage.Credential) error
@@ -84,13 +74,12 @@ type Repository interface {
 }
 
 type Service struct {
-	repo      Repository
-	keys      Keyring
-	registry  *provider.Registry
-	validator Validator
+	repo     Repository
+	keys     Keyring
+	registry *provider.Registry
 }
 
-func NewService(repo Repository, keys Keyring, registry *provider.Registry, validator Validator) (*Service, error) {
+func NewService(repo Repository, keys Keyring, registry *provider.Registry) (*Service, error) {
 	if repo == nil || registry == nil || keys.ActiveID == "" || len(keys.Keys[keys.ActiveID]) != 32 {
 		return nil, ErrConfiguration
 	}
@@ -101,7 +90,7 @@ func NewService(repo Repository, keys Keyring, registry *provider.Registry, vali
 		}
 		cloned.Keys[id] = append([]byte(nil), key...)
 	}
-	return &Service{repo: repo, keys: cloned, registry: registry, validator: validator}, nil
+	return &Service{repo: repo, keys: cloned, registry: registry}, nil
 }
 
 func (s *Service) Create(ctx context.Context, input CreateInput) (CredentialDTO, error) {
@@ -198,46 +187,6 @@ func (s *Service) List(ctx context.Context) ([]CredentialDTO, error) {
 	return out, nil
 }
 
-func (s *Service) Validate(ctx context.Context, id string) (CredentialDTO, error) {
-	row, err := s.repo.Get(ctx, id)
-	if err != nil {
-		return CredentialDTO{}, ErrNotFound
-	}
-	if s.validator == nil {
-		return CredentialDTO{}, ErrValidationUnavailable
-	}
-	secret, err := s.decrypt(row)
-	if err != nil {
-		return CredentialDTO{}, err
-	}
-	defer zero(secret)
-	result, validationErr := invokeValidator(ctx, s.validator, row.Provider, secret)
-	row.ValidatedAt = time.Now().UTC()
-	switch {
-	case errors.Is(validationErr, ErrInvalidCredential):
-		row.ValidationState = ValidationInvalid
-		row.CapabilitiesJSON = "[]"
-	case validationErr != nil:
-		row.ValidationState = ValidationError
-		row.CapabilitiesJSON = "[]"
-	case !validCapabilities(s.registry, row.Provider, result.Capabilities):
-		row.ValidationState = ValidationError
-		row.CapabilitiesJSON = "[]"
-	default:
-		row.ValidationState = ValidationValid
-		encoded, _ := json.Marshal(sortedCapabilities(result.Capabilities))
-		row.CapabilitiesJSON = string(encoded)
-	}
-	if err := s.repo.ReplaceIfUnchanged(ctx, row.KeyID, row.Ciphertext, row); err != nil {
-		return CredentialDTO{}, errors.New("credential validation state could not be stored")
-	}
-	persisted, err := s.repo.Get(ctx, id)
-	if err != nil {
-		return CredentialDTO{}, errors.New("credential validation state could not be read")
-	}
-	return toDTO(persisted), nil
-}
-
 func (s *Service) Rotate(ctx context.Context, id string) error {
 	row, err := s.repo.Get(ctx, id)
 	if err != nil {
@@ -258,16 +207,6 @@ func (s *Service) Rotate(ctx context.Context, id string) error {
 		return err
 	}
 	return s.repo.RotateIfUnchanged(ctx, row.ID, oldKeyID, oldCiphertext, s.keys.ActiveID, newCiphertext, maskBytes(secret))
-}
-
-func invokeValidator(ctx context.Context, validator Validator, providerID string, secret []byte) (result ValidationResult, err error) {
-	defer func() {
-		if recover() != nil {
-			result = ValidationResult{}
-			err = errValidatorFailed
-		}
-	}()
-	return validator.Validate(ctx, providerID, secret)
 }
 
 func (s *Service) encrypt(id, providerID, keyID string, plaintext []byte) ([]byte, error) {
@@ -364,16 +303,6 @@ func toDTO(row storage.Credential) CredentialDTO {
 	}
 	return dto
 }
-func validCapabilities(registry *provider.Registry, providerID string, caps []provider.Capability) bool {
-	seen := make(map[provider.Capability]bool)
-	for _, c := range caps {
-		if !registry.Supports(providerID, c) || seen[c] {
-			return false
-		}
-		seen[c] = true
-	}
-	return true
-}
 
 // sortedCapabilities returns a sorted copy; never nil, so the API always
 // serialises an array (clients reject "capabilities": null).
@@ -390,45 +319,6 @@ func zero(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
-}
-
-type CapabilityReadiness struct {
-	Ready  bool   `json:"ready"`
-	Reason string `json:"reason,omitempty"`
-}
-type CredentialReadiness struct {
-	Present      bool
-	Valid        bool
-	Provider     string
-	Capabilities []provider.Capability
-}
-
-func Readiness(registry *provider.Registry, required map[provider.Capability]CredentialReadiness) map[provider.Capability]CapabilityReadiness {
-	out := make(map[provider.Capability]CapabilityReadiness, len(required))
-	for capability, state := range required {
-		switch {
-		case registry == nil || !registry.Supports(state.Provider, capability):
-			out[capability] = CapabilityReadiness{Reason: "provider does not support this capability"}
-		case !state.Present:
-			out[capability] = CapabilityReadiness{Reason: "missing credential"}
-		case !state.Valid:
-			out[capability] = CapabilityReadiness{Reason: "credential is not validated"}
-		case !hasCapability(state.Capabilities, capability):
-			out[capability] = CapabilityReadiness{Reason: "credential is not verified for this capability"}
-		default:
-			out[capability] = CapabilityReadiness{Ready: true}
-		}
-	}
-	return out
-}
-
-func hasCapability(capabilities []provider.Capability, want provider.Capability) bool {
-	for _, capability := range capabilities {
-		if capability == want {
-			return true
-		}
-	}
-	return false
 }
 
 // ErrNotMCPCredential is returned when a non-MCP credential is requested as an

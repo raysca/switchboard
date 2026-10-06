@@ -93,23 +93,6 @@ const credentialEnvelope = z.object({
   data: credentialDTOSchema,
 });
 
-export const discoveryOptionSchema = z.object({
-  id: z.string(),
-  display_name: z.string(),
-  language: z.string().optional(),
-});
-export type DiscoveryOption = z.infer<typeof discoveryOptionSchema>;
-
-export const discoveryResultSchema = z.object({
-  models: z.array(discoveryOptionSchema),
-  voices: z.array(discoveryOptionSchema),
-});
-export type DiscoveryResult = z.infer<typeof discoveryResultSchema>;
-
-const discoveryEnvelope = z.object({
-  data: discoveryResultSchema,
-});
-
 const deleteEnvelope = z.object({
   data: z.object({
     deleted: z.boolean(),
@@ -539,27 +522,12 @@ export function createApiClient(
           { method: "DELETE" },
         )
       ).data,
-    validateCredential: async (id: string) =>
-      (
-        await request(
-          `/providers/credentials/${encodeURIComponent(id)}/validate`,
-          credentialEnvelope,
-          { method: "POST" },
-        )
-      ).data,
     rotateCredential: async (id: string) =>
       (
         await request(
           `/providers/credentials/${encodeURIComponent(id)}/rotate`,
           credentialEnvelope,
           { method: "POST" },
-        )
-      ).data,
-    getProviderDiscovery: async (provider: string, capability: string) =>
-      (
-        await request(
-          `/providers/${encodeURIComponent(provider)}/discovery?capability=${encodeURIComponent(capability)}`,
-          discoveryEnvelope,
         )
       ).data,
     // ponytail: one page of the server max (100); page through when someone has more agents.

@@ -4,13 +4,11 @@ import { Link } from "react-router";
 import {
   type ApiClient,
   type CredentialDTO,
-  type DiscoveryResult,
   ApiError,
   asApiError,
 } from "../../api/client";
 import {
   ActionButton,
-  DataTable,
   EmptyState,
   ErrorState,
   LoadingState,
@@ -29,12 +27,6 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
   const [addError, setAddError] = useState<ApiError | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
 
-  // Discovery state
-  const [discoverProvider, setDiscoverProvider] = useState("google");
-  const [discoverCapability, setDiscoverCapability] = useState("llm");
-  const [discoveryResult, setDiscoveryResult] = useState<DiscoveryResult | null>(null);
-  const [discoveryLoading, setDiscoveryLoading] = useState(false);
-  const [discoveryError, setDiscoveryError] = useState<ApiError | null>(null);
 
   // Updating secret state
   const [editingCredId, setEditingCredId] = useState<string | null>(null);
@@ -64,17 +56,6 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
     },
     onError: (err) => {
       setAddError(asApiError(err, "Failed to add credential"));
-    },
-  });
-
-  const validateMutation = useMutation({
-    mutationFn: (id: string) => client.validateCredential(id),
-    onSuccess: () => {
-      setActionError(null);
-      void queryClient.invalidateQueries({ queryKey: ["credentials"] });
-    },
-    onError: (err) => {
-      setActionError(asApiError(err, "Validation failed"));
     },
   });
 
@@ -119,24 +100,6 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
     const secret = secretDraft.trim();
     if (!secret) return;
     addMutation.mutate({ provider: selectedProvider, secret });
-  }
-
-  async function handleDiscover(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setDiscoveryLoading(true);
-    setDiscoveryError(null);
-    try {
-      const res = await client.getProviderDiscovery(
-        discoverProvider,
-        discoverCapability,
-      );
-      setDiscoveryResult(res);
-    } catch (err) {
-      setDiscoveryError(asApiError(err, "Discovery failed"));
-      setDiscoveryResult(null);
-    } finally {
-      setDiscoveryLoading(false);
-    }
   }
 
   const providers = providersQuery.data ?? [];
@@ -248,13 +211,6 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
                           </td>
                           <td>
                             <div className="action-buttons-cell">
-                              <button
-                                className="action-button-small"
-                                onClick={() => validateMutation.mutate(cred.id)}
-                                disabled={validateMutation.isPending}
-                              >
-                                Validate
-                              </button>
                               <button
                                 className="action-button-small"
                                 onClick={() => rotateMutation.mutate(cred.id)}
@@ -388,103 +344,6 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
                 {addMutation.isPending ? "Adding…" : "Add credential"}
               </ActionButton>
             </form>
-          </section>
-
-          {/* Capability Discovery Section */}
-          <section
-            className="discovery-section"
-            aria-labelledby="discovery-heading"
-            style={{ marginTop: "48px" }}
-          >
-            <h2 id="discovery-heading">Test capability discovery</h2>
-            <p className="discovery-desc" style={{ color: "#53666b", marginBottom: "16px" }}>
-              Query the provider catalog for supported models and voices.
-            </p>
-
-            {discoveryError && (
-              <ErrorState
-                title="Capability discovery failed"
-                error={discoveryError}
-                onRetry={() => setDiscoveryError(null)}
-              />
-            )}
-
-            <form onSubmit={handleDiscover} className="form-card">
-              <label className="form-field" htmlFor="discover-provider-select">
-                <span>Discovery provider</span>
-                <select
-                  id="discover-provider-select"
-                  value={discoverProvider}
-                  onChange={(e) => setDiscoverProvider(e.target.value)}
-                >
-                  {providers.length > 0 ? (
-                    providers.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.display_name}
-                      </option>
-                    ))
-                  ) : (
-                    <>
-                      <option value="google">Google</option>
-                      <option value="xai">xAI</option>
-                    </>
-                  )}
-                </select>
-              </label>
-
-              <label className="form-field" htmlFor="discover-capability-select">
-                <span>Discovery capability</span>
-                <select
-                  id="discover-capability-select"
-                  value={discoverCapability}
-                  onChange={(e) => setDiscoverCapability(e.target.value)}
-                >
-                  <option value="llm">LLM Models</option>
-                  <option value="stt">Speech-to-Text (STT)</option>
-                  <option value="tts">Text-to-Speech (TTS)</option>
-                </select>
-              </label>
-
-              <ActionButton type="submit" disabled={discoveryLoading}>
-                {discoveryLoading ? "Discovering…" : "Discover"}
-              </ActionButton>
-            </form>
-
-            {discoveryLoading && (
-              <LoadingState label="Discovering provider capabilities" />
-            )}
-
-            {discoveryResult && (
-              <div className="discovery-results" style={{ marginTop: "24px" }}>
-                {discoveryResult.models && discoveryResult.models.length > 0 && (
-                  <DataTable
-                    caption={`Discovered ${discoverCapability.toUpperCase()} models`}
-                    columns={["Display Name", "Model ID"]}
-                    rows={discoveryResult.models.map((m) => [
-                      m.display_name,
-                      <code>{m.id}</code>,
-                    ])}
-                  />
-                )}
-                {discoveryResult.voices && discoveryResult.voices.length > 0 && (
-                  <DataTable
-                    caption="Discovered TTS voices"
-                    columns={["Voice Name", "Language", "Voice ID"]}
-                    rows={discoveryResult.voices.map((v) => [
-                      v.display_name,
-                      v.language ?? "—",
-                      <code>{v.id}</code>,
-                    ])}
-                  />
-                )}
-                {(!discoveryResult.models || discoveryResult.models.length === 0) &&
-                  (!discoveryResult.voices || discoveryResult.voices.length === 0) && (
-                    <p style={{ marginTop: "16px", color: "#53666b" }}>
-                      No models or voices returned for this capability.
-                    </p>
-                  )}
-              </div>
-            )}
           </section>
         </div>
       )}

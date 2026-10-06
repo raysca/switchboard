@@ -168,7 +168,7 @@ describe("management client", () => {
       expect(fetcher).toHaveBeenCalledWith("/api/v1/providers", expect.any(Object));
     });
 
-    it("handles credential lifecycle: list, create, validate, rotate, update, delete", async () => {
+    it("handles credential lifecycle: list, create, rotate, update, delete", async () => {
       const cred = {
         id: "cred-1",
         provider: "google",
@@ -184,9 +184,6 @@ describe("management client", () => {
         )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ data: cred }), { status: 201 }),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: { ...cred, validation_state: "valid" } }), { status: 200 }),
         )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ data: cred }), { status: 200 }),
@@ -213,9 +210,6 @@ describe("management client", () => {
         body: JSON.stringify({ provider: "google", secret: "super-secret" }),
       }));
 
-      const validated = await client.validateCredential("cred-1");
-      expect(validated.validation_state).toBe("valid");
-
       const rotated = await client.rotateCredential("cred-1");
       expect(rotated.id).toBe("cred-1");
 
@@ -226,30 +220,6 @@ describe("management client", () => {
       expect(deleted.deleted).toBe(true);
     });
 
-    it("discovers provider capabilities (models and voices)", async () => {
-      const fetcher = vi.fn<typeof fetch>(async () =>
-        new Response(
-          JSON.stringify({
-            data: {
-              models: [{ id: "gemini-2.0-flash", display_name: "Gemini 2.0 Flash" }],
-              voices: [{ id: "en-US-Journey-F", display_name: "Journey (Female)", language: "en-US" }],
-            },
-          }),
-          { status: 200 },
-        ),
-      );
-      const client = createApiClient(
-        () => ({ key: "test-key", generation: 1 }),
-        fetcher,
-      );
-      const discovery = await client.getProviderDiscovery("google", "llm");
-      expect(discovery.models).toHaveLength(1);
-      expect(discovery.voices).toHaveLength(1);
-      expect(fetcher).toHaveBeenCalledWith(
-        "/api/v1/providers/google/discovery?capability=llm",
-        expect.any(Object),
-      );
-    });
   });
 
   describe("agents API", () => {

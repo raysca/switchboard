@@ -19,7 +19,7 @@ func TestCredentialEncryptsMasksAndNeverReturnsSecret(t *testing.T) {
 	keys := Keyring{ActiveID: "primary", Keys: map[string][]byte{"primary": bytesOf(32, 1)}}
 	registry := provider.NewRegistry(provider.Definitions())
 	repo := newMemoryRepository()
-	service, err := NewService(repo, keys, registry, nil)
+	service, err := NewService(repo, keys, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,13 +49,13 @@ func TestCredentialEncryptsMasksAndNeverReturnsSecret(t *testing.T) {
 func TestCredentialRejectsTamperedCiphertextAndUnknownKey(t *testing.T) {
 	keys := Keyring{ActiveID: "k1", Keys: map[string][]byte{"k1": bytesOf(32, 2)}}
 	repo := newMemoryRepository()
-	svc, _ := NewService(repo, keys, provider.NewRegistry(provider.Definitions()), nil)
+	svc, _ := NewService(repo, keys, provider.NewRegistry(provider.Definitions()))
 	created, err := svc.Create(context.Background(), CreateInput{Provider: "google", Secret: "safe-secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	original := cloneCredential(repo.rows[created.ID])
-	wrongKeyService, _ := NewService(repo, Keyring{ActiveID: "k1", Keys: map[string][]byte{"k1": bytesOf(32, 99)}}, provider.NewRegistry(provider.Definitions()), nil)
+	wrongKeyService, _ := NewService(repo, Keyring{ActiveID: "k1", Keys: map[string][]byte{"k1": bytesOf(32, 99)}}, provider.NewRegistry(provider.Definitions()))
 	if _, err := wrongKeyService.decrypt(original); !errors.Is(err, ErrDecrypt) {
 		t.Fatalf("wrong key error=%v", err)
 	}
@@ -82,12 +82,12 @@ func TestCredentialRejectsTamperedCiphertextAndUnknownKey(t *testing.T) {
 func TestCredentialRotationReencryptsWithoutChangingSecret(t *testing.T) {
 	oldKeys := Keyring{ActiveID: "old", Keys: map[string][]byte{"old": bytesOf(32, 3)}}
 	repo := newMemoryRepository()
-	svc, _ := NewService(repo, oldKeys, provider.NewRegistry(provider.Definitions()), nil)
+	svc, _ := NewService(repo, oldKeys, provider.NewRegistry(provider.Definitions()))
 	created, err := svc.Create(context.Background(), CreateInput{Provider: "google", Secret: "rotate-me-secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rotator, err := NewService(repo, Keyring{ActiveID: "new", Keys: map[string][]byte{"old": bytesOf(32, 3), "new": bytesOf(32, 4)}}, provider.NewRegistry(provider.Definitions()), nil)
+	rotator, err := NewService(repo, Keyring{ActiveID: "new", Keys: map[string][]byte{"old": bytesOf(32, 3), "new": bytesOf(32, 4)}}, provider.NewRegistry(provider.Definitions()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,75 +168,9 @@ func cloneCredential(c storage.Credential) storage.Credential {
 	return c
 }
 
-func TestCredentialInvalidValidationAndCapabilityReadiness(t *testing.T) {
-	registry := provider.NewRegistry(provider.Definitions())
-	repo := newMemoryRepository()
-	validator := ValidatorFunc(func(_ context.Context, _ string, _ []byte) (ValidationResult, error) {
-		return ValidationResult{}, ErrInvalidCredential
-	})
-	svc, err := NewService(repo, Keyring{ActiveID: "k", Keys: map[string][]byte{"k": bytesOf(32, 5)}}, registry, validator)
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := svc.Create(context.Background(), CreateInput{Provider: "google", Secret: "bad-secret"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	checked, err := svc.Validate(context.Background(), created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if checked.ValidationState != ValidationInvalid {
-		t.Fatalf("state=%q", checked.ValidationState)
-	}
-	if got := registry.Supports("google", provider.CapabilitySTT); !got {
-		t.Fatal("Google STT capability missing")
-	}
-	if got := registry.Supports("google", provider.CapabilityMCP); got {
-		t.Fatal("provider registry falsely claims MCP capability")
-	}
-	if ready := Readiness(registry, map[provider.Capability]CredentialReadiness{provider.CapabilitySTT: {Provider: "google", Present: true, Valid: false}}); ready[provider.CapabilitySTT].Ready {
-		t.Fatal("invalid credential reported ready")
-	}
-	if ready := Readiness(registry, map[provider.Capability]CredentialReadiness{provider.CapabilityMCP: {Provider: "google", Present: true, Valid: true}}); ready[provider.CapabilityMCP].Ready {
-		t.Fatal("unsupported capability reported ready")
-	}
-	verified := []provider.Capability{provider.CapabilitySTT}
-	readiness := Readiness(registry, map[provider.Capability]CredentialReadiness{
-		provider.CapabilitySTT: {Provider: "google", Present: true, Valid: true, Capabilities: verified},
-		provider.CapabilityTTS: {Provider: "google", Present: true, Valid: true, Capabilities: verified},
-	})
-	if !readiness[provider.CapabilitySTT].Ready || readiness[provider.CapabilityTTS].Ready {
-		t.Fatalf("readiness ignored verified capability membership: %+v", readiness)
-	}
-	emptyReadiness := Readiness(registry, map[provider.Capability]CredentialReadiness{provider.CapabilitySTT: {Provider: "google", Present: true, Valid: true}})
-	if emptyReadiness[provider.CapabilitySTT].Ready {
-		t.Fatal("empty verified capabilities reported ready")
-	}
-	validSvc, _ := NewService(newMemoryRepository(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": bytesOf(32, 6)}}, registry, ValidatorFunc(func(context.Context, string, []byte) (ValidationResult, error) {
-		return ValidationResult{Capabilities: []provider.Capability{provider.CapabilitySTT}}, nil
-	}))
-	valid, err := validSvc.Create(context.Background(), CreateInput{Provider: "google", Secret: "supported-key-value"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	valid, err = validSvc.Validate(context.Background(), valid.ID)
-	if err != nil || valid.ValidationState != ValidationValid || len(valid.Capabilities) != 1 || valid.Capabilities[0] != provider.CapabilitySTT {
-		t.Fatalf("valid credential=%+v err=%v", valid, err)
-	}
-	unsupportedSvc, _ := NewService(newMemoryRepository(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": bytesOf(32, 7)}}, registry, ValidatorFunc(func(context.Context, string, []byte) (ValidationResult, error) {
-		return ValidationResult{Capabilities: []provider.Capability{provider.CapabilityMCP}}, nil
-	}))
-	unsupported, _ := unsupportedSvc.Create(context.Background(), CreateInput{Provider: "google", Secret: "unsupported-result-key"})
-	unsupported, err = unsupportedSvc.Validate(context.Background(), unsupported.ID)
-	if err != nil || unsupported.ValidationState != ValidationError || len(unsupported.Capabilities) != 0 {
-		t.Fatalf("unsupported capability accepted: %+v %v", unsupported, err)
-	}
-}
-
 func TestCredentialUpdateDeleteAndInputValidation(t *testing.T) {
 	repo := newMemoryRepository()
-	svc, _ := NewService(repo, Keyring{ActiveID: "new", Keys: map[string][]byte{"new": bytesOf(32, 8)}}, provider.NewRegistry(provider.Definitions()), nil)
+	svc, _ := NewService(repo, Keyring{ActiveID: "new", Keys: map[string][]byte{"new": bytesOf(32, 8)}}, provider.NewRegistry(provider.Definitions()))
 	for _, secret := range []string{"", " \t ", "bad\nsecret", strings.Repeat("x", MaxSecretBytes+1)} {
 		if _, err := svc.Create(context.Background(), CreateInput{Provider: "google", Secret: secret}); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("secret %q error=%v", secret, err)
@@ -270,42 +204,6 @@ func TestCredentialUpdateDeleteAndInputValidation(t *testing.T) {
 	}
 	if _, err := svc.Get(context.Background(), created.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("deleted credential read error=%v", err)
-	}
-}
-
-func TestRotationDoesNotRestoreValidationMetadataFromStaleSnapshot(t *testing.T) {
-	base := newMemoryRepository()
-	oldKeys := Keyring{ActiveID: "old", Keys: map[string][]byte{"old": bytesOf(32, 31)}}
-	registry := provider.NewRegistry(provider.Definitions())
-	creator, err := NewService(base, oldKeys, registry, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := creator.Create(context.Background(), CreateInput{Provider: "google", Secret: "interleaved-rotation-secret"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	barrier := &rotationBarrierRepository{base: base, atRotate: make(chan struct{}), resumeRotate: make(chan struct{})}
-	rotator, err := NewService(barrier, Keyring{ActiveID: "new", Keys: map[string][]byte{"old": bytesOf(32, 31), "new": bytesOf(32, 32)}}, registry, ValidatorFunc(func(context.Context, string, []byte) (ValidationResult, error) {
-		return ValidationResult{Capabilities: []provider.Capability{provider.CapabilitySTT}}, nil
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	rotateDone := make(chan error, 1)
-	go func() { rotateDone <- rotator.Rotate(context.Background(), created.ID) }()
-	<-barrier.atRotate
-	validated, err := rotator.Validate(context.Background(), created.ID)
-	if err != nil || validated.ValidationState != ValidationValid {
-		t.Fatalf("validation=%+v err=%v", validated, err)
-	}
-	close(barrier.resumeRotate)
-	if err := <-rotateDone; err != nil {
-		t.Fatal(err)
-	}
-	row, err := base.Get(context.Background(), created.ID)
-	if err != nil || row.KeyID != "new" || row.ValidationState != ValidationValid || row.CapabilitiesJSON != "[\"stt\"]" {
-		t.Fatalf("rotation lost concurrent validation: row=%+v err=%v", row, err)
 	}
 }
 
@@ -343,7 +241,7 @@ func TestResolveOnlyReleasesMCPTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()), nil)
+	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +271,7 @@ func TestProviderSecretIsProviderScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()), nil)
+	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +317,7 @@ func TestCredentialDTOCapabilitiesNeverNull(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()), nil)
+	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -284,7 +284,7 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 		ActiveID: "key-1",
 		Keys:     map[string][]byte{"key-1": []byte(strings.Repeat("k", 32))},
 	}
-	credService, err := credential.NewService(store.Credentials(), keyring, reg, nil)
+	credService, err := credential.NewService(store.Credentials(), keyring, reg)
 	if err != nil {
 		t.Fatalf("new credential service: %v", err)
 	}

@@ -38,9 +38,7 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     createCredential: vi.fn(),
     updateCredential: vi.fn(),
     deleteCredential: vi.fn(),
-    validateCredential: vi.fn(),
     rotateCredential: vi.fn(),
-    getProviderDiscovery: vi.fn(),
     getAgents: vi.fn().mockResolvedValue([]),
     createAgent: vi.fn(),
     updateAgent: vi.fn(),
@@ -123,95 +121,7 @@ describe("ProvidersView", () => {
     expect(screen.queryByText("xai-super-secret-key-321")).toBeNull();
   });
 
-  it("validates credential and updates status badge", async () => {
-    let credState = "unvalidated";
-    const client = createMockClient({
-      getCredentials: vi.fn().mockImplementation(() =>
-        Promise.resolve([
-          {
-            id: "cred-1",
-            provider: "google",
-            masked_value: "••••••••9876",
-            validation_state: credState,
-            capabilities: ["llm", "stt", "tts"],
-            created_at: "2026-10-05T12:00:00Z",
-            updated_at: "2026-10-05T12:00:00Z",
-          },
-        ]),
-      ),
-      validateCredential: vi.fn().mockImplementation(async (id) => {
-        expect(id).toBe("cred-1");
-        credState = "valid";
-        return {
-          id: "cred-1",
-          provider: "google",
-          masked_value: "••••••••9876",
-          validation_state: "valid",
-          validated_at: "2026-10-05T12:35:00Z",
-          capabilities: ["llm", "stt", "tts"],
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:35:00Z",
-        };
-      }),
-    });
 
-    const user = userEvent.setup();
-    renderWithProviders(<ProvidersView client={client} keyValue="key-1" />);
-
-    expect(await screen.findByText("unvalidated")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /validate/i }));
-
-    expect(client.validateCredential).toHaveBeenCalledWith("cred-1");
-    expect(await screen.findByText("valid")).toBeVisible();
-  });
-
-  it("displays error banner with request ID when credential validation fails", async () => {
-    const client = createMockClient({
-      validateCredential: vi.fn().mockRejectedValue(
-        new ApiError("Provider validation rejected key", "validation_failed", 400, "req-val-fail-88"),
-      ),
-    });
-
-    const user = userEvent.setup();
-    renderWithProviders(<ProvidersView client={client} keyValue="key-1" />);
-
-    expect(await screen.findByRole("button", { name: /validate/i })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /validate/i }));
-
-    expect(await screen.findByRole("alert")).toBeVisible();
-    expect(screen.getByText("Provider validation rejected key")).toBeVisible();
-    expect(screen.getByText(/req-val-fail-88/)).toBeVisible();
-  });
-
-  it("tests capability discovery and displays models and voices", async () => {
-    const client = createMockClient({
-      getProviderDiscovery: vi.fn().mockResolvedValue({
-        models: [
-          { id: "gemini-2.0-flash", display_name: "Gemini 2.0 Flash" },
-          { id: "gemini-1.5-pro", display_name: "Gemini 1.5 Pro" },
-        ],
-        voices: [],
-      }),
-    });
-
-    const user = userEvent.setup();
-    renderWithProviders(<ProvidersView client={client} keyValue="key-1" />);
-
-    expect(await screen.findByRole("heading", { name: /test capability discovery/i })).toBeVisible();
-
-    const providerSelect = screen.getByLabelText("Discovery provider");
-    await user.selectOptions(providerSelect, "google");
-
-    const capabilitySelect = screen.getByLabelText("Discovery capability");
-    await user.selectOptions(capabilitySelect, "llm");
-
-    await user.click(screen.getByRole("button", { name: /discover/i }));
-
-    expect(client.getProviderDiscovery).toHaveBeenCalledWith("google", "llm");
-    expect(await screen.findByText("Gemini 2.0 Flash")).toBeVisible();
-    expect(screen.getByText("gemini-2.0-flash")).toBeVisible();
-    expect(screen.getByText("Gemini 1.5 Pro")).toBeVisible();
-  });
 
   it("deletes a credential and removes it from the list", async () => {
     let credentials = [
