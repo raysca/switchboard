@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"govoice/core"
 
@@ -234,12 +235,26 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 	}
 }
 
-func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.SynthesisUnitFrame, e core.Emitter) error {
-	// Validate character length <= 250 chars
-	if len([]rune(su.Text)) > p.cfg.MaxSynthesisUnitChars {
-		return fmt.Errorf("%w: length %d exceeds limit %d", ErrUnitTooLong, len([]rune(su.Text)), p.cfg.MaxSynthesisUnitChars)
+// splitUnit cuts text into pieces of at most max runes, at the last space
+// when there is one, so a long unit is synthesized piece by piece.
+func splitUnit(text string, max int) []string {
+	r := []rune(text)
+	var pieces []string
+	for len(r) > max {
+		cut := max
+		for i := max - 1; i > 0; i-- {
+			if unicode.IsSpace(r[i]) {
+				cut = i
+				break
+			}
+		}
+		pieces = append(pieces, string(r[:cut]))
+		r = r[cut:]
 	}
+	return append(pieces, string(r))
+}
 
+func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.SynthesisUnitFrame, e core.Emitter) error {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -335,19 +350,27 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		var rawAudio []byte
 		var committed bool
 
-		err := ExecuteWithRetry(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
-			return committed
-		}, func(attemptCtx context.Context, attempt int) error {
-			if attempt > 0 {
-				p.Retries.Add(1)
-			}
-			audio, err := p.cfg.Client.SynthesizeSpeech(attemptCtx, su.Text, p.cfg.Voice, p.cfg.SampleRate)
+		// A unit over the provider limit is synthesized in order, piece by
+		// piece, and played as one unit.
+		var err error
+		for _, piece := range splitUnit(su.Text, p.cfg.MaxSynthesisUnitChars) {
+			err = ExecuteWithRetry(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
+				return committed
+			}, func(attemptCtx context.Context, attempt int) error {
+				if attempt > 0 {
+					p.Retries.Add(1)
+				}
+				audio, err := p.cfg.Client.SynthesizeSpeech(attemptCtx, piece, p.cfg.Voice, p.cfg.SampleRate)
+				if err != nil {
+					return err
+				}
+				rawAudio = append(rawAudio, audio...)
+				return nil
+			}, nil)
 			if err != nil {
-				return err
+				break
 			}
-			rawAudio = audio
-			return nil
-		}, nil)
+		}
 
 		if err != nil {
 			if errors.Is(err, context.Canceled) {

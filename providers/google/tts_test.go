@@ -3,7 +3,6 @@ package google
 import (
 	"bytes"
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -84,8 +83,9 @@ func TestTTS_RejectsWAVContainer(t *testing.T) {
 	}
 }
 
-func TestTTS_UnitSizeBounds(t *testing.T) {
-	// Pinned requirement: max 250 characters
+func TestTTS_UnitOverLimitIsSynthesizedInPieces(t *testing.T) {
+	// Pinned requirement: max 250 characters per provider request. A longer
+	// unit is split, synthesized in order and played as one unit.
 	cfg := DefaultTTSConfig()
 	cfg.MaxSynthesisUnitChars = 250
 	mockClient := &mockTTSClient{}
@@ -99,22 +99,39 @@ func TestTTS_UnitSizeBounds(t *testing.T) {
 	pipe, _ := core.NewPipeline(proc)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = proc.Attach(session, 0)
+	var mu sync.Mutex
+	var finals, turnFinals int
+	session.OnOutput = func(f core.Frame) {
+		if a, ok := f.(*core.OutputAudioFrame); ok {
+			mu.Lock()
+			if a.IsFinal {
+				finals++
+			}
+			if a.TurnFinal {
+				turnFinals++
+			}
+			mu.Unlock()
+		}
+	}
 	_ = session.Start()
 	defer session.Close()
 
-	// 1. Text with 251 characters must be rejected immediately
-	tooLongText := strings.Repeat("a", 251)
-	err = session.Post(&core.SynthesisUnitFrame{
-		Turn:    "turn-1",
-		Gen:     1,
-		UnitID:  1,
-		Text:    tooLongText,
-		IsFinal: true,
-	})
-	// Session run loop fails with ErrUnitTooLong
-	time.Sleep(50 * time.Millisecond)
-	if session.Err() == nil || !errors.Is(session.Err(), ErrUnitTooLong) {
-		t.Fatalf("expected ErrUnitTooLong, got %v", session.Err())
+	words := strings.Repeat("word ", 60) // 300 runes
+	_ = session.Post(&core.SynthesisUnitFrame{Turn: "turn-1", Gen: 1, UnitID: 1, Text: words, IsFinal: true})
+	time.Sleep(100 * time.Millisecond)
+	if err := session.Err(); err != nil {
+		t.Fatalf("a long unit failed the session: %v", err)
+	}
+	mockClient.mu.Lock()
+	calls := append([]string(nil), mockClient.calls...)
+	mockClient.mu.Unlock()
+	if len(calls) != 2 || calls[0]+calls[1] != words || len([]rune(calls[0])) > 250 || strings.HasSuffix(calls[0], "wor") {
+		t.Fatalf("pieces = %q", calls)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if finals != 1 || turnFinals != 1 {
+		t.Fatalf("unit finals = %d, turn finals = %d; want one of each", finals, turnFinals)
 	}
 }
 
