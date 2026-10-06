@@ -148,7 +148,8 @@ func (s *Service) Get(ctx context.Context, id string) (Agent, error) {
 	if err != nil {
 		return Agent{}, err
 	}
-	return s.fromRow(ctx, row)
+	creds, credErr := s.store.Credentials().List(ctx)
+	return s.fromRow(ctx, row, creds, credErr)
 }
 
 func (s *Service) List(ctx context.Context, limit, offset int) ([]Agent, error) {
@@ -157,8 +158,9 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Agent, error) 
 		return nil, err
 	}
 	out := make([]Agent, 0, len(rows))
+	creds, credErr := s.store.Credentials().List(ctx)
 	for _, row := range rows {
-		a, err := s.fromRow(ctx, row)
+		a, err := s.fromRow(ctx, row, creds, credErr)
 		if err != nil {
 			return nil, err
 		}
@@ -215,12 +217,8 @@ func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, erro
 		return Snapshot{}, err
 	}
 	version := toVersion(v)
-	selections, err := s.store.Agents().SelectedTools(ctx, v.ID)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	version.MCPTools = fromStorageSelections(selections)
-	readiness, tools := s.agentReadiness(ctx, row.ID, v.ID, version.Config, row.Enabled, row.Archived)
+	creds, credErr := s.store.Credentials().List(ctx)
+	readiness, tools := s.agentReadiness(ctx, v, row.Enabled, row.Archived, creds, credErr)
 	if readiness.State == ReadinessNotReady || readiness.State == ReadinessNeedsToolReview || readiness.State == ReadinessToolUnavailable {
 		return Snapshot{}, errors.New("agent not ready")
 	}
@@ -281,11 +279,6 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 		return Snapshot{}, errors.New("session agent snapshot is inconsistent")
 	}
 	version := toVersion(v)
-	selections, err := s.store.Agents().SelectedTools(ctx, v.ID)
-	if err != nil {
-		return Snapshot{}, err
-	}
-	version.MCPTools = fromStorageSelections(selections)
 	var runtimeTools []MCPToolSnapshot
 	if strings.TrimSpace(session.RuntimeSnapshotJSON) != "" && strings.TrimSpace(session.RuntimeSnapshotJSON) != "{}" {
 		if err := json.Unmarshal([]byte(session.RuntimeSnapshotJSON), &runtimeTools); err != nil {
@@ -293,7 +286,8 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 		}
 	}
 	if runtimeTools == nil {
-		_, runtimeTools = s.agentReadiness(ctx, session.AgentID, v.ID, version.Config, true, false)
+		creds, credErr := s.store.Credentials().List(ctx)
+		_, runtimeTools = s.agentReadiness(ctx, v, true, false, creds, credErr)
 	}
 	return Snapshot{AgentID: session.AgentID, Version: version, ConfigHash: session.ConfigHash, MCPTools: runtimeTools}, nil
 }
@@ -324,7 +318,9 @@ func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelect
 	return toVersionWithTools(version, selected), nil
 }
 
-func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error) {
+// fromRow takes the credential list (and its load error) so List reads it
+// once per request instead of once per agent.
+func (s *Service) fromRow(ctx context.Context, row storage.Agent, creds []storage.Credential, credErr error) (Agent, error) {
 	a := Agent{ID: row.ID, Name: row.Name, Description: row.Description, Enabled: row.Enabled, Archived: row.Archived, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.CurrentVersionID != "" {
 		v, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
@@ -332,12 +328,7 @@ func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error)
 			return Agent{}, err
 		}
 		converted := toVersion(v)
-		selected, err := s.store.Agents().SelectedTools(ctx, converted.ID)
-		if err != nil {
-			return Agent{}, err
-		}
-		converted.MCPTools = fromStorageSelections(selected)
-		a.Readiness, _ = s.agentReadiness(ctx, row.ID, converted.ID, converted.Config, row.Enabled, row.Archived)
+		a.Readiness, _ = s.agentReadiness(ctx, v, row.Enabled, row.Archived, creds, credErr)
 		a.Version = &converted
 	} else {
 		a.Readiness = Readiness{State: ReadinessNotReady, Reasons: []string{"missing_configuration"}}
@@ -353,19 +344,16 @@ const (
 	ReadinessToolUnavailable = "tool_dependency_unavailable"
 )
 
-func (s *Service) agentReadiness(ctx context.Context, agentID, versionID string, config json.RawMessage, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
-	version, versionErr := s.store.Agents().Version(ctx, versionID)
-	if versionErr != nil {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, nil
-	}
+// agentReadiness evaluates an already-loaded version (with its MCPTools)
+// against the given credential list.
+func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersion, enabled, archived bool, creds []storage.Credential, credErr error) (Readiness, []MCPToolSnapshot) {
 	if version.MCPReviewRequired {
 		return Readiness{State: ReadinessNeedsToolReview, Reasons: []string{"mcp_tools_detached_review_required"}, ToolDependencies: []ToolDependency{}}, nil
 	}
-	parsed, parseErr := DecodeConfig(config)
+	parsed, parseErr := DecodeConfig(version.ConfigJSON)
 	if parseErr != nil {
 		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_config"}}, nil
 	}
-	creds, credErr := s.store.Credentials().List(ctx)
 	if credErr != nil {
 		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, nil
 	}
@@ -383,10 +371,7 @@ func (s *Service) agentReadiness(ctx context.Context, agentID, versionID string,
 	if len(reasons) > 0 {
 		return Readiness{State: ReadinessNotReady, Reasons: reasons}, nil
 	}
-	selections, err := s.store.Agents().SelectedTools(ctx, versionID)
-	if err != nil {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, nil
-	}
+	selections := version.MCPTools
 	dependencies := make([]ToolDependency, 0, len(selections))
 	snapshots := make([]MCPToolSnapshot, 0, len(selections))
 	requiredFailure := ""
