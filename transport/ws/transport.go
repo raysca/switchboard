@@ -72,7 +72,7 @@ type Connection struct {
 	pipeline   string
 	cfg        ServerConfig
 	pacer      *PacedWriter
-	session    *core.Session
+	session    atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
 	seqCounter atomic.Uint64
 	rtvi       *rtvi.Handler
 
@@ -97,14 +97,15 @@ type Connection struct {
 }
 
 func (c *Connection) startTrace() {
-	if c.session == nil {
+	session := c.session.Load()
+	if session == nil {
 		return
 	}
-	traceCtx := c.session.RootTraceContext()
-	span := core.StartContextSpan(traceCtx, "transport.connection", core.SessionID(strconv.FormatUint(c.session.ID(), 10)), "", core.Generation(c.session.CurrentGeneration()), map[string]any{"component": "ws"})
+	traceCtx := session.RootTraceContext()
+	span := core.StartContextSpan(traceCtx, "transport.connection", core.SessionID(strconv.FormatUint(session.ID(), 10)), "", core.Generation(session.CurrentGeneration()), map[string]any{"component": "ws"})
 	c.traceMu.Lock()
 	c.traceSpan = span
-	c.traceSession = core.SessionID(strconv.FormatUint(c.session.ID(), 10))
+	c.traceSession = core.SessionID(strconv.FormatUint(session.ID(), 10))
 	c.tracePolicy = core.TraceContextFromContext(traceCtx).Policy
 	c.traceMu.Unlock()
 	c.traceEventAt("transport.connect", c.acceptedAt, nil)
@@ -420,8 +421,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Completion and speaking callbacks run outside pacer locks. Speaking is
 	// derived only from successful non-empty output writes and final drain.
 	pacer.OnWriteComplete = func(f *core.OutputAudioFrame, err error) {
-		if conn.session != nil {
-			_ = conn.session.Reenter(&core.WriteCompletionFrame{
+		if session := conn.session.Load(); session != nil {
+			_ = session.Reenter(&core.WriteCompletionFrame{
 				Turn:      f.Turn,
 				Gen:       f.Gen,
 				UnitID:    f.UnitID,
@@ -437,9 +438,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			_ = conn.WriteWireMessage(conn.ctx, msg)
 		}
-		if conn.session != nil {
+		if session := conn.session.Load(); session != nil {
 			frame := event
-			_ = conn.session.Reenter(&frame, core.Upstream, conn.session.TailIndex(), 0)
+			_ = session.Reenter(&frame, core.Upstream, session.TailIndex(), 0)
 		}
 	}
 
@@ -463,11 +464,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			conn.session = session
 			if err := session.Start(); err != nil {
 				_ = session.Close()
 				return err
 			}
+			conn.session.Store(session)
 			conn.startTrace()
 		}
 		return nil
@@ -522,8 +523,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 	conn.Close()
 
-	if conn.session != nil {
-		_ = conn.session.Close()
+	if session := conn.session.Load(); session != nil {
+		_ = session.Close()
 	}
 }
 
@@ -583,8 +584,8 @@ func (c *Connection) readLoop() {
 					c.Close()
 					return
 				}
-				if c.session != nil {
-					_ = c.session.Post(respFrame)
+				if session := c.session.Load(); session != nil {
+					_ = session.Post(respFrame)
 				}
 			}
 
@@ -605,8 +606,8 @@ func (c *Connection) readLoop() {
 				}
 			}
 
-			if c.session != nil {
-				if err := c.session.Post(f); err != nil {
+			if session := c.session.Load(); session != nil {
+				if err := session.Post(f); err != nil {
 					// Queue full or session closed
 					if errors.Is(err, core.ErrControlQueueFull) {
 						c.traceError("backpressure")
@@ -781,10 +782,10 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 			if c.cfg.Observe != nil {
 				c.cfg.Observe("flush_ack", 1)
 			}
-			if c.session != nil {
+			if session := c.session.Load(); session != nil {
 				// Start at the transport and walk upstream. Envelope generation 0
 				// keeps the fence from dropping an ack for the generation just closed.
-				_ = c.session.Reenter(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream, c.session.TailIndex(), 0)
+				_ = session.Reenter(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream, session.TailIndex(), 0)
 			}
 		})
 		return e.PushDirection(f, dir)
@@ -853,7 +854,7 @@ func (c *Connection) RTVI() *rtvi.Handler {
 
 // Session returns the allocated core session, or nil if not ready yet.
 func (c *Connection) Session() *core.Session {
-	return c.session
+	return c.session.Load()
 }
 
 // Pacer returns the underlying PacedWriter.
