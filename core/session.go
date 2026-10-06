@@ -98,6 +98,7 @@ type Session struct {
 	err     atomic.Pointer[error]
 
 	runLoopDone chan struct{}
+	loopStarted atomic.Bool
 	ready       chan struct{}
 	stopped     chan struct{}
 	stopOnce    sync.Once
@@ -307,8 +308,36 @@ func (s *Session) Start() error {
 	s.turnSpans = make(map[TurnID]Span)
 	close(s.ready)
 
+	s.loopStarted.Store(true)
 	go s.runLoop()
+	go s.watchdog()
 	return nil
+}
+
+// watchdog fails the session when one envelope runs longer than
+// MaxFrameProcessing. It must live outside the run loop: a stuck processor
+// blocks the loop, so a check inside it could never fire.
+func (s *Session) watchdog() {
+	interval := s.budget.MaxFrameProcessing / 4
+	if interval <= 0 || interval > 200*time.Millisecond {
+		interval = 200 * time.Millisecond
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.runLoopDone:
+			return
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			start := s.procStart.Load()
+			if start > 0 && time.Since(time.Unix(0, start)) > s.budget.MaxFrameProcessing {
+				s.fail(ErrProcessorWatchdog)
+				return
+			}
+		}
+	}
 }
 
 // RootTraceContext returns the immutable session parent context after Start.
@@ -455,17 +484,22 @@ func (s *Session) enqueueData(env Envelope) error {
 // Go executes fn as a supervised, session-owned asynchronous task.
 // Recovers panics, enforces task budget, and tracks lifecycle during teardown.
 func (s *Session) Go(fn func(ctx context.Context)) error {
+	// Registration and Close's state transition share admissionMu, so a task is
+	// either counted before Close waits or rejected; never added after Wait.
+	s.admissionMu.Lock()
 	if s.State() > StateRunning {
+		s.admissionMu.Unlock()
 		return ErrSessionClosed
 	}
-
 	current := s.activeTasks.Add(1)
 	if int(current) > s.budget.MaxAsyncTasks {
 		s.activeTasks.Add(-1)
+		s.admissionMu.Unlock()
 		return ErrTooManyTasks
 	}
-
 	s.taskWg.Add(1)
+	s.admissionMu.Unlock()
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -483,58 +517,103 @@ func (s *Session) Go(fn func(ctx context.Context)) error {
 	return nil
 }
 
-// Close gracefully terminates the session, draining active envelopes and running teardown.
+// Close terminates the session. It cancels provider I/O, waits for the run
+// loop, closes processors, then waits for supervised tasks, all under one
+// TeardownTimeout deadline. Anything still running at the deadline marks the
+// session StateLeaked; Close itself always returns and Done always closes.
 func (s *Session) Close() error {
 	s.stopOnce.Do(func() {
+		s.admissionMu.Lock()
 		s.state.Store(int32(StateStopping))
+		s.admissionMu.Unlock()
 		s.cancel()
 
-		// Cancel provider I/O before waiting for supervised tasks. Processors
-		// parent their calls on s.ctx; Close also drops any extra handles.
-		for _, proc := range s.pipe.Processors() {
-			if closer, ok := proc.(Closer); ok {
-				_ = closer.Close()
+		deadline := time.NewTimer(s.budget.TeardownTimeout)
+		defer deadline.Stop()
+		timedOut := false
+
+		loopExited := true
+		if s.loopStarted.Load() {
+			select {
+			case <-s.runLoopDone:
+			case <-deadline.C:
+				loopExited, timedOut = false, true
 			}
 		}
 
-		// Wait for run loop exit
-		<-s.runLoopDone
-
-		// Teardown wait with deadline
-		teardownTimer := time.NewTimer(s.budget.TeardownTimeout)
-		defer teardownTimer.Stop()
+		// Processors are closed after the run loop exits so Close never races
+		// ProcessFrame. A wedged loop still gets a best-effort Close to release
+		// provider handles. Closers can hang, so they share the deadline.
+		closersDone := make(chan struct{})
+		go func() {
+			defer close(closersDone)
+			for _, proc := range s.pipe.Processors() {
+				if closer, ok := proc.(Closer); ok {
+					func() {
+						defer func() { _ = recover() }()
+						_ = closer.Close()
+					}()
+				}
+			}
+		}()
+		closersFinished := false
+		if !timedOut {
+			select {
+			case <-closersDone:
+				closersFinished = true
+			case <-deadline.C:
+				timedOut = true
+			}
+		}
 
 		tasksDone := make(chan struct{})
 		go func() {
 			s.taskWg.Wait()
 			close(tasksDone)
 		}()
-
-		select {
-		case <-tasksDone:
-			// All tasks cleanly exited
-			if s.Err() != nil {
-				s.state.Store(int32(StateFailed))
-			} else {
-				s.state.Store(int32(StateStopped))
+		if !timedOut {
+			select {
+			case <-tasksDone:
+			case <-deadline.C:
+				timedOut = true
 			}
-		case <-teardownTimer.C:
-			// Leaked task detection
+		}
+
+		if timedOut {
 			rem := s.activeTasks.Load()
+			if !loopExited {
+				rem++ // the stuck run loop itself
+			} else if !closersFinished {
+				rem++ // a processor Close() that never returned
+			}
 			s.leakedTasks.Store(rem)
 			s.state.Store(int32(StateLeaked))
 			s.recordErr(fmt.Errorf("%w: %d background tasks failed to exit", ErrTeardownTimeout, rem))
+		} else if s.Err() != nil {
+			s.state.Store(int32(StateFailed))
+		} else {
+			s.state.Store(int32(StateStopped))
 		}
+
 		terminal := "session.end"
 		if s.Err() != nil {
 			terminal = "session.failure"
 		}
-		for _, span := range s.turnSpans {
-			if span != nil {
-				span.End(traceStatusError(s.Err(), "session_failure"))
+		// turnSpans and traceCtx are run-loop owned; read them only after the
+		// loop has exited. A wedged loop may still write them later.
+		traceCtx := s.traceRootCtx
+		if loopExited {
+			traceCtx = s.traceCtx
+			for _, span := range s.turnSpans {
+				if span != nil {
+					span.End(traceStatusError(s.Err(), "session_failure"))
+				}
 			}
 		}
-		terminalSpan := StartSpanSafe(s.traceCtx, s.tracer, NewTraceEvent(terminal, time.Now(), SessionID(strconv.FormatUint(s.id, 10)), "", Generation(s.CurrentGeneration()), s.tracePolicy, nil))
+		if traceCtx == nil {
+			traceCtx = s.ctx
+		}
+		terminalSpan := StartSpanSafe(traceCtx, s.tracer, NewTraceEvent(terminal, time.Now(), SessionID(strconv.FormatUint(s.id, 10)), "", Generation(s.CurrentGeneration()), s.tracePolicy, nil))
 		terminalSpan.End(traceStatusError(s.Err(), "session_failure"))
 		if s.sessionSpan != nil {
 			s.sessionSpan.End(traceStatusError(s.Err(), "session_failure"))
@@ -545,16 +624,13 @@ func (s *Session) Close() error {
 
 		close(s.stopped)
 	})
+	<-s.stopped
 	return s.Err()
 }
 
 // runLoop executes the sequential processing of envelopes on a single goroutine.
 func (s *Session) runLoop() {
 	defer close(s.runLoopDone)
-
-	// Watchdog ticker
-	watchdogTicker := time.NewTicker(200 * time.Millisecond)
-	defer watchdogTicker.Stop()
 
 	// Maximum session duration timer
 	var maxDurationCh <-chan time.Time
@@ -572,13 +648,6 @@ func (s *Session) runLoop() {
 		case <-maxDurationCh:
 			s.fail(fmt.Errorf("session reached maximum duration (%v)", s.budget.MaxSessionDuration))
 			return
-
-		case <-watchdogTicker.C:
-			start := s.procStart.Load()
-			if start > 0 && time.Since(time.Unix(0, start)) > s.budget.MaxFrameProcessing {
-				s.fail(ErrProcessorWatchdog)
-				return
-			}
 
 		case env := <-s.control:
 			if !s.processEnvelope(env) {
@@ -601,12 +670,6 @@ func (s *Session) runLoop() {
 			case <-maxDurationCh:
 				s.fail(fmt.Errorf("session reached maximum duration (%v)", s.budget.MaxSessionDuration))
 				return
-			case <-watchdogTicker.C:
-				start := s.procStart.Load()
-				if start > 0 && time.Since(time.Unix(0, start)) > s.budget.MaxFrameProcessing {
-					s.fail(ErrProcessorWatchdog)
-					return
-				}
 			}
 		}
 	}
