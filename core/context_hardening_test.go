@@ -258,6 +258,33 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	}
 }
 
+// failingEmitter fails pushes of one frame type.
+type failingEmitter struct {
+	on  FrameType
+	err error
+}
+
+func (e failingEmitter) Push(f Frame) error { return e.PushDirection(f, Downstream) }
+func (e failingEmitter) PushDirection(f Frame, _ Direction) error {
+	if f.Type() == e.on {
+		return e.err
+	}
+	return nil
+}
+
+func TestUserContextReturnsPushErrors(t *testing.T) {
+	p := NewUserContextProcessor(NewConversationContext(ContextConfig{}), UserContextConfig{})
+	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
+	want := errors.New("push failed")
+	for i, on := range []FrameType{FrameInterruption, FrameFinalTranscription} {
+		turn := string(rune('a' + i))
+		err := p.ProcessFrame(context.Background(), &FinalTranscriptionFrame{Text: turn, Turn: turn, Gen: 1, Committed: true, Timestamp: time.Now()}, Downstream, failingEmitter{on, want})
+		if !errors.Is(err, want) {
+			t.Fatalf("push of %v: err = %v", on, err)
+		}
+	}
+}
+
 func TestBargeInStillForwardsUserStartedSpeaking(t *testing.T) {
 	p := NewAssistantContextProcessor(NewConversationContext(ContextConfig{}), DefaultAssistantContextConfig())
 	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)

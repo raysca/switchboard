@@ -150,12 +150,16 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	// assistant ignores it when no reply is active.
 	gen := ft.Gen
 	if ft.Committed && p.session != nil {
-		_ = e.Push(&InterruptionFrame{Gen: p.session.CurrentGeneration()})
+		if err := e.Push(&InterruptionFrame{Gen: p.session.CurrentGeneration()}); err != nil {
+			return err
+		}
 		gen = p.session.CurrentGeneration() // advanced if a reply was interrupted
 	}
 
 	// Forward FinalTranscriptionFrame downstream toward transport/listeners
-	_ = e.PushDirection(f, dir)
+	if err := e.PushDirection(f, dir); err != nil {
+		return err
+	}
 
 	// Forward UserMessageFrame downstream toward LLM
 	return e.Push(&UserMessageFrame{
