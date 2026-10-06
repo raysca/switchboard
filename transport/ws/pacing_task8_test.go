@@ -296,16 +296,17 @@ func TestPacedWriterFlushPreservesOldUninterruptibleOrderAndFencesLateCompletion
 
 func TestPacedWriterRepeatedOverlappingFlushesAckOwnGenerationAndRecover(t *testing.T) {
 	writeStarted := make(chan struct{})
+	releaseWrite := make(chan struct{})
 	pacer := ws.NewPacedWriter(ws.PacerConfig{
-		MaxQueueDuration: time.Second, MaxQueueBytes: 8192, WriteTimeout: time.Second, AbortInProgressWrite: true,
+		MaxQueueDuration: time.Second, MaxQueueBytes: 8192, WriteTimeout: time.Second,
 	}, func(ctx context.Context, _ []byte) error {
 		select {
 		case <-writeStarted:
 		default:
 			close(writeStarted)
 		}
-		<-ctx.Done()
-		return ctx.Err()
+		<-releaseWrite
+		return nil
 	})
 	if err := pacer.Enqueue(outputFrame(1, 1, core.OutputInterruptible)); err != nil {
 		t.Fatal(err)
@@ -328,6 +329,7 @@ func TestPacedWriterRepeatedOverlappingFlushesAckOwnGenerationAndRecover(t *test
 		g := gen
 		pacer.BeginFlush(g, func(err error) { acks <- ack{g, err} })
 	}
+	close(releaseWrite) // the flushes wait for the started write to finish
 	seen := map[uint64]int{}
 	for i := 0; i < 3; i++ {
 		select {
