@@ -70,10 +70,4 @@ distinguish operational metadata from conversational content:
 
 ## Audio recording and capture sink (P1)
 
-Voice Framework V2 provides an application-extensible, provider-neutral audio capture processor (`core/audio/capture.go`):
-
-- **Explicit Opt-In Consent**: Audio capture requires explicit caller consent (`CaptureConfig.Consent = true`). If consent is false (the default), all audio is discarded immediately, incrementing `DroppedSamples()` without capturing any media.
-- **Zero Core Storage**: The framework does not persist audio to disk or database tables. All recorded chunks are handed off to an application-supplied `AudioSink` implementation (`WriteChunk`).
-- **Bounded Buffer & Non-Blocking**: Audio chunks are buffered through a bounded asynchronous channel. If the sink experiences slowdowns or backpressure, excess audio chunks are safely shed to protect pipeline responsiveness.
-- **Selective Capture Modes**: Applications can configure granular capture streams: `user_only`, `assistant_only`, `mixed`, or `separate_tracks`.
-- **Format Metadata Preservation**: Every captured chunk includes immutable sample metadata (encoding, sample rate, channels, duration, timestamp, turn ID, and generation) without leaking credentials or unrelated context.
+Removed. The `core/audio` capture processor had no production users and was deleted; the framework does not record call audio.

@@ -245,8 +245,95 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	if err := bounded.AddToolCall("t", 1, "one", "lookup", []byte(`{}`), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := bounded.AddToolCall("t", 1, "two", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrToolIdentityLimit) {
-		t.Fatalf("ledger bound = %v", err)
+	// The ledger is a FIFO window: a full ledger forgets the oldest call
+	// instead of failing every later tool call.
+	if err := bounded.AddToolCall("t", 1, "two", "lookup", []byte(`{}`), time.Now()); err != nil {
+		t.Fatalf("full ledger rejected new call: %v", err)
+	}
+	if err := bounded.AddToolResult("t", 1, "two", []byte(`{}`), "", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if len(bounded.toolLedger) != 1 || len(bounded.toolOrder) != 1 {
+		t.Fatalf("ledger not bounded: %d/%d", len(bounded.toolLedger), len(bounded.toolOrder))
+	}
+}
+
+func TestNewPipelineRejectsNilProcessor(t *testing.T) {
+	if _, err := NewPipeline(&ContextAggregator{}, nil); err == nil {
+		t.Fatal("nil processor accepted")
+	}
+}
+
+// failingEmitter fails pushes of one frame type.
+type failingEmitter struct {
+	on  FrameType
+	err error
+}
+
+func (e failingEmitter) Push(f Frame) error { return e.PushDirection(f, Downstream) }
+func (e failingEmitter) PushDirection(f Frame, _ Direction) error {
+	if f.Type() == e.on {
+		return e.err
+	}
+	return nil
+}
+
+func TestUserContextReturnsPushErrors(t *testing.T) {
+	p := NewUserContextProcessor(NewConversationContext(ContextConfig{}), UserContextConfig{})
+	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
+	want := errors.New("push failed")
+	for i, on := range []FrameType{FrameInterruption, FrameFinalTranscription} {
+		turn := string(rune('a' + i))
+		err := p.ProcessFrame(context.Background(), &FinalTranscriptionFrame{Text: turn, Turn: turn, Gen: 1, Committed: true, Timestamp: time.Now()}, Downstream, failingEmitter{on, want})
+		if !errors.Is(err, want) {
+			t.Fatalf("push of %v: err = %v", on, err)
+		}
+	}
+}
+
+func TestBargeInStillForwardsUserStartedSpeaking(t *testing.T) {
+	p := NewAssistantContextProcessor(NewConversationContext(ContextConfig{}), DefaultAssistantContextConfig())
+	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
+	e := &captureEmitter{}
+	_ = p.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "a", Gen: 1}, Downstream, e)
+	speech := &UserStartedSpeakingFrame{Gen: 1}
+	if err := p.ProcessFrame(context.Background(), speech, Downstream, e); err != nil {
+		t.Fatal(err)
+	}
+	if p.InterruptionCount.Load() != 1 || e.frames[len(e.frames)-1] != Frame(speech) {
+		t.Fatalf("interruptions=%d frames=%#v", p.InterruptionCount.Load(), e.frames)
+	}
+}
+
+func TestFlushLateAckDoesNotSilenceNextBarrier(t *testing.T) {
+	p := NewAssistantContextProcessor(NewConversationContext(ContextConfig{}), AssistantContextConfig{FlushTimeout: 20 * time.Millisecond})
+	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
+	e := &captureEmitter{}
+	bargeIn := func(turn string, gen uint64) {
+		_ = p.ProcessFrame(context.Background(), &UserMessageFrame{Turn: turn, Gen: gen}, Downstream, e)
+		_ = p.ProcessFrame(context.Background(), &InterruptionFrame{}, Downstream, e)
+	}
+	bargeIn("a", 1)
+	time.Sleep(60 * time.Millisecond)
+	// The ack for barrier 1 arrives after it already timed out.
+	_ = p.ProcessFrame(context.Background(), &FlushProcessedFrame{Gen: 1}, Upstream, e)
+	bargeIn("b", 2)
+	time.Sleep(60 * time.Millisecond)
+	if got := p.FlushTimeouts.Load(); got != 2 {
+		t.Fatalf("flush timeouts = %d, want 2 (late ack silenced the next barrier)", got)
+	}
+}
+
+func TestContextEvictsUnansweredTurns(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 3})
+	for _, turn := range []string{"t0", "t1", "t2", "t3", "t4", "t5"} {
+		// Interrupted or failed turns never get an assistant reply.
+		if err := ctx.AddMessage(Message{Role: RoleUser, Content: "hi", TurnID: turn}); err != nil {
+			t.Fatalf("turn %s: %v", turn, err)
+		}
+	}
+	if got := ctx.Messages(); len(got) != 3 || got[2].TurnID != "t5" {
+		t.Fatalf("messages = %#v", got)
 	}
 }
 
@@ -273,11 +360,10 @@ func TestContextToolResultTransactionRejectsSelfEviction(t *testing.T) {
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "two", TurnID: "t2"})
 	before := ctx.Messages()
 	beforeEvictions := ctx.EvictionCount()
-	beforePairs := ctx.EvictedTurnPairs()
 	if err := ctx.AddToolResultStatus("t1", 1, "c", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
 		t.Fatalf("self-evicted result = %v", err)
 	}
-	if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions || !reflect.DeepEqual(ctx.EvictedTurnPairs(), beforePairs) {
+	if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions {
 		t.Fatal("self-evicted result transaction was not rolled back")
 	}
 	// The failed first result must not become an accepted completed replay.
@@ -299,12 +385,11 @@ func TestContextToolCallTransactionRejectsSelfEviction(t *testing.T) {
 	}
 	before := ctx.Messages()
 	beforeEvictions := ctx.EvictionCount()
-	beforePairs := ctx.EvictedTurnPairs()
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
 			t.Fatalf("self-evicted call attempt %d = %v", attempt, err)
 		}
-		if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions || !reflect.DeepEqual(ctx.EvictedTurnPairs(), beforePairs) {
+		if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions {
 			t.Fatalf("self-evicted call attempt %d changed context or eviction accounting", attempt)
 		}
 	}
@@ -432,7 +517,7 @@ func TestContextFailedBudgetTransactionRestoresEvictionAccounting(t *testing.T) 
 		if !errors.Is(err, ErrContextLimitExceeded) {
 			t.Fatalf("attempt %d = %v", i, err)
 		}
-		if ctx.EvictionCount() != 0 || len(ctx.EvictedTurnPairs()) != 0 || len(ctx.Messages()) != len(before) {
+		if ctx.EvictionCount() != 0 || len(ctx.Messages()) != len(before) {
 			t.Fatal("failed transaction leaked eviction state")
 		}
 	}
@@ -451,7 +536,7 @@ func TestContextFailedSystemReplacementRestoresEvictionAccounting(t *testing.T) 
 		if err := ctx.SetSystemInstructionChecked("this replacement system instruction cannot fit even after the older completed turn is tentatively evicted", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
 			t.Fatalf("replacement = %v", err)
 		}
-		if ctx.EvictionCount() != 0 || len(ctx.EvictedTurnPairs()) != 0 {
+		if ctx.EvictionCount() != 0 {
 			t.Fatal("failed system transaction leaked eviction state")
 		}
 		if after := ctx.Messages(); !reflect.DeepEqual(after, before) {

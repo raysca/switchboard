@@ -30,7 +30,6 @@ type UserContextProcessor struct {
 	turnCounter        uint64
 	lastFinalTurn      string
 	lastFinalText      string
-	lastFinalGen       uint64
 	committedTurns     map[committedTurnKey]struct{}
 	committedOrder     []committedTurnKey // ring of committedTurns keys, oldest at committedNext
 	committedNext      int
@@ -140,7 +139,6 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	}
 	p.lastFinalTurn = turnID
 	p.lastFinalText = ft.Text
-	p.lastFinalGen = ft.Gen
 
 	p.TurnsCreated.Add(1)
 
@@ -150,12 +148,16 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	// assistant ignores it when no reply is active.
 	gen := ft.Gen
 	if ft.Committed && p.session != nil {
-		_ = e.Push(&InterruptionFrame{Gen: p.session.CurrentGeneration()})
+		if err := e.Push(&InterruptionFrame{Gen: p.session.CurrentGeneration()}); err != nil {
+			return err
+		}
 		gen = p.session.CurrentGeneration() // advanced if a reply was interrupted
 	}
 
 	// Forward FinalTranscriptionFrame downstream toward transport/listeners
-	_ = e.PushDirection(f, dir)
+	if err := e.PushDirection(f, dir); err != nil {
+		return err
+	}
 
 	// Forward UserMessageFrame downstream toward LLM
 	return e.Push(&UserMessageFrame{

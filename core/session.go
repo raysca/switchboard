@@ -86,9 +86,6 @@ type Session struct {
 	admissionMu    sync.Mutex
 	admissionMuted bool
 
-	settingsMu sync.RWMutex
-	settings   RuntimeSettings
-
 	// Concurrency & Supervisor
 	taskWg      sync.WaitGroup
 	activeTasks atomic.Int32
@@ -113,24 +110,20 @@ type Session struct {
 	OnFrame    func(Frame, Direction)
 
 	// Metrics
-	FramesIn       atomic.Uint64
-	FramesOut      atomic.Uint64
 	StaleDiscarded atomic.Uint64
 	AudioDropped   atomic.Uint64
 	Created        time.Time
 
-	tracer             Tracer
-	tracePolicy        TracePolicy
-	traceCtx           context.Context // run-loop owned after Start
-	traceRootCtx       context.Context // immutable session parent for external async boundaries
-	sessionSpan        Span
-	traceQueue         *AsyncTracer
-	ownsTraceQueue     bool
-	tracing            bool
-	turnSpans          map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
-	traceOrigins       map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
-	disabledProcessors map[int]bool                    // run-loop owned; processors disabled via PolicyDisable
-	observers          []Observer                      // immutable observers configured before Start
+	tracer         Tracer
+	tracePolicy    TracePolicy
+	traceCtx       context.Context // run-loop owned after Start
+	traceRootCtx   context.Context // immutable session parent for external async boundaries
+	sessionSpan    Span
+	traceQueue     *AsyncTracer
+	ownsTraceQueue bool
+	tracing        bool
+	turnSpans      map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
+	traceOrigins   map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
 }
 
 // A Frame interface can contain a non-comparable concrete value. The two
@@ -153,19 +146,17 @@ func NewSession(id uint64, pipeline *Pipeline, budget ResourceBudget) (*Session,
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Session{
-		id:                 id,
-		budget:             budget,
-		pipe:               pipeline,
-		ctx:                ctx,
-		cancel:             cancel,
-		control:            make(chan Envelope, budget.MaxControlFrames),
-		data:               make(chan Envelope, budget.MaxQueuedFrames),
-		runLoopDone:        make(chan struct{}),
-		ready:              make(chan struct{}),
-		stopped:            make(chan struct{}),
-		Created:            time.Now(),
-		settings:           DefaultRuntimeSettings(),
-		disabledProcessors: make(map[int]bool),
+		id:          id,
+		budget:      budget,
+		pipe:        pipeline,
+		ctx:         ctx,
+		cancel:      cancel,
+		control:     make(chan Envelope, budget.MaxControlFrames),
+		data:        make(chan Envelope, budget.MaxQueuedFrames),
+		runLoopDone: make(chan struct{}),
+		ready:       make(chan struct{}),
+		stopped:     make(chan struct{}),
+		Created:     time.Now(),
 	}
 
 	s.state.Store(int32(StateStarting))
@@ -188,19 +179,6 @@ func (s *Session) SetTracer(tracer Tracer, policy TracePolicy) error {
 	}
 	s.tracer = tracer
 	s.tracePolicy = policy
-	return nil
-}
-
-// AddObserver registers a non-mutating observer before session start.
-func (s *Session) AddObserver(o Observer) error {
-	s.admissionMu.Lock()
-	defer s.admissionMu.Unlock()
-	if s.State() != StateStarting {
-		return errors.New("core: observers must be configured before session start")
-	}
-	if o != nil {
-		s.observers = append(s.observers, o)
-	}
 	return nil
 }
 
@@ -233,13 +211,6 @@ func (s *Session) IncrementGeneration() uint64 {
 }
 
 func (s *Session) InputMuted() bool { return s.inputMuted.Load() }
-
-// RuntimeSettings returns an immutable copy of the active runtime service settings.
-func (s *Session) RuntimeSettings() RuntimeSettings {
-	s.settingsMu.RLock()
-	defer s.settingsMu.RUnlock()
-	return s.settings
-}
 
 // Err returns the terminal error of the session, if any.
 func (s *Session) Err() error {
@@ -352,7 +323,6 @@ func (s *Session) RootTraceContext() context.Context {
 
 // Post queues an incoming frame to the session run loop from outside the pipeline.
 func (s *Session) Post(f Frame) error {
-	s.FramesIn.Add(1)
 	return s.admit(f, Downstream, 0, 0)
 }
 
@@ -701,45 +671,6 @@ func (s *Session) processEnvelope(env Envelope) bool {
 		s.inputMuted.Store(false)
 		env.Frame = &InputMutedStateFrame{Muted: false}
 	}
-	if env.Frame.Type() == FrameSettingsControl {
-		if update, ok := env.Frame.(*RuntimeSettingsUpdate); ok {
-			if err := update.Validate(); err != nil {
-				env.Frame = &RuntimeSettingsErrorEvent{Revision: update.Revision, Err: ErrInvalidRuntimeSettings}
-			} else {
-				s.settingsMu.Lock()
-				if update.Revision <= s.settings.Revision {
-					s.settingsMu.Unlock()
-					env.Frame = &RuntimeSettingsErrorEvent{Revision: update.Revision, Err: ErrStaleSettingsRevision}
-				} else {
-					// Apply atomically all-or-nothing
-					newSettings := s.settings
-					newSettings.Revision = update.Revision
-					if update.InputMuted != nil {
-						newSettings.InputMuted = *update.InputMuted
-						s.inputMuted.Store(*update.InputMuted)
-						s.admissionMu.Lock()
-						s.admissionMuted = *update.InputMuted
-						s.admissionMu.Unlock()
-					}
-					if update.InterruptionEnabled != nil {
-						newSettings.InterruptionEnabled = *update.InterruptionEnabled
-					}
-					if update.SilenceTimeout != nil {
-						newSettings.SilenceTimeout = *update.SilenceTimeout
-					}
-					if update.TurnTimeout != nil {
-						newSettings.TurnTimeout = *update.TurnTimeout
-					}
-					if update.Language != nil {
-						newSettings.Language = *update.Language
-					}
-					s.settings = newSettings
-					s.settingsMu.Unlock()
-					env.Frame = &RuntimeSettingsAppliedEvent{Revision: update.Revision, Settings: newSettings}
-				}
-			}
-		}
-	}
 	if env.CommittedFlush {
 		env.Frame = &FlushFrame{Gen: env.Gen, committed: true}
 	}
@@ -853,7 +784,6 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 	switch {
 	case to >= s.pipe.Len():
 		// Reached downstream edge
-		s.FramesOut.Add(1)
 		if s.OnOutput != nil {
 			s.OnOutput(f)
 		}
@@ -867,37 +797,7 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 		return nil
 
 	default:
-		// If processor was previously disabled by PolicyDisable, bypass it and continue in direction
-		if s.disabledProcessors != nil && s.disabledProcessors[to] {
-			if dir == Downstream {
-				return s.deliver(f, dir, to+1)
-			}
-			return s.deliver(f, dir, to-1)
-		}
-
 		proc := s.pipe.At(to)
-		policy := PolicyFailSession
-		if pp, ok := proc.(FailurePolicyProvider); ok {
-			policy = pp.FailurePolicy()
-		}
-
-		// Dispatch to non-mutating observers with panic isolation
-		if len(s.observers) > 0 {
-			component := reflect.TypeOf(proc).String()
-			obsEv := NewObserverEvent("pipeline.deliver", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), traceTurnID(f), traceGeneration(f), f.Type(), dir, component, to, map[string]any{
-				"component": component,
-				"frame":     frameTraceLabel(f.Type()),
-				"direction": dir.String(),
-			})
-			for _, obs := range s.observers {
-				func(o Observer) {
-					defer func() {
-						_ = recover() // Isolate observer panic from session execution
-					}()
-					o.Observe(obsEv)
-				}(obs)
-			}
-		}
 
 		invokeProc := func() error {
 			if !s.tracing {
@@ -928,60 +828,7 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 			return pErr
 		}
 
-		initialEmits := s.emitsCount
-		err := invokeProc()
-		if err == nil {
-			return nil
-		}
-
-		// Error occurred during processor execution. Dispatch according to FailurePolicy.
-		switch policy {
-		case PolicySafeRetry:
-			// If output was already emitted during this attempt, retrying could duplicate side effects.
-			if s.emitsCount > initialEmits {
-				return fmt.Errorf("%w: %v", ErrRetryUnsafe, err)
-			}
-			// Attempt retry once
-			err = invokeProc()
-			if err == nil {
-				return nil
-			}
-			// Retry failed; fall back to session failure
-			return err
-
-		case PolicyDisable:
-			if s.disabledProcessors == nil {
-				s.disabledProcessors = make(map[int]bool)
-			}
-			s.disabledProcessors[to] = true
-			// Emit non-fatal error frame downstream/output
-			nonFatal := &ErrorFrame{Err: err, Fatal: false}
-			if s.OnOutput != nil {
-				s.OnOutput(nonFatal)
-			}
-			// Forward original frame downstream (or upstream depending on direction)
-			if dir == Downstream {
-				return s.deliver(f, dir, to+1)
-			}
-			return s.deliver(f, dir, to-1)
-
-		case PolicyDegrade:
-			// Emit non-fatal error frame downstream/output
-			nonFatal := &ErrorFrame{Err: err, Fatal: false}
-			if s.OnOutput != nil {
-				s.OnOutput(nonFatal)
-			}
-			// Temporarily bypass this processor for this frame; processor remains enabled for future frames
-			if dir == Downstream {
-				return s.deliver(f, dir, to+1)
-			}
-			return s.deliver(f, dir, to-1)
-
-		case PolicyFailSession:
-			fallthrough
-		default:
-			return err
-		}
+		return invokeProc()
 	}
 }
 
@@ -1102,12 +949,6 @@ func frameTrace(f Frame) (string, map[string]any) {
 			attrs["usage.requests"] = *v.Requests
 		}
 		return "usage.metrics", attrs
-	case *PlaybackStateFrame:
-		attrs["state"] = string(v.State)
-		if v.UnitID > 0 {
-			attrs["unit_id"] = v.UnitID
-		}
-		return "playback.state", attrs
 	}
 	return "frame." + frameTraceLabel(f.Type()), attrs
 }
@@ -1171,8 +1012,6 @@ func traceTurnID(f Frame) TurnID {
 		return v.Turn
 	case *UsageMetricsFrame:
 		return TurnID(v.Turn)
-	case *PlaybackStateFrame:
-		return TurnID(v.Turn)
 	}
 	return ""
 }
@@ -1212,12 +1051,6 @@ func frameTraceLabel(frame FrameType) string {
 		return "tool_result"
 	case FrameUsageMetrics:
 		return "usage_metrics"
-	case FramePlaybackState:
-		return "playback_state"
-	case FrameDTMF:
-		return "dtmf"
-	case FrameTone:
-		return "tone"
 	default:
 		return strconv.Itoa(int(frame))
 	}
@@ -1329,21 +1162,7 @@ func isControlFrame(f Frame) bool {
 		return false
 	}
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsUrgentControl reports whether a frame belongs to the P1 priority control lane
-// (cancel, interruption, flush, end, and critical error).
-func IsUrgentControl(f Frame) bool {
-	if f == nil {
-		return false
-	}
-	switch f.Type() {
-	case FrameCancel, FrameInterruption, FrameFlush, FrameEnd, FrameError:
+	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
 		return true
 	default:
 		return false
@@ -1352,7 +1171,7 @@ func IsUrgentControl(f Frame) bool {
 
 func isFenceSurvivingControl(f Frame) bool {
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState, FrameSettingsControl:
+	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
 		return true
 	}
 	return false

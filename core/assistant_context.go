@@ -43,16 +43,14 @@ type AssistantContextProcessor struct {
 	finalUnitID     uint64 // 0 until final unit is emitted
 	finalSignalSent bool
 	llmComplete     bool // true once complete LLMText has been received
-	ttsStopped      bool
 	pendingUnits    map[uint64]string
 	deliveredUnits  map[uint64]string
 
 	// Flush barrier coordination
-	flushAckCh        chan uint64
 	pendingFlushGen   atomic.Uint64
+	ackedFlushGen     atomic.Uint64
 	FlushAcks         atomic.Uint64
 	FlushTimeouts     atomic.Uint64
-	Degraded          atomic.Uint64
 	InterruptionCount atomic.Uint64
 }
 
@@ -73,7 +71,6 @@ func NewAssistantContextProcessor(ctxPool *ConversationContext, cfg AssistantCon
 		cfg:            cfg,
 		pendingUnits:   make(map[uint64]string),
 		deliveredUnits: make(map[uint64]string),
-		flushAckCh:     make(chan uint64, 8),
 	}
 }
 
@@ -101,7 +98,6 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		p.finalUnitID = 0
 		p.finalSignalSent = false
 		p.llmComplete = false
-		p.ttsStopped = false
 		p.pendingUnits = make(map[uint64]string)
 		p.deliveredUnits = make(map[uint64]string)
 		return e.PushDirection(f, dir)
@@ -132,17 +128,6 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		}
 		return p.segmentBuffer(e, true)
 
-	case FrameTTSStopped:
-		ts := f.(*TTSStoppedFrame)
-		if p.isStaleTurn(ts.Turn, ts.Gen) {
-			return nil
-		}
-		p.ttsStopped = true
-		if p.llmComplete && p.finalUnitID > 0 && p.allPendingDelivered() {
-			return p.commitTurn(e, false)
-		}
-		return e.PushDirection(f, dir)
-
 	case FrameWriteCompletion:
 		wc := f.(*WriteCompletionFrame)
 		if p.isStaleTurn(wc.Turn, wc.Gen) {
@@ -164,9 +149,13 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		return nil
 
 	case FrameUserStartedSpeaking:
-		// If assistant is active (generating or playing audio), user speech triggers barge-in
+		// If assistant is active (generating or playing audio), user speech
+		// triggers barge-in. The speech event still reaches the transport after
+		// the barrier so the client sees user-started-speaking.
 		if p.activeTurn != "" {
-			return p.handleInterruption(e)
+			if err := p.handleInterruption(e); err != nil {
+				return err
+			}
 		}
 		return e.PushDirection(f, dir)
 
@@ -188,10 +177,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		fp := f.(*FlushProcessedFrame)
 		if p.pendingFlushGen.Load() == fp.Gen {
 			p.FlushAcks.Add(1)
-			select {
-			case p.flushAckCh <- fp.Gen:
-			default:
-			}
+			p.ackedFlushGen.Store(fp.Gen)
 		}
 		return e.PushDirection(f, dir)
 
@@ -487,7 +473,6 @@ func (p *AssistantContextProcessor) resetTurn() {
 	p.finalUnitID = 0
 	p.finalSignalSent = false
 	p.llmComplete = false
-	p.ttsStopped = false
 	p.pendingUnits = make(map[uint64]string)
 	p.deliveredUnits = make(map[uint64]string)
 }
@@ -498,17 +483,12 @@ func (p *AssistantContextProcessor) startFlushBarrierTimeout(gen uint64) {
 		defer timer.Stop()
 
 		select {
-		case ackGen := <-p.flushAckCh:
-			if ackGen == gen {
-				// Flush barrier acknowledged in time
-				return
-			}
 		case <-timer.C:
-			if p.pendingFlushGen.Load() != gen {
+			// Acknowledged in time, or superseded by a newer barrier.
+			if p.ackedFlushGen.Load() == gen || p.pendingFlushGen.Load() != gen {
 				return
 			}
 			p.FlushTimeouts.Add(1)
-			p.Degraded.Add(1)
 			// Non-fatal, generation 0 so the fence does not drop the degradation.
 			_ = p.session.Reenter(&ErrorFrame{
 				Err:   fmt.Errorf("flush barrier timed out for generation %d; session degraded", gen),

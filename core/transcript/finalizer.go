@@ -23,7 +23,7 @@ var (
 	ErrInvalidText         = errors.New("transcript: text must be valid UTF-8 and non-empty")
 	ErrTextTooLong         = errors.New("transcript: text exceeds configured byte limit")
 	ErrInvalidStability    = errors.New("transcript: stability must be finite and in [0,1]")
-	ErrRetiredTurnLimit    = errors.New("transcript: bounded turn retirement limit reached")
+	ErrRetiredTurnLimit    = errors.New("transcript: pending turn limit reached")
 )
 
 // Config bounds transcript state and defines deterministic release/commit policy.
@@ -120,6 +120,9 @@ type Finalizer struct {
 	lastAt     time.Time
 	turns      map[turnKey]*turnState
 	retired    map[turnKey]struct{}
+	// retiredOrder is a FIFO of retired keys; only the newest MaxRetiredTurns
+	// are remembered, so a long generation never hits a turn limit.
+	retiredOrder []turnKey
 }
 
 func NewFinalizer(cfg Config) (*Finalizer, error) {
@@ -166,7 +169,7 @@ func (f *Finalizer) Observe(candidate Candidate) ([]Output, error) {
 			f.lastAt = candidate.At
 			return f.expireDueLocked(candidate.At), nil
 		}
-		if f.turns[key] == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
+		if f.turns[key] == nil && len(f.turns) >= f.cfg.MaxRetiredTurns {
 			return nil, ErrRetiredTurnLimit
 		}
 	}
@@ -250,7 +253,7 @@ func (f *Finalizer) Complete(turn core.TurnID, generation core.Generation, at ti
 			f.lastAt = at
 			return f.expireDueLocked(at), nil
 		}
-		if f.turns[key] == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
+		if f.turns[key] == nil && len(f.turns) >= f.cfg.MaxRetiredTurns {
 			return nil, ErrRetiredTurnLimit
 		}
 	}
@@ -345,13 +348,12 @@ func (f *Finalizer) Interrupt(turn core.TurnID, generation core.Generation, at t
 			f.lastAt = at
 			return nil
 		}
-		if f.turns[key] == nil && len(f.turns)+len(f.retired) >= f.cfg.MaxRetiredTurns {
+		if f.turns[key] == nil && len(f.turns) >= f.cfg.MaxRetiredTurns {
 			return ErrRetiredTurnLimit
 		}
 	}
 	f.commitIdentityTimeLocked(generation, at)
-	delete(f.turns, key)
-	f.retired[key] = struct{}{}
+	f.retireKeyLocked(key)
 	return nil
 }
 
@@ -366,8 +368,7 @@ func (f *Finalizer) InvalidateAll(at time.Time) error {
 	}
 	f.lastAt = at
 	for key := range f.turns {
-		delete(f.turns, key)
-		f.retired[key] = struct{}{}
+		f.retireKeyLocked(key)
 	}
 	return nil
 }
@@ -377,6 +378,7 @@ func (f *Finalizer) commitIdentityTimeLocked(generation core.Generation, at time
 		f.generation = generation
 		clear(f.turns)
 		clear(f.retired)
+		f.retiredOrder = f.retiredOrder[:0]
 	}
 	f.lastAt = at
 }
@@ -405,9 +407,25 @@ func (f *Finalizer) normalizeText(text string) (string, error) {
 	return strings.Clone(text), nil
 }
 
-func (f *Finalizer) retireLocked(key turnKey, state *turnState, at time.Time) []Output {
+// retireKeyLocked drops a pending turn and remembers it as retired, evicting the
+// oldest remembered key once the window is full.
+// ponytail: a re-delivery older than the window would start a fresh turn; the
+// stale-generation check drops it once the call has moved on.
+func (f *Finalizer) retireKeyLocked(key turnKey) {
 	delete(f.turns, key)
+	if _, ok := f.retired[key]; ok {
+		return
+	}
+	if len(f.retiredOrder) >= f.cfg.MaxRetiredTurns {
+		delete(f.retired, f.retiredOrder[0])
+		f.retiredOrder = f.retiredOrder[1:]
+	}
 	f.retired[key] = struct{}{}
+	f.retiredOrder = append(f.retiredOrder, key)
+}
+
+func (f *Finalizer) retireLocked(key turnKey, state *turnState, at time.Time) []Output {
+	f.retireKeyLocked(key)
 	if state == nil || !state.hasCandidate {
 		return nil
 	}

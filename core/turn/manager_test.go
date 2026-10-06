@@ -63,9 +63,6 @@ func TestTurnManagerRejectsInvalidConfig(t *testing.T) {
 	if _, err := NewManager(cfg, SilenceDetector{}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("zero retired-turn capacity: got %v", err)
 	}
-	if _, err := NewHybridDetector(SilenceDetector{}, time.Second, math.NaN()); !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("NaN semantic threshold: got %v", err)
-	}
 }
 
 func TestNoSpeechTimeoutResetsOnActivity(t *testing.T) {
@@ -861,79 +858,6 @@ func TestTurnManagerConcurrentCompletionIsOneShot(t *testing.T) {
 	}
 	if completed != 1 {
 		t.Fatalf("concurrent advances emitted %d completions, want one", completed)
-	}
-}
-
-func TestHybridDetectorEarlyCompletionAndSafeSilenceFallback(t *testing.T) {
-	hybrid, err := NewHybridDetector(SilenceDetector{}, 300*time.Millisecond, 0.8)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := manager(t, hybrid)
-	_, _ = m.Observe(observation(t0, "semantic", 1, true))
-	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
-	ended := observation(t0.Add(time.Second), "semantic", 1, false)
-	_, _ = m.Observe(ended)
-	ended.Semantic = &SemanticEvidence{TurnID: "semantic", Generation: 1, At: t0.Add(1100 * time.Millisecond), Confidence: 0.95}
-	_, _ = m.Observe(ended)
-	frames, err := m.Advance(t0.Add(1400 * time.Millisecond))
-	events := eventFrames(frames)
-	completed := findEvent(events, core.TurnEventCompleted)
-	if err != nil || completed == nil || completed.Reason != core.TurnReasonSemantic || !completed.HasConfidence || completed.Confidence != 0.95 {
-		t.Fatalf("valid semantic evidence should complete early: events=%+v err=%v", events, err)
-	}
-
-	fallback := manager(t, hybrid)
-	_, _ = fallback.Observe(observation(t0, "fallback", 1, true))
-	_, _ = fallback.Advance(t0.Add(250 * time.Millisecond))
-	_, _ = fallback.Observe(observation(t0.Add(time.Second), "fallback", 1, false))
-	_, _ = fallback.Observe(Observation{At: t0.Add(1100 * time.Millisecond), TurnID: "fallback", Generation: 1, Semantic: &SemanticEvidence{TurnID: "fallback", Generation: 9, At: t0.Add(1100 * time.Millisecond), Confidence: 0.99}})
-	frames, err = fallback.Advance(t0.Add(2200 * time.Millisecond))
-	events = eventFrames(frames)
-	completed = findEvent(events, core.TurnEventCompleted)
-	if err != nil || completed == nil || completed.Reason != core.TurnReasonSilence || completed.HasConfidence {
-		t.Fatalf("stale semantic evidence must safely fall back to silence: events=%+v err=%v", events, err)
-	}
-}
-
-func TestHybridDetectorRejectsUnavailableInvalidStaleAndLowConfidenceEvidence(t *testing.T) {
-	detector, err := NewHybridDetector(SilenceDetector{}, 300*time.Millisecond, 0.8)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := t0.Add(2 * time.Second)
-	base := DetectionInput{
-		At: now, TurnStartedAt: t0, TurnID: "turn", Generation: 4,
-		SilenceFor: 500 * time.Millisecond, SilenceAfter: time.Second, SemanticMaxAge: time.Second,
-	}
-	evidence := func(id core.TurnID, gen core.Generation, at time.Time, confidence float64) *SemanticEvidence {
-		return &SemanticEvidence{TurnID: id, Generation: gen, At: at, Confidence: confidence}
-	}
-	cases := []struct {
-		name string
-		item *SemanticEvidence
-	}{
-		{name: "unavailable"},
-		{name: "wrong turn", item: evidence("other", 4, now, 0.99)},
-		{name: "stale generation", item: evidence("turn", 3, now, 0.99)},
-		{name: "future timestamp", item: evidence("turn", 4, now.Add(time.Nanosecond), 0.99)},
-		{name: "expired", item: evidence("turn", 4, now.Add(-2*time.Second), 0.99)},
-		{name: "low confidence", item: evidence("turn", 4, now, 0.79)},
-		{name: "invalid confidence", item: evidence("turn", 4, now, math.NaN())},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			input := base
-			input.Semantic = tc.item
-			if decision, done := detector.Detect(input); done {
-				t.Fatalf("invalid evidence completed early: %+v", decision)
-			}
-		})
-	}
-	base.Semantic, base.SilenceFor = nil, time.Second
-	decision, done := detector.Detect(base)
-	if !done || decision.Reason != core.TurnReasonSilence || decision.HasConfidence {
-		t.Fatalf("all unavailable/invalid evidence must preserve silence fallback: %+v done=%v", decision, done)
 	}
 }
 

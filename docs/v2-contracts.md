@@ -36,7 +36,7 @@ Task 2 adds `TurnLifecycle` as the one-shot start/complete/interruption state pr
 
 **Implementation Note (Task 30 — Urgent Control Lane)**
 
-`Session` provides a dedicated priority control lane for urgent lifecycle and barrier controls (`CancelFrame`, `InterruptionFrame`, `FlushFrame`, `EndFrame`, and critical `ErrorFrame`), classified via `core.IsUrgentControl(f)`.
+`Session` provides a dedicated priority control lane for urgent lifecycle and barrier controls (`CancelFrame`, `InterruptionFrame`, `FlushFrame`, `EndFrame`, and critical `ErrorFrame`).
 - **Media Congestion Bypass**: Urgent control envelopes jump ahead of queued data/audio frames, delivering immediately to pipeline processors even when the data buffer is saturated.
 - **Strict FIFO Control Order**: Multiple urgent controls maintain exact enqueue order among themselves.
 - **Starvation Resistance**: The scheduler fair-checks both control and data queues, preventing media starvation while guaranteeing zero-delay control responsiveness.
@@ -117,92 +117,33 @@ Committed user text enters through `UserContextProcessor`. Assistant text is
 committed exactly once only after every synthesis unit in the whole turn has a
 successful final write acknowledgement. Cancellation drops undelivered text.
 Interruption commits only the contiguous, fully delivered prefix as partial;
-late or stale generation work cannot extend it. Tool-call assistant messages do
-not by themselves mark a conversational turn complete for eviction.
+late or stale generation work cannot extend it.
 
 Budget enforcement preserves system instructions and the active user turn,
-evicts only the oldest complete turn, and rolls back additions that cannot fit.
+evicts the oldest other turn whole (answered or not, with its tool calls and
+results), and rolls back additions that cannot fit. The tool replay ledger
+remembers the most recent `MaxToolIdentities` calls (FIFO).
 Rollback includes eviction counters and history, so failed mutations leave no
 phantom accounting. A context-budget failure during interrupted partial commit
 is returned and no assistant commit frame is emitted.
 
-**Implementation Note (Task 28 — Context Compaction Hook)**
-
-`core.ConversationContext` provides an application-extensible, provider-neutral compaction hook boundary via `CompactionHook` / `CompactionHookFunc` and `cc.SetCompactionHook(hook)`.
-- **Atomic Execution & Failure Isolation**: `cc.Compact(ctx)` captures an immutable snapshot of messages and invokes the hook. If the hook returns `applied=false` (declining compaction) or returns an error, the context remains completely untouched and immediately usable for subsequent turns.
-- **System Instruction Preservation**: Any compaction result must preserve the original system instruction at index 0. Results omitting or mutating system prompt fail with `ErrInvalidCompaction` and roll back.
-- **Tool Ledger Retention**: Tool replay ledgers and idempotency tracking are maintained through compaction, ensuring tool call identification and conflict detection remain valid across summarized histories.
-- **Budget Bound Enforcement**: The compacted message list is strictly validated against `MaxMessages` and `MaxTokens`. Results exceeding limits fail closed without partial application.
+The context compaction hook (`CompactionHook`, `Compact`) was removed: it had no production users.
 
 ### 2.5 Observer and semantic debug events
 
-`core.Observer` is a non-mutating observation boundary. Its immutable event values describe frame kind, direction, processor identity/index, session/turn/generation correlation, and monotonic timing/lifecycle. Observer APIs do not grant a mutable frame pointer or a callback that can replace, drop, reorder, or inject frames. Callbacks run in event order and must return promptly; observer failures are isolated from session execution and counted/reported through a safe diagnostic hook.
-
-The framework emits protocol-neutral `DebugEvent` values for session/pipeline lifecycle, frame flow, speech/transcription, LLM/TTS lifecycle, interruption/flush, tool call/result, provider readiness/error, and teardown. An adapter maps these semantic values to Whisker-compatible messages. A `Serializer` owns conversion between semantic events/frames and a wire representation; it is not a pipeline processor and does not choose product persistence. RTVI serialization remains its separate client-facing compatibility surface.
-
-Task 1 defines `Observer`, `ObserverEvent`, and `DebugEvent` value surfaces. Their constructors filter and copy attributes, including approved structured numeric/boolean metadata, and their accessors return deep copies. Observer values contain a frame kind rather than a frame pointer. `DebugEvent` has explicit scalar `PipelineID`, `Processor`, `ProcessorIndex`, `FrameKind`, `Direction`, `Sequence`, and `ToolCallID` fields alongside session/turn/generation correlation, so a later adapter can distinguish frame flow and concurrent tool calls without parsing attributes. Delivery, panic isolation, protocol adapters, and general `Serializer` behavior remain assigned to later tasks.
-
-**Acceptance criteria**
-
-- Observer delivery cannot mutate frame flow and an observer panic/error does not fail the session.
-- Event order, direction, correlation IDs, processor position, and lifecycle boundaries are testable.
-- A semantic event can be serialized for a selected debug protocol without adding Whisker-specific types to core processors.
-- RTVI and Whisker conformance results are recorded independently.
+The framework keeps the protocol-neutral `DebugEvent` value (copied, filtered attributes; session/turn/generation correlation), which `tools/compat/whisker` adapts to Whisker-compatible messages. The `Observer`/`ObserverEvent` delivery API and the `Serializer` abstraction were removed: they had no production users.
 
 ### 2.6 Runtime settings updates
 
-Runtime changes enter a session through a typed `RuntimeSettingsUpdate` control message. The update includes a monotonic revision and a typed set of supported values, is validated as a complete unit, and takes effect at a documented control boundary. An invalid update is rejected without partially changing processor state. Arbitrary mutation of processor internals is not public API. Initial updateable values are input mute, interruption enabled, silence/turn timeouts, language, and selected runtime thresholds.
-
-**Acceptance criteria**
-
-- A valid update is observed as one revision and applies atomically.
-- An invalid or out-of-order revision leaves the prior settings active and produces a structured error/event.
-- Updates take effect without rebuilding a session for the supported fields.
-
-**Implementation Note (Task 27)**
-
-`core.RuntimeSettingsUpdate` implements `FrameSettingsControl`. Upon arrival in the session control queue, it is validated via `update.Validate()`. If invalid, `RuntimeSettingsErrorEvent` with `ErrInvalidRuntimeSettings` is emitted without changing session state. If the revision is less than or equal to current applied revision, `RuntimeSettingsErrorEvent` with `ErrStaleSettingsRevision` is emitted. Valid updates are applied atomically under `s.settingsMu` and `s.RuntimeSettings()` snapshot is updated, followed by emission of `RuntimeSettingsAppliedEvent`. Input mute changes update admission gating immediately without rebuilding the pipeline or session.
+Removed. `RuntimeSettingsUpdate` had no production users. Input mute/unmute remains as the `InputMuteFrame`/`InputUnmuteFrame` controls.
 
 ### 2.7 Audio filter
 
-`core.AudioFilter` is a provider-neutral streaming abstraction with explicit input/output audio format, bounded per-stream state, cancellation-aware processing, reset, and close. The first implementation must include one real noise-suppression implementation; a noise gate alone does not satisfy this contract. Filter latency is observable. Resampling and channel/format conversion remain composable core audio utilities rather than provider-specific copies.
-
-**Acceptance criteria**
-
-- A filter declares encoding, sample rate, and channels and rejects unsupported input formats explicitly.
-- Repeated chunk processing is bounded and session-safe; reset clears all prior-session signal state.
-- Cancellation and close release processing resources, and measured filter latency is available to observers/traces.
-
-Task 6 implements this boundary with a stream-owned SpeexDSP 1.2.1
-preprocessor for mono PCM16LE at 8, 16, 24, or 48 kHz. It buffers less than
-one 10 ms frame, reports 10 ms algorithmic/block latency, and rebuilds native
-state on reset. The composable audio utilities use the same vendored,
-BSD-licensed SpeexDSP release for quality-5 band-limited resampling and local
-deterministic PCM16/float conversion, mono/stereo normalization, pre-roll,
-rechunking, and opt-in turn buffering. The resampler accepts only 8, 16, 24,
-or 48 kHz, at most 48,000 input samples per call, and caps any per-call output
-allocation at 288,064 samples before narrowing lengths for C. Turn buffers use
-`core.TurnID`; all buffers are byte-bounded and require an explicit
-drop-oldest or reject-newest policy, with reject-newest reported to the caller
-without changing retained bytes. Every mutable native/DSP object is per stream
-and serialized; no process-global DSP state or model weights are used. Native
-and production builds require CGO and a C compiler; the release container
-already builds with `CGO_ENABLED=1`. Gate B remains open until the rest of the
-Phase 2 audio path and its independent gate pass.
-
-The deterministic denoiser regression uses a stationary-noise learning prefix
-followed by voiced, pitch-varying harmonic bursts and pauses. It projects the
-output onto the clean wanted reference, divides residual power by the fitted
-gain squared, and requires at least 3 dB SNR improvement plus at least 0.5
-wanted-signal gain (about -6 dB). Gain normalization makes uniform attenuation
-unable to masquerade as suppression; explicit bypass, fixed-attenuation,
-silence, and threshold-gate controls must fail the same predicate. This is a
-repeatable DSP regression, not a perceptual quality or real-speech corpus
-evaluation.
+Removed. `core.AudioFilter` and the `core/audio` package (SpeexDSP denoiser, resampler, conversion utilities) had no production users and were deleted.
 
 ### 2.8 Turn detector and manager
 
-`core/turn` provides the provider-neutral `TurnDetector` interface, `SilenceDetector`, `HybridDetector`, and a session-owned `Manager`. The manager receives caller-supplied `core.TurnID`, `core.Generation`, VAD/activity observations, and explicit timestamps through `Observe` and `Advance`; it does not read wall time, create timers/goroutines, mint IDs, or depend on providers, Server, storage, STT, or transports. A detector is synchronous, deterministic, fast, and side-effect free. It is called outside the manager state lock with an immutable snapshot (including copied, numerically valid semantic evidence); at most one callback is in flight. Concurrent/reentrant evaluations are coalesced into one complete newest snapshot, including its input and epoch. Both callback preflight and terminal commit compare that snapshot with actual current detector state and any newer queued input. Identical inputs reuse either a positive or negative result; otherwise queued snapshots run. No-op mute controls retain eligible detection even when their timestamp is later; rejected observations leave timestamps and detection unchanged. Genuine mute and speech-resume transitions fence the epoch, and unmute queues fresh silence state when a callback owner is still in flight. Each outer evaluation permits at most two plugin callbacks, after which the newest snapshot uses deterministic `SilenceDetector` fallback. Semantic state and epoch fencing prevent stale terminal commits. Pre-callback frames are discarded after an epoch change but retained across a time-only same-epoch advance. Panics and invalid suggestions are ignored in favor of silence fallback. Only silence and semantic completion reasons are accepted; confidence must always be finite, supplied confidence must be in `[0,1]`, semantic completion requires confidence, and absent confidence is normalized to zero for JSON-safe events.
+`core/turn` provides the provider-neutral `TurnDetector` interface, `SilenceDetector`, and a session-owned `Manager`. The manager receives caller-supplied `core.TurnID`, `core.Generation`, VAD/activity observations, and explicit timestamps through `Observe` and `Advance`; it does not read wall time, create timers/goroutines, mint IDs, or depend on providers, Server, storage, STT, or transports. A detector is synchronous, deterministic, fast, and side-effect free. It is called outside the manager state lock with an immutable snapshot (including copied, numerically valid semantic evidence); at most one callback is in flight. Concurrent/reentrant evaluations are coalesced into one complete newest snapshot, including its input and epoch. Both callback preflight and terminal commit compare that snapshot with actual current detector state and any newer queued input. Identical inputs reuse either a positive or negative result; otherwise queued snapshots run. No-op mute controls retain eligible detection even when their timestamp is later; rejected observations leave timestamps and detection unchanged. Genuine mute and speech-resume transitions fence the epoch, and unmute queues fresh silence state when a callback owner is still in flight. Each outer evaluation permits at most two plugin callbacks, after which the newest snapshot uses deterministic `SilenceDetector` fallback. Semantic state and epoch fencing prevent stale terminal commits. Pre-callback frames are discarded after an epoch change but retained across a time-only same-epoch advance. Panics and invalid suggestions are ignored in favor of silence fallback. Only silence and semantic completion reasons are accepted; confidence must always be finite, supplied confidence must be in `[0,1]`, semantic completion requires confidence, and absent confidence is normalized to zero for JSON-safe events.
 
 The manager distinguishes initial no-speech timeout, accepted speech start/stop, silence-based user-turn completion, and active-turn maximum duration. Start and stop debounce plus minimum speech duration suppress short false starts; repeated idle snapshots preserve the first stable stop/silence origin and do not re-emit `Stopped`. `SetMuted` pauses turn and timeout advancement; unmute starts fresh silence timing without replaying muted observations. Timestamp regression is rejected. `Interrupt` commits only for the expected active typed turn and generation. A higher observed generation fences a pending candidate or active turn before old turn-ID filtering, including on an idle snapshot. Completed and interrupted turn IDs are retired within their generation: positive `Config.MaxRetiredTurns` (default 128) bounds this ledger, and when full the manager rejects a new same-generation speaking turn with `ErrRetiredTurnLimit` rather than evicting IDs and risking a stale restart. A generation advance or `Reset` clears the ledger; generation is not used as a substitute for turn identity. Terminal decisions are one-shot through `core.TurnLifecycle` and are returned as ordinary `core.TurnEventFrame` values for the caller to route. Semantic evidence is a provider-neutral confidence value; it can complete early only for the matching turn/generation, a timestamp within the current turn and configured freshness window, confidence above threshold, and an elapsed silence guard. Missing, invalid, stale, or low-confidence evidence falls back to silence.
 
@@ -484,21 +425,11 @@ The separate `ui/` product uses React, TypeScript, and Vite. Its primary section
 - Ruling: Use React, TypeScript, Vite, and a typed `/api/v1` client for the management UI — this keeps UI concepts outside Go core and matches the V2 admin product scope — cost if wrong: choosing another frontend toolchain changes UI build/hosting integration but not the HTTP contract.
 - Ruling: Keep Whisker compatibility semantic through a Framework observer/debug adapter until an official package and protocol version are pinned — no exact Whisker wire target is specified in the approved inputs — cost if wrong: byte-level interoperability will require a versioned wire serializer and additional fixture/version maintenance.
 - Ruling: A database trace/history failure is observable but cannot abort an active voice session; failure to resolve an agent or credential prevents new session creation — an existing session must outlive optional observability writes while new sessions require valid startup configuration — cost if wrong: operators may temporarily miss history during storage outages or reject a session that a degraded provider fallback could have served.
-- Ruling: Processor failures adhere to explicit `FailurePolicy` declarations (`PolicyFailSession`, `PolicyDisable`, `PolicyDegrade`, `PolicySafeRetry`) — defaulting to session failure, while non-fatal policies emit observable `ErrorFrame` events with side-effect-aware retry protection (aborting retries if output was already emitted).
+- Ruling: A processor error fails the session; there are no per-processor failure policies.
 
 ### 2.10 Processor failure and unusable policies
 
-Processors in the session pipeline can optionally implement `core.FailurePolicyProvider`:
-```go
-type FailurePolicyProvider interface {
-    FailurePolicy() FailurePolicy
-}
-```
-Available policies:
-1. `PolicyFailSession` (default): Aborts and tears down the session with the processor error.
-2. `PolicyDisable`: Permanently disables the processor for subsequent frames in that session. Emits a non-fatal `*core.ErrorFrame{Fatal: false}` and passes the frame to the next processor. Subsequent frames completely bypass the disabled processor.
-3. `PolicyDegrade`: Temporarily bypasses the failing processor for the current frame. Emits a non-fatal `*core.ErrorFrame{Fatal: false}` and passes the frame to the next processor. The processor remains active for future frames.
-4. `PolicySafeRetry`: Retries processing the frame once before failing the session. If the processor already emitted one or more output frames during the current attempt before failing, retrying is considered unsafe and the session aborts immediately with `ErrRetryUnsafe` to prevent duplicate external side effects.
+Removed. No processor declared a `FailurePolicy`; a processor error always fails the session.
 
 ### 2.11 Provider usage metrics
 
@@ -526,246 +457,52 @@ type UsageMetricsFrame struct {
 
 ### 2.12 Bot output and playback-state observer
 
-`core.PlaybackStateFrame` and `core.PlaybackTracker` provide fine-grained, ordered bot output and playback lifecycle observations:
-```go
-type PlaybackState string
-
-const (
-    PlaybackGenerating  PlaybackState = "generating"  // LLM / TTS generating speech content
-    PlaybackBuffered    PlaybackState = "buffered"    // Pacer has received/buffered audio frames
-    PlaybackPlaying     PlaybackState = "playing"     // First audio chunk dispatched to transport
-    PlaybackDrained     PlaybackState = "drained"     // Pacer queue completely drained to client
-    PlaybackInterrupted PlaybackState = "interrupted" // Output was cancelled or interrupted mid-playback
-    PlaybackCompleted   PlaybackState = "completed"   // Turn output cleanly finished
-)
-```
-- **Ordered Lifecycle**: `generating` → `buffered` → `playing` → (`drained` | `interrupted`) → `completed`.
-- **Fault & Cancellation Isolation**: Interruptions fence subsequent buffered/playing transitions for the interrupted turn while allowing new generations to restart cleanly.
-- **Empty Output**: Silent turns or pure tool-execution turns advance directly from `generating` to `completed` without spurious buffering or playing states.
+Removed. `PlaybackTracker`/`PlaybackStateFrame` had no production users; bot speaking state is `SpeakingStateFrame` (section 2.9).
 
 ### 2.13 Serializer abstraction
 
-`core.Serializer` provides the general encoding/decoding abstraction between semantic events/frames and wire formats:
-```go
-type Serializer interface {
-    Format() string
-    Encode(v any) ([]byte, error)
-    Decode(data []byte) (any, error)
-}
-```
-- **Semantic Separation**: Decouples semantic events (such as `DebugEvent` and `ObserverEvent`) from specific transports or wire formats. RTVI remains a separate adapter without injecting wire types into processors.
-- **Validation & Bounds**: Implementations (e.g. `JSONEventSerializer`) enforce payload size limits, reject malformed payloads with `ErrMalformedPayload`, and reject unknown fields when configured with `DisallowUnknownFields`.
+Removed; see section 2.5.
 
 ### 2.14 Frame and pipeline observer API
 
-`core.Session` exposes `AddObserver(o Observer)` allowing registration of non-mutating observers:
-```go
-type Observer interface {
-    Observe(ObserverEvent)
-}
-```
-- **Mutation Impossibility**: `ObserverEvent` contains value semantics and cloned attributes. Observers receive no mutable frame references or delivery mutation hooks.
-- **Ordered Delivery**: `ObserverEvent` values are emitted in exact pipeline dispatch sequence with processor position and timing.
-- **Fault & Panic Isolation**: Any panics thrown within observer callbacks are recovered and isolated from the session run-loop, ensuring zero degradation of active calls.
+Removed; see section 2.5.
 
 ### 2.15 DTMF and transport-neutral tone frames
 
-`core/audio.DTMFFrame` and `core/audio.ToneFrame` provide transport-neutral telephony and audible signaling representations:
-```go
-type DTMFFrame struct {
-    Digit    rune          // '0'-'9', '*', '#', 'A'-'D'
-    Duration time.Duration // bounded positive duration (<= 5s)
-    Turn     string
-    Gen      uint64
-}
-
-type ToneFrame struct {
-    Frequencies []float64     // 20 Hz to 20,000 Hz
-    Duration    time.Duration // bounded positive duration (<= 5s)
-    Volume      float64       // 0.0 to 1.0
-    Turn        string
-    Gen         uint64
-}
-```
-- **Validation**: Enforces standard DTMF dual-tone frequencies (`Frequencies()`) and audible frequency boundaries (`Validate()`).
-- **Transport Neutrality**: Conveys telephone keypad interaction and signaling tones across the pipeline without implying specific SIP/PSTN transport coupling.
+Removed with the `core/audio` package; no production pipeline emitted these frames.
 
 ### 2.16 Bounded audio mixer
 
-`core/audio.AudioMixer` provides multi-source audio stream mixing with deterministic sample bounds and clipping control:
-```go
-type AudioMixer struct { ... }
-type MixerConfig struct {
-    SampleRate int
-    Channels   int
-    MaxSources int // default 8
-}
-```
-- **Stream Bounds**: Enforces `MaxSources` limit (`ErrMaxSourcesExceeded`) to prevent unbounded source registration.
-- **Format Integrity**: Enforces uniform sample rate and channel layout across sources (`ErrMixerFormatMismatch`).
-- **Clipping Protection**: Sums scaled 16-bit linear PCM samples and strictly saturates outputs within `[-32768, 32767]`, eliminating integer wraparound distortion.
-- **Generation Fencing**: Discards obsolete source frames across turn transitions via `SetGeneration`.
+Removed with the `core/audio` package.
 
 ### 2.17 Background audio and earcons
 
-`core/audio.BackgroundAndEarconProcessor` orchestrates non-blocking ambient tracks and acoustic prompts (earcons):
-```go
-type BackgroundControlFrame struct {
-    Action   BackgroundAction // start, stop, pause, resume
-    TrackID  string
-    Volume   float64
-    Loop     bool
-    PCM16LE  []byte
-}
-
-type EarconControlFrame struct {
-    EarconID    string
-    Volume      float64
-    PCM16LE     []byte
-    Disposition core.OutputDisposition // Interruptible vs Uninterruptible
-}
-```
-- **Paced Output & Volume Ducking**: Paces PCM background audio chunk-by-chunk and attenuates gain automatically (`DuckOnSpeech`) when assistant speech begins (`TTSStartedFrame`), restoring volume on `TTSStoppedFrame`.
-- **Classification & Disposition**: Earcons support explicit `OutputDisposition` (`OutputInterruptible` vs `OutputUninterruptible`).
-- **Interruption Behavior**: Interruption frames cancel active interruptible earcons and reset ducking states while preserving uninterruptible cues.
+Removed with the `core/audio` package.
 
 ### 2.18 Generic audio source
 
-`core/audio.GenericAudioSource` injects externally provided `io.Reader` audio streams into the pipeline:
-```go
-type AudioSourceConfig struct {
-    SampleRate  int
-    Channels    int
-    ChunkDur    time.Duration
-    Disposition core.OutputDisposition
-    Direction   core.Direction // Downstream (output) or Upstream (injected input)
-}
-```
-- **Pacing & Streaming**: Streams audio continuously across timed intervals matching `ChunkDur`, avoiding bursts and honoring pipeline rate requirements.
-- **Interruption Fencing**: Downstream interruptible sources immediately halt reading and chunk emission upon receiving an `InterruptionFrame`.
-- **Directional Flexibility**: Supports both upstream injected user speech (e.g. testing, dial-in gateways) and downstream assistant audio playback.
+Removed with the `core/audio` package.
 
 ### 2.19 Advanced audio filter chain
 
-`core/audio.FilterChain` composes sequential audio processing nodes with dynamic bypass and format enforcement:
-```go
-type FilterChain struct { ... }
-func (fc *FilterChain) AddFilter(id string, filter core.AudioFilter) error
-func (fc *FilterChain) SetBypass(id string, bypass bool) error
-func (fc *FilterChain) TotalLatency() time.Duration
-func (fc *FilterChain) Process(ctx context.Context, in []byte) ([]byte, error)
-```
-- **Sequential Invariants**: Validates that output format of filter `N` strictly matches input format of filter `N+1` upon insertion (`ErrFilterIncompatibleFormat`).
-- **Dynamic Bypass**: Allows toggling filters on/off dynamically at runtime without pipeline disruption, provided formats match.
-- **Latency Accounting**: Computes cumulative pipeline DSP latency across all active (non-bypassed) filters for end-to-end timing correlation.
+Removed with the `core/audio` package.
 
 ### 2.20 Read-only runtime pipeline settings introspection
 
-`core.Session` exposes `Snapshot() SessionSnapshot` providing a point-in-time, read-only diagnostic inspection:
-```go
-type SessionSnapshot struct {
-    SessionID       uint64
-    State           string
-    Generation      uint64
-    InputMuted      bool
-    CreatedAt       time.Time
-    Uptime          time.Duration
-    FramesIn        uint64
-    FramesOut       uint64
-    StaleDiscarded  uint64
-    AudioDropped    uint64
-    ActiveTasks     int
-    LeakedTasks     int
-    Settings        RuntimeSettings
-    Processors      []ProcessorSnapshot
-    ObserverCount   int
-}
-```
-- **Thread Safety & Immutability**: All counters and settings are atomically or lock-protected and copied by value; mutations cannot affect the active session run loop.
-- **Diagnostic Transparency**: Exposes exact processor pipeline topologies, indices, descriptions, and active observer counts.
+Removed. `Session.Snapshot` had no production users.
 
 ### 2.21 Processor capability metadata
 
-`core.CapableProcessor` allows pipeline processors to declare functional capabilities and contract guarantees:
-```go
-type ProcessorCapabilities struct {
-    Name         string
-    Version      string
-    Description  string
-    Capabilities []ProcessorCapability // audio_input, audio_output, speech_to_text, llm, vad, etc.
-    InputFrames  []FrameType
-    OutputFrames []FrameType
-    SideEffects  bool                  // true if processor executes external RPCs/network calls
-}
-
-type CapableProcessor interface {
-    Processor
-    Capabilities() ProcessorCapabilities
-}
-```
-- **Introspection Helpers**: `GetProcessorCapabilities(p)`, `HasCapability(p, cap)`, and `Pipeline.FindProcessorsWithCapability(cap)` allow pipeline introspection without tight coupling to concrete types.
-- **Side Effect Tracking**: `SideEffects` flag explicitly identifies processors with side-effecting operations (e.g. LLM/TTS/network calls) to guide retry policies and state rollback.
+Removed. `CapableProcessor` had no production users.
 
 ### 2.22 Provider and processor readiness events
 
-`core.ReadinessFrame` conveys availability and initialization status across pipeline components:
-```go
-type ReadinessStatus string
-const (
-    ReadinessReady    ReadinessStatus = "ready"
-    ReadinessDegraded ReadinessStatus = "degraded"
-    ReadinessNotReady ReadinessStatus = "not_ready"
-)
-
-type ReadinessFrame struct {
-    Component string          `json:"component"`
-    Status    ReadinessStatus `json:"status"`
-    Reason    string          `json:"reason,omitempty"`
-    Timestamp time.Time       `json:"timestamp"`
-    Latency   time.Duration   `json:"latency,omitempty"`
-    Gen       uint64          `json:"gen,omitempty"`
-}
-```
-- **Validation**: Enforces non-empty component identification and canonical status enum states (`Validate()`).
-- **Health Observability**: Emits non-blocking status transitions (e.g. provider network degradations or cold-start completions) across the pipeline for telemetry and diagnostics.
+Removed. `ReadinessFrame` had no production users.
 
 ### 2.23 Turn recording and replay hooks
 
-`core/turn.TurnRecorder` and `core/turn.TurnReplayer` provide deterministic capture and replay of conversation turns:
-```go
-type TurnRecording struct {
-    TurnID    string
-    Gen       uint64
-    StartTime time.Time
-    Duration  time.Duration
-    Entries   []RecordedTurnEntry
-}
-
-func (r *TurnRecorder) Record(f core.Frame, dir core.Direction)
-func (r *TurnRecorder) Stop() *TurnRecording
-func (p *TurnReplayer) Replay(ctx context.Context, onEntry func(entry RecordedTurnEntry) error) error
-```
-- **Serialization Fidelity**: Full JSON round-trip serialization (`SerializeJSON` / `DeserializeJSON`) preserves relative event offsets and directionality.
-- **Configurable Replay Speed**: Supports real-time pacing (`speed = 1.0`) or accelerated headless simulation (`speed = 0.0`) for fast continuous integration regression test suites.
+Removed. `TurnRecorder`/`TurnReplayer` had no production users and were deleted.
 
 ### 2.24 Extended behavioral parity scenarios
 
-Phase 10 introduces three extended parity scenarios (8, 9, 10) in `tools/eval/scenarios/` complementing the original seven vertical scenarios:
-1. **Scenario 8 (`audio_mixing_and_earcons`)**: Bounded multi-source audio mixing, sample saturation clipping control, uninterruptible earcon delivery through barge-in, and automatic background audio ducking.
-2. **Scenario 9 (`runtime_introspection_and_readiness`)**: Dynamic processor readiness notifications (`ReadinessFrame`), capability flag queries (`CapableProcessor`), and point-in-time runtime snapshot diagnostics (`Session.Snapshot`).
-3. **Scenario 10 (`deterministic_turn_replay`)**: End-to-end conversation turn recording (`TurnRecorder`), JSON serialization fidelity, and headless regression replay (`TurnReplayer`).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Scenarios 8–10 in `tools/eval/scenarios/` (audio mixing/earcons, runtime introspection/readiness, turn replay) describe features that were removed from core; they are descriptors only and have no runtime coverage.

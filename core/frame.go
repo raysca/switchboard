@@ -53,7 +53,6 @@ const (
 	FrameInputMute
 	FrameInputUnmute
 	FrameInputMutedState
-	FrameSettingsControl
 
 	// Internal async re-entry
 	FrameInternal               FrameType = 821
@@ -65,12 +64,6 @@ const (
 	FrameTranscriptAdvance      FrameType = 827
 	FrameTranscriptInvalidation FrameType = 828
 	FrameUsageMetrics           FrameType = 829
-	FramePlaybackState          FrameType = 830
-	FrameDTMF                   FrameType = 831
-	FrameTone                   FrameType = 832
-	FrameBackgroundAudioControl FrameType = 833
-	FrameEarconControl          FrameType = 834
-	FrameReadiness              FrameType = 835
 )
 
 // Frame is the common interface implemented by all frames in the pipeline.

@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,15 +10,13 @@ import (
 )
 
 var (
-	ErrContextLimitExceeded = errors.New("core: conversation context exceeds budget limits even after complete turn-pair eviction")
+	ErrContextLimitExceeded = errors.New("core: conversation context exceeds budget limits even after turn eviction")
 	ErrInvalidRole          = errors.New("core: invalid message role")
 	ErrInvalidToolMessage   = errors.New("core: invalid tool context message")
 	ErrUnmatchedToolResult  = errors.New("core: tool result has no matching call")
 	ErrToolCorrelation      = errors.New("core: conflicting tool call correlation")
 	ErrInvalidMetadata      = errors.New("core: message metadata must be bounded JSON-safe data")
-	ErrToolIdentityLimit    = errors.New("core: tool identity replay ledger is full")
 	ErrToolCallPending      = errors.New("core: tool call is already in progress")
-	ErrInvalidCompaction    = errors.New("core: invalid compaction result")
 )
 
 // Role represents the conversational participant role.
@@ -60,7 +57,7 @@ type Message struct {
 type ContextConfig struct {
 	MaxMessages       int // Maximum total messages preserved in history (must be >= 2 if set)
 	MaxTokens         int // Maximum estimated tokens across active messages
-	MaxToolIdentities int // Maximum retained tool replay identities (default: 256)
+	MaxToolIdentities int // Recent tool replay identities remembered (default: 256)
 }
 
 // EstimateTokens provides a deterministic, provider-neutral token count estimate.
@@ -81,36 +78,16 @@ func MessageTokens(m Message) int {
 	return EstimateTokens(m.Content) + 4
 }
 
-// CompactionResult contains the compacted sequence of messages returned by a CompactionHook.
-type CompactionResult struct {
-	Messages []Message
-}
-
-// CompactionHook is a provider-neutral interface for condensing conversation context.
-// When called, it receives an immutable snapshot of current messages and returns
-// a compacted sequence, whether it applied (or declined), and any operational error.
-type CompactionHook interface {
-	Compact(ctx context.Context, snapshot []Message) (result *CompactionResult, applied bool, err error)
-}
-
-// CompactionHookFunc adapts a standard function to the CompactionHook interface.
-type CompactionHookFunc func(ctx context.Context, snapshot []Message) (*CompactionResult, bool, error)
-
-func (f CompactionHookFunc) Compact(ctx context.Context, snapshot []Message) (*CompactionResult, bool, error) {
-	return f(ctx, snapshot)
-}
-
 // ConversationContext maintains a thread-safe, bounded, multi-turn conversation history.
-// When message or token budgets are exceeded, it deterministically evicts the oldest complete
-// turn-pairs while strictly preserving system instruction(s), the current user turn, and the newest turns.
+// When message or token budgets are exceeded, it deterministically evicts the oldest turns
+// while strictly preserving system instruction(s), the current user turn, and the newest turns.
 type ConversationContext struct {
-	mu             sync.RWMutex
-	cfg            ContextConfig
-	messages       []Message
-	evictions      int
-	evictedPairs   []string
-	toolLedger     map[string]toolReplayIdentity
-	compactionHook CompactionHook
+	mu         sync.RWMutex
+	cfg        ContextConfig
+	messages   []Message
+	evictions  int
+	toolLedger map[string]toolReplayIdentity
+	toolOrder  []string // FIFO of toolLedger keys, oldest first
 }
 
 type toolReplayIdentity struct {
@@ -128,96 +105,10 @@ func NewConversationContext(cfg ContextConfig) *ConversationContext {
 		cfg.MaxToolIdentities = 256
 	}
 	return &ConversationContext{
-		cfg:          cfg,
-		messages:     make([]Message, 0, 16),
-		evictedPairs: make([]string, 0),
-		toolLedger:   make(map[string]toolReplayIdentity, cfg.MaxToolIdentities),
+		cfg:        cfg,
+		messages:   make([]Message, 0, 16),
+		toolLedger: make(map[string]toolReplayIdentity, cfg.MaxToolIdentities),
 	}
-}
-
-// SetCompactionHook attaches an application-provided or provider-aware compaction hook.
-func (c *ConversationContext) SetCompactionHook(hook CompactionHook) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.compactionHook = hook
-}
-
-// Compact invokes the registered CompactionHook against an immutable snapshot of messages.
-// If the hook declines (applied=false) or errors, context remains completely unchanged and usable.
-// If the hook succeeds, the result is validated (must preserve system instruction and satisfy budget)
-// and atomically swapped in.
-func (c *ConversationContext) Compact(ctx context.Context) (bool, error) {
-	c.mu.Lock()
-	hook := c.compactionHook
-	if hook == nil {
-		c.mu.Unlock()
-		return false, nil
-	}
-
-	snapshot := make([]Message, len(c.messages))
-	for i := range c.messages {
-		snapshot[i], _ = cloneMessage(c.messages[i])
-	}
-	originalSystemInstruction := ""
-	hasSystemInstruction := false
-	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
-		hasSystemInstruction = true
-		originalSystemInstruction = c.messages[0].Content
-	}
-	c.mu.Unlock()
-
-	result, applied, err := hook.Compact(ctx, snapshot)
-	if err != nil {
-		return false, err
-	}
-	if !applied || result == nil {
-		return false, nil
-	}
-
-	// Validate the proposed compaction
-	if len(result.Messages) == 0 {
-		return false, fmt.Errorf("%w: compacted messages cannot be empty", ErrInvalidCompaction)
-	}
-
-	// If the original context had a system instruction, the compacted result MUST preserve it at index 0
-	if hasSystemInstruction {
-		if result.Messages[0].Role != RoleSystem || result.Messages[0].Content != originalSystemInstruction {
-			return false, fmt.Errorf("%w: compacted result must preserve original system instruction at index 0", ErrInvalidCompaction)
-		}
-	}
-
-	// Clone and validate each message
-	clonedList := make([]Message, len(result.Messages))
-	for i, m := range result.Messages {
-		if m.Role != RoleSystem && m.Role != RoleUser && m.Role != RoleAssistant && m.Role != RoleTool {
-			return false, fmt.Errorf("%w: %q", ErrInvalidRole, m.Role)
-		}
-		cloned, cErr := cloneMessage(m)
-		if cErr != nil {
-			return false, cErr
-		}
-		clonedList[i] = cloned
-	}
-
-	// Verify budget limits
-	if c.cfg.MaxMessages > 0 && len(clonedList) > c.cfg.MaxMessages {
-		return false, fmt.Errorf("%w: compacted messages count %d exceeds MaxMessages %d", ErrContextLimitExceeded, len(clonedList), c.cfg.MaxMessages)
-	}
-	if c.cfg.MaxTokens > 0 {
-		tokens := 0
-		for _, m := range clonedList {
-			tokens += MessageTokens(m)
-		}
-		if tokens > c.cfg.MaxTokens {
-			return false, fmt.Errorf("%w: compacted tokens %d exceeds MaxTokens %d", ErrContextLimitExceeded, tokens, c.cfg.MaxTokens)
-		}
-	}
-
-	// Atomically apply compacted messages under lock
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.messages = clonedList
-	return true, nil
 }
 
 // SetSystemInstruction sets or replaces the initial system instruction message.
@@ -242,7 +133,6 @@ func (c *ConversationContext) SetSystemInstructionChecked(instruction string, at
 
 	original := append([]Message(nil), c.messages...)
 	originalEvictions := c.evictions
-	originalEvictedPairs := append([]string(nil), c.evictedPairs...)
 	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
 		c.messages[0] = sysMsg
 	} else {
@@ -251,7 +141,6 @@ func (c *ConversationContext) SetSystemInstructionChecked(instruction string, at
 	if err := c.enforceBudgetLocked(); err != nil {
 		c.messages = original
 		c.evictions = originalEvictions
-		c.evictedPairs = originalEvictedPairs
 		return err
 	}
 	return nil
@@ -291,15 +180,6 @@ func (c *ConversationContext) EvictionCount() int {
 	return c.evictions
 }
 
-// EvictedTurnPairs returns the TurnIDs of all turn pairs that have been evicted.
-func (c *ConversationContext) EvictedTurnPairs() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	res := make([]string, len(c.evictedPairs))
-	copy(res, c.evictedPairs)
-	return res
-}
-
 // AddMessage appends a new message and applies deterministic eviction if limits are breached.
 // If limits cannot be satisfied without evicting the system prompt or the new message itself,
 // the addition is rejected and context remains unchanged.
@@ -332,7 +212,6 @@ func (c *ConversationContext) addMessageLocked(msg Message) error {
 	// Tentatively append message
 	originalMessages := append([]Message(nil), c.messages...)
 	originalEvictions := c.evictions
-	originalEvictedPairs := append([]string(nil), c.evictedPairs...)
 	c.messages = append(c.messages, cloned)
 
 	// Apply eviction if needed
@@ -341,7 +220,6 @@ func (c *ConversationContext) addMessageLocked(msg Message) error {
 		// Rollback on rejection
 		c.messages = originalMessages
 		c.evictions = originalEvictions
-		c.evictedPairs = originalEvictedPairs
 		return err
 	}
 
@@ -363,25 +241,20 @@ func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name 
 		}
 		return ErrToolCorrelation
 	}
-	if len(c.toolLedger) >= c.cfg.MaxToolIdentities {
-		return ErrToolIdentityLimit
-	}
 	if at.IsZero() {
 		at = time.Now()
 	}
 	originalMessages := append([]Message(nil), c.messages...)
 	originalEvictions := c.evictions
-	originalPairs := append([]string(nil), c.evictedPairs...)
 	if err := c.addMessageLocked(Message{Role: RoleAssistant, Kind: MessageToolCall, Content: string(append([]byte(nil), arguments...)), TurnID: turn, ToolCallID: callID, ToolName: name, Generation: gen, CreatedAt: at}); err != nil {
 		return err
 	}
 	if !c.hasToolMessageLocked(MessageToolCall, turn, gen, callID) {
 		c.messages = originalMessages
 		c.evictions = originalEvictions
-		c.evictedPairs = originalPairs
 		return ErrContextLimitExceeded
 	}
-	c.toolLedger[callID] = toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments), startedAt: at}
+	c.rememberToolLocked(callID, toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments), startedAt: at})
 	return nil
 }
 
@@ -403,25 +276,20 @@ func (c *ConversationContext) ClaimToolCall(call ToolCall, at time.Time) (ToolRe
 		}
 		return ToolResult{CallID: call.ID, Status: identity.status, Result: json.RawMessage(append([]byte(nil), identity.result...)), ErrorCategory: identity.safeError, StartedAt: identity.startedAt, EndedAt: identity.endedAt}, false, nil
 	}
-	if len(c.toolLedger) >= c.cfg.MaxToolIdentities {
-		return ToolResult{}, false, ErrToolIdentityLimit
-	}
 	if at.IsZero() {
 		at = time.Now()
 	}
 	originalMessages := append([]Message(nil), c.messages...)
 	originalEvictions := c.evictions
-	originalPairs := append([]string(nil), c.evictedPairs...)
 	if err := c.addMessageLocked(Message{Role: RoleAssistant, Kind: MessageToolCall, Content: string(append([]byte(nil), call.Arguments...)), TurnID: string(call.TurnID), ToolCallID: call.ID, ToolName: call.Name, Generation: uint64(call.Generation), CreatedAt: at}); err != nil {
 		return ToolResult{}, false, err
 	}
 	if !c.hasToolMessageLocked(MessageToolCall, string(call.TurnID), uint64(call.Generation), call.ID) {
 		c.messages = originalMessages
 		c.evictions = originalEvictions
-		c.evictedPairs = originalPairs
 		return ToolResult{}, false, ErrContextLimitExceeded
 	}
-	c.toolLedger[call.ID] = toolReplayIdentity{turn: string(call.TurnID), gen: uint64(call.Generation), name: call.Name, arguments: string(call.Arguments), startedAt: at}
+	c.rememberToolLocked(call.ID, toolReplayIdentity{turn: string(call.TurnID), gen: uint64(call.Generation), name: call.Name, arguments: string(call.Arguments), startedAt: at})
 	return ToolResult{}, true, nil
 }
 
@@ -465,14 +333,12 @@ func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callI
 	}
 	originalMessages := append([]Message(nil), c.messages...)
 	originalEvictions := c.evictions
-	originalPairs := append([]string(nil), c.evictedPairs...)
 	if err := c.addMessageLocked(Message{Role: RoleTool, Kind: MessageToolResult, Content: content, TurnID: turn, ToolCallID: callID, Generation: gen, ToolStatus: status, ToolErrorCategory: safeError, CreatedAt: at}); err != nil {
 		return err
 	}
 	if !c.hasToolMessageLocked(MessageToolCall, turn, gen, callID) || !c.hasToolMessageLocked(MessageToolResult, turn, gen, callID) {
 		c.messages = originalMessages
 		c.evictions = originalEvictions
-		c.evictedPairs = originalPairs
 		return ErrContextLimitExceeded
 	}
 	identity.hasResult = true
@@ -482,6 +348,19 @@ func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callI
 	identity.endedAt = at
 	c.toolLedger[callID] = identity
 	return nil
+}
+
+// rememberToolLocked records a new tool identity, forgetting the oldest once
+// MaxToolIdentities are held, so long calls never hit a tool-call limit.
+// ponytail: a replay older than the window re-executes; a result for a call
+// that old (MaxToolIdentities calls still in flight) is rejected as unmatched.
+func (c *ConversationContext) rememberToolLocked(callID string, identity toolReplayIdentity) {
+	if len(c.toolOrder) >= c.cfg.MaxToolIdentities {
+		delete(c.toolLedger, c.toolOrder[0])
+		c.toolOrder = c.toolOrder[1:]
+	}
+	c.toolLedger[callID] = identity
+	c.toolOrder = append(c.toolOrder, callID)
 }
 
 func (c *ConversationContext) hasToolMessageLocked(kind MessageKind, turn string, gen uint64, callID string) bool {
@@ -605,14 +484,13 @@ func cloneMetadataValue(v any, depth int, nodes *int) (any, error) {
 	}
 }
 
-// enforceBudgetLocked evicts the oldest complete turn-pairs until budget is satisfied.
+// enforceBudgetLocked evicts the oldest turns until budget is satisfied.
 // Invariant: System instruction and the latest user turn are NEVER evicted.
 func (c *ConversationContext) enforceBudgetLocked() error {
 	for c.isOverBudgetLocked() {
-		// Find the oldest complete turn pair to evict
-		turnID, found := c.findOldestCompleteTurnPairLocked()
+		turnID, found := c.findOldestTurnLocked()
 		if !found {
-			// No complete turn pairs available to evict, but still over budget!
+			// Nothing but the system instruction and active turn left.
 			return ErrContextLimitExceeded
 		}
 
@@ -625,7 +503,6 @@ func (c *ConversationContext) enforceBudgetLocked() error {
 		}
 		c.messages = newMsgs
 		c.evictions++
-		c.evictedPairs = append(c.evictedPairs, turnID)
 	}
 
 	return nil
@@ -641,10 +518,12 @@ func (c *ConversationContext) isOverBudgetLocked() bool {
 	return false
 }
 
-// findOldestCompleteTurnPairLocked identifies the TurnID of the oldest completed turn pair.
-// A turn pair is complete if it has an Assistant message. The active (latest) user turn is excluded.
-func (c *ConversationContext) findOldestCompleteTurnPairLocked() (string, bool) {
-	// Identify current user turn ID to protect it
+// findOldestTurnLocked identifies the TurnID of the oldest non-system turn
+// other than the active (latest) user turn. Incomplete turns (no assistant
+// reply: interrupted, failed, superseded) are evictable too, otherwise enough
+// of them would wedge the context. A turn is evicted whole, so its tool calls
+// and results always leave together.
+func (c *ConversationContext) findOldestTurnLocked() (string, bool) {
 	var activeUserTurnID string
 	for i := len(c.messages) - 1; i >= 0; i-- {
 		if c.messages[i].Role == RoleUser {
@@ -652,33 +531,10 @@ func (c *ConversationContext) findOldestCompleteTurnPairLocked() (string, bool) 
 			break
 		}
 	}
-
-	// Map turns to their completeness
-	hasAssistant := make(map[string]bool)
-	var orderedTurns []string
-
 	for _, m := range c.messages {
-		if m.Role == RoleSystem || m.TurnID == "" {
-			continue
-		}
-		if _, seen := hasAssistant[m.TurnID]; !seen {
-			orderedTurns = append(orderedTurns, m.TurnID)
-			hasAssistant[m.TurnID] = false
-		}
-		if m.Role == RoleAssistant && m.Kind != MessageToolCall {
-			hasAssistant[m.TurnID] = true
+		if m.Role != RoleSystem && m.TurnID != "" && m.TurnID != activeUserTurnID {
+			return m.TurnID, true
 		}
 	}
-
-	// Find the oldest turn that has completed (has an Assistant message) and is not active
-	for _, turnID := range orderedTurns {
-		if turnID == activeUserTurnID {
-			continue
-		}
-		if hasAssistant[turnID] {
-			return turnID, true
-		}
-	}
-
 	return "", false
 }

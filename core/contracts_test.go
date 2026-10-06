@@ -94,10 +94,9 @@ func TestTraceContractCustomMetadataRejectsInnocentStringsEverywhere(t *testing.
 	const innocent = "ordinary-label-that-is-not-a-secret"
 	attrs := map[string]any{"custom.vad": map[string]any{"label": innocent, "score": 0.8}}
 	trace := core.NewTraceEvent("custom.vad", time.Now(), "s", "t", 1, core.TracePolicy{}, attrs)
-	observer := core.NewObserverEvent("custom.vad", time.Now(), "s", "t", 1, core.FrameInputAudio, core.Downstream, "vad", 0, attrs)
 	debug := core.NewDebugEvent("custom.vad", time.Now(), "s", "t", 1, attrs)
-	if len(trace.Attributes()) != 0 || len(observer.Attributes()) != 0 || len(debug.Attributes()) != 0 {
-		t.Fatalf("custom string content must be rejected: trace=%#v observer=%#v debug=%#v", trace.Attributes(), observer.Attributes(), debug.Attributes())
+	if len(trace.Attributes()) != 0 || len(debug.Attributes()) != 0 {
+		t.Fatalf("custom string content must be rejected: trace=%#v debug=%#v", trace.Attributes(), debug.Attributes())
 	}
 }
 
@@ -200,21 +199,6 @@ func TestTraceContractTextAndScalarValuesAreBoundedAndFinite(t *testing.T) {
 	if _, ok := attrs["text"]; ok || attrs["status"] != nil || attrs["latency_ms"] != nil || attrs["duration_ms"] != nil || attrs["tool.arguments"] != nil || attrs["sample_rate"] != 16000 || attrs["transcript"] != "ok" {
 		t.Fatalf("trace bounded-value policy failed: %#v", attrs)
 	}
-}
-
-func TestObserverContractImmutableValue(t *testing.T) {
-	attrs := map[string]any{"sample_rate": 16000, "transcript": "hidden"}
-	event := core.NewObserverEvent("frame.flow", time.Now(), "s", "t", 3, core.FrameInputAudio, core.Downstream, "vad", 2, attrs)
-	attrs["sample_rate"] = 8000
-	got := event.Attributes()
-	if got["sample_rate"] != 16000 || got["transcript"] != nil {
-		t.Fatalf("observer event leaked or aliased content: %#v", got)
-	}
-	got["sample_rate"] = 1
-	if event.Attributes()["sample_rate"] != 16000 {
-		t.Fatal("observer accessor exposes mutable state")
-	}
-	var _ core.Observer = core.ObserverFunc(func(core.ObserverEvent) {})
 }
 
 func TestDebugContractImmutableValue(t *testing.T) {

@@ -9,14 +9,6 @@ import (
 
 type observedMuteState struct{ event, applied bool }
 
-func TestControlEnvelopeContract(t *testing.T) {
-	var _ Frame = (*InputMuteFrame)(nil)
-	var _ Frame = (*InputUnmuteFrame)(nil)
-	var _ Frame = (*InputMutedStateFrame)(nil)
-	var _ Frame = (*RuntimeSettingsUpdate)(nil)
-	_ = ControlEnvelope{Session: SessionID("session"), Turn: TurnID("turn"), Generation: Generation(1), Frame: &InputMuteFrame{}}
-}
-
 func TestTurnLifecycleDuplicateAndFalseStart(t *testing.T) {
 	var turn TurnLifecycle
 	if turn.Complete(TurnID("one")) || turn.Interrupt(TurnID("one")) {

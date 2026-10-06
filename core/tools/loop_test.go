@@ -503,6 +503,24 @@ func TestToolLoopResultInsertionFailureStopsContinuationAndFencesReplay(t *testi
 	}
 }
 
+func TestToolLoopResultOverContextBudgetCommitsSmallError(t *testing.T) {
+	history := core.NewConversationContext(core.ContextConfig{MaxTokens: 100})
+	_ = history.AddMessage(core.Message{Role: core.RoleUser, Content: "x", TurnID: "t"})
+	loop, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage("{\"type\":\"object\"}")}}, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+		return ToolResult{Result: json.RawMessage(`"` + strings.Repeat("a", 900) + `"`)}, nil
+	}), history, testLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loop.Run(context.Background(), []ToolCall{testCall("big", "x", "{}")}, nil)
+	if err != nil || got.Results[0].ErrorCategory != "result_too_large" {
+		t.Fatalf("oversized result = %#v, %v", got, err)
+	}
+	if msgs := history.Messages(); len(msgs) != 3 || msgs[2].Kind != core.MessageToolResult {
+		t.Fatalf("call left without result: %#v", msgs)
+	}
+}
+
 func TestToolLoopRejectsUnsafeResultDepthAndContextInsertionFailure(t *testing.T) {
 	cfg := testLoopConfig()
 	cfg.MaxJSONDepth = 2

@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -208,37 +207,5 @@ func TestUrgentControl_ShutdownGrace(t *testing.T) {
 		// Session successfully tore down without stalling
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for session teardown on urgent EndFrame")
-	}
-}
-
-// TestUrgentControl_ClassificationCheck verifies the IsUrgentControl predicate.
-func TestUrgentControl_ClassificationCheck(t *testing.T) {
-	urgentFrames := []Frame{
-		&CancelFrame{},
-		&InterruptionFrame{},
-		&FlushFrame{},
-		&EndFrame{},
-		&ErrorFrame{Err: errors.New("critical")},
-	}
-
-	for _, f := range urgentFrames {
-		if !IsUrgentControl(f) {
-			t.Fatalf("expected frame type %v to be urgent control", f.Type())
-		}
-	}
-
-	nonUrgentFrames := []Frame{
-		&InputAudioFrame{},
-		&OutputAudioFrame{},
-		&InputMuteFrame{},
-		&InputUnmuteFrame{},
-		&RuntimeSettingsUpdate{},
-		&UserMessageFrame{},
-	}
-
-	for _, f := range nonUrgentFrames {
-		if IsUrgentControl(f) {
-			t.Fatalf("expected frame type %v to NOT be urgent control", f.Type())
-		}
 	}
 }

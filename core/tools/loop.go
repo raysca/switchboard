@@ -381,6 +381,12 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
 	}
 	if err := l.history.AddToolResultStatus(string(call.TurnID), uint64(call.Generation), call.ID, toolResult.Status, payload, toolResult.ErrorCategory, ended); err != nil {
+		if errors.Is(err, core.ErrContextLimitExceeded) {
+			// The call is already in history; give it a small result that fits
+			// rather than leaving a call with no result.
+			endTrace("result_too_large")
+			return l.commit(call, ToolFailed, errorPayload("result_too_large"), "result_too_large", started)
+		}
 		endTrace("context_error")
 		return ToolResult{}, err
 	}
