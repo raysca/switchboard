@@ -348,15 +348,13 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		}()
 
 		var rawAudio []byte
-		var committed bool
 
 		// A unit over the provider limit is synthesized in order, piece by
 		// piece, and played as one unit.
 		var err error
 		for _, piece := range splitUnit(su.Text, p.cfg.MaxSynthesisUnitChars) {
-			err = ExecuteWithRetry(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
-				return committed
-			}, func(attemptCtx context.Context, attempt int) error {
+			// Nothing is emitted until synthesis is done, so every attempt may retry.
+			err = ExecuteWithRetry(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, nil, func(attemptCtx context.Context, attempt int) error {
 				if attempt > 0 {
 					p.Retries.Add(1)
 				}
@@ -380,14 +378,6 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			p.Errors.Add(1)
 			provErr := MapError("tts", err)
 			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false}, core.Downstream, p.index+1, gen)
-			return
-		}
-
-		// Critical verification check: verify rawAudio begins with PCM samples, NOT a WAV/RIFF container
-		if len(rawAudio) >= 4 && bytes.Equal(rawAudio[:4], []byte("RIFF")) {
-			traceFailure = errors.New("provider_failure")
-			err := fmt.Errorf("google tts returned WAV container instead of headerless PCM")
-			_ = p.session.Reenter(&core.ErrorFrame{Err: err, Fatal: true}, core.Downstream, p.index+1, gen)
 			return
 		}
 
@@ -440,8 +430,6 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 				return // Interrupted mid-synthesis: stop immediately
 			}
 			p.mu.Unlock()
-
-			committed = true
 
 			// Emit 24kHz PCM16LE OutputAudioFrame
 			audioFrame := &core.OutputAudioFrame{
