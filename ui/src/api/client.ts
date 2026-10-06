@@ -434,6 +434,11 @@ export class ApiError extends Error {
   }
 }
 
+/** Keeps an ApiError as is; wraps anything else (a bug, a network oddity) with a readable message. */
+export function asApiError(err: unknown, message: string): ApiError {
+  return err instanceof ApiError ? err : new ApiError(message, "client_error", 0, "");
+}
+
 export function createApiClient(
   getAuth: () => AuthSnapshot,
   fetcher: typeof fetch = fetch,

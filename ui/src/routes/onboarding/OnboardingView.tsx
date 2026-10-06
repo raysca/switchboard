@@ -7,6 +7,7 @@ import {
   type AgentDTO,
   type CreateAgentInput,
   ApiError,
+  asApiError,
 } from "../../api/client";
 import {
   ActionButton,
@@ -67,13 +68,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["credentials"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setProviderError(err);
-      } else {
-        setProviderError(
-          new ApiError("Failed to connect provider", "credential_failed", 500, ""),
-        );
-      }
+      setProviderError(asApiError(err, "Failed to connect provider"));
     },
   });
 
@@ -84,13 +79,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setAgentError(err);
-      } else {
-        setAgentError(
-          new ApiError("Failed to create agent", "create_failed", 500, ""),
-        );
-      }
+      setAgentError(asApiError(err, "Failed to create agent"));
     },
   });
 

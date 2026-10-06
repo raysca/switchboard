@@ -6,6 +6,7 @@ import {
   type CredentialDTO,
   type DiscoveryResult,
   ApiError,
+  asApiError,
 } from "../../api/client";
 import {
   ActionButton,
@@ -62,11 +63,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["credentials"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setAddError(err);
-      } else {
-        setAddError(new ApiError("Failed to add credential", "unknown_error", 500, ""));
-      }
+      setAddError(asApiError(err, "Failed to add credential"));
     },
   });
 
@@ -77,11 +74,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["credentials"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setActionError(err);
-      } else {
-        setActionError(new ApiError("Validation failed", "validation_failed", 500, ""));
-      }
+      setActionError(asApiError(err, "Validation failed"));
     },
   });
 
@@ -92,11 +85,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["credentials"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setActionError(err);
-      } else {
-        setActionError(new ApiError("Rotate failed", "rotate_failed", 500, ""));
-      }
+      setActionError(asApiError(err, "Rotate failed"));
     },
   });
 
@@ -110,11 +99,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["credentials"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setActionError(err);
-      } else {
-        setActionError(new ApiError("Update secret failed", "update_failed", 500, ""));
-      }
+      setActionError(asApiError(err, "Update secret failed"));
     },
   });
 
@@ -125,11 +110,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["credentials"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setActionError(err);
-      } else {
-        setActionError(new ApiError("Delete failed", "delete_failed", 500, ""));
-      }
+      setActionError(asApiError(err, "Delete failed"));
     },
   });
 
@@ -151,13 +132,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
       );
       setDiscoveryResult(res);
     } catch (err) {
-      if (err instanceof ApiError) {
-        setDiscoveryError(err);
-      } else {
-        setDiscoveryError(
-          new ApiError("Discovery failed", "discovery_failed", 500, ""),
-        );
-      }
+      setDiscoveryError(asApiError(err, "Discovery failed"));
       setDiscoveryResult(null);
     } finally {
       setDiscoveryLoading(false);

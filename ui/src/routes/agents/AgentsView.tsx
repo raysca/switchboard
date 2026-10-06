@@ -11,6 +11,7 @@ import {
   type UpdateAgentInput,
   agentConfigV2Schema,
   ApiError,
+  asApiError,
 } from "../../api/client";
 import {
   ActionButton,
@@ -456,11 +457,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       setMode("detail");
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setFormError(err);
-      } else {
-        setFormError(new ApiError("Failed to create agent", "create_failed", 500, ""));
-      }
+      setFormError(asApiError(err, "Failed to create agent"));
     },
   });
 
@@ -479,11 +476,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       setMode("detail");
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setFormError(err);
-      } else {
-        setFormError(new ApiError("Failed to update agent", "update_failed", 500, ""));
-      }
+      setFormError(asApiError(err, "Failed to update agent"));
     },
   });
 
@@ -494,11 +487,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setActionError(err);
-      } else {
-        setActionError(new ApiError("Duplicate failed", "duplicate_failed", 500, ""));
-      }
+      setActionError(asApiError(err, "Duplicate failed"));
     },
   });
 
@@ -512,11 +501,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setActionError(err);
-      } else {
-        setActionError(new ApiError("Archive failed", "archive_failed", 500, ""));
-      }
+      setActionError(asApiError(err, "Archive failed"));
     },
   });
 

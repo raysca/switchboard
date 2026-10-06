@@ -255,7 +255,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
     );
   }
 
-  async function handleCreateSubmit(e: FormEvent) {
+  function handleCreateSubmit(e: FormEvent) {
     e.preventDefault();
     if (!nameDraft.trim()) {
       setFormError("Server name is required");
@@ -265,18 +265,15 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
       setFormError("Endpoint URL is required");
       return;
     }
-    try {
-      await createMutation.mutateAsync({
-        name: nameDraft.trim(),
-        description: descriptionDraft.trim() || undefined,
-        endpoint: endpointDraft.trim(),
-        transport: transportDraft,
-        credential_id: credentialDraft || undefined,
-        enabled: enabledDraft,
-      });
-    } catch (err) {
-      setFormError(formatApiError(err, "Failed to create MCP server"));
-    }
+    // onError reports failures.
+    createMutation.mutate({
+      name: nameDraft.trim(),
+      description: descriptionDraft.trim() || undefined,
+      endpoint: endpointDraft.trim(),
+      transport: transportDraft,
+      credential_id: credentialDraft || undefined,
+      enabled: enabledDraft,
+    });
   }
 
   async function handleExecuteTool(serverId: string, toolName: string) {
