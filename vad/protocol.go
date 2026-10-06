@@ -26,7 +26,6 @@ const (
 	MsgTypeHandshakeResp uint16 = 2
 	MsgTypeInferReq      uint16 = 3
 	MsgTypeInferResp     uint16 = 4
-	MsgTypeFaultInject   uint16 = 5
 
 	// Status Codes
 	StatusOK                uint32 = 0

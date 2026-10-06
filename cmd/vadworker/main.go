@@ -4,7 +4,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -81,17 +80,6 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "vadworker: read frame error: %v\n", err)
 			return
-		}
-
-		if len(payload) >= 8 {
-			msgType := binary.LittleEndian.Uint16(payload[6:8])
-			if msgType == vad.MsgTypeFaultInject {
-				// Deliberate native fault simulation for Scenario F
-				fmt.Fprintf(os.Stderr, "vadworker: received fault inject command; simulating native crash\n")
-				// Dereference nil to trigger SIGSEGV / crash
-				*(*int)(nil) = 42
-				os.Exit(139)
-			}
 		}
 
 		reqItems, err := vad.DecodeInferReq(payload)
