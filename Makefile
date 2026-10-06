@@ -79,3 +79,19 @@ proto-gen:
 	protoc --proto_path=proto --go_out=core/transport/v1/framespb --go_opt=Mframes.proto=govoice/core/transport/v1/framespb --go_opt=paths=source_relative frames.proto
 
 .PHONY: build test verify release-security proto-gen
+
+# Postgres storage tests (skipped by `make test`). Uses TEST_POSTGRES_DSN if set,
+# otherwise starts a throwaway postgres container.
+PG_IMAGE ?= postgres:16-alpine
+test-postgres:
+	@if [ -n "$$TEST_POSTGRES_DSN" ]; then \
+		cd server && go test -race -count=1 ./storage/ ./retention/; \
+	else \
+		docker rm -f govoice-pg-test >/dev/null 2>&1; \
+		docker run -d --name govoice-pg-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=govoice -p 55432:5432 $(PG_IMAGE) >/dev/null && \
+		for i in $$(seq 1 30); do docker exec govoice-pg-test pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done; \
+		cd server && TEST_POSTGRES_DSN="postgres://postgres:test@127.0.0.1:55432/govoice?sslmode=disable" go test -race -count=1 ./storage/ ./retention/; \
+		status=$$?; docker rm -f govoice-pg-test >/dev/null; exit $$status; \
+	fi
+
+.PHONY: test-postgres
