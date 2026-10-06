@@ -133,23 +133,23 @@ The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status des
 | P0 — STT commit/finalization policy | Gate B passed | `core/transcript` separates raw candidates from marked commits, orders policy by an injected monotonic receipt clock, and has one session-owned deadline driver. Google and xAI preserve immutable turn ownership, bounded invalidation, multi-result completeness, rotation/drain lifecycle, and exactly-once cleanup. Provider-local wall-clock/text dedupe is absent, V2 UserContext suppresses committed-frame replay by turn/generation, and the independent Gate B tester passed focused transcript and mocked multi-turn provider integrations under the race detector. |
 | P0 — Turn-scoped audio buffer | removed | Deleted from core: it had no production users. |
 | P0 — Behavioral eval harness | P0 gate | Machine-readable scenarios pass for barge-in, turn completion, silence/no-speech timeout, flush, transcript stabilization, tool interruption, pacing, teardown, RTVI, and Whisker. |
-| P1 — Runtime service settings updates | P1 tracked | Tests prove supported changes apply atomically at control boundaries, increment revision, and reject invalid updates without partial mutation. |
+| P1 — Runtime service settings updates | removed | Deleted from core: it had no production users. |
 | P1 — Context summarization/compaction hook | P1 tracked | Context tests prove compaction is provider-neutral, preserves required system/tool state, and leaves the session usable when an application hook declines. |
 | P1 — Audio recording/capture processor | removed | Deleted from core: it had no production users. |
 | P1 — Urgent control frames/priority lane | P1 tracked | Congestion tests prove cancel/interruption/flush/end/critical error pass queued media while preserving control ordering. |
 | P1 — Processor failure/unusable policy | removed | Deleted from core: it had no production users. |
 | P1 — Usage metrics | P1 tracked | Provider contract tests record available token/audio/character/request units, omit unavailable values, and correlate them to session/turn without billing logic. |
-| P1 — Bot output/playback state observer | P1 tracked | Observer/eval tests distinguish generating, buffered, playing, drained, interrupted, and completed states with ordered events. |
-| P1 — Serializer abstraction | P1 tracked | Round-trip/negative tests map semantic events and frames to selected serializers while preserving RTVI and debug boundaries. |
-| P1 — Frame/pipeline observer API | P1 tracked | Tests prove immutable non-mutating observations, correct direction/position/timing, order, and observer-error isolation. |
+| P1 — Bot output/playback state observer | removed | Deleted from core: it had no production users. |
+| P1 — Serializer abstraction | removed | Deleted from core: it had no production users. |
+| P1 — Frame/pipeline observer API | removed | Deleted from core: it had no production users. |
 | P2 — DTMF/tone frames | removed | Deleted from core: it had no production users. |
 | P2 — Audio mixer | removed | Deleted from core: it had no production users. |
 | P2 — Background audio/earcon processor | removed | Deleted from core: it had no production users. |
 | P2 — Audio source abstraction | removed | Deleted from core: it had no production users. |
 | P2 — Advanced audio filter chain | removed | Deleted from core: it had no production users. |
-| P2 — Runtime pipeline settings introspection | P2 tracked | Read-only snapshots expose current supported settings/state without mutable internals or content-policy leaks. |
-| P2 — Processor capability metadata | P2 tracked | Metadata tests validate optional audio, interruption, runtime-update, async, and stateful declarations and safe absence for older processors. |
-| P2 — Provider/processor readiness events | P2 tracked | State-transition tests cover ready/degraded/unavailable/recovered and prove optional components do not block startup by default. |
+| P2 — Runtime pipeline settings introspection | removed | Deleted from core: it had no production users. |
+| P2 — Processor capability metadata | removed | Deleted from core: it had no production users. |
+| P2 — Provider/processor readiness events | removed | Deleted from core: it had no production users. |
 | P2 — Turn recording/replay hooks | removed | Deleted from core: it had no production users. |
 | P2 — Extended behavioral parity cases | P2 tracked | Eval scenarios cover false speech start, repeated barge-in, late STT, reconnect, TTS/tool completion races, mute update, congestion, overflow, and degradation. |
 

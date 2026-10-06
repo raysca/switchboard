@@ -36,7 +36,7 @@ Task 2 adds `TurnLifecycle` as the one-shot start/complete/interruption state pr
 
 **Implementation Note (Task 30 — Urgent Control Lane)**
 
-`Session` provides a dedicated priority control lane for urgent lifecycle and barrier controls (`CancelFrame`, `InterruptionFrame`, `FlushFrame`, `EndFrame`, and critical `ErrorFrame`), classified via `core.IsUrgentControl(f)`.
+`Session` provides a dedicated priority control lane for urgent lifecycle and barrier controls (`CancelFrame`, `InterruptionFrame`, `FlushFrame`, `EndFrame`, and critical `ErrorFrame`).
 - **Media Congestion Bypass**: Urgent control envelopes jump ahead of queued data/audio frames, delivering immediately to pipeline processors even when the data buffer is saturated.
 - **Strict FIFO Control Order**: Multiple urgent controls maintain exact enqueue order among themselves.
 - **Starvation Resistance**: The scheduler fair-checks both control and data queues, preventing media starvation while guaranteeing zero-delay control responsiveness.
@@ -136,32 +136,11 @@ is returned and no assistant commit frame is emitted.
 
 ### 2.5 Observer and semantic debug events
 
-`core.Observer` is a non-mutating observation boundary. Its immutable event values describe frame kind, direction, processor identity/index, session/turn/generation correlation, and monotonic timing/lifecycle. Observer APIs do not grant a mutable frame pointer or a callback that can replace, drop, reorder, or inject frames. Callbacks run in event order and must return promptly; observer failures are isolated from session execution and counted/reported through a safe diagnostic hook.
-
-The framework emits protocol-neutral `DebugEvent` values for session/pipeline lifecycle, frame flow, speech/transcription, LLM/TTS lifecycle, interruption/flush, tool call/result, provider readiness/error, and teardown. An adapter maps these semantic values to Whisker-compatible messages. A `Serializer` owns conversion between semantic events/frames and a wire representation; it is not a pipeline processor and does not choose product persistence. RTVI serialization remains its separate client-facing compatibility surface.
-
-Task 1 defines `Observer`, `ObserverEvent`, and `DebugEvent` value surfaces. Their constructors filter and copy attributes, including approved structured numeric/boolean metadata, and their accessors return deep copies. Observer values contain a frame kind rather than a frame pointer. `DebugEvent` has explicit scalar `PipelineID`, `Processor`, `ProcessorIndex`, `FrameKind`, `Direction`, `Sequence`, and `ToolCallID` fields alongside session/turn/generation correlation, so a later adapter can distinguish frame flow and concurrent tool calls without parsing attributes. Delivery, panic isolation, protocol adapters, and general `Serializer` behavior remain assigned to later tasks.
-
-**Acceptance criteria**
-
-- Observer delivery cannot mutate frame flow and an observer panic/error does not fail the session.
-- Event order, direction, correlation IDs, processor position, and lifecycle boundaries are testable.
-- A semantic event can be serialized for a selected debug protocol without adding Whisker-specific types to core processors.
-- RTVI and Whisker conformance results are recorded independently.
+The framework keeps the protocol-neutral `DebugEvent` value (copied, filtered attributes; session/turn/generation correlation), which `tools/compat/whisker` adapts to Whisker-compatible messages. The `Observer`/`ObserverEvent` delivery API and the `Serializer` abstraction were removed: they had no production users.
 
 ### 2.6 Runtime settings updates
 
-Runtime changes enter a session through a typed `RuntimeSettingsUpdate` control message. The update includes a monotonic revision and a typed set of supported values, is validated as a complete unit, and takes effect at a documented control boundary. An invalid update is rejected without partially changing processor state. Arbitrary mutation of processor internals is not public API. Initial updateable values are input mute, interruption enabled, silence/turn timeouts, language, and selected runtime thresholds.
-
-**Acceptance criteria**
-
-- A valid update is observed as one revision and applies atomically.
-- An invalid or out-of-order revision leaves the prior settings active and produces a structured error/event.
-- Updates take effect without rebuilding a session for the supported fields.
-
-**Implementation Note (Task 27)**
-
-`core.RuntimeSettingsUpdate` implements `FrameSettingsControl`. Upon arrival in the session control queue, it is validated via `update.Validate()`. If invalid, `RuntimeSettingsErrorEvent` with `ErrInvalidRuntimeSettings` is emitted without changing session state. If the revision is less than or equal to current applied revision, `RuntimeSettingsErrorEvent` with `ErrStaleSettingsRevision` is emitted. Valid updates are applied atomically under `s.settingsMu` and `s.RuntimeSettings()` snapshot is updated, followed by emission of `RuntimeSettingsAppliedEvent`. Input mute changes update admission gating immediately without rebuilding the pipeline or session.
+Removed. `RuntimeSettingsUpdate` had no production users. Input mute/unmute remains as the `InputMuteFrame`/`InputUnmuteFrame` controls.
 
 ### 2.7 Audio filter
 
@@ -483,47 +462,15 @@ type UsageMetricsFrame struct {
 
 ### 2.12 Bot output and playback-state observer
 
-`core.PlaybackStateFrame` and `core.PlaybackTracker` provide fine-grained, ordered bot output and playback lifecycle observations:
-```go
-type PlaybackState string
-
-const (
-    PlaybackGenerating  PlaybackState = "generating"  // LLM / TTS generating speech content
-    PlaybackBuffered    PlaybackState = "buffered"    // Pacer has received/buffered audio frames
-    PlaybackPlaying     PlaybackState = "playing"     // First audio chunk dispatched to transport
-    PlaybackDrained     PlaybackState = "drained"     // Pacer queue completely drained to client
-    PlaybackInterrupted PlaybackState = "interrupted" // Output was cancelled or interrupted mid-playback
-    PlaybackCompleted   PlaybackState = "completed"   // Turn output cleanly finished
-)
-```
-- **Ordered Lifecycle**: `generating` → `buffered` → `playing` → (`drained` | `interrupted`) → `completed`.
-- **Fault & Cancellation Isolation**: Interruptions fence subsequent buffered/playing transitions for the interrupted turn while allowing new generations to restart cleanly.
-- **Empty Output**: Silent turns or pure tool-execution turns advance directly from `generating` to `completed` without spurious buffering or playing states.
+Removed. `PlaybackTracker`/`PlaybackStateFrame` had no production users; bot speaking state is `SpeakingStateFrame` (section 2.9).
 
 ### 2.13 Serializer abstraction
 
-`core.Serializer` provides the general encoding/decoding abstraction between semantic events/frames and wire formats:
-```go
-type Serializer interface {
-    Format() string
-    Encode(v any) ([]byte, error)
-    Decode(data []byte) (any, error)
-}
-```
-- **Semantic Separation**: Decouples semantic events (such as `DebugEvent` and `ObserverEvent`) from specific transports or wire formats. RTVI remains a separate adapter without injecting wire types into processors.
-- **Validation & Bounds**: Implementations (e.g. `JSONEventSerializer`) enforce payload size limits, reject malformed payloads with `ErrMalformedPayload`, and reject unknown fields when configured with `DisallowUnknownFields`.
+Removed; see section 2.5.
 
 ### 2.14 Frame and pipeline observer API
 
-`core.Session` exposes `AddObserver(o Observer)` allowing registration of non-mutating observers:
-```go
-type Observer interface {
-    Observe(ObserverEvent)
-}
-```
-- **Mutation Impossibility**: `ObserverEvent` contains value semantics and cloned attributes. Observers receive no mutable frame references or delivery mutation hooks.
-- **Ordered Delivery**: `ObserverEvent` values are emitted in exact pipeline dispatch sequence with processor position and timing.
-- **Fault & Panic Isolation**: Any panics thrown within observer callbacks are recovered and isolated from the session run-loop, ensuring zero degradation of active calls.
+Removed; see section 2.5.
 
 ### 2.15 DTMF and transport-neutral tone frames
 
@@ -547,73 +494,15 @@ Removed with the `core/audio` package.
 
 ### 2.20 Read-only runtime pipeline settings introspection
 
-`core.Session` exposes `Snapshot() SessionSnapshot` providing a point-in-time, read-only diagnostic inspection:
-```go
-type SessionSnapshot struct {
-    SessionID       uint64
-    State           string
-    Generation      uint64
-    InputMuted      bool
-    CreatedAt       time.Time
-    Uptime          time.Duration
-    FramesIn        uint64
-    FramesOut       uint64
-    StaleDiscarded  uint64
-    AudioDropped    uint64
-    ActiveTasks     int
-    LeakedTasks     int
-    Settings        RuntimeSettings
-    Processors      []ProcessorSnapshot
-    ObserverCount   int
-}
-```
-- **Thread Safety & Immutability**: All counters and settings are atomically or lock-protected and copied by value; mutations cannot affect the active session run loop.
-- **Diagnostic Transparency**: Exposes exact processor pipeline topologies, indices, descriptions, and active observer counts.
+Removed. `Session.Snapshot` had no production users.
 
 ### 2.21 Processor capability metadata
 
-`core.CapableProcessor` allows pipeline processors to declare functional capabilities and contract guarantees:
-```go
-type ProcessorCapabilities struct {
-    Name         string
-    Version      string
-    Description  string
-    Capabilities []ProcessorCapability // audio_input, audio_output, speech_to_text, llm, vad, etc.
-    InputFrames  []FrameType
-    OutputFrames []FrameType
-    SideEffects  bool                  // true if processor executes external RPCs/network calls
-}
-
-type CapableProcessor interface {
-    Processor
-    Capabilities() ProcessorCapabilities
-}
-```
-- **Introspection Helpers**: `GetProcessorCapabilities(p)`, `HasCapability(p, cap)`, and `Pipeline.FindProcessorsWithCapability(cap)` allow pipeline introspection without tight coupling to concrete types.
-- **Side Effect Tracking**: `SideEffects` flag explicitly identifies processors with side-effecting operations (e.g. LLM/TTS/network calls) to guide retry policies and state rollback.
+Removed. `CapableProcessor` had no production users.
 
 ### 2.22 Provider and processor readiness events
 
-`core.ReadinessFrame` conveys availability and initialization status across pipeline components:
-```go
-type ReadinessStatus string
-const (
-    ReadinessReady    ReadinessStatus = "ready"
-    ReadinessDegraded ReadinessStatus = "degraded"
-    ReadinessNotReady ReadinessStatus = "not_ready"
-)
-
-type ReadinessFrame struct {
-    Component string          `json:"component"`
-    Status    ReadinessStatus `json:"status"`
-    Reason    string          `json:"reason,omitempty"`
-    Timestamp time.Time       `json:"timestamp"`
-    Latency   time.Duration   `json:"latency,omitempty"`
-    Gen       uint64          `json:"gen,omitempty"`
-}
-```
-- **Validation**: Enforces non-empty component identification and canonical status enum states (`Validate()`).
-- **Health Observability**: Emits non-blocking status transitions (e.g. provider network degradations or cold-start completions) across the pipeline for telemetry and diagnostics.
+Removed. `ReadinessFrame` had no production users.
 
 ### 2.23 Turn recording and replay hooks
 
@@ -621,22 +510,4 @@ Removed. `TurnRecorder`/`TurnReplayer` had no production users and were deleted.
 
 ### 2.24 Extended behavioral parity scenarios
 
-Phase 10 introduces three extended parity scenarios (8, 9, 10) in `tools/eval/scenarios/` complementing the original seven vertical scenarios:
-1. **Scenario 8 (`audio_mixing_and_earcons`)**: Bounded multi-source audio mixing, sample saturation clipping control, uninterruptible earcon delivery through barge-in, and automatic background audio ducking.
-2. **Scenario 9 (`runtime_introspection_and_readiness`)**: Dynamic processor readiness notifications (`ReadinessFrame`), capability flag queries (`CapableProcessor`), and point-in-time runtime snapshot diagnostics (`Session.Snapshot`).
-3. **Scenario 10 (`deterministic_turn_replay`)**: End-to-end conversation turn recording (`TurnRecorder`), JSON serialization fidelity, and headless regression replay (`TurnReplayer`).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+Scenarios 8–10 in `tools/eval/scenarios/` (audio mixing/earcons, runtime introspection/readiness, turn replay) describe features that were removed from core; they are descriptors only and have no runtime coverage.
