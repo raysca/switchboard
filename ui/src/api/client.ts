@@ -197,11 +197,44 @@ const archiveEnvelope = z.object({
   }),
 });
 
+// Agent config schema v2: one typed block per stage. Every stage names its
+// provider and an explicit credential of that provider (no implicit fallback).
+const nonEmpty = z.string().trim().min(1);
+const credentialRef = nonEmpty;
+export const agentConfigV2Schema = z.object({
+  // Mirrors the server: provider and credential_id are required per stage and
+  // llm.model is required; stt.model and tts.voice fall back to provider defaults.
+  stt: z.object({
+    provider: nonEmpty,
+    model: z.string().optional(),
+    language: z.string().optional(),
+    credential_id: credentialRef,
+  }),
+  llm: z.object({
+    provider: nonEmpty,
+    model: nonEmpty,
+    system_prompt: z.string().optional(),
+    credential_id: credentialRef,
+  }),
+  tts: z.object({
+    provider: nonEmpty,
+    voice: z.string().optional(),
+    credential_id: credentialRef,
+  }),
+  context: z
+    .object({
+      max_messages: z.number().int().min(2).optional(),
+      max_tokens: z.number().int().positive().optional(),
+    })
+    .optional(),
+});
+export type AgentConfigV2 = z.infer<typeof agentConfigV2Schema>;
+
 export type CreateAgentInput = {
   name: string;
   description: string;
   enabled?: boolean;
-  config: Record<string, unknown>;
+  config: AgentConfigV2;
   mcp_tools?: ToolSelection[];
 };
 
@@ -209,7 +242,7 @@ export type UpdateAgentInput = {
   name?: string;
   description?: string;
   enabled?: boolean;
-  config?: Record<string, unknown>;
+  config?: AgentConfigV2;
 };
 
 // MCP schemas & types
@@ -503,7 +536,7 @@ export function createApiClient(
   return {
     serverConfig: async () =>
       (await request("/server-config", configEnvelope)).data,
-    issueVoiceToken: async (input: { principal: string; pipeline: string }) =>
+    issueVoiceToken: async (input: { principal: string; agent_id: string }) =>
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
     getProviders: async () =>
       (await request("/providers", providersEnvelope)).data,

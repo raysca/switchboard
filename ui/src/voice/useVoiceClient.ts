@@ -29,7 +29,7 @@ export function useVoiceClient(apiClient: ApiClient) {
     };
   }, []);
 
-  const connect = useCallback((options?: ConnectOptions) => {
+  const connect = useCallback((options: ConnectOptions) => {
     return clientRef.current?.connect(options);
   }, []);
 

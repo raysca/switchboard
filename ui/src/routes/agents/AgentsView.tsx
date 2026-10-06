@@ -1,10 +1,15 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
   type AgentDTO,
+  type AgentConfigV2,
   type CreateAgentInput,
+  type CredentialDTO,
+  type ProviderDefinition,
   type UpdateAgentInput,
+  agentConfigV2Schema,
   ApiError,
 } from "../../api/client";
 import {
@@ -58,19 +63,376 @@ function getReadinessLabel(state: string): string {
   }
 }
 
+type Capability = "stt" | "llm" | "tts";
+
+type AgentDraft = {
+  name: string;
+  description: string;
+  enabled: boolean;
+  sttProvider: string;
+  sttModel: string;
+  sttLanguage: string;
+  sttCredential: string;
+  llmProvider: string;
+  llmModel: string;
+  llmPrompt: string;
+  llmCredential: string;
+  ttsProvider: string;
+  ttsVoice: string;
+  ttsCredential: string;
+  maxMessages: string;
+  maxTokens: string;
+};
+
+/**
+ * Returns the typed v2 config, or null when the stored config predates schema v2
+ * or lacks a stage credential; either way the agent needs reconfiguration.
+ */
+function agentConfigV2(agent: AgentDTO): AgentConfigV2 | null {
+  const parsed = agentConfigV2Schema.safeParse(agent.current_version?.config);
+  return parsed.success ? parsed.data : null;
+}
+
+function draftFromAgent(agent: AgentDTO | null): AgentDraft {
+  const cfg = agent ? agentConfigV2(agent) : null;
+  return {
+    name: agent?.name ?? "",
+    description: agent?.description ?? "",
+    enabled: agent?.enabled ?? true,
+    sttProvider: cfg?.stt.provider ?? "",
+    sttModel: cfg?.stt.model ?? "",
+    sttLanguage: cfg?.stt.language ?? "en-US",
+    sttCredential: cfg?.stt.credential_id ?? "",
+    llmProvider: cfg?.llm.provider ?? "",
+    llmModel: cfg?.llm.model ?? "",
+    llmPrompt: cfg?.llm.system_prompt ?? "",
+    llmCredential: cfg?.llm.credential_id ?? "",
+    ttsProvider: cfg?.tts.provider ?? "",
+    ttsVoice: cfg?.tts.voice ?? "",
+    ttsCredential: cfg?.tts.credential_id ?? "",
+    maxMessages: cfg?.context?.max_messages?.toString() ?? "",
+    maxTokens: cfg?.context?.max_tokens?.toString() ?? "",
+  };
+}
+
+/** Validates the draft and builds the v2 config; returns error messages on failure. */
+function buildAgentConfig(d: AgentDraft): { config: AgentConfigV2 } | { errors: string[] } {
+  const errors: string[] = [];
+  const need = (value: string, label: string) => {
+    if (!value.trim()) errors.push(`${label} is required.`);
+  };
+  need(d.name, "Agent name");
+  need(d.sttProvider, "STT provider");
+  need(d.sttCredential, "STT credential");
+  need(d.llmProvider, "LLM provider");
+  need(d.llmModel, "LLM model");
+  need(d.llmCredential, "LLM credential");
+  need(d.ttsProvider, "TTS provider");
+  need(d.ttsCredential, "TTS credential");
+  const limit = (value: string, label: string) => {
+    if (!value.trim()) return undefined;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n <= 0) {
+      errors.push(`${label} must be a positive whole number.`);
+      return undefined;
+    }
+    return n;
+  };
+  const maxMessages = limit(d.maxMessages, "Max messages");
+  if (maxMessages === 1) errors.push("Max messages must be at least 2.");
+  const maxTokens = limit(d.maxTokens, "Max tokens");
+  if (errors.length) return { errors };
+
+  const config: AgentConfigV2 = {
+    stt: {
+      provider: d.sttProvider,
+      ...(d.sttModel.trim() ? { model: d.sttModel.trim() } : {}),
+      ...(d.sttLanguage.trim() ? { language: d.sttLanguage.trim() } : {}),
+      credential_id: d.sttCredential,
+    },
+    llm: {
+      provider: d.llmProvider,
+      model: d.llmModel.trim(),
+      ...(d.llmPrompt.trim() ? { system_prompt: d.llmPrompt.trim() } : {}),
+      credential_id: d.llmCredential,
+    },
+    tts: {
+      provider: d.ttsProvider,
+      ...(d.ttsVoice.trim() ? { voice: d.ttsVoice.trim() } : {}),
+      credential_id: d.ttsCredential,
+    },
+  };
+  if (maxMessages !== undefined || maxTokens !== undefined) {
+    config.context = {
+      ...(maxMessages !== undefined ? { max_messages: maxMessages } : {}),
+      ...(maxTokens !== undefined ? { max_tokens: maxTokens } : {}),
+    };
+  }
+  return { config };
+}
+
+type AgentFormProps = {
+  agent: AgentDTO | null;
+  providers: ProviderDefinition[];
+  credentials: CredentialDTO[];
+  pending: boolean;
+  submitLabel: string;
+  onSubmit: (input: CreateAgentInput) => void;
+  onCancel: () => void;
+};
+
+function AgentForm({
+  agent,
+  providers,
+  credentials,
+  pending,
+  submitLabel,
+  onSubmit,
+  onCancel,
+}: AgentFormProps) {
+  const [draft, setDraft] = useState(() => draftFromAgent(agent));
+  const [errors, setErrors] = useState<string[]>([]);
+  const set = (patch: Partial<AgentDraft>) => setDraft((d) => ({ ...d, ...patch }));
+
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const result = buildAgentConfig(draft);
+    if ("errors" in result) {
+      setErrors(result.errors);
+      return;
+    }
+    setErrors([]);
+    onSubmit({
+      name: draft.name.trim(),
+      description: draft.description.trim(),
+      enabled: draft.enabled,
+      config: result.config,
+    });
+  }
+
+  // "mcp" holds MCP tokens only; never a voice stage provider.
+  const providerOptions = (cap: Capability) =>
+    providers.filter((p) => p.id !== "mcp" && p.capabilities.includes(cap));
+
+  const providerSelect = (cap: Capability, value: string, onChange: (v: string) => void) => (
+    <label className="form-field" htmlFor={`agent-${cap}-provider`}>
+      <span>{cap.toUpperCase()} provider</span>
+      <select id={`agent-${cap}-provider`} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Select a provider</option>
+        {providerOptions(cap).map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.display_name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  const credentialSelect = (
+    cap: Capability,
+    provider: string,
+    value: string,
+    onChange: (v: string) => void,
+  ) => {
+    const options = credentials.filter((c) => c.provider === provider);
+    return (
+      <>
+        <label className="form-field" htmlFor={`agent-${cap}-credential`}>
+          <span>{cap.toUpperCase()} credential</span>
+          <select
+            id={`agent-${cap}-credential`}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            disabled={!provider}
+            required
+          >
+            <option value="">Select a credential</option>
+            {options.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.masked_value} ({c.validation_state})
+              </option>
+            ))}
+          </select>
+        </label>
+        {provider && options.length === 0 && (
+          <p className="subtext" role="note">
+            No {cap.toUpperCase()} credentials for this provider.{" "}
+            <Link to="/providers">Add one on the Providers page</Link>.
+          </p>
+        )}
+      </>
+    );
+  };
+
+  const stageBox = {
+    border: "1px solid #c9d3d2",
+    padding: "16px",
+    marginTop: "16px",
+    background: "#ffffff",
+  } as const;
+
+  return (
+    <form onSubmit={handleSubmit} className="form-card" noValidate>
+      {errors.length > 0 && (
+        <div role="alert" className="message-panel" style={{ borderColor: "#a43e30" }}>
+          <ul style={{ margin: 0 }}>
+            {errors.map((msg) => (
+              <li key={msg}>{msg}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <label className="form-field" htmlFor="agent-name-input">
+        <span>Agent name</span>
+        <input
+          id="agent-name-input"
+          type="text"
+          value={draft.name}
+          onChange={(e) => set({ name: e.target.value })}
+          placeholder="e.g. Front Desk Assistant"
+          maxLength={128}
+          required
+        />
+      </label>
+
+      <label className="form-field" htmlFor="agent-desc-input">
+        <span>Description</span>
+        <textarea
+          id="agent-desc-input"
+          value={draft.description}
+          onChange={(e) => set({ description: e.target.value })}
+          placeholder="Short summary of what this agent does"
+          maxLength={1024}
+          rows={3}
+        />
+      </label>
+
+      <label
+        className="form-field"
+        htmlFor="agent-enabled-checkbox"
+        style={{ display: "flex", alignItems: "center", gap: "8px" }}
+      >
+        <input
+          id="agent-enabled-checkbox"
+          type="checkbox"
+          checked={draft.enabled}
+          onChange={(e) => set({ enabled: e.target.checked })}
+        />
+        <span>Enabled</span>
+      </label>
+
+      <fieldset style={stageBox}>
+        <legend>Speech-to-text</legend>
+        {providerSelect("stt", draft.sttProvider, (v) => set({ sttProvider: v, sttCredential: "" }))}
+        <label className="form-field" htmlFor="agent-stt-model">
+          <span>STT model</span>
+          <input
+            id="agent-stt-model"
+            type="text"
+            value={draft.sttModel}
+            onChange={(e) => set({ sttModel: e.target.value })}
+            placeholder="Provider default (e.g. chirp_2)"
+          />
+        </label>
+        <label className="form-field" htmlFor="agent-stt-language">
+          <span>STT language</span>
+          <input
+            id="agent-stt-language"
+            type="text"
+            value={draft.sttLanguage}
+            onChange={(e) => set({ sttLanguage: e.target.value })}
+            placeholder="e.g. en-US"
+          />
+        </label>
+        {credentialSelect("stt", draft.sttProvider, draft.sttCredential, (v) => set({ sttCredential: v }))}
+      </fieldset>
+
+      <fieldset style={stageBox}>
+        <legend>Language model</legend>
+        {providerSelect("llm", draft.llmProvider, (v) => set({ llmProvider: v, llmCredential: "" }))}
+        <label className="form-field" htmlFor="agent-llm-model">
+          <span>LLM model</span>
+          <input
+            id="agent-llm-model"
+            type="text"
+            value={draft.llmModel}
+            onChange={(e) => set({ llmModel: e.target.value })}
+            placeholder="e.g. gemini-2.0-flash"
+            required
+          />
+        </label>
+        <label className="form-field" htmlFor="agent-llm-prompt">
+          <span>System prompt</span>
+          <textarea
+            id="agent-llm-prompt"
+            value={draft.llmPrompt}
+            onChange={(e) => set({ llmPrompt: e.target.value })}
+            placeholder="Instructions for the agent's personality and behavior"
+            rows={4}
+          />
+        </label>
+        {credentialSelect("llm", draft.llmProvider, draft.llmCredential, (v) => set({ llmCredential: v }))}
+      </fieldset>
+
+      <fieldset style={stageBox}>
+        <legend>Text-to-speech</legend>
+        {providerSelect("tts", draft.ttsProvider, (v) => set({ ttsProvider: v, ttsCredential: "" }))}
+        <label className="form-field" htmlFor="agent-tts-voice">
+          <span>TTS voice</span>
+          <input
+            id="agent-tts-voice"
+            type="text"
+            value={draft.ttsVoice}
+            onChange={(e) => set({ ttsVoice: e.target.value })}
+            placeholder="Provider default (e.g. en-US-Journey-F)"
+          />
+        </label>
+        {credentialSelect("tts", draft.ttsProvider, draft.ttsCredential, (v) => set({ ttsCredential: v }))}
+      </fieldset>
+
+      <fieldset style={{ ...stageBox, marginBottom: "16px" }}>
+        <legend>Context limits (optional)</legend>
+        <label className="form-field" htmlFor="agent-max-messages">
+          <span>Max messages</span>
+          <input
+            id="agent-max-messages"
+            type="number"
+            min={1}
+            value={draft.maxMessages}
+            onChange={(e) => set({ maxMessages: e.target.value })}
+            placeholder="server default"
+          />
+        </label>
+        <label className="form-field" htmlFor="agent-max-tokens">
+          <span>Max tokens</span>
+          <input
+            id="agent-max-tokens"
+            type="number"
+            min={1}
+            value={draft.maxTokens}
+            onChange={(e) => set({ maxTokens: e.target.value })}
+            placeholder="server default"
+          />
+        </label>
+      </fieldset>
+
+      <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+        <ActionButton type="submit" disabled={pending}>
+          {pending ? "Saving…" : submitLabel}
+        </ActionButton>
+        <button type="button" className="action-button-small" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export function AgentsView({ client, keyValue }: AgentsViewProps) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ViewMode>("list");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-
-  // Form draft state
-  const [nameDraft, setNameDraft] = useState("");
-  const [descriptionDraft, setDescriptionDraft] = useState("");
-  const [enabledDraft, setEnabledDraft] = useState(true);
-  const [sttDraft, setSttDraft] = useState("google");
-  const [llmDraft, setLlmDraft] = useState("gemini-2.0-flash");
-  const [ttsDraft, setTtsDraft] = useState("en-US-Journey-F");
-  const [promptDraft, setPromptDraft] = useState("");
 
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
@@ -154,13 +516,6 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
   });
 
   function startCreate() {
-    setNameDraft("");
-    setDescriptionDraft("");
-    setEnabledDraft(true);
-    setSttDraft("");
-    setLlmDraft("");
-    setTtsDraft("");
-    setPromptDraft("");
     setFormError(null);
     setSaveSuccessMessage(null);
     setMode("create");
@@ -168,62 +523,37 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
 
   function startEdit(agent: AgentDTO) {
     setSelectedAgentId(agent.id);
-    setNameDraft(agent.name);
-    setDescriptionDraft(agent.description);
-    setEnabledDraft(agent.enabled);
-    const cfg = (agent.current_version?.config ?? {}) as Record<string, string>;
-    setSttDraft(cfg.stt ?? "google");
-    setLlmDraft(cfg.llm ?? "google");
-    setTtsDraft(cfg.tts ?? "google");
-    setPromptDraft(cfg.system_prompt ?? "");
     setFormError(null);
     setSaveSuccessMessage(null);
     setMode("edit");
   }
 
-  function handleCreateSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const name = nameDraft.trim();
-    if (!name) return;
-    const config: Record<string, unknown> = {
-      stt: sttDraft.trim(),
-      llm: llmDraft.trim(),
-      tts: ttsDraft.trim(),
-    };
-    if (promptDraft.trim()) {
-      config.system_prompt = promptDraft.trim();
-    }
-    createMutation.mutate({
-      name,
-      description: descriptionDraft.trim(),
-      enabled: enabledDraft,
-      config,
-    });
-  }
-
-  function handleEditSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!selectedAgentId) return;
-    const name = nameDraft.trim();
-    if (!name) return;
-    const config: Record<string, unknown> = {
-      stt: sttDraft.trim(),
-      llm: llmDraft.trim(),
-      tts: ttsDraft.trim(),
-    };
-    if (promptDraft.trim()) {
-      config.system_prompt = promptDraft.trim();
-    }
-    updateMutation.mutate({
-      id: selectedAgentId,
-      payload: {
-        name,
-        description: descriptionDraft.trim(),
-        enabled: enabledDraft,
-        config,
-      },
-    });
-  }
+  const formOpen = mode === "create" || mode === "edit";
+  const providersQuery = useQuery({
+    queryKey: ["providers"],
+    queryFn: () => client.getProviders(),
+    enabled: !!keyValue && formOpen,
+    retry: false,
+  });
+  const credentialsQuery = useQuery({
+    queryKey: ["credentials"],
+    queryFn: () => client.getCredentials(),
+    enabled: !!keyValue && formOpen,
+    retry: false,
+  });
+  const providers = providersQuery.data ?? [];
+  const credentials = credentialsQuery.data ?? [];
+  const optionsFailure = providersQuery.error ?? credentialsQuery.error;
+  const optionsError = optionsFailure ? (
+    <ErrorState
+      title="Failed to load providers or credentials"
+      error={optionsFailure as ApiError}
+      onRetry={() => {
+        void providersQuery.refetch();
+        void credentialsQuery.refetch();
+      }}
+    />
+  ) : null;
 
   const agents = agentsQuery.data ?? [];
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
@@ -320,6 +650,9 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                             </td>
                             <td>
                               <Status tone={tone}>{label}</Status>
+                              {!agentConfigV2(agent) && (
+                                <div className="subtext">Needs reconfiguration</div>
+                              )}
                               {agent.readiness.reasons &&
                                 agent.readiness.reasons.length > 0 && (
                                   <div
@@ -411,7 +744,8 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
             <section aria-labelledby="create-agent-heading">
               <h2 id="create-agent-heading">Create new voice agent</h2>
               <p style={{ color: "#53666b", marginBottom: "20px" }}>
-                Configure an agent with speech-to-text, reasoning model, and speech synthesis voice.
+                Configure the speech-to-text, language model and text-to-speech stages. Calls run
+                this stored agent directly.
               </p>
 
               {formError && (
@@ -421,122 +755,17 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                   onRetry={() => setFormError(null)}
                 />
               )}
+              {optionsError}
 
-              <form onSubmit={handleCreateSubmit} className="form-card">
-                <label className="form-field" htmlFor="agent-name-input">
-                  <span>Agent name</span>
-                  <input
-                    id="agent-name-input"
-                    type="text"
-                    value={nameDraft}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    placeholder="e.g. Front Desk Assistant"
-                    maxLength={128}
-                    required
-                  />
-                </label>
-
-                <label className="form-field" htmlFor="agent-desc-input">
-                  <span>Description</span>
-                  <textarea
-                    id="agent-desc-input"
-                    value={descriptionDraft}
-                    onChange={(e) => setDescriptionDraft(e.target.value)}
-                    placeholder="Short summary of what this agent does"
-                    maxLength={1024}
-                    rows={3}
-                  />
-                </label>
-
-                <label
-                  className="form-field"
-                  htmlFor="agent-enabled-checkbox"
-                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
-                >
-                  <input
-                    id="agent-enabled-checkbox"
-                    type="checkbox"
-                    checked={enabledDraft}
-                    onChange={(e) => setEnabledDraft(e.target.checked)}
-                  />
-                  <span>Enabled</span>
-                </label>
-
-                <div
-                  className="voice-stack-settings"
-                  style={{
-                    border: "1px solid #c9d3d2",
-                    padding: "16px",
-                    marginTop: "16px",
-                    marginBottom: "16px",
-                    background: "#ffffff",
-                  }}
-                >
-                  <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>
-                    Voice stack configuration
-                  </h3>
-
-                  <label className="form-field" htmlFor="agent-stt-input">
-                    <span>STT (Speech-to-Text)</span>
-                    <input
-                      id="agent-stt-input"
-                      type="text"
-                      value={sttDraft}
-                      onChange={(e) => setSttDraft(e.target.value)}
-                      placeholder="e.g. google"
-                      required
-                    />
-                  </label>
-
-                  <label className="form-field" htmlFor="agent-llm-input">
-                    <span>LLM Model</span>
-                    <input
-                      id="agent-llm-input"
-                      type="text"
-                      value={llmDraft}
-                      onChange={(e) => setLlmDraft(e.target.value)}
-                      placeholder="e.g. gemini-2.0-flash"
-                      required
-                    />
-                  </label>
-
-                  <label className="form-field" htmlFor="agent-tts-input">
-                    <span>TTS (Text-to-Speech)</span>
-                    <input
-                      id="agent-tts-input"
-                      type="text"
-                      value={ttsDraft}
-                      onChange={(e) => setTtsDraft(e.target.value)}
-                      placeholder="e.g. en-US-Journey-F"
-                      required
-                    />
-                  </label>
-
-                  <label className="form-field" htmlFor="agent-prompt-input">
-                    <span>System prompt (optional)</span>
-                    <textarea
-                      id="agent-prompt-input"
-                      value={promptDraft}
-                      onChange={(e) => setPromptDraft(e.target.value)}
-                      placeholder="Instructions for the agent voice personality and behavior"
-                      rows={3}
-                    />
-                  </label>
-                </div>
-
-                <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-                  <ActionButton type="submit" disabled={createMutation.isPending}>
-                    {createMutation.isPending ? "Saving…" : "Save agent"}
-                  </ActionButton>
-                  <button
-                    type="button"
-                    className="action-button-small"
-                    onClick={() => setMode("list")}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
+              <AgentForm
+                agent={null}
+                providers={providers}
+                credentials={credentials}
+                pending={createMutation.isPending}
+                submitLabel="Save agent"
+                onSubmit={(input) => createMutation.mutate(input)}
+                onCancel={() => setMode("list")}
+              />
             </section>
           )}
 
@@ -553,6 +782,12 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                   (v{(selectedAgent.current_version?.number ?? 1) + 1}) with a new config hash.
                   Historical sessions remain pinned to their past versions.
                 </p>
+                {!agentConfigV2(selectedAgent) && (
+                  <p>
+                    This agent's stored configuration uses an old format or is missing stage
+                    credentials. Choose a provider and credential for every stage to reconfigure it.
+                  </p>
+                )}
               </div>
 
               {formError && (
@@ -562,116 +797,20 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                   onRetry={() => setFormError(null)}
                 />
               )}
+              {optionsError}
 
-              <form onSubmit={handleEditSubmit} className="form-card">
-                <label className="form-field" htmlFor="edit-agent-name-input">
-                  <span>Agent name</span>
-                  <input
-                    id="edit-agent-name-input"
-                    type="text"
-                    value={nameDraft}
-                    onChange={(e) => setNameDraft(e.target.value)}
-                    maxLength={128}
-                    required
-                  />
-                </label>
-
-                <label className="form-field" htmlFor="edit-agent-desc-input">
-                  <span>Description</span>
-                  <textarea
-                    id="edit-agent-desc-input"
-                    value={descriptionDraft}
-                    onChange={(e) => setDescriptionDraft(e.target.value)}
-                    maxLength={1024}
-                    rows={3}
-                  />
-                </label>
-
-                <label
-                  className="form-field"
-                  htmlFor="edit-agent-enabled-checkbox"
-                  style={{ display: "flex", alignItems: "center", gap: "8px" }}
-                >
-                  <input
-                    id="edit-agent-enabled-checkbox"
-                    type="checkbox"
-                    checked={enabledDraft}
-                    onChange={(e) => setEnabledDraft(e.target.checked)}
-                  />
-                  <span>Enabled</span>
-                </label>
-
-                <div
-                  className="voice-stack-settings"
-                  style={{
-                    border: "1px solid #c9d3d2",
-                    padding: "16px",
-                    marginTop: "16px",
-                    marginBottom: "16px",
-                    background: "#ffffff",
-                  }}
-                >
-                  <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>
-                    Voice stack configuration
-                  </h3>
-
-                  <label className="form-field" htmlFor="edit-agent-stt-input">
-                    <span>STT (Speech-to-Text)</span>
-                    <input
-                      id="edit-agent-stt-input"
-                      type="text"
-                      value={sttDraft}
-                      onChange={(e) => setSttDraft(e.target.value)}
-                      required
-                    />
-                  </label>
-
-                  <label className="form-field" htmlFor="edit-agent-llm-input">
-                    <span>LLM Model</span>
-                    <input
-                      id="edit-agent-llm-input"
-                      type="text"
-                      value={llmDraft}
-                      onChange={(e) => setLlmDraft(e.target.value)}
-                      required
-                    />
-                  </label>
-
-                  <label className="form-field" htmlFor="edit-agent-tts-input">
-                    <span>TTS (Text-to-Speech)</span>
-                    <input
-                      id="edit-agent-tts-input"
-                      type="text"
-                      value={ttsDraft}
-                      onChange={(e) => setTtsDraft(e.target.value)}
-                      required
-                    />
-                  </label>
-
-                  <label className="form-field" htmlFor="edit-agent-prompt-input">
-                    <span>System prompt (optional)</span>
-                    <textarea
-                      id="edit-agent-prompt-input"
-                      value={promptDraft}
-                      onChange={(e) => setPromptDraft(e.target.value)}
-                      rows={3}
-                    />
-                  </label>
-                </div>
-
-                <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-                  <ActionButton type="submit" disabled={updateMutation.isPending}>
-                    {updateMutation.isPending ? "Saving…" : "Save changes"}
-                  </ActionButton>
-                  <button
-                    type="button"
-                    className="action-button-small"
-                    onClick={() => setMode("detail")}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </form>
+              <AgentForm
+                key={selectedAgent.id}
+                agent={selectedAgent}
+                providers={providers}
+                credentials={credentials}
+                pending={updateMutation.isPending}
+                submitLabel="Save changes"
+                onSubmit={(input) =>
+                  updateMutation.mutate({ id: selectedAgent.id, payload: input })
+                }
+                onCancel={() => setMode("detail")}
+              />
             </section>
           )}
 
@@ -747,6 +886,13 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                       {getReadinessLabel(selectedAgent.readiness.state)}
                     </Status>
                   </div>
+                  {!agentConfigV2(selectedAgent) && (
+                    <div style={{ marginTop: "8px", fontSize: "0.8rem" }}>
+                      Needs reconfiguration: this configuration predates typed agent configs or
+                      lacks stage credentials. Edit the agent to choose a provider and credential
+                      for each stage.
+                    </div>
+                  )}
                   {selectedAgent.readiness.reasons &&
                     selectedAgent.readiness.reasons.length > 0 && (
                       <div style={{ marginTop: "8px", fontSize: "0.8rem", color: "#a43e30" }}>

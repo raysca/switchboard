@@ -64,6 +64,21 @@ describe("OnboardingView", () => {
     expect(secretInput).toHaveAttribute("type", "password");
   });
 
+  it("offers only providers that can run every stage (never xAI-LLM-only or mcp)", async () => {
+    const client = createMockClient({
+      getProviders: vi.fn().mockResolvedValue([
+        { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
+        { id: "xai", display_name: "xAI", capabilities: ["llm"], auth_required: true },
+        { id: "mcp", display_name: "MCP server token", capabilities: ["mcp"], auth_required: true },
+      ]),
+    });
+    renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
+    const select = await screen.findByLabelText("Select provider");
+    await waitFor(() => expect(client.getProviders).toHaveBeenCalled());
+    const options = Array.from(select.querySelectorAll("option")).map((o) => o.getAttribute("value"));
+    expect(options).toEqual(["google"]);
+  });
+
   it("submits credential, masks value, clears secret input, and advances to step 2: create agent", async () => {
     let credentialsList: any[] = [];
     const client = createMockClient({
@@ -160,9 +175,11 @@ describe("OnboardingView", () => {
       expect.objectContaining({
         name: "Concierge",
         description: "Primary concierge agent",
-        config: expect.objectContaining({
-          stt: "google",
-        }),
+        config: {
+          stt: { provider: "google", credential_id: "cred-1", model: "chirp_2", language: "en-US" },
+          llm: { provider: "google", credential_id: "cred-1", model: "gemini-2.0-flash" },
+          tts: { provider: "google", credential_id: "cred-1", voice: "en-US-Journey-F" },
+        },
       }),
     );
 

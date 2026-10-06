@@ -17,6 +17,12 @@ function renderWithProviders(ui: React.ReactElement) {
   );
 }
 
+const v2Config = {
+  stt: { provider: "google", model: "chirp_2", language: "en-US", credential_id: "cred-g1" },
+  llm: { provider: "google", model: "gemini-2.0-flash", system_prompt: "Be brief.", credential_id: "cred-g1" },
+  tts: { provider: "google", voice: "en-US-Journey-F", credential_id: "cred-g1" },
+};
+
 function createMockAgent(overrides: Partial<AgentDTO> = {}): AgentDTO {
   return {
     id: "agent-1",
@@ -27,8 +33,8 @@ function createMockAgent(overrides: Partial<AgentDTO> = {}): AgentDTO {
     current_version: {
       id: "ver-101",
       number: 1,
-      schema_version: 1,
-      config: { stt: "google", llm: "google", tts: "google" },
+      schema_version: 2,
+      config: v2Config,
       config_hash: "hash-alpha-1",
       created_at: "2026-10-05T12:00:00Z",
       mcp_tools: [],
@@ -49,8 +55,29 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     issueVoiceToken: vi.fn(),
     getProviders: vi.fn().mockResolvedValue([
       { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
+      { id: "deepgram", display_name: "Deepgram", capabilities: ["stt"], auth_required: true },
+      { id: "mcp", display_name: "MCP", capabilities: ["mcp", "stt", "llm", "tts"], auth_required: true },
     ]),
-    getCredentials: vi.fn().mockResolvedValue([]),
+    getCredentials: vi.fn().mockResolvedValue([
+      {
+        id: "cred-g1",
+        provider: "google",
+        masked_value: "••••1111",
+        validation_state: "valid",
+        capabilities: ["llm", "stt", "tts"],
+        created_at: "2026-10-05T12:00:00Z",
+        updated_at: "2026-10-05T12:00:00Z",
+      },
+      {
+        id: "cred-dg",
+        provider: "deepgram",
+        masked_value: "••••2222",
+        validation_state: "valid",
+        capabilities: ["stt"],
+        created_at: "2026-10-05T12:00:00Z",
+        updated_at: "2026-10-05T12:00:00Z",
+      },
+    ]),
     createCredential: vi.fn(),
     getCredential: vi.fn(),
     updateCredential: vi.fn(),
@@ -135,23 +162,43 @@ describe("AgentsView", () => {
 
     await user.type(screen.getByLabelText(/agent name/i), "Billing Bot");
     await user.type(screen.getByLabelText(/description/i), "Handles invoice questions");
-    await user.type(screen.getByLabelText(/stt|speech-to-text/i), "google");
-    await user.type(screen.getByLabelText(/llm/i), "gemini-2.0-flash");
-    await user.type(screen.getByLabelText(/tts|text-to-speech/i), "en-US-Journey-F");
+    // Providers load asynchronously; MCP is never offered for a voice stage.
+    const sttProvider = await screen.findByLabelText("STT provider");
+    await screen.findByRole("option", { name: "Deepgram" });
+    expect(screen.queryByRole("option", { name: "MCP" })).toBeNull();
+    expect(
+      Array.from((screen.getByLabelText("LLM provider") as HTMLSelectElement).options).map((o) => o.value),
+    ).toEqual(["", "google"]);
+
+    await user.selectOptions(sttProvider, "deepgram");
+    await user.type(screen.getByLabelText("STT model"), "nova-3");
+    // Credential choices are filtered to the stage's provider.
+    const sttCred = screen.getByLabelText("STT credential") as HTMLSelectElement;
+    expect(Array.from(sttCred.options).map((o) => o.value)).toEqual(["", "cred-dg"]);
+    await user.selectOptions(sttCred, "cred-dg");
+
+    await user.selectOptions(screen.getByLabelText("LLM provider"), "google");
+    await user.type(screen.getByLabelText("LLM model"), "gemini-2.0-flash");
+    await user.type(screen.getByLabelText("System prompt"), "Be helpful.");
+    await user.selectOptions(screen.getByLabelText("LLM credential"), "cred-g1");
+    await user.selectOptions(screen.getByLabelText("TTS provider"), "google");
+    await user.type(screen.getByLabelText("TTS voice"), "en-US-Journey-F");
+    await user.selectOptions(screen.getByLabelText("TTS credential"), "cred-g1");
+    await user.type(screen.getByLabelText("Max messages"), "64");
 
     await user.click(screen.getByRole("button", { name: /save agent/i }));
 
-    expect(client.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "Billing Bot",
-        description: "Handles invoice questions",
-        config: expect.objectContaining({
-          stt: "google",
-          llm: "gemini-2.0-flash",
-          tts: "en-US-Journey-F",
-        }),
-      }),
-    );
+    expect(client.createAgent).toHaveBeenCalledWith({
+      name: "Billing Bot",
+      description: "Handles invoice questions",
+      enabled: true,
+      config: {
+        stt: { provider: "deepgram", model: "nova-3", language: "en-US", credential_id: "cred-dg" },
+        llm: { provider: "google", model: "gemini-2.0-flash", system_prompt: "Be helpful.", credential_id: "cred-g1" },
+        tts: { provider: "google", voice: "en-US-Journey-F", credential_id: "cred-g1" },
+        context: { max_messages: 64 },
+      },
+    });
 
     expect(await screen.findByText("Billing Bot")).toBeVisible();
   });
@@ -163,8 +210,8 @@ describe("AgentsView", () => {
       current_version: {
         id: "ver-1",
         number: 1,
-        schema_version: 1,
-        config: { stt: "google", llm: "google", tts: "google" },
+        schema_version: 2,
+        config: v2Config,
         config_hash: "hash-v1",
         created_at: "2026-10-05T12:00:00Z",
         mcp_tools: [],
@@ -206,10 +253,12 @@ describe("AgentsView", () => {
 
     await user.click(screen.getByRole("button", { name: /save changes|save agent/i }));
 
+    // The existing v2 config round-trips unchanged.
     expect(client.updateAgent).toHaveBeenCalledWith(
       "agent-1",
       expect.objectContaining({
         name: "Revised Support Bot",
+        config: v2Config,
       }),
     );
 
@@ -300,5 +349,148 @@ describe("AgentsView", () => {
 
     expect(client.archiveAgent).toHaveBeenCalledWith("agent-1");
     expect(await screen.findByText(/archived/i)).toBeVisible();
+  });
+
+  it("blocks save and lists missing required stage fields", async () => {
+    const client = createMockClient();
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    expect(await screen.findByText("Customer Support")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+    await user.type(screen.getByLabelText(/agent name/i), "Half Done");
+    await user.type(screen.getByLabelText("Max tokens"), "-5");
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("STT provider is required.");
+    expect(alert).toHaveTextContent("LLM model is required.");
+    expect(alert).toHaveTextContent("STT credential is required.");
+    expect(alert).toHaveTextContent("LLM credential is required.");
+    expect(alert).toHaveTextContent("TTS credential is required.");
+    // Matches the server: STT model and TTS voice fall back to provider defaults.
+    expect(alert).not.toHaveTextContent("STT model is required.");
+    expect(alert).not.toHaveTextContent("TTS voice is required.");
+    expect(alert).toHaveTextContent("Max tokens must be a positive whole number.");
+    expect(client.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("flags agents with a pre-v2 config as needing reconfiguration", async () => {
+    const legacy = createMockAgent({
+      id: "agent-old",
+      name: "Legacy Bot",
+      current_version: {
+        id: "ver-old",
+        number: 4,
+        schema_version: 1,
+        config: { stt: "google", llm: "gemini-2.0-flash", tts: "journey" },
+        config_hash: "hash-old",
+        created_at: "2026-10-05T12:00:00Z",
+        mcp_tools: [],
+      },
+      readiness: { state: "not_ready", reasons: ["invalid_config"] },
+    });
+    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([legacy]) });
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    expect(await screen.findByText("Legacy Bot")).toBeVisible();
+    expect(screen.getByText("Needs reconfiguration")).toBeVisible();
+    expect(screen.getByText("invalid_config")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    expect(screen.getByText(/uses an old format/i)).toBeVisible();
+    // Stage fields start empty rather than carrying the old flat strings.
+    expect(screen.getByLabelText("STT provider")).toHaveValue("");
+    expect(screen.getByLabelText("LLM model")).toHaveValue("");
+  });
+
+  it("requires a credential even when the provider has exactly one", async () => {
+    const client = createMockClient();
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    expect(await screen.findByText("Customer Support")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+    await user.type(screen.getByLabelText(/agent name/i), "No Creds");
+    await screen.findByRole("option", { name: "Deepgram" });
+    for (const cap of ["STT", "LLM", "TTS"]) {
+      await user.selectOptions(screen.getByLabelText(`${cap} provider`), "google");
+    }
+    await user.type(screen.getByLabelText("LLM model"), "gemini-2.0-flash");
+    expect(screen.queryByRole("option", { name: /automatic/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /save agent/i }));
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("STT credential is required.");
+    expect(alert).toHaveTextContent("TTS credential is required.");
+    expect(alert).not.toHaveTextContent("provider is required");
+    expect(client.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("clears the stage credential when its provider changes", async () => {
+    const client = createMockClient();
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    expect(await screen.findByText("Customer Support")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+    await screen.findByRole("option", { name: "Deepgram" });
+    await user.selectOptions(screen.getByLabelText("STT provider"), "google");
+    await user.selectOptions(screen.getByLabelText("STT credential"), "cred-g1");
+    expect(screen.getByLabelText("STT credential")).toHaveValue("cred-g1");
+
+    await user.selectOptions(screen.getByLabelText("STT provider"), "deepgram");
+    const sttCred = screen.getByLabelText("STT credential") as HTMLSelectElement;
+    expect(sttCred).toHaveValue("");
+    expect(Array.from(sttCred.options).map((o) => o.value)).toEqual(["", "cred-dg"]);
+  });
+
+  it("links to Providers when the selected provider has no credentials", async () => {
+    const client = createMockClient({
+      getCredentials: vi.fn().mockResolvedValue([
+        {
+          id: "cred-g1",
+          provider: "google",
+          masked_value: "••••1111",
+          validation_state: "valid",
+          capabilities: ["llm", "stt", "tts"],
+          created_at: "2026-10-05T12:00:00Z",
+          updated_at: "2026-10-05T12:00:00Z",
+        },
+      ]),
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    expect(await screen.findByText("Customer Support")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+    await screen.findByRole("option", { name: "Deepgram" });
+    expect(screen.queryByText(/no stt credentials/i)).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText("STT provider"), "deepgram");
+    expect(screen.getByText(/no stt credentials for this provider/i)).toBeVisible();
+    expect(screen.getByRole("link", { name: /providers page/i })).toHaveAttribute("href", "/providers");
+  });
+
+  it("flags agents whose stored config lacks a stage credential as needing reconfiguration", async () => {
+    const noCred = createMockAgent({
+      id: "agent-nocred",
+      name: "Implicit Cred Bot",
+      current_version: {
+        id: "ver-nc",
+        number: 2,
+        schema_version: 2,
+        config: { ...v2Config, tts: { provider: "google", voice: "en-US-Journey-F" } },
+        config_hash: "hash-nc",
+        created_at: "2026-10-05T12:00:00Z",
+        mcp_tools: [],
+      },
+    });
+    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([noCred]) });
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    expect(await screen.findByText("Implicit Cred Bot")).toBeVisible();
+    expect(screen.getByText("Needs reconfiguration")).toBeVisible();
   });
 });

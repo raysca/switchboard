@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, createApiClient } from "./client";
+import { ApiError, agentConfigV2Schema, createApiClient } from "./client";
 
 describe("management client", () => {
   it("sends an in-memory bearer and reads the sanitized server projection", async () => {
@@ -94,7 +94,7 @@ describe("management client", () => {
         "Content-Type": "application/json",
       });
       expect(init?.body).toBe(
-        JSON.stringify({ principal: "operator-1", pipeline: "default" }),
+        JSON.stringify({ principal: "operator-1", agent_id: "agent-1" }),
       );
       return new Response(
         JSON.stringify({
@@ -110,7 +110,7 @@ describe("management client", () => {
     const token = await createApiClient(
       () => ({ key: "management-key", generation: 1 }),
       fetcher,
-    ).issueVoiceToken({ principal: "operator-1", pipeline: "default" });
+    ).issueVoiceToken({ principal: "operator-1", agent_id: "agent-1" });
     expect(token.scope).toBe("voice:connect");
     expect(fetcher).toHaveBeenCalledWith(
       "/api/v1/voice-tokens",
@@ -339,7 +339,11 @@ describe("management client", () => {
       const created = await client.createAgent({
         name: "Customer Support",
         description: "Assists customers",
-        config: { stt: "google", llm: "google", tts: "google" },
+        config: {
+          stt: { provider: "google", model: "chirp_2", language: "en-US", credential_id: "cred-1" },
+          llm: { provider: "google", model: "gemini-2.0-flash", credential_id: "cred-1" },
+          tts: { provider: "google", voice: "en-US-Journey-F", credential_id: "cred-1" },
+        },
       });
       expect(created.id).toBe("agent-1");
 
@@ -583,3 +587,18 @@ describe("management client", () => {
   });
 });
 
+describe("agentConfigV2Schema", () => {
+  const stage = { provider: "google", credential_id: "cred-1" };
+  const valid = { stt: stage, llm: { ...stage, model: "gemini-2.0-flash" }, tts: stage };
+
+  it("requires a non-empty credential_id on every stage", () => {
+    expect(agentConfigV2Schema.safeParse(valid).success).toBe(true);
+    for (const key of ["stt", "llm", "tts"] as const) {
+      const { credential_id: _, ...noCred } = valid[key];
+      expect(agentConfigV2Schema.safeParse({ ...valid, [key]: noCred }).success).toBe(false);
+      expect(
+        agentConfigV2Schema.safeParse({ ...valid, [key]: { ...valid[key], credential_id: " " } }).success,
+      ).toBe(false);
+    }
+  });
+});

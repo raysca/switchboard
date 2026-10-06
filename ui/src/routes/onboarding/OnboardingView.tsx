@@ -5,6 +5,7 @@ import {
   type ApiClient,
   type CredentialDTO,
   type AgentDTO,
+  type CreateAgentInput,
   ApiError,
 } from "../../api/client";
 import {
@@ -31,7 +32,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   // Step 2: Agent form state
   const [agentNameDraft, setAgentNameDraft] = useState("");
   const [agentDescDraft, setAgentDescDraft] = useState("");
-  const [agentSttDraft, setAgentSttDraft] = useState("google");
+  const [agentSttDraft, setAgentSttDraft] = useState("chirp_2");
   const [agentLlmDraft, setAgentLlmDraft] = useState("gemini-2.0-flash");
   const [agentTtsDraft, setAgentTtsDraft] = useState("en-US-Journey-F");
   const [agentError, setAgentError] = useState<ApiError | null>(null);
@@ -60,16 +61,10 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const createCredMutation = useMutation({
     mutationFn: (payload: { provider: string; secret: string }) =>
       client.createCredential(payload),
-    onSuccess: (newCred) => {
+    onSuccess: () => {
       setSecretDraft("");
       setProviderError(null);
       void queryClient.invalidateQueries({ queryKey: ["credentials"] });
-      // Suggest voice provider matching the connected provider
-      if (newCred.provider) {
-        setAgentSttDraft(newCred.provider);
-        setAgentLlmDraft(newCred.provider);
-        setAgentTtsDraft(newCred.provider);
-      }
     },
     onError: (err) => {
       if (err instanceof ApiError) {
@@ -83,12 +78,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   });
 
   const createAgentMutation = useMutation({
-    mutationFn: (payload: {
-      name: string;
-      description: string;
-      enabled: boolean;
-      config: Record<string, unknown>;
-    }) => client.createAgent(payload),
+    mutationFn: (payload: CreateAgentInput) => client.createAgent(payload),
     onSuccess: () => {
       setAgentError(null);
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -114,22 +104,33 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   function handleCreateAgent(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const name = agentNameDraft.trim();
-    if (!name) return;
+    const stt = agentSttDraft.trim();
+    const llm = agentLlmDraft.trim();
+    const tts = agentTtsDraft.trim();
+    if (!name || !agentCredential || !stt || !llm || !tts) return;
+    // ponytail: onboarding uses the step-1 credential for every stage; the Agents page edits each stage.
+    const { provider, id: credential_id } = agentCredential;
     createAgentMutation.mutate({
       name,
       description: agentDescDraft.trim(),
       enabled: true,
       config: {
-        stt: agentSttDraft.trim(),
-        llm: agentLlmDraft.trim(),
-        tts: agentTtsDraft.trim(),
+        stt: { provider, credential_id, model: stt, language: "en-US" },
+        llm: { provider, credential_id, model: llm },
+        tts: { provider, credential_id, voice: tts },
       },
     });
   }
 
-  const providers = providersQuery.data ?? [];
+  // Onboarding uses one provider for every stage, so offer only providers that
+  // can do speech-to-text, LLM and text-to-speech (never the "mcp" token type).
+  const providers = (providersQuery.data ?? []).filter((p) =>
+    ["stt", "llm", "tts"].every((cap) => p.capabilities.includes(cap)),
+  );
   const credentials = credentialsQuery.data ?? [];
   const agents = agentsQuery.data ?? [];
+  // The credential connected in step 1: the first one whose provider can run every stage.
+  const agentCredential = credentials.find((c) => providers.some((p) => p.id === c.provider));
 
   const hasCredentials = credentials.length > 0;
   const hasAgents = agents.length > 0;
@@ -271,10 +272,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                       </option>
                     ))
                   ) : (
-                    <>
-                      <option value="google">Google</option>
-                      <option value="xai">xAI</option>
-                    </>
+                    <option value="google">Google</option>
                   )}
                 </select>
               </label>
@@ -304,8 +302,8 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
           <section aria-labelledby="step2-heading">
             <h2 id="step2-heading">Step 2: Create your first agent</h2>
             <p style={{ color: "#53666b", marginBottom: "16px" }}>
-              Provider connected: <strong>{credentials[0]?.provider}</strong> (
-              <code>{credentials[0]?.masked_value}</code>). Now configure your first voice agent.
+              Provider connected: <strong>{agentCredential?.provider}</strong> (
+              <code>{agentCredential?.masked_value}</code>). Now configure your first voice agent.
             </p>
 
             {agentError && (
@@ -355,9 +353,12 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                 <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>
                   Voice stack configuration
                 </h3>
+                <p style={{ margin: "0 0 12px" }}>
+                  Provider for all stages: <code>{agentCredential?.provider ?? "none connected"}</code>
+                </p>
 
                 <label className="form-field" htmlFor="onboard-agent-stt">
-                  <span>STT (Speech-to-Text)</span>
+                  <span>STT model</span>
                   <input
                     id="onboard-agent-stt"
                     type="text"
@@ -368,7 +369,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                 </label>
 
                 <label className="form-field" htmlFor="onboard-agent-llm">
-                  <span>LLM Model</span>
+                  <span>LLM model</span>
                   <input
                     id="onboard-agent-llm"
                     type="text"
@@ -379,7 +380,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                 </label>
 
                 <label className="form-field" htmlFor="onboard-agent-tts">
-                  <span>TTS (Text-to-Speech)</span>
+                  <span>TTS voice</span>
                   <input
                     id="onboard-agent-tts"
                     type="text"

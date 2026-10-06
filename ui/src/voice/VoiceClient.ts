@@ -82,7 +82,7 @@ export interface VoiceClientState {
   sessionState: SessionState;
   sessionId: string | null;
   token: string | null;
-  pipeline: string;
+  agentId: string | null;
   isUserSpeaking: boolean;
   isBotSpeaking: boolean;
   isMuted: boolean;
@@ -98,7 +98,7 @@ export interface VoiceClientState {
 export type VoiceClientListener = (state: VoiceClientState) => void;
 
 export interface ConnectOptions {
-  pipeline?: string;
+  agentId: string;
   principal?: string;
   wsBaseUrl?: string;
 }
@@ -113,7 +113,7 @@ export class VoiceClient {
     sessionState: "disconnected",
     sessionId: null,
     token: null,
-    pipeline: "default",
+    agentId: null,
     isUserSpeaking: false,
     isBotSpeaking: false,
     isMuted: false,
@@ -184,7 +184,7 @@ export class VoiceClient {
   /**
    * Connects to the voice server: requests token, initializes mic, connects WS, performs RTVI handshake.
    */
-  public async connect(options: ConnectOptions = {}): Promise<void> {
+  public async connect(options: ConnectOptions): Promise<void> {
     if (
       this.state.sessionState === "connecting" ||
       this.state.sessionState === "connected" ||
@@ -193,13 +193,20 @@ export class VoiceClient {
       return;
     }
 
-    const pipeline = options.pipeline || "default";
+    const agentId = options.agentId?.trim();
+    if (!agentId) {
+      this.updateState({
+        sessionState: "error",
+        error: { category: "token", message: "An agent is required to start a call.", fatal: true },
+      });
+      return;
+    }
     const principal = options.principal || `operator-${Date.now()}`;
 
     // Reset session errors and transient speaking states
     this.updateState({
       sessionState: "requesting_token",
-      pipeline,
+      agentId,
       error: null,
       isUserSpeaking: false,
       isBotSpeaking: false,
@@ -213,7 +220,7 @@ export class VoiceClient {
     try {
       const tokenResp = await this.apiClient.issueVoiceToken({
         principal,
-        pipeline,
+        agent_id: agentId,
       });
       tokenStr = tokenResp.token;
       const extractedId =
@@ -250,7 +257,7 @@ export class VoiceClient {
     }
 
     // Step 3: Connect WebSocket
-    const wsUrl = this.resolveWsUrl(tokenStr, pipeline, options.wsBaseUrl);
+    const wsUrl = this.resolveWsUrl(tokenStr, options.wsBaseUrl);
     this.connectStartTime = Date.now();
 
     try {
@@ -354,7 +361,6 @@ export class VoiceClient {
 
   private resolveWsUrl(
     token: string,
-    pipeline: string,
     customBaseUrl?: string,
   ): string {
     let base = customBaseUrl;
@@ -368,7 +374,6 @@ export class VoiceClient {
 
     const url = new URL(base, "http://localhost");
     url.searchParams.set("token", token);
-    url.searchParams.set("pipeline", pipeline);
     return url.toString();
   }
 

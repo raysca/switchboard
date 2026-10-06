@@ -82,7 +82,7 @@ function createMockAgent(overrides: Partial<AgentDTO> = {}): AgentDTO {
       id: "ver-1",
       number: 1,
       schema_version: 1,
-      config: { stt: "google", llm: "gemini-2.0-flash", tts: "journey", pipeline: "default" },
+      config: { stt: "google", llm: "gemini-2.0-flash", tts: "journey" },
       config_hash: "hash-1",
       created_at: "2026-10-05T12:00:00Z",
       mcp_tools: [],
@@ -246,7 +246,7 @@ describe("AgentVoiceTest", () => {
     expect(client.issueVoiceToken).toHaveBeenCalledWith(
       expect.objectContaining({
         principal: "agent-test-agent-alpha",
-        pipeline: "default",
+        agent_id: "agent-alpha",
       }),
     );
 
@@ -258,7 +258,7 @@ describe("AgentVoiceTest", () => {
 
     // Verify WebSocket connected with token query param
     expect(ws.url).toContain("token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9");
-    expect(ws.url).toContain("pipeline=default");
+    expect(ws.url).not.toContain("pipeline");
 
     // Client sends client-ready frame
     await waitFor(() => {

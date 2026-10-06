@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { ApiClient, AgentDTO } from "../../api/client";
 import {
@@ -32,6 +32,8 @@ export function AgentVoiceTest({
     voiceClientRef.current = new VoiceClient(client, audioController);
   }
 
+  // Mirrors the server: only these readiness states may take calls.
+  const callable = agent.readiness.state === "ready" || agent.readiness.state === "ready_with_tool_warning";
   const voiceClient = voiceClientRef.current;
   const [state, setState] = useState<VoiceClientState>(() =>
     voiceClient.getState(),
@@ -48,14 +50,6 @@ export function AgentVoiceTest({
     };
   }, [voiceClient]);
 
-  const pipeline = useMemo(() => {
-    const cfg = agent.current_version?.config;
-    if (cfg && typeof cfg.pipeline === "string" && cfg.pipeline.trim()) {
-      return cfg.pipeline.trim();
-    }
-    return "default";
-  }, [agent]);
-
   const isConnectedOrReady =
     state.sessionState === "connected" || state.sessionState === "ready";
   const isConnecting =
@@ -64,7 +58,7 @@ export function AgentVoiceTest({
 
   const handleConnect = async () => {
     await voiceClient.connect({
-      pipeline,
+      agentId: agent.id,
       principal: `agent-test-${agent.id}`,
       wsBaseUrl,
     });
@@ -127,7 +121,7 @@ export function AgentVoiceTest({
 
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <span style={{ fontSize: "0.82rem", color: "#53666b" }}>
-            Pipeline: <code>{pipeline}</code>
+            Agent: <code>{agent.id}</code>
           </span>
           <Status
             tone={
@@ -143,8 +137,8 @@ export function AgentVoiceTest({
         </div>
       </div>
 
-      {/* Readiness Warning (if agent is not ready) */}
-      {agent.readiness.state !== "ready" && !isConnectedOrReady && (
+      {/* Readiness: the server refuses calls to agents that are not callable (409). */}
+      {!callable && !isConnectedOrReady && (
         <div
           role="note"
           style={{
@@ -157,7 +151,7 @@ export function AgentVoiceTest({
           }}
         >
           <strong>Notice:</strong> This agent is marked as <code>{agent.readiness.state}</code> (
-          {agent.readiness.reasons.join(", ") || "configuration incomplete"}). Voice test can still be attempted if credentials are configured.
+          {agent.readiness.reasons.join(", ") || "configuration incomplete"}). Fix these before starting a voice test; the server will not accept calls to this agent.
         </div>
       )}
 
@@ -186,7 +180,7 @@ export function AgentVoiceTest({
             type="button"
             className="action-button-small"
             onClick={handleRetry}
-            disabled={!keyValue}
+            disabled={!keyValue || !callable}
           >
             Retry Connection
           </button>
@@ -209,7 +203,7 @@ export function AgentVoiceTest({
             <ActionButton
               type="button"
               onClick={handleConnect}
-              disabled={!keyValue}
+              disabled={!keyValue || !callable}
               data-testid="start-voice-test-btn"
             >
               Start voice test
