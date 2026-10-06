@@ -588,6 +588,23 @@ type ToneFrame struct {
 - **Validation**: Enforces standard DTMF dual-tone frequencies (`Frequencies()`) and audible frequency boundaries (`Validate()`).
 - **Transport Neutrality**: Conveys telephone keypad interaction and signaling tones across the pipeline without implying specific SIP/PSTN transport coupling.
 
+### 2.16 Bounded audio mixer
+
+`core/audio.AudioMixer` provides multi-source audio stream mixing with deterministic sample bounds and clipping control:
+```go
+type AudioMixer struct { ... }
+type MixerConfig struct {
+    SampleRate int
+    Channels   int
+    MaxSources int // default 8
+}
+```
+- **Stream Bounds**: Enforces `MaxSources` limit (`ErrMaxSourcesExceeded`) to prevent unbounded source registration.
+- **Format Integrity**: Enforces uniform sample rate and channel layout across sources (`ErrMixerFormatMismatch`).
+- **Clipping Protection**: Sums scaled 16-bit linear PCM samples and strictly saturates outputs within `[-32768, 32767]`, eliminating integer wraparound distortion.
+- **Generation Fencing**: Discards obsolete source frames across turn transitions via `SetGeneration`.
+
+
 
 
 
