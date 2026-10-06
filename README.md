@@ -18,6 +18,26 @@ Voice Framework V1 is a high-performance, low-latency, resilient voice agent run
 
 ## Quick Start
 
+### Fastest path: `make dev`
+```bash
+make dev                       # server + admin UI, ready to call
+make example-web               # in another terminal: browser client
+make example-cli TEXT="Hello"  # or a CLI call (omit TEXT for a voice clip)
+make example-go NAME=google_pipeline   # standalone Go examples
+```
+
+`make dev` builds everything, installs UI dependencies, generates the management
+key and token secret, and starts the server and admin UI. The server creates a
+local SQLite store and credential key in `.govoice-dev/` (git-ignored; delete it
+to start over). If `examples/.env` (template: `examples/.env.example`) has `GOOGLE_API_KEY` and/or
+`GOOGLE_APPLICATION_CREDENTIALS`, it also adds them as provider credentials and
+creates a ready "Dev Assistant" agent that the examples call. The management key
+for the admin UI is in `.govoice-dev/dev.env`. Ports default to 8080 (public),
+9090 (admin), 5173 (UI) and 3000 (web client); if one is taken, run e.g.
+`PUBLIC_PORT=18080 ADMIN_PORT=19090 make dev` (the examples follow).
+
+The steps below do the same by hand.
+
 ### 1. Build Binaries and Examples
 ```bash
 make build

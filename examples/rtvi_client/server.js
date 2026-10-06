@@ -6,6 +6,14 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
 const INDEX = path.join(__dirname, 'index.html');
 
+// Optional defaults (set by `make example-web`). With GOVOICE_MANAGEMENT_API_KEY
+// set, this server mints tokens with its own key, only ever against ADMIN_URL,
+// and the browser never sees the key.
+const ADMIN_URL = process.env.GOVOICE_ADMIN_URL || 'http://127.0.0.1:9090';
+const WS_URL = process.env.GOVOICE_WS_URL || 'ws://127.0.0.1:8080/ws';
+const AGENT_ID = process.env.GOVOICE_AGENT_ID || '';
+const SERVER_KEY = process.env.GOVOICE_MANAGEMENT_API_KEY || '';
+
 function sendJson(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
@@ -15,6 +23,15 @@ function sendJson(res, status, body) {
 // Relays to {adminUrl}/api/v1/voice-tokens so the browser needs no CORS on the
 // admin API. The management key comes from the page and is never stored here.
 async function proxyVoiceToken(req, res) {
+  // Only this page may use the relay: a cross-site form or fetch from another
+  // origin must not mint tokens or make this server call arbitrary URLs.
+  const origin = req.headers.origin;
+  if (origin && origin !== `http://${req.headers.host}`) {
+    return sendJson(res, 403, { error: { code: 'forbidden_origin', message: 'cross-origin requests are not allowed' } });
+  }
+  if (!(req.headers['content-type'] || '').startsWith('application/json')) {
+    return sendJson(res, 415, { error: { code: 'unsupported_media_type', message: 'use application/json' } });
+  }
   let raw = '';
   for await (const chunk of req) {
     raw += chunk;
@@ -26,7 +43,11 @@ async function proxyVoiceToken(req, res) {
   } catch {
     return sendJson(res, 400, { error: { code: 'invalid_json', message: 'request body must be JSON' } });
   }
-  const { adminUrl, managementKey, agentId } = input || {};
+  let { adminUrl, managementKey, agentId } = input || {};
+  if (!managementKey && SERVER_KEY) {
+    managementKey = SERVER_KEY;
+    adminUrl = ADMIN_URL; // the server's key goes to the configured admin API only
+  }
   const principal = input?.principal || 'rtvi-web-client';
   let target;
   try {
@@ -54,6 +75,10 @@ async function proxyVoiceToken(req, res) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (url.pathname === '/api/defaults') {
+    return sendJson(res, 200, { adminUrl: ADMIN_URL, wsUrl: WS_URL, agentId: AGENT_ID, serverKey: Boolean(SERVER_KEY) });
+  }
 
   if (url.pathname === '/api/voice-token') {
     if (req.method !== 'POST') return sendJson(res, 405, { error: { code: 'method_not_allowed', message: 'use POST' } });

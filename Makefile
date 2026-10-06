@@ -102,3 +102,20 @@ e2e:
 	cd e2e && npm install --no-audit --no-fund && npx playwright install chromium && npx playwright test
 
 .PHONY: e2e
+
+# Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
+# generated secrets and a local SQLite store in .govoice-dev/, seeded with a
+# "Dev Assistant" agent from examples/.env. Examples call that agent.
+dev:
+	@./scripts/dev.sh up
+
+example-web:
+	@./scripts/dev.sh web
+
+example-cli:
+	@TEXT="$(TEXT)" ./scripts/dev.sh cli
+
+example-go:
+	@./scripts/dev.sh go "$(NAME)"
+
+.PHONY: dev example-web example-cli example-go

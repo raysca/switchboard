@@ -16,6 +16,10 @@ Authorization: Bearer <management key>
 take calls. The call then connects to `{public}/ws?token=<token>`. Tokens are
 single-use, so every call fetches a new one.
 
+With `make dev` running, `make example-web` and `make example-cli [TEXT="..."]`
+in the repository root run both clients against the dev agent with nothing to
+type. To run them by hand:
+
 ```bash
 npm install
 ```
@@ -67,7 +71,15 @@ Open the page in Chrome or Edge, fill in **Admin URL**, **Management key**,
 **Agent ID** (and **Server WebSocket URL** if it is not the default), then click
 **Connect**. The page asks `server.js` for a token (`POST /api/voice-token`), which
 relays the request to the management API so the browser needs no CORS access to
-it; the key is only ever typed into the page.
+it. The relay accepts only same-origin JSON requests.
+
+`server.js` can prefill the page and hold the key itself, so the browser never
+sees it (this is what `make example-web` does):
+
+| Variable | Effect |
+|---|---|
+| `GOVOICE_ADMIN_URL`, `GOVOICE_WS_URL`, `GOVOICE_AGENT_ID` | prefill the fields |
+| `GOVOICE_MANAGEMENT_API_KEY` | used when the page's key field is empty; then only `GOVOICE_ADMIN_URL` is called |
 
 Once connected, speak into the microphone (16kHz mono PCM16 up, 24kHz playback
 down, barge-in supported) or type into **Message** and click **Send text**.

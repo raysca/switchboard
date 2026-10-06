@@ -243,6 +243,16 @@
     const configInputs = ['adminUrl', 'managementKey', 'agentId', 'wsUrl'].map(id => document.getElementById(id));
     const [adminUrlInput, managementKeyInput, agentIdInput, wsUrlInput] = configInputs;
     const errorMsg = document.getElementById('errorMsg');
+
+    // Prefill from the client server (make example-web); the page still works
+    // with the fields typed by hand.
+    fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
+      if (!d) return;
+      adminUrlInput.value = d.adminUrl || adminUrlInput.value;
+      wsUrlInput.value = d.wsUrl || wsUrlInput.value;
+      agentIdInput.value = agentIdInput.value || d.agentId || '';
+      if (d.serverKey) managementKeyInput.placeholder = 'Held by the client server (optional)';
+    }).catch(() => {});
     const textForm = document.getElementById('textForm');
     const messageInput = document.getElementById('messageInput');
     const btnSendText = document.getElementById('btnSendText');
