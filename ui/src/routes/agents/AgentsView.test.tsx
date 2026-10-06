@@ -51,7 +51,6 @@ function createMockAgent(overrides: Partial<AgentDTO> = {}): AgentDTO {
 
 function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    serverConfig: vi.fn(),
     issueVoiceToken: vi.fn(),
     getProviders: vi.fn().mockResolvedValue([
       { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
@@ -79,7 +78,6 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
       },
     ]),
     createCredential: vi.fn(),
-    getCredential: vi.fn(),
     updateCredential: vi.fn(),
     deleteCredential: vi.fn(),
     validateCredential: vi.fn(),
@@ -87,11 +85,9 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getProviderDiscovery: vi.fn(),
     getAgents: vi.fn().mockResolvedValue([createMockAgent()]),
     createAgent: vi.fn(),
-    getAgent: vi.fn().mockImplementation((id) => Promise.resolve(createMockAgent({ id }))),
     updateAgent: vi.fn(),
     archiveAgent: vi.fn(),
     duplicateAgent: vi.fn(),
-    updateAgentMCPTools: vi.fn(),
     ...overrides,
   } as ApiClient;
 }
@@ -220,7 +216,6 @@ describe("AgentsView", () => {
 
     const client = createMockClient({
       getAgents: vi.fn().mockImplementation(() => Promise.resolve([current])),
-      getAgent: vi.fn().mockImplementation((id) => Promise.resolve(current)),
       updateAgent: vi.fn().mockImplementation(async (id, payload) => {
         current = {
           ...current,

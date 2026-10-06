@@ -25,7 +25,7 @@ import { SessionsView } from "../routes/sessions/SessionsView";
 import { SessionDetailView } from "../routes/sessions/SessionDetailView";
 import { DashboardView } from "../routes/dashboard/DashboardView";
 import { ServerView } from "../routes/server/ServerView";
-import { SectionPage, sections } from "../routes/sections";
+import { sections } from "../routes/sections";
 
 function RouteFocus() {
   const location = useLocation();
@@ -184,29 +184,6 @@ export function App({ initialPath }: { initialPath?: string }) {
                     <ServerView client={client} keyValue={keyValue} />
                   }
                 />
-                {sections
-                  .filter(
-                    (section) =>
-                      section.path !== "/dashboard" &&
-                      section.path !== "/server" &&
-                      section.path !== "/providers" &&
-                      section.path !== "/agents" &&
-                      section.path !== "/mcp-servers" &&
-                      section.path !== "/sessions",
-                  )
-                  .map((section) => (
-                    <Route
-                      key={section.path}
-                      path={section.path}
-                      element={
-                        <SectionPage
-                          section={section}
-                          keyValue={keyValue}
-                          readConfig={client.serverConfig}
-                        />
-                      }
-                    />
-                  ))}
                 <Route
                   path="*"
                   element={

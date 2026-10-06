@@ -8,14 +8,6 @@ const errorEnvelope = z.object({
     details: z.unknown().optional(),
   }),
 });
-const configEnvelope = z.object({
-  data: z.object({
-    profile: z.string(),
-    max_sessions: z.number(),
-    max_call_duration_seconds: z.number(),
-    voice_token_max_lifetime_seconds: z.number(),
-  }),
-});
 const tokenEnvelope = z.object({
   data: z.object({
     token: z.string(),
@@ -188,9 +180,6 @@ const agentsEnvelope = z.object({
 const agentEnvelope = z.object({
   data: agentSchema,
 });
-const agentVersionEnvelope = z.object({
-  data: agentVersionSchema,
-});
 const archiveEnvelope = z.object({
   data: z.object({
     archived: z.boolean(),
@@ -235,7 +224,6 @@ export type CreateAgentInput = {
   description: string;
   enabled?: boolean;
   config: AgentConfigV2;
-  mcp_tools?: ToolSelection[];
 };
 
 export type UpdateAgentInput = {
@@ -304,15 +292,6 @@ export type CreateMCPServerInput = {
   name: string;
   description?: string;
   endpoint: string;
-  transport?: string;
-  credential_id?: string;
-  enabled?: boolean;
-};
-
-export type UpdateMCPServerInput = {
-  name?: string;
-  description?: string;
-  endpoint?: string;
   transport?: string;
   credential_id?: string;
   enabled?: boolean;
@@ -439,7 +418,6 @@ const sessionTracesEnvelope = z.object({
   data: sessionTracesSchema,
 });
 
-export type ServerConfig = z.infer<typeof configEnvelope>["data"];
 export type VoiceToken = z.infer<typeof tokenEnvelope>["data"];
 export type AuthSnapshot = { key: string | null; generation: number };
 
@@ -534,8 +512,6 @@ export function createApiClient(
     return parsed.data;
   }
   return {
-    serverConfig: async () =>
-      (await request("/server-config", configEnvelope)).data,
     issueVoiceToken: async (input: { principal: string; agent_id: string }) =>
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
     getProviders: async () =>
@@ -548,13 +524,6 @@ export function createApiClient(
           method: "POST",
           body: input,
         })
-      ).data,
-    getCredential: async (id: string) =>
-      (
-        await request(
-          `/providers/credentials/${encodeURIComponent(id)}`,
-          credentialEnvelope,
-        )
       ).data,
     updateCredential: async (id: string, input: { secret: string }) =>
       (
@@ -606,8 +575,6 @@ export function createApiClient(
           body: input,
         })
       ).data,
-    getAgent: async (id: string) =>
-      (await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope)).data,
     updateAgent: async (id: string, input: UpdateAgentInput) =>
       (
         await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope, {
@@ -634,17 +601,6 @@ export function createApiClient(
           },
         )
       ).data,
-    updateAgentMCPTools: async (id: string, tools: ToolSelection[]) =>
-      (
-        await request(
-          `/agents/${encodeURIComponent(id)}/mcp-tools`,
-          agentVersionEnvelope,
-          {
-            method: "PUT",
-            body: { tools },
-          },
-        )
-      ).data,
 
     // MCP endpoints
     getMCPServers: async () =>
@@ -662,17 +618,6 @@ export function createApiClient(
           method: "POST",
           body: payload,
         })
-      ).data,
-    updateMCPServer: async (id: string, payload: UpdateMCPServerInput) =>
-      (
-        await request(
-          `/mcp-servers/${encodeURIComponent(id)}`,
-          mcpServerEnvelope,
-          {
-            method: "PUT",
-            body: payload,
-          },
-        )
       ).data,
     deleteMCPServer: async (id: string, confirmedDetach?: boolean) => {
       if (confirmedDetach) {
@@ -715,32 +660,14 @@ export function createApiClient(
           { method: "POST" },
         )
       ).data,
-    testMCPTool: async (
-      id: string,
-      toolOrPayload:
-        | string
-        | { tool_name: string; arguments?: Record<string, unknown> },
-      args?: Record<string, unknown>,
-    ) => {
-      const toolName =
-        typeof toolOrPayload === "string"
-          ? toolOrPayload
-          : toolOrPayload.tool_name;
-      const toolArgs =
-        typeof toolOrPayload === "string"
-          ? (args ?? {})
-          : (toolOrPayload.arguments ?? {});
-      return (
+    testMCPTool: async (id: string, toolName: string, args: Record<string, unknown> = {}) =>
+      (
         await request(
           `/mcp-servers/${encodeURIComponent(id)}/tools/${encodeURIComponent(toolName)}/test`,
           mcpExecutionEnvelope,
-          {
-            method: "POST",
-            body: { arguments: toolArgs },
-          },
+          { method: "POST", body: { arguments: args } },
         )
-      ).data;
-    },
+      ).data,
 
     // Session & Trace endpoints
     getSessions: async (params?: SessionFilterParams) => {

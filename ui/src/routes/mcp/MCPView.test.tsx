@@ -64,7 +64,6 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getMCPServers: vi.fn().mockResolvedValue([createMockServer()]),
     getMCPServer: vi.fn().mockResolvedValue(createMockServerDetail()),
     createMCPServer: vi.fn().mockResolvedValue(createMockServer()),
-    updateMCPServer: vi.fn().mockResolvedValue(createMockServer()),
     deleteMCPServer: vi.fn().mockResolvedValue({ deleted: true }),
     disableMCPServer: vi.fn().mockResolvedValue(createMockServer({ enabled: false })),
     enableMCPServer: vi.fn().mockResolvedValue(createMockServer({ enabled: true })),
