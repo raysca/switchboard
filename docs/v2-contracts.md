@@ -165,40 +165,7 @@ Runtime changes enter a session through a typed `RuntimeSettingsUpdate` control 
 
 ### 2.7 Audio filter
 
-`core.AudioFilter` is a provider-neutral streaming abstraction with explicit input/output audio format, bounded per-stream state, cancellation-aware processing, reset, and close. The first implementation must include one real noise-suppression implementation; a noise gate alone does not satisfy this contract. Filter latency is observable. Resampling and channel/format conversion remain composable core audio utilities rather than provider-specific copies.
-
-**Acceptance criteria**
-
-- A filter declares encoding, sample rate, and channels and rejects unsupported input formats explicitly.
-- Repeated chunk processing is bounded and session-safe; reset clears all prior-session signal state.
-- Cancellation and close release processing resources, and measured filter latency is available to observers/traces.
-
-Task 6 implements this boundary with a stream-owned SpeexDSP 1.2.1
-preprocessor for mono PCM16LE at 8, 16, 24, or 48 kHz. It buffers less than
-one 10 ms frame, reports 10 ms algorithmic/block latency, and rebuilds native
-state on reset. The composable audio utilities use the same vendored,
-BSD-licensed SpeexDSP release for quality-5 band-limited resampling and local
-deterministic PCM16/float conversion, mono/stereo normalization, pre-roll,
-rechunking, and opt-in turn buffering. The resampler accepts only 8, 16, 24,
-or 48 kHz, at most 48,000 input samples per call, and caps any per-call output
-allocation at 288,064 samples before narrowing lengths for C. Turn buffers use
-`core.TurnID`; all buffers are byte-bounded and require an explicit
-drop-oldest or reject-newest policy, with reject-newest reported to the caller
-without changing retained bytes. Every mutable native/DSP object is per stream
-and serialized; no process-global DSP state or model weights are used. Native
-and production builds require CGO and a C compiler; the release container
-already builds with `CGO_ENABLED=1`. Gate B remains open until the rest of the
-Phase 2 audio path and its independent gate pass.
-
-The deterministic denoiser regression uses a stationary-noise learning prefix
-followed by voiced, pitch-varying harmonic bursts and pauses. It projects the
-output onto the clean wanted reference, divides residual power by the fitted
-gain squared, and requires at least 3 dB SNR improvement plus at least 0.5
-wanted-signal gain (about -6 dB). Gain normalization makes uniform attenuation
-unable to masquerade as suppression; explicit bypass, fixed-attenuation,
-silence, and threshold-gate controls must fail the same predicate. This is a
-repeatable DSP regression, not a perceptual quality or real-speech corpus
-evaluation.
+Removed. `core.AudioFilter` and the `core/audio` package (SpeexDSP denoiser, resampler, conversion utilities) had no production users and were deleted.
 
 ### 2.8 Turn detector and manager
 
@@ -570,94 +537,23 @@ type Observer interface {
 
 ### 2.15 DTMF and transport-neutral tone frames
 
-`core/audio.DTMFFrame` and `core/audio.ToneFrame` provide transport-neutral telephony and audible signaling representations:
-```go
-type DTMFFrame struct {
-    Digit    rune          // '0'-'9', '*', '#', 'A'-'D'
-    Duration time.Duration // bounded positive duration (<= 5s)
-    Turn     string
-    Gen      uint64
-}
-
-type ToneFrame struct {
-    Frequencies []float64     // 20 Hz to 20,000 Hz
-    Duration    time.Duration // bounded positive duration (<= 5s)
-    Volume      float64       // 0.0 to 1.0
-    Turn        string
-    Gen         uint64
-}
-```
-- **Validation**: Enforces standard DTMF dual-tone frequencies (`Frequencies()`) and audible frequency boundaries (`Validate()`).
-- **Transport Neutrality**: Conveys telephone keypad interaction and signaling tones across the pipeline without implying specific SIP/PSTN transport coupling.
+Removed with the `core/audio` package; no production pipeline emitted these frames.
 
 ### 2.16 Bounded audio mixer
 
-`core/audio.AudioMixer` provides multi-source audio stream mixing with deterministic sample bounds and clipping control:
-```go
-type AudioMixer struct { ... }
-type MixerConfig struct {
-    SampleRate int
-    Channels   int
-    MaxSources int // default 8
-}
-```
-- **Stream Bounds**: Enforces `MaxSources` limit (`ErrMaxSourcesExceeded`) to prevent unbounded source registration.
-- **Format Integrity**: Enforces uniform sample rate and channel layout across sources (`ErrMixerFormatMismatch`).
-- **Clipping Protection**: Sums scaled 16-bit linear PCM samples and strictly saturates outputs within `[-32768, 32767]`, eliminating integer wraparound distortion.
-- **Generation Fencing**: Discards obsolete source frames across turn transitions via `SetGeneration`.
+Removed with the `core/audio` package.
 
 ### 2.17 Background audio and earcons
 
-`core/audio.BackgroundAndEarconProcessor` orchestrates non-blocking ambient tracks and acoustic prompts (earcons):
-```go
-type BackgroundControlFrame struct {
-    Action   BackgroundAction // start, stop, pause, resume
-    TrackID  string
-    Volume   float64
-    Loop     bool
-    PCM16LE  []byte
-}
-
-type EarconControlFrame struct {
-    EarconID    string
-    Volume      float64
-    PCM16LE     []byte
-    Disposition core.OutputDisposition // Interruptible vs Uninterruptible
-}
-```
-- **Paced Output & Volume Ducking**: Paces PCM background audio chunk-by-chunk and attenuates gain automatically (`DuckOnSpeech`) when assistant speech begins (`TTSStartedFrame`), restoring volume on `TTSStoppedFrame`.
-- **Classification & Disposition**: Earcons support explicit `OutputDisposition` (`OutputInterruptible` vs `OutputUninterruptible`).
-- **Interruption Behavior**: Interruption frames cancel active interruptible earcons and reset ducking states while preserving uninterruptible cues.
+Removed with the `core/audio` package.
 
 ### 2.18 Generic audio source
 
-`core/audio.GenericAudioSource` injects externally provided `io.Reader` audio streams into the pipeline:
-```go
-type AudioSourceConfig struct {
-    SampleRate  int
-    Channels    int
-    ChunkDur    time.Duration
-    Disposition core.OutputDisposition
-    Direction   core.Direction // Downstream (output) or Upstream (injected input)
-}
-```
-- **Pacing & Streaming**: Streams audio continuously across timed intervals matching `ChunkDur`, avoiding bursts and honoring pipeline rate requirements.
-- **Interruption Fencing**: Downstream interruptible sources immediately halt reading and chunk emission upon receiving an `InterruptionFrame`.
-- **Directional Flexibility**: Supports both upstream injected user speech (e.g. testing, dial-in gateways) and downstream assistant audio playback.
+Removed with the `core/audio` package.
 
 ### 2.19 Advanced audio filter chain
 
-`core/audio.FilterChain` composes sequential audio processing nodes with dynamic bypass and format enforcement:
-```go
-type FilterChain struct { ... }
-func (fc *FilterChain) AddFilter(id string, filter core.AudioFilter) error
-func (fc *FilterChain) SetBypass(id string, bypass bool) error
-func (fc *FilterChain) TotalLatency() time.Duration
-func (fc *FilterChain) Process(ctx context.Context, in []byte) ([]byte, error)
-```
-- **Sequential Invariants**: Validates that output format of filter `N` strictly matches input format of filter `N+1` upon insertion (`ErrFilterIncompatibleFormat`).
-- **Dynamic Bypass**: Allows toggling filters on/off dynamically at runtime without pipeline disruption, provided formats match.
-- **Latency Accounting**: Computes cumulative pipeline DSP latency across all active (non-bypassed) filters for end-to-end timing correlation.
+Removed with the `core/audio` package.
 
 ### 2.20 Read-only runtime pipeline settings introspection
 

@@ -66,10 +66,6 @@ const (
 	FrameTranscriptInvalidation FrameType = 828
 	FrameUsageMetrics           FrameType = 829
 	FramePlaybackState          FrameType = 830
-	FrameDTMF                   FrameType = 831
-	FrameTone                   FrameType = 832
-	FrameBackgroundAudioControl FrameType = 833
-	FrameEarconControl          FrameType = 834
 	FrameReadiness              FrameType = 835
 )
 
