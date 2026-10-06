@@ -405,7 +405,17 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		return p.handleAudio(ctx, frame, e)
 
 	case *core.UserStoppedSpeakingFrame:
-		// Speech ended for current turn
+		// Detach the finished utterance's stream so the next one opens unbound:
+		// VAD reports speech start only after the onset audio was sent, and that
+		// audio must reach the next utterance's stream, not this one.
+		p.mu.Lock()
+		old := p.active
+		p.active = nil
+		p.turnID = ""
+		p.mu.Unlock()
+		if old != nil {
+			_ = old.stream.CloseSend()
+		}
 		return e.Push(f)
 
 	case *core.InterruptionFrame:
