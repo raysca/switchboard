@@ -681,13 +681,24 @@ func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	// Spawn receiver for the new stream
 	p.spawnReceiver(newActive)
 
-	// Gracefully close the old stream
-	go func() {
+	// Gracefully close the old stream as supervised session work so teardown
+	// waits for it (or cancels the grace period) and a panic fails only this call.
+	closeOld := func(ctx context.Context) {
 		_ = oldActive.stream.CloseSend()
-		time.Sleep(200 * time.Millisecond)
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+		}
 		oldActive.cancel()
 		_ = oldActive.stream.Close()
-	}()
+	}
+	if p.session == nil || p.session.Go(closeOld) != nil {
+		// No live session or task budget exhausted: close now, without the
+		// grace period, rather than sleeping on the caller's goroutine.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		closeOld(ctx)
+	}
 
 	return nil
 }
