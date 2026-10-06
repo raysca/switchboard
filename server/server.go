@@ -504,7 +504,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			}
 		case core.FrameError:
 			ef := f.(*core.ErrorFrame)
-			timeline.Record(TimelineEvent{Type: EventError, Error: ef.Err.Error()})
+			msg := "unknown error"
+			if ef.Err != nil {
+				msg = ef.Err.Error()
+			}
+			timeline.Record(TimelineEvent{Type: EventError, Error: msg})
 		}
 	}
 

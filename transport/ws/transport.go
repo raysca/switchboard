@@ -792,7 +792,11 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 
 	case core.FrameError:
 		ef := f.(*core.ErrorFrame)
-		msg, _ := c.rtvi.FormatError(ef.Err.Error(), ef.Fatal)
+		text := "unknown error"
+		if ef.Err != nil {
+			text = ef.Err.Error()
+		}
+		msg, _ := c.rtvi.FormatError(text, ef.Fatal)
 		_ = c.WriteWireMessage(ctx, msg)
 		if ef.Fatal {
 			c.Close()
