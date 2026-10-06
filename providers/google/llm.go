@@ -21,10 +21,6 @@ import (
 type LLMConfig struct {
 	Model           string // Pinned: "gemini-2.5-flash"
 	SystemPrompt    string // System instructions
-	MaxTokens       int    // Output token limit
-	Temperature     float32
-	AuthMode        AuthMode
-	Credentials     *ResolvedCredentials
 	Client          LLMStreamClient
 	RetryPolicy     RetryPolicy
 	CircuitBreaker  *CircuitBreaker
@@ -39,7 +35,6 @@ type LLMConfig struct {
 func DefaultLLMConfig() LLMConfig {
 	return LLMConfig{
 		Model:          "gemini-2.5-flash",
-		Temperature:    0.7,
 		RetryPolicy:    DefaultRetryPolicy(),
 		CircuitBreaker: NewCircuitBreaker(DefaultCircuitConfig()),
 	}
