@@ -146,6 +146,10 @@ Runtime changes enter a session through a typed `RuntimeSettingsUpdate` control 
 - An invalid or out-of-order revision leaves the prior settings active and produces a structured error/event.
 - Updates take effect without rebuilding a session for the supported fields.
 
+**Implementation Note (Task 27)**
+
+`core.RuntimeSettingsUpdate` implements `FrameSettingsControl`. Upon arrival in the session control queue, it is validated via `update.Validate()`. If invalid, `RuntimeSettingsErrorEvent` with `ErrInvalidRuntimeSettings` is emitted without changing session state. If the revision is less than or equal to current applied revision, `RuntimeSettingsErrorEvent` with `ErrStaleSettingsRevision` is emitted. Valid updates are applied atomically under `s.settingsMu` and `s.RuntimeSettings()` snapshot is updated, followed by emission of `RuntimeSettingsAppliedEvent`. Input mute changes update admission gating immediately without rebuilding the pipeline or session.
+
 ### 2.7 Audio filter
 
 `core.AudioFilter` is a provider-neutral streaming abstraction with explicit input/output audio format, bounded per-stream state, cancellation-aware processing, reset, and close. The first implementation must include one real noise-suppression implementation; a noise gate alone does not satisfy this contract. Filter latency is observable. Resampling and channel/format conversion remain composable core audio utilities rather than provider-specific copies.

@@ -86,6 +86,9 @@ type Session struct {
 	admissionMu    sync.Mutex
 	admissionMuted bool
 
+	settingsMu sync.RWMutex
+	settings   RuntimeSettings
+
 	// Concurrency & Supervisor
 	taskWg      sync.WaitGroup
 	activeTasks atomic.Int32
@@ -158,6 +161,7 @@ func NewSession(id uint64, pipeline *Pipeline, budget ResourceBudget) (*Session,
 		ready:       make(chan struct{}),
 		stopped:     make(chan struct{}),
 		Created:     time.Now(),
+		settings:    DefaultRuntimeSettings(),
 	}
 
 	s.state.Store(int32(StateStarting))
@@ -212,6 +216,13 @@ func (s *Session) IncrementGeneration() uint64 {
 }
 
 func (s *Session) InputMuted() bool { return s.inputMuted.Load() }
+
+// RuntimeSettings returns an immutable copy of the active runtime service settings.
+func (s *Session) RuntimeSettings() RuntimeSettings {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	return s.settings
+}
 
 // Err returns the terminal error of the session, if any.
 func (s *Session) Err() error {
@@ -603,6 +614,45 @@ func (s *Session) processEnvelope(env Envelope) bool {
 	if env.Frame.Type() == FrameInputUnmute {
 		s.inputMuted.Store(false)
 		env.Frame = &InputMutedStateFrame{Muted: false}
+	}
+	if env.Frame.Type() == FrameSettingsControl {
+		if update, ok := env.Frame.(*RuntimeSettingsUpdate); ok {
+			if err := update.Validate(); err != nil {
+				env.Frame = &RuntimeSettingsErrorEvent{Revision: update.Revision, Err: ErrInvalidRuntimeSettings}
+			} else {
+				s.settingsMu.Lock()
+				if update.Revision <= s.settings.Revision {
+					s.settingsMu.Unlock()
+					env.Frame = &RuntimeSettingsErrorEvent{Revision: update.Revision, Err: ErrStaleSettingsRevision}
+				} else {
+					// Apply atomically all-or-nothing
+					newSettings := s.settings
+					newSettings.Revision = update.Revision
+					if update.InputMuted != nil {
+						newSettings.InputMuted = *update.InputMuted
+						s.inputMuted.Store(*update.InputMuted)
+						s.admissionMu.Lock()
+						s.admissionMuted = *update.InputMuted
+						s.admissionMu.Unlock()
+					}
+					if update.InterruptionEnabled != nil {
+						newSettings.InterruptionEnabled = *update.InterruptionEnabled
+					}
+					if update.SilenceTimeout != nil {
+						newSettings.SilenceTimeout = *update.SilenceTimeout
+					}
+					if update.TurnTimeout != nil {
+						newSettings.TurnTimeout = *update.TurnTimeout
+					}
+					if update.Language != nil {
+						newSettings.Language = *update.Language
+					}
+					s.settings = newSettings
+					s.settingsMu.Unlock()
+					env.Frame = &RuntimeSettingsAppliedEvent{Revision: update.Revision, Settings: newSettings}
+				}
+			}
+		}
 	}
 	if env.CommittedFlush {
 		env.Frame = &FlushFrame{Gen: env.Gen, committed: true}
