@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -64,9 +63,6 @@ func (r AgentRepository) Create(ctx context.Context, a Agent) error {
 	now := utc(a.CreatedAt)
 	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO agents(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, a.Enabled), boolValue(r.s.dialect, a.Archived), now, now)
 	return err
-}
-func (r AgentRepository) AddVersion(ctx context.Context, agentID string, version int, config []byte) (AgentVersion, error) {
-	return r.PublishVersion(ctx, agentID, version, config, nil)
 }
 func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, version int, config []byte, selections []SelectedTool) (AgentVersion, error) {
 	var out AgentVersion
@@ -203,30 +199,6 @@ func (r AgentRepository) List(ctx context.Context, limit, offset int) ([]Agent, 
 	return agents, rows.Err()
 }
 
-// UpdateDetails changes mutable agent metadata without rewriting any version.
-func (r AgentRepository) UpdateDetails(ctx context.Context, id, name, description string, enabled *bool) error {
-	if strings.TrimSpace(name) == "" || len(name) > 128 || len(description) > 1024 {
-		return errors.New("invalid agent details")
-	}
-	query := "UPDATE agents SET name=?,description=?,updated_at=? WHERE id=? AND archived=?"
-	args := []any{strings.TrimSpace(name), description, utc(time.Now()), id, boolValue(r.s.dialect, false)}
-	if enabled != nil {
-		query = "UPDATE agents SET name=?,description=?,enabled=?,updated_at=? WHERE id=? AND archived=?"
-		args = []any{strings.TrimSpace(name), description, boolValue(r.s.dialect, *enabled), utc(time.Now()), id, boolValue(r.s.dialect, false)}
-	}
-	result, err := r.s.db.ExecContext(ctx, r.s.bind(query), args...)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
 func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, error) {
 	var v AgentVersion
 	var created string
@@ -921,9 +893,6 @@ func (r MCPRepository) Discovery(ctx context.Context, id string) (MCPDiscovery, 
 		d.Tools = append(d.Tools, t)
 	}
 	return d, rows.Err()
-}
-func (r MCPRepository) SelectTool(ctx context.Context, versionID, serverID, name, hash string, required bool) error {
-	return errors.New("selected tools must be published with an agent version")
 }
 
 func nullable(s string) any {

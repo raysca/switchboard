@@ -105,11 +105,8 @@ func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
 	now := j.clock()
 
 	// 1. Content purge pass
-	if j.policy.ContentRetention > 0 || j.policy.MetadataOnly {
+	if j.policy.ContentRetention > 0 {
 		contentCutoff := now.Add(-j.policy.ContentRetention)
-		if j.policy.MetadataOnly {
-			contentCutoff = now
-		}
 
 		// Page forward with a cursor: each session is examined at most once per
 		// run, so rows that cannot be sanitized never stall newer content.

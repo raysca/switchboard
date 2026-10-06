@@ -50,14 +50,14 @@ func TestRepositoryAgentVersionImmutabilityAndHistorySafety(t *testing.T) {
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`))
+	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if v.ConfigHash != "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777" {
 		t.Fatalf("hash %s", v.ConfigHash)
 	}
-	if _, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{"a":2}`)); err == nil {
+	if _, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"a":2}`), nil); err == nil {
 		t.Fatal("duplicate version accepted")
 	}
 	got, err := s.Agents().Current(ctx, a.ID)
@@ -93,7 +93,7 @@ func TestSessionAdmissionRejectsDisabledOrArchivedAgent(t *testing.T) {
 			if err := s.Agents().Create(ctx, a); err != nil {
 				t.Fatal(err)
 			}
-			v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{}`))
+			v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +120,7 @@ func TestSessionEndRetriesPendingDeleteFinalization(t *testing.T) {
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{}`))
+	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,8 @@ func TestRepositoryAgentVersionsAreMonotonicAndAgentListUpdateWork(t *testing.T)
 	if _, err := s.Agents().PublishVersion(ctx, a.ID, 4, []byte(`{}`), nil); err == nil {
 		t.Fatal("version may not skip a number")
 	}
-	if err := s.Agents().UpdateDetails(ctx, a.ID, "after", "updated", nil); err != nil {
+	name, desc := "after", "updated"
+	if _, _, err := s.Agents().MutateAndPublish(ctx, a.ID, AgentMutation{Name: &name, Description: &desc}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Agents().List(ctx, 10, 0)
@@ -414,7 +415,7 @@ func TestRepositoryRejectsInvalidDurableIDs(t *testing.T) {
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{}`))
+	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +497,7 @@ func TestRepositoryConfigHashRoundTrip(t *testing.T) {
 		if err := s.Agents().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{"z":1e1000,"text":"\u0000","a":1e2}`))
+		v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"z":1e1000,"text":"\u0000","a":1e2}`), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -548,7 +549,7 @@ func TestRepositoryPostgresIntegration(t *testing.T) {
 	if err := s.Agents().Create(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().AddVersion(context.Background(), a.ID, 1, []byte(`{"a":1}`))
+	v, err := s.Agents().PublishVersion(context.Background(), a.ID, 1, []byte(`{"a":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -711,7 +712,7 @@ func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{"x":1}`))
+	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,9 +735,6 @@ func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
 	gotD, err := s.MCP().Discovery(ctx, d.ID)
 	if err != nil || len(gotD.Tools) != 2 || gotD.Tools[0].RemoteName != "a" {
 		t.Fatalf("discovery=%+v err=%v", gotD, err)
-	}
-	if err := s.MCP().SelectTool(ctx, v.ID, m.ID, "a", gotD.Tools[0].SchemaHash, true); err == nil {
-		t.Fatal("published version accepted later selection")
 	}
 	v, err = s.Agents().PublishVersion(ctx, a.ID, 2, []byte(`{"x":2}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash, Required: true}})
 	if err != nil {
@@ -762,7 +760,7 @@ func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
 	if _, err := s.DB().Exec("DELETE FROM mcp_servers WHERE id=?", m.ID); err == nil {
 		t.Fatal("live MCP reference deleted")
 	}
-	if _, err := s.Agents().AddVersion(ctx, a.ID, 3, []byte(`{"x":3}`)); err != nil {
+	if _, err := s.Agents().PublishVersion(ctx, a.ID, 3, []byte(`{"x":3}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Sessions().End(ctx, sess.ID); err != nil {
@@ -946,7 +944,7 @@ func TestRepositoryProvenanceAndPointers(t *testing.T) {
 	if err := s.Agents().Create(ctx, b); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{}`))
+	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1031,11 +1029,8 @@ func TestRepositoryContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Agents().AddVersion(ctx, a.ID, 1, []byte(`{}`)); err == nil {
+			if _, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil); err == nil {
 				t.Fatal("duplicate version")
-			}
-			if err := s.MCP().SelectTool(ctx, v.ID, m.ID, "z", gotD.Tools[1].SchemaHash, false); err == nil {
-				t.Fatal("late tool selection")
 			}
 			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE agent_versions SET config_hash=? WHERE id=?"), "bad", v.ID); err == nil {
 				t.Fatal("immutable version changed")
@@ -1090,7 +1085,7 @@ func TestRepositoryContract(t *testing.T) {
 			if _, err := s.DB().ExecContext(ctx, s.bind("DELETE FROM mcp_servers WHERE id=?"), m.ID); err == nil {
 				t.Fatal("current MCP deleted")
 			}
-			v2, err := s.Agents().AddVersion(ctx, a.ID, 2, []byte(`{}`))
+			v2, err := s.Agents().PublishVersion(ctx, a.ID, 2, []byte(`{}`), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1150,7 +1145,7 @@ func TestCredentialDeleteBlockedWhileAttached(t *testing.T) {
 	if err := s.Agents().Create(ctx, Agent{ID: agentID, Name: "Support", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Agents().AddVersion(ctx, agentID, 1, cfg(used)); err != nil {
+	if _, err := s.Agents().PublishVersion(ctx, agentID, 1, cfg(used), nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1167,7 +1162,7 @@ func TestCredentialDeleteBlockedWhileAttached(t *testing.T) {
 	}
 
 	// Only the current version counts: after re-attaching, the old credential is free.
-	if _, err := s.Agents().AddVersion(ctx, agentID, 2, cfg(other)); err != nil {
+	if _, err := s.Agents().PublishVersion(ctx, agentID, 2, cfg(other), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Credentials().Delete(ctx, used); err != nil {

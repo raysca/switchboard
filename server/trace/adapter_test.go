@@ -37,7 +37,7 @@ func createTestSession(t *testing.T, s *storage.Store) string {
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().AddVersion(ctx, agentID, 1, []byte(`{"llm":"test"}`))
+	v, err := s.Agents().PublishVersion(ctx, agentID, 1, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

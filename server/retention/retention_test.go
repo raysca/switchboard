@@ -2,6 +2,7 @@ package retention_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -33,7 +34,7 @@ func createTestAgentAndVersion(t *testing.T, s *storage.Store) (string, string, 
 	if err := s.Agents().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().AddVersion(ctx, agentID, 1, []byte(`{"llm":"test"}`))
+	v, err := s.Agents().PublishVersion(ctx, agentID, 1, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +244,7 @@ func TestContentPurge(t *testing.T) {
 	}
 
 	// Verify session 1: content purged, metadata preserved
-	turn1, err := s.Sessions().Turn(ctx, sess1.turnID)
+	turn1, err := onlyTurn(ctx, s, sess1.sessionID)
 	if err != nil {
 		t.Fatalf("query turn 1: %v", err)
 	}
@@ -279,7 +280,7 @@ func TestContentPurge(t *testing.T) {
 	}
 
 	// Verify session 2: content intact
-	turn2, err := s.Sessions().Turn(ctx, sess2.turnID)
+	turn2, err := onlyTurn(ctx, s, sess2.sessionID)
 	if err != nil {
 		t.Fatalf("query turn 2: %v", err)
 	}
@@ -288,7 +289,7 @@ func TestContentPurge(t *testing.T) {
 	}
 
 	// Verify session 3 (active): content intact
-	turn3, err := s.Sessions().Turn(ctx, sess3.turnID)
+	turn3, err := onlyTurn(ctx, s, sess3.sessionID)
 	if err != nil {
 		t.Fatalf("query turn 3: %v", err)
 	}
@@ -363,7 +364,7 @@ func TestMetadataPurgeAndInvariants(t *testing.T) {
 	if _, err := s.Sessions().Get(ctx, sess1.sessionID); err == nil {
 		t.Errorf("expected session 1 to be deleted")
 	}
-	if _, err := s.Sessions().Turn(ctx, sess1.turnID); err == nil {
+	if _, err := onlyTurn(ctx, s, sess1.sessionID); err == nil {
 		t.Errorf("expected turn 1 to be deleted")
 	}
 	spans1, _ := s.Traces().Spans(ctx, sess1.sessionID, "")
@@ -759,4 +760,16 @@ func TestJobStopCancelsInFlightRun(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Stop waited for the in-flight run")
 	}
+}
+
+// onlyTurn returns the single turn recorded for a session.
+func onlyTurn(ctx context.Context, s *storage.Store, sessionID string) (storage.TurnRecord, error) {
+	turns, err := s.Sessions().Turns(ctx, sessionID)
+	if err == nil && len(turns) != 1 {
+		err = fmt.Errorf("session %s has %d turns", sessionID, len(turns))
+	}
+	if err != nil {
+		return storage.TurnRecord{}, err
+	}
+	return turns[0], nil
 }

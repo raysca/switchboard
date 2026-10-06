@@ -289,25 +289,8 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 		t.Fatalf("new credential service: %v", err)
 	}
 
-	// 3. Define readiness evaluator that checks provider credential readiness
-	evaluator := func(c context.Context, agentID string, rawConfig json.RawMessage) (bool, error) {
-		cfg, err := agent.DecodeConfig(rawConfig)
-		if err != nil {
-			return false, nil
-		}
-		creds, err := credService.List(c)
-		if err != nil {
-			return false, err
-		}
-		hasProv := make(map[string]bool)
-		for _, cr := range creds {
-			hasProv[cr.Provider] = true
-		}
-		// Agent requires configured STT/LLM/TTS providers to have active credentials
-		return hasProv[cfg.STT.Provider] && hasProv[cfg.LLM.Provider] && hasProv[cfg.TTS.Provider], nil
-	}
-
-	agentService := agent.NewService(store, evaluator)
+	// 3. Readiness checks attached provider credentials itself.
+	agentService := agent.NewService(store)
 
 	// 4. Before credentials: an agent cannot be created, because agents are
 	// attached to providers (and their credentials) at creation.

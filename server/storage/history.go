@@ -280,27 +280,6 @@ func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, e
 	}
 	return v, nil
 }
-func (r SessionRepository) Turn(ctx context.Context, id string) (TurnRecord, error) {
-	var v TurnRecord
-	var started string
-	var ended, transcript, assistant sql.NullString
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,session_id,ordinal,started_at,ended_at,transcript,assistant_text,latencies_json,interrupted,tools_json FROM turns WHERE id=?"), id).Scan(&v.ID, &v.SessionID, &v.Ordinal, &started, &ended, &transcript, &assistant, &v.LatenciesJSON, &v.Interrupted, &v.ToolsJSON)
-	if err != nil {
-		return v, err
-	}
-	if v.StartedAt, err = parseTime(started); err != nil {
-		return v, err
-	}
-	if ended.Valid {
-		if v.EndedAt, err = parseTime(ended.String); err != nil {
-			return v, err
-		}
-	}
-	v.Transcript = transcript.String
-	v.AssistantText = assistant.String
-	return v, nil
-}
-
 func (r SessionRepository) Turns(ctx context.Context, sessionID string) ([]TurnRecord, error) {
 	if err := validID(sessionID); err != nil {
 		return nil, err

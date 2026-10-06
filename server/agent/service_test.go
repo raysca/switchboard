@@ -56,8 +56,8 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 	if updated.Version.Number != 2 || updated.Version.ConfigHash != a.Version.ConfigHash {
 		t.Fatalf("updated version=%+v, initial=%+v", updated.Version, a.Version)
 	}
-	old, err := svc.GetVersion(ctx, a.ID, a.Version.ID)
-	if err != nil || string(old.Config) != string(a.Version.Config) {
+	old, err := svc.store.Agents().Version(ctx, a.Version.ID)
+	if err != nil || string(old.ConfigJSON) != string(a.Version.Config) {
 		t.Fatalf("old version changed: %+v err=%v", old, err)
 	}
 	items, err := svc.List(ctx, 10, 0)
@@ -267,7 +267,8 @@ func TestDetachRequiresExplicitMCPReviewAndHistoricalSelectionsRemainReadable(t 
 	if _, err := svc.ResolveCurrent(ctx, a.ID); err == nil {
 		t.Fatal("new session admitted before explicit review")
 	}
-	historical, err := svc.GetVersion(ctx, a.ID, v1.ID)
+	historicalRow, err := svc.store.Agents().Version(ctx, v1.ID)
+	historical := toVersion(historicalRow)
 	if err != nil || len(historical.MCPTools) != 1 || historical.MCPTools[0] != selection {
 		t.Fatalf("historical selection=%+v err=%v", historical.MCPTools, err)
 	}
@@ -417,7 +418,7 @@ func TestConcurrentPartialUpdatesPreserveOmittedFields(t *testing.T) {
 	}
 }
 
-func TestRuntimeResolutionRejectsIncompleteConfigAndCanUseReadinessEvaluator(t *testing.T) {
+func TestRuntimeResolutionRejectsIncompleteConfig(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
 	// An attached credential cannot be deleted, but it can turn invalid; the
@@ -447,37 +448,11 @@ func TestRuntimeResolutionRejectsIncompleteConfigAndCanUseReadinessEvaluator(t *
 	if err := svc.store.Credentials().ReplaceIfUnchanged(ctx, row.KeyID, row.Ciphertext, row); err != nil {
 		t.Fatal(err)
 	}
-	readySvc := NewService(svc.store, ReadinessEvaluator(func(context.Context, string, json.RawMessage) (bool, error) {
-		return false, nil
-	}))
-	complete, err := readySvc.Create(ctx, CreateRequest{Name: "External unavailable", Config: validConfig()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if complete.Readiness.State != ReadinessNotReady {
-		t.Fatalf("external readiness was not reflected: %+v", complete.Readiness)
-	}
-	if _, err := readySvc.ResolveCurrent(ctx, complete.ID); err == nil {
-		t.Fatal("runtime resolved agent rejected by readiness evaluator")
-	}
-	failedSvc := NewService(svc.store, ReadinessEvaluator(func(context.Context, string, json.RawMessage) (bool, error) {
-		return false, fmt.Errorf("provider error contains secret sentinel")
-	}))
-	failed, err := failedSvc.Create(ctx, CreateRequest{Name: "Evaluator error", Config: validConfig()})
-	if err != nil || failed.Readiness.State != ReadinessNotReady || len(failed.Readiness.Reasons) != 1 || failed.Readiness.Reasons[0] != "readiness_unavailable" {
-		t.Fatalf("unsafe evaluator failure readiness=%+v err=%v", failed.Readiness, err)
-	}
-	if strings.Contains(strings.Join(failed.Readiness.Reasons, " "), "secret sentinel") {
-		t.Fatal("readiness exposed external error detail")
-	}
-	successSvc := NewService(svc.store, ReadinessEvaluator(func(context.Context, string, json.RawMessage) (bool, error) {
-		return true, nil
-	}))
-	fullyReady, err := successSvc.Create(ctx, CreateRequest{Name: "Validated", Config: validConfig()})
+	fullyReady, err := svc.Create(ctx, CreateRequest{Name: "Validated", Config: validConfig()})
 	if err != nil || fullyReady.Readiness.State != ReadinessReady {
 		t.Fatalf("validated readiness=%+v err=%v", fullyReady.Readiness, err)
 	}
-	if _, err := successSvc.ResolveCurrent(ctx, fullyReady.ID); err != nil {
+	if _, err := svc.ResolveCurrent(ctx, fullyReady.ID); err != nil {
 		t.Fatalf("validated agent could not resolve: %v", err)
 	}
 }

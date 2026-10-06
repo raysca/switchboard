@@ -82,7 +82,7 @@ func TestSessionRoutesUseManagementBoundaryAndServeQueries(t *testing.T) {
 	if err := store.Agents().Create(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := store.Agents().AddVersion(context.Background(), agentID, 1, []byte(`{"llm":"test"}`))
+	v, err := store.Agents().PublishVersion(context.Background(), agentID, 1, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

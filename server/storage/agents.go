@@ -14,16 +14,9 @@ type AgentMutation struct {
 	Enabled     *bool
 }
 
-// CreateWithVersion creates the agent and its initial immutable version in one
-// transaction. An initial publication failure leaves neither row behind.
-func (r AgentRepository) CreateWithVersion(ctx context.Context, a Agent, config []byte) (AgentVersion, error) {
-	return r.CreateWithVersionAndTools(ctx, a, config, nil)
-}
-
-func (r AgentRepository) CreateWithVersionAndTools(ctx context.Context, a Agent, config []byte, selections []SelectedTool) (AgentVersion, error) {
-	return r.CreateWithVersionAndToolsAndReviewRequired(ctx, a, config, selections, false)
-}
-
+// CreateWithVersionAndToolsAndReviewRequired creates the agent and its initial
+// immutable version in one transaction. An initial publication failure leaves
+// neither row behind.
 func (r AgentRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.Context, a Agent, config []byte, selections []SelectedTool, mcpReviewRequired bool) (AgentVersion, error) {
 	if err := validID(a.ID); err != nil {
 		return AgentVersion{}, err

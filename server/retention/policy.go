@@ -10,16 +10,6 @@ type Policy struct {
 	MetadataRetention time.Duration
 	ContentRetention  time.Duration
 	BatchSize         int
-	MetadataOnly      bool
-}
-
-// DefaultPolicy returns safe, sane retention policy defaults.
-func DefaultPolicy() Policy {
-	return Policy{
-		MetadataRetention: 30 * 24 * time.Hour,
-		ContentRetention:  7 * 24 * time.Hour,
-		BatchSize:         500,
-	}
 }
 
 // Validate ensures retention periods and batch limits are valid.

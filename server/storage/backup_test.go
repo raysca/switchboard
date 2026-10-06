@@ -40,7 +40,7 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 	if err := s.Agents().Create(ctx, agent); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	ver, err := s.Agents().AddVersion(ctx, agent.ID, 1, []byte(`{"voice":"default","prompt":"hello"}`))
+	ver, err := s.Agents().PublishVersion(ctx, agent.ID, 1, []byte(`{"voice":"default","prompt":"hello"}`), nil)
 	if err != nil {
 		t.Fatalf("add version: %v", err)
 	}

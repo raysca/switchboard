@@ -19,20 +19,13 @@ const maxReadinessReasons = 8
 
 var ErrNotFound = sql.ErrNoRows
 
-type ReadinessEvaluator func(context.Context, string, json.RawMessage) (bool, error)
-
 type Service struct {
 	store     *storage.Store
-	evaluator ReadinessEvaluator
 	providers *provider.Registry
 }
 
-func NewService(store *storage.Store, evaluators ...ReadinessEvaluator) *Service {
-	s := &Service{store: store, providers: provider.NewRegistry(provider.Definitions())}
-	if len(evaluators) > 0 {
-		s.evaluator = evaluators[0]
-	}
-	return s
+func NewService(store *storage.Store) *Service {
+	return &Service{store: store, providers: provider.NewRegistry(provider.Definitions())}
 }
 
 type CreateRequest struct {
@@ -209,17 +202,6 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Agent, error)
 	return s.create(ctx, CreateRequest{Name: name, Description: source.Description, Config: source.Version.Config, Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools}, source.Version.MCPReviewRequired)
 }
 
-func (s *Service) GetVersion(ctx context.Context, agentID, versionID string) (Version, error) {
-	v, err := s.store.Agents().Version(ctx, versionID)
-	if err != nil {
-		return Version{}, err
-	}
-	if v.AgentID != agentID {
-		return Version{}, ErrNotFound
-	}
-	return toVersion(v), nil
-}
-
 func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, error) {
 	row, err := s.store.Agents().Current(ctx, id)
 	if err != nil {
@@ -365,7 +347,6 @@ func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error)
 
 const (
 	ReadinessReady           = "ready"
-	ReadinessConfigured      = "configured"
 	ReadinessNotReady        = "not_ready"
 	ReadinessWithToolWarning = "ready_with_tool_warning"
 	ReadinessNeedsToolReview = "needs_tool_review"
@@ -462,7 +443,8 @@ func (s *Service) agentReadiness(ctx context.Context, agentID, versionID string,
 		}
 		snapshots = append(snapshots, MCPToolSnapshot{ServerID: server.ID, ServerName: server.Name, Endpoint: server.Endpoint, Transport: server.Transport, CredentialID: server.AuthCredentialID, RemoteName: selection.RemoteName, SchemaJSON: json.RawMessage(schema), SchemaHash: selection.SchemaHash, Required: selection.Required})
 	}
-	base := Readiness{State: ReadinessConfigured, Reasons: []string{}, ToolDependencies: dependencies}
+	// Providers, capabilities and credentials were checked above.
+	base := Readiness{State: ReadinessReady, Reasons: []string{}, ToolDependencies: dependencies}
 	if requiredFailure != "" {
 		base.State = requiredFailure
 		base.Reasons = []string{"required_tool_unavailable"}
@@ -471,23 +453,6 @@ func (s *Service) agentReadiness(ctx context.Context, agentID, versionID string,
 	if optionalWarning {
 		base.State = ReadinessWithToolWarning
 		base.Reasons = []string{"optional_tool_unavailable"}
-	}
-	if s.evaluator == nil {
-		// Providers, capabilities and credentials were checked above.
-		if base.State == ReadinessConfigured {
-			base.State = ReadinessReady
-		}
-		return base, snapshots
-	}
-	ready, err := s.evaluator(ctx, agentID, append(json.RawMessage(nil), config...))
-	if err != nil {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, snapshots
-	}
-	if !ready {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"external_dependency_unavailable"}}, snapshots
-	}
-	if base.State == ReadinessConfigured {
-		base.State = ReadinessReady
 	}
 	return base, snapshots
 }
