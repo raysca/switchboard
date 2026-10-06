@@ -704,6 +704,30 @@ type CapableProcessor interface {
 - **Introspection Helpers**: `GetProcessorCapabilities(p)`, `HasCapability(p, cap)`, and `Pipeline.FindProcessorsWithCapability(cap)` allow pipeline introspection without tight coupling to concrete types.
 - **Side Effect Tracking**: `SideEffects` flag explicitly identifies processors with side-effecting operations (e.g. LLM/TTS/network calls) to guide retry policies and state rollback.
 
+### 2.22 Provider and processor readiness events
+
+`core.ReadinessFrame` conveys availability and initialization status across pipeline components:
+```go
+type ReadinessStatus string
+const (
+    ReadinessReady    ReadinessStatus = "ready"
+    ReadinessDegraded ReadinessStatus = "degraded"
+    ReadinessNotReady ReadinessStatus = "not_ready"
+)
+
+type ReadinessFrame struct {
+    Component string          `json:"component"`
+    Status    ReadinessStatus `json:"status"`
+    Reason    string          `json:"reason,omitempty"`
+    Timestamp time.Time       `json:"timestamp"`
+    Latency   time.Duration   `json:"latency,omitempty"`
+    Gen       uint64          `json:"gen,omitempty"`
+}
+```
+- **Validation**: Enforces non-empty component identification and canonical status enum states (`Validate()`).
+- **Health Observability**: Emits non-blocking status transitions (e.g. provider network degradations or cold-start completions) across the pipeline for telemetry and diagnostics.
+
+
 
 
 
