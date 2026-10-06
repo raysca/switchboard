@@ -116,6 +116,7 @@ type workerProcess struct {
 	mu         sync.Mutex
 	healthy    bool
 	crashes    []time.Time
+	down       bool // counted out of backend.availCount
 	closed     bool
 	wg         sync.WaitGroup
 	inFlightMu sync.Mutex
@@ -589,7 +590,10 @@ func (wp *workerProcess) respawnWithBackoff() bool {
 		wp.mu.Unlock()
 		return false
 	}
-	wp.backend.availCount.Add(-1)
+	if !wp.down {
+		wp.down = true
+		wp.backend.availCount.Add(-1)
+	}
 	now := time.Now()
 	wp.crashes = append(wp.crashes, now)
 
@@ -626,6 +630,9 @@ func (wp *workerProcess) respawnWithBackoff() bool {
 		return false
 	}
 
+	wp.mu.Lock()
+	wp.down = false
+	wp.mu.Unlock()
 	wp.backend.availCount.Add(1)
 	return true
 }
