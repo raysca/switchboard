@@ -53,6 +53,11 @@ func NewPipeline(procs ...Processor) (*Pipeline, error) {
 	if len(procs) == 0 {
 		return nil, ErrPipelineEmpty
 	}
+	for i, proc := range procs {
+		if proc == nil {
+			return nil, fmt.Errorf("core: nil processor at index %d", i)
+		}
+	}
 	return &Pipeline{
 		processors: procs,
 	}, nil
@@ -76,14 +81,4 @@ func (p *Pipeline) At(index int) Processor {
 		return nil
 	}
 	return p.processors[index]
-}
-
-// Validate ensures all processors in the pipeline are non-nil.
-func (p *Pipeline) Validate() error {
-	for i, proc := range p.processors {
-		if proc == nil {
-			return fmt.Errorf("nil processor at index %d", i)
-		}
-	}
-	return nil
 }

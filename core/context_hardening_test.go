@@ -258,6 +258,12 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	}
 }
 
+func TestNewPipelineRejectsNilProcessor(t *testing.T) {
+	if _, err := NewPipeline(&ContextAggregator{}, nil); err == nil {
+		t.Fatal("nil processor accepted")
+	}
+}
+
 // failingEmitter fails pushes of one frame type.
 type failingEmitter struct {
 	on  FrameType
