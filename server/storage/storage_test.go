@@ -1125,3 +1125,59 @@ func TestRepositoryContract(t *testing.T) {
 		})
 	}
 }
+
+// A credential attached to an active agent's current version cannot be deleted;
+// archiving the agent or re-attaching it to another credential releases it.
+func TestCredentialDeleteBlockedWhileAttached(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, Config{Dialect: SQLite, DSN: filepath.Join(t.TempDir(), "creds.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	put := func() string {
+		id := NewID()
+		if err := s.Credentials().Put(ctx, Credential{ID: id, Provider: "google", MaskedSuffix: "abcd", ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	used, other, unused := put(), put(), put()
+	cfg := func(id string) []byte {
+		return []byte(`{"llm":{"credential_id":"` + id + `","model":"m","provider":"google"},"stt":{"credential_id":"` + id + `","provider":"google"},"tts":{"credential_id":"` + id + `","provider":"google"}}`)
+	}
+	agentID := NewID()
+	if err := s.Agents().Create(ctx, Agent{ID: agentID, Name: "Support", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Agents().AddVersion(ctx, agentID, 1, cfg(used)); err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.Credentials().Delete(ctx, used)
+	var inUse *CredentialInUseError
+	if !errors.As(err, &inUse) || len(inUse.Agents) != 1 || inUse.Agents[0].AgentID != agentID || inUse.Agents[0].AgentName != "Support" {
+		t.Fatalf("delete attached: err=%v", err)
+	}
+	if _, err := s.Credentials().Get(ctx, used); err != nil {
+		t.Fatalf("attached credential was deleted: %v", err)
+	}
+	if err := s.Credentials().Delete(ctx, unused); err != nil {
+		t.Fatalf("delete unattached: %v", err)
+	}
+
+	// Only the current version counts: after re-attaching, the old credential is free.
+	if _, err := s.Agents().AddVersion(ctx, agentID, 2, cfg(other)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Credentials().Delete(ctx, used); err != nil {
+		t.Fatalf("delete after re-attach: %v", err)
+	}
+	// Archived agents do not hold their credentials.
+	if err := s.Agents().Archive(ctx, agentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Credentials().Delete(ctx, other); err != nil {
+		t.Fatalf("delete after archive: %v", err)
+	}
+}

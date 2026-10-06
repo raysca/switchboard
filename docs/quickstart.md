@@ -120,7 +120,7 @@ curl -fsS "$ADMIN/api/v1/agents/$AGENT_ID" -H "$AUTH" | jq -r .data.readiness.st
 # ready
 ```
 
-Each stage must name its `credential_id`: an agent is attached to its providers and their credentials when it is created, and creation fails with `400 agent_not_attached` if a stage has no provider, no credential, or a credential of another provider. If an attached credential is later deleted or marked invalid, the agent becomes not ready (`missing_credential_<stage>` / `invalid_credential_<stage>`). To use xAI for the LLM, set `"llm": {"provider": "xai", "model": "<grok-model>", ...}` after adding an xAI credential.
+Each stage must name its `credential_id`: an agent is attached to its providers and their credentials when it is created, and creation fails with `400 agent_not_attached` if a stage has no provider, no credential, or a credential of another provider. A credential cannot be deleted while an agent is attached to it (`409 credential_in_use` lists the agents); if it is marked invalid, the agent becomes not ready (`invalid_credential_<stage>`). To use xAI for the LLM, set `"llm": {"provider": "xai", "model": "<grok-model>", ...}` after adding an xAI credential.
 
 ### 5c. Issue a voice token
 

@@ -133,3 +133,24 @@ func TestProductionRequiresExplicitStoreAndKey(t *testing.T) {
 		t.Fatal("production enabled storage without explicit DSN and keyring")
 	}
 }
+
+func TestDeleteCredentialAttachedToAgentIsRefused(t *testing.T) {
+	s := apiTestServer(t)
+	agentID := readyTestAgent(t, s)
+	creds, err := s.credentials.List(t.Context())
+	if err != nil || len(creds) != 1 {
+		t.Fatalf("creds=%v err=%v", creds, err)
+	}
+	key := "management-test-key-32-bytes-long-and-separate"
+	path := "/api/v1/providers/credentials/" + creds[0].ID
+	w := apiRequest(s, http.MethodDelete, path, key, "")
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"credential_in_use"`) || !strings.Contains(w.Body.String(), agentID) {
+		t.Fatalf("delete attached credential: %d %s", w.Code, w.Body)
+	}
+	if err := s.agents.Archive(t.Context(), agentID); err != nil {
+		t.Fatal(err)
+	}
+	if w := apiRequest(s, http.MethodDelete, path, key, ""); w.Code != http.StatusOK {
+		t.Fatalf("delete after archiving the agent: %d %s", w.Code, w.Body)
+	}
+}

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router";
 import {
   type ApiClient,
   type CredentialDTO,
@@ -204,6 +205,18 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
                 error={actionError}
                 onRetry={() => setActionError(null)}
               />
+              {actionError.code === "credential_in_use" && attachedAgents(actionError.details).length > 0 && (
+                <div role="note" style={{ marginTop: "8px" }}>
+                  <p style={{ margin: "0 0 4px" }}>Attached to these agents:</p>
+                  <ul style={{ margin: 0 }}>
+                    {attachedAgents(actionError.details).map((a) => (
+                      <li key={a.agent_id}>
+                        <Link to={`/agents/${a.agent_id}`}>{a.agent_name}</Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
@@ -501,5 +514,16 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
         </div>
       )}
     </>
+  );
+}
+
+type AttachedAgent = { agent_id: string; agent_name: string };
+
+// attachedAgents reads the agents a credential_in_use error names.
+function attachedAgents(details: unknown): AttachedAgent[] {
+  if (!Array.isArray(details)) return [];
+  return details.filter(
+    (d): d is AttachedAgent =>
+      typeof d === "object" && d !== null && typeof (d as AttachedAgent).agent_id === "string" && typeof (d as AttachedAgent).agent_name === "string",
   );
 }

@@ -342,22 +342,64 @@ func (r CredentialRepository) RotateIfUnchanged(ctx context.Context, id, expecte
 	return nil
 }
 
+// ErrCredentialInUse is returned when deleting a credential that an active
+// agent is attached to.
+var ErrCredentialInUse = errors.New("credential is attached to an agent")
+
+// CredentialAgentReference names an active agent attached to a credential.
+type CredentialAgentReference struct {
+	AgentID   string `json:"agent_id"`
+	AgentName string `json:"agent_name"`
+}
+
+// CredentialInUseError carries the agents that block a credential deletion.
+type CredentialInUseError struct{ Agents []CredentialAgentReference }
+
+func (e *CredentialInUseError) Error() string { return ErrCredentialInUse.Error() }
+func (e *CredentialInUseError) Unwrap() error { return ErrCredentialInUse }
+
+// Delete removes a credential unless the current version of a non-archived
+// agent is attached to it. The check and the delete share one transaction.
 func (r CredentialRepository) Delete(ctx context.Context, id string) error {
 	if err := validID(id); err != nil {
 		return err
 	}
-	result, err := r.s.db.ExecContext(ctx, r.s.bind("DELETE FROM provider_credentials WHERE id=?"), id)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Agent configs are canonical compact JSON, so an attachment is always
+		// "credential_id":"<id>"; ids are UUIDs and contain no LIKE wildcards.
+		rows, err := tx.QueryContext(ctx, r.s.bind(`SELECT a.id, a.name FROM agents a JOIN agent_versions v ON v.id = a.current_version_id
+WHERE a.archived = ? AND v.config_json LIKE ? ORDER BY a.name, a.id`), boolValue(r.s.dialect, false), `%"credential_id":"`+id+`"%`)
+		if err != nil {
+			return err
+		}
+		var refs []CredentialAgentReference
+		for rows.Next() {
+			var ref CredentialAgentReference
+			if err := rows.Scan(&ref.AgentID, &ref.AgentName); err != nil {
+				rows.Close()
+				return err
+			}
+			refs = append(refs, ref)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if len(refs) > 0 {
+			return &CredentialInUseError{Agents: refs}
+		}
+		result, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM provider_credentials WHERE id=?"), id)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
 }
 
 func (r CredentialRepository) List(ctx context.Context) ([]Credential, error) {

@@ -246,4 +246,31 @@ describe("ProvidersView", () => {
     expect(client.deleteCredential).toHaveBeenCalledWith("cred-1");
     expect(await screen.findByText(/no provider credentials configured/i)).toBeVisible();
   });
+
+  it("explains a blocked delete and links the agents still attached to the credential", async () => {
+    const client = createMockClient({
+      getCredentials: vi.fn().mockResolvedValue([
+        {
+          id: "cred-1",
+          provider: "google",
+          masked_value: "••••••••9876",
+          validation_state: "unvalidated",
+          capabilities: ["llm", "stt", "tts"],
+          created_at: "2026-10-05T12:00:00Z",
+          updated_at: "2026-10-05T12:00:00Z",
+        },
+      ]),
+      deleteCredential: vi.fn().mockRejectedValue(
+        new ApiError("credential is attached to agents", "credential_in_use", 409, "req-1", [
+          { agent_id: "agent-1", agent_name: "Billing" },
+        ]),
+      ),
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<ProvidersView client={client} keyValue="key-1" />);
+    expect(await screen.findByText("••••••••9876")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+    expect(await screen.findByRole("link", { name: "Billing" })).toHaveAttribute("href", "/agents/agent-1");
+    expect(screen.getByText("••••••••9876")).toBeVisible();
+  });
 });

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"govoice/server/credential"
 	"govoice/server/provider"
+	"govoice/server/storage"
 )
 
 type ProviderManagement struct {
@@ -146,6 +147,11 @@ func (h *ProviderManagement) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, 200, SuccessResponse[credential.CredentialDTO]{Data: item})
 	case http.MethodDelete:
 		if err := h.Credentials.Delete(r.Context(), id); err != nil {
+			var inUse *storage.CredentialInUseError
+			if errors.As(err, &inUse) {
+				WriteJSON(w, http.StatusConflict, ErrorResponse{Error: Error{Code: "credential_in_use", Message: "credential is attached to agents; attach those agents to another credential or archive them first", RequestID: requestID, Details: inUse.Agents}})
+				return
+			}
 			credentialError(w, requestID, err)
 			return
 		}

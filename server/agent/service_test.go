@@ -420,21 +420,33 @@ func TestConcurrentPartialUpdatesPreserveOmittedFields(t *testing.T) {
 func TestRuntimeResolutionRejectsIncompleteConfigAndCanUseReadinessEvaluator(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
-	// An attached credential that disappears later makes the agent uncallable.
-	attached, err := svc.Create(ctx, CreateRequest{Name: "Loses credential", Config: validConfig()})
+	// An attached credential cannot be deleted, but it can turn invalid; the
+	// agent then becomes uncallable.
+	attached, err := svc.Create(ctx, CreateRequest{Name: "Credential turns invalid", Config: validConfig()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.store.Credentials().Delete(ctx, testCredentialID("google")); err != nil {
+	if err := svc.store.Credentials().Delete(ctx, testCredentialID("google")); !errors.Is(err, storage.ErrCredentialInUse) {
+		t.Fatalf("deleting an attached credential: err=%v", err)
+	}
+	row, err := svc.store.Credentials().Get(ctx, testCredentialID("google"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.ValidationState = "invalid"
+	if err := svc.store.Credentials().ReplaceIfUnchanged(ctx, row.KeyID, row.Ciphertext, row); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.ResolveCurrent(ctx, attached.ID); err == nil {
-		t.Fatal("runtime resolved an agent whose credential was deleted")
+		t.Fatal("runtime resolved an agent whose credential is invalid")
 	}
-	if got, _ := svc.Get(ctx, attached.ID); got.Readiness.State != ReadinessNotReady || !strings.Contains(strings.Join(got.Readiness.Reasons, ","), "missing_credential_") {
-		t.Fatalf("readiness after credential deletion = %+v", got.Readiness)
+	if got, _ := svc.Get(ctx, attached.ID); got.Readiness.State != ReadinessNotReady || !strings.Contains(strings.Join(got.Readiness.Reasons, ","), "invalid_credential_") {
+		t.Fatalf("readiness after credential turned invalid = %+v", got.Readiness)
 	}
-	seedCredentials(t, svc.store, "google")
+	row.ValidationState = "unvalidated"
+	if err := svc.store.Credentials().ReplaceIfUnchanged(ctx, row.KeyID, row.Ciphertext, row); err != nil {
+		t.Fatal(err)
+	}
 	readySvc := NewService(svc.store, ReadinessEvaluator(func(context.Context, string, json.RawMessage) (bool, error) {
 		return false, nil
 	}))

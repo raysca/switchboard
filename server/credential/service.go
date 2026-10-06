@@ -170,6 +170,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrNotFound) {
 			return ErrNotFound
 		}
+		if errors.Is(err, storage.ErrCredentialInUse) {
+			return err // carries the attached agents
+		}
 		return errors.New("credential could not be deleted")
 	}
 	return nil
