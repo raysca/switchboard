@@ -61,6 +61,9 @@ func Load() error {
 
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
+		if _, set := os.LookupEnv(key); set {
+			continue // the environment wins over .env
+		}
 
 		// Strip surrounding quotes
 		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
