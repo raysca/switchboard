@@ -209,16 +209,6 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
             {op.turns_total > 0 ? `${op.turns_total} total turns` : "0 turns processed"}
           </div>
         </div>
-
-        <div className="meta-card">
-          <div className="label">p95 Latency</div>
-          <div className="value">{op.p95_latency_ms.toFixed(0)} ms</div>
-          <div className="subtext">
-            {op.average_latency_ms !== undefined
-              ? `Average: ${op.average_latency_ms.toFixed(0)} ms`
-              : "Turn response time"}
-          </div>
-        </div>
       </section>
 
       {/* Agent & Provider Readiness Summary Cards */}

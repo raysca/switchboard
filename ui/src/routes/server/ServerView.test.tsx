@@ -28,8 +28,6 @@ function createMockOperations(overrides: Partial<OperationsStatus> = {}): Operat
     sessions_total: 80,
     turns_total: 320,
     errors_total: 0,
-    p95_latency_ms: 150.0,
-    average_latency_ms: 100.0,
     session_rate: 0.02,
     max_call_duration_seconds: 300,
     voice_token_max_lifetime_seconds: 60,

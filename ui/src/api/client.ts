@@ -45,8 +45,6 @@ export const operationsStatusSchema = z.object({
   sessions_total: z.number(),
   turns_total: z.number(),
   errors_total: z.number(),
-  p95_latency_ms: z.number(),
-  average_latency_ms: z.number().optional(),
   session_rate: z.number().optional(),
   max_call_duration_seconds: z.number().optional(),
   voice_token_max_lifetime_seconds: z.number().optional(),

@@ -219,7 +219,7 @@ func (h tracesHandler) turns(w http.ResponseWriter, r *http.Request, id, request
 			WriteError(w, http.StatusNotFound, "not_found", "session not found", requestID)
 			return
 		}
-		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
+		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get session", requestID)
 		return
 	}
 
@@ -249,7 +249,7 @@ func (h tracesHandler) tracesRoute(w http.ResponseWriter, r *http.Request, id, r
 			WriteError(w, http.StatusNotFound, "not_found", "session not found", requestID)
 			return
 		}
-		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
+		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get session", requestID)
 		return
 	}
 

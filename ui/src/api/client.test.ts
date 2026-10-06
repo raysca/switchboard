@@ -473,8 +473,6 @@ describe("management client", () => {
         sessions_total: 100,
         turns_total: 450,
         errors_total: 2,
-        p95_latency_ms: 180.5,
-        average_latency_ms: 120.2,
         session_rate: 0.05,
         database: {
           dialect: "sqlite",

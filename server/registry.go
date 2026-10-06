@@ -284,7 +284,10 @@ func (r *Registry) BindMetrics(m *Metrics) {
 		m.TTSCircuitStateGoogle.Store(circuitCode(string(st)))
 	})
 	r.xaiBreaker.SetObserver(func(st xai.CircuitState) {
+		// One xAI breaker serves every xAI stage.
 		m.LLMCircuitStateXAI.Store(circuitCode(string(st)))
+		m.STTCircuitStateXAI.Store(circuitCode(string(st)))
+		m.TTSCircuitStateXAI.Store(circuitCode(string(st)))
 	})
 }
 

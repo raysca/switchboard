@@ -34,8 +34,6 @@ func TestOperationsHandler_Success(t *testing.T) {
 		SessionsTotal:       42,
 		TurnsTotal:          150,
 		ErrorsTotal:         1,
-		P95LatencyMs:        120.5,
-		AverageLatencyMs:    95.2,
 		SessionRate:         0.012,
 		Database: api.DatabaseStatus{
 			Dialect:          "sqlite",

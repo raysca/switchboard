@@ -14,7 +14,6 @@ const operationsStatus = {
   sessions_total: 0,
   turns_total: 0,
   errors_total: 0,
-  p95_latency_ms: 0,
   max_call_duration_seconds: 300,
   voice_token_max_lifetime_seconds: 60,
   database: { dialect: "sqlite", status: "connected", open_connections: 1, in_use: 0 },

@@ -283,7 +283,7 @@ func ValidateConfig(cfg *Config) error {
 		}
 
 		// Production VAD default
-		if cfg.VAD.Mode == "inprocess" && !cfg.InsecureOverrides.AllowPlainWSInProduction {
+		if cfg.VAD.Mode == "inprocess" {
 			return errors.New("production profile requires VAD mode 'process' (worker isolation)")
 		}
 	}

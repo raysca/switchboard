@@ -28,8 +28,6 @@ function createMockOperations(overrides: Partial<OperationsStatus> = {}): Operat
     sessions_total: 120,
     turns_total: 480,
     errors_total: 1,
-    p95_latency_ms: 195.4,
-    average_latency_ms: 130.2,
     session_rate: 0.016,
     database: {
       dialect: "sqlite",
@@ -120,8 +118,6 @@ describe("DashboardView", () => {
     expect(screen.getByText("4 / 50")).toBeVisible();
     expect(screen.getByText("Utilization: 8.0%")).toBeVisible();
     expect(screen.getByText("120")).toBeVisible();
-    expect(screen.getByText("195 ms")).toBeVisible();
-    expect(screen.getByText("Average: 130 ms")).toBeVisible();
 
     // Readiness Summary
     expect(screen.getByText("Agent Readiness")).toBeVisible();

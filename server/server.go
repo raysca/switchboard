@@ -254,7 +254,6 @@ func (s *Server) getOperationsStatus(ctx context.Context) api.OperationsStatus {
 	sessionsTotal := s.metrics.SessionsStartedTotal.Load()
 	turnsTotal := s.metrics.TurnsTotal.Load()
 	errorsTotal := s.metrics.ErrorsTotal()
-	avgLatency, p95Latency := s.metrics.LatencyStats()
 
 	var sessionRate float64
 	if uptime > 0 {
@@ -314,8 +313,6 @@ func (s *Server) getOperationsStatus(ctx context.Context) api.OperationsStatus {
 		SessionsTotal:                sessionsTotal,
 		TurnsTotal:                   turnsTotal,
 		ErrorsTotal:                  errorsTotal,
-		P95LatencyMs:                 p95Latency,
-		AverageLatencyMs:             avgLatency,
 		SessionRate:                  sessionRate,
 		MaxCallDurationSeconds:       int(s.cfg.Limits.MaxCallDuration.Seconds()),
 		VoiceTokenMaxLifetimeSeconds: int(s.effectiveVoiceTokenLifetime().Seconds()),
@@ -879,7 +876,6 @@ func (s *Server) recordProcessorMetrics(proc core.Processor) {
 	switch p := proc.(type) {
 	case *core.AssistantContextProcessor:
 		s.metrics.FlushTimeoutsTotal.Add(p.FlushTimeouts.Load())
-		s.metrics.FlushAcksTotal.Add(p.FlushAcks.Load())
 	case *core.UserContextProcessor:
 		if n := p.EvictionCount(); n > 0 {
 			s.metrics.ContextEvictionsTotal.Add(uint64(n))

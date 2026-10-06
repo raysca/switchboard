@@ -41,7 +41,10 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID string) (Call
 	if err != nil {
 		return CallSpec{}, nil, fmt.Errorf("start agent session: %w", err)
 	}
-	history := newTurnRecorder(s.store.Sessions().AddTurn, rs.Pin.ID, s.logger)
+	history := newTurnRecorder(func(ctx context.Context, row storage.TurnRecord) error {
+		s.metrics.TurnsTotal.Add(1)
+		return s.store.Sessions().AddTurn(ctx, row)
+	}, rs.Pin.ID, s.logger)
 	release := func() {
 		// In-flight MCP tool calls are waited for, but never past the session
 		// teardown budget: a stuck remote tool must not pin the call forever.

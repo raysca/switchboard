@@ -34,8 +34,6 @@ type OperationsStatus struct {
 	SessionsTotal                uint64         `json:"sessions_total"`
 	TurnsTotal                   uint64         `json:"turns_total"`
 	ErrorsTotal                  uint64         `json:"errors_total"`
-	P95LatencyMs                 float64        `json:"p95_latency_ms"`
-	AverageLatencyMs             float64        `json:"average_latency_ms,omitempty"`
 	SessionRate                  float64        `json:"session_rate,omitempty"`
 	MaxCallDurationSeconds       int            `json:"max_call_duration_seconds,omitempty"`
 	VoiceTokenMaxLifetimeSeconds int            `json:"voice_token_max_lifetime_seconds,omitempty"`
