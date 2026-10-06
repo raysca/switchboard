@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -46,6 +47,14 @@ func (r AgentRepository) SelectedTools(ctx context.Context, versionID string) ([
 	}
 	return out, rows.Err()
 }
+
+// ErrInvalidToolSelection: a selected MCP tool's server is missing, disabled or
+// undiscovered, or the tool or its schema changed. ErrVersionConflict: another
+// writer published the version first.
+var (
+	ErrInvalidToolSelection = errors.New("invalid MCP tool selection")
+	ErrVersionConflict      = errors.New("agent version conflict")
+)
 
 func (s *Store) Agents() AgentRepository { return AgentRepository{s} }
 func (r AgentRepository) Create(ctx context.Context, a Agent) error {
@@ -91,7 +100,7 @@ func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, ver
 			return err
 		}
 		if version != latest+1 {
-			return errors.New("agent version must increment monotonically")
+			return fmt.Errorf("%w: version %d is not next after %d", ErrVersionConflict, version, latest)
 		}
 		// The same transaction validates every selected schema and publishes the version.
 		// SQLite begins IMMEDIATE; PostgreSQL row locks block refresh or delete races.
@@ -104,18 +113,22 @@ func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, ver
 				query += " FOR SHARE"
 			}
 			var discovery sql.NullString
-			if err := tx.QueryRowContext(ctx, r.s.bind(query), sel.ServerID, boolValue(r.s.dialect, true)).Scan(&discovery); err != nil {
+			if err := tx.QueryRowContext(ctx, r.s.bind(query), sel.ServerID, boolValue(r.s.dialect, true)).Scan(&discovery); errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: MCP server %s is missing or disabled", ErrInvalidToolSelection, sel.ServerID)
+			} else if err != nil {
 				return err
 			}
 			if !discovery.Valid {
-				return errors.New("MCP server has no discovery")
+				return fmt.Errorf("%w: MCP server %s has no discovery", ErrInvalidToolSelection, sel.ServerID)
 			}
 			var actual string
-			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT schema_hash FROM mcp_tools WHERE discovery_id=? AND remote_name=?"), discovery.String, sel.RemoteName).Scan(&actual); err != nil {
+			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT schema_hash FROM mcp_tools WHERE discovery_id=? AND remote_name=?"), discovery.String, sel.RemoteName).Scan(&actual); errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("%w: unknown tool %q", ErrInvalidToolSelection, sel.RemoteName)
+			} else if err != nil {
 				return err
 			}
 			if actual != sel.SchemaHash {
-				return errors.New("MCP schema hash changed")
+				return fmt.Errorf("%w: tool %q schema changed", ErrInvalidToolSelection, sel.RemoteName)
 			}
 		}
 		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), out.ID, agentID, version, out.SchemaVersion, string(canonical), hash, utc(out.CreatedAt))
@@ -343,8 +356,8 @@ func (r CredentialRepository) RotateIfUnchanged(ctx context.Context, id, expecte
 }
 
 // ErrCredentialInUse is returned when deleting a credential that an active
-// agent is attached to.
-var ErrCredentialInUse = errors.New("credential is attached to an agent")
+// agent or an MCP server uses.
+var ErrCredentialInUse = errors.New("credential is in use")
 
 // CredentialAgentReference names an active agent attached to a credential.
 type CredentialAgentReference struct {
@@ -352,8 +365,12 @@ type CredentialAgentReference struct {
 	AgentName string `json:"agent_name"`
 }
 
-// CredentialInUseError carries the agents that block a credential deletion.
-type CredentialInUseError struct{ Agents []CredentialAgentReference }
+// CredentialInUseError carries the agents and MCP servers (names) that block a
+// credential deletion.
+type CredentialInUseError struct {
+	Agents     []CredentialAgentReference
+	MCPServers []string
+}
 
 func (e *CredentialInUseError) Error() string { return ErrCredentialInUse.Error() }
 func (e *CredentialInUseError) Unwrap() error { return ErrCredentialInUse }
@@ -386,8 +403,23 @@ WHERE a.archived = ? AND v.config_json LIKE ? ORDER BY a.name, a.id`), boolValue
 			return err
 		}
 		rows.Close()
-		if len(refs) > 0 {
-			return &CredentialInUseError{Agents: refs}
+		// mcp_servers.auth_credential_id is ON DELETE RESTRICT: report it as in use.
+		var servers []string
+		mcpRows, err := tx.QueryContext(ctx, r.s.bind("SELECT name FROM mcp_servers WHERE auth_credential_id=? ORDER BY name"), id)
+		if err != nil {
+			return err
+		}
+		for mcpRows.Next() {
+			var name string
+			if err := mcpRows.Scan(&name); err != nil {
+				mcpRows.Close()
+				return err
+			}
+			servers = append(servers, name)
+		}
+		mcpRows.Close()
+		if len(refs) > 0 || len(servers) > 0 {
+			return &CredentialInUseError{Agents: refs, MCPServers: servers}
 		}
 		result, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM provider_credentials WHERE id=?"), id)
 		if err != nil {

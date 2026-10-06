@@ -1180,4 +1180,13 @@ func TestCredentialDeleteBlockedWhileAttached(t *testing.T) {
 	if err := s.Credentials().Delete(ctx, other); err != nil {
 		t.Fatalf("delete after archive: %v", err)
 	}
+
+	// An MCP server's auth credential is in use too (409, not a FK error/500).
+	mcpCred := put()
+	if err := s.MCP().CreateServer(ctx, MCPServer{ID: NewID(), Name: "Orders", Endpoint: "https://m.example", Transport: "streamable-http", AuthCredentialID: mcpCred, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Credentials().Delete(ctx, mcpCred); !errors.As(err, &inUse) || len(inUse.MCPServers) != 1 || inUse.MCPServers[0] != "Orders" {
+		t.Fatalf("delete MCP auth credential: err=%v", err)
+	}
 }

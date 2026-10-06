@@ -91,6 +91,21 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 	if err != nil || len(current.Version.MCPTools) != 1 || !current.Version.MCPTools[0].Required {
 		t.Fatalf("current agent=%+v err=%v", current, err)
 	}
+
+	// Bad selections are the caller's mistake (400), never "agent not found" or 500.
+	for name, sel := range map[string]string{
+		"unknown server": `{"mcp_server_id":"` + storage.NewID() + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
+		"unknown tool":   `{"mcp_server_id":"` + server.ID + `","remote_name":"nope","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
+		"stale schema":   `{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"stale"}`,
+	} {
+		r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID+"/mcp-tools", strings.NewReader(`{"tools":[`+sel+`]}`))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		NewAgentsHandler(service).ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_tool_selection") {
+			t.Fatalf("%s: status=%d body=%s, want 400 invalid_tool_selection", name, w.Code, w.Body)
+		}
+	}
 }
 
 func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {

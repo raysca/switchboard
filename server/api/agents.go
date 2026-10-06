@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"govoice/server/agent"
+	"govoice/server/storage"
 )
 
 type AgentService interface {
@@ -178,6 +179,14 @@ func agentMethodNotAllowed(w http.ResponseWriter, requestID, allow string) {
 }
 
 func (h agentsHandler) writeServiceError(w http.ResponseWriter, err error, requestID string) {
+	if errors.Is(err, storage.ErrInvalidToolSelection) {
+		WriteError(w, http.StatusBadRequest, "invalid_tool_selection", err.Error(), requestID)
+		return
+	}
+	if errors.Is(err, storage.ErrVersionConflict) {
+		WriteError(w, http.StatusConflict, "version_conflict", "the agent changed concurrently; retry", requestID)
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
 		return
