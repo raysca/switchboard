@@ -58,3 +58,38 @@ func TestSmokeScriptChecksProxyHealth(t *testing.T) {
 		}
 	}
 }
+
+func TestDockerfileProductionHardening(t *testing.T) {
+	dockerfile, err := os.ReadFile("../deploy/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(dockerfile)
+
+	// Check non-root user setup
+	if !strings.Contains(content, "USER govoice:govoice") {
+		t.Fatal("Dockerfile must run as non-root USER govoice:govoice")
+	}
+
+	// Check tini init system
+	if !strings.Contains(content, `ENTRYPOINT ["/usr/bin/tini", "--"]`) {
+		t.Fatal("Dockerfile must use tini as entrypoint")
+	}
+
+	// Check compose capability dropping and read-only filesystem
+	compose, err := os.ReadFile("../deploy/docker-compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	composeStr := string(compose)
+	if !strings.Contains(composeStr, "read_only: true") {
+		t.Fatal("docker-compose must enforce read_only: true")
+	}
+	if !strings.Contains(composeStr, "cap_drop:\n      - ALL") {
+		t.Fatal("docker-compose must drop ALL capabilities")
+	}
+	if !strings.Contains(composeStr, "no-new-privileges:true") {
+		t.Fatal("docker-compose must set no-new-privileges:true")
+	}
+}
+

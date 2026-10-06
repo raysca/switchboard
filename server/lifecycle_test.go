@@ -12,8 +12,10 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -41,6 +43,27 @@ func TestServer_GracefulShutdownLifecycle(t *testing.T) {
 		t.Fatal("expected server to be ready after start")
 	}
 
+	// Verify ready endpoint on admin listener
+	req := httptest.NewRequest("GET", "/ready", nil)
+	w := httptest.NewRecorder()
+	srv.adminMux.ServeHTTP(w, req)
+	// In test without live providers, PipelinesLive might be false or true depending on registry, but readiness endpoint exists
+	// Now simulate active call drain
+	srv.mu.Lock()
+	srv.activeCalls[101] = &activeCall{
+		sessionID: 101,
+		principal: "test-principal",
+	}
+	srv.mu.Unlock()
+
+	// In a goroutine, simulate session drain after 30ms
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		srv.mu.Lock()
+		delete(srv.activeCalls, 101)
+		srv.mu.Unlock()
+	}()
+
 	// Trigger shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -55,6 +78,14 @@ func TestServer_GracefulShutdownLifecycle(t *testing.T) {
 	}
 	if !srv.shuttingDown.Load() {
 		t.Fatal("expected shuttingDown flag to be true")
+	}
+
+	// Verify ready endpoint now returns 503 Service Unavailable
+	reqAfter := httptest.NewRequest("GET", "/ready", nil)
+	wAfter := httptest.NewRecorder()
+	srv.adminMux.ServeHTTP(wAfter, reqAfter)
+	if wAfter.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 on /ready after shutdown, got %d", wAfter.Code)
 	}
 }
 
@@ -109,6 +140,52 @@ func TestServer_ForcedShutdownTimeoutReturnsError(t *testing.T) {
 	err = srv.Shutdown(shutdownCtx)
 	if err == nil {
 		t.Fatal("expected non-nil error when shutdown deadline is exceeded, got nil")
+	}
+}
+
+func TestServer_DrainTimeoutForcesCancellation(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.PublicListenAddr = "127.0.0.1:18085"
+	cfg.AdminListenAddr = "127.0.0.1:19095"
+	cfg.Limits.DrainTimeout = 50 * time.Millisecond // very short drain timeout
+
+	srv, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
+	srv.SetVADExecutor(mockExec)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("start server: %v", err)
+	}
+
+	// Register an active call that NEVER drains on its own
+	srv.mu.Lock()
+	srv.activeCalls[202] = &activeCall{
+		sessionID: 202,
+		principal: "undrained-principal",
+	}
+	srv.mu.Unlock()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err = srv.Shutdown(shutdownCtx)
+	if err == nil {
+		t.Fatal("expected error on forced cancellation when drain times out, got nil")
+	}
+	if !strings.Contains(err.Error(), "forced cancellation of 1 sessions") {
+		t.Fatalf("expected forced cancellation error message, got: %v", err)
+	}
+
+	// Server should be shut down and unready
+	if srv.ready.Load() {
+		t.Fatal("expected server to be unready after forced shutdown")
+	}
+	if !srv.shuttingDown.Load() {
+		t.Fatal("expected shuttingDown flag to be true")
 	}
 }
 
