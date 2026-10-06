@@ -39,15 +39,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			MaxCallDurationSeconds:       int(s.cfg.Limits.MaxCallDuration.Seconds()),
 			VoiceTokenMaxLifetimeSeconds: int(s.effectiveVoiceTokenLifetime().Seconds()),
 		}})
-	case "/api/v1/operations/status", "/api/v1/operations/overview", "/api/v1/metrics":
+	case "/api/v1/operations/status":
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET")
 			api.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported", requestID)
-			return
-		}
-		if s.operationsManagementAPI != nil {
-			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
-			s.operationsManagementAPI.ServeHTTP(w, r)
 			return
 		}
 		status := s.getOperationsStatus(r.Context())
@@ -138,15 +133,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
 			s.sessionManagementAPI.ServeHTTP(w, r)
-			return
-		}
-		if r.URL.Path == "/api/v1/operations" || strings.HasPrefix(r.URL.Path, "/api/v1/operations/") {
-			if s.operationsManagementAPI != nil {
-				r = r.WithContext(api.WithRequestID(r.Context(), requestID))
-				s.operationsManagementAPI.ServeHTTP(w, r)
-				return
-			}
-			api.WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 			return
 		}
 		api.WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)

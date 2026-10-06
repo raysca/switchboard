@@ -108,11 +108,6 @@ func NewTracesHandler(sessions SessionRepository, traces TraceRepository) http.H
 	return tracesHandler{sessions: sessions, traces: traces}
 }
 
-// NewSessionsHandler is an alias for NewTracesHandler.
-func NewSessionsHandler(sessions SessionRepository, traces TraceRepository) http.Handler {
-	return NewTracesHandler(sessions, traces)
-}
-
 type tracesHandler struct {
 	sessions SessionRepository
 	traces   TraceRepository

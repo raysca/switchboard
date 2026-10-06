@@ -1,10 +1,6 @@
 package api
 
-import (
-	"context"
-	"net/http"
-	"time"
-)
+import "time"
 
 // DatabaseStatus represents read-only storage diagnostics for operational visibility.
 type DatabaseStatus struct {
@@ -40,38 +36,4 @@ type OperationsStatus struct {
 	Database                     DatabaseStatus `json:"database"`
 	VAD                          VADStatus      `json:"vad"`
 	Health                       string         `json:"health"`
-}
-
-// OperationsProvider returns the current operations status.
-type OperationsProvider interface {
-	GetOperationsStatus(ctx context.Context) (OperationsStatus, error)
-}
-
-// OperationsHandler serves read-only operations status over HTTP.
-type OperationsHandler struct {
-	provider OperationsProvider
-}
-
-// NewOperationsHandler constructs an operations HTTP handler.
-func NewOperationsHandler(provider OperationsProvider) *OperationsHandler {
-	return &OperationsHandler{provider: provider}
-}
-
-func (h *OperationsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	requestID := RequestIDFromContext(r.Context())
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported", requestID)
-		return
-	}
-	if h.provider == nil {
-		WriteError(w, http.StatusServiceUnavailable, "operations_unavailable", "operations status provider unavailable", requestID)
-		return
-	}
-	status, err := h.provider.GetOperationsStatus(r.Context())
-	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to retrieve operations status", requestID)
-		return
-	}
-	WriteJSON(w, http.StatusOK, SuccessResponse[OperationsStatus]{Data: status})
 }

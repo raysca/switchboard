@@ -26,7 +26,7 @@ func TestOperationsRouteUsesManagementBoundaryAndServesDiagnostics(t *testing.T)
 	s.SetStore(store)
 
 	key := "management-test-key-32-bytes-long-and-separate"
-	paths := []string{"/api/v1/operations/status", "/api/v1/operations/overview", "/api/v1/metrics"}
+	paths := []string{"/api/v1/operations/status"}
 
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {

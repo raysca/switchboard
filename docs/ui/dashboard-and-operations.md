@@ -28,7 +28,7 @@ All operational endpoints adhere to strict security constraints:
 
 ## 2. API Contracts
 
-### `GET /api/v1/operations/status` (alias `/api/v1/operations/overview`, `/api/v1/metrics`)
+### `GET /api/v1/operations/status`
 
 **Headers:**
 - `Authorization: Bearer <management_key>`
@@ -137,14 +137,8 @@ A strictly read-only diagnostics console containing 4 structured sections:
 Both server backend and UI suites verify the implementation:
 
 ### Server Tests
-- `server/api/operations_test.go`:
-  - Unit tests for `OperationsHandler`.
-  - Bounded label output & absence of secret keywords.
-  - Method rejection (`POST`, `PUT`, `DELETE`, `PATCH` -> 405).
-  - Provider error / nil handling.
-  - Degraded and unhealthy state serialization.
 - `server/api_operations_boundary_test.go`:
-  - Integrated HTTP boundary tests across all three endpoints (`/api/v1/operations/status`, `/api/v1/operations/overview`, `/api/v1/metrics`).
+  - Integrated HTTP boundary tests for `/api/v1/operations/status`.
   - Auth separation: missing key (401), invalid key (401), voice secret rejection (401).
   - Public listener route isolation (404).
   - Method not allowed (405).

@@ -32,30 +32,29 @@ import (
 
 // Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
-	cfg                     *Config
-	metrics                 *Metrics
-	timelines               *TimelineRegistry
-	admission               *AdmissionController
-	registry                *Registry
-	validator               *token.Validator
-	management              *auth.Management
-	providerManagementAPI   http.Handler
-	agentManagementAPI      http.Handler
-	mcpManagementAPI        http.Handler
-	sessionManagementAPI    http.Handler
-	operationsManagementAPI http.Handler
-	store                   *storage.Store
-	startedAt               time.Time
-	voiceSignKey            []byte
-	voiceKeyID              string
-	voiceEpoch              string
-	vadExecutor             vad.SharedExecutor
-	mgmt                    *management
-	agents                  *agent.Service
-	mcpService              *mcp.Service
-	credentials             *credential.Service
-	providerDefs            *provider.Registry
-	logger                  *slog.Logger
+	cfg                   *Config
+	metrics               *Metrics
+	timelines             *TimelineRegistry
+	admission             *AdmissionController
+	registry              *Registry
+	validator             *token.Validator
+	management            *auth.Management
+	providerManagementAPI http.Handler
+	agentManagementAPI    http.Handler
+	mcpManagementAPI      http.Handler
+	sessionManagementAPI  http.Handler
+	store                 *storage.Store
+	startedAt             time.Time
+	voiceSignKey          []byte
+	voiceKeyID            string
+	voiceEpoch            string
+	vadExecutor           vad.SharedExecutor
+	mgmt                  *management
+	agents                *agent.Service
+	mcpService            *mcp.Service
+	credentials           *credential.Service
+	providerDefs          *provider.Registry
+	logger                *slog.Logger
 
 	ready        atomic.Bool
 	shuttingDown atomic.Bool
@@ -192,11 +191,6 @@ func (s *Server) SetVADExecutor(exec vad.SharedExecutor) {
 	s.vadExecutor = exec
 }
 
-// Registry returns the provider registry.
-func (s *Server) Registry() *Registry {
-	return s.registry
-}
-
 // SetProviderManagementAPI installs the authenticated management route handler.
 // Configure it before serving requests; the outer API boundary always performs
 // administrator authentication before this handler is called.
@@ -220,17 +214,6 @@ func (s *Server) SetMCPManagementAPI(handler http.Handler) {
 // management authentication. Configure it before serving requests.
 func (s *Server) SetSessionManagementAPI(handler http.Handler) {
 	s.sessionManagementAPI = handler
-}
-
-// SetTraceManagementAPI is an alias for SetSessionManagementAPI.
-func (s *Server) SetTraceManagementAPI(handler http.Handler) {
-	s.sessionManagementAPI = handler
-}
-
-// SetOperationsManagementAPI installs the operations status route handler behind
-// management authentication. Configure it before serving requests.
-func (s *Server) SetOperationsManagementAPI(handler http.Handler) {
-	s.operationsManagementAPI = handler
 }
 
 // SetStore attaches a durable SQL store for operations inspection and diagnostics.
@@ -320,21 +303,6 @@ func (s *Server) getOperationsStatus(ctx context.Context) api.OperationsStatus {
 		VAD:                          vadStatus,
 		Health:                       health,
 	}
-}
-
-// Metrics returns the server metrics.
-func (s *Server) Metrics() *Metrics {
-	return s.metrics
-}
-
-// Admission returns the admission controller.
-func (s *Server) Admission() *AdmissionController {
-	return s.admission
-}
-
-// Timelines returns the diagnostic timeline registry.
-func (s *Server) Timelines() *TimelineRegistry {
-	return s.timelines
 }
 
 func (s *Server) setupRoutes() {
