@@ -509,7 +509,7 @@ func TestPurgeContent_ToolResultAndTextSanitization(t *testing.T) {
 	}
 
 	cutoff := now.Add(-7 * 24 * time.Hour)
-	_, _, err := s.Retention().PurgeContent(ctx, cutoff, 100)
+	_, err := s.Retention().PurgeContent(ctx, cutoff, 100, storage.ContentCursor{})
 	if err != nil {
 		t.Fatalf("PurgeContent failed: %v", err)
 	}
@@ -638,5 +638,97 @@ func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 		if err != nil {
 			t.Errorf("concurrent trace insertion error: %v", err)
 		}
+	}
+}
+
+// Sessions whose only trace attributes merely mention a content word in a label
+// (e.g. "frame":"transcript_candidate") must not be re-selected forever and
+// starve the purge of newer sessions that still hold real content.
+func TestPurgeContent_LabelMentionsDoNotStarveNewerContent(t *testing.T) {
+	s := newTestStore(t)
+	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	addSession := func(endedAgo time.Duration, transcript string) string {
+		id := storage.NewID()
+		ended := now.Add(-endedAgo)
+		if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: agentID, AgentVersionID: versionID, ConfigHash: configHash,
+			Status: "ended", StartedAt: ended.Add(-time.Minute), EndedAt: ended, ProviderStackJSON: `{}`, RuntimeSnapshotJSON: `{}`}); err != nil {
+			t.Fatal(err)
+		}
+		turnID := storage.NewID()
+		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: turnID, SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
+			Transcript: transcript, LatenciesJSON: `{}`, ToolsJSON: `[]`}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Traces().AddSpan(ctx, storage.TraceSpan{ID: storage.NewID(), SessionID: id, TurnID: turnID, Name: "processor.frame",
+			StartedAt: ended.Add(-time.Minute), EndedAt: ended,
+			AttributesJSON: `{"component":"*transcript.Processor","frame":"transcript_candidate","prompt_tokens":3}`}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	for i := 0; i < 3; i++ { // older than the batch size, already content-free
+		addSession(time.Duration(20+i)*24*time.Hour, "")
+	}
+	fresh := addSession(10*24*time.Hour, "secret transcript")
+
+	job := retention.NewJob(s.Retention(), retention.Policy{ContentRetention: 7 * 24 * time.Hour, MetadataRetention: 30 * 24 * time.Hour, BatchSize: 2},
+		retention.WithClock(func() time.Time { return now }))
+	if _, err := job.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	turns, err := s.Sessions().Turns(ctx, fresh)
+	if err != nil || len(turns) != 1 {
+		t.Fatalf("turns: %v %d", err, len(turns))
+	}
+	if turns[0].Transcript != "" {
+		t.Fatalf("content past retention was not purged: %q", turns[0].Transcript)
+	}
+}
+
+// Rows that match the content predicate but cannot be sanitized (here a string
+// value containing an escaped "text": key) must be passed over, not re-selected
+// forever ahead of newer sessions with real content.
+func TestPurgeContent_UnsanitizableRowsDoNotStall(t *testing.T) {
+	s := newTestStore(t)
+	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	add := func(endedAgo time.Duration, transcript, attrs string) string {
+		id := storage.NewID()
+		ended := now.Add(-endedAgo)
+		if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: agentID, AgentVersionID: versionID, ConfigHash: configHash,
+			Status: "ended", StartedAt: ended.Add(-time.Minute), EndedAt: ended, ProviderStackJSON: `{}`, RuntimeSnapshotJSON: `{}`}); err != nil {
+			t.Fatal(err)
+		}
+		turnID := storage.NewID()
+		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: turnID, SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
+			Transcript: transcript, LatenciesJSON: `{}`, ToolsJSON: `[]`}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Traces().AddSpan(ctx, storage.TraceSpan{ID: storage.NewID(), SessionID: id, TurnID: turnID, Name: "x",
+			StartedAt: ended.Add(-time.Minute), EndedAt: ended, AttributesJSON: attrs}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	for i := 0; i < 3; i++ {
+		add(time.Duration(20+i)*24*time.Hour, "", `{"custom.note":"he said \"text\": hi"}`)
+	}
+	nested := add(15*24*time.Hour, "", `{"custom.payload":{"text":"nested secret"}}`)
+	fresh := add(10*24*time.Hour, "secret transcript", `{}`)
+
+	job := retention.NewJob(s.Retention(), retention.Policy{ContentRetention: 7 * 24 * time.Hour, MetadataRetention: 30 * 24 * time.Hour, BatchSize: 2},
+		retention.WithClock(func() time.Time { return now }))
+	if _, err := job.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if turns, _ := s.Sessions().Turns(ctx, fresh); len(turns) != 1 || turns[0].Transcript != "" {
+		t.Fatalf("newer content stalled behind unsanitizable rows: %+v", turns)
+	}
+	if spans, _ := s.Traces().Spans(ctx, nested, ""); len(spans) != 1 || strings.Contains(spans[0].AttributesJSON, "nested secret") {
+		t.Fatalf("nested content key not removed: %+v", spans)
 	}
 }

@@ -23,67 +23,88 @@ func (s *Store) Retention() RetentionRepository {
 	return RetentionRepository{s: s}
 }
 
+// contentKeyPredicate matches trace attribute JSON holding one of the content
+// keys sanitizeAttributesJSON removes. Attributes are stored as compact JSON, so
+// a top-level key is always `"key":`. Matching key substrings instead (e.g.
+// '%transcript%') also matched labels like "frame":"transcript_candidate"; those
+// rows can never be cleaned, so the same oldest sessions were re-selected
+// forever and newer content was never purged.
+const contentKeyPredicate = `attributes_json LIKE '%"transcript":%' OR attributes_json LIKE '%"prompt":%'
+        OR attributes_json LIKE '%"text":%' OR attributes_json LIKE '%"tool.arguments":%'
+        OR attributes_json LIKE '%"tool.result":%'`
+
 // PurgeContent redacts transcript, assistant_text, and tool call argument/result summaries
 // for ended sessions whose ended_at is at or before cutoff, up to limit sessions.
 // Structural metadata (sessions, turns, latencies, spans, events) are preserved.
 // Active and draining sessions are never modified.
-func (r RetentionRepository) PurgeContent(ctx context.Context, cutoff time.Time, limit int) (turnsPurged, toolCallsPurged int64, err error) {
+// ContentCursor resumes a content purge after the last session examined, so a
+// session whose rows cannot be sanitized is passed over instead of being
+// re-selected forever.
+type ContentCursor struct{ EndedAt, ID string }
+
+// ContentPurgeResult reports one PurgeContent batch.
+type ContentPurgeResult struct {
+	TurnsPurged, ToolCallsPurged, TracesSanitized int64
+	Examined                                      int           // sessions selected in this batch
+	Next                                          ContentCursor // pass to the next call
+}
+
+func (r RetentionRepository) PurgeContent(ctx context.Context, cutoff time.Time, limit int, after ContentCursor) (res ContentPurgeResult, err error) {
 	if limit <= 0 {
 		limit = 500
 	}
 
-	query := `SELECT id FROM sessions
+	args := []any{utc(cutoff)}
+	cursorClause := ""
+	if after.ID != "" {
+		cursorClause = "\n  AND (ended_at > ? OR (ended_at = ? AND id > ?))"
+		args = append(args, after.EndedAt, after.EndedAt, after.ID)
+	}
+	args = append(args, limit)
+	query := `SELECT id, ended_at FROM sessions
 WHERE status = 'ended'
   AND ended_at IS NOT NULL
-  AND ended_at <= ?
+  AND ended_at <= ?` + cursorClause + `
   AND (
     EXISTS (SELECT 1 FROM turns WHERE session_id = sessions.id AND (transcript IS NOT NULL OR assistant_text IS NOT NULL))
     OR EXISTS (SELECT 1 FROM tool_calls WHERE session_id = sessions.id AND (arguments_summary != '' OR result_summary != ''))
     OR EXISTS (SELECT 1 FROM trace_spans WHERE session_id = sessions.id AND (
-        attributes_json LIKE '%"transcript"%' OR attributes_json LIKE '%transcript%'
-        OR attributes_json LIKE '%"prompt"%' OR attributes_json LIKE '%prompt%'
-        OR attributes_json LIKE '%"text"%'
-        OR attributes_json LIKE '%"tool.arguments"%' OR attributes_json LIKE '%tool.arguments%'
-        OR attributes_json LIKE '%"tool.result"%' OR attributes_json LIKE '%tool.result%'
-    ))
+    ` + contentKeyPredicate + `))
     OR EXISTS (SELECT 1 FROM trace_events WHERE session_id = sessions.id AND (
-        attributes_json LIKE '%"transcript"%' OR attributes_json LIKE '%transcript%'
-        OR attributes_json LIKE '%"prompt"%' OR attributes_json LIKE '%prompt%'
-        OR attributes_json LIKE '%"text"%'
-        OR attributes_json LIKE '%"tool.arguments"%' OR attributes_json LIKE '%tool.arguments%'
-        OR attributes_json LIKE '%"tool.result"%' OR attributes_json LIKE '%tool.result%'
-    ))
+    ` + contentKeyPredicate + `))
   )
-ORDER BY ended_at ASC
+ORDER BY ended_at ASC, id ASC
 LIMIT ?`
 
-	rows, err := r.s.db.QueryContext(ctx, r.s.bind(query), utc(cutoff), limit)
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind(query), args...)
 	if err != nil {
-		return 0, 0, err
+		return res, err
 	}
 	defer rows.Close()
 
 	var sessionIDs []string
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return 0, 0, err
+		var id, endedAt string
+		if err := rows.Scan(&id, &endedAt); err != nil {
+			return res, err
 		}
 		sessionIDs = append(sessionIDs, id)
+		res.Next = ContentCursor{EndedAt: endedAt, ID: id}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, 0, err
+		return res, err
 	}
 	rows.Close()
+	res.Examined = len(sessionIDs)
 
 	if len(sessionIDs) == 0 {
-		return 0, 0, nil
+		return res, nil
 	}
 
 	const subBatchSize = 25
 	for i := 0; i < len(sessionIDs); i += subBatchSize {
 		if err := ctx.Err(); err != nil {
-			return turnsPurged, toolCallsPurged, err
+			return res, err
 		}
 		end := i + subBatchSize
 		if end > len(sessionIDs) {
@@ -104,7 +125,7 @@ LIMIT ?`
 				if err != nil {
 					return err
 				}
-				turnsPurged += nTurns
+				res.TurnsPurged += nTurns
 
 				// Redact tool calls: clear arguments_summary and result_summary
 				resTC, err := tx.ExecContext(ctx, r.s.bind(
@@ -117,70 +138,55 @@ LIMIT ?`
 				if err != nil {
 					return err
 				}
-				toolCallsPurged += nTC
+				res.ToolCallsPurged += nTC
 
-				// Sanitize any text attributes in trace_spans
-				spanRows, err := tx.QueryContext(ctx, r.s.bind(
-					`SELECT id, attributes_json FROM trace_spans WHERE session_id = ? AND (
-						attributes_json LIKE '%"transcript"%' OR attributes_json LIKE '%transcript%'
-						OR attributes_json LIKE '%"prompt"%' OR attributes_json LIKE '%prompt%'
-						OR attributes_json LIKE '%"text"%'
-						OR attributes_json LIKE '%"tool.arguments"%' OR attributes_json LIKE '%tool.arguments%'
-						OR attributes_json LIKE '%"tool.result"%' OR attributes_json LIKE '%tool.result%'
-					)`,
-				), sessID)
-				if err == nil {
-					var toUpdateSpans [][2]string
-					for spanRows.Next() {
-						var sID, attrs string
-						if spanRows.Scan(&sID, &attrs) == nil {
-							cleaned := sanitizeAttributesJSON(attrs)
-							if cleaned != attrs {
-								toUpdateSpans = append(toUpdateSpans, [2]string{sID, cleaned})
-							}
-						}
+				for _, table := range []string{"trace_spans", "trace_events"} {
+					n, err := sanitizeTraceContent(ctx, tx, r.s, table, sessID)
+					if err != nil {
+						return err
 					}
-					spanRows.Close()
-					for _, pair := range toUpdateSpans {
-						_, _ = tx.ExecContext(ctx, r.s.bind("UPDATE trace_spans SET attributes_json = ? WHERE id = ?"), pair[1], pair[0])
-					}
-				}
-
-				// Sanitize any text attributes in trace_events
-				eventRows, err := tx.QueryContext(ctx, r.s.bind(
-					`SELECT id, attributes_json FROM trace_events WHERE session_id = ? AND (
-						attributes_json LIKE '%"transcript"%' OR attributes_json LIKE '%transcript%'
-						OR attributes_json LIKE '%"prompt"%' OR attributes_json LIKE '%prompt%'
-						OR attributes_json LIKE '%"text"%'
-						OR attributes_json LIKE '%"tool.arguments"%' OR attributes_json LIKE '%tool.arguments%'
-						OR attributes_json LIKE '%"tool.result"%' OR attributes_json LIKE '%tool.result%'
-					)`,
-				), sessID)
-				if err == nil {
-					var toUpdateEvents [][2]string
-					for eventRows.Next() {
-						var eID, attrs string
-						if eventRows.Scan(&eID, &attrs) == nil {
-							cleaned := sanitizeAttributesJSON(attrs)
-							if cleaned != attrs {
-								toUpdateEvents = append(toUpdateEvents, [2]string{eID, cleaned})
-							}
-						}
-					}
-					eventRows.Close()
-					for _, pair := range toUpdateEvents {
-						_, _ = tx.ExecContext(ctx, r.s.bind("UPDATE trace_events SET attributes_json = ? WHERE id = ?"), pair[1], pair[0])
-					}
+					res.TracesSanitized += n
 				}
 			}
 			return nil
 		})
 		if err != nil {
-			return turnsPurged, toolCallsPurged, err
+			return res, err
 		}
 	}
 
-	return turnsPurged, toolCallsPurged, nil
+	return res, nil
+}
+
+// sanitizeTraceContent removes content keys from one session's trace rows.
+// Any failure aborts the transaction so content is never silently retained.
+func sanitizeTraceContent(ctx context.Context, tx *sql.Tx, s *Store, table, sessionID string) (int64, error) {
+	rows, err := tx.QueryContext(ctx, s.bind("SELECT id, attributes_json FROM "+table+" WHERE session_id = ? AND ("+contentKeyPredicate+")"), sessionID)
+	if err != nil {
+		return 0, err
+	}
+	var updates [][2]string
+	for rows.Next() {
+		var id, attrs string
+		if err := rows.Scan(&id, &attrs); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if cleaned := sanitizeAttributesJSON(attrs); cleaned != attrs {
+			updates = append(updates, [2]string{id, cleaned})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	for _, u := range updates {
+		if _, err := tx.ExecContext(ctx, s.bind("UPDATE "+table+" SET attributes_json = ? WHERE id = ?"), u[1], u[0]); err != nil {
+			return 0, err
+		}
+	}
+	return int64(len(updates)), nil
 }
 
 func sanitizeAttributesJSON(raw string) string {
@@ -191,13 +197,7 @@ func sanitizeAttributesJSON(raw string) string {
 	if err := json.Unmarshal([]byte(raw), &attrs); err != nil {
 		return raw
 	}
-	changed := false
-	for _, key := range []string{"transcript", "prompt", "text", "tool.arguments", "tool.result"} {
-		if _, exists := attrs[key]; exists {
-			delete(attrs, key)
-			changed = true
-		}
-	}
+	changed := removeContentKeys(attrs)
 	if !changed {
 		return raw
 	}
@@ -337,4 +337,29 @@ LIMIT ?`
 	})
 
 	return stats, err
+}
+
+var contentKeys = []string{"transcript", "prompt", "text", "tool.arguments", "tool.result"}
+
+// removeContentKeys deletes content keys at any depth, matching the
+// key-anywhere selection predicate.
+func removeContentKeys(v any) bool {
+	changed := false
+	switch t := v.(type) {
+	case map[string]any:
+		for _, key := range contentKeys {
+			if _, ok := t[key]; ok {
+				delete(t, key)
+				changed = true
+			}
+		}
+		for _, child := range t {
+			changed = removeContentKeys(child) || changed
+		}
+	case []any:
+		for _, child := range t {
+			changed = removeContentKeys(child) || changed
+		}
+	}
+	return changed
 }

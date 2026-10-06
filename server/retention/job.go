@@ -12,7 +12,7 @@ import (
 
 // Store defines repository operations required by the retention job.
 type Store interface {
-	PurgeContent(ctx context.Context, cutoff time.Time, limit int) (turnsPurged, toolCallsPurged int64, err error)
+	PurgeContent(ctx context.Context, cutoff time.Time, limit int, after storage.ContentCursor) (storage.ContentPurgeResult, error)
 	PurgeMetadata(ctx context.Context, cutoff time.Time, limit int) (stats storage.PurgeMetadataStats, err error)
 }
 
@@ -25,6 +25,7 @@ type RunResult struct {
 	ToolCallsDeleted int64
 	TurnsPurged      int64
 	ToolCallsPurged  int64
+	TracesSanitized  int64
 }
 
 // Option configures a Job.
@@ -109,19 +110,24 @@ func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
 			contentCutoff = now
 		}
 
+		// Page forward with a cursor: each session is examined at most once per
+		// run, so rows that cannot be sanitized never stall newer content.
+		var cursor storage.ContentCursor
 		for {
 			if ctx.Err() != nil {
 				return res, ctx.Err()
 			}
-			tPurged, tcPurged, err := j.store.PurgeContent(ctx, contentCutoff, batchSize)
+			batch, err := j.store.PurgeContent(ctx, contentCutoff, batchSize, cursor)
 			if err != nil {
 				return res, err
 			}
-			res.TurnsPurged += tPurged
-			res.ToolCallsPurged += tcPurged
-			if tPurged == 0 && tcPurged == 0 {
+			res.TurnsPurged += batch.TurnsPurged
+			res.ToolCallsPurged += batch.ToolCallsPurged
+			res.TracesSanitized += batch.TracesSanitized
+			if batch.Examined < batchSize {
 				break
 			}
+			cursor = batch.Next
 		}
 	}
 
