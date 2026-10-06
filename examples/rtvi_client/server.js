@@ -15,7 +15,8 @@ const AGENT_ID = process.env.GOVOICE_AGENT_ID || '';
 const SERVER_KEY = process.env.GOVOICE_MANAGEMENT_API_KEY || '';
 // DNS rebinding guard: a hostile name resolving to 127.0.0.1 is same-origin with
 // itself, so the Origin check alone cannot stop it; the Host header can.
-const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', HOST].map(h => `${h}:${PORT}`));
+// Browsers omit the default port from Host, so on port 80 the bare name is allowed too.
+const ALLOWED_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', HOST].flatMap(h => PORT === 80 ? [h, `${h}:80`] : [`${h}:${PORT}`]));
 
 function sendJson(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' });

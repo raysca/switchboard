@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -432,6 +432,11 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
   const { agentId } = useParams();
   const [mode, setMode] = useState<ViewMode>(agentId ? "detail" : "list");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(agentId ?? null);
+  // Follow the URL: /agents/:agentId opens that agent, /agents shows the list.
+  useEffect(() => {
+    setMode(agentId ? "detail" : "list");
+    setSelectedAgentId(agentId ?? null);
+  }, [agentId]);
 
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
@@ -545,6 +550,8 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
   // "Delete" archives on the server; archived agents are hidden from the UI.
   const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
+  // An unknown or deleted agent id falls back to the list.
+  const missingAgent = mode === "detail" && agentsQuery.isSuccess && !selectedAgent;
 
   return (
     <>
@@ -591,7 +598,8 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
           )}
 
           {/* List View */}
-          {mode === "list" && (
+          {missingAgent && <p role="status">That agent was not found.</p>}
+          {(mode === "list" || missingAgent) && (
             <section aria-labelledby="agents-list-heading">
               <div
                 style={{

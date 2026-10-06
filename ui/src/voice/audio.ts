@@ -6,7 +6,8 @@ export type AudioErrorType =
   | "permission_denied"
   | "device_not_found"
   | "unsupported"
-  | "audio_context_error";
+  | "audio_context_error"
+  | "cancelled"; // stopCapture()/destroy() ran while the mic was opening
 
 export class BrowserAudioError extends Error {
   constructor(
@@ -79,7 +80,7 @@ export class BrowserAudioController {
     }
     if (gen !== this.captureGen) {
       for (const track of stream.getTracks()) track.stop();
-      return;
+      throw new BrowserAudioError("Microphone request was cancelled.", "cancelled");
     }
     this.mediaStream = stream;
 

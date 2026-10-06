@@ -426,6 +426,7 @@
     }
 
     async function startMicrophone() {
+      const myWs = ws; // this call's connection; a reconnect replaces ws
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -435,8 +436,8 @@
             noiseSuppression: true
           }
         });
-        if (!ws) {
-          // Disconnected while the permission prompt was open.
+        if (ws !== myWs) {
+          // Disconnected (or reconnected) while the permission prompt was open.
           stream.getTracks().forEach(t => t.stop());
           return;
         }

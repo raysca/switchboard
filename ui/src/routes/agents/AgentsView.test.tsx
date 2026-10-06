@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { AgentsView } from "./AgentsView";
 import { ApiError, type ApiClient, type AgentDTO } from "../../api/client";
 
@@ -316,6 +316,32 @@ describe("AgentsView", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByRole("heading", { name: /linked agent/i })).toBeVisible();
+  });
+
+  it("follows the URL: back to the list, and an unknown id falls back to it", async () => {
+    const client = createMockClient({
+      getAgents: vi.fn().mockResolvedValue([createMockAgent({ id: "agent-7", name: "Linked Agent" })]),
+    });
+    const view = <AgentsView client={client} keyValue="key-1" />;
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={["/agents/agent-7"]}>
+          <Link to="/agents">All agents</Link>
+          <Link to="/agents/nope">Missing agent</Link>
+          <Routes>
+            <Route path="/agents" element={view} />
+            <Route path="/agents/:agentId" element={view} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { name: /linked agent/i })).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "All agents" }));
+    expect(await screen.findByRole("button", { name: "+ Create agent" })).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "Missing agent" }));
+    expect(await screen.findByText("That agent was not found.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "+ Create agent" })).toBeVisible();
   });
 
   it("duplicates an agent", async () => {

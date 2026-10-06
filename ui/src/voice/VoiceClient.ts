@@ -254,11 +254,9 @@ export class VoiceClient {
       });
       return;
     }
-    if (attempt !== this.attempt) {
-      // disconnect() ran while the mic was opening: release it.
-      this.audioController.stopCapture();
-      return;
-    }
+    // disconnect() ran while the mic was opening: it already released the mic,
+    // and stopping capture here would stop a newer attempt's mic.
+    if (attempt !== this.attempt) return;
 
     // Step 3: Connect WebSocket
     const wsUrl = this.resolveWsUrl(tokenStr, options.wsBaseUrl);

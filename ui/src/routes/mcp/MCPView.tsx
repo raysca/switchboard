@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -77,6 +77,11 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ViewMode>(initialServerId ? "detail" : "list");
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId ?? null);
+  // Follow the URL: /mcp-servers/:serverId opens that server, /mcp-servers the list.
+  useEffect(() => {
+    setMode(initialServerId ? "detail" : "list");
+    setSelectedServerId(initialServerId ?? null);
+  }, [initialServerId]);
 
   // Create server form state
   const [nameDraft, setNameDraft] = useState("");

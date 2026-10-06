@@ -46,8 +46,6 @@ All operational endpoints adhere to strict security constraints:
     "sessions_total": 120,
     "turns_total": 480,
     "errors_total": 1,
-    "p95_latency_ms": 195.4,
-    "average_latency_ms": 130.2,
     "session_rate": 0.033,
     "max_call_duration_seconds": 300,
     "voice_token_max_lifetime_seconds": 60,
