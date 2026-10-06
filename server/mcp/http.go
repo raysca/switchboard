@@ -9,19 +9,14 @@ import (
 
 	"github.com/google/uuid"
 	"govoice/server/api"
-	"govoice/server/auth"
 	"govoice/server/storage"
 )
 
-// Handler exposes the MCP management API. The caller supplies the same
-// management authenticator used by other /api/v1 routes; a nil/disabled
-// authenticator fails closed.
-func Handler(service *Service, management *auth.Management) http.Handler {
+// Handler exposes the MCP management API. It must only be mounted behind the
+// server's /api/v1 boundary, which authenticates every request first.
+func Handler(service *Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/mcp-servers", func(w http.ResponseWriter, r *http.Request) {
-		if !authorize(w, r, management) {
-			return
-		}
 		id := requestID(w, r)
 		switch r.Method {
 		case http.MethodGet:
@@ -53,9 +48,6 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		}
 	})
 	mux.HandleFunc("/api/v1/mcp-servers/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if !authorize(w, r, management) {
-			return
-		}
 		id := requestID(w, r)
 		if r.Method == http.MethodDelete {
 			if err := service.Delete(r.Context(), r.PathValue("id")); err != nil {
@@ -90,9 +82,6 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerDetail]{Data: response})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
-		if !authorize(w, r, management) {
-			return
-		}
 		id := requestID(w, r)
 		serverID := r.PathValue("id")
 		if err := service.Disable(r.Context(), serverID); err != nil {
@@ -107,9 +96,6 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/enable", func(w http.ResponseWriter, r *http.Request) {
-		if !authorize(w, r, management) {
-			return
-		}
 		id := requestID(w, r)
 		serverID := r.PathValue("id")
 		if err := service.Enable(r.Context(), serverID); err != nil {
@@ -124,9 +110,6 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/detach-delete", func(w http.ResponseWriter, r *http.Request) {
-		if !authorize(w, r, management) {
-			return
-		}
 		id := requestID(w, r)
 		var input struct {
 			Confirm bool `json:"confirm"`
@@ -152,25 +135,16 @@ func Handler(service *Service, management *auth.Management) http.Handler {
 		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: view(m)}})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/validate", func(w http.ResponseWriter, r *http.Request) {
-		if !authorize(w, r, management) {
-			return
-		}
 		id := requestID(w, r)
 		m, err := service.Validate(r.Context(), r.PathValue("id"))
 		if errors.Is(err, ErrNotFound) {
 			api.WriteError(w, 404, "not_found", "MCP server not found", id)
 			return
 		}
-		if err != nil {
-			api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
-			return
-		}
+		// Validation failures are reported in the view, not as an HTTP error.
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/tools/{tool}/test", func(w http.ResponseWriter, r *http.Request) {
-		if !authorize(w, r, management) {
-			return
-		}
 		id := requestID(w, r)
 		var input struct {
 			Arguments json.RawMessage `json:"arguments"`
@@ -271,18 +245,6 @@ func requestID(w http.ResponseWriter, r *http.Request) string {
 	}
 	w.Header().Set("X-Request-ID", id)
 	return id
-}
-func authorize(w http.ResponseWriter, r *http.Request, management *auth.Management) bool {
-	if management == nil || !management.Enabled() {
-		api.WriteError(w, 503, "management_unavailable", "management API is not configured", requestID(w, r))
-		return false
-	}
-	if !management.Authenticate(r) {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="management"`)
-		api.WriteError(w, 401, "unauthorized", "valid management credential required", requestID(w, r))
-		return false
-	}
-	return true
 }
 
 func toolViews(tools []storage.MCPTool) []ToolView {

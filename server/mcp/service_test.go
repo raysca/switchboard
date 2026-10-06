@@ -268,12 +268,12 @@ func TestSchemaPreflightRejectsRecursiveRefsUnsupportedDialectsAndExcessComplexi
 		`{"type":"object","properties":{"next":{"$ref":"#"}}}`,
 		`{"$schema":"https://json-schema.org/draft/2019-09/schema","type":"object"}`,
 	} {
-		if _, err := validateSchema([]byte(raw)); err == nil {
+		if _, err := validateSchemaContext(context.Background(), []byte(raw), defaultMaxSchemaBytes); err == nil {
 			t.Fatalf("accepted unsafe schema %s", raw)
 		}
 	}
 	deep := `{"type":"object","properties":{"x":` + strings.Repeat(`{"properties":{"x":`, 70) + `{"type":"string"}` + strings.Repeat(`}}`, 70) + `}}`
-	if _, err := validateSchema([]byte(deep)); err == nil {
+	if _, err := validateSchemaContext(context.Background(), []byte(deep), defaultMaxSchemaBytes); err == nil {
 		t.Fatal("accepted excessive schema depth")
 	}
 }
@@ -294,7 +294,7 @@ func TestSchemaDialectAllowlistMatchesValidatorAndAcceptedSchemasValidate(t *tes
 	} {
 		t.Run(tc.uri, func(t *testing.T) {
 			raw := []byte(`{"$schema":` + fmt.Sprintf("%q", tc.uri) + `,"type":"object"}`)
-			resolved, err := validateSchema(raw)
+			resolved, err := validateSchemaContext(context.Background(), raw, defaultMaxSchemaBytes)
 			if !tc.ok {
 				if err == nil {
 					t.Fatal("accepted unsupported or noncanonical dialect URI")
@@ -360,7 +360,7 @@ func expandedReferenceSchema(combinator string, levels int) []byte {
 }
 
 func TestSchemaAcceptsSmallSharedReferenceGraph(t *testing.T) {
-	resolved, err := validateSchema(expandedReferenceSchema("allOf", 3))
+	resolved, err := validateSchemaContext(context.Background(), expandedReferenceSchema("allOf", 3), defaultMaxSchemaBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestSchemaAcceptsSmallSharedReferenceGraph(t *testing.T) {
 
 func TestSchemaAcceptsReferenceToEmptySchema(t *testing.T) {
 	// jsonschema-go serializes an empty schema object as the boolean true.
-	resolved, err := validateSchema([]byte(`{"type":"object","$defs":{"anything":{}},"properties":{"value":{"$ref":"#/$defs/anything"}}}`))
+	resolved, err := validateSchemaContext(context.Background(), []byte(`{"type":"object","$defs":{"anything":{}},"properties":{"value":{"$ref":"#/$defs/anything"}}}`), defaultMaxSchemaBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestSchemaAcceptsReferenceToEmptySchema(t *testing.T) {
 func TestSchemaPreflightAndValidatorUseSameDecodedJSON(t *testing.T) {
 	// encoding/json merges repeated objects when decoding into struct maps.
 	// Preflight's JSON map uses the last value, which must also reach validation.
-	resolved, err := validateSchema([]byte(`{"type":"object","properties":{"blocked":false},"properties":{}}`))
+	resolved, err := validateSchemaContext(context.Background(), []byte(`{"type":"object","properties":{"blocked":false},"properties":{}}`), defaultMaxSchemaBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +396,7 @@ func TestSchemaRejectsNoncanonicalStructuralKeywords(t *testing.T) {
 	// The lowercase alias overwrites gate in the validator's struct map, making
 	// the ref recursive even though the graph of the raw JSON is acyclic.
 	raw := []byte(`{"type":"object","dependentSchemas":{"gate":{"type":"object"}},"dependentschemas":{"gate":{"$ref":"#/dependentSchemas/gate"}}}`)
-	if _, err := validateSchema(raw); err == nil {
+	if _, err := validateSchemaContext(context.Background(), raw, defaultMaxSchemaBytes); err == nil {
 		t.Fatal("accepted structural keyword alias that changes reference targets")
 	}
 }
@@ -408,14 +408,14 @@ func TestSchemaRejectsExcessiveExpandedReferenceDepth(t *testing.T) {
 		fmt.Fprintf(&schema, `"n%d":{"$ref":"#/$defs/n%d"},`, i, i+1)
 	}
 	schema.WriteString(`"n80":{"type":"object"}},"$ref":"#/$defs/n0"}`)
-	if _, err := validateSchema([]byte(schema.String())); err == nil {
+	if _, err := validateSchemaContext(context.Background(), []byte(schema.String()), defaultMaxSchemaBytes); err == nil {
 		t.Fatal("accepted excessive expanded reference depth")
 	}
 }
 
 func TestDynamicReferenceCannotCrashProcess(t *testing.T) {
 	if os.Getenv("MCP_DYNAMIC_SCHEMA_SUBPROCESS") == "1" {
-		_, err := validateSchema([]byte(`{"$dynamicAnchor":"node","type":"object","properties":{"next":{"$dynamicRef":"#node"}}}`))
+		_, err := validateSchemaContext(context.Background(), []byte(`{"$dynamicAnchor":"node","type":"object","properties":{"next":{"$dynamicRef":"#node"}}}`), defaultMaxSchemaBytes)
 		if err == nil {
 			os.Exit(2)
 		}
@@ -433,7 +433,7 @@ func TestDynamicReferenceCannotCrashProcess(t *testing.T) {
 func TestExpandedReferenceWorkCannotCrashProcess(t *testing.T) {
 	if os.Getenv("MCP_EXPANDED_SCHEMA_SUBPROCESS") == "1" {
 		for _, combinator := range []string{"allOf", "anyOf", "oneOf"} {
-			if _, err := validateSchema(expandedReferenceSchema(combinator, 28)); err == nil {
+			if _, err := validateSchemaContext(context.Background(), expandedReferenceSchema(combinator, 28), defaultMaxSchemaBytes); err == nil {
 				os.Exit(2)
 			}
 		}
@@ -450,7 +450,7 @@ func TestExpandedReferenceWorkCannotCrashProcess(t *testing.T) {
 
 func TestRecursiveReferenceCannotCrashProcess(t *testing.T) {
 	if os.Getenv("MCP_SCHEMA_SUBPROCESS") == "1" {
-		_, err := validateSchema([]byte(`{"type":"object","properties":{"next":{"$ref":"#"}}}`))
+		_, err := validateSchemaContext(context.Background(), []byte(`{"type":"object","properties":{"next":{"$ref":"#"}}}`), defaultMaxSchemaBytes)
 		if err == nil {
 			os.Exit(2)
 		}
@@ -469,7 +469,7 @@ func TestResultSanitizationParsesNestedValuesAndRedactsDecodedCredential(t *test
 	credential := "s3cret-token"
 	secret := strings.Repeat("x", 800)
 	raw := json.RawMessage(`{"nested":[{"token":{"value":"` + secret + `"},"safe":"prefix s3cret-token suffix"}],"credential":["hidden"]}`)
-	clean := redactResult(raw, credential)
+	clean, _ := sanitizeResult(raw, credential, defaultMaxResultBytes)
 	if !json.Valid(clean) {
 		t.Fatalf("sanitized result is invalid JSON: %s", clean)
 	}
@@ -478,7 +478,7 @@ func TestResultSanitizationParsesNestedValuesAndRedactsDecodedCredential(t *test
 			t.Fatalf("sanitizer leaked %q: %s", needle, clean)
 		}
 	}
-	escaped := redactResult(json.RawMessage(`{"message":"s3cr\u0065t-token","authorization":{"nested":"value"}}`), credential)
+	escaped, _ := sanitizeResult(json.RawMessage(`{"message":"s3cr\u0065t-token","authorization":{"nested":"value"}}`), credential, defaultMaxResultBytes)
 	if strings.Contains(string(escaped), credential) || strings.Contains(string(escaped), "value") || !json.Valid(escaped) {
 		t.Fatalf("escaped value not safely sanitized: %s", escaped)
 	}

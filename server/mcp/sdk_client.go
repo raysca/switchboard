@@ -8,8 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -217,23 +215,4 @@ func (c *SDKClient) CallTool(ctx context.Context, endpoint, token, name string, 
 		return RemoteResult{}, errors.New("MCP result encoding failed")
 	}
 	return RemoteResult{JSON: raw}, nil
-}
-
-// URL parsing helper used by tests and validators. It intentionally refuses
-// non-HTTPS endpoints, user-info, and explicit unusual ports.
-func validateSDKURL(endpoint string) error {
-	u, err := url.ParseRequestURI(endpoint)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() == "" {
-		return errors.New("invalid remote MCP endpoint")
-	}
-	if port := u.Port(); port != "" {
-		n, err := strconv.Atoi(port)
-		if err != nil || n < 1 || n > 65535 {
-			return errors.New("invalid remote MCP port")
-		}
-	}
-	if strings.ContainsAny(u.Host, "\r\n\t") {
-		return errors.New("invalid remote MCP endpoint")
-	}
-	return nil
 }

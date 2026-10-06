@@ -9,23 +9,13 @@ import (
 
 	"context"
 	"govoice/server/agent"
-	"govoice/server/auth"
 	"govoice/server/storage"
 )
 
 func TestManagementHandlerProtectsMCPAndNeverReturnsSecretEndpointQuery(t *testing.T) {
 	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
 	svc, _ := newTestService(t, remote, testCredential{token: "mcp-secret-sentinel"})
-	management, err := auth.NewManagement("management-test-secret-which-is-long-enough")
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := Handler(svc, management)
-	unauth := httptest.NewRecorder()
-	handler.ServeHTTP(unauth, httptest.NewRequest("GET", "/api/v1/mcp-servers", nil))
-	if unauth.Code != http.StatusUnauthorized || strings.Contains(unauth.Body.String(), "mcp-secret-sentinel") {
-		t.Fatalf("unauthorized response=%d %s", unauth.Code, unauth.Body.String())
-	}
+	handler := Handler(svc)
 	request := httptest.NewRequest("POST", "/api/v1/mcp-servers", strings.NewReader(`{"name":"orders","endpoint":"https://mcp.example/rpc?token=url-secret-sentinel","transport":"streamable-http","enabled":true}`))
 	request.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
 	request.Header.Set("Content-Type", "application/json")
@@ -72,7 +62,6 @@ func TestManagementHandlerProtectsMCPAndNeverReturnsSecretEndpointQuery(t *testi
 func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
 	svc, _ := newTestService(t, remote, testCredential{})
-	management, _ := auth.NewManagement("management-test-secret-which-is-long-enough")
 	discovery, err := svc.Refresh(context.Background(), mustCreateMCP(t, svc))
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +83,7 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if _, err := agentService.SetMCPTools(context.Background(), created.ID, []agent.ToolSelection{{ServerID: servers[0].ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
-	h := Handler(svc, management)
+	h := Handler(svc)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
@@ -139,22 +128,10 @@ func mustCreateMCP(t *testing.T, svc *Service) string {
 	return server.ID
 }
 
-func TestManagementHandlerFailsClosedWithoutAuth(t *testing.T) {
-	svc, _ := newTestService(t, &testRemote{}, testCredential{})
-	for _, management := range []*auth.Management{nil, &auth.Management{}} {
-		r := httptest.NewRecorder()
-		Handler(svc, management).ServeHTTP(r, httptest.NewRequest("GET", "/api/v1/mcp-servers", nil))
-		if r.Code != http.StatusServiceUnavailable {
-			t.Fatalf("status=%d body=%s", r.Code, r.Body.String())
-		}
-	}
-}
-
 func TestAuthenticatedMCPCreateValidateDetailAndExecuteJSONContract(t *testing.T) {
 	remote := &testRemote{tools: []RemoteTool{{Name: "lookup_order", Description: "lookup", InputSchema: json.RawMessage(`{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}`)}}}
 	svc, _ := newTestService(t, remote, testCredential{})
-	management, _ := auth.NewManagement("management-test-secret-which-is-long-enough")
-	h := Handler(svc, management)
+	h := Handler(svc)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")

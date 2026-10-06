@@ -90,7 +90,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.SetProviderManagementAPI(&api.ProviderManagement{Credentials: creds, Registry: registry})
 	s.agents = agent.NewService(store)
 	s.SetAgentManagementAPI(api.NewAgentsHandler(s.agents))
-	s.SetMCPManagementAPI(mcp.Handler(mcpService, s.management))
+	s.SetMCPManagementAPI(mcp.Handler(mcpService))
 	s.SetSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
 	if policy != nil {

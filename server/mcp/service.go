@@ -632,10 +632,6 @@ const (
 
 type refEdge struct{ from, to string }
 
-func validateSchema(raw []byte) (*jsonschema.Resolved, error) {
-	return validateSchemaContext(context.Background(), raw, defaultMaxSchemaBytes)
-}
-
 func validateSchemaContext(ctx context.Context, raw []byte, maxBytes int) (resolved *jsonschema.Resolved, err error) {
 	defer func() {
 		if recover() != nil {
@@ -926,14 +922,6 @@ func decodeJSON(raw []byte) (any, error) {
 		return nil, errors.New("tool arguments must be object")
 	}
 	return value, nil
-}
-
-func redactResult(raw []byte, token string) json.RawMessage {
-	clean, err := sanitizeResult(raw, token, defaultMaxResultBytes)
-	if err != nil {
-		return nil
-	}
-	return clean
 }
 
 func sanitizeResult(raw []byte, credential string, maxBytes int) (json.RawMessage, error) {
