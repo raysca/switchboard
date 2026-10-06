@@ -250,6 +250,19 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	}
 }
 
+func TestContextEvictsUnansweredTurns(t *testing.T) {
+	ctx := NewConversationContext(ContextConfig{MaxMessages: 3})
+	for _, turn := range []string{"t0", "t1", "t2", "t3", "t4", "t5"} {
+		// Interrupted or failed turns never get an assistant reply.
+		if err := ctx.AddMessage(Message{Role: RoleUser, Content: "hi", TurnID: turn}); err != nil {
+			t.Fatalf("turn %s: %v", turn, err)
+		}
+	}
+	if got := ctx.Messages(); len(got) != 3 || got[2].TurnID != "t5" {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
 func TestContextPendingToolCallCannotCompleteAfterCallEviction(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 3, MaxTokens: 1000})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})

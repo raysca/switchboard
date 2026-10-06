@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	ErrContextLimitExceeded = errors.New("core: conversation context exceeds budget limits even after complete turn-pair eviction")
+	ErrContextLimitExceeded = errors.New("core: conversation context exceeds budget limits even after turn eviction")
 	ErrInvalidRole          = errors.New("core: invalid message role")
 	ErrInvalidToolMessage   = errors.New("core: invalid tool context message")
 	ErrUnmatchedToolResult  = errors.New("core: tool result has no matching call")
@@ -605,14 +605,13 @@ func cloneMetadataValue(v any, depth int, nodes *int) (any, error) {
 	}
 }
 
-// enforceBudgetLocked evicts the oldest complete turn-pairs until budget is satisfied.
+// enforceBudgetLocked evicts the oldest turns until budget is satisfied.
 // Invariant: System instruction and the latest user turn are NEVER evicted.
 func (c *ConversationContext) enforceBudgetLocked() error {
 	for c.isOverBudgetLocked() {
-		// Find the oldest complete turn pair to evict
-		turnID, found := c.findOldestCompleteTurnPairLocked()
+		turnID, found := c.findOldestTurnLocked()
 		if !found {
-			// No complete turn pairs available to evict, but still over budget!
+			// Nothing but the system instruction and active turn left.
 			return ErrContextLimitExceeded
 		}
 
@@ -641,10 +640,12 @@ func (c *ConversationContext) isOverBudgetLocked() bool {
 	return false
 }
 
-// findOldestCompleteTurnPairLocked identifies the TurnID of the oldest completed turn pair.
-// A turn pair is complete if it has an Assistant message. The active (latest) user turn is excluded.
-func (c *ConversationContext) findOldestCompleteTurnPairLocked() (string, bool) {
-	// Identify current user turn ID to protect it
+// findOldestTurnLocked identifies the TurnID of the oldest non-system turn
+// other than the active (latest) user turn. Incomplete turns (no assistant
+// reply: interrupted, failed, superseded) are evictable too, otherwise enough
+// of them would wedge the context. A turn is evicted whole, so its tool calls
+// and results always leave together.
+func (c *ConversationContext) findOldestTurnLocked() (string, bool) {
 	var activeUserTurnID string
 	for i := len(c.messages) - 1; i >= 0; i-- {
 		if c.messages[i].Role == RoleUser {
@@ -652,33 +653,10 @@ func (c *ConversationContext) findOldestCompleteTurnPairLocked() (string, bool) 
 			break
 		}
 	}
-
-	// Map turns to their completeness
-	hasAssistant := make(map[string]bool)
-	var orderedTurns []string
-
 	for _, m := range c.messages {
-		if m.Role == RoleSystem || m.TurnID == "" {
-			continue
-		}
-		if _, seen := hasAssistant[m.TurnID]; !seen {
-			orderedTurns = append(orderedTurns, m.TurnID)
-			hasAssistant[m.TurnID] = false
-		}
-		if m.Role == RoleAssistant && m.Kind != MessageToolCall {
-			hasAssistant[m.TurnID] = true
+		if m.Role != RoleSystem && m.TurnID != "" && m.TurnID != activeUserTurnID {
+			return m.TurnID, true
 		}
 	}
-
-	// Find the oldest turn that has completed (has an Assistant message) and is not active
-	for _, turnID := range orderedTurns {
-		if turnID == activeUserTurnID {
-			continue
-		}
-		if hasAssistant[turnID] {
-			return turnID, true
-		}
-	}
-
 	return "", false
 }
