@@ -47,6 +47,16 @@ type Config struct {
 		APIKeyEnv string `yaml:"api_key_env"`
 	} `yaml:"management"`
 
+	// Durable management plane (agents, provider credentials, MCP, session
+	// history). Disabled when Storage.Dialect is empty; retention: see Retention.
+	Storage struct {
+		Dialect string `yaml:"dialect"` // "sqlite" | "postgres"
+		DSNEnv  string `yaml:"dsn_env"` // env var holding the DSN (default GOVOICE_DATABASE_DSN)
+	} `yaml:"storage"`
+	Credentials struct {
+		KeyringEnv string `yaml:"keyring_env"` // env var: "id:base64key[,id:base64key]", first is active (default GOVOICE_CREDENTIAL_KEYS)
+	} `yaml:"credentials"`
+
 	// Admission Token
 	Token struct {
 		SecretEnv        string        `yaml:"secret_env"` // Env var holding HS256 secret (default "TOKEN_SECRET")
@@ -317,6 +327,11 @@ func ValidateConfig(cfg *Config) error {
 		return errors.New("token.max_lifetime must be at least 2 seconds when configured")
 	}
 
+	switch cfg.Storage.Dialect {
+	case "", "sqlite", "postgres":
+	default:
+		return fmt.Errorf("invalid storage.dialect %q: must be 'sqlite' or 'postgres'", cfg.Storage.Dialect)
+	}
 	if cfg.PublicListenAddr == "" {
 		return errors.New("public_listen_addr must be specified")
 	}

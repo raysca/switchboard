@@ -92,3 +92,18 @@ observability:
   json_format: true
   timeline_max_events: 1000
   timeline_ttl: 15m
+
+# Durable management plane (agents, provider credentials, MCP servers, session
+# history). Disabled while dialect is empty. When enabled the server requires:
+#   GOVOICE_DATABASE_DSN     storage DSN (file path for sqlite, URL for postgres)
+#   GOVOICE_CREDENTIAL_KEYS  "id:base64(32-byte key)[,id:...]", first is active
+storage:
+  dialect: ""   # "sqlite" | "postgres"
+
+# Content/metadata purge job; only runs when storage is enabled.
+retention:
+  enabled: true
+  interval: 1h
+  content_retention_days: 7
+  metadata_retention_days: 30
+  batch_size: 500

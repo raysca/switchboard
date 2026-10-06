@@ -334,3 +334,33 @@ func (r *rotationBarrierRepository) Delete(ctx context.Context, id string) error
 func (r *rotationBarrierRepository) List(ctx context.Context) ([]storage.Credential, error) {
 	return r.base.List(ctx)
 }
+
+func TestResolveOnlyReleasesMCPTokens(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, storage.Config{Dialect: storage.SQLite, DSN: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiKey, err := svc.Create(ctx, CreateInput{Provider: "google", Secret: "provider-api-key-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Resolve(ctx, apiKey.ID); !errors.Is(err, ErrNotMCPCredential) {
+		t.Fatalf("provider API key released to MCP: err=%v", err)
+	}
+	token, err := svc.Create(ctx, CreateInput{Provider: provider.MCPProviderID, Secret: "mcp-bearer-token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.Resolve(ctx, token.ID); err != nil || got != "mcp-bearer-token" {
+		t.Fatalf("mcp token resolve = %q, %v", got, err)
+	}
+	if _, err := svc.Resolve(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing credential err=%v", err)
+	}
+}

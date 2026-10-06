@@ -46,6 +46,7 @@ type Server struct {
 	voiceKeyID              string
 	voiceEpoch              string
 	vadExecutor             vad.SharedExecutor
+	mgmt                    *management
 	logger                  *slog.Logger
 
 	ready        atomic.Bool
@@ -808,10 +809,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		_ = s.vadExecutor.Close()
 	}
 
-	// 5. Close admin server
+	// 5. Close admin server, then the management plane it served
 	if s.adminServer != nil {
 		_ = s.adminServer.Close()
 	}
+	s.closeManagement()
 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("shutdown deadline exceeded: %w", err)

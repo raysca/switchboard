@@ -75,6 +75,10 @@ func main() {
 		srv.SetVADExecutor(vadExec)
 	}
 
+	if err := srv.EnableManagement(context.Background()); err != nil {
+		log.Fatalf("failed to enable management plane: %v", err)
+	}
+
 	if err := srv.Start(); err != nil {
 		log.Fatalf("failed to start server: %v", err)
 	}

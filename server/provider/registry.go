@@ -17,6 +17,9 @@ const (
 	CapabilitySTT Capability = "stt"
 	CapabilityTTS Capability = "tts"
 	CapabilityMCP Capability = "mcp"
+
+	// MCPProviderID owns credentials usable as remote MCP bearer tokens.
+	MCPProviderID = "mcp"
 )
 
 var (
@@ -66,6 +69,9 @@ func Definitions() []Definition {
 	return []Definition{
 		{ID: "google", DisplayName: "Google", AuthRequired: true, Capabilities: []Capability{CapabilityLLM, CapabilitySTT, CapabilityTTS}},
 		{ID: "xai", DisplayName: "xAI", AuthRequired: true, Capabilities: []Capability{CapabilityLLM, CapabilitySTT, CapabilityTTS}},
+		// Bearer tokens for remote MCP servers. The only credentials whose
+		// plaintext may leave the server (to the MCP endpoint they belong to).
+		{ID: MCPProviderID, DisplayName: "MCP server token", AuthRequired: true, Capabilities: []Capability{CapabilityMCP}},
 	}
 }
 

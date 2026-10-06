@@ -416,3 +416,30 @@ func hasCapability(capabilities []provider.Capability, want provider.Capability)
 	}
 	return false
 }
+
+// ErrNotMCPCredential is returned when a non-MCP credential is requested as an
+// MCP bearer token.
+var ErrNotMCPCredential = errors.New("credential is not an MCP server token")
+
+// Resolve returns the plaintext of an MCP server token for id. It satisfies the
+// MCP CredentialResolver. Provider API keys (google, xai, ...) are never
+// released: otherwise anyone able to register an MCP endpoint could exfiltrate
+// them as a bearer token.
+func (s *Service) Resolve(ctx context.Context, id string) (string, error) {
+	row, err := s.repo.Get(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("load credential: %w", err)
+	}
+	if row.Provider != provider.MCPProviderID {
+		return "", ErrNotMCPCredential
+	}
+	plain, err := s.decrypt(row)
+	if err != nil {
+		return "", err
+	}
+	defer zero(plain)
+	return string(plain), nil
+}
