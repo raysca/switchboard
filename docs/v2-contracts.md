@@ -118,8 +118,14 @@ evicts only the oldest complete turn, and rolls back additions that cannot fit.
 Rollback includes eviction counters and history, so failed mutations leave no
 phantom accounting. A context-budget failure during interrupted partial commit
 is returned and no assistant commit frame is emitted.
-Task 10 provides this deterministic bounded behavior only. Summarization and
-application-provided compaction remain Task 28.
+
+**Implementation Note (Task 28 — Context Compaction Hook)**
+
+`core.ConversationContext` provides an application-extensible, provider-neutral compaction hook boundary via `CompactionHook` / `CompactionHookFunc` and `cc.SetCompactionHook(hook)`.
+- **Atomic Execution & Failure Isolation**: `cc.Compact(ctx)` captures an immutable snapshot of messages and invokes the hook. If the hook returns `applied=false` (declining compaction) or returns an error, the context remains completely untouched and immediately usable for subsequent turns.
+- **System Instruction Preservation**: Any compaction result must preserve the original system instruction at index 0. Results omitting or mutating system prompt fail with `ErrInvalidCompaction` and roll back.
+- **Tool Ledger Retention**: Tool replay ledgers and idempotency tracking are maintained through compaction, ensuring tool call identification and conflict detection remain valid across summarized histories.
+- **Budget Bound Enforcement**: The compacted message list is strictly validated against `MaxMessages` and `MaxTokens`. Results exceeding limits fail closed without partial application.
 
 ### 2.5 Observer and semantic debug events
 

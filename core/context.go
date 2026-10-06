@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ var (
 	ErrInvalidMetadata      = errors.New("core: message metadata must be bounded JSON-safe data")
 	ErrToolIdentityLimit    = errors.New("core: tool identity replay ledger is full")
 	ErrToolCallPending      = errors.New("core: tool call is already in progress")
+	ErrInvalidCompaction    = errors.New("core: invalid compaction result")
 )
 
 // Role represents the conversational participant role.
@@ -79,16 +81,36 @@ func MessageTokens(m Message) int {
 	return EstimateTokens(m.Content) + 4
 }
 
+// CompactionResult contains the compacted sequence of messages returned by a CompactionHook.
+type CompactionResult struct {
+	Messages []Message
+}
+
+// CompactionHook is a provider-neutral interface for condensing conversation context.
+// When called, it receives an immutable snapshot of current messages and returns
+// a compacted sequence, whether it applied (or declined), and any operational error.
+type CompactionHook interface {
+	Compact(ctx context.Context, snapshot []Message) (result *CompactionResult, applied bool, err error)
+}
+
+// CompactionHookFunc adapts a standard function to the CompactionHook interface.
+type CompactionHookFunc func(ctx context.Context, snapshot []Message) (*CompactionResult, bool, error)
+
+func (f CompactionHookFunc) Compact(ctx context.Context, snapshot []Message) (*CompactionResult, bool, error) {
+	return f(ctx, snapshot)
+}
+
 // ConversationContext maintains a thread-safe, bounded, multi-turn conversation history.
 // When message or token budgets are exceeded, it deterministically evicts the oldest complete
 // turn-pairs while strictly preserving system instruction(s), the current user turn, and the newest turns.
 type ConversationContext struct {
-	mu           sync.RWMutex
-	cfg          ContextConfig
-	messages     []Message
-	evictions    int
-	evictedPairs []string
-	toolLedger   map[string]toolReplayIdentity
+	mu             sync.RWMutex
+	cfg            ContextConfig
+	messages       []Message
+	evictions      int
+	evictedPairs   []string
+	toolLedger     map[string]toolReplayIdentity
+	compactionHook CompactionHook
 }
 
 type toolReplayIdentity struct {
@@ -111,6 +133,91 @@ func NewConversationContext(cfg ContextConfig) *ConversationContext {
 		evictedPairs: make([]string, 0),
 		toolLedger:   make(map[string]toolReplayIdentity, cfg.MaxToolIdentities),
 	}
+}
+
+// SetCompactionHook attaches an application-provided or provider-aware compaction hook.
+func (c *ConversationContext) SetCompactionHook(hook CompactionHook) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.compactionHook = hook
+}
+
+// Compact invokes the registered CompactionHook against an immutable snapshot of messages.
+// If the hook declines (applied=false) or errors, context remains completely unchanged and usable.
+// If the hook succeeds, the result is validated (must preserve system instruction and satisfy budget)
+// and atomically swapped in.
+func (c *ConversationContext) Compact(ctx context.Context) (bool, error) {
+	c.mu.Lock()
+	hook := c.compactionHook
+	if hook == nil {
+		c.mu.Unlock()
+		return false, nil
+	}
+
+	snapshot := make([]Message, len(c.messages))
+	for i := range c.messages {
+		snapshot[i], _ = cloneMessage(c.messages[i])
+	}
+	originalSystemInstruction := ""
+	hasSystemInstruction := false
+	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
+		hasSystemInstruction = true
+		originalSystemInstruction = c.messages[0].Content
+	}
+	c.mu.Unlock()
+
+	result, applied, err := hook.Compact(ctx, snapshot)
+	if err != nil {
+		return false, err
+	}
+	if !applied || result == nil {
+		return false, nil
+	}
+
+	// Validate the proposed compaction
+	if len(result.Messages) == 0 {
+		return false, fmt.Errorf("%w: compacted messages cannot be empty", ErrInvalidCompaction)
+	}
+
+	// If the original context had a system instruction, the compacted result MUST preserve it at index 0
+	if hasSystemInstruction {
+		if result.Messages[0].Role != RoleSystem || result.Messages[0].Content != originalSystemInstruction {
+			return false, fmt.Errorf("%w: compacted result must preserve original system instruction at index 0", ErrInvalidCompaction)
+		}
+	}
+
+	// Clone and validate each message
+	clonedList := make([]Message, len(result.Messages))
+	for i, m := range result.Messages {
+		if m.Role != RoleSystem && m.Role != RoleUser && m.Role != RoleAssistant && m.Role != RoleTool {
+			return false, fmt.Errorf("%w: %q", ErrInvalidRole, m.Role)
+		}
+		cloned, cErr := cloneMessage(m)
+		if cErr != nil {
+			return false, cErr
+		}
+		clonedList[i] = cloned
+	}
+
+	// Verify budget limits
+	if c.cfg.MaxMessages > 0 && len(clonedList) > c.cfg.MaxMessages {
+		return false, fmt.Errorf("%w: compacted messages count %d exceeds MaxMessages %d", ErrContextLimitExceeded, len(clonedList), c.cfg.MaxMessages)
+	}
+	if c.cfg.MaxTokens > 0 {
+		tokens := 0
+		for _, m := range clonedList {
+			tokens += MessageTokens(m)
+		}
+		if tokens > c.cfg.MaxTokens {
+			return false, fmt.Errorf("%w: compacted tokens %d exceeds MaxTokens %d", ErrContextLimitExceeded, tokens, c.cfg.MaxTokens)
+		}
+	}
+
+	// Atomically apply compacted messages under lock
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.messages = clonedList
+	return true, nil
 }
 
 // SetSystemInstruction sets or replaces the initial system instruction message.
