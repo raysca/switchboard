@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -115,7 +114,6 @@ type workerProcess struct {
 	stdin      io.WriteCloser
 	stdout     io.ReadCloser
 	stderr     *boundedBuffer
-	pid        int
 	mu         sync.Mutex
 	healthy    bool
 	crashes    []time.Time
@@ -130,25 +128,6 @@ func WorkerBinary() string {
 	return filepath.Join(Root(), "bin", "vadworker")
 }
 
-// EnsureWorkerBinary builds bin/vadworker if not present.
-func EnsureWorkerBinary() (string, error) {
-	binPath := WorkerBinary()
-	if _, err := os.Stat(binPath); err == nil {
-		return binPath, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
-		return "", err
-	}
-	cmd := exec.Command("go", "build", "-o", binPath, "./cmd/vadworker")
-	cmd.Dir = Root()
-	cmd.Env = os.Environ()
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("compile vadworker: %w (%s)", err, string(out))
-	}
-	return binPath, nil
-}
-
 // NewWorkerProcessExecutor creates a WorkerProcessExecutor with verified Silero artifacts.
 func NewWorkerProcessExecutor(cfg Config) (*Executor, error) {
 	modelSHA, err := VerifyModelArtifact(ModelPath())
@@ -156,14 +135,8 @@ func NewWorkerProcessExecutor(cfg Config) (*Executor, error) {
 		return nil, fmt.Errorf("vad worker executor: %w", err)
 	}
 
-	binPath := cfg.WorkerBinary
-	if binPath == "" {
-		var err error
-		binPath, err = EnsureWorkerBinary()
-		if err != nil {
-			return nil, fmt.Errorf("vad worker binary: %w", err)
-		}
-		cfg.WorkerBinary = binPath
+	if cfg.WorkerBinary == "" {
+		cfg.WorkerBinary = WorkerBinary()
 	}
 
 	e := &Executor{cfg: cfg}
@@ -234,47 +207,6 @@ func (b *workerProcessBackend) queueDepth() int {
 	return depth
 }
 
-func (b *workerProcessBackend) pids() []int {
-	var pids []int
-	for _, wp := range b.workers {
-		wp.mu.Lock()
-		if wp.pid != 0 && wp.healthy {
-			pids = append(pids, wp.pid)
-		}
-		wp.mu.Unlock()
-	}
-	return pids
-}
-
-func (b *workerProcessBackend) injectFault(workerIdx int) error {
-	if workerIdx < 0 || workerIdx >= len(b.workers) {
-		return errors.New("invalid worker index")
-	}
-	wp := b.workers[workerIdx]
-	wp.mu.Lock()
-	defer wp.mu.Unlock()
-	if wp.stdin == nil {
-		return errors.New("worker not running")
-	}
-	frame := EncodeFaultInject()
-	return WriteFrame(wp.stdin, frame)
-}
-
-func (b *workerProcessBackend) hardKill(workerIdx int) error {
-	if workerIdx < 0 || workerIdx >= len(b.workers) {
-		return errors.New("invalid worker index")
-	}
-	wp := b.workers[workerIdx]
-	wp.mu.Lock()
-	defer wp.mu.Unlock()
-	if wp.cmd != nil && wp.cmd.Process != nil {
-		err := wp.cmd.Process.Kill()
-		wp.killAndReapLocked()
-		return err
-	}
-	return errors.New("worker not running")
-}
-
 func (b *workerProcessBackend) close() error {
 	// Swap under the write lock: once it is released no Submit can still be
 	// between its closed check and its send, so closing the queues is safe.
@@ -323,7 +255,6 @@ func (wp *workerProcess) startAndHandshake() error {
 	wp.cmd = cmd
 	wp.stdin = stdin
 	wp.stdout = stdout
-	wp.pid = cmd.Process.Pid
 
 	handshakeDeadline := time.Now().Add(3 * time.Second)
 	req := HandshakeReq{

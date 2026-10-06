@@ -361,7 +361,7 @@ func TestDetectorStateCheckpointRecovery(t *testing.T) {
 	}
 
 	// Re-entry with error
-	_ = proc.onResult(failedJob, nil)
+	_ = proc.onTraceResult(&vadResultFrame{j: failedJob}, nil)
 
 	// Verify state restored from checkpoint, not corrupted by failedJob
 	for i := 0; i < StateLen; i++ {
@@ -379,7 +379,7 @@ func TestDetectorStateCheckpointRecovery(t *testing.T) {
 		State: nextState,
 		Prob:  0.8,
 	}
-	_ = proc.onResult(succJob, nil)
+	_ = proc.onTraceResult(&vadResultFrame{j: succJob}, nil)
 
 	// Verify checkpoint updated
 	for i := 0; i < StateLen; i++ {

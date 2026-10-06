@@ -55,10 +55,6 @@ type executorBackend interface {
 	stats() Stats
 	capacity() (available, total int)
 	isReady() bool
-	pids() []int
-	queueDepth() int
-	injectFault(workerIdx int) error
-	hardKill(workerIdx int) error
 	close() error
 }
 
@@ -79,7 +75,7 @@ type Stats struct {
 
 // Config specifies the runtime executor configuration.
 type Config struct {
-	Mode            string        // "process" (prod default) | "sharded" (dev) | "global" | "stub"
+	Mode            string        // "process" (prod default) | "sharded" (dev)
 	Workers         int           // number of worker shards or child processes
 	Batch           int           // max batch size (1..8)
 	QueueCap        int           // total queue capacity across workers
@@ -87,8 +83,7 @@ type Config struct {
 	PerSessionLimit int           // maximum outstanding jobs per session (strictly 1)
 	ParentDeadline  time.Duration // parent monotonic deadline for worker response
 	ParentGrace     time.Duration // grace period before SIGKILL
-	WorkerBinary    string        // path to cmd/vadworker binary
-	StubCost        time.Duration // stub cost for benchmark harness
+	WorkerBinary    string        // path to cmd/vadworker binary (default <root>/bin/vadworker)
 }
 
 func (c Config) String() string {
@@ -143,10 +138,10 @@ func New(cfg Config) (*Executor, error) {
 	switch cfg.Mode {
 	case "process":
 		return NewWorkerProcessExecutor(cfg)
-	case "sharded", "global", "stub":
+	case "sharded":
 		return NewInProcessShardedExecutor(cfg)
 	default:
-		return nil, fmt.Errorf("unknown vad executor mode %q (must be 'process', 'sharded', 'global', or 'stub')", cfg.Mode)
+		return nil, fmt.Errorf("unknown vad executor mode %q (must be 'process' or 'sharded')", cfg.Mode)
 	}
 }
 
@@ -164,26 +159,6 @@ func (e *Executor) Capacity() (available, total int) {
 
 func (e *Executor) IsReady() bool {
 	return e.backend.isReady()
-}
-
-func (e *Executor) Config() Config {
-	return e.cfg
-}
-
-func (e *Executor) QueueDepth() int {
-	return e.backend.queueDepth()
-}
-
-func (e *Executor) PIDs() []int {
-	return e.backend.pids()
-}
-
-func (e *Executor) InjectFault(workerIdx int) error {
-	return e.backend.injectFault(workerIdx)
-}
-
-func (e *Executor) HardKill(workerIdx int) error {
-	return e.backend.hardKill(workerIdx)
 }
 
 func (e *Executor) Close() error {

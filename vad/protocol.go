@@ -45,9 +45,7 @@ var (
 	ErrInvalidMsgType    = errors.New("vad ipc: invalid message type")
 	ErrModelHashMismatch = errors.New("vad ipc: model SHA-256 hash mismatch")
 	ErrWorkerHandshake   = errors.New("vad ipc: worker handshake failed")
-	ErrWorkerCrashed     = errors.New("vad ipc: worker process crashed or pipe closed")
 	ErrWorkerHung        = errors.New("vad ipc: worker inference exceeded parent deadline")
-	ErrCrashLoopExceeded = errors.New("vad ipc: worker exceeded crash loop threshold")
 )
 
 // HandshakeReq is sent by parent to worker upon launch.
@@ -245,9 +243,6 @@ func DecodeInferReq(data []byte) ([]InferItemReq, error) {
 		return nil, ErrInvalidVersion
 	}
 	msgType := binary.LittleEndian.Uint16(data[6:8])
-	if msgType == MsgTypeFaultInject {
-		return nil, errors.New("fault inject")
-	}
 	if msgType != MsgTypeInferReq {
 		return nil, ErrInvalidMsgType
 	}
@@ -348,13 +343,4 @@ func DecodeInferResp(data []byte) ([]InferItemResp, error) {
 		}
 	}
 	return items, nil
-}
-
-// EncodeFaultInject encodes a deliberate fault injection command frame.
-func EncodeFaultInject() []byte {
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint32(buf[0:4], MagicBytes)
-	binary.LittleEndian.PutUint16(buf[4:6], ProtocolVersion)
-	binary.LittleEndian.PutUint16(buf[6:8], MsgTypeFaultInject)
-	return buf
 }
