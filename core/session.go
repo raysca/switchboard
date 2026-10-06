@@ -126,8 +126,9 @@ type Session struct {
 	traceQueue     *AsyncTracer
 	ownsTraceQueue bool
 	tracing        bool
-	turnSpans      map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
-	traceOrigins   map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
+	turnSpans          map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
+	traceOrigins       map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
+	disabledProcessors map[int]bool                    // run-loop owned; processors disabled via PolicyDisable
 }
 
 // A Frame interface can contain a non-comparable concrete value. The two
@@ -159,9 +160,10 @@ func NewSession(id uint64, pipeline *Pipeline, budget ResourceBudget) (*Session,
 		data:        make(chan Envelope, budget.MaxQueuedFrames),
 		runLoopDone: make(chan struct{}),
 		ready:       make(chan struct{}),
-		stopped:     make(chan struct{}),
-		Created:     time.Now(),
-		settings:    DefaultRuntimeSettings(),
+		stopped:            make(chan struct{}),
+		Created:            time.Now(),
+		settings:           DefaultRuntimeSettings(),
+		disabledProcessors: make(map[int]bool),
 	}
 
 	s.state.Store(int32(StateStarting))
@@ -781,32 +783,103 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 		return nil
 
 	default:
-		proc := s.pipe.At(to)
-		if !s.tracing {
-			return proc.ProcessFrame(s.ctx, f, dir, &sessionEmitter{s: s, index: to})
-		}
-		parent := s.traceCtx
-		if parent == nil {
-			parent = s.ctx
-		}
-		component := reflect.TypeOf(proc).String()
-		span := StartSpanSafe(parent, s.tracer, NewTraceEvent("processor.frame", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), traceTurnID(f), traceGeneration(f), s.tracePolicy, map[string]any{"component": component, "frame": frameTraceLabel(f.Type()), "direction": dir.String()}))
-		e := &sessionEmitter{
-			s:     s,
-			index: to,
-		}
-		previous := s.traceCtx
-		s.traceCtx = ContextWithSpan(parent, span)
-		defer func() {
-			s.traceCtx = previous
-			if r := recover(); r != nil {
-				span.End(errors.New("processor_error"))
-				panic(r)
+		// If processor was previously disabled by PolicyDisable, bypass it and continue in direction
+		if s.disabledProcessors != nil && s.disabledProcessors[to] {
+			if dir == Downstream {
+				return s.deliver(f, dir, to+1)
 			}
-			span.End(traceStatusError(resultErr, "processor_error"))
-		}()
-		resultErr = proc.ProcessFrame(s.traceCtx, f, dir, e)
-		return resultErr
+			return s.deliver(f, dir, to-1)
+		}
+
+		proc := s.pipe.At(to)
+		policy := PolicyFailSession
+		if pp, ok := proc.(FailurePolicyProvider); ok {
+			policy = pp.FailurePolicy()
+		}
+
+		invokeProc := func() error {
+			if !s.tracing {
+				return proc.ProcessFrame(s.ctx, f, dir, &sessionEmitter{s: s, index: to})
+			}
+			parent := s.traceCtx
+			if parent == nil {
+				parent = s.ctx
+			}
+			component := reflect.TypeOf(proc).String()
+			span := StartSpanSafe(parent, s.tracer, NewTraceEvent("processor.frame", time.Now(), SessionID(strconv.FormatUint(s.id, 10)), traceTurnID(f), traceGeneration(f), s.tracePolicy, map[string]any{"component": component, "frame": frameTraceLabel(f.Type()), "direction": dir.String()}))
+			e := &sessionEmitter{
+				s:     s,
+				index: to,
+			}
+			previous := s.traceCtx
+			s.traceCtx = ContextWithSpan(parent, span)
+			var pErr error
+			defer func() {
+				s.traceCtx = previous
+				if r := recover(); r != nil {
+					span.End(errors.New("processor_error"))
+					panic(r)
+				}
+				span.End(traceStatusError(pErr, "processor_error"))
+			}()
+			pErr = proc.ProcessFrame(s.traceCtx, f, dir, e)
+			return pErr
+		}
+
+		initialEmits := s.emitsCount
+		err := invokeProc()
+		if err == nil {
+			return nil
+		}
+
+		// Error occurred during processor execution. Dispatch according to FailurePolicy.
+		switch policy {
+		case PolicySafeRetry:
+			// If output was already emitted during this attempt, retrying could duplicate side effects.
+			if s.emitsCount > initialEmits {
+				return fmt.Errorf("%w: %v", ErrRetryUnsafe, err)
+			}
+			// Attempt retry once
+			err = invokeProc()
+			if err == nil {
+				return nil
+			}
+			// Retry failed; fall back to session failure
+			return err
+
+		case PolicyDisable:
+			if s.disabledProcessors == nil {
+				s.disabledProcessors = make(map[int]bool)
+			}
+			s.disabledProcessors[to] = true
+			// Emit non-fatal error frame downstream/output
+			nonFatal := &ErrorFrame{Err: err, Fatal: false}
+			if s.OnOutput != nil {
+				s.OnOutput(nonFatal)
+			}
+			// Forward original frame downstream (or upstream depending on direction)
+			if dir == Downstream {
+				return s.deliver(f, dir, to+1)
+			}
+			return s.deliver(f, dir, to-1)
+
+		case PolicyDegrade:
+			// Emit non-fatal error frame downstream/output
+			nonFatal := &ErrorFrame{Err: err, Fatal: false}
+			if s.OnOutput != nil {
+				s.OnOutput(nonFatal)
+			}
+			// Temporarily bypass this processor for this frame; processor remains enabled for future frames
+			if dir == Downstream {
+				return s.deliver(f, dir, to+1)
+			}
+			return s.deliver(f, dir, to-1)
+
+		case PolicyFailSession:
+			fallthrough
+		default:
+			return err
+		}
 	}
 }
 

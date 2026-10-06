@@ -344,9 +344,15 @@ func TestCore_SessionIsolation(t *testing.T) {
 
 // Helper test processor
 type testFnProcessor struct {
-	fn func(ctx context.Context, f Frame, dir Direction, e Emitter) error
+	fn     func(ctx context.Context, f Frame, dir Direction, e Emitter) error
+	policy FailurePolicy
 }
 
 func (p *testFnProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
 	return p.fn(ctx, f, dir, e)
 }
+
+func (p *testFnProcessor) FailurePolicy() FailurePolicy {
+	return p.policy
+}
+

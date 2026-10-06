@@ -482,3 +482,19 @@ The separate `ui/` product uses React, TypeScript, and Vite. Its primary section
 - Ruling: Use React, TypeScript, Vite, and a typed `/api/v1` client for the management UI — this keeps UI concepts outside Go core and matches the V2 admin product scope — cost if wrong: choosing another frontend toolchain changes UI build/hosting integration but not the HTTP contract.
 - Ruling: Keep Whisker compatibility semantic through a Framework observer/debug adapter until an official package and protocol version are pinned — no exact Whisker wire target is specified in the approved inputs — cost if wrong: byte-level interoperability will require a versioned wire serializer and additional fixture/version maintenance.
 - Ruling: A database trace/history failure is observable but cannot abort an active voice session; failure to resolve an agent or credential prevents new session creation — an existing session must outlive optional observability writes while new sessions require valid startup configuration — cost if wrong: operators may temporarily miss history during storage outages or reject a session that a degraded provider fallback could have served.
+- Ruling: Processor failures adhere to explicit `FailurePolicy` declarations (`PolicyFailSession`, `PolicyDisable`, `PolicyDegrade`, `PolicySafeRetry`) — defaulting to session failure, while non-fatal policies emit observable `ErrorFrame` events with side-effect-aware retry protection (aborting retries if output was already emitted).
+
+### 2.10 Processor failure and unusable policies
+
+Processors in the session pipeline can optionally implement `core.FailurePolicyProvider`:
+```go
+type FailurePolicyProvider interface {
+    FailurePolicy() FailurePolicy
+}
+```
+Available policies:
+1. `PolicyFailSession` (default): Aborts and tears down the session with the processor error.
+2. `PolicyDisable`: Permanently disables the processor for subsequent frames in that session. Emits a non-fatal `*core.ErrorFrame{Fatal: false}` and passes the frame to the next processor. Subsequent frames completely bypass the disabled processor.
+3. `PolicyDegrade`: Temporarily bypasses the failing processor for the current frame. Emits a non-fatal `*core.ErrorFrame{Fatal: false}` and passes the frame to the next processor. The processor remains active for future frames.
+4. `PolicySafeRetry`: Retries processing the frame once before failing the session. If the processor already emitted one or more output frames during the current attempt before failing, retrying is considered unsafe and the session aborts immediately with `ErrRetryUnsafe` to prevent duplicate external side effects.
+
