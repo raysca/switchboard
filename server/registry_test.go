@@ -98,11 +98,11 @@ func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
 	}
 
 	// Real factories fail closed without a stored credential.
-	if _, _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
+	if _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
 		t.Fatal("expected build to fail without provider credentials")
 	}
 	call.STT.Secret, call.LLM.Secret, call.TTS.Secret = []byte("$ENV_REF"), []byte("bad key with spaces"), nil
-	if _, _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
+	if _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
 		t.Fatal("expected build to reject unusable secrets")
 	}
 
@@ -116,16 +116,16 @@ func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
 	reg.Register("xai.llm", stub("llm", llm))
 	reg.Register("google.tts", stub("tts", &fakeTransportSink{}))
 	call.STT.Secret, call.LLM.Secret, call.TTS.Secret = []byte("stt-key"), []byte("llm-key"), []byte("tts-key")
-	call.ToolDefinitions = []core.ToolDefinition{{Name: "lookup"}}
-	pipe, ctxPool, err := reg.BuildCallPipeline(cfg, call, vadProc, sink)
-	if err != nil || pipe == nil || ctxPool == nil {
-		t.Fatalf("build: pipe=%v ctx=%v err=%v", pipe, ctxPool, err)
+	call.LLM.Tools = []core.ToolDefinition{{Name: "lookup"}}
+	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, sink)
+	if err != nil || pipe == nil {
+		t.Fatalf("build: pipe=%v err=%v", pipe, err)
 	}
 	if got["stt"].Model != "chirp_2" || got["stt"].Language != "en-US" || string(got["stt"].Secret) != "stt-key" {
 		t.Fatalf("stt spec = %+v", got["stt"])
 	}
 	if got["llm"].Model != "grok-test" || got["llm"].SystemPrompt != "be brief" || string(got["llm"].Secret) != "llm-key" ||
-		len(got["llm"].Tools) != 1 || got["llm"].History != ctxPool {
+		len(got["llm"].Tools) != 1 || got["llm"].History == nil {
 		t.Fatalf("llm spec = %+v", got["llm"])
 	}
 	if got["tts"].Voice != "en-US-Journey-F" || string(got["tts"].Secret) != "tts-key" {
@@ -137,7 +137,7 @@ func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
 
 	// A provider with no factory for a stage is rejected.
 	call.TTS.Provider = "acme"
-	if _, _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
+	if _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
 		t.Fatal("expected error for unknown provider")
 	}
 	if reg.Supports("xai", "tts") != xaiSpeechEnabled {
@@ -161,7 +161,7 @@ func TestBuildCallPipelineClosesBuiltStagesOnFailure(t *testing.T) {
 	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return nil, errors.New("bad credential") })
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}}
-	if _, _, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, &fakeTransportSink{}); err == nil {
+	if _, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, &fakeTransportSink{}); err == nil {
 		t.Fatal("expected build failure")
 	}
 	if closed != 2 {
@@ -176,7 +176,7 @@ func TestCallUserContextIndexMatchesPipeline(t *testing.T) {
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}}
-	pipe, _, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, &fakeTransportSink{})
+	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, &fakeTransportSink{})
 	if err != nil {
 		t.Fatal(err)
 	}

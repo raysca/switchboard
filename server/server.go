@@ -414,7 +414,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 
 	// 3. Build VAD processor and the agent's pipeline
 	vadProc := vad.NewProcessor(s.vadExecutor, vad.DefaultProcessorConfig())
-	pipe, _, err := s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
+	pipe, err := s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
 	call.wipeSecrets()
 	if err != nil {
 		return fail(fmt.Errorf("build pipeline: %w", err))

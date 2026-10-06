@@ -144,9 +144,6 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		if reason != "" {
 			return CallSpec{}, fmt.Errorf("agent not callable: %s", reason)
 		}
-		if id == "" {
-			continue // provider needs no credential
-		}
 		secret, err := s.credentials.ProviderSecret(ctx, id, stage.Provider)
 		if err != nil {
 			return CallSpec{}, fmt.Errorf("%s credential: %w", stage.Name, err)
@@ -155,13 +152,12 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	}
 	maxMessages, maxTokens := cfg.Context.Limits()
 	return CallSpec{
-		STT:             StageSpec{Provider: cfg.STT.Provider, Model: cfg.STT.Model, Language: cfg.STT.Language, Secret: secrets["stt"]},
-		LLM:             StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"]},
-		TTS:             StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, Secret: secrets["tts"]},
-		MaxMessages:     maxMessages,
-		MaxTokens:       maxTokens,
-		ToolDefinitions: rs.Definitions,
-		ToolExecutor:    rs.Executor,
+		STT: StageSpec{Provider: cfg.STT.Provider, Model: cfg.STT.Model, Language: cfg.STT.Language, Secret: secrets["stt"]},
+		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
+			Tools: rs.Definitions, ToolExecutor: rs.Executor},
+		TTS:         StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, Secret: secrets["tts"]},
+		MaxMessages: maxMessages,
+		MaxTokens:   maxTokens,
 	}, nil
 }
 

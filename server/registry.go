@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"govoice/core"
 	coretools "govoice/core/tools"
@@ -38,9 +37,6 @@ type CallSpec struct {
 	STT, LLM, TTS StageSpec
 	MaxMessages   int
 	MaxTokens     int
-	// ToolDefinitions and ToolExecutor carry the agent's captured MCP tools.
-	ToolDefinitions []core.ToolDefinition
-	ToolExecutor    core.ToolExecutor
 	// History, when set, sees every frame just before the transport (turn rows).
 	History core.Processor
 }
@@ -50,9 +46,9 @@ type CallSpec struct {
 // voices, prompts and credentials come from the agent via spec.
 type ProcessorFactory func(cfg *Config, spec StageSpec) (core.Processor, error)
 
-// Registry maps "<provider>.<stage>" to processor factories.
+// Registry maps "<provider>.<stage>" to processor factories. Register only
+// before serving calls; lookups are unsynchronised.
 type Registry struct {
-	mu        sync.RWMutex
 	factories map[string]ProcessorFactory
 
 	googleLLMBreaker *google.CircuitBreaker
@@ -187,15 +183,11 @@ func xaiKey(secret []byte) (string, error) {
 
 // Register adds or overrides a provider stage factory ("<provider>.<stage>").
 func (r *Registry) Register(name string, factory ProcessorFactory) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.factories[name] = factory
 }
 
 // Supports reports whether a factory exists for provider and stage.
 func (r *Registry) Supports(provider, stage string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
 	_, ok := r.factories[factoryKey(provider, stage)]
 	return ok
 }
@@ -206,11 +198,9 @@ const CallUserContextIndex = 3
 
 // BuildCallPipeline builds VAD -> STT -> transcript -> user context -> LLM ->
 // assistant context -> TTS -> transport for one call of a stored agent.
-func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, *core.ConversationContext, error) {
+func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, error) {
 	build := func(stage string, spec StageSpec) (core.Processor, error) {
-		r.mu.RLock()
 		factory, ok := r.factories[factoryKey(spec.Provider, stage)]
-		r.mu.RUnlock()
 		if !ok {
 			return nil, fmt.Errorf("%s provider %q is not available", stage, spec.Provider)
 		}
@@ -220,13 +210,13 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	// Processors hold provider clients; close those already built if a later
 	// stage fails, or a bad credential would leak a client per connect attempt.
 	var built []core.Processor
-	fail := func(err error) (*core.Pipeline, *core.ConversationContext, error) {
+	fail := func(err error) (*core.Pipeline, error) {
 		for _, p := range built {
 			if c, ok := p.(interface{ Close() error }); ok {
 				_ = c.Close()
 			}
 		}
-		return nil, nil, err
+		return nil, err
 	}
 	sttProc, err := build("stt", call.STT)
 	if err != nil {
@@ -234,7 +224,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	built = append(built, sttProc)
 	llmSpec := call.LLM
-	llmSpec.Tools, llmSpec.ToolExecutor, llmSpec.History = call.ToolDefinitions, call.ToolExecutor, ctxPool
+	llmSpec.History = ctxPool
 	llmProc, err := build("llm", llmSpec)
 	if err != nil {
 		return fail(fmt.Errorf("create llm processor: %w", err))
@@ -266,7 +256,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if err != nil {
 		return fail(fmt.Errorf("assemble pipeline: %w", err))
 	}
-	return pipe, ctxPool, nil
+	return pipe, nil
 }
 
 // BindMetrics copies circuit transitions onto the process metrics used by /ready.
