@@ -49,7 +49,6 @@ type AssistantContextProcessor struct {
 	// Flush barrier coordination
 	pendingFlushGen   atomic.Uint64
 	ackedFlushGen     atomic.Uint64
-	FlushAcks         atomic.Uint64
 	FlushTimeouts     atomic.Uint64
 	InterruptionCount atomic.Uint64
 }
@@ -176,7 +175,6 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 	case FrameFlushProcessed:
 		fp := f.(*FlushProcessedFrame)
 		if p.pendingFlushGen.Load() == fp.Gen {
-			p.FlushAcks.Add(1)
 			p.ackedFlushGen.Store(fp.Gen)
 		}
 		return e.PushDirection(f, dir)
