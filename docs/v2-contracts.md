@@ -541,5 +541,19 @@ const (
 - **Fault & Cancellation Isolation**: Interruptions fence subsequent buffered/playing transitions for the interrupted turn while allowing new generations to restart cleanly.
 - **Empty Output**: Silent turns or pure tool-execution turns advance directly from `generating` to `completed` without spurious buffering or playing states.
 
+### 2.13 Serializer abstraction
+
+`core.Serializer` provides the general encoding/decoding abstraction between semantic events/frames and wire formats:
+```go
+type Serializer interface {
+    Format() string
+    Encode(v any) ([]byte, error)
+    Decode(data []byte) (any, error)
+}
+```
+- **Semantic Separation**: Decouples semantic events (such as `DebugEvent` and `ObserverEvent`) from specific transports or wire formats. RTVI remains a separate adapter without injecting wire types into processors.
+- **Validation & Bounds**: Implementations (e.g. `JSONEventSerializer`) enforce payload size limits, reject malformed payloads with `ErrMalformedPayload`, and reject unknown fields when configured with `DisallowUnknownFields`.
+
+
 
 
