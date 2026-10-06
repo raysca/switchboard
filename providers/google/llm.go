@@ -222,11 +222,6 @@ type LLMProcessor struct {
 	Errors   atomic.Uint64
 	Retries  atomic.Uint64
 	Stale    atomic.Uint64
-
-	// Usage tracking
-	PromptTokens atomic.Int64
-	OutputTokens atomic.Int64
-	TotalTokens  atomic.Int64
 }
 
 var errGoogleToolClientUnsupported = errors.New("google: tool streaming client unsupported")
@@ -386,6 +381,8 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		var committed bool
 		var fullTextBuilder strings.Builder
 		var nativeHistory []GoogleNativeExchange
+		// Turn usage: the sum over every model request of the tool loop.
+		var pTok, oTok, tTok, requests int64
 		requestModel := func(requestCtx context.Context) (_ []core.ToolCall, traceErr error) {
 			span := core.StartContextSpan(requestCtx, "llm.request", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "google", "model": p.cfg.Model})
 			defer func() {
@@ -432,6 +429,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			var calls []core.ToolCall
 			var nativeContents []*genai.Content
 			var requestText strings.Builder
+			var reqP, reqO, reqT int64 // cumulative within a response: keep the latest
 			for chunkCh != nil || errCh != nil {
 				select {
 				case <-requestCtx.Done():
@@ -452,13 +450,13 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 						continue
 					}
 					if chunk.PromptTokens > 0 {
-						p.PromptTokens.Store(int64(chunk.PromptTokens))
+						reqP = int64(chunk.PromptTokens)
 					}
 					if chunk.OutputTokens > 0 {
-						p.OutputTokens.Store(int64(chunk.OutputTokens))
+						reqO = int64(chunk.OutputTokens)
 					}
 					if chunk.TotalTokens > 0 {
-						p.TotalTokens.Store(int64(chunk.TotalTokens))
+						reqT = int64(chunk.TotalTokens)
 					}
 					if chunk.Text != "" {
 						if !p.isCurrentGeneration(gen) {
@@ -488,6 +486,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				}
 			}
 			span.AddEvent(core.NewTraceEvent("llm.complete", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
+			pTok, oTok, tTok, requests = pTok+reqP, oTok+reqO, tTok+reqT, requests+1
 			if len(calls) > 0 {
 				// Native provider parts already contain the response text, including
 				// reasoning/signature-bearing and text-only chunks. Avoid replaying
@@ -594,9 +593,6 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		_ = p.session.Reenter(fullFrame, core.Downstream, p.index+1, gen)
 
 		// Emit optional usage metrics if available
-		pTok := p.PromptTokens.Load()
-		oTok := p.OutputTokens.Load()
-		tTok := p.TotalTokens.Load()
 		if pTok > 0 || oTok > 0 || tTok > 0 {
 			var pTokPtr, oTokPtr, tTokPtr *int64
 			if pTok > 0 {
@@ -619,7 +615,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				PromptTokens:     pTokPtr,
 				CompletionTokens: oTokPtr,
 				TotalTokens:      tTokPtr,
-				Requests:         core.Int64Ptr(1),
+				Requests:         core.Int64Ptr(requests),
 			}
 			_ = p.session.Reenter(usageFrame, core.Downstream, p.index+1, gen)
 		}

@@ -69,22 +69,14 @@ func TestLLM_StreamedTextAndUsage(t *testing.T) {
 		t.Fatalf("expected 'Hello there!', got '%s'", fullText)
 	}
 
-	// Verify token usage metadata was captured
-	if proc.PromptTokens.Load() != 10 {
-		t.Fatalf("expected 10 prompt tokens, got %d", proc.PromptTokens.Load())
-	}
-	if proc.OutputTokens.Load() != 2 {
-		t.Fatalf("expected 2 output tokens, got %d", proc.OutputTokens.Load())
-	}
-	if proc.TotalTokens.Load() != 12 {
-		t.Fatalf("expected 12 total tokens, got %d", proc.TotalTokens.Load())
-	}
-
-	// Verify UsageMetricsFrame emission and correlation
+	// Verify UsageMetricsFrame emission, token usage and correlation
 	if len(usageFrames) != 1 {
 		t.Fatalf("expected 1 UsageMetricsFrame, got %d", len(usageFrames))
 	}
 	uf := usageFrames[0]
+	if *uf.PromptTokens != 10 || *uf.CompletionTokens != 2 || *uf.TotalTokens != 12 {
+		t.Fatalf("usage = %d/%d/%d, want 10/2/12", *uf.PromptTokens, *uf.CompletionTokens, *uf.TotalTokens)
+	}
 	if uf.Turn != "turn-1" || uf.Gen != 1 || uf.Provider != "google" || uf.Service != "llm" {
 		t.Fatalf("usage frame correlation mismatch: %+v", uf)
 	}
