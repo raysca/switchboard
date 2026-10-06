@@ -139,15 +139,24 @@ func TestFinalizerSameGenerationDistinctTurnsAndBoundedRetirement(t *testing.T) 
 			t.Fatalf("turn %s: outputs=%v err=%v", turn, outs, err)
 		}
 	}
-	c := candidate("C", 1, "third", t0.Add(3*time.Millisecond))
-	c.Final = true
-	c.EndOfUtterance = true
-	if _, err := f.Observe(c); !errors.Is(err, ErrRetiredTurnLimit) {
-		t.Fatalf("expected fail-closed retirement limit, got %v", err)
+	// Past the retirement window: new turns still commit, the oldest retired
+	// key is forgotten, and the recent ones still drop late duplicates.
+	for i, turn := range []string{"C", "D", "E"} {
+		c := candidate(turn, 1, "more", t0.Add(time.Duration(3+i)*time.Millisecond))
+		c.Final = true
+		c.EndOfUtterance = true
+		if outs, err := f.Observe(c); err != nil || len(outs) != 1 {
+			t.Fatalf("turn %s beyond window: outputs=%v err=%v", turn, outs, err)
+		}
 	}
-	c.Generation, c.Turn, c.At = 2, "C", t0.Add(4*time.Millisecond)
-	if outs, err := f.Observe(c); err != nil || len(outs) != 1 {
-		t.Fatalf("generation advance did not reset bounded retirement: %v %v", outs, err)
+	late := candidate("E", 1, "late", t0.Add(10*time.Millisecond))
+	late.Final = true
+	late.EndOfUtterance = true
+	if outs, err := f.Observe(late); err != nil || len(outs) != 0 {
+		t.Fatalf("recent retired turn re-committed: %v %v", outs, err)
+	}
+	if len(f.retired) != cfg.MaxRetiredTurns {
+		t.Fatalf("retired window not bounded: %d", len(f.retired))
 	}
 }
 
