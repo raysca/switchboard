@@ -14,7 +14,6 @@ func TestMetrics_ExpositionFormatAndBoundedLabels(t *testing.T) {
 	m.SessionsStartedTotal.Add(10)
 	m.SessionsStoppedTotal.Add(5)
 	m.AdmissionRejectsLimit.Add(2)
-	m.AdmissionRejectsQuota.Add(1)
 	m.LeakedWorkTotal.Add(1)
 	m.LeakedSessionsTotal.Add(1)
 	m.LLMCircuitStateGoogle.Store(0)
@@ -29,7 +28,6 @@ func TestMetrics_ExpositionFormatAndBoundedLabels(t *testing.T) {
 		"voice_sessions_started_total 10",
 		"voice_sessions_stopped_total 5",
 		"voice_admission_rejects_total{reason=\"session_limit\"} 2",
-		"voice_admission_rejects_total{reason=\"stt_quota_exhausted\"} 1",
 		"voice_leaked_work_total 1",
 		"voice_leaked_sessions_total 1",
 		"voice_llm_circuit_state{provider=\"google\"} 0",

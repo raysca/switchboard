@@ -612,12 +612,6 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.admission.IsEnabled() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "admission globally disabled"})
-		return
-	}
-
 	// Check VAD executor capacity
 	if s.vadExecutor != nil {
 		if !s.vadExecutor.IsReady() {

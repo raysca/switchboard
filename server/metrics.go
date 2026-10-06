@@ -28,10 +28,7 @@ type Metrics struct {
 	LeakedSessionsTotal       atomic.Uint64
 	AdmissionRejectsLimit     atomic.Uint64
 	AdmissionRejectsPrincipal atomic.Uint64
-	AdmissionRejectsPending   atomic.Uint64
-	AdmissionRejectsQuota     atomic.Uint64
 	AdmissionRejectsVAD       atomic.Uint64
-	AdmissionRejectsDisabled  atomic.Uint64
 
 	// VAD Metrics
 	VADStaleChunksTotal    atomic.Uint64
@@ -40,7 +37,6 @@ type Metrics struct {
 	VADWorkerRestartsTotal atomic.Uint64
 
 	// STT Metrics
-	STTActiveStreams         atomic.Int64
 	STTErrorsTotal           atomic.Uint64
 	STTRotationsTotal        atomic.Uint64
 	STTRotationFailuresTotal atomic.Uint64
@@ -65,7 +61,6 @@ type Metrics struct {
 	TTSCircuitStateXAI     atomic.Int64
 
 	// Transport Metrics
-	PendingHandshakes      atomic.Int64
 	ConnectedClients       atomic.Int64
 	AuthFailuresTotal      atomic.Uint64
 	ReplayRejectionsTotal  atomic.Uint64
@@ -182,10 +177,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# TYPE voice_admission_rejects_total counter\n")
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"session_limit\"} %d\n", m.AdmissionRejectsLimit.Load())
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"principal_limit\"} %d\n", m.AdmissionRejectsPrincipal.Load())
-	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"pending_handshake_limit\"} %d\n", m.AdmissionRejectsPending.Load())
-	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"stt_quota_exhausted\"} %d\n", m.AdmissionRejectsQuota.Load())
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"vad_unavailable\"} %d\n", m.AdmissionRejectsVAD.Load())
-	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"admission_disabled\"} %d\n", m.AdmissionRejectsDisabled.Load())
 
 	fmt.Fprintf(w, "# HELP voice_context_evictions_total Total number of oldest turn pairs evicted.\n")
 	fmt.Fprintf(w, "# TYPE voice_context_evictions_total counter\n")
@@ -229,9 +221,6 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "voice_vad_worker_restarts_total %d\n", m.VADWorkerRestartsTotal.Load())
 
 	// STT
-	fmt.Fprintf(w, "# HELP voice_stt_active_streams Current active STT streams.\n")
-	fmt.Fprintf(w, "# TYPE voice_stt_active_streams gauge\n")
-	fmt.Fprintf(w, "voice_stt_active_streams %d\n", m.STTActiveStreams.Load())
 
 	fmt.Fprintf(w, "# HELP voice_stt_errors_total Total STT provider errors.\n")
 	fmt.Fprintf(w, "# TYPE voice_stt_errors_total counter\n")
@@ -299,9 +288,6 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"xai\"} %d\n", m.TTSCircuitStateXAI.Load())
 
 	// Transport
-	fmt.Fprintf(w, "# HELP voice_transport_pending_handshakes Number of pending WebSocket handshakes.\n")
-	fmt.Fprintf(w, "# TYPE voice_transport_pending_handshakes gauge\n")
-	fmt.Fprintf(w, "voice_transport_pending_handshakes %d\n", m.PendingHandshakes.Load())
 
 	fmt.Fprintf(w, "# HELP voice_transport_connected_clients Number of connected clients.\n")
 	fmt.Fprintf(w, "# TYPE voice_transport_connected_clients gauge\n")

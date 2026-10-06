@@ -74,15 +74,6 @@ func TestReady_CompoundReadinessSemantics(t *testing.T) {
 		t.Fatalf("expected 200 when ready, got %d", w.Code)
 	}
 
-	// 3. Admission disabled -> 503
-	srv.admission.SetEnabled(false)
-	w = httptest.NewRecorder()
-	srv.adminMux.ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when admission disabled, got %d", w.Code)
-	}
-	srv.admission.SetEnabled(true)
-
 	// 4. VAD executor not ready -> 503
 	mockExec.ready = false
 	w = httptest.NewRecorder()
