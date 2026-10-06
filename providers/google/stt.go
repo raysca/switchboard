@@ -726,6 +726,7 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 
 	if err := p.session.Go(func(ctx context.Context) {
 		var traceFailure error
+		defer st.cancel() // a detached stream only got CloseSend; free its context too
 		defer func() {
 			if v := recover(); v != nil {
 				traceFailure = errors.New("provider_failure")
