@@ -14,7 +14,8 @@ func TestRegistryHasStableExplicitCapabilities(t *testing.T) {
 	if !ok {
 		t.Fatal("xai provider missing")
 	}
-	if !reflect.DeepEqual(got.Capabilities, []Capability{CapabilityLLM, CapabilitySTT, CapabilityTTS}) {
+	// xAI speech is experimental and only compiled with the xaispeech tag.
+	if !reflect.DeepEqual(got.Capabilities, xaiCapabilities) || got.Capabilities[0] != CapabilityLLM {
 		t.Fatalf("capabilities=%v", got.Capabilities)
 	}
 	if r.Supports("xai", CapabilityMCP) {

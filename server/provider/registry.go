@@ -65,10 +65,14 @@ func (f DiscoveryFunc) Discover(ctx context.Context, c Capability) (DiscoveryRes
 
 type Registry struct{ definitions map[string]Definition }
 
+// xaiCapabilities lists what the xAI adapters in this build provide. xAI STT
+// and TTS are experimental and compiled only with the xaispeech build tag.
+var xaiCapabilities = []Capability{CapabilityLLM}
+
 func Definitions() []Definition {
 	return []Definition{
 		{ID: "google", DisplayName: "Google", AuthRequired: true, Capabilities: []Capability{CapabilityLLM, CapabilitySTT, CapabilityTTS}},
-		{ID: "xai", DisplayName: "xAI", AuthRequired: true, Capabilities: []Capability{CapabilityLLM, CapabilitySTT, CapabilityTTS}},
+		{ID: "xai", DisplayName: "xAI", AuthRequired: true, Capabilities: xaiCapabilities},
 		// Bearer tokens for remote MCP servers. The only credentials whose
 		// plaintext may leave the server (to the MCP endpoint they belong to).
 		{ID: MCPProviderID, DisplayName: "MCP server token", AuthRequired: true, Capabilities: []Capability{CapabilityMCP}},
