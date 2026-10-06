@@ -65,10 +65,7 @@ func main() {
 
 	vadExec, err := vad.New(vadCfg)
 	if err != nil {
-		if cfg.Profile == server.ProfileProduction || cfg.VAD.Mode == "process" {
-			log.Fatalf("vad executor failed closed: %v", err)
-		}
-		log.Fatalf("vad executor failed (%v); refusing stub fallback", err)
+		log.Fatalf("vad executor failed closed (no stub fallback): %v", err)
 	}
 
 	if vadExec != nil {
