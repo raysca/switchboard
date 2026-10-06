@@ -19,13 +19,6 @@ export class BrowserAudioError extends Error {
   }
 }
 
-export interface AudioCaptureOptions {
-  sampleRate?: number;
-  echoCancellation?: boolean;
-  noiseSuppression?: boolean;
-  autoGainControl?: boolean;
-}
-
 export class BrowserAudioController {
   private mediaStream: MediaStream | null = null;
   private inputContext: AudioContext | null = null;
@@ -36,14 +29,13 @@ export class BrowserAudioController {
   private isMuted = false;
   private activeSources: AudioBufferSourceNode[] = [];
   private nextPlaybackTime = 0;
+  // Bumped by stopCapture(); a startCapture() that sees it change mid-getUserMedia gives the mic back.
+  private captureGen = 0;
 
   /**
    * Requests microphone access and begins streaming 16kHz PCM16LE mono audio chunks.
    */
-  public async startCapture(
-    onAudioChunk: (chunk: Uint8Array) => void,
-    options: AudioCaptureOptions = {},
-  ): Promise<void> {
+  public async startCapture(onAudioChunk: (chunk: Uint8Array) => void): Promise<void> {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       throw new BrowserAudioError(
         "Microphone input is not supported by this browser environment.",
@@ -51,14 +43,16 @@ export class BrowserAudioController {
       );
     }
 
+    const gen = this.captureGen;
+    let stream: MediaStream;
     try {
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: options.echoCancellation ?? true,
-          noiseSuppression: options.noiseSuppression ?? true,
-          autoGainControl: options.autoGainControl ?? true,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
           channelCount: 1,
-          sampleRate: options.sampleRate ?? 16000,
+          sampleRate: 16000,
         },
       });
     } catch (err: unknown) {
@@ -83,17 +77,22 @@ export class BrowserAudioController {
         err,
       );
     }
+    if (gen !== this.captureGen) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    this.mediaStream = stream;
 
     try {
       const AudioCtx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.inputContext = new AudioCtx({ sampleRate: options.sampleRate ?? 16000 });
+      this.inputContext = new AudioCtx({ sampleRate: 16000 });
       if (this.inputContext.state === "suspended") {
         await this.inputContext.resume();
       }
 
-      this.mediaSource = this.inputContext.createMediaStreamSource(this.mediaStream);
+      this.mediaSource = this.inputContext.createMediaStreamSource(stream);
       // ScriptProcessorNode: 512 samples per chunk (32ms @ 16kHz) matches 10-40ms chunk requirement
       this.scriptProcessor = this.inputContext.createScriptProcessor(512, 1, 1);
 
@@ -121,6 +120,7 @@ export class BrowserAudioController {
    * Stops microphone capture and releases hardware devices.
    */
   public stopCapture(): void {
+    this.captureGen++;
     if (this.mediaStream) {
       for (const track of this.mediaStream.getTracks()) {
         try {
@@ -170,10 +170,6 @@ export class BrowserAudioController {
         track.enabled = !muted;
       }
     }
-  }
-
-  public getMuted(): boolean {
-    return this.isMuted;
   }
 
   /**

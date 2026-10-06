@@ -19,14 +19,12 @@ function renderWithProviders(ui: React.ReactElement) {
 
 function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    serverConfig: vi.fn(),
     issueVoiceToken: vi.fn(),
     getProviders: vi.fn().mockResolvedValue([
       { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
     ]),
     getCredentials: vi.fn().mockResolvedValue([]),
     createCredential: vi.fn(),
-    getCredential: vi.fn(),
     updateCredential: vi.fn(),
     deleteCredential: vi.fn(),
     validateCredential: vi.fn(),
@@ -34,11 +32,9 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getProviderDiscovery: vi.fn(),
     getAgents: vi.fn().mockResolvedValue([]),
     createAgent: vi.fn(),
-    getAgent: vi.fn(),
     updateAgent: vi.fn(),
     archiveAgent: vi.fn(),
     duplicateAgent: vi.fn(),
-    updateAgentMCPTools: vi.fn(),
     ...overrides,
   } as ApiClient;
 }
@@ -250,5 +246,62 @@ describe("OnboardingView", () => {
     expect(screen.getByText("Front Desk")).toBeVisible();
     expect(screen.getByRole("link", { name: /manage agents/i })).toBeVisible();
     expect(screen.getByRole("link", { name: /manage providers/i })).toBeVisible();
+  });
+
+  it("explains why Create agent cannot run when no credential covers every stage", async () => {
+    const client = createMockClient({
+      getCredentials: vi.fn().mockResolvedValue([
+        {
+          id: "cred-x",
+          provider: "xai",
+          masked_value: "••••••••9999",
+          validation_state: "valid",
+          capabilities: ["llm"],
+          created_at: "2026-10-05T12:00:00Z",
+          updated_at: "2026-10-05T12:00:00Z",
+        },
+      ]),
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
+    await screen.findByRole("heading", { name: /step 2: create your first agent/i });
+    await waitFor(() => expect(client.getProviders).toHaveBeenCalled());
+    await user.type(screen.getByLabelText(/agent name/i), "Concierge");
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+    expect(await screen.findByText(/no connected credential can run/i)).toBeVisible();
+    expect(client.createAgent).not.toHaveBeenCalled();
+  });
+
+  it("treats an install whose only agent is archived as having no agents", async () => {
+    const client = createMockClient({
+      getCredentials: vi.fn().mockResolvedValue([
+        {
+          id: "cred-1",
+          provider: "google",
+          masked_value: "••••••••1234",
+          validation_state: "valid",
+          capabilities: ["llm", "stt", "tts"],
+          created_at: "2026-10-05T12:00:00Z",
+          updated_at: "2026-10-05T12:00:00Z",
+        },
+      ]),
+      getAgents: vi.fn().mockResolvedValue([
+        {
+          id: "agent-1",
+          name: "Deleted Bot",
+          description: "",
+          enabled: true,
+          archived: true,
+          current_version: null,
+          readiness: { state: "ready", reasons: [] },
+          created_at: "2026-10-05T12:00:00Z",
+          updated_at: "2026-10-05T12:00:00Z",
+        },
+      ]),
+    });
+
+    renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
+    expect(await screen.findByRole("heading", { name: /step 2: create your first agent/i })).toBeVisible();
+    expect(screen.queryByText("Deleted Bot")).toBeNull();
   });
 });

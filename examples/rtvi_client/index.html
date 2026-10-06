@@ -235,6 +235,7 @@
     let ws = null;
     let audioCtx = null;
     let micStream = null;
+    let micCtx = null;
     let scriptProcessor = null;
     let currentBotMsgEl = null;
 
@@ -409,6 +410,10 @@
         audioCtx.close();
         audioCtx = null;
       }
+      if (micCtx) {
+        micCtx.close();
+        micCtx = null;
+      }
       ws = null;
       btnConnect.disabled = false;
       btnDisconnect.disabled = true;
@@ -422,7 +427,7 @@
 
     async function startMicrophone() {
       try {
-        micStream = await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             sampleRate: 16000,
             channelCount: 1,
@@ -430,8 +435,14 @@
             noiseSuppression: true
           }
         });
+        if (!ws) {
+          // Disconnected while the permission prompt was open.
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        micStream = stream;
 
-        const micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
         const source = micCtx.createMediaStreamSource(micStream);
 
         // 20ms @ 16kHz = 320 samples -> buffer size 512 for ScriptProcessor

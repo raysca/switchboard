@@ -23,7 +23,8 @@ if [[ ! -f deploy/certs/voice.example.com.crt ]]; then
   cp deploy/certs/voice.example.com.key deploy/certs/admin.key
 fi
 docker build -f deploy/Dockerfile -t govoice:release-security .
-trap 'docker compose -f deploy/docker-compose.yaml down' EXIT
+# -v: a kept postgres volume keeps the previous run's random password.
+trap 'docker compose -f deploy/docker-compose.yaml down -v' EXIT
 docker compose -f deploy/docker-compose.yaml up -d
 for _ in $(seq 1 30); do
   if curl -fsS --insecure https://127.0.0.1/health; then
@@ -45,11 +46,10 @@ api() {
 docker exec govoice-server curl -fsS http://127.0.0.1:9090/ready
 
 # Service-account JSON is compacted (secrets may not contain control characters);
-# anything else is treated as an API key.
-secret="$(jq -c . "$SMOKE_GOOGLE_SECRET_FILE" 2>/dev/null || tr -d '\r\n' <"$SMOKE_GOOGLE_SECRET_FILE")"
-cred_id="$(jq -n --arg s "$secret" '{provider: "google", secret: $s}' |
+# anything else is treated as an API key. The secret only travels through pipes.
+cred_id="$({ jq -c . "$SMOKE_GOOGLE_SECRET_FILE" 2>/dev/null || tr -d '\r\n' <"$SMOKE_GOOGLE_SECRET_FILE"; } |
+  jq -Rs '{provider: "google", secret: rtrimstr("\n")}' |
   api POST /api/v1/providers/credentials | jq -er .data.id)"
-unset secret
 
 # credential_id is explicit so credentials left by earlier runs cannot make it ambiguous.
 agent="$(jq -n --arg c "$cred_id" '{name: "smoke", config: {

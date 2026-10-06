@@ -2,17 +2,21 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { MCPView } from "./MCPView";
 import { ApiError, type ApiClient, type MCPServerDTO, type MCPServerDetailDTO } from "../../api/client";
 
-function renderWithProviders(ui: React.ReactElement) {
+function renderWithProviders(ui: React.ReactElement, path = "/mcp-servers") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/mcp-servers/:serverId?" element={ui} />
+        </Routes>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -60,7 +64,6 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getMCPServers: vi.fn().mockResolvedValue([createMockServer()]),
     getMCPServer: vi.fn().mockResolvedValue(createMockServerDetail()),
     createMCPServer: vi.fn().mockResolvedValue(createMockServer()),
-    updateMCPServer: vi.fn().mockResolvedValue(createMockServer()),
     deleteMCPServer: vi.fn().mockResolvedValue({ deleted: true }),
     disableMCPServer: vi.fn().mockResolvedValue(createMockServer({ enabled: false })),
     enableMCPServer: vi.fn().mockResolvedValue(createMockServer({ enabled: true })),
@@ -181,7 +184,8 @@ describe("MCPView", () => {
     });
 
     renderWithProviders(
-      <MCPView client={client} keyValue="test-key" initialServerId="mcp-server-1" />,
+      <MCPView client={client} keyValue="test-key" />,
+      "/mcp-servers/mcp-server-1",
     );
 
     expect(await screen.findByTestId("schema-drift-badge")).toBeVisible();
@@ -201,7 +205,8 @@ describe("MCPView", () => {
     const client = createMockClient({ testMCPTool });
 
     renderWithProviders(
-      <MCPView client={client} keyValue="test-key" initialServerId="mcp-server-1" />,
+      <MCPView client={client} keyValue="test-key" />,
+      "/mcp-servers/mcp-server-1",
     );
 
     const testConsoleBtn = await screen.findByRole("button", { name: "Test Console" });
@@ -230,7 +235,8 @@ describe("MCPView", () => {
     const client = createMockClient({ testMCPTool });
 
     renderWithProviders(
-      <MCPView client={client} keyValue="test-key" initialServerId="mcp-server-1" />,
+      <MCPView client={client} keyValue="test-key" />,
+      "/mcp-servers/mcp-server-1",
     );
 
     await user.click(await screen.findByRole("button", { name: "Test Console" }));
@@ -300,7 +306,8 @@ describe("MCPView", () => {
     const client = createMockClient({ testMCPTool });
 
     renderWithProviders(
-      <MCPView client={client} keyValue="test-key" initialServerId="mcp-server-1" />,
+      <MCPView client={client} keyValue="test-key" />,
+      "/mcp-servers/mcp-server-1",
     );
 
     await user.click(await screen.findByRole("button", { name: "Test Console" }));

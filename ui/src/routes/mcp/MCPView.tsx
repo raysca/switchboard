@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
@@ -20,7 +21,6 @@ import {
 export type MCPViewProps = {
   client: ApiClient;
   keyValue: string | null;
-  initialServerId?: string | null;
 };
 
 type ViewMode = "list" | "create" | "detail";
@@ -72,7 +72,8 @@ export function formatApiError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-export function MCPView({ client, keyValue, initialServerId }: MCPViewProps) {
+export function MCPView({ client, keyValue }: MCPViewProps) {
+  const { serverId: initialServerId } = useParams();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ViewMode>(initialServerId ? "detail" : "list");
   const [selectedServerId, setSelectedServerId] = useState<string | null>(initialServerId ?? null);
@@ -254,7 +255,7 @@ export function MCPView({ client, keyValue, initialServerId }: MCPViewProps) {
     );
   }
 
-  async function handleCreateSubmit(e: FormEvent) {
+  function handleCreateSubmit(e: FormEvent) {
     e.preventDefault();
     if (!nameDraft.trim()) {
       setFormError("Server name is required");
@@ -264,18 +265,15 @@ export function MCPView({ client, keyValue, initialServerId }: MCPViewProps) {
       setFormError("Endpoint URL is required");
       return;
     }
-    try {
-      await createMutation.mutateAsync({
-        name: nameDraft.trim(),
-        description: descriptionDraft.trim() || undefined,
-        endpoint: endpointDraft.trim(),
-        transport: transportDraft,
-        credential_id: credentialDraft || undefined,
-        enabled: enabledDraft,
-      });
-    } catch (err) {
-      setFormError(formatApiError(err, "Failed to create MCP server"));
-    }
+    // onError reports failures.
+    createMutation.mutate({
+      name: nameDraft.trim(),
+      description: descriptionDraft.trim() || undefined,
+      endpoint: endpointDraft.trim(),
+      transport: transportDraft,
+      credential_id: credentialDraft || undefined,
+      enabled: enabledDraft,
+    });
   }
 
   async function handleExecuteTool(serverId: string, toolName: string) {
@@ -323,6 +321,7 @@ export function MCPView({ client, keyValue, initialServerId }: MCPViewProps) {
   const getToolDriftInfo = (tool: MCPToolDTO, serverId: string): boolean => {
     if (!agentsQuery.data) return false;
     for (const agent of agentsQuery.data) {
+      if (agent.archived) continue;
       const selections = agent.current_version?.mcp_tools ?? [];
       for (const sel of selections) {
         if (sel.mcp_server_id === serverId && sel.remote_name === tool.remote_name) {

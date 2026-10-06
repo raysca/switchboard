@@ -30,15 +30,3 @@ export const test = base.extend<{ stack: Stack; _requireKey: void }>({
   stack: async ({}, use) => use(readStack()),
 });
 export { expect };
-
-// test.use(fakeMic("voice-custom.wav")) swaps the fake microphone for a spec file.
-// Note: Chromium loops the WAV for as long as capture runs.
-export const fakeMic = (wav: string) => ({
-  launchOptions: {
-    args: [
-      "--use-fake-ui-for-media-stream",
-      "--use-fake-device-for-media-stream",
-      `--use-file-for-fake-audio-capture=${path.resolve(__dirname, "../fixtures", wav)}`,
-    ],
-  },
-});

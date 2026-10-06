@@ -3,7 +3,6 @@ import type { TurnDTO, SessionTracesDTO, TraceSpanDTO, ToolCallDTO, TraceEventDT
 import { EmptyState, Status } from "../primitives";
 
 export type TurnTimelineProps = {
-  sessionId: string;
   turns: TurnDTO[];
   traces?: SessionTracesDTO | null;
   loading?: boolean;
@@ -31,14 +30,14 @@ function parseLatencies(raw: unknown): LatencyData | null {
   return null;
 }
 
-function formatDuration(startedAt: string, endedAt?: string | null): string {
+export function formatDuration(startedAt: string, endedAt?: string | null): string {
   if (!endedAt) return "In progress";
   const ms = Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-export function TurnTimeline({ sessionId: _sessionId, turns, traces, loading }: TurnTimelineProps) {
+export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
   const [expandedTurns, setExpandedTurns] = useState<Record<string, boolean>>({});
 
   if (loading) {

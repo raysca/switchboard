@@ -19,7 +19,6 @@ function renderWithProviders(ui: React.ReactElement) {
 
 function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    serverConfig: vi.fn(),
     issueVoiceToken: vi.fn(),
     getProviders: vi.fn().mockResolvedValue([
       { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
@@ -37,7 +36,6 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
       },
     ]),
     createCredential: vi.fn(),
-    getCredential: vi.fn(),
     updateCredential: vi.fn(),
     deleteCredential: vi.fn(),
     validateCredential: vi.fn(),
@@ -45,11 +43,9 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getProviderDiscovery: vi.fn(),
     getAgents: vi.fn().mockResolvedValue([]),
     createAgent: vi.fn(),
-    getAgent: vi.fn(),
     updateAgent: vi.fn(),
     archiveAgent: vi.fn(),
     duplicateAgent: vi.fn(),
-    updateAgentMCPTools: vi.fn(),
     ...overrides,
   } as ApiClient;
 }

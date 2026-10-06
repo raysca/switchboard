@@ -3,6 +3,25 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 
+// A complete /operations/status payload, as the server always sends it.
+const operationsStatus = {
+  uptime_seconds: 60,
+  started_at: "2026-10-05T12:00:00Z",
+  profile: "production",
+  active_sessions: 0,
+  max_sessions: 50,
+  capacity_utilization: 0,
+  sessions_total: 0,
+  turns_total: 0,
+  errors_total: 0,
+  p95_latency_ms: 0,
+  max_call_duration_seconds: 300,
+  voice_token_max_lifetime_seconds: 60,
+  database: { dialect: "sqlite", status: "connected", open_connections: 1, in_use: 0 },
+  vad: { worker_status: "ready", sample_rate: 16000, frame_size: 512 },
+  health: "healthy",
+};
+
 describe("admin shell", () => {
   it("shows all six routes and keeps keyboard navigation visible", async () => {
     render(<App initialPath="/agents" />);
@@ -42,14 +61,7 @@ describe("admin shell", () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({
-            data: {
-              profile: "production",
-              max_sessions: 50,
-              max_call_duration_seconds: 300,
-              voice_token_max_lifetime_seconds: 60,
-            },
-          }),
+          JSON.stringify({ data: operationsStatus }),
           { status: 200 },
         ),
       )
@@ -101,14 +113,7 @@ describe("admin shell", () => {
       .mockImplementationOnce(async () => pendingA)
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({
-            data: {
-              profile: "production",
-              max_sessions: 50,
-              max_call_duration_seconds: 300,
-              voice_token_max_lifetime_seconds: 60,
-            },
-          }),
+          JSON.stringify({ data: operationsStatus }),
           { status: 200 },
         ),
       );

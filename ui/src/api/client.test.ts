@@ -2,33 +2,22 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError, agentConfigV2Schema, createApiClient } from "./client";
 
 describe("management client", () => {
-  it("sends an in-memory bearer and reads the sanitized server projection", async () => {
+  it("sends an in-memory bearer and parses the response", async () => {
     const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
       expect(init?.headers).toMatchObject({
         Authorization: "Bearer management-key",
       });
-      return new Response(
-        JSON.stringify({
-          data: {
-            profile: "production",
-            max_sessions: 50,
-            max_call_duration_seconds: 300,
-            voice_token_max_lifetime_seconds: 60,
-          },
-        }),
-        { headers: { "X-Request-ID": "req-1" } },
-      );
+      return new Response(JSON.stringify({ data: [] }), {
+        headers: { "X-Request-ID": "req-1" },
+      });
     });
     const client = createApiClient(
       () => ({ key: "management-key", generation: 1 }),
       fetcher,
     );
-    await expect(client.serverConfig()).resolves.toMatchObject({
-      profile: "production",
-      max_sessions: 50,
-    });
+    await expect(client.getProviders()).resolves.toEqual([]);
     expect(fetcher).toHaveBeenCalledWith(
-      "/api/v1/server-config",
+      "/api/v1/providers",
       expect.any(Object),
     );
   });
@@ -51,7 +40,7 @@ describe("management client", () => {
       createApiClient(
         () => ({ key: "key", generation: 1 }),
         fetcher,
-      ).serverConfig(),
+      ).getProviders(),
     ).rejects.toMatchObject({
       code: "unavailable",
       requestId: "req-header",
@@ -79,9 +68,9 @@ describe("management client", () => {
       fetcher,
       clear,
     );
-    await expect(client.serverConfig()).rejects.toBeInstanceOf(ApiError);
+    await expect(client.getProviders()).rejects.toBeInstanceOf(ApiError);
     expect(clear).toHaveBeenCalledOnce();
-    await expect(client.serverConfig()).rejects.not.toHaveProperty(
+    await expect(client.getProviders()).rejects.not.toHaveProperty(
       "message",
       expect.stringContaining("private-key"),
     );
@@ -131,7 +120,7 @@ describe("management client", () => {
       fetcher,
       onUnauthorized,
     );
-    const request = client.serverConfig();
+    const request = client.getProviders();
     generation = 8;
     respond(
       new Response(
@@ -197,9 +186,6 @@ describe("management client", () => {
           new Response(JSON.stringify({ data: cred }), { status: 201 }),
         )
         .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: cred }), { status: 200 }),
-        )
-        .mockResolvedValueOnce(
           new Response(JSON.stringify({ data: { ...cred, validation_state: "valid" } }), { status: 200 }),
         )
         .mockResolvedValueOnce(
@@ -226,9 +212,6 @@ describe("management client", () => {
         method: "POST",
         body: JSON.stringify({ provider: "google", secret: "super-secret" }),
       }));
-
-      const single = await client.getCredential("cred-1");
-      expect(single.id).toBe("cred-1");
 
       const validated = await client.validateCredential("cred-1");
       expect(validated.validation_state).toBe("valid");
@@ -302,9 +285,6 @@ describe("management client", () => {
           new Response(JSON.stringify({ data: agent }), { status: 201 }),
         )
         .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: agent }), { status: 200 }),
-        )
-        .mockResolvedValueOnce(
           new Response(JSON.stringify({ data: { ...agent, name: "Updated" } }), { status: 200 }),
         )
         .mockResolvedValueOnce(
@@ -312,19 +292,6 @@ describe("management client", () => {
         )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ data: { archived: true } }), { status: 200 }),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({
-            data: {
-              id: "ver-2",
-              number: 2,
-              schema_version: 1,
-              config: { stt: "google", llm: "google", tts: "google" },
-              config_hash: "hash456",
-              created_at: "2026-10-05T12:05:00Z",
-              mcp_tools: [{ mcp_server_id: "mcp-1", remote_name: "query", schema_hash: "sh1", required: true }],
-            },
-          }), { status: 200 }),
         );
 
       const client = createApiClient(
@@ -332,9 +299,9 @@ describe("management client", () => {
         fetcher,
       );
 
-      const agents = await client.getAgents({ limit: 10, offset: 0 });
+      const agents = await client.getAgents();
       expect(agents).toHaveLength(1);
-      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/agents?limit=10&offset=0", expect.any(Object));
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/agents?limit=100", expect.any(Object));
 
       const created = await client.createAgent({
         name: "Customer Support",
@@ -347,9 +314,6 @@ describe("management client", () => {
       });
       expect(created.id).toBe("agent-1");
 
-      const single = await client.getAgent("agent-1");
-      expect(single.name).toBe("Customer Support");
-
       const updated = await client.updateAgent("agent-1", { name: "Updated" });
       expect(updated.name).toBe("Updated");
 
@@ -358,12 +322,6 @@ describe("management client", () => {
 
       const archived = await client.archiveAgent("agent-1");
       expect(archived.archived).toBe(true);
-
-      const version = await client.updateAgentMCPTools("agent-1", [
-        { mcp_server_id: "mcp-1", remote_name: "query", schema_hash: "sh1", required: true },
-      ]);
-      expect(version.number).toBe(2);
-      expect(version.mcp_tools).toHaveLength(1);
     });
 
     it("handles MCP server management operations", async () => {
@@ -396,7 +354,6 @@ describe("management client", () => {
           },
         }), { status: 200 }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ data: mockServer }), { status: 201 }))
-        .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...mockServer, name: "Updated" } }), { status: 200 }))
         .mockResolvedValueOnce(new Response(null, { status: 204 }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ data: { deleted: true } }), { status: 200 }))
         .mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...mockServer, enabled: false } }), { status: 200 }))
@@ -430,9 +387,6 @@ describe("management client", () => {
         endpoint: "https://mcp.example.com/rpc",
       });
       expect(created.id).toBe("mcp-1");
-
-      const updated = await client.updateMCPServer("mcp-1", { name: "Updated" });
-      expect(updated.name).toBe("Updated");
 
       const deleted = await client.deleteMCPServer("mcp-1");
       expect(deleted.deleted).toBe(true);

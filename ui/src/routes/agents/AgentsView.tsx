@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router";
+import { Link, useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
@@ -11,6 +11,7 @@ import {
   type UpdateAgentInput,
   agentConfigV2Schema,
   ApiError,
+  asApiError,
 } from "../../api/client";
 import {
   ActionButton,
@@ -431,8 +432,9 @@ function AgentForm({
 
 export function AgentsView({ client, keyValue }: AgentsViewProps) {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<ViewMode>("list");
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const { agentId } = useParams();
+  const [mode, setMode] = useState<ViewMode>(agentId ? "detail" : "list");
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(agentId ?? null);
 
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
@@ -455,11 +457,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       setMode("detail");
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setFormError(err);
-      } else {
-        setFormError(new ApiError("Failed to create agent", "create_failed", 500, ""));
-      }
+      setFormError(asApiError(err, "Failed to create agent"));
     },
   });
 
@@ -478,11 +476,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       setMode("detail");
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setFormError(err);
-      } else {
-        setFormError(new ApiError("Failed to update agent", "update_failed", 500, ""));
-      }
+      setFormError(asApiError(err, "Failed to update agent"));
     },
   });
 
@@ -493,11 +487,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setActionError(err);
-      } else {
-        setActionError(new ApiError("Duplicate failed", "duplicate_failed", 500, ""));
-      }
+      setActionError(asApiError(err, "Duplicate failed"));
     },
   });
 
@@ -511,11 +501,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setActionError(err);
-      } else {
-        setActionError(new ApiError("Archive failed", "archive_failed", 500, ""));
-      }
+      setActionError(asApiError(err, "Archive failed"));
     },
   });
 

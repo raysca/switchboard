@@ -24,7 +24,6 @@ import {
   RTVI_TYPE_USER_STOPPED_SPEAKING,
   RTVI_TYPE_USER_TRANSCRIPTION,
   type DecodedFrame,
-  type RTVIBotReadyData,
   type RTVIBotTextData,
   type RTVIErrorData,
   type RTVIMessage,
@@ -83,8 +82,6 @@ export interface VoiceClientError {
 export interface VoiceClientState {
   sessionState: SessionState;
   sessionId: string | null;
-  token: string | null;
-  agentId: string | null;
   isUserSpeaking: boolean;
   isBotSpeaking: boolean;
   isMuted: boolean;
@@ -114,8 +111,6 @@ export class VoiceClient {
   private state: VoiceClientState = {
     sessionState: "disconnected",
     sessionId: null,
-    token: null,
-    agentId: null,
     isUserSpeaking: false,
     isBotSpeaking: false,
     isMuted: false,
@@ -150,6 +145,8 @@ export class VoiceClient {
   private botSpeechStartTime = 0;
   private recentAudioFramesInTimestamps: number[] = [];
   private bargeInResetTimer: ReturnType<typeof setTimeout> | null = null;
+  // Bumped by connect() and disconnect(); a connect() whose attempt is stale stops after its next await.
+  private attempt = 0;
 
   constructor(apiClient: ApiClient, audioController?: BrowserAudioController) {
     this.apiClient = apiClient;
@@ -188,6 +185,7 @@ export class VoiceClient {
    */
   public async connect(options: ConnectOptions): Promise<void> {
     if (
+      this.state.sessionState === "requesting_token" ||
       this.state.sessionState === "connecting" ||
       this.state.sessionState === "connected" ||
       this.state.sessionState === "ready"
@@ -204,11 +202,11 @@ export class VoiceClient {
       return;
     }
     const principal = options.principal || `operator-${Date.now()}`;
+    const attempt = ++this.attempt;
 
     // Reset session errors and transient speaking states
     this.updateState({
       sessionState: "requesting_token",
-      agentId,
       error: null,
       isUserSpeaking: false,
       isBotSpeaking: false,
@@ -224,16 +222,14 @@ export class VoiceClient {
         principal,
         agent_id: agentId,
       });
+      if (attempt !== this.attempt) return;
       tokenStr = tokenResp.token;
-      const extractedId =
-        extractSessionIdFromToken(tokenStr) || `sess-${Date.now()}`;
-
       this.updateState({
-        token: tokenStr,
-        sessionId: extractedId,
+        sessionId: extractSessionIdFromToken(tokenStr),
         sessionState: "connecting",
       });
     } catch (err: unknown) {
+      if (attempt !== this.attempt) return;
       const msg = (err as Error)?.message ?? "Failed to acquire voice token";
       this.updateState({
         sessionState: "error",
@@ -248,6 +244,7 @@ export class VoiceClient {
         this.sendAudioChunk(pcmChunk);
       });
     } catch (err: unknown) {
+      if (attempt !== this.attempt) return;
       const audioErr = err as BrowserAudioError;
       const category =
         audioErr.type === "permission_denied" ? "mic" : "connection";
@@ -255,6 +252,11 @@ export class VoiceClient {
         sessionState: "error",
         error: { category, message: audioErr.message, fatal: true },
       });
+      return;
+    }
+    if (attempt !== this.attempt) {
+      // disconnect() ran while the mic was opening: release it.
+      this.audioController.stopCapture();
       return;
     }
 
@@ -319,6 +321,7 @@ export class VoiceClient {
    * Gracefully concludes the voice call and tears down resources.
    */
   public async disconnect(): Promise<void> {
+    this.attempt++;
     if (this.state.sessionState === "disconnected") {
       return;
     }
@@ -440,18 +443,12 @@ export class VoiceClient {
   }
 
   private handleSocketMessage(event: MessageEvent): void {
-    let rawBytes: Uint8Array;
-    if (event.data instanceof ArrayBuffer) {
-      rawBytes = new Uint8Array(event.data);
-    } else if (ArrayBuffer.isView(event.data)) {
-      rawBytes = new Uint8Array(event.data.buffer);
-    } else {
-      return;
-    }
+    // binaryType is "arraybuffer", so binary frames are always ArrayBuffers.
+    if (!(event.data instanceof ArrayBuffer)) return;
 
     let decoded: DecodedFrame | null = null;
     try {
-      decoded = decodeBinaryFrame(rawBytes);
+      decoded = decodeBinaryFrame(new Uint8Array(event.data));
     } catch {
       return;
     }
@@ -507,7 +504,6 @@ export class VoiceClient {
     switch (parsed.type) {
       case RTVI_TYPE_BOT_READY: {
         const readyLatency = Date.now() - this.clientReadyTime;
-        const botData = parsed.data as RTVIBotReadyData | undefined;
         this.updateState({
           sessionState: "ready",
           metrics: {
@@ -515,9 +511,6 @@ export class VoiceClient {
             readyLatencyMs: readyLatency,
           },
         });
-        if (botData?.features && typeof botData.features === "object") {
-          // Additional bot capabilities
-        }
         break;
       }
 

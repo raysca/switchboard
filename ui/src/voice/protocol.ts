@@ -30,12 +30,6 @@ export interface RTVIClientReadyData {
   about?: Record<string, unknown>;
 }
 
-export interface RTVIBotReadyData {
-  version: string;
-  config?: string[];
-  features?: Record<string, unknown>;
-}
-
 export interface RTVITranscriptionData {
   text: string;
   final: boolean;
@@ -54,9 +48,7 @@ export interface RTVIErrorData {
 
 export type DecodedFrame =
   | { kind: "message"; data: string; parsed?: RTVIMessage }
-  | { kind: "audio"; audio: Uint8Array; sampleRate: number; numChannels: number }
-  | { kind: "text"; text: string }
-  | { kind: "interruption" };
+  | { kind: "audio"; audio: Uint8Array; sampleRate: number };
 
 // --- Varint Utilities ---
 
@@ -241,172 +233,72 @@ export function encodeAudioFrame(
 // --- Protobuf Frame Decoders ---
 
 /**
- * Decodes a binary WebSocket message into a DecodedFrame.
+ * Reads one protobuf message's fields: length-delimited ones as bytes,
+ * varints as numbers. Fixed-width fields are skipped.
+ */
+function readFields(bytes: Uint8Array): Map<number, Uint8Array | number> {
+  const fields = new Map<number, Uint8Array | number>();
+  let offset = 0;
+  while (offset < bytes.length) {
+    const [tag, tagBytes] = decodeVarint(bytes, offset);
+    offset += tagBytes;
+    const wireType = tag & 0x07;
+    if (wireType === 2) {
+      const [len, lenBytes] = decodeVarint(bytes, offset);
+      offset += lenBytes;
+      if (offset + len > bytes.length) {
+        throw new Error("Malformed protobuf: field length exceeds buffer bounds");
+      }
+      fields.set(tag >> 3, bytes.subarray(offset, offset + len));
+      offset += len;
+    } else if (wireType === 0) {
+      const [val, valBytes] = decodeVarint(bytes, offset);
+      offset += valBytes;
+      fields.set(tag >> 3, val);
+    } else if (wireType === 1) {
+      offset += 8;
+    } else if (wireType === 5) {
+      offset += 4;
+    } else {
+      throw new Error(`Unsupported wire type: ${wireType}`);
+    }
+  }
+  return fields;
+}
+
+/**
+ * Decodes a binary WebSocket message into a DecodedFrame. The server only
+ * sends Frame.audio (field 2) and Frame.message (field 4).
  */
 export function decodeBinaryFrame(buffer: Uint8Array): DecodedFrame | null {
-  if (buffer.length === 0) {
-    return null;
-  }
-
-  let offset = 0;
-  while (offset < buffer.length) {
-    const [tag, tagBytes] = decodeVarint(buffer, offset);
-    offset += tagBytes;
-    const fieldNumber = tag >> 3;
-    const wireType = tag & 0x07;
-
-    if (wireType !== 2) {
-      // For oneof fields in Frame, all variants are length-delimited (wireType 2)
-      // Skip unknown wire types
-      if (wireType === 0) {
-        const [, valBytes] = decodeVarint(buffer, offset);
-        offset += valBytes;
-      } else if (wireType === 1) {
-        offset += 8;
-      } else if (wireType === 5) {
-        offset += 4;
-      } else {
-        throw new Error(`Unsupported wire type: ${wireType}`);
-      }
-      continue;
-    }
-
-    const [fieldLength, lenBytes] = decodeVarint(buffer, offset);
-    offset += lenBytes;
-
-    if (offset + fieldLength > buffer.length) {
-      throw new Error("Malformed protobuf: field length exceeds buffer bounds");
-    }
-
-    const fieldData = buffer.subarray(offset, offset + fieldLength);
-    offset += fieldLength;
-
-    if (fieldNumber === 4) {
-      // Frame.message: MessageFrame
-      return decodeMessageFrame(fieldData);
-    } else if (fieldNumber === 2) {
-      // Frame.audio: AudioRawFrame
-      return decodeAudioRawFrame(fieldData);
-    } else if (fieldNumber === 1) {
-      // Frame.text: TextFrame
-      return decodeTextFrame(fieldData);
-    } else if (fieldNumber === 5) {
-      // Frame.interruption: InterruptionFrame
-      return { kind: "interruption" };
-    }
-  }
-
-  return null;
-}
-
-function decodeMessageFrame(bytes: Uint8Array): DecodedFrame {
-  let offset = 0;
-  let jsonString = "";
-  while (offset < bytes.length) {
-    const [tag, tagBytes] = decodeVarint(bytes, offset);
-    offset += tagBytes;
-    const fieldNumber = tag >> 3;
-    const wireType = tag & 0x07;
-
-    if (wireType === 2) {
-      const [len, lenBytes] = decodeVarint(bytes, offset);
-      offset += lenBytes;
-      const dataSlice = bytes.subarray(offset, offset + len);
-      offset += len;
-      if (fieldNumber === 1) {
-        jsonString = textDecoder.decode(dataSlice);
-      }
-    } else if (wireType === 0) {
-      const [, vBytes] = decodeVarint(bytes, offset);
-      offset += vBytes;
-    } else if (wireType === 1) {
-      offset += 8;
-    } else if (wireType === 5) {
-      offset += 4;
-    }
-  }
-
-  let parsed: RTVIMessage | undefined;
-  if (jsonString) {
+  const frame = readFields(buffer);
+  const message = frame.get(4);
+  if (message instanceof Uint8Array) {
+    // MessageFrame { string data = 1; }
+    const data = readFields(message).get(1);
+    const json = data instanceof Uint8Array ? textDecoder.decode(data) : "";
+    let parsed: RTVIMessage | undefined;
     try {
-      const obj = JSON.parse(jsonString);
-      if (obj && typeof obj === "object" && obj.label === RTVI_LABEL) {
-        parsed = obj as RTVIMessage;
-      }
+      const obj = json ? JSON.parse(json) : null;
+      if (obj && typeof obj === "object" && obj.label === RTVI_LABEL) parsed = obj as RTVIMessage;
     } catch {
-      // Not JSON or parse error, keep raw string
+      // Not JSON: keep the raw string
     }
+    return { kind: "message", data: json, parsed };
   }
-
-  return { kind: "message", data: jsonString, parsed };
-}
-
-function decodeAudioRawFrame(bytes: Uint8Array): DecodedFrame {
-  let offset = 0;
-  let audio = new Uint8Array(0);
-  let sampleRate = 24000;
-  let numChannels = 1;
-
-  while (offset < bytes.length) {
-    const [tag, tagBytes] = decodeVarint(bytes, offset);
-    offset += tagBytes;
-    const fieldNumber = tag >> 3;
-    const wireType = tag & 0x07;
-
-    if (wireType === 2) {
-      const [len, lenBytes] = decodeVarint(bytes, offset);
-      offset += lenBytes;
-      const dataSlice = bytes.subarray(offset, offset + len);
-      offset += len;
-      if (fieldNumber === 3) {
-        audio = new Uint8Array(dataSlice);
-      }
-    } else if (wireType === 0) {
-      const [val, vBytes] = decodeVarint(bytes, offset);
-      offset += vBytes;
-      if (fieldNumber === 4) {
-        sampleRate = val;
-      } else if (fieldNumber === 5) {
-        numChannels = val;
-      }
-    } else if (wireType === 1) {
-      offset += 8;
-    } else if (wireType === 5) {
-      offset += 4;
-    }
+  const audio = frame.get(2);
+  if (audio instanceof Uint8Array) {
+    // AudioRawFrame { bytes audio = 3; uint32 sample_rate = 4; }
+    const fields = readFields(audio);
+    const samples = fields.get(3);
+    const rate = fields.get(4);
+    return {
+      kind: "audio",
+      audio: samples instanceof Uint8Array ? new Uint8Array(samples) : new Uint8Array(0),
+      sampleRate: typeof rate === "number" ? rate : 24000,
+    };
   }
-
-  return { kind: "audio", audio, sampleRate, numChannels };
-}
-
-function decodeTextFrame(bytes: Uint8Array): DecodedFrame {
-  let offset = 0;
-  let text = "";
-  while (offset < bytes.length) {
-    const [tag, tagBytes] = decodeVarint(bytes, offset);
-    offset += tagBytes;
-    const fieldNumber = tag >> 3;
-    const wireType = tag & 0x07;
-
-    if (wireType === 2) {
-      const [len, lenBytes] = decodeVarint(bytes, offset);
-      offset += lenBytes;
-      const dataSlice = bytes.subarray(offset, offset + len);
-      offset += len;
-      if (fieldNumber === 3) {
-        text = textDecoder.decode(dataSlice);
-      }
-    } else if (wireType === 0) {
-      const [, vBytes] = decodeVarint(bytes, offset);
-      offset += vBytes;
-    } else if (wireType === 1) {
-      offset += 8;
-    } else if (wireType === 5) {
-      offset += 4;
-    }
-  }
-
-  return { kind: "text", text };
+  return null;
 }
 
 /**

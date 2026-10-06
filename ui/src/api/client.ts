@@ -8,14 +8,6 @@ const errorEnvelope = z.object({
     details: z.unknown().optional(),
   }),
 });
-const configEnvelope = z.object({
-  data: z.object({
-    profile: z.string(),
-    max_sessions: z.number(),
-    max_call_duration_seconds: z.number(),
-    voice_token_max_lifetime_seconds: z.number(),
-  }),
-});
 const tokenEnvelope = z.object({
   data: z.object({
     token: z.string(),
@@ -41,33 +33,26 @@ export const vadStatusSchema = z.object({
 });
 export type VADStatus = z.infer<typeof vadStatusSchema>;
 
+// The server always sends every non-optional field; a missing one is an error,
+// never a made-up healthy value.
 export const operationsStatusSchema = z.object({
-  uptime_seconds: z.number().default(0),
-  started_at: z.string().default(() => new Date().toISOString()),
+  uptime_seconds: z.number(),
+  started_at: z.string(),
   profile: z.string(),
-  active_sessions: z.number().default(0),
-  max_sessions: z.number().default(0),
-  capacity_utilization: z.number().default(0),
-  sessions_total: z.number().default(0),
-  turns_total: z.number().default(0),
-  errors_total: z.number().default(0),
-  p95_latency_ms: z.number().default(0),
+  active_sessions: z.number(),
+  max_sessions: z.number(),
+  capacity_utilization: z.number(),
+  sessions_total: z.number(),
+  turns_total: z.number(),
+  errors_total: z.number(),
+  p95_latency_ms: z.number(),
   average_latency_ms: z.number().optional(),
   session_rate: z.number().optional(),
   max_call_duration_seconds: z.number().optional(),
   voice_token_max_lifetime_seconds: z.number().optional(),
-  database: databaseStatusSchema.default({
-    dialect: "sqlite",
-    status: "connected",
-    open_connections: 0,
-    in_use: 0,
-  }),
-  vad: vadStatusSchema.default({
-    worker_status: "ready",
-    sample_rate: 16000,
-    frame_size: 512,
-  }),
-  health: z.enum(["healthy", "degraded", "unhealthy"]).default("healthy"),
+  database: databaseStatusSchema,
+  vad: vadStatusSchema,
+  health: z.enum(["healthy", "degraded", "unhealthy"]),
 });
 export type OperationsStatus = z.infer<typeof operationsStatusSchema>;
 
@@ -188,9 +173,6 @@ const agentsEnvelope = z.object({
 const agentEnvelope = z.object({
   data: agentSchema,
 });
-const agentVersionEnvelope = z.object({
-  data: agentVersionSchema,
-});
 const archiveEnvelope = z.object({
   data: z.object({
     archived: z.boolean(),
@@ -235,7 +217,6 @@ export type CreateAgentInput = {
   description: string;
   enabled?: boolean;
   config: AgentConfigV2;
-  mcp_tools?: ToolSelection[];
 };
 
 export type UpdateAgentInput = {
@@ -304,15 +285,6 @@ export type CreateMCPServerInput = {
   name: string;
   description?: string;
   endpoint: string;
-  transport?: string;
-  credential_id?: string;
-  enabled?: boolean;
-};
-
-export type UpdateMCPServerInput = {
-  name?: string;
-  description?: string;
-  endpoint?: string;
   transport?: string;
   credential_id?: string;
   enabled?: boolean;
@@ -439,7 +411,6 @@ const sessionTracesEnvelope = z.object({
   data: sessionTracesSchema,
 });
 
-export type ServerConfig = z.infer<typeof configEnvelope>["data"];
 export type VoiceToken = z.infer<typeof tokenEnvelope>["data"];
 export type AuthSnapshot = { key: string | null; generation: number };
 
@@ -454,6 +425,11 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** Keeps an ApiError as is; wraps anything else (a bug, a network oddity) with a readable message. */
+export function asApiError(err: unknown, message: string): ApiError {
+  return err instanceof ApiError ? err : new ApiError(message, "client_error", 0, "");
 }
 
 export function createApiClient(
@@ -534,8 +510,6 @@ export function createApiClient(
     return parsed.data;
   }
   return {
-    serverConfig: async () =>
-      (await request("/server-config", configEnvelope)).data,
     issueVoiceToken: async (input: { principal: string; agent_id: string }) =>
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
     getProviders: async () =>
@@ -548,13 +522,6 @@ export function createApiClient(
           method: "POST",
           body: input,
         })
-      ).data,
-    getCredential: async (id: string) =>
-      (
-        await request(
-          `/providers/credentials/${encodeURIComponent(id)}`,
-          credentialEnvelope,
-        )
       ).data,
     updateCredential: async (id: string, input: { secret: string }) =>
       (
@@ -595,16 +562,10 @@ export function createApiClient(
           discoveryEnvelope,
         )
       ).data,
-    getAgents: async (pagination?: { limit?: number; offset?: number }) => {
-      const params = new URLSearchParams();
-      if (pagination?.limit !== undefined)
-        params.set("limit", String(pagination.limit));
-      if (pagination?.offset !== undefined)
-        params.set("offset", String(pagination.offset));
-      const qs = params.toString();
-      return (await request(`/agents${qs ? `?${qs}` : ""}`, agentsEnvelope))
-        .data;
-    },
+    // ponytail: one page of the server max (100); page through when someone has more agents.
+    // Includes archived agents (sessions still name them); list views filter them out.
+    getAgents: async () =>
+      (await request("/agents?limit=100", agentsEnvelope)).data,
     createAgent: async (input: CreateAgentInput) =>
       (
         await request("/agents", agentEnvelope, {
@@ -612,8 +573,6 @@ export function createApiClient(
           body: input,
         })
       ).data,
-    getAgent: async (id: string) =>
-      (await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope)).data,
     updateAgent: async (id: string, input: UpdateAgentInput) =>
       (
         await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope, {
@@ -640,17 +599,6 @@ export function createApiClient(
           },
         )
       ).data,
-    updateAgentMCPTools: async (id: string, tools: ToolSelection[]) =>
-      (
-        await request(
-          `/agents/${encodeURIComponent(id)}/mcp-tools`,
-          agentVersionEnvelope,
-          {
-            method: "PUT",
-            body: { tools },
-          },
-        )
-      ).data,
 
     // MCP endpoints
     getMCPServers: async () =>
@@ -668,17 +616,6 @@ export function createApiClient(
           method: "POST",
           body: payload,
         })
-      ).data,
-    updateMCPServer: async (id: string, payload: UpdateMCPServerInput) =>
-      (
-        await request(
-          `/mcp-servers/${encodeURIComponent(id)}`,
-          mcpServerEnvelope,
-          {
-            method: "PUT",
-            body: payload,
-          },
-        )
       ).data,
     deleteMCPServer: async (id: string, confirmedDetach?: boolean) => {
       if (confirmedDetach) {
@@ -721,32 +658,14 @@ export function createApiClient(
           { method: "POST" },
         )
       ).data,
-    testMCPTool: async (
-      id: string,
-      toolOrPayload:
-        | string
-        | { tool_name: string; arguments?: Record<string, unknown> },
-      args?: Record<string, unknown>,
-    ) => {
-      const toolName =
-        typeof toolOrPayload === "string"
-          ? toolOrPayload
-          : toolOrPayload.tool_name;
-      const toolArgs =
-        typeof toolOrPayload === "string"
-          ? (args ?? {})
-          : (toolOrPayload.arguments ?? {});
-      return (
+    testMCPTool: async (id: string, toolName: string, args: Record<string, unknown> = {}) =>
+      (
         await request(
           `/mcp-servers/${encodeURIComponent(id)}/tools/${encodeURIComponent(toolName)}/test`,
           mcpExecutionEnvelope,
-          {
-            method: "POST",
-            body: { arguments: toolArgs },
-          },
+          { method: "POST", body: { arguments: args } },
         )
-      ).data;
-    },
+      ).data,
 
     // Session & Trace endpoints
     getSessions: async (params?: SessionFilterParams) => {

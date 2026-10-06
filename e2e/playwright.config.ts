@@ -29,7 +29,7 @@ if (!process.env.E2E_GOOGLE_SECRET) {
   }
 }
 
-// Default fake mic; a spec can switch with test.use(fakeMic("voice-custom.wav")) from lib/stack.
+// The fake microphone WAV.
 export const fixture = (name: string) => path.resolve(__dirname, "fixtures", name);
 
 export default defineConfig({

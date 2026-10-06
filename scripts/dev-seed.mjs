@@ -36,16 +36,19 @@ async function api(method, route, body) {
   return json.data;
 }
 
-// Reuses a stored Google credential whose masked suffix matches, else adds it.
+// Reuses a stored Google API key whose masked suffix matches, else adds it.
+// Service-account JSON always ends the same way ('om"}'), so the suffix cannot
+// tell two apart: it is always added fresh.
 async function credentialFor(secret) {
   const suffix = [...secret.trim()].slice(-4).join("");
-  const existing = (await api("GET", "/providers/credentials")).find(
+  const existing = !secret.trim().startsWith("{") && (await api("GET", "/providers/credentials")).find(
     (c) => c.provider === "google" && c.masked_value.endsWith(suffix),
   );
   return existing?.id ?? (await api("POST", "/providers/credentials", { provider: "google", secret })).id;
 }
 
-const existing = (await api("GET", "/agents")).find((a) => a.name === AGENT);
+// Archived (deleted in the UI) agents are still listed; never reuse one.
+const existing = (await api("GET", "/agents?limit=100")).find((a) => !a.archived && a.name === AGENT);
 if (existing) {
   log(`using existing agent "${AGENT}"`);
   console.log(existing.id);

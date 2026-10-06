@@ -7,6 +7,7 @@ import {
   type AgentDTO,
   type CreateAgentInput,
   ApiError,
+  asApiError,
 } from "../../api/client";
 import {
   ActionButton,
@@ -67,13 +68,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["credentials"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setProviderError(err);
-      } else {
-        setProviderError(
-          new ApiError("Failed to connect provider", "credential_failed", 500, ""),
-        );
-      }
+      setProviderError(asApiError(err, "Failed to connect provider"));
     },
   });
 
@@ -84,13 +79,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
     },
     onError: (err) => {
-      if (err instanceof ApiError) {
-        setAgentError(err);
-      } else {
-        setAgentError(
-          new ApiError("Failed to create agent", "create_failed", 500, ""),
-        );
-      }
+      setAgentError(asApiError(err, "Failed to create agent"));
     },
   });
 
@@ -107,7 +96,20 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     const stt = agentSttDraft.trim();
     const llm = agentLlmDraft.trim();
     const tts = agentTtsDraft.trim();
-    if (!name || !agentCredential || !stt || !llm || !tts) return;
+    if (!name || !stt || !llm || !tts) return;
+    if (!agentCredential) {
+      setAgentError(
+        new ApiError(
+          providersQuery.isSuccess
+            ? "No connected credential can run speech-to-text, LLM and text-to-speech. Add one (for example Google) on the Providers page."
+            : "The provider list has not loaded yet. Reload the page and try again.",
+          "no_credential",
+          0,
+          "",
+        ),
+      );
+      return;
+    }
     // ponytail: onboarding uses the step-1 credential for every stage; the Agents page edits each stage.
     const { provider, id: credential_id } = agentCredential;
     createAgentMutation.mutate({
@@ -128,7 +130,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     ["stt", "llm", "tts"].every((cap) => p.capabilities.includes(cap)),
   );
   const credentials = credentialsQuery.data ?? [];
-  const agents = agentsQuery.data ?? [];
+  const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
   // The credential connected in step 1: the first one whose provider can run every stage.
   const agentCredential = credentials.find((c) => providers.some((p) => p.id === c.provider));
 

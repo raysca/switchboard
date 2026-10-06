@@ -7,19 +7,12 @@ import {
   LoadingState,
   Status,
 } from "../../components/primitives";
-import { TurnTimeline } from "../../components/timeline/TurnTimeline";
+import { formatDuration, TurnTimeline } from "../../components/timeline/TurnTimeline";
 
 export type SessionDetailViewProps = {
   client: ApiClient;
   keyValue: string | null;
 };
-
-function formatDuration(startedAt: string, endedAt?: string | null): string {
-  if (!endedAt) return "In progress";
-  const ms = Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(2)}s`;
-}
 
 export function SessionDetailView({ client, keyValue }: SessionDetailViewProps) {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -196,7 +189,6 @@ export function SessionDetailView({ client, keyValue }: SessionDetailViewProps) 
           />
         ) : (
           <TurnTimeline
-            sessionId={session.id}
             turns={turnsQuery.data ?? []}
             traces={tracesQuery.data ?? null}
             loading={turnsQuery.isPending}
