@@ -727,6 +727,26 @@ type ReadinessFrame struct {
 - **Validation**: Enforces non-empty component identification and canonical status enum states (`Validate()`).
 - **Health Observability**: Emits non-blocking status transitions (e.g. provider network degradations or cold-start completions) across the pipeline for telemetry and diagnostics.
 
+### 2.23 Turn recording and replay hooks
+
+`core/turn.TurnRecorder` and `core/turn.TurnReplayer` provide deterministic capture and replay of conversation turns:
+```go
+type TurnRecording struct {
+    TurnID    string
+    Gen       uint64
+    StartTime time.Time
+    Duration  time.Duration
+    Entries   []RecordedTurnEntry
+}
+
+func (r *TurnRecorder) Record(f core.Frame, dir core.Direction)
+func (r *TurnRecorder) Stop() *TurnRecording
+func (p *TurnReplayer) Replay(ctx context.Context, onEntry func(entry RecordedTurnEntry) error) error
+```
+- **Serialization Fidelity**: Full JSON round-trip serialization (`SerializeJSON` / `DeserializeJSON`) preserves relative event offsets and directionality.
+- **Configurable Replay Speed**: Supports real-time pacing (`speed = 1.0`) or accelerated headless simulation (`speed = 0.0`) for fast continuous integration regression test suites.
+
+
 
 
 
