@@ -306,7 +306,6 @@ type STTProcessor struct {
 	RotationsCount      atomic.Uint64
 	RotationFailures    atomic.Uint64
 	DeduplicatedResults atomic.Uint64
-	TotalRequestsSent   atomic.Uint64
 	Errors              atomic.Uint64
 }
 
@@ -513,7 +512,6 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		return provErr
 	}
 
-	p.TotalRequestsSent.Add(1)
 	return e.Push(f)
 }
 

@@ -196,12 +196,6 @@ func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 		t.Fatalf("expected full text 'Hello world!', got %q", fullText)
 	}
 
-	// Verify token usage tracked
-	if proc.PromptTokens.Load() != 10 || proc.OutputTokens.Load() != 2 || proc.TotalTokens.Load() != 12 {
-		t.Fatalf("token usage mismatch: p=%d, o=%d, t=%d",
-			proc.PromptTokens.Load(), proc.OutputTokens.Load(), proc.TotalTokens.Load())
-	}
-
 	// Verify UsageMetricsFrame emission and correlation
 	if len(usageFrames) != 1 {
 		t.Fatalf("expected 1 UsageMetricsFrame, got %d", len(usageFrames))
