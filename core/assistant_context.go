@@ -48,8 +48,8 @@ type AssistantContextProcessor struct {
 	deliveredUnits  map[uint64]string
 
 	// Flush barrier coordination
-	flushAckCh        chan uint64
 	pendingFlushGen   atomic.Uint64
+	ackedFlushGen     atomic.Uint64
 	FlushAcks         atomic.Uint64
 	FlushTimeouts     atomic.Uint64
 	Degraded          atomic.Uint64
@@ -73,7 +73,6 @@ func NewAssistantContextProcessor(ctxPool *ConversationContext, cfg AssistantCon
 		cfg:            cfg,
 		pendingUnits:   make(map[uint64]string),
 		deliveredUnits: make(map[uint64]string),
-		flushAckCh:     make(chan uint64, 8),
 	}
 }
 
@@ -188,10 +187,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		fp := f.(*FlushProcessedFrame)
 		if p.pendingFlushGen.Load() == fp.Gen {
 			p.FlushAcks.Add(1)
-			select {
-			case p.flushAckCh <- fp.Gen:
-			default:
-			}
+			p.ackedFlushGen.Store(fp.Gen)
 		}
 		return e.PushDirection(f, dir)
 
@@ -498,13 +494,9 @@ func (p *AssistantContextProcessor) startFlushBarrierTimeout(gen uint64) {
 		defer timer.Stop()
 
 		select {
-		case ackGen := <-p.flushAckCh:
-			if ackGen == gen {
-				// Flush barrier acknowledged in time
-				return
-			}
 		case <-timer.C:
-			if p.pendingFlushGen.Load() != gen {
+			// Acknowledged in time, or superseded by a newer barrier.
+			if p.ackedFlushGen.Load() == gen || p.pendingFlushGen.Load() != gen {
 				return
 			}
 			p.FlushTimeouts.Add(1)

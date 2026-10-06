@@ -258,6 +258,25 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	}
 }
 
+func TestFlushLateAckDoesNotSilenceNextBarrier(t *testing.T) {
+	p := NewAssistantContextProcessor(NewConversationContext(ContextConfig{}), AssistantContextConfig{FlushTimeout: 20 * time.Millisecond})
+	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
+	e := &captureEmitter{}
+	bargeIn := func(turn string, gen uint64) {
+		_ = p.ProcessFrame(context.Background(), &UserMessageFrame{Turn: turn, Gen: gen}, Downstream, e)
+		_ = p.ProcessFrame(context.Background(), &InterruptionFrame{}, Downstream, e)
+	}
+	bargeIn("a", 1)
+	time.Sleep(60 * time.Millisecond)
+	// The ack for barrier 1 arrives after it already timed out.
+	_ = p.ProcessFrame(context.Background(), &FlushProcessedFrame{Gen: 1}, Upstream, e)
+	bargeIn("b", 2)
+	time.Sleep(60 * time.Millisecond)
+	if got := p.FlushTimeouts.Load(); got != 2 {
+		t.Fatalf("flush timeouts = %d, want 2 (late ack silenced the next barrier)", got)
+	}
+}
+
 func TestContextEvictsUnansweredTurns(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 3})
 	for _, turn := range []string{"t0", "t1", "t2", "t3", "t4", "t5"} {
