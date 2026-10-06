@@ -30,12 +30,6 @@ export interface RTVIClientReadyData {
   about?: Record<string, unknown>;
 }
 
-export interface RTVIBotReadyData {
-  version: string;
-  config?: string[];
-  features?: Record<string, unknown>;
-}
-
 export interface RTVITranscriptionData {
   text: string;
   final: boolean;

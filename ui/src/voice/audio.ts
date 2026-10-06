@@ -19,13 +19,6 @@ export class BrowserAudioError extends Error {
   }
 }
 
-export interface AudioCaptureOptions {
-  sampleRate?: number;
-  echoCancellation?: boolean;
-  noiseSuppression?: boolean;
-  autoGainControl?: boolean;
-}
-
 export class BrowserAudioController {
   private mediaStream: MediaStream | null = null;
   private inputContext: AudioContext | null = null;
@@ -42,10 +35,7 @@ export class BrowserAudioController {
   /**
    * Requests microphone access and begins streaming 16kHz PCM16LE mono audio chunks.
    */
-  public async startCapture(
-    onAudioChunk: (chunk: Uint8Array) => void,
-    options: AudioCaptureOptions = {},
-  ): Promise<void> {
+  public async startCapture(onAudioChunk: (chunk: Uint8Array) => void): Promise<void> {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       throw new BrowserAudioError(
         "Microphone input is not supported by this browser environment.",
@@ -58,11 +48,11 @@ export class BrowserAudioController {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: options.echoCancellation ?? true,
-          noiseSuppression: options.noiseSuppression ?? true,
-          autoGainControl: options.autoGainControl ?? true,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
           channelCount: 1,
-          sampleRate: options.sampleRate ?? 16000,
+          sampleRate: 16000,
         },
       });
     } catch (err: unknown) {
@@ -97,7 +87,7 @@ export class BrowserAudioController {
       const AudioCtx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.inputContext = new AudioCtx({ sampleRate: options.sampleRate ?? 16000 });
+      this.inputContext = new AudioCtx({ sampleRate: 16000 });
       if (this.inputContext.state === "suspended") {
         await this.inputContext.resume();
       }
@@ -180,10 +170,6 @@ export class BrowserAudioController {
         track.enabled = !muted;
       }
     }
-  }
-
-  public getMuted(): boolean {
-    return this.isMuted;
   }
 
   /**

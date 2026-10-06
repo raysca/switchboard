@@ -24,7 +24,6 @@ import {
   RTVI_TYPE_USER_STOPPED_SPEAKING,
   RTVI_TYPE_USER_TRANSCRIPTION,
   type DecodedFrame,
-  type RTVIBotReadyData,
   type RTVIBotTextData,
   type RTVIErrorData,
   type RTVIMessage,
@@ -83,8 +82,6 @@ export interface VoiceClientError {
 export interface VoiceClientState {
   sessionState: SessionState;
   sessionId: string | null;
-  token: string | null;
-  agentId: string | null;
   isUserSpeaking: boolean;
   isBotSpeaking: boolean;
   isMuted: boolean;
@@ -114,8 +111,6 @@ export class VoiceClient {
   private state: VoiceClientState = {
     sessionState: "disconnected",
     sessionId: null,
-    token: null,
-    agentId: null,
     isUserSpeaking: false,
     isBotSpeaking: false,
     isMuted: false,
@@ -212,7 +207,6 @@ export class VoiceClient {
     // Reset session errors and transient speaking states
     this.updateState({
       sessionState: "requesting_token",
-      agentId,
       error: null,
       isUserSpeaking: false,
       isBotSpeaking: false,
@@ -231,7 +225,6 @@ export class VoiceClient {
       if (attempt !== this.attempt) return;
       tokenStr = tokenResp.token;
       this.updateState({
-        token: tokenStr,
         sessionId: extractSessionIdFromToken(tokenStr),
         sessionState: "connecting",
       });
@@ -450,18 +443,12 @@ export class VoiceClient {
   }
 
   private handleSocketMessage(event: MessageEvent): void {
-    let rawBytes: Uint8Array;
-    if (event.data instanceof ArrayBuffer) {
-      rawBytes = new Uint8Array(event.data);
-    } else if (ArrayBuffer.isView(event.data)) {
-      rawBytes = new Uint8Array(event.data.buffer);
-    } else {
-      return;
-    }
+    // binaryType is "arraybuffer", so binary frames are always ArrayBuffers.
+    if (!(event.data instanceof ArrayBuffer)) return;
 
     let decoded: DecodedFrame | null = null;
     try {
-      decoded = decodeBinaryFrame(rawBytes);
+      decoded = decodeBinaryFrame(new Uint8Array(event.data));
     } catch {
       return;
     }
@@ -517,7 +504,6 @@ export class VoiceClient {
     switch (parsed.type) {
       case RTVI_TYPE_BOT_READY: {
         const readyLatency = Date.now() - this.clientReadyTime;
-        const botData = parsed.data as RTVIBotReadyData | undefined;
         this.updateState({
           sessionState: "ready",
           metrics: {
@@ -525,9 +511,6 @@ export class VoiceClient {
             readyLatencyMs: readyLatency,
           },
         });
-        if (botData?.features && typeof botData.features === "object") {
-          // Additional bot capabilities
-        }
         break;
       }
 
