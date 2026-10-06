@@ -364,3 +364,47 @@ func TestResolveOnlyReleasesMCPTokens(t *testing.T) {
 		t.Fatalf("missing credential err=%v", err)
 	}
 }
+
+func TestProviderSecretIsProviderScoped(t *testing.T) {
+	ctx := context.Background()
+	store, err := storage.Open(ctx, storage.Config{Dialect: storage.SQLite, DSN: ":memory:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	svc, err := NewService(store.Credentials(), Keyring{ActiveID: "k", Keys: map[string][]byte{"k": []byte(strings.Repeat("k", 32))}}, provider.NewRegistry(provider.Definitions()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, _ := svc.Create(ctx, CreateInput{Provider: "google", Secret: "google-api-key"})
+	m, _ := svc.Create(ctx, CreateInput{Provider: provider.MCPProviderID, Secret: "mcp-token"})
+	if got, err := svc.ProviderSecret(ctx, g.ID, "google"); err != nil || string(got) != "google-api-key" {
+		t.Fatalf("google secret = %q, %v", got, err)
+	}
+	if _, err := svc.ProviderSecret(ctx, g.ID, "xai"); !errors.Is(err, ErrProviderMismatch) {
+		t.Fatalf("cross-provider read err=%v", err)
+	}
+	if _, err := svc.ProviderSecret(ctx, m.ID, provider.MCPProviderID); !errors.Is(err, ErrProviderMismatch) {
+		t.Fatalf("MCP token released on call path err=%v", err)
+	}
+	if _, err := svc.ProviderSecret(ctx, "missing", "google"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing err=%v", err)
+	}
+}
+
+func TestMultilineSecretsAcceptedButOtherControlsRejected(t *testing.T) {
+	if err := validateSecret("google", "{\n  \"type\": \"service_account\"\n}\n"); err != nil {
+		t.Fatalf("pretty-printed JSON rejected: %v", err)
+	}
+	if err := validateSecret("google", "key\x00injected"); err == nil {
+		t.Fatal("NUL accepted")
+	}
+	if err := validateSecret("google", "api-key\nX-Injected: 1"); err == nil {
+		t.Fatal("newline accepted in a non-JSON key")
+	}
+	for _, p := range []string{"xai", "mcp"} {
+		if err := validateSecret(p, "{\n\"token\": 1}"); err == nil {
+			t.Fatalf("%s accepted a multi-line secret", p)
+		}
+	}
+}

@@ -109,7 +109,7 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (CredentialDTO,
 	if _, ok := s.registry.Provider(providerID); !ok {
 		return CredentialDTO{}, ErrUnsupportedProvider
 	}
-	if err := validateSecret(input.Secret); err != nil {
+	if err := validateSecret(providerID, input.Secret); err != nil {
 		return CredentialDTO{}, err
 	}
 	id := storage.NewID()
@@ -135,12 +135,12 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (CredentialDTO,
 }
 
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (CredentialDTO, error) {
-	if err := validateSecret(input.Secret); err != nil {
-		return CredentialDTO{}, err
-	}
 	row, err := s.repo.Get(ctx, id)
 	if err != nil {
 		return CredentialDTO{}, ErrNotFound
+	}
+	if err := validateSecret(row.Provider, input.Secret); err != nil {
+		return CredentialDTO{}, err
 	}
 	oldKeyID := row.KeyID
 	oldCiphertext := append([]byte(nil), row.Ciphertext...)
@@ -310,15 +310,22 @@ func (s *Service) decrypt(row storage.Credential) ([]byte, error) {
 func associatedData(id, providerID, keyID string) []byte {
 	return []byte(id + "\x00" + providerID + "\x00" + keyID)
 }
-func validateSecret(secret string) error {
-	if strings.TrimSpace(secret) == "" || len(secret) > MaxSecretBytes || !utf8.ValidString(secret) || providerHasControl(secret) {
+func validateSecret(providerID, secret string) error {
+	if strings.TrimSpace(secret) == "" || len(secret) > MaxSecretBytes || !utf8.ValidString(secret) || providerHasControl(providerID, secret) {
 		return ErrInvalidInput
 	}
 	return nil
 }
 
-func providerHasControl(value string) bool {
+// providerHasControl rejects control characters. Only Google secrets can be a
+// JSON document (a pretty-printed service-account key), which may contain tab,
+// CR and LF; every other secret is a single token sent in a header.
+func providerHasControl(providerID, value string) bool {
+	jsonDoc := providerID == "google" && strings.HasPrefix(strings.TrimSpace(value), "{")
 	for _, r := range value {
+		if jsonDoc && (r == '\t' || r == '\n' || r == '\r') {
+			continue
+		}
 		if r < 0x20 || r == 0x7f {
 			return true
 		}
@@ -442,4 +449,31 @@ func (s *Service) Resolve(ctx context.Context, id string) (string, error) {
 	}
 	defer zero(plain)
 	return string(plain), nil
+}
+
+// ErrProviderMismatch is returned when a credential is requested for a
+// provider other than the one it was stored for.
+var ErrProviderMismatch = errors.New("credential belongs to a different provider")
+
+// ProviderSecret returns the plaintext of credential id for use by providerID
+// on the call path. The caller owns the returned slice and should zero it once
+// the provider client is built. MCP tokens are only available via Resolve.
+func (s *Service) ProviderSecret(ctx context.Context, id, providerID string) ([]byte, error) {
+	if providerID == "" || providerID == provider.MCPProviderID {
+		return nil, ErrProviderMismatch
+	}
+	row, err := s.repo.Get(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load credential: %w", err)
+	}
+	if row.Provider != providerID {
+		return nil, ErrProviderMismatch
+	}
+	if row.ValidationState == ValidationInvalid {
+		return nil, ErrInvalidCredential
+	}
+	return s.decrypt(row)
 }
