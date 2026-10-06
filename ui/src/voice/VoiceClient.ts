@@ -347,6 +347,9 @@ export class VoiceClient {
   public sendText(text: string): boolean {
     const content = text.trim();
     if (!content || !this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    // A typed turn interrupts the reply like speech does; the server flushes its
+    // side, this drops what is already buffered here.
+    if (this.state.isBotSpeaking) this.triggerBargeIn();
     this.ws.send(encodeSendTextFrame(content) as unknown as ArrayBufferView<ArrayBuffer>);
     this.recordEvent(
       "out",

@@ -441,6 +441,15 @@ describe("AgentVoiceTest", () => {
 
     expect(await screen.findByTestId("transcript-user")).toHaveTextContent("What are your hours?");
     expect(await screen.findByTestId("transcript-bot")).toHaveTextContent("We are open 9 to 5.");
+
+    // Typing while the bot speaks interrupts it, like speech: local audio stops.
+    const stopPlaybackSpy = vi.spyOn(mockAudio, "stopPlayback");
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_STARTED_SPEAKING);
+    expect(await screen.findByText(/Assistant speaking…/i)).toBeVisible();
+    await user.type(screen.getByLabelText("Message"), "Actually, never mind");
+    await user.click(screen.getByRole("button", { name: "Send text" }));
+    expect(stopPlaybackSpy).toHaveBeenCalled();
+    expect(await screen.findByText(/Interrupted: 1x/i)).toBeVisible();
   });
 
   it("toggles Pipecat debug panel visibility", async () => {

@@ -13,7 +13,9 @@ test.describe.configure({ mode: "serial" });
 test.use({ trace: "off" });
 
 const AGENT = "E2E Concierge";
-const FOUR = /\b(4|four)\b/i;
+// No leading \b: a transcript entry's text runs its label into the reply
+// ("AssistantFour."). The lookbehind still rejects "14"; the trailing \b "fourteen".
+const FOUR = /(?<!\d)(4|four)\b/i;
 const PARIS = /paris/i;
 // Google STT normalises numbers: "two plus two" arrives as "2 + 2".
 const TWO_PLUS_TWO = /(two plus two|2\s*\+\s*2)/i;

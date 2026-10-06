@@ -144,6 +144,16 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 
 	p.TurnsCreated.Add(1)
 
+	// A new user turn supersedes any reply still generating or playing. Voice
+	// turns usually interrupted at speech start; typed turns have no speech
+	// start, so run the barrier here, before the turn reaches the LLM. The
+	// assistant ignores it when no reply is active.
+	gen := ft.Gen
+	if ft.Committed && p.session != nil {
+		_ = e.Push(&InterruptionFrame{Gen: p.session.CurrentGeneration()})
+		gen = p.session.CurrentGeneration() // advanced if a reply was interrupted
+	}
+
 	// Forward FinalTranscriptionFrame downstream toward transport/listeners
 	_ = e.PushDirection(f, dir)
 
@@ -151,7 +161,7 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 	return e.Push(&UserMessageFrame{
 		Turn:      turnID,
 		Content:   ft.Text,
-		Gen:       ft.Gen,
+		Gen:       gen,
 		Timestamp: userMsg.CreatedAt,
 	})
 }

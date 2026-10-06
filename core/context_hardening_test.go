@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -490,5 +491,84 @@ func TestContextToolResultFailsClosedAtBudget(t *testing.T) {
 	}
 	if len(ctx.Messages()) != len(before) {
 		t.Fatal("failed result changed context")
+	}
+}
+
+// frameLog records frames passing through a pipeline position.
+type frameLog struct {
+	mu     sync.Mutex
+	frames []Frame
+}
+
+func (l *frameLog) ProcessFrame(_ context.Context, f Frame, dir Direction, e Emitter) error {
+	l.mu.Lock()
+	l.frames = append(l.frames, f)
+	l.mu.Unlock()
+	return e.PushDirection(f, dir)
+}
+
+func (l *frameLog) userMessage(turn string) *UserMessageFrame {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, f := range l.frames {
+		if um, ok := f.(*UserMessageFrame); ok && um.Turn == turn {
+			return um
+		}
+	}
+	return nil
+}
+
+func (l *frameLog) flushes() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, f := range l.frames {
+		if f.Type() == FrameFlush {
+			n++
+		}
+	}
+	return n
+}
+
+// A typed turn has no speech start, so the new committed user turn itself must
+// interrupt a reply that is still playing: advance the generation, flush queued
+// audio, and send the new turn to the LLM on the new generation.
+func TestCommittedUserTurnInterruptsActiveReply(t *testing.T) {
+	store := NewConversationContext(ContextConfig{MaxMessages: 20, MaxTokens: 4000})
+	user := NewUserContextProcessor(store, UserContextConfig{RequireCommittedTranscript: true})
+	toLLM := &frameLog{}
+	asst := NewAssistantContextProcessor(store, DefaultAssistantContextConfig())
+	toTTS := &frameLog{}
+	pipe, _ := NewPipeline(user, toLLM, asst, toTTS)
+	s, _ := NewSession(904, pipe, DefaultResourceBudget())
+	_ = s.Start()
+	defer s.Close()
+
+	gen := s.CurrentGeneration()
+	_ = s.Post(&FinalTranscriptionFrame{Text: "Tell me a long story", Turn: "A", Gen: gen, Timestamp: time.Now(), Committed: true})
+	_ = s.Post(&LLMTextDeltaFrame{Turn: "A", Gen: gen, Delta: "Once upon a time"})
+	time.Sleep(20 * time.Millisecond)
+	if asst.InterruptionCount.Load() != 0 {
+		t.Fatal("the first turn interrupted nothing, yet the barrier ran")
+	}
+
+	_ = s.Post(&FinalTranscriptionFrame{Text: "Stop, what time is it?", Turn: "B", Gen: gen, Timestamp: time.Now(), Committed: true})
+	time.Sleep(20 * time.Millisecond)
+
+	if got := asst.InterruptionCount.Load(); got != 1 {
+		t.Fatalf("interruptions = %d, want 1", got)
+	}
+	if s.CurrentGeneration() != gen+1 {
+		t.Fatalf("generation = %d, want %d", s.CurrentGeneration(), gen+1)
+	}
+	if toTTS.flushes() == 0 {
+		t.Fatal("queued audio of the interrupted reply was not flushed")
+	}
+	um := toLLM.userMessage("B")
+	if um == nil || um.Gen != gen+1 {
+		t.Fatalf("turn B reached the LLM as %#v, want generation %d", um, gen+1)
+	}
+	if err := s.Err(); err != nil {
+		t.Fatalf("session failed: %v", err)
 	}
 }

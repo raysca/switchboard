@@ -389,7 +389,9 @@
         type: 'send-text',
         data: { content: text }
       });
-      // The server echoes the turn back as a final user-transcription.
+      // The server echoes the turn back as a final user-transcription and
+      // interrupts any reply still playing.
+      stopPlayback();
       currentBotMsgEl = null;
       messageInput.value = '';
     });
@@ -531,6 +533,16 @@
     }
 
     let nextPlayTime = 0;
+    let playing = []; // scheduled AudioBufferSourceNodes
+
+    // Barge-in (speech or a typed turn): drop audio already scheduled locally.
+    function stopPlayback() {
+      for (const node of playing) {
+        try { node.stop(); } catch (e) {}
+      }
+      playing = [];
+      nextPlayTime = 0;
+    }
     function playAudioBuffer(pcmBytes, sampleRate) {
       if (!audioCtx) return;
       // Copy: PCM16 needs 2-byte alignment, and a subarray offset may be odd.
@@ -545,6 +557,8 @@
       const node = audioCtx.createBufferSource();
       node.buffer = audioBuf;
       node.connect(audioCtx.destination);
+      playing.push(node);
+      node.onended = () => { playing = playing.filter(n => n !== node); };
 
       let now = audioCtx.currentTime;
       let start = Math.max(now, nextPlayTime);
@@ -565,8 +579,7 @@
         case 'user-started-speaking':
           speechState.textContent = 'Speaking...';
           speechState.style.color = '#c084fc';
-          // Barge-in: flush playing audio immediately
-          nextPlayTime = 0;
+          stopPlayback(); // barge-in
           break;
         case 'user-stopped-speaking':
           speechState.textContent = 'Listening...';
