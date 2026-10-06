@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"govoice/core"
 	"govoice/transport/rtvi"
@@ -209,5 +210,32 @@ func TestSendText(t *testing.T) {
 	h.OnSendText = func(string) error { return errors.New("no active session") }
 	if _, err := h.HandleIncomingJSON(msg("hello")); !errors.Is(err, rtvi.ErrRejectedMessage) {
 		t.Fatalf("callback error must be a rejection: %v", err)
+	}
+}
+
+// A connection may send a short burst of text turns, then is throttled without
+// being disconnected; throttled turns never reach the LLM.
+func TestSendTextRateLimit(t *testing.T) {
+	h := rtvi.NewHandler()
+	delivered := 0
+	h.OnSendText = func(string) error { delivered++; return nil }
+	if _, err := h.HandleIncomingJSON(`{"id":"r","label":"rtvi-ai","type":"client-ready","data":{"version":"` + rtvi.ProtocolVersion + `"}}`); err != nil {
+		t.Fatal(err)
+	}
+	send := `{"id":"t","label":"rtvi-ai","type":"send-text","data":{"content":"hi"}}`
+	for i := 0; i < rtvi.SendTextBurst; i++ {
+		if _, err := h.HandleIncomingJSON(send); err != nil {
+			t.Fatalf("turn %d within burst: %v", i, err)
+		}
+	}
+	if _, err := h.HandleIncomingJSON(send); !errors.Is(err, rtvi.ErrRejectedMessage) || !strings.Contains(err.Error(), "rate limit") {
+		t.Fatalf("turn over burst: %v, want rate-limit rejection", err)
+	}
+	if delivered != rtvi.SendTextBurst {
+		t.Fatalf("delivered %d turns, want %d", delivered, rtvi.SendTextBurst)
+	}
+	time.Sleep(rtvi.SendTextInterval + 50*time.Millisecond)
+	if _, err := h.HandleIncomingJSON(send); err != nil {
+		t.Fatalf("turn after refill: %v", err)
 	}
 }

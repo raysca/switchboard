@@ -9,13 +9,12 @@ import (
 )
 
 var ErrInvalidCommittedTranscript = errors.New("core: committed transcript requires turn, generation, text, and timestamp")
-var ErrCommittedTurnLimit = errors.New("core: committed transcript identity limit reached")
 
 // UserContextConfig configures the user context processor.
 type UserContextConfig struct {
 	TurnPrefix                 string // Prefix for auto-generated turn IDs (default: "turn")
 	RequireCommittedTranscript bool   // V2: only finalizer-marked finals may enter context
-	MaxCommittedTurns          int    // V2 fail-closed idempotence bound (default: 128)
+	MaxCommittedTurns          int    // V2 idempotence window: recent committed turns remembered (default: 128)
 }
 
 // UserContextProcessor receives final transcription frames, assigns stable turn IDs,
@@ -33,6 +32,8 @@ type UserContextProcessor struct {
 	lastFinalText      string
 	lastFinalGen       uint64
 	committedTurns     map[committedTurnKey]struct{}
+	committedOrder     []committedTurnKey // ring of committedTurns keys, oldest at committedNext
+	committedNext      int
 	DuplicateDropCount atomic.Uint64
 	TurnsCreated       atomic.Uint64
 }
@@ -62,6 +63,7 @@ func NewUserContextProcessor(ctxPool *ConversationContext, cfg UserContextConfig
 		ctxPool:        ctxPool,
 		cfg:            cfg,
 		committedTurns: make(map[committedTurnKey]struct{}, cfg.MaxCommittedTurns),
+		committedOrder: make([]committedTurnKey, cfg.MaxCommittedTurns),
 	}
 }
 
@@ -100,9 +102,6 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 			p.DuplicateDropCount.Add(1)
 			return nil
 		}
-		if len(p.committedTurns) >= p.cfg.MaxCommittedTurns {
-			return ErrCommittedTurnLimit
-		}
 	}
 
 	// 2. Duplicate / late final transcript protection:
@@ -137,7 +136,7 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 		return err
 	}
 	if ft.Committed {
-		p.committedTurns[committedKey] = struct{}{}
+		p.rememberCommitted(committedKey)
 	}
 	p.lastFinalTurn = turnID
 	p.lastFinalText = ft.Text
@@ -155,4 +154,18 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 		Gen:       ft.Gen,
 		Timestamp: userMsg.CreatedAt,
 	})
+}
+
+// rememberCommitted records a committed turn for duplicate suppression. Only the
+// most recent MaxCommittedTurns are kept, so long calls never hit a limit.
+// ponytail: a re-delivery older than the window would be accepted again; such a
+// late duplicate is already dropped by the stale-generation check once the call
+// has moved on to a newer generation.
+func (p *UserContextProcessor) rememberCommitted(key committedTurnKey) {
+	if len(p.committedTurns) >= len(p.committedOrder) {
+		delete(p.committedTurns, p.committedOrder[p.committedNext])
+	}
+	p.committedTurns[key] = struct{}{}
+	p.committedOrder[p.committedNext] = key
+	p.committedNext = (p.committedNext + 1) % len(p.committedOrder)
 }

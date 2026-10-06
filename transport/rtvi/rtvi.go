@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
+
+	"golang.org/x/time/rate"
 
 	"govoice/core"
 )
@@ -88,10 +91,18 @@ type Handler struct {
 	OnDisconnect  func()
 	// OnSendText receives a validated client text turn.
 	OnSendText func(content string) error
+
+	sendText *rate.Limiter
 }
 
-// MaxSendTextBytes bounds one client text turn.
-const MaxSendTextBytes = 4096
+const (
+	// MaxSendTextBytes bounds one client text turn.
+	MaxSendTextBytes = 4096
+	// Each text turn starts a paid LLM request: a connection may send
+	// SendTextBurst turns at once, then one per SendTextInterval.
+	SendTextBurst    = 3
+	SendTextInterval = time.Second
+)
 
 // SendTextData is the payload of a send-text client message.
 type SendTextData struct {
@@ -100,7 +111,7 @@ type SendTextData struct {
 
 // NewHandler initializes a new RTVI Handler.
 func NewHandler() *Handler {
-	return &Handler{}
+	return &Handler{sendText: rate.NewLimiter(rate.Every(SendTextInterval), SendTextBurst)}
 }
 
 // IsReady returns true if client-ready handshake succeeded.
@@ -151,6 +162,9 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 		}
 		if h.OnSendText == nil {
 			return nil, fmt.Errorf("%w: text input is not supported", ErrRejectedMessage)
+		}
+		if !h.sendText.Allow() {
+			return nil, fmt.Errorf("%w: send-text rate limit exceeded; wait and retry", ErrRejectedMessage)
 		}
 		if err := h.OnSendText(content); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrRejectedMessage, err)

@@ -53,7 +53,7 @@ func TestUserContextV2RejectsCommittedTranscriptWithoutPolicyTime(t *testing.T) 
 	}
 }
 
-func TestUserContextCommittedIdempotenceIsTurnGenerationScopedAndBounded(t *testing.T) {
+func TestUserContextCommittedIdempotenceIsTurnGenerationScopedAndWindowed(t *testing.T) {
 	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	user := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{RequireCommittedTranscript: true, MaxCommittedTurns: 2})
 	sink := &core.PassthroughProcessor{}
@@ -71,13 +71,16 @@ func TestUserContextCommittedIdempotenceIsTurnGenerationScopedAndBounded(t *test
 	if len(msgs) != 2 || msgs[0].TurnID != "A" || msgs[1].TurnID != "B" {
 		t.Fatalf("turn-scoped idempotence mismatch: %#v", msgs)
 	}
+	// The window holds two turns: C evicts A, the call goes on, and B (still in
+	// the window) is still suppressed as a duplicate.
 	_ = session.Post(&core.FinalTranscriptionFrame{Text: "third", Turn: "C", Gen: 1, Timestamp: at, Committed: true})
-	select {
-	case <-session.Done():
-	case <-time.After(time.Second):
-		t.Fatal("bounded idempotence did not fail closed")
+	_ = session.Post(&core.FinalTranscriptionFrame{Text: "same", Turn: "B", Gen: 1, Timestamp: at, Committed: true})
+	time.Sleep(20 * time.Millisecond)
+	if err := session.Err(); err != nil {
+		t.Fatalf("session failed after the idempotence window filled: %v", err)
 	}
-	if !errors.Is(session.Err(), core.ErrCommittedTurnLimit) {
-		t.Fatalf("expected bound error, got %v", session.Err())
+	msgs = ctxPool.Messages()
+	if len(msgs) != 3 || msgs[2].TurnID != "C" {
+		t.Fatalf("window mismatch: %#v", msgs)
 	}
 }

@@ -196,6 +196,19 @@ client.on("bot-stopped-speaking", () => {
 await client.connect();
 ```
 
+### Text turns
+
+After `bot-ready`, a client can type instead of speak by sending the RTVI client
+message `{"label":"rtvi-ai","type":"send-text","data":{"content":"..."}}`. The
+content is trimmed and must be 1–4096 bytes of UTF-8. It enters the conversation
+as a final `user-transcription`, and the reply streams as `bot-llm-text`,
+ending with `bot-llm-stopped`. `bot-llm-stopped` is only sent when a reply
+completes, not when it is interrupted or fails.
+
+Each text turn starts an LLM request, so a connection may send 3 at once, then
+one per second. A rejected text turn (too early, invalid, or over the rate) gets
+a non-fatal `error` message, and the call stays open.
+
 ---
 
 ## 7. Running Independent Examples
