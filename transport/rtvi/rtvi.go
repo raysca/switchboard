@@ -24,14 +24,12 @@ const (
 	TypeUserStoppedSpeaking = "user-stopped-speaking"
 	TypeUserTranscription   = "user-transcription"
 	TypeBotLLMText          = "bot-llm-text"
-	TypeBotText             = "bot-llm-text"    // Alias for TypeBotLLMText
 	TypeBotLLMStopped       = "bot-llm-stopped" // the reply text for a turn is complete
 	TypeBotStartedSpeaking  = "bot-started-speaking"
 	TypeBotStoppedSpeaking  = "bot-stopped-speaking"
 	TypeError               = "error"
 	TypeDisconnectBot       = "disconnect-bot"
-	TypeSendText            = "send-text"      // client text turn: {"content": "..."}
-	TypeDisconnect          = "disconnect-bot" // Alias for TypeDisconnectBot
+	TypeSendText            = "send-text" // client text turn: {"content": "..."}
 )
 
 var (
@@ -40,7 +38,6 @@ var (
 	// ErrRejectedMessage marks a well-formed client message the bot refuses;
 	// the connection stays open and the client receives a non-fatal error.
 	ErrRejectedMessage = errors.New("rtvi: message rejected")
-	ErrNotReady        = errors.New("rtvi: client sent audio/data before client-ready handshake")
 )
 
 // Message is the standard RTVI envelope structure.
@@ -88,7 +85,6 @@ type Handler struct {
 	ready     atomic.Bool
 
 	OnClientReady func(version string) error
-	OnDisconnect  func()
 	// OnSendText receives a validated client text turn.
 	OnSendText func(content string) error
 
@@ -175,9 +171,6 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 		return nil, nil
 
 	case TypeDisconnectBot, "disconnect":
-		if h.OnDisconnect != nil {
-			h.OnDisconnect()
-		}
 		return &core.EndFrame{}, nil
 
 	default:
@@ -203,15 +196,6 @@ func (h *Handler) FormatUserStoppedSpeaking() (string, error) {
 	return h.formatMessage(TypeUserStoppedSpeaking, nil)
 }
 
-// FormatUserTranscription produces user transcription events.
-func (h *Handler) FormatUserTranscription(text string, isFinal bool) (string, error) {
-	data, _ := json.Marshal(TranscriptionData{
-		Text:  text,
-		Final: isFinal,
-	})
-	return h.formatMessage(TypeUserTranscription, data)
-}
-
 // FormatUserTranscriptionWithMeta produces user transcription events with timestamp and user ID.
 func (h *Handler) FormatUserTranscriptionWithMeta(text string, isFinal bool, timestamp string, userID string) (string, error) {
 	data, _ := json.Marshal(TranscriptionData{
@@ -235,11 +219,6 @@ func (h *Handler) FormatBotLLMText(text string) (string, error) {
 // turn's text is complete without waiting on audio or timeouts.
 func (h *Handler) FormatBotLLMStopped() (string, error) {
 	return h.formatMessage(TypeBotLLMStopped, nil)
-}
-
-// FormatBotText is an alias for FormatBotLLMText.
-func (h *Handler) FormatBotText(text string) (string, error) {
-	return h.FormatBotLLMText(text)
 }
 
 // FormatBotStartedSpeaking produces bot-started-speaking state events.

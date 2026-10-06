@@ -52,18 +52,10 @@ func TestRTVI_ClientReadyIncompatibleVersion(t *testing.T) {
 
 func TestRTVI_Disconnect(t *testing.T) {
 	h := rtvi.NewHandler()
-	var disconnected bool
-	h.OnDisconnect = func() {
-		disconnected = true
-	}
-
 	rawJSON := `{"id":"2","label":"rtvi-ai","type":"disconnect-bot"}`
 	frame, err := h.HandleIncomingJSON(rawJSON)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if !disconnected {
-		t.Fatalf("expected OnDisconnect to be called")
 	}
 	if _, ok := frame.(*core.EndFrame); !ok {
 		t.Fatalf("expected EndFrame, got %T", frame)

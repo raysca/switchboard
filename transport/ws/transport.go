@@ -21,7 +21,6 @@ import (
 var (
 	ErrHandshakeLimitExceeded = errors.New("ws: maximum pending handshakes exceeded")
 	ErrMaxSessionsExceeded    = errors.New("ws: maximum concurrent sessions exceeded")
-	ErrConnectionClosed       = errors.New("ws: connection closed")
 )
 
 // ServerConfig configures WebSocket connection lifecycle, timeouts, limits, and security.

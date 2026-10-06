@@ -1,7 +1,6 @@
 package ws
 
 import (
-	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -20,7 +19,6 @@ type SecurityConfig struct {
 	AllowMissingOrigin bool     // Allow clients with no Origin header (e.g. non-browser SDKs)
 	TrustedProxies     []string // CIDR blocks or IP addresses of reverse proxies
 	RequireTLS         bool     // If true, reject plain HTTP/WS upgrade
-	TLSConfig          *tls.Config
 }
 
 // CheckOrigin verifies the request's Origin header against the configured allowlist.
