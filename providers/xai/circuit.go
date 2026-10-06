@@ -1,6 +1,7 @@
 package xai
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
@@ -117,6 +118,27 @@ func (cb *CircuitBreaker) RecordFailure() {
 	st := cb.state
 	cb.mu.Unlock()
 	cb.notify(st)
+}
+
+// recordError counts only availability failures. A non-retryable provider
+// error (bad credential, bad request, unknown model) says nothing about xAI,
+// so one tenant's mistake cannot open the shared breaker; it just frees a
+// half-open probe.
+func (cb *CircuitBreaker) recordError(err error) {
+	var pe *ProviderError
+	if !errors.As(err, &pe) || pe.Class != ClassificationNonRetryable {
+		cb.RecordFailure()
+		return
+	}
+	cb.release()
+}
+
+// release frees the half-open probe slot of a call that ended without an
+// outcome (cancelled), so the breaker does not stay half-open forever.
+func (cb *CircuitBreaker) release() {
+	cb.mu.Lock()
+	cb.probing = false
+	cb.mu.Unlock()
 }
 
 // State returns the current CircuitState.

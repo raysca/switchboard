@@ -123,6 +123,26 @@ func (cb *CircuitBreaker) ReportFailure() {
 	}
 }
 
+// reportError counts only availability failures (retryable: 5xx, timeout,
+// rate limit). A bad credential, bad request or unknown model says nothing
+// about the provider, so one tenant's mistake cannot open the shared breaker;
+// it just frees a half-open probe.
+func (cb *CircuitBreaker) reportError(err error) {
+	if MapError("", err).Retryable {
+		cb.ReportFailure()
+		return
+	}
+	cb.release()
+}
+
+// release frees the half-open probe slot of a call that ended without an
+// outcome (cancelled, superseded), so the breaker does not stay half-open forever.
+func (cb *CircuitBreaker) release() {
+	cb.mu.Lock()
+	cb.probing = false
+	cb.mu.Unlock()
+}
+
 // State returns the current circuit state.
 func (cb *CircuitBreaker) State() CircuitState {
 	cb.mu.Lock()

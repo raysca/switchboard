@@ -90,15 +90,17 @@ func ExecuteWithRetry(
 
 		// A cancelled or superseded request (barge-in) is not a provider failure.
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrGenerationMismatch) {
+			if cb != nil {
+				cb.release()
+			}
 			return err
 		}
 
 		// Map error to classified ProviderError
 		provErr := MapError("retry", err)
 
-		// Record failure on circuit breaker
 		if cb != nil {
-			cb.ReportFailure()
+			cb.reportError(provErr)
 		}
 
 		// Check if user-visible output has been committed

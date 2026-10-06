@@ -428,7 +428,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		p.stopStream(st)
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.RecordFailure()
+			p.cfg.CircuitBreaker.recordError(err)
 		}
 		return provErr
 	}
@@ -480,7 +480,7 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 		cancel()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.RecordFailure()
+			p.cfg.CircuitBreaker.recordError(err)
 		}
 		return provErr
 	}
@@ -619,7 +619,7 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 					traceFailure = errors.New("provider_failure")
 					providerErr := MapError("stt", sendErr)
 					if p.cfg.CircuitBreaker != nil {
-						p.cfg.CircuitBreaker.RecordFailure()
+						p.cfg.CircuitBreaker.recordError(sendErr)
 					}
 					st.mu.Lock()
 					turn, turnGen := st.turnID, st.gen
