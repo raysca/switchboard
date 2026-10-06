@@ -42,7 +42,7 @@ The providers view manages external service integrations powering speech recogni
 ## 4. Agent Configuration (`/agents`)
 
 The agent configuration view provides full lifecycle management with immutable versioning:
-- **Catalog View:** Lists all agents with readiness badges (`ready`, `configured`, `ready_with_tool_warning`, `needs_tool_review`, `tool_dependency_unavailable`, `not_ready`) and reason tags (e.g., `missing_stt`, `missing_llm`, `missing_tts`, `missing_credential_llm`).
+- **Catalog View:** Lists all agents with readiness badges (`ready`, `ready_with_tool_warning`, `needs_tool_review`, `tool_dependency_unavailable`, `not_ready`) and reason tags (e.g., `missing_stt`, `missing_llm`, `missing_tts`, `missing_credential_llm`).
 - **Create & Edit Forms:** Captures agent name (1–128 chars), description (≤1024 chars), enabled status, and voice stack settings (STT, LLM, TTS providers, models, voice, prompt, and a required credential per stage: agents are attached to their providers' credentials when created). The first agent created by onboarding is attached to the credential added in step 1.
 - **Immutable Version History:** In accordance with V2 specifications, updating an agent's configuration automatically publishes the next contiguous version number (`v1`, `v2`, etc.) along with a canonical SHA-256 configuration hash. Historical sessions stay pinned to specific version IDs and configuration hashes, preventing runtime drift.
 - **Duplication & Archiving:** One-click duplication clones an agent and its configuration; archiving marks the agent as archived and updates its readiness status.

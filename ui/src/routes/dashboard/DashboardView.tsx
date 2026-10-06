@@ -136,7 +136,6 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
 
   // Readiness calculations
   const readyAgentsCount = agents.filter((a) => a.readiness?.state === "ready").length;
-  const configuredAgentsCount = agents.filter((a) => a.readiness?.state === "configured").length;
   const totalAgents = agents.length;
 
   const totalCredentials = credentials.length;
@@ -228,11 +227,6 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
             <span className={`badge ${readyAgentsCount > 0 ? "badge--good" : "badge--neutral"}`}>
               {readyAgentsCount} Ready
             </span>
-            {configuredAgentsCount > 0 && (
-              <span className="badge badge--warning">
-                {configuredAgentsCount} Configured
-              </span>
-            )}
             {totalAgents === 0 && (
               <span className="subtext">No agents created yet.</span>
             )}

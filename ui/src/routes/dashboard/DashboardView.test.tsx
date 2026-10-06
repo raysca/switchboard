@@ -51,7 +51,7 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     getOperationsStatus: vi.fn().mockResolvedValue(createMockOperations()),
     getAgents: vi.fn().mockResolvedValue([
       { id: "agent-1", name: "Support Agent", readiness: { state: "ready" } },
-      { id: "agent-2", name: "Sales Agent", readiness: { state: "configured" } },
+      { id: "agent-2", name: "Sales Agent", readiness: { state: "not_ready" } },
     ]),
     getProviders: vi.fn().mockResolvedValue([
       { id: "google", display_name: "Google Gemini", capabilities: ["llm", "stt", "tts"] },
@@ -122,7 +122,6 @@ describe("DashboardView", () => {
     // Readiness Summary
     expect(screen.getByText("Agent Readiness")).toBeVisible();
     expect(screen.getByText("1 Ready")).toBeVisible();
-    expect(screen.getByText("1 Configured")).toBeVisible();
     expect(screen.getByText("Provider Readiness")).toBeVisible();
     expect(screen.getByText("1 / 1 Validated Keys")).toBeVisible();
 

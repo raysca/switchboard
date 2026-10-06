@@ -34,7 +34,6 @@ function getReadinessTone(state: string): "good" | "bad" | "neutral" {
   switch (state) {
     case "ready":
       return "good";
-    case "configured":
     case "ready_with_tool_warning":
       return "neutral";
     case "not_ready":
@@ -49,8 +48,6 @@ function getReadinessLabel(state: string): string {
   switch (state) {
     case "ready":
       return "Ready";
-    case "configured":
-      return "Configured";
     case "ready_with_tool_warning":
       return "Ready (tool warning)";
     case "needs_tool_review":
