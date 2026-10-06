@@ -46,21 +46,21 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
   });
 
   const agentsQuery = useQuery({
-    queryKey: ["dashboard-agents"],
+    queryKey: ["agents"],
     queryFn: () => client.getAgents(),
     enabled: !!keyValue,
     retry: false,
   });
 
   const providersQuery = useQuery({
-    queryKey: ["dashboard-providers"],
+    queryKey: ["providers"],
     queryFn: () => client.getProviders(),
     enabled: !!keyValue,
     retry: false,
   });
 
   const credentialsQuery = useQuery({
-    queryKey: ["dashboard-credentials"],
+    queryKey: ["credentials"],
     queryFn: () => client.getCredentials(),
     enabled: !!keyValue,
     retry: false,
