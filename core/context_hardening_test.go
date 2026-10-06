@@ -258,6 +258,20 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	}
 }
 
+func TestBargeInStillForwardsUserStartedSpeaking(t *testing.T) {
+	p := NewAssistantContextProcessor(NewConversationContext(ContextConfig{}), DefaultAssistantContextConfig())
+	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
+	e := &captureEmitter{}
+	_ = p.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "a", Gen: 1}, Downstream, e)
+	speech := &UserStartedSpeakingFrame{Gen: 1}
+	if err := p.ProcessFrame(context.Background(), speech, Downstream, e); err != nil {
+		t.Fatal(err)
+	}
+	if p.InterruptionCount.Load() != 1 || e.frames[len(e.frames)-1] != Frame(speech) {
+		t.Fatalf("interruptions=%d frames=%#v", p.InterruptionCount.Load(), e.frames)
+	}
+}
+
 func TestFlushLateAckDoesNotSilenceNextBarrier(t *testing.T) {
 	p := NewAssistantContextProcessor(NewConversationContext(ContextConfig{}), AssistantContextConfig{FlushTimeout: 20 * time.Millisecond})
 	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)

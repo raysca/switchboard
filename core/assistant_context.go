@@ -163,9 +163,13 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		return nil
 
 	case FrameUserStartedSpeaking:
-		// If assistant is active (generating or playing audio), user speech triggers barge-in
+		// If assistant is active (generating or playing audio), user speech
+		// triggers barge-in. The speech event still reaches the transport after
+		// the barrier so the client sees user-started-speaking.
 		if p.activeTurn != "" {
-			return p.handleInterruption(e)
+			if err := p.handleInterruption(e); err != nil {
+				return err
+			}
 		}
 		return e.PushDirection(f, dir)
 
