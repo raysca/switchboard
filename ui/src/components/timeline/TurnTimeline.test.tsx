@@ -6,7 +6,7 @@ import type { TurnDTO, SessionTracesDTO } from "../../api/client";
 
 describe("TurnTimeline", () => {
   it("renders empty state when no turns exist", () => {
-    render(<TurnTimeline sessionId="sess-1" turns={[]} />);
+    render(<TurnTimeline turns={[]} />);
     expect(screen.getByText("No turns recorded")).toBeVisible();
     expect(
       screen.getByText("No conversational turns were recorded for this session."),
@@ -37,7 +37,7 @@ describe("TurnTimeline", () => {
       },
     ];
 
-    render(<TurnTimeline sessionId="sess-1" turns={turns} />);
+    render(<TurnTimeline turns={turns} />);
 
     const turnHeadings = screen.getAllByRole("heading", { name: /Turn #/i });
 
@@ -67,7 +67,7 @@ describe("TurnTimeline", () => {
       },
     ];
 
-    render(<TurnTimeline sessionId="sess-1" turns={turns} />);
+    render(<TurnTimeline turns={turns} />);
 
     expect(screen.getByText("Interrupted")).toBeVisible();
     expect(screen.getByText("VAD: 35ms")).toBeVisible();
@@ -90,7 +90,7 @@ describe("TurnTimeline", () => {
       },
     ];
 
-    const { container } = render(<TurnTimeline sessionId="sess-1" turns={turns} />);
+    const { container } = render(<TurnTimeline turns={turns} />);
 
     // Privacy invariant 1: No <audio> tags rendered in DOM
     expect(container.querySelectorAll("audio")).toHaveLength(0);
@@ -155,7 +155,7 @@ describe("TurnTimeline", () => {
       ],
     };
 
-    render(<TurnTimeline sessionId="sess-1" turns={turns} traces={traces} />);
+    render(<TurnTimeline turns={turns} traces={traces} />);
 
     const toggleButton = screen.getByRole("button", { name: /Show traces/i });
     expect(toggleButton).toBeVisible();

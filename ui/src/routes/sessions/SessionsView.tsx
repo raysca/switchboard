@@ -10,18 +10,12 @@ import {
   LoadingState,
   Status,
 } from "../../components/primitives";
+import { formatDuration } from "../../components/timeline/TurnTimeline";
 
 export type SessionsViewProps = {
   client: ApiClient;
   keyValue: string | null;
 };
-
-function formatDuration(startedAt: string, endedAt?: string | null): string {
-  if (!endedAt) return "In progress";
-  const ms = Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
 
 export function SessionsView({ client, keyValue }: SessionsViewProps) {
   const [limit, setLimit] = useState(10);
