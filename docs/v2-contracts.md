@@ -643,6 +643,21 @@ type AudioSourceConfig struct {
 - **Interruption Fencing**: Downstream interruptible sources immediately halt reading and chunk emission upon receiving an `InterruptionFrame`.
 - **Directional Flexibility**: Supports both upstream injected user speech (e.g. testing, dial-in gateways) and downstream assistant audio playback.
 
+### 2.19 Advanced audio filter chain
+
+`core/audio.FilterChain` composes sequential audio processing nodes with dynamic bypass and format enforcement:
+```go
+type FilterChain struct { ... }
+func (fc *FilterChain) AddFilter(id string, filter core.AudioFilter) error
+func (fc *FilterChain) SetBypass(id string, bypass bool) error
+func (fc *FilterChain) TotalLatency() time.Duration
+func (fc *FilterChain) Process(ctx context.Context, in []byte) ([]byte, error)
+```
+- **Sequential Invariants**: Validates that output format of filter `N` strictly matches input format of filter `N+1` upon insertion (`ErrFilterIncompatibleFormat`).
+- **Dynamic Bypass**: Allows toggling filters on/off dynamically at runtime without pipeline disruption, provided formats match.
+- **Latency Accounting**: Computes cumulative pipeline DSP latency across all active (non-bypassed) filters for end-to-end timing correlation.
+
+
 
 
 
