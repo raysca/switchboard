@@ -36,10 +36,31 @@ type ToolLoopConfig struct {
 	MaxJSONDepth       int
 	DefaultCallTimeout time.Duration
 	RoundTimeout       time.Duration
-	Now                func() time.Time
-	IsCurrent          func(ToolCall) bool
-	Tracer             core.Tracer
-	TracePolicy        core.TracePolicy
+	// MaxParallel bounds concurrently executing calls within one round. Zero or
+	// one keeps the sequential behaviour. Results are committed and returned in
+	// call order regardless.
+	MaxParallel int
+	// StaleCheckInterval is how often IsCurrent is polled to cancel in-flight
+	// calls of a stale generation (default 25ms).
+	StaleCheckInterval time.Duration
+	// MaxAsyncInFlight bounds background ToolPolicy.Async executions (default 4).
+	MaxAsyncInFlight int
+	// OnAsyncResult, if set, runs after an async tool's result has been
+	// injected into history, so the owner can trigger a model turn.
+	OnAsyncResult func(ToolCall, ToolResult)
+	// AsyncSink, if set, replaces the immediate injection and OnAsyncResult: the
+	// sink receives the finished call and decides when to inject its message
+	// (AsyncToolResult.Inject) and trigger a model turn. It must not block.
+	AsyncSink func(core.AsyncToolResult)
+	// OnAsyncStart runs when an async call is acknowledged, before the executor
+	// goroutine starts (side-effect accounting for LLM failover).
+	OnAsyncStart func(ToolCall)
+	// AsyncTimeout is the default and cap for an async call (default 5m).
+	AsyncTimeout time.Duration
+	Now          func() time.Time
+	IsCurrent    func(ToolCall) bool
+	Tracer       core.Tracer
+	TracePolicy  core.TracePolicy
 }
 
 func DefaultToolLoopConfig() ToolLoopConfig {
@@ -47,7 +68,7 @@ func DefaultToolLoopConfig() ToolLoopConfig {
 }
 
 func (c ToolLoopConfig) validate() error {
-	if c.MaxRounds <= 0 || c.MaxCalls <= 0 || c.MaxArgumentBytes <= 0 || c.MaxResultBytes < minimumToolResultBytes || c.MaxJSONDepth <= 0 || c.DefaultCallTimeout <= 0 || c.RoundTimeout <= 0 {
+	if c.MaxRounds <= 0 || c.MaxCalls <= 0 || c.MaxArgumentBytes <= 0 || c.MaxResultBytes < minimumToolResultBytes || c.MaxJSONDepth <= 0 || c.DefaultCallTimeout <= 0 || c.RoundTimeout <= 0 || c.MaxParallel < 0 || c.StaleCheckInterval < 0 || c.MaxAsyncInFlight < 0 || c.AsyncTimeout < 0 {
 		return ErrInvalidToolLoopConfig
 	}
 	return nil
@@ -71,6 +92,7 @@ type ToolLoop struct {
 	history     *core.ConversationContext
 	cfg         ToolLoopConfig
 	ownedTracer *core.AsyncTracer
+	async       *asyncState
 }
 
 func NewToolLoop(definitions []ToolDefinition, executor ToolExecutor, history *core.ConversationContext, cfg ToolLoopConfig) (*ToolLoop, error) {
@@ -91,13 +113,25 @@ func NewToolLoop(definitions []ToolDefinition, executor ToolExecutor, history *c
 		def.InputSchema = append(json.RawMessage(nil), def.InputSchema...)
 		defs[def.Name] = def
 	}
+	if cfg.MaxParallel < 1 {
+		cfg.MaxParallel = 1
+	}
+	if cfg.StaleCheckInterval == 0 {
+		cfg.StaleCheckInterval = 25 * time.Millisecond
+	}
+	if cfg.MaxAsyncInFlight == 0 {
+		cfg.MaxAsyncInFlight = 4
+	}
+	if cfg.AsyncTimeout == 0 {
+		cfg.AsyncTimeout = 5 * time.Minute
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
 	if cfg.Tracer == nil {
 		cfg.Tracer = core.NoopTracer{}
 	}
-	loop := &ToolLoop{definitions: defs, executor: executor, history: history, cfg: cfg}
+	loop := &ToolLoop{definitions: defs, executor: executor, history: history, cfg: cfg, async: newAsyncState()}
 	if _, noop := cfg.Tracer.(core.NoopTracer); !noop {
 		if _, async := cfg.Tracer.(*core.AsyncTracer); !async {
 			loop.ownedTracer = core.NewAsyncTracer(cfg.Tracer, 0)
@@ -112,7 +146,13 @@ func NewToolLoop(definitions []ToolDefinition, executor ToolExecutor, history *c
 // is disabled. Owners that retain a ToolLoop must call Close at teardown.
 func (l *ToolLoop) Close() {
 	if l != nil && l.ownedTracer != nil {
-		l.ownedTracer.Close()
+		defer l.ownedTracer.Close()
+	}
+	if l != nil && l.async != nil {
+		l.async.mu.Lock()
+		l.async.cancel() // abandons in-flight async tools; no result is injected
+		l.async.mu.Unlock()
+		l.async.wg.Wait()
 	}
 }
 
@@ -127,7 +167,7 @@ func (l *ToolLoop) WithCurrentFence(fence func(ToolCall) bool) *ToolLoop {
 	if l == nil {
 		return nil
 	}
-	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg}
+	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg, async: l.async}
 	if fence == nil {
 		return derived
 	}
@@ -148,7 +188,7 @@ func (l *ToolLoop) WithTraceContext(ctx context.Context) *ToolLoop {
 	if l == nil {
 		return nil
 	}
-	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg}
+	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg, async: l.async}
 	trace := core.TraceContextFromContext(ctx)
 	if _, noop := trace.Tracer.(core.NoopTracer); !noop {
 		derived.cfg.Tracer = trace.Tracer
@@ -173,17 +213,28 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 		roundCtx, cancelRound := context.WithTimeout(ctx, l.cfg.RoundTimeout)
 		result.Rounds++
 		roundResults := make([]ToolResult, 0, len(calls))
-		for _, call := range calls {
-			if result.Calls == l.cfg.MaxCalls {
-				cancelRound()
-				return result, ErrMaxToolCalls
+		batch := calls
+		truncated := len(batch) > l.cfg.MaxCalls-result.Calls
+		if truncated {
+			batch = batch[:l.cfg.MaxCalls-result.Calls]
+		}
+		slots := func() []slot {
+			l.async.round.RLock()
+			defer l.async.round.RUnlock()
+			l.history.BeginToolRound() // plain messages queue until the results are written
+			defer l.history.EndToolRound()
+			return l.runRound(roundCtx, batch)
+		}()
+		for _, s := range slots {
+			if !s.ran {
+				break
 			}
 			result.Calls++
-			toolResult, err := l.execute(roundCtx, call)
-			if err != nil {
+			if s.err != nil {
 				cancelRound()
-				return result, err
+				return result, s.err
 			}
+			toolResult := s.res
 			roundResults = append(roundResults, cloneToolResult(toolResult))
 			result.Results = append(result.Results, cloneToolResult(toolResult))
 			if toolResult.Status == ToolCancelled && toolResult.ErrorCategory == "stale_generation" {
@@ -198,6 +249,10 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 				cancelRound()
 				return result, err
 			}
+		}
+		if truncated {
+			cancelRound()
+			return result, ErrMaxToolCalls
 		}
 		// A generation that moved on after the round still aborts the loop, but
 		// results already committed to history are returned as recorded: history
@@ -246,48 +301,82 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 	return result, nil
 }
 
+// execute is begin followed by finish with no commit gate (sequential path).
+// abandonGrace is how long a cancelled executor may take to return before
+// its round stops waiting for it.
+const abandonGrace = time.Second
+
 func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult, error) {
+	res, done, started, err := l.begin(call)
+	if done {
+		return res, err
+	}
+	return l.finish(roundCtx, call, started, nil)
+}
+
+// begin checks and claims a call. Its only history write is the claim (the
+// tool call itself), so a parallel round can claim every call up front and the
+// provider sees one contiguous call batch. done reports that res/err is final.
+func (l *ToolLoop) begin(call ToolCall) (ToolResult, bool, time.Time, error) {
 	if call.ID == "" || call.Name == "" || call.TurnID == "" || call.Generation == 0 || call.SessionID == "" {
-		return ToolResult{}, ErrMalformedToolCall
+		return ToolResult{}, true, time.Time{}, ErrMalformedToolCall
 	}
 	if len(call.Arguments) > l.cfg.MaxArgumentBytes {
-		return ToolResult{}, ErrMalformedToolCall
+		return ToolResult{}, true, time.Time{}, ErrMalformedToolCall
 	}
 	started := l.cfg.Now()
 	prior, claimed, err := l.history.ClaimToolCall(call, started)
 	if err != nil {
-		return ToolResult{}, err
+		return ToolResult{}, true, started, err
 	}
 	if !claimed {
 		if !l.isCurrent(call) {
-			return staleToolResult(call, prior.StartedAt, l.cfg.Now()), nil
+			return staleToolResult(call, prior.StartedAt, l.cfg.Now()), true, started, nil
 		}
 		if _, category := normalizePayload(prior.Result, l.cfg.MaxResultBytes, l.cfg.MaxJSONDepth); category != "" {
-			return ToolResult{}, ErrReplayResultOutOfBounds
+			return ToolResult{}, true, started, ErrReplayResultOutOfBounds
 		}
-		return cloneToolResult(prior), nil
+		return cloneToolResult(prior), true, started, nil
+	}
+	return ToolResult{}, false, started, nil
+}
+
+// finish validates a claimed call, runs the executor (or acknowledges an async
+// tool) and commits the result. gate, when non-nil, is called before every
+// history write so parallel rounds commit in call order.
+func (l *ToolLoop) finish(roundCtx context.Context, call ToolCall, started time.Time, gate func()) (ToolResult, error) {
+	if gate == nil {
+		gate = func() {}
+	}
+	commit := func(status ToolStatus, payload json.RawMessage, category string) (ToolResult, error) {
+		gate()
+		return l.commit(call, status, payload, category, started)
 	}
 	if !toolNamePattern.MatchString(call.Name) {
-		return l.commit(call, ToolFailed, errorPayload("invalid_tool_name"), "invalid_tool_name", started)
+		return commit(ToolFailed, errorPayload("invalid_tool_name"), "invalid_tool_name")
 	}
 	if len(call.Arguments) == 0 || !json.Valid(call.Arguments) {
-		return l.commit(call, ToolFailed, errorPayload("invalid_arguments"), "invalid_arguments", started)
+		return commit(ToolFailed, errorPayload("invalid_arguments"), "invalid_arguments")
 	}
 	if !validJSONDepth(call.Arguments, l.cfg.MaxJSONDepth) {
-		return l.commit(call, ToolFailed, errorPayload("arguments_too_deep"), "arguments_too_deep", started)
+		return commit(ToolFailed, errorPayload("arguments_too_deep"), "arguments_too_deep")
 	}
 	if _, ok := l.definitions[call.Name]; !ok {
-		return l.commit(call, ToolFailed, errorPayload("unknown_tool"), "unknown_tool", started)
+		return commit(ToolFailed, errorPayload("unknown_tool"), "unknown_tool")
 	}
 	if !l.isCurrent(call) {
-		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
+		return commit(ToolCancelled, errorPayload("stale_generation"), "stale_generation")
 	}
 	if err := roundCtx.Err(); err != nil {
 		category := "timeout"
 		if errors.Is(err, context.Canceled) {
 			category = "cancelled"
 		}
-		return l.commit(call, ToolCancelled, errorPayload(category), category, started)
+		return commit(ToolCancelled, errorPayload(category), category)
+	}
+	if def := l.definitions[call.Name]; def.Policy.Async {
+		gate() // in call order, so MaxAsyncInFlight rejects deterministically
+		return l.startAsync(call, def, started, commit)
 	}
 	def := l.definitions[call.Name]
 	timeout := def.Policy.Timeout
@@ -318,18 +407,38 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 		// Only canonical loop categories reach tracing, never executor text.
 		span.End(errors.New(category))
 	}
-	func() {
+	// The executor runs aside so one that ignores ctx cannot hold the round (and
+	// the history queue behind it) open: once callCtx is done the outcome is
+	// cancelled/timeout whatever it returns, and after abandonGrace it is left
+	// behind. ponytail: an abandoned goroutine lives until it returns itself.
+	type outcome struct {
+		res ToolResult
+		err error
+	}
+	out := make(chan outcome, 1)
+	go func() {
+		var o outcome
 		defer func() {
 			if recover() != nil {
-				execErr = errExecutorPanic
+				o.err = errExecutorPanic
 			}
+			out <- o
 		}()
-		toolResult, execErr = l.executor.Execute(callCtx, cloneCall(call))
+		o.res, o.err = l.executor.Execute(callCtx, cloneCall(call))
 	}()
+	select {
+	case o := <-out:
+		toolResult, execErr = o.res, o.err
+	case <-callCtx.Done():
+		select { // a cooperative executor unwinds before the round ends
+		case <-out:
+		case <-time.After(abandonGrace):
+		}
+	}
 	ended := l.cfg.Now()
 	if !l.isCurrent(call) {
 		endTrace("stale_generation")
-		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
+		return commit(ToolCancelled, errorPayload("stale_generation"), "stale_generation")
 	}
 	if callCtx.Err() != nil {
 		category := "timeout"
@@ -337,7 +446,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 			category = "cancelled"
 		}
 		endTrace(category)
-		return l.commit(call, ToolCancelled, errorPayload(category), category, started)
+		return commit(ToolCancelled, errorPayload(category), category)
 	}
 	if execErr != nil {
 		category := "executor_error"
@@ -345,7 +454,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 			category = "executor_panic"
 		}
 		endTrace(category)
-		return l.commit(call, ToolFailed, errorPayload(category), category, started)
+		return commit(ToolFailed, errorPayload(category), category)
 	}
 	toolResult.CallID, toolResult.StartedAt, toolResult.EndedAt = call.ID, started, ended
 	if toolResult.Status == "" {
@@ -353,7 +462,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 	}
 	if toolResult.Status != ToolSucceeded && toolResult.Status != ToolFailed && toolResult.Status != ToolCancelled {
 		endTrace("invalid_status")
-		return l.commit(call, ToolFailed, errorPayload("invalid_status"), "invalid_status", started)
+		return commit(ToolFailed, errorPayload("invalid_status"), "invalid_status")
 	}
 	if toolResult.Status == ToolFailed || toolResult.Status == ToolCancelled {
 		category := normalizeCategory(toolResult.ErrorCategory)
@@ -378,14 +487,15 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 	toolResult.Result = payload
 	if !l.isCurrent(call) {
 		endTrace("stale_generation")
-		return l.commit(call, ToolCancelled, errorPayload("stale_generation"), "stale_generation", started)
+		return commit(ToolCancelled, errorPayload("stale_generation"), "stale_generation")
 	}
+	gate()
 	if err := l.history.AddToolResultStatus(string(call.TurnID), uint64(call.Generation), call.ID, toolResult.Status, payload, toolResult.ErrorCategory, ended); err != nil {
 		if errors.Is(err, core.ErrContextLimitExceeded) {
 			// The call is already in history; give it a small result that fits
 			// rather than leaving a call with no result.
 			endTrace("result_too_large")
-			return l.commit(call, ToolFailed, errorPayload("result_too_large"), "result_too_large", started)
+			return commit(ToolFailed, errorPayload("result_too_large"), "result_too_large")
 		}
 		endTrace("context_error")
 		return ToolResult{}, err
