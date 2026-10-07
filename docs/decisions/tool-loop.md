@@ -84,3 +84,74 @@ the same provider ToolCall into the existing context aggregator, or add an
 explicit distinction between an already recorded call and a newly claimed
 call. If the aggregator inserts first, ToolLoop sees a pending replay and
 correctly refuses to execute it. Task 11 does not change aggregator behavior.
+
+## Update: parallel and async tool calls (P3-3)
+
+This supersedes the "Calls execute sequentially" bullet above when opted in.
+
+- `ToolLoopConfig.MaxParallel` (default 1 = unchanged sequential behaviour)
+  runs one round's calls concurrently. Every call is claimed (written to
+  history) in order before any executes, executors run concurrently, and each
+  result write waits for the previous call's, so history is one contiguous call
+  batch followed by its results in call order (Gemini pairs them per turn).
+  `MaxCalls` is checked against the batch before dispatch, so counters are only
+  touched by the `Run` goroutine; `MaxResultBytes` applies per call as before.
+  Per-call timeout is still `ToolPolicy.Timeout` capped by `DefaultCallTimeout`.
+- Stale generations are now detected while calls run: a watcher polls
+  `IsCurrent` every `StaleCheckInterval` (25ms) and cancels the round context,
+  so cooperative executors stop on barge-in. The loop still waits for every
+  started executor to return (no detached goroutines on this path). A stale or
+  failed call aborts calls not yet started; their results are normalised.
+- `ToolPolicy.Async` marks a long-running tool. The loop commits an immediate
+  ack (`{"status":"running","async":true}`) as the tool result, then runs the
+  executor in a background goroutine. When it finishes, the result is injected
+  as a user-role context message (metadata `async_tool_call_id`) and
+  `OnAsyncResult` is called so the owner can trigger a model turn. The
+  injection waits until no round of this loop is in flight, so it never
+  precedes its ack or splits a call batch from its results; user turns added
+  meanwhile simply sit between them. The message is a labelled JSON envelope
+  (`call_id`, `tool`, `status`, `result`) marked as tool output, not user
+  instructions. `OnAsyncResult` must not call `Close` (Close waits for it).
+- Async calls ignore the generation fence (they survive barge-in, as Pipecat's
+  `cancel_on_interruption=False`). They are bounded by `MaxAsyncInFlight`
+  (default 4, excess calls fail `too_many_async`), use the same timeout and
+  result normalisation, and are cancelled and dropped by `ToolLoop.Close`.
+  Not done: LLM-driven cancellation of async calls.
+
+## Update: async tools wired into a call (T2)
+
+- Every LLM stage now owns a session-lived `ToolLoop` (Google was the last to
+  build one per generation; it now keeps one for the processor and derives a
+  fenced loop per generation, closing it in `Close`). Async calls therefore
+  survive across generations and are cancelled only at session close.
+- `ToolLoopConfig.AsyncSink` replaces immediate injection: the finished call is
+  handed over with an `Inject` func (still taking the round lock). The owner
+  injects the envelope only when it is about to start a model turn, so the
+  history reads `... assistant reply, envelope` and the model answers the
+  envelope. `OnAsyncStart` fires at acknowledgement (before the ack is written)
+  so the failover side-effect counter moves at claim time. `AsyncTimeout`
+  (default 5m) is the default and cap for async calls instead of the 30s
+  synchronous cap.
+- `core.AsyncTrigger` is a pass-through stage placed directly before the LLM
+  (only built when a tool is async). It queues results (bounded at 8; on
+  overflow the oldest is injected at once without its own turn, so no result
+  is lost; `DroppedCount` only counts failed injections) and, once the user is not speaking (VAD/turn
+  events), the bot is not speaking (upstream `SpeakingStateFrame`) and no reply
+  is active (`AssistantContextProcessor.Active`) for `Settle` (300ms), injects
+  every queued envelope and re-enters one `UserMessageFrame` (turn `async-N`)
+  at the LLM. A signal stuck longer than `MaxWait` (60s) stops deferring.
+  It never interrupts: delivery waits for the call to go idle. A real user turn
+  in between simply delays it. Session close drops the queue (its worker is a
+  supervised session task).
+  A reply with nothing to speak clears `Active` at its final text, so it does
+  not hold delivery until `MaxWait`; an LLM error still does (up to 60s).
+  Counters: `voice_async_tool_turns_total`, `voice_async_tool_results_dropped_total`.
+- Config: agent config `async_tools: ["<mcp_server_id>/<remote_name>"]`
+  (shape validated at decode, default none) sets `ToolPolicy.Async`. An entry
+  naming a tool the version does not select is inert (that tool stays sync).
+  An async MCP call is bounded by `AsyncTimeout` (`mcp.LongCall`), not the MCP
+  service's 15s per-call timeout, and is cancelled with the loop at close.
+- `MaxAsyncInFlight` is per candidate loop, so a session with LLM fallbacks
+  can hold up to 4 x candidates; deliberately not shared.
+- Failover: an acknowledged async call counts as a side effect at once, so a
+  generation that started one is never replayed on a fallback.

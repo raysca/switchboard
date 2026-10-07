@@ -29,6 +29,9 @@ limits:
   max_pending_handshakes: 50
   max_sessions: 100
   max_sessions_per_principal: 5
+  # max_sessions_per_agent: 0         # 0 = unlimited
+  # start_rate_per_principal: 0       # starts/sec per principal; 0 = unlimited
+  # start_burst_per_principal: 1      # required >= 1 when rate > 0
   upgrade_timeout: 5s
   ready_timeout: 10s
   max_call_duration: 30m
@@ -83,3 +86,40 @@ retention:
   content_retention_days: 7
   metadata_retention_days: 30
   batch_size: 500
+
+# Provider connection reuse and pre-dial (P2-9, docs/operations_runbook.md).
+# enabled shares one tuned HTTP transport per provider across calls (safe).
+# predial opens one TCP/TLS spare per candidate provider at call setup;
+# keep it off until measured live (see "Connection warm-up" in the runbook).
+warmup:
+  enabled: true
+  predial: false
+  on_start: false
+
+# Optional features, all off by default. Defaults and semantics for every key:
+# docs/pipecat-parity-matrix.md ("Default" column) and docs/quickstart.md.
+# stt: {replay_buffer: 10s}              # STT failover replay window
+# turn:
+#   manager: false                       # turn manager (needed for the keys below)
+#   min_words: 0                         # >0: barge-in needs N words
+#   stop: [speech-timeout]               # speech-timeout | eager | llm-completion | turn-analyzer
+#   speech_timeout: 700ms
+#   eager_grace: 200ms
+#   completion: {}                       # llm-completion tuning
+#   mute: []                             # always | first_speech | until_first_bot_complete | function_call | critical_output
+#   max_mute: 30s
+#   analyzer: {mode: "", workers: 0, model_path: third_party/smart_turn_v3.2_cpu.onnx, stop_secs: 3s, budget: 150ms}
+# first_clause_chars: 0                  # try 40 for earlier first audio
+# audio:
+#   input_filters: []                    # [denoise]
+#   denoise_strength: 0.5
+#   output_gain_db: 0
+#   background: {file: "", gain_db: -30, loop: true}
+# idle: {user_timeout: 0s, max_prompts: 0, prompt: "", prompt_mode: "", goodbye: "", bot_timeout: 0s, bot_max_stuck: 0, bot_fallback: ""}
+# dtmf: {detect: false, aggregate: false, send_tool: false, aggregate_timeout: 2s}
+# recording: {enabled: false, dir: "", retention_days: 0, max_duration: 1h, max_bytes: 268435456}
+# privacy:
+#   redaction: {enabled: false, rules: [], dtmf: always}
+# otel: {enabled: false, endpoint: "", protocol: "", sampling_ratio: 1.0, service_name: "", capture_content: false}
+# providers:
+#   openai_llm: {allow_private_base_url: false}   # self-hosted OpenAI-compatible endpoints

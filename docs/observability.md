@@ -97,3 +97,30 @@ Voice Framework V1 provides an in-memory, circular ring buffer for deep incident
 - **Meaning**: A native Silero VAD worker process crashed (e.g. segmentation fault) or became unresponsive.
 - **System Behavior**: The supervisor killed the faulty worker, reaped its PID, and respawned a clean worker. Other workers continued processing calls without disruption.
 - **Action**: Check `stderr` logs for VAD child worker diagnostic dumps (bounded to 64KB).
+
+## Latency observers
+
+`core/observe` consumes the session's DebugEvents (`session.started`, `user.stopped`, `stt.final`, `llm.request`, `llm.first_token`, `tts.request`, `bot.first_audio`, emitted once per turn by `core/debug_frames.go`) and computes per-turn `stt_final`, `llm_ttft`, `tts_ttfb`, `voice_to_voice` plus session `startup`. The server exposes them as `voice_latency_seconds{stage}` histograms (stage is the only label) and as `latency` timeline events (`details` = stage, `duration_ms`). `voice_to_voice` is user-stop to the first non-empty bot audio frame the TTS pushes into the pipeline (not transport playout); turns without a preceding user-stop (greetings) report no `stt_final` or `voice_to_voice`. Observers are bounded and drop-counted, so a slow one never delays the pipeline.
+
+## OpenTelemetry export (optional)
+
+Off by default: with `otel.enabled: false` (or the section absent) no exporter is built and sessions run with no OTel code path. When enabled, each call exports one trace: `govoice.session` -> `govoice.turn` -> `govoice.stt|llm|tts|tool`. Per-frame and per-processor spans are not exported.
+
+```yaml
+otel:
+  enabled: true
+  endpoint: https://collector.example.com:4318/v1/traces   # OTLP/HTTP protobuf
+  protocol: http/protobuf          # only supported value
+  headers_env:                     # header name -> env var holding the value (never logged)
+    Authorization: OTEL_AUTH_HEADER
+  sampling_ratio: 0.1              # default 1; 0 exports nothing
+  service_name: govoice
+  resource_attributes: {deployment.environment: prod}
+  capture_content: false           # default; true admits transcript/prompt text into spans
+  queue_size: 2048                 # finished spans buffered; overflow is dropped, never blocks a call
+  shutdown_timeout: 5s             # bounded final flush during Shutdown
+```
+
+Attributes (prefix `govoice.`): `agent.id`, `agent.version`, `session.id`, `turn.id`, `provider`, `model`, usage (`quantity`/`unit`), and `latency.{stt_final,llm_ttft,tts_ttfb,voice_to_voice,startup}_ms` on the turn (startup on the session span). Failed spans carry `error.class` (Go type only; the message is never exported) and provider failure/failover events are attached as span events. Transcript, prompt, tool arguments/results and audio are not attributes unless `capture_content: true`.
+
+Metrics: `voice_otel_spans_dropped_total` (queue full) and `voice_otel_spans_failed_total` (OTLP export errors). Export is best effort and cannot block or fail a call.

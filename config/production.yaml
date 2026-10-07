@@ -31,6 +31,9 @@ limits:
   max_pending_handshakes: 100
   max_sessions: 250
   max_sessions_per_principal: 5
+  # max_sessions_per_agent: 0         # 0 = unlimited
+  # start_rate_per_principal: 0       # starts/sec per principal; 0 = unlimited
+  # start_burst_per_principal: 1      # required >= 1 when rate > 0
   max_sessions_per_ip: 5
   upgrade_timeout: 5s
   ready_timeout: 10s
@@ -79,3 +82,12 @@ retention:
   content_retention_days: 7
   metadata_retention_days: 30
   batch_size: 500
+
+# Provider connection reuse and pre-dial (P2-9, docs/operations_runbook.md).
+# enabled shares one tuned HTTP transport per provider across calls (safe).
+# predial opens one TCP/TLS spare per candidate provider at call setup;
+# keep it off until measured live (see "Connection warm-up" in the runbook).
+warmup:
+  enabled: true
+  predial: false
+  on_start: false

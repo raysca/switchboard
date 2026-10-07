@@ -42,3 +42,6 @@ e2e/.stack.json
 
 # Agent worktrees
 .claude/worktrees/
+.govoice-eval-pipecat/
+.govoice-loadtest-soak.*
+.perf-out/

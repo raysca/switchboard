@@ -68,6 +68,106 @@ distinguish operational metadata from conversational content:
   Purges execute in bounded batches (e.g. 500 records) to avoid database
   contention or long locks on both SQLite and PostgreSQL.
 
-## Audio recording and capture sink (P1)
+## Call recording
 
-Removed. The `core/audio` capture processor had no production users and was deleted; the framework does not record call audio.
+Off by default. A call is recorded only when **both** the server enables it
+(`recording.enabled`, with `recording.dir` and `recording.retention_days > 0`)
+**and** the agent opts in (`recording: {enabled, disclosure_confirmed}` in its
+config). `enabled` without `disclosure_confirmed` makes the agent report
+`recording_disclosure_unconfirmed` and refuse calls: the operator must confirm
+callers are told they are recorded. The decision is made once at call start
+from the agent version the call pins; turning recording off affects new calls,
+not calls already in progress.
+
+- **What is stored:** `<agentid>-<sessionid>-<unix>.wav` (stereo 16-bit PCM,
+  L = caller, R = bot) and a `.json` sidecar (session/agent/call ids, start/end,
+  format, and the user/assistant transcript turns, each capped at 4 KiB; an
+  assistant turn cut off by barge-in holds only the heard prefix and is marked
+  `interrupted`). File names contain ids only, never names or phone numbers. The caller audio and
+  transcript are personal data: treat the directory accordingly.
+- **Bot track = what was actually sent.** It is fed from the paced writer's
+  successful write completions, so audio flushed on barge-in is never recorded.
+  Tracks are aligned to wall-clock with silence padding; audio arriving within
+  60 ms of a track's end continues it without a gap, so network jitter never
+  inserts clicks.
+- **Retention:** a janitor deletes recordings older than
+  `recording.retention_days` (hourly, by file mtime) and finalizes `.part` files
+  left by a crashed process (only files whose header this package wrote).
+  Recordings are conversation content, so `retention_days` may not exceed
+  `retention.content_retention_days` when database retention is on.
+- **Storage hygiene:** use a dedicated directory. It is created/tightened to
+  0700 and refused if it is a symlink; files are 0600, created exclusively
+  (never through a planted link), written as `.part` and renamed on
+  completion. The janitor only touches regular files named like recordings
+  (`<id>.wav`, `<id>.json`, and their `.part`) and never follows symlinks.
+- **Caps per call:** `recording.max_duration` (1h) and `recording.max_bytes`
+  (256 MiB); the file is truncated and flagged `truncated`.
+- **Failure isolation:** the recorder queue is bounded; a slow or failing disk
+  drops and counts frames (logged at call end) and never stalls or fails the call.
+- **Not covered:** S3-compatible storage is an interface (`record.Sink`) only;
+  encryption at rest is the operator's responsibility.
+
+## DTMF digits
+
+Key presses (`dtmf.detect`/`dtmf.aggregate`) can be PINs or card numbers. The
+aggregated `DTMF: …` text goes to the LLM unchanged (the model needs it), but
+is masked at the sinks by default (see Sink redaction): stored turn history,
+recording sidecar and OTel content become `DTMF: [REDACTED:dtmf 4]`. The
+client's `user-transcription` still carries the digits. A recording's caller
+track contains the tones themselves, which are decodable: disable recording
+or do not enable DTMF for agents that collect payment data. `send_dtmf` digits
+are tool arguments (content). The `dtmf.detected` debug event and logs never
+carry digits.
+
+## Context summarization
+
+Agents may set `context.summarization.enabled` (default off). When the call history passes `trigger_tokens` (or three quarters of `max_messages`), the older turns (caller speech, assistant replies, tool results) are sent to the agent's primary LLM provider, with the agent's own credential and model, to be replaced by one short summary in the call's in-memory history. Fallback providers are never asked to summarize (on failover they receive the history, including any summary, like any turn). The summary is stored as a user-role message labelled as background context, never shown or recorded as caller speech, and the transcript is sent as delimited, untrusted data. The summary is derived content: it exists only in the call's history, is covered by the same content retention rules as the turns it replaces, is never added to traces or debug events (only outcome counts, a bounded failure reason and token estimates are exported), and a failed or cancelled summary leaves the history untouched.
+
+## Sink redaction
+
+One policy engine (`core/redact`) masks sensitive spans as `[REDACTED:kind]`
+at **sinks only**; the live LLM context is never touched.
+
+```yaml
+privacy:
+  redaction:
+    enabled: false      # text rules below; default off
+    rules: []           # default when enabled: pin, ssn, iban, card, digits
+    dtmf: always        # always (default) | off; independent of enabled
+```
+
+- **Rules:** `pin` (3-8 digits or 3-8 spoken digits after PIN/CVV/CVC/
+  passcode/OTP/one-time password, or after "my/the/your/a/this/that/access/
+  door/gate/security/verification/confirmation/auth/one-time code"; "zip/area/
+  error code" are not matched), `ssn` (NNN-NN-NNNN, plausible area), `iban`
+  (mod-97 valid), `card` (13-19 digits with spaces/dashes/dots, Luhn valid),
+  `digits` (9+ contiguous digits, or 9+ spoken/single digit tokens such as
+  "four one one one ...", "oh four double one ..." or "4 1 1 1 ..."), and
+  opt-in only by name `email` and `phone`. Before the text rules run,
+  non-ASCII digits (Arabic-Indic, fullwidth, ...) are folded to ASCII and
+  invisible characters (zero-width, bidi controls, soft hyphen) are dropped,
+  so they cannot split a number; the stored text changes only in those
+  characters. Redacting is idempotent. DTMF: every `DTMF:` marker run loses
+  its keys but keeps the marker and key count.
+- **Applied at:** stored turn history (`transcript`, `assistant_text`; admin
+  API reads from it), recording sidecar transcript turns, error text in the
+  session timeline and the "session failed" log (provider errors can echo
+  request text), and OTel `transcript`/`prompt`/`text` attributes when
+  `otel.capture_content` is on (today no span carries them: per-frame events
+  are not exported). Debug events and stored traces are metadata only. Tool
+  arguments/results are not stored by the server and are not exported to
+  OTel (no tool-content redactor is configured).
+- **NOT covered:** the live LLM context; anything the STT/LLM/TTS providers
+  receive; the client's `user-transcription`; audio recordings (speech and DTMF
+  tones remain); the summarizer input; content already stored before the
+  policy was enabled. With only the default DTMF masking, an assistant reply
+  that reads the keyed digits back ("you entered 1234") is stored as-is:
+  enable the text rules (`pin`) or instruct the agent not to repeat them.
+- **Limits (precision over recall):** rules are regular expressions, not
+  understanding. Not caught: numbers spoken as tens/hundreds ("forty one
+  eleven"), numbers broken up by other words, digits spoken in other
+  languages, numbers with fewer than 9 digits (except after a PIN/code
+  keyword), Luhn-invalid spaced card numbers. False positives: any 9+ digit
+  number (order IDs, Unix timestamps, dotted version strings) and digit-word
+  runs of 9+. Matching is linear time (RE2); about 0.5 s per MiB in the
+  worst case, and turns are small.

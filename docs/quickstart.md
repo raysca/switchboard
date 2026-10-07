@@ -36,6 +36,8 @@ This generates:
 
 `config/development.yaml` works as-is. YAML holds only infrastructure: listeners, TLS, limits, VAD, the token issuer, provider infrastructure (Google project/location/stream quotas, xAI endpoints) and `storage.dialect`. Models, voices, prompts and credentials belong to stored agents. A `pipelines:` section is rejected at startup.
 
+Optional features (turn manager, Smart Turn, idle, DTMF, recording, OTel, redaction, audio filters, failover) are off by default and listed as commented examples at the end of `config/development.yaml`; defaults and semantics per key are in the "Default" column of [pipecat-parity-matrix.md](pipecat-parity-matrix.md).
+
 The agent store is required. Set its DSN, the credential encryption keyring and the management API key:
 
 In the development profile you can skip the first two variables: the server then creates `.govoice-dev/govoice.db` and a persisted credential key in `.govoice-dev/credential.key`. Production always requires both.
@@ -201,13 +203,26 @@ await client.connect();
 After `bot-ready`, a client can type instead of speak by sending the RTVI client
 message `{"label":"rtvi-ai","type":"send-text","data":{"content":"..."}}`. The
 content is trimmed and must be 1–4096 bytes of UTF-8. It enters the conversation
-as a final `user-transcription`, and the reply streams as `bot-llm-text`,
-ending with `bot-llm-stopped`. `bot-llm-stopped` is only sent when a reply
+as a final `user-transcription`, and the reply opens with `bot-llm-started`,
+streams as `bot-llm-text`, and ends with `bot-llm-stopped`. `bot-llm-stopped` is only sent when a reply
 completes, not when it is interrupted or fails.
 
 Each text turn starts an LLM request, so a connection may send 3 at once, then
 one per second. A rejected text turn (too early, invalid, or over the rate) gets
 a non-fatal `error` message, and the call stays open.
+
+### DTMF (keypad tones)
+
+Off by default; enable per server under `dtmf:`. `detect: true` finds keypad
+tones in the caller's audio (accepts tones of 40 ms or more). `aggregate: true`
+turns key presses into one user turn (`DTMF: 1234#`), committed on `#` or after
+`aggregate_timeout` (2s) of quiet; the first key interrupts the bot. Clients may
+also send presses after `bot-ready` as
+`{"label":"rtvi-ai","type":"dtmf","data":{"buttons":["1","2","#"]}}` (up to 32
+keys, 10 keys/s with a 32-key burst). `send_tool: true` gives the LLM a
+`send_dtmf` tool that plays tones toward the caller (IVR navigation). Digits
+can be PINs or card numbers: they are conversation content (see
+`docs/privacy.md`).
 
 ---
 

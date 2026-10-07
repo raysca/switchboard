@@ -13,6 +13,7 @@ Voice Framework V1 is a high-performance, low-latency, resilient voice agent run
 - **Provider Interchangeability**: Agents can use Google Cloud for every stage (Chirp 2 STT + Gemini LLM + Journey TTS) or swap in xAI Grok for the LLM (Scenario C) with zero core runtime modifications. xAI STT/TTS are only available in builds made with `-tags xaispeech`.
 - **Bounded Resource Safety**: Enforces message and token context budgets, async task budgets, priority control queues, and data shedding under backpressure.
 - **Production-Ready Observability**: Provides separation of public (`:8080`) and administrative (`:9090`) listeners, cheap local `/health`, compound `/ready`, Prometheus metrics conforming to Spec §35 without high-cardinality labels, and a per-session circular diagnostic timeline.
+- **Pipecat feature coverage** (defaults, config keys and status per feature in [docs/pipecat-parity-matrix.md](docs/pipecat-parity-matrix.md)): observer and latency metrics, LLM/STT/TTS failover, turn strategies (speech-timeout, eager, LLM completion, mute), Smart Turn v3 analyzer, idle handling, DTMF, call recording, OpenTelemetry export, PII redaction, context summarization, input denoise and background audio, plus a CI perf gate ([docs/benchmarks/README.md](docs/benchmarks/README.md)).
 
 ---
 
@@ -46,6 +47,7 @@ make build
 This compiles:
 - `bin/server`: Production voice server
 - `bin/vadworker`: Isolated child worker process for Silero VAD
+- `bin/turnworker`: Isolated child worker process for the Smart Turn model
 - `examples/...`: Programmatic pipeline examples
 
 ### 2. Run Complete Verification Suite
@@ -53,7 +55,7 @@ This compiles:
 make verify
 ```
 
-Validates code formatting, runs all tests with `-race` across all modules (`core`, `providers/google`, `providers/xai`, `server`, `vad`, `transport`), verifies Protobuf binary fixtures, and confirms the compatibility manifest.
+Validates code formatting, runs all tests with `-race` across all modules (root, `core`, every `providers/*`, `server`, including `vad`, `smartturn`, `transport`, `tools/*`), verifies Protobuf binary fixtures, and confirms the compatibility manifest.
 
 ### 3. Launch Development Server
 The agent store is required. Provide its DSN, the credential encryption keyring and a management API key:

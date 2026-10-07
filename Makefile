@@ -1,8 +1,9 @@
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
   SDKROOT_CANDIDATE := /Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk
+  # Only when present and not set by the caller; otherwise cgo asks xcrun (CI runners).
   ifneq ($(wildcard $(SDKROOT_CANDIDATE)),)
-    export SDKROOT := $(SDKROOT_CANDIDATE)
+    export SDKROOT ?= $(SDKROOT_CANDIDATE)
   endif
   export CGO_LDFLAGS := -Wl,-w
 endif
@@ -12,31 +13,37 @@ export PATH := $(PATH):$(HOME)/go/bin:/opt/homebrew/bin
 build:
 	@mkdir -p bin
 	go build -o bin/vadworker ./cmd/vadworker
+	go build -o bin/turnworker ./cmd/turnworker
 	go build -o bin/server ./cmd/server
 	go build ./examples/...
 
+# Every module in go.work (root also covers vad, smartturn, transport, tools/*, cmd, examples).
+MODULES := . core providers/cartesia providers/deepgram providers/elevenlabs providers/google providers/openai providers/xai server
+
 test: build
-	@echo "=== Vetting and testing root module ==="
-	go vet ./...
-	go test -race -count=1 ./vad/
-	go test -race -count=1 ./tools/compat/...
-	go test -race -count=1 ./transport/...
-	@echo "=== Vetting and testing core module ==="
-	cd core && go vet ./...
-	cd core && go test -race -count=1 ./...
-	@echo "=== Vetting and testing providers/google module ==="
-	cd providers/google && go vet ./...
-	cd providers/google && go test -race -count=1 ./...
-	@echo "=== Vetting and testing providers/xai module ==="
-	cd providers/xai && go vet ./...
-	cd providers/xai && go test -race -count=1 ./...
-	@echo "=== Vetting and testing server module ==="
-	cd server && go vet ./...
-	cd server && go test -race -count=1 ./...
+	@set -e; for m in $(MODULES); do \
+		echo "=== Vetting and testing module $$m ==="; \
+		(cd $$m && go vet ./... && go test -race -count=1 ./...); \
+	done
+
+# Black-box pipecat.evals run against the Go server with fake providers (docs/decisions/pipecat-evals.md).
+eval-pipecat:
+	@./tools/eval/pipecat/run.sh
+
+# Turn-quality gate (docs/benchmarks/turn-quality.md): fake oracles, no cost; fails on threshold regression.
+eval-turn:
+	@go run ./tools/eval/cmd/govoice-turn-eval
+
+# Paired Pipecat fixtures (docs/pipecat-parity-matrix.md): re-executes the pinned pipecat-impl components
+# from its venv (`cd pipecat-impl && uv sync` once) and rewrites tools/compat/testdata/parity/*.json.
+# Offline and deterministic; `go test ./tools/compat/...` compares go-voice against the committed goldens.
+parity-regen:
+	@test -x pipecat-impl/.venv/bin/python || { echo "pipecat-impl/.venv missing: cd pipecat-impl && uv sync"; exit 1; }
+	cd pipecat-impl && .venv/bin/python ../tools/compat/parity/gen_goldens.py
 
 verify: test
 	@echo "=== Checking code formatting ==="
-	@unformatted=$$(gofmt -l core/ transport/ tools/compat/ proto/ providers/ vad/ cmd/ server/ examples/); \
+	@unformatted=$$(gofmt -l core/ transport/ tools/ proto/ providers/ vad/ smartturn/ cmd/ server/ examples/); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files need formatting:"; \
 		echo "$$unformatted"; \
@@ -118,4 +125,38 @@ example-cli:
 example-go:
 	@./scripts/dev.sh go "$(NAME)"
 
+# Framework latency baseline with fake providers (docs/benchmarks/baseline.md).
+bench-latency:
+	@go run ./tools/eval/cmd/govoice-bench $(BENCH_ARGS)
+
+# Load/soak harness: real WebSocket calls against a -tags fakeproviders server child
+# (docs/benchmarks/capacity.md). Fake providers, no network, no cost.
+# loadtest-smoke: ~1 min, CI-friendly. Skips when the Silero model is missing.
+loadtest-smoke:
+	@test -f third_party/silero_vad.onnx || { echo "loadtest-smoke: SKIPPED: third_party/silero_vad.onnx missing"; exit 0; }
+	@go run ./tools/loadtest -sessions 4 -duration 30s -ramp 3s -turns-per-session 3 -sample-interval 2s -max-p95-v2v 1500 $(LOADTEST_ARGS)
+
+# loadtest-soak: SOAK_DURATION=24h for the full P5-4 acceptance run; default 5m.
+SOAK_DURATION ?= 5m
+SOAK_SESSIONS ?= 16
+loadtest-soak:
+	@go run ./tools/loadtest -soak -sessions $(SOAK_SESSIONS) -duration $(SOAK_DURATION) -ramp 30s -sample-interval 30s \
+		-max-p95-v2v 1500 -max-rss-growth-pct 10 -max-goroutine-growth 50 -json-out .govoice-loadtest-soak.json -md-out .govoice-loadtest-soak.md $(LOADTEST_ARGS)
+	@cat .govoice-loadtest-soak.md
+
+# Perf gate (P5-5, docs/benchmarks/README.md): framework-overhead bench + loadtest smoke vs the
+# committed baseline for THIS machine class (docs/benchmarks/baselines/<label>*.json).
+# PERF_BASELINE=<label> overrides the label; CI=true fails on a missing baseline unless PERF_ALLOW_MISSING=1.
+perf-gate:
+	@scripts/perf-gate.sh gate
+
+# (Re)generate this machine's baseline; FORCE=1 to overwrite. Run on an otherwise idle host.
+perf-baseline:
+	@scripts/perf-gate.sh baseline
+
+# Proves the gate fails on a 100 ms injected delay and passes without one (~4 min).
+perf-gate-selftest:
+	@scripts/perf-gate.sh selftest
+
+.PHONY: parity-regen eval-turn eval-pipecat bench-latency loadtest-smoke loadtest-soak perf-gate perf-baseline perf-gate-selftest
 .PHONY: dev example-web example-cli example-go

@@ -35,7 +35,7 @@ Remaining pin provenance: Go module paths and Go directives are in the five `go.
 
 - The protobuf `Frame` oneof has text field 1, audio field 2, transcription field 3, nested message field 4, and interruption field 5. The checked-in Go protocol and fixtures cover audio, nested RTVI messages, and malformed input.
 - The server normalizes incoming audio to mono PCM16LE at 16 kHz and client playback to mono PCM16LE at 24 kHz. The official client quick start uses 16 kHz microphone capture and 24 kHz playback. Audio output is paced against media time; the default server-side residual queue is bounded to 100 ms / 4,800 bytes at 24 kHz PCM16 mono.
-- The server emits V1 RTVI lifecycle, user speech, transcription, assistant text, bot speaking, error, and disconnect messages at the `rtvi-ai` label and `2.1.0` protocol version.
+- The server emits V1 RTVI lifecycle, user speech, transcription, assistant text, bot speaking, error, and disconnect messages at the `rtvi-ai` label and `2.1.0` protocol version. Assistant text is bracketed per reply by `bot-llm-started`/`bot-llm-stopped` (a reply cut off by an interruption gets no stop; the next reply still opens with a start), and each TTS synthesis unit by `bot-tts-started`/`bot-tts-stopped`. `bot-tts-text`, `bot-interrupted`, function-call and `vad-*` messages are not emitted.
 - V1 internally uses generation fencing and a paced output queue. This protects server-side work and queued frames from stale output, but it does not clear audio already buffered in the pinned browser player.
 - The hard probe against the exact unmodified packages found that protobuf interruption field 5 is rejected as `Unknown frame kind`; the RTVI `user-started-speaking` message deserializes and calls the client callback, but neither `WebSocketTransport` nor `PipecatClient` calls the media player's interruption/clear method. The observed verdict is `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`.
 
@@ -63,6 +63,8 @@ Until an official Whisker package and protocol version are pinned, the V2 target
 Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` directly carries pipeline/processor position, frame kind, direction, sequence, and tool call ID with session/turn/generation correlation. Namespaced structured metadata is restricted to copied numeric/boolean values. The Task 14 semantic adapter deep-copies nested metadata and rejects malformed identifiers, processor indexes, and directions. Its eleven cases use live session/probe processing or the actual paced writer, then adapt observed transitions to `DebugEvent` values. Interruption and transport flush acknowledgement come from the assistant/transport processors; queued and in-flight flush completion comes from the paced writer. Tool start and failure come from live executor outcomes. This validates the narrow adapter; a general runtime observer subscription/delivery API belongs to Task 35.
 
 The teardown probe implements `core.Closer` and records `processor.shutdown` only from its actual `Close` callback. Its session-supervised worker waits for cancellation and the close callback, then records `session.resources.completed` as it exits. The scenario requires both observations before session `Done` and zero leaked tasks. Suppressing the close observation fails the negative regression. This does not add a general processor shutdown event to core; Task 35 owns general observer delivery.
+
+Task 35 is delivered by `core/observer.go` (plan task P0-1). `Session.Subscribe(buffer, fn)` runs each observer on its own session-supervised task with a bounded queue. `Session.EmitDebug` never blocks: a full queue drops the event for that observer only, and the drop is counted (`Subscription.Dropped`, `Session.DebugDropped`). An observer panic is recovered and never fails the session. Cancel is idempotent, and teardown leaves no tasks behind unless an observer blocks forever, which Close reports as a leaked task.
 
 The conformance scenario set is:
 
@@ -96,7 +98,7 @@ Compatibility remains three separately verifiable suites:
 |---|---|---|
 | Pinned RTVI client | Go loopback integration runs `node tools/compat/test_rtvi_client.js`; `node tools/compat/verify_fixtures.js`; `npm test --prefix tools/compat` | The exact pinned client/transport exchange and fixture decoding pass. The client integration checks interim/final transcript payload and order, a nonfatal server error, user speech, assistant text/speaking, audio, handshake, and disconnect. Error-callback tests reject unexpected, fatal, duplicate, and late callbacks. |
 | Whisker semantic | `go test -race ./tools/compat/whisker` and eleven `whisker_*` eval results | The semantic adapter preserves observed event identity, ordering fields, correlation, and copied safe attributes. No wire protocol or general observer-delivery claim is made. |
-| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` against `pipecat-impl/` revision in `tools/compat/fixtures/pipecat-turn-parity.json` | The fixture validator checks the exact checkout HEAD, file, and named tests. Equivalent Go frames pass through a live session and production turn manager; emitted `TurnEventFrame` decisions include turn two ending interrupted after EndFrame. This narrow suite does not imply complete Pipecat parity. |
+| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` (turn events) and `go test -race ./tools/compat -run TestParity` (56 paired scenarios, below) against `pipecat-impl/` | The fixture validators check the exact checkout HEAD and cited modules. Turn events: equivalent Go frames pass through a live session and the production turn manager; turn two ends interrupted after EndFrame. Paired scenarios: the same scripted input runs through the Pipecat component and go-voice; equal output, or a declared `intentional_difference`. Neither implies complete Pipecat parity. |
 
 The JSON runner labels the official RTVI and Pipecat suites as `separate_suite`
 because those require their own package/reference test runs; it does not turn
@@ -117,15 +119,39 @@ have explicitly authorized content use the existing typed
 prevents the compatibility adapter from fabricating empty content or widening
 debug-event privacy policy.
 
-## Selected Pipecat behavioral parity
+## Pipecat behavioral parity: matrix and paired fixtures
 
-The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status describes the V2 target as of this contract freeze. Acceptance evidence must be attached to the owning phase task; a planned test is not a passing result.
+The per-feature matrix (Pipecat module, go-voice package and config key, status, whether it is on by default, differences, evidence) is `docs/pipecat-parity-matrix.md`; it also lists known gaps and risks. This is the third surface only: nothing here is evidence for RTVI client or Whisker conformance, and those suites do not count toward it.
+
+Paired fixtures live in `tools/compat/testdata/parity/*.json` (committed, about 40 KB). `tools/compat/parity/gen_goldens.py` runs the pinned `pipecat-impl` components on scripted inputs (asyncio on a virtual clock: no network, audio hardware or wall clock) and writes the goldens, including each declared `intentional_difference` with its reason and the go-voice output. `tools/compat/parity_fixtures_test.go` runs the same inputs through go-voice and needs no Python.
+
+| Area | Scenarios | Pipecat component | go-voice |
+|---|---|---|---|
+| `turn` | 14 | user start strategies (min words, transcription, wake phrase), speech-timeout stop, `UserTurnController` | `core/turn` Manager |
+| `idle` | 6 | `UserIdleController` | `core.IdleController` on a fake clock |
+| `mute` | 6 | four user mute strategies | `core/turn` Processor mute |
+| `dtmf` | 6 | `DTMFAggregator` | `core/audio/dtmf` Aggregator |
+| `text` | 12 | `SimpleTextAggregator` | `core.AssistantContextProcessor` synthesis units |
+| `assistant` | 6 | `LLMAssistantAggregator` on interruption | `core.HeardText` via the assistant-context stage |
+| `summary` | 5 | `get_messages_to_summarize` | `core.ContextSummarizer` |
+| `constants` | 1 | turn-completion markers | `core` markers |
+
+```sh
+go test -race -count=1 ./tools/compat/...   # compare go-voice with the committed goldens (also part of make test)
+make parity-regen                           # re-execute Pipecat from pipecat-impl/.venv, rewrite the goldens (needs: cd pipecat-impl && uv sync)
+```
+
+Regeneration is deterministic (a second run is byte-identical). A fixture without a declared difference must match Pipecat exactly; a declared difference must still hold and must differ from Pipecat, so a stale one fails. `TestParityMatrix` also fails when the matrix cites a missing path, test or fixture, or leaves a declared difference unexplained. Only the turn-event fixture above pins `tests/test_turn_tracking_observer.py`; the new goldens pin the checkout revision and each cited module. A paired fixture drives one component with scripted frames; it is not evidence that the feature is enabled in a live call (most turn-taking features need `turn.manager: true`).
+
+## Selected V2 capability status
+
+The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status describes the V2 target as of this contract freeze; rows marked "rebuilt" were deleted then and re-added by the Pipecat parity plan (current state in `docs/pipecat-parity-matrix.md`). Acceptance evidence must be attached to the owning phase task; a planned test is not a passing result.
 
 | Priority and capability | Status | Acceptance evidence |
 |---|---|---|
 | P0 — Input mute/unmute control | Gate B passed | Core race tests prove mute keeps the session alive, blocks VAD/STT by default, emits state, and unmute resumes input without reconnecting. |
-| P0 — Audio filter/noise-suppression abstraction | removed | Deleted from core: it had no production users. |
-| P0 — Audio resampling and normalization | removed | Deleted from core: it had no production users. |
+| P0 — Audio filter/noise-suppression abstraction | rebuilt (P4-2) | `core/audio/filter`, off by default. |
+| P0 — Audio resampling and normalization | transport only | `core/transport/resample` normalizes input to 16 kHz mono; no general processor. |
 | P0 — Bot speaking state | Gate B passed | Task 8 starts typed speaking state only after a successful non-empty paced write and stops once on whole-turn drain, flush, fatal write failure, or close. A late whole-turn marker reconciles already-completed output exactly once. Empty/error/stale output and per-unit TTS boundaries do not flicker state. The same transition maps to RTVI; it is not client playback acknowledgement. |
 | P0 — Interruptible vs uninterruptible output | Gate B passed | Task 8 tests show flush drops queued/selected interruptible output through the target generation while old-generation explicitly uninterruptible media survives in relative order and new-generation output recovers. A transport-bound real WebSocket write finishes before acknowledgement because canceling it would close the connection. |
 | P0 — Output flush semantics | Gate B passed; client clear unsupported | Task 8 bounds/copies the paced queue by frame/byte/duration, atomically fences write admission, preserves uninterruptible final drains, and schedules late finality at recorded media time. The real-WebSocket integration proves barrier waiting plus same-connection reuse. The pinned browser probe still cannot clear already-buffered playback, so no client-buffer claim is made; Gate B permits this documented already-delivered-audio exception. |
@@ -134,19 +160,19 @@ The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status des
 | P0 — Turn-scoped audio buffer | removed | Deleted from core: it had no production users. |
 | P0 — Behavioral eval harness | P0 gate | Machine-readable scenarios pass for barge-in, turn completion, silence/no-speech timeout, flush, transcript stabilization, tool interruption, pacing, teardown, RTVI, and Whisker. |
 | P1 — Runtime service settings updates | removed | Deleted from core: it had no production users. |
-| P1 — Context summarization/compaction hook | removed | Deleted from core: it had no production users. |
-| P1 — Audio recording/capture processor | removed | Deleted from core: it had no production users. |
+| P1 — Context summarization/compaction hook | rebuilt (P3-4) | `core/context_summary.go`, per-agent opt-in. |
+| P1 — Audio recording/capture processor | rebuilt (P4-4) | `core/record`, server and agent opt-in. |
 | P1 — Urgent control frames/priority lane | P1 tracked | Congestion tests prove cancel/interruption/flush/end/critical error pass queued media while preserving control ordering. |
 | P1 — Processor failure/unusable policy | removed | Deleted from core: it had no production users. |
 | P1 — Usage metrics | P1 tracked | Provider contract tests record available token/audio/character/request units, omit unavailable values, and correlate them to session/turn without billing logic. |
 | P1 — Bot output/playback state observer | removed | Deleted from core: it had no production users. |
 | P1 — Serializer abstraction | removed | Deleted from core: it had no production users. |
-| P1 — Frame/pipeline observer API | removed | Deleted from core: it had no production users. |
-| P2 — DTMF/tone frames | removed | Deleted from core: it had no production users. |
-| P2 — Audio mixer | removed | Deleted from core: it had no production users. |
-| P2 — Background audio/earcon processor | removed | Deleted from core: it had no production users. |
+| P1 — Frame/pipeline observer API | rebuilt (P0-1) | `Session.Subscribe` on debug events, not frames. |
+| P2 — DTMF/tone frames | implemented (P4-1) | `core/audio/dtmf`: Goertzel detector, RTVI `dtmf` input, `DTMFAggregator`-style user turns, `send_dtmf` tool; off by default (`dtmf:` config). Tones are generated in-process rather than sent as transport DTMF events. |
+| P2 — Audio mixer | rebuilt (P4-3) | `core/audio/mixer`, off by default. |
+| P2 — Background audio/earcon processor | rebuilt (P4-3) | Looping ambience only; no earcons. |
 | P2 — Audio source abstraction | removed | Deleted from core: it had no production users. |
-| P2 — Advanced audio filter chain | removed | Deleted from core: it had no production users. |
+| P2 — Advanced audio filter chain | rebuilt (P4-2) | Ordered `audio.input_filters`; one filter (denoise). |
 | P2 — Runtime pipeline settings introspection | removed | Deleted from core: it had no production users. |
 | P2 — Processor capability metadata | removed | Deleted from core: it had no production users. |
 | P2 — Provider/processor readiness events | removed | Deleted from core: it had no production users. |

@@ -8,8 +8,12 @@ WORKDIR /src
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
 COPY core/go.mod ./core/
-COPY providers/google/go.mod providers/google/go.sum ./providers/google/
-COPY providers/xai/go.mod ./providers/xai/
+COPY providers/cartesia/go.mod providers/cartesia/go.sum* ./providers/cartesia/
+COPY providers/deepgram/go.mod providers/deepgram/go.sum* ./providers/deepgram/
+COPY providers/elevenlabs/go.mod providers/elevenlabs/go.sum* ./providers/elevenlabs/
+COPY providers/google/go.mod providers/google/go.sum* ./providers/google/
+COPY providers/openai/go.mod providers/openai/go.sum* ./providers/openai/
+COPY providers/xai/go.mod providers/xai/go.sum* ./providers/xai/
 COPY server/go.mod server/go.sum ./server/
 
 RUN go work sync
@@ -18,10 +22,14 @@ COPY . .
 
 ENV CGO_ENABLED=1
 RUN go build -ldflags="-s -w" -o /src/bin/vadworker ./cmd/vadworker && \
+    go build -ldflags="-s -w" -o /src/bin/turnworker ./cmd/turnworker && \
     go build -ldflags="-s -w" -o /src/bin/server ./cmd/server
 
 RUN test -f third_party/silero_vad.onnx && \
     sha256sum third_party/silero_vad.onnx | grep 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
+
+RUN test -f third_party/smart_turn_v3.2_cpu.onnx && \
+    sha256sum third_party/smart_turn_v3.2_cpu.onnx | grep 2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f
 
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 
@@ -56,13 +64,15 @@ WORKDIR /opt/govoice
 
 COPY --from=builder /src/bin/server /opt/govoice/bin/server
 COPY --from=builder /src/bin/vadworker /opt/govoice/bin/vadworker
+COPY --from=builder /src/bin/turnworker /opt/govoice/bin/turnworker
+COPY --from=builder /src/third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx
 COPY --from=builder /src/third_party/silero_vad.onnx /opt/govoice/third_party/silero_vad.onnx
 COPY --from=builder /src/third_party/silero_vad.onnx /opt/govoice/models/silero_vad.onnx
 COPY --from=builder /src/config/production.yaml /etc/govoice/production.yaml
 
 RUN chown -R govoice:govoice /opt/govoice /etc/govoice && \
-    chmod 755 /opt/govoice/bin/server /opt/govoice/bin/vadworker && \
-    chmod 644 /opt/govoice/third_party/silero_vad.onnx /opt/govoice/models/silero_vad.onnx /etc/govoice/production.yaml /opt/govoice/lib/libonnxruntime.so
+    chmod 755 /opt/govoice/bin/server /opt/govoice/bin/vadworker /opt/govoice/bin/turnworker && \
+    chmod 644 /opt/govoice/third_party/silero_vad.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/models/silero_vad.onnx /etc/govoice/production.yaml /opt/govoice/lib/libonnxruntime.so
 
 RUN mkdir -p /tmp /var/log/govoice && \
     chown -R govoice:govoice /tmp /var/log/govoice && \

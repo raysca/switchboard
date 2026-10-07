@@ -23,6 +23,14 @@ The following table is planning guidance for a host that runs the image:
 - **Processes / Threads**: `LimitNPROC=4096`
 - **Network**: 1 Gbps NIC with low jitter connectivity to Google Cloud (`us-central1` recommended)
 
+### Sizing VAD workers and CPU headroom
+
+Measured with `tools/loadtest` (see `docs/benchmarks/capacity.md`; Apple M4 Pro, fake providers, so these are framework-only figures):
+
+- **`vad.workers`**: Silero needs about 76 µs of one core per 32 ms window per call when unbatched, and about 52 µs at batch 8. That is about 2.4 ms of CPU per call-second in the worst case, so one worker (single-threaded) saturates near 400 calls. Size for 50% worker utilisation: `vad.workers = max(2, ceil(peak_concurrent_calls / 200))`. The default of 4 covers about 800 calls. More workers do not help latency below that. Re-measure on slower x86 cores, which can be 2 to 3 times slower per window.
+- **CPU headroom matters more than worker count.** A VAD worker that has not answered a batch in about 150 ms is killed and respawned. When the host or container is CPU-starved (oversubscribed nodes, or a CPU limit that throttles in 100 ms periods), healthy workers can be killed. You then see `voice_vad_worker_restarts_total` increase, `vad_unavailable` admission rejects while every worker is down, and growth in `voice_vad_stale_chunks_total`, all with normal latency. Keep the steady state below about 70% of the CPU allotment. Prefer CPU requests without a tight CPU limit. Do not co-locate a load generator with the server when measuring capacity.
+- **Admission limits**: set `limits.max_sessions` from a load test on the target hardware with real providers, at most about 70% of the session count where the p95 voice-to-voice budget or any of the failure counters above first break.
+
 ---
 
 ## 2. Deployment Path A: Container (Docker / Podman)
@@ -141,13 +149,21 @@ sudo systemctl stop govoice.service
 # Or in docker:
 docker stop -t 45 govoice
 ```
-**Drain Sequence**:
-1. Server marks itself unready (`/ready` returns 503).
-2. Existing WebSocket calls continue normally up to `shutdown_timeout: 30s`.
-3. New handshakes are rejected with 503.
-4. After 30s, any remaining sessions are canceled cleanly.
-5. All worker processes and network sockets are closed.
-6. Process exits with status `0`.
+**Drain Sequence** (`limits.drain_timeout`, default 30s; 45s in production.yaml):
+1. SIGTERM/SIGINT: admin `/ready` returns 503 immediately (`voice_draining 1`).
+2. New calls are refused: a new `/ws` upgrade gets HTTP 503 `server_draining` before the token is checked (the token stays valid for a retry on another instance); a client already upgraded but not yet `client-ready` gets RTVI error `server_draining` and close 1001. The public listener stays open (public `/health` keeps answering) so stragglers routed during LB endpoint lag get a clear 503, not connection refused.
+3. Active calls continue until they end or `drain_timeout` expires (`voice_drain_sessions_remaining` shows how many are left).
+4. At the deadline each remaining call receives a fatal RTVI error `server_draining` followed by close 1001 (going away), then is force-closed. The client should reconnect.
+5. The public listener, VAD workers and admin listener are closed. Exit `0` when all calls ended inside the deadline; exit `1` if calls had to be force-closed (or the shutdown budget ran out). Orchestrators ignore the code on a requested stop (Kubernetes, `docker stop`; systemd only logs `status=1/FAILURE` and does not restart on `systemctl stop`), so it is a signal for alerting on dropped calls, not a restart trigger.
+
+### Rolling Deploys and Session Affinity
+- **Readiness vs liveness**: point the load balancer / Kubernetes `readinessProbe` at admin `/ready` (503 during drain). Point `livenessProbe` at `/health` (admin `:9090` or public `:8080`; both stay up for the whole drain). Never use `/ready` for liveness: it is 503 for the whole drain and would kill the pod mid-drain.
+- **Grace period**: `terminationGracePeriodSeconds` (Docker `stop_grace_period`, systemd `TimeoutStopSec`) must be at least `drain_timeout` + `preStop` sleep + 5s process margin (the server budgets `drain_timeout + 5s`). Production: 45s drain + 5s preStop + 5s margin => 60s or more (compose uses 60s).
+- **preStop sleep**: add `preStop: sleep 5` so endpoint removal propagates to the LB before drain starts; SIGTERM is delivered after the hook. Anything still routed afterwards gets 503 `server_draining`; have the LB retry 503 on another target (nginx: `proxy_next_upstream error http_503`).
+- **LB connection draining**: enable it (deregistration delay >= 0 is fine; do not set it shorter than the preStop sleep) and never have the LB cut established WebSockets when a target goes unhealthy. nginx: a reload keeps existing connections on old workers.
+- **Affinity**: a call is one WebSocket pinned to one instance, and its pipeline, context and turn state live in that process's memory. There is no cross-node migration, and no sticky-session config is needed beyond the connection itself. New calls land on whichever instance is ready.
+- **Reconnect semantics**: a force-closed client gets `server_draining` + 1001 and must start a new call (new voice token; tokens are single-use). Conversation context is not carried over; the app should replay it through the agent or accept a fresh start. Size `drain_timeout` to your typical call length to keep forced closes rare, and roll one instance at a time.
+- **Kubernetes sketch**: `terminationGracePeriodSeconds: 60`, `lifecycle.preStop.exec.command: ["sleep","5"]`, `readinessProbe.httpGet: {path: /ready, port: 9090}`, `livenessProbe.httpGet: {path: /health, port: 9090}`.
 
 ---
 
@@ -171,3 +187,27 @@ docker stop -t 45 govoice
   1. Check GCP Service Health status for Speech-to-Text or Vertex AI.
   2. Verify the stored credential (`POST /api/v1/providers/credentials/{id}/validate`) and IAM permissions.
   3. Circuits will automatically probe the provider in Half-Open state after 30 seconds of cooldown.
+  4. Agents with STT fallbacks move the open utterance to the next provider and replay its buffered audio (`voice_stt_failover_total`); each new utterance tries the primary again once its breaker allows. `stt.replay_buffer` (default `10s`, max `60s`, ~32 KB/s per call with fallbacks) bounds how much of a long utterance survives; `voice_stt_replay_dropped_bytes_total` counts utterance audio that did not fit.
+
+## Idle handling (`idle:`)
+
+Off by default; no processor is added when off. `idle.user_timeout` (e.g. 15s) prompts a silent user after the bot stops speaking (and from call start, so a caller who connects and never speaks is released too), `idle.max_prompts` (default 2) times, one timeout apart, then ends the call with reason `user_idle` (optional spoken `idle.goodbye`); any speech, DTMF or typed input resets the count, the controller's own prompts do not. Prompts are skipped while a tool runs, the user is muted, a reply is generating or playing, or either side speaks. An idle hang-up sends a non-fatal RTVI `error` whose text is the reason (`user_idle` / `bot_idle`) and closes the WebSocket with 1000 (normal): clients must treat it as final, unlike the drain's `server_draining` + 1001 which means reconnect elsewhere. `idle.prompt_mode: llm` (default) injects a labelled non-user notice so the model phrases the nudge; `say` speaks `idle.prompt` verbatim. `idle.bot_timeout` (e.g. 30s) is the stuck-bot watchdog: a finished user turn with no bot speech sends the client an error, cancels the generation and optionally speaks `idle.bot_fallback`; `idle.bot_max_stuck` (default 3) in a row ends the call (`bot_idle`). A reply that finishes with no speech (tool-only) is not stuck. The watchdog is the caller's patience bound and cancels whatever is in flight, including an LLM failover (which may start a fallback up to 60 s into a turn); set `bot_timeout` above that budget if failovers must always run to completion. Debug events `idle.user_prompt`, `idle.user_timeout`, `idle.bot_stuck`; counters `voice_user_idle_prompts_total`, `voice_user_idle_hangups_total`, `voice_bot_idle_stuck_total`, `voice_bot_idle_hangups_total` (added when a call ends). Server-wide for now; per-agent settings come with the agent config. The existing `limits.idle_timeout` is only the WebSocket read deadline and is unrelated.
+
+## Connection warm-up and keepalive (P2-9)
+
+What costs first-turn time, per provider (measured on loopback with an injected 80 ms dial delay in `core/netpool` and each provider's `warm_test.go`; the real gain is 1 RTT for TCP, 1-2 RTT for TLS and 0-1 for DNS, i.e. typically 50-250 ms, and can only be measured live):
+
+| Stage | Before | Now |
+|---|---|---|
+| xAI / OpenAI-compatible LLM (HTTP/2) | per-session `http.Client`; OpenAI cloned a transport per session, so every call's first request paid DNS+TCP+TLS | one shared transport per provider (and per SSRF-guard mode for `openai`), 32 idle conns/host, 90 s idle timeout, TLS session cache, HTTP/2 health pings (30 s idle, 10 s timeout). Second session: 0 new dials |
+| Deepgram STT, xAI STT, Cartesia/ElevenLabs TTS | websocket dialed per turn/unit on `http.DefaultClient`: DNS+TCP+TLS+upgrade each time | same dial, through a shared HTTP/1.1 pool. Only TCP+TLS can be pre-dialed (see below) |
+| Google STT/TTS (gRPC) | one channel per call, lazy: first RPC paid connect | channel per call is unchanged; `Warm` starts the connect so it is READY before the first utterance; gRPC keepalive (60 s ping/20 s timeout, only while an RPC is in flight; never below 60 s, the floor Google's own Go clients use, because Google front ends answer too-frequent pings with GOAWAY too_many_pings). Sharing channels across calls needs a credential-keyed refcounted cache and is not done |
+| Google LLM | API-key mode already used `http.DefaultTransport` (shared); Vertex builds an authenticated transport per client | API-key mode uses the shared pool and can be warmed; Vertex is unchanged |
+
+Pre-dial decisions (all in `core/netpool`): a spare is an anonymous TCP+TLS connection with no request, no credentials, no provider session. It cannot bill and never reports to a breaker, and it is closed after `warmup.spare_ttl` (default 10 s) if unused or if the peer closed it (checked with a non-consuming socket peek). It goes through the same dialer, so the `openai` SSRF dial guard applies to pre-dials. No speculative websocket is opened for any provider: Deepgram closes idle sockets after about 10 s and a stream is bound to one turn, Cartesia/ElevenLabs bind a context/session to the socket. One spare per host exists at a time, so only the first dial after a warm-up benefits; per-turn re-warm after a stream ends is not done (follow-up if live numbers justify it). Per-turn websockets have nothing to keep alive. `http.Transport` already retries a request on an idle connection the server closed.
+
+Config (`warmup`, see `config/*.yaml`): `enabled` (default true, shared transports only; false restores one private pool per session), `predial` (default false), `on_start` (default false, needs `predial`; pre-dials default endpoints with a placeholder key, which also primes DNS and TLS session tickets), `timeout` (3 s), `spare_ttl` (10 s). Warm-up runs in a goroutine bounded by `timeout`, for every candidate in a failover chain, and is skipped (counted) when that provider's breaker is open.
+
+Metrics (labels `provider`, `stage` only): `voice_provider_warm_dials_total{result=hit|miss}`, `voice_provider_warmups_total{result=ok|error|skipped}`, `voice_provider_connect_seconds` (histogram of fresh TCP+TLS connects, and gRPC time-to-READY for Google).
+
+Manual live check (not run in CI, needs real keys): `RUN_LIVE_DEEPGRAM_TEST=1 DEEPGRAM_API_KEY=... go test -tags integration -run LiveWarm -v ./providers/deepgram` alternates cold and pre-dialed first connects and logs each. For the whole pipeline set `warmup.predial: true` on one canary, place calls, and compare `voice_latency_seconds` (first-turn TTFB stages) and `voice_provider_connect_seconds` against a canary without it; flip the default only if the p50 first-turn gain is real and `warmups_total{result="error"}` stays low.

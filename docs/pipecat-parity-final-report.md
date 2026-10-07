@@ -1,0 +1,56 @@
+# Pipecat parity: final report
+
+**Scope:** server-side gaps vs Pipecat for a robust, fast, scalable voice server (no extra transports, no video, no Flows/bus/S2S).
+**Plan:** [pipecat-parity.md](plans/pipecat-parity.md) · **Truth table:** [pipecat-parity-matrix.md](pipecat-parity-matrix.md) · **Tracking:** goalpulse goal `pipecat-parity-for-a-robust-fast-scalabl`.
+**State:** everything below is on an **uncommitted** working tree on top of `194c741`. `make verify` is green (46 packages, 1m43s).
+
+## What was done
+
+48 tasks: the 36 planned (P0–P6) plus 12 added while working (T1–T12). Every task was built by one agent and then reviewed by an independent Opus agent that fixed what it found.
+
+| Phase | Delivered |
+|---|---|
+| 0 Measure | Observer API, latency observers (STT/TTFT/TTFB/voice-to-voice, Prometheus + timeline), `pipecat.evals` black-box run over RTVI with fake providers, fake-provider bench |
+| 1 Turn-taking | Start/stop strategy chains, Smart-turn ONNX worker (p95 25 ms), LLM turn-completion markers, user mute, user/bot idle controller, turn-quality gate, turn manager wired live (`turn.manager`) |
+| 2 Providers | Fallback chains in agent config, LLM/TTS/STT failover (STT with audio replay), Deepgram STT, Cartesia + ElevenLabs TTS, OpenAI-compatible LLM (SSRF-guarded), shared pools + optional pre-dial, shared TTS unit runner |
+| 3 Conversation | Safe sentence aggregation, heard-text tracker + interrupted-reply reconciliation, parallel + async tools end to end, tool-round history ordering, live summarization |
+| 4 Telephony audio | DTMF in/out + `send_dtmf`, input filter chain + pure-Go denoiser, output gain + ambience, call recording with retention, sink redaction |
+| 5 Scale/ops | Per-agent/per-principal limits, rolling drain, OpenTelemetry (off by default), load/soak harness, perf CI gate with per-machine baselines |
+| 6 Verification | Parity matrix with enforced Default column, 56 paired Pipecat-vs-Go fixtures, Whisker decision, this report |
+
+## What independent review caught
+
+Reviews changed the outcome on almost every task. The ones that mattered most:
+
+- **Turn manager was not live** in real calls (found in P1-1). Wired in T1; the reviewer then found that after a barge-in the user's phrase never reached the LLM, fixed by rebinding STT streams to the new generation.
+- **Smart-turn verdicts were discarded** on most ticks on the real clock (monotonic vs wall-clock cache key). Unit tests could not see it.
+- **Core bug behind two flakes:** a processor returning `ErrSessionClosed` during a clean `Close` marked the session Failed. Fixed centrally.
+- **Scale:** the 384-session failure was CPU contention exposing two server bugs (VAD watchdog killing healthy workers at 100 ms; hang-up counted as a slow-client failure), plus head-of-line blocking of caller audio behind faster-than-real-time bot audio (stale VAD chunks 200/s → 0).
+- **Failover:** breaker-stranding resolver, late output from abandoned candidates, Gemini call/result ordering, STT replay losing audio on xAI, TTS wedges (watchdog added).
+- **Security/privacy:** SSRF on user-supplied LLM base URLs, worker child inheriting server secrets, decrypted secrets left in memory on error paths, recording symlink/janitor/crash-recovery issues, redaction evasion via Unicode digits and non-idempotence.
+- **Honesty fixes:** the "5 ms framework overhead" was macOS timer slop (real: 0.01 ms p50); the parity matrix initially over-claimed (now has an enforced Default column).
+
+## Measured (this machine, fake providers, localhost)
+
+- Framework overhead: p50 0.01 ms, p95 0.03 ms.
+- Smart-turn inference through the worker: p95 25.4 ms.
+- Load: 384 concurrent sessions clean in the final sweep, p95 voice-to-voice 962.7 ms (about 700 ms of that is the VAD hangover), 0.37 CPU-s per session-minute (~150 sessions per core), 0 stale/dropped VAD chunks.
+
+These numbers are framework cost only. No real STT/LLM/TTS was called anywhere (cost rule).
+
+## Not done / known risks
+
+- **Nothing is committed.** Regenerate the perf baseline once after committing if numbers drift.
+- **`turn.manager` defaults off**; turn strategies, mute, completion, idle-after-turn behaviours need it. Flipping the default needs a real-STT e2e and a decision on the ~800 ms later end-of-turn.
+- **No live-provider verification:** Cartesia/ElevenLabs/Deepgram/Smart-turn-vs-real-audio protocols were checked against docs and fake servers only; the integration tests exist behind build tags and env vars. Google gRPC burst-replay for STT failover is unverified.
+- **Not run:** 24 h soak (command documented), `docker build`, the CI workflow remotely, noisy real-audio denoiser evaluation, a real-LLM turn-quality evaluation (gate validates plumbing with fake oracles).
+- **Open product decisions:** which extra vendors you want first (goalpulse Q1; I assumed Deepgram + Cartesia + ElevenLabs), per-agent vs server-wide scope for DTMF/filters/idle, whether the idle hang-up wording suits your clients.
+- **Residuals listed in the matrix "Known gaps and risks":** recording is unencrypted and continues after an agent is disabled mid-call, DTMF digits remain in LLM context, failover can take ~90 s with default retries, admission is reject-only, no provider emits tool-call frames (tool-first leniency is test-only), tool rounds run sequentially in production, usage metrics reach traces only.
+- **Out of scope by design:** video, extra transports, Flows, bus/workers, speech-to-speech models, Whisker wire compatibility.
+
+## Suggested next steps
+
+1. Commit in reviewable slices (the goalpulse task list is a natural split), then regenerate the perf baseline.
+2. Run the live integration tests per provider with real keys once; enable `turn.manager` on a staging agent with Smart-turn and compare turn quality.
+3. Decide Q1 and the `turn.manager` default.
+4. Run the 24 h soak (`make loadtest-soak SOAK_DURATION=24h`) on a quiet host.
