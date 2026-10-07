@@ -94,13 +94,6 @@ func (b *Breaker) SetObserver(fn func(State)) {
 	b.mu.Unlock()
 }
 
-// State is the current state.
-func (b *Breaker) State() State {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.state
-}
-
 func (b *Breaker) RecordSuccess() {
 	b.mu.Lock()
 	b.failures, b.probing, b.state = 0, false, Closed
@@ -258,11 +251,12 @@ func Execute(ctx context.Context, b *Breaker, p Policy, classify Classify, commi
 		if !v.Retryable || attempt == p.MaxAttempts-1 {
 			return err
 		}
-		delay := backoff
+		// The provider's Retry-After is honoured as given (capped); our own
+		// backoff is fully jittered.
+		delay := min(time.Duration(rand.Float64()*float64(backoff)), p.MaxBackoff)
 		if v.RetryAfter > 0 {
-			delay = v.RetryAfter
+			delay = min(v.RetryAfter, p.MaxBackoff)
 		}
-		delay = min(time.Duration(rand.Float64()*float64(delay)), p.MaxBackoff) // full jitter
 		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
 			return err // no time left to retry
 		}

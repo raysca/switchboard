@@ -87,14 +87,12 @@ func NewProcessor(cfg Config) (*Processor, error) {
 		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())
 	}
 	if cfg.RetryPolicy.MaxAttempts <= 0 {
-		cfg.RetryPolicy = resilience.DefaultPolicy()
+		cfg.RetryPolicy.MaxAttempts = resilience.DefaultPolicy().MaxAttempts
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 30 * time.Second
 	}
-	if cfg.RetryPolicy.AttemptTimeout <= 0 {
-		cfg.RetryPolicy.AttemptTimeout = cfg.Timeout // bounds each request round
-	}
+	cfg.RetryPolicy.AttemptTimeout = cfg.Timeout // Timeout is the one knob: it bounds each request round
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{
 			Timeout: cfg.Timeout,

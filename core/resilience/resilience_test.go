@@ -163,8 +163,8 @@ func TestRetriesWithBackoffRetryAfterAndStopsOnNonRetryable(t *testing.T) {
 	*slept = nil
 	retryAfter := func(error) Verdict { return Verdict{Retryable: true, RetryAfter: 500 * time.Millisecond} }
 	_ = Execute(context.Background(), nil, Policy{MaxAttempts: 2, MaxBackoff: time.Second}, retryAfter, nil, fail(errOutage))
-	if len(*slept) != 1 || (*slept)[0] > 500*time.Millisecond {
-		t.Fatalf("RetryAfter not honoured: %v", *slept)
+	if len(*slept) != 1 || (*slept)[0] != 500*time.Millisecond {
+		t.Fatalf("RetryAfter not honoured exactly: %v", *slept)
 	}
 
 	calls := 0

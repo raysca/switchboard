@@ -29,3 +29,27 @@ func TestClassifyForSharedBreaker(t *testing.T) {
 		}
 	}
 }
+
+// classify keeps xAI's retry hints: rate limits and outages are retried with
+// the provider's Retry-After; client errors are not retried.
+func TestClassifyRetryHints(t *testing.T) {
+	v := classify(&ProviderError{Class: ClassificationRateLimit, RetryAfter: 3 * time.Second})
+	if !v.Retryable || v.RetryAfter != 3*time.Second || v.ClientError {
+		t.Fatalf("rate limit: %+v", v)
+	}
+	if v := classify(&ProviderError{Class: ClassificationNonRetryable}); v.Retryable {
+		t.Fatalf("client error retried: %+v", v)
+	}
+}
+
+// Timeout is the single knob for xAI's per-attempt deadline, whatever retry
+// policy the caller passes, and retries are on by default.
+func TestTimeoutIsTheAttemptDeadline(t *testing.T) {
+	llm, err := NewProcessor(Config{APIKey: "k", Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if llm.cfg.RetryPolicy.AttemptTimeout != 5*time.Second || llm.cfg.RetryPolicy.MaxAttempts != 3 {
+		t.Fatalf("llm policy %+v", llm.cfg.RetryPolicy)
+	}
+}

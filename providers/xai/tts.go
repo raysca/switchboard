@@ -177,9 +177,10 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 10 * time.Second
 	}
-	if cfg.RetryPolicy.AttemptTimeout <= 0 {
-		cfg.RetryPolicy.AttemptTimeout = cfg.Timeout // bounds each synthesis request
+	if cfg.RetryPolicy.MaxAttempts <= 0 {
+		cfg.RetryPolicy.MaxAttempts = resilience.DefaultPolicy().MaxAttempts
 	}
+	cfg.RetryPolicy.AttemptTimeout = cfg.Timeout // Timeout is the one knob: it bounds each synthesis request
 	client := cfg.Client
 	if client == nil {
 		client = NewRealXAITTSClient()
