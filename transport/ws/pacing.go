@@ -30,7 +30,10 @@ type PacerConfig struct {
 }
 
 func DefaultPacerConfig() PacerConfig {
-	return PacerConfig{MaxQueueDuration: 100 * time.Millisecond, MaxQueueBytes: 4800, MaxQueueFrames: 64, WriteTimeout: 2 * time.Second, EnablePacing: true}
+	// The lookahead must cover a TTS burst: enqueueOutput runs inline on the session
+	// run loop, so a full queue stalls caller audio and VAD results (stale VAD chunks).
+	// 2 s of 24 kHz PCM16 mono; a flush drops it all, so barge-in is unaffected.
+	return PacerConfig{MaxQueueDuration: 2 * time.Second, MaxQueueBytes: 96000, MaxQueueFrames: 512, WriteTimeout: 2 * time.Second, EnablePacing: true}
 }
 
 type pacedFrame struct {
