@@ -268,3 +268,35 @@ func TestServerErrorsAreClassifiedAndNotEchoed(t *testing.T) {
 		t.Fatalf("rejected text turn = %v", err)
 	}
 }
+
+// Pipecat clients (client-js onBotLlmStarted, pipecat.evals llm_response) need
+// bot-llm-started before a reply's text; a cut-off reply must not swallow the next one's.
+func TestBotLLMStartedBracketsEachReply(t *testing.T) {
+	h := rtvi.NewHandler()
+	var got []string
+	add := func(msgs []string) {
+		for _, m := range msgs {
+			var msg rtvi.Message
+			if err := json.Unmarshal([]byte(m), &msg); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, msg.Type)
+		}
+	}
+	add(h.BotLLMText("t1/1", "a"))
+	add(h.BotLLMText("t1/1", "b"))
+	add(h.BotLLMStopped("t1/1"))
+	add(h.BotLLMText("t2/1", "c")) // interrupted: no stop
+	add(h.BotLLMText("t2/2", "d")) // new generation reopens
+	add(h.BotLLMStopped("t2/2"))
+	add(h.BotLLMStopped("t3/2")) // reply with no text still bracketed
+	want := []string{
+		"bot-llm-started", "bot-llm-text", "bot-llm-text", "bot-llm-stopped",
+		"bot-llm-started", "bot-llm-text",
+		"bot-llm-started", "bot-llm-text", "bot-llm-stopped",
+		"bot-llm-started", "bot-llm-stopped",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got  %v\nwant %v", got, want)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -12,6 +13,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"govoice/core"
+	"govoice/core/audio/dtmf"
 )
 
 const (
@@ -23,13 +25,17 @@ const (
 	TypeUserStartedSpeaking = "user-started-speaking"
 	TypeUserStoppedSpeaking = "user-stopped-speaking"
 	TypeUserTranscription   = "user-transcription"
+	TypeBotLLMStarted       = "bot-llm-started" // first text of a reply follows
 	TypeBotLLMText          = "bot-llm-text"
 	TypeBotLLMStopped       = "bot-llm-stopped" // the reply text for a turn is complete
+	TypeBotTTSStarted       = "bot-tts-started"
+	TypeBotTTSStopped       = "bot-tts-stopped"
 	TypeBotStartedSpeaking  = "bot-started-speaking"
 	TypeBotStoppedSpeaking  = "bot-stopped-speaking"
 	TypeError               = "error"
 	TypeDisconnectBot       = "disconnect-bot"
 	TypeSendText            = "send-text" // client text turn: {"content": "..."}
+	TypeDTMF                = "dtmf"      // client key presses: {"buttons": ["1","#"]} (2.0.x clients: {"button": "1"})
 )
 
 var (
@@ -90,8 +96,15 @@ type Handler struct {
 	OnClientReady func(version string) error
 	// OnSendText receives a validated client text turn.
 	OnSendText func(content string) error
+	// OnDTMF receives validated client key presses (digits, in order).
+	OnDTMF func(digits string) error
 
 	sendText *rate.Limiter
+	dtmf     *rate.Limiter // keys, not messages
+
+	llmMu    sync.Mutex
+	llmOpen  bool   // bot-llm-started sent and not yet stopped
+	llmReply string // key of the open reply
 }
 
 const (
@@ -101,6 +114,9 @@ const (
 	// SendTextBurst turns at once, then one per SendTextInterval.
 	SendTextBurst    = 3
 	SendTextInterval = time.Second
+	// DTMFKeysPerSecond caps client key presses (a '#' can commit an LLM turn):
+	// about a human's top keypad speed, with one full send as burst.
+	DTMFKeysPerSecond = 10
 )
 
 // SendTextData is the payload of a send-text client message.
@@ -110,7 +126,10 @@ type SendTextData struct {
 
 // NewHandler initializes a new RTVI Handler.
 func NewHandler() *Handler {
-	return &Handler{sendText: rate.NewLimiter(rate.Every(SendTextInterval), SendTextBurst)}
+	return &Handler{
+		sendText: rate.NewLimiter(rate.Every(SendTextInterval), SendTextBurst),
+		dtmf:     rate.NewLimiter(DTMFKeysPerSecond, dtmf.MaxDigitsPerSend),
+	}
 }
 
 // IsReady returns true if client-ready handshake succeeded.
@@ -174,6 +193,35 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 		}
 		return nil, nil
 
+	case TypeDTMF:
+		if !h.ready.Load() {
+			return nil, fmt.Errorf("%w: dtmf before client-ready", ErrRejectedMessage)
+		}
+		var data struct {
+			Buttons []string `json:"buttons"`
+			Button  string   `json:"button"` // RTVI 2.0.x: one message per key
+		}
+		if err := json.Unmarshal(msg.Data, &data); err != nil {
+			return nil, fmt.Errorf("%w: dtmf payload is invalid", ErrRejectedMessage)
+		}
+		if data.Button != "" {
+			data.Buttons = append(data.Buttons, data.Button)
+		}
+		digits := strings.Join(data.Buttons, "")
+		if err := dtmf.ValidateDigits(digits); err != nil || len(digits) != len(data.Buttons) {
+			return nil, fmt.Errorf("%w: dtmf must be 1 to %d keys from 0-9, *, #, A-D", ErrRejectedMessage, dtmf.MaxDigitsPerSend)
+		}
+		if h.OnDTMF == nil {
+			return nil, fmt.Errorf("%w: dtmf input is not supported", ErrRejectedMessage)
+		}
+		if !h.dtmf.AllowN(time.Now(), len(digits)) {
+			return nil, fmt.Errorf("%w: dtmf rate limit exceeded; wait and retry", ErrRejectedMessage)
+		}
+		if err := h.OnDTMF(digits); err != nil {
+			return nil, fmt.Errorf("%w: dtmf could not be accepted", ErrRejectedMessage)
+		}
+		return nil, nil
+
 	case TypeDisconnectBot, "disconnect":
 		return &core.EndFrame{}, nil
 
@@ -223,6 +271,46 @@ func (h *Handler) FormatBotLLMText(text string) (string, error) {
 // turn's text is complete without waiting on audio or timeouts.
 func (h *Handler) FormatBotLLMStopped() (string, error) {
 	return h.formatMessage(TypeBotLLMStopped, nil)
+}
+
+// BotLLMText returns the wire messages for one reply text delta, preceded by
+// bot-llm-started when reply (any per-reply key, e.g. turn+generation) is not
+// the open one. A new key also covers a reply cut off without its stop.
+func (h *Handler) BotLLMText(reply, text string) []string {
+	h.llmMu.Lock()
+	defer h.llmMu.Unlock()
+	var out []string
+	if !h.llmOpen || h.llmReply != reply {
+		h.llmOpen, h.llmReply = true, reply
+		msg, _ := h.formatMessage(TypeBotLLMStarted, nil)
+		out = append(out, msg)
+	}
+	msg, _ := h.FormatBotLLMText(text)
+	return append(out, msg)
+}
+
+// BotLLMStopped closes the open reply. A reply with no text deltas still gets
+// a started/stopped pair, as Pipecat brackets every LLM response.
+func (h *Handler) BotLLMStopped(reply string) []string {
+	h.llmMu.Lock()
+	defer h.llmMu.Unlock()
+	var out []string
+	if !h.llmOpen || h.llmReply != reply {
+		msg, _ := h.formatMessage(TypeBotLLMStarted, nil)
+		out = append(out, msg)
+	}
+	h.llmOpen = false
+	msg, _ := h.FormatBotLLMStopped()
+	return append(out, msg)
+}
+
+// FormatBotTTSStarted / FormatBotTTSStopped bracket one synthesis unit.
+func (h *Handler) FormatBotTTSStarted() (string, error) {
+	return h.formatMessage(TypeBotTTSStarted, nil)
+}
+
+func (h *Handler) FormatBotTTSStopped() (string, error) {
+	return h.formatMessage(TypeBotTTSStopped, nil)
 }
 
 // FormatBotStartedSpeaking produces bot-started-speaking state events.

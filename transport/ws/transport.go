@@ -39,6 +39,9 @@ type ServerConfig struct {
 	HandshakeRateLimit         float64       // Max handshake attempts per second per source IP (default: 20)
 	FixedPlayerRate            int           // Fixed client player rate (default: 24000)
 	Observe                    func(event string, n uint64)
+	// Underlay builds one session's background ambience (nil: none). Its Rate
+	// must equal FixedPlayerRate. See PacedWriter.Underlay.
+	Underlay func() Underlay
 }
 
 // DefaultServerConfig returns production-ready server parameters.
@@ -71,6 +74,7 @@ type Connection struct {
 	cfg        ServerConfig
 	pacer      *PacedWriter
 	session    atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
+	tap        atomic.Pointer[AudioTap]     // optional call recorder; nil = none
 	seqCounter atomic.Uint64
 	rtvi       *rtvi.Handler
 
@@ -147,6 +151,9 @@ type Server struct {
 	// OnText receives a validated client text turn for conn's session. Nil
 	// means text input is not supported and send-text is rejected.
 	OnText func(conn *Connection, text string) error
+	// OnDTMF receives validated client key presses for conn's session. Nil
+	// rejects the message.
+	OnDTMF func(conn *Connection, digits string) error
 }
 
 func (s *Server) observe(event string, n uint64) {
@@ -389,19 +396,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return wsConn.Write(ctx, websocket.MessageBinary, data)
 	})
 	conn.pacer = pacer
+	if s.cfg.Underlay != nil {
+		pacer.Underlay = s.cfg.Underlay() // per-session cursor over shared ambience
+	}
 
 	// Completion and speaking callbacks run outside pacer locks. Speaking is
 	// derived only from successful non-empty output writes and final drain.
 	pacer.OnWriteComplete = func(f *core.OutputAudioFrame, err error) {
+		if t := conn.tap.Load(); t != nil && err == nil {
+			(*t).Bot(f) // only audio the pacer actually released, never a flushed tail
+		}
 		if session := conn.session.Load(); session != nil {
 			_ = session.Reenter(&core.WriteCompletionFrame{
-				Turn:      f.Turn,
-				Gen:       f.Gen,
-				UnitID:    f.UnitID,
-				Seq:       f.Seq,
-				IsFinal:   f.IsFinal,
-				TurnFinal: f.TurnFinal,
-				Err:       err,
+				Turn:        f.Turn,
+				Gen:         f.Gen,
+				UnitID:      f.UnitID,
+				Seq:         f.Seq,
+				IsFinal:     f.IsFinal,
+				TurnFinal:   f.TurnFinal,
+				Err:         err,
+				Media:       f.Duration,
+				WordTimings: f.WordTimings,
 			}, core.Downstream, 0, f.Gen)
 		}
 	}
@@ -429,6 +444,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return s.OnText(conn, text)
 	}
 
+	conn.rtvi.OnDTMF = func(digits string) error {
+		if s.OnDTMF == nil || conn.session.Load() == nil {
+			return errors.New("dtmf input is not supported")
+		}
+		return s.OnDTMF(conn, digits)
+	}
+
 	// Protocol-ready handshake callback: allocate session ONLY after valid RTVI readiness!
 	conn.rtvi.OnClientReady = func(version string) error {
 		conn.readyOnce.Do(func() {
@@ -449,6 +471,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
+			session.SetOutputGate(conn.awaitOutputRoom)
 			if err := session.Start(); err != nil {
 				_ = session.Close()
 				return err
@@ -567,6 +590,11 @@ func (c *Connection) readLoop() {
 					_ = c.conn.Close(websocket.StatusPolicyViolation, "incompatible rtvi protocol")
 					return
 				}
+				if errors.Is(err, ErrDraining) {
+					// Server is draining: tell the client to reconnect elsewhere.
+					c.GoAway(ErrDraining.Error(), 2*time.Second)
+					return
+				}
 				if errors.Is(err, rtvi.ErrSessionSetup) {
 					errJSON, _ := c.rtvi.FormatError("session_setup_failed", true)
 					_ = c.WriteWireMessage(c.ctx, errJSON)
@@ -602,6 +630,10 @@ func (c *Connection) readLoop() {
 					f.Samples = resampled
 					f.SampleRate = InternalSampleRate
 				}
+			}
+
+			if t := c.tap.Load(); t != nil {
+				(*t).User(f)
 			}
 
 			if session := c.session.Load(); session != nil {
@@ -668,6 +700,37 @@ func disconnectCategory(err error) string {
 	}
 }
 
+// ErrDraining, returned from OnSessionReady, refuses the call with GoAway.
+var ErrDraining = errors.New("server_draining")
+
+// GoAway tells the client to reconnect elsewhere: a fatal RTVI error carrying
+// the stable reason code, then a 1001 going-away close. Bounded by timeout.
+func (c *Connection) GoAway(reason string, timeout time.Duration) {
+	c.closeWith(reason, true, websocket.StatusGoingAway, timeout)
+}
+
+// Hangup ends the call for good (the bot hung up, e.g. user_idle): a
+// non-fatal RTVI error carrying the reason code, then a 1000 normal close, so
+// clients do not treat it as "reconnect elsewhere". Bounded by timeout.
+func (c *Connection) Hangup(reason string, timeout time.Duration) {
+	c.closeWith(reason, false, websocket.StatusNormalClosure, timeout)
+}
+
+func (c *Connection) closeWith(reason string, fatal bool, code websocket.StatusCode, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if msg, err := c.rtvi.FormatError(reason, fatal); err == nil {
+		_ = c.WriteWireMessage(ctx, msg)
+	}
+	done := make(chan struct{})
+	go func() { _ = c.conn.Close(code, reason); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		_ = c.conn.CloseNow()
+	}
+}
+
 func (c *Connection) Close() {
 	c.closeOnce.Do(func() {
 		c.traceEvent("transport.close", nil)
@@ -687,6 +750,8 @@ func (c *Connection) Close() {
 		}
 	})
 }
+
+func replyKey(turn string, gen uint64) string { return turn + "/" + strconv.FormatUint(gen, 10) }
 
 // ProcessFrame implements core.Processor to serve as the transport audio sink and RTVI emitter.
 func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
@@ -754,21 +819,28 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 
 	case core.FrameLLMTextDelta:
 		ltf := f.(*core.LLMTextDeltaFrame)
-		msg, _ := c.rtvi.FormatBotLLMText(ltf.Delta)
-		_ = c.WriteWireMessage(ctx, msg)
+		for _, msg := range c.rtvi.BotLLMText(replyKey(ltf.Turn, ltf.Gen), ltf.Delta) {
+			_ = c.WriteWireMessage(ctx, msg)
+		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameLLMText:
 		// The complete reply text follows its deltas: tell the client the
 		// turn's text is done.
-		msg, _ := c.rtvi.FormatBotLLMStopped()
-		_ = c.WriteWireMessage(ctx, msg)
+		lf := f.(*core.LLMTextFrame)
+		for _, msg := range c.rtvi.BotLLMStopped(replyKey(lf.Turn, lf.Gen)) {
+			_ = c.WriteWireMessage(ctx, msg)
+		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameTTSStarted:
+		msg, _ := c.rtvi.FormatBotTTSStarted()
+		_ = c.WriteWireMessage(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameTTSStopped:
+		msg, _ := c.rtvi.FormatBotTTSStopped()
+		_ = c.WriteWireMessage(ctx, msg)
 		return e.PushDirection(f, dir)
 
 	case core.FrameInterruption:
@@ -822,6 +894,14 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 	}
 }
 
+// awaitOutputRoom is the session's output gate: the TTS producer, not the run
+// loop, waits for the pacer to drain. Room is kept for the frame plus the two
+// the session may already hold queued (core maxQueuedOutputAudio), so
+// enqueueOutput below rarely has to block the run loop (and caller audio).
+func (c *Connection) awaitOutputRoom(ctx context.Context, d time.Duration) {
+	c.pacer.WaitRoom(ctx, 3*d, c.cfg.Pacer.WriteTimeout)
+}
+
 // enqueueOutput applies backpressure while the pacer drains at media time.
 // A client that does not drain before the write timeout is terminated.
 func (c *Connection) enqueueOutput(ctx context.Context, frame *core.OutputAudioFrame) error {
@@ -831,7 +911,13 @@ func (c *Connection) enqueueOutput(ctx context.Context, frame *core.OutputAudioF
 		if err == nil || !errors.Is(err, ErrSlowClient) {
 			return err
 		}
-		if time.Now().After(deadline) || ctx.Err() != nil {
+		// A session that ends (client hung up) while bot audio is backpressured
+		// is not a slow client: returning the queue-full error here made the
+		// session record it as its failure (loadtest: every hang-up mid-reply).
+		if ctx.Err() != nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
 			return err
 		}
 		timer := time.NewTimer(20 * time.Millisecond)
@@ -839,7 +925,7 @@ func (c *Connection) enqueueOutput(ctx context.Context, frame *core.OutputAudioF
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			return err
+			return nil
 		}
 	}
 }
@@ -878,6 +964,22 @@ func (c *Connection) Session() *core.Session {
 // Pacer returns the underlying PacedWriter.
 func (c *Connection) Pacer() *PacedWriter {
 	return c.pacer
+}
+
+// AudioTap observes call audio for recording. Both methods must return
+// quickly and must not retain the frame (its buffers are reused).
+type AudioTap interface {
+	User(*core.InputAudioFrame)
+	Bot(*core.OutputAudioFrame)
+}
+
+// SetAudioTap attaches (or, with nil, detaches) the call's audio tap.
+func (c *Connection) SetAudioTap(t AudioTap) {
+	if t == nil {
+		c.tap.Store(nil)
+		return
+	}
+	c.tap.Store(&t)
 }
 
 // Claims returns the authenticated token claims.

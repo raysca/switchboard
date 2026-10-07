@@ -30,7 +30,10 @@ type PacerConfig struct {
 }
 
 func DefaultPacerConfig() PacerConfig {
-	return PacerConfig{MaxQueueDuration: 100 * time.Millisecond, MaxQueueBytes: 4800, MaxQueueFrames: 64, WriteTimeout: 2 * time.Second, EnablePacing: true}
+	// The lookahead must cover a TTS burst: enqueueOutput runs inline on the session
+	// run loop, so a full queue stalls caller audio and VAD results (stale VAD chunks).
+	// 2 s of 24 kHz PCM16 mono; a flush drops it all, so barge-in is unaffected.
+	return PacerConfig{MaxQueueDuration: 2 * time.Second, MaxQueueBytes: 96000, MaxQueueFrames: 512, WriteTimeout: 2 * time.Second, EnablePacing: true}
 }
 
 type pacedFrame struct {
@@ -95,6 +98,7 @@ type PacedWriter struct {
 	retiredUnitID  uint64
 	drain          *finalDrain
 	terminalErr    error
+	room           chan struct{} // closed when queued audio shrinks; see WaitRoom
 
 	speaking *core.SpeakingTracker
 	eventMu  sync.Mutex
@@ -104,6 +108,17 @@ type PacedWriter struct {
 	FramesWritten atomic.Uint64
 	FramesDropped atomic.Uint64
 
+	// Underlay, when set before Run, is mixed under every released speech
+	// frame and emitted alone, as 20 ms NonSpeech frames on the pacer clock,
+	// while the queue is empty (background ambience). Ambience frames are
+	// Uninterruptible (flush never drops them), never reach OnWriteComplete
+	// (recording and heard-text ignore them) and never change speaking state.
+	// Requires EnablePacing; ignored otherwise. Driven only by Run.
+	Underlay      Underlay
+	AmbientFrames atomic.Uint64
+	amb           *pacedFrame
+	mixBuf        []byte
+
 	OnWriteComplete func(*core.OutputAudioFrame, error)
 	OnSpeakingState func(core.SpeakingStateFrame)
 
@@ -111,6 +126,18 @@ type PacedWriter struct {
 	AfterSelect          func()
 	BeforeWriteAdmission func()
 }
+
+// Underlay is a background audio source mixed by the paced writer. Rate must
+// equal the wire rate. Mix fills dst with src+ambience (src nil: ambience
+// only); Active reports whether it still has audio (a finished one-shot does
+// not keep the writer emitting silence).
+type Underlay interface {
+	Rate() int
+	Active() bool
+	Mix(dst, src []byte)
+}
+
+const ambientFrame = 20 * time.Millisecond
 
 func NewPacedWriter(cfg PacerConfig, writeFn func(context.Context, []byte) error) *PacedWriter {
 	defaults := DefaultPacerConfig()
@@ -275,6 +302,48 @@ func (w *PacedWriter) admitUnitLocked(key turnFinalKey, disposition core.OutputD
 	return nil
 }
 
+// WaitRoom blocks until the queue can take `need` more audio (duration and,
+// at the queue's current byte rate, bytes), the writer closes, ctx ends or
+// timeout passes. It is advisory: Enqueue still enforces the budgets.
+func (w *PacedWriter) WaitRoom(ctx context.Context, need, timeout time.Duration) {
+	var expired <-chan time.Time
+	for {
+		w.mu.Lock()
+		fits := w.closed || need > w.cfg.MaxQueueDuration || w.queuedDur+need <= w.cfg.MaxQueueDuration
+		if fits && !w.closed && w.queuedDur > 0 && w.cfg.MaxQueueBytes >= 0 {
+			fits = w.queuedBytes+int(int64(w.queuedBytes)*int64(need)/int64(w.queuedDur)) <= w.cfg.MaxQueueBytes
+		}
+		if fits {
+			w.mu.Unlock()
+			return
+		}
+		if w.room == nil {
+			w.room = make(chan struct{})
+		}
+		room := w.room
+		w.mu.Unlock()
+		if expired == nil {
+			t := time.NewTimer(timeout)
+			defer t.Stop()
+			expired = t.C
+		}
+		select {
+		case <-room:
+		case <-ctx.Done():
+			return
+		case <-expired:
+			return
+		}
+	}
+}
+
+func (w *PacedWriter) signalRoomLocked() {
+	if w.room != nil {
+		close(w.room)
+		w.room = nil
+	}
+}
+
 func (w *PacedWriter) SetActiveGeneration(gen uint64) {
 	w.mu.Lock()
 	if gen > w.activeGen {
@@ -324,6 +393,14 @@ func (w *PacedWriter) Enqueue(f *core.OutputAudioFrame) error {
 	w.queue = append(w.queue, entry)
 	w.queuedBytes = nextBytes
 	w.queuedDur = nextDuration
+	if w.inflight != nil && w.inflight == w.amb && w.inflightAbort != nil {
+		// An ambience frame is still waiting for its slot: give the slot to
+		// speech. The cursor has not advanced (Mix runs after the wait).
+		w.dropInflight = true
+		close(w.inflightAbort)
+		w.inflightAbort = nil
+		w.lastMediaEnd = w.lastMediaEnd.Add(-ambientFrame)
+	}
 	w.cond.Signal()
 	return nil
 }
@@ -428,6 +505,7 @@ func (w *PacedWriter) dropGeneration(gen uint64) (<-chan struct{}, chan struct{}
 		if entry.frame.Gen <= gen && entry.frame.Disposition != core.OutputUninterruptible {
 			w.queuedBytes -= entry.bytes
 			w.queuedDur -= entry.duration
+			w.signalRoomLocked()
 			w.FramesDropped.Add(1)
 			if entry.frame.IsFinal {
 				delete(w.activeUnits, frameKey(entry.frame))
@@ -550,7 +628,7 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		wireBytes, err := EncodeAudioFrame(entry.frame.Samples, entry.frame.SampleRate, entry.frame.Channels)
+		wireBytes, err := EncodeAudioFrame(w.wireSamples(entry), entry.frame.SampleRate, entry.frame.Channels)
 		if err != nil {
 			dispatch := w.finishFatal(entry, core.SpeakingStopWriteError)
 			if dispatch {
@@ -579,8 +657,14 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 			if errors.Is(err, context.DeadlineExceeded) {
 				err = fmt.Errorf("%w: write deadline exceeded (%v)", ErrSlowClient, w.cfg.WriteTimeout)
 			}
-			w.safeWriteComplete(entry.frame, err)
+			if entry != w.amb {
+				w.safeWriteComplete(entry.frame, err)
+			}
 			return err
+		}
+		if entry == w.amb {
+			w.AmbientFrames.Add(1)
+			continue
 		}
 		w.FramesWritten.Add(1)
 		if w.completionAllowed(entry) {
@@ -595,7 +679,7 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 func (w *PacedWriter) next(ctx context.Context) (*pacedFrame, time.Duration, time.Time, chan struct{}, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for len(w.queue) == 0 && !w.closed && ctx.Err() == nil {
+	for len(w.queue) == 0 && !w.closed && ctx.Err() == nil && !w.ambientLocked() {
 		w.cond.Wait()
 	}
 	if ctx.Err() != nil {
@@ -604,10 +688,16 @@ func (w *PacedWriter) next(ctx context.Context) (*pacedFrame, time.Duration, tim
 	if w.closed {
 		return nil, 0, time.Time{}, nil, nil
 	}
-	entry := w.queue[0]
-	w.queue = w.queue[1:]
-	w.queuedBytes -= entry.bytes
-	w.queuedDur -= entry.duration
+	var entry *pacedFrame
+	if len(w.queue) == 0 {
+		entry = w.amb // ambientLocked guaranteed the underlay is live
+	} else {
+		entry = w.queue[0]
+		w.queue = w.queue[1:]
+		w.queuedBytes -= entry.bytes
+		w.queuedDur -= entry.duration
+		w.signalRoomLocked()
+	}
 	w.inflight = entry
 	w.dropInflight = false
 	w.inflightAbort = make(chan struct{})
@@ -618,7 +708,11 @@ func (w *PacedWriter) next(ctx context.Context) (*pacedFrame, time.Duration, tim
 	mediaEnd := w.lastMediaEnd
 	var waitDuration time.Duration
 	if w.cfg.EnablePacing {
-		if mediaEnd.IsZero() || now.Sub(mediaEnd) > 100*time.Millisecond {
+		late := 100 * time.Millisecond
+		if entry == w.amb {
+			late = ambientFrame // a stalled socket skips ambience, never bursts it to catch up
+		}
+		if mediaEnd.IsZero() || now.Sub(mediaEnd) > late {
 			mediaEnd = now
 		}
 		if mediaEnd.After(now) {
@@ -630,12 +724,49 @@ func (w *PacedWriter) next(ctx context.Context) (*pacedFrame, time.Duration, tim
 	return entry, waitDuration, mediaEnd, abort, nil
 }
 
+// ambientLocked reports whether an ambience frame can fill an empty queue.
+func (w *PacedWriter) ambientLocked() bool {
+	if w.Underlay == nil || !w.cfg.EnablePacing || !w.Underlay.Active() {
+		return false
+	}
+	if w.amb == nil {
+		n := w.Underlay.Rate() / 50 * 2
+		w.amb = &pacedFrame{bytes: n, duration: ambientFrame, frame: &core.OutputAudioFrame{
+			SampleRate: w.Underlay.Rate(), Channels: 1, Duration: ambientFrame, NonSpeech: true,
+			Disposition: core.OutputUninterruptible}}
+	}
+	return true
+}
+
+// wireSamples returns the bytes to encode: the frame's own samples, or the
+// underlay mix in a reused buffer (the queued frame, which the recording tap
+// sees, is never modified).
+func (w *PacedWriter) wireSamples(entry *pacedFrame) []byte {
+	u, f := w.Underlay, entry.frame
+	if u == nil || (entry != w.amb && (!u.Active() || f.SampleRate != u.Rate() || f.Channels != 1 || len(f.Samples)%2 != 0 ||
+		(f.Encoding != core.EncodingPCM16LE && f.Encoding != ""))) {
+		return f.Samples
+	}
+	if cap(w.mixBuf) < entry.bytes {
+		w.mixBuf = make([]byte, entry.bytes)
+	}
+	buf := w.mixBuf[:entry.bytes]
+	if entry == w.amb {
+		u.Mix(buf, nil)
+	} else {
+		u.Mix(buf, f.Samples)
+	}
+	return buf
+}
+
 func (w *PacedWriter) dropBeforeWrite(entry *pacedFrame) bool {
 	w.mu.Lock()
 	drop := w.inflight != entry || w.dropInflight || staleInterruptible(entry.frame, w.activeGen)
 	if drop {
 		w.clearInflightLocked(entry)
-		w.FramesDropped.Add(1)
+		if entry != w.amb {
+			w.FramesDropped.Add(1)
+		}
 	}
 	w.mu.Unlock()
 	return drop
@@ -691,7 +822,9 @@ func (w *PacedWriter) finishWrite(entry *pacedFrame, writeErr error, mediaEnd ti
 			dispatch = w.queueSpeakingLocked(event)
 		}
 	} else {
-		if event, ok := w.speaking.ObserveWrite(entry.frame.Turn, entry.frame.Gen, entry.frame.Disposition, entry.frame.UnitID); ok {
+		if entry.frame.NonSpeech {
+			// DTMF tones are not bot speech.
+		} else if event, ok := w.speaking.ObserveWrite(entry.frame.Turn, entry.frame.Gen, entry.frame.Disposition, entry.frame.UnitID); ok {
 			dispatch = w.queueSpeakingLocked(event)
 		}
 		key := frameKey(entry.frame)
@@ -858,6 +991,7 @@ func (w *PacedWriter) Close() {
 	w.queue = nil
 	w.queuedBytes = 0
 	w.queuedDur = 0
+	w.signalRoomLocked()
 	clear(w.pendingFinals)
 	clear(w.completedFinals)
 	clear(w.activeUnits)
