@@ -25,13 +25,17 @@ var (
 
 // ServerConfig configures WebSocket connection lifecycle, timeouts, limits, and security.
 type ServerConfig struct {
-	Security                   SecurityConfig
-	TokenValidator             *token.Validator
-	Pacer                      PacerConfig
-	HandshakeTimeout           time.Duration // Max handshake duration (default: 5s)
-	RTVIReadyTimeout           time.Duration // Max wait for client-ready handshake (default: 5s)
+	Security         SecurityConfig
+	TokenValidator   *token.Validator
+	Pacer            PacerConfig
+	HandshakeTimeout time.Duration // Max handshake duration (default: 5s)
+	RTVIReadyTimeout time.Duration // Max wait for client-ready handshake (default: 5s)
+	// ReadTimeout is the idle read deadline and the only dead-peer detector:
+	// only data messages reset it (coder/websocket handles ping/pong inside Read
+	// and expiry closes the conn), so a client that sends nothing for this long
+	// is dropped, including a live one that stops sending audio while muted.
+	// No server pings are sent; pings alone would not keep such a client alive.
 	ReadTimeout                time.Duration // Idle read timeout (default: 30s)
-	PingInterval               time.Duration // Keepalive ping interval (default: 10s)
 	MaxConnectionLifetime      time.Duration // Max duration for a voice call (default: 60m)
 	MaxConcurrentSessions      int           // Max active voice sessions (default: 100)
 	MaxConcurrentSessionsPerIP int           // Max active voice sessions per source IP (default: 10)
@@ -56,7 +60,6 @@ func DefaultServerConfig(val *token.Validator) ServerConfig {
 		HandshakeTimeout:           5 * time.Second,
 		RTVIReadyTimeout:           5 * time.Second,
 		ReadTimeout:                30 * time.Second,
-		PingInterval:               10 * time.Second,
 		MaxConnectionLifetime:      60 * time.Minute,
 		MaxConcurrentSessions:      100,
 		MaxConcurrentSessionsPerIP: 10,
@@ -595,6 +598,12 @@ func (c *Connection) readLoop() {
 					c.GoAway(ErrDraining.Error(), 2*time.Second)
 					return
 				}
+				var rej *RejectError
+				if errors.As(err, &rej) {
+					// Admission refused the call: a stable reason code and 1013, not a generic 1011.
+					c.closeWith(rej.Reason, true, websocket.StatusTryAgainLater, 2*time.Second)
+					return
+				}
 				if errors.Is(err, rtvi.ErrSessionSetup) {
 					errJSON, _ := c.rtvi.FormatError("session_setup_failed", true)
 					_ = c.WriteWireMessage(c.ctx, errJSON)
@@ -702,6 +711,17 @@ func disconnectCategory(err error) string {
 
 // ErrDraining, returned from OnSessionReady, refuses the call with GoAway.
 var ErrDraining = errors.New("server_draining")
+
+// RejectError, returned (possibly wrapped) from OnSessionReady, refuses the call
+// because of capacity or rate limits: the client gets an RTVI error carrying
+// Reason (a stable code such as capacity_exceeded) and a 1013 try-again-later close.
+type RejectError struct {
+	Reason string
+	Err    error
+}
+
+func (e *RejectError) Error() string { return e.Reason + ": " + e.Err.Error() }
+func (e *RejectError) Unwrap() error { return e.Err }
 
 // GoAway tells the client to reconnect elsewhere: a fatal RTVI error carrying
 // the stable reason code, then a 1001 going-away close. Bounded by timeout.
