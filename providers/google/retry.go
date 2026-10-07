@@ -13,7 +13,14 @@ type RetryPolicy struct {
 	MaxBackoff     time.Duration
 	Multiplier     float64
 	MaxAttempts    int
+	// AttemptTimeout bounds one request (for the LLM, the whole stream). A
+	// request that hits it counts as a provider failure and is retried unless
+	// output was committed. Zero means DefaultAttemptTimeout.
+	AttemptTimeout time.Duration
 }
+
+// DefaultAttemptTimeout is the per-request limit when a policy sets none.
+const DefaultAttemptTimeout = 30 * time.Second
 
 func DefaultRetryPolicy() RetryPolicy {
 	return RetryPolicy{
@@ -21,6 +28,7 @@ func DefaultRetryPolicy() RetryPolicy {
 		MaxBackoff:     2000 * time.Millisecond,
 		Multiplier:     2.0,
 		MaxAttempts:    3,
+		AttemptTimeout: DefaultAttemptTimeout,
 	}
 }
 
@@ -62,6 +70,9 @@ func ExecuteWithRetry(
 	if policy.Multiplier <= 1.0 {
 		policy.Multiplier = 2.0
 	}
+	if policy.AttemptTimeout <= 0 {
+		policy.AttemptTimeout = DefaultAttemptTimeout
+	}
 
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
 		// Circuit breaker check
@@ -74,7 +85,11 @@ func ExecuteWithRetry(
 		}
 
 		// Execute operation
-		err := op(ctx, attempt)
+		// The provider's own deadline: unlike the caller's ctx (barge-in, a
+		// tool round), hitting it means Google hung, so it counts.
+		attemptCtx, cancelAttempt := context.WithTimeoutCause(ctx, policy.AttemptTimeout, ErrProviderTimeout)
+		err := op(attemptCtx, attempt)
+		cancelAttempt()
 		if err == nil {
 			if cb != nil {
 				cb.ReportSuccess()

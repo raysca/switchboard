@@ -82,3 +82,26 @@ func TestCallerDeadlineAndCancellationDoNotCount(t *testing.T) {
 		t.Fatal("a caller deadline or a hang-up opened the shared breaker")
 	}
 }
+
+// A request Google never answers is cut off at the attempt timeout, retried,
+// and counted against the breaker.
+func TestHungRequestTimesOutRetriesAndCounts(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 2, CooldownDuration: time.Hour})
+	attempts := 0
+	start := time.Now()
+	err := ExecuteWithRetry(context.Background(), cb, RetryPolicy{MaxAttempts: 2, InitialBackoff: time.Millisecond, AttemptTimeout: 20 * time.Millisecond}, nil,
+		func(ctx context.Context, _ int) error {
+			attempts++
+			<-ctx.Done() // hung provider
+			return ctx.Err()
+		})
+	if attempts != 2 || !errors.Is(err, ErrProviderTimeout) {
+		t.Fatalf("attempts=%d err=%v, want 2 attempts and ErrProviderTimeout", attempts, err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("hung requests took %v", time.Since(start))
+	}
+	if cb.Allow() {
+		t.Fatal("two provider timeouts did not open the breaker")
+	}
+}

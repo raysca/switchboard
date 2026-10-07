@@ -42,7 +42,7 @@ func DefaultTTSConfig() TTSConfig {
 		SampleRate:            24000,
 		MaxSynthesisUnitChars: 250,
 		ChunkDuration:         20 * time.Millisecond,
-		RetryPolicy:           DefaultRetryPolicy(),
+		RetryPolicy:           ttsRetryPolicy(),
 		CircuitBreaker:        NewCircuitBreaker(DefaultCircuitConfig()),
 	}
 }
@@ -518,4 +518,12 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		}
 		_ = p.session.Reenter(usageFrame, core.Downstream, p.index+1, gen)
 	})
+}
+
+// ttsRetryPolicy bounds one synthesis request (at most MaxSynthesisUnitChars)
+// tighter than an LLM stream.
+func ttsRetryPolicy() RetryPolicy {
+	p := DefaultRetryPolicy()
+	p.AttemptTimeout = 10 * time.Second
+	return p
 }
