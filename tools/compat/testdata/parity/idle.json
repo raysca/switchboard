@@ -1,0 +1,163 @@
+{
+ "area": "idle",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "idle_fires_after_bot_stops",
+   "params": {
+    "end_ms": 20000,
+    "timeout_ms": 3000
+   },
+   "pipecat": [
+    "4000:idle"
+   ],
+   "pipecat_module": "turns/user_idle_controller.py",
+   "steps": [
+    {
+     "ev": "bot_start",
+     "t": 0
+    },
+    {
+     "ev": "bot_stop",
+     "t": 1000
+    }
+   ]
+  },
+  {
+   "id": "idle_cancelled_when_user_speaks",
+   "intentional_difference": {
+    "go": [
+     "5500:idle"
+    ],
+    "reason": "go-voice re-arms the idle clock when the user stops speaking with no bot reply (filtered backchannel); Pipecat re-arms only after the next bot stop or an explicit wait_for_user()."
+   },
+   "params": {
+    "end_ms": 20000,
+    "timeout_ms": 3000
+   },
+   "pipecat": [],
+   "pipecat_module": "turns/user_idle_controller.py",
+   "steps": [
+    {
+     "ev": "bot_start",
+     "t": 0
+    },
+    {
+     "ev": "bot_stop",
+     "t": 1000
+    },
+    {
+     "ev": "user_start",
+     "t": 2000
+    },
+    {
+     "ev": "user_stop",
+     "t": 2500
+    }
+   ]
+  },
+  {
+   "id": "idle_cancelled_when_bot_speaks_again",
+   "params": {
+    "end_ms": 20000,
+    "timeout_ms": 3000
+   },
+   "pipecat": [],
+   "pipecat_module": "turns/user_idle_controller.py",
+   "steps": [
+    {
+     "ev": "bot_start",
+     "t": 0
+    },
+    {
+     "ev": "bot_stop",
+     "t": 1000
+    },
+    {
+     "ev": "bot_start",
+     "t": 2000
+    }
+   ]
+  },
+  {
+   "id": "idle_suppressed_when_bot_stops_during_user_turn",
+   "params": {
+    "end_ms": 20000,
+    "timeout_ms": 3000
+   },
+   "pipecat": [],
+   "pipecat_module": "turns/user_idle_controller.py",
+   "steps": [
+    {
+     "ev": "bot_start",
+     "t": 0
+    },
+    {
+     "ev": "user_start",
+     "t": 500
+    },
+    {
+     "ev": "bot_stop",
+     "t": 1000
+    }
+   ]
+  },
+  {
+   "id": "idle_rearms_after_user_turn_and_next_bot_reply",
+   "params": {
+    "end_ms": 20000,
+    "timeout_ms": 3000
+   },
+   "pipecat": [
+    "7000:idle"
+   ],
+   "pipecat_module": "turns/user_idle_controller.py",
+   "steps": [
+    {
+     "ev": "bot_start",
+     "t": 0
+    },
+    {
+     "ev": "bot_stop",
+     "t": 1000
+    },
+    {
+     "ev": "user_start",
+     "t": 2000
+    },
+    {
+     "ev": "user_stop",
+     "t": 2500
+    },
+    {
+     "ev": "bot_start",
+     "t": 3000
+    },
+    {
+     "ev": "bot_stop",
+     "t": 4000
+    }
+   ]
+  },
+  {
+   "id": "idle_no_clock_before_first_bot_speech",
+   "intentional_difference": {
+    "go": [
+     "3000:idle"
+    ],
+    "reason": "go-voice starts the user-idle clock at call start so a caller who connects and says nothing is prompted; Pipecat's clock starts only after the bot first stops speaking."
+   },
+   "params": {
+    "end_ms": 20000,
+    "timeout_ms": 3000
+   },
+   "pipecat": [],
+   "pipecat_module": "turns/user_idle_controller.py",
+   "steps": []
+  }
+ ]
+}

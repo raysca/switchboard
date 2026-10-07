@@ -1,0 +1,544 @@
+{
+ "area": "turn",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "min_words_bot_speaking_needs_threshold",
+   "params": {
+    "end_ms": 3000,
+    "start": [
+     {
+      "kind": "min_words",
+      "min_words": 2,
+      "use_interim": true
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "400:turn_started",
+    "1000:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/min_words_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "bot_start",
+     "t": 100
+    },
+    {
+     "ev": "final",
+     "t": 200,
+     "text": "Hello"
+    },
+    {
+     "ev": "final",
+     "t": 400,
+     "text": "Hello there!"
+    }
+   ]
+  },
+  {
+   "id": "min_words_bot_silent_single_word_starts",
+   "params": {
+    "end_ms": 3000,
+    "start": [
+     {
+      "kind": "min_words",
+      "min_words": 3,
+      "use_interim": true
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "200:turn_started",
+    "800:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/min_words_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "final",
+     "t": 200,
+     "text": "Hello"
+    }
+   ]
+  },
+  {
+   "id": "min_words_interim_ignored_when_disabled",
+   "params": {
+    "end_ms": 3000,
+    "start": [
+     {
+      "kind": "min_words",
+      "min_words": 1,
+      "use_interim": false
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "500:turn_started",
+    "1100:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/min_words_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "interim",
+     "t": 200,
+     "text": "Hello there"
+    },
+    {
+     "ev": "final",
+     "t": 500,
+     "text": "Hello there"
+    }
+   ]
+  },
+  {
+   "id": "transcription_interim_starts_turn",
+   "intentional_difference": {
+    "go": [
+     "200:turn_started",
+     "800:turn_stopped"
+    ],
+    "reason": "go-voice starts the silence clock when a turn opens from a transcript, so speech-timeout ends it 600ms later; Pipecat's speech-timeout waits for a final transcript or VAD stop (only user_turn_stop_timeout, default 5s, ends it)."
+   },
+   "params": {
+    "end_ms": 3000,
+    "start": [
+     {
+      "kind": "transcription",
+      "use_interim": true
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "200:turn_started"
+   ],
+   "pipecat_module": "turns/user_start/transcription_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "interim",
+     "t": 200,
+     "text": "hel"
+    }
+   ]
+  },
+  {
+   "id": "transcription_interim_ignored_when_disabled",
+   "params": {
+    "end_ms": 3000,
+    "start": [
+     {
+      "kind": "transcription",
+      "use_interim": false
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "500:turn_started",
+    "1100:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/transcription_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "interim",
+     "t": 200,
+     "text": "hel"
+    },
+    {
+     "ev": "final",
+     "t": 500,
+     "text": "hello"
+    }
+   ]
+  },
+  {
+   "id": "wake_phrase_punctuation_stripped",
+   "params": {
+    "end_ms": 4000,
+    "start": [
+     {
+      "kind": "wake",
+      "phrases": [
+       "hey pipecat"
+      ],
+      "timeout_ms": 3000
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "600:turn_started",
+    "1200:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/wake_phrase_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "final",
+     "t": 200,
+     "text": "Hello there."
+    },
+    {
+     "ev": "final",
+     "t": 600,
+     "text": "Hey, Pipecat!"
+    }
+   ]
+  },
+  {
+   "id": "wake_phrase_split_across_finals",
+   "params": {
+    "end_ms": 4000,
+    "start": [
+     {
+      "kind": "wake",
+      "phrases": [
+       "hey pipecat"
+      ],
+      "timeout_ms": 3000
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "500:turn_started",
+    "1100:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/wake_phrase_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "final",
+     "t": 200,
+     "text": "hey"
+    },
+    {
+     "ev": "final",
+     "t": 500,
+     "text": "pipecat what time is it"
+    }
+   ]
+  },
+  {
+   "id": "wake_phrase_blocks_vad_until_awake",
+   "params": {
+    "end_ms": 6000,
+    "start": [
+     {
+      "kind": "wake",
+      "phrases": [
+       "hey pipecat"
+      ],
+      "timeout_ms": 3000
+     },
+     {
+      "kind": "vad"
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "2000:turn_started",
+    "3500:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/wake_phrase_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "vad_start",
+     "t": 100
+    },
+    {
+     "ev": "vad_stop",
+     "t": 900
+    },
+    {
+     "ev": "final",
+     "t": 1000,
+     "text": "just chatting"
+    },
+    {
+     "ev": "final",
+     "t": 2000,
+     "text": "hey pipecat"
+    },
+    {
+     "ev": "vad_start",
+     "t": 2300
+    },
+    {
+     "ev": "vad_stop",
+     "t": 2900
+    }
+   ]
+  },
+  {
+   "id": "wake_phrase_timeout_returns_to_idle",
+   "params": {
+    "end_ms": 12000,
+    "start": [
+     {
+      "kind": "wake",
+      "phrases": [
+       "hey pipecat"
+      ],
+      "timeout_ms": 3000
+     },
+     {
+      "kind": "vad"
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "100:turn_started",
+    "1600:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/wake_phrase_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "final",
+     "t": 100,
+     "text": "hey pipecat"
+    },
+    {
+     "ev": "vad_start",
+     "t": 300
+    },
+    {
+     "ev": "vad_stop",
+     "t": 1000
+    },
+    {
+     "ev": "final",
+     "t": 1200,
+     "text": "what time is it"
+    },
+    {
+     "ev": "vad_start",
+     "t": 8000
+    },
+    {
+     "ev": "vad_stop",
+     "t": 8500
+    }
+   ]
+  },
+  {
+   "id": "wake_phrase_single_activation",
+   "intentional_difference": {
+    "go": [
+     "100:turn_started",
+     "1600:turn_stopped",
+     "3500:turn_started",
+     "4700:turn_stopped"
+    ],
+    "reason": "go-voice WakePhraseStart has only the inactivity-timeout mode (ponytail in core/turn/start.go): activity keeps it awake, so the later speech starts a turn; Pipecat single_activation stops refreshing the window and falls back to idle."
+   },
+   "params": {
+    "end_ms": 12000,
+    "start": [
+     {
+      "kind": "wake",
+      "phrases": [
+       "hey pipecat"
+      ],
+      "single": true,
+      "timeout_ms": 3000
+     },
+     {
+      "kind": "vad"
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "100:turn_started",
+    "1600:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_start/wake_phrase_user_turn_start_strategy.py",
+   "steps": [
+    {
+     "ev": "final",
+     "t": 100,
+     "text": "hey pipecat"
+    },
+    {
+     "ev": "vad_start",
+     "t": 300
+    },
+    {
+     "ev": "vad_stop",
+     "t": 1000
+    },
+    {
+     "ev": "final",
+     "t": 1200,
+     "text": "what time is it"
+    },
+    {
+     "ev": "vad_start",
+     "t": 3500
+    },
+    {
+     "ev": "vad_stop",
+     "t": 4100
+    },
+    {
+     "ev": "final",
+     "t": 4200,
+     "text": "again"
+    }
+   ]
+  },
+  {
+   "id": "vad_start_then_speech_timeout_stop",
+   "params": {
+    "end_ms": 5000,
+    "start": [
+     {
+      "kind": "vad"
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "100:turn_started",
+    "1600:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_stop/speech_timeout_user_turn_stop_strategy.py",
+   "steps": [
+    {
+     "ev": "vad_start",
+     "t": 100
+    },
+    {
+     "ev": "vad_stop",
+     "t": 1000
+    },
+    {
+     "ev": "final",
+     "t": 1300,
+     "text": "hello there"
+    }
+   ]
+  },
+  {
+   "id": "speech_timeout_user_resumes_restarts_clock",
+   "params": {
+    "end_ms": 6000,
+    "start": [
+     {
+      "kind": "vad"
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "100:turn_started",
+    "2600:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_stop/speech_timeout_user_turn_stop_strategy.py",
+   "steps": [
+    {
+     "ev": "vad_start",
+     "t": 100
+    },
+    {
+     "ev": "vad_stop",
+     "t": 1000
+    },
+    {
+     "ev": "vad_start",
+     "t": 1300
+    },
+    {
+     "ev": "vad_stop",
+     "t": 2000
+    },
+    {
+     "ev": "final",
+     "t": 2100,
+     "text": "hello again"
+    }
+   ]
+  },
+  {
+   "id": "speech_timeout_waits_for_transcript",
+   "intentional_difference": {
+    "go": [
+     "100:turn_started",
+     "1600:turn_stopped"
+    ],
+    "reason": "go-voice SpeechTimeout has no wait-for-transcript gate (ponytail in core/turn/stop.go): the turn ends silence-after-VAD-stop even if the transcript is late; Pipecat holds the stop until a transcript arrives."
+   },
+   "params": {
+    "end_ms": 6000,
+    "start": [
+     {
+      "kind": "vad"
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "100:turn_started",
+    "2500:turn_stopped"
+   ],
+   "pipecat_module": "turns/user_stop/speech_timeout_user_turn_stop_strategy.py",
+   "steps": [
+    {
+     "ev": "vad_start",
+     "t": 100
+    },
+    {
+     "ev": "vad_stop",
+     "t": 1000
+    },
+    {
+     "ev": "final",
+     "t": 2500,
+     "text": "late words"
+    }
+   ]
+  },
+  {
+   "id": "speech_timeout_no_transcript_never_stops",
+   "intentional_difference": {
+    "go": [
+     "100:turn_started",
+     "1600:turn_stopped"
+    ],
+    "reason": "Same missing transcript gate: go-voice ends a transcript-less turn after the silence timeout (the empty turn is then dropped downstream); Pipecat never stops it."
+   },
+   "params": {
+    "end_ms": 6000,
+    "start": [
+     {
+      "kind": "vad"
+     }
+    ],
+    "stop_ms": 600
+   },
+   "pipecat": [
+    "100:turn_started"
+   ],
+   "pipecat_module": "turns/user_stop/speech_timeout_user_turn_stop_strategy.py",
+   "steps": [
+    {
+     "ev": "vad_start",
+     "t": 100
+    },
+    {
+     "ev": "vad_stop",
+     "t": 1000
+    }
+   ]
+  }
+ ]
+}

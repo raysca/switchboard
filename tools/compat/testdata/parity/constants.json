@@ -1,0 +1,21 @@
+{
+ "area": "constants",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "turn_completion_markers",
+   "params": {},
+   "pipecat": [
+    "complete:●",
+    "short:◐",
+    "long:○"
+   ],
+   "pipecat_module": "turns/user_turn_completion_mixin.py",
+   "steps": []
+  }
+ ]
+}

@@ -1,0 +1,200 @@
+{
+ "area": "dtmf",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "dtmf_pound_flushes_including_terminator",
+   "params": {
+    "tail_ms": 300,
+    "timeout_ms": 100
+   },
+   "pipecat": [
+    "interrupt",
+    "text:DTMF: 123#"
+   ],
+   "pipecat_module": "processors/aggregators/dtmf_aggregator.py",
+   "steps": [
+    {
+     "digit": "1",
+     "t": 0
+    },
+    {
+     "digit": "2",
+     "t": 10
+    },
+    {
+     "digit": "3",
+     "t": 20
+    },
+    {
+     "digit": "#",
+     "t": 30
+    }
+   ]
+  },
+  {
+   "id": "dtmf_idle_timeout_flushes",
+   "params": {
+    "tail_ms": 300,
+    "timeout_ms": 100
+   },
+   "pipecat": [
+    "interrupt",
+    "text:DTMF: 12",
+    "interrupt",
+    "text:DTMF: 3#"
+   ],
+   "pipecat_module": "processors/aggregators/dtmf_aggregator.py",
+   "steps": [
+    {
+     "digit": "1",
+     "t": 0
+    },
+    {
+     "digit": "2",
+     "t": 10
+    },
+    {
+     "digit": "3",
+     "t": 500
+    },
+    {
+     "digit": "#",
+     "t": 510
+    }
+   ]
+  },
+  {
+   "id": "dtmf_each_run_interrupts_once",
+   "params": {
+    "tail_ms": 300,
+    "timeout_ms": 100
+   },
+   "pipecat": [
+    "interrupt",
+    "text:DTMF: 45#",
+    "interrupt",
+    "text:DTMF: 78",
+    "interrupt",
+    "text:DTMF: 9"
+   ],
+   "pipecat_module": "processors/aggregators/dtmf_aggregator.py",
+   "steps": [
+    {
+     "digit": "4",
+     "t": 0
+    },
+    {
+     "digit": "5",
+     "t": 10
+    },
+    {
+     "digit": "#",
+     "t": 20
+    },
+    {
+     "digit": "7",
+     "t": 300
+    },
+    {
+     "digit": "8",
+     "t": 310
+    },
+    {
+     "digit": "9",
+     "t": 600
+    }
+   ]
+  },
+  {
+   "id": "dtmf_pending_digits_flush_on_end_of_stream",
+   "intentional_difference": {
+    "go": [
+     "interrupt"
+    ],
+    "reason": "go-voice drops a pending digit run when the session closes (the context dies with it); Pipecat flushes it as a transcription on EndFrame/CancelFrame."
+   },
+   "params": {
+    "tail_ms": 0,
+    "timeout_ms": 60000
+   },
+   "pipecat": [
+    "interrupt",
+    "text:DTMF: 42"
+   ],
+   "pipecat_module": "processors/aggregators/dtmf_aggregator.py",
+   "steps": [
+    {
+     "digit": "4",
+     "t": 0
+    },
+    {
+     "digit": "2",
+     "t": 10
+    }
+   ]
+  },
+  {
+   "id": "dtmf_star_is_an_ordinary_digit",
+   "params": {
+    "tail_ms": 300,
+    "timeout_ms": 100
+   },
+   "pipecat": [
+    "interrupt",
+    "text:DTMF: *1#"
+   ],
+   "pipecat_module": "processors/aggregators/dtmf_aggregator.py",
+   "steps": [
+    {
+     "digit": "*",
+     "t": 0
+    },
+    {
+     "digit": "1",
+     "t": 10
+    },
+    {
+     "digit": "#",
+     "t": 20
+    }
+   ]
+  },
+  {
+   "id": "dtmf_digit_right_after_terminator_starts_new_run",
+   "params": {
+    "tail_ms": 300,
+    "timeout_ms": 100
+   },
+   "pipecat": [
+    "interrupt",
+    "text:DTMF: 12#",
+    "interrupt",
+    "text:DTMF: 3"
+   ],
+   "pipecat_module": "processors/aggregators/dtmf_aggregator.py",
+   "steps": [
+    {
+     "digit": "1",
+     "t": 0
+    },
+    {
+     "digit": "2",
+     "t": 10
+    },
+    {
+     "digit": "#",
+     "t": 20
+    },
+    {
+     "digit": "3",
+     "t": 30
+    }
+   ]
+  }
+ ]
+}

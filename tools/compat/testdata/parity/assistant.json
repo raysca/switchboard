@@ -1,0 +1,322 @@
+{
+ "area": "assistant",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "reply_fully_played_is_recorded_whole",
+   "interrupt_ms": null,
+   "params": {},
+   "pipecat": [
+    "content:Hello there, how are you? I am fine.",
+    "interrupted:false"
+   ],
+   "pipecat_module": "processors/aggregators/llm_response_universal.py",
+   "steps": [],
+   "units": [
+    {
+     "dur_ms": 1500,
+     "text": "Hello there, how are you?",
+     "words": [
+      {
+       "e": 250,
+       "s": 0,
+       "w": "Hello"
+      },
+      {
+       "e": 550,
+       "s": 300,
+       "w": "there,"
+      },
+      {
+       "e": 700,
+       "s": 600,
+       "w": "how"
+      },
+      {
+       "e": 850,
+       "s": 750,
+       "w": "are"
+      },
+      {
+       "e": 1000,
+       "s": 900,
+       "w": "you?"
+      }
+     ]
+    },
+    {
+     "dur_ms": 800,
+     "text": "I am fine.",
+     "words": [
+      {
+       "e": 200,
+       "s": 0,
+       "w": "I"
+      },
+      {
+       "e": 400,
+       "s": 250,
+       "w": "am"
+      },
+      {
+       "e": 800,
+       "s": 450,
+       "w": "fine."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "interrupt_between_words_keeps_spoken_prefix",
+   "interrupt_ms": 700,
+   "params": {},
+   "pipecat": [
+    "content:Hello there, how",
+    "interrupted:true"
+   ],
+   "pipecat_module": "processors/aggregators/llm_response_universal.py",
+   "steps": [],
+   "units": [
+    {
+     "dur_ms": 1500,
+     "text": "Hello there, how are you?",
+     "words": [
+      {
+       "e": 250,
+       "s": 0,
+       "w": "Hello"
+      },
+      {
+       "e": 550,
+       "s": 300,
+       "w": "there,"
+      },
+      {
+       "e": 700,
+       "s": 600,
+       "w": "how"
+      },
+      {
+       "e": 850,
+       "s": 750,
+       "w": "are"
+      },
+      {
+       "e": 1000,
+       "s": 900,
+       "w": "you?"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "interrupt_mid_second_unit_keeps_first_unit_and_prefix",
+   "interrupt_ms": 1920,
+   "params": {},
+   "pipecat": [
+    "content:Hello there, how are you? I am",
+    "interrupted:true"
+   ],
+   "pipecat_module": "processors/aggregators/llm_response_universal.py",
+   "steps": [],
+   "units": [
+    {
+     "dur_ms": 1500,
+     "text": "Hello there, how are you?",
+     "words": [
+      {
+       "e": 250,
+       "s": 0,
+       "w": "Hello"
+      },
+      {
+       "e": 550,
+       "s": 300,
+       "w": "there,"
+      },
+      {
+       "e": 700,
+       "s": 600,
+       "w": "how"
+      },
+      {
+       "e": 850,
+       "s": 750,
+       "w": "are"
+      },
+      {
+       "e": 1000,
+       "s": 900,
+       "w": "you?"
+      }
+     ]
+    },
+    {
+     "dur_ms": 800,
+     "text": "I am fine.",
+     "words": [
+      {
+       "e": 200,
+       "s": 0,
+       "w": "I"
+      },
+      {
+       "e": 400,
+       "s": 250,
+       "w": "am"
+      },
+      {
+       "e": 800,
+       "s": 450,
+       "w": "fine."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "interrupt_before_any_audio_records_nothing",
+   "interrupt_ms": 0,
+   "params": {},
+   "pipecat": [
+    "no_message"
+   ],
+   "pipecat_module": "processors/aggregators/llm_response_universal.py",
+   "steps": [],
+   "units": [
+    {
+     "dur_ms": 1500,
+     "text": "Hello there, how are you?",
+     "words": [
+      {
+       "e": 250,
+       "s": 0,
+       "w": "Hello"
+      },
+      {
+       "e": 550,
+       "s": 300,
+       "w": "there,"
+      },
+      {
+       "e": 700,
+       "s": 600,
+       "w": "how"
+      },
+      {
+       "e": 850,
+       "s": 750,
+       "w": "are"
+      },
+      {
+       "e": 1000,
+       "s": 900,
+       "w": "you?"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "interrupt_inside_a_word_first_half",
+   "intentional_difference": {
+    "go": [
+     "content:Hello there,",
+     "interrupted:true"
+    ],
+    "reason": "go-voice keeps a word only if finished or at least half spoken at the barge-in (core.HeardText); Pipecat's TTS text frames deliver a word when its audio starts, so a word interrupted in its first half is kept."
+   },
+   "interrupt_ms": 630,
+   "params": {},
+   "pipecat": [
+    "content:Hello there, how",
+    "interrupted:true"
+   ],
+   "pipecat_module": "processors/aggregators/llm_response_universal.py",
+   "steps": [],
+   "units": [
+    {
+     "dur_ms": 1500,
+     "text": "Hello there, how are you?",
+     "words": [
+      {
+       "e": 250,
+       "s": 0,
+       "w": "Hello"
+      },
+      {
+       "e": 550,
+       "s": 300,
+       "w": "there,"
+      },
+      {
+       "e": 700,
+       "s": 600,
+       "w": "how"
+      },
+      {
+       "e": 850,
+       "s": 750,
+       "w": "are"
+      },
+      {
+       "e": 1000,
+       "s": 900,
+       "w": "you?"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "interrupt_inside_a_word_second_half",
+   "interrupt_ms": 680,
+   "params": {},
+   "pipecat": [
+    "content:Hello there, how",
+    "interrupted:true"
+   ],
+   "pipecat_module": "processors/aggregators/llm_response_universal.py",
+   "steps": [],
+   "units": [
+    {
+     "dur_ms": 1500,
+     "text": "Hello there, how are you?",
+     "words": [
+      {
+       "e": 250,
+       "s": 0,
+       "w": "Hello"
+      },
+      {
+       "e": 550,
+       "s": 300,
+       "w": "there,"
+      },
+      {
+       "e": 700,
+       "s": 600,
+       "w": "how"
+      },
+      {
+       "e": 850,
+       "s": 750,
+       "w": "are"
+      },
+      {
+       "e": 1000,
+       "s": 900,
+       "w": "you?"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

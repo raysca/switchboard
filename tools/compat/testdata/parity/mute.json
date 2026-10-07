@@ -1,0 +1,202 @@
+{
+ "area": "mute",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "mute_always_follows_bot_speech",
+   "params": {
+    "strategy": "always"
+   },
+   "pipecat": [
+    "100:muted",
+    "200:unmuted",
+    "300:muted",
+    "400:unmuted"
+   ],
+   "pipecat_module": "turns/user_mute/always_user_mute_strategy.py",
+   "steps": [
+    {
+     "ev": "probe",
+     "t": 0
+    },
+    {
+     "ev": "bot_start",
+     "t": 100
+    },
+    {
+     "ev": "bot_stop",
+     "t": 200
+    },
+    {
+     "ev": "bot_start",
+     "t": 300
+    },
+    {
+     "ev": "bot_stop",
+     "t": 400
+    }
+   ]
+  },
+  {
+   "id": "mute_first_speech_only_first_turn",
+   "params": {
+    "strategy": "first_speech"
+   },
+   "pipecat": [
+    "100:muted",
+    "200:unmuted"
+   ],
+   "pipecat_module": "turns/user_mute/first_speech_user_mute_strategy.py",
+   "steps": [
+    {
+     "ev": "probe",
+     "t": 0
+    },
+    {
+     "ev": "bot_start",
+     "t": 100
+    },
+    {
+     "ev": "bot_stop",
+     "t": 200
+    },
+    {
+     "ev": "bot_start",
+     "t": 300
+    },
+    {
+     "ev": "bot_stop",
+     "t": 400
+    }
+   ]
+  },
+  {
+   "id": "mute_until_first_bot_complete_from_start",
+   "params": {
+    "strategy": "until_first_bot_complete"
+   },
+   "pipecat": [
+    "0:muted",
+    "200:unmuted"
+   ],
+   "pipecat_module": "turns/user_mute/mute_until_first_bot_complete_user_mute_strategy.py",
+   "steps": [
+    {
+     "ev": "probe",
+     "t": 0
+    },
+    {
+     "ev": "bot_start",
+     "t": 100
+    },
+    {
+     "ev": "bot_stop",
+     "t": 200
+    },
+    {
+     "ev": "bot_start",
+     "t": 300
+    }
+   ]
+  },
+  {
+   "id": "mute_until_first_bot_complete_released_by_error",
+   "intentional_difference": {
+    "go": [
+     "0:muted"
+    ],
+    "reason": "go-voice's mute stage never sees LLM/TTS ErrorFrames (they flow downstream of it); a failed greeting is released by turn.mute max (30s) instead of at once."
+   },
+   "params": {
+    "strategy": "until_first_bot_complete"
+   },
+   "pipecat": [
+    "0:muted",
+    "100:unmuted"
+   ],
+   "pipecat_module": "turns/user_mute/mute_until_first_bot_complete_user_mute_strategy.py",
+   "steps": [
+    {
+     "ev": "probe",
+     "t": 0
+    },
+    {
+     "ev": "error",
+     "t": 100
+    },
+    {
+     "ev": "probe",
+     "t": 200
+    }
+   ]
+  },
+  {
+   "id": "mute_function_call_until_result",
+   "params": {
+    "strategy": "function_call"
+   },
+   "pipecat": [
+    "100:muted",
+    "200:unmuted"
+   ],
+   "pipecat_module": "turns/user_mute/function_call_user_mute_strategy.py",
+   "steps": [
+    {
+     "ev": "probe",
+     "t": 0
+    },
+    {
+     "ev": "tool_start",
+     "id": "a",
+     "t": 100
+    },
+    {
+     "ev": "tool_result",
+     "id": "a",
+     "t": 200
+    }
+   ]
+  },
+  {
+   "id": "mute_function_call_parallel_calls_and_cancel",
+   "params": {
+    "strategy": "function_call"
+   },
+   "pipecat": [
+    "100:muted",
+    "300:unmuted"
+   ],
+   "pipecat_module": "turns/user_mute/function_call_user_mute_strategy.py",
+   "steps": [
+    {
+     "ev": "probe",
+     "t": 0
+    },
+    {
+     "ev": "tool_start",
+     "id": "a",
+     "t": 100
+    },
+    {
+     "ev": "tool_start",
+     "id": "b",
+     "t": 110
+    },
+    {
+     "ev": "tool_result",
+     "id": "a",
+     "t": 200
+    },
+    {
+     "ev": "tool_cancel",
+     "id": "b",
+     "t": 300
+    }
+   ]
+  }
+ ]
+}

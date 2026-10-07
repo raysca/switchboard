@@ -1,0 +1,603 @@
+{
+ "area": "text",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "sentences_split_at_terminators",
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "Hello there friend.",
+    "How are you today?",
+    "I am doing fine!"
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "Hello"
+    },
+    {
+     "chunk": " there"
+    },
+    {
+     "chunk": " friend."
+    },
+    {
+     "chunk": " How"
+    },
+    {
+     "chunk": " are"
+    },
+    {
+     "chunk": " you"
+    },
+    {
+     "chunk": " today?"
+    },
+    {
+     "chunk": " I"
+    },
+    {
+     "chunk": " am"
+    },
+    {
+     "chunk": " doing"
+    },
+    {
+     "chunk": " fine!"
+    }
+   ]
+  },
+  {
+   "id": "short_sentences_not_merged_by_reference",
+   "intentional_difference": {
+    "go": [
+     "Hi. How are you doing?"
+    ],
+    "reason": "go-voice merges a sentence shorter than assistant_context min_unit_length (10 runes) into the next unit so TTS gets prosodic context; Pipecat's SimpleTextAggregator emits every sentence."
+   },
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "Hi.",
+    "How are you doing?"
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "Hi."
+    },
+    {
+     "chunk": " How"
+    },
+    {
+     "chunk": " are"
+    },
+    {
+     "chunk": " you"
+    },
+    {
+     "chunk": " doing?"
+    }
+   ]
+  },
+  {
+   "id": "abbreviation_does_not_split",
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "Dr. Smith is here today.",
+    "He left already."
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "Dr."
+    },
+    {
+     "chunk": " Smith"
+    },
+    {
+     "chunk": " is"
+    },
+    {
+     "chunk": " here"
+    },
+    {
+     "chunk": " today."
+    },
+    {
+     "chunk": " He"
+    },
+    {
+     "chunk": " left"
+    },
+    {
+     "chunk": " already."
+    }
+   ]
+  },
+  {
+   "id": "decimal_does_not_split",
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "It costs $29.99 today.",
+    "Thanks a lot!"
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "It"
+    },
+    {
+     "chunk": " costs"
+    },
+    {
+     "chunk": " $29.99"
+    },
+    {
+     "chunk": " today."
+    },
+    {
+     "chunk": " Thanks"
+    },
+    {
+     "chunk": " a"
+    },
+    {
+     "chunk": " lot!"
+    }
+   ]
+  },
+  {
+   "id": "ellipsis_and_interrobang",
+   "intentional_difference": {
+    "go": [
+     "Wait... what happened here?",
+     "Really?! Yes it did."
+    ],
+    "reason": "go-voice merges a sentence shorter than assistant_context min_unit_length (10 runes) into the next unit so TTS gets prosodic context; Pipecat's SimpleTextAggregator emits every sentence."
+   },
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "Wait... what happened here?",
+    "Really?!",
+    "Yes it did."
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "Wait..."
+    },
+    {
+     "chunk": " what"
+    },
+    {
+     "chunk": " happened"
+    },
+    {
+     "chunk": " here?"
+    },
+    {
+     "chunk": " Really?!"
+    },
+    {
+     "chunk": " Yes"
+    },
+    {
+     "chunk": " it"
+    },
+    {
+     "chunk": " did."
+    }
+   ]
+  },
+  {
+   "id": "no_terminator_flushes_remainder",
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "Hello there my good friend"
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "Hello"
+    },
+    {
+     "chunk": " there"
+    },
+    {
+     "chunk": " my"
+    },
+    {
+     "chunk": " good"
+    },
+    {
+     "chunk": " friend"
+    }
+   ]
+  },
+  {
+   "id": "closing_quote_stays_with_sentence",
+   "intentional_difference": {
+    "go": [
+     "He said \"stop now!\"",
+     "and left quickly.",
+     "Done then."
+    ],
+    "reason": "A terminator that ends a streamed delta splits at once in go-voice (never stall a reply on lookahead), so a closing quote followed by lowercase continuation splits when the delta boundary lands there; the same text in one delta stays whole (core/sentence_test.go)."
+   },
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "He said \"stop now!\" and left quickly.",
+    "Done then."
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "He"
+    },
+    {
+     "chunk": " said"
+    },
+    {
+     "chunk": " \"stop"
+    },
+    {
+     "chunk": " now!\""
+    },
+    {
+     "chunk": " and"
+    },
+    {
+     "chunk": " left"
+    },
+    {
+     "chunk": " quickly."
+    },
+    {
+     "chunk": " Done"
+    },
+    {
+     "chunk": " then."
+    }
+   ]
+  },
+  {
+   "id": "url_does_not_split",
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "Visit example.com for more details.",
+    "Then call us."
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "Visit"
+    },
+    {
+     "chunk": " example.com"
+    },
+    {
+     "chunk": " for"
+    },
+    {
+     "chunk": " more"
+    },
+    {
+     "chunk": " details."
+    },
+    {
+     "chunk": " Then"
+    },
+    {
+     "chunk": " call"
+    },
+    {
+     "chunk": " us."
+    }
+   ]
+  },
+  {
+   "id": "cjk_sentences",
+   "intentional_difference": {
+    "go": [
+     "你好，今天天气很好。我们出去玩吧！"
+    ],
+    "reason": "go-voice merges a sentence shorter than assistant_context min_unit_length (10 runes) into the next unit so TTS gets prosodic context; Pipecat's SimpleTextAggregator emits every sentence."
+   },
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "你好，今天天气很好。",
+    "我们出去玩吧！"
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "你好，今天天气很好。我们出去玩吧！"
+    }
+   ]
+  },
+  {
+   "id": "cjk_long_sentences_split",
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "你好，今天的天气真的非常好。",
+    "我们一起去公园散步吧！"
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "你好，今天的天气真的非常好。我们一起去公园散步吧！"
+    }
+   ]
+  },
+  {
+   "id": "long_unpunctuated_run_is_not_capped",
+   "intentional_difference": {
+    "go": [
+     "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+     "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"
+    ],
+    "reason": "go-voice caps a unit at max_unit_length (150 runes) at the next whitespace so first audio is never held for an unpunctuated run; Pipecat buffers until a terminator or flush."
+   },
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    },
+    {
+     "chunk": " word"
+    }
+   ]
+  },
+  {
+   "id": "numbered_list_lines",
+   "intentional_difference": {
+    "go": [
+     "Steps follow.",
+     "1. First item here",
+     "2. Second item here"
+    ],
+    "reason": "go-voice treats newlines and list numbers as boundaries and never splits inside '2.'; Pipecat leaves list-number fragments ('\\n1.') as separate sentences."
+   },
+   "params": {
+    "aggregation": "sentence"
+   },
+   "pipecat": [
+    "Steps follow.",
+    "\n1.",
+    "First item here\n2.",
+    "Second item here\n"
+   ],
+   "pipecat_module": "utils/text/simple_text_aggregator.py",
+   "steps": [
+    {
+     "chunk": "Steps"
+    },
+    {
+     "chunk": " follow.\n1."
+    },
+    {
+     "chunk": " First"
+    },
+    {
+     "chunk": " item"
+    },
+    {
+     "chunk": " here\n2."
+    },
+    {
+     "chunk": " Second"
+    },
+    {
+     "chunk": " item"
+    },
+    {
+     "chunk": " here\n"
+    }
+   ]
+  }
+ ]
+}

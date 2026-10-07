@@ -1,0 +1,344 @@
+{
+ "area": "summary",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "summarize_all_but_newest_turns",
+   "messages": [
+    {
+     "kind": "system",
+     "text": "be nice"
+    },
+    {
+     "kind": "user",
+     "text": "u1",
+     "turn": 1
+    },
+    {
+     "kind": "assistant",
+     "text": "a1",
+     "turn": 1
+    },
+    {
+     "kind": "user",
+     "text": "u2",
+     "turn": 2
+    },
+    {
+     "kind": "assistant",
+     "text": "a2",
+     "turn": 2
+    },
+    {
+     "kind": "user",
+     "text": "u3",
+     "turn": 3
+    },
+    {
+     "kind": "assistant",
+     "text": "a3",
+     "turn": 3
+    },
+    {
+     "kind": "user",
+     "text": "u4",
+     "turn": 4
+    },
+    {
+     "kind": "assistant",
+     "text": "a4",
+     "turn": 4
+    },
+    {
+     "kind": "user",
+     "text": "u5",
+     "turn": 5
+    },
+    {
+     "kind": "assistant",
+     "text": "a5",
+     "turn": 5
+    },
+    {
+     "kind": "user",
+     "text": "u6",
+     "turn": 6
+    },
+    {
+     "kind": "assistant",
+     "text": "a6",
+     "turn": 6
+    }
+   ],
+   "params": {
+    "keep_turns": 2
+   },
+   "pipecat": [
+    "summarize:8",
+    "last_index:8"
+   ],
+   "pipecat_module": "utils/context/llm_context_summarization.py",
+   "steps": []
+  },
+  {
+   "id": "too_few_messages_summarize_nothing",
+   "messages": [
+    {
+     "kind": "system",
+     "text": "be nice"
+    },
+    {
+     "kind": "user",
+     "text": "u1",
+     "turn": 1
+    },
+    {
+     "kind": "assistant",
+     "text": "a1",
+     "turn": 1
+    },
+    {
+     "kind": "user",
+     "text": "u2",
+     "turn": 2
+    },
+    {
+     "kind": "assistant",
+     "text": "a2",
+     "turn": 2
+    }
+   ],
+   "params": {
+    "keep_turns": 2
+   },
+   "pipecat": [
+    "summarize:0",
+    "last_index:-1"
+   ],
+   "pipecat_module": "utils/context/llm_context_summarization.py",
+   "steps": []
+  },
+  {
+   "id": "resolved_tool_exchange_is_summarized",
+   "messages": [
+    {
+     "kind": "system",
+     "text": "be nice"
+    },
+    {
+     "kind": "user",
+     "text": "u1",
+     "turn": 1
+    },
+    {
+     "kind": "assistant",
+     "text": "a1",
+     "turn": 1
+    },
+    {
+     "kind": "user",
+     "text": "u2",
+     "turn": 2
+    },
+    {
+     "id": "c2",
+     "kind": "tool_call",
+     "turn": 2
+    },
+    {
+     "id": "c2",
+     "kind": "tool_result",
+     "text": "ok",
+     "turn": 2
+    },
+    {
+     "kind": "assistant",
+     "text": "a2",
+     "turn": 2
+    },
+    {
+     "kind": "user",
+     "text": "u3",
+     "turn": 3
+    },
+    {
+     "kind": "assistant",
+     "text": "a3",
+     "turn": 3
+    },
+    {
+     "kind": "user",
+     "text": "u4",
+     "turn": 4
+    },
+    {
+     "kind": "assistant",
+     "text": "a4",
+     "turn": 4
+    },
+    {
+     "kind": "user",
+     "text": "u5",
+     "turn": 5
+    },
+    {
+     "kind": "assistant",
+     "text": "a5",
+     "turn": 5
+    }
+   ],
+   "params": {
+    "keep_turns": 2
+   },
+   "pipecat": [
+    "summarize:8",
+    "last_index:8"
+   ],
+   "pipecat_module": "utils/context/llm_context_summarization.py",
+   "steps": []
+  },
+  {
+   "id": "no_system_prompt_starts_at_first_message",
+   "messages": [
+    {
+     "kind": "user",
+     "text": "u1",
+     "turn": 1
+    },
+    {
+     "kind": "assistant",
+     "text": "a1",
+     "turn": 1
+    },
+    {
+     "kind": "user",
+     "text": "u2",
+     "turn": 2
+    },
+    {
+     "kind": "assistant",
+     "text": "a2",
+     "turn": 2
+    },
+    {
+     "kind": "user",
+     "text": "u3",
+     "turn": 3
+    },
+    {
+     "kind": "assistant",
+     "text": "a3",
+     "turn": 3
+    },
+    {
+     "kind": "user",
+     "text": "u4",
+     "turn": 4
+    },
+    {
+     "kind": "assistant",
+     "text": "a4",
+     "turn": 4
+    },
+    {
+     "kind": "user",
+     "text": "u5",
+     "turn": 5
+    },
+    {
+     "kind": "assistant",
+     "text": "a5",
+     "turn": 5
+    }
+   ],
+   "params": {
+    "keep_turns": 2
+   },
+   "pipecat": [
+    "summarize:6",
+    "last_index:5"
+   ],
+   "pipecat_module": "utils/context/llm_context_summarization.py",
+   "steps": []
+  },
+  {
+   "id": "unresolved_tool_call_stops_cut_before_it",
+   "intentional_difference": {
+    "go": [
+     "summarize:4",
+     "last_index:4"
+    ],
+    "reason": "Both stop the cut before an unresolved tool call; go-voice then keeps that whole turn verbatim (the user message too), Pipecat cuts right before the tool-call message."
+   },
+   "messages": [
+    {
+     "kind": "system",
+     "text": "be nice"
+    },
+    {
+     "kind": "user",
+     "text": "u1",
+     "turn": 1
+    },
+    {
+     "kind": "assistant",
+     "text": "a1",
+     "turn": 1
+    },
+    {
+     "kind": "user",
+     "text": "u2",
+     "turn": 2
+    },
+    {
+     "kind": "assistant",
+     "text": "a2",
+     "turn": 2
+    },
+    {
+     "kind": "user",
+     "text": "u3",
+     "turn": 3
+    },
+    {
+     "id": "c3",
+     "kind": "tool_call",
+     "turn": 3
+    },
+    {
+     "kind": "user",
+     "text": "u4",
+     "turn": 4
+    },
+    {
+     "kind": "assistant",
+     "text": "a4",
+     "turn": 4
+    },
+    {
+     "kind": "user",
+     "text": "u5",
+     "turn": 5
+    },
+    {
+     "kind": "assistant",
+     "text": "a5",
+     "turn": 5
+    }
+   ],
+   "params": {
+    "keep_turns": 2
+   },
+   "pipecat": [
+    "summarize:5",
+    "last_index:5"
+   ],
+   "pipecat_module": "utils/context/llm_context_summarization.py",
+   "steps": []
+  }
+ ]
+}
