@@ -1,0 +1,9 @@
+name: latency_budget
+scenarios:
+  - name: latency_budget
+    turns:
+      - user: "Quick question"
+        expect:
+          - event: llm_response
+            text_contains: "Quick question"
+            within_ms: 3000

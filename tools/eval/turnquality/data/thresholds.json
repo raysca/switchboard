@@ -1,0 +1,6 @@
+{
+  "speech-timeout":           {"max_false_cut": 1.0,  "max_late_cut": 0.0,  "calibrated": true},
+  "llm-completion-perfect":   {"max_false_cut": 0.0,  "max_late_cut": 0.0,  "calibrated": true},
+  "llm-completion-heuristic": {"max_false_cut": 0.30, "max_late_cut": 0.02, "calibrated": true},
+  "llm-completion-real":      {"max_false_cut": 0.15, "max_late_cut": 0.10, "calibrated": false}
+}

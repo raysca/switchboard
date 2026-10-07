@@ -1,0 +1,9 @@
+name: text_turn
+scenarios:
+  - name: text_turn
+    turns:
+      - user: "What is the capital of France?"
+        expect:
+          - event: llm_started
+          - event: llm_response
+            text_contains: "capital of France"

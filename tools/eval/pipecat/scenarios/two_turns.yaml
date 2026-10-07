@@ -1,0 +1,13 @@
+name: two_turns
+scenarios:
+  - name: two_turns
+    turns:
+      - user: "Hello there"
+        expect:
+          - event: llm_response
+            text_contains: "Hello there"
+      - user: "And again please"
+        expect:
+          - event: llm_response
+            text_contains: "again please"
+            text_excludes: "Hello there"

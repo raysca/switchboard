@@ -1,0 +1,49 @@
+{
+  "Machine": "darwin/arm64/12",
+  "Turns": 200,
+  "Sessions": 4,
+  "SimSTT": "0s",
+  "SimLLM": "0s",
+  "SimTTS": "0s",
+  "Stages": {
+    "llm_ttft": {
+      "N": 800,
+      "P50": 0.001,
+      "P95": 0.011,
+      "P99": 0.141,
+      "Max": 0.174
+    },
+    "stt_final": {
+      "N": 800,
+      "P50": 0,
+      "P95": 0.002,
+      "P99": 0.016,
+      "Max": 0.035
+    },
+    "tts_ttfb": {
+      "N": 800,
+      "P50": 0.004,
+      "P95": 0.027,
+      "P99": 0.131,
+      "Max": 0.302
+    },
+    "voice_to_voice": {
+      "N": 800,
+      "P50": 0.009,
+      "P95": 0.063,
+      "P99": 0.205,
+      "Max": 0.401
+    }
+  },
+  "Overhead": {
+    "N": 800,
+    "P50": 0.009,
+    "P95": 0.063,
+    "P99": 0.205,
+    "Max": 0.401
+  },
+  "GoroutinesBefore": 1,
+  "GoroutinesAfter": 1,
+  "RSSKBBefore": 6112,
+  "RSSKBAfter": 13680
+}

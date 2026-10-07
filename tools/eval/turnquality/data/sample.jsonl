@@ -1,0 +1,138 @@
+{"id": "complete_answer_travel", "category": "complete", "user": "I'd go to Japan because I love the culture.", "expect": "complete"}
+{"id": "complete_answer_travel_stt", "category": "complete", "user": "i'd go to japan because i love the culture", "expect": "complete"}
+{"id": "complete_correction", "category": "complete", "user": "Actually, make it Saturday instead.", "expect": "complete"}
+{"id": "complete_correction_stt", "category": "complete", "user": "actually make it saturday instead", "expect": "complete"}
+{"id": "complete_ends_with_question_back", "category": "complete", "user": "I'd pick Italy, for the history. What about you?", "expect": "complete"}
+{"id": "complete_ends_with_question_back_stt", "category": "complete", "user": "i'd pick italy for the history what about you", "expect": "complete"}
+{"id": "complete_favor_question", "category": "complete", "user": "Can you do me a favor?", "expect": "complete"}
+{"id": "complete_favor_question_stt", "category": "complete", "user": "can you do me a favor", "expect": "complete"}
+{"id": "complete_question_capital", "category": "complete", "user": "What's the capital of Germany?", "expect": "complete"}
+{"id": "complete_question_capital_stt", "category": "complete", "user": "what's the capital of germany", "expect": "complete"}
+{"id": "complete_repeat_request", "category": "complete", "user": "Sorry, can you say that again?", "expect": "complete"}
+{"id": "complete_repeat_request_stt", "category": "complete", "user": "sorry can you say that again", "expect": "complete"}
+{"id": "complete_request_flight", "category": "complete", "user": "Can you help me book a flight to New York next week?", "expect": "complete"}
+{"id": "complete_request_flight_stt", "category": "complete", "user": "can you help me book a flight to new york next week", "expect": "complete"}
+{"id": "complete_statement", "category": "complete", "user": "I'm planning a trip to Japan next spring.", "expect": "complete"}
+{"id": "complete_statement_stt", "category": "complete", "user": "i'm planning a trip to japan next spring", "expect": "complete"}
+{"id": "complete_two_sentences", "category": "complete", "user": "I'm a nurse. I work nights at a hospital downtown.", "expect": "complete"}
+{"id": "complete_two_sentences_stt", "category": "complete", "user": "i'm a nurse i work nights at a hospital downtown", "expect": "complete"}
+{"id": "complete_with_filler_prefix", "category": "complete", "user": "Hmm, I'd go to Japan, mostly for the food.", "expect": "complete"}
+{"id": "complete_with_filler_prefix_stt", "category": "complete", "user": "hmm i'd go to japan mostly for the food", "expect": "complete"}
+{"id": "cutoff_article", "category": "cutoff", "user": "I need help with the", "expect": "incomplete"}
+{"id": "cutoff_article_stt", "category": "cutoff", "user": "i need help with the", "expect": "incomplete"}
+{"id": "cutoff_conjunction", "category": "cutoff", "user": "I'd like to fly out on Tuesday and", "expect": "incomplete"}
+{"id": "cutoff_conjunction_stt", "category": "cutoff", "user": "i'd like to fly out on tuesday and", "expect": "incomplete"}
+{"id": "cutoff_disfluent", "category": "cutoff", "user": "I was thinking maybe, uh,", "expect": "incomplete"}
+{"id": "cutoff_disfluent_stt", "category": "cutoff", "user": "i was thinking maybe uh", "expect": "incomplete"}
+{"id": "cutoff_infinitive", "category": "cutoff", "user": "I want to", "expect": "incomplete"}
+{"id": "cutoff_infinitive_stt", "category": "cutoff", "user": "i want to", "expect": "incomplete"}
+{"id": "cutoff_list_comma", "category": "cutoff", "user": "I'd like a large pepperoni pizza, a garden salad,", "expect": "incomplete"}
+{"id": "cutoff_mid_request", "category": "cutoff", "user": "I need help with", "expect": "incomplete"}
+{"id": "cutoff_mid_request_stt", "category": "cutoff", "user": "i need help with", "expect": "incomplete"}
+{"id": "cutoff_phone_number", "category": "cutoff", "user": "It's five five five,", "expect": "incomplete"}
+{"id": "cutoff_phone_number_stt", "category": "cutoff", "user": "it's five five five", "expect": "incomplete"}
+{"id": "cutoff_preposition", "category": "cutoff", "user": "I'd go to Japan because I love", "expect": "incomplete"}
+{"id": "cutoff_preposition_stt", "category": "cutoff", "user": "i'd go to japan because i love", "expect": "incomplete"}
+{"id": "cutoff_question_no_object", "category": "cutoff", "user": "Can you tell me the weather in", "expect": "incomplete"}
+{"id": "cutoff_question_no_object_stt", "category": "cutoff", "user": "can you tell me the weather in", "expect": "incomplete"}
+{"id": "cutoff_so", "category": "cutoff", "user": "I'd go to Japan, so", "expect": "incomplete"}
+{"id": "cutoff_so_stt", "category": "cutoff", "user": "i'd go to japan so", "expect": "incomplete"}
+{"id": "cutoff_subject_only", "category": "cutoff", "user": "So the thing I wanted to ask about was", "expect": "incomplete"}
+{"id": "cutoff_subject_only_stt", "category": "cutoff", "user": "so the thing i wanted to ask about was", "expect": "incomplete"}
+{"id": "cutoff_the_reason", "category": "cutoff", "user": "The main reason is that", "expect": "incomplete"}
+{"id": "cutoff_the_reason_stt", "category": "cutoff", "user": "the main reason is that", "expect": "incomplete"}
+{"id": "drift_bare_complete_history", "category": "drift", "user": "Fine. What's the capital of Italy?", "expect": "complete"}
+{"id": "drift_interrupted_assistant", "category": "drift", "user": "Actually never mind that. What's the capital of Japan?", "expect": "complete"}
+{"id": "drift_many_complete_then_cutoff", "category": "drift", "user": "And the capital of", "expect": "incomplete"}
+{"id": "drift_many_complete_then_time", "category": "drift", "user": "Hmm, hold on, let me think of another one.", "expect": "incomplete"}
+{"id": "drift_many_long_then_complete", "category": "drift", "user": "I'd say it's patience. I don't get rattled easily.", "expect": "complete"}
+{"id": "drift_many_short_then_complete", "category": "drift", "user": "history, I guess.", "expect": "complete"}
+{"id": "greeting_are_you_there", "category": "greeting", "user": "Are you there?", "expect": "complete"}
+{"id": "greeting_user_hello", "category": "greeting", "user": "Hello?", "expect": "complete"}
+{"id": "greeting_user_hi_there", "category": "greeting", "user": "Hi there.", "expect": "complete"}
+{"id": "hard_answer_then_new_thought_cutoff", "category": "hard", "user": "Tuesday. Oh, and also, could you", "expect": "incomplete"}
+{"id": "hard_answer_then_new_thought_cutoff_stt", "category": "hard", "user": "tuesday oh and also could you", "expect": "incomplete"}
+{"id": "hard_complete_with_trailing_um", "category": "hard", "user": "Tuesday works. Um.", "expect": "incomplete"}
+{"id": "hard_complete_with_trailing_um_stt", "category": "hard", "user": "tuesday works um", "expect": "incomplete"}
+{"id": "hard_complete_with_trailing_yeah", "category": "hard", "user": "I'd go to Japan, definitely. Yeah.", "expect": "complete"}
+{"id": "hard_complete_with_trailing_yeah_stt", "category": "hard", "user": "i'd go to japan definitely yeah", "expect": "complete"}
+{"id": "hard_i_think", "category": "hard", "user": "I think...", "expect": "incomplete"}
+{"id": "hard_i_think_stt", "category": "hard", "user": "i think", "expect": "incomplete"}
+{"id": "hard_listing_and", "category": "hard", "user": "A large pepperoni pizza, a garden salad, and", "expect": "incomplete"}
+{"id": "hard_listing_and_stt", "category": "hard", "user": "a large pepperoni pizza a garden salad and", "expect": "incomplete"}
+{"id": "hard_listing_done", "category": "hard", "user": "A large pepperoni pizza, a garden salad, and two cokes. That's it.", "expect": "complete"}
+{"id": "hard_listing_done_stt", "category": "hard", "user": "a large pepperoni pizza a garden salad and two cokes that's it", "expect": "complete"}
+{"id": "hard_ok_alone", "category": "hard", "user": "Okay.", "expect": "complete"}
+{"id": "hard_ok_alone_stt", "category": "hard", "user": "okay", "expect": "complete"}
+{"id": "hard_ok_trailing", "category": "hard", "user": "Okay, but", "expect": "incomplete"}
+{"id": "hard_ok_trailing_stt", "category": "hard", "user": "okay but", "expect": "incomplete"}
+{"id": "hard_question_with_hedge", "category": "hard", "user": "I'm not sure this is the right place to ask, but do you handle billing questions?", "expect": "complete"}
+{"id": "hard_question_with_hedge_stt", "category": "hard", "user": "i'm not sure this is the right place to ask but do you handle billing questions", "expect": "complete"}
+{"id": "hard_thinking_aloud", "category": "hard", "user": "It's um, it starts with a four, I think, four seven", "expect": "incomplete"}
+{"id": "hard_thinking_aloud_stt", "category": "hard", "user": "it's um it starts with a four i think four seven", "expect": "incomplete"}
+{"id": "lang_de_cutoff", "category": "language", "user": "Ich würde nach Japan fahren, weil ich", "expect": "incomplete"}
+{"id": "lang_es_complete", "category": "language", "user": "Iría a Japón porque me encanta la comida.", "expect": "complete"}
+{"id": "lang_es_cutoff", "category": "language", "user": "Iría a Japón porque me encanta la", "expect": "incomplete"}
+{"id": "lang_es_think", "category": "language", "user": "Déjame pensarlo un momento.", "expect": "incomplete"}
+{"id": "lang_fr_short_complete", "category": "language", "user": "Oui.", "expect": "complete"}
+{"id": "lang_ja_complete", "category": "language", "user": "日本に行きたいです。食べ物が大好きだからです。", "expect": "complete"}
+{"id": "long_complete_paragraph", "category": "long", "user": "So it's a voice agent for a dental office. Patients call in, the bot checks their insurance, finds an open slot, and books them. The hard part has been turn-taking, because people pause a lot when they're reading their insurance card, and the bot keeps jumping in. We tried a longer silence timeout but then it feels sluggish for everyone else. So now I'm looking at having the model itself decide whether the caller is done.", "expect": "complete"}
+{"id": "long_complete_paragraph_stt", "category": "long", "user": "so it's a voice agent for a dental office patients call in the bot checks their insurance finds an open slot and books them the hard part has been turn taking because people pause a lot when they're reading their insurance card and the bot keeps jumping in we tried a longer silence timeout but then it feels sluggish for everyone else so now i'm looking at having the model itself decide whether the caller is done", "expect": "complete"}
+{"id": "long_complete_then_time", "category": "long", "user": "So it's a voice agent for a dental office. Patients call in, the bot checks their insurance, finds an open slot, and books them. The hard part has been turn-taking. Actually, hold on, let me think about how to explain this.", "expect": "incomplete"}
+{"id": "long_complete_then_time_stt", "category": "long", "user": "so it's a voice agent for a dental office patients call in the bot checks their insurance finds an open slot and books them the hard part has been turn taking actually hold on let me think about how to explain this", "expect": "incomplete"}
+{"id": "long_cutoff_paragraph", "category": "long", "user": "So it's a voice agent for a dental office. Patients call in, the bot checks their insurance, finds an open slot, and books them. The hard part has been turn-taking, because people pause a lot when they're reading their insurance card, and the bot keeps jumping in. We tried a longer silence timeout but then it feels sluggish, so what I'm thinking now is that we could", "expect": "incomplete"}
+{"id": "long_cutoff_paragraph_stt", "category": "long", "user": "so it's a voice agent for a dental office patients call in the bot checks their insurance finds an open slot and books them the hard part has been turn taking because people pause a lot when they're reading their insurance card and the bot keeps jumping in we tried a longer silence timeout but then it feels sluggish so what i'm thinking now is that we could", "expect": "incomplete"}
+{"id": "preamble_good_question", "category": "preamble", "user": "That's a good question.", "expect": "incomplete"}
+{"id": "preamble_good_question_stt", "category": "preamble", "user": "that's a good question", "expect": "incomplete"}
+{"id": "preamble_hmm", "category": "preamble", "user": "Hmm.", "expect": "incomplete"}
+{"id": "preamble_hmm_stt", "category": "preamble", "user": "hmm", "expect": "incomplete"}
+{"id": "preamble_interesting", "category": "preamble", "user": "That's interesting...", "expect": "incomplete"}
+{"id": "preamble_interesting_stt", "category": "preamble", "user": "that's interesting", "expect": "incomplete"}
+{"id": "preamble_let_me_see", "category": "preamble", "user": "Let me see.", "expect": "incomplete"}
+{"id": "preamble_let_me_see_stt", "category": "preamble", "user": "let me see", "expect": "incomplete"}
+{"id": "preamble_oh_wow", "category": "preamble", "user": "Oh wow, okay.", "expect": "incomplete"}
+{"id": "preamble_oh_wow_stt", "category": "preamble", "user": "oh wow okay", "expect": "incomplete"}
+{"id": "preamble_so_um", "category": "preamble", "user": "So, okay, um.", "expect": "incomplete"}
+{"id": "preamble_so_um_stt", "category": "preamble", "user": "so okay um", "expect": "incomplete"}
+{"id": "preamble_well", "category": "preamble", "user": "Well...", "expect": "incomplete"}
+{"id": "preamble_well_stt", "category": "preamble", "user": "well", "expect": "incomplete"}
+{"id": "reprompt_then_user_answers", "category": "reprompt", "user": "the food, mostly. And the temples.", "expect": "complete"}
+{"id": "reprompt_then_user_still_thinking", "category": "reprompt", "user": "Still thinking, hang on.", "expect": "incomplete"}
+{"id": "short_day", "category": "short_complete", "user": "Tuesday.", "expect": "complete"}
+{"id": "short_day_stt", "category": "short_complete", "user": "tuesday", "expect": "complete"}
+{"id": "short_goodbye", "category": "short_complete", "user": "Nope, that's all. Bye.", "expect": "complete"}
+{"id": "short_goodbye_stt", "category": "short_complete", "user": "nope that's all bye", "expect": "complete"}
+{"id": "short_name", "category": "short_complete", "user": "Mark.", "expect": "complete"}
+{"id": "short_name_stt", "category": "short_complete", "user": "mark", "expect": "complete"}
+{"id": "short_no_thanks", "category": "short_complete", "user": "No thanks.", "expect": "complete"}
+{"id": "short_no_thanks_stt", "category": "short_complete", "user": "no thanks", "expect": "complete"}
+{"id": "short_number", "category": "short_complete", "user": "Four.", "expect": "complete"}
+{"id": "short_number_stt", "category": "short_complete", "user": "four", "expect": "complete"}
+{"id": "short_one_word_place", "category": "short_complete", "user": "Japan.", "expect": "complete"}
+{"id": "short_one_word_place_stt", "category": "short_complete", "user": "japan", "expect": "complete"}
+{"id": "short_sure", "category": "short_complete", "user": "Sure.", "expect": "complete"}
+{"id": "short_sure_stt", "category": "short_complete", "user": "sure", "expect": "complete"}
+{"id": "short_thanks", "category": "short_complete", "user": "Thanks!", "expect": "complete"}
+{"id": "short_thanks_stt", "category": "short_complete", "user": "thanks", "expect": "complete"}
+{"id": "short_yes", "category": "short_complete", "user": "Yes.", "expect": "complete"}
+{"id": "short_yes_stt", "category": "short_complete", "user": "yes", "expect": "complete"}
+{"id": "time_checking_calendar", "category": "time_request", "user": "One sec, let me check my calendar.", "expect": "incomplete"}
+{"id": "time_checking_calendar_stt", "category": "time_request", "user": "one sec let me check my calendar", "expect": "incomplete"}
+{"id": "time_dont_answer_yet", "category": "time_request", "user": "Wait, don't answer yet, I'm still deciding.", "expect": "incomplete"}
+{"id": "time_dont_answer_yet_stt", "category": "time_request", "user": "wait don't answer yet i'm still deciding", "expect": "incomplete"}
+{"id": "time_give_me_minute", "category": "time_request", "user": "Give me a minute to gather my thoughts.", "expect": "incomplete"}
+{"id": "time_give_me_minute_stt", "category": "time_request", "user": "give me a minute to gather my thoughts", "expect": "incomplete"}
+{"id": "time_hold_on", "category": "time_request", "user": "Hmm, hold on a second.", "expect": "incomplete"}
+{"id": "time_hold_on_stt", "category": "time_request", "user": "hmm hold on a second", "expect": "incomplete"}
+{"id": "time_let_me_think", "category": "time_request", "user": "Let me think about that for a moment.", "expect": "incomplete"}
+{"id": "time_let_me_think_stt", "category": "time_request", "user": "let me think about that for a moment", "expect": "incomplete"}
+{"id": "time_looking_it_up", "category": "time_request", "user": "Hang on, I have to look it up.", "expect": "incomplete"}
+{"id": "time_looking_it_up_stt", "category": "time_request", "user": "hang on i have to look it up", "expect": "incomplete"}
+{"id": "tool_appointment_partial", "category": "tools", "user": "Book me an appointment for Tuesday at", "expect": "incomplete"}
+{"id": "tool_appointment_partial_stt", "category": "tools", "user": "book me an appointment for tuesday at", "expect": "incomplete"}
+{"id": "tool_unrelated_complete", "category": "tools", "user": "What's the capital of Germany?", "expect": "complete"}
+{"id": "tool_unrelated_complete_stt", "category": "tools", "user": "what's the capital of germany", "expect": "complete"}
+{"id": "tool_weather_cutoff", "category": "tools", "user": "What's the weather in", "expect": "incomplete"}
+{"id": "tool_weather_cutoff_stt", "category": "tools", "user": "what's the weather in", "expect": "incomplete"}
+{"id": "tool_weather_hmm", "category": "tools", "user": "What's the weather in... hmm", "expect": "incomplete"}
+{"id": "tool_weather_hmm_stt", "category": "tools", "user": "what's the weather in hmm", "expect": "incomplete"}

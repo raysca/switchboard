@@ -1,0 +1,39 @@
+# Perf gate (P5-5). See docs/benchmarks/README.md. Not enabled until pushed.
+# Until a baseline for the runner's machine label is committed, the job generates a candidate
+# baseline and uploads it instead of failing (PERF_ALLOW_MISSING=1). Remove that env to enforce.
+name: perf-gate
+on:
+  pull_request:
+    paths: ['core/**', 'vad/**', 'transport/**', 'server/**', 'providers/**', 'tools/loadtest/**', 'tools/eval/cmd/govoice-bench/**', 'scripts/perf-gate.sh', 'docs/benchmarks/baselines/**']
+permissions:
+  contents: read
+concurrency:
+  group: perf-gate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  perf-gate:
+    runs-on: macos-14   # Apple Silicon; the machine label (os-arch-cpus) must match a committed baseline
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      PERF_ALLOW_MISSING: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # The dylib is git-ignored (*.dylib); vad/silero.go looks for it at this path.
+      - name: onnxruntime 1.29.0
+        run: |
+          d=third_party/onnxruntime-osx-arm64-1.29.0
+          [ -f $d/lib/libonnxruntime.dylib ] || curl -fsSL https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-osx-arm64-1.29.0.tgz | tar xz -C third_party
+      - run: go build ./...
+      - run: make perf-gate
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-gate-reports
+          path: |
+            .perf-out/
+            !.perf-out/bin/
+          include-hidden-files: true   # .perf-out is a dot-dir; v4 skips hidden paths by default
