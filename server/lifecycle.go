@@ -10,3 +10,7 @@ func ShutdownBudget(drain time.Duration) time.Duration {
 	}
 	return drain + 5*time.Second
 }
+
+// DrainReason is the stable code sent to clients (RTVI error and close reason)
+// when the drain deadline expires: reconnect to another instance.
+const DrainReason = "server_draining"

@@ -30,6 +30,7 @@ const (
 	EventContextEviction TimelineEventType = "context_eviction"
 	EventProviderRetry   TimelineEventType = "provider_retry"
 	EventCircuitState    TimelineEventType = "circuit_state"
+	EventLatency         TimelineEventType = "latency" // Details = stage, DurationMs = value
 	EventError           TimelineEventType = "error"
 	EventDisconnect      TimelineEventType = "disconnect"
 )

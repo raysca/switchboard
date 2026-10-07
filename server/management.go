@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"govoice/core/record"
 	"govoice/server/agent"
 	"govoice/server/api"
 	"govoice/server/credential"
@@ -27,6 +28,7 @@ type management struct {
 	store     *storage.Store
 	traces    *trace.Adapter
 	retention *retention.Job
+	recStop   context.CancelFunc // ends the recording janitor
 }
 
 // EnableManagement opens storage and installs the agent, provider, MCP and
@@ -99,6 +101,16 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	} else {
 		s.logger.Warn("retention disabled: stored transcripts and traces are kept indefinitely")
 	}
+	if rc := s.cfg.Recording; rc.Enabled {
+		sink, err := record.NewLocalSink(rc.Dir)
+		if err != nil {
+			return fail(fmt.Errorf("recording sink: %w", err))
+		}
+		s.recSink = sink
+		jctx, stop := context.WithCancel(context.Background())
+		m.recStop = stop
+		go sink.Janitor(jctx, time.Duration(rc.RetentionDays)*24*time.Hour, time.Hour, s.logger)
+	}
 	s.mgmt = m
 	s.logger.Info("management plane enabled", slog.String("dialect", s.cfg.Storage.Dialect), slog.Bool("retention", m.retention != nil))
 	return nil
@@ -110,6 +122,9 @@ func (m *management) close() {
 	}
 	if m.retention != nil {
 		m.retention.Stop()
+	}
+	if m.recStop != nil {
+		m.recStop()
 	}
 	if m.traces != nil {
 		_ = m.traces.Close()

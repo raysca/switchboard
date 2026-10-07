@@ -5,8 +5,13 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"slices"
 	"sync/atomic"
 	"time"
+
+	"govoice/core"
+	"govoice/core/netpool"
+	"govoice/smartturn"
 )
 
 // Metrics holds the full suite of V1 product pipeline telemetry matching spec §35.
@@ -14,8 +19,16 @@ import (
 type Metrics struct {
 	StartTime time.Time
 
+	// OTelStats reports (dropped, failed) exported spans; nil when otel is off.
+	OTelStats func() (dropped, failed uint64)
+
+	// SmartTurnWorkers reports (up, total) smart-turn worker processes; nil when not process-isolated.
+	SmartTurnWorkers func() (up, total int)
+
 	// Runtime Metrics
 	ActiveSessions            atomic.Int64
+	Draining                  atomic.Int64 // 1 once SIGTERM drain began
+	DrainRemaining            atomic.Int64 // sessions still live during drain
 	SessionsStartedTotal      atomic.Uint64
 	SessionsStoppedTotal      atomic.Uint64
 	SessionsFailedTotal       atomic.Uint64
@@ -26,6 +39,8 @@ type Metrics struct {
 	AdmissionRejectsLimit     atomic.Uint64
 	AdmissionRejectsPrincipal atomic.Uint64
 	AdmissionRejectsVAD       atomic.Uint64
+	AdmissionRejectsAgent     atomic.Uint64
+	AdmissionRejectsRate      atomic.Uint64
 
 	// VAD Metrics
 	VADStaleChunksTotal    atomic.Uint64
@@ -76,6 +91,36 @@ type Metrics struct {
 	ProtocolErrorsTotal    atomic.Uint64
 
 	TurnsTotal atomic.Uint64 // recorded call turns
+
+	latency      latencyHistograms
+	llmFailovers failoverCounts
+	stt          sttMetrics
+	ttsFailovers failoverCounts
+	// TTSFallbacksSkippedTotal counts configured TTS fallbacks left out of a call.
+	TTSFallbacksSkippedTotal atomic.Uint64
+	// LLMFallbacksSkippedTotal counts configured LLM fallbacks left out of a call
+	// (unavailable provider, unresolvable credential or a factory error).
+	LLMFallbacksSkippedTotal atomic.Uint64
+	// UserMuteDroppedTotal counts user VAD/transcript frames dropped by a user mute strategy.
+	UserMuteDroppedTotal atomic.Uint64
+	// Idle controller (per call, added when the call ends): prompts sent, calls
+	// hung up for user idle, stuck-bot cancellations, calls hung up for repeated ones.
+	UserIdlePromptsTotal, UserIdleHangupsTotal, BotIdleStuckTotal, BotIdleHangupsTotal atomic.Uint64
+	// AsyncToolTurnsTotal / AsyncToolResultsDroppedTotal mirror core.AsyncTrigger.
+	AsyncToolTurnsTotal          atomic.Uint64
+	AsyncToolResultsDroppedTotal atomic.Uint64
+	filters                      filterMetrics
+	summary                      summaryMetrics
+	// completion verdicts: complete, incomplete_short, incomplete_long, no_marker.
+	completion [4]atomic.Uint64
+}
+
+var completionVerdicts = [4]string{core.VerdictComplete, core.VerdictIncompleteShort, core.VerdictIncompleteLong, core.VerdictNoMarker}
+
+func (m *Metrics) completionVerdict(v string) {
+	if i := slices.Index(completionVerdicts[:], v); i >= 0 {
+		m.completion[i].Add(1)
+	}
 }
 
 // ErrorsTotal returns the total count of failures and provider/protocol errors.
@@ -114,6 +159,9 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# TYPE voice_active_sessions gauge\n")
 	fmt.Fprintf(w, "voice_active_sessions %d\n", m.ActiveSessions.Load())
 
+	fmt.Fprintf(w, "# HELP voice_draining 1 while the server is draining for shutdown.\n# TYPE voice_draining gauge\nvoice_draining %d\n", m.Draining.Load())
+	fmt.Fprintf(w, "# HELP voice_drain_sessions_remaining Sessions still live while draining.\n# TYPE voice_drain_sessions_remaining gauge\nvoice_drain_sessions_remaining %d\n", m.DrainRemaining.Load())
+
 	fmt.Fprintf(w, "# HELP voice_sessions_started_total Total number of voice sessions started.\n")
 	fmt.Fprintf(w, "# TYPE voice_sessions_started_total counter\n")
 	fmt.Fprintf(w, "voice_sessions_started_total %d\n", m.SessionsStartedTotal.Load())
@@ -131,6 +179,8 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"session_limit\"} %d\n", m.AdmissionRejectsLimit.Load())
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"principal_limit\"} %d\n", m.AdmissionRejectsPrincipal.Load())
 	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"vad_unavailable\"} %d\n", m.AdmissionRejectsVAD.Load())
+	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"agent_limit\"} %d\n", m.AdmissionRejectsAgent.Load())
+	fmt.Fprintf(w, "voice_admission_rejects_total{reason=\"start_rate_limit\"} %d\n", m.AdmissionRejectsRate.Load())
 
 	fmt.Fprintf(w, "# HELP voice_context_evictions_total Total number of oldest turn pairs evicted.\n")
 	fmt.Fprintf(w, "# TYPE voice_context_evictions_total counter\n")
@@ -143,6 +193,11 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_leaked_work_total Total number of tasks that ignored cancellation.\n")
 	fmt.Fprintf(w, "# TYPE voice_leaked_work_total counter\n")
 	fmt.Fprintf(w, "voice_leaked_work_total %d\n", m.LeakedWorkTotal.Load())
+	if m.OTelStats != nil {
+		d, f := m.OTelStats()
+		fmt.Fprintf(w, "# HELP voice_otel_spans_dropped_total Spans dropped because the export queue was full.\n# TYPE voice_otel_spans_dropped_total counter\nvoice_otel_spans_dropped_total %d\n", d)
+		fmt.Fprintf(w, "# HELP voice_otel_spans_failed_total Spans lost to OTLP export errors.\n# TYPE voice_otel_spans_failed_total counter\nvoice_otel_spans_failed_total %d\n", f)
+	}
 
 	fmt.Fprintf(w, "# HELP voice_leaked_sessions_total Total number of sessions marked as having leaked tasks.\n")
 	fmt.Fprintf(w, "# TYPE voice_leaked_sessions_total counter\n")
@@ -172,6 +227,14 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_vad_worker_restarts_total Worker processes restarted.\n")
 	fmt.Fprintf(w, "# TYPE voice_vad_worker_restarts_total counter\n")
 	fmt.Fprintf(w, "voice_vad_worker_restarts_total %d\n", m.VADWorkerRestartsTotal.Load())
+
+	// Smart-turn model
+	smartturn.WriteMetrics(w)
+	netpool.WriteMetrics(w)
+	if m.SmartTurnWorkers != nil {
+		up, total := m.SmartTurnWorkers()
+		fmt.Fprintf(w, "# HELP voice_smartturn_workers Smart-turn worker processes.\n# TYPE voice_smartturn_workers gauge\nvoice_smartturn_workers{state=\"up\"} %d\nvoice_smartturn_workers{state=\"total\"} %d\n", up, total)
+	}
 
 	// STT
 
@@ -239,6 +302,36 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# TYPE voice_tts_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"google\"} %d\n", m.TTSCircuitStateGoogle.Load())
 	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"xai\"} %d\n", m.TTSCircuitStateXAI.Load())
+
+	m.latency.write(w)
+	m.llmFailovers.write(w)
+	m.stt.write(w)
+	m.ttsFailovers.writeAs(w, "voice_tts_failover_total", "TTS synthesis moved to a fallback provider (replayed before audio, or next unit after a mid-unit failure).")
+	fmt.Fprintf(w, "# HELP voice_tts_fallbacks_skipped_total Configured TTS fallbacks left out of a call (unresolvable).\n# TYPE voice_tts_fallbacks_skipped_total counter\nvoice_tts_fallbacks_skipped_total %d\n", m.TTSFallbacksSkippedTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_llm_fallbacks_skipped_total Configured LLM fallbacks left out of a call (unresolvable).\n# TYPE voice_llm_fallbacks_skipped_total counter\nvoice_llm_fallbacks_skipped_total %d\n", m.LLMFallbacksSkippedTotal.Load())
+
+	fmt.Fprintf(w, "# HELP voice_user_mute_dropped_total User input frames (VAD start/stop, transcripts) dropped while muted.\n# TYPE voice_user_mute_dropped_total counter\nvoice_user_mute_dropped_total %d\n", m.UserMuteDroppedTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_async_tool_turns_total Model turns started to deliver finished async tool results.\n# TYPE voice_async_tool_turns_total counter\nvoice_async_tool_turns_total %d\n", m.AsyncToolTurnsTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_turn_completion_total LLM turn-completion verdicts (turn.stop llm-completion).\n# TYPE voice_turn_completion_total counter\n")
+	for i, v := range completionVerdicts {
+		fmt.Fprintf(w, "voice_turn_completion_total{verdict=%q} %d\n", v, m.completion[i].Load())
+	}
+	fmt.Fprintf(w, "# HELP voice_async_tool_results_dropped_total Finished async tool results that could not be injected (session closing).\n# TYPE voice_async_tool_results_dropped_total counter\nvoice_async_tool_results_dropped_total %d\n", m.AsyncToolResultsDroppedTotal.Load())
+
+	for _, c := range []struct {
+		name, help string
+		v          *atomic.Uint64
+	}{
+		{"voice_user_idle_prompts_total", "Prompts sent to a silent user.", &m.UserIdlePromptsTotal},
+		{"voice_user_idle_hangups_total", "Calls ended after the user stayed silent through every prompt.", &m.UserIdleHangupsTotal},
+		{"voice_bot_idle_stuck_total", "User turns the bot never answered (generation cancelled).", &m.BotIdleStuckTotal},
+		{"voice_bot_idle_hangups_total", "Calls ended after repeated unanswered turns.", &m.BotIdleHangupsTotal},
+	} {
+		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n%s %d\n", c.name, c.help, c.name, c.name, c.v.Load())
+	}
+
+	m.filters.write(w)
+	m.summary.write(w)
 
 	// Transport
 

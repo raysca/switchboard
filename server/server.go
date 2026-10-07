@@ -16,15 +16,18 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/providers/google"
-	"govoice/providers/xai"
+	"govoice/core/observe"
+	"govoice/core/record"
+	"govoice/core/redact"
 	"govoice/server/agent"
 	"govoice/server/api"
 	"govoice/server/auth"
 	"govoice/server/credential"
 	"govoice/server/mcp"
+	"govoice/server/otelexport"
 	"govoice/server/provider"
 	"govoice/server/storage"
+	"govoice/smartturn"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 	"govoice/vad"
@@ -32,6 +35,8 @@ import (
 
 // Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
+	otel                  *otelexport.Exporter // nil unless otel.enabled
+	redactor              *redact.Redactor     // sink redaction; never applied to the live LLM context
 	cfg                   *Config
 	metrics               *Metrics
 	timelines             *TimelineRegistry
@@ -49,6 +54,7 @@ type Server struct {
 	voiceKeyID            string
 	voiceEpoch            string
 	vadExecutor           vad.SharedExecutor
+	turnBackend           smartturn.Backend
 	mgmt                  *management
 	agents                *agent.Service
 	mcpService            *mcp.Service
@@ -64,6 +70,7 @@ type Server struct {
 	publicServer *http.Server
 	adminServer  *http.Server
 	wsServer     *ws.Server
+	underlay     func() ws.Underlay // background ambience factory, nil when off
 
 	mu          sync.Mutex
 	activeCalls map[uint64]*activeCall
@@ -71,6 +78,7 @@ type Server struct {
 	nextCallID  atomic.Uint64
 	textTurns   atomic.Uint64
 	pruneStop   chan struct{}
+	recSink     *record.LocalSink // nil unless recording.enabled
 }
 
 type activeCall struct {
@@ -115,6 +123,10 @@ func NewServer(cfg *Config) (*Server, error) {
 	admission := NewAdmissionController(cfg, metrics)
 	registry := NewRegistry()
 	registry.BindMetrics(metrics)
+	cfg.Warmup.Apply()
+	if cfg.Warmup.OnStart {
+		go registry.WarmOnStart(context.Background(), cfg.Warmup.WarmTimeout())
+	}
 
 	tokenSecret, err := ResolveTokenSecret(cfg)
 	if err != nil {
@@ -156,6 +168,20 @@ func NewServer(cfg *Config) (*Server, error) {
 		activeCalls:  make(map[uint64]*activeCall),
 	}
 
+	if s.redactor, err = redact.New(cfg.Privacy.Redaction); err != nil {
+		return nil, err
+	}
+	if cfg.OTel.Enabled {
+		if s.otel, err = otelexport.New(cfg.OTel, os.Getenv); err != nil {
+			return nil, fmt.Errorf("otel: %w", err)
+		}
+		s.otel.SetRedactor(s.redactor.Redact)
+		metrics.OTelStats = s.otel.Stats
+	}
+
+	if s.underlay, err = loadBackground(cfg, ws.FixedPlayerSampleRate); err != nil {
+		return nil, err
+	}
 	s.setupRoutes()
 	return s, nil
 }
@@ -189,6 +215,18 @@ func voiceTokenConfig(cfg *Config, tokenSecret string) token.Config {
 // SetVADExecutor attaches a custom or mocked VAD executor.
 func (s *Server) SetVADExecutor(exec vad.SharedExecutor) {
 	s.vadExecutor = exec
+}
+
+// SetTurnBackend attaches the smart-turn model backend (turn.stop:
+// turn-analyzer); the server closes it on shutdown. A crashed or overloaded
+// model only degrades turn endpointing to speech-timeout, so it is reported
+// through metrics, not /ready.
+func (s *Server) SetTurnBackend(b smartturn.Backend) {
+	s.turnBackend = b
+	s.registry.SetTurnBackend(b)
+	if p, ok := b.(*smartturn.Pool); ok {
+		s.metrics.SmartTurnWorkers = p.Capacity
+	}
 }
 
 // SetProviderManagementAPI installs the authenticated management route handler.
@@ -329,14 +367,22 @@ func (s *Server) setupRoutes() {
 		FixedPlayerRate:            24000,
 	}
 
+	wsCfg.Underlay = s.underlay
 	s.wsServer = ws.NewServer(wsCfg)
 	s.wsServer.OnSessionReady = s.onSessionReady
 	s.wsServer.OnText = s.onText
+	s.wsServer.OnDTMF = s.onDTMF
 
 	// Public Listener: /health and /ws
 	s.publicMux = http.NewServeMux()
 	s.publicMux.HandleFunc("GET /health", s.handleHealth)
-	s.publicMux.Handle("GET /ws", s.wsServer)
+	s.publicMux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
+		if s.shuttingDown.Load() { // before auth: the single-use token stays valid for a retry elsewhere
+			http.Error(w, DrainReason, http.StatusServiceUnavailable)
+			return
+		}
+		s.wsServer.ServeHTTP(w, r)
+	})
 
 	// Admin Listener: /health, /ready, /metrics, /debug/timeline
 	adminRoutes := http.NewServeMux()
@@ -362,7 +408,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	s.mu.Lock()
 	if s.shuttingDown.Load() {
 		s.mu.Unlock()
-		return nil, errors.New("server shutting down")
+		return nil, ws.ErrDraining
 	}
 	s.connecting.Add(1)
 	s.mu.Unlock()
@@ -373,6 +419,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		principal = conn.Claims().Subject
 	}
 
+	agentID := conn.AgentID()
+
 	// 1. Admission Control check
 	vadCapacity := true
 	if s.vadExecutor != nil {
@@ -380,7 +428,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		vadCapacity = s.vadExecutor.IsReady() && avail > 0
 	}
 
-	if err := s.admission.AcquireSession(principal, vadCapacity); err != nil {
+	if err := s.admission.AcquireSession(principal, agentID, vadCapacity); err != nil {
 		return nil, err
 	}
 
@@ -399,14 +447,14 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	call, releaseCall, err := s.resolveCall(resolveCtx, conn.AgentID(), tokenID)
 	cancelResolve()
 	if err != nil {
-		s.admission.ReleaseSession(principal)
+		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: err.Error()})
 		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
 	fail := func(err error) (*core.Session, error) {
 		releaseCall()
-		s.admission.ReleaseSession(principal)
+		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: err.Error()})
 		return nil, err
@@ -499,10 +547,45 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			ef := f.(*core.ErrorFrame)
 			msg := "unknown error"
 			if ef.Err != nil {
-				msg = ef.Err.Error()
+				msg = s.redactor.Redact(ef.Err.Error()) // provider errors may echo request text
 			}
 			timeline.Record(TimelineEvent{Type: EventError, Error: msg})
 		}
+	}
+
+	for _, p := range pipe.Processors() {
+		if ic, ok := p.(*core.IdleController); ok {
+			ic.SetOnEnd(func(reason string) {
+				// Off the controller's task: Session.Close waits for it.
+				go func() {
+					timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "terminated: " + reason})
+					conn.Hangup(reason, 2*time.Second) // final, not "reconnect elsewhere": RTVI error with the reason, 1000 close
+					conn.Close()
+					_ = session.Close()
+				}()
+			})
+		}
+	}
+
+	var otelTracer *otelexport.SessionTracer
+	if s.otel != nil {
+		otelTracer = s.otel.Session(agentID, call.AgentVersionID)
+		if err := session.SetTracer(otelTracer, s.otel.Policy()); err != nil {
+			return fail(fmt.Errorf("otel tracer: %w", err))
+		}
+	}
+
+	stopRecording := s.attachRecording(call, agentID, sessionID, conn, session)
+
+	// Latency observer: attach before Start so startup timing is captured.
+	if _, err := observe.Attach(session, func(m observe.Measurement) {
+		if otelTracer != nil {
+			otelTracer.Latency(m)
+		}
+		s.metrics.ObserveLatency(m.Stage, m.Value)
+		timeline.Record(TimelineEvent{Type: EventLatency, Timestamp: m.At, TurnID: string(m.Turn), Details: string(m.Stage), DurationMs: m.Value.Milliseconds()})
+	}); err != nil {
+		return fail(fmt.Errorf("attach latency observer: %w", err))
 	}
 
 	s.mu.Lock()
@@ -521,13 +604,22 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		}
 		if err := session.Err(); err != nil {
 			s.metrics.SessionsFailedTotal.Add(1)
-			s.logger.Error("session failed", slog.Uint64("session", sessionID), slog.String("err", err.Error()))
+			s.logger.Error("session failed", slog.Uint64("session", sessionID), slog.String("err", s.redactor.Redact(err.Error())))
 			conn.Close()
 		}
-		s.admission.ReleaseSession(principal)
+		s.admission.ReleaseSession(principal, agentID)
 		// End the session row before the call stops counting as active, so a
-		// draining Shutdown cannot close the store first.
+		// draining Shutdown cannot close the store first. The recording is
+		// finalized alongside (both ~5s bounded) so it fits Shutdown's wait too.
+		recDone := make(chan struct{})
+		go func() {
+			defer close(recDone)
+			if stopRecording != nil {
+				stopRecording()
+			}
+		}()
 		releaseCall() // bounded: drains MCP tools and ends the session row
+		<-recDone
 		s.mu.Lock()
 		delete(s.activeCalls, sessionID)
 		s.mu.Unlock()
@@ -687,6 +779,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.shuttingDown.Store(true)
 	s.mu.Unlock()
 	s.ready.Store(false)
+	s.metrics.Draining.Store(1)
 	if s.pruneStop != nil {
 		select {
 		case <-s.pruneStop:
@@ -697,10 +790,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	s.logger.Info("server shutting down: marked unready, stopping admission")
 
-	// 1. Close public server to stop new upgrades immediately
-	if s.publicServer != nil {
-		_ = s.publicServer.Close()
-	}
+	// 1. The public listener stays open so late arrivals (LB endpoint lag) get
+	// 503 server_draining instead of connection refused; /ws checks shuttingDown.
 
 	// Calls admitted before shutdown finish registering (bounded by resolveTimeout).
 	waitUntil(ctx, resolveTimeout+time.Second, func() bool { s.connecting.Wait(); return true })
@@ -727,6 +818,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			s.mu.Lock()
 			count := len(s.activeCalls)
 			s.mu.Unlock()
+			s.metrics.DrainRemaining.Store(int64(count))
 			if count == 0 {
 				s.logger.Info("all active calls drained cleanly")
 				break drainLoop
@@ -748,15 +840,22 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	// 3. Cancel any remaining active calls
 	s.mu.Lock()
+	var goAway sync.WaitGroup
 	for _, call := range s.activeCalls {
 		if call.conn != nil {
-			call.conn.Close()
+			// Tell the client to reconnect (reason server_draining, close 1001).
+			goAway.Add(1)
+			go func(c *ws.Connection) { defer goAway.Done(); c.GoAway(DrainReason, 2*time.Second) }(call.conn)
 		}
 		if call.session != nil {
 			_ = call.session.Close()
 		}
 	}
 	s.mu.Unlock()
+	goAway.Wait() // bounded by GoAway's own timeout
+	if s.publicServer != nil {
+		_ = s.publicServer.Close() // upgraded sockets are hijacked, so this only drops HTTP
+	}
 
 	// Their teardown ends each session row (bounded by releaseTimeout); wait for
 	// it before closing the store.
@@ -771,11 +870,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		_ = s.vadExecutor.Close()
 	}
 
+	if s.turnBackend != nil {
+		_ = s.turnBackend.Close()
+	}
+
 	// 5. Close admin server, then the management plane it served
 	if s.adminServer != nil {
 		_ = s.adminServer.Close()
 	}
 	s.closeManagement()
+	if s.otel != nil { // after calls drained so their final spans are flushed
+		if err := s.otel.Shutdown(context.WithoutCancel(ctx)); err != nil {
+			s.logger.Warn("otel flush incomplete", slog.String("err", err.Error()))
+		}
+	}
 
 	if drainTimedOut {
 		return fmt.Errorf("server shutdown timed out: forced cancellation of %d sessions", remainingCount)
@@ -844,30 +952,33 @@ func (s *Server) recordProcessorMetrics(proc core.Processor) {
 	switch p := proc.(type) {
 	case *core.AssistantContextProcessor:
 		s.metrics.FlushTimeoutsTotal.Add(p.FlushTimeouts.Load())
+	case *core.IdleController:
+		s.metrics.UserIdlePromptsTotal.Add(p.UserPrompts.Load())
+		s.metrics.UserIdleHangupsTotal.Add(p.UserHangups.Load())
+		s.metrics.BotIdleStuckTotal.Add(p.BotStuck.Load())
+		s.metrics.BotIdleHangupsTotal.Add(p.BotHangups.Load())
 	case *core.UserContextProcessor:
 		if n := p.EvictionCount(); n > 0 {
 			s.metrics.ContextEvictionsTotal.Add(uint64(n))
 		}
-	case *google.STTProcessor:
-		s.metrics.STTRotationsTotal.Add(p.RotationsCount.Load())
-		s.metrics.STTRotationFailuresTotal.Add(p.RotationFailures.Load())
-		s.metrics.STTDeduplicatedTotal.Add(p.DeduplicatedResults.Load())
-		s.metrics.STTErrorsTotal.Add(p.Errors.Load())
-	case *google.LLMProcessor:
-		s.metrics.LLMRequestsTotal.Add(p.Requests.Load())
-		s.metrics.LLMErrorsTotal.Add(p.Errors.Load())
-		s.metrics.LLMRetriesTotal.Add(p.Retries.Load())
-		s.metrics.LLMStaleDeltasDiscarded.Add(p.Stale.Load())
-	case *xai.Processor:
-		s.metrics.LLMRequestsTotal.Add(p.Requests.Load())
-		s.metrics.LLMErrorsTotal.Add(p.Errors.Load())
-		s.metrics.LLMRetriesTotal.Add(p.Retries.Load())
-		s.metrics.LLMStaleDeltasDiscarded.Add(p.Stale.Load())
-	case *google.TTSProcessor:
-		s.metrics.TTSRequestsTotal.Add(p.Requests.Load())
-		s.metrics.TTSErrorsTotal.Add(p.Errors.Load())
-		s.metrics.TTSRetriesTotal.Add(p.Retries.Load())
-		s.metrics.TTSStaleAudioDiscarded.Add(p.Stale.Load())
+	case core.STTCounters: // google and the failover wrapper
+		rot, rotFail, dedup, errs := p.STTCounts()
+		s.metrics.STTRotationsTotal.Add(rot)
+		s.metrics.STTRotationFailuresTotal.Add(rotFail)
+		s.metrics.STTDeduplicatedTotal.Add(dedup)
+		s.metrics.STTErrorsTotal.Add(errs)
+	case core.LLMCounters: // google, xai, openai and the failover wrapper
+		req, errs, retries, stale := p.LLMCounts()
+		s.metrics.LLMRequestsTotal.Add(req)
+		s.metrics.LLMErrorsTotal.Add(errs)
+		s.metrics.LLMRetriesTotal.Add(retries)
+		s.metrics.LLMStaleDeltasDiscarded.Add(stale)
+	case core.TTSCounters: // google, xai, ttsunit-based (cartesia, elevenlabs) and the failover wrapper
+		req, errs, retries, stale := p.TTSCounts()
+		s.metrics.TTSRequestsTotal.Add(req)
+		s.metrics.TTSErrorsTotal.Add(errs)
+		s.metrics.TTSRetriesTotal.Add(retries)
+		s.metrics.TTSStaleAudioDiscarded.Add(stale)
 	}
 }
 
@@ -909,7 +1020,13 @@ func (s *Server) onText(conn *ws.Connection, text string) error {
 		Gen:       gen,
 		Committed: true,
 	}
-	return session.Reenter(frame, core.Downstream, CallUserContextIndex, gen)
+	idx := CallUserContextIndex
+	for i, p := range session.Processors() {
+		if _, ok := p.(*core.UserContextProcessor); ok {
+			idx = i // shifts by one when the turn processor is installed
+		}
+	}
+	return session.Reenter(frame, core.Downstream, idx, gen)
 }
 
 // waitUntil polls done (or, if it blocks, waits for it) until it reports true,

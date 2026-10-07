@@ -1,0 +1,103 @@
+package server
+
+import (
+	"errors"
+	"io"
+
+	"govoice/core"
+	"govoice/core/resilience"
+	"govoice/providers/cartesia"
+	"govoice/providers/elevenlabs"
+	"govoice/server/agent"
+)
+
+// defaultTTSRate is the output rate every TTS provider defaults to; the
+// pipeline rate is Providers.GoogleTTS.SampleRate when set.
+const defaultTTSRate = 24000
+
+// ttsClassify is the failover class of a failed TTS candidate ("" = none).
+// google and xai expose ClientError() on their ProviderError; cartesia and
+// elevenlabs carry it as a field, which the method check would flatten into
+// server_error.
+func ttsClassify(err error) string {
+	var ce interface{ ClientError() bool }
+	var cp *cartesia.ProviderError
+	var ep *elevenlabs.ProviderError
+	client := errors.As(err, &ce) && ce.ClientError() ||
+		errors.As(err, &cp) && cp.ClientError ||
+		errors.As(err, &ep) && ep.ClientError
+	return agent.ClassOf(err, resilience.Verdict{ClientError: client})
+}
+
+// ttsBreaker is the breaker a TTS stage of this provider uses (nil if unknown).
+func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
+	switch provider {
+	case "google":
+		return r.googleTTSBreaker
+	case "xai":
+		return r.xaiBreaker
+	case "cartesia":
+		return r.cartesiaBreaker
+	case "elevenlabs":
+		return r.elevenlabsBreaker
+	}
+	return nil
+}
+
+// ttsRate is the one output rate the call's TTS candidates are built for. The
+// transport builds its resampler from the first frame and cannot follow a
+// rate change, so every candidate is configured to this rate (the factories
+// read it from the same setting) and core.NewTTSFailover rejects a mismatch.
+func ttsRate(cfg *Config) int {
+	if cfg != nil && cfg.Providers.GoogleTTS.SampleRate > 0 {
+		return cfg.Providers.GoogleTTS.SampleRate
+	}
+	return defaultTTSRate
+}
+
+// buildTTS builds the TTS stage: the primary alone (the pre-failover pipeline,
+// unchanged) or, with fallbacks, a core.TTSFailover over the chain. Fallbacks
+// that cannot be built are skipped (counted in voice_tts_fallbacks_skipped_total).
+func (r *Registry) buildTTS(cfg *Config, call CallSpec, build func(string, StageSpec) (core.Processor, error)) (core.Processor, error) {
+	if len(call.TTSFallbacks) == 0 {
+		return build("tts", call.TTS)
+	}
+	specs := append([]StageSpec{call.TTS}, call.TTSFallbacks...)
+	var cands []core.TTSCandidate
+	for i, sp := range specs {
+		p, err := build("tts", sp)
+		if err != nil {
+			if i == 0 {
+				closeProcs(cands)
+				return nil, err
+			}
+			if r.onTTSFallbackSkipped != nil {
+				r.onTTSFallbackSkipped()
+			}
+			continue
+		}
+		c := core.TTSCandidate{Provider: sp.Provider, Proc: p, Rate: ttsRate(cfg)}
+		if br := r.ttsBreaker(sp.Provider); br != nil {
+			c.Open = br.WouldRefuse
+		}
+		cands = append(cands, c)
+	}
+	if len(cands) == 1 {
+		return cands[0].Proc, nil
+	}
+	fo, err := core.NewTTSFailover(core.TTSFailoverConfig{
+		Candidates: cands, Classify: ttsClassify, Allow: call.Failover.Allows, OnFailover: r.onTTSFailover,
+	})
+	if err != nil {
+		closeProcs(cands)
+	}
+	return fo, err
+}
+
+func closeProcs(cands []core.TTSCandidate) {
+	for _, c := range cands {
+		if cl, ok := c.Proc.(io.Closer); ok {
+			_ = cl.Close()
+		}
+	}
+}

@@ -15,7 +15,7 @@ const xaiSpeechEnabled = true
 // registerXAISpeech wires the experimental xAI STT/TTS adapters.
 func registerXAISpeech(r *Registry) {
 	r.Register("xai.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		key, err := xaiKey(spec.Secret)
+		key, err := apiKey(spec.Secret)
 		if err != nil {
 			return nil, fmt.Errorf("xai.stt: %w", err)
 		}
@@ -34,7 +34,7 @@ func registerXAISpeech(r *Registry) {
 	})
 
 	r.Register("xai.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		key, err := xaiKey(spec.Secret)
+		key, err := apiKey(spec.Secret)
 		if err != nil {
 			return nil, fmt.Errorf("xai.tts: %w", err)
 		}
@@ -44,6 +44,10 @@ func registerXAISpeech(r *Registry) {
 		}
 		if cfg.Providers.XAITTS.Endpoint != "" {
 			ttsCfg.Endpoint = cfg.Providers.XAITTS.Endpoint
+		}
+		// The pipeline's TTS output rate is configured once, under the google TTS settings.
+		if cfg.Providers.GoogleTTS.SampleRate > 0 {
+			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
 		}
 		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.xaiBreaker
 		return xai.NewTTSProcessor(ttsCfg)

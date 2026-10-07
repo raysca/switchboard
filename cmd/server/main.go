@@ -10,9 +10,11 @@ import (
 	"syscall"
 
 	"path/filepath"
+	"slices"
 
 	"govoice/examples/envload"
 	"govoice/server"
+	"govoice/smartturn"
 	"govoice/vad"
 )
 
@@ -70,6 +72,25 @@ func main() {
 
 	if vadExec != nil {
 		srv.SetVADExecutor(vadExec)
+	}
+
+	if slices.Contains(cfg.Turn.Stop, "turn-analyzer") {
+		smartturn.ConfigureModel(cfg.Turn.Analyzer.ModelPath)
+		var be smartturn.Backend
+		var err error
+		if cfg.TurnAnalyzerMode() == "inprocess" {
+			be, err = smartturn.NewInProcess(smartturn.ModelPath())
+		} else {
+			bin := "bin/turnworker"
+			if exe, e := os.Executable(); e == nil {
+				bin = filepath.Join(filepath.Dir(exe), "turnworker")
+			}
+			be, err = smartturn.NewPool(smartturn.PoolConfig{Binary: bin, Workers: cfg.Turn.Analyzer.Workers})
+		}
+		if err != nil {
+			log.Fatalf("smart-turn model failed closed (hash/worker check): %v", err)
+		}
+		srv.SetTurnBackend(be)
 	}
 
 	if err := srv.EnableManagement(context.Background()); err != nil {
