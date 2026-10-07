@@ -34,18 +34,18 @@ Reviews changed the outcome on almost every task. The ones that mattered most:
 
 - Framework overhead: p50 0.01 ms, p95 0.03 ms.
 - Smart-turn inference through the worker: p95 25.4 ms.
-- Load: 384 concurrent sessions clean in the final sweep, p95 voice-to-voice 962.7 ms (about 700 ms of that is the VAD hangover), 0.37 CPU-s per session-minute (~150 sessions per core), 0 stale/dropped VAD chunks.
+- Load and capacity: see `docs/benchmarks/capacity.md` (latest 384-session sweep, CPU per session-minute, stale/dropped VAD chunks). Latency baseline: see `docs/benchmarks/README.md`; it is regenerated in G6.
 
 These numbers are framework cost only. No real STT/LLM/TTS was called anywhere (cost rule).
 
 ## Not done / known risks
 
-- **Perf baseline** was taken on the uncommitted tree: regenerate once on the committed branch (`FORCE=1 make perf-baseline`) if numbers drift.
+- **Perf baseline** was taken on an uncommitted tree and records no git commit; regenerated in G6 (`FORCE=1 make perf-baseline`).
 - **`turn.manager` defaults off**; turn strategies, mute, completion, idle-after-turn behaviours need it. Flipping the default needs a real-STT e2e and a decision on the ~800 ms later end-of-turn.
-- **No live-provider verification:** Cartesia/ElevenLabs/Deepgram/Smart-turn-vs-real-audio protocols were checked against docs and fake servers only; the integration tests exist behind build tags and env vars. Google gRPC burst-replay for STT failover is unverified.
+- **No live-provider verification:** Deepgram, Cartesia, ElevenLabs and OpenAI-compatible defaults and protocols, and Smart-turn on real audio, were checked against docs and fake servers only; xAI STT/TTS need `-tags xaispeech`; the integration tests exist behind build tags and env vars. Google gRPC burst-replay for STT failover is unverified.
 - **Not run:** 24 h soak (command documented), `docker build`, the CI workflow remotely, noisy real-audio denoiser evaluation, a real-LLM turn-quality evaluation (gate validates plumbing with fake oracles).
 - **Open product decisions:** which extra vendors you want first (goalpulse Q1; I assumed Deepgram + Cartesia + ElevenLabs), per-agent vs server-wide scope for DTMF/filters/idle, whether the idle hang-up wording suits your clients.
-- **Residuals listed in the matrix "Known gaps and risks":** recording is unencrypted and continues after an agent is disabled mid-call, DTMF digits remain in LLM context, failover can take ~90 s with default retries, admission is reject-only, no provider emits tool-call frames (tool-first leniency is test-only), tool rounds run sequentially in production, usage metrics reach traces only.
+- **Residuals listed in the matrix "Known gaps and risks":** recording is unencrypted and continues after an agent is disabled mid-call, DTMF digits remain in LLM context, failover timing is bounded (LLM first token 8 s, 60 s budget; Google/xAI STT open 2x5 s; shortened non-last retries; see the runbook table) but a started LLM stream is still cut at 30 s per round and reasoning models need a raised `llm_first_token`, admission is reject-only (distinct reason codes, close 1013), no provider emits tool-call frames (tool-first leniency is test-only), tool rounds run sequentially in production, usage metrics reach traces only, Deepgram/xAI STT export no counters, some raw error text still reaches three log/trace sites. The rare ONNX exit abort is attributed to ORT telemetry (now disabled; `vad.ShutdownORT` runs after ORT sessions close on the clean exit paths of the server, both workers and the vad/smartturn test mains, not on error exits or in the server test binary): plausible, unproven, Linux unverified. See the matrix for the ranked list of what Pipecat has that go-voice lacks.
 - **Out of scope by design:** video, extra transports, Flows, bus/workers, speech-to-speech models, Whisker wire compatibility.
 
 ## Suggested next steps

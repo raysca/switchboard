@@ -162,6 +162,7 @@ docker stop -t 45 govoice
 - **preStop sleep**: add `preStop: sleep 5` so endpoint removal propagates to the LB before drain starts; SIGTERM is delivered after the hook. Anything still routed afterwards gets 503 `server_draining`; have the LB retry 503 on another target (nginx: `proxy_next_upstream error http_503`).
 - **LB connection draining**: enable it (deregistration delay >= 0 is fine; do not set it shorter than the preStop sleep) and never have the LB cut established WebSockets when a target goes unhealthy. nginx: a reload keeps existing connections on old workers.
 - **Affinity**: a call is one WebSocket pinned to one instance, and its pipeline, context and turn state live in that process's memory. There is no cross-node migration, and no sticky-session config is needed beyond the connection itself. New calls land on whichever instance is ready.
+- **Admission rejects**: a refused call gets an RTVI error `capacity_exceeded` | `principal_limit` | `agent_limit` | `rate_limited` and close 1013 (try again later), counted in `voice_admission_rejects_total{reason}` (metric labels: `session_limit`, `vad_unavailable`, `principal_limit`, `agent_limit`, `start_rate_limit`; the first two both reach the client as `capacity_exceeded`). The client sees only the code, never the principal or counts. 1011 `session_setup_failed` is a real setup failure, so alert on it separately. `limits.handshake_rate_per_ip` (default 20/s, burst max(5, 2x); 0 means the default, it cannot be disabled) bounds WebSocket upgrades per source IP, refused with HTTP 429 before the upgrade. The source IP is the TCP peer unless that peer is listed in `tls.trusted_proxies`, in which case it is the right-most untrusted `X-Forwarded-For` entry (else `X-Real-IP`). Behind a load balancer, list it in `tls.trusted_proxies`, or every caller shares the balancer's bucket; raise the rate only for a NAT that really hides many clients. The table holds at most 10k IPs (entries idle over 1 min are evicted when full); while 10k distinct IPs are active, new IPs get 429.
 - **Reconnect semantics**: a force-closed client gets `server_draining` + 1001 and must start a new call (new voice token; tokens are single-use). Conversation context is not carried over; the app should replay it through the agent or accept a fresh start. Size `drain_timeout` to your typical call length to keep forced closes rare, and roll one instance at a time.
 - **Kubernetes sketch**: `terminationGracePeriodSeconds: 60`, `lifecycle.preStop.exec.command: ["sleep","5"]`, `readinessProbe.httpGet: {path: /ready, port: 9090}`, `livenessProbe.httpGet: {path: /health, port: 9090}`.
 
@@ -211,3 +212,29 @@ Config (`warmup`, see `config/*.yaml`): `enabled` (default true, shared transpor
 Metrics (labels `provider`, `stage` only): `voice_provider_warm_dials_total{result=hit|miss}`, `voice_provider_warmups_total{result=ok|error|skipped}`, `voice_provider_connect_seconds` (histogram of fresh TCP+TLS connects, and gRPC time-to-READY for Google).
 
 Manual live check (not run in CI, needs real keys): `RUN_LIVE_DEEPGRAM_TEST=1 DEEPGRAM_API_KEY=... go test -tags integration -run LiveWarm -v ./providers/deepgram` alternates cold and pre-dialed first connects and logs each. For the whole pipeline set `warmup.predial: true` on one canary, place calls, and compare `voice_latency_seconds` (first-turn TTFB stages) and `voice_provider_connect_seconds` against a canary without it; flip the default only if the p50 first-turn gain is real and `warmups_total{result="error"}` stays low.
+
+## Failover timing
+
+How long a stage waits on its primary before a fallback takes over. Applies only to agents with `fallbacks` for the stage; a stage without fallbacks keeps the providers' own retries unchanged (LLM: 3 x 30 s, so a hung primary only errors at about 90 s).
+
+| Stage | Primary with a fallback | Worst case before the fallback starts | Without fallbacks (unchanged) | Tune |
+|---|---|---|---|---|
+| LLM | first-token deadline `failover.llm_first_token` (default 8 s): a candidate that produced no text or tool call by then is cancelled and its breaker told. A generation that has started streaming is never cut by this deadline. | 8 s per candidate (about 16 s with two fallbacks) | 3 attempts x 30 s + backoff, about 90 s | `failover.llm_first_token` |
+| LLM budget | no new candidate is started later than `failover.llm_budget` (default 60 s) after the generation began | n/a | n/a | `failover.llm_budget`; must exceed `llm_first_token` (config is rejected otherwise) |
+| STT open | Deepgram 2 x 5 s; Google and xAI 2 x 5 s (always, fallbacks or not: the open had no application timeout before) | about 10 s | Deepgram 3 x 5 s | provider `RetryPolicy` (Google `STTConfig.RetryPolicy`, xAI `STTConfig.RetryPolicy`) |
+| TTS request | Cartesia, ElevenLabs, xAI, Google: 2 attempts, each keeping the provider's request timeout (it bounds the whole sentence, dial to last audio byte, so it is not shortened: a long sentence must not be cut) | Cartesia/ElevenLabs about 30 s, xAI/Google about 20 s | Cartesia/ElevenLabs 3 x 15 s (45 s), xAI/Google 3 x 10 s (30 s) | `failoverPolicy` in `server/tts_failover.go`; provider `Timeout` |
+| TTS unit watchdog | 30 s + 20 ms per character, a backstop for a provider that hangs without erroring | 30 s+ | same | `core.TTSFailoverConfig` |
+
+Notes:
+- The last candidate of a chain keeps its full retries: nothing is left to fail over to, so cutting it short would only lose answers.
+- The provider request timeout still bounds a whole LLM stream (30 s), with or without fallbacks, so the first-token deadline is what rescues a hang and the provider timeout is what ends a runaway generation.
+- A first-token timeout counts against the provider's circuit breaker, so later calls start on the healthy provider (open breakers are tried last).
+- `idle.bot_timeout` cancels an LLM failover in flight; keep it above `failover.llm_first_token` times the chain length.
+- "First token" is the first non-empty text delta or the first tool execution (thinking/reasoning and usage frames do not count; no provider emits tool-call frames before running the tool). A model that thinks, or decides on a tool call, for longer than `llm_first_token` is abandoned like a hung one: raise it for reasoning models. Once a tool ran or text streamed, later rounds (slow tool, second model round) are never cut by it.
+- Each first-token timeout is one breaker failure; 5 in a row (no success between, across calls) open that provider's breaker for 30 s, so a primary that is merely slow (overloaded, huge context) is shed to the fallback for a cooldown. The abandoned request is cancelled; its prompt tokens may still be billed.
+
+```yaml
+failover:
+  llm_first_token: 6s   # default 8s
+  llm_budget: 45s       # default 60s
+```
