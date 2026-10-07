@@ -3,7 +3,11 @@ go 1.27.1
 use (
 	.
 	./core
+	./providers/cartesia
+	./providers/deepgram
+	./providers/elevenlabs
 	./providers/google
+	./providers/openai
 	./providers/xai
 	./server
 )
