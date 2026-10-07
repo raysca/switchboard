@@ -33,6 +33,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "vadworker: init ORT runner failed: %v\n", err)
 		os.Exit(2)
 	}
+	defer vad.ShutdownORT() // runs after runner.Close
 	defer runner.Close()
 
 	// 3. Complete handshake with parent

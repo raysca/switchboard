@@ -118,6 +118,16 @@ func InitORT() error {
 	return initErr
 }
 
+// ShutdownORT releases the ORT environment at process exit, after every Runner
+// (and any other ORT session) is closed. Left alive, the env is torn down by
+// C++ static destructors during exit, which can abort the process
+// ("recursive_mutex lock failed").
+func ShutdownORT() {
+	if ort.IsInitialized() {
+		_ = ort.DestroyEnvironment()
+	}
+}
+
 type tensors struct {
 	in, state, out, stateN *ort.Tensor[float32]
 }

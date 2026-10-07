@@ -17,7 +17,9 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	ShutdownORT()
+	os.Exit(code)
 }
 
 // HardKill SIGKILLs worker workerIdx of a process executor.

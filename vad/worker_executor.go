@@ -429,10 +429,6 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 		return
 	}
 
-	type readResult struct {
-		payload []byte
-		err     error
-	}
 	resCh := make(chan readResult, 1)
 
 	go func() {
@@ -440,8 +436,7 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 		resCh <- readResult{payload: p, err: err}
 	}()
 
-	select {
-	case res := <-resCh:
+	if res, ok := awaitReply(resCh, deadline, wp.backend.cfg.ParentGrace); ok {
 		fin := time.Now()
 		wp.backend.statCounters.busyNanos.Add(int64(fin.Sub(now)))
 		wp.backend.statCounters.batches.Add(1)
@@ -483,8 +478,7 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 			}
 		}
 		wp.inFlightMu.Unlock()
-
-	case <-time.After(time.Until(deadline)):
+	} else {
 		wp.backend.statCounters.workerHangs.Add(1)
 		wp.backend.statCounters.workerErrors.Add(int64(len(jobs)))
 
@@ -504,6 +498,35 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 		wp.inFlightMu.Unlock()
 
 		_ = wp.respawnWithBackoff()
+	}
+}
+
+type readResult struct {
+	payload []byte
+	err     error
+}
+
+// awaitReply waits for the worker's reply until deadline, then for one more
+// grace period. The deadline is wall-clock time in this process: when the
+// parent itself is descheduled (host CPU contention, GC), its timer and a
+// reply already in the pipe become ready together, and the loadtest at 384
+// calls saw healthy workers killed with the reply arriving <1 ms after a
+// timer that fired 100 ms late. The extra grace is measured after the parent
+// runs again, so only a worker that stays silent is declared hung.
+func awaitReply(resCh <-chan readResult, deadline time.Time, grace time.Duration) (readResult, bool) {
+	t := time.NewTimer(time.Until(deadline))
+	defer t.Stop()
+	select {
+	case res := <-resCh:
+		return res, true
+	case <-t.C:
+	}
+	t.Reset(grace)
+	select {
+	case res := <-resCh:
+		return res, true
+	case <-t.C:
+		return readResult{}, false
 	}
 }
 

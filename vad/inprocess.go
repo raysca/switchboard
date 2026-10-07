@@ -66,6 +66,7 @@ func NewInProcessShardedExecutor(cfg Config) (*Executor, error) {
 	for i := 0; i < cfg.Workers; i++ {
 		r, err := NewRunner(cfg.Batch, cfg.IntraOp)
 		if err != nil {
+			_ = b.close() // stop the workers (and free the runners) already started
 			return nil, fmt.Errorf("in-process runner: %w", err)
 		}
 		q := make(chan *Job, max(1, cfg.QueueCap/cfg.Workers))
