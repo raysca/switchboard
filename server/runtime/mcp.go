@@ -40,6 +40,7 @@ type sessionExecutor struct {
 	inFlight int
 	drained  chan struct{}
 	handlers map[string]*mcp.CapturedTool
+	async    map[string]bool // async tools: bounded by the loop's AsyncTimeout, not the MCP call timeout
 	// sessionID is the stored session's id. Calls carry the core session's
 	// numeric id, which history and trace rows cannot reference.
 	sessionID string
@@ -70,6 +71,9 @@ func (e *sessionExecutor) Execute(ctx context.Context, call core.ToolCall) (core
 	}()
 	if !ok {
 		return core.ToolResult{CallID: call.ID, Status: core.ToolFailed, ErrorCategory: "unknown_tool", Result: json.RawMessage(`{"error":"unknown_tool"}`), StartedAt: started, EndedAt: time.Now()}, nil
+	}
+	if e.async[call.Name] {
+		ctx = mcp.LongCall(ctx)
 	}
 	result, err := handler.ExecuteCall(ctx, call.Arguments, call.ID, e.sessionID, string(call.TurnID), uint64(call.Generation))
 	ended := time.Now()
@@ -113,6 +117,7 @@ func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Se
 		return nil, err
 	}
 	items := make([]captured, 0, len(snapshot.MCPTools))
+	agentCfg, _ := agent.DecodeConfig(snapshot.Version.Config) // already validated at publish; unusable config = no async tools
 	for _, tool := range snapshot.MCPTools {
 		capturedTool, captureErr := mcpService.CaptureTool(ctx, tool.ServerID, tool.RemoteName, tool.SchemaHash)
 		if captureErr != nil {
@@ -128,7 +133,7 @@ func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Se
 			}
 			continue
 		}
-		definition := core.ToolDefinition{Name: name, Description: capturedTool.Description(), InputSchema: capturedTool.Schema(), Policy: core.ToolPolicy{Required: tool.Required}}
+		definition := core.ToolDefinition{Name: name, Description: capturedTool.Description(), InputSchema: capturedTool.Schema(), Policy: core.ToolPolicy{Required: tool.Required, Async: agentCfg.IsAsyncTool(tool.ServerID, tool.RemoteName)}}
 		items = append(items, captured{definition: definition, handler: capturedTool})
 	}
 	definitions := make([]core.ToolDefinition, 0, len(items))
@@ -148,10 +153,12 @@ func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Se
 	// The core executor closes over captured server-side handles; only definitions
 	// and redacted snapshot metadata are persisted or exposed to the framework.
 	handlers := make(map[string]*mcp.CapturedTool, len(items))
+	async := map[string]bool{}
 	for _, item := range items {
 		handlers[item.definition.Name] = item.handler
+		async[item.definition.Name] = item.definition.Policy.Async
 	}
-	runner := &sessionExecutor{handlers: handlers}
+	runner := &sessionExecutor{handlers: handlers, async: async}
 	pin, err := agents.StartCapturedSession(ctx, snapshot, sessionID, string(runtimeJSON), references)
 	if err != nil {
 		return nil, err

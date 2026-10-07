@@ -150,3 +150,43 @@ func seedAPICredentials(t *testing.T, s *storage.Store) {
 		}
 	}
 }
+
+func TestAgentFallbackChainRoundTrip(t *testing.T) {
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "chain.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedAPICredentials(t, store)
+	defer store.Close()
+	handler := NewAgentsHandler(agent.NewService(store))
+	cred := `"credential_id":"018f0000-0000-7000-8000-000000000001"`
+	body := func(fallbacks string) string {
+		return `{"name":"Chain","config":{"stt":{"provider":"google","model":"s",` + cred + `},"llm":{"provider":"google","model":"m",` + cred + fallbacks + `},"tts":{"provider":"google","voice":"v",` + cred + `},"failover":{"on":["timeout","server_error"]}}}`
+	}
+	post := func(b string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/agents", strings.NewReader(b))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	if w := post(body(`,"fallbacks":[{"provider":"google","model":"m",` + cred + `}]`)); w.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate chain status=%d body=%s", w.Code, w.Body)
+	}
+	created := post(body(`,"fallbacks":[{"provider":"google","model":"backup",` + cred + `}]`))
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
+	}
+	var env struct {
+		Data agent.Agent `json:"data"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+env.Data.ID, nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"model":"backup"`) || !strings.Contains(w.Body.String(), `"server_error"`) {
+		t.Fatalf("get status=%d body=%s", w.Code, w.Body)
+	}
+}

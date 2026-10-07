@@ -721,3 +721,47 @@ func TestCreateRejectsUnsupportedLocalAndUnsafeRemoteDestination(t *testing.T) {
 		}
 	}
 }
+
+// An async (LongCall) execution outlives the service's short call timeout but
+// stays bounded by, and cancelled with, the caller's context (session close).
+func TestLongCallUsesCallerDeadlineAndCancellation(t *testing.T) {
+	cancelled := make(chan struct{}, 1)
+	remote := &testRemote{tools: []RemoteTool{{Name: "slow", InputSchema: json.RawMessage(`{"type":"object"}`)}}, call: func(ctx context.Context, _ string, args json.RawMessage) (RemoteResult, error) {
+		select {
+		case <-time.After(300 * time.Millisecond): // > the 100ms service timeout
+			return RemoteResult{JSON: json.RawMessage(`{"ok":true}`)}, nil
+		case <-ctx.Done():
+			cancelled <- struct{}{}
+			return RemoteResult{}, ctx.Err()
+		}
+	}}
+	svc, _ := newTestService(t, remote, testCredential{})
+	server := createTestServer(t, svc, "https://mcp.example/rpc", "")
+	discovery, err := svc.Refresh(context.Background(), server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool, err := svc.CaptureTool(context.Background(), server.ID, "slow", discovery.Tools[0].SchemaHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tool.ExecuteCall(context.Background(), json.RawMessage(`{}`), "c1", "s", "t", 1); err == nil {
+		t.Fatal("a plain call must keep the service timeout")
+	}
+	<-cancelled
+	ctx, cancel := context.WithTimeout(LongCall(context.Background()), 5*time.Second)
+	defer cancel()
+	if _, err := tool.ExecuteCall(ctx, json.RawMessage(`{}`), "c2", "s", "t", 1); err != nil {
+		t.Fatalf("long call: %v", err)
+	}
+	ctx, cancel = context.WithTimeout(LongCall(context.Background()), 5*time.Second)
+	time.AfterFunc(20*time.Millisecond, cancel) // session close
+	if _, err := tool.ExecuteCall(ctx, json.RawMessage(`{}`), "c3", "s", "t", 1); err == nil {
+		t.Fatal("cancelled long call succeeded")
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("remote call not cancelled")
+	}
+}

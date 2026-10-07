@@ -468,7 +468,8 @@ func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json
 	if err != nil {
 		return nil, fmt.Errorf("list credentials: %w", err)
 	}
-	if problems := AttachmentProblems(cfg, s.providers, creds); len(problems) > 0 {
+	problems := append(AttachmentProblems(cfg, s.providers, creds), FallbackProblems(cfg, s.providers, creds)...)
+	if len(problems) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrNotAttached, strings.Join(problems, ", "))
 	}
 	return canonical, nil

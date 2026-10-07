@@ -22,3 +22,31 @@ func TestRegistryHasStableExplicitCapabilities(t *testing.T) {
 		t.Fatal("unknown provider was inferred")
 	}
 }
+
+func TestDeepgramIsSTTOnly(t *testing.T) {
+	r := NewRegistry(Definitions())
+	if !r.Supports("deepgram", CapabilitySTT) || r.Supports("deepgram", CapabilityLLM) || r.Supports("deepgram", CapabilityTTS) {
+		t.Fatal("deepgram must offer STT only")
+	}
+}
+
+func TestCartesiaIsTTSOnly(t *testing.T) {
+	r := NewRegistry(Definitions())
+	if !r.Supports("cartesia", CapabilityTTS) || r.Supports("cartesia", CapabilityLLM) || r.Supports("cartesia", CapabilitySTT) {
+		t.Fatal("cartesia must offer TTS only")
+	}
+}
+
+func TestElevenLabsIsTTSOnly(t *testing.T) {
+	r := NewRegistry(Definitions())
+	if !r.Supports("elevenlabs", CapabilityTTS) || r.Supports("elevenlabs", CapabilityLLM) || r.Supports("elevenlabs", CapabilitySTT) {
+		t.Fatal("elevenlabs must offer TTS only")
+	}
+}
+
+func TestOpenAIIsLLMOnly(t *testing.T) {
+	r := NewRegistry(Definitions())
+	if !r.Supports("openai", CapabilityLLM) || r.Supports("openai", CapabilitySTT) || r.Supports("openai", CapabilityTTS) {
+		t.Fatal("openai must offer LLM only")
+	}
+}

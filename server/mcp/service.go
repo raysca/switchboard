@@ -381,6 +381,15 @@ func (s *Service) endpoint(ctx context.Context, m storage.MCPServer) (*url.URL, 
 func (s *Service) timed(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, s.timeout)
 }
+
+type longCallKey struct{}
+
+// LongCall marks a tool call that runs in the background (an async tool): it
+// is bounded by the caller's deadline (the tool loop's AsyncTimeout) instead of
+// the service's short per-call timeout.
+func LongCall(ctx context.Context) context.Context {
+	return context.WithValue(ctx, longCallKey{}, true)
+}
 func (s *Service) span(ctx context.Context, name string) core.Span {
 	return core.StartSpanSafe(ctx, s.tracer, core.NewTraceEvent(name, time.Now(), "", "", 0, core.TracePolicy{Content: core.TraceMetadata}, nil))
 }
@@ -509,7 +518,10 @@ func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMes
 }
 
 func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, args json.RawMessage, callID, sessionID, turnID string, generation uint64) (ToolResult, error) {
-	ctx, cancel := s.timed(ctx)
+	cancel := context.CancelFunc(func() {})
+	if _, bounded := ctx.Deadline(); ctx.Value(longCallKey{}) == nil || !bounded {
+		ctx, cancel = s.timed(ctx)
+	}
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return ToolResult{}, err
