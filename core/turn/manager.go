@@ -3,6 +3,7 @@ package turn
 import (
 	"errors"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,10 @@ type Config struct {
 	MinimumSpeechDuration time.Duration
 	SemanticMaxAge        time.Duration
 	MaxRetiredTurns       int
+	// StartStrategies is the first-yes-wins chain deciding when a user turn
+	// starts. Nil means VAD only (the historical behavior). Instances are
+	// stateful and must not be shared between managers.
+	StartStrategies []UserTurnStartStrategy
 }
 
 func DefaultConfig() Config {
@@ -49,6 +54,11 @@ func (c Config) validate() error {
 		c.StartDebounce < 0 || c.StopDebounce < 0 || c.MinimumSpeechDuration < 0 || c.SemanticMaxAge < 0 || c.MaxRetiredTurns <= 0 {
 		return ErrInvalidConfig
 	}
+	for _, s := range c.StartStrategies {
+		if s == nil {
+			return ErrInvalidConfig
+		}
+	}
 	return nil
 }
 
@@ -61,6 +71,13 @@ type Observation struct {
 	Speaking   bool
 	Activity   bool
 	Semantic   *SemanticEvidence
+	// Optional start-strategy evidence; ignored by the default VAD chain.
+	Transcript      string
+	TranscriptFinal bool
+	BotSpeaking     bool
+	ExternalStart   bool
+	// ExternalStop ends the active turn when an ExternalStop strategy is in the chain.
+	ExternalStop bool
 }
 
 // Manager is a session-owned, serialized state machine. It creates no timers
@@ -101,6 +118,19 @@ type Manager struct {
 	hasSilenceSince bool
 	muteSince       time.Time
 	semantic        *SemanticEvidence
+
+	starters     []UserTurnStartStrategy
+	startByVAD   bool
+	pendingText  string
+	pendingFinal bool
+	hasText      bool
+	pendingExt   bool
+	botSpeaking  bool
+
+	text      string
+	textFinal bool
+	textAt    time.Time
+	extStop   bool
 }
 
 type detectionSnapshot struct {
@@ -118,7 +148,11 @@ func NewManager(config Config, detector TurnDetector) (*Manager, error) {
 	if err := config.validate(); err != nil || detector == nil {
 		return nil, ErrInvalidConfig
 	}
-	return &Manager{cfg: config, detector: detector, retiredTurns: make(map[core.TurnID]struct{})}, nil
+	starters := config.StartStrategies
+	if len(starters) == 0 {
+		starters = []UserTurnStartStrategy{VADStart()}
+	}
+	return &Manager{cfg: config, detector: detector, starters: starters, retiredTurns: make(map[core.TurnID]struct{})}, nil
 }
 
 // Start sets the initial-silence origin explicitly; it never reads wall time.
@@ -217,6 +251,23 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 	if observation.Activity || observation.Speaking {
 		m.noSpeechSince = observation.At
 	}
+	m.botSpeaking = observation.BotSpeaking
+	if observation.Activity || observation.Speaking || observation.BotSpeaking || observation.Transcript != "" {
+		for _, s := range m.starters {
+			s.activity(observation.At)
+		}
+	}
+	if !m.active {
+		if strings.TrimSpace(observation.Transcript) != "" {
+			m.pendingText, m.pendingFinal, m.hasText = observation.Transcript, observation.TranscriptFinal, true
+		}
+		m.pendingExt = m.pendingExt || observation.ExternalStart
+	} else {
+		if strings.TrimSpace(observation.Transcript) != "" {
+			m.text, m.textFinal, m.textAt = observation.Transcript, observation.TranscriptFinal, observation.At
+		}
+		m.extStop = m.extStop || observation.ExternalStop
+	}
 	if observation.Speaking {
 		if m.active {
 			if m.hasSilenceSince {
@@ -230,21 +281,27 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 			m.startCandidate = true
 			m.startSince = observation.At
 			m.startTurn, m.startGen = observation.TurnID, observation.Generation
+			m.startByVAD = true
 			m.speaking = true
 		}
 		framesAfter, snapshot := m.advanceLocked(observation.At)
 		return append(frames, framesAfter...), snapshot, nil
 	}
 
+	if !m.startCandidate && !m.active && (m.hasText || m.pendingExt) && observation.TurnID != "" && observation.Generation != 0 {
+		// Transcript/external evidence without speech activity opens a
+		// one-shot candidate; it never lingers if no strategy accepts it.
+		m.startCandidate, m.startByVAD = true, false
+		m.startSince, m.startTurn, m.startGen = observation.At, observation.TurnID, observation.Generation
+	}
 	if m.startCandidate {
-		if observation.At.Sub(m.startSince) >= maxDuration(m.cfg.StartDebounce, m.cfg.MinimumSpeechDuration) {
-			frames = append(frames, m.startLocked(observation.At)...)
-		}
+		frames = append(frames, m.tryStartLocked(observation.At)...)
 		m.startCandidate = false
 		if !m.active {
 			m.speaking = false
 		}
 	}
+	m.pendingText, m.pendingFinal, m.hasText, m.pendingExt = "", false, false, false
 	if m.active && m.speaking && !m.stopCandidate {
 		m.stopCandidate, m.stopSince = true, observation.At
 	}
@@ -330,7 +387,7 @@ func sameDetectionInput(a, b DetectionInput) bool {
 // an observation counter or another queued snapshot. Control timestamps alone
 // do not advance detection; an accepted Observe/Advance queues its own input.
 func (m *Manager) snapshotCurrentLocked(snapshot *detectionSnapshot) bool {
-	if m.closed || m.muted || !m.active || !m.hasSilenceSince ||
+	if m.closed || m.muted || !m.active || !(m.hasSilenceSince || m.extStop) ||
 		m.epoch != snapshot.epoch || m.currentID != snapshot.turn || m.currentGen != snapshot.generation ||
 		!m.turnStartedAt.Equal(snapshot.turnStartedAt) || !m.silenceSince.Equal(snapshot.silenceSince) {
 		return false
@@ -451,6 +508,10 @@ func (m *Manager) Reset(at time.Time) error {
 	m.retiredTurns = make(map[core.TurnID]struct{})
 	m.retiredOrder = nil
 	m.semantic = nil
+	m.pendingText, m.hasText, m.pendingExt = "", false, false
+	for _, s := range m.starters {
+		s.reset()
+	}
 	m.lifecycle = core.TurnLifecycle{}
 	m.active, m.speaking, m.hasSilenceSince = false, false, false
 	m.clearPendingLocked()
@@ -491,8 +552,8 @@ func (m *Manager) advanceLocked(at time.Time) ([]core.Frame, *detectionSnapshot)
 		return nil, nil
 	}
 	var frames []core.Frame
-	if !m.active && m.startCandidate && m.speaking && at.Sub(m.startSince) >= maxDuration(m.cfg.StartDebounce, m.cfg.MinimumSpeechDuration) {
-		frames = append(frames, m.startLocked(at)...)
+	if !m.active && m.startCandidate && m.speaking {
+		frames = append(frames, m.tryStartLocked(at)...)
 	}
 	if m.active && m.stopCandidate && at.Sub(m.stopSince) >= m.cfg.StopDebounce {
 		m.stopCandidate, m.speaking = false, false
@@ -504,7 +565,7 @@ func (m *Manager) advanceLocked(at time.Time) ([]core.Frame, *detectionSnapshot)
 			frames = append(frames, m.completeLocked(at, core.TurnReasonMaxDuration, 0, false)...)
 			return frames, nil
 		}
-		if m.hasSilenceSince {
+		if m.hasSilenceSince || m.extStop {
 			if m.detectionInFlight {
 				m.pendingDetection = m.newDetectionSnapshotLocked(at)
 				return frames, nil
@@ -528,9 +589,14 @@ func (m *Manager) newDetectionSnapshotLocked(at time.Time) *detectionSnapshot {
 		evidence := *m.semantic
 		semantic = &evidence
 	}
+	var silenceFor time.Duration
+	if m.hasSilenceSince {
+		silenceFor = at.Sub(m.silenceSince)
+	}
 	input := DetectionInput{
 		At: at, TurnStartedAt: m.turnStartedAt, TurnID: m.currentID, Generation: m.currentGen,
-		SilenceFor: at.Sub(m.silenceSince), SilenceAfter: m.cfg.SilenceTimeout,
+		Text: m.text, TextFinal: m.textFinal, TextAt: m.textAt, ExternalStop: m.extStop,
+		SilenceFor: silenceFor, SilenceAfter: m.cfg.SilenceTimeout,
 		SemanticMaxAge: m.cfg.SemanticMaxAge, Semantic: semantic,
 	}
 	return &detectionSnapshot{
@@ -545,6 +611,31 @@ func normalizedSemanticEvidence(source *SemanticEvidence) *SemanticEvidence {
 	}
 	evidence := *source
 	return &evidence
+}
+
+// tryStartLocked consults the strategy chain (first yes wins) and consumes
+// one-shot evidence. Strategies are in-package and callback-free.
+func (m *Manager) tryStartLocked(at time.Time) []core.Frame {
+	in := startInput{
+		At: at, VADCandidate: m.startByVAD, SpeakingFor: at.Sub(m.startSince),
+		Debounce: maxDuration(m.cfg.StartDebounce, m.cfg.MinimumSpeechDuration),
+		Text:     m.pendingText, HasText: m.hasText, Final: m.pendingFinal,
+		BotSpeaking: m.botSpeaking, External: m.pendingExt,
+	}
+	m.pendingText, m.pendingFinal, m.hasText, m.pendingExt = "", false, false, false
+	for _, s := range m.starters {
+		switch s.evaluate(in) {
+		case startYes:
+			frames := m.startLocked(at)
+			if m.active && in.HasText {
+				m.text, m.textFinal, m.textAt = in.Text, in.Final, at
+			}
+			return frames
+		case startBlock:
+			return nil
+		}
+	}
+	return nil
 }
 
 func (m *Manager) startLocked(at time.Time) []core.Frame {
@@ -581,6 +672,7 @@ func (m *Manager) completeLocked(at time.Time, reason core.TurnReason, confidenc
 	}
 	e := event(m.currentID, m.currentGen, core.TurnEventCompleted, at, reason, confidence, hasConfidence)
 	m.active = false
+	m.text, m.textFinal, m.textAt, m.extStop = "", false, time.Time{}, false
 	m.speaking, m.stopCandidate, m.startCandidate, m.hasSilenceSince = false, false, false, false
 	m.clearPendingDetectionLocked()
 	m.bumpEpochLocked()
@@ -596,6 +688,7 @@ func (m *Manager) interruptLocked(id core.TurnID, generation core.Generation, at
 	}
 	e := event(id, generation, core.TurnEventInterrupted, at, core.TurnReasonInterrupted, 0, false)
 	m.active = false
+	m.text, m.textFinal, m.textAt, m.extStop = "", false, time.Time{}, false
 	m.speaking, m.stopCandidate, m.startCandidate, m.hasSilenceSince = false, false, false, false
 	m.clearPendingDetectionLocked()
 	m.bumpEpochLocked()
@@ -628,6 +721,7 @@ func (m *Manager) bumpEpochLocked() {
 }
 
 func (m *Manager) clearPendingLocked() {
+	m.text, m.textFinal, m.textAt, m.extStop = "", false, time.Time{}, false
 	m.startCandidate, m.stopCandidate = false, false
 	m.speaking = false
 	m.hasSilenceSince = false

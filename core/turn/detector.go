@@ -19,6 +19,12 @@ type DetectionInput struct {
 	SilenceAfter   time.Duration
 	SemanticMaxAge time.Duration
 	Semantic       *SemanticEvidence
+	// Latest transcript of the open turn (joined across segments) and when it
+	// arrived; TextFinal is false for interim results.
+	Text         string
+	TextFinal    bool
+	TextAt       time.Time
+	ExternalStop bool
 }
 
 // DetectionDecision is a detector's one-shot completion suggestion.
