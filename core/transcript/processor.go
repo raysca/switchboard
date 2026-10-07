@@ -46,7 +46,12 @@ type Processor struct {
 	index      int
 	wake       chan struct{}
 	startOnce  sync.Once
+	managed    bool
 }
+
+// ManageTurns hands turn boundaries to a turn.Processor: raw VAD stop no longer
+// completes a turn; only TurnEventFrame does.
+func (p *Processor) ManageTurns() { p.managed = true }
 
 func NewProcessor(cfg Config) (*Processor, error) {
 	finalizer, err := NewFinalizer(cfg)
@@ -194,7 +199,7 @@ func (p *Processor) ProcessFrame(_ context.Context, frame core.Frame, dir core.D
 		p.legacyTurn = core.TurnID(fmt.Sprintf("turn-%d-%d", value.Gen, value.Seq))
 		p.legacyGen = core.Generation(value.Gen)
 	case *core.UserStoppedSpeakingFrame:
-		if p.legacyTurn != "" && p.legacyGen == core.Generation(value.Gen) {
+		if !p.managed && p.legacyTurn != "" && p.legacyGen == core.Generation(value.Gen) {
 			outputs, err = p.finalizer.Complete(p.legacyTurn, p.legacyGen, policyAt)
 		}
 	}
