@@ -235,6 +235,7 @@ func (wp *workerProcess) startAndHandshake() error {
 	defer wp.mu.Unlock()
 
 	cmd := exec.Command(wp.backend.cfg.WorkerBinary, fmt.Sprint(wp.backend.cfg.Batch))
+	cmd.Env = WorkerEnv()
 	cmd.Stderr = wp.stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

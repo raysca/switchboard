@@ -31,6 +31,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
+	vad.ShutdownORT()
 	os.RemoveAll(dir)
 	os.Exit(code)
 }
@@ -230,5 +231,27 @@ func TestWorkerEnvSanitizedAndStderrReported(t *testing.T) {
 	}
 	if msg := err.Error(); strings.Contains(msg, "s3cret-key") || !strings.Contains(msg, "GOVOICE_ROOT=") {
 		t.Fatalf("child env/stderr: %v", msg)
+	}
+}
+
+// A turnworker whose stdin closes after the handshake must exit 0 with a silent stderr.
+func TestTurnWorkerExitsCleanOnStdinClose(t *testing.T) {
+	sha, _ := hex.DecodeString(PinnedModelSHA256)
+	cmd := exec.Command(testWorker)
+	cmd.Env = vad.WorkerEnv()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	in, _ := cmd.StdinPipe()
+	out, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	in.Write(sha)
+	if _, err := io.ReadFull(out, make([]byte, 36)); err != nil {
+		t.Fatalf("handshake: %v\n%s", err, stderr.String())
+	}
+	in.Close()
+	if err := cmd.Wait(); err != nil || stderr.Len() != 0 {
+		t.Fatalf("exit err=%v stderr=%q", err, stderr.String())
 	}
 }

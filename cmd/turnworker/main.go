@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"govoice/smartturn"
+	"govoice/vad"
 )
 
 func main() {
@@ -28,6 +29,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "turnworker: init: %v\n", err)
 		os.Exit(2)
 	}
+	defer vad.ShutdownORT() // runs after r.Close
 	defer r.Close()
 	var sha [32]byte
 	_, _ = hex.Decode(sha[:], []byte(smartturn.PinnedModelSHA256))

@@ -112,10 +112,31 @@ func InitORT() error {
 			initErr = fmt.Errorf("onnx runtime library not found")
 			return
 		}
+		// ORT's 1DS telemetry thread outlives main and races C++ static destructors at
+		// exit ("recursive_mutex lock failed" abort); it also phones home. Only this env
+		// var, set before the environment exists, disables it (ort.DisableTelemetry is too late).
+		// An operator's explicit non-empty value (e.g. "0") wins; ORT treats empty as enabled.
+		if os.Getenv("ORT_DISABLE_TELEMETRY") == "" {
+			_ = os.Setenv("ORT_DISABLE_TELEMETRY", "1")
+		}
 		ort.SetSharedLibraryPath(ortLib)
 		initErr = ort.InitializeEnvironment()
 	})
 	return initErr
+}
+
+// WorkerEnv is the whole environment of an ORT worker child: only what locating
+// the models and ONNX Runtime needs. The parent's secrets (database DSN,
+// credential keys, provider API keys) never reach the child.
+func WorkerEnv() []string {
+	var env []string
+	for _, k := range []string{"GOVOICE_ROOT", "GOVOICE_ORT_LIB", "GOVOICE_MODEL_PATH", "GOVOICE_TURN_MODEL_PATH",
+		"PATH", "TMPDIR", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GOCOVERDIR", "ORT_DISABLE_TELEMETRY"} {
+		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
 }
 
 // ShutdownORT releases the ORT environment at process exit, after every Runner

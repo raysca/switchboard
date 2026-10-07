@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -90,20 +89,6 @@ func (t *tailBuffer) String() string {
 	return string(t.buf)
 }
 
-// childEnv is the worker's whole environment: only what locating the model
-// and ONNX Runtime needs. The server's secrets (database DSN, credential
-// keys, provider API keys) never reach the child.
-func childEnv() []string {
-	var env []string
-	for _, k := range []string{"GOVOICE_ROOT", "GOVOICE_ORT_LIB", "GOVOICE_TURN_MODEL_PATH",
-		"PATH", "TMPDIR", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "GOCOVERDIR"} {
-		if v, ok := os.LookupEnv(k); ok {
-			env = append(env, k+"="+v)
-		}
-	}
-	return env
-}
-
 var _ Backend = (*Pool)(nil)
 
 // NewPool verifies the model, then starts and handshakes every worker.
@@ -156,7 +141,7 @@ func (p *Pool) Close() error {
 
 func (w *worker) start() error {
 	cmd := exec.Command(w.p.cfg.Binary, fmt.Sprint(w.p.cfg.IntraOp))
-	cmd.Env = childEnv()
+	cmd.Env = vad.WorkerEnv() // secrets stay in the parent
 	cmd.Stderr = &w.stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
