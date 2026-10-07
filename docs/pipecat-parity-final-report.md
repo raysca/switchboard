@@ -2,7 +2,7 @@
 
 **Scope:** server-side gaps vs Pipecat for a robust, fast, scalable voice server (no extra transports, no video, no Flows/bus/S2S).
 **Plan:** [pipecat-parity.md](plans/pipecat-parity.md) · **Truth table:** [pipecat-parity-matrix.md](pipecat-parity-matrix.md) · **Tracking:** goalpulse goal `pipecat-parity-for-a-robust-fast-scalabl`.
-**State:** everything below is on an **uncommitted** working tree on top of `194c741`. `make verify` is green (46 packages, 1m43s).
+**State:** committed in 23 slices on branch `feat/pipecat-parity` (base `194c741`); every commit passes `go vet` on all modules. `make verify` was green on the final tree (46 packages, 1m43s).
 
 ## What was done
 
@@ -40,7 +40,7 @@ These numbers are framework cost only. No real STT/LLM/TTS was called anywhere (
 
 ## Not done / known risks
 
-- **Nothing is committed.** Regenerate the perf baseline once after committing if numbers drift.
+- **Perf baseline** was taken on the uncommitted tree: regenerate once on the committed branch (`FORCE=1 make perf-baseline`) if numbers drift.
 - **`turn.manager` defaults off**; turn strategies, mute, completion, idle-after-turn behaviours need it. Flipping the default needs a real-STT e2e and a decision on the ~800 ms later end-of-turn.
 - **No live-provider verification:** Cartesia/ElevenLabs/Deepgram/Smart-turn-vs-real-audio protocols were checked against docs and fake servers only; the integration tests exist behind build tags and env vars. Google gRPC burst-replay for STT failover is unverified.
 - **Not run:** 24 h soak (command documented), `docker build`, the CI workflow remotely, noisy real-audio denoiser evaluation, a real-LLM turn-quality evaluation (gate validates plumbing with fake oracles).
@@ -50,7 +50,7 @@ These numbers are framework cost only. No real STT/LLM/TTS was called anywhere (
 
 ## Suggested next steps
 
-1. Commit in reviewable slices (the goalpulse task list is a natural split), then regenerate the perf baseline.
+1. Regenerate the perf baseline on the committed branch, then open the PR (the 23 commits are ordered core → transport/vad → providers → server → tools → docs).
 2. Run the live integration tests per provider with real keys once; enable `turn.manager` on a staging agent with Smart-turn and compare turn quality.
 3. Decide Q1 and the `turn.manager` default.
 4. Run the 24 h soak (`make loadtest-soak SOAK_DURATION=24h`) on a quiet host.
