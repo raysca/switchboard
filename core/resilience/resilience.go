@@ -87,6 +87,15 @@ func (b *Breaker) allow() (bool, uint64) {
 	return true, b.probe
 }
 
+// WouldRefuse reports, without changing state, whether Allow would refuse now
+// because the breaker is open and still inside its cooldown. A cooled-down
+// breaker is not refusing (its next call is the half-open probe).
+func (b *Breaker) WouldRefuse() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state == Open && time.Since(b.lastFailure) < b.cfg.Cooldown
+}
+
 // SetObserver receives state changes; it runs without the breaker lock.
 func (b *Breaker) SetObserver(fn func(State)) {
 	b.mu.Lock()

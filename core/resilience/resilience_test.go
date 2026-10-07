@@ -182,3 +182,18 @@ func TestOpenBreakerRefusesCalls(t *testing.T) {
 		t.Fatalf("err=%v called=%v", err, called)
 	}
 }
+
+func TestWouldRefuseOnlyWhileOpenInsideCooldown(t *testing.T) {
+	b := NewBreaker(Config{FailureThreshold: 1, Cooldown: 20 * time.Millisecond})
+	if b.WouldRefuse() {
+		t.Fatal("closed breaker refuses")
+	}
+	b.RecordFailure()
+	if !b.WouldRefuse() || b.State() != Open {
+		t.Fatal("open breaker inside cooldown must refuse")
+	}
+	time.Sleep(30 * time.Millisecond)
+	if b.WouldRefuse() || b.State() != Open {
+		t.Fatal("cooled-down breaker must not refuse, and the check must not change state")
+	}
+}
