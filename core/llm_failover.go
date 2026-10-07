@@ -19,7 +19,16 @@ type LLMCandidate struct {
 	// Open reports whether this candidate's circuit breaker would refuse now.
 	// Open candidates are tried last. May be nil.
 	Open func() bool
+	// OnFirstTokenTimeout is called when the first-token watchdog gives up on
+	// this candidate (it hung without output), so its breaker can learn of it.
+	// May be nil.
+	OnFirstTokenTimeout func()
 }
+
+// ErrFirstTokenTimeout is the failure of a candidate that produced nothing
+// within LLMFailoverConfig.FirstTokenTimeout. Classify should map it to the
+// timeout class.
+var ErrFirstTokenTimeout = errors.New("core: llm produced no output before the first-token deadline")
 
 type LLMFailoverConfig struct {
 	Candidates []LLMCandidate // ordered, primary first
@@ -33,6 +42,11 @@ type LLMFailoverConfig struct {
 	// Budget bounds the time since the generation began within which a new
 	// candidate may still be started. Zero means unbounded (chain length still bounds).
 	Budget time.Duration
+	// FirstTokenTimeout abandons a candidate that has produced no output (no
+	// text, no tool call) that long after it started, and moves to the next
+	// one. It never bounds a generation that has begun: a healthy long answer
+	// is not cut. Zero disables it. Only armed while a next candidate exists.
+	FirstTokenTimeout time.Duration
 	// OnFailover is called for every switch (metrics). May be nil.
 	OnFailover func(from, to, class string)
 }
@@ -83,6 +97,7 @@ type failoverGen struct {
 	committed bool
 	done      bool // interrupted or finished: no more failover
 	start     time.Time
+	timer     *time.Timer // first-token watchdog of the running candidate
 	effects   uint64
 }
 
@@ -191,6 +206,7 @@ func (w *LLMFailover) begin(ctx context.Context, um *UserMessageFrame, dir Direc
 	w.mu.Lock()
 	prev := w.cur
 	w.cur = g
+	w.armLocked(g)
 	var stale Processor
 	if prev != nil && !prev.done {
 		prev.done = true
@@ -235,8 +251,17 @@ func (w *LLMFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 		w.mu.Unlock()
 		return w.session.Reenter(f, dir, resume, gen)
 	}
+	return w.failoverLocked(g, idx, ef.Err, func() error {
+		return w.session.Reenter(f, dir, resume, gen) // chain exhausted: one clean error
+	})
+}
+
+// failoverLocked moves the generation off candidate idx (failed with err) to
+// the next one that starts. Called with w.mu held; unlocks it. exhausted runs
+// when no candidate is left.
+func (w *LLMFailover) failoverLocked(g *failoverGen, idx int, err error, exhausted func() error) error {
 	from := w.cfg.Candidates[idx].Provider
-	class := w.classOf(ef.Err)
+	class := w.classOf(err)
 	// Try the following candidates; a candidate that cannot even start counts as failed.
 	for g.pos+1 < len(g.order) {
 		g.pos++
@@ -247,6 +272,7 @@ func (w *LLMFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 		if err == nil {
 			w.mu.Lock()
 			late := g.done // interrupted while starting: the cancel missed it
+			w.armLocked(g)
 			w.mu.Unlock()
 			if late {
 				_ = next.Proc.ProcessFrame(g.ctx, &InterruptionFrame{}, Downstream, swallow{})
@@ -262,7 +288,39 @@ func (w *LLMFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 	}
 	g.done = true
 	w.mu.Unlock()
-	return w.session.Reenter(f, dir, resume, gen) // chain exhausted: one clean error
+	return exhausted()
+}
+
+// armLocked starts the first-token watchdog for the running candidate (w.mu held).
+func (w *LLMFailover) armLocked(g *failoverGen) {
+	if w.cfg.FirstTokenTimeout <= 0 || g.done || g.pos+1 >= len(g.order) {
+		return
+	}
+	if g.timer != nil {
+		g.timer.Stop()
+	}
+	pos := g.pos
+	g.timer = time.AfterFunc(w.cfg.FirstTokenTimeout, func() { w.firstTokenExpired(g, pos) })
+}
+
+// firstTokenExpired abandons the candidate at pos if it is still silent: its
+// breaker is told, the next candidate starts, and the silent one is cancelled
+// (anything it emits later is dropped like any abandoned attempt).
+func (w *LLMFailover) firstTokenExpired(g *failoverGen, pos int) {
+	w.mu.Lock()
+	if g.done || g.committed || g.pos != pos || !w.mayFailOver(g, ErrFirstTokenTimeout) {
+		w.mu.Unlock()
+		return
+	}
+	idx := g.order[pos]
+	old := w.cfg.Candidates[idx]
+	if old.OnFirstTokenTimeout != nil {
+		old.OnFirstTokenTimeout()
+	}
+	_ = w.failoverLocked(g, idx, ErrFirstTokenTimeout, func() error {
+		return w.session.Reenter(&ErrorFrame{Err: ErrFirstTokenTimeout}, Downstream, w.index, g.gen)
+	})
+	_ = old.Proc.ProcessFrame(g.ctx, &InterruptionFrame{}, Downstream, swallow{})
 }
 
 // mayFailOver is called with w.mu held.

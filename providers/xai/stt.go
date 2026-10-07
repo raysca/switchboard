@@ -32,8 +32,11 @@ type STTConfig struct {
 	InterimResults bool   // Default: true
 	APIKey         string // Bearer token
 	CircuitBreaker *resilience.Breaker
-	StreamOpener   STTStreamOpener
-	Now            func() time.Time // Receipt clock; policy time is carried in candidate frames.
+	// RetryPolicy bounds opening the websocket: MaxAttempts tries of
+	// AttemptTimeout each (zero = DefaultSTTOpenPolicy).
+	RetryPolicy  resilience.Policy
+	StreamOpener STTStreamOpener
+	Now          func() time.Time // Receipt clock; policy time is carried in candidate frames.
 }
 
 // DefaultSTTConfig returns recommended default settings for xAI STT.
@@ -45,7 +48,13 @@ func DefaultSTTConfig() STTConfig {
 		SampleRate:     16000,
 		Encoding:       "pcm",
 		InterimResults: true,
+		RetryPolicy:    DefaultSTTOpenPolicy(),
 	}
+}
+
+// DefaultSTTOpenPolicy is two tries of 5 s to open the STT websocket.
+func DefaultSTTOpenPolicy() resilience.Policy {
+	return resilience.Policy{MaxAttempts: 2, AttemptTimeout: 5 * time.Second, InitialBackoff: 100 * time.Millisecond}
 }
 
 // STTMessage represents an event received from the xAI STT stream.
@@ -167,8 +176,23 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 		},
 	}
 
-	conn, _, err := websocket.Dial(ctx, u.String(), opts)
+	pol := cfg.RetryPolicy
+	if pol.MaxAttempts <= 0 {
+		pol = DefaultSTTOpenPolicy()
+	}
+	// The dial ctx only governs the handshake, so a per-try deadline cannot
+	// cut the stream that follows.
+	conn, err := resilience.OpenBounded(ctx, pol, classify, func(actx context.Context) (*websocket.Conn, error) {
+		c, resp, derr := websocket.Dial(actx, u.String(), opts)
+		if derr != nil {
+			return nil, dialError(actx, resp, derr)
+		}
+		return c, nil
+	})
 	if err != nil {
+		if errors.Is(err, resilience.ErrTimeout) { // a hang is an outage, not the caller's fault
+			return nil, &ProviderError{Capability: "stt", Code: "TIMEOUT", Message: SanitizeString(err.Error()), Class: ClassificationRetryable, Cause: err}
+		}
 		return nil, MapError("stt", err)
 	}
 
@@ -886,4 +910,17 @@ func boolStability(stable bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// dialError classifies a failed websocket dial: an HTTP refusal by its status
+// (4xx is the caller's fault), cancellation as non-retryable, and anything
+// else (timeout, reset, DNS) as a retryable outage the breaker should count.
+func dialError(ctx context.Context, resp *http.Response, err error) error {
+	if resp != nil {
+		return MapHTTPError("stt", resp, "", err)
+	}
+	if ctx.Err() != nil && !errors.Is(context.Cause(ctx), resilience.ErrTimeout) {
+		return MapError("stt", err) // cancelled by the caller
+	}
+	return &ProviderError{Capability: "stt", Code: "ERROR", Message: SanitizeString(err.Error()), Class: ClassificationRetryable, Cause: err}
 }

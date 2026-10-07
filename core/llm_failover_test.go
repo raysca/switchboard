@@ -246,3 +246,171 @@ func TestAbandonedCandidateOutputIsDropped(t *testing.T) {
 		t.Fatalf("deltas=%q errs=%d", deltas, errs)
 	}
 }
+
+// silent starts a generation (forwarding the user message) and then says
+// nothing until released, like a hung provider. Interruption cancels it; once
+// released it speaks "late" (a recovering primary).
+type silent struct {
+	s       core.SessionController
+	idx     int
+	release chan struct{}
+	started atomic.Uint64
+	stopped atomic.Uint64
+	ctxc    context.CancelFunc
+}
+
+func newSilent() *silent { return &silent{release: make(chan struct{})} }
+
+func (p *silent) Attach(s core.SessionController, i int) error { p.s, p.idx = s, i; return nil }
+func (p *silent) ProcessFrame(ctx context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+	switch fr := f.(type) {
+	case *core.UserMessageFrame:
+		if err := e.PushDirection(f, d); err != nil {
+			return err
+		}
+		p.started.Add(1)
+		gen := fr.Gen
+		return p.s.Go(func(c context.Context) {
+			select {
+			case <-p.release:
+				_ = p.s.Reenter(&core.LLMTextDeltaFrame{Delta: "LATE", Turn: fr.Turn, Gen: gen}, core.Downstream, p.idx+1, gen)
+				_ = p.s.Reenter(&core.LLMTextFrame{Text: "LATE", Turn: fr.Turn, Gen: gen}, core.Downstream, p.idx+1, gen)
+			case <-c.Done():
+			}
+		})
+	case *core.InterruptionFrame:
+		p.stopped.Add(1)
+	}
+	return e.PushDirection(f, d)
+}
+
+func TestHungPrimaryFailsOverWithinFirstTokenDeadline(t *testing.T) {
+	primary := newSilent()
+	var timedOut atomic.Bool
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates: []core.LLMCandidate{
+			{Provider: "a", Proc: primary, OnFirstTokenTimeout: func() { timedOut.Store(true) }},
+			{Provider: "b", Proc: fake([]string{"hel", "lo"}, 0, nil)}},
+		Classify: func(err error) string {
+			return map[bool]string{true: "timeout"}[errors.Is(err, core.ErrFirstTokenTimeout)]
+		},
+		Budget:            5 * time.Second,
+		FirstTokenTimeout: 60 * time.Millisecond,
+	})
+	start := time.Now()
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { _, _, f, _ := r.summary(); return f == 1 })
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("failover took %v", d)
+	}
+	if users, deltas, finals, errs := r.summary(); users != 1 || deltas != "hello" || finals != 1 || errs != 0 {
+		t.Fatalf("users=%d deltas=%q finals=%d errs=%d", users, deltas, finals, errs)
+	}
+	if got := r.switched(); len(got) != 1 || got[0] != "a>b:timeout" {
+		t.Fatalf("switches %v", got)
+	}
+	if !timedOut.Load() || primary.stopped.Load() != 1 {
+		t.Fatalf("breaker hook=%v primary cancels=%d", timedOut.Load(), primary.stopped.Load())
+	}
+}
+
+func TestRecoveringPrimaryDoesNotDoubleSpeak(t *testing.T) {
+	primary := newSilent()
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: fake([]string{"ok"}, 0, nil)}},
+		FirstTokenTimeout: 40 * time.Millisecond,
+	})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { _, _, f, _ := r.summary(); return f == 1 })
+	close(primary.release) // the abandoned primary wakes up and answers
+	time.Sleep(100 * time.Millisecond)
+	if _, deltas, finals, errs := r.summary(); deltas != "ok" || finals != 1 || errs != 0 {
+		t.Fatalf("deltas=%q finals=%d errs=%d", deltas, finals, errs)
+	}
+}
+
+func TestSlowHealthyGenerationIsNotCut(t *testing.T) {
+	// first token inside the deadline, whole answer ~8x longer than it
+	slow := core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"a", "b", "c", "d", "e", "f", "g", "h"}, ChunkDelay: 40 * time.Millisecond})
+	backup := fake([]string{"BACKUP"}, 0, nil)
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: slow}, {Provider: "b", Proc: backup}},
+		FirstTokenTimeout: 100 * time.Millisecond,
+	})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { _, _, f, _ := r.summary(); return f == 1 })
+	if _, deltas, _, errs := r.summary(); deltas != "abcdefgh" || errs != 0 || backup.Started.Load() != 0 {
+		t.Fatalf("deltas=%q errs=%d backup started=%d", deltas, errs, backup.Started.Load())
+	}
+}
+
+func TestHungPrimaryWithoutFallbackBudgetIsLeftAlone(t *testing.T) {
+	// the budget has already closed when the deadline fires: no failover
+	primary, backup := newSilent(), fake([]string{"ok"}, 0, nil)
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}},
+		Budget:            20 * time.Millisecond,
+		FirstTokenTimeout: 60 * time.Millisecond,
+	})
+	r.say(t, "hi")
+	time.Sleep(200 * time.Millisecond)
+	if backup.Started.Load() != 0 || primary.stopped.Load() != 0 {
+		t.Fatalf("backup=%d primary cancels=%d", backup.Started.Load(), primary.stopped.Load())
+	}
+}
+
+func TestFirstTokenAtTheDeadlineSpeaksOnce(t *testing.T) {
+	// the primary's first token and the watchdog land together: whichever wins
+	// under the lock answers, the other is dropped; never both, never neither.
+	for i := 0; i < 20; i++ {
+		primary := newSilent()
+		r := newFailoverRig(t, core.LLMFailoverConfig{
+			Candidates:        []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: fake([]string{"ok"}, 0, nil)}},
+			FirstTokenTimeout: 20 * time.Millisecond,
+		})
+		r.say(t, "hi")
+		r.waitFor(t, func() bool { return primary.started.Load() == 1 })
+		time.AfterFunc(20*time.Millisecond, func() { close(primary.release) })
+		r.waitFor(t, func() bool { _, _, f, _ := r.summary(); return f >= 1 })
+		time.Sleep(40 * time.Millisecond)
+		if _, deltas, finals, errs := r.summary(); (deltas != "ok" && deltas != "LATE") || finals != 1 || errs != 0 {
+			t.Fatalf("run %d: deltas=%q finals=%d errs=%d", i, deltas, finals, errs)
+		}
+	}
+}
+
+func TestToolStartedBeforeDeadlineBlocksWatchdog(t *testing.T) {
+	// a tool-only first round: no text, but a tool ran, so the slow silence
+	// that follows (the tool, then round two) must not replay the turn
+	var effects atomic.Uint64
+	primary, backup := newSilent(), fake([]string{"x"}, 0, nil)
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		SideEffects:       effects.Load,
+		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}},
+		FirstTokenTimeout: 40 * time.Millisecond,
+	})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { return primary.started.Load() == 1 })
+	effects.Add(1)
+	time.Sleep(120 * time.Millisecond)
+	if backup.Started.Load() != 0 || primary.stopped.Load() != 0 {
+		t.Fatalf("backup=%d primary cancels=%d", backup.Started.Load(), primary.stopped.Load())
+	}
+}
+
+func TestBargeInBeforeDeadlineStopsWatchdog(t *testing.T) {
+	primary, backup := newSilent(), fake([]string{"x"}, 0, nil)
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}},
+		FirstTokenTimeout: 40 * time.Millisecond,
+	})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { return primary.started.Load() == 1 })
+	if err := r.sess.Post(&core.InterruptionFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	if backup.Started.Load() != 0 {
+		t.Fatal("watchdog failed over an interrupted generation")
+	}
+}

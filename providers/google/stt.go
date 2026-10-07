@@ -34,7 +34,7 @@ type STTConfig struct {
 	CredentialsJSON         []byte        // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                  string        // Fallback API key if supported
 	StreamOpener            STTStreamOpener
-	RetryPolicy             resilience.Policy
+	RetryPolicy             resilience.Policy // bounds opening a stream: MaxAttempts tries of AttemptTimeout each
 	CircuitBreaker          *resilience.Breaker
 	Now                     func() time.Time // Receipt clock; policy time is carried in candidate frames.
 }
@@ -48,9 +48,15 @@ func DefaultSTTConfig() STTConfig {
 		StreamRotationThreshold: 240 * time.Second,
 		StreamOverlap:           500 * time.Millisecond,
 		MaxRequestBytes:         25600,
-		RetryPolicy:             resilience.DefaultPolicy(),
+		RetryPolicy:             DefaultSTTOpenPolicy(),
 		CircuitBreaker:          resilience.NewBreaker(resilience.DefaultConfig()),
 	}
+}
+
+// DefaultSTTOpenPolicy is two tries of 5 s to open a recognition stream: the
+// open must not hang on the TCP dial's 10 s alone while a live caller waits.
+func DefaultSTTOpenPolicy() resilience.Policy {
+	return resilience.Policy{MaxAttempts: 2, AttemptTimeout: 5 * time.Second, InitialBackoff: 100 * time.Millisecond}
 }
 
 // STTResult is a provider-neutral recognition result.
@@ -127,6 +133,20 @@ func (o *RealGoogleSTTOpener) Close() error {
 }
 
 func (o *RealGoogleSTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTStream, error) {
+	pol := cfg.RetryPolicy
+	if pol.MaxAttempts <= 0 {
+		pol = DefaultSTTOpenPolicy()
+	}
+	st, err := resilience.OpenBounded(ctx, pol, classify, func(ctx context.Context) (STTStream, error) {
+		return o.openOnce(ctx, cfg)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return st, nil
+}
+
+func (o *RealGoogleSTTOpener) openOnce(ctx context.Context, cfg STTConfig) (STTStream, error) {
 	stream, err := o.client.StreamingRecognize(ctx)
 	if err != nil {
 		return nil, MapError("stt", err)

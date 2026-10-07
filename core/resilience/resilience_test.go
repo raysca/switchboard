@@ -197,3 +197,36 @@ func TestWouldRefuseOnlyWhileOpenInsideCooldown(t *testing.T) {
 		t.Fatal("cooled-down breaker must not refuse, and the check must not change state")
 	}
 }
+
+func TestOpenBoundedTimesOutHungOpenAndRetries(t *testing.T) {
+	p := Policy{MaxAttempts: 2, AttemptTimeout: 30 * time.Millisecond, InitialBackoff: time.Millisecond}
+	calls := 0
+	start := time.Now()
+	_, err := OpenBounded(context.Background(), p, classify, func(ctx context.Context) (int, error) {
+		calls++
+		<-ctx.Done() // hangs until the open deadline
+		return 0, ctx.Err()
+	})
+	if !errors.Is(err, ErrTimeout) || !errors.Is(err, context.DeadlineExceeded) || calls != 2 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("took %v", d)
+	}
+}
+
+func TestOpenBoundedClientErrorNotRetriedAndSuccessCtxSurvives(t *testing.T) {
+	p := Policy{MaxAttempts: 3, AttemptTimeout: 20 * time.Millisecond, InitialBackoff: time.Millisecond}
+	calls := 0
+	if _, err := OpenBounded(context.Background(), p, classify, func(context.Context) (int, error) { calls++; return 0, errClient }); !errors.Is(err, errClient) || calls != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+	var opened context.Context
+	if _, err := OpenBounded(context.Background(), p, classify, func(ctx context.Context) (int, error) { opened = ctx; return 1, nil }); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond) // past the open deadline: the stream's ctx must be alive
+	if opened.Err() != nil {
+		t.Fatalf("stream ctx cancelled after a successful open: %v", opened.Err())
+	}
+}

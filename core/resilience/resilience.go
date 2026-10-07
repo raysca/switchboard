@@ -5,6 +5,7 @@ package resilience
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -281,4 +282,62 @@ func (b *Breaker) releaseIfSet(probe uint64) {
 	if b != nil {
 		b.release(probe)
 	}
+}
+
+// OpenBounded runs open (a stream or connection setup whose ctx must outlive the
+// call: the stream lives on it) under an open deadline and a bounded retry:
+// at most p.MaxAttempts tries, each given p.AttemptTimeout to return. A try
+// that does not return in time has its ctx cancelled and fails with an error
+// matching both ErrTimeout and context.DeadlineExceeded; it, and any error
+// classify calls retryable (and not the caller's fault), is retried after
+// p.InitialBackoff. Breaker accounting stays with the caller (one report per
+// call). The ctx open receives derives from parent, so cancelling parent ends
+// the opened stream; on success it is not cancelled here.
+func OpenBounded[T any](parent context.Context, p Policy, classify Classify, open func(ctx context.Context) (T, error)) (T, error) {
+	var zero T
+	def := DefaultPolicy()
+	if p.MaxAttempts <= 0 {
+		p.MaxAttempts = 1
+	}
+	if p.AttemptTimeout <= 0 {
+		p.AttemptTimeout = def.AttemptTimeout
+	}
+	if p.InitialBackoff <= 0 {
+		p.InitialBackoff = def.InitialBackoff
+	}
+	var err error
+	for attempt := 0; attempt < p.MaxAttempts; attempt++ {
+		ctx, cancel := context.WithCancelCause(parent)
+		timer := time.AfterFunc(p.AttemptTimeout, func() { cancel(ErrTimeout) })
+		var v T
+		v, err = open(ctx)
+		if !timer.Stop() { // fired: the ctx v may hang on is already cancelled
+			if err == nil { // opened just as the deadline hit: release it
+				switch c := any(v).(type) {
+				case interface{ CloseNow() error }: // websocket conns
+					_ = c.CloseNow()
+				case interface{ Close() error }:
+					_ = c.Close()
+				}
+			}
+			err = fmt.Errorf("%w: open exceeded %v: %w", ErrTimeout, p.AttemptTimeout, context.DeadlineExceeded)
+		} else if err == nil {
+			return v, nil
+		}
+		cancel(err)
+		if parent.Err() != nil {
+			return zero, err
+		}
+		if !errors.Is(err, ErrTimeout) {
+			if vd := classify(err); !vd.Retryable || vd.ClientError {
+				return zero, err
+			}
+		}
+		if attempt < p.MaxAttempts-1 {
+			if serr := sleep(parent, p.InitialBackoff); serr != nil {
+				return zero, serr
+			}
+		}
+	}
+	return zero, err
 }
