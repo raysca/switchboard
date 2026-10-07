@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 )
 
 func TestLLM_StreamedTextAndUsage(t *testing.T) {
@@ -202,7 +203,7 @@ func TestLLM_RetryBeforeAndAfterCommit(t *testing.T) {
 
 	cfg := DefaultLLMConfig()
 	cfg.Client = mockClient
-	cfg.RetryPolicy = RetryPolicy{
+	cfg.RetryPolicy = resilience.Policy{
 		InitialBackoff: 10 * time.Millisecond,
 		MaxAttempts:    2,
 	}

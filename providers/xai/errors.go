@@ -3,6 +3,7 @@ package xai
 import (
 	"errors"
 	"fmt"
+	"govoice/core/resilience"
 	"net/http"
 	"regexp"
 	"strings"
@@ -32,13 +33,10 @@ func (c ErrorClassification) String() string {
 }
 
 var (
-	ErrCircuitOpen         = errors.New("xai: circuit breaker is open")
-	ErrRetryCommitted      = errors.New("xai: retry prohibited after output committed")
-	ErrMissingAPIKey       = errors.New("xai: missing API key (XAI_API_KEY)")
-	ErrProviderUnavailable = errors.New("xai: provider unavailable")
-	// ErrRequestTimeout is the cause of xAI's own per-request deadline; only
-	// that deadline (not a caller's, e.g. a tool round's) is a provider failure.
-	ErrRequestTimeout       = errors.New("xai: request timed out")
+	ErrCircuitOpen          = resilience.ErrCircuitOpen    // shared with every provider
+	ErrRetryCommitted       = resilience.ErrRetryCommitted // shared with every provider
+	ErrMissingAPIKey        = errors.New("xai: missing API key (XAI_API_KEY)")
+	ErrProviderUnavailable  = errors.New("xai: provider unavailable")
 	ErrMissingTerminalEvent = errors.New("xai sse: stream ended without terminal completion event")
 	ErrOversizedLine        = errors.New("xai sse: line exceeded maximum size")
 	ErrOversizedEvent       = errors.New("xai sse: event exceeded maximum size")

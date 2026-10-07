@@ -18,6 +18,7 @@ import (
 
 	"github.com/coder/websocket"
 	"govoice/core"
+	"govoice/core/resilience"
 )
 
 // STTConfig holds configuration for the xAI Speech-to-Text processor.
@@ -29,7 +30,7 @@ type STTConfig struct {
 	Encoding       string // Default: "pcm"
 	InterimResults bool   // Default: true
 	APIKey         string // Bearer token
-	CircuitBreaker *CircuitBreaker
+	CircuitBreaker *resilience.Breaker
 	StreamOpener   STTStreamOpener
 	Now            func() time.Time // Receipt clock; policy time is carried in candidate frames.
 }
@@ -428,7 +429,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		p.stopStream(st)
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.recordError(err, 0)
+			p.cfg.CircuitBreaker.Report(err, classify)
 		}
 		return provErr
 	}
@@ -480,7 +481,7 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 		cancel()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.recordError(err, 0)
+			p.cfg.CircuitBreaker.Report(err, classify)
 		}
 		return provErr
 	}
@@ -619,7 +620,7 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 					traceFailure = errors.New("provider_failure")
 					providerErr := MapError("stt", sendErr)
 					if p.cfg.CircuitBreaker != nil {
-						p.cfg.CircuitBreaker.recordError(sendErr, 0)
+						p.cfg.CircuitBreaker.Report(sendErr, classify)
 					}
 					st.mu.Lock()
 					turn, turnGen := st.turnID, st.gen

@@ -17,6 +17,7 @@ import (
 
 	"google.golang.org/genai"
 	"govoice/core"
+	"govoice/core/resilience"
 	"govoice/core/tools"
 )
 
@@ -173,7 +174,7 @@ func TestGoogleLLMToolLoopClaimsOnceAndContinuesWithFunctionHistory(t *testing.T
 	var executed []string
 	proc, err := NewLLMProcessor(LLMConfig{
 		Client:          client,
-		RetryPolicy:     RetryPolicy{InitialBackoff: time.Millisecond, MaxAttempts: 2},
+		RetryPolicy:     resilience.Policy{InitialBackoff: time.Millisecond, MaxAttempts: 2},
 		ToolDefinitions: []core.ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`)}},
 		ToolExecutor: core.ToolExecutorFunc(func(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
 			executed = append(executed, call.ID)
@@ -427,7 +428,7 @@ func TestGoogleFailedStreamNeverExecutesBufferedToolCalls(t *testing.T) {
 		processor, err := NewLLMProcessor(LLMConfig{Client: client, ToolDefinitions: []core.ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}, ToolExecutor: core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
 			executed.Store(true)
 			return core.ToolResult{Result: json.RawMessage(`{}`)}, nil
-		}), ToolHistory: core.NewConversationContext(core.ContextConfig{}), RetryPolicy: RetryPolicy{MaxAttempts: 1}})
+		}), ToolHistory: core.NewConversationContext(core.ContextConfig{}), RetryPolicy: resilience.Policy{MaxAttempts: 1}})
 		if err != nil {
 			t.Fatal(err)
 		}

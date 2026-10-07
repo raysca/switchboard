@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 	coretools "govoice/core/tools"
 )
 
@@ -31,8 +32,8 @@ type Config struct {
 	ToolDefinitions []core.ToolDefinition
 	ToolLoop        *coretools.ToolLoop
 	Timeout         time.Duration
-	RetryPolicy     RetryPolicy
-	CircuitBreaker  *CircuitBreaker
+	RetryPolicy     resilience.Policy
+	CircuitBreaker  *resilience.Breaker
 	MaxLineLength   int
 	MaxEventSize    int
 	MaxTotalSize    int
@@ -45,8 +46,8 @@ func DefaultConfig() Config {
 		Endpoint:       PinnedEndpoint,
 		Model:          PinnedModelID,
 		Timeout:        30 * time.Second,
-		RetryPolicy:    DefaultRetryPolicy(),
-		CircuitBreaker: NewCircuitBreaker(DefaultCircuitConfig()),
+		RetryPolicy:    resilience.DefaultPolicy(),
+		CircuitBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
 		MaxLineLength:  DefaultMaxLineLength,
 		MaxEventSize:   DefaultMaxEventSize,
 		MaxTotalSize:   DefaultMaxTotalResponseSize,
@@ -83,13 +84,16 @@ func NewProcessor(cfg Config) (*Processor, error) {
 		cfg.APIKey = os.Getenv("XAI_API_KEY")
 	}
 	if cfg.CircuitBreaker == nil {
-		cfg.CircuitBreaker = NewCircuitBreaker(DefaultCircuitConfig())
+		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())
 	}
 	if cfg.RetryPolicy.MaxAttempts <= 0 {
-		cfg.RetryPolicy = DefaultRetryPolicy()
+		cfg.RetryPolicy = resilience.DefaultPolicy()
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 30 * time.Second
+	}
+	if cfg.RetryPolicy.AttemptTimeout <= 0 {
+		cfg.RetryPolicy.AttemptTimeout = cfg.Timeout // bounds each request round
 	}
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{

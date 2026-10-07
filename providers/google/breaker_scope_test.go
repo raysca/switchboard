@@ -8,100 +8,43 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"govoice/core/resilience"
 )
 
-func TestHalfOpenProbeEndedByCancellationIsReleased(t *testing.T) {
-	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Millisecond})
-	cb.ReportFailure()
-	time.Sleep(2 * time.Millisecond)
-	for _, err := range []error{context.Canceled, ErrGenerationMismatch} {
-		_ = ExecuteWithRetry(context.Background(), cb, RetryPolicy{MaxAttempts: 1}, nil, func(context.Context, int) error { return err })
-		ok, probe := cb.allow()
-		if !ok {
-			t.Fatalf("half-open probe ended by %v was never released", err)
-		}
-		cb.release(probe)
-	}
-}
-
-func TestClientErrorsDoNotOpenSharedBreaker(t *testing.T) {
-	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Hour})
-	for _, err := range []error{errors.New("401 unauthenticated"), errors.New("400 bad request: unknown model")} {
-		_ = ExecuteWithRetry(context.Background(), cb, RetryPolicy{MaxAttempts: 1}, nil, func(context.Context, int) error { return err })
-	}
-	if !cb.Allow() {
-		t.Fatal("a tenant's bad credential/request opened the process-wide breaker")
-	}
-	_ = ExecuteWithRetry(context.Background(), cb, RetryPolicy{MaxAttempts: 1}, nil, func(context.Context, int) error { return errors.New("503 unavailable") })
-	if cb.Allow() {
-		t.Fatal("an availability failure did not count")
-	}
-}
-
-// Outages the mapper calls non-retryable (HTTP 500, gRPC Internal/Unknown)
-// must still open the breaker; only client errors are exempt.
-func TestServerErrorsOpenTheBreaker(t *testing.T) {
-	for _, outage := range []error{errors.New("Error 500, Message: internal error, Status: INTERNAL"), status.Error(codes.Internal, "boom"), status.Error(codes.Unknown, "boom")} {
-		cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Hour})
-		_ = ExecuteWithRetry(context.Background(), cb, RetryPolicy{MaxAttempts: 1}, nil, func(context.Context, int) error { return outage })
-		if cb.Allow() {
-			t.Fatalf("%v did not count against the breaker", outage)
+// Google's classification for the shared breaker: client errors (bad key,
+// bad request, unknown model) and superseded or hung-up requests are exempt;
+// outages count, including the 500/Internal/Unknown errors MapError calls
+// non-retryable.
+func TestClassifyForSharedBreaker(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		counts bool
+	}{
+		{errors.New("401 unauthenticated"), false},
+		{errors.New("400 bad request: unknown model"), false},
+		{status.Error(codes.NotFound, "model"), false},
+		{ErrGenerationMismatch, false},
+		{context.Canceled, false},
+		{errors.New("503 unavailable"), true},
+		{errors.New("Error 500, Message: internal error, Status: INTERNAL"), true},
+		{status.Error(codes.Internal, "boom"), true},
+		{status.Error(codes.Unknown, "boom"), true},
+	} {
+		b := resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
+		_ = resilience.Execute(context.Background(), b, resilience.Policy{MaxAttempts: 1}, classify, nil, func(context.Context, int) error { return tc.err })
+		b.Report(tc.err, classify) // the STT path
+		if opened := !b.Allow(); opened != tc.counts {
+			t.Errorf("%v: breaker opened=%v, want %v", tc.err, opened, tc.counts)
 		}
 	}
-	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Hour})
-	_ = ExecuteWithRetry(context.Background(), cb, RetryPolicy{MaxAttempts: 1}, nil, func(context.Context, int) error { return status.Error(codes.NotFound, "model") })
-	if !cb.Allow() {
-		t.Fatal("an unknown model (NotFound) opened the shared breaker")
-	}
 }
 
-// Only the holder of the half-open probe can release it.
-func TestStaleCallCannotReleaseAnotherProbe(t *testing.T) {
-	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Millisecond})
-	_, stale := cb.allow() // admitted while closed: token 0
-	cb.ReportFailure()
-	time.Sleep(2 * time.Millisecond)
-	if ok, _ := cb.allow(); !ok {
-		t.Fatal("probe not granted after cooldown")
-	}
-	cb.release(stale)
-	if ok, _ := cb.allow(); ok {
-		t.Fatal("a stale call freed the live probe: a second probe got through")
-	}
-}
-
-// A caller's deadline (e.g. a slow tool round) and a cancelled STT stream
-// (hang-up) are not provider outages.
-func TestCallerDeadlineAndCancellationDoNotCount(t *testing.T) {
-	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 1, CooldownDuration: time.Hour})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
-	defer cancel()
-	_ = ExecuteWithRetry(ctx, cb, RetryPolicy{MaxAttempts: 1}, nil, func(ctx context.Context, _ int) error { <-ctx.Done(); return ctx.Err() })
-	cb.reportError(MapError("stt", context.Canceled), 0)
-	if !cb.Allow() {
-		t.Fatal("a caller deadline or a hang-up opened the shared breaker")
-	}
-}
-
-// A request Google never answers is cut off at the attempt timeout, retried,
-// and counted against the breaker.
-func TestHungRequestTimesOutRetriesAndCounts(t *testing.T) {
-	cb := NewCircuitBreaker(CircuitConfig{FailureThreshold: 2, CooldownDuration: time.Hour})
-	attempts := 0
-	start := time.Now()
-	err := ExecuteWithRetry(context.Background(), cb, RetryPolicy{MaxAttempts: 2, InitialBackoff: time.Millisecond, AttemptTimeout: 20 * time.Millisecond}, nil,
-		func(ctx context.Context, _ int) error {
-			attempts++
-			<-ctx.Done() // hung provider
-			return ctx.Err()
-		})
-	if attempts != 2 || !errors.Is(err, ErrProviderTimeout) {
-		t.Fatalf("attempts=%d err=%v, want 2 attempts and ErrProviderTimeout", attempts, err)
-	}
-	if time.Since(start) > time.Second {
-		t.Fatalf("hung requests took %v", time.Since(start))
-	}
-	if cb.Allow() {
-		t.Fatal("two provider timeouts did not open the breaker")
+// A timed-out request maps to ErrProviderTimeout for the error frame.
+func TestTimeoutMapsToProviderTimeout(t *testing.T) {
+	err := resilience.Execute(context.Background(), nil, resilience.Policy{MaxAttempts: 1, AttemptTimeout: time.Millisecond}, classify, nil,
+		func(ctx context.Context, _ int) error { <-ctx.Done(); return ctx.Err() })
+	if pe := MapError("llm", err); !errors.Is(pe, ErrProviderTimeout) || !pe.Retryable {
+		t.Fatalf("mapped %v, want a retryable ErrProviderTimeout", pe)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"govoice/core"
+	"govoice/core/resilience"
 	coretools "govoice/core/tools"
 	coretranscript "govoice/core/transcript"
 	"govoice/providers/google"
@@ -51,10 +52,10 @@ type ProcessorFactory func(cfg *Config, spec StageSpec) (core.Processor, error)
 type Registry struct {
 	factories map[string]ProcessorFactory
 
-	googleLLMBreaker *google.CircuitBreaker
-	googleTTSBreaker *google.CircuitBreaker
-	googleSTTBreaker *google.CircuitBreaker
-	xaiBreaker       *xai.CircuitBreaker
+	googleLLMBreaker *resilience.Breaker
+	googleTTSBreaker *resilience.Breaker
+	googleSTTBreaker *resilience.Breaker
+	xaiBreaker       *resilience.Breaker
 }
 
 func factoryKey(provider, stage string) string { return provider + "." + stage }
@@ -62,10 +63,10 @@ func factoryKey(provider, stage string) string { return provider + "." + stage }
 func NewRegistry() *Registry {
 	r := &Registry{
 		factories:        make(map[string]ProcessorFactory),
-		googleLLMBreaker: google.NewCircuitBreaker(google.DefaultCircuitConfig()),
-		googleTTSBreaker: google.NewCircuitBreaker(google.DefaultCircuitConfig()),
-		googleSTTBreaker: google.NewCircuitBreaker(google.DefaultCircuitConfig()),
-		xaiBreaker:       xai.NewCircuitBreaker(xai.DefaultCircuitConfig()),
+		googleLLMBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
+		googleTTSBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
+		googleSTTBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
+		xaiBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
 	}
 
 	r.Register("google.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
@@ -264,16 +265,16 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	if m == nil {
 		return
 	}
-	r.googleSTTBreaker.SetObserver(func(st google.CircuitState) {
+	r.googleSTTBreaker.SetObserver(func(st resilience.State) {
 		m.STTCircuitStateGoogle.Store(circuitCode(string(st)))
 	})
-	r.googleLLMBreaker.SetObserver(func(st google.CircuitState) {
+	r.googleLLMBreaker.SetObserver(func(st resilience.State) {
 		m.LLMCircuitStateGoogle.Store(circuitCode(string(st)))
 	})
-	r.googleTTSBreaker.SetObserver(func(st google.CircuitState) {
+	r.googleTTSBreaker.SetObserver(func(st resilience.State) {
 		m.TTSCircuitStateGoogle.Store(circuitCode(string(st)))
 	})
-	r.xaiBreaker.SetObserver(func(st xai.CircuitState) {
+	r.xaiBreaker.SetObserver(func(st resilience.State) {
 		// One xAI breaker serves every xAI stage.
 		m.LLMCircuitStateXAI.Store(circuitCode(string(st)))
 		m.STTCircuitStateXAI.Store(circuitCode(string(st)))

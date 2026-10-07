@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 )
 
 var errInvalidToolDefinition = errors.New("xai: invalid tool definition")
@@ -312,8 +313,6 @@ func ParseXAIToolCalls(items []XAIResponseOutputItem, session, turn string, gene
 }
 
 func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesRequest, gen uint64, turn string, s core.SessionController, text *strings.Builder) (_ []XAIResponseOutputItem, _ int, _ int, _ int, traceErr error) {
-	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.Timeout, ErrRequestTimeout)
-	defer cancel()
 	span := core.StartContextSpan(ctx, "llm.request", core.SessionID(fmt.Sprint(s.ID())), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "xai", "model": p.cfg.Model})
 	defer func() {
 		name := "llm.complete"
@@ -344,7 +343,7 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 	var roundText strings.Builder
 	callAssemblies := make(xaiCallAssemblyIndex)
 	var prompt, output, total int
-	err = ExecuteWithRetry(ctx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, &committed, func(attempt int) error {
+	err = resilience.Execute(ctx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, classify, func() bool { return committed }, func(ctx context.Context, attempt int) error {
 		if attempt > 0 {
 			p.Retries.Add(1)
 		}

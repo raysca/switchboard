@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 	coretools "govoice/core/tools"
 )
 
@@ -283,7 +284,7 @@ func runXAIToolStream(t *testing.T, wire string) ([]core.ToolCall, error) {
 		_, _ = fmt.Fprint(w, wire)
 	}))
 	defer srv.Close()
-	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: RetryPolicy{MaxAttempts: 1}})
+	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: resilience.Policy{MaxAttempts: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +327,7 @@ data: [DONE]
 		_, _ = fmt.Fprint(w, wire)
 	}))
 	defer srv.Close()
-	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: RetryPolicy{MaxAttempts: 1}})
+	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: resilience.Policy{MaxAttempts: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}

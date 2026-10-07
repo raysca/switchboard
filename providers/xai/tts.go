@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 )
 
 // TTSConfig holds configuration for the xAI Text-to-Speech processor.
@@ -26,8 +27,8 @@ type TTSConfig struct {
 	SampleRate     int           // Default: 24000
 	APIKey         string        // Bearer token
 	Timeout        time.Duration // Default: 10s
-	CircuitBreaker *CircuitBreaker
-	RetryPolicy    RetryPolicy
+	CircuitBreaker *resilience.Breaker
+	RetryPolicy    resilience.Policy
 	Client         TTSClient
 }
 
@@ -39,7 +40,7 @@ func DefaultTTSConfig() TTSConfig {
 		Language:    "en",
 		SampleRate:  24000,
 		Timeout:     10 * time.Second,
-		RetryPolicy: DefaultRetryPolicy(),
+		RetryPolicy: resilience.DefaultPolicy(),
 	}
 }
 
@@ -176,6 +177,9 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 10 * time.Second
 	}
+	if cfg.RetryPolicy.AttemptTimeout <= 0 {
+		cfg.RetryPolicy.AttemptTimeout = cfg.Timeout // bounds each synthesis request
+	}
 	client := cfg.Client
 	if client == nil {
 		client = NewRealXAITTSClient()
@@ -263,7 +267,7 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 	}
 
 	parent := s.Context()
-	synthCtx, cancel := context.WithTimeoutCause(parent, p.cfg.Timeout, ErrRequestTimeout)
+	synthCtx, cancel := context.WithCancel(parent) // barge-in; the request deadline is per attempt
 	seq := p.nextSeq + 1
 	p.nextSeq = seq
 	p.cancels = append(p.cancels, ttsCancel{seq: seq, cancel: cancel})
@@ -317,11 +321,11 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 		var pcmData []byte
 		var committed bool
 
-		opErr := ExecuteWithRetry(synthCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, &committed, func(attempt int) error {
+		opErr := resilience.Execute(synthCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, classify, func() bool { return committed }, func(attemptCtx context.Context, attempt int) error {
 			if attempt > 0 {
 				p.RetriesTotal.Add(1)
 			}
-			data, err := p.client.Synthesize(synthCtx, unit.Text, p.cfg)
+			data, err := p.client.Synthesize(attemptCtx, unit.Text, p.cfg)
 			if err != nil {
 				return err
 			}

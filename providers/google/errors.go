@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,12 +21,12 @@ var (
 	ErrProviderAuth               = errors.New("google provider: authentication failed")
 	ErrProviderRateLimit          = errors.New("google provider: rate limit exceeded")
 	ErrProviderUnavailable        = errors.New("google provider: service unavailable")
-	ErrProviderTimeout            = errors.New("google provider: operation timed out")
+	ErrProviderTimeout            = resilience.ErrTimeout // shared with every provider
 	ErrProviderInternal           = errors.New("google provider: internal provider error")
 	ErrProviderBadRequest         = errors.New("google provider: invalid request parameters")
-	ErrCircuitOpen                = errors.New("google provider: circuit breaker open")
+	ErrCircuitOpen                = resilience.ErrCircuitOpen // shared with every provider
 	ErrGenerationMismatch         = errors.New("google provider: stale generation rejected")
-	ErrRetryCommitted             = errors.New("google provider: retry prohibited after committed output")
+	ErrRetryCommitted             = resilience.ErrRetryCommitted // shared with every provider
 	ErrRequestTooLarge            = errors.New("google provider: request payload exceeds maximum byte limit")
 	ErrTranscriptAssemblyCapacity = core.ErrTranscriptInvalidated
 )
@@ -72,7 +73,7 @@ func MapError(capability string, err error) *ProviderError {
 			Retryable:   false,
 		}
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrProviderTimeout) {
 		return &ProviderError{
 			Capability:  capability,
 			BaseErr:     ErrProviderTimeout,

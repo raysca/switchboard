@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"govoice/core"
+	"govoice/core/resilience"
 
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
 	texttospeechpb "cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
@@ -30,8 +31,8 @@ type TTSConfig struct {
 	CredentialsJSON       []byte // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                string
 	Client                TTSClient
-	RetryPolicy           RetryPolicy
-	CircuitBreaker        *CircuitBreaker
+	RetryPolicy           resilience.Policy
+	CircuitBreaker        *resilience.Breaker
 }
 
 // DefaultTTSConfig returns configuration matching v1-lock.json.
@@ -43,7 +44,7 @@ func DefaultTTSConfig() TTSConfig {
 		MaxSynthesisUnitChars: 250,
 		ChunkDuration:         20 * time.Millisecond,
 		RetryPolicy:           ttsRetryPolicy(),
-		CircuitBreaker:        NewCircuitBreaker(DefaultCircuitConfig()),
+		CircuitBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 	}
 }
 
@@ -169,7 +170,7 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 		cfg.ChunkDuration = 20 * time.Millisecond
 	}
 	if cfg.CircuitBreaker == nil {
-		cfg.CircuitBreaker = NewCircuitBreaker(DefaultCircuitConfig())
+		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())
 	}
 	p := &TTSProcessor{cfg: cfg}
 	p.cond = sync.NewCond(&p.mu)
@@ -363,7 +364,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		var err error
 		for _, piece := range splitUnit(su.Text, p.cfg.MaxSynthesisUnitChars) {
 			// Nothing is emitted until synthesis is done, so every attempt may retry.
-			err = ExecuteWithRetry(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, nil, func(attemptCtx context.Context, attempt int) error {
+			err = resilience.Execute(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, classify, nil, func(attemptCtx context.Context, attempt int) error {
 				if attempt > 0 {
 					p.Retries.Add(1)
 				}
@@ -522,8 +523,8 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 
 // ttsRetryPolicy bounds one synthesis request (at most MaxSynthesisUnitChars)
 // tighter than an LLM stream.
-func ttsRetryPolicy() RetryPolicy {
-	p := DefaultRetryPolicy()
+func ttsRetryPolicy() resilience.Policy {
+	p := resilience.DefaultPolicy()
 	p.AttemptTimeout = 10 * time.Second
 	return p
 }

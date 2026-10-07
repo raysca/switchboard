@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 )
 
 // A request that runs past the timeout is a provider failure the user must
@@ -24,7 +25,7 @@ func TestLLMRequestTimeoutSurfacesAnError(t *testing.T) {
 	defer close(release)
 	proc, err := NewProcessor(Config{
 		Endpoint: server.URL, Model: "m", APIKey: "k", HTTPClient: server.Client(),
-		Timeout: 50 * time.Millisecond, RetryPolicy: RetryPolicy{MaxAttempts: 1},
+		Timeout: 50 * time.Millisecond, RetryPolicy: resilience.Policy{MaxAttempts: 1},
 	})
 	if err != nil {
 		t.Fatal(err)

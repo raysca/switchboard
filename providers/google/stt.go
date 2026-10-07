@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 
 	speech "cloud.google.com/go/speech/apiv2"
 	speechpb "cloud.google.com/go/speech/apiv2/speechpb"
@@ -33,8 +34,8 @@ type STTConfig struct {
 	CredentialsJSON         []byte        // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                  string        // Fallback API key if supported
 	StreamOpener            STTStreamOpener
-	RetryPolicy             RetryPolicy
-	CircuitBreaker          *CircuitBreaker
+	RetryPolicy             resilience.Policy
+	CircuitBreaker          *resilience.Breaker
 	Now                     func() time.Time // Receipt clock; policy time is carried in candidate frames.
 }
 
@@ -47,8 +48,8 @@ func DefaultSTTConfig() STTConfig {
 		StreamRotationThreshold: 240 * time.Second,
 		StreamOverlap:           500 * time.Millisecond,
 		MaxRequestBytes:         25600,
-		RetryPolicy:             DefaultRetryPolicy(),
-		CircuitBreaker:          NewCircuitBreaker(DefaultCircuitConfig()),
+		RetryPolicy:             resilience.DefaultPolicy(),
+		CircuitBreaker:          resilience.NewBreaker(resilience.DefaultConfig()),
 	}
 }
 
@@ -327,7 +328,7 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 		cfg.MaxRequestBytes = 25600
 	}
 	if cfg.CircuitBreaker == nil {
-		cfg.CircuitBreaker = NewCircuitBreaker(DefaultCircuitConfig())
+		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -507,7 +508,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		_ = st.stream.Close()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.reportError(provErr, 0) // STT holds no probe
+			p.cfg.CircuitBreaker.Report(provErr, classify)
 		}
 		return provErr
 	}
@@ -567,13 +568,13 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		cancel()
 		provErr := MapError("stt", err)
 		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.reportError(provErr, 0) // STT holds no probe
+			p.cfg.CircuitBreaker.Report(provErr, classify)
 		}
 		return provErr
 	}
 
 	if p.cfg.CircuitBreaker != nil {
-		p.cfg.CircuitBreaker.ReportSuccess()
+		p.cfg.CircuitBreaker.RecordSuccess()
 	}
 
 	p.mu.Lock()

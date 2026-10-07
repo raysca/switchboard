@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/resilience"
 	"govoice/core/tools"
 
 	"cloud.google.com/go/auth/credentials"
@@ -22,8 +23,8 @@ type LLMConfig struct {
 	Model           string // Pinned: "gemini-2.5-flash"
 	SystemPrompt    string // System instructions
 	Client          LLMStreamClient
-	RetryPolicy     RetryPolicy
-	CircuitBreaker  *CircuitBreaker
+	RetryPolicy     resilience.Policy
+	CircuitBreaker  *resilience.Breaker
 	ContextProvider func() []core.Message
 	ToolDefinitions []core.ToolDefinition
 	ToolExecutor    core.ToolExecutor
@@ -35,8 +36,8 @@ type LLMConfig struct {
 func DefaultLLMConfig() LLMConfig {
 	return LLMConfig{
 		Model:          "gemini-2.5-flash",
-		RetryPolicy:    DefaultRetryPolicy(),
-		CircuitBreaker: NewCircuitBreaker(DefaultCircuitConfig()),
+		RetryPolicy:    resilience.DefaultPolicy(),
+		CircuitBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
 	}
 }
 
@@ -215,7 +216,7 @@ func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
 		cfg.Model = "gemini-2.5-flash"
 	}
 	if cfg.CircuitBreaker == nil {
-		cfg.CircuitBreaker = NewCircuitBreaker(DefaultCircuitConfig())
+		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())
 	}
 	if len(cfg.ToolDefinitions) > 0 {
 		if cfg.ToolExecutor == nil || cfg.ToolHistory == nil {
@@ -491,7 +492,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		}
 		requestWithRetry := func(requestCtx context.Context) ([]core.ToolCall, error) {
 			var calls []core.ToolCall
-			err := ExecuteWithRetry(requestCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, func() bool {
+			err := resilience.Execute(requestCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, classify, func() bool {
 				return committed
 			}, func(attemptCtx context.Context, attempt int) error {
 				if attempt > 0 {
