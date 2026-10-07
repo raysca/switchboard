@@ -170,6 +170,11 @@ type FakeLLMConfig struct {
 	ResponseChunks []string
 	ChunkDelay     time.Duration
 	IgnoreCancel   bool // If true, keep emitting after cancellation to test fencing
+	EchoUser       bool // If true, append the user's message as a final chunk
+	// FailWith, when set, makes a generation emit FailAfter chunks and then a
+	// non-fatal ErrorFrame instead of the final LLMTextFrame (provider failure).
+	FailWith  error
+	FailAfter int
 }
 
 // FakeLLMProcessor simulates streamed or non-streamed LLM responses.
@@ -181,6 +186,7 @@ type FakeLLMProcessor struct {
 	mu            sync.Mutex
 	activeCancel  context.CancelFunc
 	CanceledCount atomic.Uint64
+	Started       atomic.Uint64 // generations begun
 }
 
 func NewFakeLLMProcessor(cfg FakeLLMConfig) *FakeLLMProcessor {
@@ -213,9 +219,17 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 			gen = p.session.CurrentGeneration()
 		}
 
+		p.Started.Add(1)
 		return p.session.Go(func(c context.Context) {
 			var complete strings.Builder
-			for _, chunk := range p.cfg.ResponseChunks {
+			chunks := p.cfg.ResponseChunks
+			if p.cfg.EchoUser {
+				chunks = append(chunks[:len(chunks):len(chunks)], um.Content)
+			}
+			for i, chunk := range chunks {
+				if p.cfg.FailWith != nil && i == p.cfg.FailAfter {
+					break
+				}
 				if p.cfg.ChunkDelay > 0 {
 					select {
 					case <-taskCtx.Done():
@@ -236,6 +250,10 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 					Turn:  um.Turn,
 					Gen:   gen,
 				}, Downstream, 0, gen)
+			}
+			if p.cfg.FailWith != nil {
+				_ = p.session.Reenter(&ErrorFrame{Err: p.cfg.FailWith}, Downstream, p.index, gen)
+				return
 			}
 			_ = p.session.Reenter(&LLMTextFrame{
 				Text: complete.String(),
@@ -263,6 +281,12 @@ type FakeTTSConfig struct {
 	FramesPerUnit int           // Output audio frames per unit (default: 2)
 	FrameDelay    time.Duration // Delay between audio frame emissions
 	IgnoreCancel  bool          // If true, keep emitting after cancellation to test fencing
+	// FailWith fails every unit with this error: before any audio when
+	// FailAfterAudio is 0, else after that many audio frames, then closes the unit
+	// out (empty final frame), as the real streaming providers do.
+	FailWith       error
+	FailAfterAudio int
+	SampleRate     int // output rate (default 24000)
 }
 
 // FakeTTSProcessor simulates TTS synthesis from explicit synthesis units.
@@ -277,6 +301,7 @@ type FakeTTSProcessor struct {
 	cancels       map[uint64]context.CancelFunc
 	Synthesized   atomic.Uint64
 	CanceledCount atomic.Uint64
+	Units         atomic.Uint64 // units this processor started synthesizing
 }
 
 func NewFakeTTSProcessor(cfg FakeTTSConfig) *FakeTTSProcessor {
@@ -331,7 +356,25 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 					return
 				}
 			}
+			p.Units.Add(1)
+			rate := p.cfg.SampleRate
+			if rate == 0 {
+				rate = 24000
+			}
+			fail := func() {
+				_ = p.session.Reenter(&ErrorFrame{Err: p.cfg.FailWith, Turn: TurnID(su.Turn), Gen: Generation(su.Gen), UnitID: su.UnitID}, Downstream, p.index+1, su.Gen)
+			}
+			if p.cfg.FailWith != nil && p.cfg.FailAfterAudio == 0 {
+				fail()
+				return
+			}
 			for i := 1; i <= p.cfg.FramesPerUnit; i++ {
+				if p.cfg.FailWith != nil && i > p.cfg.FailAfterAudio {
+					fail() // error first, then the closing frame (see the cartesia/elevenlabs providers)
+					_ = p.session.Reenter(&OutputAudioFrame{Encoding: EncodingPCM16LE, SampleRate: rate, Channels: 1, Gen: su.Gen,
+						Turn: su.Turn, UnitID: su.UnitID, IsFinal: true, TurnFinal: su.IsFinal}, Downstream, p.index+1, su.Gen)
+					return
+				}
 				if p.cfg.FrameDelay > 0 {
 					timer := time.NewTimer(p.cfg.FrameDelay)
 					if p.cfg.IgnoreCancel {
@@ -374,7 +417,7 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 				audioFrame := &OutputAudioFrame{
 					Samples:    make([]byte, 640),
 					Encoding:   EncodingPCM16LE,
-					SampleRate: 24000,
+					SampleRate: rate,
 					Channels:   1,
 					Duration:   20 * time.Millisecond,
 					Timestamp:  time.Now(),
@@ -462,12 +505,14 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 
 			// Report write completion immediately back to session
 			return p.session.Reenter(&WriteCompletionFrame{
-				Turn:      oaf.Turn,
-				Gen:       oaf.Gen,
-				UnitID:    oaf.UnitID,
-				Seq:       oaf.Seq,
-				IsFinal:   oaf.IsFinal,
-				TurnFinal: oaf.TurnFinal,
+				Turn:        oaf.Turn,
+				Gen:         oaf.Gen,
+				UnitID:      oaf.UnitID,
+				Seq:         oaf.Seq,
+				IsFinal:     oaf.IsFinal,
+				TurnFinal:   oaf.TurnFinal,
+				Media:       oaf.MediaDuration(),
+				WordTimings: oaf.WordTimings,
 			}, Downstream, 0, oaf.Gen)
 		}
 
@@ -499,12 +544,14 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 			p.mu.Unlock()
 
 			_ = p.session.Reenter(&WriteCompletionFrame{
-				Turn:      oaf.Turn,
-				Gen:       oaf.Gen,
-				UnitID:    oaf.UnitID,
-				Seq:       oaf.Seq,
-				IsFinal:   oaf.IsFinal,
-				TurnFinal: oaf.TurnFinal,
+				Turn:        oaf.Turn,
+				Gen:         oaf.Gen,
+				UnitID:      oaf.UnitID,
+				Seq:         oaf.Seq,
+				IsFinal:     oaf.IsFinal,
+				TurnFinal:   oaf.TurnFinal,
+				Media:       oaf.MediaDuration(),
+				WordTimings: oaf.WordTimings,
 			}, Downstream, 0, oaf.Gen)
 		})
 

@@ -27,8 +27,8 @@ func TestSpeakingTrackerStartsFromWrittenAudioAndStopsOnce(t *testing.T) {
 
 func TestSpeakingTrackerFlushPreservesNewGenerationAndUninterruptibleOutput(t *testing.T) {
 	tracker := NewSpeakingTracker()
-	if _, ok := tracker.ObserveWrite("critical", 1, OutputUninterruptible); !ok {
-		t.Fatal("expected critical output to start speaking")
+	if ev, ok := tracker.ObserveWrite("critical", 1, OutputUninterruptible); !ok || !ev.Uninterruptible {
+		t.Fatal("expected critical output to start speaking, flagged uninterruptible")
 	}
 	if _, ok := tracker.StopThrough(1, SpeakingStopFlushed); ok {
 		t.Fatal("flush must not stop explicitly uninterruptible output")
@@ -37,7 +37,7 @@ func TestSpeakingTrackerFlushPreservesNewGenerationAndUninterruptibleOutput(t *t
 		t.Fatal("final drain must stop uninterruptible output")
 	}
 
-	if _, ok := tracker.ObserveWrite("turn-2", 2, OutputInterruptible); !ok {
+	if ev, ok := tracker.ObserveWrite("turn-2", 2, OutputInterruptible); !ok || ev.Uninterruptible {
 		t.Fatal("expected new generation to start speaking")
 	}
 	if _, ok := tracker.StopThrough(1, SpeakingStopFlushed); ok {

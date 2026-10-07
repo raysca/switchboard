@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -13,6 +14,19 @@ type AssistantContextConfig struct {
 	MinUnitLength int           // Minimum character count before splitting on punctuation (default: 20)
 	MaxUnitLength int           // Maximum character count per synthesis unit (default: 150)
 	FlushTimeout  time.Duration // Timeout waiting for transport flush acknowledgement (default: 200ms)
+	// BargeInOnTurnEvent moves barge-in from raw VAD speech start to the turn
+	// manager's TurnEventStarted. Set only when a turn.Processor is in the pipeline.
+	BargeInOnTurnEvent bool
+	// FirstClauseMinLength lets the first unit of a turn end at a clause
+	// boundary (comma, semicolon, colon, dash) once it has this many characters,
+	// so audio starts before the first full sentence is generated. 0 disables.
+	FirstClauseMinLength int
+	// Completion enables the LLM turn-completion marker protocol (see
+	// turn_completion.go). Requires BargeInOnTurnEvent's turn manager; nil = off.
+	Completion *TurnCompletionConfig
+	// Summary, when it has a Summarizer, summarizes older history after each
+	// completed assistant turn (see ContextSummarizer). Nil = off.
+	Summary *SummaryConfig
 }
 
 // DefaultAssistantContextConfig returns a safe, production-tuned default configuration.
@@ -21,6 +35,8 @@ func DefaultAssistantContextConfig() AssistantContextConfig {
 		MinUnitLength: 10,
 		MaxUnitLength: 150,
 		FlushTimeout:  200 * time.Millisecond,
+		// Off, like Pipecat: a clause cut changes TTS prosody, and there is no
+		// latency measurement yet showing it pays. Opt in via first_clause_chars.
 	}
 }
 
@@ -35,6 +51,7 @@ type AssistantContextProcessor struct {
 	cfg     AssistantContextConfig
 
 	activeTurn      string
+	active          atomic.Bool // mirrors activeTurn != "" for other goroutines
 	activeGen       uint64
 	textBuf         strings.Builder
 	totalTurnText   strings.Builder
@@ -45,6 +62,16 @@ type AssistantContextProcessor struct {
 	llmComplete     bool // true once complete LLMText has been received
 	pendingUnits    map[uint64]string
 	deliveredUnits  map[uint64]string
+	heard           *HeardText
+	summ            *ContextSummarizer
+
+	// Turn-completion protocol state (nil gate = protocol off for this turn).
+	gate      *completionGate
+	holdShort bool
+	holdMu    sync.Mutex
+	holdStop  chan struct{}
+	held      atomic.Bool
+	nudgeN    atomic.Uint64
 
 	// Flush barrier coordination
 	pendingFlushGen   atomic.Uint64
@@ -65,11 +92,18 @@ func NewAssistantContextProcessor(ctxPool *ConversationContext, cfg AssistantCon
 		cfg.FlushTimeout = 200 * time.Millisecond
 	}
 
+	if cfg.Completion != nil {
+		c := *cfg.Completion
+		c.defaults()
+		cfg.Completion = &c
+	}
+
 	return &AssistantContextProcessor{
 		ctxPool:        ctxPool,
 		cfg:            cfg,
 		pendingUnits:   make(map[uint64]string),
 		deliveredUnits: make(map[uint64]string),
+		heard:          NewHeardText(),
 	}
 }
 
@@ -77,6 +111,13 @@ func NewAssistantContextProcessor(ctxPool *ConversationContext, cfg AssistantCon
 func (p *AssistantContextProcessor) Attach(s SessionController, index int) error {
 	p.session = s
 	p.index = index
+	if sc := p.cfg.Summary; sc != nil && sc.Summarizer != nil {
+		var emit func(DebugEvent)
+		if d, ok := s.(interface{ EmitDebug(DebugEvent) }); ok {
+			emit = d.EmitDebug
+		}
+		p.summ = NewContextSummarizer(p.ctxPool, *sc, s.Go, emit)
+	}
 	return nil
 }
 
@@ -87,6 +128,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		// New user turn received: reset assistant turn state
 		um := f.(*UserMessageFrame)
 		p.activeTurn = um.Turn
+		p.active.Store(true)
 		p.activeGen = um.Gen
 		if p.activeGen == 0 && p.session != nil {
 			p.activeGen = p.session.CurrentGeneration()
@@ -99,12 +141,34 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		p.llmComplete = false
 		p.pendingUnits = make(map[uint64]string)
 		p.deliveredUnits = make(map[uint64]string)
+		p.heard.Reset()
+		p.cancelHold()
+		p.gate = nil
+		if p.cfg.Completion != nil {
+			p.gate = &completionGate{lenient: isSyntheticTurn(um.Turn)}
+		}
+		return e.PushDirection(f, dir)
+
+	case FrameToolCall:
+		if p.gate != nil && !p.gate.decided {
+			p.gate.lenient = true // a tool call before any text: the turn is complete
+		}
 		return e.PushDirection(f, dir)
 
 	case FrameLLMTextDelta:
 		delta := f.(*LLMTextDeltaFrame)
 		if p.isStaleTurn(delta.Turn, delta.Gen) {
 			return nil
+		}
+		if p.gate != nil {
+			out := p.gateFeed(delta.Delta)
+			if out == "" {
+				return nil
+			}
+			if out != delta.Delta {
+				delta = &LLMTextDeltaFrame{Delta: out, Turn: delta.Turn, Gen: delta.Gen}
+				f = delta
+			}
 		}
 		p.textBuf.WriteString(delta.Delta)
 		p.totalTurnText.WriteString(delta.Delta)
@@ -118,6 +182,18 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		if p.isStaleTurn(lt.Turn, lt.Gen) {
 			return nil
 		}
+		if p.gate != nil {
+			text, held := p.gateFinal(lt.Text)
+			if held { // incomplete user turn: nothing is spoken or recorded; wait for the user
+				short := p.holdShort
+				err := e.PushDirection(&LLMTextFrame{Turn: lt.Turn, Gen: lt.Gen}, dir)
+				p.resetTurn()
+				p.armHold(short)
+				return err
+			}
+			lt = &LLMTextFrame{Text: text, Turn: lt.Turn, Gen: lt.Gen}
+			f = lt
+		}
 		p.llmComplete = true
 		// Providers emit deltas and then a final frame containing the full
 		// accumulated response. Append only text that is not already buffered.
@@ -125,12 +201,21 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		if err := e.PushDirection(f, dir); err != nil {
 			return err
 		}
-		return p.segmentBuffer(e, true)
+		if err := p.segmentBuffer(e, true); err != nil {
+			return err
+		}
+		if p.firstUnitID == 0 { // nothing to speak: the reply is over (Active must not stick)
+			p.resetTurn()
+		}
+		return nil
 
 	case FrameWriteCompletion:
 		wc := f.(*WriteCompletionFrame)
 		if p.isStaleTurn(wc.Turn, wc.Gen) {
 			return nil
+		}
+		if wc.Err == nil {
+			p.heard.Played(wc.UnitID, wc.Media, wc.WordTimings, wc.IsFinal)
 		}
 		if wc.IsFinal {
 			if wc.Err != nil {
@@ -148,10 +233,22 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		return nil
 
 	case FrameUserStartedSpeaking:
+		p.cancelHold()
 		// If assistant is active (generating or playing audio), user speech
 		// triggers barge-in. The speech event still reaches the transport after
 		// the barrier so the client sees user-started-speaking.
-		if p.activeTurn != "" {
+		if p.activeTurn != "" && !p.cfg.BargeInOnTurnEvent {
+			if err := p.handleInterruption(e); err != nil {
+				return err
+			}
+		}
+		return e.PushDirection(f, dir)
+
+	case FrameTurnEvent:
+		if f.(*TurnEventFrame).Kind == TurnEventStarted {
+			p.cancelHold()
+		}
+		if p.cfg.BargeInOnTurnEvent && p.activeTurn != "" && f.(*TurnEventFrame).Kind == TurnEventStarted {
 			if err := p.handleInterruption(e); err != nil {
 				return err
 			}
@@ -160,6 +257,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 
 	case FrameInterruption:
 		intr := f.(*InterruptionFrame)
+		p.cancelHold()
 		if p.activeTurn != "" && (intr.Turn == "" || intr.Turn == p.activeTurn) && (intr.Gen == 0 || intr.Gen == p.activeGen) {
 			return p.handleInterruption(e)
 		}
@@ -167,6 +265,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 
 	case FrameCancel:
 		cancel := f.(*CancelFrame)
+		p.cancelHold()
 		if p.activeTurn != "" && (cancel.Gen == 0 || cancel.Gen == p.activeGen) {
 			p.resetTurn()
 		}
@@ -252,42 +351,24 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 			break
 		}
 
-		splitIdx := -1
-		// Check sentence boundaries: '.', '!', '?', '\n'
-		for i, r := range buf {
-			if i >= p.cfg.MinUnitLength {
-				if r == '.' || r == '!' || r == '?' || r == '\n' {
-					// Split after punctuation and trailing space
-					splitIdx = i + 1
-					for splitIdx < len(buf) && (buf[splitIdx] == ' ' || buf[splitIdx] == '\t') {
-						splitIdx++
-					}
-					break
-				}
-			}
-			if i >= p.cfg.MaxUnitLength && (r == ' ' || r == ',') {
-				splitIdx = i + 1
-				break
-			}
-		}
-
+		splitIdx := nextSplit(buf, splitRules{
+			min: p.cfg.MinUnitLength, max: p.cfg.MaxUnitLength, clause: p.cfg.FirstClauseMinLength,
+			first: p.firstUnitID == 0, last: isLastChunk,
+		})
 		if splitIdx == -1 {
-			if isLastChunk && len(buf) > 0 {
-				splitIdx = len(buf)
-			} else {
-				break
-			}
+			break
 		}
 		unitText := strings.TrimSpace(buf[:splitIdx])
 		buf = buf[splitIdx:]
 
-		if len(unitText) > 0 {
+		if speakable(unitText) { // a stray closing quote or dash is not worth a TTS call
 			p.unitCounter++
 			unitID := p.unitCounter
 			if p.firstUnitID == 0 {
 				p.firstUnitID = unitID
 			}
 			p.pendingUnits[unitID] = unitText
+			p.heard.AddUnit(unitID, unitText)
 
 			isFinalUnit := isLastChunk && len(buf) == 0
 			if isFinalUnit {
@@ -366,6 +447,9 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 		if err := p.ctxPool.AddMessage(asstMsg); err != nil {
 			return err
 		}
+		if p.summ != nil && !partial {
+			p.summ.Maybe() // between turns, off the hot path; skips open tool rounds itself
+		}
 	}
 
 	emitErr := e.Push(&AssistantMessageFrame{
@@ -403,14 +487,22 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	}
 
 	// 1. Partial context rule:
-	// Only complete synthesis units whose final audio frame was successfully written
-	// before the barrier are included. A partly written unit is excluded in full.
+	// Units whose final audio frame was written before the barrier are included
+	// in full; the unit being spoken contributes only its heard prefix.
 	var delivered []string
-	for id := p.firstUnitID; id != 0 && id <= p.unitCounter; id++ {
+	id := p.firstUnitID
+	for ; id != 0 && id <= p.unitCounter; id++ {
 		if text, exists := p.deliveredUnits[id]; exists {
 			delivered = append(delivered, text)
 		} else {
 			break
+		}
+	}
+	// The unit being spoken at the barrier contributes only what was heard of
+	// it (by word timings, else a proportional estimate), never the whole unit.
+	if id != 0 && id <= p.unitCounter {
+		if h := p.heard.Heard(id); h != "" {
+			delivered = append(delivered, h)
 		}
 	}
 
@@ -462,8 +554,12 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	return nil
 }
 
+// Active reports whether a reply is generating or playing (safe from any goroutine).
+func (p *AssistantContextProcessor) Active() bool { return p.active.Load() }
+
 func (p *AssistantContextProcessor) resetTurn() {
 	p.activeTurn = ""
+	p.active.Store(false)
 	p.activeGen = 0
 	p.textBuf.Reset()
 	p.totalTurnText.Reset()
@@ -473,6 +569,8 @@ func (p *AssistantContextProcessor) resetTurn() {
 	p.llmComplete = false
 	p.pendingUnits = make(map[uint64]string)
 	p.deliveredUnits = make(map[uint64]string)
+	p.heard.Reset()
+	p.gate = nil
 }
 
 func (p *AssistantContextProcessor) startFlushBarrierTimeout(gen uint64) {

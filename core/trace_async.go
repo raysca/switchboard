@@ -46,6 +46,16 @@ type AsyncTracer struct {
 	terminalPending map[*asyncSpan]struct{}
 }
 
+// AsyncTraceObserver is optionally implemented by a tracer wrapped in an
+// AsyncTracer: AsyncTraceOpened runs synchronously in NewAsyncTracer, and
+// AsyncTraceDrained runs on the worker after Close once every queued
+// operation has been delivered. Exporters use the pair to flush only after
+// span ends that are still in flight when the session has already closed.
+type AsyncTraceObserver interface {
+	AsyncTraceOpened()
+	AsyncTraceDrained()
+}
+
 // NewAsyncTracer creates a bounded asynchronous dispatcher. A non-positive
 // queue size selects the conservative 256-operation default.
 func NewAsyncTracer(tracer Tracer, queueSize int) *AsyncTracer {
@@ -62,6 +72,9 @@ func NewAsyncTracer(tracer Tracer, queueSize int) *AsyncTracer {
 		// One callback can be active while the bounded queue is full.
 		capacity:        queueSize + 1,
 		terminalPending: make(map[*asyncSpan]struct{}),
+	}
+	if o, ok := tracer.(AsyncTraceObserver); ok {
+		o.AsyncTraceOpened()
 	}
 	go dispatcher.run()
 	return dispatcher
@@ -216,6 +229,9 @@ func (t *AsyncTracer) run() {
 		if queue == nil {
 			t.drainTerminals(spans)
 			if !t.hasTerminals() {
+				if o, ok := t.tracer.(AsyncTraceObserver); ok {
+					o.AsyncTraceDrained()
+				}
 				return
 			}
 			// A terminal without a started span can only belong to an operation

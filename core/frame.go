@@ -133,6 +133,19 @@ type OutputAudioFrame struct {
 	IsFinal     bool // true if this is the final audio frame of the synthesis unit
 	TurnFinal   bool // true only on the final output marker for the whole assistant turn
 	Disposition OutputDisposition
+	// NonSpeech marks audio that is not the bot speaking (DTMF tones): the
+	// transport plays it but does not report it as bot speech.
+	NonSpeech bool
+	// WordTimings are the words whose timing the provider reported since the
+	// previous frame of this unit; offsets are from the start of the unit's
+	// audio. Nil for providers without word timestamps.
+	WordTimings []WordTiming
+}
+
+// WordTiming places one spoken word within a synthesis unit's audio.
+type WordTiming struct {
+	Word       string
+	Start, End time.Duration
 }
 
 func (f *OutputAudioFrame) Type() FrameType    { return FrameOutputAudio }
@@ -403,6 +416,9 @@ type ErrorFrame struct {
 	// uncorrelated errors leave both zero.
 	Turn TurnID
 	Gen  Generation
+	// UnitID names the synthesis unit a TTS error belongs to (0 = none), so a
+	// TTS failover stage can tell a failed unit from the tail of an earlier one.
+	UnitID uint64
 }
 
 func (f *ErrorFrame) Type() FrameType { return FrameError }
@@ -443,6 +459,10 @@ type WriteCompletionFrame struct {
 	IsFinal   bool // true if this completed the final audio frame of the synthesis unit
 	TurnFinal bool // true if this completed the final output marker for the whole assistant turn
 	Err       error
+	// Media is the audio duration released by this write and WordTimings the
+	// provider word offsets it carried (see OutputAudioFrame); zero/nil if unknown.
+	Media       time.Duration
+	WordTimings []WordTiming
 }
 
 func (f *WriteCompletionFrame) Type() FrameType    { return FrameWriteCompletion }
@@ -455,6 +475,9 @@ type SpeakingStateFrame struct {
 	Turn   string
 	Gen    uint64
 	Reason SpeakingStopReason
+	// Uninterruptible reports, on SpeakingStarted, that the first written
+	// output was OutputUninterruptible (user mute strategies key off it).
+	Uninterruptible bool
 }
 
 func (f *SpeakingStateFrame) Type() FrameType    { return FrameSpeakingState }

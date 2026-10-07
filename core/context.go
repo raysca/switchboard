@@ -88,6 +88,41 @@ type ConversationContext struct {
 	evictions  int
 	toolLedger map[string]toolReplayIdentity
 	toolOrder  []string // FIFO of toolLedger keys, oldest first
+
+	// While openRounds > 0 a tool round is in flight: plain messages are queued
+	// (flushed when the last round ends) so they never land between a tool call
+	// and its result. ponytail: one global queue, no per-round attribution.
+	openRounds int
+	queued     []Message
+}
+
+// maxQueuedMessages bounds messages held while a tool round is open (a round
+// is itself bounded by the loop's round timeout).
+const maxQueuedMessages = 64
+
+// BeginToolRound marks a tool round in flight; pair with EndToolRound. Rounds
+// from several loops sharing this context nest.
+func (c *ConversationContext) BeginToolRound() {
+	c.mu.Lock()
+	c.openRounds++
+	c.mu.Unlock()
+}
+
+// EndToolRound closes a round; when none remain open, queued messages are
+// appended in arrival order. A message the budget now rejects is dropped.
+func (c *ConversationContext) EndToolRound() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.openRounds > 0 {
+		c.openRounds--
+	}
+	if c.openRounds > 0 {
+		return
+	}
+	for _, m := range c.queued {
+		_ = c.addMessageLocked(m)
+	}
+	c.queued = nil
 }
 
 type toolReplayIdentity struct {
@@ -151,9 +186,29 @@ func (c *ConversationContext) Messages() []Message {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	res := make([]Message, len(c.messages))
-	for i := range c.messages {
-		res[i], _ = cloneMessage(c.messages[i])
+	// Mid-round, a call still without its result is hidden: a provider
+	// snapshot taken now (a barge-in's next generation) must stay valid. The
+	// ledger is not used: it forgets old identities whose calls stay in history.
+	var resolved map[string]bool
+	if c.openRounds > 0 {
+		resolved = map[string]bool{}
+		for _, m := range c.messages {
+			if m.Kind == MessageToolResult {
+				resolved[m.ToolCallID] = true
+			}
+		}
+	}
+	res := make([]Message, 0, len(c.messages)+len(c.queued))
+	for _, m := range c.messages {
+		if resolved != nil && m.Kind == MessageToolCall && !resolved[m.ToolCallID] {
+			continue
+		}
+		cm, _ := cloneMessage(m)
+		res = append(res, cm)
+	}
+	for _, m := range c.queued {
+		cm, _ := cloneMessage(m)
+		res = append(res, cm)
 	}
 	return res
 }
@@ -201,6 +256,17 @@ func (c *ConversationContext) AddMessage(msg Message) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.openRounds > 0 {
+		cloned, err := cloneMessage(msg)
+		if err != nil {
+			return err
+		}
+		if len(c.queued) >= maxQueuedMessages {
+			return ErrContextLimitExceeded
+		}
+		c.queued = append(c.queued, cloned)
+		return nil
+	}
 	return c.addMessageLocked(msg)
 }
 

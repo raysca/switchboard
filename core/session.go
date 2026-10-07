@@ -79,6 +79,13 @@ type Session struct {
 
 	control chan Envelope
 	data    chan Envelope
+	// outSlots caps bot audio queued in data so caller audio never waits behind
+	// more than maxQueuedOutputAudio paced frames (the transport blocks the run
+	// loop per frame to pace output).
+	outSlots chan struct{}
+	// outputGate, if set, holds a bot-audio producer until playback has room,
+	// so the transport's pacing backpressure stops landing on the run loop.
+	outputGate func(ctx context.Context, d time.Duration)
 
 	state          atomic.Int32
 	gen            atomic.Uint64
@@ -114,6 +121,10 @@ type Session struct {
 	AudioDropped   atomic.Uint64
 	Created        time.Time
 
+	observers      observerSet
+	debugMu        sync.Mutex
+	debugSeen      map[string]string // last turn emitted per latency DebugEvent name
+	debugLastStop  *UserStoppedSpeakingFrame
 	tracer         Tracer
 	tracePolicy    TracePolicy
 	traceCtx       context.Context // run-loop owned after Start
@@ -153,6 +164,7 @@ func NewSession(id uint64, pipeline *Pipeline, budget ResourceBudget) (*Session,
 		cancel:      cancel,
 		control:     make(chan Envelope, budget.MaxControlFrames),
 		data:        make(chan Envelope, budget.MaxQueuedFrames),
+		outSlots:    make(chan struct{}, maxQueuedOutputAudio),
 		runLoopDone: make(chan struct{}),
 		ready:       make(chan struct{}),
 		stopped:     make(chan struct{}),
@@ -278,6 +290,7 @@ func (s *Session) Start() error {
 	s.traceRootCtx = s.traceCtx
 	s.turnSpans = make(map[TurnID]Span)
 	close(s.ready)
+	s.EmitDebug(NewDebugEvent(DebugSessionStarted, time.Now(), SessionID(strconv.FormatUint(s.id, 10)), "", 0, map[string]any{"latency_ms": time.Since(s.Created).Milliseconds()}))
 
 	s.loopStarted.Store(true)
 	go s.runLoop()
@@ -393,6 +406,10 @@ func (s *Session) admit(f Frame, dir Direction, resumeIndex int, suppliedGen uin
 			return ErrControlQueueFull
 		}
 	}
+	if f.Type() == FrameOutputAudio {
+		s.admissionMu.Unlock()
+		return s.enqueueOutputAudio(env)
+	}
 	select {
 	case s.data <- env:
 		s.admissionMu.Unlock()
@@ -401,6 +418,48 @@ func (s *Session) admit(f Frame, dir Direction, resumeIndex int, suppliedGen uin
 		s.admissionMu.Unlock()
 		return s.enqueueData(env)
 	}
+}
+
+const maxQueuedOutputAudio = 2
+
+// SetOutputGate installs a wait the producer of each output audio frame runs
+// before queueing it (with the frame's duration). The transport uses it to
+// apply playback backpressure to TTS instead of blocking the run loop, where
+// it delays caller audio. The gate must return on ctx cancellation and should
+// give up after a bounded time; the transport's own enqueue still enforces its
+// budget. Call before Start.
+func (s *Session) SetOutputGate(g func(ctx context.Context, d time.Duration)) {
+	s.outputGate = g
+}
+
+// enqueueOutputAudio takes an output slot (released when the run loop dequeues
+// the frame) before queueing; a producer that cannot get one within the frame
+// budget ends the session like any other output that does not fit.
+func (s *Session) enqueueOutputAudio(env Envelope) error {
+	if s.outputGate != nil {
+		if f, ok := env.Frame.(*OutputAudioFrame); ok && f.Duration > 0 {
+			s.outputGate(s.ctx, f.Duration)
+		}
+	}
+	select {
+	case s.outSlots <- struct{}{}:
+	default:
+		timer := time.NewTimer(s.budget.MaxFrameProcessing)
+		defer timer.Stop()
+		select {
+		case s.outSlots <- struct{}{}:
+		case <-timer.C:
+			s.fail(ErrSlowOutput)
+			return ErrSlowOutput
+		case <-s.ctx.Done():
+			return ErrSessionClosed
+		}
+	}
+	err := s.enqueueData(env)
+	if err != nil {
+		<-s.outSlots
+	}
+	return err
 }
 
 // enqueueData sheds input audio when the inbox is full. Other frames wait for the
@@ -639,6 +698,9 @@ func (s *Session) runLoop() {
 					return
 				}
 			case env := <-s.data:
+				if env.Frame.Type() == FrameOutputAudio {
+					<-s.outSlots
+				}
 				if !s.processEnvelope(env) {
 					return
 				}
@@ -735,7 +797,12 @@ func (s *Session) processEnvelope(env Envelope) bool {
 	}
 
 	if deliveryErr != nil {
-		s.fail(deliveryErr)
+		// ErrSessionClosed only comes from Go/Reenter/Post once teardown has begun:
+		// a processor that lost the race with Close is not a failure. A real cause,
+		// if any, was already recorded by fail().
+		if !errors.Is(deliveryErr, ErrSessionClosed) || s.State() <= StateRunning {
+			s.fail(deliveryErr)
+		}
 		return false
 	}
 
@@ -780,6 +847,7 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 	if s.OnFrame != nil {
 		s.OnFrame(f, dir)
 	}
+	s.emitFrameDebug(f)
 
 	switch {
 	case to >= s.pipe.Len():

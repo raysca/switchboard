@@ -213,10 +213,12 @@ func TestCore_QueueOverflowPolicies(t *testing.T) {
 	_ = s1.Start()
 	defer s1.Close()
 
-	// Fill control queue
-	_ = s1.Post(&StartFrame{})
-	_ = s1.Post(&StartFrame{})
-	errCtrl := s1.Post(&StartFrame{})
+	// Fill control queue. The run loop may already hold the first frame, so
+	// overflow comes on the 3rd or 4th post.
+	var errCtrl error
+	for i := 0; i < 4 && errCtrl == nil; i++ {
+		errCtrl = s1.Post(&StartFrame{})
+	}
 	if errCtrl != ErrControlQueueFull {
 		t.Fatalf("Expected ErrControlQueueFull, got: %v", errCtrl)
 	}

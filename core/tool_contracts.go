@@ -18,6 +18,9 @@ type ToolDefinition struct {
 type ToolPolicy struct {
 	Timeout  time.Duration
 	Required bool
+	// Async makes the loop acknowledge the call immediately and deliver the real
+	// result later as an injected context message. Async calls survive barge-in.
+	Async bool
 }
 type ToolCall struct {
 	ID         string
@@ -50,4 +53,15 @@ type ToolExecutorFunc func(context.Context, ToolCall) (ToolResult, error)
 
 func (fn ToolExecutorFunc) Execute(ctx context.Context, call ToolCall) (ToolResult, error) {
 	return fn(ctx, call)
+}
+
+// AsyncToolResult is a finished background (ToolPolicy.Async) call handed to
+// the loop's AsyncSink. Message is the labelled envelope for the model; the
+// sink owns when it enters history (Inject, which honours the loop's round
+// lock so it never splits a tool call from its result).
+type AsyncToolResult struct {
+	Call    ToolCall
+	Result  ToolResult
+	Message Message
+	Inject  func() error
 }

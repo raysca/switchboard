@@ -174,3 +174,35 @@ type teardownTracer struct{}
 func (teardownTracer) StartSpan(context.Context, TraceEvent) Span { return teardownSpan{} }
 
 func newRecordingTracerForTeardown() Tracer { return teardownTracer{} }
+
+// goOnStop is a processor that, like the fake LLM/TTS, starts session work per
+// frame and returns Session.Go's error, but only once Close is underway.
+type goOnStop struct {
+	s       *Session
+	entered chan struct{}
+}
+
+func (p *goOnStop) ProcessFrame(_ context.Context, _ Frame, _ Direction, _ Emitter) error {
+	close(p.entered)
+	for p.s.State() == StateRunning {
+		time.Sleep(time.Millisecond)
+	}
+	return p.s.Go(func(context.Context) {})
+}
+
+// A processor racing a clean Close sees ErrSessionClosed from Go/Reenter; that is
+// the shutdown it lost to, not a session failure (govoice-bench flake, P5-5).
+func TestCloseRacingProcessorIsClean(t *testing.T) {
+	p := &goOnStop{entered: make(chan struct{})}
+	pipe, _ := NewPipeline(p)
+	s, _ := NewSession(3, pipe, teardownBudget())
+	p.s = s
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Post(&SystemMessageFrame{})
+	<-p.entered
+	if err := s.Close(); err != nil || s.State() != StateStopped {
+		t.Fatalf("clean Close racing a processor: err=%v state=%v", err, s.State())
+	}
+}
