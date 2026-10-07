@@ -180,8 +180,14 @@ func TestGoogleLLMToolLoopClaimsOnceAndContinuesWithFunctionHistory(t *testing.T
 			executed = append(executed, call.ID)
 			return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{"value":1}`)}, nil
 		}),
-		ToolHistory:     history,
-		ContextProvider: history.Messages,
+		ToolHistory: history,
+		ContextProvider: func() []core.Message {
+			msgs := history.Messages()
+			if err := core.ValidateToolPairing(msgs); err != nil {
+				t.Errorf("provider-facing history invalid: %v", err)
+			}
+			return msgs
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -583,5 +589,19 @@ func TestGoogleNativeExchangesStayAfterPriorToolResults(t *testing.T) {
 	}
 	if result1Index < 0 || prefixIndex <= result1Index {
 		t.Fatalf("response boundary lost: result1 index=%d prefix index=%d contents=%#v", result1Index, prefixIndex, got)
+	}
+}
+
+// Held user fragments (turn-completion protocol) are consecutive user messages;
+// Gemini gets them as one user Content with one part each.
+func TestGoogleContentsMergeConsecutiveUserText(t *testing.T) {
+	history := []core.Message{
+		{Role: core.RoleUser, Content: "i'd go to japan because"},
+		{Role: core.RoleUser, Content: "i love the food"},
+		{Role: core.RoleAssistant, Content: "Great choice."},
+	}
+	contents := GoogleContentsWithNativeExchanges(history, nil)
+	if len(contents) != 2 || contents[0].Role != "user" || len(contents[0].Parts) != 2 || contents[0].Parts[1].Text != "i love the food" || contents[1].Role != "model" {
+		t.Fatalf("contents = %+v", contents)
 	}
 }

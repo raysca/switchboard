@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 	"govoice/core/tools"
 
@@ -50,6 +51,9 @@ type LLMStreamChunk struct {
 	OutputTokens   int
 	TotalTokens    int
 	IsDone         bool
+	// FinishReason is the candidate's finish reason, or the prompt's block
+	// reason when the prompt itself was blocked; "" while streaming.
+	FinishReason string
 }
 
 // LLMStreamClient abstracts streamed content generation.
@@ -71,6 +75,7 @@ type GoogleNativeExchange struct {
 // RealGoogleLLMClient uses google.golang.org/genai.
 type RealGoogleLLMClient struct {
 	client *genai.Client
+	pool   *netpool.Pool // API-key mode only
 }
 
 func NewRealGoogleLLMClient(ctx context.Context, creds *ResolvedCredentials) (*RealGoogleLLMClient, error) {
@@ -100,11 +105,16 @@ func NewRealGoogleLLMClient(ctx context.Context, creds *ResolvedCredentials) (*R
 		return nil, fmt.Errorf("unsupported auth mode: %v", creds.Mode)
 	}
 
+	var pool *netpool.Pool
+	if creds.Mode == AuthModeGeminiAPIKey {
+		pool = netpool.Get(netpool.Options{Provider: "google", Stage: "llm"})
+		cfg.HTTPClient = pool.Client(0)
+	}
 	client, err := genai.NewClient(ctx, cfg)
 	if err != nil {
 		return nil, MapError("llm", err)
 	}
-	return &RealGoogleLLMClient{client: client}, nil
+	return &RealGoogleLLMClient{client: client, pool: pool}, nil
 }
 
 func (c *RealGoogleLLMClient) GenerateStream(ctx context.Context, model string, systemPrompt string, history []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
@@ -172,10 +182,19 @@ func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Contex
 				totTok = int(resp.UsageMetadata.TotalTokenCount)
 			}
 
+			finish := ""
+			if len(resp.Candidates) > 0 && resp.Candidates[0] != nil {
+				finish = string(resp.Candidates[0].FinishReason)
+			}
+			if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
+				finish = string(resp.PromptFeedback.BlockReason)
+			}
+
 			select {
 			case <-ctx.Done():
 				return
 			case chunkCh <- LLMStreamChunk{
+				FinishReason:   finish,
 				Text:           text,
 				ToolCalls:      toolCalls,
 				NativeContents: nativeContents,
@@ -195,6 +214,9 @@ type LLMProcessor struct {
 	cfg     LLMConfig
 	session core.SessionController
 	index   int
+	// loop is the session-lived tool loop: async tool calls outlive the
+	// generation that started them and are cancelled only by Close.
+	loop *tools.ToolLoop
 
 	mu           sync.Mutex
 	activeCancel context.CancelFunc
@@ -209,6 +231,11 @@ type LLMProcessor struct {
 }
 
 var errGoogleToolClientUnsupported = errors.New("google: tool streaming client unsupported")
+
+// LLMCounts implements core.LLMCounters.
+func (p *LLMProcessor) LLMCounts() (req, errs, retries, stale uint64) {
+	return p.Requests.Load(), p.Errors.Load(), p.Retries.Load(), p.Stale.Load()
+}
 
 // NewLLMProcessor creates a new LLMProcessor.
 func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
@@ -229,11 +256,11 @@ func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
 			cfg.ToolLoopConfig = tools.DefaultToolLoopConfig()
 		}
 		cfg.ToolDefinitions = cloneGoogleToolDefinitions(cfg.ToolDefinitions)
-		validationLoop, err := tools.NewToolLoop(cfg.ToolDefinitions, cfg.ToolExecutor, cfg.ToolHistory, cfg.ToolLoopConfig)
+		loop, err := tools.NewToolLoop(cfg.ToolDefinitions, cfg.ToolExecutor, cfg.ToolHistory, cfg.ToolLoopConfig)
 		if err != nil {
 			return nil, err
 		}
-		validationLoop.Close()
+		return &LLMProcessor{cfg: cfg, loop: loop}, nil
 	}
 	return &LLMProcessor{
 		cfg: cfg,
@@ -259,12 +286,13 @@ func (p *LLMProcessor) Attach(s core.SessionController, index int) error {
 // Close terminates any active generation.
 func (p *LLMProcessor) Close() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.closed = true
 	if p.activeCancel != nil {
 		p.activeCancel()
 		p.activeCancel = nil
 	}
+	p.mu.Unlock()
+	p.loop.Close() // cancels in-flight async tool calls (nil-safe)
 	return nil
 }
 
@@ -517,20 +545,13 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			return
 		}
 		if len(calls) > 0 {
-			loopCfg := p.cfg.ToolLoopConfig
-			if trace := core.TraceContextFromContext(genCtx); trace.Tracer != nil {
-				if _, noop := trace.Tracer.(core.NoopTracer); !noop {
-					loopCfg.Tracer, loopCfg.TracePolicy = trace.Tracer, trace.Policy
-				}
-			}
-			loop, loopErr := tools.NewToolLoop(p.cfg.ToolDefinitions, p.cfg.ToolExecutor, p.cfg.ToolHistory, loopCfg)
-			if loopErr != nil {
+			loop := p.loop
+			if loop == nil {
 				p.Errors.Add(1)
 				return
 			}
-			defer loop.Close()
 			loop = loop.WithTraceContext(genCtx).WithCurrentFence(func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) })
-			_, loopErr = loop.Run(genCtx, calls, func(continueCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
+			_, loopErr := loop.Run(genCtx, calls, func(continueCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
 				committed = false
 				for _, result := range results {
 					name := ""

@@ -110,6 +110,7 @@ func NewRealGoogleSTTOpener(ctx context.Context, cfg STTConfig) (*RealGoogleSTTO
 	opts := append([]option.ClientOption{
 		option.WithEndpoint(speechEndpoint(cfg) + ":443"),
 	}, clientAuthOptions(cfg.CredentialsJSON, cfg.CredentialsFile, cfg.APIKey)...)
+	opts = append(opts, grpcKeepalive())
 
 	c, err := speech.NewClient(ctx, opts...)
 	if err != nil {
@@ -308,6 +309,11 @@ type STTProcessor struct {
 	RotationFailures    atomic.Uint64
 	DeduplicatedResults atomic.Uint64
 	Errors              atomic.Uint64
+}
+
+// STTCounts implements core.STTCounters.
+func (p *STTProcessor) STTCounts() (rot, rotFail, dedup, errs uint64) {
+	return p.RotationsCount.Load(), p.RotationFailures.Load(), p.DeduplicatedResults.Load(), p.Errors.Load()
 }
 
 // NewSTTProcessor creates a new STTProcessor with the given config.
@@ -851,6 +857,17 @@ func (p *STTProcessor) bindOrDetachActiveLocked(turn string, gen uint64) *active
 		p.active.turnID, p.active.gen = turn, gen
 		return nil
 	}
+	if p.active.turnID == turn && p.active.gen < gen {
+		// A turn manager barged in mid-utterance: the open stream moves to the
+		// new generation with its assembled text instead of being cut.
+		old := googleAssemblyKey{turn: turn, gen: p.active.gen}
+		if a := p.assemblies[old]; a != nil {
+			delete(p.assemblies, old)
+			p.assemblies[googleAssemblyKey{turn: turn, gen: gen}] = a
+		}
+		p.active.gen = gen
+		return nil
+	}
 	if p.active.turnID != turn || p.active.gen != gen {
 		old := p.active
 		p.active = nil
@@ -860,7 +877,7 @@ func (p *STTProcessor) bindOrDetachActiveLocked(turn string, gen uint64) *active
 }
 
 func (p *STTProcessor) setPendingOwnershipLocked(turn string, gen uint64) *activeStream {
-	if p.turnID != turn || p.streamGen != gen {
+	if p.turnID != turn {
 		p.turnAudioBytes = 0
 		p.audioBuffer = p.audioBuffer[:0]
 	}

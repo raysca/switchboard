@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 	coretools "govoice/core/tools"
 )
@@ -57,6 +58,7 @@ func DefaultConfig() Config {
 // Processor implements core.Processor for the xAI LLM Responses API.
 type Processor struct {
 	cfg     Config
+	pool    *netpool.Pool // nil when HTTPClient was injected
 	session core.SessionController
 	index   int
 
@@ -70,6 +72,11 @@ type Processor struct {
 	Errors   atomic.Uint64
 	Retries  atomic.Uint64
 	Stale    atomic.Uint64
+}
+
+// LLMCounts implements core.LLMCounters.
+func (p *Processor) LLMCounts() (req, errs, retries, stale uint64) {
+	return p.Requests.Load(), p.Errors.Load(), p.Retries.Load(), p.Stale.Load()
 }
 
 // NewProcessor creates an xAI LLM Processor.
@@ -93,10 +100,10 @@ func NewProcessor(cfg Config) (*Processor, error) {
 		cfg.Timeout = 30 * time.Second
 	}
 	cfg.RetryPolicy.AttemptTimeout = cfg.Timeout // Timeout is the one knob: it bounds each request round
+	var pool *netpool.Pool
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{
-			Timeout: cfg.Timeout,
-		}
+		pool = netpool.Get(netpool.Options{Provider: "xai", Stage: "llm"})
+		cfg.HTTPClient = pool.Client(cfg.Timeout)
 	}
 	if _, err := MapToolDefinitions(cfg.ToolDefinitions); err != nil {
 		return nil, err
@@ -110,8 +117,23 @@ func NewProcessor(cfg Config) (*Processor, error) {
 	cfg.ToolDefinitions = cloneXAIToolDefinitions(cfg.ToolDefinitions)
 
 	return &Processor{
-		cfg: cfg,
+		cfg:  cfg,
+		pool: pool,
 	}, nil
+}
+
+// Warm pre-dials TCP+TLS to the endpoint (the first request then skips
+// DNS/TCP/TLS and negotiates HTTP/2 on the spare). Skipped while the breaker
+// is open; never reports to it.
+func (p *Processor) Warm(ctx context.Context) error {
+	if p.pool == nil {
+		return nil
+	}
+	if p.cfg.CircuitBreaker.WouldRefuse() {
+		p.pool.NoteSkipped()
+		return nil
+	}
+	return p.pool.Warm(ctx, p.cfg.Endpoint)
 }
 
 // SetContextProvider supplies bounded conversation history for each request.

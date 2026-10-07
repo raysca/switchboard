@@ -156,3 +156,25 @@ func TestReviewXAITypedCompletionClosesAudio(t *testing.T) {
 		t.Fatalf("typed completion did not send audio.done; close sends=%d", st.closeSends)
 	}
 }
+
+// A turn manager barges in mid-utterance: the open stream moves to the new
+// generation instead of draining.
+func TestXAISameTurnNewerGenerationAdoptsStream(t *testing.T) {
+	opener := &reviewSequenceOpener{}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = opener
+	p, _ := NewSTTProcessor(cfg)
+	defer p.Close()
+	e := reviewEmitter{}
+	ctx := context.Background()
+	_ = p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "A", Gen: 1}, core.Downstream, e)
+	_ = p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
+	_ = p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "A", Gen: 2}, core.Upstream, e)
+	_ = p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 2}, core.Downstream, e)
+	p.mu.Lock()
+	gen, draining := p.active.gen, len(p.draining)
+	p.mu.Unlock()
+	if len(opener.streams) != 1 || opener.streams[0].closeSends != 0 || gen != 2 || draining != 0 {
+		t.Fatalf("streams=%d gen=%d draining=%d", len(opener.streams), gen, draining)
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 )
 
@@ -56,11 +57,21 @@ type RealXAITTSClient struct {
 
 // NewRealXAITTSClient creates an HTTP client for xAI TTS.
 func NewRealXAITTSClient() *RealXAITTSClient {
-	return &RealXAITTSClient{
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
+	return &RealXAITTSClient{httpClient: ttsPool().Client(15 * time.Second)}
+}
+
+func ttsPool() *netpool.Pool { return netpool.Get(netpool.Options{Provider: "xai", Stage: "tts"}) }
+
+// Warm pre-dials TCP+TLS to the endpoint when the real HTTP client is used.
+func (p *TTSProcessor) Warm(ctx context.Context) error {
+	if _, ok := p.client.(*RealXAITTSClient); !ok {
+		return nil
 	}
+	if br := p.cfg.CircuitBreaker; br != nil && br.WouldRefuse() {
+		ttsPool().NoteSkipped()
+		return nil
+	}
+	return ttsPool().Warm(ctx, p.cfg.Endpoint)
 }
 
 type ttsOutputFormat struct {
@@ -163,6 +174,11 @@ type TTSProcessor struct {
 	StaleTotal    atomic.Uint64
 }
 
+// TTSCounts implements core.TTSCounters.
+func (p *TTSProcessor) TTSCounts() (req, errs, retries, stale uint64) {
+	return p.RequestsTotal.Load(), p.ErrorsTotal.Load(), p.RetriesTotal.Load(), p.StaleTotal.Load()
+}
+
 // NewTTSProcessor creates a new xAI TTSProcessor.
 func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	if cfg.Endpoint == "" {
@@ -249,9 +265,9 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFrame, e core.Emitter) error {
 	p.mu.Lock()
-	if p.closed {
+	if p.closed { // the session is already ending: drop, do not fail it
 		p.mu.Unlock()
-		return core.ErrSessionClosed
+		return nil
 	}
 
 	s := p.session
@@ -278,11 +294,12 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 	// Push unit frame downstream for assistant context tracking
 	if err := e.Push(unit); err != nil {
 		cancel()
+		p.abandon(seq)
 		return err
 	}
 
 	p.RequestsTotal.Add(1)
-	return s.Go(func(sessionCtx context.Context) {
+	if err := s.Go(func(sessionCtx context.Context) {
 		traceSession := core.SessionID(strconv.FormatUint(s.ID(), 10))
 		traceTurn, traceGen := core.TurnID(unit.Turn), core.Generation(unit.Gen)
 		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": "xai"})
@@ -334,20 +351,8 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 			return nil
 		})
 
-		if opErr != nil {
-			if errors.Is(opErr, context.Canceled) || synthCtx.Err() != nil {
-				return
-			}
-			traceFailure = errors.New("provider_failure")
-			p.ErrorsTotal.Add(1)
-			_ = s.Reenter(&core.ErrorFrame{
-				Err:   opErr,
-				Fatal: false,
-			}, core.Downstream, p.index+1, unit.Gen)
-			return
-		}
-
-		// Wait for turn in emission sequence: units must be emitted strictly in arrival order
+		// Wait for turn in emission sequence: units must be emitted strictly in
+		// arrival order, failed ones included.
 		p.mu.Lock()
 		for p.finishedSeq+1 != seq && synthCtx.Err() == nil && sessionCtx.Err() == nil && !p.closed {
 			p.cond.Wait()
@@ -357,6 +362,24 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 
 		if stale {
 			p.StaleTotal.Add(1)
+			return
+		}
+
+		// A failure waits its turn too, so its slot is released in order and
+		// later units are not wedged behind it.
+		if opErr != nil {
+			if errors.Is(opErr, context.Canceled) || synthCtx.Err() != nil {
+				return
+			}
+			traceFailure = errors.New("provider_failure")
+			p.ErrorsTotal.Add(1)
+			_ = s.Reenter(&core.ErrorFrame{
+				Err:    opErr,
+				Fatal:  false,
+				Turn:   core.TurnID(unit.Turn),
+				Gen:    core.Generation(unit.Gen),
+				UnitID: unit.UnitID,
+			}, core.Downstream, p.index+1, unit.Gen)
 			return
 		}
 
@@ -463,5 +486,43 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 			return
 		}
 		traceFailure = nil
-	})
+	}); err != nil {
+		// The task was refused, so nothing will ever complete this slot: give
+		// it back so later units are not wedged behind it.
+		cancel()
+		p.abandon(seq)
+		if errors.Is(err, core.ErrSessionClosed) {
+			return nil
+		}
+		if errors.Is(err, core.ErrTooManyTasks) { // lose this unit, not the call
+			p.ErrorsTotal.Add(1)
+			// Re-entered, not pushed: under TTSFailover e swallows, and the
+			// wrapper would wait for this unit until its watchdog fired.
+			_ = s.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(unit.Turn), Gen: core.Generation(unit.Gen), UnitID: unit.UnitID}, core.Downstream, p.index+1, unit.Gen)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// abandon releases seq when its task was never started. Calls are serialized
+// with the frame handler, so seq is still the newest slot.
+func (p *TTSProcessor) abandon(seq uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	kept := make([]ttsCancel, 0, len(p.cancels))
+	for _, c := range p.cancels {
+		if c.seq != seq {
+			kept = append(kept, c)
+		}
+	}
+	p.cancels = kept
+	if p.nextSeq == seq {
+		p.nextSeq--
+		if p.finishedSeq > p.nextSeq {
+			p.finishedSeq = p.nextSeq
+		}
+	}
+	p.cond.Broadcast()
 }

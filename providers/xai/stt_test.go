@@ -475,3 +475,66 @@ func TestXAISTTStreamOwnershipIsImmutableAcrossTurns(t *testing.T) {
 		t.Fatalf("stream result relabeled: %#v", seen)
 	}
 }
+
+type gatedSTTStream struct {
+	*mockSTTStream
+	gate chan struct{}
+}
+
+func (g *gatedSTTStream) Recv(ctx context.Context) (*STTMessage, error) {
+	select {
+	case <-g.gate:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return g.mockSTTStream.Recv(ctx)
+}
+
+type gatedSTTOpener struct{ s *gatedSTTStream }
+
+func (o gatedSTTOpener) OpenStream(context.Context, STTConfig) (STTStream, error) { return o.s, nil }
+
+// An STT failover replays seconds of audio at once into a fresh stream, all of
+// it before transcript.created: none may be dropped.
+func TestXAISTTKeepsReplayBurstBeforeReady(t *testing.T) {
+	ms := &mockSTTStream{messages: []*STTMessage{{Type: "transcript.created"}}}
+	gs := &gatedSTTStream{mockSTTStream: ms, gate: make(chan struct{})}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = gatedSTTOpener{gs}
+	proc, err := NewSTTProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe, _ := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	session, _ := core.NewSession(4, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	const n = 500 // 10 s
+	_ = proc.ProcessFrame(context.Background(), &core.UserStartedSpeakingFrame{Gen: 1, Seq: 1}, core.Downstream, nopEmit{})
+	for i := 0; i < n; i++ {
+		if err := proc.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000}, core.Downstream, nopEmit{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(gs.gate)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		ms.mu.Lock()
+		got := len(ms.audioIn)
+		ms.mu.Unlock()
+		if got == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("flushed %d of %d pre-ready chunks", got, n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+type nopEmit struct{}
+
+func (nopEmit) Push(core.Frame) error                          { return nil }
+func (nopEmit) PushDirection(core.Frame, core.Direction) error { return nil }

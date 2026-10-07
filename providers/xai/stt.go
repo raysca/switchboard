@@ -18,6 +18,7 @@ import (
 
 	"github.com/coder/websocket"
 	"govoice/core"
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 )
 
@@ -106,6 +107,23 @@ func (s *wsSTTStream) Close() error {
 	return s.conn.Close(websocket.StatusNormalClosure, "done")
 }
 
+func sttPool() *netpool.Pool {
+	return netpool.Get(netpool.Options{Provider: "xai", Stage: "stt", HTTP1Only: true})
+}
+
+// Warm pre-dials TCP+TLS only (no websocket session) when the real opener is
+// used. Skipped while the breaker is open; never reports to it.
+func (p *STTProcessor) Warm(ctx context.Context) error {
+	if _, ok := p.cfg.StreamOpener.(*RealXAISTTOpener); !ok {
+		return nil
+	}
+	if br := p.cfg.CircuitBreaker; br != nil && br.WouldRefuse() {
+		sttPool().NoteSkipped()
+		return nil
+	}
+	return sttPool().Warm(ctx, p.cfg.Endpoint)
+}
+
 // RealXAISTTOpener establishes live WebSocket streams to xAI.
 type RealXAISTTOpener struct{}
 
@@ -143,6 +161,7 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 	u.RawQuery = q.Encode()
 
 	opts := &websocket.DialOptions{
+		HTTPClient: sttPool().Client(0),
 		HTTPHeader: http.Header{
 			"Authorization": []string{"Bearer " + cfg.APIKey},
 		},
@@ -307,6 +326,10 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			var old *activeSTTStream
 			if p.active != nil {
 				p.active.mu.Lock()
+				if p.active.turnID == p.turnID && p.active.gen < p.streamGen {
+					// A turn manager barged in mid-utterance: keep the stream, move it to the new generation.
+					p.active.gen = p.streamGen
+				}
 				owned := p.active.turnID != "" && (p.active.turnID != p.turnID || p.active.gen != p.streamGen)
 				if p.active.turnID == "" {
 					p.active.turnID, p.active.gen = p.turnID, p.streamGen
@@ -408,8 +431,10 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 
 	st.mu.Lock()
 	if !st.isReady {
-		// Buffer audio until transcript.created arrives (bound to 50 chunks = 1s of 20ms audio)
-		if len(st.audioBuf) < 50 {
+		// Buffer audio until transcript.created arrives. Live audio only fills the
+		// handshake time; an STT failover replays up to 60 s at once into a new
+		// stream, so the bound (3000 chunks = 60 s of 20 ms audio) covers that burst.
+		if len(st.audioBuf) < 3000 {
 			st.audioBuf = append(st.audioBuf, append([]byte(nil), f.Samples...))
 		}
 		st.mu.Unlock()

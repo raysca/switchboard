@@ -48,6 +48,10 @@ func (e *ProviderError) Error() string {
 	return fmt.Sprintf("%s (%s)", e.BaseErr.Error(), e.Capability)
 }
 
+// ClientError reports a caller-side failure (bad key or request), which the
+// server's LLM failover treats as its own opt-in class.
+func (e *ProviderError) ClientError() bool { return isClientError(e) }
+
 func (e *ProviderError) Unwrap() error {
 	return e.BaseErr
 }
@@ -64,6 +68,9 @@ func MapError(capability string, err error) *ProviderError {
 		return provErr
 	}
 
+	if errors.Is(err, ErrCircuitOpen) { // keep the sentinel: LLM failover classes it circuit_open
+		return &ProviderError{Capability: capability, BaseErr: ErrCircuitOpen, SafeMessage: "circuit breaker open", Retryable: false}
+	}
 	// Context errors
 	if errors.Is(err, context.Canceled) {
 		return &ProviderError{

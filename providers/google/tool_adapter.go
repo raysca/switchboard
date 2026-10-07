@@ -116,6 +116,15 @@ func GoogleFunctionResponse(call core.ToolCall, result core.ToolResult) (*genai.
 	return response, nil
 }
 
+func googleTextOnly(c *genai.Content) bool {
+	for _, p := range c.Parts {
+		if p == nil || p.FunctionCall != nil || p.FunctionResponse != nil {
+			return false
+		}
+	}
+	return true
+}
+
 // GoogleContentsWithNativeExchanges maps history while keeping each completed
 // model response attached to the call batch it produced. A later response's
 // leading signed/text parts therefore cannot move ahead of an earlier batch's
@@ -193,6 +202,13 @@ func GoogleContentsWithNativeExchanges(history []core.Message, exchanges []Googl
 		role := "user"
 		if message.Role == core.RoleAssistant {
 			role = "model"
+		}
+		// Consecutive same-role text (e.g. user fragments the turn-completion
+		// protocol held without a reply) joins one Content: Gemini expects
+		// user/model turns to alternate.
+		if n := len(contents); n > 0 && contents[n-1].Role == role && googleTextOnly(contents[n-1]) {
+			contents[n-1].Parts = append(contents[n-1].Parts, &genai.Part{Text: message.Content})
+			continue
 		}
 		contents = append(contents, &genai.Content{Role: role, Parts: []*genai.Part{{Text: message.Content}}})
 	}

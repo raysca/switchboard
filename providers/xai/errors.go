@@ -82,6 +82,9 @@ func SanitizeString(s string) string {
 	return s
 }
 
+// ClientError reports a non-retryable (caller-side) failure.
+func (e *ProviderError) ClientError() bool { return e.Class == ClassificationNonRetryable }
+
 // SanitizeError returns a sanitized error safe for user logs and metrics.
 func SanitizeError(err error) error {
 	if err == nil {
@@ -93,7 +96,10 @@ func SanitizeError(err error) error {
 		sanitized.Message = SanitizeString(pe.Message)
 		return &sanitized
 	}
-	return errors.New(SanitizeString(err.Error()))
+	if msg := SanitizeString(err.Error()); msg != err.Error() {
+		return errors.New(msg)
+	}
+	return err // nothing to redact: keep the chain (ErrTimeout, ErrCircuitOpen) for failover
 }
 
 // ClassifyHTTPResponse determines the ErrorClassification and RetryAfter from an HTTP response.

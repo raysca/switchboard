@@ -60,7 +60,7 @@ type RealGoogleTTSClient struct {
 }
 
 func NewRealGoogleTTSClient(ctx context.Context, cfg TTSConfig) (*RealGoogleTTSClient, error) {
-	c, err := texttospeech.NewClient(ctx, clientAuthOptions(cfg.CredentialsJSON, cfg.CredentialsFile, cfg.APIKey)...)
+	c, err := texttospeech.NewClient(ctx, append(clientAuthOptions(cfg.CredentialsJSON, cfg.CredentialsFile, cfg.APIKey), grpcKeepalive())...)
 	if err != nil {
 		return nil, MapError("tts", err)
 	}
@@ -153,6 +153,11 @@ type TTSProcessor struct {
 type ttsCancel struct {
 	seq    uint64
 	cancel context.CancelFunc
+}
+
+// TTSCounts implements core.TTSCounters.
+func (p *TTSProcessor) TTSCounts() (req, errs, retries, stale uint64) {
+	return p.Requests.Load(), p.Errors.Load(), p.Retries.Load(), p.Stale.Load()
 }
 
 // NewTTSProcessor creates a new TTSProcessor.
@@ -295,17 +300,19 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 	// Push SynthesisUnitFrame downstream for assistant context tracking
 	if err := e.Push(su); err != nil {
 		cancel()
+		p.abandon(seq)
 		return err
 	}
 
 	if p.session == nil || p.cfg.Client == nil {
 		cancel()
+		p.abandon(seq)
 		return nil
 	}
 
 	// Synthesize speech asynchronously, in unit order. Cancellation covers every
 	// in-flight request, not only the most recently started one.
-	return p.session.Go(func(taskCtx context.Context) {
+	if err := p.session.Go(func(taskCtx context.Context) {
 		defer cancel()
 		defer func() {
 			p.mu.Lock()
@@ -387,7 +394,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			traceFailure = errors.New("provider_failure")
 			p.Errors.Add(1)
 			provErr := MapError("tts", err)
-			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false}, core.Downstream, p.index+1, gen)
+			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false, Turn: core.TurnID(su.Turn), Gen: core.Generation(su.Gen), UnitID: su.UnitID}, core.Downstream, p.index+1, gen)
 			return
 		}
 
@@ -518,7 +525,45 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			Requests:        core.Int64Ptr(1),
 		}
 		_ = p.session.Reenter(usageFrame, core.Downstream, p.index+1, gen)
-	})
+	}); err != nil {
+		// The task was refused, so nothing will ever complete this slot: give
+		// it back so later units are not wedged behind it.
+		cancel()
+		p.abandon(seq)
+		if errors.Is(err, core.ErrSessionClosed) {
+			return nil
+		}
+		if errors.Is(err, core.ErrTooManyTasks) { // lose this unit, not the call
+			p.Errors.Add(1)
+			// Re-entered, not pushed: under TTSFailover e swallows, and the
+			// wrapper would wait for this unit until its watchdog fired.
+			_ = p.session.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(su.Turn), Gen: core.Generation(su.Gen), UnitID: su.UnitID}, core.Downstream, p.index+1, su.Gen)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// abandon releases seq when its task was never started. Calls are serialized
+// with the frame handler, so seq is still the newest slot.
+func (p *TTSProcessor) abandon(seq uint64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	kept := make([]ttsCancel, 0, len(p.cancels))
+	for _, c := range p.cancels {
+		if c.seq != seq {
+			kept = append(kept, c)
+		}
+	}
+	p.cancels = kept
+	if p.nextSeq == seq {
+		p.nextSeq--
+		if p.finishedSeq > p.nextSeq {
+			p.finishedSeq = p.nextSeq
+		}
+	}
+	p.cond.Broadcast()
 }
 
 // ttsRetryPolicy bounds one synthesis request (at most MaxSynthesisUnitChars)

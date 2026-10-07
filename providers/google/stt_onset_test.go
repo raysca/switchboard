@@ -55,3 +55,50 @@ func TestGoogleSTTNextUtteranceStreamGetsItsOnsetAudio(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+// A turn manager barges in mid-utterance: the open stream moves to the new
+// generation with its assembled text instead of being cut or fenced.
+func TestGoogleSTTSameTurnNewerGenerationAdoptsStream(t *testing.T) {
+	opener := &mockSTTOpener{}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = opener
+	proc, _ := NewSTTProcessor(cfg)
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	session, _ := core.NewSession(35, pipe, core.DefaultResourceBudget())
+	_ = session.Start()
+	defer session.Close()
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	var st *mockSTTStream
+	for deadline := time.Now().Add(time.Second); st == nil && time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		opener.mu.Lock()
+		if len(opener.streams) > 0 {
+			st = opener.streams[0]
+		}
+		opener.mu.Unlock()
+	}
+	if st == nil {
+		t.Fatal("stream never opened")
+	}
+	st.PushResult(&STTResult{Transcript: "stop", IsFinal: true, ResultEndOffset: time.Second})
+	time.Sleep(20 * time.Millisecond)
+	session.IncrementGeneration()
+	_ = session.Post(&core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "turn-1-1", Gen: 2})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 2})
+	time.Sleep(20 * time.Millisecond)
+	st.PushResult(&STTResult{Transcript: "now", IsFinal: true, ResultEndOffset: 2 * time.Second})
+	time.Sleep(30 * time.Millisecond)
+	var last *core.TranscriptCandidateFrame
+	for _, f := range sink.GetFrames() {
+		if c, ok := f.(*core.TranscriptCandidateFrame); ok {
+			last = c
+		}
+	}
+	opener.mu.Lock()
+	opens := len(opener.streams)
+	opener.mu.Unlock()
+	if last == nil || last.Text != "stop now" || last.Turn != "turn-1-1" || last.Gen != 2 || opens != 1 {
+		t.Fatalf("candidate %+v opens=%d", last, opens)
+	}
+}
