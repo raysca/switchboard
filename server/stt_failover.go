@@ -67,6 +67,7 @@ func (r *Registry) buildSTT(cfg *Config, call CallSpec, build func(string, Stage
 	specs := append([]StageSpec{call.STT}, call.STTFallbacks...)
 	var cands []core.STTCandidate
 	for i, sp := range specs {
+		sp.Failover = i < len(specs)-1
 		p, err := build("stt", sp)
 		if err != nil {
 			if i == 0 {

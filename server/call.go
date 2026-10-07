@@ -58,7 +58,7 @@ func (s *Server) resolveCall(ctx context.Context, agentID, tokenID string) (Call
 		history.close(historyCtx)
 		cancelHistory()
 		if err := rs.Close(ctx); err != nil {
-			s.logger.Warn("agent session did not end cleanly", "session", rs.Pin.ID, "err", err.Error())
+			s.logger.Warn("agent session did not end cleanly", "session", rs.Pin.ID, "err", s.redactor.Redact(err.Error()))
 		}
 	}
 	call, err := s.callSpec(ctx, rs)

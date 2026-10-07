@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,14 @@ import (
 	"govoice/smartturn"
 	"govoice/vad"
 )
+
+// TestMain releases the ORT environment after the in-process Smart-turn test,
+// avoiding the exit-time abort.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	vad.ShutdownORT()
+	os.Exit(code)
+}
 
 func TestTurnStopDetector(t *testing.T) {
 	if d, err := turnStopDetector(nil, 0, 0, nil); d != nil || err != nil {

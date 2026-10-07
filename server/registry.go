@@ -46,6 +46,11 @@ type StageSpec struct {
 	// their acknowledgement (see tools.ToolLoopConfig).
 	AsyncSink    func(core.AsyncToolResult)
 	OnAsyncStart func(core.ToolCall)
+
+	// Failover is set on a non-last candidate of a stage chain: its provider is
+	// built with failoverPolicy (fewer, shorter attempts) so a fallback is
+	// reached while the caller still waits.
+	Failover bool
 }
 
 // toolLoopConfig is the default loop config with the stage's async hooks.
@@ -157,6 +162,9 @@ func NewRegistry() *Registry {
 		}
 		sttCfg.CredentialsJSON, sttCfg.APIKey = material.ServiceAccountJSON, material.APIKey
 		sttCfg.CircuitBreaker = r.googleSTTBreaker
+		if spec.Failover {
+			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
+		}
 		opener, err := google.NewRealGoogleSTTOpener(context.Background(), sttCfg)
 		if err != nil {
 			return nil, fmt.Errorf("google.stt: %w", err)
@@ -212,6 +220,9 @@ func NewRegistry() *Registry {
 		}
 		ttsCfg.Client = client
 		ttsCfg.CircuitBreaker = r.googleTTSBreaker
+		if spec.Failover {
+			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
+		}
 		return google.NewTTSProcessor(ttsCfg)
 	})
 
@@ -265,6 +276,9 @@ func NewRegistry() *Registry {
 			sttCfg.Language = spec.Language
 		}
 		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.deepgramBreaker
+		if spec.Failover {
+			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
+		}
 		return deepgram.NewSTTProcessor(sttCfg)
 	})
 
@@ -288,6 +302,9 @@ func NewRegistry() *Registry {
 			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
 		}
 		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.cartesiaBreaker
+		if spec.Failover {
+			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
+		}
 		return cartesia.NewTTSProcessor(ttsCfg)
 	})
 
@@ -308,6 +325,9 @@ func NewRegistry() *Registry {
 			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
 		}
 		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.elevenlabsBreaker
+		if spec.Failover {
+			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
+		}
 		return elevenlabs.NewTTSProcessor(ttsCfg)
 	})
 

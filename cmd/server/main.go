@@ -26,16 +26,15 @@ func main() {
 	vadModeFlag := flag.String("vad-mode", "", "override VAD mode: process|inprocess")
 	flag.Parse()
 
-	cfg, err := server.LoadConfig(*configPath)
+	cfg, err := server.LoadConfigProfile(*configPath, server.Profile(*profileFlag))
 	if err != nil {
 		log.Fatalf("failed to load config from %s: %v", *configPath, err)
 	}
-
-	if *profileFlag != "" {
-		cfg.Profile = server.Profile(*profileFlag)
-	}
 	if *vadModeFlag != "" {
 		cfg.VAD.Mode = *vadModeFlag
+		if err := server.ValidateConfig(cfg); err != nil { // e.g. inprocess in production
+			log.Fatalf("invalid -vad-mode: %v", err)
+		}
 	}
 
 	srv, err := server.NewServer(cfg)
@@ -116,7 +115,9 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
+	err = srv.Shutdown(shutdownCtx) // closes the VAD executor and turn backend first
+	vad.ShutdownORT()               // only after every ORT session is closed
+	if err != nil {
 		log.Printf("error during shutdown: %v", err)
 		os.Exit(1)
 	}

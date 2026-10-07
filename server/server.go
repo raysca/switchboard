@@ -364,6 +364,7 @@ func (s *Server) setupRoutes() {
 		MaxConcurrentSessions:      s.cfg.Limits.MaxSessions,
 		MaxConcurrentSessionsPerIP: s.cfg.Limits.MaxSessionsPerIP,
 		MaxPendingHandshakes:       s.cfg.Limits.MaxPendingHandshakes,
+		HandshakeRateLimit:         s.cfg.Limits.HandshakeRatePerIP, // 0 -> ws default (20)
 		FixedPlayerRate:            24000,
 	}
 
@@ -429,7 +430,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 
 	if err := s.admission.AcquireSession(principal, agentID, vadCapacity); err != nil {
-		return nil, err
+		return nil, &ws.RejectError{Reason: admissionReason(err), Err: err}
 	}
 
 	sessionID := s.nextCallID.Add(1)
@@ -449,14 +450,14 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	if err != nil {
 		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
-		timeline.Record(TimelineEvent{Type: EventError, Details: err.Error()})
+		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
 	fail := func(err error) (*core.Session, error) {
 		releaseCall()
 		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
-		timeline.Record(TimelineEvent{Type: EventError, Details: err.Error()})
+		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		return nil, err
 	}
 

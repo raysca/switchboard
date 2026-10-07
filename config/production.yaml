@@ -33,6 +33,7 @@ limits:
   max_sessions_per_principal: 5
   # max_sessions_per_agent: 0         # 0 = unlimited
   # start_rate_per_principal: 0       # starts/sec per principal; 0 = unlimited
+  # handshake_rate_per_ip: 20         # WebSocket upgrades/sec per source IP (burst max(5, 2x)); 0 = default 20
   # start_burst_per_principal: 1      # required >= 1 when rate > 0
   max_sessions_per_ip: 5
   upgrade_timeout: 5s

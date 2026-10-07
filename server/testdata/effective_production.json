@@ -1,0 +1,189 @@
+{
+ "Profile": "production",
+ "InsecureOverrides": {
+  "AllowPlainWSInProduction": false
+ },
+ "PublicListenAddr": "0.0.0.0:8080",
+ "AdminListenAddr": "127.0.0.1:9090",
+ "TLS": {
+  "CertFile": "",
+  "KeyFile": "",
+  "TrustedProxyMode": true,
+  "TrustedProxies": [
+   "127.0.0.1/32",
+   "::1/128",
+   "172.16.0.0/12"
+  ]
+ },
+ "OriginAllowlist": [
+  "https://app.govoice.internal"
+ ],
+ "Management": {
+  "APIKeyEnv": "GOVOICE_MANAGEMENT_API_KEY"
+ },
+ "Storage": {
+  "Dialect": "postgres",
+  "DSNEnv": ""
+ },
+ "Credentials": {
+  "KeyringEnv": ""
+ },
+ "Token": {
+  "SecretEnv": "TOKEN_SECRET",
+  "Secret": "",
+  "Issuer": "govoice-v1",
+  "Audience": "govoice-v1-client",
+  "MaxLifetime": 300000000000,
+  "ClockSkew": 30000000000,
+  "ReplayCacheLimit": 50000,
+  "KeyID": "v1"
+ },
+ "Limits": {
+  "MaxPendingHandshakes": 100,
+  "MaxSessions": 250,
+  "MaxSessionsPerPrincipal": 5,
+  "MaxSessionsPerIP": 5,
+  "MaxSessionsPerAgent": 0,
+  "StartRatePerPrincipal": 0,
+  "StartBurstPerPrincipal": 0,
+  "HandshakeRatePerIP": 20,
+  "UpgradeTimeout": 5000000000,
+  "ReadyTimeout": 10000000000,
+  "MaxCallDuration": 3600000000000,
+  "IdleTimeout": 30000000000,
+  "DrainTimeout": 45000000000,
+  "ImmediateCancel": false
+ },
+ "VAD": {
+  "Mode": "process",
+  "Workers": 8,
+  "Batch": 8,
+  "ModelPath": "/opt/govoice/models/silero_vad.onnx",
+  "OrtLibPath": "/opt/govoice/lib/libonnxruntime.so",
+  "QueueCap": 8192
+ },
+ "STT": {
+  "ReplayBuffer": 10000000000
+ },
+ "Failover": {
+  "LLMBudget": 60000000000,
+  "LLMFirstToken": 8000000000
+ },
+ "Turn": {
+  "Manager": false,
+  "MinWords": 0,
+  "Stop": null,
+  "Completion": {
+   "ShortWait": 0,
+   "LongWait": 0,
+   "Prompt": "",
+   "Nudge": ""
+  },
+  "SpeechTimeout": 0,
+  "EagerGrace": 0,
+  "Mute": null,
+  "MaxMute": 0,
+  "Analyzer": {
+   "Mode": "",
+   "Workers": 1,
+   "ModelPath": "",
+   "StopSecs": 3000000000,
+   "Budget": 150000000
+  }
+ },
+ "FirstClauseChars": 0,
+ "Audio": {
+  "InputFilters": null,
+  "DenoiseStrength": 0.5,
+  "OutputGainDB": 0,
+  "Background": {
+   "File": "",
+   "GainDB": null,
+   "Loop": null
+  }
+ },
+ "Idle": {
+  "UserTimeout": 0,
+  "MaxPrompts": 2,
+  "Prompt": "",
+  "PromptMode": "",
+  "Goodbye": "",
+  "BotTimeout": 0,
+  "BotMaxStuck": 3,
+  "BotFallback": ""
+ },
+ "DTMF": {
+  "Detect": false,
+  "Aggregate": false,
+  "SendTool": false,
+  "AggregateTimeout": 2000000000
+ },
+ "Providers": {
+  "GoogleSTT": {
+   "ProjectID": "",
+   "Location": "us-central1",
+   "RotationThreshold": 240000000000
+  },
+  "GoogleTTS": {
+   "SampleRate": 24000
+  },
+  "XAILLM": {
+   "Endpoint": "https://api.x.ai/v1/responses"
+  },
+  "OpenAILLM": {
+   "AllowPrivateBaseURL": false
+  },
+  "XAISTT": {
+   "Endpoint": "wss://api.x.ai/v1/stt"
+  },
+  "XAITTS": {
+   "Endpoint": "https://api.x.ai/v1/tts"
+  }
+ },
+ "Observability": {
+  "LogLevel": "info",
+  "JSONFormat": true,
+  "TimelineMaxEvents": 1000,
+  "TimelineTTL": 900000000000
+ },
+ "Retention": {
+  "Enabled": true,
+  "Interval": 3600000000000,
+  "MetadataRetentionDays": 30,
+  "ContentRetentionDays": 7,
+  "BatchSize": 500
+ },
+ "Recording": {
+  "Enabled": false,
+  "Dir": "",
+  "RetentionDays": 7,
+  "MaxDuration": 3600000000000,
+  "MaxBytes": 268435456
+ },
+ "Privacy": {
+  "Redaction": {
+   "Enabled": false,
+   "Rules": null,
+   "DTMF": ""
+  }
+ },
+ "OTel": {
+  "Enabled": false,
+  "Endpoint": "",
+  "Protocol": "",
+  "HeadersEnv": null,
+  "SamplingRatio": null,
+  "ServiceName": "",
+  "ResourceAttributes": null,
+  "CaptureContent": false,
+  "QueueSize": 2048,
+  "ShutdownTimeout": 5000000000
+ },
+ "Warmup": {
+  "Enabled": true,
+  "Predial": false,
+  "OnStart": false,
+  "Timeout": 3000000000,
+  "SpareTTL": 10000000000
+ }
+}

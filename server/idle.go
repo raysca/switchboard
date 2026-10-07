@@ -29,7 +29,8 @@ type IdleConfig struct {
 	// cancels the generation and sends the client an error (0 = off). After
 	// BotMaxStuck such turns in a row (default 3) the call ends. BotFallback is
 	// spoken after each cancel (TTS, no model). It also cancels an LLM failover
-	// in flight (budget 60s): set it above that to let failovers always finish.
+	// in flight: keep it above failover.llm_first_token x (chain length - 1) for
+	// a hung primary to be rescued, above failover.llm_budget for every failover to finish.
 	BotTimeout  time.Duration `yaml:"bot_timeout"`
 	BotMaxStuck int           `yaml:"bot_max_stuck"`
 	BotFallback string        `yaml:"bot_fallback"`

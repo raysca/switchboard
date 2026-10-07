@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"io"
+	"time"
 
 	"govoice/core"
 	"govoice/core/resilience"
@@ -44,6 +45,27 @@ func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
 	return nil
 }
 
+// failoverPolicy tightens a provider's retry policy for a stage candidate that
+// has a fallback behind it: 2 tries instead of 3, and for stt opens at most
+// 5 s each, so the fallback starts after about 10 s (stt) or 2 x the
+// provider's request timeout (tts) instead of up to 45 s. It only ever shortens
+// base (a zero base field counts as unset). The last candidate keeps its full
+// policy. LLMs are instead bounded by the first-token deadline (core.LLMFailover).
+//
+// ponytail: tts keeps its attempt timeout because every tts provider applies it
+// to the whole unit (dial through the last audio byte), so shortening it would
+// cut long sentences mid-word; a first-audio deadline in ttsunit is the upgrade
+// if 2 x 15 s proves too slow.
+func failoverPolicy(stage string, base resilience.Policy) resilience.Policy {
+	if base.MaxAttempts <= 0 || base.MaxAttempts > 2 {
+		base.MaxAttempts = 2
+	}
+	if stage == "stt" && (base.AttemptTimeout <= 0 || base.AttemptTimeout > 5*time.Second) {
+		base.AttemptTimeout = 5 * time.Second
+	}
+	return base
+}
+
 // ttsRate is the one output rate the call's TTS candidates are built for. The
 // transport builds its resampler from the first frame and cannot follow a
 // rate change, so every candidate is configured to this rate (the factories
@@ -65,6 +87,7 @@ func (r *Registry) buildTTS(cfg *Config, call CallSpec, build func(string, Stage
 	specs := append([]StageSpec{call.TTS}, call.TTSFallbacks...)
 	var cands []core.TTSCandidate
 	for i, sp := range specs {
+		sp.Failover = i < len(specs)-1
 		p, err := build("tts", sp)
 		if err != nil {
 			if i == 0 {

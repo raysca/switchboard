@@ -125,3 +125,18 @@ func (ac *AdmissionController) ReleaseSession(principal, agentID string) {
 		}
 	}
 }
+
+// admissionReason maps an admission error to the stable reason code sent to the
+// client in the RTVI error (docs/pipecat-compatibility.md).
+func admissionReason(err error) string {
+	switch {
+	case errors.Is(err, ErrStartRateLimit):
+		return "rate_limited"
+	case errors.Is(err, ErrAgentLimit):
+		return "agent_limit"
+	case errors.Is(err, ErrPrincipalLimit):
+		return "principal_limit"
+	default: // global cap, VAD unavailable
+		return "capacity_exceeded"
+	}
+}

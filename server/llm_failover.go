@@ -15,14 +15,54 @@ import (
 	"govoice/server/agent"
 )
 
-// llmFailoverBudget bounds how long into a generation a new candidate may
-// still be started (each candidate has its own attempt deadline and retries).
-const llmFailoverBudget = 60 * time.Second
+// Defaults for failover.llm_budget (how long into a generation a new candidate
+// may still be started) and failover.llm_first_token (how long a silent
+// primary is waited on). Providers alone give up only after ~90 s (3 attempts x
+// 30 s), which is why the first-token deadline is what lets failover rescue a hang.
+const (
+	defaultLLMFailoverBudget = 60 * time.Second
+	defaultLLMFirstToken     = 8 * time.Second
+)
+
+// resolveLLMTiming applies the defaults to zero values.
+func resolveLLMTiming(budget, firstToken time.Duration) (time.Duration, time.Duration) {
+	if budget <= 0 {
+		budget = defaultLLMFailoverBudget
+	}
+	if firstToken <= 0 {
+		firstToken = defaultLLMFirstToken
+	}
+	return budget, firstToken
+}
+
+// llmFailoverTiming resolves the configured values (nil cfg = defaults).
+func llmFailoverTiming(cfg *Config) (budget, firstToken time.Duration) {
+	if cfg == nil {
+		return resolveLLMTiming(0, 0)
+	}
+	return resolveLLMTiming(cfg.Failover.LLMBudget, cfg.Failover.LLMFirstToken)
+}
+
+// validateLLMFailoverTiming rejects values where the first-token deadline
+// could never fire before the budget closes, which would make failover a no-op
+// for a hung primary. Zero means default.
+func validateLLMFailoverTiming(budget, firstToken time.Duration) error {
+	if budget < 0 || firstToken < 0 {
+		return errors.New("failover.llm_budget and failover.llm_first_token must not be negative")
+	}
+	if b, f := resolveLLMTiming(budget, firstToken); f >= b {
+		return fmt.Errorf("failover.llm_first_token (%v) must be below failover.llm_budget (%v), or a hung primary can never fail over", f, b)
+	}
+	return nil
+}
 
 // llmClassify is the failover class of a failed LLM candidate ("" = none).
 // Providers expose ClientError() on their ProviderError.
 func llmClassify(err error) string {
 	var ce interface{ ClientError() bool }
+	if errors.Is(err, core.ErrFirstTokenTimeout) {
+		return agent.ClassTimeout
+	}
 	return agent.ClassOf(err, resilience.Verdict{ClientError: errors.As(err, &ce) && ce.ClientError()})
 }
 
@@ -86,15 +126,17 @@ func (r *Registry) buildLLM(cfg *Config, call CallSpec, spec StageSpec, build fu
 		c := core.LLMCandidate{Provider: sp.Provider, Proc: p}
 		if br := r.llmBreaker(sp); br != nil {
 			c.Open = br.WouldRefuse
+			c.OnFirstTokenTimeout = br.RecordFailure // a hang is a provider failure the breaker should see
 		}
 		cands = append(cands, c)
 	}
 	if len(cands) == 1 {
 		return cands[0].Proc, nil
 	}
+	budget, firstToken := llmFailoverTiming(cfg) // pair validated by ValidateConfig (server.New, LoadConfig)
 	fo, err := core.NewLLMFailover(core.LLMFailoverConfig{
 		Candidates: cands, Classify: llmClassify, Allow: call.Failover.Allows,
-		SideEffects: effects.Load, Budget: llmFailoverBudget, OnFailover: r.onLLMFailover,
+		SideEffects: effects.Load, Budget: budget, FirstTokenTimeout: firstToken, OnFailover: r.onLLMFailover,
 	})
 	if err != nil {
 		closeAll(cands)

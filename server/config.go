@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -81,6 +82,7 @@ type Config struct {
 		MaxSessionsPerAgent     int           `yaml:"max_sessions_per_agent"`    // 0 = unlimited
 		StartRatePerPrincipal   float64       `yaml:"start_rate_per_principal"`  // session starts/sec per principal; 0 = unlimited
 		StartBurstPerPrincipal  int           `yaml:"start_burst_per_principal"` // bucket size; required >= 1 when rate > 0
+		HandshakeRatePerIP      float64       `yaml:"handshake_rate_per_ip"`     // WebSocket upgrades/sec per source IP (burst = max(5, 2x)); default 20
 		UpgradeTimeout          time.Duration `yaml:"upgrade_timeout"`
 		ReadyTimeout            time.Duration `yaml:"ready_timeout"`
 		MaxCallDuration         time.Duration `yaml:"max_call_duration"`
@@ -105,6 +107,17 @@ type Config struct {
 		// in progress (default 10s, max 60s; 16 kHz PCM16 mono, ~32 KB/s per call).
 		ReplayBuffer time.Duration `yaml:"replay_buffer"`
 	} `yaml:"stt"`
+
+	// Failover tunes how long an agent stage with fallbacks waits on its
+	// primary (see docs/operations_runbook.md). Zero means the default.
+	Failover struct {
+		// LLMBudget: no fallback is started later than this after the
+		// generation began (default 60s).
+		LLMBudget time.Duration `yaml:"llm_budget"`
+		// LLMFirstToken: a primary LLM silent this long is abandoned for the
+		// fallback; a generation that has started is never cut (default 8s).
+		LLMFirstToken time.Duration `yaml:"llm_first_token"`
+	} `yaml:"failover"`
 
 	// Turn routes live calls through the turn manager (core/turn.Processor).
 	// Off by default: user turns then end on raw VAD stop as before.
@@ -293,8 +306,10 @@ func (c *Config) TurnAnalyzerMode() string {
 	return "process"
 }
 
-// DefaultConfig returns a base configuration. Its origin allowlist includes
-// "*", so production deployments must set their own.
+// DefaultConfig returns the base configuration LoadConfig decodes YAML over
+// (the only production path; direct callers are tests). Its origin allowlist
+// includes "*", so LoadConfig clears it, and the storage dialect, for the
+// production profile: those must be set explicitly.
 func DefaultConfig(profile Profile) *Config {
 	cfg := &Config{
 		Profile:          profile,
@@ -320,6 +335,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Limits.MaxPendingHandshakes = 50
 	cfg.Limits.MaxSessions = 100
 	cfg.Limits.MaxSessionsPerPrincipal = 5
+	cfg.Limits.HandshakeRatePerIP = 20
 	cfg.Limits.UpgradeTimeout = 5 * time.Second
 	cfg.Limits.ReadyTimeout = 10 * time.Second
 	cfg.Limits.MaxCallDuration = 30 * time.Minute
@@ -337,9 +353,9 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.VAD.Workers = 4
 	cfg.VAD.Batch = 8
 	cfg.VAD.QueueCap = 8192
-	cfg.VAD.ModelPath = "third_party/silero_vad.onnx"
+	// Model paths stay empty: the vad and smartturn packages resolve their
+	// default artifacts (and GOVOICE_*_MODEL_PATH) themselves.
 	cfg.Turn.Analyzer.Workers = 1
-	cfg.Turn.Analyzer.ModelPath = "third_party/smart_turn_v3.2_cpu.onnx"
 	cfg.Turn.Analyzer.StopSecs = 3 * time.Second
 	cfg.Turn.Analyzer.Budget = 150 * time.Millisecond
 
@@ -369,12 +385,33 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Retention.ContentRetentionDays = 7
 	cfg.Retention.BatchSize = 500
 	cfg.Recording.RetentionDays = 7
+	cfg.Recording.MaxDuration = time.Hour
+	cfg.Recording.MaxBytes = 256 << 20
+
+	cfg.STT.ReplayBuffer = 10 * time.Second
+	cfg.Failover.LLMBudget, cfg.Failover.LLMFirstToken = defaultLLMFailoverBudget, defaultLLMFirstToken
+	cfg.Idle.BotMaxStuck = 3
+	cfg.DTMF.AggregateTimeout = 2 * time.Second
+	cfg.Audio.DenoiseStrength = 0.5
+	cfg.Warmup.Timeout = 3 * time.Second
+	cfg.Warmup.SpareTTL = 10 * time.Second
+	cfg.OTel.QueueSize = 2048
+	cfg.OTel.ShutdownTimeout = 5 * time.Second
+	// Not defaulted on purpose: turn.speech_timeout, eager_grace, max_mute and
+	// completion waits (setting them would trip "needs turn.manager"; the turn
+	// code owns those fallbacks), warmup.enabled and audio.background.gain_db/loop
+	// (nil means default), otel.sampling_ratio (nil means 1).
 
 	return cfg
 }
 
 // LoadConfig parses and validates YAML configuration from disk.
-func LoadConfig(path string) (*Config, error) {
+func LoadConfig(path string) (*Config, error) { return LoadConfigProfile(path, "") }
+
+// LoadConfigProfile is LoadConfig with the YAML profile overridden (the
+// -profile flag): the override picks the defaults and is what gets validated,
+// so -profile production cannot inherit development defaults or skip checks.
+func LoadConfigProfile(path string, profile Profile) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
@@ -384,18 +421,32 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	var cfg Config
+	// Defaults depend on the profile, so read it first. yaml.v3 decodes into the
+	// pre-populated struct, replacing only keys present (lists are replaced
+	// whole, maps merge, an explicit zero overwrites).
+	var head struct {
+		Profile Profile `yaml:"profile"`
+	}
+	_ = yaml.Unmarshal(data, &head) // syntax errors are reported by the strict decode
+	if profile != "" {
+		head.Profile = profile
+	}
+	cfg := DefaultConfig(head.Profile)
+	if head.Profile == ProfileProduction {
+		cfg.OriginAllowlist, cfg.Storage.Dialect = nil, ""
+	}
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true) // Reject unknown fields per spec §28 & Phase 8 checklist
-	if err := dec.Decode(&cfg); err != nil {
+	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parse config yaml: %w", err)
 	}
+	cfg.Profile = head.Profile
 
-	if err := ValidateConfig(&cfg); err != nil {
+	if err := ValidateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 // ValidateConfig enforces production safety and constraint validation.
@@ -459,11 +510,17 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.Limits.StartRatePerPrincipal > 0 && cfg.Limits.StartBurstPerPrincipal < 1 {
 		return errors.New("start_burst_per_principal must be >= 1 when start_rate_per_principal > 0")
 	}
+	if cfg.Limits.HandshakeRatePerIP < 0 {
+		return errors.New("handshake_rate_per_ip must be >= 0 (0 = default 20)")
+	}
 	if cfg.Limits.MaxCallDuration <= 0 {
 		return errors.New("max_call_duration must be > 0")
 	}
 	if cfg.STT.ReplayBuffer < 0 || cfg.STT.ReplayBuffer > maxSTTReplay {
 		return fmt.Errorf("stt.replay_buffer must be between 0 (default 10s) and %v", maxSTTReplay)
+	}
+	if err := validateLLMFailoverTiming(cfg.Failover.LLMBudget, cfg.Failover.LLMFirstToken); err != nil {
+		return err
 	}
 
 	// Calls run stored agents only: the agent store is mandatory.
