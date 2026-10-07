@@ -21,10 +21,12 @@ build:
 MODULES := . core providers/cartesia providers/deepgram providers/elevenlabs providers/google providers/openai providers/xai server
 
 test: build
-	@set -e; for m in $(MODULES); do \
+	@failed=""; for m in $(MODULES); do \
 		echo "=== Vetting and testing module $$m ==="; \
-		(cd $$m && go vet ./... && go test -race -count=1 ./...); \
-	done
+		(cd $$m && go vet ./... && go test -race -count=1 ./...) || failed="$$failed $$m"; \
+	done; \
+	if [ -n "$$failed" ]; then echo "=== FAILED modules:$$failed ==="; exit 1; fi; \
+	echo "=== All modules passed ==="
 
 # Black-box pipecat.evals run against the Go server with fake providers (docs/decisions/pipecat-evals.md).
 eval-pipecat:
@@ -137,10 +139,11 @@ loadtest-smoke:
 	@go run ./tools/loadtest -sessions 4 -duration 30s -ramp 3s -turns-per-session 3 -sample-interval 2s -max-p95-v2v 1500 $(LOADTEST_ARGS)
 
 # loadtest-soak: SOAK_DURATION=24h for the full P5-4 acceptance run; default 5m.
+# Sample interval is duration/60 clamped to 2s..60s; minimum duration ~1m (ramp + 13 intervals), shorter fails with a clear message.
 SOAK_DURATION ?= 5m
 SOAK_SESSIONS ?= 16
 loadtest-soak:
-	@go run ./tools/loadtest -soak -sessions $(SOAK_SESSIONS) -duration $(SOAK_DURATION) -ramp 30s -sample-interval 30s \
+	@go run ./tools/loadtest -soak -sessions $(SOAK_SESSIONS) -duration $(SOAK_DURATION) -ramp 30s \
 		-max-p95-v2v 1500 -max-rss-growth-pct 10 -max-goroutine-growth 50 -json-out .govoice-loadtest-soak.json -md-out .govoice-loadtest-soak.md $(LOADTEST_ARGS)
 	@cat .govoice-loadtest-soak.md
 

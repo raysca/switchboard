@@ -52,7 +52,7 @@ func parseFlags(args []string) (*flags, error) {
 	fs.StringVar(&f.serverBin, "server-bin", "", "prebuilt -tags fakeproviders server (vadworker next to it); default builds one")
 	fs.BoolVar(&f.keepWork, "keep-work", false, "keep the temp dir (server log, config) and print its path")
 	fs.BoolVar(&f.soak, "soak", false, "label the run a soak and require valid growth windows")
-	fs.DurationVar(&f.sampleEvery, "sample-interval", 5*time.Second, "server sampling interval")
+	fs.DurationVar(&f.sampleEvery, "sample-interval", 0, "server sampling interval (0 = duration/60 clamped to 2s..60s)")
 	fs.BoolVar(&f.findCap, "find-capacity", false, "step concurrency until p95 v2v degrades beyond the budget")
 	fs.StringVar(&f.capSteps, "cap-steps", "4,8,16,32,64,96", "session counts to try (at most 8 steps)")
 	fs.DurationVar(&f.stepDur, "step-duration", 30*time.Second, "length of each capacity step")
@@ -71,6 +71,18 @@ func parseFlags(args []string) (*flags, error) {
 	}
 	if f.sessions < 1 || f.duration <= 0 || f.ramp < 0 || f.ramp >= f.duration {
 		return nil, fmt.Errorf("need sessions >= 1 and 0 <= ramp < duration")
+	}
+	if f.sampleEvery <= 0 {
+		f.sampleEvery = min(max(f.duration/60, 2*time.Second), 60*time.Second)
+	}
+	if f.soak && !f.findCap {
+		// analyze(): growth window = quarter of the post-warmup region, needs >= 3 sample
+		// intervals; +1 interval because the first post-warmup sample can land up to one late.
+		ramp := max(f.ramp, time.Duration(f.sessions)*minStartGap)
+		if need := max(ramp, f.duration/10) + 13*f.sampleEvery; f.duration < need {
+			return nil, fmt.Errorf("soak -duration %s is too short for a valid growth reading with -sample-interval %s and -ramp %s: need at least %s (use -duration >= %s, or a smaller -sample-interval/-ramp)",
+				f.duration, f.sampleEvery, ramp, need.Round(time.Second), need.Round(time.Second))
+		}
 	}
 	return f, nil
 }
@@ -166,7 +178,13 @@ func run(f *flags) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	work, err := os.MkdirTemp("", "govoice-loadtest-")
+	// Signals cancel ctx, which unwinds run() through the deferred cleanup
+	// below (and the server process-group kill); installed before the temp
+	// dir exists so no window leaks it. SIGKILL is covered by the next sweep.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	sweepStaleWork(os.TempDir(), time.Hour)
+	work, err := os.MkdirTemp("", workPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -177,9 +195,11 @@ func run(f *flags) (*Report, error) {
 			os.RemoveAll(work)
 		}
 	}()
+	// Without the pid file a concurrent harness's sweep would delete this dir after an hour.
+	if err := os.WriteFile(filepath.Join(work, pidFile), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		return nil, err
+	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	maxSess := f.sessions
 	steps, err := parseSteps(f.capSteps)
 	if f.findCap {
@@ -309,8 +329,8 @@ func findCapacity(ctx context.Context, f *flags, cp CallParams, steps []int) (*R
 // LoadParams-free core: one load phase against an already running server.
 func runLoad(ctx context.Context, f *flags, cp CallParams, sessions int, duration, ramp time.Duration) (*Results, []Sample, error) {
 	srv := cp.Server
-	// The server rate-limits upgrades per source IP (20/s, burst 40, not configurable) and
-	// every simulated caller is 127.0.0.1, so starts must be spread.
+	// The server rate-limits upgrades per source IP (limits.handshake_rate_per_ip, default
+	// 20/s, burst 40) and every simulated caller is 127.0.0.1, so starts must be spread.
 	if min := time.Duration(sessions) * minStartGap; ramp < min {
 		fmt.Fprintf(os.Stderr, "loadtest: ramp raised to %s (server allows ~20 upgrades/s per source IP)\n", min)
 		ramp = min

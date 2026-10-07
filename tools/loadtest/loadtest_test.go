@@ -256,3 +256,18 @@ func TestEndToEndTwoSessions(t *testing.T) {
 		t.Errorf("unexpected result: %+v\n%s", rep.Results, rep.Markdown())
 	}
 }
+
+func TestSampleIntervalAutoAndSoakMinimum(t *testing.T) {
+	for _, c := range []struct {
+		dur  string
+		want time.Duration
+	}{{"2m", 2 * time.Second}, {"5m", 5 * time.Second}, {"24h", 60 * time.Second}} {
+		f, err := parseFlags([]string{"-soak", "-sessions", "16", "-duration", c.dur, "-ramp", "30s"})
+		if err != nil || f.sampleEvery != c.want {
+			t.Errorf("%s: interval %v err %v, want %v", c.dur, f.sampleEvery, err, c.want)
+		}
+	}
+	if _, err := parseFlags([]string{"-soak", "-duration", "50s", "-ramp", "30s"}); err == nil || !strings.Contains(err.Error(), "too short") {
+		t.Errorf("short soak: err %v, want a 'too short' message", err)
+	}
+}
