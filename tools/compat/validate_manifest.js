@@ -22,7 +22,7 @@ function validateManifest() {
   // 1. Check required top-level keys
   const requiredKeys = [
     'name', 'version', 'toolchain', 'modules', 'client_packages',
-    'protobuf', 'rtvi', 'audio', 'resampler', 'vad',
+    'protobuf', 'rtvi', 'audio', 'resampler', 'vad', 'smart_turn',
     'google_provider', 'xai_provider', 'auth_and_admission',
     'limits_and_timeouts', 'target_platform', 'slos'
   ];
@@ -72,6 +72,22 @@ function validateManifest() {
   const actualVadSha = sha256File(vadPath);
   if (actualVadSha !== manifest.vad.sha256) {
     throw new Error(`VAD SHA-256 mismatch! Expected ${manifest.vad.sha256}, got ${actualVadSha}`);
+  }
+
+  // 4b. Verify Smart Turn model checksum
+  const turnPath = path.join(rootDir, manifest.smart_turn.model_file);
+  if (!fs.existsSync(turnPath)) {
+    throw new Error(`Smart Turn model file not found: ${turnPath}`);
+  }
+  const actualTurnSha = sha256File(turnPath);
+  if (actualTurnSha !== manifest.smart_turn.sha256) {
+    throw new Error(`Smart Turn SHA-256 mismatch! Expected ${manifest.smart_turn.sha256}, got ${actualTurnSha}`);
+  }
+  // The pin is repeated in the Go loader and the image build; keep all three in step.
+  for (const rel of ['smartturn/model.go', 'deploy/Dockerfile']) {
+    if (!fs.readFileSync(path.join(rootDir, rel), 'utf8').includes(manifest.smart_turn.sha256)) {
+      throw new Error(`Smart Turn SHA-256 in ${rel} does not match the manifest`);
+    }
   }
 
   // 5. Verify installed npm package versions in tools/compat

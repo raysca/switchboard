@@ -77,6 +77,17 @@
     "context_samples": 64,
     "onnxruntime_version": "1.29.0"
   },
+  "smart_turn": {
+    "engine": "Pipecat Smart Turn v3.2 (CPU) ONNX Runtime",
+    "model_file": "third_party/smart_turn_v3.2_cpu.onnx",
+    "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
+    "source": "pipecat-impl/src/pipecat/audio/turn/smart_turn/data/smart-turn-v3.2-cpu.onnx",
+    "license": "BSD-2-Clause, Copyright (c) 2024-2026 Daily (pipecat-impl/LICENSE; model shipped inside the pipecat package)",
+    "sample_rate_hz": 16000,
+    "window_seconds": 8,
+    "n_mels": 80,
+    "onnxruntime_version": "1.29.0"
+  },
   "google_provider": {
     "stt_model": "chirp_2",
     "stt_location": "us-central1",
