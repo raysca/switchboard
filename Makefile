@@ -18,7 +18,7 @@ build:
 	go build ./examples/...
 
 # Every module in go.work (root also covers vad, smartturn, transport, tools/*, cmd, examples).
-MODULES := . core providers/cartesia providers/deepgram providers/elevenlabs providers/google providers/openai providers/xai server
+MODULES := . core providers/cartesia providers/deepgram providers/elevenlabs providers/google providers/nvidia providers/openai providers/xai server
 
 test: build
 	@failed=""; for m in $(MODULES); do \
@@ -126,6 +126,17 @@ example-cli:
 
 example-go:
 	@./scripts/dev.sh go "$(NAME)"
+
+# Opt-in LIVE check: real Google STT/LLM/TTS (spends API credit, ~60 provider calls) driving
+# turn scenarios against a real server with turn.manager off/on/smart-turn
+# (docs/benchmarks/turn-manager-live.md). Needs examples/.env; refuses without GOVOICE_LIVE=1.
+# LIVE_ARGS e.g. "-only S1,S2 -variants off,plain -stt-model latest_long -trace".
+live-check:
+	@test "$$GOVOICE_LIVE" = 1 || { echo "live-check spends real Google API credit: run GOVOICE_LIVE=1 make live-check"; exit 1; }
+	@test -f examples/.env || { echo "live-check needs examples/.env (see examples/.env.example)"; exit 1; }
+	@go run ./tools/livecheck $(LIVE_ARGS)
+
+.PHONY: live-check
 
 # Framework latency baseline with fake providers (docs/benchmarks/baseline.md).
 bench-latency:

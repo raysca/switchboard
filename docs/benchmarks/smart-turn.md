@@ -16,7 +16,8 @@ Parity: the Go log-mel features are bit-identical to pipecat's `_whisper_feature
 10 s truncated to the last 8 s, odd length with DC offset at tiny amplitude, and int16-saturated. The waveform
 normalization runs in float32 as numpy does; float64 there was off by up to 1.6e-5. Model probabilities still differ by
 up to 0.06 from onnxruntime-python 1.24 (Go uses ORT 1.29). This quantized model's output depends on ORT graph fusions:
-python alone spans 0.80 to 0.83 across optimization levels. The >0.5 verdict agrees on every fixture.
+python alone spans 0.80 to 0.83 across optimization levels. The >0.5 verdict agrees on every fixture. On speech (5 clips x 3 silence tails, `docs/benchmarks/turn-manager-live.md`) Go and Python differ by up to 0.2
+and python alone by up to 0.39 across optimization levels; 1 of 30 verdicts flips.
 
 Config (`turn.manager: true` required):
 

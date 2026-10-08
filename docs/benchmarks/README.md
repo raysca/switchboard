@@ -55,3 +55,5 @@ To start gating CI: run the `perf-gate` workflow on a PR once (first runs upload
 - CI: macos-14 runners have 3 cores, so the first run produces a `darwin-arm64-3c` candidate; the onnxruntime dylib is git-ignored and is downloaded by the workflow.
 - Client v2v includes the VAD hangover and a 100 ms clip margin, so it is not comparable with `baseline.md`.
 - One speech clip, 4 calls: the smoke is a regression tripwire, not a capacity measurement (see `capacity.md`).
+
+Live provider checks (opt-in, spends API credit, not part of the gates): `make live-check`, results in `turn-manager-live.md`.
