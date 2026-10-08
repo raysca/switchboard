@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -56,11 +57,12 @@ func DefaultTTSConfig() TTSConfig {
 }
 
 // TTSProcessor turns SynthesisUnitFrames into 20 ms OutputAudioFrames, with
-// word timings on the frames. One websocket per unit; units play in order
+// word timings on the frames. One websocket per reply (multi-stream-input, one context per unit); units play in order
 // (the shared machinery lives in core/ttsunit).
 type TTSProcessor struct {
 	*ttsunit.Runner
-	cfg TTSConfig
+	cfg  TTSConfig
+	slot ttsunit.ReplySlot[*session]
 }
 
 func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
@@ -97,9 +99,10 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 		cfg.Pool = netpool.Get(netpool.Options{Provider: "elevenlabs", Stage: "tts", HTTP1Only: true})
 	}
 	p := &TTSProcessor{cfg: cfg}
+	p.slot.Close = (*session).abort
 	p.Runner = ttsunit.New(ttsunit.Config{
 		Provider: "elevenlabs", Model: cfg.Model, SampleRate: cfg.SampleRate,
-		Breaker: cfg.CircuitBreaker, Policy: cfg.RetryPolicy, Classify: classify,
+		Breaker: cfg.CircuitBreaker, Policy: cfg.RetryPolicy, Classify: classify, EndReply: p.slot.Drop,
 		Attempt: func(ctx context.Context, u *ttsunit.Unit, attempt int) error {
 			return (&unitRun{p: p, Unit: u}).attempt(ctx, attempt)
 		},
@@ -107,9 +110,8 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	return p, nil
 }
 
-// Warm pre-dials TCP+TLS only. Each synthesis unit owns its websocket
-// (a context/session per unit), so a speculative websocket would not be
-// reusable; the transport spare is anonymous and unbilled. Skipped while the
+// Warm pre-dials TCP+TLS only. The reply's websocket is dialed
+// with its first unit, so a speculative websocket would not be reusable; the transport spare is anonymous and unbilled. Skipped while the
 // breaker is open; never reports to it.
 func (p *TTSProcessor) Warm(ctx context.Context) error {
 	if br := p.cfg.CircuitBreaker; br != nil && br.WouldRefuse() {
@@ -121,11 +123,13 @@ func (p *TTSProcessor) Warm(ctx context.Context) error {
 
 // ---- wire format ----
 
-// clientMsg covers the opening (BOS), text, and closing (EOS) messages.
+// clientMsg covers the context-opening and text messages; flush and close are
+// built as maps because they carry no text.
 type clientMsg struct {
-	Text                 string         `json:"text"`
-	VoiceSettings        map[string]any `json:"voice_settings,omitempty"`
-	TryTriggerGeneration bool           `json:"try_trigger_generation,omitempty"`
+	Text          string         `json:"text"`
+	ContextID     string         `json:"context_id"`
+	VoiceSettings map[string]any `json:"voice_settings,omitempty"`
+	Flush         bool           `json:"flush,omitempty"`
 }
 
 type alignment struct {
@@ -137,6 +141,7 @@ type alignment struct {
 type message struct {
 	Audio               string     `json:"audio"`
 	IsFinal             bool       `json:"isFinal"`
+	ContextID           string     `json:"contextId"`
 	Alignment           *alignment `json:"alignment"`
 	NormalizedAlignment *alignment `json:"normalizedAlignment"`
 	Error               string     `json:"error"`
@@ -161,12 +166,34 @@ func (c TTSConfig) voiceSettings() map[string]any {
 
 func (c TTSConfig) url() string {
 	u, _ := url.Parse(c.Endpoint)
-	u.Path = strings.TrimRight(u.Path, "/") + "/v1/text-to-speech/" + url.PathEscape(c.Voice) + "/stream-input"
+	u.Path = strings.TrimRight(u.Path, "/") + "/v1/text-to-speech/" + url.PathEscape(c.Voice) + "/multi-stream-input"
 	u.RawQuery = url.Values{"model_id": {c.Model}, "output_format": {"pcm_" + strconv.Itoa(c.SampleRate)}, "sync_alignment": {"true"}}.Encode()
 	return u.String()
 }
 
 // ---- synthesis ----
+
+// session is the websocket shared by the units of one reply.
+type session struct {
+	conn *websocket.Conn
+	cur  atomic.Value // string: the unit context in flight
+}
+
+func (s *session) write(ctx context.Context, v any) error {
+	body, _ := json.Marshal(v)
+	return s.conn.Write(ctx, websocket.MessageText, body)
+}
+
+// abort closes the in-flight context and the socket (barge-in, error, stale reply).
+func (s *session) abort() {
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	if id, _ := s.cur.Load().(string); id != "" {
+		_ = s.write(ctx, map[string]any{"context_id": id, "close_context": true})
+	}
+	_ = s.write(ctx, map[string]any{"close_socket": true})
+	s.conn.CloseNow()
+}
 
 // unitRun is one attempt's provider-side state.
 type unitRun struct {
@@ -189,33 +216,61 @@ func (u *unitRun) dial(ctx context.Context) (*websocket.Conn, error) {
 	return c, nil
 }
 
-func (u *unitRun) attempt(ctx context.Context, attempt int) error {
+// attempt synthesizes one unit in its own context on the reply's socket: open
+// the context, send the text with flush, close the context; its isFinal ends
+// the unit. A retry starts a fresh socket.
+func (u *unitRun) attempt(ctx context.Context, attempt int) (err error) {
 	cfg := u.p.cfg
-	conn, err := u.dial(ctx)
-	if err != nil {
-		return err
+	slot := &u.p.slot
+	s, ok := slot.Get(u.Frame)
+	if ok && attempt > 0 {
+		slot.Drop()
+		ok = false
 	}
-	defer conn.CloseNow()
+	if !ok {
+		conn, err := u.dial(ctx)
+		if err != nil {
+			return err
+		}
+		s = &session{conn: conn}
+		slot.Put(u.Frame, s)
+	}
+	defer func() {
+		if err != nil {
+			slot.Drop()
+		}
+	}()
+	conn := s.conn
+	// Operations outlive ctx so that abort can still close the context cleanly
+	// (a canceled read ctx would close the socket first).
+	rctx := context.WithoutCancel(ctx)
+	defer context.AfterFunc(ctx, slot.Drop)()
+	fail := func(err error) error { // report the cause (timeout/cancel), not the abort's hang-up
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return MapError("tts", err, nil)
+	}
+	cid := "u" + strconv.FormatUint(u.Frame.UnitID, 10) + "-" + strconv.Itoa(attempt)
+	s.cur.Store(cid)
 
-	// BOS, the text (trailing space per the docs), then EOS to flush and finish.
-	for _, m := range []clientMsg{
-		{Text: " ", VoiceSettings: cfg.voiceSettings()},
-		{Text: u.Frame.Text + " ", TryTriggerGeneration: true},
-		{Text: ""},
+	for _, m := range []any{
+		clientMsg{Text: " ", ContextID: cid, VoiceSettings: cfg.voiceSettings()},
+		clientMsg{Text: u.Frame.Text + " ", ContextID: cid, Flush: true}, // trailing space per the docs
+		map[string]any{"context_id": cid, "close_context": true},
 	} {
-		body, _ := json.Marshal(m)
-		if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
-			return MapError("tts", err, nil)
+		if err := s.write(rctx, m); err != nil {
+			return fail(err)
 		}
 	}
 	for {
-		_, data, err := conn.Read(ctx)
+		_, data, err := conn.Read(rctx)
 		if err != nil {
-			return MapError("tts", err, nil)
+			return fail(err)
 		}
 		var m message
-		if json.Unmarshal(data, &m) != nil {
-			continue
+		if json.Unmarshal(data, &m) != nil || (m.ContextID != "" && m.ContextID != cid) {
+			continue // not this unit's context (e.g. a retried attempt's leftovers)
 		}
 		if m.Error != "" || (m.Message != "" && m.Audio == "" && !m.IsFinal) {
 			return messageError(m.Error, m.Message, m.Code)
@@ -239,6 +294,11 @@ func (u *unitRun) attempt(ctx context.Context, attempt int) error {
 		}
 		if m.IsFinal {
 			u.flushWord()
+			if u.Frame.IsFinal { // last unit: end the reply and its socket
+				slot.Release()
+				s.cur.Store("") // already closed: abort sends only close_socket, bounded
+				s.abort()
+			}
 			return u.Finish()
 		}
 	}

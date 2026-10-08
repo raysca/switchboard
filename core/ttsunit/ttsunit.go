@@ -29,6 +29,10 @@ type Config struct {
 	// Attempt performs one synthesis try, feeding audio to u.Write and finishing
 	// with u.Finish. State from a failed try before commit is cleared by Reset.
 	Attempt func(ctx context.Context, u *Unit, attempt int) error
+	// EndReply, when set, is called on interruption/cancel/Close (under the
+	// runner lock: it must not block long) and when a blank final unit ends a
+	// reply without an Attempt, so a provider can release its reply session.
+	EndReply func()
 }
 
 type cancelEntry struct {
@@ -85,6 +89,9 @@ func (r *Runner) Close() error {
 }
 
 func (r *Runner) cancelAllLocked() {
+	if r.cfg.EndReply != nil {
+		r.cfg.EndReply()
+	}
 	for _, c := range r.cancels {
 		c.cancel()
 	}
@@ -187,6 +194,9 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 		u := &Unit{Frame: unit, r: r, s: s, span: span, session: traceSession, turn: traceTurn, gen: traceGen, policy: policy}
 		var err error
 		if strings.TrimSpace(unit.Text) == "" { // nothing to say; keep the drain boundary
+			if unit.IsFinal && r.cfg.EndReply != nil {
+				r.cfg.EndReply()
+			}
 			err = u.Finish()
 		} else {
 			err = resilience.Execute(synthCtx, r.cfg.Breaker, r.cfg.Policy, r.cfg.Classify, func() bool { return u.committed }, func(ctx context.Context, attempt int) error {

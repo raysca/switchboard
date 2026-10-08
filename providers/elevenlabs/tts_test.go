@@ -198,11 +198,11 @@ func TestTTS_StreamsFramesWithWordTimings(t *testing.T) {
 	waitFor(t, 3*time.Second, "stop", func() bool { return h.stopped() == 1 })
 
 	msgs, hdr, u := <-f.msgs, <-f.headers, <-f.urls
-	if msgs[0].Text != " " || msgs[0].VoiceSettings["stability"] != 0.4 || msgs[1].Text != "Hello there " || !msgs[1].TryTriggerGeneration || msgs[2].Text != "" {
+	if msgs[0].Text != " " || msgs[0].VoiceSettings["stability"] != 0.4 || msgs[1].Text != "Hello there " || !msgs[1].Flush || msgs[0].ContextID == "" || msgs[0].ContextID != msgs[1].ContextID {
 		t.Fatalf("messages: %+v", msgs)
 	}
 	q := u.Query()
-	if !strings.HasSuffix(u.Path, "/v1/text-to-speech/"+defaultVoice+"/stream-input") || q.Get("model_id") != "eleven_flash_v2_5" || q.Get("output_format") != "pcm_24000" || q.Get("sync_alignment") != "true" {
+	if !strings.HasSuffix(u.Path, "/v1/text-to-speech/"+defaultVoice+"/multi-stream-input") || q.Get("model_id") != "eleven_flash_v2_5" || q.Get("output_format") != "pcm_24000" || q.Get("sync_alignment") != "true" {
 		t.Fatalf("url: %v", u)
 	}
 	if hdr.Get("xi-api-key") != cfg.APIKey || strings.Contains(u.String(), cfg.APIKey) {

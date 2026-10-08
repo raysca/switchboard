@@ -227,3 +227,15 @@ func TestCancelStopsUnit(t *testing.T) {
 		})
 	}
 }
+
+// A blank final unit ends the reply without an Attempt: EndReply releases the
+// provider's reply session; so does an interruption.
+func TestRunner_EndReplyHook(t *testing.T) {
+	var ends atomic.Int32
+	h := start(t, func(context.Context, *Unit, int) error { return nil })
+	h.r.cfg.EndReply = func() { ends.Add(1) }
+	h.say(t, 1, " ", true)
+	waitFor(t, "blank final unit", func() bool { return ends.Load() == 1 })
+	_ = h.sess.Post(&core.InterruptionFrame{})
+	waitFor(t, "interruption", func() bool { return ends.Load() == 2 })
+}
