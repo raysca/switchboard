@@ -12,7 +12,7 @@
 |---|---|
 | 0 Measure | Observer API, latency observers (STT/TTFT/TTFB/voice-to-voice, Prometheus + timeline), `pipecat.evals` black-box run over RTVI with fake providers, fake-provider bench |
 | 1 Turn-taking | Start/stop strategy chains, Smart-turn ONNX worker (p95 25 ms), LLM turn-completion markers, user mute, user/bot idle controller, turn-quality gate, turn manager wired live (`turn.manager`) |
-| 2 Providers | Fallback chains in agent config, LLM/TTS/STT failover (STT with audio replay), Deepgram STT, Cartesia + ElevenLabs TTS, OpenAI-compatible LLM (SSRF-guarded), shared pools + optional pre-dial, shared TTS unit runner |
+| 2 Providers | Fallback chains in agent config, LLM/TTS/STT failover (STT with audio replay), Deepgram STT, Cartesia + ElevenLabs TTS and STT, OpenAI-compatible LLM (SSRF-guarded), shared pools + optional pre-dial, shared TTS unit runner |
 | 3 Conversation | Safe sentence aggregation, heard-text tracker + interrupted-reply reconciliation, parallel + async tools end to end, tool-round history ordering, live summarization |
 | 4 Telephony audio | DTMF in/out + `send_dtmf`, input filter chain + pure-Go denoiser, output gain + ambience, call recording with retention, sink redaction |
 | 5 Scale/ops | Per-agent/per-principal limits, rolling drain, OpenTelemetry (off by default), load/soak harness, perf CI gate with per-machine baselines |
@@ -54,3 +54,12 @@ These numbers are framework cost only. No real STT/LLM/TTS was called anywhere (
 2. Run the live integration tests per provider with real keys once; enable `turn.manager` on a staging agent with Smart-turn and compare turn quality.
 3. Decide Q1 and the `turn.manager` default.
 4. Run the 24 h soak (`make loadtest-soak SOAK_DURATION=24h`) on a quiet host.
+
+## Round 1 and 2 follow-ups
+
+Uncommitted on top of the 23 slices.
+
+- **Changed:** Nvidia provider (NIM LLM through the OpenAI adapter, Riva STT/TTS over gRPC); Cartesia and ElevenLabs STT; server WebSocket ping liveness (`limits.ping_*`, replaces data-silence as the liveness signal); Smart Turn window now starts at the VAD speech start; idle prompt/goodbye now audible with Google TTS; no ERROR logs at hang-up (paced writer closed, STT `EOF`); late finals no longer lose `min_words` turns or the first half of a paused sentence; ORT telemetry disabled and ordered ORT shutdown; distinct admission reject codes; `tools/livecheck` live harness.
+- **Live results (small n, one machine):** Google chirp_2/latest_long + Gemini + Journey with the turn manager, and Nvidia NIM/Riva, see `docs/benchmarks/turn-manager-live.md` and `docs/benchmarks/nvidia-live.md`. Manager default stop costs about +0.6 s voice-to-voice (not default-on); Nvidia full turn 2.1 to 3.6 s voice-to-voice (LLM-bound).
+- **Open:** Smart Turn v3.2 misjudges the measured clips (model); `chirp_2` sends no interims so `min_words` gives no barge-in; NIM reasoning-only models and 404/410 catalog entries; xAI STT breaker pattern differs; `PingMaxFailures` has no YAML key; abandoned tabs hold a slot until `max_call_duration` unless `idle.user_timeout` is set; Cartesia, ElevenLabs, Deepgram and xAI never run live. Full list: matrix "Known gaps and risks".
+
