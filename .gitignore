@@ -45,3 +45,9 @@ e2e/.stack.json
 .govoice-eval-pipecat/
 .govoice-loadtest-soak.*
 .perf-out/
+
+# livecheck agent-matrix output
+.agent-matrix-out/
+
+# provider conformance run output (tools/provtest)
+provtest-results.json
