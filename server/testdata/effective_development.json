@@ -60,7 +60,8 @@
   "Batch": 8,
   "ModelPath": "third_party/silero_vad.onnx",
   "OrtLibPath": "",
-  "QueueCap": 8192
+  "QueueCap": 8192,
+  "StopMS": 800
  },
  "STT": {
   "ReplayBuffer": 10000000000

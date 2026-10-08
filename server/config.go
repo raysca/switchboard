@@ -12,6 +12,7 @@ import (
 	"govoice/core/redact"
 	coreturn "govoice/core/turn"
 	"govoice/server/otelexport"
+	"govoice/vad"
 
 	"gopkg.in/yaml.v3"
 )
@@ -101,6 +102,9 @@ type Config struct {
 		ModelPath  string `yaml:"model_path"`
 		OrtLibPath string `yaml:"ort_lib_path"`
 		QueueCap   int    `yaml:"queue_cap"`
+		// StopMS is the silence after speech that ends the user's VAD turn
+		// (rounded up to 32 ms chunks). Default 800; 200..2000.
+		StopMS int `yaml:"stop_ms"`
 	} `yaml:"vad"`
 
 	// STT tunes failover for agents with STT fallbacks.
@@ -377,6 +381,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.VAD.Workers = 4
 	cfg.VAD.Batch = 8
 	cfg.VAD.QueueCap = 8192
+	cfg.VAD.StopMS = 800
 	// Model paths stay empty: the vad and smartturn packages resolve their
 	// default artifacts (and GOVOICE_*_MODEL_PATH) themselves.
 	cfg.Turn.Analyzer.Workers = 1
@@ -595,6 +600,9 @@ func ValidateConfig(cfg *Config) error {
 	if k := cfg.Turn.Completion; k.ShortWait < 0 || k.LongWait < 0 {
 		return errors.New("turn.completion.short_wait and long_wait must be >= 0")
 	}
+	if ms := cfg.VAD.StopMS; ms != 0 && (ms < 200 || ms > 2000) {
+		return errors.New("vad.stop_ms must be between 200 and 2000")
+	}
 	if cfg.Turn.MaxMute < 0 {
 		return errors.New("turn.max_mute must be >= 0")
 	}
@@ -711,4 +719,15 @@ func rejectRemovedKeys(data []byte) error {
 		}
 	}
 	return nil
+}
+
+// VADProcessorConfig is the per-call VAD config: library defaults with
+// vad.stop_ms applied (0 keeps the 800 ms default).
+func (c *Config) VADProcessorConfig() vad.ProcessorConfig {
+	pc := vad.DefaultProcessorConfig()
+	if ms := c.VAD.StopMS; ms > 0 {
+		chunkMS := vad.ChunkSamples * 1000 / vad.SampleRate
+		pc.StopChunks = (ms + chunkMS - 1) / chunkMS
+	}
+	return pc
 }

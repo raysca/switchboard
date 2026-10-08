@@ -56,6 +56,7 @@ vad:
   model_path: "/opt/govoice/models/silero_vad.onnx"
   ort_lib_path: "/opt/govoice/lib/libonnxruntime.so"
   queue_cap: 8192
+  stop_ms: 800         # silence that ends a VAD speech segment (200..2000, 32 ms steps); lower = faster replies, more mid-sentence cuts
 
 # Provider infrastructure only. Models, voices, prompts and credentials belong to
 # stored agents and provider credentials (see /api/v1/agents, /api/v1/providers).

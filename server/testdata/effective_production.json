@@ -62,7 +62,8 @@
   "Batch": 8,
   "ModelPath": "/opt/govoice/models/silero_vad.onnx",
   "OrtLibPath": "/opt/govoice/lib/libonnxruntime.so",
-  "QueueCap": 8192
+  "QueueCap": 8192,
+  "StopMS": 800
  },
  "STT": {
   "ReplayBuffer": 10000000000
