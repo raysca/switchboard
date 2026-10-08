@@ -429,7 +429,7 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 				seq++
 
 				p.mu.Lock()
-				if unit.Gen != 0 && unit.Gen < s.CurrentGeneration() {
+				if synthCtx.Err() != nil || (unit.Gen != 0 && unit.Gen < s.CurrentGeneration()) { // gen 0 (idle prompt) stops on barge-in via synthCtx
 					p.mu.Unlock()
 					return
 				}

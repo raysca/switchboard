@@ -403,7 +403,9 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		if p.session != nil {
 			currentGen = p.session.CurrentGeneration()
 		}
-		if gen != currentGen {
+		// gen 0: session-originated speech (idle prompts), not fenced by generation;
+		// a barge-in still stops it through the cancelled unit context.
+		if unitCtx.Err() != nil || (gen != 0 && gen != currentGen) {
 			p.mu.Unlock()
 			return
 		}
@@ -442,7 +444,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			if p.session != nil {
 				currentGen = p.session.CurrentGeneration()
 			}
-			if gen != currentGen {
+			if unitCtx.Err() != nil || (gen != 0 && gen != currentGen) {
 				p.mu.Unlock()
 				return // Interrupted mid-synthesis: stop immediately
 			}

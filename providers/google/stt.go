@@ -523,6 +523,20 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 
 	// Send audio chunk
 	if err := st.stream.Send(f.Samples); err != nil {
+		if errors.Is(err, io.EOF) {
+			// gRPC: the stream already ended (the server closed it, or call
+			// teardown cancelled it); its status is the receiver's to report.
+			// Not a session failure: drop this frame, the next opens a new stream.
+			p.mu.Lock()
+			if p.active == st {
+				p.active = nil
+			}
+			p.mu.Unlock()
+			if p.session == nil { // no receiver owns the stream's context
+				st.cancel()
+			}
+			return e.Push(f)
+		}
 		p.mu.Lock()
 		turn, turnGen := st.turnID, st.gen
 		if p.active == st {

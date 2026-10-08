@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -311,5 +312,75 @@ func TestTTSForwardsUpstreamFlushAck(t *testing.T) {
 	}
 	if em.frame != frame {
 		t.Fatal("flush ack frame was replaced")
+	}
+}
+
+// Idle prompts and goodbyes are synthesis units with generation 0 (never fenced by
+// an interruption). The session generation starts at 1, so the post-synthesis
+// staleness checks must exempt gen 0 or the prompt is silently never played.
+func TestTTS_GenerationZeroUnitIsPlayed(t *testing.T) {
+	cfg := DefaultTTSConfig()
+	cfg.Client = &mockTTSClient{}
+	proc, err := NewTTSProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe, _ := core.NewPipeline(proc)
+	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	_ = proc.Attach(session, 0)
+	var mu sync.Mutex
+	var audio int
+	session.OnOutput = func(f core.Frame) {
+		if _, ok := f.(*core.OutputAudioFrame); ok {
+			mu.Lock()
+			audio++
+			mu.Unlock()
+		}
+	}
+	_ = session.Start()
+	defer session.Close()
+	if session.CurrentGeneration() == 0 {
+		t.Fatal("test premise: session generation starts above 0")
+	}
+	_ = session.Post(&core.SynthesisUnitFrame{Turn: "idle-say-1", Gen: 0, UnitID: 1, Text: "Are you still there?", IsFinal: true})
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if audio == 0 {
+		t.Fatal("generation-0 unit produced no audio")
+	}
+}
+
+// A barge-in during a generation-0 unit (idle prompt) must still silence it: the
+// generation fence exempts gen 0, so the cancelled unit context is what stops it.
+func TestTTS_GenerationZeroUnitStopsOnInterruption(t *testing.T) {
+	started := make(chan struct{})
+	cfg := DefaultTTSConfig()
+	cfg.Client = &mockTTSClient{synthesizeFn: func(ctx context.Context, _, _ string, _ int) ([]byte, error) {
+		close(started)
+		<-ctx.Done()
+		return make([]byte, 4800), nil // response landed just as the barge-in cancelled it
+	}}
+	proc, err := NewTTSProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe, _ := core.NewPipeline(proc)
+	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	_ = proc.Attach(session, 0)
+	var audio atomic.Int32
+	session.OnOutput = func(f core.Frame) {
+		if _, ok := f.(*core.OutputAudioFrame); ok {
+			audio.Add(1)
+		}
+	}
+	_ = session.Start()
+	defer session.Close()
+	_ = session.Post(&core.SynthesisUnitFrame{Turn: "idle-say-1", Gen: 0, UnitID: 1, Text: "Are you still there?", IsFinal: true})
+	<-started
+	_ = session.Post(&core.InterruptionFrame{Gen: session.CurrentGeneration()})
+	time.Sleep(150 * time.Millisecond)
+	if n := audio.Load(); n != 0 {
+		t.Fatalf("interrupted generation-0 unit played %d audio frames", n)
 	}
 }
