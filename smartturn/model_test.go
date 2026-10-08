@@ -28,6 +28,7 @@ func TestMain(m *testing.M) {
 	cmd.Dir = vad.Root()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "build turnworker: %v\n%s", err, out)
+		os.RemoveAll(dir)
 		os.Exit(1)
 	}
 	code := m.Run()

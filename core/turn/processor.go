@@ -41,6 +41,10 @@ type ProcessorOptions struct {
 	Mute       []UserMuteStrategy
 	MaxMute    time.Duration
 	OnMuteDrop func() // called per dropped input frame while muted
+	// OnFinalWithoutInterims is called once per call when the first transcript
+	// candidate is already final: the STT sends no interim results, so a
+	// transcript-based start (min_words) cannot act before the final.
+	OnFinalWithoutInterims func()
 }
 
 // tickFrame re-enters the run loop so the manager advances on the same
@@ -49,6 +53,12 @@ type ProcessorOptions struct {
 type tickFrame struct{}
 
 func (tickFrame) Type() core.FrameType { return core.FrameInternal }
+
+// unstartedNoFinalExpiry: how long after the VAD stop an unstarted turn (min_words, wake
+// phrase) still waits for its final transcript. A streaming STT without interim results
+// (Google chirp_2) answers 1-2 s after the VAD stop; dropping the turn earlier lost the
+// whole utterance. ponytail: fixed cap; make it config if a provider is slower.
+const unstartedNoFinalExpiry = 2500 * time.Millisecond
 
 type segment struct {
 	turn  string
@@ -66,17 +76,19 @@ type segment struct {
 //
 // All state below is owned by the session run loop.
 type Processor struct {
-	mgr       *Manager
-	clock     Clock
-	tick      time.Duration
-	expiry    time.Duration
-	session   core.SessionController
-	index     int
-	wake      chan struct{}
-	tickGen   atomic.Uint64 // generation of the queued tick; 0 = none queued
-	busy      atomic.Bool
-	extStop   atomic.Bool // external end-of-turn signal, consumed by the run loop
-	startOnce sync.Once
+	mgr    *Manager
+	clock  Clock
+	tick   time.Duration
+	expiry time.Duration
+	// expiryNoFinal replaces expiry while the newest segment has no final transcript yet.
+	expiryNoFinal time.Duration
+	session       core.SessionController
+	index         int
+	wake          chan struct{}
+	tickGen       atomic.Uint64 // generation of the queued tick; 0 = none queued
+	busy          atomic.Bool
+	extStop       atomic.Bool // external end-of-turn signal, consumed by the run loop
+	startOnce     sync.Once
 
 	last        time.Time
 	open        bool // a managed turn exists (first VAD start .. terminal event/expiry)
@@ -90,11 +102,13 @@ type Processor struct {
 	lastStop    time.Time
 	candGen     uint64 // generation of the last candidate forwarded for this turn
 
-	mute       *muter
-	onMuteDrop func()
-	dropSeg    bool        // the current VAD segment's start was dropped; swallow its stop
-	mgrMuted   bool        // the manager is paused for a not-yet-admitted turn
-	mutedNow   atomic.Bool // mirrors mute.on for other goroutines (idle controller)
+	mute         *muter
+	onMuteDrop   func()
+	onNoInterims func()
+	sawCandidate bool        // a transcript candidate arrived this call
+	dropSeg      bool        // the current VAD segment's start was dropped; swallow its stop
+	mgrMuted     bool        // the manager is paused for a not-yet-admitted turn
+	mutedNow     atomic.Bool // mirrors mute.on for other goroutines (idle controller)
 }
 
 func NewProcessor(cfg Config, opts ProcessorOptions) (*Processor, error) {
@@ -106,7 +120,7 @@ func NewProcessor(cfg Config, opts ProcessorOptions) (*Processor, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &Processor{mgr: mgr, clock: opts.Clock, tick: opts.Tick, mute: newMuter(opts.Mute, opts.MaxMute), onMuteDrop: opts.OnMuteDrop,
+	p := &Processor{mgr: mgr, clock: opts.Clock, tick: opts.Tick, mute: newMuter(opts.Mute, opts.MaxMute), onMuteDrop: opts.OnMuteDrop, onNoInterims: opts.OnFinalWithoutInterims,
 		wake: make(chan struct{}, 1), closed: make(map[string]struct{})}
 	if p.clock == nil {
 		p.clock = realClock{}
@@ -116,6 +130,7 @@ func NewProcessor(cfg Config, opts ProcessorOptions) (*Processor, error) {
 	}
 	// Long enough for a trailing final transcript before an unstarted turn is dropped.
 	p.expiry = max(cfg.SilenceTimeout, time.Second)
+	p.expiryNoFinal = max(p.expiry, unstartedNoFinalExpiry)
 	if err := mgr.Start(p.now()); err != nil {
 		return nil, err
 	}
@@ -270,13 +285,22 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter) error {
 	seg := fmt.Sprintf("turn-%d-%d", v.Gen, v.Seq) // same identity STT derives
 	if !p.open {
-		p.retireSegments()
+		// The last turn ended with no transcript at all while its final is still
+		// due (a stop faster than a non-streaming STT, e.g. Smart Turn + chirp_2):
+		// the user is resuming that utterance, so its late final joins this turn.
+		n := len(p.segs)
+		carry := n > 0 && !p.segs[n-1].final && p.joined() == "" && p.now().Sub(p.lastStop) < p.expiryNoFinal
+		segs := p.segs
+		if !carry {
+			p.retireSegments()
+			segs = nil
+		}
 		p.extStop.Store(false) // a stale signal must not end the next turn
 		gen := core.Generation(v.Gen)
 		if gen == 0 && p.session != nil {
 			gen = core.Generation(p.session.CurrentGeneration())
 		}
-		p.open, p.started, p.id, p.mgrGen, p.segs, p.candGen = true, false, core.TurnID(seg), gen, nil, 0
+		p.open, p.started, p.id, p.mgrGen, p.segs, p.candGen = true, false, core.TurnID(seg), gen, segs, 0
 	}
 	p.segs = append(p.segs, segment{turn: seg})
 	p.vadSpeaking = true
@@ -284,6 +308,12 @@ func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter)
 }
 
 func (p *Processor) onCandidate(c *core.TranscriptCandidateFrame, e core.Emitter) error {
+	if !p.sawCandidate {
+		p.sawCandidate = true
+		if (c.Final || c.EndOfUtterance) && p.onNoInterims != nil {
+			p.onNoInterims()
+		}
+	}
 	idx := -1
 	for i := range p.segs {
 		if p.segs[i].turn == string(c.Turn) {
@@ -360,7 +390,11 @@ func (p *Processor) advance(e core.Emitter) error {
 			return err
 		}
 	}
-	if p.open && !p.started && !p.vadSpeaking && at.Sub(p.lastStop) >= p.expiry {
+	limit := p.expiry
+	if n := len(p.segs); n > 0 && !p.segs[n-1].final {
+		limit = p.expiryNoFinal
+	}
+	if p.open && !p.started && !p.vadSpeaking && at.Sub(p.lastStop) >= limit {
 		// Never admitted (backchannel, wake phrase idle): retire its transcripts
 		// uncommitted so they cannot leak into the next turn.
 		gen := core.Generation(p.candGen)

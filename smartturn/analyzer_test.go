@@ -344,3 +344,102 @@ func TestSessionVerdictStream(t *testing.T) {
 		}
 	})
 }
+
+// capBackend answers p and keeps the last window.
+type capBackend struct {
+	mu  sync.Mutex
+	pcm []int16
+	p   float32
+}
+
+func (b *capBackend) Infer(_ context.Context, pcm []int16) (float32, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.pcm = append([]int16(nil), pcm...)
+	return b.p, nil
+}
+func (*capBackend) Ready() bool  { return true }
+func (*capBackend) Close() error { return nil }
+func (b *capBackend) count(v int16) (n int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, x := range b.pcm {
+		if x == v {
+			n++
+		}
+	}
+	return n
+}
+
+// feedFor feeds d of 20 ms frames (value v) through the tap's path, advancing clk.
+func feedFor(a *Analyzer, clk *fakeClock, d time.Duration, v int16) {
+	for el := time.Duration(0); el < d; el += 20 * time.Millisecond {
+		pcm := make([]int16, 320)
+		for i := range pcm {
+			pcm[i] = v
+		}
+		a.feed(pcm, clk.Now())
+		clk.Advance(20 * time.Millisecond)
+	}
+}
+
+// Pipecat's window starts at the VAD speech start (minus pre-speech), not at
+// the late turn start the manager reports with min_words; it spans pauses
+// while the verdict is incomplete, and a complete verdict or Hold of silence
+// starts the next window at the next speech.
+func TestAnalyzerWindowFollowsSpeechStart(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(1000, 0)}
+	be := &capBackend{p: 0.9}
+	a := NewAnalyzer(be, Config{Now: clk.Now})
+	s := Stop(a, 700*time.Millisecond, 3*time.Second)
+	utter := func(d time.Duration, v int16, gap time.Duration) {
+		a.vad(true, clk.Now())
+		feedFor(a, clk, d, v)
+		a.vad(false, clk.Now())
+		feedFor(a, clk, gap, 0)
+	}
+	analyze := func(id core.TurnID, turnStart time.Time, v int16, want int) {
+		t.Helper()
+		in := turn.DetectionInput{At: clk.Now(), TurnStartedAt: turnStart, TurnID: id, Generation: 1, SilenceFor: 100 * time.Millisecond, SilenceAfter: 700 * time.Millisecond}
+		s.Detect(in)
+		eventually(t, func() bool { return a.jobDone() })
+		if n := be.count(v); n != want {
+			t.Fatalf("%s: window holds %d samples of value %d, want %d", id, n, v, want)
+		}
+	}
+
+	feedFor(a, clk, 2*time.Second, 0)
+	utter(time.Second, 1000, 1500*time.Millisecond)
+	analyze("t1", clk.Now().Add(-300*time.Millisecond), 1000, SampleRate) // admitted by a late final
+
+	// Complete cleared it: the next utterance (inside Hold) is a window of its own.
+	feedFor(a, clk, time.Second, 0)
+	utter(500*time.Millisecond, 2000, 300*time.Millisecond)
+	analyze("t2", clk.Now(), 2000, SampleRate/2)
+	if n := be.count(1000); n != 0 {
+		t.Fatalf("t2 window still holds %d samples of t1", n)
+	}
+
+	// Incomplete keeps the window across a pause ...
+	be.mu.Lock()
+	be.p = 0.1
+	be.mu.Unlock()
+	feedFor(a, clk, time.Second, 0)
+	utter(500*time.Millisecond, 3000, 400*time.Millisecond)
+	analyze("t3", clk.Now(), 3000, SampleRate/2)
+	utter(500*time.Millisecond, 3000, 100*time.Millisecond)
+	analyze("t3", clk.Now(), 3000, SampleRate)
+	// ... until Hold of silence: the next speech opens a new window.
+	feedFor(a, clk, 3100*time.Millisecond, 0)
+	utter(200*time.Millisecond, 4000, 100*time.Millisecond)
+	analyze("t4", clk.Now(), 4000, SampleRate/5)
+	if n := be.count(3000); n != 0 {
+		t.Fatalf("t4 window still holds %d samples of t3", n)
+	}
+}
+
+func (a *Analyzer) jobDone() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.job != nil && a.job.done
+}

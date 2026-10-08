@@ -27,7 +27,8 @@ var (
 // Config tunes one per-call Analyzer. Zero values are the defaults.
 type Config struct {
 	Budget    time.Duration    // verdict deadline; later = fall back (default 150ms)
-	PreSpeech time.Duration    // audio kept before the turn's start (default 500ms, Pipecat pre_speech_ms)
+	PreSpeech time.Duration    // audio kept before the speech start (default 500ms, Pipecat pre_speech_ms)
+	Hold      time.Duration    // silence after which the next VAD start begins a new window (default 3s, Pipecat stop_secs)
 	Now       func() time.Time // default time.Now; must be the turn processor's clock
 }
 
@@ -44,6 +45,14 @@ type Analyzer struct {
 	chunks []chunk // last ~8.5 s of audio, oldest first
 	total  int     // samples in chunks
 	job    *job
+
+	// Pipecat's _speech_start_time: the first VAD start since the window was
+	// last cleared (complete verdict, turn ended here, or Hold of silence).
+	// The manager's TurnStartedAt can be much later (min_words, transcript
+	// start), which would leave the window holding only trailing silence.
+	speechStart time.Time
+	speaking    bool
+	lastStop    time.Time
 }
 
 type chunk struct {
@@ -82,6 +91,9 @@ func NewAnalyzer(be Backend, cfg Config) *Analyzer {
 	if cfg.PreSpeech <= 0 {
 		cfg.PreSpeech = 500 * time.Millisecond
 	}
+	if cfg.Hold <= 0 {
+		cfg.Hold = 3 * time.Second
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -110,6 +122,27 @@ func (a *Analyzer) feed(pcm []int16, at time.Time) {
 		a.chunks = append(a.chunks[:0], a.chunks[drop:]...)
 	}
 	a.mu.Unlock()
+}
+
+// vad records a VAD transition seen by the tap (Pipecat append_audio's is_speech).
+func (a *Analyzer) vad(speaking bool, at time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if speaking && !a.speaking && (a.speechStart.IsZero() || at.Sub(a.lastStop) >= a.cfg.Hold) {
+		a.speechStart = at
+	}
+	if !speaking && a.speaking {
+		a.lastStop = at
+	}
+	a.speaking = speaking
+}
+
+// clearLocked starts the next window at the next VAD start (Pipecat _clear).
+func (a *Analyzer) clearLocked() {
+	a.speechStart = time.Time{}
+	if a.speaking {
+		a.speechStart = a.cfg.Now()
+	}
 }
 
 // Close cancels any in-flight job.
@@ -193,6 +226,7 @@ func (a *Analyzer) finish(j *job, p float32, err error) {
 	j.done = true
 	j.res = turn.AnalyzerResult{Complete: p > 0.5, Confidence: float64(p)}
 	if j.res.Complete {
+		a.clearLocked()
 		stats.complete.Add(1)
 	} else {
 		stats.incompl.Add(1)
@@ -205,8 +239,12 @@ func (a *Analyzer) failLocked(j *job, reason string) {
 	countFallback(reason)
 }
 
-// segmentLocked is the audio from turnStart-PreSpeech to now, last 8 s.
+// segmentLocked is the audio from the speech start (or the turn start, if
+// earlier or no VAD start was seen) minus PreSpeech to now, last 8 s.
 func (a *Analyzer) segmentLocked(turnStart time.Time) []int16 {
+	if !a.speechStart.IsZero() && a.speechStart.Before(turnStart) {
+		turnStart = a.speechStart
+	}
 	from := turnStart.Add(-a.cfg.PreSpeech)
 	i := 0
 	for i < len(a.chunks) && a.chunks[i].at.Before(from) {
@@ -248,16 +286,26 @@ func (s stop) Detect(in turn.DetectionInput) (turn.DetectionDecision, bool) {
 		return turn.DetectionDecision{}, false
 	}
 	if in.SilenceFor >= max(s.hold, base) {
-		return turn.DetectionDecision{Reason: core.TurnReasonSilence}, true
+		return s.end(turn.DetectionDecision{Reason: core.TurnReasonSilence})
 	}
 	r, degraded := s.a.verdict(in)
 	switch {
 	case r.Complete:
 		return turn.DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: r.Confidence, HasConfidence: true}, true
 	case degraded && in.SilenceFor >= base:
-		return turn.DetectionDecision{Reason: core.TurnReasonSilence}, true
+		return s.end(turn.DetectionDecision{Reason: core.TurnReasonSilence})
 	}
 	return turn.DetectionDecision{}, false
+}
+
+// end clears the window when this strategy ends the turn (Pipecat clears on
+// turn stop). ponytail: a turn ended by another strategy (eager, external)
+// keeps the window until a complete verdict or Hold of silence clears it.
+func (s stop) end(d turn.DetectionDecision) (turn.DetectionDecision, bool) {
+	s.a.mu.Lock()
+	s.a.clearLocked()
+	s.a.mu.Unlock()
+	return d, true
 }
 
 // Tap returns a pass-through processor that feeds the analyzer with inbound
@@ -278,6 +326,12 @@ func (t tap) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction,
 			pcm[i] = int16(binary.LittleEndian.Uint16(af.Samples[2*i:]))
 		}
 		t.a.feed(pcm, t.a.cfg.Now())
+	}
+	switch f.(type) {
+	case *core.UserStartedSpeakingFrame:
+		t.a.vad(true, t.a.cfg.Now())
+	case *core.UserStoppedSpeakingFrame:
+		t.a.vad(false, t.a.cfg.Now())
 	}
 	return e.PushDirection(f, dir)
 }

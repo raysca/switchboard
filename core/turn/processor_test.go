@@ -1,7 +1,9 @@
 package turn
 
 import (
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -265,6 +267,26 @@ func TestProcessorUnstartedTurnIsInvalidated(t *testing.T) {
 	}
 }
 
+// A STT without interim results delivers its final 1-2 s after the VAD stop. A min_words
+// turn must still be admitted by that late final instead of being dropped as "never admitted".
+func TestProcessorLateFinalAdmitsMinWordsTurn(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StartStrategies = []UserTurnStartStrategy{MinWordsStart(3, true)}
+	h := newHarness(t, cfg)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	h.run(1500*time.Millisecond, func() bool { return false }) // past the 1 s expiry, no transcript yet
+	for _, f := range h.sink.GetFrames() {
+		if f.Type() == core.FrameTranscriptInvalidation {
+			t.Fatal("turn dropped while its final transcript was still due")
+		}
+	}
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "what is two plus two", Final: true})
+	if !h.run(3*time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 }) {
+		t.Fatalf("late final transcript lost: started=%d completed=%d", len(h.events(core.TurnEventStarted)), len(h.events(core.TurnEventCompleted)))
+	}
+}
+
 func TestProcessorResumedSpeechJoinsSegments(t *testing.T) {
 	h := newHarness(t, DefaultConfig())
 	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
@@ -302,5 +324,63 @@ func TestProcessorTickSurvivesGenerationBump(t *testing.T) {
 	h.sess.IncrementGeneration()                     // ... then discarded by the fence
 	if !h.run(2*time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 }) {
 		t.Fatal("tick driver stalled after a generation bump")
+	}
+}
+
+// The min_words warning hook fires once per call, only when the STT's first
+// candidate is already final (no interim results).
+func TestProcessorFinalWithoutInterimsHook(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		firstFinal bool
+		want       int32
+	}{{"final first", true, 1}, {"interim first", false, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, DefaultConfig())
+			var n atomic.Int32
+			h.proc.onNoInterims = func() { n.Add(1) }
+			for seq := uint64(1); seq <= 3; seq += 2 {
+				id := core.TurnID(fmt.Sprintf("turn-1-%d", seq))
+				_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: seq, Gen: 1})
+				_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: id, Gen: 1, Text: "hello there", Final: tc.firstFinal})
+				_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: id, Gen: 1, Text: "hello there", Final: true})
+				_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: seq + 1, Gen: 1})
+			}
+			h.run(200*time.Millisecond, func() bool { return false })
+			if got := n.Load(); got != tc.want {
+				t.Fatalf("hook fired %d times, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// A stop strategy can end a turn before a non-streaming STT's final arrives
+// (Smart Turn "complete" at the VAD stop; chirp_2 answers ~1 s later). If the
+// user resumes before that final, it must join the new turn, not be dropped
+// (live: "I would like to know ... what the capital of France is" lost its first half).
+func TestProcessorPendingFinalJoinsNextTurn(t *testing.T) {
+	h := newHarness(t, DefaultConfig())
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	if !h.run(2*time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 }) {
+		t.Fatal("first turn never completed")
+	}
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 3, Gen: 1})
+	h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) == 2 })
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "I would like to know", Final: true}) // late
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-3", Gen: 1, Text: "the capital of France", Final: true})
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 4, Gen: 1})
+	if !h.run(3*time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) == 2 }) {
+		t.Fatal("second turn never completed")
+	}
+	var last *core.TranscriptCandidateFrame
+	for _, f := range h.sink.GetFrames() {
+		if c, ok := f.(*core.TranscriptCandidateFrame); ok {
+			last = c
+		}
+	}
+	if last == nil || last.Text != "I would like to know the capital of France" || !last.Final {
+		t.Fatalf("candidate %+v", last)
 	}
 }
