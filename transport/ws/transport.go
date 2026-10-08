@@ -30,12 +30,18 @@ type ServerConfig struct {
 	Pacer            PacerConfig
 	HandshakeTimeout time.Duration // Max handshake duration (default: 5s)
 	RTVIReadyTimeout time.Duration // Max wait for client-ready handshake (default: 5s)
-	// ReadTimeout is the idle read deadline and the only dead-peer detector:
-	// only data messages reset it (coder/websocket handles ping/pong inside Read
-	// and expiry closes the conn), so a client that sends nothing for this long
-	// is dropped, including a live one that stops sending audio while muted.
-	// No server pings are sent; pings alone would not keep such a client alive.
-	ReadTimeout                time.Duration // Idle read timeout (default: 30s)
+	// PingInterval > 0 enables ping round-trip liveness: the server pings every
+	// interval and a peer that fails PingMaxFailures consecutive pings (each
+	// bounded by PingTimeout) is closed 1001 "peer_unresponsive". Reads then
+	// have no data deadline, so a muted or text-only client stays connected;
+	// call length (MaxConnectionLifetime) and the idle controller bound the rest.
+	PingInterval    time.Duration
+	PingTimeout     time.Duration // per-ping pong wait (default 10s)
+	PingMaxFailures int           // consecutive failed pings before close (default 2)
+	// ReadTimeout is the legacy idle read deadline, used only when PingInterval
+	// is 0: only data messages reset it (coder/websocket handles pongs inside
+	// Read and expiry closes the conn), so a silent client is dropped.
+	ReadTimeout                time.Duration // Legacy idle read timeout (default: 30s)
 	MaxConnectionLifetime      time.Duration // Max duration for a voice call (default: 60m)
 	MaxConcurrentSessions      int           // Max active voice sessions (default: 100)
 	MaxConcurrentSessionsPerIP int           // Max active voice sessions per source IP (default: 10)
@@ -60,6 +66,9 @@ func DefaultServerConfig(val *token.Validator) ServerConfig {
 		HandshakeTimeout:           5 * time.Second,
 		RTVIReadyTimeout:           5 * time.Second,
 		ReadTimeout:                30 * time.Second,
+		PingInterval:               15 * time.Second,
+		PingTimeout:                10 * time.Second,
+		PingMaxFailures:            2,
 		MaxConnectionLifetime:      60 * time.Minute,
 		MaxConcurrentSessions:      100,
 		MaxConcurrentSessionsPerIP: 10,
@@ -80,6 +89,7 @@ type Connection struct {
 	tap        atomic.Pointer[AudioTap]     // optional call recorder; nil = none
 	seqCounter atomic.Uint64
 	rtvi       *rtvi.Handler
+	handling   atomic.Bool // read goroutine is in a handler, not Read: pongs wait
 
 	writeMu   sync.Mutex
 	readyCh   chan struct{}
@@ -219,6 +229,14 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 	if cfg.ReadTimeout <= 0 {
 		cfg.ReadTimeout = 30 * time.Second
+	}
+	if cfg.PingInterval > 0 {
+		if cfg.PingTimeout <= 0 {
+			cfg.PingTimeout = 10 * time.Second
+		}
+		if cfg.PingMaxFailures <= 0 {
+			cfg.PingMaxFailures = 2
+		}
 	}
 	if cfg.MaxConcurrentSessions <= 0 {
 		cfg.MaxConcurrentSessions = 100
@@ -496,7 +514,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-time.After(s.cfg.RTVIReadyTimeout):
 			if !conn.rtvi.IsReady() {
 				conn.traceError("timeout")
-				_ = wsConn.Close(websocket.StatusPolicyViolation, "rtvi ready timeout exceeded")
+				conn.closeBounded(websocket.StatusPolicyViolation, "rtvi ready timeout exceeded", 500*time.Millisecond)
 				conn.cancel()
 			}
 		case <-conn.ctx.Done():
@@ -506,6 +524,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Run independent supervised read and write tasks
 	var wg sync.WaitGroup
 	wg.Add(2)
+	if s.cfg.PingInterval > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn.pingLoop()
+		}()
+	}
 
 	// Writer task
 	go func() {
@@ -514,7 +539,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			conn.traceError("transport_failure")
 			if errors.Is(err, ErrSlowClient) {
 				s.observe("slow_client", 1)
-				_ = wsConn.Close(websocket.StatusPolicyViolation, "slow client terminated")
+				conn.closeBounded(websocket.StatusPolicyViolation, "slow client terminated", 500*time.Millisecond)
 			}
 			conn.cancel()
 		}
@@ -539,15 +564,66 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// pingLoop is the dead-peer detector when PingInterval > 0. Conn.Ping needs a
+// concurrent reader to see the pong (readLoop); a miss while the read
+// goroutine is in a handler (session setup can take seconds) is not counted,
+// and only PingMaxFailures consecutive misses close the call. Control frames are
+// written under the library's own write lock, so they cannot interleave with
+// the pacer's data frames.
+func (c *Connection) pingLoop() {
+	t := time.NewTicker(c.cfg.PingInterval)
+	defer t.Stop()
+	fails := 0
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-t.C:
+		}
+		ctx, cancel := context.WithTimeout(c.ctx, c.cfg.PingTimeout)
+		err := c.conn.Ping(ctx)
+		cancel()
+		if c.ctx.Err() != nil {
+			return
+		}
+		if err == nil {
+			fails = 0
+			continue
+		}
+		if c.handling.Load() {
+			continue // the pong may be sitting unread behind the handler
+		}
+		if c.cfg.Observe != nil {
+			c.cfg.Observe("ping_failure", 1)
+		}
+		if fails++; fails < c.cfg.PingMaxFailures {
+			continue
+		}
+		c.traceError("peer_unresponsive")
+		// No close handshake: coder/websocket's Close waits up to 5 s for a peer
+		// that is not answering. Best-effort RTVI error, then drop the socket.
+		wctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		if msg, err := c.rtvi.FormatError("peer_unresponsive", false); err == nil {
+			_ = c.WriteWireMessage(wctx, msg)
+		}
+		cancel()
+		_ = c.conn.CloseNow()
+		c.cancel()
+		return
+	}
+}
+
 func (c *Connection) readLoop() {
 	for {
 		readCtx := c.ctx
 		var cancel context.CancelFunc
-		if c.cfg.ReadTimeout > 0 {
+		if c.cfg.PingInterval <= 0 && c.cfg.ReadTimeout > 0 {
 			readCtx, cancel = context.WithTimeout(c.ctx, c.cfg.ReadTimeout)
 		}
 
+		c.handling.Store(false)
 		msgType, data, err := c.conn.Read(readCtx)
+		c.handling.Store(true)
 		if cancel != nil {
 			cancel()
 		}
@@ -742,12 +818,25 @@ func (c *Connection) closeWith(reason string, fatal bool, code websocket.StatusC
 	if msg, err := c.rtvi.FormatError(reason, fatal); err == nil {
 		_ = c.WriteWireMessage(ctx, msg)
 	}
+	dl, _ := ctx.Deadline()
+	c.closeBounded(code, reason, time.Until(dl))
+}
+
+// closeBounded runs the close handshake for at most d. coder/websocket's
+// CloseNow is a no-op while a Close is in progress (it waits up to 15 s), so
+// on timeout the connection context is cancelled instead: the read
+// goroutine's Read context then drops the socket.
+// ponytail: when the read goroutine is itself the caller (not in Read), the
+// library's own 5 s handshake bounds still apply.
+func (c *Connection) closeBounded(code websocket.StatusCode, reason string, d time.Duration) {
 	done := make(chan struct{})
 	go func() { _ = c.conn.Close(code, reason); close(done) }()
+	t := time.NewTimer(d)
+	defer t.Stop()
 	select {
 	case <-done:
-	case <-ctx.Done():
-		_ = c.conn.CloseNow()
+	case <-t.C:
+		c.cancel()
 	}
 }
 
@@ -802,7 +891,7 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 
 	case core.FrameOutputTurnFinal:
 		marker := f.(*core.OutputTurnFinalFrame)
-		if err := c.pacer.MarkTurnFinal(marker.Turn, marker.Gen, marker.UnitID); err != nil {
+		if err := c.pacer.MarkTurnFinal(marker.Turn, marker.Gen, marker.UnitID); err != nil && !errors.Is(err, ErrWriterClosed) {
 			return err
 		}
 		return e.PushDirection(f, dir)
@@ -928,6 +1017,11 @@ func (c *Connection) enqueueOutput(ctx context.Context, frame *core.OutputAudioF
 	deadline := time.Now().Add(c.cfg.Pacer.WriteTimeout)
 	for {
 		err := c.pacer.Enqueue(frame)
+		if errors.Is(err, ErrWriterClosed) {
+			// Only connection teardown closes the pacer, before the session is
+			// closed: audio still in flight is a hang-up, not a session failure.
+			return nil
+		}
 		if err == nil || !errors.Is(err, ErrSlowClient) {
 			return err
 		}

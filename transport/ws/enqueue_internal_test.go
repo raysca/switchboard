@@ -79,3 +79,23 @@ func TestWaitRoomTracksQueuedAudio(t *testing.T) {
 		t.Fatal("close did not release the waiting producer")
 	}
 }
+
+// The connection closes the pacer before it closes the session (client hang-up):
+// bot audio or a turn-final marker still in flight must not fail the session.
+func TestOutputAfterPacerClosedIsHangUp(t *testing.T) {
+	cfg := PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 96000, MaxQueueFrames: 64, WriteTimeout: time.Second, EnablePacing: true}
+	c := &Connection{cfg: ServerConfig{Pacer: cfg, FixedPlayerRate: 24000}, pacer: NewPacedWriter(cfg, func(context.Context, []byte) error { return nil })}
+	c.pacer.Close()
+	audio := &core.OutputAudioFrame{Samples: make([]byte, 960), Encoding: core.EncodingPCM16LE, SampleRate: 24000, Channels: 1, Gen: 1, Turn: "t", UnitID: 1}
+	if err := c.ProcessFrame(context.Background(), audio, core.Downstream, nopEmitter{}); err != nil {
+		t.Fatalf("audio after hang-up: %v", err)
+	}
+	if err := c.ProcessFrame(context.Background(), &core.OutputTurnFinalFrame{Turn: "t", Gen: 1, UnitID: 1}, core.Downstream, nopEmitter{}); err != nil {
+		t.Fatalf("turn-final marker after hang-up: %v", err)
+	}
+}
+
+type nopEmitter struct{}
+
+func (nopEmitter) Push(core.Frame) error                          { return nil }
+func (nopEmitter) PushDirection(core.Frame, core.Direction) error { return nil }
