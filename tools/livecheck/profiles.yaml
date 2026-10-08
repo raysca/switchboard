@@ -1,0 +1,124 @@
+# Provider profiles for the agent-level matrix (tools/livecheck, `make agent-matrix`).
+# A profile is one STT + LLM + TTS combination. Adding a provider means adding an entry here,
+# not code (unless the vendor is new to the harness: then also credential handling in creds.go).
+#
+#   name        unique, used by -profiles a,b
+#   stages      stt/llm/tts: provider (+ model, language, voice). ${VAR} and ${VAR:-default}
+#               are expanded from the environment (then `defaults`) when the profile runs.
+#   requires    env vars that must be set (non-empty, after `defaults`) or the profile is SKIPPED.
+#               Must include every variable the stage credentials read (a unit test checks this).
+#   optional    env vars that change the run when set (documentation only).
+#   defaults    values used when the env var is unset (public ids only, never secrets).
+#   build_tags  server build tags this profile needs; the harness builds ONE server binary with
+#               the union of the selected profiles' tags (xai STT/TTS are implied: xaispeech).
+#   infra       server.yaml provider settings (providers.<name>.<key>); empty values are dropped.
+#   interims    does the STT send interim transcripts? yes | no | auto (default: detected in S3).
+#   fake        offline self-test profile (-tags fakeproviders); never run together with real ones.
+#   notes       free text shown in the report.
+profiles:
+  # What `make dev` seeds today.
+  - name: google
+    description: Google Chirp 2 STT + Gemini + Google TTS (the make dev agent)
+    stages:
+      stt: {provider: google, model: chirp_2, language: en-US}
+      llm: {provider: google, model: gemini-2.5-flash}
+      tts: {provider: google, voice: en-US-Journey-F}
+    requires: [GOOGLE_API_KEY, GOOGLE_APPLICATION_CREDENTIALS]
+    interims: "no"
+    notes: chirp_2 sends no interim results, so S3 (min_words backchannel) is N/A.
+
+  - name: google-latest-long
+    description: Google latest_long STT (interim results) + Gemini + Google TTS
+    stages:
+      stt: {provider: google, model: latest_long, language: en-US}
+      llm: {provider: google, model: gemini-2.5-flash}
+      tts: {provider: google, voice: en-US-Journey-F}
+    requires: [GOOGLE_API_KEY, GOOGLE_APPLICATION_CREDENTIALS]
+    interims: "yes"
+
+  # docs/benchmarks/nvidia-live.md. Function ids are public NVCF ids and change over time.
+  - name: nvidia
+    description: NVIDIA Riva STT (Parakeet CTC 1.1b) + NIM gpt-oss-20b + Riva TTS (Magpie)
+    stages:
+      stt: {provider: nvidia, language: en-US}
+      llm: {provider: nvidia, model: "${NVIDIA_LLM_MODEL:-openai/gpt-oss-20b}"}
+      tts: {provider: nvidia, voice: Magpie-Multilingual.EN-US.Aria}
+    requires: [NVIDIA_API_KEY]
+    optional: [NVIDIA_STT_FUNCTION_ID, NVIDIA_TTS_FUNCTION_ID, NVIDIA_LLM_MODEL]
+    defaults:
+      NVIDIA_STT_FUNCTION_ID: 1598d209-5e27-4d3c-8079-4751568b1081
+      NVIDIA_TTS_FUNCTION_ID: 877104f7-e885-42b9-8de8-f6e4c6303969
+    interims: "yes"
+    notes: gpt-oss-20b is a short-reasoning model; first token 0.4 to 1.5 s.
+
+  # providers/xai. LLM needs no build tag; STT/TTS compile only with -tags xaispeech (implied).
+  - name: xai
+    description: xAI STT + Grok + xAI TTS
+    stages:
+      stt: {provider: xai, language: en}
+      llm: {provider: xai, model: "${XAI_MODEL:-grok-2-1212}"}
+      tts: {provider: xai}
+    requires: [XAI_API_KEY]
+    optional: [XAI_MODEL]
+    build_tags: [xaispeech]
+    notes: >-
+      STT grok-voice-transcribe-2.0 and TTS voice eve are the adapter defaults (wss://api.x.ai/v1/stt,
+      https://api.x.ai/v1/tts); LLM grok-2-1212 is the adapter's pinned id (XAI_MODEL overrides).
+      XAI_ENDPOINT from examples/.env is deliberately NOT passed on: production reads
+      providers.xai_llm.endpoint from server.yaml and defaults to the Responses API (/v1/responses),
+      which tool calls need; examples/ points it at chat/completions.
+
+  # xAI LLM on the default Google speech stages: runs without the experimental xaispeech tag.
+  - name: xai-llm
+    description: Google Chirp 2 STT + Grok + Google TTS
+    stages:
+      stt: {provider: google, model: chirp_2, language: en-US}
+      llm: {provider: xai, model: "${XAI_MODEL:-grok-2-1212}"}
+      tts: {provider: google, voice: en-US-Journey-F}
+    requires: [XAI_API_KEY, GOOGLE_APPLICATION_CREDENTIALS]
+    optional: [XAI_MODEL]
+    interims: "no"
+    notes: XAI_ENDPOINT is deliberately ignored (production default is the Responses API, which tool calls need).
+
+  # Mixed-vendor templates: run only when every key is present.
+  - name: deepgram-openai-cartesia
+    description: Deepgram STT + OpenAI-compatible LLM + Cartesia TTS
+    stages:
+      stt: {provider: deepgram, language: en}
+      llm: {provider: openai, model: "${OPENAI_MODEL:-gpt-4o-mini}"}
+      tts: {provider: cartesia}
+    requires: [DEEPGRAM_API_KEY, OPENAI_API_KEY, CARTESIA_API_KEY]
+    optional: [OPENAI_BASE_URL, OPENAI_MODEL]
+    notes: template; wire shapes written from docs, not yet run live. OPENAI_BASE_URL points it at Groq, vLLM, ...
+
+  - name: elevenlabs-google-elevenlabs
+    description: ElevenLabs Scribe STT + Gemini + ElevenLabs TTS
+    stages:
+      stt: {provider: elevenlabs, language: en}
+      llm: {provider: google, model: gemini-2.5-flash}
+      tts: {provider: elevenlabs}
+    requires: [ELEVENLABS_API_KEY, GOOGLE_API_KEY]
+    notes: template; the ElevenLabs credential is shared by STT and TTS.
+
+  - name: cartesia-nvidia
+    description: Cartesia STT + NIM LLM + Riva TTS
+    stages:
+      stt: {provider: cartesia, language: en}
+      llm: {provider: nvidia, model: "${NVIDIA_LLM_MODEL:-openai/gpt-oss-20b}"}
+      tts: {provider: nvidia, voice: Magpie-Multilingual.EN-US.Aria}
+    requires: [CARTESIA_API_KEY, NVIDIA_API_KEY]
+    defaults:
+      NVIDIA_TTS_FUNCTION_ID: 877104f7-e885-42b9-8de8-f6e4c6303969
+    notes: template.
+
+  # Offline engine self-test (make live-check-selftest): fake providers, no network, no cost.
+  - name: fake
+    description: fake providers (-tags fakeproviders), engine self-test only
+    fake: true
+    stages:
+      stt: {provider: google, model: chirp_2, language: en-US}
+      llm: {provider: google, model: fake}
+      tts: {provider: google, voice: fake}
+    build_tags: [fakeproviders]
+    interims: "no"
+    notes: transcripts are placeholders and bot audio is too short to barge into; content checks, S2, S3 and S6 are N/A.
