@@ -59,6 +59,57 @@ type unitRun struct {
 	frames            []*core.OutputAudioFrame
 }
 
+// TTSTiming is the stable shape the offline latency simulator reads from results.json
+// (tts_timing), taken from the 3 synthesis requests of the "synth" check. Totals are over the units;
+// ttfa_ms is the cold first unit. No overhead fit: 3 points with a cold first unit give a noisy
+// intercept; units[] carries the raw per-request numbers for any model the simulator wants.
+type TTSTiming struct {
+	TTFAMS         float64   `json:"ttfa_ms"`
+	AudioMS        float64   `json:"audio_ms"`
+	Chars          int       `json:"chars"`
+	WallMS         float64   `json:"wall_ms"`
+	CharsPerSec    float64   `json:"chars_per_sec"`
+	RealtimeFactor float64   `json:"realtime_factor"` // audio seconds per wall second
+	Units          []TTSUnit `json:"units"`
+}
+
+// TTSUnit is one synthesis request: post to first audio, post to TTSStopped, audio produced.
+type TTSUnit struct {
+	Chars   int     `json:"chars"`
+	TTFAMS  float64 `json:"ttfa_ms"`
+	WallMS  float64 `json:"wall_ms"`
+	AudioMS float64 `json:"audio_ms"`
+}
+
+func ttsTiming(units []unitRun) *TTSTiming {
+	t := &TTSTiming{}
+	for i, u := range units {
+		if u.first.IsZero() || u.stop.IsZero() {
+			continue
+		}
+		var bytes int
+		for _, f := range u.frames {
+			bytes += len(f.Samples)
+		}
+		c := utf8.RuneCountInString(ttsSentences[i])
+		w := float64(u.stop.Sub(u.post).Microseconds()) / 1000
+		tu := TTSUnit{Chars: c, TTFAMS: float64(u.first.Sub(u.post).Microseconds()) / 1000, WallMS: w, AudioMS: float64(bytes/2) * 1000 / pipelineRate}
+		if i == 0 { // cold; stays 0 if the first unit produced nothing
+			t.TTFAMS = tu.TTFAMS
+		}
+		t.Units = append(t.Units, tu)
+		t.Chars += c
+		t.WallMS += w
+		t.AudioMS += tu.AudioMS
+	}
+	if len(t.Units) == 0 || t.WallMS <= 0 {
+		return nil
+	}
+	t.CharsPerSec = float64(t.Chars) * 1000 / t.WallMS
+	t.RealtimeFactor = t.AudioMS / t.WallMS
+	return t
+}
+
 func (r *run) ttsSynth(g *rig) {
 	if !r.spend(len(ttsSentences), "synth") {
 		return
@@ -177,6 +228,8 @@ func (r *run) ttsSynth(g *rig) {
 		}
 	}
 	r.metric("usage_chars", chars == want, float64(chars), "chars", "usage characters %d, text characters %d", chars, want)
+
+	r.tts = ttsTiming(units)
 
 	// time to first audio per unit; the first is the cold one.
 	var ttfa []float64

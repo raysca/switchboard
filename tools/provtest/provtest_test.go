@@ -371,3 +371,36 @@ func TestBudgetStopsOnActualRequests(t *testing.T) {
 		t.Error("max 0 means unlimited")
 	}
 }
+
+// TTS rows carry tts_timing from the existing synth requests; the matrix shows it; old files without it merge.
+func TestTTSTiming(t *testing.T) {
+	o := dryOpts(t)
+	res := RunTarget(FakeTarget(TTS, "fake", o.Clips, FaultNone), o)
+	tm := res.TTSTiming
+	if tm == nil || len(tm.Units) != len(ttsSentences) || tm.Chars != totalChars() {
+		t.Fatalf("tts_timing = %+v", tm)
+	}
+	if tm.TTFAMS <= 0 || tm.WallMS < tm.TTFAMS || tm.CharsPerSec <= 0 {
+		t.Errorf("implausible timing %+v", tm)
+	}
+	if want := float64(totalChars()) * 60; tm.AudioMS < want*0.99 || tm.AudioMS > want*1.01 { // fake: 60 ms per char
+		t.Errorf("audio_ms %.0f, want ~%.0f", tm.AudioMS, want)
+	}
+	if m := Merge([]Result{res, res, res}); m.TTSTiming == nil {
+		t.Error("Merge dropped tts_timing")
+	}
+	rep := Report{Mode: "dry", Results: []Result{res}}
+	if !strings.Contains(rep.Markdown(), "chars/s") || !strings.Contains(string(rep.JSON()), `"tts_timing"`) {
+		t.Error("matrix or JSON lacks timing")
+	}
+	// old results.json (no tts_timing) merges and renders
+	old := filepath.Join(t.TempDir(), "old.json")
+	os.WriteFile(old, []byte(`{"mode":"live","results":[{"provider":"google","stage":"tts","status":"pass","calls":3,"seconds":1}]}`), 0o600)
+	m, err := MergeFiles([]string{old}, Table, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.Markdown(), "| - | - | - |") {
+		t.Error("old row should render dashes")
+	}
+}

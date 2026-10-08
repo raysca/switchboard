@@ -78,9 +78,15 @@ func (r Report) Markdown() string {
 		for _, c := range cols {
 			fmt.Fprintf(&b, " %s |", c)
 		}
+		if st == TTS {
+			b.WriteString(" ttfa ms | audio s/s | chars/s |")
+		}
 		b.WriteString("\n|---|---|")
 		for range cols {
 			b.WriteString("---|")
+		}
+		if st == TTS {
+			b.WriteString("---|---|---|")
 		}
 		b.WriteString("\n")
 		for _, res := range rows {
@@ -88,6 +94,9 @@ func (r Report) Markdown() string {
 				fmt.Fprintf(&b, "| %s | skip: %s |", res.Provider, res.Reason)
 				for range cols {
 					b.WriteString(" |")
+				}
+				if st == TTS {
+					b.WriteString(" | | |")
 				}
 				b.WriteString("\n")
 				continue
@@ -101,6 +110,13 @@ func (r Report) Markdown() string {
 					}
 				}
 				fmt.Fprintf(&b, " %s |", cell(found))
+			}
+			if t := res.TTSTiming; st == TTS {
+				if t == nil {
+					b.WriteString(" - | - | - |")
+				} else {
+					fmt.Fprintf(&b, " %.0f | %.1f | %.0f |", t.TTFAMS, t.RealtimeFactor, t.CharsPerSec)
+				}
 			}
 			b.WriteString("\n")
 			for _, c := range res.Checks {
@@ -195,6 +211,8 @@ func MergeFiles(files []string, table []Provider, env Env) (Report, error) {
 const Legend = `## Checks
 
 Numbers in a cell are the check's headline value (ms, s, WER, characters).
+
+TTS timing columns come from the 3 synthesis requests the suite already makes (no extra calls) and are also saved as tts_timing in results.json: ttfa ms (cold first unit), audio s/s (seconds of audio per wall second), chars/s (text chars per wall second). Wall time includes per-request overhead, so short sentences understate the provider's streaming rate.
 
 - **TTS**: synth (3 sentences as synthesis units), format (PCM16 mono at the 24 kHz pipeline rate, exact 20 ms frames), final_flags (one IsFinal per unit as its last frame, TurnFinal only on the turn's last), stopped (TTSStopped after each unit), usage_chars (billed characters equal text), ttfa (first audio per unit, value = the cold first unit), duration_plausible (0.02-0.25 s of audio per character), non_silent (RMS), no_riff (raw PCM, no WAV header), total_time, interrupt (barge-in stops audio within 300 ms, the cancelled unit neither completes nor errors; an explicit skip when the unit finished before the barge-in), bad_credential (client error class, no retry: under 10 s, secret absent from the error), close_leaks (session tasks and goroutines after Close).
 - **STT** (16 kHz clips at real time with UserStarted/Stopped and TurnEvent Started/Stopped/Completed): wer (per clip against the known text after normalisation: case, punctuation, hyphens, small numerals, common contractions; per-clip limit max_wer in clips.json, 0.20-0.25 = one error on the short clips; Google and NVIDIA score 0.00 on every clip), interim_before_final (skip when the provider emits no interims), final_latency (final after the VAD stop), cumulative (each final extends the previous one), turn_binding (candidates carry the started turn and generation), resumed_speech (two sentences separated by a 1 s pause in one turn keep both), reuse_after_idle (second turn after an idle gap), barge_in_rebind (same-turn TurnEventStarted at a newer generation keeps results flowing under it), bad_credential, close_leaks.

@@ -60,6 +60,8 @@ type Result struct {
 	Calls    int     `json:"calls"`                     // planned units spent (estimate)
 	Actual   int     `json:"actual_requests,omitempty"` // measured at the provider boundary
 	Seconds  float64 `json:"seconds"`
+	// TTSTiming is measured from the synthesis requests the suite already makes (no extra calls); nil for other stages and for old files.
+	TTSTiming *TTSTiming `json:"tts_timing,omitempty"`
 }
 
 // Variant selects how Target.Build constructs the processor.
@@ -186,6 +188,7 @@ type run struct {
 	o      Options
 	checks []Check
 	calls  int
+	tts    *TTSTiming
 }
 
 func (r *run) add(name string, ok bool, detail string, args ...any) {
@@ -230,7 +233,7 @@ func RunTarget(t Target, o Options) Result {
 	case LLM:
 		r.llmSuite()
 	}
-	res := Result{Provider: t.Provider, Stage: t.Stage, Checks: r.checks, Calls: r.calls, Actual: sinceRequests(reqBase), Seconds: time.Since(start).Seconds(), Status: Pass}
+	res := Result{Provider: t.Provider, Stage: t.Stage, Checks: r.checks, Calls: r.calls, Actual: sinceRequests(reqBase), Seconds: time.Since(start).Seconds(), Status: Pass, TTSTiming: r.tts}
 	ran, budget := 0, 0
 	for _, c := range r.checks {
 		switch {
@@ -255,11 +258,15 @@ func Merge(runs []Result) Result {
 	out := runs[0]
 	out.Checks = slices.Clone(out.Checks)
 	out.Calls, out.Actual, out.Seconds = 0, 0, 0
+	var tts []*TTSTiming
 	vals := map[string][]float64{}
 	for _, r := range runs {
 		out.Calls += r.Calls
 		out.Actual += r.Actual
 		out.Seconds += r.Seconds
+		if r.TTSTiming != nil {
+			tts = append(tts, r.TTSTiming)
+		}
 		if r.Status == Fail {
 			out.Status = Fail
 		}
@@ -288,6 +295,11 @@ func Merge(runs []Result) Result {
 			sort.Float64s(v)
 			out.Checks[i].Value = v[len(v)/2]
 		}
+	}
+	out.TTSTiming = nil
+	if len(tts) > 0 { // the repeat with the median wall time
+		sort.Slice(tts, func(i, j int) bool { return tts[i].WallMS < tts[j].WallMS })
+		out.TTSTiming = tts[len(tts)/2]
 	}
 	return out
 }
