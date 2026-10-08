@@ -127,3 +127,32 @@ func classify(err error) resilience.Verdict {
 	}
 	return resilience.Verdict{Retryable: true}
 }
+
+// sttMessageError maps a realtime-STT error message (message_type + error text,
+// per the ElevenLabs realtime STT reference). Auth, quota, terms and malformed
+// input are the caller's fault; throttling, capacity and transcriber failures
+// are outages. Unknown types retry.
+func sttMessageError(kind, msg string) *ProviderError {
+	out := &ProviderError{Capability: "stt", Code: "UNAVAILABLE", Retryable: true, Message: SanitizeString(strings.TrimSpace(kind + ": " + msg))}
+	if len(out.Message) > 512 {
+		out.Message = out.Message[:512] + "... [truncated]"
+	}
+	switch kind {
+	case "auth_error", "unaccepted_terms":
+		out.Code, out.Retryable, out.ClientError, out.StatusCode = "UNAUTHORIZED", false, true, 401
+	case "quota_exceeded":
+		out.Code, out.Retryable, out.ClientError, out.StatusCode = "QUOTA_EXCEEDED", false, true, 402
+	case "input_error", "invalid_request", "chunk_size_exceeded":
+		out.Code, out.Retryable, out.ClientError, out.StatusCode = "BAD_REQUEST", false, true, 400
+	case "rate_limited", "commit_throttled":
+		out.Code, out.StatusCode = "RATE_LIMIT_EXCEEDED", 429
+	}
+	return out
+}
+
+// sttErrorKinds are the server error message types we surface as failures.
+var sttErrorKinds = map[string]bool{
+	"error": true, "auth_error": true, "quota_exceeded": true, "commit_throttled": true, "unaccepted_terms": true,
+	"rate_limited": true, "queue_overflow": true, "resource_exhausted": true, "input_error": true,
+	"invalid_request": true, "chunk_size_exceeded": true, "transcriber_error": true,
+}
