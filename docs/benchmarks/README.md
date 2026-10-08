@@ -126,11 +126,16 @@ profile, `SCENARIOS=S1`, `MODES=off`.
 - **Cap**: `make agent-matrix`, `agent-matrix-plan` and `provider-matrix` default to `MAX_CALLS=40` (`DEFAULT_MAX_CALLS` in
   the Makefile; `live-check` and a bare `go run ./tools/livecheck` use the tool default of 60, so the old full
   Google off/on/smart shape (about 187) is refused until narrowed or `-max-calls` is raised). A plan whose estimate exceeds the cap is refused before anything
-  is spent (`agent-matrix-plan` shows the verdict and still exits 0). During the run the measured total is polled every second:
+  is spent (`agent-matrix-plan` shows the verdict and still exits 0). During the run the measured total is polled every 250ms:
   past the cap the current call is closed (scenario `ERR`), later scenarios are skipped, and the stage suite refuses further
   units. The poll fails closed: if the server's `/metrics` cannot be read the call is ended and later scenarios are skipped.
   The stage suite (`provider-matrix`) has no up-front refusal: it gates each unit on planned + measured requests, so it stops
   at the cap (rows `incomplete`) and can overshoot by at most one unit's requests (e.g. an STT reopen inside a unit). Raise it deliberately: `MAX_CALLS=120`.
+- **TTS timing for the offline simulator**: each TTS row in `provider-matrix`'s `results.json` carries `tts_timing`, taken from the
+  3 synthesis requests the suite already makes (no extra calls): `ttfa_ms` (cold first unit), `audio_ms`, `chars`, `wall_ms`
+  (sum of post to TTSStopped), `chars_per_sec`, `realtime_factor` (audio s per wall s) and
+  `units[]` (per request `chars`, `ttfa_ms`, `wall_ms`, `audio_ms`; fit any overhead model from these). Repeats keep the median-wall run.
+  Absent in older files; `-merge` accepts those.
 - Every live run ends with `actual provider requests: N (upper-bound estimate M, -max-calls C)`.
 - Not counted: provider-side billing units (characters, tokens, audio seconds), OAuth token fetches (not billed), pre-dial
   warm-ups (bare TCP/TLS or gRPC channel connects, no request), and transport-internal replays of a request the server never

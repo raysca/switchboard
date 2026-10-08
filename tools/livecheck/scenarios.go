@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -183,6 +184,14 @@ var scenarios = []scenario{
 		shape: func(*opts) shape { return shape{turns: 1, noSTT: true} }, run: s7},
 	{id: "S8", title: "muted-client liveness", class: classPing,
 		shape: func(*opts) shape { return shape{} }, run: s8},
+	{id: "S9", title: "long reply (TTS requests, first audio, gaps)", class: classBase, clips: []string{"mars"},
+		shape: func(*opts) shape { return shape{turns: 1, long: true} },
+		na: func(p Profile, _ mode, _ *opts) string {
+			if p.Fake {
+				return "fake providers: reply is not multi-sentence"
+			}
+			return ""
+		}, run: s9},
 }
 
 func scenarioByID(id string) (scenario, bool) {
@@ -471,4 +480,70 @@ func neededMissing(missing []string, scs []scenario) []string {
 		}
 	}
 	return out
+}
+
+// s9: one multi-sentence reply (the Mars clip). Measures TTS requests per reply, first audio, and
+// underruns of a simulated real-time player (a chunk arriving after the queued audio ran out is a gap;
+// robust to the server sending audio in bursts). Compare mode off against merge.
+func s9(x *sctx, r *Result) {
+	c := x.c
+	ttsReqs := func() (n int) {
+		for k, v := range x.srv.requests() {
+			if strings.HasSuffix(k, "/tts") {
+				n += v
+			}
+		}
+		return
+	}
+	c.quiet(400 * time.Millisecond)
+	before, bs := ttsReqs(), x.srv.stages()
+	mark := time.Now()
+	_, tEnd, err := c.stream(x.clips["mars"])
+	if err != nil {
+		r.abort(redact(err))
+		return
+	}
+	c.wait(25*time.Second, func() bool { return c.has(mark, "audio") })
+	c.wait(60*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+	c.quiet(time.Second)
+	said := c.texts(mark, "bot-llm-text", false)
+	var first, playEnd, last time.Time
+	var gaps int
+	var gapMs, audioMs int64
+	for _, e := range c.snap() {
+		if e.kind != "audio" || e.t.Before(mark) {
+			continue
+		}
+		if first.IsZero() {
+			first, playEnd = e.t, e.t
+		}
+		if e.t.After(playEnd.Add(100 * time.Millisecond)) {
+			gaps++
+			gapMs += e.t.Sub(playEnd).Milliseconds()
+		}
+		if e.t.After(playEnd) {
+			playEnd = e.t
+		}
+		playEnd = playEnd.Add(e.dur)
+		audioMs += e.dur.Milliseconds()
+		last = e.t
+	}
+	r.check("bot audio", !first.IsZero(), "")
+	if first.IsZero() {
+		return
+	}
+	n := ttsReqs() - before
+	r.m("first_audio_ms", msv(first.Sub(tEnd)))
+	r.m("tts_requests", n)
+	r.m("sentences_est", len(regexp.MustCompile(`[.!?]+(\s|$)`).FindAllString(said, -1)))
+	r.m("reply_chars", len([]rune(said)))
+	r.m("audio_ms", audioMs)
+	r.m("gaps_gt100ms", gaps)
+	r.m("gap_ms_total", gapMs)
+	r.m("audio_span_ms", msv(last.Sub(first)))
+	if v, ok := stageDelta(bs, x.srv.stages())["tts_ttfb"]; ok {
+		r.m("tts_ttfb_ms", int64(v[0]))
+	}
+	r.m("reply", truncate(said, 90))
+	r.check("reply text", said != "", "")
 }

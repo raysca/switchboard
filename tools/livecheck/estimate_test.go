@@ -186,6 +186,9 @@ var knownActuals = []struct {
 	{"xai agent pass", "xai", map[string]int{"S1": 1, "S2": 1, "S4": 1, "S5": 1, "S7": 1}, 41 - 5},
 	{"google round 2", "google", map[string]int{"S1": 3, "S4": 3}, 18 + 13 + 17},
 	{"google S1 smoke", "google", map[string]int{"S1": 1}, 7},
+	// K5 S9 long reply, one cell each (off, merge): xai 15+9, google 9+7 (merge cut at the cap)
+	{"xai S9 off+merge", "xai", map[string]int{"S9": 2}, 15 + 9},
+	{"google S9 off+merge", "google", map[string]int{"S9": 2}, 9 + 7},
 }
 
 func TestEstimateCoversKnownActuals(t *testing.T) {

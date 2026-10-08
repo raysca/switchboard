@@ -147,7 +147,7 @@ live-check: ## paid|Agent-level live run, Google profile (GOVOICE_LIVE=1; LIVE_A
 # agent-matrix: standard agent x provider profiles x scenarios x turn modes
 # (docs/benchmarks/agent-matrix.md). GOVOICE_LIVE=1 make agent-matrix PROFILES=google,nvidia SCENARIOS=S1 MODES=off,on
 # COST CAP: -max-calls defaults to 40 (DEFAULT_MAX_CALLS). A plan whose upper-bound estimate exceeds it is refused before any
-# call (see make agent-matrix-plan); during the run the MEASURED provider requests are checked every second and the call ends
+# call (see make agent-matrix-plan); during the run the MEASURED provider requests are checked every 250ms and the call ends
 # when they pass the cap. Raise it on purpose: MAX_CALLS=120.
 # Optional: REPEAT=n MAX_CALLS=n LIVE_ARGS="-write-docs -mcp-url https://... -trace"; PROFILES=all runs every profile whose env is set.
 agent-matrix: ## paid|Standard agent x PROFILES x SCENARIOS x MODES (GOVOICE_LIVE=1; hard cap MAX_CALLS, default 40)
@@ -228,3 +228,9 @@ perf-gate-selftest: ## free|Prove the perf gate fails on an injected delay (abou
 
 .PHONY: parity-regen eval-turn eval-pipecat bench-latency loadtest-smoke loadtest-soak perf-gate perf-baseline perf-gate-selftest
 .PHONY: dev example-web example-cli example-go
+
+# Offline TTS unit-sizing simulator for unary providers (docs/benchmarks/tts-unit-sizing.md). No network, no keys, no cost.
+tts-sim: ## free|Simulate TTS unit sizing strategies for unary providers (TTSSIM_ARGS="-n 300 -cps 40,80,150 -overheads 300,800,1000")
+	@go run ./tools/ttssim $(TTSSIM_ARGS)
+
+.PHONY: tts-sim

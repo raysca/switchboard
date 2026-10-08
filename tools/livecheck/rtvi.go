@@ -19,6 +19,7 @@ type ev struct {
 	kind  string // audio | RTVI type
 	text  string
 	final bool
+	dur   time.Duration // audio: playback length of the chunk
 }
 
 // client is one RTVI WebSocket call: it records every server event with its arrival time and
@@ -92,6 +93,10 @@ func (c *client) reader(ctx context.Context) {
 		switch fr := f.(type) {
 		case *core.InputAudioFrame: // bot audio as seen by the client
 			e.kind = "audio"
+			e.dur = fr.Duration
+			if e.dur == 0 && fr.SampleRate > 0 {
+				e.dur = time.Duration(len(fr.Samples)/2/max(fr.Channels, 1)) * time.Second / time.Duration(fr.SampleRate)
+			}
 		case *ws.WireMessageFrame:
 			var m struct {
 				Type string

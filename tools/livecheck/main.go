@@ -49,7 +49,7 @@ func realMain(args []string) int {
 		profNames = fs.String("profiles", "google", "comma list of profile names, or all (every real profile)")
 		profFile  = fs.String("profiles-file", "", "profiles YAML to use instead of the embedded profiles.yaml")
 		scList    = fs.String("scenarios", "", "comma list of S1..S8 (default all)")
-		modeList  = fs.String("modes", "off,on,on+smart", "comma list of turn modes: off, on (manager + min_words 3), on+smart (adds smart-turn), plain, fast")
+		modeList  = fs.String("modes", "off,on,on+smart", "comma list of turn modes: off, on (manager + min_words 3), on+smart (adds smart-turn), merge (off + tts_merge), plain, fast")
 		repeat    = fs.Int("repeat", 1, "run every scenario this many times")
 		maxCalls  = fs.Int("max-calls", 60, "hard cap on provider requests: refuses a plan whose upper-bound estimate exceeds it, and aborts the run mid-call when the MEASURED requests exceed it")
 		yes       = fs.Bool("yes", false, "proceed after printing the estimate (GOVOICE_LIVE=1 does the same)")

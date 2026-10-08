@@ -1,0 +1,67 @@
+{
+ "note": "provider-matrix live capture 2026-10-08, STAGES=tts PROVIDERS=xai,google (11 requests)",
+ "results": [
+  {
+   "provider": "google",
+   "tts_timing": {
+    "ttfa_ms": 1274.835,
+    "audio_ms": 7600,
+    "chars": 134,
+    "wall_ms": 3538.965,
+    "chars_per_sec": 37.86417780339732,
+    "realtime_factor": 2.147520532132982,
+    "units": [
+     {
+      "chars": 44,
+      "ttfa_ms": 1274.835,
+      "wall_ms": 1275.289,
+      "audio_ms": 2840
+     },
+     {
+      "chars": 42,
+      "ttfa_ms": 1074.902,
+      "wall_ms": 1074.996,
+      "audio_ms": 2120
+     },
+     {
+      "chars": 48,
+      "ttfa_ms": 1188.35,
+      "wall_ms": 1188.68,
+      "audio_ms": 2640
+     }
+    ]
+   }
+  },
+  {
+   "provider": "xai",
+   "tts_timing": {
+    "ttfa_ms": 1250.975,
+    "audio_ms": 8059.833333333334,
+    "chars": 134,
+    "wall_ms": 3507.603,
+    "chars_per_sec": 38.202727047502236,
+    "realtime_factor": 2.297818006579802,
+    "units": [
+     {
+      "chars": 44,
+      "ttfa_ms": 1250.975,
+      "wall_ms": 1251.372,
+      "audio_ms": 3033.5
+     },
+     {
+      "chars": 42,
+      "ttfa_ms": 1236.614,
+      "wall_ms": 1237.245,
+      "audio_ms": 2470
+     },
+     {
+      "chars": 48,
+      "ttfa_ms": 1018.142,
+      "wall_ms": 1018.986,
+      "audio_ms": 2556.3333333333335
+     }
+    ]
+   }
+  }
+ ]
+}

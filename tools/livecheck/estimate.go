@@ -14,6 +14,7 @@ type shape struct {
 	extraSTT int  // extra STT stream opens: barge-in or resumed speech
 	extraLLM int  // extra LLM requests: a tool round, a retry
 	noSTT    bool // text-only: no audio, so no STT stream
+	long     bool // long reply (S9): 3x the per-reply TTS (xAI measured 12 requests, ~1.2k chars)
 }
 
 // ttsPerReply is the TTS requests one reply can cost. Unit-based TTS (xAI unary, Google) sends one
@@ -42,6 +43,9 @@ func estCalls(sh shape, p Profile) int {
 	}
 	llm := sh.turns + sh.extraLLM
 	tts := sh.turns * ttsPerReply(p.Stages.TTS.Provider)
+	if sh.long {
+		tts *= 3
+	}
 	return stt + llm + tts
 }
 

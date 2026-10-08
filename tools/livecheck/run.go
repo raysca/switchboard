@@ -213,7 +213,7 @@ func runScenario(ctx context.Context, cfg runCfg, srv *server, agent string, it 
 	t0 := time.Now()
 	reqBefore := srv.requests()
 	var overBudget atomic.Bool
-	stopWatch := watchSpend(cfg.act, srv.requestTotal, time.Second, func() { overBudget.Store(true); _ = c.conn.CloseNow() })
+	stopWatch := watchSpend(cfg.act, srv.requestTotal, 250*time.Millisecond, func() { overBudget.Store(true); _ = c.conn.CloseNow() })
 	var timedOut atomic.Bool
 	wd := time.AfterFunc(cfg.scenarioTimeout, func() { timedOut.Store(true); _ = c.conn.CloseNow() })
 	stopOnCancel := context.AfterFunc(ctx, func() { _ = c.conn.CloseNow() }) // Ctrl-C ends the call now

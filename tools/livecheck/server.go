@@ -24,15 +24,18 @@ import (
 )
 
 // mode is one turn configuration the scenarios run under (server-level, so one server each).
-type mode struct{ name, turn string }
+type mode struct{ name, turn, extra string } // extra: more top-level server.yaml (e.g. tts_merge)
 
 var modes = map[string]mode{
-	"off":      {"off", ""},
-	"on":       {"on", "turn:\n  manager: true\n  min_words: 3\n"},
-	"on+smart": {"on+smart", "turn:\n  manager: true\n  min_words: 3\n  stop: [turn-analyzer, speech-timeout]\n"},
+	"off":      {"off", "", ""},
+	"on":       {"on", "turn:\n  manager: true\n  min_words: 3\n", ""},
+	"on+smart": {"on+smart", "turn:\n  manager: true\n  min_words: 3\n  stop: [turn-analyzer, speech-timeout]\n", ""},
+	// slack-aware TTS merging (xai/google; docs/benchmarks/tts-unit-sizing.md): same server as "off" otherwise.
+	// first_clause_chars 40 is what the server implies when merging is on and the key is 0.
+	"merge": {"merge", "", "tts_merge: {enabled: true, margin: 300ms, cap: 250}\n"},
 	// kept from the first livecheck so old -variants lists still work
-	"plain": {"plain", "turn:\n  manager: true\n"},
-	"fast":  {"fast", "turn:\n  manager: true\n  min_words: 3\n  speech_timeout: 150ms\n"},
+	"plain": {"plain", "turn:\n  manager: true\n", ""},
+	"fast":  {"fast", "turn:\n  manager: true\n  min_words: 3\n  speech_timeout: 150ms\n", ""},
 }
 
 var modeAlias = map[string]string{"smart": "on+smart"}
@@ -148,8 +151,8 @@ providers:
 %sobservability: {log_level: "%s", json_format: false, timeline_max_events: 500, timeline_ttl: 10m}
 storage: {dialect: "sqlite"}
 retention: {enabled: false}
-%s%s
-`, pub, adm, limits, pv.String(), sp.logLevel, sp.mode.turn, sp.class.yaml)
+%s%s%s
+`, pub, adm, limits, pv.String(), sp.logLevel, sp.mode.turn, sp.mode.extra, sp.class.yaml)
 }
 
 func sortedKeys[V any](m map[string]V) []string {
