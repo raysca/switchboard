@@ -413,3 +413,30 @@ func TestInterruptionClosesStream(t *testing.T) {
 		t.Fatalf("frames after interruption: %+v", s.got)
 	}
 }
+
+// A retired model (NIM answers 404/410): one request, a client error that
+// names the model, and no key echoed back.
+func TestRetiredModelIsClientError(t *testing.T) {
+	for _, code := range []int{http.StatusNotFound, http.StatusGone} {
+		var hits atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			w.WriteHeader(code)
+			fmt.Fprintf(w, `{"detail":"model gone for key %s"}`, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		}))
+		br := resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Minute})
+		s := run(t, Config{BaseURL: srv.URL, Model: "old/model", APIKey: "nvapi-0123456789abcdefghij", CircuitBreaker: br})
+		srv.Close()
+		ef, ok := s.got[len(s.got)-1].(*core.ErrorFrame)
+		if !ok {
+			t.Fatalf("%d: frames=%+v", code, s.got)
+		}
+		msg := ef.Err.Error()
+		if !strings.Contains(msg, `model "old/model" not found or deprecated`) || strings.Contains(msg, "0123456789") {
+			t.Fatalf("%d: %s", code, msg)
+		}
+		if hits.Load() != 1 || br.WouldRefuse() || !classify(ef.Err).ClientError {
+			t.Fatalf("%d: hits=%d breaker open=%v", code, hits.Load(), br.WouldRefuse())
+		}
+	}
+}

@@ -12,6 +12,7 @@ COPY providers/cartesia/go.mod providers/cartesia/go.sum* ./providers/cartesia/
 COPY providers/deepgram/go.mod providers/deepgram/go.sum* ./providers/deepgram/
 COPY providers/elevenlabs/go.mod providers/elevenlabs/go.sum* ./providers/elevenlabs/
 COPY providers/google/go.mod providers/google/go.sum* ./providers/google/
+COPY providers/nvidia/go.mod providers/nvidia/go.sum* ./providers/nvidia/
 COPY providers/openai/go.mod providers/openai/go.sum* ./providers/openai/
 COPY providers/xai/go.mod providers/xai/go.sum* ./providers/xai/
 COPY server/go.mod server/go.sum ./server/

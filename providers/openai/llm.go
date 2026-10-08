@@ -530,7 +530,7 @@ func (p *Processor) stream(ctx, sessionCtx context.Context, req request, gen uin
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-			return newHTTPError(resp, string(b))
+			return newHTTPError(resp, string(b), p.cfg.Model)
 		}
 		lr := &io.LimitedReader{R: resp.Body, N: maxBody + 1}
 		sc := bufio.NewScanner(lr)

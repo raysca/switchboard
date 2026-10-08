@@ -7,6 +7,7 @@ use (
 	./providers/deepgram
 	./providers/elevenlabs
 	./providers/google
+	./providers/nvidia
 	./providers/openai
 	./providers/xai
 	./server

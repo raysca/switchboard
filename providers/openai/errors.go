@@ -41,15 +41,19 @@ func sanitizeErr(err error) error {
 	return err
 }
 
-var secretPattern = regexp.MustCompile(`(?i)(bearer\s+|api[_-]?key[:=]\s*)[A-Za-z0-9_\-\.]{8,}|\b(sk|gsk|xai)-[A-Za-z0-9_-]{16,}`)
+var secretPattern = regexp.MustCompile(`(?i)(bearer\s+|api[_-]?key[:=]\s*)[A-Za-z0-9_\-\.]{8,}|\b(sk|gsk|xai|nvapi)-[A-Za-z0-9_-]{16,}`)
 
 // SanitizeString strips API keys and bearer tokens from text bound for logs.
 func SanitizeString(s string) string { return secretPattern.ReplaceAllString(s, "[REDACTED]") }
 
-func newHTTPError(resp *http.Response, body string) *ProviderError {
+func newHTTPError(resp *http.Response, body, model string) *ProviderError {
 	pe := &ProviderError{Status: resp.StatusCode, Message: strings.TrimSpace(SanitizeString(body))}
 	if len(pe.Message) > 512 {
 		pe.Message = pe.Message[:512] + "... [truncated]"
+	}
+	// Hosted catalogs (NIM) retire models: 404/410 here is the operator's to fix.
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		pe.Message = fmt.Sprintf("model %q not found or deprecated (or wrong base_url): set the model explicitly; %s", model, pe.Message)
 	}
 	pe.Retryable = resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
 	if d, err := time.ParseDuration(resp.Header.Get("Retry-After") + "s"); err == nil && d > 0 {
