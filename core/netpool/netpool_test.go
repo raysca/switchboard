@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -219,5 +220,35 @@ func TestGuardedPoolNotSharedWithUnguarded(t *testing.T) {
 	}
 	if guarded.Transport().Proxy != nil {
 		t.Fatal("guarded pool must not use a proxy")
+	}
+}
+
+// Every request through a pool client (and CountRequest for gRPC) lands in
+// voice_provider_requests_total, retries included: harnesses cap on this number.
+func TestRequestsCounted(t *testing.T) {
+	Configure(Settings{Shared: true, Predial: true, SpareTTL: time.Second})
+	t.Cleanup(func() { Configure(Settings{Shared: true}) })
+	s := newSrv(t)
+	p := Get(Options{Provider: "t", Stage: "reqs", Variant: t.Name(), TLS: clientTLS(s)})
+	if err := p.Warm(context.Background(), s.URL); err != nil { // a pre-dial is a connection, not a request
+		t.Fatal(err)
+	}
+	base := Requests()["t|reqs"] // counters are process-wide: -count=N reruns start above 0
+	c := p.Client(0)
+	for i := 0; i < 3; i++ {
+		resp, err := c.Get(s.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	CountRequest("t", "reqs")
+	if got := Requests()["t|reqs"] - base; got != 4 {
+		t.Errorf("requests = %d, want 3 HTTP + 1 counted", got)
+	}
+	var b bytes.Buffer
+	WriteMetrics(&b)
+	if !strings.Contains(b.String(), fmt.Sprintf(`voice_provider_requests_total{provider="t",stage="reqs"} %d`, base+4)) {
+		t.Errorf("metrics lack the counter:\n%s", b.String())
 	}
 }

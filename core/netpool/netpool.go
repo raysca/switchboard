@@ -146,7 +146,33 @@ func (p *Pool) Transport() *http.Transport { return p.tr }
 // Client returns a client over the shared transport. timeout 0 means none
 // (required for WebSocket dials; use contexts instead).
 func (p *Pool) Client(timeout time.Duration) *http.Client {
-	return &http.Client{Transport: p.tr, Timeout: timeout}
+	return &http.Client{Transport: countingRT{p.tr, p.st}, Timeout: timeout}
+}
+
+// countingRT counts every request (HTTP call or WebSocket upgrade) a provider client sends
+// through the pool: the measured "provider requests" figure live harnesses cap on.
+type countingRT struct {
+	http.RoundTripper
+	st *stats
+}
+
+func (c countingRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	c.st.requests.Add(1)
+	return c.RoundTripper.RoundTrip(r)
+}
+
+// CountRequest counts one request a provider made outside a Pool (a gRPC RPC or stream open).
+func CountRequest(provider, stage string) { statsFor(provider, stage).requests.Add(1) }
+
+// Requests returns the cumulative request count per "provider|stage" (tests, harnesses).
+func Requests() map[string]uint64 {
+	statMu.Lock()
+	defer statMu.Unlock()
+	out := make(map[string]uint64, len(statBy))
+	for k, s := range statBy {
+		out[k] = s.requests.Load()
+	}
+	return out
 }
 
 func (p *Pool) tlsConfig(host string) *tls.Config {
@@ -315,9 +341,9 @@ func (p *Pool) Close() {
 var connectBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5}
 
 type stats struct {
-	hit, miss, warmOK, warmErr, warmSkipped atomic.Uint64
-	buckets                                 [10]atomic.Uint64 // last is +Inf
-	sumNanos, count                         atomic.Uint64
+	hit, miss, warmOK, warmErr, warmSkipped, requests atomic.Uint64
+	buckets                                           [10]atomic.Uint64 // last is +Inf
+	sumNanos, count                                   atomic.Uint64
 }
 
 func (s *stats) observe(d time.Duration) {
@@ -370,6 +396,10 @@ func WriteMetrics(w io.Writer) {
 			}
 		}
 		return ""
+	}
+	fmt.Fprint(w, "# HELP voice_provider_requests_total Requests sent to a provider (HTTP calls, WebSocket dials, gRPC RPCs/stream opens), retries included.\n# TYPE voice_provider_requests_total counter\n")
+	for i, k := range keys {
+		fmt.Fprintf(w, "voice_provider_requests_total{%s} %d\n", lbl(k), snap[i].requests.Load())
 	}
 	fmt.Fprint(w, "# HELP voice_provider_warm_dials_total Dials served by a pre-dialed spare (hit) or by a fresh connect (miss).\n# TYPE voice_provider_warm_dials_total counter\n")
 	for i, k := range keys {
