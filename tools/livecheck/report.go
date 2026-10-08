@@ -267,6 +267,22 @@ func renderMarkdown(rep *Report) string {
 		}
 	}
 
+	w("\nAdditive split of the first S1 turn (server timeline, same clock): clip end to speech_stop (vad), to the user message at the LLM (eot: STT final + turn commit), to first token (ttft), to first TTS unit (unit wait), to first TTS audio (tts), to client receipt (tail).\n\n")
+	w("| profile | mode | vad | eot | ttft | unit wait | tts | tail |\n|---|---|---|---|---|---|---|---|\n")
+	for _, p := range rep.Profiles {
+		for _, m := range rep.Modes {
+			rs := g[[3]string{p.Name, m, "S1"}]
+			if len(rs) == 0 || rs[0].Status == stNA {
+				continue
+			}
+			w("| %s | %s |", p.Name, m)
+			for _, k := range []string{"vad", "eot", "ttft", "unit_wait", "tts", "tail"} {
+				w(" %s |", med(rs, "t1.bd_"+k+"_ms"))
+			}
+			w("\n")
+		}
+	}
+
 	renderRequests(w, rep)
 
 	w("\n## Details\n\nFailed checks, errors, N/A reasons and skips.\n\n")

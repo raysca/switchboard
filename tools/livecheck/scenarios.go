@@ -241,6 +241,9 @@ func s1(x *sctx, r *Result) {
 			}
 		}
 		c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+		if ok {
+			s1Breakdown(x, r, pfx, tEnd, e.t)
+		}
 		heard, said := c.texts(mark, "user-transcription", true), c.texts(mark, "bot-llm-text", false)
 		r.m(pfx+"heard", heard)
 		r.m(pfx+"reply", truncate(said, 90))
@@ -263,6 +266,36 @@ func s1(x *sctx, r *Result) {
 			r.m(stage+"_ms", int64(v[0]))
 		}
 	}
+}
+
+// s1Breakdown splits a turn's v2v into additive stages from the server timeline (same host,
+// same wall clock, no extra provider calls): vad (clip end to server speech_stop), eot (speech_stop to
+// the user message reaching the LLM (stt_result): STT final + turn commit), ttft, unit_wait (first token to first TTS unit dispatched),
+// tts (unit to first audio), tail (server audio to client receipt). Each stage is the earliest event of
+// its type at or after the previous one (not the i-th: tts_unit fires per unit, speech_stop per pause,
+// the ring evicts, and latency events are recorded out of order), so the parts sum to v2v exactly.
+func s1Breakdown(x *sctx, r *Result, pfx string, tEnd, clientAudio time.Time) {
+	evs := x.srv.timelineEvents(x.c.n)
+	prev := tEnd.Add(-300 * time.Millisecond) // same slack as vad_stop_ms: the VAD may stop inside the clip's 100 ms margin
+	from := tEnd
+	for _, st := range [][2]string{{"speech_stop", "bd_vad_ms"}, {"stt_result", "bd_eot_ms"}, {"llm_first_token", "bd_ttft_ms"}, {"tts_unit", "bd_unit_wait_ms"}, {"latency:tts_ttfb", "bd_tts_ms"}} {
+		var t time.Time
+		for _, e := range evs {
+			k := e.Type
+			if k == "latency" {
+				k += ":" + e.Details // observer events carry the event time in Timestamp
+			}
+			if k == st[0] && !e.Timestamp.Before(prev) && (t.IsZero() || e.Timestamp.Before(t)) {
+				t = e.Timestamp
+			}
+		}
+		if t.IsZero() {
+			return
+		}
+		r.m(pfx+st[1], msv(t.Sub(from)))
+		prev, from = t, t
+	}
+	r.m(pfx+"bd_tail_ms", msv(clientAudio.Sub(prev)))
 }
 
 var fourRe = regexp.MustCompile(`(?i)\b(four|4)\b`)

@@ -399,24 +399,33 @@ func stageDelta(before, after map[string]stageStat) map[string][2]float64 {
 	return out
 }
 
-// timeline prints the server-side session timeline (admin /debug/timeline) for session n.
-func (s *server) timeline(n int) {
+type tlEvent struct {
+	Type, Details string
+	Timestamp     time.Time
+}
+
+// timelineEvents fetches the server-side session timeline (admin /debug/timeline) for session n.
+func (s *server) timelineEvents(n int) []tlEvent {
 	resp, err := http.Get(fmt.Sprintf("%s/debug/timeline?session=%d", s.admin, n))
 	if err != nil {
-		return
+		return nil
 	}
 	defer resp.Body.Close()
-	var tl struct {
-		Events []struct {
-			Type, Details string
-			Timestamp     time.Time
-		}
+	var tl struct{ Events []tlEvent }
+	if json.NewDecoder(resp.Body).Decode(&tl) != nil {
+		return nil
 	}
-	if json.NewDecoder(resp.Body).Decode(&tl) != nil || len(tl.Events) == 0 {
+	return tl.Events
+}
+
+// timeline prints the server-side session timeline for session n.
+func (s *server) timeline(n int) {
+	tl := s.timelineEvents(n)
+	if len(tl) == 0 {
 		return
 	}
-	t0 := tl.Events[0].Timestamp
-	for _, e := range tl.Events {
+	t0 := tl[0].Timestamp
+	for _, e := range tl {
 		fmt.Fprintf(stdout, "    srv %7.2fs %-14s %s\n", e.Timestamp.Sub(t0).Seconds(), e.Type, truncate(e.Details, 120))
 	}
 }
