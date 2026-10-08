@@ -136,7 +136,7 @@ func TestPoolsIsolatedByGuardModeAndBoundedByMode(t *testing.T) {
 	if total.Load() != 1 {
 		t.Fatalf("warm dialed %d, want 1", total.Load())
 	}
-	strict := guardedPool(false)
+	strict := guardedPool("openai", false)
 	if strict == priv.pool {
 		t.Fatal("strict and allow_private must not share a pool")
 	}

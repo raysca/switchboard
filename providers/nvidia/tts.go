@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 	"govoice/core/transport/resample"
 	"govoice/core/ttsunit"
@@ -136,6 +137,7 @@ func (p *TTSProcessor) attempt(ctx context.Context, u *ttsunit.Unit, _ int) erro
 	}
 	sctx, cancel := context.WithCancel(p.conn.Context(ctx))
 	defer cancel() // tears the RPC down on every exit, including barge-in
+	netpool.CountRequest("nvidia", "tts")
 	st, err := p.client.SynthesizeOnline(sctx)
 	if err != nil {
 		return MapError("tts", err)

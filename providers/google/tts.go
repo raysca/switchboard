@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"govoice/core"
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
@@ -96,6 +97,7 @@ func (c *RealGoogleTTSClient) SynthesizeSpeech(ctx context.Context, text string,
 		},
 	}
 
+	netpool.CountRequest("google", "tts")
 	resp, err := c.client.SynthesizeSpeech(ctx, req)
 	if err != nil {
 		return nil, MapError("tts", err)

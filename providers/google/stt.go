@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 
 	speech "cloud.google.com/go/speech/apiv2"
@@ -147,6 +148,7 @@ func (o *RealGoogleSTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (ST
 }
 
 func (o *RealGoogleSTTOpener) openOnce(ctx context.Context, cfg STTConfig) (STTStream, error) {
+	netpool.CountRequest("google", "stt")
 	stream, err := o.client.StreamingRecognize(ctx)
 	if err != nil {
 		return nil, MapError("stt", err)

@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc"
 
 	"govoice/core"
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 	"govoice/providers/nvidia/rivapb"
 )
@@ -357,6 +358,7 @@ func (p *STTProcessor) initRequest() *rivapb.StreamingRecognizeRequest {
 // openOnce starts the RPC and sends the config message. A failed first Send
 // is io.EOF; the real status is on Recv.
 func (p *STTProcessor) openOnce(actx context.Context) (*stream, error) {
+	netpool.CountRequest("nvidia", "stt")
 	rpc, err := p.client.StreamingRecognize(p.conn.Context(actx))
 	if err != nil {
 		return nil, MapError("stt", err)

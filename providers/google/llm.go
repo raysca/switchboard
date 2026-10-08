@@ -154,6 +154,9 @@ func (c *RealGoogleLLMClient) generateStreamWithNativeHistory(ctx context.Contex
 		defer close(chunkCh)
 		defer close(errCh)
 
+		if c.pool == nil { // Vertex: genai's own HTTP client is not on a netpool Pool, so count here
+			netpool.CountRequest("google", "llm")
+		}
 		seq := c.client.Models.GenerateContentStream(ctx, model, contents, genConfig)
 		streamCallOrdinal := 0
 		for resp, err := range seq {

@@ -41,8 +41,9 @@ var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 // ponytail: Proxy is nil on purpose (netpool drops it when Control is set);
 // through an egress proxy the dial check would only see the proxy. Add proxy
 // support with host checks if a deployment needs one.
-func guardedPool(allowPrivate bool) *netpool.Pool {
-	return netpool.Get(netpool.Options{Provider: "openai", Stage: "llm", Variant: fmt.Sprintf("private=%t", allowPrivate),
+// provider is the metric label ("openai", "nvidia"): set by server code, never user input.
+func guardedPool(provider string, allowPrivate bool) *netpool.Pool {
+	return netpool.Get(netpool.Options{Provider: provider, Stage: "llm", Variant: fmt.Sprintf("private=%t", allowPrivate),
 		Control: func(_, address string, _ syscall.RawConn) error {
 			ap, err := netip.ParseAddrPort(address)
 			if err != nil || !allowedIP(ap.Addr(), allowPrivate) {

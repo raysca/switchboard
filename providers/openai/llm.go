@@ -116,7 +116,7 @@ func NewProcessor(cfg Config) (*Processor, error) {
 	cfg.RetryPolicy.AttemptTimeout = cfg.Timeout
 	var pool *netpool.Pool
 	if cfg.HTTPClient == nil {
-		pool = guardedPool(cfg.AllowPrivate)
+		pool = guardedPool(cfg.Provider, cfg.AllowPrivate)
 		cfg.HTTPClient = guardedClient(pool) // attempt deadline comes from the retry policy
 	}
 	tools, err := mapTools(cfg.ToolDefinitions)
