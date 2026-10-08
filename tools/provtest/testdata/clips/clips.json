@@ -1,0 +1,34 @@
+[
+  {
+    "id": "two-plus-two",
+    "text": "What is two plus two?",
+    "language": "en-US",
+    "file": "two-plus-two.wav",
+    "max_wer": 0.2
+  },
+  {
+    "id": "capital-of-france",
+    "text": "What is the capital of France?",
+    "language": "en-US",
+    "file": "capital-of-france.wav",
+    "max_wer": 0.2
+  },
+  {
+    "id": "twelve-words",
+    "text": "The quick brown fox jumps over the lazy dog near the river.",
+    "language": "en-US",
+    "file": "twelve-words.wav",
+    "max_wer": 0.25
+  },
+  {
+    "id": "two-sentences-pause",
+    "text": "What is the capital of France? What is two plus two?",
+    "language": "en-US",
+    "file": "two-sentences-pause.wav",
+    "segments": [
+      "What is the capital of France?",
+      "What is two plus two?"
+    ],
+    "max_wer": 0.2
+  }
+]
