@@ -10,8 +10,11 @@ import (
 
 	"govoice/core"
 	"govoice/core/resilience"
+	"govoice/providers/cartesia"
 	"govoice/providers/deepgram"
+	"govoice/providers/elevenlabs"
 	"govoice/providers/google"
+	"govoice/providers/nvidia"
 	"govoice/providers/xai"
 	"govoice/server/agent"
 	"govoice/server/runtime"
@@ -33,11 +36,18 @@ func sttClassify(err error) string {
 	var ge *google.ProviderError
 	var xe *xai.ProviderError
 	var de *deepgram.ProviderError
-	isGoogle, isXAI, isDeepgram := errors.As(err, &ge), errors.As(err, &xe), errors.As(err, &de)
+	var ce *cartesia.ProviderError
+	var ee *elevenlabs.ProviderError
+	var ne *nvidia.ProviderError
+	isGoogle, isXAI, isDeepgram, isCartesia, isEleven := errors.As(err, &ge), errors.As(err, &xe), errors.As(err, &de), errors.As(err, &ce), errors.As(err, &ee)
+	isNvidia := errors.As(err, &ne)
 	client := isGoogle && ge.ClientError() ||
 		isXAI && xe.StatusCode >= 400 && xe.StatusCode < 500 && xe.StatusCode != 429 ||
-		isDeepgram && de.ClientError
-	if (isGoogle || isXAI || isDeepgram) && errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		isDeepgram && de.ClientError ||
+		isCartesia && ce.ClientError ||
+		isEleven && ee.ClientError ||
+		isNvidia && ne.ClientError
+	if (isGoogle || isXAI || isDeepgram || isCartesia || isEleven || isNvidia) && errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 		return agent.ClassTimeout
 	}
 	return agent.ClassOf(err, resilience.Verdict{ClientError: client})
@@ -52,6 +62,12 @@ func (r *Registry) sttBreaker(provider string) *resilience.Breaker {
 		return r.xaiBreaker
 	case "deepgram":
 		return r.deepgramBreaker
+	case "nvidia":
+		return r.nvidiaBreaker("stt|" + nvidia.DefaultEndpoint) // hosted; custom endpoints keep their own
+	case "cartesia":
+		return r.cartesiaSTTBreaker
+	case "elevenlabs":
+		return r.elevenlabsSTTBreaker
 	}
 	return nil
 }
@@ -80,7 +96,11 @@ func (r *Registry) buildSTT(cfg *Config, call CallSpec, build func(string, Stage
 			continue
 		}
 		c := core.STTCandidate{Provider: sp.Provider, Proc: p}
-		if br := r.sttBreaker(sp.Provider); br != nil {
+		br := r.sttBreaker(sp.Provider)
+		if sp.Provider == "nvidia" { // per endpoint: a tenant's self-hosted Riva has its own
+			br = r.nvidiaSTTBreaker(sp.Secret)
+		}
+		if br != nil {
 			c.Open = br.WouldRefuse
 		}
 		cands = append(cands, c)

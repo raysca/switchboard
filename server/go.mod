@@ -14,6 +14,8 @@ replace govoice/providers/deepgram => ../providers/deepgram
 
 replace govoice/providers/google => ../providers/google
 
+replace govoice/providers/nvidia => ../providers/nvidia
+
 replace govoice/providers/openai => ../providers/openai
 
 replace govoice/providers/xai => ../providers/xai
@@ -38,6 +40,7 @@ require (
 	govoice/providers/deepgram v0.0.0-00010101000000-000000000000
 	govoice/providers/elevenlabs v0.0.0-00010101000000-000000000000
 	govoice/providers/google v0.0.0-00010101000000-000000000000
+	govoice/providers/nvidia v0.0.0-00010101000000-000000000000
 	govoice/providers/openai v0.0.0-00010101000000-000000000000
 	govoice/providers/xai v0.0.0-00010101000000-000000000000
 	modernc.org/sqlite v1.60.1

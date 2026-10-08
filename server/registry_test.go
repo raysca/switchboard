@@ -226,6 +226,28 @@ func TestDeepgramSTTFactoryRegisteredAndValidatesKey(t *testing.T) {
 	_ = p.(interface{ Close() error }).Close()
 }
 
+func TestElevenLabsSTTFactoryRegisteredAndValidatesKey(t *testing.T) {
+	reg := NewRegistry()
+	if !reg.Supports("elevenlabs", "stt") || !reg.Supports("elevenlabs", "tts") || reg.Supports("elevenlabs", "llm") {
+		t.Fatal("elevenlabs offers stt and tts")
+	}
+	if reg.sttBreaker("elevenlabs") == nil || reg.sttBreaker("elevenlabs") == reg.elevenlabsBreaker {
+		t.Fatal("elevenlabs STT needs its own breaker")
+	}
+	f := reg.factories["elevenlabs.stt"]
+	if _, err := f(&Config{}, StageSpec{Secret: []byte("two words")}); err == nil {
+		t.Fatal("malformed credential accepted")
+	}
+	p, err := f(&Config{}, StageSpec{Secret: []byte("xi-test-key-0123456789"), Failover: true, Language: "en-US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.(core.STTCounters); !ok {
+		t.Fatal("elevenlabs STT must export counters")
+	}
+	_ = p.(interface{ Close() error }).Close()
+}
+
 func TestElevenLabsTTSFactoryRegisteredAndValidatesKey(t *testing.T) {
 	reg := NewRegistry()
 	if !reg.Supports("elevenlabs", "tts") || reg.Supports("elevenlabs", "llm") {
@@ -259,6 +281,28 @@ func TestCartesiaTTSFactoryRegisteredAndValidatesKey(t *testing.T) {
 	p, err := f(&Config{}, StageSpec{Secret: []byte("cartesia-test-key-0123456789")})
 	if err != nil {
 		t.Fatal(err)
+	}
+	_ = p.(interface{ Close() error }).Close()
+}
+
+func TestCartesiaSTTFactoryRegisteredAndValidatesKey(t *testing.T) {
+	reg := NewRegistry()
+	if !reg.Supports("cartesia", "stt") || reg.Supports("cartesia", "llm") {
+		t.Fatal("cartesia must support stt")
+	}
+	f := reg.factories["cartesia.stt"]
+	if _, err := f(&Config{}, StageSpec{Secret: []byte("two words")}); err == nil {
+		t.Fatal("malformed credential accepted")
+	}
+	p, err := f(&Config{}, StageSpec{Secret: []byte("cartesia-test-key-0123456789")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.(core.STTCounters); !ok {
+		t.Fatal("cartesia stt must report STT counters")
+	}
+	if reg.sttBreaker("cartesia") != reg.cartesiaSTTBreaker || reg.cartesiaSTTBreaker == reg.cartesiaBreaker {
+		t.Fatal("cartesia stt needs its own breaker")
 	}
 	_ = p.(interface{ Close() error }).Close()
 }

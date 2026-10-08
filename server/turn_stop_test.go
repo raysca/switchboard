@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,5 +315,89 @@ func TestTurnCompletionEndToEnd(t *testing.T) {
 		if metrics.completion[0].Load()+metrics.completion[1].Load() != 1 {
 			t.Fatalf("verdict not counted: %d/%d", metrics.completion[0].Load(), metrics.completion[1].Load())
 		}
+	}
+}
+
+// recordingBackend answers p and keeps the last window it was given.
+type recordingBackend struct {
+	mu  sync.Mutex
+	pcm []int16
+	p   float32
+}
+
+func (b *recordingBackend) Infer(_ context.Context, pcm []int16) (float32, error) {
+	b.mu.Lock()
+	b.pcm = append([]int16(nil), pcm...)
+	b.mu.Unlock()
+	return b.p, nil
+}
+func (*recordingBackend) Ready() bool  { return true }
+func (*recordingBackend) Close() error { return nil }
+
+// turn.manager + min_words + turn-analyzer: the turn starts only when the
+// transcript arrives (after the VAD stop), yet the model must still be given
+// the speech, not the trailing silence after the late turn start.
+func TestTurnAnalyzerWindowWithMinWords(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Turn.Manager = true
+	cfg.Turn.MinWords = 3
+	cfg.Turn.Stop = []string{"turn-analyzer", "speech-timeout"}
+	cfg.Turn.Analyzer.Budget = 500 * time.Millisecond
+	reg := NewRegistry()
+	llm := &core.PassthroughProcessor{}
+	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
+	be := &recordingBackend{p: 0.9}
+	reg.SetTurnBackend(be)
+	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+	pipe, err := reg.BuildCallPipeline(cfg, CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}}, vadProc, &fakeTransportSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	speech := make([]byte, 640)
+	for i := range speech {
+		speech[i] = 0x11 // every sample 0x1111: never zero
+	}
+	_ = s.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	const frames = 25
+	for i := 0; i < frames; i++ {
+		_ = s.Post(&core.InputAudioFrame{Samples: speech, Encoding: core.EncodingPCM16LE, SampleRate: 16000, Channels: 1})
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = s.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	for i := 0; i < 30; i++ { // trailing silence until the late final (no interims)
+		_ = s.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Encoding: core.EncodingPCM16LE, SampleRate: 16000, Channels: 1})
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = s.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "what is two plus two", Final: true})
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.ContainsFunc(llm.GetFrames(), func(f core.Frame) bool {
+		ev, ok := f.(*core.TurnEventFrame)
+		return ok && ev.Kind == core.TurnEventCompleted
+	}) {
+		if time.Now().After(deadline) {
+			t.Fatal("turn never completed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	be.mu.Lock()
+	defer be.mu.Unlock()
+	n := 0
+	for _, v := range be.pcm {
+		if v == 0x1111 {
+			n++
+		}
+	}
+	if want := frames * 320 * 9 / 10; n < want {
+		t.Fatalf("model window held %d speech samples of %d (window %d samples): it starts at the late turn start", n, frames*320, len(be.pcm))
 	}
 }

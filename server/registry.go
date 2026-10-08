@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -102,9 +103,13 @@ type Registry struct {
 	// One breaker per base URL: a tenant's broken vLLM must not open the
 	// breaker for every other OpenAI-compatible endpoint.
 	// ponytail: never evicted; bounded by the distinct base URLs stored.
-	openaiBreakers    sync.Map // base URL -> *resilience.Breaker
-	cartesiaBreaker   *resilience.Breaker
-	elevenlabsBreaker *resilience.Breaker
+	openaiBreakers       sync.Map // base URL -> *resilience.Breaker
+	cartesiaBreaker      *resilience.Breaker
+	cartesiaSTTBreaker   *resilience.Breaker
+	elevenlabsBreaker    *resilience.Breaker
+	elevenlabsSTTBreaker *resilience.Breaker
+
+	nvidiaBreakers sync.Map // "llm|<base url>" / "stt|<endpoint>" -> *resilience.Breaker (nvidia.go)
 
 	turnBackend smartturn.Backend // smart-turn model; nil unless turn.stop has turn-analyzer
 
@@ -113,6 +118,7 @@ type Registry struct {
 	onSTTReplayDropped   func(bytes int)                                  // set by BindMetrics
 	onLLMFailover        func(from, to, class string)                     // set by BindMetrics
 	onUserMuteDrop       func()                                           // set by BindMetrics
+	onMinWordsNoInterims func()                                           // set by BindMetrics
 	onAsyncTurn          func()                                           // set by BindMetrics
 	onAsyncDrop          func()                                           // set by BindMetrics
 	onSummary            func(outcome string, d time.Duration, saved int) // set by BindMetrics
@@ -127,14 +133,16 @@ func factoryKey(provider, stage string) string { return provider + "." + stage }
 
 func NewRegistry() *Registry {
 	r := &Registry{
-		factories:         make(map[string]ProcessorFactory),
-		googleLLMBreaker:  resilience.NewBreaker(resilience.DefaultConfig()),
-		googleTTSBreaker:  resilience.NewBreaker(resilience.DefaultConfig()),
-		googleSTTBreaker:  resilience.NewBreaker(resilience.DefaultConfig()),
-		xaiBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
-		deepgramBreaker:   resilience.NewBreaker(resilience.DefaultConfig()),
-		cartesiaBreaker:   resilience.NewBreaker(resilience.DefaultConfig()),
-		elevenlabsBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
+		factories:            make(map[string]ProcessorFactory),
+		googleLLMBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
+		googleTTSBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
+		googleSTTBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
+		xaiBreaker:           resilience.NewBreaker(resilience.DefaultConfig()),
+		deepgramBreaker:      resilience.NewBreaker(resilience.DefaultConfig()),
+		cartesiaBreaker:      resilience.NewBreaker(resilience.DefaultConfig()),
+		cartesiaSTTBreaker:   resilience.NewBreaker(resilience.DefaultConfig()),
+		elevenlabsBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
+		elevenlabsSTTBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
 	}
 
 	r.Register("google.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
@@ -282,6 +290,25 @@ func NewRegistry() *Registry {
 		return deepgram.NewSTTProcessor(sttCfg)
 	})
 
+	r.Register("cartesia.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		key, err := apiKey(spec.Secret)
+		if err != nil {
+			return nil, fmt.Errorf("cartesia.stt: %w", err)
+		}
+		sttCfg := cartesia.DefaultSTTConfig()
+		if spec.Model != "" {
+			sttCfg.Model = spec.Model
+		}
+		if spec.Language != "" {
+			sttCfg.Language = spec.Language
+		}
+		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.cartesiaSTTBreaker
+		if spec.Failover {
+			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
+		}
+		return cartesia.NewSTTProcessor(sttCfg)
+	})
+
 	r.Register("cartesia.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
 		key, err := apiKey(spec.Secret)
 		if err != nil {
@@ -308,6 +335,25 @@ func NewRegistry() *Registry {
 		return cartesia.NewTTSProcessor(ttsCfg)
 	})
 
+	r.Register("elevenlabs.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		key, err := apiKey(spec.Secret) // same credential as elevenlabs.tts
+		if err != nil {
+			return nil, fmt.Errorf("elevenlabs.stt: %w", err)
+		}
+		sttCfg := elevenlabs.DefaultSTTConfig()
+		if spec.Model != "" {
+			sttCfg.Model = spec.Model
+		}
+		if spec.Language != "" {
+			sttCfg.Language = spec.Language
+		}
+		sttCfg.APIKey, sttCfg.CircuitBreaker = key, r.elevenlabsSTTBreaker
+		if spec.Failover {
+			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
+		}
+		return elevenlabs.NewSTTProcessor(sttCfg)
+	})
+
 	r.Register("elevenlabs.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
 		key, err := apiKey(spec.Secret)
 		if err != nil {
@@ -332,6 +378,7 @@ func NewRegistry() *Registry {
 	})
 
 	registerXAISpeech(r)
+	r.registerNvidia()
 	if registerFakeProviders != nil {
 		registerFakeProviders(r) // -tags fakeproviders only (registry_fake.go)
 	}
@@ -497,7 +544,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		}
 		var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
 		if slices.Contains(cfg.Turn.Stop, "turn-analyzer") && r.turnBackend != nil {
-			a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget})
+			a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.StopSecs})
 			turnTap = a.Tap()
 			analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
 				return smartturn.Stop(a, base, cfg.Turn.Analyzer.StopSecs)
@@ -511,7 +558,18 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		if err != nil {
 			return fail(err)
 		}
-		tp, err := coreturn.NewProcessor(mc, coreturn.ProcessorOptions{Detector: stop, Mute: mute, MaxMute: cfg.Turn.MaxMute, OnMuteDrop: r.onUserMuteDrop})
+		opts := coreturn.ProcessorOptions{Detector: stop, Mute: mute, MaxMute: cfg.Turn.MaxMute, OnMuteDrop: r.onUserMuteDrop}
+		if cfg.Turn.MinWords > 0 {
+			stt, count := call.STT.Provider, r.onMinWordsNoInterims
+			opts.OnFinalWithoutInterims = func() {
+				slog.Warn("turn.min_words is on but the STT sent no interim results: turns start (and barge-in happens) only when the final transcript arrives; use an STT with interim results or disable turn.min_words",
+					slog.String("stt", stt), slog.Int("min_words", cfg.Turn.MinWords))
+				if count != nil {
+					count()
+				}
+			}
+		}
+		tp, err := coreturn.NewProcessor(mc, opts)
 		if err != nil {
 			return fail(fmt.Errorf("create turn processor: %w", err))
 		}
@@ -598,6 +656,7 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	r.onTTSFailover = m.ttsFailovers.add
 	r.onTTSFallbackSkipped = func() { m.TTSFallbacksSkippedTotal.Add(1) }
 	r.onUserMuteDrop = func() { m.UserMuteDroppedTotal.Add(1) }
+	r.onMinWordsNoInterims = func() { m.MinWordsNoInterimsTotal.Add(1) }
 	r.onAsyncTurn = func() { m.AsyncToolTurnsTotal.Add(1) }
 	r.onAsyncDrop = func() { m.AsyncToolResultsDroppedTotal.Add(1) }
 	r.onSummary = m.summary.observe

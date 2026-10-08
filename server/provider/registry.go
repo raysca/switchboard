@@ -41,10 +41,11 @@ var xaiCapabilities = []Capability{CapabilityLLM}
 func Definitions() []Definition {
 	return []Definition{
 		{ID: "google", DisplayName: "Google", AuthRequired: true, Capabilities: []Capability{CapabilityLLM, CapabilitySTT, CapabilityTTS}},
-		{ID: "cartesia", DisplayName: "Cartesia", AuthRequired: true, Capabilities: []Capability{CapabilityTTS}},
-		{ID: "elevenlabs", DisplayName: "ElevenLabs", AuthRequired: true, Capabilities: []Capability{CapabilityTTS}},
+		{ID: "cartesia", DisplayName: "Cartesia", AuthRequired: true, Capabilities: []Capability{CapabilitySTT, CapabilityTTS}},
+		{ID: "elevenlabs", DisplayName: "ElevenLabs", AuthRequired: true, Capabilities: []Capability{CapabilitySTT, CapabilityTTS}},
 		{ID: "deepgram", DisplayName: "Deepgram", AuthRequired: true, Capabilities: []Capability{CapabilitySTT}},
 		{ID: "openai", DisplayName: "OpenAI-compatible", AuthRequired: true, Capabilities: []Capability{CapabilityLLM}},
+		{ID: "nvidia", DisplayName: "NVIDIA (NIM, Riva)", AuthRequired: true, Capabilities: []Capability{CapabilityLLM, CapabilitySTT, CapabilityTTS}},
 		{ID: "xai", DisplayName: "xAI", AuthRequired: true, Capabilities: xaiCapabilities},
 		// Bearer tokens for remote MCP servers. The only credentials whose
 		// plaintext may leave the server (to the MCP endpoint they belong to).

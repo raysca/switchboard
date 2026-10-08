@@ -36,7 +36,10 @@ limits:
   upgrade_timeout: 5s
   ready_timeout: 10s
   max_call_duration: 30m
+  # idle_timeout is the legacy data-silence disconnect, used only when ping_interval: 0
   idle_timeout: 60s
+  ping_interval: 15s   # server WebSocket ping; a peer missing 2 pings in a row (each ping_timeout) is dropped
+  ping_timeout: 10s
   drain_timeout: 30s
   immediate_cancel: false
 
@@ -125,3 +128,8 @@ warmup:
 # otel: {enabled: false, endpoint: "", protocol: "", sampling_ratio: 1.0, service_name: "", capture_content: false}
 # providers:
 #   openai_llm: {allow_private_base_url: false}   # self-hosted OpenAI-compatible endpoints
+#   nvidia: {allow_private: false}                # self-hosted NIM (nvidia.llm) and Riva (nvidia.stt, nvidia.tts)
+# nvidia credentials (stored through the management API, not here; not a config block):
+# - nvidia.llm: bare NVIDIA_API_KEY (default model openai/gpt-oss-20b, base https://integrate.api.nvidia.com/v1)
+# - nvidia.stt/tts: {"api_key":"nvapi-...","function_id":"1598d209-5e27-4d3c-8079-4751568b1081","tts_function_id":"877104f7-e885-42b9-8de8-f6e4c6303969"}
+# - (NVCF hosted Parakeet CTC 1.1b ASR and Magpie TTS Multilingual, voice Magpie-Multilingual.EN-US.Aria; verified live 2026-10)

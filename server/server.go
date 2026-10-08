@@ -360,6 +360,8 @@ func (s *Server) setupRoutes() {
 		HandshakeTimeout:           s.cfg.Limits.UpgradeTimeout,
 		RTVIReadyTimeout:           s.cfg.Limits.ReadyTimeout,
 		ReadTimeout:                s.cfg.Limits.IdleTimeout,
+		PingInterval:               s.cfg.Limits.PingInterval,
+		PingTimeout:                s.cfg.Limits.PingTimeout,
 		MaxConnectionLifetime:      s.cfg.Limits.MaxCallDuration,
 		MaxConcurrentSessions:      s.cfg.Limits.MaxSessions,
 		MaxConcurrentSessionsPerIP: s.cfg.Limits.MaxSessionsPerIP,
@@ -915,6 +917,8 @@ func (s *Server) observeTransport(event string, n uint64) {
 		s.metrics.FlushAcksTotal.Add(n)
 	case "slow_client":
 		s.metrics.SlowClientTermTotal.Add(n)
+	case "ping_failure":
+		s.metrics.WSPingFailuresTotal.Add(n)
 	case "client_connected":
 		s.metrics.ConnectedClients.Add(int64(n))
 	case "client_disconnected":

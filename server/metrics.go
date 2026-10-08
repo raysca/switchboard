@@ -88,6 +88,7 @@ type Metrics struct {
 	FlushAcksTotal         atomic.Uint64
 	FlushTimeoutsTotal     atomic.Uint64
 	SlowClientTermTotal    atomic.Uint64
+	WSPingFailuresTotal    atomic.Uint64
 	ProtocolErrorsTotal    atomic.Uint64
 
 	TurnsTotal atomic.Uint64 // recorded call turns
@@ -103,6 +104,8 @@ type Metrics struct {
 	LLMFallbacksSkippedTotal atomic.Uint64
 	// UserMuteDroppedTotal counts user VAD/transcript frames dropped by a user mute strategy.
 	UserMuteDroppedTotal atomic.Uint64
+	// MinWordsNoInterimsTotal counts calls with turn.min_words whose STT sent a final with no interim before it.
+	MinWordsNoInterimsTotal atomic.Uint64
 	// Idle controller (per call, added when the call ends): prompts sent, calls
 	// hung up for user idle, stuck-bot cancellations, calls hung up for repeated ones.
 	UserIdlePromptsTotal, UserIdleHangupsTotal, BotIdleStuckTotal, BotIdleHangupsTotal atomic.Uint64
@@ -311,6 +314,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_llm_fallbacks_skipped_total Configured LLM fallbacks left out of a call (unresolvable).\n# TYPE voice_llm_fallbacks_skipped_total counter\nvoice_llm_fallbacks_skipped_total %d\n", m.LLMFallbacksSkippedTotal.Load())
 
 	fmt.Fprintf(w, "# HELP voice_user_mute_dropped_total User input frames (VAD start/stop, transcripts) dropped while muted.\n# TYPE voice_user_mute_dropped_total counter\nvoice_user_mute_dropped_total %d\n", m.UserMuteDroppedTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_turn_min_words_no_interims_total Calls with turn.min_words whose STT sent a final transcript before any interim (min_words cannot start turns early).\n# TYPE voice_turn_min_words_no_interims_total counter\nvoice_turn_min_words_no_interims_total %d\n", m.MinWordsNoInterimsTotal.Load())
 	fmt.Fprintf(w, "# HELP voice_async_tool_turns_total Model turns started to deliver finished async tool results.\n# TYPE voice_async_tool_turns_total counter\nvoice_async_tool_turns_total %d\n", m.AsyncToolTurnsTotal.Load())
 	fmt.Fprintf(w, "# HELP voice_turn_completion_total LLM turn-completion verdicts (turn.stop llm-completion).\n# TYPE voice_turn_completion_total counter\n")
 	for i, v := range completionVerdicts {
@@ -385,6 +389,9 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_transport_slow_client_terminations_total Slow client terminations.\n")
 	fmt.Fprintf(w, "# TYPE voice_transport_slow_client_terminations_total counter\n")
 	fmt.Fprintf(w, "voice_transport_slow_client_terminations_total %d\n", m.SlowClientTermTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_ws_ping_failures_total Server WebSocket pings that got no pong in time.\n")
+	fmt.Fprintf(w, "# TYPE voice_ws_ping_failures_total counter\n")
+	fmt.Fprintf(w, "voice_ws_ping_failures_total %d\n", m.WSPingFailuresTotal.Load())
 
 	fmt.Fprintf(w, "# HELP voice_transport_protocol_errors_total Wire protocol errors.\n")
 	fmt.Fprintf(w, "# TYPE voice_transport_protocol_errors_total counter\n")

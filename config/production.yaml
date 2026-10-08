@@ -39,7 +39,13 @@ limits:
   upgrade_timeout: 5s
   ready_timeout: 10s
   max_call_duration: 60m
+  # idle_timeout is the legacy data-silence disconnect, used only when ping_interval: 0
   idle_timeout: 30s
+  ping_interval: 15s   # server WebSocket ping; a peer missing 2 pings in a row (each ping_timeout) is dropped
+  ping_timeout: 10s
+  # Recommended: ping_interval/ping_timeout above drop dead peers (2 missed pings); a live but abandoned tab
+  # still answers pings and holds its slot until max_call_duration. Also set idle.user_timeout (see the
+  # commented idle block at the end of this file) so silent callers are prompted and hung up.
   drain_timeout: 45s
   immediate_cancel: false
 
@@ -92,3 +98,6 @@ warmup:
   enabled: true
   predial: false
   on_start: false
+
+# Recommended for production (off by default): hang up callers who stay silent or abandon the tab.
+# idle: {user_timeout: 30s, max_prompts: 2}

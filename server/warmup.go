@@ -99,7 +99,13 @@ func (r *Registry) WarmOnStart(ctx context.Context, timeout time.Duration) {
 	if p, err := deepgram.NewSTTProcessor(func() deepgram.STTConfig { c := deepgram.DefaultSTTConfig(); c.APIKey = k; return c }()); err == nil {
 		ws = append(ws, p)
 	}
+	if p, err := cartesia.NewSTTProcessor(func() cartesia.STTConfig { c := cartesia.DefaultSTTConfig(); c.APIKey = k; return c }()); err == nil {
+		ws = append(ws, p)
+	}
 	if p, err := cartesia.NewTTSProcessor(func() cartesia.TTSConfig { c := cartesia.DefaultTTSConfig(); c.APIKey = k; return c }()); err == nil {
+		ws = append(ws, p)
+	}
+	if p, err := elevenlabs.NewSTTProcessor(func() elevenlabs.STTConfig { c := elevenlabs.DefaultSTTConfig(); c.APIKey = k; return c }()); err == nil {
 		ws = append(ws, p)
 	}
 	if p, err := elevenlabs.NewTTSProcessor(func() elevenlabs.TTSConfig { c := elevenlabs.DefaultTTSConfig(); c.APIKey = k; return c }()); err == nil {

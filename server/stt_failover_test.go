@@ -12,7 +12,9 @@ import (
 
 	"govoice/core"
 	"govoice/core/resilience"
+	"govoice/providers/cartesia"
 	"govoice/providers/deepgram"
+	"govoice/providers/elevenlabs"
 	"govoice/providers/google"
 	"govoice/providers/xai"
 	"govoice/server/agent"
@@ -33,6 +35,14 @@ func TestSTTClassifyPerProvider(t *testing.T) {
 		{"deepgram attempt timeout", deepgram.MapError("stt", resilience.ErrTimeout, nil), agent.ClassTimeout},
 		{"deepgram bad request", &deepgram.ProviderError{Capability: "stt", ClientError: true}, agent.ClassClient},
 		{"deepgram caller cancelled", deepgram.MapError("stt", context.Canceled, nil), ""},
+		{"elevenlabs bad request", &elevenlabs.ProviderError{Capability: "stt", ClientError: true}, agent.ClassClient},
+		{"elevenlabs dial 503", elevenlabs.MapError("stt", errors.New("dial"), nil), agent.ClassServer},
+		{"elevenlabs attempt timeout", elevenlabs.MapError("stt", resilience.ErrTimeout, nil), agent.ClassTimeout},
+		{"elevenlabs circuit open", elevenlabs.MapError("stt", resilience.ErrCircuitOpen, nil), agent.ClassCircuit},
+		{"elevenlabs cancelled", elevenlabs.MapError("stt", context.Canceled, nil), ""},
+		{"cartesia bad request", &cartesia.ProviderError{Capability: "stt", ClientError: true}, agent.ClassClient},
+		{"cartesia dial 503", cartesia.MapError("stt", errors.New("dial"), nil), agent.ClassServer},
+		{"cartesia attempt timeout", cartesia.MapError("stt", resilience.ErrTimeout, nil), agent.ClassTimeout},
 		{"google circuit open", google.MapError("stt", resilience.ErrCircuitOpen), agent.ClassCircuit},
 		{"google deadline", google.MapError("stt", context.DeadlineExceeded), agent.ClassTimeout},
 		{"google cancelled", google.MapError("stt", context.Canceled), ""},

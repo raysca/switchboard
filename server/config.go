@@ -86,7 +86,9 @@ type Config struct {
 		UpgradeTimeout          time.Duration `yaml:"upgrade_timeout"`
 		ReadyTimeout            time.Duration `yaml:"ready_timeout"`
 		MaxCallDuration         time.Duration `yaml:"max_call_duration"`
-		IdleTimeout             time.Duration `yaml:"idle_timeout"`
+		IdleTimeout             time.Duration `yaml:"idle_timeout"`  // legacy data-silence read deadline; used only when ping_interval is 0
+		PingInterval            time.Duration `yaml:"ping_interval"` // server WebSocket ping period (liveness); 0 = off, fall back to idle_timeout
+		PingTimeout             time.Duration `yaml:"ping_timeout"`  // pong wait per ping; must be < ping_interval
 		DrainTimeout            time.Duration `yaml:"drain_timeout"`
 		ImmediateCancel         bool          `yaml:"immediate_cancel"`
 	} `yaml:"limits"`
@@ -236,6 +238,14 @@ type Config struct {
 			AllowPrivateBaseURL bool `yaml:"allow_private_base_url"`
 		} `yaml:"openai_llm"`
 
+		// Nvidia: NIM base URLs and Riva endpoints come from stored credentials;
+		// loopback/private targets (self-hosted NIM or Riva) and plaintext http
+		// are refused unless the operator opts in. Link-local and metadata
+		// addresses stay blocked regardless.
+		Nvidia struct {
+			AllowPrivate bool `yaml:"allow_private"`
+		} `yaml:"nvidia"`
+
 		XAISTT struct {
 			Endpoint string `yaml:"endpoint"`
 		} `yaml:"xai_stt"`
@@ -340,6 +350,8 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Limits.ReadyTimeout = 10 * time.Second
 	cfg.Limits.MaxCallDuration = 30 * time.Minute
 	cfg.Limits.IdleTimeout = 60 * time.Second
+	cfg.Limits.PingInterval = 15 * time.Second
+	cfg.Limits.PingTimeout = 10 * time.Second
 	cfg.Limits.DrainTimeout = 30 * time.Second
 
 	// VAD defaults based on profile
@@ -515,6 +527,9 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if cfg.Limits.MaxCallDuration <= 0 {
 		return errors.New("max_call_duration must be > 0")
+	}
+	if cfg.Limits.PingInterval < 0 || (cfg.Limits.PingInterval > 0 && (cfg.Limits.PingTimeout <= 0 || cfg.Limits.PingTimeout >= cfg.Limits.PingInterval)) {
+		return errors.New("limits: ping_interval must be >= 0 (0 = off) and, when set, 0 < ping_timeout < ping_interval")
 	}
 	if cfg.STT.ReplayBuffer < 0 || cfg.STT.ReplayBuffer > maxSTTReplay {
 		return fmt.Errorf("stt.replay_buffer must be between 0 (default 10s) and %v", maxSTTReplay)

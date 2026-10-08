@@ -9,6 +9,7 @@ import (
 	"govoice/core/resilience"
 	"govoice/providers/cartesia"
 	"govoice/providers/elevenlabs"
+	"govoice/providers/nvidia"
 	"govoice/server/agent"
 )
 
@@ -17,16 +18,18 @@ import (
 const defaultTTSRate = 24000
 
 // ttsClassify is the failover class of a failed TTS candidate ("" = none).
-// google and xai expose ClientError() on their ProviderError; cartesia and
-// elevenlabs carry it as a field, which the method check would flatten into
+// google and xai expose ClientError() on their ProviderError; cartesia,
+// elevenlabs and nvidia carry it as a field, which the method check would flatten into
 // server_error.
 func ttsClassify(err error) string {
 	var ce interface{ ClientError() bool }
 	var cp *cartesia.ProviderError
 	var ep *elevenlabs.ProviderError
+	var np *nvidia.ProviderError
 	client := errors.As(err, &ce) && ce.ClientError() ||
 		errors.As(err, &cp) && cp.ClientError ||
-		errors.As(err, &ep) && ep.ClientError
+		errors.As(err, &ep) && ep.ClientError ||
+		errors.As(err, &np) && np.ClientError
 	return agent.ClassOf(err, resilience.Verdict{ClientError: client})
 }
 
@@ -41,6 +44,8 @@ func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
 		return r.cartesiaBreaker
 	case "elevenlabs":
 		return r.elevenlabsBreaker
+	case "nvidia":
+		return r.nvidiaBreaker("tts|" + nvidia.DefaultEndpoint) // hosted; custom endpoints keep their own
 	}
 	return nil
 }
@@ -100,7 +105,11 @@ func (r *Registry) buildTTS(cfg *Config, call CallSpec, build func(string, Stage
 			continue
 		}
 		c := core.TTSCandidate{Provider: sp.Provider, Proc: p, Rate: ttsRate(cfg)}
-		if br := r.ttsBreaker(sp.Provider); br != nil {
+		br := r.ttsBreaker(sp.Provider)
+		if sp.Provider == "nvidia" { // per endpoint, as in buildSTT
+			br = r.nvidiaRivaBreaker("tts", sp.Secret)
+		}
+		if br != nil {
 			c.Open = br.WouldRefuse
 		}
 		cands = append(cands, c)

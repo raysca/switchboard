@@ -51,6 +51,8 @@
   "ReadyTimeout": 10000000000,
   "MaxCallDuration": 3600000000000,
   "IdleTimeout": 30000000000,
+  "PingInterval": 15000000000,
+  "PingTimeout": 10000000000,
   "DrainTimeout": 45000000000,
   "ImmediateCancel": false
  },
@@ -132,6 +134,9 @@
   },
   "OpenAILLM": {
    "AllowPrivateBaseURL": false
+  },
+  "Nvidia": {
+   "AllowPrivate": false
   },
   "XAISTT": {
    "Endpoint": "wss://api.x.ai/v1/stt"

@@ -30,17 +30,17 @@ func TestDeepgramIsSTTOnly(t *testing.T) {
 	}
 }
 
-func TestCartesiaIsTTSOnly(t *testing.T) {
+func TestCartesiaIsSTTAndTTS(t *testing.T) {
 	r := NewRegistry(Definitions())
-	if !r.Supports("cartesia", CapabilityTTS) || r.Supports("cartesia", CapabilityLLM) || r.Supports("cartesia", CapabilitySTT) {
-		t.Fatal("cartesia must offer TTS only")
+	if !r.Supports("cartesia", CapabilityTTS) || r.Supports("cartesia", CapabilityLLM) || !r.Supports("cartesia", CapabilitySTT) {
+		t.Fatal("cartesia must offer STT and TTS")
 	}
 }
 
-func TestElevenLabsIsTTSOnly(t *testing.T) {
+func TestElevenLabsIsSTTAndTTS(t *testing.T) {
 	r := NewRegistry(Definitions())
-	if !r.Supports("elevenlabs", CapabilityTTS) || r.Supports("elevenlabs", CapabilityLLM) || r.Supports("elevenlabs", CapabilitySTT) {
-		t.Fatal("elevenlabs must offer TTS only")
+	if !r.Supports("elevenlabs", CapabilityTTS) || r.Supports("elevenlabs", CapabilityLLM) || !r.Supports("elevenlabs", CapabilitySTT) {
+		t.Fatal("elevenlabs must offer STT and TTS")
 	}
 }
 
