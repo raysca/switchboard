@@ -14,6 +14,7 @@ import (
 // opts are the knobs scenarios read (flags).
 type opts struct {
 	s1Turns    int
+	s1Short    bool // the S1 prompt gets a one-sentence reply: estimate 2 TTS requests per reply, not 5
 	pause      time.Duration
 	werMax     float64       // max word error rate of what the STT heard
 	v2vMax     time.Duration // S1 voice-to-voice ceiling
@@ -145,7 +146,7 @@ const naFake = "fake providers: bot audio is too short to barge into"
 
 var scenarios = []scenario{
 	{id: "S1", title: "baseline turn", class: classBase, clips: []string{"question"},
-		shape: func(o *opts) shape { return shape{turns: o.s1Turns} }, run: s1},
+		shape: func(o *opts) shape { return shape{turns: o.s1Turns, short: o.s1Short} }, run: s1},
 	{id: "S2", title: "barge-in", class: classBase, clips: []string{"mars", "question"},
 		shape: func(*opts) shape { return shape{turns: 2, extraSTT: 1} },
 		na: func(p Profile, _ mode, _ *opts) string {

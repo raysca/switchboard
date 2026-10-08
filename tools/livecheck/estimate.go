@@ -14,6 +14,7 @@ type shape struct {
 	extraSTT int  // extra STT stream opens: barge-in or resumed speech
 	extraLLM int  // extra LLM requests: a tool round, a retry
 	noSTT    bool // text-only: no audio, so no STT stream
+	short    bool // one-sentence reply: at most 2 unary TTS requests per reply
 	long     bool // long reply (S9): 3x the per-reply TTS (xAI measured 12 requests, ~1.2k chars)
 }
 
@@ -43,6 +44,9 @@ func estCalls(sh shape, p Profile) int {
 	}
 	llm := sh.turns + sh.extraLLM
 	tts := sh.turns * ttsPerReply(p.Stages.TTS.Provider)
+	if sh.short {
+		tts = sh.turns * min(2, ttsPerReply(p.Stages.TTS.Provider))
+	}
 	if sh.long {
 		tts *= 3
 	}

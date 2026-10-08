@@ -67,3 +67,50 @@ Not worth chasing: unit wait on short replies and transport (both about 0).
 
 16 measured provider requests in total (cap 20): 4 per cell, 4 cells (xai off twice: the first run exposed that the timeline has no `llm_start`/`tts_audio`
 events, so the harness was changed to use `stt_result` and the observer `latency` events, then rerun; google off; xai on). The question clip was cached, no synthesis spent. Per-cell upper-bound estimate was 8 to 9.
+
+## Fix measurements (L2)
+
+### Code change: `vad.stop_ms`
+
+The VAD stop hangover is now a config key: `vad.stop_ms` (default 800, validated 200..2000, rounded up to 32 ms chunks; `server.Config.VADProcessorConfig()` feeds `vad.NewProcessor` per call, so it also covers `vad.mode: process`, where only inference runs in the worker and the stop decision stays in the call's processor). Default behavior is byte-for-byte unchanged (25 chunks); the shipped YAMLs and both effective-config goldens carry `stop_ms: 800`. Tests: `TestConfig_VADStopMS` (default, chunk mapping, bounds), `TestDetectHonorsStopChunks` (the processor stops after exactly N quiet chunks).
+Harness: new modes `eager` (`turn.stop [eager, speech-timeout]`, `eager_grace 200ms`), `vad500` (`vad.stop_ms 500`, no turn manager), `vad300+smart` (`vad.stop_ms 300`, `turn.stop [turn-analyzer, speech-timeout]`, no `min_words`), and `-s1-short` (the estimate assumes 2 TTS requests per reply instead of 5 for a one-sentence prompt; the measured cap is unchanged). The estimator adds one LLM request for `eager` (a split turn).
+
+### Live comparison (xAI, S1 "What is two plus two?", **n = 1 per variant, one machine**)
+
+| variant | v2v | vad | eot (STT final + commit) | ttft | unit wait | tts first byte | reply |
+|---|---|---|---|---|---|---|---|
+| baseline (off) | 3360 | 840 | 422 | 744 | 11 | 1341 | "4." |
+| eager (`[eager, speech-timeout]`, grace 200 ms) | 2804 | 841 | 653 | 701 | 24 | 583 | "2 + 2 equals 4." |
+| vad_stop 300 + `[turn-analyzer, speech-timeout]` | 2250 | 360 | 665 | 544 | 58 | 621 | "2 + 2 equals 4." |
+| vad_stop 500, no turn manager | not run | | | | | | |
+
+How to read it, with the noise stated first:
+- **Noise is larger than most differences.** The same `off` cell was 2157 ms in L1 and 3360 ms here: tts first byte 458 vs 1341 ms, ttft 559 vs 744 ms. Anything under about 1 s on v2v is not distinguishable at n = 1. Only the `vad` column is deterministic.
+- The part that does not depend on the LLM or TTS is `vad + eot`: off 1262, eager 1494, smart 1025 ms (L1: off 1115, manager-on 1644). Everything after it (ttft, unit wait, tts) varied independently of the setting.
+- **`vad300+smart`**: the VAD stage fell 480 ms (840 to 360) exactly as arithmetic predicts; the commit step cost +243 ms vs off (665 vs 422, analyzer plus the manager), net about -240 ms on the pre-LLM path in this one sample. The eot half is not deterministic (the same `off` eot moved about 150 ms between L1 and L2), so the net is only known to be somewhere between roughly -100 and -480 ms until n >= 5. Its v2v of 2250 is the best cell, but about 600 ms of the gap to `off` is ttft/tts variance. Replies were correct in all cells (wer 0.00).
+- **`eager` did not help here**: eot 653 vs 422 (+230 ms), no gain over off at n = 1. The expected saving was against `on` with `min_words` (eot 904), not against `off`; eager is a fix for the turn manager's stacked timeout, not a gain over no manager. It only makes sense where a turn manager is needed anyway.
+- `vad500` was not run: the estimator refused it once the remaining budget (5) fell under its per-cell upper bound (6). Its effect on the vad stage is the same arithmetic (800 to 500 ms: -300 ms).
+
+### False-cut risk of a shorter VAD stop (free, no provider calls)
+
+A cut happens exactly when a mid-utterance pause is at least `stop_ms` long (below `StopThresh` 0.35 for that long): that part is arithmetic and `TestDetectHonorsStopChunks` covers it. What matters is how long real in-sentence pauses are. `make eval-turn` cannot tell: its dataset is transcripts without timing (speech-timeout false_cut 1.0 by construction, smart-turn skipped). I ran the real Silero model (the shipped `silero_vad.onnx`, same thresholds and 2-chunk start rule) over the 18 clips in `assets/speech` (59 s of read speech) and measured every silence inside speech of at least 96 ms:
+
+| vad stop | chunks | internal gaps that would cut mid-utterance |
+|---|---|---|
+| 224 ms | 7 | 2 of 16 |
+| 320 ms | 10 | 0 |
+| 512 ms | 16 | 0 |
+| 800 ms | 25 | 0 |
+
+All 16 gaps were 128 to 256 ms (median 160). **Caveat, important:** these are 18 fluent, scripted clips (16 gaps in total) with no hesitation, so the pause lengths are a lower bound and 0 cuts at 320 ms is a best case, not a rate. People pausing to think routinely pause longer than 300 ms, so 300 and 500 ms will split such utterances; this test cannot measure that rate. The cheap protection is what `vad300+smart` does: with `turn-analyzer` holding the turn, a VAD stop on an incomplete sentence does not end the user's turn, so the false cut is paid as a wait, not a split. Without an analyzer (plain `vad500`), every pause of 500 ms or more is a split turn.
+
+### Recommendation (latency-first profile; defaults not changed)
+
+1. `vad.stop_ms: 300` together with `turn: {manager: true, stop: [turn-analyzer, speech-timeout]}`: 480 ms off the VAD stage by arithmetic, about 240 ms net of the analyzer/manager commit cost in one sample (see above), with the analyzer turning most false cuts into a wait (a degraded model falls back to speech-timeout and can still split). Best single change; confirm with n >= 5 and a hesitation clip before adopting.
+2. If no turn manager is wanted: `vad.stop_ms: 500` (saves 300 ms; expect some split turns on hesitations) rather than 300.
+3. Use `turn.stop: [eager, speech-timeout]` only when the turn manager is on already (it removes the stacked `speech_timeout` seen in `on` mode); do not add the manager just for eager.
+4. Keep 800 as the default.
+
+### Request accounting (L2)
+
+15 measured provider requests (cap 20): 3 from a first attempt that failed because the provtest clip is IMA ADPCM and the harness loaded it as raw PCM (no useful data; the question clip was then converted with ffmpeg into the local cache), 8 for `off` + `eager` (4 each), 4 for `vad300+smart`. The plan preview refused `vad500` with the 5 remaining. n = 2 per variant was not possible under the cap (per-cell upper bound 6 to 7, measured 4).

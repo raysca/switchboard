@@ -73,6 +73,7 @@ func realMain(args []string) int {
 	)
 	o := &opts{}
 	fs.IntVar(&o.s1Turns, "s1-turns", 2, "S1 turns per call")
+	fs.BoolVar(&o.s1Short, "s1-short", false, "S1 prompt has a one-sentence reply (e.g. the two-plus-two clip): the estimate assumes 2 TTS requests per reply instead of 5; the measured cap still applies")
 	fs.DurationVar(&o.pause, "pause", time.Second, "S4: silence inside the utterance")
 	fs.Float64Var(&o.werMax, "wer-max", 0.4, "max word error rate of what the STT heard")
 	fs.DurationVar(&o.v2vMax, "v2v-max", 8*time.Second, "S1: voice-to-voice ceiling")

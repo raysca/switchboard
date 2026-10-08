@@ -24,18 +24,26 @@ import (
 )
 
 // mode is one turn configuration the scenarios run under (server-level, so one server each).
-type mode struct{ name, turn, extra string } // extra: more top-level server.yaml (e.g. tts_merge)
+type mode struct {
+	name, turn, extra string // extra: more top-level server.yaml (e.g. tts_merge)
+	vadStopMS         int    // vad.stop_ms (0 = server default 800)
+	extraLLM          int    // extra LLM requests in the estimate (eager can split a turn into a second one)
+}
 
 var modes = map[string]mode{
-	"off":      {"off", "", ""},
-	"on":       {"on", "turn:\n  manager: true\n  min_words: 3\n", ""},
-	"on+smart": {"on+smart", "turn:\n  manager: true\n  min_words: 3\n  stop: [turn-analyzer, speech-timeout]\n", ""},
+	"off":      {"off", "", "", 0, 0},
+	"on":       {"on", "turn:\n  manager: true\n  min_words: 3\n", "", 0, 0},
+	"on+smart": {"on+smart", "turn:\n  manager: true\n  min_words: 3\n  stop: [turn-analyzer, speech-timeout]\n", "", 0, 0},
 	// slack-aware TTS merging (xai/google; docs/benchmarks/tts-unit-sizing.md): same server as "off" otherwise.
 	// first_clause_chars 40 is what the server implies when merging is on and the key is 0.
-	"merge": {"merge", "", "tts_merge: {enabled: true, margin: 300ms, cap: 250}\n"},
+	"merge": {"merge", "", "tts_merge: {enabled: true, margin: 300ms, cap: 250}\n", 0, 0},
+	// first-audio latency fixes (docs/benchmarks/first-audio-latency.md, Fix measurements)
+	"eager":        {"eager", "turn:\n  manager: true\n  stop: [eager, speech-timeout]\n  eager_grace: 200ms\n", "", 0, 1},
+	"vad500":       {"vad500", "", "", 500, 0},
+	"vad300+smart": {"vad300+smart", "turn:\n  manager: true\n  stop: [turn-analyzer, speech-timeout]\n", "", 300, 0},
 	// kept from the first livecheck so old -variants lists still work
-	"plain": {"plain", "turn:\n  manager: true\n", ""},
-	"fast":  {"fast", "turn:\n  manager: true\n  min_words: 3\n  speech_timeout: 150ms\n", ""},
+	"plain": {"plain", "turn:\n  manager: true\n", "", 0, 0},
+	"fast":  {"fast", "turn:\n  manager: true\n  min_words: 3\n  speech_timeout: 150ms\n", "", 0, 0},
 }
 
 var modeAlias = map[string]string{"smart": "on+smart"}
@@ -139,20 +147,24 @@ func serverYAML(sp serverSpec, pub, adm int) string {
 		}
 		pv.WriteString(fmt.Sprintf("  %s: {%s}\n", n, strings.Join(kv, ", ")))
 	}
+	vadStop := ""
+	if ms := sp.mode.vadStopMS; ms > 0 {
+		vadStop = fmt.Sprintf(", stop_ms: %d", ms)
+	}
 	return fmt.Sprintf(`profile: development
 public_listen_addr: "127.0.0.1:%d"
 admin_listen_addr: "127.0.0.1:%d"
 origin_allowlist: ["*"]
 token: {secret_env: "TOKEN_SECRET", issuer: "govoice-v1", audience: "govoice-v1-client", key_id: "v1", max_lifetime: 5m, clock_skew: 30s, replay_cache_limit: 1000}
 %s
-vad: {mode: "process", workers: 1, batch: 8, model_path: "third_party/silero_vad.onnx", queue_cap: 8192}
+vad: {mode: "process", workers: 1, batch: 8, model_path: "third_party/silero_vad.onnx", queue_cap: 8192%s}
 providers:
   google_stt: {project_id: "", location: "us-central1", rotation_threshold: 240s}
 %sobservability: {log_level: "%s", json_format: false, timeline_max_events: 500, timeline_ttl: 10m}
 storage: {dialect: "sqlite"}
 retention: {enabled: false}
 %s%s%s
-`, pub, adm, limits, pv.String(), sp.logLevel, sp.mode.turn, sp.mode.extra, sp.class.yaml)
+`, pub, adm, limits, vadStop, pv.String(), sp.logLevel, sp.mode.turn, sp.mode.extra, sp.class.yaml)
 }
 
 func sortedKeys[V any](m map[string]V) []string {

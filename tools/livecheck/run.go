@@ -36,7 +36,9 @@ func buildPlan(profs []Profile, ms []mode, scs []scenario, repeat int, o *opts) 
 							it.na = sc.na(p, m, o)
 						}
 						if it.na == "" && !p.Fake {
-							it.calls = estCalls(sc.shape(o), p)
+							sh := sc.shape(o)
+							sh.extraLLM += m.extraLLM
+							it.calls = estCalls(sh, p)
 						}
 						plan = append(plan, it)
 					}

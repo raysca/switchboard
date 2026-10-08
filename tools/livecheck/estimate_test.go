@@ -204,3 +204,25 @@ func TestEstimateCoversKnownActuals(t *testing.T) {
 		}
 	}
 }
+
+// New latency modes: vad.stop_ms reaches the server yaml and the estimate is pessimistic for eager/smart.
+func TestLatencyModes(t *testing.T) {
+	if y := serverYAML(serverSpec{mode: modes["vad500"], class: classBase}, 1, 2); !strings.Contains(y, "stop_ms: 500") {
+		t.Error("vad500 yaml lacks stop_ms: 500")
+	}
+	if y := serverYAML(serverSpec{mode: modes["off"], class: classBase}, 1, 2); strings.Contains(y, "stop_ms") {
+		t.Error("off must not set stop_ms")
+	}
+	if y := serverYAML(serverSpec{mode: modes["eager"], class: classBase}, 1, 2); !strings.Contains(y, "stop: [eager, speech-timeout]") || !strings.Contains(y, "eager_grace: 200ms") {
+		t.Error("eager yaml wrong")
+	}
+	if y := serverYAML(serverSpec{mode: modes["vad300+smart"], class: classBase}, 1, 2); !strings.Contains(y, "stop_ms: 300") || !strings.Contains(y, "turn-analyzer") {
+		t.Error("vad300+smart yaml wrong")
+	}
+	if modes["eager"].extraLLM < 1 {
+		t.Error("eager estimate must allow a split turn")
+	}
+	if got := estCalls(shape{turns: 1, short: true}, prof("xai")); got != 3+1+2 {
+		t.Errorf("short xai S1 estimate = %d, want 6", got)
+	}
+}
