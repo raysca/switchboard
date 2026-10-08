@@ -525,6 +525,20 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	asstCfg := core.DefaultAssistantContextConfig()
 	asstCfg.FirstClauseMinLength = cfg.FirstClauseChars
+	if m := cfg.TTSMerge; m.Enabled {
+		if sc, ok := core.SlackDefaults(call.TTS.Provider); ok {
+			if m.Margin > 0 {
+				sc.Margin = m.Margin
+			}
+			if m.Cap > 0 {
+				sc.Cap = m.Cap
+			}
+			if asstCfg.FirstClauseMinLength == 0 {
+				asstCfg.FirstClauseMinLength = 40
+			}
+			asstCfg.SlackMerge = &sc
+		}
+	}
 	asstCfg.Completion = completion
 	if call.Summary.Enabled {
 		if c, ok := llmProc.(textCompleter); ok {

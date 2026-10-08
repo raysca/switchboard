@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // AssistantContextConfig configures synthesis segmentation and flush timeouts.
@@ -27,6 +28,9 @@ type AssistantContextConfig struct {
 	// Summary, when it has a Summarizer, summarizes older history after each
 	// completed assistant turn (see ContextSummarizer). Nil = off.
 	Summary *SummaryConfig
+	// SlackMerge, when set, merges sentences for unary TTS providers (see
+	// SlackMergeConfig). Nil = off, one unit per sentence.
+	SlackMerge *SlackMergeConfig
 }
 
 // DefaultAssistantContextConfig returns a safe, production-tuned default configuration.
@@ -64,6 +68,7 @@ type AssistantContextProcessor struct {
 	deliveredUnits  map[uint64]string
 	heard           *HeardText
 	summ            *ContextSummarizer
+	slack           *slackMerger // nil = off
 
 	// Turn-completion protocol state (nil gate = protocol off for this turn).
 	gate      *completionGate
@@ -98,7 +103,12 @@ func NewAssistantContextProcessor(ctxPool *ConversationContext, cfg AssistantCon
 		cfg.Completion = &c
 	}
 
+	var slack *slackMerger
+	if cfg.SlackMerge != nil {
+		slack = newSlackMerger(*cfg.SlackMerge)
+	}
 	return &AssistantContextProcessor{
+		slack:          slack,
 		ctxPool:        ctxPool,
 		cfg:            cfg,
 		pendingUnits:   make(map[uint64]string),
@@ -142,6 +152,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		p.pendingUnits = make(map[uint64]string)
 		p.deliveredUnits = make(map[uint64]string)
 		p.heard.Reset()
+		p.slackReset()
 		p.cancelHold()
 		p.gate = nil
 		if p.cfg.Completion != nil {
@@ -215,6 +226,14 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 			return nil
 		}
 		if wc.Err == nil {
+			if p.slack != nil {
+				p.slack.observe(wc.UnitID, p.firstUnitID, wc.Media, wc.IsFinal)
+				// Playback writes are the clock tick: held text still goes at the
+				// last safe moment when the LLM stalls (slow tokens, a tool call).
+				if err := p.emitUnits(e, p.slack.due(false)); err != nil {
+					return err
+				}
+			}
 			p.heard.Played(wc.UnitID, wc.Media, wc.WordTimings, wc.IsFinal)
 		}
 		if wc.IsFinal {
@@ -362,35 +381,19 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 		buf = buf[splitIdx:]
 
 		if speakable(unitText) { // a stray closing quote or dash is not worth a TTS call
-			p.unitCounter++
-			unitID := p.unitCounter
-			if p.firstUnitID == 0 {
-				p.firstUnitID = unitID
-			}
-			p.pendingUnits[unitID] = unitText
-			p.heard.AddUnit(unitID, unitText)
-
 			isFinalUnit := isLastChunk && len(buf) == 0
-			if isFinalUnit {
-				p.finalUnitID = unitID
-				p.finalSignalSent = true
+			outs := []slackOut{{unitText, isFinalUnit}}
+			if p.slack != nil {
+				outs = p.slack.admit(unitText, p.firstUnitID == 0, isFinalUnit)
 			}
-
-			gen := uint64(0)
-			if p.session != nil {
-				gen = p.session.CurrentGeneration()
-			}
-
-			unitFrame := &SynthesisUnitFrame{
-				Turn:    p.activeTurn,
-				Gen:     gen,
-				UnitID:  unitID,
-				Text:    unitText,
-				IsFinal: isFinalUnit,
-			}
-			if err := e.Push(unitFrame); err != nil {
+			if err := p.emitUnits(e, outs); err != nil {
 				return err
 			}
+		}
+	}
+	if p.slack != nil { // held text goes at the last safe moment (checked per delta) or at reply end
+		if err := p.emitUnits(e, p.slack.due(isLastChunk && len(buf) == 0)); err != nil {
+			return err
 		}
 	}
 
@@ -411,6 +414,40 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 		}
 		if p.allPendingDelivered() {
 			return p.commitTurn(e, false)
+		}
+	}
+	return nil
+}
+
+func (p *AssistantContextProcessor) slackReset() {
+	if p.slack != nil {
+		p.slack.reset()
+	}
+}
+
+// emitUnits sends one synthesis unit per out (a merged unit is still one unit).
+func (p *AssistantContextProcessor) emitUnits(e Emitter, outs []slackOut) error {
+	for _, o := range outs {
+		p.unitCounter++
+		unitID := p.unitCounter
+		if p.firstUnitID == 0 {
+			p.firstUnitID = unitID
+		}
+		p.pendingUnits[unitID] = o.text
+		p.heard.AddUnit(unitID, o.text)
+		if o.final {
+			p.finalUnitID = unitID
+			p.finalSignalSent = true
+		}
+		if p.slack != nil {
+			p.slack.sent(unitID, utf8.RuneCountInString(o.text))
+		}
+		gen := uint64(0)
+		if p.session != nil {
+			gen = p.session.CurrentGeneration()
+		}
+		if err := e.Push(&SynthesisUnitFrame{Turn: p.activeTurn, Gen: gen, UnitID: unitID, Text: o.text, IsFinal: o.final}); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -570,6 +607,7 @@ func (p *AssistantContextProcessor) resetTurn() {
 	p.pendingUnits = make(map[uint64]string)
 	p.deliveredUnits = make(map[uint64]string)
 	p.heard.Reset()
+	p.slackReset()
 	p.gate = nil
 }
 

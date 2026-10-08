@@ -115,6 +115,7 @@ warmup:
 #   max_mute: 30s
 #   analyzer: {mode: "", workers: 1, model_path: third_party/smart_turn_v3.2_cpu.onnx, stop_secs: 3s, budget: 150ms}
 # first_clause_chars: 0                  # try 40 for earlier first audio
+# tts_merge: {enabled: false, margin: 300ms, cap: 250}  # xai/google only: merge sentences while audio slack allows (fewer requests); implies first_clause_chars 40 if 0
 # audio:
 #   input_filters: []                    # [denoise]
 #   denoise_strength: 0.5

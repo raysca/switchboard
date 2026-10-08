@@ -177,6 +177,18 @@ type Config struct {
 	// some cost to prosody. 0 (default) splits on sentences only. Try 40.
 	FirstClauseChars int `yaml:"first_clause_chars"`
 
+	// TTSMerge enables slack-aware unit merging for unary TTS providers (xai,
+	// google; ignored for others): after the first unit, sentences are held
+	// and merged while the merged request would still finish Margin before the
+	// queued audio runs out. Fewer requests at the same characters. Off by
+	// default. With it on and first_clause_chars 0, the first unit ends at a
+	// clause after 40 chars. Cap 0 = 250 runes.
+	TTSMerge struct {
+		Enabled bool          `yaml:"enabled"`
+		Margin  time.Duration `yaml:"margin"` // default 300ms
+		Cap     int           `yaml:"cap"`
+	} `yaml:"tts_merge"`
+
 	// Audio configures inbound audio conditioning. InputFilters runs in the
 	// listed order between the DTMF detector (which hears unfiltered audio)
 	// and VAD; empty (default) leaves the pipeline unchanged. Known filters:
@@ -570,6 +582,9 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if cfg.FirstClauseChars < 0 {
 		return errors.New("first_clause_chars must be >= 0")
+	}
+	if cfg.TTSMerge.Margin < 0 || cfg.TTSMerge.Cap < 0 {
+		return errors.New("tts_merge.margin and tts_merge.cap must be >= 0")
 	}
 	if cfg.Turn.SpeechTimeout < 0 || cfg.Turn.EagerGrace < 0 {
 		return errors.New("turn.speech_timeout and turn.eager_grace must be >= 0")

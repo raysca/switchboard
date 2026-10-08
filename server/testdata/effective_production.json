@@ -94,6 +94,11 @@
   }
  },
  "FirstClauseChars": 0,
+ "TTSMerge": {
+  "Enabled": false,
+  "Margin": 0,
+  "Cap": 0
+ },
  "Audio": {
   "InputFilters": null,
   "DenoiseStrength": 0.5,
