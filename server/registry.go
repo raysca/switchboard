@@ -438,11 +438,7 @@ const CallUserContextIndex = 3
 // assistant context -> TTS -> transport for one call of a stored agent.
 func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, error) {
 	build := func(stage string, spec StageSpec) (core.Processor, error) {
-		factory, ok := r.factories[factoryKey(spec.Provider, stage)]
-		if !ok {
-			return nil, fmt.Errorf("%s provider %q is not available", stage, spec.Provider)
-		}
-		proc, err := factory(cfg, spec)
+		proc, err := r.BuildStage(cfg, stage, spec)
 		if err == nil {
 			r.warm(cfg, proc) // every candidate, primary and fallbacks
 		}
