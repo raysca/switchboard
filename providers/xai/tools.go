@@ -366,6 +366,10 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 			return MapHTTPError("llm", resp, string(b), nil)
 		}
 		sse := NewSSEReader(resp.Body, p.cfg.MaxLineLength, p.cfg.MaxEventSize, p.cfg.MaxTotalSize)
+		// The Responses API ends the stream with response.completed and no "[DONE]" sentinel
+		// (chat/completions still sends [DONE]); either one is a terminal event.
+		completed := false
+	read:
 		for {
 			select {
 			case <-ctx.Done():
@@ -499,7 +503,8 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 						}
 					}
 				}
-				continue
+				completed = true
+				break read
 			}
 			delta := ""
 			if chunk.Type == "response.output_text.delta" || chunk.Type == "response.text.delta" {
@@ -526,7 +531,7 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 				}
 			}
 		}
-		if !sse.SawTerminal() {
+		if !completed && !sse.SawTerminal() {
 			return ErrMissingTerminalEvent
 		}
 		return nil

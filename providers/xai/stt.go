@@ -208,6 +208,9 @@ type activeSTTStream struct {
 	turnID     string
 	gen        uint64
 	lastText   string
+	base       string // finished utterances of this turn (speech_final texts)
+	chunks     string // locked chunk finals of the utterance in progress
+	settled    bool   // the last partial was a speech_final: no utterance is open
 	drainTimer *time.Timer
 	closing    bool
 	stopOnce   sync.Once
@@ -319,7 +322,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.mu.Lock()
 		p.turnID = fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq)
 		p.streamGen = frame.Gen
-		var old *activeSTTStream
+		var old, parked *activeSTTStream
 		if p.active != nil {
 			p.active.mu.Lock()
 			owned := p.active.turnID != "" && (p.active.turnID != p.turnID || p.active.gen != frame.Gen)
@@ -328,6 +331,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			}
 			p.active.mu.Unlock()
 			if owned {
+				parked = p.active
 				p.draining = append(p.draining, p.active)
 				p.active = nil
 				old = p.trimDrainingLocked()
@@ -335,6 +339,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		}
 		p.mu.Unlock()
 		p.stopStream(old)
+		_ = p.beginDrain(ctx, parked) // another turn's stream finalizes and drains on its own
 		if err := p.ensureStream(ctx); err != nil {
 			p.ErrorsTotal.Add(1)
 			return err
@@ -347,7 +352,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.mu.Lock()
 			p.turnID = string(frame.Turn)
 			p.streamGen = uint64(frame.Gen)
-			var old *activeSTTStream
+			var old, parked *activeSTTStream
 			if p.active != nil {
 				p.active.mu.Lock()
 				if p.active.turnID == p.turnID && p.active.gen < p.streamGen {
@@ -360,6 +365,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 				}
 				p.active.mu.Unlock()
 				if owned {
+					parked = p.active
 					p.draining = append(p.draining, p.active)
 					p.active = nil
 					old = p.trimDrainingLocked()
@@ -367,6 +373,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			}
 			p.mu.Unlock()
 			p.stopStream(old)
+			_ = p.beginDrain(ctx, parked)
 		case core.TurnEventCompleted:
 			if err := p.completeStream(ctx, string(frame.Turn), uint64(frame.Gen)); err != nil {
 				return err
@@ -380,9 +387,19 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		return p.handleAudio(ctx, frame, e)
 
 	case *core.UserStoppedSpeakingFrame:
+		// Half-close and detach the stream, and release the turn (like Deepgram): audio after the
+		// stop opens a fresh unbound stream that the next UserStarted adopts, so a quick resume
+		// keeps its onset instead of feeding a stream that already got audio.done.
 		p.mu.Lock()
-		active := p.active
+		active, old := p.active, (*activeSTTStream)(nil)
+		if active != nil {
+			p.active = nil
+			p.draining = append(p.draining, active)
+			old = p.trimDrainingLocked()
+		}
+		p.turnID, p.streamGen = "", 0
 		p.mu.Unlock()
+		p.stopStream(old)
 		if active != nil {
 			if err := p.beginDrain(ctx, active); err != nil {
 				return err
@@ -474,6 +491,9 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	err := st.stream.SendAudio(sendCtx, f.Samples)
 	st.sendMu.Unlock()
 	if err != nil {
+		if st.ctx.Err() != nil { // torn down concurrently: not a provider failure
+			return e.Push(f)
+		}
 		st.endTrace(errors.New("provider_failure"))
 		p.stopStream(st)
 		provErr := MapError("stt", err)
@@ -506,6 +526,11 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 	turn, gen := p.turnID, p.streamGen
 	p.mu.Unlock()
 
+	// An open breaker stops the dial. WouldRefuse does not take the half-open probe: a cooled-down
+	// breaker lets this dial through, and its one Report/RecordSuccess below settles the state.
+	if br := p.cfg.CircuitBreaker; br != nil && br.WouldRefuse() {
+		return ErrCircuitOpen
+	}
 	traceSession := core.SessionID("")
 	if p.session != nil {
 		traceSession = core.SessionID(strconv.FormatUint(p.session.ID(), 10))
@@ -527,9 +552,10 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 	if err != nil {
 		span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), traceSession, core.TurnID(turn), core.Generation(gen), policy, nil))
 		span.End(errors.New("provider_failure"))
+		cancelled := streamCtx.Err() != nil // session torn down / caller gave up: not a provider outage
 		cancel()
 		provErr := MapError("stt", err)
-		if p.cfg.CircuitBreaker != nil {
+		if p.cfg.CircuitBreaker != nil && !cancelled {
 			p.cfg.CircuitBreaker.Report(err, classify)
 		}
 		return provErr
@@ -703,15 +729,34 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 				if turnGen == 0 && p.session != nil {
 					turnGen = p.session.CurrentGeneration()
 				}
-				st.lastText = msg.Text
+				// xAI sends per-segment text: interims and chunk finals carry only the current
+				// chunk, speech_final the stitched utterance. Candidates are cumulative for the
+				// turn, like the other STT adapters (interim = locked + chunk).
+				seg := strings.TrimSpace(msg.Text)
+				var text string
+				switch {
+				case msg.SpeechFinal:
+					text = joinWords(st.base, seg)
+					st.base, st.chunks = text, ""
+				case msg.IsFinal:
+					st.chunks = joinWords(st.chunks, seg)
+					text = joinWords(st.base, st.chunks)
+				default:
+					text = joinWords(joinWords(st.base, st.chunks), seg)
+				}
+				st.lastText = text
+				st.settled = msg.SpeechFinal
 				isProviderFinal := msg.IsFinal || msg.SpeechFinal
 				isUtteranceFinal := msg.SpeechFinal
 				st.mu.Unlock()
+				if turn == "" { // unbound (between turns): the adopting turn's next candidate carries the text
+					continue
+				}
 
 				// is_final closes a chunk but does not close the utterance;
 				// speech_final is the utterance-final signal.
 				frame := &core.TranscriptCandidateFrame{
-					Text:           msg.Text,
+					Text:           text,
 					Turn:           core.TurnID(turn),
 					Gen:            core.Generation(turnGen),
 					Timestamp:      p.cfg.Now(),
@@ -736,11 +781,14 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 				if lastText == "" {
 					lastText = st.lastText
 				}
+				// Nothing is pending when the last candidate was already a speech_final: a second
+				// final would only be a late duplicate that lands in the next turn's window.
+				pending := !st.settled
 				st.mu.Unlock()
 
-				// transcript.done closes the stream/utterance. Re-emitting the last
-				// text as a raw final candidate is safe; common policy deduplicates it.
-				if lastText != "" && p.session != nil {
+				// transcript.done closes the stream/utterance. An utterance still open at that
+				// point (audio.done before the server endpointed) is finalized from its text.
+				if lastText != "" && pending && turn != "" && p.session != nil {
 					frame := &core.TranscriptCandidateFrame{
 						Text: lastText, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 						Timestamp: p.cfg.Now(), Final: true, EndOfUtterance: true, Provider: "xai",
@@ -813,7 +861,9 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 	}
 	st.mu.Lock()
 	if st.drainTimer == nil {
-		st.drainTimer = time.AfterFunc(500*time.Millisecond, func() {
+		// The stream is detached, so a long wait costs nothing; live finals land 0.2-0.4 s after
+		// audio.done. ponytail: fixed bound like Deepgram's default DrainTimeout; config if needed.
+		st.drainTimer = time.AfterFunc(2*time.Second, func() {
 			st.mu.Lock()
 			if st.drainTimer == nil {
 				st.mu.Unlock()
@@ -903,6 +953,13 @@ func (p *STTProcessor) releaseStream(st *activeSTTStream) {
 		}
 	}
 	p.mu.Unlock()
+}
+
+func joinWords(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
+	}
+	return a + " " + b
 }
 
 func boolStability(stable bool) float64 {

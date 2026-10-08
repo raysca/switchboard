@@ -412,6 +412,9 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 			return
 		}
 
+		if len(pcmData)%2 != 0 { // keep sample alignment; a lone byte is dropped
+			pcmData = pcmData[:len(pcmData)-1]
+		}
 		totalBytes := len(pcmData)
 		firstAudio := true
 		if totalBytes > 0 {
@@ -485,6 +488,14 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 			traceFailure = errors.New("transport_failure")
 			return
 		}
+		// Billing is per character sent: report it like core/ttsunit does, after TTSStopped.
+		_ = s.Reenter(&core.UsageMetricsFrame{
+			SessionID: traceSession, Turn: unit.Turn, Gen: unit.Gen, Provider: "xai", Model: p.cfg.Voice,
+			Service: "tts", Timestamp: time.Now(),
+			Characters:      core.Int64Ptr(int64(len([]rune(unit.Text)))),
+			AudioDurationMs: core.Int64Ptr(int64(totalBytes / 2 * 1000 / sampleRate)),
+			Requests:        core.Int64Ptr(1),
+		}, core.Downstream, p.index+1, unit.Gen)
 		traceFailure = nil
 	}); err != nil {
 		// The task was refused, so nothing will ever complete this slot: give
