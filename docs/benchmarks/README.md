@@ -60,4 +60,80 @@ To start gating CI: run the `perf-gate` workflow on a PR once (first runs upload
 - Client v2v includes the VAD hangover and a 100 ms clip margin, so it is not comparable with `baseline.md`.
 - One speech clip, 4 calls: the smoke is a regression tripwire, not a capacity measurement (see `capacity.md`).
 
-Live provider checks (opt-in, spends API credit, not part of the gates): `make live-check`, results in `turn-manager-live.md`.
+## Live provider matrix (opt-in, spends API credit, not part of the gates)
+
+`tools/livecheck` runs ONE standard agent (same system prompt, same scenarios) on a real server child against many provider **profiles**; adding a provider combination means adding a profile, not code. Results: [agent-matrix.md](agent-matrix.md). Earlier one-off runs: [turn-manager-live.md](turn-manager-live.md) (Google), [nvidia-live.md](nvidia-live.md).
+
+```
+go run ./tools/livecheck -list                       # profiles and whether this environment can run them (free)
+GOVOICE_LIVE=1 make agent-matrix PROFILES=google,nvidia SCENARIOS=S1 MODES=off,on
+go run ./tools/livecheck -dry-run -profiles all      # the provider-request estimate only (free)
+make live-check-selftest                             # same engine, fake providers, no network (about 2 min)
+GOVOICE_LIVE=1 make live-check                       # old entry point: google profile, all modes (LIVE_ARGS for flags)
+```
+
+Run control (all flags: `go run ./tools/livecheck -h`): `-profiles a,b|all`, `-scenarios S1,S2`, `-modes off,on,on+smart` (`on` = turn.manager + min_words 3, `on+smart` adds Smart-turn), `-repeat N`, `-max-calls N` (a hard cap; see "Cost control" below), `-yes` or `GOVOICE_LIVE=1` to proceed, `-out dir` (results.json + agent-matrix.md, default `.agent-matrix-out/`, git-ignored), `-write-docs` (merges into `docs/benchmarks/agent-matrix.json` and re-renders `agent-matrix.md`: each profile x mode x scenario keeps its latest run, stamped with date and commit, so separate runs accumulate), `-clips dir`, `-profiles-file path` (use another YAML), `-stt-model` (override the STT model), `-mcp-url` (S6), `-trace`, `-keep-work`. Exit status 1 when any assertion fails or a scenario errors; N/A and SKIPPED do not count.
+
+| scenario | asserts | needs |
+|---|---|---|
+| S1 baseline turn | question heard (WER vs the known text), answer is "four", bot audio within `-v2v-max`; reports v2v, VAD stop, STT final, LLM first token, TTS first byte | |
+| S2 barge-in | bot audio stops within `-stop-max`, second utterance heard and answered | a bot reply that keeps talking (the Mars question) |
+| S3 backchannel | with min_words, "uh-huh yeah" starts no reply and does not interrupt | an STT with interim results (`interims: yes`, else detected; N/A otherwise) |
+| S4 mid-utterance pause | under the turn manager one user turn, one reply, whole sentence heard | |
+| S5 idle | an idle prompt is spoken, then the server hangs up | |
+| S6 tool call | the answer carries the tool result (`-mcp-expect`) | `-mcp-url`: a public HTTPS MCP server with `get_time` (the server refuses loopback and plain-http MCP endpoints, so the harness cannot host one) |
+| S7 text turn | RTVI `send-text` gets a spoken, correct answer | |
+| S8 muted client | a client that sends nothing outlives `idle_timeout` (3 s) for 9 s because the 1 s pings are answered | |
+
+Each profile and turn mode gets a fresh server child on ephemeral ports (S5 and S8 their own, with short idle/ping timers), a fresh credential store (one stored credential per provider, referenced per stage, deleted when the server stops), and the server binary is built once with the union of the build tags the selected profiles need (xAI STT/TTS: `xaispeech`). A profile whose required env is missing is SKIPPED with the reason. Secrets are read from `examples/.env` into the harness environment only; the server child inherits an allowlist (PATH, HOME, locale, ONNX runtime paths), never provider keys or `GOVOICE_DATABASE_DSN`; all output and report files are redacted (patterns plus the literal values of every `*KEY*/*SECRET*/*TOKEN*` variable).
+
+### Adding a provider profile
+
+1. Vendor already known to `tools/livecheck/creds.go` (google, nvidia, xai, deepgram, cartesia, elevenlabs, openai)? Go to 2. Otherwise add a `credSpecs` entry (env var, how the stored secret is built); stage capabilities come from the server's own catalog (`server/provider/registry.go`), which must already know the provider.
+2. Add an entry to `tools/livecheck/profiles.yaml`: `name`, `stages` (provider, model, language, voice; `${VAR:-default}` allowed), `requires` (every env var the credentials read), `defaults` (public ids only), `build_tags` if the stages need any, `interims` if you know whether the STT sends interim results, `notes`.
+3. `go test ./tools/livecheck` (validates the file: capabilities, required env, credentials, and runs every profile's agent payload through the server's own config and credential validation offline), then `go run ./tools/livecheck -list` (does your environment satisfy it?) and `-dry-run -profiles <name>` (the estimate).
+4. Smoke it: `GOVOICE_LIVE=1 make agent-matrix PROFILES=<name> SCENARIOS=S1 MODES=off` (about 7 provider requests measured; the plan shows an upper bound of about 15 plus any missing clips).
+5. Full run, then `-write-docs` and commit `agent-matrix.md` with the reason. Findings go in the matrix `notes:` of the profile and in the capabilities/parity docs, not in this README.
+
+Limits: timings are small-n samples on one machine and network; S1's WER and "four" checks depend on the STT; S6 needs an external MCP server; `-max-calls` is enforced on measured provider requests (clip synthesis for missing clips is counted), but a provider may bill more than one unit per request. `-clips` also reads the shared provtest set (`clips.json`, matched by spoken text) when present.
+
+## Running things, cheapest first
+
+`make help` lists every target by cost tier. In short:
+
+| Tier | Targets | Cost |
+|---|---|---|
+| Free | `make verify`, `eval-pipecat`, `eval-turn`, `bench-latency`, `loadtest-smoke`, `perf-gate`, `live-check-selftest`, `provider-matrix-dry` | none (fake providers, no keys) |
+| Preview | `make live-list`, `provider-env`, `agent-matrix-plan PROFILES=... SCENARIOS=... MODES=...` | none (shows runnable profiles, env names, request estimate) |
+| Paid | `make provider-matrix`, `agent-matrix`, `live-check`, `e2e` | real provider requests; each needs `GOVOICE_LIVE=1` and `examples/.env` |
+
+Keep paid runs small: preview first (`make agent-matrix-plan` shows the per-profile upper-bound estimate and the cap), then one
+profile, `SCENARIOS=S1`, `MODES=off`.
+
+### Cost control: estimate versus actual
+
+- **Actual** requests are measured at the provider boundary, always on, no switch: `core/netpool` counts every request a
+  provider client sends (HTTP calls, WebSocket dials, retries included) and Google/Nvidia gRPC stream opens and RPCs are
+  counted by the provider (`voice_provider_requests_total{provider,stage}` on the server's `/metrics`). `tools/livecheck`
+  reads it before and after each scenario (`actual_requests`, `actual_requests_by_stage` in `results.json`; est vs actual
+  table in `agent-matrix.md`) and counts the harness's own clip synthesis. `tools/provtest` reads the same counters
+  in-process (`actual_requests` per row).
+- **Estimate** is a deliberately pessimistic *upper bound* (`tools/livecheck/estimate.go`): per scenario, 1 STT stream at
+  call start + 2 per user turn (adopt + reopen) + 1 for a barge-in or resumed speech, 1 LLM request per turn (+1 for a tool
+  round), and TTS requests per reply of 5 (xAI: unary, one request per sentence), 4 (Google: per piece), 2 otherwise. It
+  came from a measured miss: an xAI S2/S4 run estimated at 15 made 30 to 35 requests. Recalibrate it from the
+  `est vs actual` table after real runs.
+- **Cap**: `make agent-matrix`, `agent-matrix-plan` and `provider-matrix` default to `MAX_CALLS=40` (`DEFAULT_MAX_CALLS` in
+  the Makefile; `live-check` and a bare `go run ./tools/livecheck` use the tool default of 60, so the old full
+  Google off/on/smart shape (about 187) is refused until narrowed or `-max-calls` is raised). A plan whose estimate exceeds the cap is refused before anything
+  is spent (`agent-matrix-plan` shows the verdict and still exits 0). During the run the measured total is polled every second:
+  past the cap the current call is closed (scenario `ERR`), later scenarios are skipped, and the stage suite refuses further
+  units. The poll fails closed: if the server's `/metrics` cannot be read the call is ended and later scenarios are skipped.
+  The stage suite (`provider-matrix`) has no up-front refusal: it gates each unit on planned + measured requests, so it stops
+  at the cap (rows `incomplete`) and can overshoot by at most one unit's requests (e.g. an STT reopen inside a unit). Raise it deliberately: `MAX_CALLS=120`.
+- Every live run ends with `actual provider requests: N (upper-bound estimate M, -max-calls C)`.
+- Not counted: provider-side billing units (characters, tokens, audio seconds), OAuth token fetches (not billed), pre-dial
+  warm-ups (bare TCP/TLS or gRPC channel connects, no request), and transport-internal replays of a request the server never
+  processed. Google Vertex-mode LLM calls are counted per stream by the provider (genai's own client is not on the pool);
+  Nvidia LLM (OpenAI-compatible) is labelled `provider="nvidia"`.
+Stage-level `STAGES=llm` is the cheapest paid check; `e2e` (Playwright, real Google) the most expensive.

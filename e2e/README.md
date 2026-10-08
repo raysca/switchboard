@@ -6,7 +6,7 @@ the whole stack; global teardown stops it (also when setup fails).
 ## Run
 
 ```sh
-make e2e                                     # from the repo root: install + run everything
+GOVOICE_LIVE=1 make e2e                      # from the repo root: install + run everything (spends real Google credit)
 cd e2e && npx playwright test tests/10-full-stack.spec.ts   # the full scenario only
 npx playwright test tests/00-stack.spec.ts   # smoke: stack + admin UI login
 ```

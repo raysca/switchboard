@@ -20,6 +20,8 @@ Voice Framework V1 is a high-performance, low-latency, resilient voice agent run
 
 ## Quick Start
 
+`make help` lists every target, grouped by cost: free (fake providers), read-only previews, and PAID live checks that refuse to run without `GOVOICE_LIVE=1`.
+
 ### Fastest path: `make dev`
 ```bash
 make dev                       # server + admin UI, ready to call

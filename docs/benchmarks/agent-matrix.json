@@ -1,0 +1,620 @@
+{
+ "build_tags": [
+  "xaispeech"
+ ],
+ "commit": "d03e601123",
+ "dirty": true,
+ "estimated_provider_calls": 15,
+ "go_version": "go1.27.1",
+ "merged": true,
+ "modes": [
+  "off",
+  "on"
+ ],
+ "profiles": [
+  {
+   "build_tags": [
+    "xaispeech",
+    "xaispeech",
+    "xaispeech"
+   ],
+   "description": "xAI STT + Grok + xAI TTS",
+   "llm": "xai grok-4.20-non-reasoning",
+   "name": "xai",
+   "notes": "STT grok-voice-transcribe-2.0 and TTS voice eve are the adapter defaults (wss://api.x.ai/v1/stt, https://api.x.ai/v1/tts); LLM grok-2-1212 is the adapter's pinned id (XAI_MODEL overrides). XAI_ENDPOINT from examples/.env is deliberately NOT passed on: production reads providers.xai_llm.endpoint from server.yaml and defaults to the Responses API (/v1/responses), which tool calls need; examples/ points it at chat/completions.",
+   "stt": "xai en",
+   "tts": "xai"
+  },
+  {
+   "description": "Google Chirp 2 STT + Grok + Google TTS",
+   "infra": {
+    "xai_llm.endpoint": "https://api.x.ai/v1/chat/completions"
+   },
+   "interims": "no",
+   "llm": "xai grok-4.20-non-reasoning",
+   "name": "xai-llm",
+   "notes": "XAI_ENDPOINT on chat/completions has no tool calls (S6).",
+   "stt": "google chirp_2 en-US",
+   "tts": "google en-US-Journey-F"
+  },
+  {
+   "description": "Google Chirp 2 STT + Gemini + Google TTS (the make dev agent)",
+   "interims": "no",
+   "llm": "google gemini-2.5-flash",
+   "name": "google",
+   "notes": "chirp_2 sends no interim results, so S3 (min_words backchannel) is N/A.",
+   "stt": "google chirp_2 en-US",
+   "tts": "google en-US-Journey-F"
+  }
+ ],
+ "repeat": 1,
+ "results": [
+  {
+   "at": "2026-10-08 15:13Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "t1.bot audio",
+     "pass": true
+    },
+    {
+     "name": "t1.v2v \u003c= 8s",
+     "pass": true
+    },
+    {
+     "name": "t1.reply text",
+     "pass": true
+    },
+    {
+     "name": "t1.wer \u003c= 0.40",
+     "pass": true
+    },
+    {
+     "name": "t1.answer is four",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "t1.v2v_ms",
+     "v": 3264
+    },
+    {
+     "k": "t1.vad_stop_ms",
+     "v": 741
+    },
+    {
+     "k": "t1.final_tr_ms",
+     "v": 1691
+    },
+    {
+     "k": "t1.heard",
+     "v": "what is 2 + 2"
+    },
+    {
+     "k": "t1.reply",
+     "v": "2 + 2 = 4."
+    },
+    {
+     "k": "t1.wer",
+     "v": "0.00"
+    },
+    {
+     "k": "v2v_ms",
+     "v": 3264
+    },
+    {
+     "k": "stt_final_ms",
+     "v": 949
+    },
+    {
+     "k": "llm_ttft_ms",
+     "v": 650
+    },
+    {
+     "k": "tts_ttfb_ms",
+     "v": 922
+    }
+   ],
+   "mode": "off",
+   "profile": "google",
+   "repeat": 1,
+   "scenario": "S1",
+   "seconds": 7.863812333,
+   "status": "pass"
+  },
+  {
+   "at": "2026-10-08 15:13Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "t1.bot audio",
+     "pass": true
+    },
+    {
+     "name": "t1.v2v \u003c= 8s",
+     "pass": true
+    },
+    {
+     "name": "t1.reply text",
+     "pass": true
+    },
+    {
+     "name": "t1.wer \u003c= 0.40",
+     "pass": true
+    },
+    {
+     "name": "t1.answer is four",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "t1.v2v_ms",
+     "v": 4124
+    },
+    {
+     "k": "t1.vad_stop_ms",
+     "v": 762
+    },
+    {
+     "k": "t1.final_tr_ms",
+     "v": 2370
+    },
+    {
+     "k": "t1.heard",
+     "v": "what is 2 + 2"
+    },
+    {
+     "k": "t1.reply",
+     "v": "2 + 2 equals 4."
+    },
+    {
+     "k": "t1.wer",
+     "v": "0.00"
+    },
+    {
+     "k": "v2v_ms",
+     "v": 4124
+    },
+    {
+     "k": "stt_final_ms",
+     "v": 1607
+    },
+    {
+     "k": "llm_ttft_ms",
+     "v": 772
+    },
+    {
+     "k": "tts_ttfb_ms",
+     "v": 980
+    }
+   ],
+   "mode": "on",
+   "profile": "google",
+   "repeat": 1,
+   "scenario": "S1",
+   "seconds": 9.0425585,
+   "status": "pass"
+  },
+  {
+   "at": "2026-10-08 15:14Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "t1.bot audio",
+     "pass": true
+    },
+    {
+     "name": "t1.v2v \u003c= 8s",
+     "pass": true
+    },
+    {
+     "name": "t1.reply text",
+     "pass": true
+    },
+    {
+     "name": "t1.wer \u003c= 0.40",
+     "pass": true
+    },
+    {
+     "name": "t1.answer is four",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "t1.v2v_ms",
+     "v": 3702
+    },
+    {
+     "k": "t1.vad_stop_ms",
+     "v": 741
+    },
+    {
+     "k": "t1.final_tr_ms",
+     "v": 1662
+    },
+    {
+     "k": "t1.heard",
+     "v": "what is 2 + 2"
+    },
+    {
+     "k": "t1.reply",
+     "v": "2 + 2 is 4."
+    },
+    {
+     "k": "t1.wer",
+     "v": "0.00"
+    },
+    {
+     "k": "v2v_ms",
+     "v": 3702
+    },
+    {
+     "k": "stt_final_ms",
+     "v": 921
+    },
+    {
+     "k": "llm_ttft_ms",
+     "v": 678
+    },
+    {
+     "k": "tts_ttfb_ms",
+     "v": 1360
+    }
+   ],
+   "mode": "off",
+   "profile": "xai-llm",
+   "repeat": 1,
+   "scenario": "S1",
+   "seconds": 8.504047541,
+   "status": "pass"
+  },
+  {
+   "at": "2026-10-08 15:14Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "bot audio",
+     "pass": true
+    },
+    {
+     "name": "reply text",
+     "pass": true
+    },
+    {
+     "name": "answer is four",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "text_to_audio_ms",
+     "v": 1391
+    },
+    {
+     "k": "text_to_llm_ms",
+     "v": 436
+    },
+    {
+     "k": "reply",
+     "v": "Two plus two equals four."
+    }
+   ],
+   "mode": "off",
+   "profile": "xai-llm",
+   "repeat": 1,
+   "scenario": "S7",
+   "seconds": 3.362009708,
+   "status": "pass"
+  },
+  {
+   "at": "2026-10-08 17:43Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "t1.bot audio",
+     "pass": true
+    },
+    {
+     "name": "t1.v2v \u003c= 8s",
+     "pass": true
+    },
+    {
+     "name": "t1.reply text",
+     "pass": true
+    },
+    {
+     "name": "t1.wer \u003c= 0.40",
+     "pass": true
+    },
+    {
+     "name": "t1.answer is four",
+     "pass": true
+    },
+    {
+     "name": "t2.bot audio",
+     "pass": true
+    },
+    {
+     "name": "t2.v2v \u003c= 8s",
+     "pass": true
+    },
+    {
+     "name": "t2.reply text",
+     "pass": true
+    },
+    {
+     "name": "t2.wer \u003c= 0.40",
+     "pass": true
+    },
+    {
+     "name": "t2.answer is four",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "t1.v2v_ms",
+     "v": 3381
+    },
+    {
+     "k": "t1.vad_stop_ms",
+     "v": 741
+    },
+    {
+     "k": "t1.final_tr_ms",
+     "v": 1094
+    },
+    {
+     "k": "t1.heard",
+     "v": "What is two plus two?"
+    },
+    {
+     "k": "t1.reply",
+     "v": "Two plus two equals four."
+    },
+    {
+     "k": "t1.wer",
+     "v": "0.00"
+    },
+    {
+     "k": "t2.v2v_ms",
+     "v": 2539
+    },
+    {
+     "k": "t2.vad_stop_ms",
+     "v": 742
+    },
+    {
+     "k": "t2.final_tr_ms",
+     "v": 1120
+    },
+    {
+     "k": "t2.heard",
+     "v": "What is two plus two?"
+    },
+    {
+     "k": "t2.reply",
+     "v": "Two plus two equals four."
+    },
+    {
+     "k": "t2.wer",
+     "v": "0.00"
+    },
+    {
+     "k": "v2v_ms",
+     "v": 3381
+    },
+    {
+     "k": "stt_final_ms",
+     "v": 365
+    },
+    {
+     "k": "llm_ttft_ms",
+     "v": 840
+    },
+    {
+     "k": "tts_ttfb_ms",
+     "v": 1011
+    }
+   ],
+   "mode": "on",
+   "profile": "xai",
+   "repeat": 1,
+   "scenario": "S1",
+   "seconds": 16.043719542,
+   "status": "pass"
+  },
+  {
+   "at": "2026-10-08 17:43Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "bot audio",
+     "pass": true
+    },
+    {
+     "name": "reply text",
+     "pass": true
+    },
+    {
+     "name": "answer is four",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "text_to_audio_ms",
+     "v": 1320
+    },
+    {
+     "k": "text_to_llm_ms",
+     "v": 535
+    },
+    {
+     "k": "reply",
+     "v": "Two plus two equals four."
+    }
+   ],
+   "mode": "on",
+   "profile": "xai",
+   "repeat": 1,
+   "scenario": "S7",
+   "seconds": 3.9021872909999997,
+   "status": "pass"
+  },
+  {
+   "at": "2026-10-08 17:43Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "idle prompt audio",
+     "pass": true
+    },
+    {
+     "name": "server hung up",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "first_prompt_audio_s",
+     "v": "4.5"
+    },
+    {
+     "k": "closed_after_s",
+     "v": "11.0"
+    },
+    {
+     "k": "close_status",
+     "v": 1000
+    },
+    {
+     "k": "bot_text",
+     "v": ""
+    }
+   ],
+   "mode": "on",
+   "profile": "xai",
+   "repeat": 1,
+   "scenario": "S5",
+   "seconds": 11.000820167,
+   "status": "pass"
+  },
+  {
+   "at": "2026-10-08 18:23Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "bot audio flushed",
+     "pass": true
+    },
+    {
+     "name": "audio stops \u003c= 1.5s",
+     "pass": true
+    },
+    {
+     "name": "second utterance answered",
+     "pass": true
+    },
+    {
+     "name": "second utterance heard (wer \u003c= 0.40)",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "audio_stop_ms",
+     "v": 1438
+    },
+    {
+     "k": "bot_stopped_evt_ms",
+     "v": 1449
+    },
+    {
+     "k": "user_started_evt_ms",
+     "v": 201
+    },
+    {
+     "k": "llm_start_after_end_ms",
+     "v": 2410
+    },
+    {
+     "k": "second_reply_v2v_ms",
+     "v": 2813
+    },
+    {
+     "k": "heard_after_onset",
+     "v": "What is two plus two?"
+    },
+    {
+     "k": "reply_after_onset",
+     "v": "Four."
+    },
+    {
+     "k": "wer",
+     "v": "0.00"
+    }
+   ],
+   "mode": "on",
+   "profile": "xai",
+   "repeat": 1,
+   "scenario": "S2",
+   "seconds": 14.020391041,
+   "status": "pass"
+  },
+  {
+   "at": "2026-10-08 18:23Z d03e601123+dirty",
+   "checks": [
+    {
+     "name": "one user turn",
+     "note": "got 2",
+     "pass": false
+    },
+    {
+     "name": "one bot reply",
+     "note": "got 1",
+     "pass": true
+    },
+    {
+     "name": "heard whole sentence (wer \u003c= 0.40)",
+     "pass": true
+    }
+   ],
+   "metrics": [
+    {
+     "k": "first_audio_vs_end_ms",
+     "v": 4234
+    },
+    {
+     "k": "user_turns",
+     "v": 2
+    },
+    {
+     "k": "bot_replies",
+     "v": 1
+    },
+    {
+     "k": "heard",
+     "v": "I would like to know. What the capital of France is."
+    },
+    {
+     "k": "reply",
+     "v": "The capital of France is Paris, a vibrant city known for its rich history, iconic landmarks like the Eiffel To..."
+    },
+    {
+     "k": "wer",
+     "v": "0.00"
+    }
+   ],
+   "mode": "on",
+   "profile": "xai",
+   "repeat": 1,
+   "scenario": "S4",
+   "seconds": 37.960469541,
+   "status": "fail"
+  }
+ ],
+ "scenarios": [
+  "S1",
+  "S2",
+  "S4",
+  "S5",
+  "S7"
+ ],
+ "started": "2026-10-08T18:23:49Z"
+}

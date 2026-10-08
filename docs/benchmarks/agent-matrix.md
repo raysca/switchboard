@@ -1,0 +1,52 @@
+# Agent provider matrix
+
+One standard agent (same system prompt and scenario set) run across provider profiles with `tools/livecheck` (`make agent-matrix`). Small-n timings, single machine: a regression signal and a capability map, not a benchmark.
+
+- Accumulated over runs: each profile x mode x scenario keeps its latest run (`last run` below; `agent-matrix.json` has the stamp per result). Latest run: 2026-10-08 18:23 UTC, commit `d03e601123` (working tree had local changes), go1.27.1
+- Server build tags: `xaispeech`
+- Modes: `off`, `on`; scenarios: `S1`, `S2`, `S4`, `S5`, `S7`; repeat: 1; estimated provider requests: 15
+
+## Profiles
+
+| profile | STT | LLM | TTS | build tags | state |
+|---|---|---|---|---|---|
+| xai | xai en | xai grok-4.20-non-reasoning | xai | `xaispeech`, `xaispeech`, `xaispeech` | ran, last run 2026-10-08 18:23Z d03e601123+dirty |
+| xai-llm | google chirp_2 en-US | xai grok-4.20-non-reasoning | google en-US-Journey-F | none | ran, last run 2026-10-08 15:14Z d03e601123+dirty |
+| google | google chirp_2 en-US | google gemini-2.5-flash | google en-US-Journey-F | none | ran, last run 2026-10-08 15:13Z d03e601123+dirty |
+
+- **xai**: STT grok-voice-transcribe-2.0 and TTS voice eve are the adapter defaults (wss://api.x.ai/v1/stt, https://api.x.ai/v1/tts); LLM grok-2-1212 is the adapter's pinned id (XAI_MODEL overrides). XAI_ENDPOINT from examples/.env is deliberately NOT passed on: production reads providers.xai_llm.endpoint from server.yaml and defaults to the Responses API (/v1/responses), which tool calls need; examples/ points it at chat/completions.
+- **xai-llm**: XAI_ENDPOINT on chat/completions has no tool calls (S6). `xai_llm.endpoint=https://api.x.ai/v1/chat/completions`
+- **google**: chirp_2 sends no interim results, so S3 (min_words backchannel) is N/A.
+
+## Mode `off`
+
+| profile | S1 | S2 | S4 | S5 | S7 |
+|---|---|---|---|---|---|
+| xai | - | - | - | - | - |
+| xai-llm | PASS 3.7s | - | - | - | PASS 1.4s |
+| google | PASS 3.3s | - | - | - | - |
+
+## Mode `on`
+
+| profile | S1 | S2 | S4 | S5 | S7 |
+|---|---|---|---|---|---|
+| xai | PASS 3.4s | PASS 1438.0ms | FAIL 2 turn | PASS | PASS 1.3s |
+| xai-llm | - | - | - | - | - |
+| google | PASS 4.1s | - | - | - | - |
+
+## Voice-to-voice breakdown (S1)
+
+Client v2v is end of the clip to first bot audio; the stage columns are server means over the S1 turns (`voice_latency_seconds`).
+
+| profile | mode | v2v | STT final | LLM first token | TTS first byte |
+|---|---|---|---|---|---|
+| xai | on | 3381 ms | 365 ms | 840 ms | 1011 ms |
+| xai-llm | off | 3702 ms | 921 ms | 678 ms | 1360 ms |
+| google | off | 3264 ms | 949 ms | 650 ms | 922 ms |
+| google | on | 4124 ms | 1607 ms | 772 ms | 980 ms |
+
+## Details
+
+Failed checks, errors, N/A reasons and skips.
+
+- `xai` on S4: FAIL one user turn got 2
