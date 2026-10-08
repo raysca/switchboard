@@ -11,12 +11,14 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/coder/websocket"
 	"govoice/core/resilience"
 )
 
 var (
-	ErrCircuitOpen   = resilience.ErrCircuitOpen // shared with every provider
-	ErrMissingAPIKey = errors.New("cartesia: missing API key (CARTESIA_API_KEY)")
+	ErrCircuitOpen         = resilience.ErrCircuitOpen // shared with every provider
+	ErrMissingAPIKey       = errors.New("cartesia: missing API key (CARTESIA_API_KEY)")
+	ErrProviderUnavailable = errors.New("cartesia: provider unavailable")
 )
 
 // ProviderError is a sanitized, classified Cartesia failure.
@@ -74,13 +76,15 @@ func MapError(capability string, err error, resp *http.Response) *ProviderError 
 		if s, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && s > 0 {
 			out.RetryAfter = time.Duration(s) * time.Second
 		}
+	} else if websocket.CloseStatus(err) == websocket.StatusPolicyViolation { // 1008: bad params/audio
+		out.Code, out.Retryable, out.ClientError = "BAD_REQUEST", false, true
 	}
 	return out
 }
 
 // messageError maps an in-band {"type":"error"} message.
-func messageError(status int, msg string) *ProviderError {
-	out := &ProviderError{Capability: "tts", Code: "ERROR", Message: SanitizeString(msg), Retryable: true}
+func messageError(capability string, status int, msg string) *ProviderError {
+	out := &ProviderError{Capability: capability, Code: "ERROR", Message: SanitizeString(msg), Retryable: true}
 	if len(out.Message) > 512 {
 		out.Message = out.Message[:512] + "... [truncated]"
 	}
