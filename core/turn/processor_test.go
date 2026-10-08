@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	coretranscript "govoice/core/transcript"
 )
 
 type fakeClock struct {
@@ -382,5 +383,49 @@ func TestProcessorPendingFinalJoinsNextTurn(t *testing.T) {
 	}
 	if last == nil || last.Text != "I would like to know the capital of France" || !last.Final {
 		t.Fatalf("candidate %+v", last)
+	}
+}
+
+// An STT end-of-utterance inside a managed turn must not commit the turn: the manager owns
+// the boundary. Before, the finalizer committed the first half 200 ms after its EOU final and
+// the resumed half, joined to the same turn, was dropped as already committed (live xAI S4:
+// "I would like to know" + 1 s pause + "what the capital of France is." lost the second half).
+func TestProcessorResumedSpeechAfterEOUCommitsWholeTurn(t *testing.T) {
+	clk := &fakeClock{now: time.Unix(1000, 0)}
+	proc, err := NewProcessor(DefaultConfig(), ProcessorOptions{Clock: clk})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fin, _ := coretranscript.NewProcessor(coretranscript.DefaultConfig())
+	fin.ManageTurns()
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(&core.PassthroughProcessor{}, proc, fin, sink)
+	sess, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	h := &harness{t: t, clk: clk, sess: sess, sink: sink}
+	finals := func() (out []string) {
+		for _, f := range sink.GetFrames() {
+			if ft, ok := f.(*core.FinalTranscriptionFrame); ok {
+				out = append(out, ft.Text)
+			}
+		}
+		return out
+	}
+	_ = sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
+	_ = sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	_ = sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "I would like to know", Final: true, EndOfUtterance: true, Timestamp: time.Now()})
+	h.run(200*time.Millisecond, func() bool { return false })
+	time.Sleep(300 * time.Millisecond) // past the finalizer's 200 ms grace (real time)
+	_ = sess.Post(&core.UserStartedSpeakingFrame{Seq: 3, Gen: 1})
+	_ = sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-3", Gen: 1, Text: "what the capital of France is", Final: true, EndOfUtterance: true, Timestamp: time.Now()})
+	_ = sess.Post(&core.UserStoppedSpeakingFrame{Seq: 4, Gen: 1})
+	h.run(3*time.Second, func() bool { return len(finals()) > 0 && len(h.events(core.TurnEventCompleted)) == 1 })
+	time.Sleep(400 * time.Millisecond)
+	if got := finals(); len(got) != 1 || got[0] != "I would like to know what the capital of France is" {
+		t.Fatalf("committed %q, want the joined turn once (started %d completed %d)", got, len(h.events(core.TurnEventStarted)), len(h.events(core.TurnEventCompleted)))
 	}
 }

@@ -332,8 +332,11 @@ func (p *Processor) onCandidate(c *core.TranscriptCandidateFrame, e core.Emitter
 	p.segs[idx].text, p.segs[idx].final = c.Text, c.Final || c.EndOfUtterance
 	out := *c
 	out.Turn, out.Gen, out.Text = p.id, p.wireGen(), p.joined()
+	// The manager owns the turn boundary: an STT end-of-utterance would let the finalizer commit
+	// the turn 200 ms later, before resumed speech can join it. TurnEventCompleted commits it.
+	out.Final, out.EndOfUtterance = c.Final || c.EndOfUtterance, false
 	if idx != len(p.segs)-1 {
-		out.Final, out.EndOfUtterance = false, false
+		out.Final = false
 	}
 	p.candGen = uint64(out.Gen)
 	if err := e.Push(&out); err != nil {
