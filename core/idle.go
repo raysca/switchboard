@@ -24,10 +24,6 @@ const (
 	IdleReasonBot  = "bot_idle"
 )
 
-// idleUnitBase keeps this controller's synthesis unit ids clear of the
-// assistant context's counter (which starts at 1 and is session-global).
-const idleUnitBase = 1 << 40
-
 // IdleTimer and IdleClock make the controller deterministic in tests.
 type IdleTimer interface {
 	C() <-chan time.Time
@@ -479,7 +475,13 @@ func (c *IdleController) say(text string) {
 		return
 	}
 	n := c.sayN.Add(1)
-	_ = c.session.Reenter(&SynthesisUnitFrame{Turn: "idle-say-" + strconv.FormatUint(n, 10), UnitID: idleUnitBase + n, Text: text, IsFinal: true}, Downstream, c.speak, 0)
+	// Unit ids must increase across the whole session (transport pacer), so
+	// share the assistant's allocator when the session has one.
+	unit := n
+	if u, ok := c.session.(interface{ NextUnitID() uint64 }); ok {
+		unit = u.NextUnitID()
+	}
+	_ = c.session.Reenter(&SynthesisUnitFrame{Turn: "idle-say-" + strconv.FormatUint(n, 10), UnitID: unit, Text: text, IsFinal: true}, Downstream, c.speak, 0)
 }
 
 func (c *IdleController) debug(name string, attrs map[string]any) {

@@ -428,8 +428,11 @@ func (p *AssistantContextProcessor) slackReset() {
 // emitUnits sends one synthesis unit per out (a merged unit is still one unit).
 func (p *AssistantContextProcessor) emitUnits(e Emitter, outs []slackOut) error {
 	for _, o := range outs {
-		p.unitCounter++
-		unitID := p.unitCounter
+		unitID := p.unitCounter + 1
+		if u, ok := p.session.(interface{ NextUnitID() uint64 }); ok {
+			unitID = u.NextUnitID() // shared with idle speech, so ids may skip
+		}
+		p.unitCounter = unitID
 		if p.firstUnitID == 0 {
 			p.firstUnitID = unitID
 		}
@@ -464,7 +467,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	for id := p.firstUnitID; id != 0 && id <= p.unitCounter; id++ {
 		if text, exists := p.deliveredUnits[id]; exists {
 			parts = append(parts, text)
-		} else {
+		} else if _, ours := p.pendingUnits[id]; ours {
 			break
 		}
 	}
@@ -531,7 +534,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	for ; id != 0 && id <= p.unitCounter; id++ {
 		if text, exists := p.deliveredUnits[id]; exists {
 			delivered = append(delivered, text)
-		} else {
+		} else if _, ours := p.pendingUnits[id]; ours {
 			break
 		}
 	}

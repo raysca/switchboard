@@ -12,8 +12,25 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/transport/ws"
 	"govoice/vad"
 )
+
+// pacerTransport feeds the fake transport's output through the real ws pacer,
+// so unit-id rules the fake ignores (session-monotonic ids) fail the session.
+type pacerTransport struct {
+	*core.FakeTransportOutput
+	w *ws.PacedWriter
+}
+
+func (p *pacerTransport) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	if oaf, ok := f.(*core.OutputAudioFrame); ok && dir == core.Downstream {
+		if err := p.w.Enqueue(oaf); err != nil {
+			return err
+		}
+	}
+	return p.FakeTransportOutput.ProcessFrame(ctx, f, dir, e)
+}
 
 func TestIdleConfigValidation(t *testing.T) {
 	base := func() *Config {
@@ -148,7 +165,9 @@ func newIdleE2E(t *testing.T, mod func(*Config)) *idleE2E {
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return r.llm, nil })
 	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, MaxMessages: 20, MaxTokens: 4000}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
-	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	w := ws.NewPacedWriter(ws.PacerConfig{EnablePacing: false}, func(context.Context, []byte) error { return nil })
+	t.Cleanup(func() { w.Close() })
+	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, &pacerTransport{core.NewFakeTransportOutput(core.FakeTransportConfig{}), w})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +252,9 @@ func TestCallPipelineIdleStuckModelRecovers(t *testing.T) {
 	r.say(t, "t2", "hello")
 	idleWait(t, "answer to the next turn", func() bool { return strings.Contains(strings.Join(r.spoken(), "|"), "Sure thing.") })
 	time.Sleep(400 * time.Millisecond) // answered: the watchdog stays quiet
+	if err := r.sess.Err(); err != nil { // e.g. the pacer refusing the reply after the idle phrase
+		t.Fatalf("session failed: %v", err)
+	}
 	if n := r.errors(); n != 1 {
 		t.Fatalf("errors = %d, want 1", n)
 	}
