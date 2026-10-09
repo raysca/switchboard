@@ -11,6 +11,8 @@ This guide gets you up and running with a real, live voice conversation using Vo
 - **Google credential**: either a Gemini/Google API key, or a service-account JSON key with `Speech-to-Text API`, `Cloud Text-to-Speech API`, and `Vertex AI` enabled.
 - **xAI API key** (optional): xAI can serve the LLM stage. xAI STT/TTS exist only in builds made with `-tags xaispeech`.
 - `curl`, `openssl` and `jq` for the commands below.
+- **ONNX Runtime 1.29.0**: not committed (ignored by version control), so a fresh clone needs `make ort` once (downloads the pinned release for your OS/arch). `make build` fails with that hint when it is missing. The Silero and Smart Turn models are tracked in `third_party/`.
+- `make build`, `make test` and `make verify` build with `-tags xaispeech` (xAI STT/TTS), like the production image.
 
 Provider credentials are not read from the environment. `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` and `XAI_API_KEY` are ignored by the server. You add credentials through the management API, and the server stores them encrypted.
 
