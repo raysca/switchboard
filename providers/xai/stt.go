@@ -645,7 +645,10 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 					return
 				}
 				st.mu.Lock()
-				closing, bound := st.closing, st.turnID != ""
+				bound := st.turnID != ""
+				// A drop after audio.done but before transcript.done, with words heard and no
+				// speech_final yet, still loses the utterance (M3-09 follow-up).
+				closing := st.closing && !(bound && !st.settled && st.lastText != "")
 				st.mu.Unlock()
 				closeStatus := websocket.CloseStatus(err) != -1
 				if closing || (!bound && (errors.Is(err, io.EOF) || closeStatus)) {

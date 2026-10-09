@@ -534,3 +534,43 @@ func TestSTTFailoverIdleCloseThenSpeechKeepsFirstWords(t *testing.T) {
 		t.Fatal("fallback missed or duplicated audio")
 	}
 }
+
+// M3-09 end to end: the xAI shape (transcript invalidation + error) after the primary already
+// delivered a speech-final for part of the turn, while the turn is still running. The merge must
+// commit the whole utterance exactly once, from the fallback, with no error downstream.
+func TestSTTFailoverInvalidatingDropAfterSpeechFinalCommitsOnce(t *testing.T) {
+	primary := fakeSTT("a", core.FakeSTTConfig{FinalEvery: 2, FailAfter: 3, InvalidateOnFail: true})
+	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, true)
+	r.start()
+	r.audio(0)
+	r.audio(1) // primary speech-final "w0 w1"
+	r.waitFor(func() bool { return len(primary.Received()) == 2*64 })
+	r.audio(2) // the connection drops here
+	r.waitActive("b")
+	r.audio(3)
+	r.audio(4)
+	r.stop()
+	committed := func() (out []string) {
+		for _, f := range r.rec.GetFrames() {
+			if ft, ok := f.(*core.FinalTranscriptionFrame); ok {
+				out = append(out, ft.Text)
+			}
+		}
+		return out
+	}
+	r.waitFor(func() bool { return len(committed()) > 0 })
+	time.Sleep(300 * time.Millisecond)
+	if got := committed(); len(got) != 1 || got[0] != allWords {
+		t.Fatalf("committed %q, want [%q]", got, allWords)
+	}
+	if !bytes.Equal(fallback.Received(), r.sent) {
+		t.Fatal("fallback did not get exactly the utterance's audio")
+	}
+	for _, f := range r.rec.GetFrames() {
+		switch f.(type) {
+		case *core.ErrorFrame, *core.TranscriptInvalidationFrame:
+			t.Fatalf("%T leaked downstream", f)
+		}
+	}
+}

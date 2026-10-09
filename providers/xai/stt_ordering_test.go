@@ -172,3 +172,22 @@ func TestXAISTTEOFWhileDrainingIsClean(t *testing.T) {
 		t.Fatalf("clean drain end raised %d errors", e)
 	}
 }
+
+// M3-09 follow-up: a drop after audio.done but before transcript.done, with a partial heard and
+// no speech_final yet, loses the utterance and must raise the failover error.
+func TestXAISTTDropAfterDoneWithOpenUtteranceRaisesError(t *testing.T) {
+	h := newSTTHarness(t)
+	h.send(t, &core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.send(t, &core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000})
+	h.ws.recv <- recvItem{msg: &STTMessage{Type: "transcript.created"}}
+	h.ws.recv <- recvItem{msg: &STTMessage{Type: "transcript.partial", Text: "hello there"}}
+	waitFor(t, "audio", func() bool { return len(h.ws.snapshot()) == 1 })
+	time.Sleep(50 * time.Millisecond) // the partial is consumed
+	h.send(t, &core.UserStoppedSpeakingFrame{})
+	waitFor(t, "done", func() bool { return len(h.ws.snapshot()) == 2 })
+	h.ws.recv <- recvItem{err: io.EOF}
+	waitFor(t, "error frame", func() bool { e, _ := h.errCount(); return e > 0 })
+	if _, inv := h.errCount(); inv != 1 {
+		t.Fatalf("invalidations = %d, want 1", inv)
+	}
+}
