@@ -332,16 +332,9 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			p.mu.Unlock()
 		}()
 
-		p.mu.Lock()
-		for p.finishedSeq+1 != seq && unitCtx.Err() == nil && taskCtx.Err() == nil && !p.closed {
-			p.cond.Wait()
-		}
-		stale := p.closed || unitCtx.Err() != nil || taskCtx.Err() != nil
-		if !stale && p.session != nil && gen != 0 && gen < p.session.CurrentGeneration() {
-			stale = true
-		}
-		p.mu.Unlock()
-		if stale {
+		// Look-ahead: synthesize while earlier units are queued or playing, but
+		// no more than ttsLookAhead units past the one being emitted.
+		if p.waitSeq(unitCtx, taskCtx, func() bool { return seq <= p.finishedSeq+1+ttsLookAhead }) || p.staleGen(gen) {
 			p.Stale.Add(1)
 			return
 		}
@@ -387,6 +380,12 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			if err != nil {
 				break
 			}
+		}
+
+		// Emission is strictly in unit order, failures included.
+		if p.waitSeq(unitCtx, taskCtx, func() bool { return p.finishedSeq+1 == seq }) || p.staleGen(gen) {
+			p.Stale.Add(1)
+			return
 		}
 
 		if err != nil {
@@ -547,6 +546,26 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		return err
 	}
 	return nil
+}
+
+// ttsLookAhead is how many units past the one being emitted may already be
+// synthesizing (bounds provider concurrency and buffered audio per call).
+const ttsLookAhead = 2
+
+// waitSeq blocks until ok() holds and reports true when the wait ended because
+// the unit or session was cancelled or the processor closed instead.
+func (p *TTSProcessor) waitSeq(unitCtx, taskCtx context.Context, ok func() bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for !ok() && unitCtx.Err() == nil && taskCtx.Err() == nil && !p.closed {
+		p.cond.Wait()
+	}
+	return p.closed || unitCtx.Err() != nil || taskCtx.Err() != nil
+}
+
+// staleGen reports a unit from a generation the session has moved past.
+func (p *TTSProcessor) staleGen(gen uint64) bool {
+	return p.session != nil && gen != 0 && gen < p.session.CurrentGeneration()
 }
 
 // abandon releases seq when its task was never started. Calls are serialized
