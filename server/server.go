@@ -962,7 +962,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 			go func(c interface{ Close() error }) { defer goAway.Done(); _ = c.Close() }(t.sess)
 		}
 	}
-	goAway.Wait() // bounded by GoAway's own timeout
+	// GoAway and Session.Close each bound themselves (~2 s); ctx caps the whole phase (M2-03).
+	waitUntil(ctx, 3*time.Second, func() bool { goAway.Wait(); return true })
 	if s.publicServer != nil {
 		_ = s.publicServer.Close() // upgraded sockets are hijacked, so this only drops HTTP
 	}
