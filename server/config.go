@@ -502,7 +502,7 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.AdminListenAddr == "" {
 		return errors.New("admin_listen_addr must be specified")
 	}
-	if cfg.PublicListenAddr == cfg.AdminListenAddr {
+	if cfg.PublicListenAddr == cfg.AdminListenAddr && !strings.HasSuffix(cfg.PublicListenAddr, ":0") { // ":0" = two ephemeral ports (tests)
 		return fmt.Errorf("public_listen_addr (%s) and admin_listen_addr (%s) must be separate listeners",
 			cfg.PublicListenAddr, cfg.AdminListenAddr)
 	}

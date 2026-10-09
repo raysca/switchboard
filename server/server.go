@@ -75,6 +75,8 @@ type Server struct {
 	publicServer *http.Server
 	adminServer  *http.Server
 	probeServer  *http.Server
+	publicAddr   string // bound addresses after Start (useful with ":0")
+	adminAddr    string
 	wsServer     *ws.Server
 	underlay     func() ws.Underlay // background ambience factory, nil when off
 
@@ -837,6 +839,7 @@ func (s *Server) Start() error {
 		go func() { _ = s.probeServer.Serve(probeListener) }()
 	}
 
+	s.publicAddr, s.adminAddr = pubListener.Addr().String(), adminListener.Addr().String()
 	s.pruneStop = make(chan struct{})
 	go s.pruneTimelines()
 
@@ -851,6 +854,10 @@ func (s *Server) Start() error {
 	)
 	return nil
 }
+
+// PublicAddr and AdminAddr return the bound listener addresses once Start has returned.
+func (s *Server) PublicAddr() string { return s.publicAddr }
+func (s *Server) AdminAddr() string  { return s.adminAddr }
 
 // Shutdown performs orderly drain-then-cancel shutdown per spec §37.
 func (s *Server) Shutdown(ctx context.Context) error {
