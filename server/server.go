@@ -934,19 +934,34 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	// 3. Cancel any remaining active calls
+	// Snapshot under the lock and close concurrently: Session.Close can take seconds per wedged
+	// session, and serial closes under s.mu would overrun the process budget (M2-03).
+	type target struct {
+		conn *ws.Connection
+		sess interface{ Close() error }
+	}
 	s.mu.Lock()
-	var goAway sync.WaitGroup
+	var targets []target
 	for _, call := range s.activeCalls {
-		if call.conn != nil {
-			// Tell the client to reconnect (reason server_draining, close 1001).
-			goAway.Add(1)
-			go func(c *ws.Connection) { defer goAway.Done(); c.GoAway(DrainReason, 2*time.Second) }(call.conn)
-		}
+		t := target{conn: call.conn}
 		if call.session != nil {
-			_ = call.session.Close()
+			t.sess = call.session
 		}
+		targets = append(targets, t)
 	}
 	s.mu.Unlock()
+	var goAway sync.WaitGroup
+	for _, t := range targets {
+		if t.conn != nil {
+			// Tell the client to reconnect (reason server_draining, close 1001).
+			goAway.Add(1)
+			go func(c *ws.Connection) { defer goAway.Done(); c.GoAway(DrainReason, 2*time.Second) }(t.conn)
+		}
+		if t.sess != nil {
+			goAway.Add(1)
+			go func(c interface{ Close() error }) { defer goAway.Done(); _ = c.Close() }(t.sess)
+		}
+	}
 	goAway.Wait() // bounded by GoAway's own timeout
 	if s.publicServer != nil {
 		_ = s.publicServer.Close() // upgraded sockets are hijacked, so this only drops HTTP
