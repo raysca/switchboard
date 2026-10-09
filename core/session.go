@@ -741,6 +741,11 @@ func (s *Session) processEnvelope(env Envelope) bool {
 	if env.CommittedFlush {
 		env.Frame = &FlushFrame{Gen: env.Gen, committed: true}
 	}
+	if su, ok := env.Frame.(*SynthesisUnitFrame); ok && su.UnitID == 0 {
+		// Out-of-band speech (idle) takes its id here, on the run loop, so it is
+		// ordered with the assistant's units as the transport pacer requires.
+		su.UnitID = s.NextUnitID()
+	}
 
 	// Reset per-envelope emit counter and set watchdog start time
 	s.emitsCount = 0

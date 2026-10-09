@@ -475,11 +475,12 @@ func (c *IdleController) say(text string) {
 		return
 	}
 	n := c.sayN.Add(1)
-	// Unit ids must increase across the whole session (transport pacer), so
-	// share the assistant's allocator when the session has one.
+	// Unit ids must increase across the whole session (transport pacer): a
+	// Session stamps id 0 when it delivers the frame (allocating here could
+	// lose the race to a reply unit and reach the pacer out of order).
 	unit := n
-	if u, ok := c.session.(interface{ NextUnitID() uint64 }); ok {
-		unit = u.NextUnitID()
+	if _, ok := c.session.(interface{ NextUnitID() uint64 }); ok {
+		unit = 0
 	}
 	_ = c.session.Reenter(&SynthesisUnitFrame{Turn: "idle-say-" + strconv.FormatUint(n, 10), UnitID: unit, Text: text, IsFinal: true}, Downstream, c.speak, 0)
 }
