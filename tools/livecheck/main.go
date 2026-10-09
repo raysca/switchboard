@@ -48,7 +48,7 @@ func realMain(args []string) int {
 		clipDir   = fs.String("clips", "", "clip directory: our cached <name>.pcm and/or the shared provtest set (clips.json); missing clips are synthesized into it (default: temp dir)")
 		profNames = fs.String("profiles", "google", "comma list of profile names, or all (every real profile)")
 		profFile  = fs.String("profiles-file", "", "profiles YAML to use instead of the embedded profiles.yaml")
-		scList    = fs.String("scenarios", "", "comma list of S1..S8 (default all)")
+		scList    = fs.String("scenarios", "", "comma list of S1..S10 (default all)")
 		modeList  = fs.String("modes", "off,on,on+smart", "comma list of turn modes: off, on (manager + min_words 3), on+smart (adds smart-turn), merge (off + tts_merge), plain, fast")
 		repeat    = fs.Int("repeat", 1, "run every scenario this many times")
 		maxCalls  = fs.Int("max-calls", 60, "hard cap on provider requests: refuses a plan whose upper-bound estimate exceeds it, and aborts the run mid-call when the MEASURED requests exceed it")
@@ -75,6 +75,7 @@ func realMain(args []string) int {
 	fs.IntVar(&o.s1Turns, "s1-turns", 2, "S1 turns per call")
 	fs.BoolVar(&o.s1Short, "s1-short", false, "S1 prompt has a one-sentence reply (e.g. the two-plus-two clip): the estimate assumes 2 TTS requests per reply instead of 5; the measured cap still applies")
 	fs.DurationVar(&o.pause, "pause", time.Second, "S4: silence inside the utterance")
+	hes := fs.String("hes", "400ms,700ms", "S10: comma-separated pauses inside the utterance, one turn each (same call)")
 	fs.Float64Var(&o.werMax, "wer-max", 0.4, "max word error rate of what the STT heard")
 	fs.DurationVar(&o.v2vMax, "v2v-max", 8*time.Second, "S1: voice-to-voice ceiling")
 	fs.DurationVar(&o.stopMax, "stop-max", 1500*time.Millisecond, "S2: bot audio must stop this fast after the user starts")
@@ -86,6 +87,14 @@ func realMain(args []string) int {
 		if *a[0] != "" {
 			*a[1] = *a[0]
 		}
+	}
+	for _, f := range strings.Split(*hes, ",") {
+		d, err := time.ParseDuration(strings.TrimSpace(f))
+		if err != nil || d < 0 {
+			fmt.Fprintln(stderr, "-hes:", f)
+			return 2
+		}
+		o.hes = append(o.hes, d)
 	}
 	re, err := regexp.Compile(*mcpExpect)
 	if err != nil {
@@ -300,11 +309,13 @@ func realMain(args []string) int {
 func printPlan(plan []planItem, synth, total, max int) {
 	per := map[string]int{}
 	var order []string
+	exp := synth
 	for _, it := range plan {
 		if _, ok := per[it.prof.Name]; !ok {
 			order = append(order, it.prof.Name)
 		}
 		per[it.prof.Name] += it.calls
+		exp += it.expect
 	}
 	fmt.Fprintln(stdout, "upper-bound estimate of provider requests (STT stream opens + LLM + TTS requests; pessimistic, measured after the run):")
 	for _, n := range order {
@@ -314,6 +325,9 @@ func printPlan(plan []planItem, synth, total, max int) {
 		fmt.Fprintf(stdout, "  %-30s %4d (missing clips)\n", "clip synthesis", synth)
 	}
 	fmt.Fprintf(stdout, "  %-30s %4d\n", "total (upper bound)", total)
+	if exp != total {
+		fmt.Fprintf(stdout, "  %-30s %4d (calibrated on measured short replies; not a bound)\n", "expected", exp)
+	}
 	verdict := "within the cap"
 	if total > max {
 		verdict = "OVER the cap: the run will be refused"

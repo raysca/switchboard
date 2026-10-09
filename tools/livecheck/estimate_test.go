@@ -191,6 +191,23 @@ var knownActuals = []struct {
 	{"google S9 off+merge", "google", map[string]int{"S9": 2}, 9 + 7},
 }
 
+// L3 (first-audio-latency.md), short replies: S1 x5 = 16, S1 x4 = 13, S10 with 2 pauses = 9
+// (split VAD stops opened 2 extra STT streams; the old calibrated figure said 7).
+func TestShortEstimateCoversL3(t *testing.T) {
+	x, s10 := prof("xai"), scenarios[len(scenarios)-1]
+	if s10.id != "S10" {
+		t.Fatal("S10 not last")
+	}
+	for _, c := range []struct {
+		sh     shape
+		actual int
+	}{{shape{turns: 5, short: true}, 16}, {shape{turns: 4, short: true}, 13}, {s10.shape(&opts{hes: make([]time.Duration, 2)}), 9}} {
+		if est := estCalls(c.sh, x); est < c.actual {
+			t.Errorf("%+v: upper bound %d < measured %d", c.sh, est, c.actual)
+		}
+	}
+}
+
 func TestEstimateCoversKnownActuals(t *testing.T) {
 	o := &opts{s1Turns: 2}
 	for _, k := range knownActuals {
@@ -224,5 +241,8 @@ func TestLatencyModes(t *testing.T) {
 	}
 	if got := estCalls(shape{turns: 1, short: true}, prof("xai")); got != 3+1+2 {
 		t.Errorf("short xai S1 estimate = %d, want 6", got)
+	}
+	if got := expCalls(shape{turns: 5, short: true}, prof("xai")); got != 16 { // L3 measured
+		t.Errorf("short xai S1 x5 expected = %d, want 16", got)
 	}
 }

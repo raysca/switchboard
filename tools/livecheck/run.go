@@ -18,6 +18,7 @@ type planItem struct {
 	repeat int
 	na     string // static not-applicable reason
 	calls  int    // upper-bound estimate of provider requests; 0 when na or fake
+	expect int    // expected requests (expCalls), printed only
 }
 
 // buildPlan lists every (profile, mode, scenario, repeat) in execution order.
@@ -38,7 +39,7 @@ func buildPlan(profs []Profile, ms []mode, scs []scenario, repeat int, o *opts) 
 						if it.na == "" && !p.Fake {
 							sh := sc.shape(o)
 							sh.extraLLM += m.extraLLM
-							it.calls = estCalls(sh, p)
+							it.calls, it.expect = estCalls(sh, p), expCalls(sh, p)
 						}
 						plan = append(plan, it)
 					}

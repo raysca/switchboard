@@ -114,3 +114,60 @@ All 16 gaps were 128 to 256 ms (median 160). **Caveat, important:** these are 18
 ### Request accounting (L2)
 
 15 measured provider requests (cap 20): 3 from a first attempt that failed because the provtest clip is IMA ADPCM and the harness loaded it as raw PCM (no useful data; the question clip was then converted with ffmpeg into the local cache), 8 for `off` + `eager` (4 each), 4 for `vad300+smart`. The plan preview refused `vad500` with the 5 remaining. n = 2 per variant was not possible under the cap (per-cell upper bound 6 to 7, measured 4).
+
+## Confirmation (L3)
+
+Real turns on xAI (one machine, one afternoon), `make agent-matrix`-equivalent: `-s1-short -s1-turns N`, new scenario S10 (hesitation). Defaults are not changed.
+
+### Harness changes
+
+- **S10 "hesitation"** (`-hes 400ms,700ms`, one turn per pause, all in one call): the same sentence cut in two by that much silence; records `vad_stops`, `user_turns`, `bot_replies`, `llm_requests`, heard and reply per pause. A false cut shows as more than 1 turn, reply or LLM request.
+- **Clip, no TTS requests**: "What is the capital of France?" from `tools/provtest/testdata/clips/capital-of-france.wav` (IMA ADPCM, decoded with `ffmpeg -f s16le -ar 16000`), split at 0.5 s, a short (~50 ms) word gap after "What is", and joined with exact silence offline (the effective pause is the `-hes` value plus that gap); the S1 clip is `two-plus-two.wav` decoded the same way. Both sit in a local `-clips` dir (nothing committed).
+- **Estimator**: S10 has a shape (turns = number of pauses). The runs below used a then-calibrated `short` estimate (1 + n STT, n LLM, n TTS: measured 16 for n = 5, 13 for n = 4), previewed as 23 and 16 against caps 24 and 17; it was not an upper bound, and S10 (estimated 7, measured 9: the split VAD stops open extra STT streams) pushed the call over its cap, which the measured check caught. Since review, `short` is an upper bound again (2 TTS per reply, 2 STT opens per turn; S10 adds one STT open, LLM request and reply per pause for a split), and the plan preview prints the calibrated figure separately as `expected` (not a bound). The same plans now preview at 41 upper bound / 23 expected.
+
+### Results (xAI, S1 "What is two plus two?", all replies "2 + 2 equals 4.", wer 0.00)
+
+| variant | n | v2v median (min-max) | vad | eot (STT final + commit) | ttft | unit wait | tts first byte |
+|---|---|---|---|---|---|---|---|
+| baseline (off, `stop_ms` 800) | 4 | 2499 (2433-2760) | 842 | 612 | 536 | 17 | 529 |
+| `vad300+smart` | 5 | 2311 (2268-2490) | 361 | 619 | 665 | 6 | 582 |
+
+(stage medians in ms; per-turn values are in the run JSON.) The baseline has n = 4, not 5: the budget ran out (see accounting).
+
+- **v2v: about -190 ms (-8 %) median** (baseline median of 4 = mean of the middle two, 2498.5). The ranges nearly separate (smart max 2490 is below the baseline median; baseline min 2433 overlaps). Noise within a variant is 100 to 250 ms, so -190 ms is real but modest at this n.
+- **The pre-LLM path improved as predicted**: vad -481 ms (842 to 361, deterministic); eot unchanged (619 vs 612; the analyzer/manager commit cost did not show here, the L2 +243 ms was one noisy sample). Net pre-LLM about -475 ms.
+- **Only 190 of those ~475 ms reached v2v** because ttft was +130 ms and tts +53 ms in the smart run: those stages do not depend on the setting, so this is provider variance between the two calls (L1/L2 showed the same stage moving 100 to 800 ms between identical calls), not a cost of the profile. So: measured -190 ms at v2v; the mechanism predicts up to about -475 ms if the commit step really costs nothing (L2's one sample said +243 ms). Neither figure is a bound at this n (v2v noise of 100 to 250 ms per variant can move the measured gain either way); the stage-level -480 ms on `vad` is the only part with a deterministic mechanism.
+- Earlier single samples (L2: off 3360, smart 2250; L1: off 2157) are consistent with this range but are n = 1 and not pooled.
+
+### Hesitation (`vad300+smart`, one turn per pause)
+
+| pause | VAD stops | user turns | bot replies | LLM requests | heard | reply |
+|---|---|---|---|---|---|---|
+| 400 ms | 2 | 1 | 1 | 1 | "What is The capital of France." | "The capital of France is Paris." |
+| 700 ms | 2 | 1 | 1 | 1 | "What is The capital of France." | "The capital of France is Paris." |
+
+At `stop_ms` 300 both pauses did cut the VAD (2 stops each, as the arithmetic says), and in both cases the turn analyzer held the turn: one committed transcript, one LLM request, one reply, no truncated text. So Smart-turn converted the false cut into a wait, at n = 1 per pause. The 700 ms turn's first-audio time was lost (the call was ended by the cap right after the reply text, so S10 is recorded as `error`, and its 3 s window for a late second reply did not run to completion; the 400 ms turn's v2v was 1823 ms).
+
+Not measured, stated plainly:
+- **Baseline hesitation was not run** (no budget). At `stop_ms` 800 neither a 400 nor a 700 ms pause reaches the stop threshold, so no cut is possible by construction; that is arithmetic, not a measurement.
+- n = 1 per pause, one sentence, and the pause sits after "What is": an obviously incomplete fragment, the easiest case for an end-of-turn model. A pause after a grammatically complete clause ("I want a table for two,") is not shown to be protected. A degraded model falls back to speech-timeout and can still split.
+- `vad500` without a manager was not run.
+
+### Recommendation: adopt as an opt-in latency-first profile; keep 800 as the default
+
+Consider `vad300+smart` as an opt-in for deployments that prioritize first-audio latency and run the turn analyzer (model available): about 480 ms off the VAD stage (deterministic), about 190 ms measured at v2v (n = 4 vs 5), and no split in two single hesitation trials. That is not evidence of general false-cut safety: both trials paused after the same obviously incomplete fragment ("What is"), the baseline arm was not run, and pauses after a complete-sounding clause are untested. Do not make it the default, and test it on your own hesitant speech before relying on it; the protection depends entirely on the analyzer. Without the analyzer, use `stop_ms: 500` at most (not measured here), never 300.
+
+```yaml
+# latency-first profile: ~480 ms less VAD wait; the turn analyzer keeps mid-sentence pauses in one turn
+vad:
+  stop_ms: 300
+turn:
+  manager: true
+  stop: [turn-analyzer, speech-timeout]
+```
+
+(There is no examples/profile pattern in `config/` beyond the two environment files, so the snippet lives here.)
+
+### Request accounting (L3)
+
+38 measured provider requests (cap 40): `vad300+smart` S1 x5 = 16 (stt 6, llm 5, tts 5), S10 = 9 (stt 5, llm 2, tts 2; the call was ended by its cap of 24 after the second pause's reply, total 25 for the call), baseline S1 x4 = 13 (stt 5, llm 4, tts 4). The extra STT opens in S10 are the split VAD stops. Baseline n = 5 would have made 41, so it was cut to 4.

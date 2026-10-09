@@ -16,10 +16,11 @@ type opts struct {
 	s1Turns    int
 	s1Short    bool // the S1 prompt gets a one-sentence reply: estimate 2 TTS requests per reply, not 5
 	pause      time.Duration
-	werMax     float64       // max word error rate of what the STT heard
-	v2vMax     time.Duration // S1 voice-to-voice ceiling
-	stopMax    time.Duration // S2 bot audio must stop this fast after the user starts speaking
-	mcpURL     string        // public HTTPS MCP server exposing get_time (S6)
+	hes        []time.Duration // S10 pauses
+	werMax     float64         // max word error rate of what the STT heard
+	v2vMax     time.Duration   // S1 voice-to-voice ceiling
+	stopMax    time.Duration   // S2 bot audio must stop this fast after the user starts speaking
+	mcpURL     string          // public HTTPS MCP server exposing get_time (S6)
 	toolExpect *regexp.Regexp
 	trace      bool
 }
@@ -193,6 +194,9 @@ var scenarios = []scenario{
 			}
 			return ""
 		}, run: s9},
+	{id: "S10", title: "hesitation (pause inside one sentence, per -hes)", class: classBase, clips: []string{"pauseA", "pauseB"},
+		// each pause may split its turn: one more STT open, LLM request and reply per pause
+		shape: func(o *opts) shape { n := len(o.hes); return shape{turns: n, short: true, extraSTT: n, extraLLM: n} }, run: s10},
 }
 
 func scenarioByID(id string) (scenario, bool) {
@@ -580,4 +584,42 @@ func s9(x *sctx, r *Result) {
 	}
 	r.m("reply", truncate(said, 90))
 	r.check("reply text", said != "", "")
+}
+
+// s10: one turn per -hes pause, each the same sentence cut in two by that much silence. The
+// evidence of a false cut is more than one user turn / bot reply (or more LLM requests) for it.
+func s10(x *sctx, r *Result) {
+	c := x.c
+	llm := func() (n int) {
+		for k, v := range x.srv.requests() {
+			if strings.HasSuffix(k, "/llm") {
+				n += v
+			}
+		}
+		return
+	}
+	for _, gap := range x.o.hes {
+		pfx := fmt.Sprintf("h%d.", gap.Milliseconds())
+		c.quiet(400 * time.Millisecond)
+		mark, l0 := time.Now(), llm()
+		_, tEnd, err := c.stream(pauseClip(x.clips, gap))
+		if err != nil {
+			r.abort(redact(err))
+			return
+		}
+		c.wait(20*time.Second, func() bool { return c.has(mark, "audio") })
+		if e, ok := c.firstAfter(tEnd, "audio"); ok {
+			r.m(pfx+"v2v_ms", msv(e.t.Sub(tEnd)))
+		}
+		c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+		c.quiet(3 * time.Second) // a late second reply from a split turn
+		turns := c.count(mark, "user-transcription") - c.interims(mark)
+		r.m(pfx+"vad_stops", c.count(mark, "user-stopped-speaking"))
+		r.m(pfx+"user_turns", turns)
+		r.m(pfx+"bot_replies", c.count(mark, "bot-llm-started"))
+		r.m(pfx+"llm_requests", llm()-l0)
+		r.m(pfx+"heard", c.texts(mark, "user-transcription", true))
+		r.m(pfx+"reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
+		c.quiet(time.Second)
+	}
 }

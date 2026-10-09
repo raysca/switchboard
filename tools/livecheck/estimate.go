@@ -14,7 +14,7 @@ type shape struct {
 	extraSTT int  // extra STT stream opens: barge-in or resumed speech
 	extraLLM int  // extra LLM requests: a tool round, a retry
 	noSTT    bool // text-only: no audio, so no STT stream
-	short    bool // one-sentence reply: at most 2 unary TTS requests per reply
+	short    bool // one-sentence reply: 2 TTS per reply (a split turn makes a second reply); expCalls has the calibrated figure
 	long     bool // long reply (S9): 3x the per-reply TTS (xAI measured 12 requests, ~1.2k chars)
 }
 
@@ -45,12 +45,27 @@ func estCalls(sh shape, p Profile) int {
 	llm := sh.turns + sh.extraLLM
 	tts := sh.turns * ttsPerReply(p.Stages.TTS.Provider)
 	if sh.short {
-		tts = sh.turns * min(2, ttsPerReply(p.Stages.TTS.Provider))
+		tts = 2 * sh.turns // one sentence, but a split turn (hesitation, eager) adds a second reply
 	}
 	if sh.long {
 		tts *= 3
 	}
 	return stt + llm + tts
+}
+
+// expCalls is the EXPECTED requests (not a bound) for a short-reply shape with no split turn,
+// calibrated on L3 xAI (1 + n STT, n LLM, n TTS: measured 16 for n = 5, 13 for n = 4; extras
+// ignored); other shapes return estCalls.
+// It is printed for budgeting only: the -max-calls checks use estCalls and the measured count.
+func expCalls(sh shape, p Profile) int {
+	if !sh.short || sh.long || p.Fake {
+		return estCalls(sh, p)
+	}
+	stt := 0
+	if !sh.noSTT {
+		stt = 1 + sh.turns
+	}
+	return stt + 2*sh.turns
 }
 
 // spend tracks the measured provider requests of a run against -max-calls. A nil *spend never limits.
