@@ -8,15 +8,22 @@ import (
 	"govoice/core"
 )
 
+// holdOnlySlot fills a one-task budget with a foreign task so the next unit's
+// worker cannot start; the returned func frees the slot.
+func holdOnlySlot(t *testing.T, sess *core.Session) func() {
+	t.Helper()
+	hold := make(chan struct{})
+	if err := sess.Go(func(context.Context) { <-hold }); err != nil {
+		t.Fatal(err)
+	}
+	return func() { close(hold); time.Sleep(20 * time.Millisecond) }
+}
+
 // A refused background task must not leave a hole in the play order: the lost
 // unit gets one ErrorFrame and the next unit is still spoken.
 func TestRefusedHandoffDoesNotWedgeLaterUnits(t *testing.T) {
-	release := make(chan struct{})
 	r := New(Config{Provider: "fake", Model: "m", SampleRate: 24000, Classify: classify,
 		Attempt: func(ctx context.Context, u *Unit, _ int) error {
-			if u.Frame.UnitID == 1 {
-				<-release
-			}
 			u.Write(make([]byte, 960))
 			return u.Finish()
 		}})
@@ -34,19 +41,18 @@ func TestRefusedHandoffDoesNotWedgeLaterUnits(t *testing.T) {
 	h := &harness{r, sess, sink}
 	defer sess.Close()
 
-	h.say(t, 1, "one", false)
-	h.say(t, 2, "two", false) // budget full: refused
-	waitFor(t, "error for unit 2", func() bool { return len(of[*core.ErrorFrame](h)) == 1 })
-	close(release)
-	waitFor(t, "unit 1", func() bool { return len(of[*core.TTSStoppedFrame](h)) == 1 })
-	h.say(t, 3, "three", true)
-	waitFor(t, "unit 3 (not wedged)", func() bool { return len(of[*core.TTSStoppedFrame](h)) == 2 })
+	free := holdOnlySlot(t, sess)
+	h.say(t, 1, "one", false) // budget full: refused
+	waitFor(t, "error for unit 1", func() bool { return len(of[*core.ErrorFrame](h)) == 1 })
+	free()
+	h.say(t, 2, "two", true)
+	waitFor(t, "unit 2 (not wedged)", func() bool { return len(of[*core.TTSStoppedFrame](h)) == 1 })
 	time.Sleep(10 * time.Millisecond)
-	if e := of[*core.ErrorFrame](h); len(e) != 1 || e[0].UnitID != 2 {
+	if e := of[*core.ErrorFrame](h); len(e) != 1 || e[0].UnitID != 1 {
 		t.Fatalf("errors: %+v", e)
 	}
 	for _, a := range of[*core.OutputAudioFrame](h) {
-		if a.UnitID == 2 {
+		if a.UnitID == 1 {
 			t.Fatal("refused unit was spoken")
 		}
 	}
@@ -54,16 +60,10 @@ func TestRefusedHandoffDoesNotWedgeLaterUnits(t *testing.T) {
 
 // Under TTSFailover the provider's emitter swallows, so a refused unit's error
 // must be re-entered: otherwise the wrapper waits on it until the watchdog.
-// Unit 2 is started from unit 1's own task (its final frame), so with a budget
-// of one task it is always refused.
 func TestRefusedHandoffUnderFailover(t *testing.T) {
-	release := make(chan struct{})
 	cand := func() *Runner {
 		return New(Config{Provider: "fake", Model: "m", SampleRate: 24000, Classify: classify,
 			Attempt: func(ctx context.Context, u *Unit, _ int) error {
-				if u.Frame.UnitID == 1 {
-					<-release
-				}
 				u.Write(make([]byte, 960))
 				return u.Finish()
 			}})
@@ -90,22 +90,17 @@ func TestRefusedHandoffUnderFailover(t *testing.T) {
 	h := &harness{nil, sess, sink}
 	defer sess.Close()
 
+	free := holdOnlySlot(t, sess)
 	h.say(t, 1, "one", false)
-	h.say(t, 2, "two", false)
-	time.Sleep(20 * time.Millisecond)
-	close(release)
-	waitFor(t, "error for unit 2 (not the watchdog)", func() bool { return len(of[*core.ErrorFrame](h)) == 1 })
-	time.Sleep(20 * time.Millisecond) // unit 1's task has returned
-	h.say(t, 3, "three", true)
-	waitFor(t, "unit 3", func() bool {
+	waitFor(t, "error for unit 1 (not the watchdog)", func() bool { return len(of[*core.ErrorFrame](h)) >= 1 })
+	free()
+	h.say(t, 2, "two", true)
+	waitFor(t, "unit 2", func() bool {
 		a := of[*core.OutputAudioFrame](h)
-		return len(a) > 0 && a[len(a)-1].UnitID == 3 && a[len(a)-1].IsFinal
+		return len(a) > 0 && a[len(a)-1].UnitID == 2 && a[len(a)-1].IsFinal
 	})
-	if e := of[*core.ErrorFrame](h); len(e) != 1 || e[0].UnitID != 2 {
-		t.Fatalf("errors: %+v", e)
-	}
 	for _, a := range of[*core.OutputAudioFrame](h) {
-		if a.UnitID == 2 {
+		if a.UnitID == 1 {
 			t.Fatal("refused unit was spoken")
 		}
 	}

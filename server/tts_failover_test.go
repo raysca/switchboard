@@ -129,7 +129,8 @@ func TestCallPipelineTTSFailoverSpeaksEachUnitOnce(t *testing.T) {
 		case *core.SynthesisUnitFrame:
 			seen[v.UnitID] = true
 		case *core.OutputAudioFrame:
-			if v.IsFinal {
+			// OnFrame fires per hop: count a unit's final frame once.
+			if v.IsFinal && (len(finals) == 0 || finals[len(finals)-1] != v.UnitID) {
 				finals = append(finals, v.UnitID)
 			}
 		case *core.ErrorFrame:

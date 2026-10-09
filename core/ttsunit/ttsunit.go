@@ -52,6 +52,7 @@ type Runner struct {
 	nextSeq     uint64
 	finishedSeq uint64
 	closed      bool
+	queue       core.SerialQueue // units wait here, not on a task slot each
 
 	RequestsTotal atomic.Uint64
 	RetriesTotal  atomic.Uint64
@@ -142,7 +143,7 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 		return err
 	}
 	r.RequestsTotal.Add(1)
-	if err := s.Go(func(sessionCtx context.Context) {
+	if err := r.queue.Go(s, func(sessionCtx context.Context) {
 		traceSession := core.SessionID(strconv.FormatUint(s.ID(), 10))
 		traceTurn, traceGen := core.TurnID(unit.Turn), core.Generation(unit.Gen)
 		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": r.cfg.Provider})

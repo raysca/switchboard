@@ -70,22 +70,30 @@ func (b *Breaker) Allow() bool {
 // otherwise); only that token can release the probe.
 func (b *Breaker) allow() (bool, uint64) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	switch b.state {
-	case Closed:
-		return true, 0
-	case Open:
-		if time.Since(b.lastFailure) < b.cfg.Cooldown {
+	half := false
+	ok, probe := func() (bool, uint64) {
+		switch b.state {
+		case Closed:
+			return true, 0
+		case Open:
+			if time.Since(b.lastFailure) < b.cfg.Cooldown {
+				return false, 0
+			}
+			b.state, half = HalfOpen, true
+		}
+		if b.probing {
 			return false, 0
 		}
-		b.state = HalfOpen
+		b.probing = true
+		b.probe++
+		return true, b.probe
+	}()
+	fn := b.onChange
+	b.mu.Unlock()
+	if half && fn != nil {
+		fn(HalfOpen) // observers see the probe window, not OPEN until it resolves
 	}
-	if b.probing {
-		return false, 0
-	}
-	b.probing = true
-	b.probe++
-	return true, b.probe
+	return ok, probe
 }
 
 // WouldRefuse reports, without changing state, whether Allow would refuse now

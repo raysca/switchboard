@@ -51,6 +51,10 @@ func (t *vadJobTrace) finish(err error) {
 
 func (*vadResultFrame) Type() core.FrameType { return core.FrameInternal }
 
+// SurvivesGenerationFence: a result dropped as stale would leave busy set and
+// VAD would never submit again.
+func (*vadResultFrame) SurvivesGenerationFence() {}
+
 // ProcessorConfig defines VAD thresholds and behavior.
 type ProcessorConfig struct {
 	StaleAfter  time.Duration // job deadline = due + StaleAfter
@@ -127,12 +131,26 @@ func (p *Processor) Attach(s core.SessionController, index int) error {
 		p.traceMu.Lock()
 		trace := p.jobTrace
 		p.traceMu.Unlock()
-		if err := s.Reenter(&vadResultFrame{j: j, trace: trace}, core.Downstream, index, s.CurrentGeneration()); err != nil {
-			trace.finish(errors.New("canceled"))
-		}
+		p.reenterResult(&vadResultFrame{j: j, trace: trace})
 	}
 	return nil
 }
+
+// reenterResult delivers a finished job. A full inbox refuses internal frames;
+// the result must not be lost (busy is cleared only when it is processed), so
+// retry until the session takes it or closes.
+func (p *Processor) reenterResult(f *vadResultFrame) {
+	err := p.s.Reenter(f, core.Downstream, p.idx, p.s.CurrentGeneration())
+	if errors.Is(err, core.ErrQueueFull) {
+		time.AfterFunc(resultRetryDelay, func() { p.reenterResult(f) })
+		return
+	}
+	if err != nil {
+		f.trace.finish(errors.New("canceled"))
+	}
+}
+
+const resultRetryDelay = 5 * time.Millisecond
 
 func (p *Processor) Close() error {
 	p.traceMu.Lock()

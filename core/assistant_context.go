@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -225,6 +226,12 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		if p.isStaleTurn(wc.Turn, wc.Gen) {
 			return nil
 		}
+		if wc.Failed {
+			// A unit that produced no audio: drop it from the reply and, if it
+			// was the last one outstanding, close the reply out.
+			delete(p.pendingUnits, wc.UnitID)
+			return p.finishIfDelivered(e)
+		}
 		if wc.Err == nil {
 			if p.slack != nil {
 				p.slack.observe(wc.UnitID, p.firstUnitID, wc.Media, wc.IsFinal)
@@ -300,6 +307,24 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 	default:
 		return e.PushDirection(f, dir)
 	}
+}
+
+// finishIfDelivered ends the reply once the model is done and every unit still
+// pending has played; a reply with nothing heard is dropped, not committed.
+func (p *AssistantContextProcessor) finishIfDelivered(e Emitter) error {
+	if !p.llmComplete || p.finalUnitID == 0 {
+		return nil
+	}
+	for id := range p.pendingUnits {
+		if _, ok := p.deliveredUnits[id]; !ok {
+			return nil
+		}
+	}
+	if len(p.deliveredUnits) == 0 {
+		p.resetTurn()
+		return nil
+	}
+	return p.commitTurn(e, false)
 }
 
 func (p *AssistantContextProcessor) allPendingDelivered() bool {
@@ -428,8 +453,11 @@ func (p *AssistantContextProcessor) slackReset() {
 // emitUnits sends one synthesis unit per out (a merged unit is still one unit).
 func (p *AssistantContextProcessor) emitUnits(e Emitter, outs []slackOut) error {
 	for _, o := range outs {
-		p.unitCounter++
-		unitID := p.unitCounter
+		unitID := p.unitCounter + 1
+		if u, ok := p.session.(interface{ NextUnitID() uint64 }); ok {
+			unitID = u.NextUnitID() // shared with idle speech, so ids may skip
+		}
+		p.unitCounter = unitID
 		if p.firstUnitID == 0 {
 			p.firstUnitID = unitID
 		}
@@ -464,7 +492,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	for id := p.firstUnitID; id != 0 && id <= p.unitCounter; id++ {
 		if text, exists := p.deliveredUnits[id]; exists {
 			parts = append(parts, text)
-		} else {
+		} else if _, ours := p.pendingUnits[id]; ours {
 			break
 		}
 	}
@@ -480,27 +508,51 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 		CreatedAt: time.Now(),
 	}
 
+	recorded := true
 	if len(content) > 0 {
-		if err := p.ctxPool.AddMessage(asstMsg); err != nil {
+		var err error
+		if recorded, err = p.addAssistantMessage(asstMsg); err != nil {
 			return err
 		}
-		if p.summ != nil && !partial {
+		if recorded && p.summ != nil && !partial {
 			p.summ.Maybe() // between turns, off the hot path; skips open tool rounds itself
 		}
 	}
 
-	emitErr := e.Push(&AssistantMessageFrame{
-		Turn:      p.activeTurn,
-		Content:   content,
-		Gen:       gen,
-		Partial:   partial,
-		Timestamp: asstMsg.CreatedAt,
-	})
+	var emitErr error
+	if recorded { // never announce a message that is absent from history
+		emitErr = e.Push(&AssistantMessageFrame{
+			Turn:      p.activeTurn,
+			Content:   content,
+			Gen:       gen,
+			Partial:   partial,
+			Timestamp: asstMsg.CreatedAt,
+		})
+	}
 
 	// Reset turn state
 	p.resetTurn()
 
 	return emitErr
+}
+
+// DebugContextReplyDropped: a spoken reply did not fit the context budget and
+// is missing from history (attr chars: its length).
+const DebugContextReplyDropped = "context.reply_dropped"
+
+// addAssistantMessage records a spoken reply. One that cannot fit the context
+// budget (the active turn is never evicted) is skipped: losing the history
+// entry is better than ending the call that just spoke it. recorded reports
+// whether the message made it into history.
+func (p *AssistantContextProcessor) addAssistantMessage(m Message) (recorded bool, err error) {
+	err = p.ctxPool.AddMessage(m)
+	if errors.Is(err, ErrContextLimitExceeded) {
+		if d, ok := p.session.(interface{ EmitDebug(DebugEvent) }); ok {
+			d.EmitDebug(NewDebugEvent(DebugContextReplyDropped, time.Now(), "", TurnID(m.TurnID), 0, map[string]any{"chars": len(m.Content)}))
+		}
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // failUndeliveredTurn refuses to commit assistant text when the final audio write failed.
@@ -531,7 +583,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 	for ; id != 0 && id <= p.unitCounter; id++ {
 		if text, exists := p.deliveredUnits[id]; exists {
 			delivered = append(delivered, text)
-		} else {
+		} else if _, ours := p.pendingUnits[id]; ours {
 			break
 		}
 	}
@@ -552,18 +604,21 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 			Partial:   true,
 			CreatedAt: time.Now(),
 		}
-		if err := p.ctxPool.AddMessage(asstMsg); err != nil {
+		recorded, err := p.addAssistantMessage(asstMsg)
+		if err != nil {
 			return err
 		}
-		if err := e.Push(&AssistantMessageFrame{
-			Turn:      interruptedTurn,
-			Content:   partialText,
-			Gen:       oldGen,
-			Partial:   true,
-			Timestamp: asstMsg.CreatedAt,
-		}); err != nil {
-			p.resetTurn()
-			return err
+		if recorded {
+			if err := e.Push(&AssistantMessageFrame{
+				Turn:      interruptedTurn,
+				Content:   partialText,
+				Gen:       oldGen,
+				Partial:   true,
+				Timestamp: asstMsg.CreatedAt,
+			}); err != nil {
+				p.resetTurn()
+				return err
+			}
 		}
 	}
 	// If len(delivered) == 0, no assistant text is committed to context.
