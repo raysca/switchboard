@@ -16,20 +16,35 @@ export PATH := $(PATH):$(HOME)/go/bin:/opt/homebrew/bin
 help: ## build|Show this help
 	@scripts/make-help.sh $(firstword $(MAKEFILE_LIST))
 
-build: ## build|Build bin/server, bin/vadworker, bin/turnworker and the examples
+# xAI STT/TTS are in launch scope: every build, vet and test of the shipped server uses -tags xaispeech
+# (the production Dockerfile does the same). Override with GOTAGS= to build without them.
+GOTAGS ?= xaispeech
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS_VERSION := -X govoice/server.Version=$(VERSION) -X govoice/server.Commit=$(COMMIT)
+
+build: ort-check ## build|Build bin/server, bin/vadworker, bin/turnworker and the examples
 	@mkdir -p bin
-	go build -o bin/vadworker ./cmd/vadworker
-	go build -o bin/turnworker ./cmd/turnworker
-	go build -o bin/server ./cmd/server
-	go build ./examples/...
+	go build -tags "$(GOTAGS)" -o bin/vadworker ./cmd/vadworker
+	go build -tags "$(GOTAGS)" -o bin/turnworker ./cmd/turnworker
+	go build -tags "$(GOTAGS)" -ldflags "$(LDFLAGS_VERSION)" -o bin/server ./cmd/server
+	go build -tags "$(GOTAGS)" ./examples/...
+
+# ONNX Runtime is git-ignored (*.dylib / *.so) and needed by the vad and smartturn tests and the server.
+# Fresh clone: `make ort` downloads the pinned release and verifies its sha256.
+ort-check: ## build|Fail with instructions when the ONNX Runtime library is missing
+	@scripts/fetch-ort.sh check
+
+ort: ## build|Download the pinned ONNX Runtime for this OS/arch into third_party/ (sha256-verified)
+	@scripts/fetch-ort.sh fetch
 
 # Every module in go.work (root also covers vad, smartturn, transport, tools/*, cmd, examples).
 MODULES := . core providers/cartesia providers/deepgram providers/elevenlabs providers/google providers/nvidia providers/openai providers/xai server
 
-test: build ## build|Vet + race-test every module (about 3 min)
+test: build ## build|Vet (with and without xaispeech) + race-test every module with -tags xaispeech (about 3 min)
 	@failed=""; for m in $(MODULES); do \
 		echo "=== Vetting and testing module $$m ==="; \
-		(cd $$m && go vet ./... && go test -race -count=1 ./...) || failed="$$failed $$m"; \
+		(cd $$m && go vet ./... && go vet -tags "$(GOTAGS)" ./... && go test -race -count=1 -tags "$(GOTAGS)" ./...) || failed="$$failed $$m"; \
 	done; \
 	if [ -n "$$failed" ]; then echo "=== FAILED modules:$$failed ==="; exit 1; fi; \
 	echo "=== All modules passed ==="
