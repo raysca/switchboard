@@ -12,6 +12,7 @@ import (
 	"govoice/core"
 	"govoice/core/resilience"
 
+	"google.golang.org/genai"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -113,7 +114,18 @@ func MapError(capability string, err error) *ProviderError {
 		return mapGRPCStatus(capability, st)
 	}
 
-	// Fallback substring inspection for HTTP status or SDK errors
+	// The Gemini API client returns a typed HTTP error: classify by its status
+	// code, never by words in its message (a quota message may contain "401").
+	var api genai.APIError
+	if errors.As(err, &api) {
+		return mapHTTPStatus(capability, api.Code, sanitizeErrorMessage(api.Message))
+	}
+	var apiPtr *genai.APIError
+	if errors.As(err, &apiPtr) && apiPtr != nil {
+		return mapHTTPStatus(capability, apiPtr.Code, sanitizeErrorMessage(apiPtr.Message))
+	}
+
+	// Fallback substring inspection for untyped errors
 	msg := sanitizeErrorMessage(err.Error())
 	lower := strings.ToLower(msg)
 
@@ -171,6 +183,34 @@ func MapError(capability string, err error) *ProviderError {
 			Retryable:   false,
 		}
 	}
+}
+
+// mapHTTPStatus classifies a Gemini API HTTP status: 429 and 5xx are retryable
+// (500 INTERNAL is a documented transient), 401/403 are credentials, any other
+// 4xx is the caller's (a 400 is never an outage).
+func mapHTTPStatus(capability string, code int, msg string) *ProviderError {
+	pe := &ProviderError{Capability: capability, StatusCode: code, SafeMessage: msg}
+	switch {
+	case code == http.StatusUnauthorized, code == http.StatusForbidden:
+		pe.BaseErr, pe.SafeMessage = ErrProviderAuth, "invalid or missing Google credentials, or access denied"
+	case code == http.StatusBadRequest && strings.Contains(strings.ToLower(msg), "api key not valid"):
+		pe.BaseErr, pe.SafeMessage = ErrProviderAuth, "invalid or missing Google credentials"
+	case code == http.StatusTooManyRequests:
+		pe.BaseErr, pe.SafeMessage, pe.Retryable = ErrProviderRateLimit, "quota or rate limit exceeded", true
+	case code == http.StatusRequestEntityTooLarge:
+		pe.BaseErr = ErrRequestTooLarge
+	case code == http.StatusGatewayTimeout, code == http.StatusRequestTimeout:
+		pe.BaseErr, pe.Retryable = ErrProviderTimeout, true
+	case code == http.StatusInternalServerError:
+		pe.BaseErr, pe.Retryable = ErrProviderInternal, true
+	case code >= 500:
+		pe.BaseErr, pe.Retryable = ErrProviderUnavailable, true
+	case code >= 400:
+		pe.BaseErr = ErrProviderBadRequest
+	default:
+		pe.BaseErr = ErrProviderInternal
+	}
+	return pe
 }
 
 func mapGRPCStatus(capability string, st *status.Status) *ProviderError {

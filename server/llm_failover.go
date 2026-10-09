@@ -72,7 +72,7 @@ func (r *Registry) llmBreaker(spec StageSpec) *resilience.Breaker {
 	case "google":
 		return r.googleLLMBreaker
 	case "xai":
-		return r.xaiBreaker
+		return r.xaiLLMBreaker
 	case "nvidia":
 		if _, baseURL, err := nvidiaLLMTarget(spec.Secret); err == nil {
 			return r.nvidiaBreaker("llm|" + baseURL)

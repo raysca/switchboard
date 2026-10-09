@@ -213,7 +213,10 @@ type activeSTTStream struct {
 	settled    bool   // the last partial was a speech_final: no utterance is open
 	drainTimer *time.Timer
 	closing    bool
-	stopOnce   sync.Once
+	// pendingDone: audio.done is owed because the turn ended before the stream
+	// was ready; the receiver sends it after flushing the buffered audio.
+	pendingDone bool
+	stopOnce    sync.Once
 
 	sendMu       sync.Mutex
 	mu           sync.Mutex
@@ -588,6 +591,9 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 		gen:       p.streamGen,
 		audioBuf:  make([][]byte, 0, 16),
 		traceSpan: span, tracePolicy: policy, traceSession: traceSession,
+		// Without a session no receiver runs, so nothing would ever deliver
+		// transcript.created: treat the stream as ready (bare-processor use).
+		isReady: p.session == nil,
 	}
 	p.active = active
 	p.mu.Unlock()
@@ -634,25 +640,35 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 
 			msg, err := st.stream.Recv(st.ctx)
 			if err != nil {
-				if errors.Is(err, context.Canceled) || st.ctx.Err() != nil || errors.Is(err, io.EOF) {
-					if !errors.Is(err, io.EOF) {
-						traceFailure = errors.New("canceled")
-					}
-					return
-				}
-				if strings.Contains(err.Error(), "closed") || strings.Contains(err.Error(), "1006") || strings.Contains(err.Error(), "1000") {
+				if errors.Is(err, context.Canceled) || st.ctx.Err() != nil {
 					traceFailure = errors.New("canceled")
 					return
 				}
+				st.mu.Lock()
+				closing, bound := st.closing, st.turnID != ""
+				st.mu.Unlock()
+				closeStatus := websocket.CloseStatus(err) != -1
+				if closing || (!bound && (errors.Is(err, io.EOF) || closeStatus)) {
+					// Drained after audio.done, or an idle pre-opened stream the
+					// server closed: nothing was lost.
+					return
+				}
+				// A drop while a turn is bound and audio.done is not sent loses the
+				// utterance: retire the partial and raise a retryable error so
+				// STTFailover fires (M3-09).
 				p.ErrorsTotal.Add(1)
 				traceFailure = errors.New("provider_failure")
-				if p.session != nil {
+				providerErr := MapError("stt", err)
+				if bound {
+					if p.cfg.CircuitBreaker != nil {
+						p.cfg.CircuitBreaker.Report(err, classify)
+					}
+					p.failBoundStream(st, providerErr, "xai stream dropped mid-utterance")
+				} else if p.session != nil {
 					st.mu.Lock()
 					turnGen := st.gen
 					st.mu.Unlock()
-					_ = p.session.Reenter(&core.ErrorFrame{
-						Err: MapError("stt", err),
-					}, core.Downstream, p.index+1, turnGen)
+					_ = p.session.Reenter(&core.ErrorFrame{Err: providerErr}, core.Downstream, p.index+1, turnGen)
 				}
 				return
 			}
@@ -685,6 +701,18 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 						break
 					}
 				}
+				// The turn ended before the handshake finished: audio.done goes
+				// after the buffered audio, never before it (M3-02).
+				st.mu.Lock()
+				owed := st.pendingDone
+				st.pendingDone = false
+				st.mu.Unlock()
+				if owed && sendErr == nil {
+					sendErr = st.stream.CloseSend(st.ctx)
+					if sendErr == nil {
+						p.armDrainTimer(st)
+					}
+				}
 				st.sendMu.Unlock()
 				if sendErr != nil {
 					if st.ctx.Err() != nil {
@@ -697,24 +725,7 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 					if p.cfg.CircuitBreaker != nil {
 						p.cfg.CircuitBreaker.Report(sendErr, classify)
 					}
-					st.mu.Lock()
-					turn, turnGen := st.turnID, st.gen
-					st.mu.Unlock()
-					if turnGen == 0 {
-						turnGen = p.session.CurrentGeneration()
-					}
-					// Retire any earlier partial before publishing the provider error.
-					if turn != "" && turnGen != 0 {
-						if err := p.session.Reenter(&core.TranscriptInvalidationFrame{
-							Turn: core.TurnID(turn), Gen: core.Generation(turnGen), Err: providerErr,
-						}, core.Downstream, p.index+1, turnGen); err != nil {
-							return
-						}
-					}
-					_ = p.session.Reenter(&core.ErrorFrame{
-						Err:  fmt.Errorf("%w: xai buffered audio send failed: %v", core.ErrTranscriptInvalidated, providerErr),
-						Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
-					}, core.Downstream, p.index+1, turnGen)
+					p.failBoundStream(st, providerErr, "xai buffered audio send failed")
 					return
 				}
 
@@ -847,6 +858,11 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 		return nil
 	}
 	st.closing = true
+	if !st.isReady { // the receiver sends audio.done after flushing the buffer
+		st.pendingDone = true
+		st.mu.Unlock()
+		return nil
+	}
 	st.mu.Unlock()
 	st.sendMu.Lock()
 	err := st.stream.CloseSend(ctx)
@@ -859,6 +875,34 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 		st.mu.Unlock()
 		return err
 	}
+	p.armDrainTimer(st)
+	return nil
+}
+
+// failBoundStream retires the partial transcript of the stream's turn and
+// publishes a transcript-invalidating error (what STTFailover reacts to).
+func (p *STTProcessor) failBoundStream(st *activeSTTStream, providerErr error, what string) {
+	st.mu.Lock()
+	turn, turnGen := st.turnID, st.gen
+	st.mu.Unlock()
+	if turnGen == 0 {
+		turnGen = p.session.CurrentGeneration()
+	}
+	if turn != "" && turnGen != 0 {
+		if err := p.session.Reenter(&core.TranscriptInvalidationFrame{
+			Turn: core.TurnID(turn), Gen: core.Generation(turnGen), Err: providerErr,
+		}, core.Downstream, p.index+1, turnGen); err != nil {
+			return
+		}
+	}
+	_ = p.session.Reenter(&core.ErrorFrame{
+		Err:  fmt.Errorf("%w: %s: %v", core.ErrTranscriptInvalidated, what, providerErr),
+		Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
+	}, core.Downstream, p.index+1, turnGen)
+}
+
+// armDrainTimer bounds how long a half-closed stream may wait for its final.
+func (p *STTProcessor) armDrainTimer(st *activeSTTStream) {
 	st.mu.Lock()
 	if st.drainTimer == nil {
 		// The stream is detached, so a long wait costs nothing; live finals land 0.2-0.4 s after
@@ -879,7 +923,6 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 		})
 	}
 	st.mu.Unlock()
-	return nil
 }
 
 func (p *STTProcessor) stopDrainTimer(st *activeSTTStream) {

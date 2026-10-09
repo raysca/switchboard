@@ -228,8 +228,12 @@ type request struct {
 type chunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
+			Content string `json:"content"`
+			// Reasoning models (NIM nemotron/gpt-oss, vLLM, DeepSeek) stream their
+			// thinking under one of these names before any content.
+			ReasoningContent string `json:"reasoning_content"`
+			Reasoning        string `json:"reasoning"`
+			ToolCalls        []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Function struct {
@@ -437,6 +441,13 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			p.Stale.Add(1)
 			return
 		}
+		if strings.TrimSpace(text.String()) == "" {
+			// Nothing to speak (a reasoning-only or empty reply): say so instead of
+			// ending the turn in silence, so failover and metrics see it.
+			p.Errors.Add(1)
+			_ = s.Reenter(&core.ErrorFrame{Err: ErrEmptyReply, Fatal: false, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index, gen)
+			return
+		}
 		_ = s.Reenter(&core.LLMTextFrame{Text: text.String(), Turn: turn, Gen: gen}, core.Downstream, p.index, gen)
 		if total.prompt > 0 || total.completion > 0 || total.total > 0 {
 			ptr := func(v int) *int64 {
@@ -503,7 +514,7 @@ func (p *Processor) stream(ctx, sessionCtx context.Context, req request, gen uin
 	if err != nil {
 		return nil, usage{}, err
 	}
-	var committed, firstOutput bool
+	var committed, firstOutput, reasoning bool
 	var acc map[int]*callAcc
 	var u usage
 	err = resilience.Execute(ctx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, classify, func() bool { return committed }, func(ctx context.Context, attempt int) error {
@@ -580,6 +591,16 @@ func (p *Processor) stream(ctx, sessionCtx context.Context, req request, gen uin
 					}
 					a.args.WriteString(tc.Function.Arguments)
 					committed = true
+				}
+				if ch.Delta.ReasoningContent != "" || ch.Delta.Reasoning != "" {
+					// The model is alive and thinking: bill-bearing output exists, so a
+					// later failure or timeout is not retried (a retry would think again
+					// from scratch, up to 3x the wait and cost).
+					committed = true
+					if !reasoning {
+						reasoning = true
+						span.AddEvent(core.NewTraceEvent("llm.first_reasoning", time.Now(), core.SessionID(sid), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(ctx).Policy, nil))
+					}
 				}
 				if d := ch.Delta.Content; d != "" {
 					committed = true

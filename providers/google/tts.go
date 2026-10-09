@@ -145,7 +145,10 @@ type TTSProcessor struct {
 	finishedSeq uint64
 	activeGen   uint64
 	closed      bool
-	queue       core.SerialQueue // units wait here, not on a task slot each
+	// Unit seq runs on queues[seq%len]: queued units hold no task slot, and
+	// unit k starts only after unit k-len is done, so at most ttsLookAhead
+	// units synthesize ahead of the one being emitted.
+	queues [ttsLookAhead + 1]core.SerialQueue
 
 	Requests atomic.Uint64
 	Errors   atomic.Uint64
@@ -315,7 +318,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 
 	// Synthesize speech asynchronously, in unit order. Cancellation covers every
 	// in-flight request, not only the most recently started one.
-	if err := p.queue.Go(p.session, func(taskCtx context.Context) {
+	if err := p.queues[seq%uint64(len(p.queues))].Go(p.session, func(taskCtx context.Context) {
 		defer cancel()
 		defer func() {
 			p.mu.Lock()
@@ -333,20 +336,14 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			p.mu.Unlock()
 		}()
 
-		p.mu.Lock()
-		for p.finishedSeq+1 != seq && unitCtx.Err() == nil && taskCtx.Err() == nil && !p.closed {
-			p.cond.Wait()
+		// Look-ahead: synthesize while earlier units are queued or playing, but
+		// no more than ttsLookAhead units past the one being emitted.
+		// A stale unit is not synthesized but still waits its turn below, so the
+		// emission order (finishedSeq) moves past it.
+		skip := p.waitSeq(unitCtx, taskCtx, func() bool { return seq <= p.finishedSeq+1+ttsLookAhead }) || p.staleGen(gen)
+		if !skip {
+			p.Requests.Add(1)
 		}
-		stale := p.closed || unitCtx.Err() != nil || taskCtx.Err() != nil
-		if !stale && p.session != nil && gen != 0 && gen < p.session.CurrentGeneration() {
-			stale = true
-		}
-		p.mu.Unlock()
-		if stale {
-			p.Stale.Add(1)
-			return
-		}
-		p.Requests.Add(1)
 		traceSession := core.SessionID(strconv.FormatUint(p.session.ID(), 10))
 		traceTurn, traceGen := core.TurnID(su.Turn), core.Generation(su.Gen)
 		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": "google"})
@@ -373,6 +370,9 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		// piece, and played as one unit.
 		var err error
 		for _, piece := range splitUnit(su.Text, p.cfg.MaxSynthesisUnitChars) {
+			if skip {
+				break
+			}
 			// Nothing is emitted until synthesis is done, so every attempt may retry.
 			err = resilience.Execute(unitCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, classify, nil, func(attemptCtx context.Context, attempt int) error {
 				if attempt > 0 {
@@ -388,6 +388,12 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			if err != nil {
 				break
 			}
+		}
+
+		// Emission is strictly in unit order, failures included.
+		if p.waitSeq(unitCtx, taskCtx, func() bool { return p.finishedSeq+1 == seq }) || skip || p.staleGen(gen) {
+			p.Stale.Add(1)
+			return
 		}
 
 		if err != nil {
@@ -548,6 +554,26 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		return err
 	}
 	return nil
+}
+
+// ttsLookAhead is how many units past the one being emitted may already be
+// synthesizing (bounds provider concurrency and buffered audio per call).
+const ttsLookAhead = 2
+
+// waitSeq blocks until ok() holds and reports true when the wait ended because
+// the unit or session was cancelled or the processor closed instead.
+func (p *TTSProcessor) waitSeq(unitCtx, taskCtx context.Context, ok func() bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for !ok() && unitCtx.Err() == nil && taskCtx.Err() == nil && !p.closed {
+		p.cond.Wait()
+	}
+	return p.closed || unitCtx.Err() != nil || taskCtx.Err() != nil
+}
+
+// staleGen reports a unit from a generation the session has moved past.
+func (p *TTSProcessor) staleGen(gen uint64) bool {
+	return p.session != nil && gen != 0 && gen < p.session.CurrentGeneration()
 }
 
 // abandon releases seq when its task was never started. Calls are serialized

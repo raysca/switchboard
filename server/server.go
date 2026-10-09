@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -465,13 +466,16 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
+		s.logSetupFailure(sessionID, agentID, "resolve", err)
 		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
+	phase := "build_pipeline"
 	fail := func(err error) (*core.Session, error) {
 		releaseCall()
 		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
+		s.logSetupFailure(sessionID, agentID, phase, err)
 		return nil, err
 	}
 
@@ -487,6 +491,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	// 4. Construct Core Session
 	session, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
 	if err != nil {
+		phase = "create_session"
 		return fail(fmt.Errorf("create session: %w", err))
 	}
 
@@ -1173,4 +1178,33 @@ func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
 	case <-timer.C:
 	case <-ctx.Done():
 	}
+}
+
+// logSetupFailure logs one warning for a call that could not be set up, so
+// operators see why (bad credential, refused endpoint, incomplete agent) rather
+// than only a rising failure counter. It names the phase, category and failing
+// provider stage but never the error text: that may echo endpoints, credential
+// fragments or provider messages, and s.redactor masks PII, not secrets. The
+// redacted text is on the call timeline.
+func (s *Server) logSetupFailure(session uint64, agentID, phase string, err error) {
+	category := phase
+	switch {
+	case errors.Is(err, credential.ErrDecrypt):
+		category = "credential_decrypt"
+	case errors.Is(err, context.DeadlineExceeded):
+		category = "timeout"
+	}
+	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("agent", agentID),
+		slog.String("category", category), slog.String("stage", setupStage(err.Error())))
+}
+
+// setupStageRe matches the "<provider>.<stage>" prefix registry errors carry.
+var setupStageRe = regexp.MustCompile(`(?:^|: )([a-z0-9_]+\.(?:llm|stt|tts|vad))(?: tools)?: `)
+
+// setupStage returns the provider stage a setup error names ("nvidia.stt"), or "".
+func setupStage(msg string) string {
+	if m := setupStageRe.FindStringSubmatch(msg); m != nil {
+		return m[1]
+	}
+	return ""
 }

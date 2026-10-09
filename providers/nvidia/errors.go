@@ -93,7 +93,7 @@ func classify(err error) resilience.Verdict {
 		return resilience.Verdict{ClientError: true}
 	}
 	pe := MapError("", err)
-	return resilience.Verdict{Retryable: pe.Retryable, ClientError: pe.ClientError, RetryAfter: pe.RetryAfter}
+	return resilience.Verdict{Retryable: pe.Retryable, ClientError: pe.ClientError, NoBreaker: pe.GRPCCode == codes.ResourceExhausted, RetryAfter: pe.RetryAfter}
 }
 
 // streamEnded reports a normal end of a Riva stream (server EOF).

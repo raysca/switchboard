@@ -127,9 +127,11 @@ func (c *RealXAITTSClient) Synthesize(ctx context.Context, text string, cfg TTSC
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
+	// A transport failure (refused, reset, DNS, TLS, truncated body) is a
+	// retryable outage, not a client error: nil response classes it retryable.
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, MapError("tts", err)
+		return nil, MapHTTPError("tts", nil, "", err)
 	}
 	defer resp.Body.Close()
 
@@ -140,7 +142,7 @@ func (c *RealXAITTSClient) Synthesize(ctx context.Context, text string, cfg TTSC
 
 	pcmBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, MapError("tts", err)
+		return nil, MapHTTPError("tts", nil, "", err)
 	}
 	return pcmBytes, nil
 }

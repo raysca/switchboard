@@ -98,8 +98,9 @@ type Registry struct {
 	googleLLMBreaker *resilience.Breaker
 	googleTTSBreaker *resilience.Breaker
 	googleSTTBreaker *resilience.Breaker
-	xaiBreaker       *resilience.Breaker
-	deepgramBreaker  *resilience.Breaker
+	// One xAI breaker per stage: an STT or TTS outage must not block the LLM.
+	xaiLLMBreaker, xaiSTTBreaker, xaiTTSBreaker *resilience.Breaker
+	deepgramBreaker                             *resilience.Breaker
 	// One breaker per base URL: a tenant's broken vLLM must not open the
 	// breaker for every other OpenAI-compatible endpoint.
 	// ponytail: never evicted; bounded by the distinct base URLs stored.
@@ -138,7 +139,9 @@ func NewRegistry() *Registry {
 		googleLLMBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
 		googleTTSBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
 		googleSTTBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
-		xaiBreaker:           resilience.NewBreaker(resilience.DefaultConfig()),
+		xaiLLMBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
+		xaiSTTBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
+		xaiTTSBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 		deepgramBreaker:      resilience.NewBreaker(resilience.DefaultConfig()),
 		cartesiaBreaker:      resilience.NewBreaker(resilience.DefaultConfig()),
 		cartesiaSTTBreaker:   resilience.NewBreaker(resilience.DefaultConfig()),
@@ -240,7 +243,7 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("xai.llm: %w", err)
 		}
-		xaiCfg := xai.Config{Model: spec.Model, Endpoint: cfg.Providers.XAILLM.Endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: r.xaiBreaker}
+		xaiCfg := xai.Config{Model: spec.Model, Endpoint: cfg.Providers.XAILLM.Endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: r.xaiLLMBreaker}
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
@@ -683,10 +686,13 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	r.googleTTSBreaker.SetObserver(func(st resilience.State) {
 		m.TTSCircuitStateGoogle.Store(circuitCode(string(st)))
 	})
-	r.xaiBreaker.SetObserver(func(st resilience.State) {
-		// One xAI breaker serves every xAI stage.
+	r.xaiLLMBreaker.SetObserver(func(st resilience.State) {
 		m.LLMCircuitStateXAI.Store(circuitCode(string(st)))
+	})
+	r.xaiSTTBreaker.SetObserver(func(st resilience.State) {
 		m.STTCircuitStateXAI.Store(circuitCode(string(st)))
+	})
+	r.xaiTTSBreaker.SetObserver(func(st resilience.State) {
 		m.TTSCircuitStateXAI.Store(circuitCode(string(st)))
 	})
 }
