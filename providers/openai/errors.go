@@ -15,6 +15,9 @@ var (
 	ErrMissingTerminalEvent = errors.New("openai sse: stream ended without [DONE]")
 	ErrOversizedBody        = errors.New("openai sse: response exceeded maximum size")
 	ErrInvalidEvent         = errors.New("openai sse: invalid event")
+	// ErrEmptyReply: the stream ended without any spoken text, typically a
+	// reasoning model that spent its budget thinking.
+	ErrEmptyReply = errors.New("openai llm: model returned no text (reasoning only or empty reply); use a non-reasoning model or raise its output budget")
 )
 
 // ProviderError is a sanitized HTTP failure. Retryable covers 5xx and 429;
