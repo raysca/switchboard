@@ -19,7 +19,9 @@ type SerialQueue struct {
 // is not queued. Callers must serialize Go calls (processors do: one run loop).
 // Jobs still run after the session ctx ends (they must check
 // it and return), so their cleanup always happens.
-func (q *SerialQueue) Go(s interface{ Go(func(context.Context)) error }, fn func(ctx context.Context)) error {
+func (q *SerialQueue) Go(s interface {
+	Go(func(context.Context)) error
+}, fn func(ctx context.Context)) error {
 	q.mu.Lock()
 	if q.running {
 		q.jobs = append(q.jobs, fn)

@@ -251,7 +251,7 @@ func TestCallPipelineIdleStuckModelRecovers(t *testing.T) {
 	idleWait(t, "fallback phrase", func() bool { return strings.Contains(strings.Join(r.spoken(), "|"), "give me a moment") })
 	r.say(t, "t2", "hello")
 	idleWait(t, "answer to the next turn", func() bool { return strings.Contains(strings.Join(r.spoken(), "|"), "Sure thing.") })
-	time.Sleep(400 * time.Millisecond) // answered: the watchdog stays quiet
+	time.Sleep(400 * time.Millisecond)   // answered: the watchdog stays quiet
 	if err := r.sess.Err(); err != nil { // e.g. the pacer refusing the reply after the idle phrase
 		t.Fatalf("session failed: %v", err)
 	}

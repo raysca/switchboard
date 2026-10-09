@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -508,7 +509,7 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	}
 
 	if len(content) > 0 {
-		if err := p.ctxPool.AddMessage(asstMsg); err != nil {
+		if err := p.addAssistantMessage(asstMsg); err != nil {
 			return err
 		}
 		if p.summ != nil && !partial {
@@ -528,6 +529,16 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	p.resetTurn()
 
 	return emitErr
+}
+
+// addAssistantMessage records a spoken reply. One that cannot fit the context
+// budget (the active turn is never evicted) is skipped: losing the history
+// entry is better than ending the call that just spoke it.
+func (p *AssistantContextProcessor) addAssistantMessage(m Message) error {
+	if err := p.ctxPool.AddMessage(m); !errors.Is(err, ErrContextLimitExceeded) {
+		return err
+	}
+	return nil
 }
 
 // failUndeliveredTurn refuses to commit assistant text when the final audio write failed.
@@ -579,7 +590,7 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 			Partial:   true,
 			CreatedAt: time.Now(),
 		}
-		if err := p.ctxPool.AddMessage(asstMsg); err != nil {
+		if err := p.addAssistantMessage(asstMsg); err != nil {
 			return err
 		}
 		if err := e.Push(&AssistantMessageFrame{
