@@ -233,6 +233,13 @@ type LLMProcessor struct {
 	Stale    atomic.Uint64
 }
 
+// ErrBlockedReply: Gemini refused the prompt or stopped the reply (safety,
+// recitation, prohibited content) and produced no text.
+var ErrBlockedReply = errors.New("google llm: reply blocked by the model")
+
+// ErrEmptyReply: the stream ended with no text and no stated reason.
+var ErrEmptyReply = errors.New("google llm: model returned no text")
+
 var errGoogleToolClientUnsupported = errors.New("google: tool streaming client unsupported")
 
 // LLMCounts implements core.LLMCounters.
@@ -395,6 +402,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 
 		var committed bool
 		var fullTextBuilder strings.Builder
+		var finishReason string // last non-empty finish/block reason of the turn
 		var nativeHistory []GoogleNativeExchange
 		// Turn usage: the sum over every model request of the tool loop.
 		var pTok, oTok, tTok, requests int64
@@ -461,6 +469,9 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 					if !ok {
 						chunkCh = nil
 						continue
+					}
+					if chunk.FinishReason != "" {
+						finishReason = chunk.FinishReason
 					}
 					if chunk.PromptTokens > 0 {
 						reqP = int64(chunk.PromptTokens)
@@ -590,6 +601,18 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			return
 		}
 		p.mu.Unlock()
+
+		if strings.TrimSpace(fullTextBuilder.String()) == "" {
+			// A blocked prompt, a SAFETY/RECITATION stop or an empty candidate: surface
+			// it so failover and metrics see it, instead of ending the turn in silence.
+			p.Errors.Add(1)
+			cause := ErrEmptyReply
+			if finishReason != "" && finishReason != "STOP" && finishReason != "FINISH_REASON_UNSPECIFIED" {
+				cause = fmt.Errorf("%w (finish reason %s)", ErrBlockedReply, finishReason)
+			}
+			_ = p.session.Reenter(&core.ErrorFrame{Err: cause, Fatal: false, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+			return
+		}
 
 		fullFrame := &core.LLMTextFrame{
 			Text: fullTextBuilder.String(),
