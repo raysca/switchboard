@@ -386,7 +386,7 @@ func (s *Server) setupRoutes() {
 	s.publicMux = http.NewServeMux()
 	s.publicMux.HandleFunc("GET /health", s.handleHealth)
 	s.publicMux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
-		if s.shuttingDown.Load() { // before auth: the single-use token stays valid for a retry elsewhere
+		if s.shuttingDown.Load() { // before auth, so the token is not consumed; it is still bound to this process (issuer_epoch), so the client fetches a new one
 			http.Error(w, DrainReason, http.StatusServiceUnavailable)
 			return
 		}

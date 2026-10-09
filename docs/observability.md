@@ -23,7 +23,7 @@ Voice Framework V1 uses validated YAML configuration files loaded via `server/co
 
 ## 2. Health and Readiness Semantics
 
-All health endpoints are served exclusively on the protected admin listener (default `:9090`).
+`/health`, `/ready` and `/metrics` are served on the probe listener (`probe_listen_addr`, `0.0.0.0:9092` in `config/production.yaml`, unauthenticated, no management API) and on the admin listener (`admin_listen_addr`, default loopback `:9090`, which also serves the management API and `/debug/timeline`). Keep the admin listener on loopback; never expose the probe port publicly.
 
 ### Liveness Probe: `GET /health`
 - **Purpose**: Local process liveness for orchestrators (Kubernetes / Docker Compose / Systemd).
@@ -36,8 +36,8 @@ All health endpoints are served exclusively on the protected admin listener (def
   1. Startup/shutdown: unready until initialization finishes and while draining or shutting down.
   2. Admission: unready if admission has been globally disabled.
   3. VAD capacity: unready if no native VAD worker is online.
-  4. Agent store: unready if agent storage is not enabled (calls run stored agents only).
-- **Provider circuits** (`google_stt`, `google_llm`, `google_tts`, `xai_llm`, `xai_stt`, `xai_tts`) are reported as `closed`, `open` or `half_open` for diagnosis but do not make the server unready: an open circuit only affects agents that use that provider. Per-agent call readiness is reported by `GET /api/v1/agents/{id}` (`readiness`). `/ready` no longer reports `usable_pipelines`.
+  4. Agent store: unready if agent storage is not enabled, or if a ping of the store fails (the verdict is cached for 1 s). Calls run stored agents only.
+- **Provider circuits** (`google_stt`, `google_llm`, `google_tts`, `xai_llm`, `xai_stt`, `xai_tts` when built in, plus `nvidia_<stage>:<endpoint>` once an Nvidia endpoint has been used) are reported as `closed`, `open` or `half_open` for diagnosis but do not make the server unready: an open circuit only affects agents that use that provider. Per-agent call readiness is reported by `GET /api/v1/agents/{id}` (`readiness`). `/ready` no longer reports `usable_pipelines`.
 - **Response**:
   - Ready: `HTTP 200 OK` with `{"status":"ready", "circuits":{...}}`
   - Unready: `HTTP 503 Service Unavailable` with `{"status":"unready", "reason":"..."}`
@@ -46,7 +46,7 @@ All health endpoints are served exclusively on the protected admin listener (def
 
 ## 3. Prometheus Telemetry (Spec §35)
 
-The server exposes Prometheus metrics at `GET /metrics` on the admin port.
+The server exposes Prometheus metrics at `GET /metrics` on the probe and admin listeners. Alert rules: `deploy/alerts/govoice.rules.yml`. A test (`server/docs_contract_test.go`) fails if this document, the runbook or the rules name a metric the server does not emit.
 
 ### Cardinality Discipline
 To prevent memory exhaustion in Prometheus and TSDB instances:
@@ -57,28 +57,44 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 
 | Metric Name | Type | Description |
 |---|---|---|
-| `voice_sessions_active` | Gauge | Currently active concurrent voice sessions |
-| `voice_sessions_total` | Counter | Total voice sessions initiated |
-| `voice_sessions_rejected_total` | Counter | Sessions rejected by admission control (`reason`) |
-| `voice_session_tasks_leaked_total` | Counter | Managed tasks that failed to exit within teardown timeout |
-| `voice_frames_processed_total` | Counter | Frames processed by pipeline (`direction`, `type`) |
-| `voice_audio_dropped_total` | Counter | Audio frames dropped due to queue congestion |
-| `voice_interruption_total` | Counter | Interruption (barge-in) events triggered |
-| `voice_interruption_latency_seconds` | Histogram | Latency from `UserStartedSpeaking` to transport flush |
-| `vad_worker_capacity_total` | Gauge | Total VAD worker inference slots |
-| `vad_worker_capacity_available` | Gauge | Available VAD worker inference slots |
-| `vad_worker_errors_total` | Counter | Failures encountered by VAD child processes |
-| `vad_worker_restarts_total` | Counter | Number of times VAD child workers respawned |
-| `provider_request_duration_seconds` | Histogram | Request latency per provider (`provider`, `operation`) |
-| `provider_circuit_state` | Gauge | Circuit breaker status (0=Closed, 1=Half-Open, 2=Open) |
+| `voice_build_info` | Gauge | Always 1; labels `version`, `commit` |
+| `voice_active_sessions` | Gauge | Currently active concurrent voice sessions |
+| `voice_sessions_started_total` | Counter | Voice sessions started |
+| `voice_sessions_stopped_total` | Counter | Voice sessions stopped |
+| `voice_sessions_failed_total` | Counter | Sessions that failed (setup or run) |
+| `voice_admission_rejects_total` | Counter | Calls refused by admission control (`reason`: `session_limit`, `principal_limit`, `vad_unavailable`, `agent_limit`, `start_rate_limit`) |
+| `voice_draining` | Gauge | 1 while draining for shutdown |
+| `voice_drain_sessions_remaining` | Gauge | Sessions still live while draining |
+| `voice_max_duration_terminations_total` | Counter | Calls hung up by the max call duration guard |
+| `voice_leaked_work_total` | Counter | Tasks that ignored cancellation at teardown |
+| `voice_leaked_sessions_total` | Counter | Sessions that leaked at least one task |
+| `voice_process_goroutines` / `voice_process_heap_bytes` | Gauge | Process runtime |
+| `voice_vad_active_streams` | Gauge | Active VAD streams |
+| `voice_vad_stale_chunks_total` / `voice_vad_dropped_chunks_total` | Counter | VAD chunks discarded as stale / dropped on overload |
+| `voice_vad_worker_restarts_total` | Counter | VAD child workers respawned |
+| `voice_stt_errors_total` / `voice_llm_errors_total` / `voice_tts_errors_total` | Counter | Provider errors per stage (all providers) |
+| `voice_provider_errors_total` | Counter | Stage errors by `provider` and `stage` (`provider="failover"` when the stage had fallbacks) |
+| `voice_provider_requests_total` | Counter | Requests sent to a provider (`provider`, `stage`), retries included |
+| `voice_stt_circuit_state` / `voice_llm_circuit_state` / `voice_tts_circuit_state` | Gauge | Circuit breaker per `provider` (0=closed, 1=open, 2=half_open); Nvidia adds an `endpoint` label |
+| `voice_latency_seconds` | Histogram | Per-turn latency by `stage` (`stt_final`, `llm_ttft`, `tts_ttfb`, `voice_to_voice`, `startup`) |
+| `voice_transport_connected_clients` | Gauge | Connected WebSocket clients |
+| `voice_transport_auth_failures_total` | Counter | Token authentication failures |
+| `voice_transport_disconnects_total` | Counter | Disconnects by `reason` |
+| `voice_transport_slow_client_terminations_total` | Counter | Slow clients cut off |
+| `voice_ws_ping_failures_total` | Counter | Pings that got no pong in time |
+| `voice_user_idle_hangups_total` | Counter | Calls ended after the user stayed silent |
+| `voice_otel_spans_dropped_total` / `voice_otel_spans_failed_total` | Counter | OTel export losses (only with `otel.enabled`) |
+
+The series for smart-turn, audio filters, summaries, failover and warm-up are described in the runbook sections for those features.
+
 
 ---
 
 ## 4. Per-Session Diagnostic Timeline
 
-Voice Framework V1 provides an in-memory, circular ring buffer for deep incident diagnostics at `GET /timeline?session_id=<ID>`:
-- **Buffer Size**: Strictly bounded to 256 events per session.
-- **TTL**: Evicted 5 minutes after session termination.
+Voice Framework V1 provides an in-memory, circular ring buffer for deep incident diagnostics at `GET /debug/timeline?session=<ID>` on the admin listener:
+- **Buffer Size**: Bounded to `observability.timeline_max_events` events per session (1000 in production.yaml).
+- **TTL**: Idle rings are evicted after `observability.timeline_ttl` (15m in production.yaml).
 - **Zero Content Leakage**: Transcripts and audio samples are **omitted by default**; only event names, state transitions, generation IDs, and latencies are recorded.
 - **Non-Blocking**: The timeline logger never blocks the session run loop. If the ring buffer fills, older events are overwritten and an `evicted_count` counter is incremented.
 
@@ -86,14 +102,14 @@ Voice Framework V1 provides an in-memory, circular ring buffer for deep incident
 
 ## 5. Incident Interpretation Runbook
 
-### Alert: `voice_session_tasks_leaked_total > 0`
+### Alert: `GovoiceLeakedWork` (`increase(voice_leaked_work_total[15m]) > 0`)
 - **Meaning**: A session was closed, but one or more background goroutines failed to exit within `TeardownTimeout` (2 seconds).
 - **Likely Causes**:
   - An external provider client ignored context cancellation.
   - A socket write blocked indefinitely without honoring write deadlines.
-- **Diagnostic Action**: Inspect the session timeline (`/timeline?session_id=...`) to identify which provider call was in-flight at teardown.
+- **Diagnostic Action**: Inspect the session timeline (`/debug/timeline?session=...`) to identify which provider call was in-flight at teardown.
 
-### Alert: `vad_worker_restarts_total > 5` or `vad_worker_errors_total > 0`
+### Alert: `GovoiceVADWorkerRestarts` (`increase(voice_vad_worker_restarts_total[10m]) > 5`)
 - **Meaning**: A native Silero VAD worker process crashed (e.g. segmentation fault) or became unresponsive.
 - **System Behavior**: The supervisor killed the faulty worker, reaped its PID, and respawned a clean worker. Other workers continued processing calls without disruption.
 - **Action**: Check `stderr` logs for VAD child worker diagnostic dumps (bounded to 64KB).

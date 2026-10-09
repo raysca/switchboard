@@ -1,0 +1,110 @@
+# Prometheus alert rules for go-voice. Scrape the probe listener (":9092/metrics").
+# Validate: promtool check rules deploy/alerts/govoice.rules.yml
+# `server/docs_contract_test.go` fails if an expr names a metric or label value the server does not emit.
+# Thresholds assume config/production.yaml (max_sessions 250); tune after a load test on your hardware.
+groups:
+  - name: govoice-availability
+    rules:
+      - alert: GovoiceDown
+        expr: up{job="govoice"} == 0
+        for: 2m
+        labels: {severity: page}
+        annotations:
+          summary: "go-voice instance {{ $labels.instance }} is not scraped"
+          description: "Probe listener unreachable. Check the container, `/ready` and docs/operations_runbook.md."
+      - alert: GovoiceDraining
+        expr: voice_draining == 1
+        for: 10m
+        labels: {severity: warn}
+        annotations:
+          summary: "go-voice {{ $labels.instance }} has been draining for 10 minutes"
+          description: "A drain longer than drain_timeout + 5 s means calls are stuck; see voice_drain_sessions_remaining."
+      - alert: GovoiceSessionFailures
+        expr: >
+          increase(voice_sessions_failed_total[10m]) > 5
+          and increase(voice_sessions_failed_total[10m]) > 0.2 * increase(voice_sessions_started_total[10m])
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "go-voice session failures on {{ $labels.instance }}"
+          description: "Calls fail at setup or run time. Check logs for 'call setup failed' and provider circuits."
+
+  - name: govoice-capacity
+    rules:
+      - alert: GovoiceNearCapacity
+        expr: voice_active_sessions > 200
+        for: 5m
+        labels: {severity: warn}
+        annotations:
+          summary: "go-voice {{ $labels.instance }} above 80% of limits.max_sessions (250)"
+      - alert: GovoiceAdmissionRejecting
+        expr: increase(voice_admission_rejects_total{reason="session_limit"}[5m]) > 0
+        labels: {severity: page}
+        annotations:
+          summary: "go-voice {{ $labels.instance }} is refusing calls at limits.max_sessions"
+      - alert: GovoiceVADUnavailable
+        expr: increase(voice_admission_rejects_total{reason="vad_unavailable"}[5m]) > 0
+        labels: {severity: page}
+        annotations:
+          summary: "go-voice {{ $labels.instance }} refuses calls: no VAD worker capacity"
+      - alert: GovoiceVADWorkerRestarts
+        expr: increase(voice_vad_worker_restarts_total[10m]) > 5
+        labels: {severity: warn}
+        annotations:
+          summary: "VAD workers on {{ $labels.instance }} keep restarting"
+          description: "Crash or CPU starvation (a worker silent for ~150 ms is killed). See runbook Incident 1."
+      - alert: GovoiceLeakedWork
+        expr: increase(voice_leaked_work_total[15m]) > 0
+        labels: {severity: warn}
+        annotations:
+          summary: "go-voice {{ $labels.instance }} leaked tasks at session teardown"
+          description: "A provider client ignored cancellation. See runbook Incident 2."
+      - alert: GovoiceGoroutineGrowth
+        expr: voice_process_goroutines > 20000
+        for: 15m
+        labels: {severity: warn}
+        annotations:
+          summary: "go-voice {{ $labels.instance }} has an unusually high goroutine count"
+
+  - name: govoice-providers
+    rules:
+      - alert: GovoiceProviderCircuitOpen
+        expr: >
+          max by (instance, provider) (voice_stt_circuit_state == 1)
+          or max by (instance, provider) (voice_llm_circuit_state == 1)
+          or max by (instance, provider) (voice_tts_circuit_state == 1)
+        for: 2m
+        labels: {severity: page}
+        annotations:
+          summary: "{{ $labels.provider }} circuit breaker is open on {{ $labels.instance }}"
+          description: "Agents using this provider fail or fail over. Nvidia series carry an `endpoint` label. See runbook Incident 3."
+      - alert: GovoiceProviderErrors
+        expr: sum by (provider, stage) (increase(voice_provider_errors_total[10m])) > 10
+        labels: {severity: warn}
+        annotations:
+          summary: "{{ $labels.provider }} {{ $labels.stage }} errors are elevated"
+      - alert: GovoiceVoiceToVoiceSlow
+        expr: >
+          histogram_quantile(0.95, sum by (le) (rate(voice_latency_seconds_bucket{stage="voice_to_voice"}[10m]))) > 2.5
+        for: 10m
+        labels: {severity: warn}
+        annotations:
+          summary: "p95 voice-to-voice latency above 2.5 s"
+
+  - name: govoice-transport
+    rules:
+      - alert: GovoiceAuthFailureSpike
+        expr: increase(voice_transport_auth_failures_total[5m]) > 100
+        labels: {severity: warn}
+        annotations:
+          summary: "Many WebSocket token failures on {{ $labels.instance }} (probing, clock skew or a wrong signing key)"
+      - alert: GovoiceSlowClients
+        expr: increase(voice_transport_slow_client_terminations_total[10m]) > 20
+        labels: {severity: warn}
+        annotations:
+          summary: "Slow WebSocket clients are being terminated on {{ $labels.instance }}"
+      - alert: GovoiceOTelLosingSpans
+        expr: increase(voice_otel_spans_dropped_total[10m]) + increase(voice_otel_spans_failed_total[10m]) > 0
+        labels: {severity: info}
+        annotations:
+          summary: "OTel export is losing spans on {{ $labels.instance }}"
