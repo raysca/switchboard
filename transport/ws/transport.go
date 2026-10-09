@@ -159,6 +159,7 @@ type Server struct {
 	rateMu       sync.Mutex
 	ratePerIP    map[string]*ipRateState
 	rateOverflow ipRateState // shared bucket for new sources once ratePerIP is full
+	rateSweptAt  time.Time   // last stale-entry sweep of a full ratePerIP
 	idCounter    atomic.Uint64
 
 	// Session factory callback
@@ -190,18 +191,21 @@ func (s *Server) allowHandshakeRate(ip string) bool {
 	now := time.Now()
 	state, exists := s.ratePerIP[ip]
 	if !exists {
-		if len(s.ratePerIP) >= maxRateEntries {
+		// Sweep at most once a second: under a flood every new source lands here, and a full scan per
+		// handshake (under rateMu) would serialize all handshakes behind it.
+		if len(s.ratePerIP) >= maxRateEntries && now.Sub(s.rateSweptAt) > time.Second {
+			s.rateSweptAt = now
 			for k, v := range s.ratePerIP {
 				if now.Sub(v.lastCheck) > time.Minute {
 					delete(s.ratePerIP, k)
 				}
 			}
-			if len(s.ratePerIP) >= maxRateEntries {
-				// Still full of active sources (e.g. a flood from many addresses): degrade to one shared
-				// bucket for every new source instead of refusing them all. ponytail: the shared bucket is
-				// 10x one IP's; a sustained flood still starves new sources, but known ones keep their own bucket.
-				return takeToken(&s.rateOverflow, now, rate*10, burst*10)
-			}
+		}
+		if len(s.ratePerIP) >= maxRateEntries {
+			// Still full of active sources (e.g. a flood from many addresses): degrade to one shared
+			// bucket for every new source instead of refusing them all. ponytail: the shared bucket is
+			// 10x one IP's; a sustained flood still starves new sources, but known ones keep their own bucket.
+			return takeToken(&s.rateOverflow, now, rate*10, burst*10)
 		}
 		s.ratePerIP[ip] = &ipRateState{
 			tokens:    float64(burst - 1),

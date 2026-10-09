@@ -30,6 +30,9 @@ func TestHandshakeRateMapDegradesToSharedOverflowBucketAtCapacity(t *testing.T) 
 			allowed++
 		}
 	}
+	if len(s.ratePerIP) != maxRateEntries { // the sweep is throttled; the cap is not
+		t.Fatalf("rate map grew past the cap during a flood: %d", len(s.ratePerIP))
+	}
 	if allowed < 40 || allowed > 60 {
 		t.Fatalf("overflow bucket admitted %d of 201 new sources, want about 50", allowed)
 	}
