@@ -1,0 +1,90 @@
+# Continuous integration (M4-01). Every job runs the same Makefile targets a developer runs locally, so
+# a green CI means `make verify`, the xAI speech (-tags xaispeech) tests, the race detector, the
+# Postgres store tests and the production image smoke all pass. No provider keys are used anywhere:
+# tests use fake providers and the smoke test starts the image without credentials.
+#
+# Required status checks to configure on main: linux, macos, postgres, image-smoke.
+# perf-gate.yml is advisory (see docs/benchmarks/README.md, "CI policy").
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # make verify = build (-tags xaispeech) + go vet (with and without the tag) + go test -race for every
+  # module + gofmt + manifest/fixture/playback-clear checks. ONNX Runtime is git-ignored: `make ort`
+  # downloads the pinned release (sha256-verified on Linux).
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true   # tools/compat parity tests read the pinned pipecat-impl revision
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix tools/compat   # released @pipecat-ai client packages for the compat tests
+      - run: make ort
+      - run: make verify
+
+  # The reference platform for the committed benchmarks; also proves the macOS cgo/ORT path.
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true   # tools/compat parity tests read the pinned pipecat-impl revision
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix tools/compat   # released @pipecat-ai client packages for the compat tests
+      - run: make ort
+      - run: make verify
+
+  # Storage and migration tests against the production database (skipped by `make test`).
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: govoice
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      TEST_POSTGRES_DSN: postgres://postgres:test@127.0.0.1:5432/govoice?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test-postgres
+
+  # Builds the production image and probes it from outside the container with no provider key:
+  # /ready, /metrics, loopback-only admin, xAI speech compiled in, clean SIGTERM exit.
+  image-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: deploy/smoke.sh

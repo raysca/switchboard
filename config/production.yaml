@@ -3,7 +3,13 @@ insecure_overrides:
   allow_plain_ws_in_production: false
 
 public_listen_addr: "0.0.0.0:8080"
+# Management API (/api/v1, bearer auth) and /debug/timeline: container loopback only. Reach it with
+# `docker exec` / `kubectl port-forward`; never bind it beyond loopback.
 admin_listen_addr: "127.0.0.1:9090"
+# Probe listener: ONLY /health, /ready and /metrics (no auth, no management API, no per-call data), so
+# kubelet probes and Prometheus can reach the container. Keep it off public networks (compose publishes
+# it on 127.0.0.1 only; in Kubernetes expose it to the cluster network, not through the ingress).
+probe_listen_addr: "0.0.0.0:9092"
 
 tls:
   cert_file: ""
@@ -45,7 +51,7 @@ limits:
   ping_timeout: 10s
   # Recommended: ping_interval/ping_timeout above drop dead peers (2 missed pings); a live but abandoned tab
   # still answers pings and holds its slot until max_call_duration. Also set idle.user_timeout (see the
-  # commented idle block at the end of this file) so silent callers are prompted and hung up.
+  # idle block at the end of this file) so silent callers are prompted and hung up.
   drain_timeout: 45s
   immediate_cancel: false
 
@@ -100,5 +106,7 @@ warmup:
   predial: false
   on_start: false
 
-# Recommended for production (off by default): hang up callers who stay silent or abandon the tab.
-# idle: {user_timeout: 30s, max_prompts: 2}
+# Hang up callers who stay silent or abandon the tab (a live but abandoned tab still answers pings and
+# would hold its slot and provider streams until max_call_duration). After 2 prompts at 30 s each the
+# call ends; raise user_timeout if your agents legitimately wait on long tool calls.
+idle: {user_timeout: 30s, max_prompts: 2}

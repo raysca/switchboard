@@ -255,6 +255,10 @@ func TestProfilesPassServerValidation(t *testing.T) {
 	p.Stages.STT, p.Stages.LLM, p.Stages.TTS = Stage{Provider: "xai"}, Stage{Provider: "xai", Model: "m"}, Stage{Provider: "xai"}
 	raw, _ := json.Marshal(agentConfig(p, map[string]string{"stt": "c", "llm": "c", "tts": "c"}))
 	c, _ := agent.DecodeConfig(raw)
+	// (skipped when this test binary itself is built with -tags xaispeech, as make test does)
+	if provider.NewRegistry(provider.Definitions()).Supports("xai", provider.CapabilitySTT) {
+		return
+	}
 	if probs := agent.AttachmentProblems(c, provider.NewRegistry(provider.Definitions()), []storage.Credential{{ID: "c", Provider: "xai"}}); len(probs) == 0 {
 		t.Error("untagged registry accepted xai speech; drop the implied xaispeech tag")
 	}

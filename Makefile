@@ -16,20 +16,35 @@ export PATH := $(PATH):$(HOME)/go/bin:/opt/homebrew/bin
 help: ## build|Show this help
 	@scripts/make-help.sh $(firstword $(MAKEFILE_LIST))
 
-build: ## build|Build bin/server, bin/vadworker, bin/turnworker and the examples
+# xAI STT/TTS are in launch scope: every build, vet and test of the shipped server uses -tags xaispeech
+# (the production Dockerfile does the same). Override with GOTAGS= to build without them.
+GOTAGS ?= xaispeech
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS_VERSION := -X govoice/server.Version=$(VERSION) -X govoice/server.Commit=$(COMMIT)
+
+build: ort-check ## build|Build bin/server, bin/vadworker, bin/turnworker and the examples
 	@mkdir -p bin
-	go build -o bin/vadworker ./cmd/vadworker
-	go build -o bin/turnworker ./cmd/turnworker
-	go build -o bin/server ./cmd/server
-	go build ./examples/...
+	go build -tags "$(GOTAGS)" -o bin/vadworker ./cmd/vadworker
+	go build -tags "$(GOTAGS)" -o bin/turnworker ./cmd/turnworker
+	go build -tags "$(GOTAGS)" -ldflags "$(LDFLAGS_VERSION)" -o bin/server ./cmd/server
+	go build -tags "$(GOTAGS)" ./examples/...
+
+# ONNX Runtime is git-ignored (*.dylib / *.so) and needed by the vad and smartturn tests and the server.
+# Fresh clone: `make ort` downloads the pinned release and verifies its sha256.
+ort-check: ## build|Fail with instructions when the ONNX Runtime library is missing
+	@scripts/fetch-ort.sh check
+
+ort: ## build|Download the pinned ONNX Runtime for this OS/arch into third_party/ (sha256-verified)
+	@scripts/fetch-ort.sh fetch
 
 # Every module in go.work (root also covers vad, smartturn, transport, tools/*, cmd, examples).
 MODULES := . core providers/cartesia providers/deepgram providers/elevenlabs providers/google providers/nvidia providers/openai providers/xai server
 
-test: build ## build|Vet + race-test every module (about 3 min)
+test: build ## build|Vet (with and without xaispeech) + race-test every module with -tags xaispeech (about 3 min)
 	@failed=""; for m in $(MODULES); do \
 		echo "=== Vetting and testing module $$m ==="; \
-		(cd $$m && go vet ./... && go test -race -count=1 ./...) || failed="$$failed $$m"; \
+		(cd $$m && go vet ./... && go vet -tags "$(GOTAGS)" ./... && go test -race -count=1 -tags "$(GOTAGS)" ./...) || failed="$$failed $$m"; \
 	done; \
 	if [ -n "$$failed" ]; then echo "=== FAILED modules:$$failed ==="; exit 1; fi; \
 	echo "=== All modules passed ==="
@@ -71,8 +86,12 @@ release-security: ## build|Release hardening: pinned images, govulncheck, SBOM, 
 		echo "Dockerfile FROM lines must pin immutable digests"; \
 		exit 1; \
 	fi
+	@if grep -E '^\s*image:' deploy/docker-compose.yaml | grep -v '@sha256:' | grep -v 'govoice:'; then \
+		echo "docker-compose images must pin immutable digests"; \
+		exit 1; \
+	fi
 	@echo "=== govulncheck ==="
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 	@echo "=== Module SBOM ==="
 	go list -m -json all | python3 -c 'import json,sys; text=sys.stdin.read(); dec=json.JSONDecoder(); i=0; objs=[]; \
 	exec("while i < len(text):\n    while i < len(text) and text[i].isspace():\n        i += 1\n    if i >= len(text):\n        break\n    obj, i = dec.raw_decode(text, i)\n    objs.append(obj)"); \
@@ -95,9 +114,10 @@ proto-gen: ## build|Regenerate the protobuf frame code
 
 .PHONY: build test verify release-security proto-gen
 
-# Postgres storage tests (skipped by `make test`). Uses TEST_POSTGRES_DSN if set,
+# Postgres storage tests (skipped by `make test`; run by the `postgres` job in .github/workflows/ci.yml,
+# which provides a service container and sets TEST_POSTGRES_DSN). Uses TEST_POSTGRES_DSN if set,
 # otherwise starts a throwaway postgres container.
-PG_IMAGE ?= postgres:16-alpine
+PG_IMAGE ?= postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
 test-postgres: ## build|Postgres storage tests (docker, or TEST_POSTGRES_DSN)
 	@if [ -n "$$TEST_POSTGRES_DSN" ]; then \
 		cd server && go test -race -count=1 ./storage/ ./retention/; \

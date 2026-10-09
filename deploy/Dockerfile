@@ -22,9 +22,14 @@ RUN go work sync
 COPY . .
 
 ENV CGO_ENABLED=1
-RUN go build -ldflags="-s -w" -o /src/bin/vadworker ./cmd/vadworker && \
-    go build -ldflags="-s -w" -o /src/bin/turnworker ./cmd/turnworker && \
-    go build -ldflags="-s -w" -o /src/bin/server ./cmd/server
+# xAI STT/TTS are in launch scope: the server must be built with -tags xaispeech
+# (the Makefile and CI do the same; see server/registry_xaispeech.go). Stored
+# agents that need a provider missing from the build fail startup in production.
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN go build -trimpath -ldflags="-s -w" -o /src/bin/vadworker ./cmd/vadworker && \
+    go build -trimpath -ldflags="-s -w" -o /src/bin/turnworker ./cmd/turnworker && \
+    go build -trimpath -tags xaispeech -ldflags="-s -w -X govoice/server.Version=${VERSION} -X govoice/server.Commit=${COMMIT}" -o /src/bin/server ./cmd/server
 
 RUN test -f third_party/silero_vad.onnx && \
     sha256sum third_party/silero_vad.onnx | grep 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
@@ -82,7 +87,8 @@ RUN mkdir -p /tmp /var/log/govoice && \
 USER govoice:govoice
 
 EXPOSE 8080
-EXPOSE 9090
+# Probe listener (/health /ready /metrics). The admin listener (9090) is container loopback only.
+EXPOSE 9092
 
 ENV PATH="/opt/govoice/bin:${PATH}" \
     GOVOICE_ROOT="/opt/govoice" \

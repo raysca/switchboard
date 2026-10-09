@@ -86,6 +86,21 @@ func readyTestAgent(t *testing.T, s *Server) string {
 	return a.ID
 }
 
+// An agent whose provider/stage has no factory in this build (e.g. xAI speech
+// without -tags xaispeech) must be reported at startup, not at call time.
+func TestUnavailableAgentProvidersReported(t *testing.T) {
+	s := apiTestServer(t)
+	id := readyTestAgent(t, s)
+	if bad := s.unavailableAgentProviders(t.Context()); len(bad) != 0 {
+		t.Fatalf("complete build reported %v", bad)
+	}
+	delete(s.registry.factories, factoryKey("google", "tts"))
+	bad := s.unavailableAgentProviders(t.Context())
+	if len(bad) != 1 || bad[0] != "agent "+id+" tts=google" {
+		t.Fatalf("got %v", bad)
+	}
+}
+
 func credentialInput(provider, secret string) credential.CreateInput {
 	return credential.CreateInput{Provider: provider, Secret: secret}
 }

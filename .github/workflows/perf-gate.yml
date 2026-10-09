@@ -1,4 +1,6 @@
-# Perf gate (P5-5). See docs/benchmarks/README.md. Not enabled until pushed.
+# Perf gate (P5-5). See docs/benchmarks/README.md ("CI policy"). ADVISORY: non-blocking until a baseline for the
+# runner's machine label is committed. Only darwin-arm64-12c exists; macos-14 has 3 cores (darwin-arm64-3c), so this
+# job generates a candidate baseline and uploads it. Do not make it a required check before then.
 # Until a baseline for the runner's machine label is committed, the job generates a candidate
 # baseline and uploads it instead of failing (PERF_ALLOW_MISSING=1). Remove that env to enforce.
 name: perf-gate
@@ -14,6 +16,7 @@ jobs:
   perf-gate:
     runs-on: macos-14   # Apple Silicon; the machine label (os-arch-cpus) must match a committed baseline
     timeout-minutes: 20
+    continue-on-error: true   # advisory: see the policy above
     env:
       CI: 'true'
       PERF_ALLOW_MISSING: '1'
