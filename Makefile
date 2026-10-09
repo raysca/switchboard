@@ -86,8 +86,12 @@ release-security: ## build|Release hardening: pinned images, govulncheck, SBOM, 
 		echo "Dockerfile FROM lines must pin immutable digests"; \
 		exit 1; \
 	fi
+	@if grep -E '^\s*image:' deploy/docker-compose.yaml | grep -v '@sha256:' | grep -v 'govoice:'; then \
+		echo "docker-compose images must pin immutable digests"; \
+		exit 1; \
+	fi
 	@echo "=== govulncheck ==="
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 	@echo "=== Module SBOM ==="
 	go list -m -json all | python3 -c 'import json,sys; text=sys.stdin.read(); dec=json.JSONDecoder(); i=0; objs=[]; \
 	exec("while i < len(text):\n    while i < len(text) and text[i].isspace():\n        i += 1\n    if i >= len(text):\n        break\n    obj, i = dec.raw_decode(text, i)\n    objs.append(obj)"); \
@@ -110,9 +114,10 @@ proto-gen: ## build|Regenerate the protobuf frame code
 
 .PHONY: build test verify release-security proto-gen
 
-# Postgres storage tests (skipped by `make test`). Uses TEST_POSTGRES_DSN if set,
+# Postgres storage tests (skipped by `make test`; run by the `postgres` job in .github/workflows/ci.yml,
+# which provides a service container and sets TEST_POSTGRES_DSN). Uses TEST_POSTGRES_DSN if set,
 # otherwise starts a throwaway postgres container.
-PG_IMAGE ?= postgres:16-alpine
+PG_IMAGE ?= postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
 test-postgres: ## build|Postgres storage tests (docker, or TEST_POSTGRES_DSN)
 	@if [ -n "$$TEST_POSTGRES_DSN" ]; then \
 		cd server && go test -race -count=1 ./storage/ ./retention/; \

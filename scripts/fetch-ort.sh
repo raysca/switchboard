@@ -43,7 +43,7 @@ case "${1:-check}" in
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
     curl -fsSL -o "$tmp/ort.tgz" "https://github.com/microsoft/onnxruntime/releases/download/v$V/$asset.tgz"
-    got="$(shasum -a 256 "$tmp/ort.tgz" | cut -d' ' -f1)"
+    got="$( (sha256sum "$tmp/ort.tgz" 2>/dev/null || shasum -a 256 "$tmp/ort.tgz") | cut -d' ' -f1)"
     if [[ -n "$sha" && "$got" != "$sha" ]]; then
       echo "fetch-ort: sha256 mismatch for $asset.tgz: got $got, want $sha" >&2
       exit 1

@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestNginxCertificatesAreMounted(t *testing.T) {
@@ -90,6 +92,59 @@ func TestDockerfileProductionHardening(t *testing.T) {
 	}
 	if !strings.Contains(composeStr, "no-new-privileges:true") {
 		t.Fatal("docker-compose must set no-new-privileges:true")
+	}
+}
+
+// CI (M4-01): every workflow and the alert rules parse, and ci.yml gates on the Makefile targets that
+// cover verify, the tagged tests, Postgres and the image smoke on Linux and macOS.
+func TestCIWorkflowCoversTheSafetyNet(t *testing.T) {
+	type step struct {
+		Run  string `yaml:"run"`
+		Uses string `yaml:"uses"`
+	}
+	type job struct {
+		RunsOn          string `yaml:"runs-on"`
+		ContinueOnError bool   `yaml:"continue-on-error"`
+		Steps           []step `yaml:"steps"`
+	}
+	load := func(p string) map[string]job {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wf struct {
+			Name string         `yaml:"name"`
+			Jobs map[string]job `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(b, &wf); err != nil {
+			t.Fatalf("%s does not parse: %v", p, err)
+		}
+		if wf.Name == "" || len(wf.Jobs) == 0 {
+			t.Fatalf("%s: missing name or jobs", p)
+		}
+		return wf.Jobs
+	}
+	ci := load("../.github/workflows/ci.yml")
+	runs := func(name string) string {
+		var all []string
+		for _, s := range ci[name].Steps {
+			all = append(all, s.Run)
+		}
+		return strings.Join(all, "\n")
+	}
+	for name, want := range map[string]string{"linux": "make verify", "macos": "make verify", "postgres": "make test-postgres", "image-smoke": "deploy/smoke.sh"} {
+		if !strings.Contains(runs(name), want) {
+			t.Errorf("ci job %s must run %q", name, want)
+		}
+		if ci[name].ContinueOnError {
+			t.Errorf("ci job %s must be blocking", name)
+		}
+	}
+	if !strings.HasPrefix(ci["linux"].RunsOn, "ubuntu") || !strings.HasPrefix(ci["macos"].RunsOn, "macos") {
+		t.Errorf("linux/macos runners = %q/%q", ci["linux"].RunsOn, ci["macos"].RunsOn)
+	}
+	if perf := load("../.github/workflows/perf-gate.yml"); !perf["perf-gate"].ContinueOnError {
+		t.Error("perf-gate must stay advisory until a runner-class baseline is committed")
 	}
 }
 
