@@ -25,12 +25,15 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true   # tools/compat parity tests read the pinned pipecat-impl revision
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: npm ci --prefix tools/compat   # released @pipecat-ai client packages for the compat tests
       - run: make ort
       - run: make verify
 
@@ -40,12 +43,15 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true   # tools/compat parity tests read the pinned pipecat-impl revision
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: npm ci --prefix tools/compat   # released @pipecat-ai client packages for the compat tests
       - run: make ort
       - run: make verify
 
