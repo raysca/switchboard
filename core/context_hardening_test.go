@@ -545,6 +545,8 @@ func TestContextFailedSystemReplacementRestoresEvictionAccounting(t *testing.T) 
 	}
 }
 
+// A partial reply that cannot be recorded is skipped without failing the
+// interruption (M1-05), and no commit frame is announced for it.
 func TestInterruptedAssistantBudgetFailureEmitsNoCommit(t *testing.T) {
 	store := NewConversationContext(ContextConfig{MaxTokens: 8})
 	if err := store.AddMessage(Message{Role: RoleUser, Content: "x", TurnID: "t"}); err != nil {
@@ -556,7 +558,7 @@ func TestInterruptedAssistantBudgetFailureEmitsNoCommit(t *testing.T) {
 	_ = p.ProcessFrame(context.Background(), &LLMTextDeltaFrame{Turn: "t", Gen: 1, Delta: "This delivered response is too large."}, Downstream, e)
 	_ = p.ProcessFrame(context.Background(), &WriteCompletionFrame{Turn: "t", Gen: 1, UnitID: 1, IsFinal: true}, Downstream, e)
 	err := p.ProcessFrame(context.Background(), &InterruptionFrame{Turn: "t", Gen: 1}, Downstream, e)
-	if !errors.Is(err, ErrContextLimitExceeded) {
+	if err != nil {
 		t.Fatalf("interrupt error = %v", err)
 	}
 	for _, f := range e.frames {

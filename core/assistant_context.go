@@ -508,22 +508,27 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 		CreatedAt: time.Now(),
 	}
 
+	recorded := true
 	if len(content) > 0 {
-		if err := p.addAssistantMessage(asstMsg); err != nil {
+		var err error
+		if recorded, err = p.addAssistantMessage(asstMsg); err != nil {
 			return err
 		}
-		if p.summ != nil && !partial {
+		if recorded && p.summ != nil && !partial {
 			p.summ.Maybe() // between turns, off the hot path; skips open tool rounds itself
 		}
 	}
 
-	emitErr := e.Push(&AssistantMessageFrame{
-		Turn:      p.activeTurn,
-		Content:   content,
-		Gen:       gen,
-		Partial:   partial,
-		Timestamp: asstMsg.CreatedAt,
-	})
+	var emitErr error
+	if recorded { // never announce a message that is absent from history
+		emitErr = e.Push(&AssistantMessageFrame{
+			Turn:      p.activeTurn,
+			Content:   content,
+			Gen:       gen,
+			Partial:   partial,
+			Timestamp: asstMsg.CreatedAt,
+		})
+	}
 
 	// Reset turn state
 	p.resetTurn()
@@ -533,12 +538,14 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 
 // addAssistantMessage records a spoken reply. One that cannot fit the context
 // budget (the active turn is never evicted) is skipped: losing the history
-// entry is better than ending the call that just spoke it.
-func (p *AssistantContextProcessor) addAssistantMessage(m Message) error {
-	if err := p.ctxPool.AddMessage(m); !errors.Is(err, ErrContextLimitExceeded) {
-		return err
+// entry is better than ending the call that just spoke it. recorded reports
+// whether the message made it into history.
+func (p *AssistantContextProcessor) addAssistantMessage(m Message) (recorded bool, err error) {
+	err = p.ctxPool.AddMessage(m)
+	if errors.Is(err, ErrContextLimitExceeded) {
+		return false, nil
 	}
-	return nil
+	return err == nil, err
 }
 
 // failUndeliveredTurn refuses to commit assistant text when the final audio write failed.
@@ -590,18 +597,21 @@ func (p *AssistantContextProcessor) handleInterruption(e Emitter) error {
 			Partial:   true,
 			CreatedAt: time.Now(),
 		}
-		if err := p.addAssistantMessage(asstMsg); err != nil {
+		recorded, err := p.addAssistantMessage(asstMsg)
+		if err != nil {
 			return err
 		}
-		if err := e.Push(&AssistantMessageFrame{
-			Turn:      interruptedTurn,
-			Content:   partialText,
-			Gen:       oldGen,
-			Partial:   true,
-			Timestamp: asstMsg.CreatedAt,
-		}); err != nil {
-			p.resetTurn()
-			return err
+		if recorded {
+			if err := e.Push(&AssistantMessageFrame{
+				Turn:      interruptedTurn,
+				Content:   partialText,
+				Gen:       oldGen,
+				Partial:   true,
+				Timestamp: asstMsg.CreatedAt,
+			}); err != nil {
+				p.resetTurn()
+				return err
+			}
 		}
 	}
 	// If len(delivered) == 0, no assistant text is committed to context.
