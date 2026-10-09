@@ -115,3 +115,60 @@ func TestUnitFailureReporterClosesReply(t *testing.T) {
 		t.Fatalf("assistant messages = %d, want 0", n)
 	}
 }
+
+// gateFrame parks the run loop (see gateStage) so later frames queue up.
+type gateFrame struct{}
+
+func (*gateFrame) Type() core.FrameType { return core.FrameInternal }
+
+type gateStage struct{ hold func() }
+
+func (g *gateStage) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	if _, ok := f.(*gateFrame); ok {
+		g.hold()
+		return nil
+	}
+	return e.PushDirection(f, dir)
+}
+
+// A unit that played some audio and then failed is not a no-audio failure,
+// even when its ErrorFrame (control queue) overtakes that audio (data queue).
+func TestUnitFailureReporterIgnoresUnitWithQueuedAudio(t *testing.T) {
+	ctx := core.NewConversationContext(core.ContextConfig{})
+	asst := core.NewAssistantContextProcessor(ctx, core.DefaultAssistantContextConfig())
+	tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 3, FailWith: errors.New("tts dropped"), FailAfterAudio: 1})
+	gate := &gateStage{hold: func() {
+		for end := time.Now().Add(2 * time.Second); tts.Units.Load() < 1 && time.Now().Before(end); {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(50 * time.Millisecond) // audio (data) and error (control) are both queued now
+	}}
+	pipe, err := core.NewPipeline(gate, asst, tts, &core.UnitFailureReporter{}, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_ = s.Post(&core.UserMessageFrame{Turn: "t1", Content: "hi", Gen: s.CurrentGeneration()})
+	_ = s.Post(&core.LLMTextFrame{Turn: "t1", Gen: s.CurrentGeneration(), Text: "Only one sentence here."})
+	_ = s.Post(&gateFrame{})
+	for end := time.Now().Add(2 * time.Second); tts.Units.Load() < 1; time.Sleep(time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("unit was not synthesized")
+		}
+	}
+	for end := time.Now().Add(2 * time.Second); asst.Active(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("reply stayed active")
+		}
+	}
+	if n := assistantMessages(ctx); n != 1 {
+		t.Fatalf("assistant messages = %d, want the heard part committed", n)
+	}
+}
