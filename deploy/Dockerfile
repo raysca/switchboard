@@ -87,7 +87,8 @@ RUN mkdir -p /tmp /var/log/govoice && \
 USER govoice:govoice
 
 EXPOSE 8080
-EXPOSE 9090
+# Probe listener (/health /ready /metrics). The admin listener (9090) is container loopback only.
+EXPOSE 9092
 
 ENV PATH="/opt/govoice/bin:${PATH}" \
     GOVOICE_ROOT="/opt/govoice" \

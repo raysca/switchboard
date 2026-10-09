@@ -102,6 +102,8 @@ sudo chown -R root:root /opt/govoice && sudo chown govoice:govoice /var/log/govo
 ```bash
 sudo mkdir -p /etc/govoice
 sudo cp config/production.yaml /etc/govoice/production.yaml   # the unit reads production.yaml
+# On a host (not a container) probe_listen_addr "0.0.0.0:9092" binds every host interface: set it to
+# "127.0.0.1:9092" (or the private interface Prometheus scrapes) or firewall 9092 from the internet.
 
 # Copy and enable systemd unit
 sudo cp deploy/govoice.service /etc/systemd/system/govoice.service

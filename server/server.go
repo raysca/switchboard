@@ -754,7 +754,8 @@ func (s *Server) storeHealthy(ctx context.Context) bool {
 	if time.Since(s.pingAt) < time.Second {
 		return s.pingOK
 	}
-	pctx, cancel := context.WithTimeout(ctx, time.Second)
+	// WithoutCancel: one aborted probe must not cache an "unhealthy" verdict for every other caller.
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	s.pingOK = s.store.DB().PingContext(pctx) == nil
 	s.pingAt = time.Now()
