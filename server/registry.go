@@ -110,6 +110,7 @@ type Registry struct {
 	elevenlabsSTTBreaker *resilience.Breaker
 
 	nvidiaBreakers sync.Map // "llm|<base url>" / "stt|<endpoint>" -> *resilience.Breaker (nvidia.go)
+	metrics        *Metrics // set by BindMetrics; per-endpoint breakers export their state through it
 
 	turnBackend smartturn.Backend // smart-turn model; nil unless turn.stop has turn-analyzer
 
@@ -658,6 +659,7 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	if m == nil {
 		return
 	}
+	r.metrics = m
 	r.onSTTFailover = m.stt.failovers.add
 	r.onSTTFallbackSkipped = func() { m.stt.FallbacksSkippedTotal.Add(1) }
 	r.onSTTReplayDropped = func(n int) { m.stt.ReplayDroppedBytesTotal.Add(uint64(n)) }

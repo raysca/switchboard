@@ -43,7 +43,7 @@ func TestRunbookNamesContainerAsDistribution(t *testing.T) {
 }
 
 func TestSmokeScriptChecksProxyHealth(t *testing.T) {
-	body, err := os.ReadFile("../deploy/smoke.sh")
+	body, err := os.ReadFile("../deploy/smoke-google.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,5 +90,59 @@ func TestDockerfileProductionHardening(t *testing.T) {
 	}
 	if !strings.Contains(composeStr, "no-new-privileges:true") {
 		t.Fatal("docker-compose must set no-new-privileges:true")
+	}
+}
+
+// The probe listener (M4-02) must be wired consistently: production.yaml binds it, compose publishes
+// it on loopback only, nginx's admin vhost proxies to it, and the management API stays on loopback.
+func TestProbeListenerWiring(t *testing.T) {
+	read := func(p string) string {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	cfg, compose, nginx := read("../config/production.yaml"), read("../deploy/docker-compose.yaml"), read("../deploy/nginx.conf")
+	m := regexp.MustCompile(`(?m)^probe_listen_addr:\s*"[^"]*:(\d+)"`).FindStringSubmatch(cfg)
+	if m == nil {
+		t.Fatal("production.yaml must set probe_listen_addr")
+	}
+	port := m[1]
+	if !strings.Contains(compose, `"127.0.0.1:`+port+":"+port+`"`) {
+		t.Fatalf("compose must publish probe port %s on 127.0.0.1 only", port)
+	}
+	if regexp.MustCompile(`"(0\.0\.0\.0:)?\d+:9090"`).MatchString(compose) {
+		t.Fatal("compose must not publish the management/admin port 9090")
+	}
+	if !strings.Contains(nginx, "govoice:"+port) || strings.Contains(nginx, "govoice:9090") {
+		t.Fatalf("nginx admin vhost must proxy to the probe port %s, never to the admin listener", port)
+	}
+	if !regexp.MustCompile(`(?m)^admin_listen_addr:\s*"127\.0\.0\.1:`).MatchString(cfg) {
+		t.Fatal("production admin_listen_addr must stay on loopback")
+	}
+}
+
+// The shipped server must include xAI speech (launch scope) and the keyless smoke must probe from outside.
+func TestProductionImageBuildsWithXAISpeechAndKeylessSmoke(t *testing.T) {
+	df, _ := os.ReadFile("../deploy/Dockerfile")
+	if !strings.Contains(string(df), "-tags xaispeech") {
+		t.Fatal("Dockerfile must build the server with -tags xaispeech")
+	}
+	mk, _ := os.ReadFile("../Makefile")
+	if !strings.Contains(string(mk), "GOTAGS ?= xaispeech") {
+		t.Fatal("Makefile must default GOTAGS to xaispeech")
+	}
+	sm, err := os.ReadFile("../deploy/smoke.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{"/ready", "/metrics", "-p 127.0.0.1:0:9092", "docker kill -s TERM"} {
+		if !strings.Contains(string(sm), needle) {
+			t.Fatalf("smoke.sh missing %q", needle)
+		}
+	}
+	if strings.Contains(string(sm), "SMOKE_GOOGLE_SECRET_FILE") {
+		t.Fatal("deploy/smoke.sh must stay keyless")
 	}
 }

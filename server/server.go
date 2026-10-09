@@ -65,10 +65,16 @@ type Server struct {
 	ready        atomic.Bool
 	shuttingDown atomic.Bool
 
+	pingMu sync.Mutex // storeHealthy cache
+	pingAt time.Time
+	pingOK bool
+
 	publicMux    *http.ServeMux
 	adminMux     http.Handler
+	probeMux     http.Handler // /health, /ready, /metrics only (probe_listen_addr)
 	publicServer *http.Server
 	adminServer  *http.Server
+	probeServer  *http.Server
 	wsServer     *ws.Server
 	underlay     func() ws.Underlay // background ambience factory, nil when off
 
@@ -391,11 +397,15 @@ func (s *Server) setupRoutes() {
 	adminRoutes := http.NewServeMux()
 	adminRoutes.HandleFunc("GET /health", s.handleHealth)
 	adminRoutes.HandleFunc("GET /ready", s.handleReady)
-	adminRoutes.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.sampleVADMetrics()
-		s.metrics.Handler().ServeHTTP(w, r)
-	}))
+	adminRoutes.HandleFunc("GET /metrics", s.handleMetrics)
 	adminRoutes.Handle("GET /debug/timeline", s.timelines.Handler())
+	// Probe listener: the only surface safe to bind beyond loopback (kubelet probes, Prometheus).
+	// No management API and no /debug/timeline (per-call principals).
+	probe := http.NewServeMux()
+	probe.HandleFunc("GET /health", s.handleHealth)
+	probe.HandleFunc("GET /ready", s.handleReady)
+	probe.HandleFunc("GET /metrics", s.handleMetrics)
+	s.probeMux = probe
 	s.adminMux = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1" || strings.HasPrefix(r.URL.Path, "/api/v1/") {
 			s.handleAPI(w, r)
@@ -470,6 +480,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	if err != nil {
 		return fail(fmt.Errorf("build pipeline: %w", err))
 	}
+	errProviders := stageProviders(call)
 
 	// 4. Construct Core Session
 	session, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
@@ -604,6 +615,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		}
 		for _, proc := range session.Processors() {
 			s.recordProcessorMetrics(proc)
+			s.recordProviderErrors(proc, errProviders)
 		}
 		if err := session.Err(); err != nil {
 			s.metrics.SessionsFailedTotal.Add(1)
@@ -655,6 +667,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	return session, nil
 }
 
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	s.sampleVADMetrics()
+	s.metrics.Handler().ServeHTTP(w, r)
+}
+
 // handleHealth serves cheap local process liveness (spec §31).
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -687,22 +704,58 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Provider circuits are reported for diagnosis; calls are per agent, so an
-	// open circuit only affects agents using that provider.
-	circuits := map[string]string{
-		"google_stt": circuitStateName(s.metrics.STTCircuitStateGoogle.Load()),
-		"google_llm": circuitStateName(s.metrics.LLMCircuitStateGoogle.Load()),
-		"xai_llm":    circuitStateName(s.metrics.LLMCircuitStateXAI.Load()),
-		"google_tts": circuitStateName(s.metrics.TTSCircuitStateGoogle.Load()),
-		"xai_stt":    circuitStateName(s.metrics.STTCircuitStateXAI.Load()),
-		"xai_tts":    circuitStateName(s.metrics.TTSCircuitStateXAI.Load()),
+	if !s.storeHealthy(r.Context()) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "agent store unreachable"})
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":   "ready",
-		"circuits": circuits,
+		"circuits": s.circuitReport(),
 	})
+}
+
+// circuitReport lists the circuits of providers built into this binary, for
+// diagnosis; calls are per agent, so an open circuit only affects agents using
+// that provider. Nvidia breakers are per endpoint: "nvidia_<stage>:<endpoint>".
+func (s *Server) circuitReport() map[string]string {
+	m := s.metrics
+	out := map[string]string{}
+	add := func(provider, stage string, v *atomic.Int64) {
+		if s.registry.Supports(provider, stage) {
+			out[provider+"_"+stage] = circuitStateName(v.Load())
+		}
+	}
+	add("google", "stt", &m.STTCircuitStateGoogle)
+	add("google", "llm", &m.LLMCircuitStateGoogle)
+	add("google", "tts", &m.TTSCircuitStateGoogle)
+	add("xai", "stt", &m.STTCircuitStateXAI)
+	add("xai", "llm", &m.LLMCircuitStateXAI)
+	add("xai", "tts", &m.TTSCircuitStateXAI)
+	for k, v := range m.circuits.snapshot() {
+		out[k.provider+"_"+k.stage+":"+k.endpoint] = circuitStateName(v)
+	}
+	return out
+}
+
+// storeHealthy pings the agent store, caching the verdict for a second so a
+// probe storm does not become a query storm.
+func (s *Server) storeHealthy(ctx context.Context) bool {
+	if s.store == nil || s.store.DB() == nil {
+		return true
+	}
+	s.pingMu.Lock()
+	defer s.pingMu.Unlock()
+	if time.Since(s.pingAt) < time.Second {
+		return s.pingOK
+	}
+	pctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	s.pingOK = s.store.DB().PingContext(pctx) == nil
+	s.pingAt = time.Now()
+	return s.pingOK
 }
 
 func circuitStateName(val int64) string {
@@ -739,12 +792,28 @@ func (s *Server) Start() error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	var probeListener net.Listener
+	if s.cfg.ProbeListenAddr != "" {
+		if probeListener, err = net.Listen("tcp", s.cfg.ProbeListenAddr); err != nil {
+			pubListener.Close()
+			adminListener.Close()
+			return fmt.Errorf("listen probe %s: %w", s.cfg.ProbeListenAddr, err)
+		}
+		s.probeServer = &http.Server{
+			Handler:           s.probeMux,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+	}
 
 	certFile, keyFile := s.cfg.TLS.CertFile, s.cfg.TLS.KeyFile
 	if certFile != "" && keyFile != "" {
 		if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
 			pubListener.Close()
 			adminListener.Close()
+			if probeListener != nil {
+				probeListener.Close()
+			}
 			return fmt.Errorf("load tls certificate: %w", err)
 		}
 	}
@@ -763,6 +832,9 @@ func (s *Server) Start() error {
 	go func() {
 		_ = s.adminServer.Serve(adminListener)
 	}()
+	if probeListener != nil {
+		go func() { _ = s.probeServer.Serve(probeListener) }()
+	}
 
 	s.pruneStop = make(chan struct{})
 	go s.pruneTimelines()
@@ -771,6 +843,9 @@ func (s *Server) Start() error {
 	s.logger.Info("server started",
 		slog.String("public_addr", s.cfg.PublicListenAddr),
 		slog.String("admin_addr", s.cfg.AdminListenAddr),
+		slog.String("probe_addr", s.cfg.ProbeListenAddr),
+		slog.String("version", Version),
+		slog.String("commit", Commit),
 		slog.String("profile", string(s.cfg.Profile)),
 	)
 	return nil
@@ -881,6 +956,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.adminServer != nil {
 		_ = s.adminServer.Close()
 	}
+	if s.probeServer != nil {
+		_ = s.probeServer.Close()
+	}
 	s.closeManagement()
 	if s.otel != nil { // after calls drained so their final spans are flushed
 		if err := s.otel.Shutdown(context.WithoutCancel(ctx)); err != nil {
@@ -950,6 +1028,38 @@ func (s *Server) sampleVADMetrics() {
 	s.metrics.VADDroppedChunksTotal.Store(uint64(dropped))
 	if st.Restarts > 0 {
 		s.metrics.VADWorkerRestartsTotal.Store(uint64(st.Restarts))
+	}
+}
+
+// stageProviders names the provider each stage's errors are attributed to: its
+// provider, or "failover" when the stage has fallbacks (the chain's processor
+// sums its candidates, so the failing one is unknown).
+func stageProviders(c CallSpec) map[string]string {
+	pick := func(p string, fallbacks int) string {
+		if fallbacks > 0 {
+			return "failover"
+		}
+		return p
+	}
+	return map[string]string{
+		"stt": pick(c.STT.Provider, len(c.STTFallbacks)),
+		"llm": pick(c.LLM.Provider, len(c.LLMFallbacks)),
+		"tts": pick(c.TTS.Provider, len(c.TTSFallbacks)),
+	}
+}
+
+// recordProviderErrors adds a finished call's stage errors to voice_provider_errors_total.
+func (s *Server) recordProviderErrors(proc core.Processor, prov map[string]string) {
+	switch p := proc.(type) {
+	case core.STTCounters:
+		_, _, _, errs := p.STTCounts()
+		s.metrics.providerErrors.add(prov["stt"], "stt", errs)
+	case core.LLMCounters:
+		_, errs, _, _ := p.LLMCounts()
+		s.metrics.providerErrors.add(prov["llm"], "llm", errs)
+	case core.TTSCounters:
+		_, errs, _, _ := p.TTSCounts()
+		s.metrics.providerErrors.add(prov["tts"], "tts", errs)
 	}
 }
 

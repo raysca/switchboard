@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"runtime"
 	"slices"
+	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -93,6 +95,11 @@ type Metrics struct {
 
 	TurnsTotal atomic.Uint64 // recorded call turns
 
+	// circuits holds breakers that exist per endpoint (nvidia: one per NIM base URL / Riva endpoint);
+	// providerErrors counts stage errors per provider (see Server.recordProcessorMetrics).
+	circuits       dynamicCircuits
+	providerErrors providerErrors
+
 	latency      latencyHistograms
 	llmFailovers failoverCounts
 	stt          sttMetrics
@@ -156,6 +163,8 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	numGoroutines := runtime.NumGoroutine()
+
+	fmt.Fprintf(w, "# HELP voice_build_info Build version and commit (value is always 1).\n# TYPE voice_build_info gauge\nvoice_build_info{version=%q,commit=%q} 1\n", Version, Commit)
 
 	// Runtime
 	fmt.Fprintf(w, "# HELP voice_active_sessions Number of currently active voice sessions.\n")
@@ -261,6 +270,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# TYPE voice_stt_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_stt_circuit_state{provider=\"google\"} %d\n", m.STTCircuitStateGoogle.Load())
 	fmt.Fprintf(w, "voice_stt_circuit_state{provider=\"xai\"} %d\n", m.STTCircuitStateXAI.Load())
+	m.circuits.write(w, "stt")
 
 	// LLM
 	fmt.Fprintf(w, "# HELP voice_llm_requests_total Total LLM turn requests.\n")
@@ -283,6 +293,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# TYPE voice_llm_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_llm_circuit_state{provider=\"google\"} %d\n", m.LLMCircuitStateGoogle.Load())
 	fmt.Fprintf(w, "voice_llm_circuit_state{provider=\"xai\"} %d\n", m.LLMCircuitStateXAI.Load())
+	m.circuits.write(w, "llm")
 
 	// TTS
 	fmt.Fprintf(w, "# HELP voice_tts_requests_total Total TTS synthesis requests.\n")
@@ -305,7 +316,9 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# TYPE voice_tts_circuit_state gauge\n")
 	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"google\"} %d\n", m.TTSCircuitStateGoogle.Load())
 	fmt.Fprintf(w, "voice_tts_circuit_state{provider=\"xai\"} %d\n", m.TTSCircuitStateXAI.Load())
+	m.circuits.write(w, "tts")
 
+	m.providerErrors.write(w)
 	m.latency.write(w)
 	m.llmFailovers.write(w)
 	m.stt.write(w)
@@ -396,4 +409,102 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_transport_protocol_errors_total Wire protocol errors.\n")
 	fmt.Fprintf(w, "# TYPE voice_transport_protocol_errors_total counter\n")
 	fmt.Fprintf(w, "voice_transport_protocol_errors_total %d\n", m.ProtocolErrorsTotal.Load())
+}
+
+// dynamicCircuits is the circuit gauge of breakers created per endpoint at run time.
+type dynamicCircuits struct {
+	mu sync.Mutex
+	m  map[circuitKey]*atomic.Int64
+}
+
+type circuitKey struct{ stage, provider, endpoint string }
+
+func (d *dynamicCircuits) set(stage, provider, endpoint string, state int64) {
+	k := circuitKey{stage, provider, endpoint}
+	d.mu.Lock()
+	if d.m == nil {
+		d.m = map[circuitKey]*atomic.Int64{}
+	}
+	g := d.m[k]
+	if g == nil {
+		g = new(atomic.Int64)
+		d.m[k] = g
+	}
+	d.mu.Unlock()
+	g.Store(state)
+}
+
+func (d *dynamicCircuits) snapshot() map[circuitKey]int64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make(map[circuitKey]int64, len(d.m))
+	for k, g := range d.m {
+		out[k] = g.Load()
+	}
+	return out
+}
+
+// write emits the stage's samples; they continue voice_<stage>_circuit_state's family.
+func (d *dynamicCircuits) write(w io.Writer, stage string) {
+	snap := d.snapshot()
+	keys := make([]circuitKey, 0, len(snap))
+	for k := range snap {
+		if k.stage == stage {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].provider != keys[j].provider {
+			return keys[i].provider < keys[j].provider
+		}
+		return keys[i].endpoint < keys[j].endpoint
+	})
+	for _, k := range keys {
+		fmt.Fprintf(w, "voice_%s_circuit_state{provider=%q,endpoint=%q} %d\n", stage, k.provider, k.endpoint, snap[k])
+	}
+}
+
+// providerErrors counts stage errors by provider. A stage with fallbacks reports provider
+// "failover": the processor sums its whole chain, so the culprit is not known here.
+type providerErrors struct {
+	mu sync.Mutex
+	m  map[[2]string]uint64
+}
+
+func (p *providerErrors) add(provider, stage string, n uint64) {
+	if n == 0 {
+		return
+	}
+	p.mu.Lock()
+	if p.m == nil {
+		p.m = map[[2]string]uint64{}
+	}
+	p.m[[2]string{provider, stage}] += n
+	p.mu.Unlock()
+}
+
+func (p *providerErrors) write(w io.Writer) {
+	p.mu.Lock()
+	keys := make([][2]string, 0, len(p.m))
+	for k := range p.m {
+		keys = append(keys, k)
+	}
+	vals := make(map[[2]string]uint64, len(p.m))
+	for k, v := range p.m {
+		vals[k] = v
+	}
+	p.mu.Unlock()
+	if len(keys) == 0 {
+		return
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i][0] != keys[j][0] {
+			return keys[i][0] < keys[j][0]
+		}
+		return keys[i][1] < keys[j][1]
+	})
+	fmt.Fprint(w, "# HELP voice_provider_errors_total Stage errors by provider (provider=\"failover\" when the stage had fallbacks).\n# TYPE voice_provider_errors_total counter\n")
+	for _, k := range keys {
+		fmt.Fprintf(w, "voice_provider_errors_total{provider=%q,stage=%q} %d\n", k[0], k[1], vals[k])
+	}
 }

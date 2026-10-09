@@ -37,7 +37,11 @@ type Config struct {
 
 	// Network listeners
 	PublicListenAddr string `yaml:"public_listen_addr"` // e.g. "127.0.0.1:8080"
-	AdminListenAddr  string `yaml:"admin_listen_addr"`  // e.g. "127.0.0.1:9090"
+	AdminListenAddr  string `yaml:"admin_listen_addr"`  // e.g. "127.0.0.1:9090"; management API + /debug: keep on loopback
+	// ProbeListenAddr optionally serves only /health, /ready and /metrics (no auth, no management API,
+	// no /debug/timeline), so kubelet probes and Prometheus can reach a container whose admin listener
+	// is on loopback. Empty = disabled. Never publish it to the internet.
+	ProbeListenAddr string `yaml:"probe_listen_addr"`
 
 	// TLS & Network Policy
 	TLS struct {
@@ -501,6 +505,10 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.PublicListenAddr == cfg.AdminListenAddr {
 		return fmt.Errorf("public_listen_addr (%s) and admin_listen_addr (%s) must be separate listeners",
 			cfg.PublicListenAddr, cfg.AdminListenAddr)
+	}
+
+	if cfg.ProbeListenAddr != "" && (cfg.ProbeListenAddr == cfg.PublicListenAddr || cfg.ProbeListenAddr == cfg.AdminListenAddr) {
+		return fmt.Errorf("probe_listen_addr (%s) must differ from the public and admin listeners", cfg.ProbeListenAddr)
 	}
 
 	// Production TLS requirements

@@ -1,8 +1,6 @@
 # Production Docker Compose definition for Voice Framework V1
 # Fulfills spec §39 (Non-root, read-only root, declared writables, capability drops, health checks)
 
-version: "3.8"
-
 services:
   govoice:
     build:
@@ -34,7 +32,9 @@ services:
       - GOVOICE_DATABASE_DSN=postgres://govoice:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/govoice?sslmode=disable
     ports:
       - "127.0.0.1:8080:8080" # Public WebSocket / Health (proxied via NGINX)
-      - "127.0.0.1:9090:9090" # Admin Metrics / Readiness (internal only)
+      - "127.0.0.1:9092:9092" # Probe listener: /health /ready /metrics only (internal; never publish on 0.0.0.0)
+      # The management API (admin_listen_addr, 127.0.0.1:9090 inside the container) is deliberately not
+      # published: use `docker exec govoice-server curl http://127.0.0.1:9090/api/v1/...`.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
       interval: 10s
