@@ -3,8 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,8 +17,15 @@ import (
 	"govoice/vad"
 )
 
+// fatal logs through slog (JSON in production) and exits 1.
+func fatal(msg string, err error) {
+	slog.Error(msg, slog.String("err", err.Error()))
+	os.Exit(1)
+}
+
 func main() {
-	_ = envload.Load()
+	// JSON until the configured logger exists, so no startup line is unstructured.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
 	configPath := flag.String("config", "config/development.yaml", "path to YAML configuration file")
 	profileFlag := flag.String("profile", "", "override profile: development|production")
@@ -28,19 +34,26 @@ func main() {
 
 	cfg, err := server.LoadConfigProfile(*configPath, server.Profile(*profileFlag))
 	if err != nil {
-		log.Fatalf("failed to load config from %s: %v", *configPath, err)
+		fatal("failed to load config from "+*configPath, err)
+	}
+	// .env files are a development convenience: production gets its environment from the orchestrator,
+	// so a stray .env in the working directory can never supply a DSN, key or token secret.
+	if cfg.Profile != server.ProfileProduction {
+		_ = envload.Load()
 	}
 	if *vadModeFlag != "" {
 		cfg.VAD.Mode = *vadModeFlag
 		if err := server.ValidateConfig(cfg); err != nil { // e.g. inprocess in production
-			log.Fatalf("invalid -vad-mode: %v", err)
+			fatal("invalid -vad-mode", err)
 		}
 	}
 
 	srv, err := server.NewServer(cfg)
 	if err != nil {
-		log.Fatalf("failed to initialize server: %v", err)
+		fatal("failed to initialize server", err)
 	}
+	logger := srv.Logger()
+	slog.SetDefault(logger) // provider and registry warnings share the configured (JSON) format
 
 	// Initialize VAD Executor based on configuration
 	vadCfg := vad.DefaultConfig()
@@ -66,7 +79,7 @@ func main() {
 
 	vadExec, err := vad.New(vadCfg)
 	if err != nil {
-		log.Fatalf("vad executor failed closed (no stub fallback): %v", err)
+		fatal("vad executor failed closed (no stub fallback)", err)
 	}
 
 	if vadExec != nil {
@@ -87,29 +100,24 @@ func main() {
 			be, err = smartturn.NewPool(smartturn.PoolConfig{Binary: bin, Workers: cfg.Turn.Analyzer.Workers})
 		}
 		if err != nil {
-			log.Fatalf("smart-turn model failed closed (hash/worker check): %v", err)
+			fatal("smart-turn model failed closed (hash/worker check)", err)
 		}
 		srv.SetTurnBackend(be)
 	}
 
 	if err := srv.EnableManagement(context.Background()); err != nil {
-		log.Fatalf("failed to enable management plane: %v", err)
+		fatal("failed to enable management plane", err)
 	}
 
 	if err := srv.Start(); err != nil {
-		log.Fatalf("failed to start server: %v", err)
+		fatal("failed to start server", err)
 	}
-
-	fmt.Printf("Voice Framework V1 Server running\n")
-	fmt.Printf("  Profile: %s\n", cfg.Profile)
-	fmt.Printf("  Public:  %s\n", cfg.PublicListenAddr)
-	fmt.Printf("  Admin:   %s\n", cfg.AdminListenAddr)
 
 	// Wait for SIGINT or SIGTERM
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	sig := <-sigCh
-	fmt.Printf("\nReceived signal %v: initiating graceful shutdown...\n", sig)
+	logger.Info("received signal: initiating graceful shutdown", slog.String("signal", sig.String()))
 
 	shutdownTimeout := server.ShutdownBudget(cfg.Limits.DrainTimeout)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -118,10 +126,10 @@ func main() {
 	err = srv.Shutdown(shutdownCtx) // closes the VAD executor and turn backend first
 	vad.ShutdownORT()               // only after every ORT session is closed
 	if err != nil {
-		log.Printf("error during shutdown: %v", err)
+		logger.Error("error during shutdown", slog.String("err", err.Error()))
 		os.Exit(1)
 	}
 
-	fmt.Println("Server stopped cleanly.")
+	logger.Info("server stopped cleanly")
 	os.Exit(0)
 }

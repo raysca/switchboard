@@ -35,7 +35,7 @@ mgmt="$(openssl rand -hex 32)"
 docker network create "$run-net" >/dev/null
 docker run -d --name "$run-pg" --network "$run-net" \
   -e POSTGRES_USER=govoice -e POSTGRES_DB=govoice -e POSTGRES_PASSWORD="$pgpass" \
-  postgres:16-alpine >/dev/null
+  postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea >/dev/null
 for _ in $(seq 1 60); do
   docker exec "$run-pg" pg_isready -U govoice -d govoice >/dev/null 2>&1 && break
   sleep 1

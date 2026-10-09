@@ -116,7 +116,7 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 
 	opts := &slog.HandlerOptions{Level: logLevel}
-	if cfg.Observability.JSONFormat {
+	if cfg.Observability.JSONFormat || cfg.Profile == ProfileProduction { // production logs are always JSON
 		logHandler = slog.NewJSONHandler(os.Stdout, opts)
 	} else {
 		logHandler = slog.NewTextHandler(os.Stdout, opts)
@@ -854,6 +854,9 @@ func (s *Server) Start() error {
 	)
 	return nil
 }
+
+// Logger is the configured structured logger (JSON when observability.json_format).
+func (s *Server) Logger() *slog.Logger { return s.logger }
 
 // PublicAddr and AdminAddr return the bound listener addresses once Start has returned.
 func (s *Server) PublicAddr() string { return s.publicAddr }
