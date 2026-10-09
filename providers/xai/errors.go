@@ -1,6 +1,7 @@
 package xai
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"govoice/core/resilience"
@@ -198,4 +199,60 @@ func MapError(capability string, err error) *ProviderError {
 		Class:      ClassificationNonRetryable,
 		Cause:      err,
 	}
+}
+
+// responseEventProviderError turns a Responses API "error" or "response.failed"
+// event into a classified ProviderError that keeps the server's code and
+// (sanitized) message. A request-caused failure (context too long, policy,
+// invalid input) is non-retryable and so exempt from the breaker; rate limits
+// keep their class; anything else is a retryable server failure.
+func responseEventProviderError(c *chatChunkResponse) *ProviderError {
+	var code, msg string
+	set := func(raw json.RawMessage, m string) {
+		if code == "" {
+			var s string
+			if json.Unmarshal(raw, &s) == nil {
+				code = s
+			} else if len(raw) > 0 && string(raw) != "null" {
+				code = strings.Trim(string(raw), `"`)
+			}
+		}
+		if msg == "" {
+			msg = m
+		}
+	}
+	if c.Response != nil && c.Response.Error != nil {
+		set(c.Response.Error.Code, c.Response.Error.Message)
+		if code == "" {
+			code = c.Response.Error.Type
+		}
+	}
+	if c.Error != nil {
+		set(c.Error.Code, c.Error.Message)
+		if code == "" {
+			code = c.Error.Type
+		}
+	}
+	set(c.Code, c.Message)
+	if code == "" {
+		code = "RESPONSE_FAILED"
+	}
+	if msg == "" {
+		msg = "xai responses API returned " + c.Type
+	}
+	msg = SanitizeString(msg)
+	if len(msg) > 512 {
+		msg = msg[:512] + "... [truncated]"
+	}
+	class := ClassificationRetryable
+	lc := strings.ToLower(code)
+	switch {
+	case strings.Contains(lc, "rate_limit"):
+		class = ClassificationRateLimit
+	case strings.Contains(lc, "context_length"), strings.Contains(lc, "invalid"), strings.Contains(lc, "policy"),
+		strings.Contains(lc, "content_filter"), strings.Contains(lc, "unsupported"), strings.Contains(lc, "bad_request"),
+		strings.Contains(lc, "auth"), strings.Contains(lc, "permission"), strings.Contains(lc, "not_found"):
+		class = ClassificationNonRetryable
+	}
+	return &ProviderError{Capability: "llm", Code: strings.ToUpper(code), Message: msg, Class: class}
 }

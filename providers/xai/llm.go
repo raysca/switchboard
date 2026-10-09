@@ -250,11 +250,26 @@ type chatChunkResponse struct {
 	Choices     []chatChunkChoice `json:"choices"`
 	Usage       *chatChunkUsage   `json:"usage"`
 	Response    *struct {
-		OutputText string                  `json:"output_text"`
-		Usage      *chatChunkUsage         `json:"usage"`
-		Output     []XAIResponseOutputItem `json:"output"`
+		OutputText        string                  `json:"output_text"`
+		Usage             *chatChunkUsage         `json:"usage"`
+		Output            []XAIResponseOutputItem `json:"output"`
+		Error             *responseEventError     `json:"error"`
+		IncompleteDetails *struct {
+			Reason string `json:"reason"`
+		} `json:"incomplete_details"`
 	} `json:"response"`
 	Item *XAIResponseOutputItem `json:"item"`
+
+	// "error" events carry the failure at the top level (or under "error").
+	Error   *responseEventError `json:"error"`
+	Code    json.RawMessage     `json:"code"`
+	Message string              `json:"message"`
+}
+
+type responseEventError struct {
+	Type    string          `json:"type"`
+	Code    json.RawMessage `json:"code"`
+	Message string          `json:"message"`
 }
 
 func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame, e core.Emitter) error {

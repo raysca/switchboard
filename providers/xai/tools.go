@@ -486,8 +486,17 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 					items = canonical
 				}
 			}
-			if chunk.Type == "response.failed" {
-				return errors.New("xai responses API returned response.failed")
+			switch chunk.Type {
+			case "error", "response.failed":
+				return responseEventProviderError(&chunk)
+			case "response.incomplete":
+				// Terminal: max tokens or a content filter ended the reply early. What was
+				// streamed stands; an empty filtered reply is the caller's problem, not an outage.
+				if chunk.Response != nil && chunk.Response.IncompleteDetails != nil && chunk.Response.IncompleteDetails.Reason == "content_filter" && !committed {
+					return &ProviderError{Capability: "llm", Code: "CONTENT_FILTER", Message: "xai response stopped by content filter", Class: ClassificationNonRetryable}
+				}
+				completed = true
+				break read
 			}
 			if chunk.Type == "response.completed" || chunk.Type == "response.done" {
 				if chunk.Response != nil && chunk.Response.OutputText != "" && roundText.Len() == 0 {
