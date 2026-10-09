@@ -225,6 +225,12 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		if p.isStaleTurn(wc.Turn, wc.Gen) {
 			return nil
 		}
+		if wc.Failed {
+			// A unit that produced no audio: drop it from the reply and, if it
+			// was the last one outstanding, close the reply out.
+			delete(p.pendingUnits, wc.UnitID)
+			return p.finishIfDelivered(e)
+		}
 		if wc.Err == nil {
 			if p.slack != nil {
 				p.slack.observe(wc.UnitID, p.firstUnitID, wc.Media, wc.IsFinal)
@@ -300,6 +306,24 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 	default:
 		return e.PushDirection(f, dir)
 	}
+}
+
+// finishIfDelivered ends the reply once the model is done and every unit still
+// pending has played; a reply with nothing heard is dropped, not committed.
+func (p *AssistantContextProcessor) finishIfDelivered(e Emitter) error {
+	if !p.llmComplete || p.finalUnitID == 0 {
+		return nil
+	}
+	for id := range p.pendingUnits {
+		if _, ok := p.deliveredUnits[id]; !ok {
+			return nil
+		}
+	}
+	if len(p.deliveredUnits) == 0 {
+		p.resetTurn()
+		return nil
+	}
+	return p.commitTurn(e, false)
 }
 
 func (p *AssistantContextProcessor) allPendingDelivered() bool {

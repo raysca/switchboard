@@ -77,8 +77,8 @@ func idleTestPipeline(t *testing.T, cfg *Config) *core.Pipeline {
 
 func TestIdleDisabledAddsNoProcessor(t *testing.T) {
 	pipe := idleTestPipeline(t, DefaultConfig(ProfileDevelopment))
-	if pipe.Len() != 8 {
-		t.Fatalf("pipeline has %d processors, want 8", pipe.Len())
+	if pipe.Len() != 9 {
+		t.Fatalf("pipeline has %d processors, want 9", pipe.Len())
 	}
 	for _, p := range pipe.Processors() {
 		if _, ok := p.(*core.IdleController); ok {
@@ -91,8 +91,8 @@ func TestIdleEnabledSitsBeforeTheModel(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Idle.UserTimeout = 15 * time.Second
 	procs := idleTestPipeline(t, cfg).Processors()
-	if len(procs) != 9 {
-		t.Fatalf("pipeline has %d processors, want 9", len(procs))
+	if len(procs) != 10 {
+		t.Fatalf("pipeline has %d processors, want 10", len(procs))
 	}
 	if _, ok := procs[4].(*core.IdleController); !ok {
 		t.Fatalf("processor 4 is %T, want the idle controller before the LLM", procs[4])
