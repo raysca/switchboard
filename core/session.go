@@ -1242,7 +1242,15 @@ func isControlFrame(f Frame) bool {
 	}
 }
 
+// FenceSurvivor is implemented by frames that must be delivered even when the
+// generation advanced after admission (a shared worker's result that clears
+// the processor's in-flight state).
+type FenceSurvivor interface{ SurvivesGenerationFence() }
+
 func isFenceSurvivingControl(f Frame) bool {
+	if _, ok := f.(FenceSurvivor); ok {
+		return true
+	}
 	switch f.Type() {
 	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
 		return true
