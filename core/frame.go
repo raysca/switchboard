@@ -463,6 +463,10 @@ type WriteCompletionFrame struct {
 	// provider word offsets it carried (see OutputAudioFrame); zero/nil if unknown.
 	Media       time.Duration
 	WordTimings []WordTiming
+	// Failed marks a unit that ended with a TTS error before any audio was
+	// released (IsFinal is also set): it will never play, so the assistant
+	// context stops waiting for it. Sent by UnitFailureReporter, not transports.
+	Failed bool
 }
 
 func (f *WriteCompletionFrame) Type() FrameType    { return FrameWriteCompletion }

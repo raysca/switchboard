@@ -14,3 +14,17 @@ loadgen
 examples/secrets
 **/node_modules
 third_party/onnxruntime-*
+# Local agent/worktree/eval output (M4-17): never part of the build context
+.worktrees
+.claude
+.goalpulse
+.superpowers
+.agents
+.perf-out
+.govoice-dev
+.govoice-eval-pipecat
+.agent-matrix-out
+.govoice-loadtest-soak.*
+e2e
+progress.md
+**/*.log

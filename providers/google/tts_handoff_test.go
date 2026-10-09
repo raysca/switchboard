@@ -13,12 +13,8 @@ import (
 // A refused background task must not leave a hole in the play order: the lost
 // unit gets one ErrorFrame and the next unit is still spoken.
 func TestTTS_RefusedHandoffDoesNotWedgeLaterUnits(t *testing.T) {
-	release := make(chan struct{})
 	cfg := DefaultTTSConfig()
 	cfg.Client = &mockTTSClient{synthesizeFn: func(ctx context.Context, text, voice string, rate int) ([]byte, error) {
-		if text == "one" {
-			<-release
-		}
 		return make([]byte, 4800), nil
 	}}
 	proc, _ := NewTTSProcessor(cfg)
@@ -47,28 +43,31 @@ func TestTTS_RefusedHandoffDoesNotWedgeLaterUnits(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	say(1, "one")
-	say(2, "two") // budget full: refused
+	hold := make(chan struct{})
+	if err := session.Go(func(context.Context) { <-hold }); err != nil { // takes the only slot
+		t.Fatal(err)
+	}
+	say(1, "one") // budget full: refused
 	time.Sleep(50 * time.Millisecond)
-	close(release)
+	close(hold)
 	time.Sleep(50 * time.Millisecond)
-	say(3, "three")
+	say(2, "two")
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		mu.Lock()
-		ok := audio[3] > 0
+		ok := audio[2] > 0
 		mu.Unlock()
 		if ok {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("unit 3 never spoken: play order wedged")
+			t.Fatal("unit 2 never spoken: play order wedged")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if audio[1] == 0 || audio[2] != 0 || errs[2] != 1 || len(errs) != 1 {
+	if audio[1] != 0 || errs[1] != 1 || len(errs) != 1 {
 		t.Fatalf("audio=%v errors=%v", audio, errs)
 	}
 }

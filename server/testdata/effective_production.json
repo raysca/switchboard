@@ -5,6 +5,7 @@
  },
  "PublicListenAddr": "0.0.0.0:8080",
  "AdminListenAddr": "127.0.0.1:9090",
+ "ProbeListenAddr": "0.0.0.0:9092",
  "TLS": {
   "CertFile": "",
   "KeyFile": "",
@@ -111,7 +112,7 @@
   }
  },
  "Idle": {
-  "UserTimeout": 0,
+  "UserTimeout": 30000000000,
   "MaxPrompts": 2,
   "Prompt": "",
   "PromptMode": "",

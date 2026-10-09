@@ -145,6 +145,7 @@ type TTSProcessor struct {
 	finishedSeq uint64
 	activeGen   uint64
 	closed      bool
+	queue       core.SerialQueue // units wait here, not on a task slot each
 
 	Requests atomic.Uint64
 	Errors   atomic.Uint64
@@ -314,7 +315,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 
 	// Synthesize speech asynchronously, in unit order. Cancellation covers every
 	// in-flight request, not only the most recently started one.
-	if err := p.session.Go(func(taskCtx context.Context) {
+	if err := p.queue.Go(p.session, func(taskCtx context.Context) {
 		defer cancel()
 		defer func() {
 			p.mu.Lock()

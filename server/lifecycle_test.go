@@ -22,8 +22,8 @@ import (
 
 func TestServer_GracefulShutdownLifecycle(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.PublicListenAddr = "127.0.0.1:18081"
-	cfg.AdminListenAddr = "127.0.0.1:19091"
+	cfg.PublicListenAddr = "127.0.0.1:0"
+	cfg.AdminListenAddr = "127.0.0.1:0"
 	cfg.Limits.DrainTimeout = 100 * time.Millisecond
 
 	srv, err := NewServer(cfg)
@@ -91,8 +91,8 @@ func TestServer_GracefulShutdownLifecycle(t *testing.T) {
 
 func TestServer_ImmediateCancelShutdown(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.PublicListenAddr = "127.0.0.1:18082"
-	cfg.AdminListenAddr = "127.0.0.1:19092"
+	cfg.PublicListenAddr = "127.0.0.1:0"
+	cfg.AdminListenAddr = "127.0.0.1:0"
 	cfg.Limits.ImmediateCancel = true
 	cfg.Limits.DrainTimeout = 10 * time.Second // Should be ignored because ImmediateCancel is true
 
@@ -121,8 +121,8 @@ func TestServer_ImmediateCancelShutdown(t *testing.T) {
 
 func TestServer_ForcedShutdownTimeoutReturnsError(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.PublicListenAddr = "127.0.0.1:18083"
-	cfg.AdminListenAddr = "127.0.0.1:19093"
+	cfg.PublicListenAddr = "127.0.0.1:0"
+	cfg.AdminListenAddr = "127.0.0.1:0"
 
 	srv, err := NewServer(cfg)
 	if err != nil {
@@ -145,8 +145,8 @@ func TestServer_ForcedShutdownTimeoutReturnsError(t *testing.T) {
 
 func TestServer_DrainTimeoutForcesCancellation(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.PublicListenAddr = "127.0.0.1:18085"
-	cfg.AdminListenAddr = "127.0.0.1:19095"
+	cfg.PublicListenAddr = "127.0.0.1:0"
+	cfg.AdminListenAddr = "127.0.0.1:0"
 	cfg.Limits.DrainTimeout = 50 * time.Millisecond // very short drain timeout
 
 	srv, err := NewServer(cfg)
@@ -194,8 +194,8 @@ func TestServer_ServeTLS(t *testing.T) {
 	certFile, keyFile := writeSelfSigned(t, dir)
 
 	cfg := DefaultConfig(ProfileDevelopment)
-	cfg.PublicListenAddr = "127.0.0.1:18084"
-	cfg.AdminListenAddr = "127.0.0.1:19094"
+	cfg.PublicListenAddr = "127.0.0.1:0"
+	cfg.AdminListenAddr = "127.0.0.1:0"
 	cfg.TLS.CertFile = certFile
 	cfg.TLS.KeyFile = keyFile
 
@@ -221,7 +221,7 @@ func TestServer_ServeTLS(t *testing.T) {
 	var resp *http.Response
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		resp, err = client.Get("https://127.0.0.1:18084/health")
+		resp, err = client.Get("https://" + srv.PublicAddr() + "/health")
 		if err == nil {
 			break
 		}

@@ -111,6 +111,7 @@ type Registry struct {
 	elevenlabsSTTBreaker *resilience.Breaker
 
 	nvidiaBreakers sync.Map // "llm|<base url>" / "stt|<endpoint>" -> *resilience.Breaker (nvidia.go)
+	metrics        *Metrics // set by BindMetrics; per-endpoint breakers export their state through it
 
 	turnBackend smartturn.Backend // smart-turn model; nil unless turn.stop has turn-analyzer
 
@@ -604,7 +605,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		sink.SetContextProvider(func() []core.Message { return ctxPool.Messages() })
 	}
 
-	procs := []core.Processor{vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc}
+	procs := []core.Processor{vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc, &core.UnitFailureReporter{}}
 	idleProc, err := cfg.Idle.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, held)
 	if err != nil {
 		return fail(fmt.Errorf("create idle controller: %w", err))
@@ -661,6 +662,7 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	if m == nil {
 		return
 	}
+	r.metrics = m
 	r.onSTTFailover = m.stt.failovers.add
 	r.onSTTFallbackSkipped = func() { m.stt.FallbacksSkippedTotal.Add(1) }
 	r.onSTTReplayDropped = func(n int) { m.stt.ReplayDroppedBytesTotal.Add(uint64(n)) }

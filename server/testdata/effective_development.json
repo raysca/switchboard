@@ -5,6 +5,7 @@
  },
  "PublicListenAddr": "127.0.0.1:8080",
  "AdminListenAddr": "127.0.0.1:9090",
+ "ProbeListenAddr": "",
  "TLS": {
   "CertFile": "",
   "KeyFile": "",

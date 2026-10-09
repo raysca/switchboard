@@ -68,7 +68,9 @@ Use the reference compose configuration in `deploy/docker-compose.yaml`:
 ```bash
 docker compose -f deploy/docker-compose.yaml up -d
 ```
-The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at `/tmp`. The compose file also starts a `postgres` service for the agent store; set `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY`, `GOVOICE_CREDENTIAL_KEYS` and `POSTGRES_PASSWORD` before `up`. `deploy/smoke.sh` runs this stack end to end: it adds a credential, creates an agent and issues a voice token.
+The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at `/tmp`. The compose file also starts a `postgres` service for the agent store; set `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY`, `GOVOICE_CREDENTIAL_KEYS` and `POSTGRES_PASSWORD` before `up`. `deploy/smoke.sh` is the keyless release check (no provider key, costs nothing): it builds the image, starts it next to a throwaway Postgres and probes `/ready` and `/metrics` from outside the container, checks that xAI speech is in the build and that SIGTERM exits 0. `deploy/smoke-google.sh` runs the compose stack end to end with a Google key: it adds a credential, creates an agent and issues a voice token.
+
+**Listeners.** `public_listen_addr` (`:8080`) serves `/ws` and `/health`. `admin_listen_addr` (`127.0.0.1:9090`, container loopback) serves the management API (`/api/v1`, bearer auth) and `/debug/timeline`; compose does not publish it, so run management calls with `docker exec govoice-server curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...` (Kubernetes: `kubectl port-forward` or `exec`). `probe_listen_addr` (`0.0.0.0:9092`) serves only `/health`, `/ready` and `/metrics` without auth, so kubelet probes and Prometheus can reach the container; compose publishes it on `127.0.0.1` only. Never bind the admin listener beyond loopback, and keep the probe port off public ingress (cluster network only).
 
 ---
 
@@ -76,25 +78,32 @@ The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at
 
 The systemd unit is a reference file and is not required to run V1.
 
-### Step 1: Install Binaries and Models
+The layout mirrors the container image (`deploy/Dockerfile`). The server finds `vadworker` and `turnworker` next to its own executable, so all three binaries go in the same directory. Build with `make build` (it uses `-tags xaispeech`; `make ort` fetches the ONNX Runtime for your platform).
+
+### Step 1: Install Binaries, Models and ONNX Runtime
 ```bash
 # Create service user
 sudo useradd -r -s /usr/sbin/nologin -d /opt/govoice govoice
 
-# Install binaries
-sudo install -m 755 -o root -g root bin/server /usr/local/bin/govoice-server
-sudo install -m 755 -o root -g root bin/vadworker /usr/local/bin/govoice-vadworker
+# Binaries: server, vadworker and turnworker side by side
+sudo install -d -m 755 /opt/govoice/bin /opt/govoice/models /opt/govoice/lib /opt/govoice/third_party /var/log/govoice
+sudo install -m 755 bin/server bin/vadworker bin/turnworker /opt/govoice/bin/
 
-# Install VAD ONNX model
-sudo mkdir -p /opt/govoice/vad/models
-sudo cp vad/models/silero_vad.onnx /opt/govoice/vad/models/
-sudo chown -R root:root /opt/govoice
+# Models: Silero VAD (the unit's GOVOICE_MODEL_PATH) and the Smart Turn model (turn.analyzer)
+sudo install -m 644 third_party/silero_vad.onnx /opt/govoice/models/silero_vad.onnx
+sudo install -m 644 third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx
+
+# ONNX Runtime 1.29.0 for Linux (the unit's GOVOICE_ORT_LIB). The tarball URL and sha256 are in deploy/Dockerfile.
+sudo install -m 644 onnxruntime-linux-x64-1.29.0/lib/libonnxruntime.so /opt/govoice/lib/libonnxruntime.so
+sudo chown -R root:root /opt/govoice && sudo chown govoice:govoice /var/log/govoice
 ```
 
 ### Step 2: Install Configuration and Systemd Unit
 ```bash
 sudo mkdir -p /etc/govoice
-sudo cp config/production.yaml /etc/govoice/config.yaml
+sudo cp config/production.yaml /etc/govoice/production.yaml   # the unit reads production.yaml
+# On a host (not a container) probe_listen_addr "0.0.0.0:9092" binds every host interface: set it to
+# "127.0.0.1:9092" (or the private interface Prometheus scrapes) or firewall 9092 from the internet.
 
 # Copy and enable systemd unit
 sudo cp deploy/govoice.service /etc/systemd/system/govoice.service
@@ -126,7 +135,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ### Security Highlights of `deploy/nginx.conf`:
 1. **WSS Upgrades**: Passes `Upgrade` and `Connection "Upgrade"` headers properly.
 2. **Access Log Redaction**: Automatically redacts query tokens (`token=[REDACTED]`).
-3. **Admin Port Isolation**: Port `9090` is bound to `127.0.0.1` and blocked from external ingress.
+3. **Admin Isolation**: the public vhost returns 404 for `/metrics` and `/debug/`. The management API listener (`9090`) is container loopback and never proxied; the internal-only vhost on `9091` proxies just `/health`, `/ready` and `/metrics` to the probe listener (`9092`).
 
 ---
 
@@ -135,10 +144,11 @@ sudo nginx -t && sudo systemctl reload nginx
 ### Checking Health & Readiness
 ```bash
 # Liveness (Should return HTTP 200)
-curl -s http://127.0.0.1:9090/health
+curl -s http://127.0.0.1:9092/health
 
-# Readiness (Should return HTTP 200 with checks: true)
-curl -s http://127.0.0.1:9090/ready | jq .
+# Readiness: HTTP 200 {"status":"ready","circuits":{...}}; 503 {"status":"unready","reason":...} while starting,
+# draining, without VAD capacity or when the agent store does not answer a ping
+curl -s http://127.0.0.1:9092/ready | jq .
 ```
 
 ### Graceful Drain-Then-Cancel Shutdown
@@ -147,45 +157,45 @@ When rolling out updates or draining a host:
 # Send SIGTERM to server
 sudo systemctl stop govoice.service
 # Or in docker:
-docker stop -t 45 govoice
+docker stop -t 60 govoice-server   # at least drain_timeout + 5 s (50 s in production.yaml); the default 10 s would SIGKILL mid-drain
 ```
 **Drain Sequence** (`limits.drain_timeout`, default 30s; 45s in production.yaml):
-1. SIGTERM/SIGINT: admin `/ready` returns 503 immediately (`voice_draining 1`).
-2. New calls are refused: a new `/ws` upgrade gets HTTP 503 `server_draining` before the token is checked (the token stays valid for a retry on another instance); a client already upgraded but not yet `client-ready` gets RTVI error `server_draining` and close 1001. The public listener stays open (public `/health` keeps answering) so stragglers routed during LB endpoint lag get a clear 503, not connection refused.
+1. SIGTERM/SIGINT: `/ready` (probe listener) returns 503 immediately (`voice_draining 1`).
+2. New calls are refused: a new `/ws` upgrade gets HTTP 503 `server_draining` before the token is checked (the token is not consumed, but it is bound to the issuing instance; see Affinity); a client already upgraded but not yet `client-ready` gets RTVI error `server_draining` and close 1001. The public listener stays open (public `/health` keeps answering) so stragglers routed during LB endpoint lag get a clear 503, not connection refused.
 3. Active calls continue until they end or `drain_timeout` expires (`voice_drain_sessions_remaining` shows how many are left).
 4. At the deadline each remaining call receives a fatal RTVI error `server_draining` followed by close 1001 (going away), then is force-closed. The client should reconnect.
 5. The public listener, VAD workers and admin listener are closed. Exit `0` when all calls ended inside the deadline; exit `1` if calls had to be force-closed (or the shutdown budget ran out). Orchestrators ignore the code on a requested stop (Kubernetes, `docker stop`; systemd only logs `status=1/FAILURE` and does not restart on `systemctl stop`), so it is a signal for alerting on dropped calls, not a restart trigger.
 
 ### Rolling Deploys and Session Affinity
-- **Readiness vs liveness**: point the load balancer / Kubernetes `readinessProbe` at admin `/ready` (503 during drain). Point `livenessProbe` at `/health` (admin `:9090` or public `:8080`; both stay up for the whole drain). Never use `/ready` for liveness: it is 503 for the whole drain and would kill the pod mid-drain.
+- **Readiness vs liveness**: point the load balancer / Kubernetes `readinessProbe` at `/ready` on the probe port (`:9092`, 503 during drain). Point `livenessProbe` at `/health` (probe `:9092` or public `:8080`; both stay up for the whole drain). Never use `/ready` for liveness: it is 503 for the whole drain and would kill the pod mid-drain.
 - **Grace period**: `terminationGracePeriodSeconds` (Docker `stop_grace_period`, systemd `TimeoutStopSec`) must be at least `drain_timeout` + `preStop` sleep + 5s process margin (the server budgets `drain_timeout + 5s`). Production: 45s drain + 5s preStop + 5s margin => 60s or more (compose uses 60s).
-- **preStop sleep**: add `preStop: sleep 5` so endpoint removal propagates to the LB before drain starts; SIGTERM is delivered after the hook. Anything still routed afterwards gets 503 `server_draining`; have the LB retry 503 on another target (nginx: `proxy_next_upstream error http_503`).
+- **preStop sleep**: add `preStop: sleep 5` so endpoint removal propagates to the LB before drain starts; SIGTERM is delivered after the hook. Anything still routed afterwards gets 503 `server_draining`. A retry on another instance only works if that instance can validate the token (see Affinity), so the client normally requests a fresh voice token instead. `deploy/nginx.conf` has a single upstream and no `proxy_next_upstream`; a multi-instance edge needs an upstream block with `proxy_next_upstream error http_503` and token issuance pinned as described below.
 - **LB connection draining**: enable it (deregistration delay >= 0 is fine; do not set it shorter than the preStop sleep) and never have the LB cut established WebSockets when a target goes unhealthy. nginx: a reload keeps existing connections on old workers.
-- **Affinity**: a call is one WebSocket pinned to one instance, and its pipeline, context and turn state live in that process's memory. There is no cross-node migration, and no sticky-session config is needed beyond the connection itself. New calls land on whichever instance is ready.
-- **Admission rejects**: a refused call gets an RTVI error `capacity_exceeded` | `principal_limit` | `agent_limit` | `rate_limited` and close 1013 (try again later), counted in `voice_admission_rejects_total{reason}` (metric labels: `session_limit`, `vad_unavailable`, `principal_limit`, `agent_limit`, `start_rate_limit`; the first two both reach the client as `capacity_exceeded`). The client sees only the code, never the principal or counts. 1011 `session_setup_failed` is a real setup failure, so alert on it separately. `limits.handshake_rate_per_ip` (default 20/s, burst max(5, 2x); 0 means the default, it cannot be disabled) bounds WebSocket upgrades per source IP, refused with HTTP 429 before the upgrade. The source IP is the TCP peer unless that peer is listed in `tls.trusted_proxies`, in which case it is the right-most untrusted `X-Forwarded-For` entry (else `X-Real-IP`). Behind a load balancer, list it in `tls.trusted_proxies`, or every caller shares the balancer's bucket; raise the rate only for a NAT that really hides many clients. The table holds at most 10k IPs (entries idle over 1 min are evicted when full); while 10k distinct IPs are active, new IPs get 429.
+- **Affinity**: a call is one WebSocket pinned to one instance, and its pipeline, context and turn state live in that process's memory. There is no cross-node migration. Voice tokens are NOT portable between instances: every API-issued token carries the issuing process's random `issuer_epoch`, and any other process rejects it with 401 (`ErrTokenEpoch`, `docs/api/v1.md`). With more than one replica, `POST /api/v1/voice-tokens` and the `/ws` upgrade for that token must reach the same replica (sticky routing by client, or issue the token through the replica you will connect to); otherwise about (N-1)/N of calls fail with `invalid token`. A client that gets the drain 503 must request a new token (from a ready replica) and reconnect.
+- **Admission rejects**: a refused call gets an RTVI error `capacity_exceeded` | `principal_limit` | `agent_limit` | `rate_limited` and close 1013 (try again later), counted in `voice_admission_rejects_total{reason}` (metric labels: `session_limit`, `vad_unavailable`, `principal_limit`, `agent_limit`, `start_rate_limit`; the first two both reach the client as `capacity_exceeded`). The client sees only the code, never the principal or counts. 1011 `session_setup_failed` is a real setup failure, so alert on it separately. `limits.handshake_rate_per_ip` (default 20/s, burst max(5, 2x); 0 means the default, it cannot be disabled) bounds WebSocket upgrades per source IP, refused with HTTP 429 before the upgrade. The source IP is the TCP peer unless that peer is listed in `tls.trusted_proxies`, in which case it is the right-most untrusted `X-Forwarded-For` entry (else `X-Real-IP`). Behind a load balancer, list it in `tls.trusted_proxies`, or every caller shares the balancer's bucket; raise the rate only for a NAT that really hides many clients. IPv6 sources are keyed by their /64 (for this limiter, the pending-handshake cap and `max_sessions_per_ip`). The table holds at most 10k sources (entries idle over 1 min are evicted when full); while 10k distinct sources are active, new sources share one overflow bucket (10x a single IP's rate) instead of all being refused, so a flood cannot lock out every new caller.
 - **Ping liveness**: the server sends a WebSocket ping every `limits.ping_interval` (default 15 s); a peer that misses 2 pings in a row (each waits `limits.ping_timeout`, 10 s) is dropped. Browsers and ws libraries answer automatically, so a muted or text-only client stays connected; `PingMaxFailures` (2) has no YAML key. `limits.idle_timeout` is the legacy data-silence deadline and applies only when `ping_interval: 0`. An abandoned tab that still answers pings holds its slot until `limits.max_call_duration`, so set `idle.user_timeout` (e.g. 30s) in production. Each connection runs one extra ping goroutine and adds a small ping/pong frame every interval (see the perf gate notes in `docs/benchmarks/README.md`).
 - **Telemetry env**: `ORT_DISABLE_TELEMETRY=1` is set by the server before ONNX Runtime starts and passed to the VAD and Smart Turn workers (`vad.WorkerEnv`); do not override it. Workers otherwise receive only an allowlisted environment, never provider credentials.
 - **Reconnect semantics**: a force-closed client gets `server_draining` + 1001 and must start a new call (new voice token; tokens are single-use). Conversation context is not carried over; the app should replay it through the agent or accept a fresh start. Size `drain_timeout` to your typical call length to keep forced closes rare, and roll one instance at a time.
-- **Kubernetes sketch**: `terminationGracePeriodSeconds: 60`, `lifecycle.preStop.exec.command: ["sleep","5"]`, `readinessProbe.httpGet: {path: /ready, port: 9090}`, `livenessProbe.httpGet: {path: /health, port: 9090}`.
+- **Kubernetes sketch**: `terminationGracePeriodSeconds: 60`, `lifecycle.preStop.exec.command: ["sleep","5"]`, `readinessProbe.httpGet: {path: /ready, port: 9092}`, `livenessProbe.httpGet: {path: /health, port: 9092}`; scrape `:9092/metrics` with Prometheus and load `deploy/alerts/govoice.rules.yml`.
 
 ---
 
 ## 6. Incident Troubleshooting & Failure Recovery
 
 ### Incident 1: Native VAD Worker Crash
-- **Symptoms**: Alert on `vad_worker_restarts_total` increasing or `vad_worker_errors_total > 0`.
+- **Symptoms**: Alert `GovoiceVADWorkerRestarts` (`increase(voice_vad_worker_restarts_total[10m]) > 5`) or `GovoiceVADUnavailable` (admission rejects with `reason="vad_unavailable"`).
 - **Underlying Mechanism**: A Silero VAD C/ONNX native routine crashed (e.g. SIGSEGV).
 - **Automated Mitigation**: The parent process detects the child exit, reaps the PID via `cmd.Wait()`, updates capacity, and automatically spawns a healthy replacement worker with exponential backoff.
 - **Action Required**: Inspect `journalctl -u govoice.service` for child stderr diagnostics (bounded to 64KB). Verify that the host is not experiencing OOM kills (`dmesg -T | grep -i oom`).
 
 ### Incident 2: Leaked Goroutines / Leaked Work
-- **Symptoms**: Alert on `voice_session_tasks_leaked_total > 0`.
+- **Symptoms**: Alert `GovoiceLeakedWork` (`increase(voice_leaked_work_total[15m]) > 0`; `voice_leaked_sessions_total` counts the affected sessions).
 - **Underlying Mechanism**: A session was terminated, but a managed child task failed to exit within `TeardownTimeout: 2s`.
-- **Action Required**: Query `/timeline?session_id=<ID>` for the affected session. Check if an external provider call hung without respecting context cancellation.
+- **Action Required**: Query the admin listener's `/debug/timeline?session=<ID>` for the affected session (inside the container, port 9090). Check if an external provider call hung without respecting context cancellation.
 
 ### Incident 3: Cloud Provider Circuit Breakers Tripped
-- **Symptoms**: `provider_circuit_state{provider="..."} == 2`; `/ready` lists the circuit as `open` under `circuits` (it stays 200, because only agents using that provider are affected).
-- **Underlying Mechanism**: 5 consecutive failures occurred against Google Cloud STT, LLM, or TTS within 60 seconds.
+- **Symptoms**: alert `GovoiceProviderCircuitOpen` (`voice_{stt,llm,tts}_circuit_state{provider="..."} == 1`; 0 = closed, 1 = open, 2 = half-open; Nvidia has one series per endpoint with an `endpoint` label); `/ready` lists the circuit as `open` under `circuits` (it stays 200, because only agents using that provider are affected). `voice_provider_errors_total{provider,stage}` shows which provider the errors came from (`failover` when the stage had fallbacks).
+- **Underlying Mechanism**: 5 consecutive failures occurred against the provider (Google, xAI or an Nvidia endpoint) STT, LLM, or TTS.
 - **Action Required**:
   1. Check GCP Service Health status for Speech-to-Text or Vertex AI.
   2. Verify the stored credential (`POST /api/v1/providers/credentials/{id}/validate`) and IAM permissions.

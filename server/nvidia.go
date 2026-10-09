@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"govoice/core"
@@ -28,8 +29,26 @@ const (
 // one tenant's broken self-hosted NIM or Riva must not open it for the others.
 // ponytail: never evicted; bounded by the distinct endpoints stored.
 func (r *Registry) nvidiaBreaker(key string) *resilience.Breaker {
-	br, _ := r.nvidiaBreakers.LoadOrStore(key, resilience.NewBreaker(resilience.DefaultConfig()))
-	return br.(*resilience.Breaker)
+	br, loaded := r.nvidiaBreakers.LoadOrStore(key, resilience.NewBreaker(resilience.DefaultConfig()))
+	b := br.(*resilience.Breaker)
+	if !loaded && r.metrics != nil { // first use: export the gauge (voice_<stage>_circuit_state, /ready)
+		stage, endpoint, _ := strings.Cut(key, "|")
+		endpoint = endpointLabel(endpoint)
+		r.metrics.circuits.set(stage, "nvidia", endpoint, 0)
+		b.SetObserver(func(st resilience.State) {
+			r.metrics.circuits.set(stage, "nvidia", endpoint, circuitCode(string(st)))
+		})
+	}
+	return b
+}
+
+// endpointLabel reduces a base URL or host:port to host[:port] for a metric label
+// (no path, userinfo or query).
+func endpointLabel(ep string) string {
+	if u, err := url.Parse(ep); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return ep
 }
 
 // nvidiaLLMTarget resolves the stored credential to key and base URL.

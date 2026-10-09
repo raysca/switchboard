@@ -111,9 +111,50 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		m.recStop = stop
 		go sink.Janitor(jctx, time.Duration(rc.RetentionDays)*24*time.Hour, time.Hour, s.logger)
 	}
+	if bad := s.unavailableAgentProviders(ctx); len(bad) > 0 {
+		for _, b := range bad {
+			s.logger.Error("agent references a provider this build cannot run", slog.String("problem", b))
+		}
+		if s.cfg.Profile == ProfileProduction {
+			return fail(fmt.Errorf("%d stored agent stage(s) use providers missing from this build (xAI STT/TTS need -tags xaispeech): %s", len(bad), strings.Join(bad, "; ")))
+		}
+	}
 	s.mgmt = m
 	s.logger.Info("management plane enabled", slog.String("dialect", s.cfg.Storage.Dialect), slog.Bool("retention", m.retention != nil))
 	return nil
+}
+
+// unavailableAgentProviders lists "agent id stage provider" for every enabled,
+// non-archived stored agent whose stage (or fallback) has no factory in this
+// build, so a tagged-vs-untagged build mismatch fails startup, not calls.
+func (s *Server) unavailableAgentProviders(ctx context.Context) []string {
+	var bad []string
+	for offset := 0; ; offset += 100 {
+		page, err := s.agents.List(ctx, 100, offset)
+		if err != nil {
+			s.logger.Warn("agent provider check skipped", slog.String("err", s.redactor.Redact(err.Error())))
+			return bad
+		}
+		for _, a := range page {
+			if !a.Enabled || a.Archived || a.Version == nil {
+				continue
+			}
+			cfg, err := agent.DecodeConfig(a.Version.Config)
+			if err != nil {
+				continue
+			}
+			for _, stage := range []string{"stt", "llm", "tts"} {
+				for _, c := range cfg.Chain(stage) {
+					if c.Provider != "" && !s.registry.Supports(c.Provider, stage) {
+						bad = append(bad, fmt.Sprintf("agent %s %s=%s", a.ID, stage, c.Provider))
+					}
+				}
+			}
+		}
+		if len(page) < 100 {
+			return bad
+		}
+	}
 }
 
 func (m *management) close() {

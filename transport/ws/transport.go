@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -157,6 +158,8 @@ type Server struct {
 	pendingPerIP map[string]int
 	rateMu       sync.Mutex
 	ratePerIP    map[string]*ipRateState
+	rateOverflow ipRateState // shared bucket for new sources once ratePerIP is full
+	rateSweptAt  time.Time   // last stale-entry sweep of a full ratePerIP
 	idCounter    atomic.Uint64
 
 	// Session factory callback
@@ -188,15 +191,21 @@ func (s *Server) allowHandshakeRate(ip string) bool {
 	now := time.Now()
 	state, exists := s.ratePerIP[ip]
 	if !exists {
-		if len(s.ratePerIP) >= 10000 {
+		// Sweep at most once a second: under a flood every new source lands here, and a full scan per
+		// handshake (under rateMu) would serialize all handshakes behind it.
+		if len(s.ratePerIP) >= maxRateEntries && now.Sub(s.rateSweptAt) > time.Second {
+			s.rateSweptAt = now
 			for k, v := range s.ratePerIP {
 				if now.Sub(v.lastCheck) > time.Minute {
 					delete(s.ratePerIP, k)
 				}
 			}
-			if len(s.ratePerIP) >= 10000 {
-				return false
-			}
+		}
+		if len(s.ratePerIP) >= maxRateEntries {
+			// Still full of active sources (e.g. a flood from many addresses): degrade to one shared
+			// bucket for every new source instead of refusing them all. ponytail: the shared bucket is
+			// 10x one IP's; a sustained flood still starves new sources, but known ones keep their own bucket.
+			return takeToken(&s.rateOverflow, now, rate*10, burst*10)
 		}
 		s.ratePerIP[ip] = &ipRateState{
 			tokens:    float64(burst - 1),
@@ -204,19 +213,42 @@ func (s *Server) allowHandshakeRate(ip string) bool {
 		}
 		return true
 	}
+	return takeToken(state, now, rate, burst)
+}
 
+// maxRateEntries bounds the per-source rate table.
+const maxRateEntries = 10000
+
+// takeToken refills the bucket for the time since its last use and takes one token.
+func takeToken(state *ipRateState, now time.Time, rate float64, burst int) bool {
+	if state.lastCheck.IsZero() { // a fresh shared bucket starts full
+		state.tokens, state.lastCheck = float64(burst), now
+	}
 	elapsed := now.Sub(state.lastCheck).Seconds()
 	state.lastCheck = now
 	state.tokens += elapsed * rate
 	if state.tokens > float64(burst) {
 		state.tokens = float64(burst)
 	}
-
 	if state.tokens < 1.0 {
 		return false
 	}
 	state.tokens -= 1.0
 	return true
+}
+
+// limiterKey is the key of every per-source table: an IPv6 address is keyed by its /64 (one subscriber
+// or one attacker holds a whole /64), IPv4 and IPv4-mapped addresses by themselves.
+func limiterKey(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil || a.Is4() || a.Is4In6() {
+		return ip
+	}
+	p, err := a.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return p.Masked().String()
 }
 
 // NewServer creates a new WebSocket voice server.
@@ -264,7 +296,7 @@ func NewServer(cfg ServerConfig) *Server {
 
 // ServeHTTP processes WebSocket upgrade requests with pre-upgrade token and origin checks.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	clientIP := s.cfg.Security.ClientIP(r)
+	clientIP := limiterKey(s.cfg.Security.ClientIP(r))
 
 	// 1a. Handshake rate limit per source IP
 	if !s.allowHandshakeRate(clientIP) {
