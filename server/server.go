@@ -453,13 +453,16 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
+		s.logSetupFailure(sessionID, agentID, "resolve", err)
 		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
+	phase := "build_pipeline"
 	fail := func(err error) (*core.Session, error) {
 		releaseCall()
 		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
+		s.logSetupFailure(sessionID, agentID, phase, err)
 		return nil, err
 	}
 
@@ -474,6 +477,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	// 4. Construct Core Session
 	session, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
 	if err != nil {
+		phase = "create_session"
 		return fail(fmt.Errorf("create session: %w", err))
 	}
 
@@ -1051,4 +1055,20 @@ func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
 	case <-timer.C:
 	case <-ctx.Done():
 	}
+}
+
+// logSetupFailure logs one redacted warning for a call that could not be set
+// up, so operators see why (bad credential, refused endpoint, incomplete agent)
+// rather than only a rising failure counter. The error text is redacted like
+// the timeline's: secrets never reach the log.
+func (s *Server) logSetupFailure(session uint64, agentID, phase string, err error) {
+	category := phase
+	switch {
+	case errors.Is(err, credential.ErrDecrypt):
+		category = "credential_decrypt"
+	case errors.Is(err, context.DeadlineExceeded):
+		category = "timeout"
+	}
+	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("agent", agentID),
+		slog.String("category", category), slog.String("err", s.redactor.Redact(err.Error())))
 }
