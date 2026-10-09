@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -332,4 +333,48 @@ func TestIdleSilentCallerIsHungUpWithNormalClose(t *testing.T) {
 		t.Fatalf("close status %d (%v), reason seen %v", got, err, saw)
 	}
 	idleWait(t, "hang-up counted", func() bool { return s.metrics.UserIdleHangupsTotal.Load() == 1 })
+}
+
+// idle speech re-enters at the TTS stage; the DTMF detector and input filter inserted at the
+// front of the pipeline after the idle controller was built must shift that index.
+func TestIdleSpeakIndexFollowsFrontInsertions(t *testing.T) {
+	for name, mod := range map[string]func(*Config){
+		"none":   func(*Config) {},
+		"dtmf":   func(c *Config) { c.DTMF.Detect = true },
+		"filter": func(c *Config) { c.Audio.InputFilters = []string{"denoise"} },
+		"both":   func(c *Config) { c.DTMF.Detect, c.Audio.InputFilters = true, []string{"denoise"} },
+	} {
+		cfg := DefaultConfig(ProfileDevelopment)
+		cfg.Idle.UserTimeout = 15 * time.Second
+		mod(cfg)
+		reg := NewRegistry()
+		tts := &core.PassthroughProcessor{}
+		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return tts, nil })
+		vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+		call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}}
+		pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, &fakeTransportSink{})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var idle *core.IdleController
+		for _, p := range pipe.Processors() {
+			if c, ok := p.(*core.IdleController); ok {
+				idle = c
+			}
+		}
+		if idle == nil {
+			t.Fatalf("%s: no idle controller", name)
+		}
+		got := pipe.At(idle.SpeakIndex())
+		// the TTS stage may be wrapped (failover/unit reporting); it must at least not be the
+		// assistant-context stage or earlier: the stage at the index must follow the idle stage and the LLM.
+		if idle.SpeakIndex() < 0 || got == nil {
+			t.Fatalf("%s: speak index %d invalid", name, idle.SpeakIndex())
+		}
+		if got != core.Processor(tts) && !strings.Contains(fmt.Sprintf("%T", got), "TTS") {
+			t.Errorf("%s: speak index %d points at %T, want the TTS stage", name, idle.SpeakIndex(), got)
+		}
+	}
 }

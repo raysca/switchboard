@@ -173,6 +173,9 @@ func NewIdleController(cfg IdleConfig) (*IdleController, error) {
 // fall back to the model and the goodbye/fallback phrases are skipped.
 func (c *IdleController) SetSpeakIndex(i int) { c.speak = i }
 
+// SpeakIndex is the index set by SetSpeakIndex (-1 when unset).
+func (c *IdleController) SpeakIndex() int { return c.speak }
+
 // SetOnEnd installs the hang-up (before the session starts); see IdleConfig.OnEnd.
 func (c *IdleController) SetOnEnd(fn func(reason string)) { c.cfg.OnEnd = fn }
 

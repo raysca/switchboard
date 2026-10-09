@@ -627,9 +627,6 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		// STT consumes audio frames, so the model's audio tap must precede it.
 		procs = slices.Insert(procs, 1, turnTap)
 	}
-	if idleProc != nil {
-		idleProc.SetSpeakIndex(slices.Index(procs, ttsProc)) // after every insertion above
-	}
 	if call.History != nil {
 		procs = append(procs, call.History)
 	}
@@ -641,6 +638,9 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	if dt.in != nil {
 		procs = slices.Insert(procs, 0, dt.in) // before VAD
+	}
+	if idleProc != nil {
+		idleProc.SetSpeakIndex(slices.Index(procs, ttsProc)) // after every front insertion (dt.in, inFilter shift it)
 	}
 	if g, err := buildOutputGain(cfg); err != nil {
 		return fail(fmt.Errorf("create output gain: %w", err))

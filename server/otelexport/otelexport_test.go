@@ -142,22 +142,29 @@ func TestSamplingZeroEmitsNothing(t *testing.T) {
 	}
 }
 
-type hang struct{}
-
-func (hang) ExportSpans(ctx context.Context, _ []sdktrace.ReadOnlySpan) error {
-	return errors.New("down")
-}
-func (hang) Shutdown(context.Context) error { return nil }
-
 func TestQueueOverflowDropsAndCounts(t *testing.T) {
-	e := build(Config{QueueSize: 1}, hang{}, time.Now)
+	// The worker only exports at 512 spans or on the 2s tick, so a fast worker can drain a
+	// size-1 queue forever and never drop (the old flake). Park it inside a hung export
+	// first; then the queue holds 1 span and every further span must drop.
+	b := blockExp{entered: make(chan struct{}, 1)}
+	e := build(Config{QueueSize: 1, ShutdownTimeout: 100 * time.Millisecond}, b, time.Now)
 	st := e.Session("a", "v")
-	for i := 0; i < 100; i++ {
-		st.StartSpan(context.Background(), ev(e, "session.start", t0, "", nil)).End(nil)
+	emit := func() { st.StartSpan(context.Background(), ev(e, "session.start", t0, "", nil)).End(nil) }
+	for range 512 {
+		emit()
 	}
-	if d, _ := e.Stats(); d == 0 {
-		t.Fatal("expected drops, never blocking")
+	select {
+	case <-b.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker never started the export")
 	}
+	for range 10 {
+		emit()
+	}
+	if d, _ := e.Stats(); d < 9 {
+		t.Fatalf("dropped %d, want >= 9 (queue holds 1 while the worker is parked)", d)
+	}
+	_ = e.Shutdown(context.Background())
 }
 
 func TestConfigValidate(t *testing.T) {
