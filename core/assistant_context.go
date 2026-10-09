@@ -536,6 +536,10 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 	return emitErr
 }
 
+// DebugContextReplyDropped: a spoken reply did not fit the context budget and
+// is missing from history (attr chars: its length).
+const DebugContextReplyDropped = "context.reply_dropped"
+
 // addAssistantMessage records a spoken reply. One that cannot fit the context
 // budget (the active turn is never evicted) is skipped: losing the history
 // entry is better than ending the call that just spoke it. recorded reports
@@ -543,6 +547,9 @@ func (p *AssistantContextProcessor) commitTurn(e Emitter, partial bool) error {
 func (p *AssistantContextProcessor) addAssistantMessage(m Message) (recorded bool, err error) {
 	err = p.ctxPool.AddMessage(m)
 	if errors.Is(err, ErrContextLimitExceeded) {
+		if d, ok := p.session.(interface{ EmitDebug(DebugEvent) }); ok {
+			d.EmitDebug(NewDebugEvent(DebugContextReplyDropped, time.Now(), "", TurnID(m.TurnID), 0, map[string]any{"chars": len(m.Content)}))
+		}
 		return false, nil
 	}
 	return err == nil, err
