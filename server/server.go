@@ -368,7 +368,7 @@ func (s *Server) setupRoutes() {
 		ReadTimeout:                s.cfg.Limits.IdleTimeout,
 		PingInterval:               s.cfg.Limits.PingInterval,
 		PingTimeout:                s.cfg.Limits.PingTimeout,
-		MaxConnectionLifetime:      s.cfg.Limits.MaxCallDuration,
+		MaxConnectionLifetime:      0, // the max-call-duration timer in onSessionReady is the single owner (it counts and tells the client)
 		MaxConcurrentSessions:      s.cfg.Limits.MaxSessions,
 		MaxConcurrentSessionsPerIP: s.cfg.Limits.MaxSessionsPerIP,
 		MaxPendingHandshakes:       s.cfg.Limits.MaxPendingHandshakes,
@@ -658,6 +658,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 					Type:    EventDisconnect,
 					Details: "terminated: max call duration reached",
 				})
+				conn.Hangup("max_call_duration", 2*time.Second) // final RTVI error with the reason, 1000 close (like idle)
 				conn.Close()
 				_ = session.Close()
 			}
