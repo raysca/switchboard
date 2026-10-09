@@ -158,11 +158,12 @@ func TestQueueOverflowDropsAndCounts(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("worker never started the export")
 	}
+	before, _ := e.Stats()
 	for range 10 {
 		emit()
 	}
-	if d, _ := e.Stats(); d < 9 {
-		t.Fatalf("dropped %d, want >= 9 (queue holds 1 while the worker is parked)", d)
+	if d, _ := e.Stats(); d-before < 9 {
+		t.Fatalf("dropped %d while parked, want >= 9 (queue holds 1 while the worker is parked)", d-before)
 	}
 	_ = e.Shutdown(context.Background())
 }
