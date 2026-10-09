@@ -164,6 +164,7 @@ type TTSProcessor struct {
 	finishedSeq uint64
 	activeGen   uint64
 	closed      bool
+	queue       core.SerialQueue // units wait here, not on a task slot each
 
 	// Metrics
 	RequestsTotal atomic.Uint64
@@ -299,7 +300,7 @@ func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisU
 	}
 
 	p.RequestsTotal.Add(1)
-	if err := s.Go(func(sessionCtx context.Context) {
+	if err := p.queue.Go(s, func(sessionCtx context.Context) {
 		traceSession := core.SessionID(strconv.FormatUint(s.ID(), 10))
 		traceTurn, traceGen := core.TurnID(unit.Turn), core.Generation(unit.Gen)
 		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": "xai"})
