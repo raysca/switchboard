@@ -22,7 +22,7 @@ func TestSetupFailureLogsOneWarnWithCategory(t *testing.T) {
 	var buf bytes.Buffer
 	s := &Server{redactor: rd, logger: slog.New(slog.NewTextHandler(&buf, nil))}
 
-	s.logSetupFailure(7, "agent-1", "build_pipeline", errors.New("build pipeline: nvidia.stt: stored credential is not valid JSON"))
+	s.logSetupFailure(7, "agent-1", "build_pipeline", errors.New(`build pipeline: nvidia.stt: parse "https://u:sk-live-SECRET@host": invalid port`))
 	s.logSetupFailure(8, "agent-1", "resolve", fmt.Errorf("resolve: %w", credential.ErrDecrypt))
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
@@ -35,7 +35,10 @@ func TestSetupFailureLogsOneWarnWithCategory(t *testing.T) {
 			t.Errorf("line %d = %s", i, l)
 		}
 	}
-	if !strings.Contains(lines[0], "nvidia.stt") {
+	if !strings.Contains(lines[0], "stage=nvidia.stt") {
 		t.Errorf("cause stage missing: %s", lines[0])
+	}
+	if strings.Contains(buf.String(), "SECRET") || strings.Contains(buf.String(), "https://") {
+		t.Errorf("error text leaked into the log: %s", buf.String())
 	}
 }

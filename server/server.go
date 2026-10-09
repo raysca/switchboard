@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1179,10 +1180,12 @@ func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
 	}
 }
 
-// logSetupFailure logs one redacted warning for a call that could not be set
-// up, so operators see why (bad credential, refused endpoint, incomplete agent)
-// rather than only a rising failure counter. The error text is redacted like
-// the timeline's: secrets never reach the log.
+// logSetupFailure logs one warning for a call that could not be set up, so
+// operators see why (bad credential, refused endpoint, incomplete agent) rather
+// than only a rising failure counter. It names the phase, category and failing
+// provider stage but never the error text: that may echo endpoints, credential
+// fragments or provider messages, and s.redactor masks PII, not secrets. The
+// redacted text is on the call timeline.
 func (s *Server) logSetupFailure(session uint64, agentID, phase string, err error) {
 	category := phase
 	switch {
@@ -1192,5 +1195,16 @@ func (s *Server) logSetupFailure(session uint64, agentID, phase string, err erro
 		category = "timeout"
 	}
 	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("agent", agentID),
-		slog.String("category", category), slog.String("err", s.redactor.Redact(err.Error())))
+		slog.String("category", category), slog.String("stage", setupStage(err.Error())))
+}
+
+// setupStageRe matches the "<provider>.<stage>" prefix registry errors carry.
+var setupStageRe = regexp.MustCompile(`(?:^|: )([a-z0-9_]+\.(?:llm|stt|tts|vad))(?: tools)?: `)
+
+// setupStage returns the provider stage a setup error names ("nvidia.stt"), or "".
+func setupStage(msg string) string {
+	if m := setupStageRe.FindStringSubmatch(msg); m != nil {
+		return m[1]
+	}
+	return ""
 }
