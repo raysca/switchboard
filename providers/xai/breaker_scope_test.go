@@ -18,7 +18,8 @@ func TestClassifyForSharedBreaker(t *testing.T) {
 	}{
 		{&ProviderError{Code: "UNAUTHORIZED", Class: ClassificationNonRetryable, StatusCode: 401}, false},
 		{&ProviderError{Code: "UNAVAILABLE", Class: ClassificationRetryable, StatusCode: 503}, true},
-		{&ProviderError{Code: "RATE_LIMITED", Class: ClassificationRateLimit, StatusCode: 429}, true},
+		// 429 is one credential's quota, not provider health: retried, never counted.
+		{&ProviderError{Code: "RATE_LIMITED", Class: ClassificationRateLimit, StatusCode: 429}, false},
 		{errors.New("connection reset"), true},
 	} {
 		b := resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})

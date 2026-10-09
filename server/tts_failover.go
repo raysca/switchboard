@@ -39,7 +39,7 @@ func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
 	case "google":
 		return r.googleTTSBreaker
 	case "xai":
-		return r.xaiBreaker
+		return r.xaiTTSBreaker
 	case "cartesia":
 		return r.cartesiaBreaker
 	case "elevenlabs":

@@ -59,7 +59,7 @@ func (r *Registry) sttBreaker(provider string) *resilience.Breaker {
 	case "google":
 		return r.googleSTTBreaker
 	case "xai":
-		return r.xaiBreaker
+		return r.xaiSTTBreaker
 	case "deepgram":
 		return r.deepgramBreaker
 	case "nvidia":

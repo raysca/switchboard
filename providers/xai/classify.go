@@ -13,7 +13,7 @@ import (
 func classify(err error) resilience.Verdict {
 	var pe *ProviderError
 	if errors.As(err, &pe) {
-		return resilience.Verdict{Retryable: pe.Class != ClassificationNonRetryable, ClientError: pe.Class == ClassificationNonRetryable, RetryAfter: pe.RetryAfter}
+		return resilience.Verdict{Retryable: pe.Class != ClassificationNonRetryable, ClientError: pe.Class == ClassificationNonRetryable, NoBreaker: pe.Class == ClassificationRateLimit, RetryAfter: pe.RetryAfter}
 	}
 	return resilience.Verdict{Retryable: true}
 }

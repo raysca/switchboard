@@ -144,16 +144,20 @@ func (b *Breaker) release(probe uint64) {
 // Report records a provider error seen outside Execute (e.g. on a stream):
 // client errors are ignored, anything else counts.
 func (b *Breaker) Report(err error, classify Classify) {
-	if !classify(err).ClientError {
+	if v := classify(err); !v.ClientError && !v.NoBreaker {
 		b.RecordFailure()
 	}
 }
 
 // Verdict is a provider's reading of one of its errors.
 type Verdict struct {
-	Retryable   bool          // worth another attempt (unless output was committed)
-	ClientError bool          // the caller's fault (bad key, bad request): not a provider outage
-	RetryAfter  time.Duration // provider-requested wait, if any
+	Retryable   bool // worth another attempt (unless output was committed)
+	ClientError bool // the caller's fault (bad key, bad request): not a provider outage
+	// NoBreaker: retry and fail over as usual but do not count on the breaker.
+	// For one credential's quota or rate limit (429): it says nothing about the
+	// provider's health and breakers are shared by every tenant.
+	NoBreaker  bool
+	RetryAfter time.Duration // provider-requested wait, if any
 }
 
 type Classify func(error) Verdict
@@ -248,7 +252,7 @@ func Execute(ctx context.Context, b *Breaker, p Policy, classify Classify, commi
 			v = classify(err)
 		}
 		if b != nil {
-			if v.ClientError {
+			if v.ClientError || v.NoBreaker {
 				b.release(probe)
 			} else {
 				b.RecordFailure()

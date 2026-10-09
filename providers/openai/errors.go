@@ -63,11 +63,12 @@ func newHTTPError(resp *http.Response, body, model string) *ProviderError {
 }
 
 // classify feeds the shared breaker and retry loop: client errors are exempt
-// from the breaker; everything else (5xx, 429, network) is an outage.
+// from the breaker, and so is a 429 (one key's quota, not an outage); everything
+// else (5xx, network) counts.
 func classify(err error) resilience.Verdict {
 	var pe *ProviderError
 	if errors.As(err, &pe) {
-		return resilience.Verdict{Retryable: pe.Retryable, ClientError: !pe.Retryable, RetryAfter: pe.RetryAfter}
+		return resilience.Verdict{Retryable: pe.Retryable, ClientError: !pe.Retryable, NoBreaker: pe.Status == http.StatusTooManyRequests, RetryAfter: pe.RetryAfter}
 	}
 	return resilience.Verdict{Retryable: true}
 }
