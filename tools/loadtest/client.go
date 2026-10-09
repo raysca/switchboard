@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,21 +21,38 @@ var lagBounds = []float64{1, 2, 5, 10, 20, 50, 100, 200, 500, 1000}
 
 // LoadState aggregates client-side results across slots.
 type LoadState struct {
-	mu       sync.Mutex
-	v2v      []float64
-	errs     map[string]int
-	sessions SessionCounts
-	turns    TurnCounts
-	cur, max atomic.Int64
-	lag      [11]atomic.Uint64 // len(lagBounds)+1
-	sessNS   atomic.Int64      // total connected session time
+	mu            sync.Mutex
+	v2v           []float64
+	errs          map[string]int
+	chaosErrs     map[string]int
+	sessions      SessionCounts
+	turns         TurnCounts
+	cur, max      atomic.Int64
+	lag           [11]atomic.Uint64 // len(lagBounds)+1
+	sessNS        atomic.Int64      // total connected session time
+	chaosInjected atomic.Uint64
 }
 
-func newLoadState() *LoadState { return &LoadState{errs: map[string]int{}} }
+func newLoadState() *LoadState {
+	return &LoadState{
+		errs:      map[string]int{},
+		chaosErrs: map[string]int{},
+	}
+}
 
 func (l *LoadState) addErr(k string) {
 	l.mu.Lock()
 	l.errs[k]++
+	l.mu.Unlock()
+}
+
+func (l *LoadState) recordChaos(kind string) {
+	l.chaosInjected.Add(1)
+	l.mu.Lock()
+	if l.chaosErrs == nil {
+		l.chaosErrs = map[string]int{}
+	}
+	l.chaosErrs[kind]++
 	l.mu.Unlock()
 }
 
@@ -84,13 +102,18 @@ func (l *LoadState) lagStat() Stat {
 
 // CallParams describes the simulated caller.
 type CallParams struct {
-	Server    *Server
-	AgentID   string
-	Clip      []byte
-	Turns     int // 0 = until ctx ends
-	Think     time.Duration
-	TurnLimit time.Duration // max wait for first bot audio
-	IdleRSSMB float64       // RSS of the freshly started server
+	Server      *Server
+	AgentID     string
+	Clip        []byte
+	Turns       int // 0 = until ctx ends
+	MinTurns    int
+	MaxTurns    int
+	MinDuration time.Duration
+	MaxDuration time.Duration
+	Think       time.Duration
+	TurnLimit   time.Duration // max wait for first bot audio
+	IdleRSSMB   float64       // RSS of the freshly started server
+	ChaosRate   float64       // probability of injecting client fault
 }
 
 // call is one WebSocket call with a real-time 20 ms mic stream.
@@ -261,6 +284,24 @@ func runCall(ctx context.Context, st *LoadState, p CallParams, principal string)
 		st.sessNS.Add(int64(time.Since(t0)))
 	}()
 
+	// Determine if this call should undergo injected chaos
+	var chaosMode string
+	if p.ChaosRate > 0 && rand.Float64() < p.ChaosRate {
+		modes := []string{"tcp_abort", "malformed_frame", "stalled_consumer"}
+		chaosMode = modes[rand.Intn(len(modes))]
+	}
+
+	// Target turns and deadline for call churn
+	targetTurns := p.Turns
+	if p.MinTurns > 0 && p.MaxTurns >= p.MinTurns {
+		targetTurns = p.MinTurns + rand.Intn(p.MaxTurns-p.MinTurns+1)
+	}
+	var callDeadline time.Time
+	if p.MinDuration > 0 && p.MaxDuration >= p.MinDuration {
+		dur := p.MinDuration + time.Duration(rand.Int63n(int64(p.MaxDuration-p.MinDuration+1)))
+		callDeadline = time.Now().Add(dur)
+	}
+
 	c.next = time.Now()
 	fail := func(kind string, err error) error {
 		if ctx.Err() != nil {
@@ -272,7 +313,35 @@ func runCall(ctx context.Context, st *LoadState, p CallParams, principal string)
 	if err := c.idle(cctx, 500*time.Millisecond, nil); err != nil {
 		return fail("conn_lost", err)
 	}
-	for turn := 0; (p.Turns == 0 || turn < p.Turns) && ctx.Err() == nil; turn++ {
+	for turn := 0; (targetTurns == 0 || turn < targetTurns) && ctx.Err() == nil; turn++ {
+		if !callDeadline.IsZero() && time.Now().After(callDeadline) {
+			break
+		}
+		if chaosMode != "" && turn == 0 {
+			switch chaosMode {
+			case "tcp_abort":
+				_ = c.pace(cctx, p.Clip[:min(chunkBytes*2, len(p.Clip))])
+				st.recordChaos("tcp_abort")
+				conn.CloseNow()
+				return nil
+			case "malformed_frame":
+				st.recordChaos("malformed_frame")
+				_ = conn.Write(context.Background(), websocket.MessageBinary, []byte{0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04})
+				time.Sleep(100 * time.Millisecond)
+				conn.CloseNow()
+				return nil
+			case "stalled_consumer":
+				st.recordChaos("stalled_consumer")
+				rcancel() // kill reader so client stops reading
+				for off := 0; off < min(len(p.Clip), chunkBytes*10); off += chunkBytes {
+					chunk := p.Clip[off : off+chunkBytes]
+					_ = c.pace(cctx, chunk)
+				}
+				time.Sleep(1 * time.Second)
+				conn.CloseNow()
+				return nil
+			}
+		}
 		for len(c.audioCh) > 0 {
 			<-c.audioCh
 		}

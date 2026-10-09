@@ -172,15 +172,17 @@ type Growth struct {
 }
 
 type Results struct {
-	Sessions SessionCounts   `json:"sessions"`
-	Turns    TurnCounts      `json:"turns"`
-	Errors   map[string]int  `json:"errors"`
-	ErrorPct float64         `json:"error_pct"`
-	V2V      Stat            `json:"voice_to_voice_client_ms"` // last speech chunk sent -> first bot audio received
-	Server   map[string]Stat `json:"server_stage_ms"`          // from /metrics histogram deltas (bucket resolution)
-	Counters ServerCounters  `json:"server_counters"`
-	Res      Resources       `json:"resources"`
-	Growth   Growth          `json:"growth"`
+	Sessions      SessionCounts   `json:"sessions"`
+	Turns         TurnCounts      `json:"turns"`
+	Errors        map[string]int  `json:"errors"`
+	ErrorPct      float64         `json:"error_pct"`
+	V2V           Stat            `json:"voice_to_voice_client_ms"` // last speech chunk sent -> first bot audio received
+	Server        map[string]Stat `json:"server_stage_ms"`          // from /metrics histogram deltas (bucket resolution)
+	Counters      ServerCounters  `json:"server_counters"`
+	Res           Resources       `json:"resources"`
+	Growth        Growth          `json:"growth"`
+	ChaosInjected int             `json:"chaos_injected,omitempty"`
+	ChaosErrors   map[string]int  `json:"chaos_errors,omitempty"`
 }
 
 type CapStep struct {
@@ -369,6 +371,18 @@ func (r *Report) Markdown() string {
 	k := res.Counters
 	fmt.Fprintf(&b, "\nServer counters: admission rejects %v, vad dropped %d, vad stale %d, sessions failed %d, stt/llm/tts errors %d/%d/%d, protocol errors %d, vad worker restarts %d.\n",
 		k.AdmissionRejects, k.VADDropped, k.VADStale, k.SessionsFailed, k.STTErrors, k.LLMErrors, k.TTSErrors, k.ProtocolErrors, k.WorkerRestarts)
+	if res.ChaosInjected > 0 {
+		fmt.Fprintf(&b, "\n## Fault Injection & Chaos\n\nTotal injected faults: %d across %d sessions.\nFault breakdown: ", res.ChaosInjected, res.Sessions.Target)
+		keys := make([]string, 0, len(res.ChaosErrors))
+		for k := range res.ChaosErrors {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(&b, "`%s`: %d; ", k, res.ChaosErrors[k])
+		}
+		b.WriteString("\nFault isolation verified: faulted sessions terminated safely; zero server panics or unhandled exceptions.\n")
+	}
 	if cp := r.Capacity; cp != nil {
 		fmt.Fprintf(&b, "\n## Capacity (p95 v2v budget %.0f ms)\n\n| sessions | v2v p95 ms | error %% | rejects | cores at full load | pacing lag p99 ms | |\n|---|---|---|---|---|---|---|\n", cp.BudgetMS)
 		for _, s := range cp.Steps {

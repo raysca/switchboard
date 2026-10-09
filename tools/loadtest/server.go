@@ -63,6 +63,8 @@ type ServerOpts struct {
 type Server struct {
 	cmd              *exec.Cmd
 	PublicURL, Admin string
+	MetricsURL       string // metrics/probe base URL (default: Admin)
+	ContainerName    string // optional docker container name for resource stats
 	key              string // management API key; never printed or logged
 	LogPath          string
 	done             chan struct{}
@@ -191,7 +193,55 @@ func StartServer(ctx context.Context, o ServerOpts) (*Server, error) {
 	return nil, fmt.Errorf("server not ready in 60s (log: %s)", s.LogPath)
 }
 
-func (s *Server) PID() int { return s.cmd.Process.Pid }
+// ConnectTarget connects to an existing or containerized server under test.
+func ConnectTarget(ctx context.Context, targetURL, adminURL, metricsURL, apiKey, container string) (*Server, error) {
+	if !strings.HasPrefix(adminURL, "http://") && !strings.HasPrefix(adminURL, "https://") {
+		adminURL = "http://" + adminURL
+	}
+	if metricsURL != "" && !strings.HasPrefix(metricsURL, "http://") && !strings.HasPrefix(metricsURL, "https://") {
+		metricsURL = "http://" + metricsURL
+	}
+	if metricsURL == "" {
+		metricsURL = adminURL
+	}
+	targetURL = strings.TrimPrefix(targetURL, "ws://")
+	targetURL = strings.TrimPrefix(targetURL, "http://")
+	targetURL = strings.TrimSuffix(targetURL, "/ws")
+
+	s := &Server{
+		PublicURL:     targetURL,
+		Admin:         adminURL,
+		MetricsURL:    metricsURL,
+		key:           apiKey,
+		ContainerName: container,
+		cpuSeen:       map[int]float64{},
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		if r, err := client.Get(metricsURL + "/ready"); err == nil {
+			r.Body.Close()
+			if r.StatusCode == 200 {
+				return s, nil
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("target server at %s (/ready) not ready after 60s", metricsURL)
+}
+
+func (s *Server) PID() int {
+	if s.cmd != nil && s.cmd.Process != nil {
+		return s.cmd.Process.Pid
+	}
+	return 0
+}
 
 // Stop sends SIGTERM to the group, waits for graceful exit, then SIGKILLs the group.
 func (s *Server) Stop() {
@@ -308,8 +358,12 @@ type Snapshot struct {
 }
 
 func (s *Server) Scrape() (*Snapshot, error) {
+	baseURL := s.MetricsURL
+	if baseURL == "" {
+		baseURL = s.Admin
+	}
 	c := http.Client{Timeout: 5 * time.Second}
-	resp, err := c.Get(s.Admin + "/metrics")
+	resp, err := c.Get(baseURL + "/metrics")
 	if err != nil {
 		return nil, err
 	}
@@ -400,6 +454,31 @@ func treePIDs(psOut string, root int) (pids []int, rss map[int]float64, cpu map[
 }
 
 func (s *Server) Proc() ProcStats {
+	if s.ContainerName != "" {
+		out, err := execOutput("docker", "exec", s.ContainerName, "ps", "-axo", "pid=,ppid=,rss=,time=")
+		if err == nil {
+			pids, rss, cpu := treePIDs(out, 1)
+			var st ProcStats
+			s.mu.Lock()
+			for _, p := range pids {
+				st.RSSMB += rss[p]
+				s.cpuSeen[p] = max(s.cpuSeen[p], cpu[p])
+			}
+			for _, c := range s.cpuSeen {
+				st.CPUSec += c
+			}
+			s.mu.Unlock()
+			if fdOut, err := execOutput("docker", "exec", s.ContainerName, "sh", "-c", "ls -1 /proc/[0-9]*/fd 2>/dev/null | wc -l"); err == nil {
+				if fds, err := strconv.Atoi(strings.TrimSpace(fdOut)); err == nil {
+					st.FDs = fds
+				}
+			}
+			return st
+		}
+	}
+	if s.cmd == nil || s.cmd.Process == nil {
+		return ProcStats{}
+	}
 	out, err := execOutput("ps", "-axo", "pid=,ppid=,rss=,time=")
 	if err != nil {
 		return ProcStats{}

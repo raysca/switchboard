@@ -34,6 +34,15 @@ type flags struct {
 	jsonOut, mdOut, compare, current string
 	tolScale                         float64
 	th                               Thresholds
+
+	// Target / Container server support
+	targetURL, adminURL, metricsURL string
+	apiKey, container               string
+
+	// Churn and Chaos flags
+	minSessDur, maxSessDur time.Duration
+	minTurns, maxTurns     int
+	chaosRate              float64
 }
 
 func parseFlags(args []string) (*flags, error) {
@@ -66,6 +75,17 @@ func parseFlags(args []string) (*flags, error) {
 	fs.Float64Var(&f.th.MaxRSSGrowthPct, "max-rss-growth-pct", 0, "fail when RSS grows more than this between first and last window (0 = off)")
 	fs.IntVar(&f.th.MaxGoroutineGrow, "max-goroutine-growth", -1, "fail when goroutines grow more than this (steady windows, or residual after drain; -1 = off)")
 	fs.Float64Var(&f.th.MaxErrorPct, "max-error-pct", 1, "fail when failed calls + turn timeouts exceed this percent")
+
+	fs.StringVar(&f.targetURL, "target-url", "", "connect to an existing server (e.g. 127.0.0.1:8080) instead of starting a local child")
+	fs.StringVar(&f.adminURL, "admin-url", "", "management API URL for -target-url (e.g. http://127.0.0.1:9090)")
+	fs.StringVar(&f.metricsURL, "metrics-url", "", "metrics/probe URL for -target-url (e.g. http://127.0.0.1:9092, default: admin-url)")
+	fs.StringVar(&f.apiKey, "api-key", "perf-test-mgmt-key-32-bytes-long!", "management API key for -target-url")
+	fs.StringVar(&f.container, "container", "", "docker container name (e.g. govoice-perf) to collect container metrics")
+	fs.DurationVar(&f.minSessDur, "min-session-dur", 0, "minimum session duration for churn simulation (e.g. 30s)")
+	fs.DurationVar(&f.maxSessDur, "max-session-dur", 0, "maximum session duration for churn simulation (e.g. 60s)")
+	fs.IntVar(&f.minTurns, "min-turns", 0, "minimum turns per session for churn simulation")
+	fs.IntVar(&f.maxTurns, "max-turns", 0, "maximum turns per session for churn simulation")
+	fs.Float64Var(&f.chaosRate, "chaos-rate", 0, "probability of injected client faults per call (0.0 to 1.0, e.g. 0.15)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -210,17 +230,47 @@ func run(f *flags) (*Report, error) {
 			maxSess = max(maxSess, s)
 		}
 	}
-	fmt.Fprintln(os.Stderr, "loadtest: starting server (fakeproviders)...")
-	srv, err := StartServer(ctx, ServerOpts{Root: root, ServerBin: f.serverBin, WorkDir: work, VADMode: f.vadMode, TurnManager: f.turnManager, MaxSessions: maxSess * 2})
-	if err != nil {
-		return nil, err
+	var srv *Server
+	if f.targetURL != "" {
+		fmt.Fprintf(os.Stderr, "loadtest: connecting to target server at %s...\n", f.targetURL)
+		adminURL := f.adminURL
+		if adminURL == "" {
+			adminURL = "http://" + f.targetURL
+		}
+		metricsURL := f.metricsURL
+		if metricsURL == "" {
+			metricsURL = adminURL
+		}
+		srv, err = ConnectTarget(ctx, f.targetURL, adminURL, metricsURL, f.apiKey, f.container)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		fmt.Fprintln(os.Stderr, "loadtest: starting server (fakeproviders)...")
+		srv, err = StartServer(ctx, ServerOpts{Root: root, ServerBin: f.serverBin, WorkDir: work, VADMode: f.vadMode, TurnManager: f.turnManager, MaxSessions: maxSess * 2})
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer srv.Stop() // also runs on panic; signal handling cancels ctx, which unwinds here
 	agent, err := srv.Provision()
 	if err != nil {
 		return nil, err
 	}
-	cp := CallParams{IdleRSSMB: srv.Proc().RSSMB, Server: srv, AgentID: agent, Clip: clip, Turns: f.turns, Think: f.think, TurnLimit: f.turnLimit}
+	cp := CallParams{
+		IdleRSSMB:   srv.Proc().RSSMB,
+		Server:      srv,
+		AgentID:     agent,
+		Clip:        clip,
+		Turns:       f.turns,
+		MinTurns:    f.minTurns,
+		MaxTurns:    f.maxTurns,
+		MinDuration: f.minSessDur,
+		MaxDuration: f.maxSessDur,
+		Think:       f.think,
+		TurnLimit:   f.turnLimit,
+		ChaosRate:   f.chaosRate,
+	}
 
 	rep := &Report{SchemaVersion: SchemaVersion, Kind: "govoice-loadtest", StartedAt: time.Now(), Machine: thisMachine()}
 	rep.Config = Config{Mode: "load", Sessions: f.sessions, DurationS: f.duration.Seconds(), RampS: f.ramp.Seconds(), TurnsPerSession: f.turns,
@@ -440,6 +490,15 @@ func analyze(st *LoadState, idle, final *Snapshot, idleProc, finalProc ProcStats
 	r.Sessions.Target, r.Sessions.MaxConcurrent = target, int(st.max.Load())
 	if att := r.Turns.Attempted + r.Sessions.Failed + r.Sessions.Rejected; att > 0 {
 		r.ErrorPct = round2(float64(r.Turns.Timeouts+r.Sessions.Failed+r.Sessions.Rejected) * 100 / float64(att))
+	}
+	if st.chaosInjected.Load() > 0 {
+		r.ChaosInjected = int(st.chaosInjected.Load())
+		st.mu.Lock()
+		r.ChaosErrors = make(map[string]int, len(st.chaosErrs))
+		for k, v := range st.chaosErrs {
+			r.ChaosErrors[k] = v
+		}
+		st.mu.Unlock()
 	}
 	// server stage latency from histogram deltas
 	for stage, fb := range final.Buckets {

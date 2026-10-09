@@ -271,3 +271,59 @@ func TestSampleIntervalAutoAndSoakMinimum(t *testing.T) {
 		t.Errorf("short soak: err %v, want a 'too short' message", err)
 	}
 }
+
+func TestParseFlagsChurnAndChaos(t *testing.T) {
+	args := []string{
+		"-target-url", "127.0.0.1:8080",
+		"-admin-url", "http://127.0.0.1:9090",
+		"-metrics-url", "http://127.0.0.1:9092",
+		"-container", "govoice-perf",
+		"-min-session-dur", "30s",
+		"-max-session-dur", "60s",
+		"-min-turns", "4",
+		"-max-turns", "8",
+		"-chaos-rate", "0.15",
+	}
+	f, err := parseFlags(args)
+	if err != nil {
+		t.Fatalf("parseFlags: %v", err)
+	}
+	if f.targetURL != "127.0.0.1:8080" || f.adminURL != "http://127.0.0.1:9090" || f.metricsURL != "http://127.0.0.1:9092" {
+		t.Errorf("unexpected target URLs: %+v", f)
+	}
+	if f.container != "govoice-perf" {
+		t.Errorf("unexpected container: %s", f.container)
+	}
+	if f.minSessDur != 30*time.Second || f.maxSessDur != 60*time.Second {
+		t.Errorf("unexpected churn durations: %v, %v", f.minSessDur, f.maxSessDur)
+	}
+	if f.minTurns != 4 || f.maxTurns != 8 {
+		t.Errorf("unexpected turn limits: %d, %d", f.minTurns, f.maxTurns)
+	}
+	if f.chaosRate != 0.15 {
+		t.Errorf("unexpected chaos rate: %v", f.chaosRate)
+	}
+}
+
+func TestChaosRecordingAndMarkdown(t *testing.T) {
+	st := newLoadState()
+	st.recordChaos("tcp_abort")
+	st.recordChaos("malformed_frame")
+	st.recordChaos("stalled_consumer")
+
+	snap := &Snapshot{Gauges: map[string]float64{}, Buckets: map[string]map[float64]float64{}, Sum: map[string]float64{}, Count: map[string]float64{}, Rejects: map[string]float64{}}
+	res := analyze(st, snap, snap, ProcStats{}, ProcStats{}, nil, Sample{}, time.Minute, time.Second, time.Second, 10, false)
+
+	if res.ChaosInjected != 3 {
+		t.Errorf("expected 3 chaos injected, got %d", res.ChaosInjected)
+	}
+	if res.ChaosErrors["tcp_abort"] != 1 || res.ChaosErrors["malformed_frame"] != 1 || res.ChaosErrors["stalled_consumer"] != 1 {
+		t.Errorf("unexpected chaos errors: %+v", res.ChaosErrors)
+	}
+
+	rep := &Report{Results: *res, Config: Config{Mode: "load", Sessions: 10}}
+	md := rep.Markdown()
+	if !strings.Contains(md, "Fault Injection & Chaos") || !strings.Contains(md, "tcp_abort") {
+		t.Errorf("expected chaos section in markdown, got:\n%s", md)
+	}
+}

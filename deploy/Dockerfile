@@ -27,9 +27,10 @@ ENV CGO_ENABLED=1
 # agents that need a provider missing from the build fail startup in production.
 ARG VERSION=dev
 ARG COMMIT=unknown
+ARG BUILD_TAGS=xaispeech
 RUN go build -trimpath -ldflags="-s -w" -o /src/bin/vadworker ./cmd/vadworker && \
     go build -trimpath -ldflags="-s -w" -o /src/bin/turnworker ./cmd/turnworker && \
-    go build -trimpath -tags xaispeech -ldflags="-s -w -X govoice/server.Version=${VERSION} -X govoice/server.Commit=${COMMIT}" -o /src/bin/server ./cmd/server
+    go build -trimpath -tags "${BUILD_TAGS}" -ldflags="-s -w -X govoice/server.Version=${VERSION} -X govoice/server.Commit=${COMMIT}" -o /src/bin/server ./cmd/server
 
 RUN test -f third_party/silero_vad.onnx && \
     sha256sum third_party/silero_vad.onnx | grep 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
@@ -40,7 +41,7 @@ RUN test -f third_party/smart_turn_v3.2_cpu.onnx && \
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates tini curl libgomp1 && \
+    apt-get install -y --no-install-recommends ca-certificates tini curl libgomp1 procps && \
     rm -rf /var/lib/apt/lists/*
 
 ARG ORT_VERSION=1.29.0
@@ -87,6 +88,7 @@ RUN mkdir -p /tmp /var/log/govoice && \
 USER govoice:govoice
 
 EXPOSE 8080
+EXPOSE 9090
 # Probe listener (/health /ready /metrics). The admin listener (9090) is container loopback only.
 EXPOSE 9092
 

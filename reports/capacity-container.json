@@ -1,0 +1,321 @@
+{
+  "schema_version": 1,
+  "kind": "govoice-loadtest",
+  "started_at": "2026-10-09T20:38:17.469204+01:00",
+  "machine": {
+    "os": "darwin",
+    "arch": "arm64",
+    "cpus": 12,
+    "go": "go1.27.1",
+    "cpu_model": "Apple M4 Pro",
+    "machine_specific": true
+  },
+  "config": {
+    "mode": "capacity",
+    "sessions": 24,
+    "duration_s": 20,
+    "ramp_s": 0,
+    "turns_per_session": 5,
+    "think_time_ms": 1000,
+    "speech_clip": "e2e/fixtures/voice-debug.wav",
+    "clip_speech_ms": 1600,
+    "vad_mode": "process",
+    "turn_manager": false
+  },
+  "results": {
+    "sessions": {
+      "target": 24,
+      "max_concurrent": 24,
+      "started": 25,
+      "completed": 1,
+      "failed": 0,
+      "rejected": 0
+    },
+    "turns": {
+      "attempted": 120,
+      "completed": 110,
+      "timeouts": 0
+    },
+    "errors": {},
+    "error_pct": 0,
+    "voice_to_voice_client_ms": {
+      "n": 110,
+      "p50_ms": 944.109666,
+      "p95_ms": 965.084209,
+      "p99_ms": 965.497041,
+      "max_ms": 966.568958,
+      "mean_ms": 949.7499075999996
+    },
+    "server_stage_ms": {
+      "llm_ttft": {
+        "n": 111,
+        "p50_ms": 25,
+        "p95_ms": 47.5,
+        "p99_ms": 49.5,
+        "max_ms": 50,
+        "mean_ms": 0.05
+      },
+      "startup": {
+        "n": 25,
+        "p50_ms": 25,
+        "p95_ms": 47.5,
+        "p99_ms": 49.5,
+        "max_ms": 50,
+        "mean_ms": 0
+      },
+      "stt_final": {
+        "n": 111,
+        "p50_ms": 250,
+        "p95_ms": 295,
+        "p99_ms": 299,
+        "max_ms": 300,
+        "mean_ms": 200.59
+      },
+      "tts_ttfb": {
+        "n": 111,
+        "p50_ms": 25,
+        "p95_ms": 47.5,
+        "p99_ms": 49.5,
+        "max_ms": 50,
+        "mean_ms": 0.2
+      },
+      "voice_to_voice": {
+        "n": 111,
+        "p50_ms": 250,
+        "p95_ms": 295,
+        "p99_ms": 299,
+        "max_ms": 300,
+        "mean_ms": 201.3
+      }
+    },
+    "server_counters": {
+      "admission_rejects": {},
+      "vad_dropped_chunks": 0,
+      "vad_stale_chunks": 0,
+      "sessions_failed": 0,
+      "leaked_work": 0,
+      "leaked_sessions": 0,
+      "protocol_errors": 0,
+      "stt_errors": 0,
+      "llm_errors": 0,
+      "tts_errors": 0,
+      "vad_worker_restarts": 0
+    },
+    "resources": {
+      "rss_idle_mb": 236.33,
+      "rss_peak_mb": 235.71,
+      "rss_steady_mb": 220.34,
+      "mb_per_session": 0,
+      "cpu_seconds": 11,
+      "cores_avg": 0.55,
+      "session_minutes": 7.54,
+      "cpu_s_per_session_min": 1.46,
+      "goroutines_idle": 19,
+      "goroutines_peak": 331,
+      "goroutines_after_drain": 19,
+      "heap_peak_mb": 31.62,
+      "fds_idle": 84,
+      "fds_peak": 113,
+      "fds_after_drain": 84,
+      "client_pacing_lag_ms": {
+        "n": 22621,
+        "p50_ms": 1,
+        "p95_ms": 1,
+        "p99_ms": 2,
+        "max_ms": 5,
+        "mean_ms": 0
+      }
+    },
+    "growth": {
+      "window_s": 4,
+      "rss_pct": 13.3,
+      "heap_pct": 130.24,
+      "goroutines": 0,
+      "goroutines_residual_after_drain": 0,
+      "fds": 0,
+      "valid": true
+    }
+  },
+  "capacity": {
+    "p95_v2v_budget_ms": 1117,
+    "steps": [
+      {
+        "sessions": 4,
+        "v2v_p95_ms": 966.56,
+        "error_pct": 0,
+        "rejects": 0,
+        "cores_at_full_load": 0.05,
+        "pacing_lag_p99_ms": 5,
+        "pass": true
+      },
+      {
+        "sessions": 8,
+        "v2v_p95_ms": 965.31,
+        "error_pct": 0,
+        "rejects": 0,
+        "cores_at_full_load": 0.25,
+        "pacing_lag_p99_ms": 5,
+        "pass": true
+      },
+      {
+        "sessions": 16,
+        "v2v_p95_ms": 965.43,
+        "error_pct": 0,
+        "rejects": 0,
+        "cores_at_full_load": 0.36,
+        "pacing_lag_p99_ms": 5,
+        "pass": true
+      },
+      {
+        "sessions": 24,
+        "v2v_p95_ms": 965.08,
+        "error_pct": 0,
+        "rejects": 0,
+        "cores_at_full_load": 0.58,
+        "pacing_lag_p99_ms": 2,
+        "pass": true
+      }
+    ],
+    "max_sessions_at_budget": 24,
+    "cores_used_at_max": 0.58,
+    "sessions_per_core": 41.38,
+    "note": "Fake providers, localhost, load generator on the same machine as the server, one real speech clip: framework cost only, an upper bound for real deployments."
+  },
+  "verdict": {
+    "pass": true,
+    "checks": [
+      {
+        "name": "error_pct",
+        "value": 0,
+        "limit": 1,
+        "pass": true,
+        "note": "failed calls + turn timeouts over attempts"
+      },
+      {
+        "name": "admission_rejects",
+        "value": 0,
+        "limit": 0,
+        "pass": true,
+        "note": "limits are set far above -sessions; any reject is a finding"
+      },
+      {
+        "name": "leaked_work_sessions",
+        "value": 0,
+        "limit": 0,
+        "pass": true
+      },
+      {
+        "name": "server_sessions_failed",
+        "value": 0,
+        "limit": 0,
+        "pass": true,
+        "note": "server-side call failures (e.g. slow-client terminations)"
+      },
+      {
+        "name": "vad_worker_restarts",
+        "value": 0,
+        "limit": 0,
+        "pass": true
+      },
+      {
+        "name": "vad_dropped_chunks",
+        "value": 0,
+        "limit": 0,
+        "pass": true,
+        "note": "VAD overload drops audio"
+      }
+    ]
+  },
+  "samples": [
+    {
+      "t_s": 2.055402208,
+      "active_sessions": 20,
+      "goroutines": 282,
+      "heap_mb": 11.798782348632812,
+      "rss_mb": 203.58984375,
+      "cpu_s": 14,
+      "fds": 105
+    },
+    {
+      "t_s": 4.060991708,
+      "active_sessions": 24,
+      "goroutines": 331,
+      "heap_mb": 13.734222412109375,
+      "rss_mb": 204.02734375,
+      "cpu_s": 18,
+      "fds": 108
+    },
+    {
+      "t_s": 6.060245333,
+      "active_sessions": 24,
+      "goroutines": 331,
+      "heap_mb": 11.029426574707031,
+      "rss_mb": 208.0390625,
+      "cpu_s": 18,
+      "fds": 108
+    },
+    {
+      "t_s": 8.071755958,
+      "active_sessions": 24,
+      "goroutines": 331,
+      "heap_mb": 22.33807373046875,
+      "rss_mb": 211.85546875,
+      "cpu_s": 18,
+      "fds": 108
+    },
+    {
+      "t_s": 10.07866425,
+      "active_sessions": 24,
+      "goroutines": 331,
+      "heap_mb": 27.695465087890625,
+      "rss_mb": 216.53125,
+      "cpu_s": 19,
+      "fds": 108
+    },
+    {
+      "t_s": 12.079555333,
+      "active_sessions": 24,
+      "goroutines": 331,
+      "heap_mb": 29.10211181640625,
+      "rss_mb": 220.34375,
+      "cpu_s": 20,
+      "fds": 113
+    },
+    {
+      "t_s": 14.087115458,
+      "active_sessions": 24,
+      "goroutines": 331,
+      "heap_mb": 23.64849090576172,
+      "rss_mb": 222.76171875,
+      "cpu_s": 23,
+      "fds": 108
+    },
+    {
+      "t_s": 16.073631833,
+      "active_sessions": 24,
+      "goroutines": 331,
+      "heap_mb": 20.346031188964844,
+      "rss_mb": 227.12890625,
+      "cpu_s": 24,
+      "fds": 108
+    },
+    {
+      "t_s": 18.075294958,
+      "active_sessions": 24,
+      "goroutines": 331,
+      "heap_mb": 22.851097106933594,
+      "rss_mb": 230.89453125,
+      "cpu_s": 24,
+      "fds": 108
+    },
+    {
+      "t_s": 20.085371708,
+      "active_sessions": 19,
+      "goroutines": 244,
+      "heap_mb": 31.621620178222656,
+      "rss_mb": 235.71484375,
+      "cpu_s": 24,
+      "fds": 86
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+# Docker Compose definition for zero-cost performance, soak, and chaos testing
+# Server runs with fakeproviders in a resource-constrained container (2 CPU cores, 2GB RAM).
+
+services:
+  govoice-perf:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        BUILD_TAGS: fakeproviders
+    image: govoice:perf
+    container_name: govoice-perf
+    restart: unless-stopped
+    read_only: true
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512M
+    volumes:
+      - ../config/perf.yaml:/etc/govoice/perf.yaml:ro
+    environment:
+      - GOVOICE_ROOT=/opt/govoice
+      - GOVOICE_DEV_DIR=/tmp/govoice-dev
+      - GOVOICE_MANAGEMENT_API_KEY=perf-test-mgmt-key-32-bytes-long!
+      - TOKEN_SECRET=perf-test-token-secret-32-bytes-long!
+      - GOVOICE_FAKE_STT=audio
+    ports:
+      - "127.0.0.1:8080:8080" # Public WebSocket /ws and /health
+      - "127.0.0.1:9090:9090" # Admin / Management API (/api/v1)
+      - "127.0.0.1:9092:9092" # Probe / Metrics (/health, /ready, /metrics)
+    command: ["/opt/govoice/bin/server", "-config", "/etc/govoice/perf.yaml"]
+    networks:
+      - perf_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9092/ready"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+        reservations:
+          cpus: "1.0"
+          memory: 512M
+
+networks:
+  perf_net:
+    name: govoice_perf_net

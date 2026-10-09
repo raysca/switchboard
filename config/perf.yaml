@@ -1,0 +1,51 @@
+profile: development
+insecure_overrides:
+  allow_plain_ws_in_production: false
+
+public_listen_addr: "0.0.0.0:8080"
+admin_listen_addr: "0.0.0.0:9090"
+probe_listen_addr: "0.0.0.0:9092"
+
+origin_allowlist:
+  - "*"
+
+token:
+  secret_env: "TOKEN_SECRET"
+  secret: "perf-test-token-secret-32-bytes-long!"
+  issuer: "govoice-v1"
+  audience: "govoice-v1-client"
+  key_id: "v1"
+  max_lifetime: 5m
+  clock_skew: 30s
+  replay_cache_limit: 100000
+
+limits:
+  max_pending_handshakes: 200
+  max_sessions: 500
+  max_sessions_per_principal: 500
+  max_sessions_per_ip: 500
+  handshake_rate_per_ip: 100
+  upgrade_timeout: 10s
+  ready_timeout: 20s
+  max_call_duration: 4h
+  idle_timeout: 60s
+  drain_timeout: 10s
+
+vad:
+  mode: "process"
+  workers: 4
+  batch: 8
+  model_path: "third_party/silero_vad.onnx"
+  queue_cap: 8192
+
+observability:
+  log_level: "warn"
+  json_format: false
+  timeline_max_events: 100
+  timeline_ttl: 1m
+
+storage:
+  dialect: "sqlite"
+
+retention:
+  enabled: false
