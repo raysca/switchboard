@@ -413,7 +413,15 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 		}
 
 		if speakable(unitText) { // a stray closing quote or dash is not worth a TTS call
-			isFinalUnit := isLastChunk && len(buf) == 0
+			restSpeakable := false
+			if isLastChunk && len(buf) > 0 {
+				rest := buf
+				if !p.cfg.DisableTextCleaning {
+					rest = CleanTTSText(rest)
+				}
+				restSpeakable = speakable(rest)
+			}
+			isFinalUnit := isLastChunk && !restSpeakable
 			outs := []slackOut{{unitText, isFinalUnit}}
 			if p.slack != nil {
 				outs = p.slack.admit(unitText, p.firstUnitID == 0, isFinalUnit)

@@ -15,15 +15,15 @@ var (
 	// Links: keep link label, discard URL.
 	reLinks = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	// Bold + italic: ***text*** or ___text___
-	reBoldItalic = regexp.MustCompile(`\*{3}(.+?)\*{3}|_{3}(.+?)_{3}`)
+	reBoldItalic = regexp.MustCompile(`\*{3}([^\s*](?:.*?[^\s*])?)\*{3}|\b_{3}([^\s_](?:.*?[^\s_])?)_{3}\b`)
 	// Bold: **text** or __text__
-	reBold = regexp.MustCompile(`\*{2}(.+?)\*{2}|_{2}(.+?)_{2}`)
-	// Italic with asterisk: *text*
-	reItalicStar = regexp.MustCompile(`\*(.+?)\*`)
+	reBold = regexp.MustCompile(`\*{2}([^\s*](?:.*?[^\s*])?)\*{2}|\b_{2}([^\s_](?:.*?[^\s_])?)_{2}\b`)
+	// Italic with asterisk: *text* (requires non-space bounds to preserve math multiplication)
+	reItalicStar = regexp.MustCompile(`\*([^\s*](?:.*?[^\s*])?)\*`)
 	// Italic with underscore: only on word boundaries to preserve snake_case identifiers.
-	reItalicUnd = regexp.MustCompile(`(^|\s)_([^_]+)_(\s|[.,!?;:]|$)`)
+	reItalicUnd = regexp.MustCompile(`\b_([^\s_](?:.*?[^\s_])?)_\b`)
 	// Strikethrough: ~~text~~
-	reStrike = regexp.MustCompile(`~~(.+?)~~`)
+	reStrike = regexp.MustCompile(`~~([^\s~](?:.*?[^\s~])?)~~`)
 	// ATX headers: #, ##, ### at line starts
 	reHeaders = regexp.MustCompile(`(?m)^#{1,6}\s+`)
 	// Blockquotes: > at line starts
@@ -67,13 +67,7 @@ func CleanTTSText(text string) string {
 	text = reBoldItalic.ReplaceAllString(text, "$1$2")
 	text = reBold.ReplaceAllString(text, "$1$2")
 	text = reItalicStar.ReplaceAllString(text, "$1")
-	for {
-		next := reItalicUnd.ReplaceAllString(text, "$1$2$3")
-		if next == text {
-			break
-		}
-		text = next
-	}
+	text = reItalicUnd.ReplaceAllString(text, "$1")
 	text = reStrike.ReplaceAllString(text, "$1")
 
 	// 5. Structure: headers, blockquotes, horizontal rules, bullets

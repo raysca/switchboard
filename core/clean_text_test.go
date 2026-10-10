@@ -38,6 +38,11 @@ func TestCleanTTSText(t *testing.T) {
 			expected: "Please listen carefully now.",
 		},
 		{
+			name:     "math multiplication asterisks preserved",
+			input:    "Calculate 2 * 3 * 4 or $x * y * z$ please.",
+			expected: "Calculate 2 * 3 * 4 or $x * y * z$ please.",
+		},
+		{
 			name:     "italic underscores",
 			input:    "Please listen _carefully_ now.",
 			expected: "Please listen carefully now.",
@@ -236,6 +241,67 @@ func TestAssistantContextProcessor_TextCleaningIntegration(t *testing.T) {
 		}
 		if !foundBold {
 			t.Errorf("expected unit text to preserve **bold**, got: %+v", units)
+		}
+	})
+
+	t.Run("final chunk is unspeakable markdown", func(t *testing.T) {
+		store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 500})
+		cfg := DefaultAssistantContextConfig()
+		p := NewAssistantContextProcessor(store, cfg)
+		em := &cleanCaptureEmitter{}
+
+		if err := p.ProcessFrame(ctx, &UserMessageFrame{Turn: "turn-1", Gen: 1}, Downstream, em); err != nil {
+			t.Fatalf("UserMessageFrame failed: %v", err)
+		}
+		if err := p.ProcessFrame(ctx, &LLMTextDeltaFrame{Turn: "turn-1", Gen: 1, Delta: "Hello world. "}, Downstream, em); err != nil {
+			t.Fatalf("LLMTextDeltaFrame failed: %v", err)
+		}
+		if err := p.ProcessFrame(ctx, &LLMTextFrame{Turn: "turn-1", Gen: 1, Text: "Hello world. **"}, Downstream, em); err != nil {
+			t.Fatalf("LLMTextFrame failed: %v", err)
+		}
+
+		var units []*SynthesisUnitFrame
+		for _, f := range em.frames {
+			if su, ok := f.(*SynthesisUnitFrame); ok {
+				units = append(units, su)
+			}
+		}
+
+		if len(units) != 1 {
+			t.Fatalf("expected exactly 1 synthesis unit, got %d", len(units))
+		}
+
+		// Unit 1 was streamed on delta, so OutputTurnFinalFrame must be sent to finalize the turn
+		var turnFinal *OutputTurnFinalFrame
+		for _, f := range em.frames {
+			if otf, ok := f.(*OutputTurnFinalFrame); ok {
+				turnFinal = otf
+			}
+		}
+		if turnFinal == nil {
+			t.Fatal("expected OutputTurnFinalFrame to be sent for unit 1, got nil")
+		}
+		if turnFinal.UnitID != units[0].UnitID {
+			t.Errorf("expected OutputTurnFinalFrame UnitID %d, got %d", units[0].UnitID, turnFinal.UnitID)
+		}
+
+		// Complete playback of unit 1
+		if err := p.ProcessFrame(ctx, &WriteCompletionFrame{Turn: "turn-1", Gen: 1, UnitID: units[0].UnitID, IsFinal: true}, Downstream, em); err != nil {
+			t.Fatalf("WriteCompletionFrame failed: %v", err)
+		}
+
+		// Verify AssistantMessageFrame was committed
+		var asstMsg *AssistantMessageFrame
+		for _, f := range em.frames {
+			if am, ok := f.(*AssistantMessageFrame); ok {
+				asstMsg = am
+			}
+		}
+		if asstMsg == nil {
+			t.Fatal("expected AssistantMessageFrame to be committed, got nil")
+		}
+		if asstMsg.Content != "Hello world." {
+			t.Errorf("expected committed content 'Hello world.', got %q", asstMsg.Content)
 		}
 	})
 }
