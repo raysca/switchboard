@@ -42,22 +42,9 @@ func (s *server) provision(p Profile, env func(string) string, mcpURL string) (s
 	if err != nil {
 		return "", err
 	}
-	var keys []string
-	for k := range secrets {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	ids := map[string]string{}
-	for _, k := range keys {
-		theRedactor.add(secrets[k])
-		prov, _, _ := strings.Cut(k, "/")
-		if ids[k], err = s.id("providers/credentials", map[string]string{"provider": prov, "secret": secrets[k]}); err != nil {
-			return "", fmt.Errorf("store %s credential: %w", prov, err)
-		}
-	}
-	cred := map[string]string{}
-	for stage, k := range stageKey {
-		cred[stage] = ids[k]
+	cred, err := s.storeCreds(secrets, stageKey)
+	if err != nil {
+		return "", err
 	}
 	agent, err := s.id("agents", map[string]any{"name": "Live Check", "description": "livecheck " + p.Name, "config": agentConfig(p, cred)})
 	if err != nil {
@@ -69,6 +56,71 @@ func (s *server) provision(p Profile, env func(string) string, mcpURL string) (s
 		}
 	}
 	return agent, nil
+}
+
+// storeCreds stores each distinct secret once and returns stage -> credential id.
+func (s *server) storeCreds(secrets, stageKey map[string]string) (map[string]string, error) {
+	var keys []string
+	for k := range secrets {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	ids := map[string]string{}
+	for _, k := range keys {
+		theRedactor.add(secrets[k])
+		prov, _, _ := strings.Cut(k, "/")
+		id, err := s.id("providers/credentials", map[string]string{"provider": prov, "secret": secrets[k]})
+		if err != nil {
+			return nil, fmt.Errorf("store %s credential: %w", prov, err)
+		}
+		ids[k] = id
+	}
+	cred := map[string]string{}
+	for stage, k := range stageKey {
+		cred[stage] = ids[k]
+	}
+	return cred, nil
+}
+
+// failoverConfig is the standard agent with its primary LLM on a broken credential and one
+// fallback: the same provider and model on the real credential. Every failure class may fail
+// over, client_error included (a rejected key), so a call must be answered by the fallback.
+func failoverConfig(p Profile, cred map[string]string, badLLMCred string) map[string]any {
+	cfg := agentConfig(p, cred)
+	llm := cfg["llm"].(map[string]any)
+	llm["fallbacks"] = []map[string]any{{"provider": p.Stages.LLM.Provider, "model": p.Stages.LLM.Model, "credential_id": cred["llm"]}}
+	llm["credential_id"] = badLLMCred
+	cfg["failover"] = map[string]any{"on": []string{"client_error", "server_error", "timeout", "circuit_open"}}
+	return cfg
+}
+
+// brokenSecret keeps a key's length and prefix but changes its last characters, so the provider
+// rejects it as invalid instead of the server refusing to store it.
+func brokenSecret(s string) string {
+	if len(s) < 8 {
+		return s + "-invalid"
+	}
+	return s[:len(s)-4] + "zzzz"
+}
+
+// provisionFailover creates the failover agent for S13 and returns its id.
+func (s *server) provisionFailover(p Profile, env func(string) string) (string, error) {
+	secrets, stageKey, err := credPlan(p, env)
+	if err != nil {
+		return "", err
+	}
+	cred, err := s.storeCreds(secrets, stageKey)
+	if err != nil {
+		return "", err
+	}
+	bad := brokenSecret(secrets[stageKey["llm"]])
+	theRedactor.add(bad)
+	prov, _, _ := strings.Cut(stageKey["llm"], "/")
+	badID, err := s.id("providers/credentials", map[string]string{"provider": prov, "secret": bad})
+	if err != nil {
+		return "", fmt.Errorf("store broken %s credential: %w", prov, err)
+	}
+	return s.id("agents", map[string]any{"name": "Live Check Failover", "description": "livecheck failover " + p.Name, "config": failoverConfig(p, cred, badID)})
 }
 
 // attachTool registers the MCP server, discovers its tools and selects get_time for the agent.

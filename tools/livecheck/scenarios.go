@@ -206,6 +206,18 @@ var scenarios = []scenario{
 	{id: "S12", title: "server-side mute (ends the segment, muted speech unheard, no phantom after unmute)", class: classBase,
 		clips: []string{"pauseA", "pauseB"},
 		shape: func(*opts) shape { return shape{turns: 1, short: true} }, run: s12},
+	{id: "S13", title: "LLM failover to a real fallback (primary key rejected)", class: classFailover, clips: []string{"question"},
+		// one turn; the rejected primary request counts as one more LLM request
+		shape: func(*opts) shape { return shape{turns: 1, short: true, extraLLM: 1} },
+		na: func(p Profile, _ mode, _ *opts) string {
+			switch {
+			case p.Fake:
+				return "fake LLM accepts any key"
+			case p.Stages.LLM.Provider == "openai":
+				return "openai credentials are JSON (key + base URL); brokenSecret would make them unparseable"
+			}
+			return ""
+		}, run: s13},
 }
 
 func scenarioByID(id string) (scenario, bool) {
@@ -733,4 +745,28 @@ func s12(x *sctx, r *Result) {
 	c.quiet(3 * time.Second) // streams silence after unmute
 	r.check("no phantom segment after unmute", !c.has(tUnmute, "user-started-speaking"), "")
 	r.check("no rejected client message", !c.has(mark, "error"), "")
+}
+
+// s13: the primary LLM's key is rejected; the fallback (same provider, real key) answers.
+func s13(x *sctx, r *Result) {
+	c := x.c
+	before := x.srv.failovers()
+	c.quiet(400 * time.Millisecond)
+	mark := time.Now()
+	_, tEnd, err := c.stream(x.clips["question"])
+	if err != nil {
+		r.abort(redact(err))
+		return
+	}
+	ok := c.wait(20*time.Second, func() bool { return c.has(tEnd, "audio") })
+	r.check("answered through the fallback", ok, "")
+	c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+	said := c.texts(mark, "bot-llm-text", false)
+	r.m("reply", truncate(said, 90))
+	n := x.srv.failovers() - before
+	r.m("llm_failovers", n)
+	r.check("LLM failed over", n >= 1, "")
+	if x.content() {
+		r.check("answer is four", fourRe.MatchString(said), "")
+	}
 }

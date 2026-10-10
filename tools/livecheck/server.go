@@ -58,6 +58,9 @@ var (
 	// idle_timeout is the legacy data-silence deadline; with ping_interval set it is not used,
 	// which is what S8 proves: a muted client outlives idle_timeout.
 	classPing = serverClass{"ping", ""}
+	// classFailover runs S13 in its own server: its broken primary key must not open the
+	// process-wide breaker for the other scenarios.
+	classFailover = serverClass{"failover", ""}
 )
 
 const pingIdleTimeout = 3 * time.Second
@@ -383,6 +386,26 @@ func (s *server) requests() map[string]int {
 		}
 	}
 	return out
+}
+
+var failoverRe = regexp.MustCompile(`^voice_llm_failover_total\{[^}]*\} (\d+)`)
+
+// failovers is the server's total LLM failovers (voice_llm_failover_total), 0 if unreadable.
+func (s *server) failovers() int {
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Get(s.admin + "/metrics")
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	n := 0
+	for _, ln := range strings.Split(string(b), "\n") {
+		if m := failoverRe.FindStringSubmatch(ln); m != nil {
+			v, _ := strconv.Atoi(m[1])
+			n += v
+		}
+	}
+	return n
 }
 
 // requestTotal is the sum of requests(); ok is false (and n the last good value) when the scrape
