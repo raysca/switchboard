@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { AgentVoiceTest } from "./AgentVoiceTest";
@@ -428,6 +428,48 @@ describe("AgentVoiceTest", () => {
     expect(messages(RTVI_TYPE_PUSH_TO_TALK)).toEqual([
       { pressed: true }, { pressed: false }, { pressed: true }, { pressed: false },
     ]);
+  });
+
+  async function connectPushToTalk() {
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <AgentVoiceTest agent={createMockAgent()} client={createMockClient()} keyValue="mgmt-key-1"
+          audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Push to talk"));
+    await user.click(screen.getByRole("button", { name: "Start voice test" }));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    await waitFor(() => expect(ws.sentData.length).toBeGreaterThan(0));
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_READY, { version: "2.1.0" });
+    await waitFor(() => expect(screen.getByTestId("connection-state")).toHaveTextContent("READY"));
+    const presses = () =>
+      ws.sentData
+        .map((d) => decodeBinaryFrame(d))
+        .filter((f) => f?.kind === "message" && f.parsed?.type === RTVI_TYPE_PUSH_TO_TALK)
+        .map((f) => (f?.kind === "message" ? f.parsed?.data : null));
+    return { user, ws, talk: screen.getByTestId("ptt-btn"), presses };
+  }
+
+  it("push-to-talk: leaving the window while holding releases", async () => {
+    const { user, talk, presses } = await connectPushToTalk();
+    await user.pointer({ keys: "[MouseLeft>]", target: talk });
+    expect(talk).toHaveAttribute("aria-pressed", "true");
+    fireEvent.blur(window);
+    await waitFor(() => expect(talk).toHaveAttribute("aria-pressed", "false"));
+    expect(presses()).toEqual([{ pressed: true }, { pressed: false }]);
+  });
+
+  it("push-to-talk: a release over a closed socket still stops talking", async () => {
+    const { user, ws, talk } = await connectPushToTalk();
+    await user.pointer({ keys: "[MouseLeft>]", target: talk });
+    ws.readyState = 3; // CLOSED; the mock global has no WebSocket.* constants
+    await user.pointer({ keys: "[/MouseLeft]", target: talk });
+    expect(talk).toHaveAttribute("aria-pressed", "false");
   });
 
   it("hands-free calls show no hold-to-talk button", async () => {

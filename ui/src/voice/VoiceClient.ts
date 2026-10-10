@@ -389,9 +389,10 @@ export class VoiceClient {
   /** Push-to-talk: true when the hold-to-talk button goes down, false when it is released. */
   public setTalking(pressed: boolean): void {
     if (!this.state.pushToTalk || this.state.isTalking === pressed) return;
-    if (this.sendRTVI(RTVI_TYPE_PUSH_TO_TALK, encodePushToTalkFrame(pressed), { pressed })) {
-      this.updateState({ isTalking: pressed });
-    }
+    const sent = this.sendRTVI(RTVI_TYPE_PUSH_TO_TALK, encodePushToTalkFrame(pressed), { pressed });
+    // A release always stops talking here, even if the socket is gone; a press
+    // only counts once the server was told.
+    if (sent || !pressed) this.updateState({ isTalking: pressed });
   }
 
   /**

@@ -58,6 +58,14 @@ export function AgentVoiceTest({
     state.sessionState === "requesting_token" ||
     state.sessionState === "connecting";
 
+  // Alt-tab while holding: pointerup never arrives, so release on window blur.
+  useEffect(() => {
+    if (!state.isTalking) return;
+    const release = () => voiceClient.setTalking(false);
+    window.addEventListener("blur", release);
+    return () => window.removeEventListener("blur", release);
+  }, [state.isTalking, voiceClient]);
+
   const handleConnect = async () => {
     await voiceClient.connect({
       agentId: agent.id,
@@ -277,10 +285,13 @@ export function AgentVoiceTest({
                   className="action-button-small"
                   data-testid="ptt-btn"
                   aria-pressed={state.isTalking}
-                  onPointerDown={() => voiceClient.setTalking(true)}
+                  onPointerDown={(e) => {
+                    // Keep the press while the pointer drifts off the button.
+                    e.currentTarget.setPointerCapture?.(e.pointerId);
+                    voiceClient.setTalking(true);
+                  }}
                   onPointerUp={() => voiceClient.setTalking(false)}
                   onPointerCancel={() => voiceClient.setTalking(false)}
-                  onPointerLeave={() => voiceClient.setTalking(false)}
                   onBlur={() => voiceClient.setTalking(false)}
                   onKeyDown={(e) => {
                     if ((e.key === " " || e.key === "Enter") && !e.repeat) {
