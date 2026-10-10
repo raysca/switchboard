@@ -71,6 +71,42 @@ The codebase is strictly bifurcated into an independent **Core Library** and an 
 
 ---
 
+## Go Idioms & High-Throughput Engineering Standards
+
+To sustain hundreds of concurrent voice calls with sub-200ms interruption latency, all Go code must strictly conform to these engineering standards:
+
+### 1. Goroutine Lifecycle & Context Propagation
+- **Explicit Lifecycle:** Never spawn a goroutine without an unambiguous termination path. Every goroutine must select on `ctx.Done()` or a dedicated close/done channel.
+- **Supervisor Integration:** In `core/`, all session-scoped background tasks must be spawned via `session.Go(...)` so unhandled panics and lifecycle teardowns are coordinated by the session supervisor.
+- **No Context in Structs:** Never store a `context.Context` inside a struct field. Pass context as the first argument (`ctx context.Context`) to methods and functions.
+- **Immediate Defers:** Always invoke `defer cancel()` immediately after creating derived contexts (`context.WithTimeout`, `context.WithCancel`).
+
+### 2. Concurrency & Synchronization Hygiene
+- **Never Hold Locks Across I/O:** Never perform network I/O, database queries, disk writes, or blocking channel operations while holding a `sync.Mutex` or `sync.RWMutex`.
+- **Fast-Path Atomics:** On the hot audio streaming path (50 frames/sec per call), prefer `sync/atomic` primitives (`atomic.Uint64`, `atomic.Bool`, `atomic.Pointer`) over mutexes for generation checks, counters, and status flags.
+- **Channel Directionality:** Explicitly declare channel directions (`<-chan T` for receive-only, `chan<- T` for send-only) in function parameters and interface signatures.
+- **Producer-Only Closes:** Only the producer goroutine may close a channel. Never close a channel from the receiver side, and coordinate concurrent teardown with `sync.Once`.
+
+### 3. Allocation & Memory Efficiency on Hot Paths
+- **Zero-Allocation Audio Framing:** A single call processes 50 audio frames per second (20ms PCM chunks). At 300+ calls, that is >15,000 frames/sec. Avoid heap allocations on this path: reuse fixed buffers, slice existing arrays, and utilize `sync.Pool` where appropriate.
+- **Preallocate Capacities:** Always provide capacity hints when creating slices whose size or upper bound is known: `make([]T, 0, capacity)`.
+- **String Building:** Use `strings.Builder` with `b.Grow(...)` or `bytes.Buffer` for multi-fragment string assembly; never concatenate strings with `+` in loops.
+
+### 4. Monotonic Timing vs. Wall-Clock
+- **Always Use Monotonic Time:** Use monotonic timers (`time.Since`, `time.Until`, `time.Duration`) for calculating elapsed time, silence hangovers, and speech timeouts.
+- **Never Rely on Wall Clocks for Durations:** Avoid `time.Now().UnixNano()` for interval comparisons. Wall clocks jump during NTP adjustments, which corrupts turn-taking detectors and timeout loops.
+
+### 5. Error Handling & Panic Resilience
+- **Contextual Wrapping:** Wrap errors with actionable context using `fmt.Errorf("action description: %w", err)`.
+- **Idiomatic Inspection:** Use `errors.Is` and `errors.As` instead of direct equality (`err == ...`) or raw type assertions.
+- **Exported Sentinels:** Define package-level exported errors as `var Err... = errors.New(...)`.
+- **Crash Protection on Transports:** WebSocket frame writers and provider callbacks must protect against panics (`defer func() { if r := recover(); r != nil { ... } }()`) so an individual client anomaly cannot terminate the server daemon.
+
+### 6. Interface Philosophy
+- **Accept Interfaces, Return Concrete Structs:** Define small, focused interfaces at the consumer call site rather than declaring large producer god-interfaces.
+
+---
+
 ## Mandatory Code Review Workflow
 
 All engineering tasks, features, and refactors must conclude with an **independent agent review**:
