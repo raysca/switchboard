@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func TestGoogleSTTHalfCloseErrorCancelsAndReports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var errs int
+	var errs atomic.Int64
 	pipe, err := core.NewPipeline(proc, &core.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +85,7 @@ func TestGoogleSTTHalfCloseErrorCancelsAndReports(t *testing.T) {
 	}
 	session.OnOutput = func(f core.Frame) {
 		if _, ok := f.(*core.ErrorFrame); ok {
-			errs++
+			errs.Add(1)
 		}
 	}
 	if err := session.Start(); err != nil {
@@ -100,7 +101,7 @@ func TestGoogleSTTHalfCloseErrorCancelsAndReports(t *testing.T) {
 		t.Fatal("halfClose did not cancel after CloseSend error")
 	}
 	deadline := time.Now().Add(time.Second)
-	for errs == 0 {
+	for errs.Load() == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("halfClose did not emit an ErrorFrame")
 		}

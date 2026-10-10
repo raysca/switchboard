@@ -233,3 +233,32 @@ func TestXAISTTInterruptionLeavesDrainingUtterance(t *testing.T) {
 		return false
 	})
 }
+
+func TestXAISTTInterruptionAdmitsDetachedSpeechFinal(t *testing.T) {
+	h := newSTTHarness(t)
+	h.send(t, &core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.send(t, &core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000})
+	h.ws.recv <- recvItem{msg: &STTMessage{Type: "transcript.created"}}
+	h.ws.recv <- recvItem{msg: &STTMessage{Type: "transcript.partial", Text: "hello there"}}
+	waitFor(t, "audio", func() bool { return len(h.ws.snapshot()) == 1 })
+	time.Sleep(50 * time.Millisecond)
+	h.send(t, &core.UserStoppedSpeakingFrame{})
+	waitFor(t, "done", func() bool { return len(h.ws.snapshot()) == 2 })
+	h.session.IncrementGeneration()
+	h.send(t, &core.InterruptionFrame{Gen: 2})
+	h.p.mu.Lock()
+	n := len(h.p.draining)
+	h.p.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("draining = %d, want 1 after interruption", n)
+	}
+	h.ws.recv <- recvItem{msg: &STTMessage{Type: "transcript.partial", Text: "hello there", SpeechFinal: true}}
+	waitFor(t, "final", func() bool {
+		for _, text := range h.finalTexts() {
+			if text == "hello there" {
+				return true
+			}
+		}
+		return false
+	})
+}

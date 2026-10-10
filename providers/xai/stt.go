@@ -772,7 +772,19 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 					HasStability:   false,
 					Provider:       "xai",
 				}
-				if err := p.session.Reenter(frame, core.Downstream, p.index+1, turnGen); err == nil && isProviderFinal {
+				// A detached stream's speech_final is admitted at the current
+				// generation so a later barge-in does not drop it. The frame
+				// Gen stays the utterance generation. An active stream keeps
+				// its own generation.
+				admitGen := turnGen
+				if isUtteranceFinal {
+					p.mu.Lock()
+					if p.active != st {
+						admitGen = p.session.CurrentGeneration()
+					}
+					p.mu.Unlock()
+				}
+				if err := p.session.Reenter(frame, core.Downstream, p.index+1, admitGen); err == nil && isProviderFinal {
 					st.firstFinal(turn, turnGen)
 				}
 
