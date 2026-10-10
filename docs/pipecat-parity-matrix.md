@@ -166,6 +166,28 @@ Collected from the goalpulse record and re-checked against the code (G5 re-verif
 - **Different Silero model file** from Pipecat's bundled one; VAD decisions are not compared.
 - **Coverage of this matrix**: paired fixtures cover turn start/stop timing, mute, idle, DTMF aggregation, sentence splitting, interrupted-reply content and summarization cut points, each on one component with scripted frames. Tool-loop ordering, async tools, failover, VAD, filters, observability and operations rows are evidenced by go-voice tests only.
 
+## Remaining work toward production (priority order)
+
+Core library and server, transports aside. Re-ranked on 2026-10-10 after the mute, push-to-talk and hardening work. Live-provider evidence comes from automated tests on the critical paths below, not manual runs or a long soak.
+
+1. **Automated live tests on critical paths.** `tools/livecheck` (agent-level scenarios S1 to S10) and `tools/provtest` (stage conformance) exist but only run by hand (`make live-check`, `make provider-matrix`); no CI job runs them. Needed:
+   - A scheduled and manual-dispatch CI job with provider secrets and a hard call cap (`-max-calls`), running a critical-path subset per profile: S1 baseline, S2 barge-in, S6 tool call, S9 long reply.
+   - New scenarios for paths with no live coverage: push-to-talk (press, pause while held, release mid-word with `chirp_2`, press during bot speech); server-side mute (`set-muted` mid-utterance ends the turn, unmute opens no phantom segment); failover with a real fallback (primary forced to fail, fallback answers).
+   - First live runs for the never-run profiles: `deepgram-openai-cartesia`, `elevenlabs-google-elevenlabs`, `cartesia-nvidia`.
+2. **Churn at real call lengths.** The container churn run is one 90 s run (68 calls of 30 to 60 s, fake providers). Run 30 to 60 minutes of 2 to 3 minute calls in the container with fake providers, and check that goroutines and fds return to baseline independent of call count. Then a short churn slice against one real profile.
+3. **End-of-turn latency.** The VAD stop is fixed at 25 quiet chunks (about 0.7 to 0.8 s; Pipecat 0.2 s), and the turn manager adds 700 ms; live, about +0.6 s voice-to-voice. Make the VAD stop configurable, gate the speech timeout on the transcript, and decide the `turn.manager` default, measured with the item 1 tests.
+4. **Streaming TTS.** Google (`StreamingSynthesize`) and xAI (WebSocket) are unary: first audio waits for a whole sentence, and replies have gaps.
+5. **Cost visibility.** Usage (tokens, characters, requests) reaches traces only: add Prometheus counters. Attribute summary usage and cap summary output.
+6. **Multi-tenant resilience.** Per-tenant breaker keys (breakers are process-wide per stage). Report the active provider rather than `provider=failover`. One STT breaker pattern.
+7. **Recording privacy, if recording ships.** Encryption at rest, a played disclosure, and stopping on a mid-call agent disable.
+8. **Low-severity leftovers:**
+   - audit M1-06 to M1-09;
+   - the IPv6 /48 overflow-bucket residual;
+   - nginx 503 retry (M4-18);
+   - pinning the macOS ONNX Runtime sha256;
+   - tool-result sizing against the context budget.
+9. **Library-only code.** `Session.DebugDropped`, `ValidateToolPairing` and `AnalyzerStop` have no server caller: wire them or delete them.
+
 ## Missing versus Pipecat (ranked)
 
 Checked against `pipecat-impl/src/pipecat/services/` (73 entries: 62 vendor directories plus 11 base modules). Ranked by likely operator impact.
