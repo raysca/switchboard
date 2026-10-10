@@ -105,6 +105,8 @@ type Processor struct {
 	checkpointState [StateLen]float32 // parent-owned state checkpoint for crash recovery
 
 	speaking bool
+	muted    bool // input muted: ignore audio and results, so no segment opens
+	discard  bool // the in-flight result was submitted before a mute: drop it
 	above    int
 	below    int
 
@@ -175,6 +177,9 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 		if dir != core.Downstream {
 			return e.PushDirection(f, dir)
 		}
+		if p.muted {
+			return nil // queued before the mute; the session drops later audio itself
+		}
 
 		if p.cfg.PassAudio {
 			if err := e.Push(f); err != nil {
@@ -185,11 +190,43 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 		p.appendAudioSamples(ctx, v.Samples, v.Seq, v.Timestamp, e)
 		return p.trySubmit(e)
 
+	case *core.InputMutedStateFrame:
+		if err := p.setMuted(v.Muted, e); err != nil {
+			return err
+		}
+		return e.PushDirection(f, dir)
+
 	case *vadResultFrame:
 		return p.onTraceResult(v, e)
 	}
 
 	return e.PushDirection(f, dir)
+}
+
+// setMuted ends an open speech segment when the input is muted: muted audio
+// never arrives, so the quiet chunks that would end it never come and the
+// user's turn would hang. While muted nothing is buffered or detected.
+func (p *Processor) setMuted(muted bool, e core.Emitter) error {
+	if p.muted == muted {
+		return nil // a repeated mute or unmute changes nothing
+	}
+	p.muted = muted
+	if !muted {
+		// Start fresh: mid-speech recurrent state would open a phantom segment.
+		p.state, p.checkpointState, p.ctx = [StateLen]float32{}, [StateLen]float32{}, [ContextSamples]float32{}
+		return nil
+	}
+	p.discard = p.discard || p.busy
+	p.sampleBuf, p.pending, p.above, p.below = p.sampleBuf[:0], nil, 0, 0
+	if !p.speaking {
+		return nil
+	}
+	p.speaking = false
+	var gen uint64
+	if p.s != nil {
+		gen = p.s.CurrentGeneration()
+	}
+	return e.Push(&core.UserStoppedSpeakingFrame{Timestamp: time.Now(), Gen: gen})
 }
 
 func (p *Processor) appendAudioSamples(ctx context.Context, raw []byte, seq uint64, ts time.Time, e core.Emitter) {
@@ -327,6 +364,11 @@ func (p *Processor) onTraceResult(frame *vadResultFrame, e core.Emitter) error {
 	}()
 	p.busy = false
 
+	if p.discard {
+		// Submitted before a mute: its state is from speech the user muted.
+		p.discard = false
+		return p.trySubmit(e)
+	}
 	if j.Err != nil {
 		traceFailure = errors.New("vad_failure")
 		// Recovery from parent-owned state checkpoint:
@@ -346,6 +388,9 @@ func (p *Processor) onTraceResult(frame *vadResultFrame, e core.Emitter) error {
 }
 
 func (p *Processor) detect(prob float32, seq uint64, due time.Time, e core.Emitter, trace *vadJobTrace) error {
+	if p.muted {
+		return nil // a result for a chunk submitted before the mute
+	}
 	if !p.speaking {
 		if prob >= p.cfg.StartThresh {
 			p.above++
