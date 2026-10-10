@@ -224,6 +224,9 @@ down and `"pressed":false` on release. Speech only starts a turn while the
 button is held, pauses while holding do not end it, and release ends it.
 Pressing and speaking while the bot talks barges in. A call that did not opt
 in gets a non-fatal error for `push-to-talk`.
+Push-to-talk calls ignore `turn.stop`, `turn.min_words` and the smart-turn
+model, but `turn.mute` strategies still apply: with `always`, a press while
+the bot talks does not interrupt it.
 
 ### DTMF (keypad tones)
 

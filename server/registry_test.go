@@ -506,3 +506,34 @@ func TestPushToTalkCallInstallsTurnProcessor(t *testing.T) {
 		}
 	}
 }
+
+// A push-to-talk call never runs the smart-turn model, even on a server whose
+// turn.stop uses it, and builds whether or not the model is loaded.
+func TestPushToTalkCallSkipsSmartTurn(t *testing.T) {
+	for _, withModel := range []bool{true, false} {
+		reg := NewRegistry()
+		for _, stage := range []string{"stt", "llm", "tts"} {
+			reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		}
+		if withModel {
+			reg.SetTurnBackend(smartBackend{p: 0.9})
+		}
+		cfg := DefaultConfig(ProfileDevelopment)
+		cfg.Turn.Manager = true
+		cfg.Turn.Stop = []string{"turn-analyzer", "speech-timeout"}
+		cfg.Turn.MinWords = 3
+		vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+		call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, PushToTalk: true}
+		pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, &fakeTransportSink{})
+		if err != nil {
+			t.Fatalf("model=%t: %v", withModel, err)
+		}
+		procs := pipe.Processors()
+		if _, ok := procs[1].(*core.PassthroughProcessor); !ok {
+			t.Fatalf("model=%t: processor 1 is %T, want STT (no smart-turn tap)", withModel, procs[1])
+		}
+		if _, ok := procs[2].(*coreturn.Processor); !ok {
+			t.Fatalf("model=%t: processor 2 is %T, want the turn processor", withModel, procs[2])
+		}
+	}
+}

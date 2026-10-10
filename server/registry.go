@@ -565,33 +565,37 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	var turnTyped *coreturn.Processor
 	if cfg.Turn.Manager || call.PushToTalk {
 		mc := coreturn.DefaultConfig()
-		if cfg.Turn.MinWords > 0 {
-			mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.MinWordsStart(cfg.Turn.MinWords, true)}
-		}
-		var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
-		if slices.Contains(cfg.Turn.Stop, "turn-analyzer") && r.turnBackend != nil {
-			a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.StopSecs})
-			turnTap = a.Tap()
-			analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
-				return smartturn.Stop(a, base, cfg.Turn.Analyzer.StopSecs)
-			}
-		}
-		stop, err := turnStopDetector(cfg.Turn.Stop, cfg.Turn.SpeechTimeout, cfg.Turn.EagerGrace, analyzer)
-		if err != nil {
-			return fail(err)
-		}
+		var stop coreturn.TurnDetector
 		if call.PushToTalk {
-			// The button replaces voice detection for starting and ending turns;
+			// The button replaces voice detection for starting and ending turns,
+			// so the smart-turn model, the stop chain and min_words are unused.
+			// turn.mute strategies still apply: they are the operator's call.
 			// MaxTurnDuration still caps a held button.
 			mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.ExternalStart()}
 			stop = coreturn.StopChain(coreturn.ExternalStop())
+		} else {
+			if cfg.Turn.MinWords > 0 {
+				mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.MinWordsStart(cfg.Turn.MinWords, true)}
+			}
+			var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
+			if slices.Contains(cfg.Turn.Stop, "turn-analyzer") && r.turnBackend != nil {
+				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.StopSecs})
+				turnTap = a.Tap()
+				analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
+					return smartturn.Stop(a, base, cfg.Turn.Analyzer.StopSecs)
+				}
+			}
+			var err error
+			if stop, err = turnStopDetector(cfg.Turn.Stop, cfg.Turn.SpeechTimeout, cfg.Turn.EagerGrace, analyzer); err != nil {
+				return fail(err)
+			}
 		}
 		mute, err := coreturn.ParseMuteStrategies(cfg.Turn.Mute, muteTools)
 		if err != nil {
 			return fail(err)
 		}
 		opts := coreturn.ProcessorOptions{Detector: stop, Mute: mute, MaxMute: cfg.Turn.MaxMute, OnMuteDrop: r.onUserMuteDrop}
-		if cfg.Turn.MinWords > 0 {
+		if cfg.Turn.MinWords > 0 && !call.PushToTalk {
 			stt, count := call.STT.Provider, r.onMinWordsNoInterims
 			opts.OnFinalWithoutInterims = func() {
 				slog.Warn("turn.min_words is on but the STT sent no interim results: turns start (and barge-in happens) only when the final transcript arrives; use an STT with interim results or disable turn.min_words",
