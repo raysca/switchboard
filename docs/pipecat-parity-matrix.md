@@ -168,25 +168,36 @@ Collected from the goalpulse record and re-checked against the code (G5 re-verif
 
 ## Remaining work toward production (priority order)
 
-Core library and server, transports aside. Re-ranked on 2026-10-10 after the mute, push-to-talk and hardening work. Live-provider evidence comes from automated tests on the critical paths below, not manual runs or a long soak.
+Core library and server, transports aside. Re-ranked on 2026-10-10: live tests first, then the Pipecat gaps a caller notices, then library parity. Live-provider evidence comes from automated tests on critical paths, not manual runs or a long soak.
 
 1. **Automated live tests on critical paths.** `tools/livecheck` (agent-level scenarios S1 to S10) and `tools/provtest` (stage conformance) exist but only run by hand (`make live-check`, `make provider-matrix`); no CI job runs them. Needed:
    - A scheduled and manual-dispatch CI job with provider secrets and a hard call cap (`-max-calls`), running a critical-path subset per profile: S1 baseline, S2 barge-in, S6 tool call, S9 long reply.
    - New scenarios for paths with no live coverage: push-to-talk (press, pause while held, release mid-word with `chirp_2`, press during bot speech); server-side mute (`set-muted` mid-utterance ends the turn, unmute opens no phantom segment); failover with a real fallback (primary forced to fail, fallback answers).
    - First live runs for the never-run profiles: `deepgram-openai-cartesia`, `elevenlabs-google-elevenlabs`, `cartesia-nvidia`.
-2. **Churn at real call lengths.** The container churn run is one 90 s run (68 calls of 30 to 60 s, fake providers). Run 30 to 60 minutes of 2 to 3 minute calls in the container with fake providers, and check that goroutines and fds return to baseline independent of call count. Then a short churn slice against one real profile.
-3. **End-of-turn latency.** The VAD stop is fixed at 25 quiet chunks (about 0.7 to 0.8 s; Pipecat 0.2 s), and the turn manager adds 700 ms; live, about +0.6 s voice-to-voice. Make the VAD stop configurable, gate the speech timeout on the transcript, and decide the `turn.manager` default, measured with the item 1 tests.
-4. **Streaming TTS.** Google (`StreamingSynthesize`) and xAI (WebSocket) are unary: first audio waits for a whole sentence, and replies have gaps.
-5. **Cost visibility.** Usage (tokens, characters, requests) reaches traces only: add Prometheus counters. Attribute summary usage and cap summary output.
-6. **Multi-tenant resilience.** Per-tenant breaker keys (breakers are process-wide per stage). Report the active provider rather than `provider=failover`. One STT breaker pattern.
-7. **Recording privacy, if recording ships.** Encryption at rest, a played disclosure, and stopping on a mid-call agent disable.
-8. **Low-severity leftovers:**
+
+   This also gives items 2 and 3 real before/after numbers.
+2. **Turn latency (Pipecat parity).**
+   - Make the VAD stop configurable: it is fixed at 25 quiet chunks, about 0.7 to 0.8 s, against Pipecat's `stop_secs` 0.2 s.
+   - Gate the speech timeout on the transcript, with an STT-latency timer, as Pipecat does. Today a fixed clock ends the turn, so slow STT loses trailing words, and a faster VAD stop makes that worse.
+   - Compare decisions against Pipecat's bundled Silero file, or adopt it.
+   - Decide the `turn.manager` default from the measurements.
+3. **Streaming TTS (Pipecat parity).** Google (`StreamingSynthesize`) and xAI (WebSocket) are unary: first audio waits for a whole sentence, and replies have gaps between sentences.
+4. **Library parity gaps:**
+   - context update frames, Pipecat's `LLMMessagesAppendFrame`, `LLMMessagesUpdateFrame` and the like, for changing the LLM context mid-call;
+   - LLM-driven cancellation of async tools;
+   - word timestamps beyond Cartesia and ElevenLabs;
+   - flushing pending DTMF digits at end of stream.
+5. **Churn at real call lengths.** The container churn run is one 90 s run (68 calls of 30 to 60 s, fake providers). Run 30 to 60 minutes of 2 to 3 minute calls in the container with fake providers, and check goroutines and fds return to baseline independent of call count. Then a short churn slice against one real profile. Cheap; it can run alongside any item above.
+6. **Cost visibility and STT tracing.** Usage reaches traces only: add Prometheus counters, attribute summary usage and cap summary output. Add STT spans to OpenTelemetry.
+7. **Multi-tenant resilience.** Per-tenant breaker keys (breakers are process-wide per stage). Report the active provider rather than `provider=failover`. One STT breaker pattern.
+8. **Recording privacy, if recording ships.** Encryption at rest, a played disclosure, and stopping on a mid-call agent disable.
+9. **Low-severity leftovers:**
    - audit M1-06 to M1-09;
    - the IPv6 /48 overflow-bucket residual;
    - nginx 503 retry (M4-18);
    - pinning the macOS ONNX Runtime sha256;
    - tool-result sizing against the context budget.
-9. **Library-only code.** `Session.DebugDropped`, `ValidateToolPairing` and `AnalyzerStop` have no server caller: wire them or delete them.
+10. **Library-only code.** `Session.DebugDropped`, `ValidateToolPairing` and `AnalyzerStop` have no server caller: wire them or delete them.
 
 ## Missing versus Pipecat (ranked)
 
