@@ -104,7 +104,7 @@ func (t *AsyncTrigger) ProcessFrame(_ context.Context, f Frame, dir Direction, e
 		}
 	case *UserMessageFrame:
 		set(&t.turnUser, false)
-		t.reply.Store(time.Now().UnixNano())
+		t.reply.Store(int64(time.Since(monoBase)))
 	}
 	return e.PushDirection(f, dir)
 }
@@ -207,7 +207,7 @@ func (t *AsyncTrigger) fire() {
 	if injected == 0 {
 		return
 	}
-	t.reply.Store(time.Now().UnixNano())
+	t.reply.Store(int64(time.Since(monoBase)))
 	um := &UserMessageFrame{Turn: turn, Content: "[async tool result:" + names + "]", Gen: t.session.CurrentGeneration(), Timestamp: time.Now()}
 	if t.session.Reenter(um, Downstream, t.index+1, 0) == nil {
 		t.TriggeredCount.Add(1)
