@@ -8,12 +8,14 @@ import {
   encodeClientReadyFrame,
   encodeDisconnectFrame,
   encodeMessageFrame,
+  encodeSetMutedFrame,
   encodeVarint,
   extractSessionIdFromToken,
   RTVI_LABEL,
   RTVI_TYPE_BOT_READY,
   RTVI_TYPE_CLIENT_READY,
   RTVI_TYPE_DISCONNECT,
+  RTVI_TYPE_SET_MUTED,
 } from "./protocol";
 
 describe("RTVI Protobuf Wire Protocol", () => {
@@ -60,6 +62,15 @@ describe("RTVI Protobuf Wire Protocol", () => {
     if (discDecoded?.kind === "message") {
       expect(discDecoded.parsed?.type).toBe(RTVI_TYPE_DISCONNECT);
     }
+  });
+
+  it("encodes set-muted with the muted flag", () => {
+    const decoded = decodeBinaryFrame(encodeSetMutedFrame(true));
+    expect(decoded?.kind === "message" && decoded.parsed).toMatchObject({
+      label: RTVI_LABEL,
+      type: RTVI_TYPE_SET_MUTED,
+      data: { muted: true },
+    });
   });
 
   it("encodes and decodes audio frames round-trip", () => {

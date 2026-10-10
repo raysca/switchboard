@@ -19,6 +19,7 @@ import {
   RTVI_TYPE_CLIENT_READY,
   RTVI_TYPE_DISCONNECT,
   RTVI_TYPE_SEND_TEXT,
+  RTVI_TYPE_SET_MUTED,
   RTVI_TYPE_USER_STARTED_SPEAKING,
   RTVI_TYPE_USER_STOPPED_SPEAKING,
   RTVI_TYPE_USER_TRANSCRIPTION,
@@ -347,8 +348,15 @@ describe("AgentVoiceTest", () => {
     await user.click(muteBtn);
     expect(screen.getByText(/\[Mic Muted\]/i)).toBeVisible();
     expect(muteBtn).toHaveTextContent("Unmute mic");
+    const muteMessages = () =>
+      ws.sentData
+        .map((d) => decodeBinaryFrame(d))
+        .filter((f) => f?.kind === "message" && f.parsed?.type === RTVI_TYPE_SET_MUTED)
+        .map((f) => (f?.kind === "message" ? f.parsed?.data : null));
+    expect(muteMessages()).toEqual([{ muted: true }]);
     await user.click(muteBtn);
     expect(screen.queryByText(/\[Mic Muted\]/i)).toBeNull();
+    expect(muteMessages()).toEqual([{ muted: true }, { muted: false }]);
 
     // 7. Session summary & Trace timeline link verification
     const sessionSummary = screen.getByTestId("session-summary");
@@ -380,6 +388,29 @@ describe("AgentVoiceTest", () => {
     // Clicking trace link routes to /sessions/:sessionId
     await user.click(screen.getByTestId("view-trace-link"));
     expect(await screen.findByTestId("sessions-page")).toBeVisible();
+  });
+
+  it("restates mute to the server after bot-ready", async () => {
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <AgentVoiceTest agent={createMockAgent()} client={createMockClient()} keyValue="mgmt-key-1"
+          audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Start voice test" }));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    await waitFor(() => expect(ws.sentData.length).toBeGreaterThan(0));
+    await user.click(screen.getByTestId("mute-btn")); // muted before the session is ready
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_READY, { version: "2.1.0" });
+    await waitFor(() => expect(screen.getByTestId("connection-state")).toHaveTextContent("READY"));
+    const muted = ws.sentData
+      .map((d) => decodeBinaryFrame(d))
+      .filter((f) => f?.kind === "message" && f.parsed?.type === RTVI_TYPE_SET_MUTED);
+    expect(muted.length).toBe(2); // the click, then the restatement after bot-ready
   });
 
   it("sends a typed text turn and shows user and bot transcript entries", async () => {

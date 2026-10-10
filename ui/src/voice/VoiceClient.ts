@@ -11,6 +11,7 @@ import {
   encodeClientReadyFrame,
   encodeDisconnectFrame,
   encodeSendTextFrame,
+  encodeSetMutedFrame,
   extractSessionIdFromToken,
   RTVI_TYPE_BOT_LLM_TEXT,
   RTVI_TYPE_BOT_READY,
@@ -20,6 +21,7 @@ import {
   RTVI_TYPE_DISCONNECT,
   RTVI_TYPE_ERROR,
   RTVI_TYPE_SEND_TEXT,
+  RTVI_TYPE_SET_MUTED,
   RTVI_TYPE_USER_STARTED_SPEAKING,
   RTVI_TYPE_USER_STOPPED_SPEAKING,
   RTVI_TYPE_USER_TRANSCRIPTION,
@@ -362,12 +364,14 @@ export class VoiceClient {
   }
 
   /**
-   * Toggles microphone mute.
+   * Toggles microphone mute: disables the mic track and tells the server, which
+   * then drops the caller's audio (no turns, STT, or recorded speech).
    */
   public toggleMute(): void {
     const nextMuted = !this.state.isMuted;
     this.audioController.setMuted(nextMuted);
     this.updateState({ isMuted: nextMuted });
+    this.sendRTVI(RTVI_TYPE_SET_MUTED, encodeSetMutedFrame(nextMuted), { muted: nextMuted });
   }
 
   /**
@@ -395,6 +399,14 @@ export class VoiceClient {
     const url = new URL(base, "http://localhost");
     url.searchParams.set("token", token);
     return url.toString();
+  }
+
+  /** Sends one RTVI client message and logs it. Returns false when the socket is not open. */
+  private sendRTVI(type: string, frame: Uint8Array, data: unknown): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(frame as unknown as ArrayBufferView<ArrayBuffer>);
+    this.recordEvent("out", type, JSON.stringify({ label: "rtvi-ai", type, data }), data);
+    return true;
   }
 
   private sendClientReady(): void {
@@ -509,6 +521,10 @@ export class VoiceClient {
             readyLatencyMs: readyLatency,
           },
         });
+        // A reconnect starts an unmuted server session; restate a mute the UI still shows.
+        if (this.state.isMuted) {
+          this.sendRTVI(RTVI_TYPE_SET_MUTED, encodeSetMutedFrame(true), { muted: true });
+        }
         break;
       }
 

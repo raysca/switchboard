@@ -17,6 +17,7 @@ export const RTVI_TYPE_BOT_STOPPED_SPEAKING = "bot-stopped-speaking";
 export const RTVI_TYPE_ERROR = "error";
 export const RTVI_TYPE_DISCONNECT = "disconnect-bot";
 export const RTVI_TYPE_SEND_TEXT = "send-text";
+export const RTVI_TYPE_SET_MUTED = "set-muted";
 
 export interface RTVIMessage<T = unknown> {
   id?: string;
@@ -157,6 +158,11 @@ export function encodeDisconnectFrame(): Uint8Array {
  */
 export function encodeSendTextFrame(content: string): Uint8Array {
   return encodeRTVIMessage(RTVI_TYPE_SEND_TEXT, { content });
+}
+
+/** Encodes set-muted: the server drops the caller's audio while muted. */
+export function encodeSetMutedFrame(muted: boolean): Uint8Array {
+  return encodeRTVIMessage(RTVI_TYPE_SET_MUTED, { muted });
 }
 
 /**
