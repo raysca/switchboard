@@ -121,7 +121,7 @@ func TestLoadConfigProfile_OverrideUsesProductionDefaults(t *testing.T) {
 func TestLoadConfig_TurnStopValidatedAtLoad(t *testing.T) {
 	for stop, want := range map[string]string{
 		"[eager]":                         "must include speech-timeout",
-		"[external, speech-timeout]":      "not available",
+		"[external, speech-timeout]":      "not a server setting",
 		"[bogus, speech-timeout]":         "unknown strategy",
 		"[eager, speech-timeout]":         "",
 		"[turn-analyzer, speech-timeout]": "",

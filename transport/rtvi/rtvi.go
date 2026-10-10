@@ -34,9 +34,10 @@ const (
 	TypeBotStoppedSpeaking  = "bot-stopped-speaking"
 	TypeError               = "error"
 	TypeDisconnectBot       = "disconnect-bot"
-	TypeSendText            = "send-text" // client text turn: {"content": "..."}
-	TypeDTMF                = "dtmf"      // client key presses: {"buttons": ["1","#"]} (2.0.x clients: {"button": "1"})
-	TypeSetMuted            = "set-muted" // client mic mute: {"muted": true|false}; the session drops input audio while muted
+	TypeSendText            = "send-text"    // client text turn: {"content": "..."}
+	TypeDTMF                = "dtmf"         // client key presses: {"buttons": ["1","#"]} (2.0.x clients: {"button": "1"})
+	TypeSetMuted            = "set-muted"    // client mic mute: {"muted": true|false}; the session drops input audio while muted
+	TypePushToTalk          = "push-to-talk" // {"pressed": true|false}; only on calls whose client-ready set push_to_talk
 )
 
 var (
@@ -62,6 +63,8 @@ type Message struct {
 type ClientReadyData struct {
 	Version string           `json:"version"`
 	About   *json.RawMessage `json:"about,omitempty"`
+	// PushToTalk: turns start and end on push-to-talk messages, not on voice detection.
+	PushToTalk bool `json:"push_to_talk,omitempty"`
 }
 
 // BotReadyData represents payload for bot-ready.
@@ -91,8 +94,9 @@ type ErrorData struct {
 
 // Handler manages RTVI protocol handshake, event conversion, and message serialization.
 type Handler struct {
-	idCounter atomic.Uint64
-	ready     atomic.Bool
+	idCounter  atomic.Uint64
+	ready      atomic.Bool
+	pushToTalk atomic.Bool // set once by client-ready
 
 	OnClientReady func(version string) error
 	// OnSendText receives a validated client text turn.
@@ -138,6 +142,9 @@ func (h *Handler) IsReady() bool {
 	return h.ready.Load()
 }
 
+// PushToTalk reports whether client-ready opted this call into push-to-talk.
+func (h *Handler) PushToTalk() bool { return h.pushToTalk.Load() }
+
 // HandleIncomingJSON parses an incoming RTVI JSON string and handles protocol events.
 func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 	var msg Message
@@ -163,6 +170,7 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 			// Session setup runs once per connection; a repeat would leak the first session.
 			return nil, fmt.Errorf("%w: duplicate client-ready", ErrRejectedMessage)
 		}
+		h.pushToTalk.Store(readyData.PushToTalk)
 		if h.OnClientReady != nil {
 			if err := h.OnClientReady(readyData.Version); err != nil {
 				return nil, fmt.Errorf("%w: %w", ErrSessionSetup, err)
@@ -237,6 +245,21 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 			return &core.InputMuteFrame{}, nil
 		}
 		return &core.InputUnmuteFrame{}, nil
+
+	case TypePushToTalk:
+		if !h.ready.Load() {
+			return nil, fmt.Errorf("%w: push-to-talk before client-ready", ErrRejectedMessage)
+		}
+		if !h.pushToTalk.Load() {
+			return nil, fmt.Errorf("%w: push-to-talk is not enabled for this call", ErrRejectedMessage)
+		}
+		var data struct {
+			Pressed *bool `json:"pressed"`
+		}
+		if err := json.Unmarshal(msg.Data, &data); err != nil || data.Pressed == nil {
+			return nil, fmt.Errorf(`%w: push-to-talk needs {"pressed": true|false}`, ErrRejectedMessage)
+		}
+		return &core.PushToTalkFrame{Pressed: *data.Pressed}, nil
 
 	case TypeDisconnectBot, "disconnect":
 		return &core.EndFrame{}, nil

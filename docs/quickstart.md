@@ -218,6 +218,13 @@ and unmutes with `"muted":false`. While muted the server drops the caller's
 audio (no turns, no STT, no barge-in) and the recording stores silence. A muted
 client should still disable its mic track; the message makes the server agree.
 
+For push-to-talk, send `"push_to_talk": true` in `client-ready` data. Then
+`{"label":"rtvi-ai","type":"push-to-talk","data":{"pressed":true}}` on button
+down and `"pressed":false` on release. Speech only starts a turn while the
+button is held, pauses while holding do not end it, and release ends it.
+Pressing and speaking while the bot talks barges in. A call that did not opt
+in gets a non-fatal error for `push-to-talk`.
+
 ### DTMF (keypad tones)
 
 Off by default; enable per server under `dtmf:`. `detect: true` finds keypad

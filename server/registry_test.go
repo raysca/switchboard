@@ -483,3 +483,26 @@ func TestTurnManagerCallPipelineEndToEnd(t *testing.T) {
 		t.Fatalf("llm saw %q", got)
 	}
 }
+
+// A push-to-talk call gets the turn processor even with turn.manager off,
+// and a hands-free call with turn.manager off does not.
+func TestPushToTalkCallInstallsTurnProcessor(t *testing.T) {
+	reg := NewRegistry()
+	for _, stage := range []string{"stt", "llm", "tts"} {
+		reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	}
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Turn.Manager = false
+	for _, ptt := range []bool{true, false} {
+		vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+		call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, PushToTalk: ptt}
+		pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, &fakeTransportSink{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, installed := pipe.Processors()[2].(*coreturn.Processor)
+		if installed != ptt {
+			t.Fatalf("push_to_talk=%t: turn processor installed=%t", ptt, installed)
+		}
+	}
+}

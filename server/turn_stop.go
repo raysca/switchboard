@@ -13,7 +13,8 @@ import (
 // turnStopDetector builds the user-turn stop chain from turn.stop. Empty
 // means the built-in silence timeout (speech_timeout, default 700ms). A chain
 // must contain speech-timeout: eager alone never ends an unpunctuated turn.
-// external (no signal source yet) is rejected until it has a consumer.
+// external is rejected: push-to-talk is chosen per call by the client
+// (client-ready push_to_talk), not by server config.
 // llm-completion is not a detector: it enables the marker protocol in the
 // assistant stage (core.TurnCompletionConfig) and adds nothing to the chain.
 //
@@ -53,7 +54,7 @@ func turnStopDetector(stop []string, speechTimeout, eagerGrace time.Duration, an
 		case "llm-completion":
 			// protocol, not a stop strategy; see completionConfig
 		case "external":
-			return nil, fmt.Errorf("turn.stop %q is not available yet", name)
+			return nil, errors.New(`turn.stop "external" is not a server setting; clients opt in with client-ready push_to_talk`)
 		default:
 			return nil, fmt.Errorf("turn.stop: unknown strategy %q (speech-timeout, eager, turn-analyzer, llm-completion)", name)
 		}

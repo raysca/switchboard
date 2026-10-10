@@ -91,6 +91,9 @@ type CallSpec struct {
 	DisableTextCleaning bool
 	// VADStopMS overrides server vad.stop_ms if > 0.
 	VADStopMS int
+	// PushToTalk: the client opted in at client-ready. Turns start and end
+	// only on its push-to-talk messages (ExternalStart/ExternalStop).
+	PushToTalk bool
 }
 
 // ProcessorFactory builds one stage processor. cfg supplies provider
@@ -560,7 +563,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	var turnProc, turnTap core.Processor
 	var turnTyped *coreturn.Processor
-	if cfg.Turn.Manager {
+	if cfg.Turn.Manager || call.PushToTalk {
 		mc := coreturn.DefaultConfig()
 		if cfg.Turn.MinWords > 0 {
 			mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.MinWordsStart(cfg.Turn.MinWords, true)}
@@ -576,6 +579,12 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		stop, err := turnStopDetector(cfg.Turn.Stop, cfg.Turn.SpeechTimeout, cfg.Turn.EagerGrace, analyzer)
 		if err != nil {
 			return fail(err)
+		}
+		if call.PushToTalk {
+			// The button replaces voice detection for starting and ending turns;
+			// MaxTurnDuration still caps a held button.
+			mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.ExternalStart()}
+			stop = coreturn.StopChain(coreturn.ExternalStop())
 		}
 		mute, err := coreturn.ParseMuteStrategies(cfg.Turn.Mute, muteTools)
 		if err != nil {

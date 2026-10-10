@@ -3,6 +3,7 @@ package rtvi_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -324,5 +325,45 @@ func TestSetMuted(t *testing.T) {
 	f, err = h.HandleIncomingJSON(msg(`{"muted":false}`))
 	if _, ok := f.(*core.InputUnmuteFrame); err != nil || !ok {
 		t.Fatalf("muted=false gave %T, %v", f, err)
+	}
+}
+
+func TestPushToTalk(t *testing.T) {
+	ptt := func(pressed string) string {
+		return `{"id":"p","label":"rtvi-ai","type":"push-to-talk","data":{"pressed":` + pressed + `}}`
+	}
+	ready := func(h *rtvi.Handler, extra string) {
+		t.Helper()
+		if _, err := h.HandleIncomingJSON(`{"id":"r","label":"rtvi-ai","type":"client-ready","data":{"version":"` + rtvi.ProtocolVersion + `"` + extra + `}}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	off := rtvi.NewHandler()
+	ready(off, "")
+	if off.PushToTalk() {
+		t.Fatal("push-to-talk on without opt-in")
+	}
+	if _, err := off.HandleIncomingJSON(ptt("true")); !errors.Is(err, rtvi.ErrRejectedMessage) {
+		t.Fatalf("push-to-talk accepted on a call that did not opt in: %v", err)
+	}
+
+	on := rtvi.NewHandler()
+	if _, err := on.HandleIncomingJSON(ptt("true")); !errors.Is(err, rtvi.ErrRejectedMessage) {
+		t.Fatalf("push-to-talk before client-ready: %v", err)
+	}
+	ready(on, `,"push_to_talk":true`)
+	if !on.PushToTalk() {
+		t.Fatal("opt-in not recorded")
+	}
+	if _, err := on.HandleIncomingJSON(`{"id":"p","label":"rtvi-ai","type":"push-to-talk","data":{}}`); !errors.Is(err, rtvi.ErrRejectedMessage) {
+		t.Fatalf("missing pressed accepted: %v", err)
+	}
+	for _, want := range []bool{true, false} {
+		f, err := on.HandleIncomingJSON(ptt(fmt.Sprint(want)))
+		p, ok := f.(*core.PushToTalkFrame)
+		if err != nil || !ok || p.Pressed != want {
+			t.Fatalf("pressed=%t gave %#v, %v", want, f, err)
+		}
 	}
 }

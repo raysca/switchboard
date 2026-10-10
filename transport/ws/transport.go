@@ -1148,6 +1148,9 @@ func (c *Connection) Claims() *token.Claims {
 // Context is the connection's lifetime context; it ends when the client goes away.
 func (c *Connection) Context() context.Context { return c.ctx }
 
+// PushToTalk reports whether the client opted this call into push-to-talk.
+func (c *Connection) PushToTalk() bool { return c.rtvi.PushToTalk() }
+
 // AgentID returns the stored agent the token authorizes this call to run.
 func (c *Connection) AgentID() string {
 	if c.claims == nil {
