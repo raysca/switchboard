@@ -417,20 +417,12 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			generation = p.session.CurrentGeneration()
 		}
 		if generation > p.streamGen {
-			// The session has advanced after barge-in. New streams inherit the
-			// new generation; streams below remain owned by their original one.
 			p.streamGen = generation
 		}
-		streams := append([]*activeSTTStream(nil), p.draining...)
-		if p.active != nil {
-			streams = append(streams, p.active)
-		}
+		old := p.active
 		p.active = nil
-		p.draining = nil
 		p.mu.Unlock()
-		for _, st := range streams {
-			p.stopStream(st)
-		}
+		p.stopStream(old)
 		return e.PushDirection(f, dir)
 
 	case *core.CancelFrame:
