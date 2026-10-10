@@ -20,6 +20,8 @@ type Config struct {
 	LLM     LLMConfig     `json:"llm"`
 	TTS     TTSConfig     `json:"tts"`
 	Context ContextLimits `json:"context,omitempty"`
+	// VADStopMS overrides the server VAD stop hangover (200..2000 ms). 0 uses the server default.
+	VADStopMS int `json:"vad_stop_ms,omitempty"`
 	// AsyncTools lists selected MCP tools ("<mcp_server_id>/<remote_name>") that
 	// run in the background: the model gets an immediate ack and is told the
 	// result when it arrives. Default none.
@@ -56,6 +58,8 @@ type LLMConfig struct {
 	SystemPrompt string        `json:"system_prompt,omitempty"`
 	CredentialID string        `json:"credential_id,omitempty"`
 	Fallbacks    []LLMFallback `json:"fallbacks,omitempty"`
+	// MaxParallel bounds concurrently executing tool calls within one round (1..16, 0 keeps default 1).
+	MaxParallel int `json:"max_parallel,omitempty"`
 }
 
 type TTSConfig struct {
@@ -157,6 +161,12 @@ func DecodeConfig(raw json.RawMessage) (Config, error) {
 	}
 	if c.Context.MaxMessages < 0 || c.Context.MaxTokens < 0 || c.Context.MaxMessages == 1 {
 		return c, fmt.Errorf("%w: context.max_messages must be 0 (default) or at least 2, max_tokens non-negative", ErrInvalidConfig)
+	}
+	if c.LLM.MaxParallel < 0 || c.LLM.MaxParallel > 16 {
+		return c, fmt.Errorf("%w: llm.max_parallel must be between 0 and 16", ErrInvalidConfig)
+	}
+	if c.VADStopMS < 0 || (c.VADStopMS > 0 && (c.VADStopMS < 200 || c.VADStopMS > 2000)) {
+		return c, fmt.Errorf("%w: vad_stop_ms must be 0 (default) or between 200 and 2000", ErrInvalidConfig)
 	}
 	if err := c.Context.Summarization.validate(c.LLM.Provider, c.Context.MaxTokens); err != nil {
 		return c, err

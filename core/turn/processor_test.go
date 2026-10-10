@@ -429,3 +429,32 @@ func TestProcessorResumedSpeechAfterEOUCommitsWholeTurn(t *testing.T) {
 		t.Fatalf("committed %q, want the joined turn once (started %d completed %d)", got, len(h.events(core.TurnEventStarted)), len(h.events(core.TurnEventCompleted)))
 	}
 }
+
+func TestProcessor_VADSilenceOnsetEliminatesDoubleTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SilenceTimeout = 500 * time.Millisecond
+	h := newHarness(t, cfg)
+
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.audio()
+	h.run(150*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
+
+	// User stopped speaking, with VAD confirming 500ms of quiet chunks
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{
+		Seq:             2,
+		Gen:             1,
+		SilenceDuration: 500 * time.Millisecond,
+	})
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{
+		Turn:  "turn-1-1",
+		Gen:   1,
+		Text:  "hello there",
+		Final: true,
+	})
+
+	// The turn should complete immediately without having to wait another full 500ms
+	h.run(150*time.Millisecond, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 })
+	if len(h.events(core.TurnEventCompleted)) != 1 {
+		t.Fatalf("turn should complete promptly when VAD already confirmed silence, got %d completed events", len(h.events(core.TurnEventCompleted)))
+	}
+}

@@ -482,7 +482,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 
 	// 3. Build VAD processor and the agent's pipeline
-	vadProc := vad.NewProcessor(s.vadExecutor, s.cfg.VADProcessorConfig())
+	vadProc := vad.NewProcessor(s.vadExecutor, s.cfg.VADProcessorConfigForStopMS(call.VADStopMS))
 	pipe, err := s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
 	call.wipeSecrets()
 	if err != nil {

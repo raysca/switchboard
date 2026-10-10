@@ -129,6 +129,12 @@ type Config struct {
 		LLMFirstToken time.Duration `yaml:"llm_first_token"`
 	} `yaml:"failover"`
 
+	// Tools configures default tool loop limits across providers.
+	Tools struct {
+		// MaxParallel bounds concurrently executing calls within one round (1..16, 0 keeps default 1).
+		MaxParallel int `yaml:"max_parallel"`
+	} `yaml:"tools"`
+
 	// Turn routes live calls through the turn manager (core/turn.Processor).
 	// Off by default: user turns then end on raw VAD stop as before.
 	Turn struct {
@@ -732,8 +738,18 @@ func rejectRemovedKeys(data []byte) error {
 // VADProcessorConfig is the per-call VAD config: library defaults with
 // vad.stop_ms applied (0 keeps the 800 ms default).
 func (c *Config) VADProcessorConfig() vad.ProcessorConfig {
+	return c.VADProcessorConfigForStopMS(0)
+}
+
+// VADProcessorConfigForStopMS returns the per-call VAD config applying an
+// agent-level stop_ms override if positive, or the server-level vad.stop_ms otherwise.
+func (c *Config) VADProcessorConfigForStopMS(overrideMS int) vad.ProcessorConfig {
 	pc := vad.DefaultProcessorConfig()
-	if ms := c.VAD.StopMS; ms > 0 {
+	ms := c.VAD.StopMS
+	if overrideMS > 0 {
+		ms = overrideMS
+	}
+	if ms > 0 {
 		chunkMS := vad.ChunkSamples * 1000 / vad.SampleRate
 		pc.StopChunks = (ms + chunkMS - 1) / chunkMS
 	}

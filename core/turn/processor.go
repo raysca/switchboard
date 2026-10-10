@@ -45,6 +45,9 @@ type ProcessorOptions struct {
 	// candidate is already final: the STT sends no interim results, so a
 	// transcript-based start (min_words) cannot act before the final.
 	OnFinalWithoutInterims func()
+	// VADHangover is the estimated silence duration that has already elapsed when
+	// UserStoppedSpeakingFrame is received.
+	VADHangover time.Duration
 }
 
 // tickFrame re-enters the run loop so the manager advances on the same
@@ -105,6 +108,7 @@ type Processor struct {
 	mute         *muter
 	onMuteDrop   func()
 	onNoInterims func()
+	vadHangover  time.Duration
 	sawCandidate bool        // a transcript candidate arrived this call
 	dropSeg      bool        // the current VAD segment's start was dropped; swallow its stop
 	mgrMuted     bool        // the manager is paused for a not-yet-admitted turn
@@ -121,7 +125,7 @@ func NewProcessor(cfg Config, opts ProcessorOptions) (*Processor, error) {
 		return nil, err
 	}
 	p := &Processor{mgr: mgr, clock: opts.Clock, tick: opts.Tick, mute: newMuter(opts.Mute, opts.MaxMute), onMuteDrop: opts.OnMuteDrop, onNoInterims: opts.OnFinalWithoutInterims,
-		wake: make(chan struct{}, 1), closed: make(map[string]struct{})}
+		vadHangover: opts.VADHangover, wake: make(chan struct{}, 1), closed: make(map[string]struct{})}
 	if p.clock == nil {
 		p.clock = realClock{}
 	}
@@ -275,7 +279,13 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 		}
 		p.vadSpeaking = false
 		p.lastStop = p.now()
-		return p.observe(e, "", false)
+		silenceSince := time.Time{}
+		if v.SilenceDuration > 0 {
+			silenceSince = p.lastStop.Add(-v.SilenceDuration)
+		} else if p.vadHangover > 0 {
+			silenceSince = p.lastStop.Add(-p.vadHangover)
+		}
+		return p.observeSilence(e, "", false, silenceSince)
 	case *core.TranscriptCandidateFrame:
 		return p.onCandidate(v, e)
 	}
@@ -363,11 +373,15 @@ func (p *Processor) wireGen() core.Generation {
 }
 
 func (p *Processor) observe(e core.Emitter, text string, final bool) error {
+	return p.observeSilence(e, text, final, time.Time{})
+}
+
+func (p *Processor) observeSilence(e core.Emitter, text string, final bool, silenceSince time.Time) error {
 	if !p.open {
 		return nil
 	}
 	at := p.now()
-	obs := Observation{ExternalStop: p.extStop.Swap(false), At: at, TurnID: p.id, Generation: p.mgrGen, Speaking: p.vadSpeaking, Activity: p.vadSpeaking,
+	obs := Observation{ExternalStop: p.extStop.Swap(false), At: at, SilenceSince: silenceSince, TurnID: p.id, Generation: p.mgrGen, Speaking: p.vadSpeaking, Activity: p.vadSpeaking,
 		BotSpeaking: p.bot, Transcript: text, TranscriptFinal: final}
 	frames, err := p.mgr.Observe(obs)
 	if errors.Is(err, ErrRetiredTurnLimit) {

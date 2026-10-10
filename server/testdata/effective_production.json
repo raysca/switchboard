@@ -73,6 +73,9 @@
   "LLMBudget": 60000000000,
   "LLMFirstToken": 8000000000
  },
+ "Tools": {
+  "MaxParallel": 0
+ },
  "Turn": {
   "Manager": false,
   "MinWords": 0,

@@ -48,6 +48,9 @@ type StageSpec struct {
 	AsyncSink    func(core.AsyncToolResult)
 	OnAsyncStart func(core.ToolCall)
 
+	// MaxParallel bounds concurrently executing calls within one round (1..16, 0 keeps default 1).
+	MaxParallel int
+
 	// Failover is set on a non-last candidate of a stage chain: its provider is
 	// built with failoverPolicy (fewer, shorter attempts) so a fallback is
 	// reached while the caller still waits.
@@ -57,6 +60,7 @@ type StageSpec struct {
 // toolLoopConfig is the default loop config with the stage's async hooks.
 func (s StageSpec) toolLoopConfig() coretools.ToolLoopConfig {
 	cfg := coretools.DefaultToolLoopConfig()
+	cfg.MaxParallel = s.MaxParallel
 	cfg.AsyncSink, cfg.OnAsyncStart = s.AsyncSink, s.OnAsyncStart
 	return cfg
 }
@@ -83,6 +87,8 @@ type CallSpec struct {
 	// TTSFallbacks are the TTS chain after the primary (credentials resolved,
 	// voice from each fallback's own spec).
 	TTSFallbacks []StageSpec
+	// VADStopMS overrides server vad.stop_ms if > 0.
+	VADStopMS int
 }
 
 // ProcessorFactory builds one stage processor. cfg supplies provider

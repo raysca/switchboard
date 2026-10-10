@@ -65,12 +65,13 @@ func (c Config) validate() error {
 // Observation is a provider-neutral VAD/activity snapshot. Muting is explicit
 // manager state, controlled with SetMuted, so muted frames are never replayed.
 type Observation struct {
-	At         time.Time
-	TurnID     core.TurnID
-	Generation core.Generation
-	Speaking   bool
-	Activity   bool
-	Semantic   *SemanticEvidence
+	At           time.Time
+	SilenceSince time.Time // audio silence onset if known (accounts for VAD hangover)
+	TurnID       core.TurnID
+	Generation   core.Generation
+	Speaking     bool
+	Activity     bool
+	Semantic     *SemanticEvidence
 	// Optional start-strategy evidence; ignored by the default VAD chain.
 	Transcript      string
 	TranscriptFinal bool
@@ -303,7 +304,12 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 	}
 	m.pendingText, m.pendingFinal, m.hasText, m.pendingExt = "", false, false, false
 	if m.active && m.speaking && !m.stopCandidate {
-		m.stopCandidate, m.stopSince = true, observation.At
+		m.stopCandidate = true
+		if !observation.SilenceSince.IsZero() && observation.SilenceSince.Before(observation.At) {
+			m.stopSince = observation.SilenceSince
+		} else {
+			m.stopSince = observation.At
+		}
 	}
 	framesAfter, snapshot := m.advanceLocked(observation.At)
 	return append(frames, framesAfter...), snapshot, nil

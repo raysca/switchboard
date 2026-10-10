@@ -167,9 +167,10 @@ func (f *UserStartedSpeakingFrame) Generation() uint64 { return f.Gen }
 
 // UserStoppedSpeakingFrame indicates that VAD detected end of user speech.
 type UserStoppedSpeakingFrame struct {
-	Seq       uint64
-	Timestamp time.Time
-	Gen       uint64
+	Seq             uint64
+	Timestamp       time.Time
+	Gen             uint64
+	SilenceDuration time.Duration // estimated silence already elapsed before frame was emitted
 }
 
 func (f *UserStoppedSpeakingFrame) Type() FrameType    { return FrameUserStoppedSpeaking }

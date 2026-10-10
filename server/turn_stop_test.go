@@ -401,3 +401,73 @@ func TestTurnAnalyzerWindowWithMinWords(t *testing.T) {
 		t.Fatalf("model window held %d speech samples of %d (window %d samples): it starts at the late turn start", n, frames*320, len(be.pcm))
 	}
 }
+
+// Tests the server-level integration of turn taking: barge-in over speaking TTS
+// advances generation and triggers turn start, followed by silence end-of-turn completion.
+func TestTurnManager_BargeInOverSpeakingTTSAndSilenceCompletion(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Turn.Manager = true
+	cfg.Turn.SpeechTimeout = 200 * time.Millisecond
+
+	reg := NewRegistry()
+	llm := &core.PassthroughProcessor{}
+	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
+
+	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+	pipe, err := reg.BuildCallPipeline(cfg, CallSpec{
+		STT: StageSpec{Provider: "google"},
+		TTS: StageSpec{Provider: "google"},
+		LLM: StageSpec{Provider: "google"},
+	}, vadProc, &fakeTransportSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := core.NewSession(2, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// 1. Bot is actively speaking TTS (speaking state frame flowing upstream)
+	_ = s.Reenter(&core.SpeakingStateFrame{State: core.SpeakingStarted}, core.Upstream, s.TailIndex(), s.CurrentGeneration())
+	time.Sleep(20 * time.Millisecond)
+
+	// 2. User starts speaking (barge-in interruption)
+	_ = s.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: s.CurrentGeneration()})
+
+	// Wait for turn event started
+	deadline := time.Now().Add(2 * time.Second)
+	for !slices.ContainsFunc(llm.GetFrames(), func(f core.Frame) bool {
+		ev, ok := f.(*core.TurnEventFrame)
+		return ok && ev.Kind == core.TurnEventStarted
+	}) {
+		if time.Now().After(deadline) {
+			t.Fatal("turn event started was not emitted on barge-in")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// 3. User finishes speaking after audio frames
+	speech := make([]byte, 640)
+	_ = s.Post(&core.InputAudioFrame{Samples: speech, Encoding: core.EncodingPCM16LE, SampleRate: 16000, Channels: 1})
+	_ = s.Post(&core.TranscriptCandidateFrame{Turn: "turn-2-1", Gen: core.Generation(s.CurrentGeneration()), Text: "stop talking now", Final: true})
+	_ = s.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: s.CurrentGeneration(), SilenceDuration: 200 * time.Millisecond})
+
+	// 4. Silence ends the turn (TurnEventCompleted)
+	deadline = time.Now().Add(2 * time.Second)
+	for !slices.ContainsFunc(llm.GetFrames(), func(f core.Frame) bool {
+		ev, ok := f.(*core.TurnEventFrame)
+		return ok && ev.Kind == core.TurnEventCompleted
+	}) {
+		if time.Now().After(deadline) {
+			t.Fatal("turn event completed was not emitted after silence")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

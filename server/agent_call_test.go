@@ -369,3 +369,83 @@ func TestTurnRecorderPairsUserAndAssistant(t *testing.T) {
 		t.Fatalf("second turn = %+v", second)
 	}
 }
+
+func TestStoredAgent_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
+	s := apiTestServer(t)
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	enableTestManagement(t, s)
+	cred, err := s.credentials.Create(t.Context(), credentialInput("google", "stored-google-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgJSON := strings.ReplaceAll(`{
+		"vad_stop_ms": 450,
+		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
+		"llm": {"provider": "google", "model": "gemini-test", "credential_id": "018f0000-0000-7000-8000-000000000001", "max_parallel": 4},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001"}
+	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+
+	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "ParallelAgent", Config: json.RawMessage(cfgJSON)})
+	if err != nil || created.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("agent creation failed: %v", err)
+	}
+
+	var mu sync.Mutex
+	var gotLLM StageSpec
+	s.registry.Register("google.stt", func(_ *Config, _ StageSpec) (core.Processor, error) {
+		return &core.PassthroughProcessor{}, nil
+	})
+	s.registry.Register("google.tts", func(_ *Config, _ StageSpec) (core.Processor, error) {
+		return &core.PassthroughProcessor{}, nil
+	})
+	s.registry.Register("google.llm", func(_ *Config, spec StageSpec) (core.Processor, error) {
+		mu.Lock()
+		gotLLM = spec
+		mu.Unlock()
+		return &core.PassthroughProcessor{}, nil
+	})
+
+	ts := httptest.NewServer(s.wsServer)
+	defer ts.Close()
+
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+created.ID+`"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("token creation: %d %s", w.Code, w.Body)
+	}
+	var resp struct {
+		Data struct{ Token string } `json:"data"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"?token="+resp.Data.Token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "done")
+
+	ready, _ := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`)
+	if err := conn.Write(ctx, websocket.MessageBinary, ready); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _ = conn.Read(ctx)
+
+	waitFor(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return gotLLM.Model == "gemini-test"
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotLLM.MaxParallel != 4 {
+		t.Fatalf("expected MaxParallel 4, got %d", gotLLM.MaxParallel)
+	}
+	// Verify VAD processor config for this stop_ms
+	vadCfg := s.cfg.VADProcessorConfigForStopMS(450)
+	expectedChunks := (450 + 31) / 32
+	if vadCfg.StopChunks != expectedChunks {
+		t.Fatalf("expected StopChunks %d for 450ms, got %d", expectedChunks, vadCfg.StopChunks)
+	}
+}
