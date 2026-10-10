@@ -213,6 +213,11 @@ Each text turn starts an LLM request, so a connection may send 3 at once, then
 one per second. A rejected text turn (too early, invalid, or over the rate) gets
 a non-fatal `error` message, and the call stays open.
 
+A client mutes the caller with `{"label":"rtvi-ai","type":"set-muted","data":{"muted":true}}`
+and unmutes with `"muted":false`. While muted the server drops the caller's
+audio (no turns, no STT, no barge-in) and the recording stores silence. A muted
+client should still disable its mic track; the message makes the server agree.
+
 ### DTMF (keypad tones)
 
 Off by default; enable per server under `dtmf:`. `detect: true` finds keypad

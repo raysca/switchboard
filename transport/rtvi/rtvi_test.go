@@ -300,3 +300,29 @@ func TestBotLLMStartedBracketsEachReply(t *testing.T) {
 		t.Fatalf("got  %v\nwant %v", got, want)
 	}
 }
+
+func TestSetMuted(t *testing.T) {
+	h := rtvi.NewHandler()
+	msg := func(data string) string {
+		return `{"id":"m","label":"rtvi-ai","type":"set-muted","data":` + data + `}`
+	}
+	if _, err := h.HandleIncomingJSON(msg(`{"muted":true}`)); !errors.Is(err, rtvi.ErrRejectedMessage) {
+		t.Fatalf("set-muted before client-ready: %v", err)
+	}
+	if _, err := h.HandleIncomingJSON(`{"id":"r","label":"rtvi-ai","type":"client-ready","data":{"version":"` + rtvi.ProtocolVersion + `"}}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{`{}`, `{"muted":"yes"}`, `null`} {
+		if _, err := h.HandleIncomingJSON(msg(bad)); !errors.Is(err, rtvi.ErrRejectedMessage) {
+			t.Fatalf("payload %s accepted: %v", bad, err)
+		}
+	}
+	f, err := h.HandleIncomingJSON(msg(`{"muted":true}`))
+	if _, ok := f.(*core.InputMuteFrame); err != nil || !ok {
+		t.Fatalf("muted=true gave %T, %v", f, err)
+	}
+	f, err = h.HandleIncomingJSON(msg(`{"muted":false}`))
+	if _, ok := f.(*core.InputUnmuteFrame); err != nil || !ok {
+		t.Fatalf("muted=false gave %T, %v", f, err)
+	}
+}

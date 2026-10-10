@@ -728,7 +728,11 @@ func (c *Connection) readLoop() {
 					return
 				}
 				if session := c.session.Load(); session != nil {
-					_ = session.Post(respFrame)
+					if err := session.Post(respFrame); err != nil {
+						// A lost mute or push-to-talk release would leave the call in the wrong state: say so.
+						errJSON, _ := c.rtvi.FormatError(rtvi.ErrRejectedMessage.Error()+": message could not be applied", false)
+						_ = c.WriteWireMessage(c.ctx, errJSON)
+					}
 				}
 			}
 
@@ -749,11 +753,19 @@ func (c *Connection) readLoop() {
 				}
 			}
 
+			session := c.session.Load()
+			if session != nil && session.InputMuted() {
+				// The session drops muted audio. Zero it so the recording keeps its
+				// timing but stores no speech. ponytail: InputMuted flips on the run
+				// loop, so a few ms after set-muted may still record; the UI also
+				// disables the mic track.
+				clear(f.Samples)
+			}
 			if t := c.tap.Load(); t != nil {
 				(*t).User(f)
 			}
 
-			if session := c.session.Load(); session != nil {
+			if session != nil {
 				if err := session.Post(f); err != nil {
 					// Queue full or session closed
 					if errors.Is(err, core.ErrControlQueueFull) {

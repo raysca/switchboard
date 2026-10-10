@@ -36,6 +36,7 @@ const (
 	TypeDisconnectBot       = "disconnect-bot"
 	TypeSendText            = "send-text" // client text turn: {"content": "..."}
 	TypeDTMF                = "dtmf"      // client key presses: {"buttons": ["1","#"]} (2.0.x clients: {"button": "1"})
+	TypeSetMuted            = "set-muted" // client mic mute: {"muted": true|false}; the session drops input audio while muted
 )
 
 var (
@@ -221,6 +222,21 @@ func (h *Handler) HandleIncomingJSON(rawJSON string) (core.Frame, error) {
 			return nil, fmt.Errorf("%w: dtmf could not be accepted", ErrRejectedMessage)
 		}
 		return nil, nil
+
+	case TypeSetMuted:
+		if !h.ready.Load() {
+			return nil, fmt.Errorf("%w: set-muted before client-ready", ErrRejectedMessage)
+		}
+		var data struct {
+			Muted *bool `json:"muted"`
+		}
+		if err := json.Unmarshal(msg.Data, &data); err != nil || data.Muted == nil {
+			return nil, fmt.Errorf(`%w: set-muted needs {"muted": true|false}`, ErrRejectedMessage)
+		}
+		if *data.Muted {
+			return &core.InputMuteFrame{}, nil
+		}
+		return &core.InputUnmuteFrame{}, nil
 
 	case TypeDisconnectBot, "disconnect":
 		return &core.EndFrame{}, nil

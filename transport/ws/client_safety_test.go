@@ -3,6 +3,7 @@ package ws_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -88,5 +89,68 @@ func TestIncompatibleClientCloseUsesFixedReason(t *testing.T) {
 	}
 	if got := websocket.CloseStatus(err); got != websocket.StatusPolicyViolation {
 		t.Fatalf("close status = %v (%v), want policy violation", got, err)
+	}
+}
+
+// set-muted over the socket mutes and unmutes the call's session.
+func TestSetMutedTogglesSessionInputMute(t *testing.T) {
+	ready := make(chan *ws.Connection, 1)
+	c, ctx := dialReady(t, "jti-set-muted", func(conn *ws.Connection) { ready <- conn })
+	conn := <-ready
+	for _, muted := range []bool{true, false} {
+		msg, _ := ws.EncodeMessageFrame(fmt.Sprintf(`{"id":"m","label":"rtvi-ai","type":"set-muted","data":{"muted":%t}}`, muted))
+		if err := c.Write(ctx, websocket.MessageBinary, msg); err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for conn.Session().InputMuted() != muted {
+			if time.Now().After(deadline) {
+				t.Fatalf("InputMuted() never became %t", muted)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+}
+
+type userTap struct{ got chan []byte }
+
+func (u userTap) User(f *core.InputAudioFrame) { u.got <- append([]byte(nil), f.Samples...) }
+func (userTap) Bot(*core.OutputAudioFrame)     {}
+
+// While muted the recording receives silence of the same length, never speech.
+func TestMutedAudioReachesRecordingAsSilence(t *testing.T) {
+	tap := userTap{got: make(chan []byte, 8)}
+	ready := make(chan *ws.Connection, 1)
+	c, ctx := dialReady(t, "jti-muted-tap", func(conn *ws.Connection) { conn.SetAudioTap(tap); ready <- conn })
+	conn := <-ready
+	msg, _ := ws.EncodeMessageFrame(`{"id":"m","label":"rtvi-ai","type":"set-muted","data":{"muted":true}}`)
+	if err := c.Write(ctx, websocket.MessageBinary, msg); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(2 * time.Second); !conn.Session().InputMuted(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("never muted")
+		}
+	}
+	speech := make([]byte, 640)
+	for i := range speech {
+		speech[i] = 0x55
+	}
+	audio, _ := ws.EncodeAudioFrame(speech, 16000, 1)
+	if err := c.Write(ctx, websocket.MessageBinary, audio); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-tap.got:
+		if len(got) != len(speech) {
+			t.Fatalf("recorded %d bytes, want %d", len(got), len(speech))
+		}
+		for _, b := range got {
+			if b != 0 {
+				t.Fatal("muted speech reached the recording")
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("tap never saw the muted frame")
 	}
 }
