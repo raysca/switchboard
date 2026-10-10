@@ -203,6 +203,9 @@ var scenarios = []scenario{
 		clips: []string{"question", "pauseA", "pauseB"}, pushToTalk: true,
 		// the unpressed utterance and each held segment open an STT stream; one short reply
 		shape: func(*opts) shape { return shape{turns: 1, short: true, extraSTT: 2} }, run: s11},
+	{id: "S12", title: "server-side mute (ends the segment, muted speech unheard, no phantom after unmute)", class: classBase,
+		clips: []string{"pauseA", "pauseB"},
+		shape: func(*opts) shape { return shape{turns: 1, short: true} }, run: s12},
 }
 
 func scenarioByID(id string) (scenario, bool) {
@@ -685,4 +688,49 @@ func s11(x *sctx, r *Result) {
 		r.check("heard both halves", strings.Contains(h, "know") && strings.Contains(h, "france"), heard)
 		r.check("answer is Paris", parisRe.MatchString(said), "")
 	}
+}
+
+// s12: server-side mute. Muting mid-utterance ends the speech segment at once (the turn does not
+// hang); speech while muted is not heard; after unmute, silence opens no segment.
+func s12(x *sctx, r *Result) {
+	c := x.c
+	c.quiet(400 * time.Millisecond)
+	mark := time.Now()
+	a := x.clips["pauseA"]
+	if _, _, err := c.stream(a[:len(a)*3/4/2*2]); err != nil { // stop mid-utterance
+		r.abort(redact(err))
+		return
+	}
+	c.wait(time.Second, func() bool { return c.has(mark, "user-started-speaking") })
+	r.check("speech detected before mute", c.has(mark, "user-started-speaking"), "")
+	tMute := time.Now()
+	if err := c.setMuted(true); err != nil {
+		r.abort(redact(err))
+		return
+	}
+	if _, _, err := c.stream(x.clips["pauseB"]); err != nil { // spoken while muted: must not be heard
+		r.abort(redact(err))
+		return
+	}
+	stop, ok := c.firstAfter(tMute, "user-stopped-speaking")
+	note := "no user-stopped-speaking after mute"
+	if ok {
+		r.m("mute_to_stop_ms", msv(stop.t.Sub(tMute)))
+		note = ""
+	}
+	r.check("segment ends at mute", ok && stop.t.Sub(tMute) < 1500*time.Millisecond, note)
+	c.wait(15*time.Second, func() bool { return c.has(tMute, "bot-stopped-speaking") }) // the cut turn may be answered
+	heard := c.texts(mark, "user-transcription", true)
+	r.m("heard", heard)
+	if x.content() {
+		r.check("muted speech not heard", !strings.Contains(strings.ToLower(heard), "france"), heard)
+	}
+	tUnmute := time.Now()
+	if err := c.setMuted(false); err != nil {
+		r.abort(redact(err))
+		return
+	}
+	c.quiet(3 * time.Second) // streams silence after unmute
+	r.check("no phantom segment after unmute", !c.has(tUnmute, "user-started-speaking"), "")
+	r.check("no rejected client message", !c.has(mark, "error"), "")
 }
