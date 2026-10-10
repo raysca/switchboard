@@ -32,6 +32,9 @@ type AssistantContextConfig struct {
 	// SlackMerge, when set, merges sentences for unary TTS providers (see
 	// SlackMergeConfig). Nil = off, one unit per sentence.
 	SlackMerge *SlackMergeConfig
+	// DisableTextCleaning skips stripping markdown formatting, emojis, and tags from
+	// synthesis units. When false (default), CleanTTSText sanitizes text before TTS.
+	DisableTextCleaning bool
 }
 
 // DefaultAssistantContextConfig returns a safe, production-tuned default configuration.
@@ -404,6 +407,10 @@ func (p *AssistantContextProcessor) segmentBuffer(e Emitter, isLastChunk bool) e
 		}
 		unitText := strings.TrimSpace(buf[:splitIdx])
 		buf = buf[splitIdx:]
+
+		if !p.cfg.DisableTextCleaning {
+			unitText = CleanTTSText(unitText)
+		}
 
 		if speakable(unitText) { // a stray closing quote or dash is not worth a TTS call
 			isFinalUnit := isLastChunk && len(buf) == 0

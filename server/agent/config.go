@@ -67,6 +67,9 @@ type TTSConfig struct {
 	Voice        string        `json:"voice,omitempty"`
 	CredentialID string        `json:"credential_id,omitempty"`
 	Fallbacks    []TTSFallback `json:"fallbacks,omitempty"`
+	// CleanText controls whether markdown, emojis, and formatting markers are stripped
+	// before synthesis. When nil or true, text cleaning is active. Set false to disable.
+	CleanText *bool `json:"clean_text,omitempty"`
 }
 
 type ContextLimits struct {

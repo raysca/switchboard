@@ -489,3 +489,70 @@ func TestStoredAgent_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T
 		t.Fatalf("expected fallback LLM MaxParallel 3 from server config, got %d", spec.LLMFallbacks[0].MaxParallel)
 	}
 }
+
+func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
+	s := apiTestServer(t)
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	enableTestManagement(t, s)
+	cred, err := s.credentials.Create(t.Context(), credentialInput("google", "stored-google-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Default (unspecified clean_text): text cleaning enabled -> DisableTextCleaning == false
+	cfgDefault := strings.ReplaceAll(`{
+		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
+		"llm": {"provider": "google", "model": "gemini-primary", "credential_id": "018f0000-0000-7000-8000-000000000001"},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001"}
+	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+	createdDefault, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "DefaultAgent", Config: json.RawMessage(cfgDefault)})
+	if err != nil {
+		t.Fatalf("agent creation failed: %v", err)
+	}
+	specDefault, releaseDefault, err := s.resolveCall(t.Context(), createdDefault.ID, "session-default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseDefault()
+	if specDefault.DisableTextCleaning {
+		t.Errorf("expected DisableTextCleaning=false by default, got true")
+	}
+
+	// 2. clean_text: false -> DisableTextCleaning == true
+	cfgDisabled := strings.ReplaceAll(`{
+		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
+		"llm": {"provider": "google", "model": "gemini-primary", "credential_id": "018f0000-0000-7000-8000-000000000001"},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001", "clean_text": false}
+	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+	createdDisabled, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "DisabledCleanAgent", Config: json.RawMessage(cfgDisabled)})
+	if err != nil {
+		t.Fatalf("agent creation failed: %v", err)
+	}
+	specDisabled, releaseDisabled, err := s.resolveCall(t.Context(), createdDisabled.ID, "session-disabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseDisabled()
+	if !specDisabled.DisableTextCleaning {
+		t.Errorf("expected DisableTextCleaning=true when clean_text=false, got false")
+	}
+
+	// 3. clean_text: true -> DisableTextCleaning == false
+	cfgEnabled := strings.ReplaceAll(`{
+		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
+		"llm": {"provider": "google", "model": "gemini-primary", "credential_id": "018f0000-0000-7000-8000-000000000001"},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001", "clean_text": true}
+	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+	createdEnabled, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "ExplicitCleanAgent", Config: json.RawMessage(cfgEnabled)})
+	if err != nil {
+		t.Fatalf("agent creation failed: %v", err)
+	}
+	specEnabled, releaseEnabled, err := s.resolveCall(t.Context(), createdEnabled.ID, "session-enabled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseEnabled()
+	if specEnabled.DisableTextCleaning {
+		t.Errorf("expected DisableTextCleaning=false when clean_text=true, got true")
+	}
+}

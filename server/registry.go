@@ -87,6 +87,8 @@ type CallSpec struct {
 	// TTSFallbacks are the TTS chain after the primary (credentials resolved,
 	// voice from each fallback's own spec).
 	TTSFallbacks []StageSpec
+	// DisableTextCleaning skips stripping markdown formatting and emojis before TTS.
+	DisableTextCleaning bool
 	// VADStopMS overrides server vad.stop_ms if > 0.
 	VADStopMS int
 }
@@ -534,6 +536,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	asstCfg := core.DefaultAssistantContextConfig()
+	asstCfg.DisableTextCleaning = call.DisableTextCleaning
 	asstCfg.FirstClauseMinLength = cfg.FirstClauseChars
 	if m := cfg.TTSMerge; m.Enabled {
 		if sc, ok := core.SlackDefaults(call.TTS.Provider); ok {

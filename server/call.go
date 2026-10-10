@@ -183,19 +183,24 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	ttsFallbacks := s.resolveFallbacks(ctx, rs, creds, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
 	})
+	var disableTextCleaning bool
+	if cfg.TTS.CleanText != nil && !*cfg.TTS.CleanText {
+		disableTextCleaning = true
+	}
 	return CallSpec{
 		LLMFallbacks: fallbacks, TTSFallbacks: ttsFallbacks, Failover: cfg.Failover,
 		STTFallbacks: s.sttFallbacks(ctx, rs, cfg, creds),
 		STT:          StageSpec{Provider: cfg.STT.Provider, Model: cfg.STT.Model, Language: cfg.STT.Language, Secret: secrets["stt"]},
 		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
 			Tools: rs.Definitions, ToolExecutor: rs.Executor, MaxParallel: maxParallel},
-		TTS:            StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, Secret: secrets["tts"]},
-		MaxMessages:    maxMessages,
-		MaxTokens:      maxTokens,
-		Summary:        cfg.Context.Summarization,
-		AgentVersionID: rs.Snapshot.Version.ID,
-		Recording:      cfg.Recording.Active(),
-		VADStopMS:      cfg.VADStopMS,
+		TTS:                 StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, Secret: secrets["tts"]},
+		DisableTextCleaning: disableTextCleaning,
+		MaxMessages:         maxMessages,
+		MaxTokens:           maxTokens,
+		Summary:             cfg.Context.Summarization,
+		AgentVersionID:      rs.Snapshot.Version.ID,
+		Recording:           cfg.Recording.Active(),
+		VADStopMS:           cfg.VADStopMS,
 	}, nil
 }
 
