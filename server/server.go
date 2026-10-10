@@ -616,6 +616,18 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	// 5. Cleanup when session closes
 	go func() {
 		<-session.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("panic during session cleanup", slog.Uint64("session", sessionID), slog.Any("panic", r))
+			}
+			s.mu.Lock()
+			delete(s.activeCalls, sessionID)
+			s.mu.Unlock()
+			timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "session closed"})
+			s.metrics.SessionsStoppedTotal.Add(1)
+		}()
+		defer s.admission.ReleaseSession(principal, agentID)
+
 		if n := session.LeakedTasks(); n > 0 {
 			s.metrics.LeakedSessionsTotal.Add(1)
 			s.metrics.LeakedWorkTotal.Add(uint64(n))
@@ -629,7 +641,6 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			s.logger.Error("session failed", slog.Uint64("session", sessionID), slog.String("err", s.redactor.Redact(err.Error())))
 			conn.Close()
 		}
-		s.admission.ReleaseSession(principal, agentID)
 		// End the session row before the call stops counting as active, so a
 		// draining Shutdown cannot close the store first. The recording is
 		// finalized alongside (both ~5s bounded) so it fits Shutdown's wait too.
@@ -642,11 +653,6 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		}()
 		releaseCall() // bounded: drains MCP tools and ends the session row
 		<-recDone
-		s.mu.Lock()
-		delete(s.activeCalls, sessionID)
-		s.mu.Unlock()
-		timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "session closed"})
-		s.metrics.SessionsStoppedTotal.Add(1)
 	}()
 
 	s.metrics.SessionsStartedTotal.Add(1)

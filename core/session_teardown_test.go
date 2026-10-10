@@ -206,3 +206,57 @@ func TestCloseRacingProcessorIsClean(t *testing.T) {
 		t.Fatalf("clean Close racing a processor: err=%v state=%v", err, s.State())
 	}
 }
+
+func TestWatchdogPreservesMonotonicClock(t *testing.T) {
+	budget := teardownBudget()
+	budget.MaxFrameProcessing = 60 * time.Millisecond
+
+	// 1. Frame completes within budget: no watchdog trip
+	var processed sync.WaitGroup
+	processed.Add(1)
+	fastProc := &testFnProcessor{fn: func(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+		defer processed.Done()
+		return e.Push(f)
+	}}
+	pipeFast, err := NewPipeline(fastProc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sFast, err := NewSession(4, pipeFast, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sFast.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = sFast.Post(&SystemMessageFrame{})
+	processed.Wait()
+	time.Sleep(80 * time.Millisecond) // wait past watchdog check interval
+	if sFast.Err() != nil {
+		t.Fatalf("fast processor should not trigger watchdog: %v", sFast.Err())
+	}
+	_ = sFast.Close()
+
+	// 2. Slow processor stalls longer than budget: watchdog trips
+	pipeSlow, err := NewPipeline(hungProcessor{make(chan struct{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sSlow, err := NewSession(5, pipeSlow, budget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sSlow.Start(); err != nil {
+		t.Fatal(err)
+	}
+	_ = sSlow.Post(&SystemMessageFrame{})
+	select {
+	case <-sSlow.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("hung processor not terminated by watchdog")
+	}
+	if !errors.Is(sSlow.Err(), ErrProcessorWatchdog) {
+		t.Fatalf("err = %v, want ErrProcessorWatchdog", sSlow.Err())
+	}
+	_ = sSlow.Close()
+}

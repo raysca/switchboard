@@ -110,7 +110,7 @@ type Session struct {
 
 	// Run-loop private execution state
 	emitsCount int
-	procStart  atomic.Int64 // Unix nanos when current envelope began processing
+	procStart  atomic.Int64 // Monotonic nanos since Created when current envelope began processing (+1 offset so >0 indicates active processing)
 
 	// Edge callbacks
 	OnOutput   func(Frame)
@@ -321,9 +321,12 @@ func (s *Session) watchdog() {
 			return
 		case <-ticker.C:
 			start := s.procStart.Load()
-			if start > 0 && time.Since(time.Unix(0, start)) > s.budget.MaxFrameProcessing {
-				s.fail(ErrProcessorWatchdog)
-				return
+			if start > 0 {
+				elapsed := time.Since(s.Created) - time.Duration(start-1)
+				if elapsed > s.budget.MaxFrameProcessing {
+					s.fail(ErrProcessorWatchdog)
+					return
+				}
 			}
 		}
 	}
@@ -752,7 +755,7 @@ func (s *Session) processEnvelope(env Envelope) bool {
 	if s.tracing {
 		s.traceOrigins = map[traceFrameIdentity]struct{}{traceIdentity(env.Frame): {}}
 	}
-	s.procStart.Store(time.Now().UnixNano())
+	s.procStart.Store(int64(time.Since(s.Created)) + 1)
 	defer s.procStart.Store(0)
 
 	// Panic containment for inline processor execution.

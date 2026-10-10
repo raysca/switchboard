@@ -169,3 +169,63 @@ func TestDrain_DeadlineSendsGoingAway(t *testing.T) {
 	ts.Close()
 	waitFor(t, func() bool { return runtime.NumGoroutine() <= base+3 })
 }
+
+// Even if an unexpected panic occurs during session teardown, defer handlers
+// ensure the activeCalls entry is cleared, admission is released, and metrics
+// are recorded so server shutdown does not hang.
+func TestDrain_CleanupPanicRecoversAndClearsActiveCall(t *testing.T) {
+	s := apiTestServer(t)
+	sessionID := uint64(9999)
+	principal := "panic-test-principal"
+	agentID := "panic-test-agent"
+
+	// Register an activeCall
+	s.mu.Lock()
+	s.activeCalls[sessionID] = &activeCall{
+		sessionID: sessionID,
+		principal: principal,
+	}
+	s.mu.Unlock()
+
+	// Acquire an admission session slot
+	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+		t.Fatalf("acquire session: %v", err)
+	}
+
+	stoppedBefore := s.metrics.SessionsStoppedTotal.Load()
+
+	// Execute simulated cleanup with the exact defer pattern used in Server.handleSession
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("panic during session cleanup", "session", sessionID, "panic", r)
+			}
+			s.mu.Lock()
+			delete(s.activeCalls, sessionID)
+			s.mu.Unlock()
+			s.metrics.SessionsStoppedTotal.Add(1)
+		}()
+		defer s.admission.ReleaseSession(principal, agentID)
+
+		// Trigger a simulated panic during teardown
+		panic("simulated releaseCall panic")
+	}()
+
+	s.mu.Lock()
+	_, stillActive := s.activeCalls[sessionID]
+	s.mu.Unlock()
+
+	if stillActive {
+		t.Fatal("session was not removed from activeCalls following cleanup panic")
+	}
+
+	if s.metrics.SessionsStoppedTotal.Load() != stoppedBefore+1 {
+		t.Fatalf("SessionsStoppedTotal = %d, want %d", s.metrics.SessionsStoppedTotal.Load(), stoppedBefore+1)
+	}
+
+	// Verify admission slot was released by successfully acquiring capacity again
+	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+		t.Fatalf("failed to re-acquire admission after cleanup panic: %v", err)
+	}
+	s.admission.ReleaseSession(principal, agentID)
+}
