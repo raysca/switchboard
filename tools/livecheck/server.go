@@ -183,7 +183,8 @@ func sortedKeys[V any](m map[string]V) []string {
 // keys (the child must use stored credentials only), unrelated tokens, and GOVOICE_DATABASE_DSN /
 // GOVOICE_CREDENTIAL_KEYS (they would point the child at a real store that outlives the run) stay out.
 var childEnvAllow = []string{"PATH", "HOME", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL", "TZ",
-	"DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH", "ORT_DISABLE_TELEMETRY", "GOVOICE_ORT_LIB", "GOVOICE_MODEL_PATH"}
+	"DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH", "ORT_DISABLE_TELEMETRY", "GOVOICE_ORT_LIB", "GOVOICE_MODEL_PATH",
+	"GOVOICE_FAKE_LLM_DELAY"} // read only by -tags fakeproviders: emulates provider latency in the self-test
 
 func childEnv(environ []string) []string {
 	var env []string

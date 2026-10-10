@@ -674,12 +674,12 @@ func s11(x *sctx, r *Result) {
 		return
 	}
 	c.quiet(x.o.pause + 300*time.Millisecond) // a pause while held must not end the turn
-	early := c.has(mark, "audio")
 	_, tEnd, err := c.stream(x.clips["pauseB"])
 	if err != nil {
 		r.abort(redact(err))
 		return
 	}
+	early := c.has(mark, "audio")        // over the whole hold: a reply to the first half arrives late
 	if err := c.ptt(false); err != nil { // released at the end of speech, before the final
 		r.abort(redact(err))
 		return
@@ -691,9 +691,21 @@ func s11(x *sctx, r *Result) {
 		r.m("release_to_audio_ms", msv(e.t.Sub(tEnd)))
 	}
 	c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+	c.quiet(2 * time.Second) // a late second reply (the pause split the turn) would start here
 	heard, said := c.texts(mark, "user-transcription", true), c.texts(mark, "bot-llm-text", false)
 	r.m("heard", heard)
 	r.m("reply", truncate(said, 90))
+	turns := 0 // committed user turns: a pause that ends the held turn makes two
+	for _, e := range c.snap() {
+		if e.t.After(mark) && e.kind == "user-transcription" && e.final {
+			turns++
+		}
+	}
+	replies := c.count(mark, "bot-llm-started")
+	r.m("user_turns", turns)
+	r.m("replies", replies)
+	r.check("one user turn for the held utterance", turns == 1, fmt.Sprintf("%d turns", turns))
+	r.check("one reply for the held utterance", replies == 1, fmt.Sprintf("%d replies", replies))
 	r.check("no rejected client message", !c.has(mark, "error"), "")
 	if x.content() {
 		h := strings.ToLower(heard)
