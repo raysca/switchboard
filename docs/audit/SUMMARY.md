@@ -80,7 +80,7 @@ Fixed = merged on `main`. Commit hashes are the fixing commits; "open" means no 
 | M4-07 | fixed, partial | 6cb493f (`make ort`). Open: macOS ONNX Runtime sha256 is not pinned yet |
 | M4-08 | fixed | c1b2a26 |
 | M4-09 | fixed | c1b2a26 (CI Postgres job) |
-| M4-10 | open | no Linux/soak/fault-injection evidence; needs a spend and time budget |
+| M4-10 | partly done | Linux container capacity, churn and fault-injection runs with fake providers (`docs/benchmarks/container-soak-churn-chaos.md`); 24 h soak dropped (calls last 2 to 3 minutes). Open: longer churn at real call lengths and real-provider runs |
 | M4-11 | fixed | 5b49ad7 |
 | M4-12 | fixed | 9c66b1d, d8ca2a0. Residual: `/ready` can flap under DB pool exhaustion |
 | M4-13 | fixed | 9c66b1d |
@@ -91,7 +91,7 @@ Found and fixed during round 7 verification (not in the original audit): idle sp
 
 ## Remaining before launch
 
-- M4-10: Linux container run, real-provider soak and fault injection under load.
+- M4-10: longer churn at real call lengths (2 to 3 minutes) and real-provider runs; the Linux container capacity, churn and fault-injection runs are done (fake providers).
 - M1-06, M1-07, M1-08, M1-09 (low).
 - M4-18: nginx 503 retry for multi-instance edges.
 - Pin the macOS ONNX Runtime sha256 in `scripts/fetch-ort.sh`.
