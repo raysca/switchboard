@@ -63,6 +63,11 @@ func (tickFrame) Type() core.FrameType { return core.FrameInternal }
 // whole utterance. ponytail: fixed cap; make it config if a provider is slower.
 const unstartedNoFinalExpiry = 2500 * time.Millisecond
 
+// releaseGrace caps how long a push-to-talk release waits for the VAD stop
+// (the VAD's stop hangover is about 800ms). ponytail: fixed, make it follow
+// the VAD stop config if that changes.
+const releaseGrace = time.Second
+
 type segment struct {
 	turn  string
 	text  string
@@ -90,8 +95,10 @@ type Processor struct {
 	wake          chan struct{}
 	tickGen       atomic.Uint64 // generation of the queued tick; 0 = none queued
 	busy          atomic.Bool
-	extStop       bool // push-to-talk released while a turn is open; consumed by the next observation
-	held          bool // push-to-talk button is down
+	extStop       bool      // push-to-talk released while a turn is open; consumed by the next observation
+	held          bool      // push-to-talk button is down
+	stopPending   time.Time // released while VAD still heard speech; the turn ends at the VAD stop or after releaseGrace
+	released      bool      // the last turn ended by release: its late final must not carry into the next turn
 	startOnce     sync.Once
 
 	last        time.Time
@@ -277,6 +284,10 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 		} else if p.vadHangover > 0 {
 			silenceSince = p.lastStop.Add(-p.vadHangover)
 		}
+		if !p.stopPending.IsZero() {
+			p.stopPending = time.Time{}
+			p.extStop, p.released = true, true
+		}
 		return p.observeSilence(e, "", false, silenceSince)
 	case *core.TranscriptCandidateFrame:
 		return p.onCandidate(v, e)
@@ -291,13 +302,13 @@ func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter)
 		// due (a stop faster than a non-streaming STT, e.g. Smart Turn + chirp_2):
 		// the user is resuming that utterance, so its late final joins this turn.
 		n := len(p.segs)
-		carry := n > 0 && !p.segs[n-1].final && p.joined() == "" && p.now().Sub(p.lastStop) < p.expiryNoFinal
+		carry := !p.released && n > 0 && !p.segs[n-1].final && p.joined() == "" && p.now().Sub(p.lastStop) < p.expiryNoFinal
 		segs := p.segs
 		if !carry {
 			p.retireSegments()
 			segs = nil
 		}
-		p.extStop = false // a stale signal must not end the next turn
+		p.extStop, p.released = false, false // a stale signal must not end the next turn
 		gen := core.Generation(v.Gen)
 		if gen == 0 && p.session != nil {
 			gen = core.Generation(p.session.CurrentGeneration())
@@ -316,10 +327,36 @@ func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter)
 // it cannot start a later turn.
 func (p *Processor) onPushToTalk(pressed bool, e core.Emitter) error {
 	p.held = pressed
-	if !pressed && p.open {
-		p.extStop = true
+	if pressed {
+		p.stopPending = time.Time{}
+		if p.open && !p.started && !p.vadSpeaking {
+			// Unpressed speech that already ended is not part of this turn.
+			gen, id := core.Generation(p.candGen), p.id
+			p.finish()
+			p.retireSegments()
+			if gen != 0 {
+				return e.Push(&core.TranscriptInvalidationFrame{Turn: id, Gen: gen})
+			}
+			return nil
+		}
+		return p.observe(e, "", false) // no-op when no turn is open
 	}
-	return p.observe(e, "", false) // no-op when no turn is open
+	if !p.open {
+		return nil
+	}
+	if p.vadSpeaking {
+		// The STT stream closes at the VAD stop; ending the turn there gives the
+		// final its normal window.
+		p.stopPending = p.now()
+		return nil
+	}
+	return p.endByRelease(e)
+}
+
+func (p *Processor) endByRelease(e core.Emitter) error {
+	p.stopPending = time.Time{}
+	p.extStop, p.released = true, true
+	return p.observe(e, "", false)
 }
 
 func (p *Processor) onCandidate(c *core.TranscriptCandidateFrame, e core.Emitter) error {
@@ -408,6 +445,11 @@ func (p *Processor) advance(e core.Emitter) error {
 	frames, err := p.mgr.Advance(at)
 	if err == nil {
 		if err := p.emit(e, frames); err != nil {
+			return err
+		}
+	}
+	if !p.stopPending.IsZero() && p.open && at.Sub(p.stopPending) >= releaseGrace {
+		if err := p.endByRelease(e); err != nil {
 			return err
 		}
 	}

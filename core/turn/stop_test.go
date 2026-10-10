@@ -304,3 +304,94 @@ func newStopHarness(t *testing.T, cfg Config, det TurnDetector) *harness {
 	t.Cleanup(func() { _ = h.sess.Close() })
 	return h
 }
+
+func (h *harness) candidates() (out []*core.TranscriptCandidateFrame) {
+	for _, f := range h.sink.GetFrames() {
+		if c, ok := f.(*core.TranscriptCandidateFrame); ok {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Speech that ended before the press is not part of the pressed turn, and a
+// press with no speech does not start (or barge in) on its own.
+func TestPushToTalkDropsUnpressedSpeechBeforePress(t *testing.T) {
+	h := newPTTHarness(t)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.settle()
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "side talk to a colleague", Final: true})
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	h.settle()
+	h.run(400*time.Millisecond, func() bool { return false })
+	h.ptt(true)
+	if h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) > 0 }) {
+		t.Fatal("a press with no speech started a turn")
+	}
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 3, Gen: 1})
+	h.settle()
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-3", Gen: 1, Text: "what is the weather", Final: true})
+	h.settle()
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 4, Gen: 1})
+	h.settle()
+	h.ptt(false)
+	h.run(time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 })
+	c := h.candidates()
+	if len(c) == 0 || c[len(c)-1].Text != "what is the weather" {
+		t.Fatalf("pressed turn text = %+v, want only \"what is the weather\"", c)
+	}
+}
+
+// A turn ended by release keeps its late final even when the user speaks
+// again (unpressed) before that final arrives.
+func TestPushToTalkReleasedTurnKeepsLateFinal(t *testing.T) {
+	h := newPTTHarness(t)
+	h.ptt(true)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	h.settle()
+	h.ptt(false)
+	if !h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 }) {
+		t.Fatal("release did not end the turn")
+	}
+	done := h.events(core.TurnEventCompleted)[0].Turn
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 3, Gen: 1}) // unpressed
+	h.settle()
+	_ = h.sess.Reenter(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "book a table for two", Final: true}, core.Downstream, 1, 1)
+	h.settle()
+	for _, c := range h.candidates() {
+		if c.Text == "book a table for two" && c.Turn != done {
+			t.Fatalf("late final re-keyed to %s, want the released turn %s", c.Turn, done)
+		}
+	}
+}
+
+// Released mid-speech: the turn ends at the VAD stop, when the STT stream
+// closes, so the final gets its normal window.
+func TestPushToTalkReleaseWhileSpeakingEndsAtVADStop(t *testing.T) {
+	h := newPTTHarness(t)
+	h.ptt(true)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
+	h.ptt(false)
+	if h.run(500*time.Millisecond, func() bool { return len(h.events(core.TurnEventCompleted)) > 0 }) {
+		t.Fatal("turn ended before the VAD stop")
+	}
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	if !h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 }) {
+		t.Fatal("VAD stop after a release did not end the turn")
+	}
+}
+
+// A release whose VAD stop never comes still ends the turn shortly after.
+func TestPushToTalkReleaseWithoutVADStopIsCapped(t *testing.T) {
+	h := newPTTHarness(t)
+	h.ptt(true)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.run(300*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
+	h.ptt(false)
+	if !h.run(2*time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 }) {
+		t.Fatal("a release without a VAD stop never ended the turn")
+	}
+}
