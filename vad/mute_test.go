@@ -117,3 +117,23 @@ func TestUnmuteStartsWithFreshDetectorState(t *testing.T) {
 		t.Fatalf("pre-mute result counted: above=%d busy=%t", p.above, p.busy)
 	}
 }
+
+// An unmute while already unmuted (any client may send one) changes nothing:
+// it must not reset detection in the middle of speech.
+func TestRedundantUnmuteKeepsDetectorState(t *testing.T) {
+	p := NewProcessor(nil, DefaultProcessorConfig())
+	l := &frameLog{}
+	for i := range p.state {
+		p.state[i] = 7
+	}
+	for i := range p.ctx {
+		p.ctx[i] = 0.5
+	}
+	_ = p.ProcessFrame(context.Background(), &core.InputMutedStateFrame{Muted: false}, core.Downstream, l)
+	if p.state[0] != 7 || p.ctx[0] != 0.5 {
+		t.Fatal("a redundant unmute reset the detector")
+	}
+	if l.muted != 1 {
+		t.Fatalf("state frame forwarded %d times, want 1", l.muted)
+	}
+}

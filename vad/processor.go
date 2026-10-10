@@ -207,6 +207,9 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 // never arrives, so the quiet chunks that would end it never come and the
 // user's turn would hang. While muted nothing is buffered or detected.
 func (p *Processor) setMuted(muted bool, e core.Emitter) error {
+	if p.muted == muted {
+		return nil // a repeated mute or unmute changes nothing
+	}
 	p.muted = muted
 	if !muted {
 		// Start fresh: mid-speech recurrent state would open a phantom segment.
