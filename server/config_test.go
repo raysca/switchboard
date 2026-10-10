@@ -243,3 +243,19 @@ func TestConfig_VADStopMS(t *testing.T) {
 		}
 	}
 }
+
+func TestConfig_ToolsMaxParallel(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	for _, val := range []int{0, 1, 4, 16} {
+		cfg.Tools.MaxParallel = val
+		if err := ValidateConfig(cfg); err != nil {
+			t.Fatalf("tools.max_parallel %d: %v", val, err)
+		}
+	}
+	for _, val := range []int{-1, 17, 100} {
+		cfg.Tools.MaxParallel = val
+		if err := ValidateConfig(cfg); err == nil {
+			t.Fatalf("tools.max_parallel %d should be rejected", val)
+		}
+	}
+}

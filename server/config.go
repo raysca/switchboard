@@ -629,6 +629,9 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.Turn.Completion != (CompletionConfig{}) && !slices.Contains(cfg.Turn.Stop, "llm-completion") {
 		return errors.New("turn.completion needs llm-completion in turn.stop")
 	}
+	if cfg.Tools.MaxParallel < 0 || cfg.Tools.MaxParallel > 16 {
+		return errors.New("tools.max_parallel must be between 0 and 16")
+	}
 
 	if err := cfg.Privacy.Redaction.Validate(); err != nil {
 		return err

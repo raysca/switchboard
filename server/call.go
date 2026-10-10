@@ -173,16 +173,16 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	}
 	resolved = true
 	maxMessages, maxTokens := cfg.Context.Limits()
-	fallbacks := s.resolveFallbacks(ctx, rs, creds, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
-		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: rs.Definitions, ToolExecutor: rs.Executor}
-	})
-	ttsFallbacks := s.resolveFallbacks(ctx, rs, creds, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
-		return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
-	})
 	maxParallel := cfg.LLM.MaxParallel
 	if maxParallel <= 0 && s.cfg.Tools.MaxParallel > 0 {
 		maxParallel = s.cfg.Tools.MaxParallel
 	}
+	fallbacks := s.resolveFallbacks(ctx, rs, creds, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: rs.Definitions, ToolExecutor: rs.Executor, MaxParallel: maxParallel}
+	})
+	ttsFallbacks := s.resolveFallbacks(ctx, rs, creds, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+		return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
+	})
 	return CallSpec{
 		LLMFallbacks: fallbacks, TTSFallbacks: ttsFallbacks, Failover: cfg.Failover,
 		STTFallbacks: s.sttFallbacks(ctx, rs, cfg, creds),

@@ -449,3 +449,43 @@ func TestStoredAgent_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 		t.Fatalf("expected StopChunks %d for 450ms, got %d", expectedChunks, vadCfg.StopChunks)
 	}
 }
+
+func TestStoredAgent_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T) {
+	s := apiTestServer(t)
+	s.cfg.Tools.MaxParallel = 3
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	enableTestManagement(t, s)
+	cred, err := s.credentials.Create(t.Context(), credentialInput("google", "stored-google-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Agent config with no agent-level max_parallel and an LLM fallback
+	cfgJSON := strings.ReplaceAll(`{
+		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
+		"llm": {"provider": "google", "model": "gemini-primary", "credential_id": "018f0000-0000-7000-8000-000000000001",
+			"fallbacks": [{"provider": "google", "model": "gemini-fallback", "credential_id": "018f0000-0000-7000-8000-000000000001"}]},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001"}
+	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+
+	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "FallbackParallelAgent", Config: json.RawMessage(cfgJSON)})
+	if err != nil || created.Readiness.State != agent.ReadinessReady {
+		t.Fatalf("agent creation failed: %v", err)
+	}
+
+	spec, release, err := s.resolveCall(t.Context(), created.ID, "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	if spec.LLM.MaxParallel != 3 {
+		t.Fatalf("expected primary LLM MaxParallel 3 from server config, got %d", spec.LLM.MaxParallel)
+	}
+	if len(spec.LLMFallbacks) != 1 {
+		t.Fatalf("expected 1 LLM fallback, got %d", len(spec.LLMFallbacks))
+	}
+	if spec.LLMFallbacks[0].MaxParallel != 3 {
+		t.Fatalf("expected fallback LLM MaxParallel 3 from server config, got %d", spec.LLMFallbacks[0].MaxParallel)
+	}
+}

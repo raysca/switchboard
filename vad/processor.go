@@ -382,7 +382,8 @@ func (p *Processor) detect(prob float32, seq uint64, due time.Time, e core.Emitt
 		if p.s != nil {
 			gen = p.s.CurrentGeneration()
 		}
-		hangover := time.Duration(p.cfg.StopChunks) * 32 * time.Millisecond
+		chunkDuration := time.Duration(ChunkSamples) * time.Second / time.Duration(SampleRate)
+		hangover := time.Duration(p.cfg.StopChunks) * chunkDuration
 		return e.Push(&core.UserStoppedSpeakingFrame{
 			Seq:             seq,
 			Timestamp:       due,

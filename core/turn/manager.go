@@ -307,6 +307,9 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 		m.stopCandidate = true
 		if !observation.SilenceSince.IsZero() && observation.SilenceSince.Before(observation.At) {
 			m.stopSince = observation.SilenceSince
+			if m.stopSince.Before(m.turnStartedAt) {
+				m.stopSince = m.turnStartedAt
+			}
 		} else {
 			m.stopSince = observation.At
 		}

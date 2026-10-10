@@ -435,26 +435,71 @@ func TestProcessor_VADSilenceOnsetEliminatesDoubleTimeout(t *testing.T) {
 	cfg.SilenceTimeout = 500 * time.Millisecond
 	h := newHarness(t, cfg)
 
-	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
-	h.audio()
-	h.run(150*time.Millisecond, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: h.sess.CurrentGeneration()})
+	h.settle()
+	if !h.run(2*time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 }) {
+		t.Fatal("no TurnEventStarted")
+	}
 
-	// User stopped speaking, with VAD confirming 500ms of quiet chunks
+	// User speaks for 300ms
+	h.clk.Advance(300 * time.Millisecond)
+	h.audio()
+
+	// VAD accumulates 500ms of silence chunks
+	h.clk.Advance(500 * time.Millisecond)
 	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{
 		Seq:             2,
-		Gen:             1,
+		Gen:             h.sess.CurrentGeneration(),
 		SilenceDuration: 500 * time.Millisecond,
 	})
 	_ = h.sess.Post(&core.TranscriptCandidateFrame{
 		Turn:  "turn-1-1",
-		Gen:   1,
+		Gen:   core.Generation(h.sess.CurrentGeneration()),
 		Text:  "hello there",
 		Final: true,
 	})
+	h.settle()
 
-	// The turn should complete immediately without having to wait another full 500ms
+	// The turn should complete promptly without having to wait another full 500ms
 	h.run(150*time.Millisecond, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 })
 	if len(h.events(core.TurnEventCompleted)) != 1 {
 		t.Fatalf("turn should complete promptly when VAD already confirmed silence, got %d completed events", len(h.events(core.TurnEventCompleted)))
+	}
+}
+
+func TestProcessor_SilenceDurationClampedToTurnStart(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.SilenceTimeout = 500 * time.Millisecond
+	h := newHarness(t, cfg)
+
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: h.sess.CurrentGeneration()})
+	h.settle()
+	if !h.run(2*time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 }) {
+		t.Fatal("no TurnEventStarted")
+	}
+	startEv := h.events(core.TurnEventStarted)[0]
+
+	// User stopped speaking with an artificially huge SilenceDuration (e.g. 10 hours)
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{
+		Seq:             2,
+		Gen:             h.sess.CurrentGeneration(),
+		SilenceDuration: 10 * time.Hour,
+	})
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{
+		Turn:  "turn-1-1",
+		Gen:   core.Generation(h.sess.CurrentGeneration()),
+		Text:  "quick word",
+		Final: true,
+	})
+	h.settle()
+
+	// Advance clock past silence timeout
+	h.run(600*time.Millisecond, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 })
+	if len(h.events(core.TurnEventCompleted)) != 1 {
+		t.Fatalf("turn should complete, got %d events", len(h.events(core.TurnEventCompleted)))
+	}
+	stopEv := h.events(core.TurnEventCompleted)[0]
+	if stopEv.At.Before(startEv.At) {
+		t.Fatalf("stop event At (%v) cannot precede start event At (%v)", stopEv.At, startEv.At)
 	}
 }
