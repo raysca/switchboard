@@ -18,6 +18,7 @@ import {
   RTVI_TYPE_BOT_STOPPED_SPEAKING,
   RTVI_TYPE_CLIENT_READY,
   RTVI_TYPE_DISCONNECT,
+  RTVI_TYPE_PUSH_TO_TALK,
   RTVI_TYPE_SEND_TEXT,
   RTVI_TYPE_SET_MUTED,
   RTVI_TYPE_USER_STARTED_SPEAKING,
@@ -388,6 +389,64 @@ describe("AgentVoiceTest", () => {
     // Clicking trace link routes to /sessions/:sessionId
     await user.click(screen.getByTestId("view-trace-link"));
     expect(await screen.findByTestId("sessions-page")).toBeVisible();
+  });
+
+  it("push-to-talk: opts in at client-ready and sends press and release", async () => {
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <AgentVoiceTest agent={createMockAgent()} client={createMockClient()} keyValue="mgmt-key-1"
+          audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Push to talk"));
+    await user.click(screen.getByRole("button", { name: "Start voice test" }));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    await waitFor(() => expect(ws.sentData.length).toBeGreaterThan(0));
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_READY, { version: "2.1.0" });
+    await waitFor(() => expect(screen.getByTestId("connection-state")).toHaveTextContent("READY"));
+
+    const messages = (type: string) =>
+      ws.sentData
+        .map((d) => decodeBinaryFrame(d))
+        .filter((f) => f?.kind === "message" && f.parsed?.type === type)
+        .map((f) => (f?.kind === "message" ? f.parsed?.data : null));
+    expect(messages(RTVI_TYPE_CLIENT_READY)[0]).toMatchObject({ push_to_talk: true });
+    expect(screen.getByLabelText("Push to talk")).toBeDisabled();
+
+    const talk = screen.getByTestId("ptt-btn");
+    await user.pointer({ keys: "[MouseLeft>]", target: talk });
+    expect(talk).toHaveAttribute("aria-pressed", "true");
+    await user.pointer({ keys: "[/MouseLeft]", target: talk });
+    expect(talk).toHaveAttribute("aria-pressed", "false");
+    talk.focus();
+    await user.keyboard("[Space>]");
+    await user.keyboard("[/Space]");
+    expect(messages(RTVI_TYPE_PUSH_TO_TALK)).toEqual([
+      { pressed: true }, { pressed: false }, { pressed: true }, { pressed: false },
+    ]);
+  });
+
+  it("hands-free calls show no hold-to-talk button", async () => {
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
+    render(
+      <MemoryRouter>
+        <AgentVoiceTest agent={createMockAgent()} client={createMockClient()} keyValue="mgmt-key-1"
+          audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+      </MemoryRouter>,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Start voice test" }));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    await waitFor(() => expect(ws.sentData.length).toBeGreaterThan(0));
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_READY, { version: "2.1.0" });
+    await waitFor(() => expect(screen.getByTestId("connection-state")).toHaveTextContent("READY"));
+    expect(screen.queryByTestId("ptt-btn")).toBeNull();
   });
 
   it("restates mute to the server after bot-ready", async () => {

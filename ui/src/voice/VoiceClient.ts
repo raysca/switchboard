@@ -11,6 +11,7 @@ import {
   encodeClientReadyFrame,
   encodeDisconnectFrame,
   encodeSendTextFrame,
+  encodePushToTalkFrame,
   encodeSetMutedFrame,
   extractSessionIdFromToken,
   RTVI_TYPE_BOT_LLM_TEXT,
@@ -20,6 +21,8 @@ import {
   RTVI_TYPE_CLIENT_READY,
   RTVI_TYPE_DISCONNECT,
   RTVI_TYPE_ERROR,
+  RTVI_PROTOCOL_VERSION,
+  RTVI_TYPE_PUSH_TO_TALK,
   RTVI_TYPE_SEND_TEXT,
   RTVI_TYPE_SET_MUTED,
   RTVI_TYPE_USER_STARTED_SPEAKING,
@@ -87,6 +90,8 @@ export interface VoiceClientState {
   isUserSpeaking: boolean;
   isBotSpeaking: boolean;
   isMuted: boolean;
+  pushToTalk: boolean;
+  isTalking: boolean;
   isBargeInActive: boolean;
   currentInterimTranscript: string;
   currentBotStreamingText: string;
@@ -102,6 +107,8 @@ export interface ConnectOptions {
   agentId: string;
   principal?: string;
   wsBaseUrl?: string;
+  /** Turns start and end on the hold-to-talk button instead of voice detection. */
+  pushToTalk?: boolean;
 }
 
 export class VoiceClient {
@@ -116,6 +123,8 @@ export class VoiceClient {
     isUserSpeaking: false,
     isBotSpeaking: false,
     isMuted: false,
+    pushToTalk: false,
+    isTalking: false,
     isBargeInActive: false,
     currentInterimTranscript: "",
     currentBotStreamingText: "",
@@ -209,6 +218,8 @@ export class VoiceClient {
     // Reset session errors and transient speaking states
     this.updateState({
       sessionState: "requesting_token",
+      pushToTalk: options.pushToTalk === true,
+      isTalking: false,
       error: null,
       isUserSpeaking: false,
       isBotSpeaking: false,
@@ -340,6 +351,7 @@ export class VoiceClient {
     this.teardownResources();
     this.updateState({
       sessionState: "disconnected",
+      isTalking: false,
       isUserSpeaking: false,
       isBotSpeaking: false,
       isBargeInActive: false,
@@ -372,6 +384,14 @@ export class VoiceClient {
     this.audioController.setMuted(nextMuted);
     this.updateState({ isMuted: nextMuted });
     this.sendRTVI(RTVI_TYPE_SET_MUTED, encodeSetMutedFrame(nextMuted), { muted: nextMuted });
+  }
+
+  /** Push-to-talk: true when the hold-to-talk button goes down, false when it is released. */
+  public setTalking(pressed: boolean): void {
+    if (!this.state.pushToTalk || this.state.isTalking === pressed) return;
+    if (this.sendRTVI(RTVI_TYPE_PUSH_TO_TALK, encodePushToTalkFrame(pressed), { pressed })) {
+      this.updateState({ isTalking: pressed });
+    }
   }
 
   /**
@@ -413,7 +433,7 @@ export class VoiceClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
     this.clientReadyTime = Date.now();
-    const readyFrame = encodeClientReadyFrame();
+    const readyFrame = encodeClientReadyFrame(RTVI_PROTOCOL_VERSION, this.state.pushToTalk);
     this.ws.send(readyFrame as unknown as ArrayBufferView<ArrayBuffer>);
 
     this.recordEvent(
@@ -422,7 +442,7 @@ export class VoiceClient {
       JSON.stringify({
         label: "rtvi-ai",
         type: RTVI_TYPE_CLIENT_READY,
-        data: { version: "2.1.0" },
+        data: this.state.pushToTalk ? { version: "2.1.0", push_to_talk: true } : { version: "2.1.0" },
       }),
     );
   }

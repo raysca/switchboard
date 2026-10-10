@@ -26,6 +26,7 @@ export function AgentVoiceTest({
 }: AgentVoiceTestProps) {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [textMessage, setTextMessage] = useState("");
+  const [pushToTalk, setPushToTalk] = useState(false);
   const voiceClientRef = useRef<VoiceClient | null>(null);
 
   // Initialize or maintain VoiceClient instance
@@ -62,6 +63,7 @@ export function AgentVoiceTest({
       agentId: agent.id,
       principal: `agent-test-${agent.id}`,
       wsBaseUrl,
+      pushToTalk,
     });
   };
 
@@ -213,6 +215,16 @@ export function AgentVoiceTest({
         }}
       >
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          <label style={{ fontSize: "0.85rem", display: "flex", gap: "4px", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={pushToTalk}
+              disabled={isConnectedOrReady || isConnecting}
+              onChange={(e) => setPushToTalk(e.target.checked)}
+            />
+            Push to talk
+          </label>
+
           {!isConnectedOrReady && !isConnecting && (
             <ActionButton
               type="button"
@@ -258,6 +270,38 @@ export function AgentVoiceTest({
               >
                 {state.isMuted ? "Unmute mic" : "Mute mic"}
               </button>
+
+              {state.pushToTalk && (
+                <button
+                  type="button"
+                  className="action-button-small"
+                  data-testid="ptt-btn"
+                  aria-pressed={state.isTalking}
+                  onPointerDown={() => voiceClient.setTalking(true)}
+                  onPointerUp={() => voiceClient.setTalking(false)}
+                  onPointerCancel={() => voiceClient.setTalking(false)}
+                  onPointerLeave={() => voiceClient.setTalking(false)}
+                  onBlur={() => voiceClient.setTalking(false)}
+                  onKeyDown={(e) => {
+                    if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                      e.preventDefault();
+                      voiceClient.setTalking(true);
+                    }
+                  }}
+                  onKeyUp={(e) => {
+                    if (e.key === " " || e.key === "Enter") {
+                      e.preventDefault();
+                      voiceClient.setTalking(false);
+                    }
+                  }}
+                  style={{
+                    background: state.isTalking ? "#e4f3ec" : "#ffffff",
+                    borderColor: state.isTalking ? "#2f7a55" : "#c9d3d2",
+                  }}
+                >
+                  {state.isTalking ? "Talking… release to send" : "Hold to talk"}
+                </button>
+              )}
             </>
           )}
 

@@ -8,6 +8,7 @@ import {
   encodeClientReadyFrame,
   encodeDisconnectFrame,
   encodeMessageFrame,
+  encodePushToTalkFrame,
   encodeSetMutedFrame,
   encodeVarint,
   extractSessionIdFromToken,
@@ -15,6 +16,7 @@ import {
   RTVI_TYPE_BOT_READY,
   RTVI_TYPE_CLIENT_READY,
   RTVI_TYPE_DISCONNECT,
+  RTVI_TYPE_PUSH_TO_TALK,
   RTVI_TYPE_SET_MUTED,
 } from "./protocol";
 
@@ -71,6 +73,15 @@ describe("RTVI Protobuf Wire Protocol", () => {
       type: RTVI_TYPE_SET_MUTED,
       data: { muted: true },
     });
+  });
+
+  it("encodes push-to-talk and the client-ready opt-in", () => {
+    const ptt = decodeBinaryFrame(encodePushToTalkFrame(false));
+    expect(ptt?.kind === "message" && ptt.parsed).toMatchObject({ type: RTVI_TYPE_PUSH_TO_TALK, data: { pressed: false } });
+    const ready = decodeBinaryFrame(encodeClientReadyFrame("2.1.0", true));
+    expect(ready?.kind === "message" && ready.parsed?.data).toEqual({ version: "2.1.0", push_to_talk: true });
+    const plain = decodeBinaryFrame(encodeClientReadyFrame("2.1.0"));
+    expect(plain?.kind === "message" && plain.parsed?.data).toEqual({ version: "2.1.0" });
   });
 
   it("encodes and decodes audio frames round-trip", () => {

@@ -18,6 +18,7 @@ export const RTVI_TYPE_ERROR = "error";
 export const RTVI_TYPE_DISCONNECT = "disconnect-bot";
 export const RTVI_TYPE_SEND_TEXT = "send-text";
 export const RTVI_TYPE_SET_MUTED = "set-muted";
+export const RTVI_TYPE_PUSH_TO_TALK = "push-to-talk";
 
 export interface RTVIMessage<T = unknown> {
   id?: string;
@@ -29,6 +30,7 @@ export interface RTVIMessage<T = unknown> {
 export interface RTVIClientReadyData {
   version: string;
   about?: Record<string, unknown>;
+  push_to_talk?: boolean;
 }
 
 export interface RTVITranscriptionData {
@@ -140,10 +142,17 @@ export function encodeRTVIMessage<T = unknown>(
  */
 export function encodeClientReadyFrame(
   version: string = RTVI_PROTOCOL_VERSION,
+  pushToTalk = false,
 ): Uint8Array {
-  return encodeRTVIMessage<RTVIClientReadyData>(RTVI_TYPE_CLIENT_READY, {
-    version,
-  });
+  return encodeRTVIMessage<RTVIClientReadyData>(
+    RTVI_TYPE_CLIENT_READY,
+    pushToTalk ? { version, push_to_talk: true } : { version },
+  );
+}
+
+/** Encodes push-to-talk: pressed on button down, released on button up. */
+export function encodePushToTalkFrame(pressed: boolean): Uint8Array {
+  return encodeRTVIMessage(RTVI_TYPE_PUSH_TO_TALK, { pressed });
 }
 
 /**
