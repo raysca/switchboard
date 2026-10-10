@@ -134,6 +134,8 @@ func (x *sctx) content() bool { return !x.fake }
 type scenario struct {
 	id, title string
 	class     serverClass
+	// pushToTalk opts the call into push-to-talk at client-ready.
+	pushToTalk bool
 	// clips are the audio clips the scenario streams (only these are synthesized when missing).
 	clips []string
 	// shape feeds the upper-bound provider-request estimate (estimate.go).
@@ -197,6 +199,10 @@ var scenarios = []scenario{
 	{id: "S10", title: "hesitation (pause inside one sentence, per -hes)", class: classBase, clips: []string{"pauseA", "pauseB"},
 		// each pause may split its turn: one more STT open, LLM request and reply per pause
 		shape: func(o *opts) shape { n := len(o.hes); return shape{turns: n, short: true, extraSTT: n, extraLLM: n} }, run: s10},
+	{id: "S11", title: "push-to-talk (unpressed ignored, pause while held, release before final)", class: classBase,
+		clips: []string{"question", "pauseA", "pauseB"}, pushToTalk: true,
+		// the unpressed utterance and each held segment open an STT stream; one short reply
+		shape: func(*opts) shape { return shape{turns: 1, short: true, extraSTT: 2} }, run: s11},
 }
 
 func scenarioByID(id string) (scenario, bool) {
@@ -621,5 +627,62 @@ func s10(x *sctx, r *Result) {
 		r.m(pfx+"heard", c.texts(mark, "user-transcription", true))
 		r.m(pfx+"reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
 		c.quiet(time.Second)
+	}
+}
+
+var parisRe = regexp.MustCompile(`(?i)\bparis\b`)
+
+// s11: push-to-talk. Speech without the button gets no reply; held speech with a pause inside it is
+// one turn; releasing right at the end of speech (before the STT final) still answers all of it.
+func s11(x *sctx, r *Result) {
+	c := x.c
+	c.quiet(400 * time.Millisecond)
+	mark := time.Now()
+	if _, _, err := c.stream(x.clips["question"]); err != nil {
+		r.abort(redact(err))
+		return
+	}
+	replied := c.wait(6*time.Second, func() bool { return c.has(mark, "audio") })
+	r.check("unpressed speech gets no reply", !replied, "")
+	if replied {
+		c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
+	}
+	c.quiet(time.Second)
+
+	mark = time.Now()
+	if err := c.ptt(true); err != nil {
+		r.abort(redact(err))
+		return
+	}
+	if _, _, err := c.stream(x.clips["pauseA"]); err != nil {
+		r.abort(redact(err))
+		return
+	}
+	c.quiet(x.o.pause + 300*time.Millisecond) // a pause while held must not end the turn
+	early := c.has(mark, "audio")
+	_, tEnd, err := c.stream(x.clips["pauseB"])
+	if err != nil {
+		r.abort(redact(err))
+		return
+	}
+	if err := c.ptt(false); err != nil { // released at the end of speech, before the final
+		r.abort(redact(err))
+		return
+	}
+	r.check("no reply while held", !early, "")
+	ok := c.wait(15*time.Second, func() bool { return c.has(tEnd, "audio") })
+	r.check("reply after release", ok, "")
+	if e, ok := c.firstAfter(tEnd, "audio"); ok {
+		r.m("release_to_audio_ms", msv(e.t.Sub(tEnd)))
+	}
+	c.wait(25*time.Second, func() bool { return c.has(tEnd, "bot-stopped-speaking") })
+	heard, said := c.texts(mark, "user-transcription", true), c.texts(mark, "bot-llm-text", false)
+	r.m("heard", heard)
+	r.m("reply", truncate(said, 90))
+	r.check("no rejected client message", !c.has(mark, "error"), "")
+	if x.content() {
+		h := strings.ToLower(heard)
+		r.check("heard both halves", strings.Contains(h, "know") && strings.Contains(h, "france"), heard)
+		r.check("answer is Paris", parisRe.MatchString(said), "")
 	}
 }

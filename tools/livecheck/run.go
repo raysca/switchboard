@@ -207,7 +207,7 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 
 func runScenario(ctx context.Context, cfg runCfg, srv *server, agent string, it planItem, name string) *Result {
 	r := &Result{}
-	c, err := dial(ctx, srv, agent)
+	c, err := dial(ctx, srv, agent, it.sc.pushToTalk)
 	if err != nil {
 		r.abort(redact(err))
 		return r

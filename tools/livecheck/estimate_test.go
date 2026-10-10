@@ -194,9 +194,10 @@ var knownActuals = []struct {
 // L3 (first-audio-latency.md), short replies: S1 x5 = 16, S1 x4 = 13, S10 with 2 pauses = 9
 // (split VAD stops opened 2 extra STT streams; the old calibrated figure said 7).
 func TestShortEstimateCoversL3(t *testing.T) {
-	x, s10 := prof("xai"), scenarios[len(scenarios)-1]
-	if s10.id != "S10" {
-		t.Fatal("S10 not last")
+	x := prof("xai")
+	s10, ok := scenarioByID("S10")
+	if !ok {
+		t.Fatal("no S10")
 	}
 	for _, c := range []struct {
 		sh     shape

@@ -36,7 +36,7 @@ type client struct {
 	n        int       // server session number (1-based dial order)
 }
 
-func dial(ctx context.Context, s *server, agent string) (*client, error) {
+func dial(ctx context.Context, s *server, agent string, pushToTalk bool) (*client, error) {
 	tok, err := s.token(agent)
 	if err != nil {
 		return nil, err
@@ -48,7 +48,11 @@ func dial(ctx context.Context, s *server, agent string) (*client, error) {
 		return nil, fmt.Errorf("dial: %v", err)
 	}
 	conn.SetReadLimit(1 << 20)
-	ready, _ := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`)
+	ptt := ""
+	if pushToTalk {
+		ptt = `,"push_to_talk":true`
+	}
+	ready, _ := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"` + ptt + `}}`)
 	if err := conn.Write(dctx, websocket.MessageBinary, ready); err != nil {
 		return nil, err
 	}
@@ -137,14 +141,29 @@ func (c *client) pace(b []byte) error {
 	return c.conn.Write(context.Background(), websocket.MessageBinary, f)
 }
 
-// sendText sends an RTVI send-text client message (a text turn, no audio).
-func (c *client) sendText(text string) error {
-	b, _ := json.Marshal(map[string]any{"id": "t1", "label": "rtvi-ai", "type": "send-text", "data": map[string]string{"content": text}})
+// sendMsg sends one RTVI client message.
+func (c *client) sendMsg(typ string, data any) error {
+	b, _ := json.Marshal(map[string]any{"id": "m1", "label": "rtvi-ai", "type": typ, "data": data})
 	f, err := ws.EncodeMessageFrame(string(b))
 	if err != nil {
 		return err
 	}
 	return c.conn.Write(context.Background(), websocket.MessageBinary, f)
+}
+
+// sendText sends an RTVI send-text client message (a text turn, no audio).
+func (c *client) sendText(text string) error {
+	return c.sendMsg("send-text", map[string]string{"content": text})
+}
+
+// ptt presses (true) or releases (false) the push-to-talk button.
+func (c *client) ptt(pressed bool) error {
+	return c.sendMsg("push-to-talk", map[string]bool{"pressed": pressed})
+}
+
+// setMuted mutes or unmutes the caller server-side.
+func (c *client) setMuted(muted bool) error {
+	return c.sendMsg("set-muted", map[string]bool{"muted": muted})
 }
 
 // stream sends PCM in real time; the caller gets the wall-clock start and end.
