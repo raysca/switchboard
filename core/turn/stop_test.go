@@ -195,26 +195,91 @@ func TestProcessorEagerStopThroughSession(t *testing.T) {
 	}
 }
 
-func TestProcessorSignalStopThroughSession(t *testing.T) {
-	h := newStopHarness(t, DefaultConfig(), ExternalStop())
-	h.proc.SignalStop() // no open turn: must be ignored
-	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+func newPTTHarness(t *testing.T) *harness {
+	cfg := DefaultConfig()
+	cfg.StartStrategies = []UserTurnStartStrategy{ExternalStart()}
+	return newStopHarness(t, cfg, StopChain(ExternalStop()))
+}
+
+func (h *harness) ptt(pressed bool) {
+	_ = h.sess.Post(&core.PushToTalkFrame{Pressed: pressed})
 	h.settle()
-	h.run(time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
-	h.run(2*time.Second, func() bool { return false })
-	if len(h.events(core.TurnEventCompleted)) != 0 {
-		t.Fatal("ended without a signal")
+}
+
+func TestPushToTalkIgnoresSpeechWithoutPress(t *testing.T) {
+	h := newPTTHarness(t)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	if h.run(time.Second, func() bool { return len(h.events(core.TurnEventStarted)) > 0 }) {
+		t.Fatal("voice detection alone started a push-to-talk turn")
 	}
-	h.proc.SignalStop()
+}
+
+func TestPushToTalkPressSpeakRelease(t *testing.T) {
+	h := newPTTHarness(t)
+	h.ptt(true)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	if !h.run(time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 }) {
+		t.Fatal("press + speech did not start a turn")
+	}
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	if h.run(3*time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) > 0 }) {
+		t.Fatal("a pause ended a held push-to-talk turn")
+	}
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 3, Gen: 1}) // resumes while held: same turn
+	h.settle()
+	h.ptt(false)
 	if !h.run(time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 }) {
-		t.Fatal("SignalStop did not end the turn")
+		t.Fatal("release did not end the turn")
+	}
+	if n := len(h.events(core.TurnEventStarted)); n != 1 {
+		t.Fatalf("%d turns started, want 1", n)
 	}
 	if err := h.sess.Close(); err != nil || h.sess.LeakedTasks() != 0 {
 		t.Fatalf("close %v leaked %d", err, h.sess.LeakedTasks())
 	}
 }
 
-// newStopHarness is newHarness with a custom detector.
+func TestPushToTalkPressDuringSpeechStartsTurn(t *testing.T) {
+	h := newPTTHarness(t)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.run(300*time.Millisecond, func() bool { return false })
+	h.ptt(true)
+	if !h.run(time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 }) {
+		t.Fatal("pressing while already speaking did not start the turn")
+	}
+}
+
+func TestPushToTalkPressWithoutSpeechDoesNotLinger(t *testing.T) {
+	h := newPTTHarness(t)
+	h.ptt(true)
+	h.ptt(false)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	if h.run(time.Second, func() bool { return len(h.events(core.TurnEventStarted)) > 0 }) {
+		t.Fatal("an earlier press-and-release started a later unpressed turn")
+	}
+}
+
+func TestPushToTalkReleaseWithNoTurnIsIgnored(t *testing.T) {
+	h := newPTTHarness(t)
+	h.ptt(false) // no open turn
+	h.ptt(true)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.run(time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
+	if h.run(2*time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) > 0 }) {
+		t.Fatal("a stale release ended the next turn")
+	}
+}
+
+func TestPushToTalkBargesIn(t *testing.T) {
+	h := newPTTHarness(t)
+	h.botSpeaks()
+	h.ptt(true)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	if !h.run(time.Second, func() bool { return h.asst.InterruptionCount.Load() == 1 }) {
+		t.Fatal("press + speech while the bot spoke did not barge in")
+	}
+}
+
 func newStopHarness(t *testing.T, cfg Config, det TurnDetector) *harness {
 	t.Helper()
 	h := &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &core.PassthroughProcessor{}}

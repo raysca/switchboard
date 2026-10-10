@@ -130,9 +130,8 @@ func endsSentence(text string) bool {
 }
 
 // ExternalStop ends the turn only when the caller signals it
-// (Observation.ExternalStop / Processor.SignalStop). ponytail: nothing in the
-// server calls SignalStop yet, so turn.stop rejects "external"; wire a source
-// (e.g. an RTVI client message or an STT that owns endpointing) first.
+// (Observation.ExternalStop; the turn processor sets it when a
+// core.PushToTalkFrame reports the button released).
 func ExternalStop() UserTurnStopStrategy { return externalStop{} }
 
 type externalStop struct{}

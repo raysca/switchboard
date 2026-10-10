@@ -90,7 +90,8 @@ type Processor struct {
 	wake          chan struct{}
 	tickGen       atomic.Uint64 // generation of the queued tick; 0 = none queued
 	busy          atomic.Bool
-	extStop       atomic.Bool // external end-of-turn signal, consumed by the run loop
+	extStop       bool // push-to-talk released while a turn is open; consumed by the next observation
+	held          bool // push-to-talk button is down
 	startOnce     sync.Once
 
 	last        time.Time
@@ -147,17 +148,6 @@ func (p *Processor) Attach(s core.SessionController, index int) error {
 	var err error
 	p.startOnce.Do(func() { err = s.Go(p.run) })
 	return err
-}
-
-// SignalStop reports an external end of turn (for the ExternalStop strategy).
-// Safe from any goroutine; it is applied on the next tick and ignored when no
-// turn is open.
-func (p *Processor) SignalStop() {
-	p.extStop.Store(true)
-	select {
-	case p.wake <- struct{}{}:
-	default:
-	}
 }
 
 // Close releases the manager; the driver exits with the session context.
@@ -254,6 +244,8 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 	case tickFrame:
 		p.tickGen.Store(0)
 		return p.advance(e)
+	case *core.PushToTalkFrame:
+		return p.onPushToTalk(v.Pressed, e)
 	case *core.UserStartedSpeakingFrame:
 		if p.muted() {
 			p.dropSeg = true
@@ -305,7 +297,7 @@ func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter)
 			p.retireSegments()
 			segs = nil
 		}
-		p.extStop.Store(false) // a stale signal must not end the next turn
+		p.extStop = false // a stale signal must not end the next turn
 		gen := core.Generation(v.Gen)
 		if gen == 0 && p.session != nil {
 			gen = core.Generation(p.session.CurrentGeneration())
@@ -315,6 +307,19 @@ func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter)
 	p.segs = append(p.segs, segment{turn: seg})
 	p.vadSpeaking = true
 	return p.observe(e, "", false)
+}
+
+// onPushToTalk applies a push-to-talk press or release and consumes the frame.
+// A press is ExternalStart evidence for the current or next VAD segment, so
+// pressing just before or while speaking both work; a release ends the open
+// turn through ExternalStop. A release with no open turn clears the press, so
+// it cannot start a later turn.
+func (p *Processor) onPushToTalk(pressed bool, e core.Emitter) error {
+	p.held = pressed
+	if !pressed && p.open {
+		p.extStop = true
+	}
+	return p.observe(e, "", false) // no-op when no turn is open
 }
 
 func (p *Processor) onCandidate(c *core.TranscriptCandidateFrame, e core.Emitter) error {
@@ -381,7 +386,9 @@ func (p *Processor) observeSilence(e core.Emitter, text string, final bool, sile
 		return nil
 	}
 	at := p.now()
-	obs := Observation{ExternalStop: p.extStop.Swap(false), At: at, SilenceSince: silenceSince, TurnID: p.id, Generation: p.mgrGen, Speaking: p.vadSpeaking, Activity: p.vadSpeaking,
+	stop := p.extStop
+	p.extStop = false
+	obs := Observation{ExternalStart: p.held, ExternalStop: stop, At: at, SilenceSince: silenceSince, TurnID: p.id, Generation: p.mgrGen, Speaking: p.vadSpeaking, Activity: p.vadSpeaking,
 		BotSpeaking: p.bot, Transcript: text, TranscriptFinal: final}
 	frames, err := p.mgr.Observe(obs)
 	if errors.Is(err, ErrRetiredTurnLimit) {
@@ -397,9 +404,6 @@ func (p *Processor) observeSilence(e core.Emitter, text string, final bool, sile
 }
 
 func (p *Processor) advance(e core.Emitter) error {
-	if p.extStop.Load() && p.open {
-		return p.observe(e, "", false)
-	}
 	at := p.now()
 	frames, err := p.mgr.Advance(at)
 	if err == nil {

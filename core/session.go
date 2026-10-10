@@ -1132,6 +1132,8 @@ func frameTraceLabel(frame FrameType) string {
 		return "tool_result"
 	case FrameUsageMetrics:
 		return "usage_metrics"
+	case FramePushToTalk:
+		return "push_to_talk"
 	default:
 		return strconv.Itoa(int(frame))
 	}
