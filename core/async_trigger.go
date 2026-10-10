@@ -44,7 +44,7 @@ type AsyncTrigger struct {
 	running bool
 	seq     int
 
-	// Unix-nano since which each signal has been on; 0 = off.
+	// monotonic offset from monoBase; 0 means off.
 	vadUser, turnUser, bot, reply atomic.Int64
 
 	DroppedCount   atomic.Uint64 // results whose injection failed (loop closed)
@@ -67,6 +67,9 @@ func NewAsyncTrigger(cfg AsyncTriggerConfig) *AsyncTrigger {
 	return &AsyncTrigger{cfg: cfg}
 }
 
+// monoBase carries a monotonic reading. Offsets from it ignore wall-clock steps.
+var monoBase = time.Now()
+
 func (t *AsyncTrigger) Attach(s SessionController, index int) error {
 	t.session, t.index = s, index
 	return nil
@@ -76,7 +79,7 @@ func set(a *atomic.Int64, on bool) {
 	if !on {
 		a.Store(0)
 	} else if a.Load() == 0 {
-		a.Store(time.Now().UnixNano())
+		a.Store(int64(time.Since(monoBase)))
 	}
 }
 
@@ -134,7 +137,10 @@ func (t *AsyncTrigger) Deliver(r AsyncToolResult) {
 
 func (t *AsyncTrigger) on(a *atomic.Int64) bool {
 	since := a.Load()
-	return since != 0 && time.Since(time.Unix(0, since)) < t.cfg.MaxWait
+	if since == 0 {
+		return false
+	}
+	return time.Duration(int64(time.Since(monoBase))-since) < t.cfg.MaxWait
 }
 
 func (t *AsyncTrigger) idle() bool {
