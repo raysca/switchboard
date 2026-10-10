@@ -58,12 +58,13 @@ type wireOpener struct{ s *wireSTTStream }
 func (o wireOpener) OpenStream(context.Context, STTConfig) (STTStream, error) { return o.s, nil }
 
 type sttHarness struct {
-	p      *STTProcessor
-	ws     *wireSTTStream
-	mu     sync.Mutex
-	errs   []*core.ErrorFrame
-	inv    int
-	finals []string
+	p       *STTProcessor
+	ws      *wireSTTStream
+	session *core.Session
+	mu      sync.Mutex
+	errs    []*core.ErrorFrame
+	inv     int
+	finals  []string
 }
 
 func newSTTHarness(t *testing.T) *sttHarness {
@@ -78,6 +79,7 @@ func newSTTHarness(t *testing.T) *sttHarness {
 	h.p = p
 	pipe, _ := core.NewPipeline(p, &core.PassthroughProcessor{})
 	session, _ := core.NewSession(4, pipe, core.DefaultResourceBudget())
+	h.session = session
 	session.OnOutput = func(f core.Frame) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -213,6 +215,7 @@ func TestXAISTTInterruptionLeavesDrainingUtterance(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	h.send(t, &core.UserStoppedSpeakingFrame{})
 	waitFor(t, "done", func() bool { return len(h.ws.snapshot()) == 2 })
+	h.session.IncrementGeneration()
 	h.send(t, &core.InterruptionFrame{Gen: 2})
 	h.p.mu.Lock()
 	n := len(h.p.draining)

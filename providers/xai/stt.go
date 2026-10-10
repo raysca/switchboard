@@ -799,7 +799,13 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 						Text: lastText, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 						Timestamp: p.cfg.Now(), Final: true, EndOfUtterance: true, Provider: "xai",
 					}
-					if err := p.session.Reenter(frame, core.Downstream, p.index+1, turnGen); err == nil {
+					admitGen := turnGen
+					p.mu.Lock()
+					if p.active != st {
+						admitGen = p.session.CurrentGeneration()
+					}
+					p.mu.Unlock()
+					if err := p.session.Reenter(frame, core.Downstream, p.index+1, admitGen); err == nil {
 						st.firstFinal(turn, turnGen)
 					}
 				}
