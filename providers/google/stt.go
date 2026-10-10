@@ -413,7 +413,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		old := p.setPendingOwnershipLocked(fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq), frame.Gen)
 		p.mu.Unlock()
 		if old != nil {
-			_ = old.stream.CloseSend()
+			p.halfClose(old)
 		}
 		return e.Push(f)
 
@@ -423,7 +423,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			old := p.setPendingOwnershipLocked(string(frame.Turn), uint64(frame.Gen))
 			p.mu.Unlock()
 			if old != nil {
-				_ = old.stream.CloseSend()
+				p.halfClose(old)
 			}
 		}
 		return e.PushDirection(f, dir)
@@ -441,7 +441,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.turnID = ""
 		p.mu.Unlock()
 		if old != nil {
-			_ = old.stream.CloseSend()
+			p.halfClose(old)
 		}
 		return e.Push(f)
 
@@ -473,6 +473,22 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	default:
 		return e.PushDirection(f, dir)
+	}
+}
+
+func (p *STTProcessor) halfClose(st *activeStream) {
+	if st == nil {
+		return
+	}
+	if err := st.stream.CloseSend(); err != nil {
+		st.cancel()
+		if p.session != nil {
+			_ = p.session.Reenter(&core.ErrorFrame{
+				Err:  MapError("stt", err),
+				Turn: core.TurnID(st.turnID),
+				Gen:  core.Generation(st.gen),
+			}, core.Downstream, p.index+1, st.gen)
+		}
 	}
 }
 
@@ -815,7 +831,8 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 			if p.session != nil {
 				currentGen = p.session.CurrentGeneration()
 			}
-			if turn == "" || turnGen == 0 || turnGen < currentGen {
+			detached := p.active != st
+			if turn == "" || turnGen == 0 || (turnGen < currentGen && !detached) {
 				p.mu.Unlock()
 				continue
 			}
@@ -865,7 +882,11 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				Stability: float64(latest.Stability), HasStability: !latest.IsFinal && latest.Stability > 0,
 				Provider: "google",
 			}
-			_ = p.session.Reenter(frame, core.Downstream, p.index+1, turnGen)
+			admitGen := turnGen
+			if detached {
+				admitGen = currentGen
+			}
+			_ = p.session.Reenter(frame, core.Downstream, p.index+1, admitGen)
 		}
 	}); err != nil {
 		p.mu.Lock()
