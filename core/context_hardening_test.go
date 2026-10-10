@@ -135,30 +135,6 @@ func TestContextRejectsDirectToolMessagesAndConflictingResultStatus(t *testing.T
 	}
 }
 
-func TestContextAggregatorConsumesPublicToolFramesInOrder(t *testing.T) {
-	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
-	p := &ContextAggregator{Context: store}
-	e := &captureEmitter{}
-	frames := []Frame{
-		&SystemMessageFrame{Content: "be concise"},
-		&ToolCallFrame{Call: ToolCall{ID: "c", Name: "lookup", Arguments: json.RawMessage(`{"q":1}`), TurnID: "t", Generation: 3}},
-		&ToolResultFrame{Turn: "t", Gen: 3, Result: ToolResult{CallID: "c", Status: ToolSucceeded, Result: json.RawMessage(`{"ok":true}`)}},
-	}
-	for _, f := range frames {
-		if err := p.ProcessFrame(context.Background(), f, Downstream, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	msgs := store.Messages()
-	if len(msgs) != 3 || msgs[0].Role != RoleSystem || msgs[1].Kind != MessageToolCall || msgs[2].Kind != MessageToolResult {
-		t.Fatalf("ordered context = %#v", msgs)
-	}
-	bad := &ToolResultFrame{Turn: "t", Gen: 3, Result: ToolResult{CallID: "absent", Status: ToolSucceeded, Result: json.RawMessage(`{}`)}}
-	if err := p.ProcessFrame(context.Background(), bad, Downstream, e); !errors.Is(err, ErrUnmatchedToolResult) {
-		t.Fatalf("malformed correlation = %v", err)
-	}
-}
-
 func TestContextConcurrentToolReplayCommitsExactlyOnce(t *testing.T) {
 	store := NewConversationContext(ContextConfig{MaxMessages: 20, MaxTokens: 1000})
 	var done = make(chan error, 16)
@@ -259,7 +235,7 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 }
 
 func TestNewPipelineRejectsNilProcessor(t *testing.T) {
-	if _, err := NewPipeline(&ContextAggregator{}, nil); err == nil {
+	if _, err := NewPipeline(&PassthroughProcessor{}, nil); err == nil {
 		t.Fatal("nil processor accepted")
 	}
 }

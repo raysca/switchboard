@@ -57,8 +57,8 @@ type tickFrame struct{}
 
 func (tickFrame) Type() core.FrameType { return core.FrameInternal }
 
-// unstartedNoFinalExpiry: how long after the VAD stop an unstarted turn (min_words, wake
-// phrase) still waits for its final transcript. A streaming STT without interim results
+// unstartedNoFinalExpiry: how long after the VAD stop an unstarted turn (min_words,
+// push-to-talk not pressed) still waits for its final transcript. A streaming STT without interim results
 // (Google chirp_2) answers 1-2 s after the VAD stop; dropping the turn earlier lost the
 // whole utterance. ponytail: fixed cap; make it config if a provider is slower.
 const unstartedNoFinalExpiry = 2500 * time.Millisecond
@@ -416,7 +416,7 @@ func (p *Processor) advance(e core.Emitter) error {
 		limit = p.expiryNoFinal
 	}
 	if p.open && !p.started && !p.vadSpeaking && at.Sub(p.lastStop) >= limit {
-		// Never admitted (backchannel, wake phrase idle): retire its transcripts
+		// Never admitted (backchannel, push-to-talk not pressed): retire its transcripts
 		// uncommitted so they cannot leak into the next turn.
 		gen := core.Generation(p.candGen)
 		id := p.id

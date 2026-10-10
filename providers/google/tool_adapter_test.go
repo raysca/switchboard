@@ -192,8 +192,8 @@ func TestGoogleLLMToolLoopClaimsOnceAndContinuesWithFunctionHistory(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	aggregator := &core.ContextAggregator{Context: history}
-	pipe, err := core.NewPipeline(aggregator, proc)
+	recorder := &toolFrameRecorder{history: history}
+	pipe, err := core.NewPipeline(recorder, proc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestGoogleLLMToolReplayDoesNotExecuteTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe, _ := core.NewPipeline(&core.ContextAggregator{Context: history}, proc)
+	pipe, _ := core.NewPipeline(&toolFrameRecorder{history: history}, proc)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = proc.Attach(session, 1)
 	done := make(chan struct{})
@@ -321,7 +321,7 @@ func TestGoogleLLMInterruptionCancelsToolAndFencesContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe, _ := core.NewPipeline(&core.ContextAggregator{Context: history}, proc)
+	pipe, _ := core.NewPipeline(&toolFrameRecorder{history: history}, proc)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = proc.Attach(session, 1)
 	_ = session.Start()

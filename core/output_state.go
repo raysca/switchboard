@@ -96,9 +96,3 @@ func (t *SpeakingTracker) stopLocked(reason SpeakingStopReason) (SpeakingStateFr
 	t.disposition = OutputInterruptible
 	return event, true
 }
-
-func (t *SpeakingTracker) IsSpeaking() bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.speaking
-}

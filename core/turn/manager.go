@@ -640,8 +640,6 @@ func (m *Manager) tryStartLocked(at time.Time) []core.Frame {
 				m.text, m.textFinal, m.textAt = in.Text, in.Final, at
 			}
 			return frames
-		case startBlock:
-			return nil
 		}
 	}
 	return nil

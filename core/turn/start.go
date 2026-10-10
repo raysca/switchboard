@@ -1,20 +1,17 @@
 package turn
 
 import (
-	"regexp"
 	"strings"
 	"time"
-	"unicode"
 )
 
-// startVerdict is one strategy's answer, mirroring Pipecat's CONTINUE/STOP
-// plus an explicit "start".
+// startVerdict is one strategy's answer, mirroring Pipecat's CONTINUE plus an
+// explicit "start".
 type startVerdict uint8
 
 const (
 	startContinue startVerdict = iota // no opinion, ask the next strategy
 	startYes                          // user turn starts; first yes wins
-	startBlock                        // veto: stop the chain without starting (wake phrase idle)
 )
 
 // startInput is what the manager shows a strategy. It is a value snapshot;
@@ -67,24 +64,6 @@ func (vadStart) evaluate(in startInput) startVerdict {
 	return startContinue
 }
 
-type transcriptionStart struct {
-	stateless
-	useInterim bool
-}
-
-// TranscriptionStart starts a turn on any transcript; a fallback for speech
-// VAD misses. Interim results count only when useInterim is set.
-func TranscriptionStart(useInterim bool) UserTurnStartStrategy {
-	return transcriptionStart{useInterim: useInterim}
-}
-
-func (s transcriptionStart) evaluate(in startInput) startVerdict {
-	if in.HasText && (in.Final || s.useInterim) {
-		return startYes
-	}
-	return startContinue
-}
-
 type minWordsStart struct {
 	stateless
 	min        int
@@ -122,72 +101,4 @@ func (externalStart) evaluate(in startInput) startVerdict {
 		return startYes
 	}
 	return startContinue
-}
-
-type wakePhraseStart struct {
-	patterns []*regexp.Regexp
-	timeout  time.Duration
-	awake    bool
-	deadline time.Time
-	acc      string
-}
-
-// WakePhraseStart blocks the chain until a final transcript contains one of
-// phrases, then lets later strategies run until timeout of inactivity passes.
-// Place it first. ponytail: no single-activation mode; add if needed.
-func WakePhraseStart(phrases []string, timeout time.Duration) UserTurnStartStrategy {
-	s := &wakePhraseStart{timeout: timeout}
-	for _, p := range phrases {
-		words := strings.Fields(stripPunct(p))
-		for i := range words {
-			words[i] = regexp.QuoteMeta(words[i])
-		}
-		if len(words) > 0 {
-			// Go's \b is ASCII-only; text is punctuation-stripped, so a
-			// whitespace/end boundary is the Unicode-correct equivalent.
-			s.patterns = append(s.patterns, regexp.MustCompile(`(?i)(?:^|\s)`+strings.Join(words, `\s*`)+`(?:\s|$)`))
-		}
-	}
-	return s
-}
-
-func stripPunct(text string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsMark(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || r == '_' {
-			return r
-		}
-		return -1
-	}, text)
-}
-
-func (s *wakePhraseStart) reset() { s.awake, s.acc = false, "" }
-
-func (s *wakePhraseStart) activity(at time.Time) {
-	if s.awake && at.After(s.deadline) {
-		s.reset()
-	} else if s.awake {
-		s.deadline = at.Add(s.timeout)
-	}
-}
-
-func (s *wakePhraseStart) evaluate(in startInput) startVerdict {
-	if s.awake && in.At.After(s.deadline) {
-		s.reset()
-	}
-	if s.awake {
-		return startContinue
-	}
-	if in.HasText && in.Final {
-		s.acc += " " + stripPunct(in.Text)
-		if len(s.acc) > 250 {
-			s.acc = s.acc[len(s.acc)-250:]
-		}
-		for _, p := range s.patterns {
-			if p.MatchString(s.acc) {
-				s.awake, s.acc, s.deadline = true, "", in.At.Add(s.timeout)
-				return startYes
-			}
-		}
-	}
-	return startBlock
 }

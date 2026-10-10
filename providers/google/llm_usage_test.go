@@ -28,7 +28,7 @@ func TestGoogleLLMToolLoopUsageSumsEveryRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe, _ := core.NewPipeline(&core.ContextAggregator{Context: history}, proc)
+	pipe, _ := core.NewPipeline(&toolFrameRecorder{history: history}, proc)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = proc.Attach(session, 1)
 	usage := make(chan *core.UsageMetricsFrame, 1)

@@ -45,7 +45,7 @@ func TestGoogleAsyncToolOutlivesGenerationAndCloseCancels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe, err := core.NewPipeline(&core.ContextAggregator{Context: history}, proc)
+	pipe, err := core.NewPipeline(&toolFrameRecorder{history: history}, proc)
 	if err != nil {
 		t.Fatal(err)
 	}
