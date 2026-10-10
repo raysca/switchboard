@@ -360,10 +360,45 @@ func TestPushToTalkReleasedTurnKeepsLateFinal(t *testing.T) {
 	h.settle()
 	_ = h.sess.Reenter(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "book a table for two", Final: true}, core.Downstream, 1, 1)
 	h.settle()
+	delivered := false
 	for _, c := range h.candidates() {
-		if c.Text == "book a table for two" && c.Turn != done {
-			t.Fatalf("late final re-keyed to %s, want the released turn %s", c.Turn, done)
+		if c.Text == "book a table for two" {
+			if c.Turn != done || !c.Final {
+				t.Fatalf("late final delivered as %s final=%t, want the released turn %s, final", c.Turn, c.Final, done)
+			}
+			delivered = true
 		}
+	}
+	if !delivered {
+		t.Fatalf("late final of released turn %s was dropped; candidates=%+v", done, h.candidates())
+	}
+}
+
+// Unpressed speech, a short pause, then a press during a second unpressed
+// segment: only the segment being spoken at the press belongs to the turn.
+func TestPushToTalkPressMidSecondSegmentDropsEarlierSegment(t *testing.T) {
+	h := newPTTHarness(t)
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	h.settle()
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "side talk", Final: true})
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1})
+	h.settle()
+	h.run(300*time.Millisecond, func() bool { return false })
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 3, Gen: 1})
+	h.settle()
+	h.ptt(true)
+	if !h.run(time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 }) {
+		t.Fatal("press during speech did not start the turn")
+	}
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-3", Gen: 1, Text: "what is the weather", Final: true})
+	h.settle()
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 4, Gen: 1})
+	h.settle()
+	h.ptt(false)
+	h.run(time.Second, func() bool { return len(h.events(core.TurnEventCompleted)) == 1 })
+	c := h.candidates()
+	if len(c) == 0 || c[len(c)-1].Text != "what is the weather" {
+		t.Fatalf("pressed turn text = %q, want only \"what is the weather\"", c[len(c)-1].Text)
 	}
 }
 

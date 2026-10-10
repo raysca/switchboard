@@ -74,6 +74,15 @@ type segment struct {
 	final bool
 }
 
+// releasedTurn is a turn ended by a push-to-talk release. Its segments stay
+// routable to it after the next VAD segment opens a new turn, so a late STT
+// final still completes the turn the user released.
+type releasedTurn struct {
+	id   core.TurnID
+	gen  core.Generation
+	segs []segment
+}
+
 // Processor runs a Manager inside a live pipeline. Place it after STT and
 // before the transcript processor: STT keeps opening its stream on the raw VAD
 // frames (so a min-words strategy never stops transcription), while this
@@ -95,10 +104,13 @@ type Processor struct {
 	wake          chan struct{}
 	tickGen       atomic.Uint64 // generation of the queued tick; 0 = none queued
 	busy          atomic.Bool
-	extStop       bool      // push-to-talk released while a turn is open; consumed by the next observation
-	held          bool      // push-to-talk button is down
-	stopPending   time.Time // released while VAD still heard speech; the turn ends at the VAD stop or after releaseGrace
-	released      bool      // the last turn ended by release: its late final must not carry into the next turn
+	extStop       bool            // push-to-talk released while a turn is open; consumed by the next observation
+	held          bool            // push-to-talk button is down
+	stopPending   time.Time       // released while VAD still heard speech; the turn ends at the VAD stop or after releaseGrace
+	released      bool            // the last turn ended by release: its late final must not carry into the next turn
+	doneID        core.TurnID     // last completed turn, as the finalizer knows it
+	doneGen       core.Generation // generation that turn completed at
+	prev          releasedTurn    // the last released turn, still awaiting late finals
 	startOnce     sync.Once
 
 	last        time.Time
@@ -305,7 +317,13 @@ func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter)
 		carry := !p.released && n > 0 && !p.segs[n-1].final && p.joined() == "" && p.now().Sub(p.lastStop) < p.expiryNoFinal
 		segs := p.segs
 		if !carry {
-			p.retireSegments()
+			if p.released && len(p.segs) > 0 {
+				p.closeSegments(p.prev.segs)
+				p.prev = releasedTurn{id: p.doneID, gen: p.doneGen, segs: p.segs}
+				p.segs = nil
+			} else {
+				p.retireSegments()
+			}
 			segs = nil
 		}
 		p.extStop, p.released = false, false // a stale signal must not end the next turn
@@ -329,15 +347,24 @@ func (p *Processor) onPushToTalk(pressed bool, e core.Emitter) error {
 	p.held = pressed
 	if pressed {
 		p.stopPending = time.Time{}
-		if p.open && !p.started && !p.vadSpeaking {
-			// Unpressed speech that already ended is not part of this turn.
+		if p.open && !p.started && (!p.vadSpeaking || len(p.segs) > 1) {
+			// Unpressed speech that already ended is not part of this turn; only
+			// the segment being spoken at the press (if any) is kept.
 			gen, id := core.Generation(p.candGen), p.id
-			p.finish()
-			p.retireSegments()
-			if gen != 0 {
-				return e.Push(&core.TranscriptInvalidationFrame{Turn: id, Gen: gen})
+			if p.vadSpeaking {
+				cur := p.segs[len(p.segs)-1]
+				p.segs = p.segs[:len(p.segs)-1]
+				p.retireSegments()
+				p.segs, p.id, p.candGen = []segment{cur}, core.TurnID(cur.turn), 0
+			} else {
+				p.finish()
+				p.retireSegments()
 			}
-			return nil
+			if gen != 0 {
+				if err := e.Push(&core.TranscriptInvalidationFrame{Turn: id, Gen: gen}); err != nil {
+					return err
+				}
+			}
 		}
 		return p.observe(e, "", false) // no-op when no turn is open
 	}
@@ -373,6 +400,11 @@ func (p *Processor) onCandidate(c *core.TranscriptCandidateFrame, e core.Emitter
 		}
 	}
 	if idx < 0 {
+		for i := range p.prev.segs {
+			if p.prev.segs[i].turn == string(c.Turn) {
+				return p.onReleasedCandidate(c, i, e)
+			}
+		}
 		if _, dead := p.closed[string(c.Turn)]; dead || p.muted() {
 			if p.muted() {
 				p.drop()
@@ -397,9 +429,22 @@ func (p *Processor) onCandidate(c *core.TranscriptCandidateFrame, e core.Emitter
 	return p.observe(e, out.Text, out.Final)
 }
 
-func (p *Processor) joined() string {
+// onReleasedCandidate re-keys a late transcript to the released turn it
+// belongs to. That turn already completed, so the manager is not consulted.
+func (p *Processor) onReleasedCandidate(c *core.TranscriptCandidateFrame, i int, e core.Emitter) error {
+	seg := &p.prev.segs[i]
+	seg.text, seg.final = c.Text, c.Final || c.EndOfUtterance
+	out := *c
+	out.Turn, out.Gen, out.Text = p.prev.id, p.prev.gen, joinedSegments(p.prev.segs)
+	out.Final, out.EndOfUtterance = seg.final && i == len(p.prev.segs)-1, false
+	return e.Push(&out)
+}
+
+func (p *Processor) joined() string { return joinedSegments(p.segs) }
+
+func joinedSegments(segs []segment) string {
 	var parts []string
-	for _, s := range p.segs {
+	for _, s := range segs {
 		if t := strings.TrimSpace(s.text); t != "" {
 			parts = append(parts, t)
 		}
@@ -474,16 +519,22 @@ func (p *Processor) advance(e core.Emitter) error {
 // finalizer's grace period are still re-keyed and delivered.
 func (p *Processor) finish() {
 	p.open, p.started = false, false
+	p.stopPending = time.Time{} // a turn that ended another way has no pending release
 }
 
 func (p *Processor) retireSegments() {
+	p.closeSegments(p.segs)
+	p.segs = nil
+}
+
+// closeSegments marks segment ids dead so their late candidates are dropped.
+func (p *Processor) closeSegments(segs []segment) {
 	if len(p.closed) > 64 {
 		p.closed = make(map[string]struct{})
 	}
-	for _, s := range p.segs {
+	for _, s := range segs {
 		p.closed[s.turn] = struct{}{}
 	}
-	p.segs = nil
 }
 
 func (p *Processor) emit(e core.Emitter, frames []core.Frame) error {
@@ -516,6 +567,7 @@ func (p *Processor) emit(e core.Emitter, frames []core.Frame) error {
 			return err
 		}
 		if ev.Kind == core.TurnEventCompleted || ev.Kind == core.TurnEventInterrupted {
+			p.doneID, p.doneGen = out.Turn, out.Gen
 			p.finish()
 		}
 	}
