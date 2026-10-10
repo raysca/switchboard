@@ -106,6 +106,7 @@ type Processor struct {
 
 	speaking bool
 	muted    bool // input muted: ignore audio and results, so no segment opens
+	discard  bool // the in-flight result was submitted before a mute: drop it
 	above    int
 	below    int
 
@@ -208,8 +209,11 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 func (p *Processor) setMuted(muted bool, e core.Emitter) error {
 	p.muted = muted
 	if !muted {
+		// Start fresh: mid-speech recurrent state would open a phantom segment.
+		p.state, p.checkpointState, p.ctx = [StateLen]float32{}, [StateLen]float32{}, [ContextSamples]float32{}
 		return nil
 	}
+	p.discard = p.discard || p.busy
 	p.sampleBuf, p.pending, p.above, p.below = p.sampleBuf[:0], nil, 0, 0
 	if !p.speaking {
 		return nil
@@ -357,6 +361,11 @@ func (p *Processor) onTraceResult(frame *vadResultFrame, e core.Emitter) error {
 	}()
 	p.busy = false
 
+	if p.discard {
+		// Submitted before a mute: its state is from speech the user muted.
+		p.discard = false
+		return p.trySubmit(e)
+	}
 	if j.Err != nil {
 		traceFailure = errors.New("vad_failure")
 		// Recovery from parent-owned state checkpoint:

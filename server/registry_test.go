@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -534,6 +535,32 @@ func TestPushToTalkCallSkipsSmartTurn(t *testing.T) {
 		}
 		if _, ok := procs[2].(*coreturn.Processor); !ok {
 			t.Fatalf("model=%t: processor 2 is %T, want the turn processor", withModel, procs[2])
+		}
+	}
+}
+
+// A release is a definite end of turn, so push-to-talk calls never get the
+// llm-completion protocol (the model would otherwise hold "incomplete" turns).
+func TestPushToTalkCallSkipsLLMCompletion(t *testing.T) {
+	for _, ptt := range []bool{true, false} {
+		reg := NewRegistry()
+		var prompt string
+		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google.llm", func(_ *Config, s StageSpec) (core.Processor, error) {
+			prompt = s.SystemPrompt
+			return &core.PassthroughProcessor{}, nil
+		})
+		cfg := DefaultConfig(ProfileDevelopment)
+		cfg.Turn.Manager = true
+		cfg.Turn.Stop = []string{"speech-timeout", "llm-completion"}
+		vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+		call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google", SystemPrompt: "be nice"}, TTS: StageSpec{Provider: "google"}, PushToTalk: ptt}
+		if _, err := reg.BuildCallPipeline(cfg, call, vadProc, &fakeTransportSink{}); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(prompt, core.CompletionInstructions); got == ptt {
+			t.Fatalf("push_to_talk=%t: prompt carries completion protocol=%t", ptt, got)
 		}
 	}
 }

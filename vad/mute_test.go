@@ -76,3 +76,44 @@ func TestMuteIgnoresQueuedAudio(t *testing.T) {
 		t.Fatalf("muted audio buffered: samples=%d pending=%d", len(p.sampleBuf), len(p.pending))
 	}
 }
+
+// Unmute starts detection fresh: no mid-speech recurrent state or context
+// survives the mute, and a result for a chunk submitted before the mute is
+// discarded rather than restoring that state.
+func TestUnmuteStartsWithFreshDetectorState(t *testing.T) {
+	cfg := DefaultProcessorConfig()
+	p := NewProcessor(nil, cfg)
+	l := &frameLog{}
+	speak(p, l, cfg.StartChunks)
+	for i := range p.state {
+		p.state[i] = 7 // mid-speech recurrent state
+	}
+	p.checkpointState = p.state
+	for i := range p.ctx {
+		p.ctx[i] = 0.5
+	}
+	p.busy = true // a chunk is in flight at the mute
+	ctx := context.Background()
+	_ = p.ProcessFrame(ctx, &core.InputMutedStateFrame{Muted: true}, core.Downstream, l)
+	_ = p.ProcessFrame(ctx, &core.InputMutedStateFrame{Muted: false}, core.Downstream, l)
+	var zeroState [StateLen]float32
+	if p.state != zeroState || p.checkpointState != zeroState {
+		t.Fatal("unmute kept the pre-mute recurrent state")
+	}
+	for _, v := range p.ctx {
+		if v != 0 {
+			t.Fatal("unmute kept the pre-mute audio context")
+		}
+	}
+	var stale [StateLen]float32
+	for i := range stale {
+		stale[i] = 7
+	}
+	_ = p.ProcessFrame(ctx, &vadResultFrame{j: &Job{State: stale, Prob: 0.99}}, core.Downstream, l)
+	if p.state != zeroState || p.checkpointState != zeroState {
+		t.Fatal("a pre-mute result landing after unmute restored mid-speech state")
+	}
+	if p.above != 0 || p.busy {
+		t.Fatalf("pre-mute result counted: above=%d busy=%t", p.above, p.busy)
+	}
+}

@@ -492,6 +492,9 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	// LLM turn-completion protocol (turn.stop: llm-completion): every candidate's
 	// system prompt carries the marker instructions.
 	completion := completionConfig(cfg.Turn.Stop, cfg.Turn.Completion, r.onCompletion)
+	if call.PushToTalk {
+		completion = nil // a release is a definite end of turn: no "incomplete" holds
+	}
 	if completion != nil {
 		llmSpec.SystemPrompt = completionPrompt(llmSpec.SystemPrompt, cfg.Turn.Completion)
 		call.LLMFallbacks = slices.Clone(call.LLMFallbacks)
