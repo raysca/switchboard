@@ -214,6 +214,9 @@ func TestCallPipelineAsyncToolsResultTriggersAssistantTurn(t *testing.T) {
 	r.waitSpoken(t, "ok")
 	close(r.release)
 	r.waitSpoken(t, "Result: ")
+	// The announcement streams as synthesis units: wait for both envelopes.
+	r.waitSpoken(t, `"tool":"slow"`)
+	r.waitSpoken(t, `"tool":"other"`)
 	out := r.spoken()
 	if strings.Count(out, `"tool":"slow"`) != 1 || strings.Count(out, `"tool":"other"`) != 1 || !strings.Contains(out, `"answer":42`) {
 		t.Fatalf("spoken = %q", out)
