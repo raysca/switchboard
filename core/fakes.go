@@ -294,6 +294,7 @@ type FakeTTSProcessor struct {
 	session SessionController
 	index   int
 	cfg     FakeTTSConfig
+	queue   SerialQueue // one task for all units, like the real TTS stages (ttsunit)
 
 	mu            sync.Mutex
 	tail          chan struct{}
@@ -333,7 +334,7 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 		p.cancels[taskID] = cancel
 		p.mu.Unlock()
 
-		return p.session.Go(func(c context.Context) {
+		return p.queue.Go(p.session, func(c context.Context) {
 			defer close(done)
 			defer func() {
 				p.mu.Lock()
