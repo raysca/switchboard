@@ -170,62 +170,113 @@ func TestDrain_DeadlineSendsGoingAway(t *testing.T) {
 	waitFor(t, func() bool { return runtime.NumGoroutine() <= base+3 })
 }
 
-// Even if an unexpected panic occurs during session teardown, defer handlers
-// ensure the activeCalls entry is cleared, admission is released, and metrics
-// are recorded so server shutdown does not hang.
-func TestDrain_CleanupPanicRecoversAndClearsActiveCall(t *testing.T) {
+func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	s := apiTestServer(t)
 	sessionID := uint64(9999)
-	principal := "panic-test-principal"
-	agentID := "panic-test-agent"
-
-	// Register an activeCall
-	s.mu.Lock()
-	s.activeCalls[sessionID] = &activeCall{
-		sessionID: sessionID,
-		principal: principal,
+	principal, agentID := "panic-test-principal", "panic-test-agent"
+	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+		t.Fatal(err)
 	}
+	pipe, err := core.NewPipeline(&core.PassthroughProcessor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.activeCalls[sessionID] = &activeCall{sessionID: sessionID, principal: principal}
 	s.mu.Unlock()
 
-	// Acquire an admission session slot
-	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
-		t.Fatalf("acquire session: %v", err)
+	started := make(chan struct{})
+	releaseRecording := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.finishCall(sessionID, principal, agentID, sess, nil, s.timelines.GetOrCreate(sessionID), nil,
+			func() { panic("simulated releaseCall panic") },
+			func() {
+				close(started)
+				<-releaseRecording
+			},
+		)
+	}()
+	<-started
+	s.mu.Lock()
+	_, still := s.activeCalls[sessionID]
+	s.mu.Unlock()
+	if !still {
+		t.Fatal("activeCalls cleared while recording was still running")
 	}
+	close(releaseRecording)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("finishCall did not return after recording finished")
+	}
+	s.mu.Lock()
+	_, still = s.activeCalls[sessionID]
+	s.mu.Unlock()
+	if still {
+		t.Fatal("activeCalls still set after finishCall returned")
+	}
+	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+		t.Fatalf("admission not released: %v", err)
+	}
+	s.admission.ReleaseSession(principal, agentID)
+}
 
-	stoppedBefore := s.metrics.SessionsStoppedTotal.Load()
+func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
+	s := apiTestServer(t)
+	sessionID := uint64(10000)
+	principal, agentID := "rec-panic-principal", "rec-panic-agent"
+	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+		t.Fatal(err)
+	}
+	pipe, err := core.NewPipeline(&core.PassthroughProcessor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.activeCalls[sessionID] = &activeCall{sessionID: sessionID, principal: principal}
+	s.mu.Unlock()
 
-	// Execute simulated cleanup with the exact defer pattern used in Server.handleSession
+	s.finishCall(sessionID, principal, agentID, sess, nil, s.timelines.GetOrCreate(sessionID), nil,
+		func() {},
+		func() { panic("recording finalize") },
+	)
+	s.mu.Lock()
+	_, still := s.activeCalls[sessionID]
+	s.mu.Unlock()
+	if still {
+		t.Fatal("activeCalls still set after recording panic")
+	}
+}
+
+func TestRecoverEachRunsStopAfterReleasePanics(t *testing.T) {
+	s := apiTestServer(t)
+	var stopped bool
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
-				s.logger.Error("panic during session cleanup", "session", sessionID, "panic", r)
+				t.Fatalf("panic escaped recoverEach: %v", r)
 			}
-			s.mu.Lock()
-			delete(s.activeCalls, sessionID)
-			s.mu.Unlock()
-			s.metrics.SessionsStoppedTotal.Add(1)
 		}()
-		defer s.admission.ReleaseSession(principal, agentID)
-
-		// Trigger a simulated panic during teardown
-		panic("simulated releaseCall panic")
+		recoverEach(s.logger, 1, "releaseCall", func() { panic("release") })
+		recoverEach(s.logger, 1, "stopRecording", func() { stopped = true })
 	}()
-
-	s.mu.Lock()
-	_, stillActive := s.activeCalls[sessionID]
-	s.mu.Unlock()
-
-	if stillActive {
-		t.Fatal("session was not removed from activeCalls following cleanup panic")
+	if !stopped {
+		t.Fatal("stopRecording did not run after releaseCall panicked")
 	}
-
-	if s.metrics.SessionsStoppedTotal.Load() != stoppedBefore+1 {
-		t.Fatalf("SessionsStoppedTotal = %d, want %d", s.metrics.SessionsStoppedTotal.Load(), stoppedBefore+1)
-	}
-
-	// Verify admission slot was released by successfully acquiring capacity again
-	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
-		t.Fatalf("failed to re-acquire admission after cleanup panic: %v", err)
-	}
-	s.admission.ReleaseSession(principal, agentID)
 }

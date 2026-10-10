@@ -470,8 +470,10 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
 	phase := "build_pipeline"
+	var stopRecording func()
 	fail := func(err error) (*core.Session, error) {
-		releaseCall()
+		recoverEach(s.logger, sessionID, "releaseCall", releaseCall)
+		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
 		s.admission.ReleaseSession(principal, agentID)
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
@@ -596,7 +598,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		}
 	}
 
-	stopRecording := s.attachRecording(call, agentID, sessionID, conn, session)
+	stopRecording = s.attachRecording(call, agentID, sessionID, conn, session)
 
 	// Latency observer: attach before Start so startup timing is captured.
 	if _, err := observe.Attach(session, func(m observe.Measurement) {
@@ -616,43 +618,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	// 5. Cleanup when session closes
 	go func() {
 		<-session.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				s.logger.Error("panic during session cleanup", slog.Uint64("session", sessionID), slog.Any("panic", r))
-			}
-			s.mu.Lock()
-			delete(s.activeCalls, sessionID)
-			s.mu.Unlock()
-			timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "session closed"})
-			s.metrics.SessionsStoppedTotal.Add(1)
-		}()
-		defer s.admission.ReleaseSession(principal, agentID)
-
-		if n := session.LeakedTasks(); n > 0 {
-			s.metrics.LeakedSessionsTotal.Add(1)
-			s.metrics.LeakedWorkTotal.Add(uint64(n))
-		}
-		for _, proc := range session.Processors() {
-			s.recordProcessorMetrics(proc)
-			s.recordProviderErrors(proc, errProviders)
-		}
-		if err := session.Err(); err != nil {
-			s.metrics.SessionsFailedTotal.Add(1)
-			s.logger.Error("session failed", slog.Uint64("session", sessionID), slog.String("err", s.redactor.Redact(err.Error())))
-			conn.Close()
-		}
-		// End the session row before the call stops counting as active, so a
-		// draining Shutdown cannot close the store first. The recording is
-		// finalized alongside (both ~5s bounded) so it fits Shutdown's wait too.
-		recDone := make(chan struct{})
-		go func() {
-			defer close(recDone)
-			if stopRecording != nil {
-				stopRecording()
-			}
-		}()
-		releaseCall() // bounded: drains MCP tools and ends the session row
-		<-recDone
+		s.finishCall(sessionID, principal, agentID, session, conn, timeline, errProviders, releaseCall, stopRecording)
 	}()
 
 	s.metrics.SessionsStartedTotal.Add(1)
@@ -1200,6 +1166,59 @@ func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
 	case <-timer.C:
 	case <-ctx.Done():
 	}
+}
+
+func recoverEach(log *slog.Logger, sessionID uint64, label string, fn func()) {
+	if fn == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("panic during "+label, slog.Uint64("session", sessionID), slog.Any("panic", r))
+		}
+	}()
+	fn()
+}
+
+func (s *Server) finishCall(sessionID uint64, principal, agentID string, session *core.Session, conn *ws.Connection, timeline *SessionTimeline, errProviders map[string]string, release func(), stopRecording func()) {
+	recDone := make(chan struct{})
+	go func() {
+		defer close(recDone)
+		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
+	}()
+	defer func() {
+		<-recDone
+		if r := recover(); r != nil {
+			s.logger.Error("panic during session cleanup", slog.Uint64("session", sessionID), slog.Any("panic", r))
+		}
+		s.mu.Lock()
+		delete(s.activeCalls, sessionID)
+		s.mu.Unlock()
+		if timeline != nil {
+			timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "session closed"})
+		}
+		s.metrics.SessionsStoppedTotal.Add(1)
+	}()
+	defer s.admission.ReleaseSession(principal, agentID)
+
+	if session != nil {
+		if n := session.LeakedTasks(); n > 0 {
+			s.metrics.LeakedSessionsTotal.Add(1)
+			s.metrics.LeakedWorkTotal.Add(uint64(n))
+		}
+		for _, proc := range session.Processors() {
+			s.recordProcessorMetrics(proc)
+			s.recordProviderErrors(proc, errProviders)
+		}
+		if err := session.Err(); err != nil {
+			s.metrics.SessionsFailedTotal.Add(1)
+			s.logger.Error("session failed", slog.Uint64("session", sessionID), slog.String("err", s.redactor.Redact(err.Error())))
+			if conn != nil {
+				conn.Close()
+			}
+		}
+	}
+	recoverEach(s.logger, sessionID, "releaseCall", release)
 }
 
 // logSetupFailure logs one warning for a call that could not be set up, so
