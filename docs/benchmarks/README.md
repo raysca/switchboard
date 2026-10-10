@@ -101,6 +101,34 @@ Each profile and turn mode gets a fresh server child on ephemeral ports (S5 and 
 
 Limits: timings are small-n samples on one machine and network; S1's WER and "four" checks depend on the STT; S6 needs an external MCP server; `-max-calls` is enforced on measured provider requests (clip synthesis for missing clips is counted), but a provider may bill more than one unit per request. `-clips` also reads the shared provtest set (`clips.json`, matched by spoken text) when present.
 
+## Nightly critical-path job
+
+`.github/workflows/live.yml` runs every night at 03:17 UTC and on manual dispatch. It runs
+`make live-critical` for two profiles in mode `off`, with the call cap split per step (60 per run):
+
+| Profile | Scenarios | Cap |
+|---|---|---|
+| google | S1 baseline, S11 push-to-talk, S12 server-side mute, S13 LLM failover | 31 |
+| xai | S1, S11, S12, S13 | 29 |
+
+The caps come from the harness's upper-bound estimates (27 calls per profile, plus up to 3 clip
+syntheses on a cold cache). The expected spend is lower (about 18 per profile).
+
+Manual-only (`make agent-matrix`):
+- S2 barge-in: 16 more calls for google would exceed the 60 cap;
+- S6 tool call: needs a public MCP server;
+- S9 long reply.
+
+Secrets live in the `live-providers` GitHub environment:
+- `GOOGLE_API_KEY`;
+- `GCP_SA_JSON`: the service-account JSON, which the job writes to a temp file for `GOOGLE_APPLICATION_CREDENTIALS`;
+- `XAI_API_KEY`.
+
+Synthesized clips are cached between runs. Results (results.json and agent-matrix.md per profile) are
+uploaded as the `live-critical-results` artifact. A failed check fails the job.
+
+Run the same thing locally: `GOVOICE_LIVE=1 make live-critical PROFILES=google SCENARIOS=S11 MAX_CALLS=10`.
+
 ## Running things, cheapest first
 
 `make help` lists every target by cost tier. In short:

@@ -1,0 +1,56 @@
+# Nightly real-provider tests on the critical call paths (docs/benchmarks/README.md
+# "Nightly critical-path job"). Spends real credit: at most 60 provider calls per run,
+# enforced by the harness (-max-calls per step; the step caps sum to 60).
+name: live-critical-paths
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: live-critical-paths
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: live-providers
+    env:
+      GOVOICE_LIVE: "1"
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make ort
+      - name: Google service account file
+        env:
+          GCP_SA_JSON: ${{ secrets.GCP_SA_JSON }}
+        run: |
+          umask 077
+          printf '%s' "$GCP_SA_JSON" > "$RUNNER_TEMP/gcp.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp.json" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: .livecheck-clips
+          key: livecheck-clips-${{ hashFiles('tools/livecheck/clips.go') }}
+      # Upper bounds (make live-critical dry runs): 27 calls per profile plus up to 3 clip
+      # syntheses on a cold cache. S2 barge-in (16 more for google) does not fit the 60 cap: manual only.
+      - name: google (S1 S11 S12 S13, cap 31)
+        run: make live-critical PROFILES=google SCENARIOS=S1,S11,S12,S13 MAX_CALLS=31 LIVE_ARGS="-out .live-out/google"
+      - name: xai (S1 S11 S12 S13, cap 29)
+        if: ${{ !cancelled() }}
+        run: make live-critical PROFILES=xai SCENARIOS=S1,S11,S12,S13 MAX_CALLS=29 LIVE_ARGS="-out .live-out/xai"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: live-critical-results
+          path: .live-out
+          retention-days: 30

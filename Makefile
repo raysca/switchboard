@@ -175,6 +175,13 @@ agent-matrix: ## paid|Standard agent x PROFILES x SCENARIOS x MODES (GOVOICE_LIV
 	@test -f examples/.env || { echo "agent-matrix needs examples/.env (see examples/.env.example)"; exit 1; }
 	@go run ./tools/livecheck -profiles "$(or $(PROFILES),google)" -modes "$(or $(MODES),off$(comma)on)" $(if $(SCENARIOS),-scenarios "$(SCENARIOS)") $(if $(REPEAT),-repeat $(REPEAT)) -max-calls $(or $(MAX_CALLS),$(DEFAULT_MAX_CALLS)) $(LIVE_ARGS)
 
+# live-critical: the nightly critical-path subset (docs/benchmarks/README.md "Nightly critical-path job").
+# No examples/.env needed: secrets come from the environment (CI). Mode off, one short S1 turn, cached clips.
+live-critical: ## paid|Critical-path live subset (GOVOICE_LIVE=1 PROFILES=... SCENARIOS=... MAX_CALLS=...)
+	@test "$$GOVOICE_LIVE" = 1 || { echo "live-critical spends real provider credit: GOVOICE_LIVE=1 make live-critical PROFILES=google SCENARIOS=S1 MAX_CALLS=10"; exit 1; }
+	@test -n "$(PROFILES)" && test -n "$(SCENARIOS)" && test -n "$(MAX_CALLS)" || { echo "live-critical needs PROFILES, SCENARIOS and MAX_CALLS"; exit 1; }
+	@go run ./tools/livecheck -profiles "$(PROFILES)" -modes off -scenarios "$(SCENARIOS)" -s1-turns 1 -s1-short -clips .livecheck-clips -max-calls $(MAX_CALLS) -yes $(LIVE_ARGS)
+
 # Offline engine self-test: the same scenario engine against a -tags fakeproviders server child.
 # No network, no keys, no cost (about 2 min: builds the server, S5/S8 wait on real timers).
 live-check-selftest: ## free|The scenario engine against fake providers (about 2 min)
@@ -198,7 +205,7 @@ DEFAULT_MAX_CALLS ?= 40
 # $(or $(MODES),off,on) would split on the comma and default to "off" only.
 comma := ,
 
-.PHONY: help live-check agent-matrix live-check-selftest live-list agent-matrix-plan provider-env provider-matrix-dry
+.PHONY: help live-check live-critical agent-matrix live-check-selftest live-list agent-matrix-plan provider-env provider-matrix-dry
 
 # Stage-level provider conformance matrix (docs/benchmarks/provider-matrix.md, tools/provtest): the same
 # STT/TTS/LLM checks against every provider built through the server registry. Spends real API credit

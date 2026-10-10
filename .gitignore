@@ -51,3 +51,4 @@ e2e/.stack.json
 
 # provider conformance run output (tools/provtest)
 provtest-results.json
+.livecheck-clips/

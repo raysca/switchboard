@@ -170,12 +170,10 @@ Collected from the goalpulse record and re-checked against the code (G5 re-verif
 
 Core library and server, transports aside. Re-ranked on 2026-10-10: live tests first, then the Pipecat gaps a caller notices, then library parity. Live-provider evidence comes from automated tests on critical paths, not manual runs or a long soak.
 
-1. **Automated live tests on critical paths.** `tools/livecheck` (agent-level scenarios S1 to S10) and `tools/provtest` (stage conformance) exist but only run by hand (`make live-check`, `make provider-matrix`); no CI job runs them. Needed:
-   - A scheduled and manual-dispatch CI job with provider secrets and a hard call cap (`-max-calls`), running a critical-path subset per profile: S1 baseline, S2 barge-in, S6 tool call, S9 long reply.
-   - New scenarios for paths with no live coverage: push-to-talk (press, pause while held, release mid-word with `chirp_2`, press during bot speech); server-side mute (`set-muted` mid-utterance ends the turn, unmute opens no phantom segment); failover with a real fallback (primary forced to fail, fallback answers).
-   - First live runs for the never-run profiles: `deepgram-openai-cartesia`, `elevenlabs-google-elevenlabs`, `cartesia-nvidia`.
-
-   This also gives items 2 and 3 real before/after numbers.
+1. **Automated live tests on critical paths.** `.github/workflows/live.yml` runs nightly and on dispatch: `google` and `xai`, each S1, S11 push-to-talk, S12 server-side mute and S13 LLM failover, capped at 60 provider calls per run (`docs/benchmarks/README.md`). The repository needs a GitHub remote and the `live-providers` secrets before it can run. Still open:
+   - S2 barge-in nightly: it does not fit the 60 cap and is manual-only;
+   - first live runs for the never-run profiles (`deepgram-openai-cartesia`, `elevenlabs-google-elevenlabs`, `cartesia-nvidia`);
+   - STT and TTS failover scenarios.
 2. **Turn latency (Pipecat parity).**
    - Lower the VAD stop default: `vad.stop_ms` is configurable (default 800 ms) but far above Pipecat's `stop_secs` 0.2 s; pick a default from live measurements.
    - Gate the speech timeout on the transcript, with an STT-latency timer, as Pipecat does. Today a fixed clock ends the turn, so slow STT loses trailing words, and a faster VAD stop makes that worse.
