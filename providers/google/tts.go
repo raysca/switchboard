@@ -36,10 +36,13 @@ type TTSConfig struct {
 	CircuitBreaker        *resilience.Breaker
 }
 
+// DefaultVoice is the voice agents get when none is set.
+const DefaultVoice = "en-US-Journey-F"
+
 // DefaultTTSConfig returns configuration matching v1-lock.json.
 func DefaultTTSConfig() TTSConfig {
 	return TTSConfig{
-		Voice:                 "en-US-Journey-F",
+		Voice:                 DefaultVoice,
 		LanguageCode:          "en-US",
 		SampleRate:            24000,
 		MaxSynthesisUnitChars: 250,
@@ -166,10 +169,10 @@ func (p *TTSProcessor) TTSCounts() (req, errs, retries, stale uint64) {
 	return p.Requests.Load(), p.Errors.Load(), p.Retries.Load(), p.Stale.Load()
 }
 
-// NewTTSProcessor creates a new TTSProcessor.
-func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
+// normalizeTTSConfig fills the defaults the unary and streaming processors share.
+func normalizeTTSConfig(cfg TTSConfig) TTSConfig {
 	if cfg.Voice == "" {
-		cfg.Voice = "en-US-Journey-F"
+		cfg.Voice = DefaultVoice
 	}
 	if cfg.SampleRate <= 0 {
 		cfg.SampleRate = 24000
@@ -183,6 +186,12 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	if cfg.CircuitBreaker == nil {
 		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())
 	}
+	return cfg
+}
+
+// NewTTSProcessor creates a new TTSProcessor.
+func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
+	cfg = normalizeTTSConfig(cfg)
 	p := &TTSProcessor{cfg: cfg}
 	p.cond = sync.NewCond(&p.mu)
 	return p, nil
