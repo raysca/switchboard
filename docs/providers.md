@@ -24,6 +24,25 @@ A value must be a single token: surrounding whitespace is trimmed, and a value w
 
 Self-hosted NVIDIA NIM and Riva endpoints are not supported in this release: `nvidia` always uses the hosted NIM (`integrate.api.nvidia.com`) and NVCF Riva endpoints, and `providers.nvidia.allow_private` is removed (a config that still sets it fails to load). They come back as catalog environment fields when needed. Variables are read when they are needed (agent readiness, `GET /providers`, and the start of each call), never cached; in practice you change them by editing the environment file and restarting.
 
+## How the variables relate to the data files
+
+The table above is derived from the data files; the files are the source of truth. The chain, for one provider:
+
+```
+environment variable ──▶ credentials[].fields ──▶ credentials[] kind ──▶ services.<stt|llm|tts>.credential ──▶ UI + readiness
+ (GOOGLE_API_KEY)         (api_key: {env: ...})    (id: api_key)          (llm: [api_key, service_account])     (dropdowns)
+```
+
+1. **`fields`** bind a variable name to a field of a credential kind. A kind is *usable* when every non-`optional` field's variable is set and valid (see the rules above).
+2. **`assemble`** turns the fields into the one secret the adapter receives: `token` (a single value), `json` (an object of the fields) or `file_json` (the contents of the file the variable points at). The environment is read here, at use time.
+3. **A service's `credential` list** names the kinds that can serve it, in preference order. The service is `available` when any listed kind is usable (and `needs` fields are set, and the build has the adapter); the first usable kind wins. Google shows this: with only `GOOGLE_API_KEY` set, the LLM works and STT/TTS report `missing_env: [GOOGLE_APPLICATION_CREDENTIALS]`; with both set, the LLM uses the API key.
+4. **`models`, `voices`, `languages`** are what the dropdowns offer for that service once it is available. They never gate anything.
+5. **What is returned:** `GET /api/v1/providers` lists, per provider, `env` (every variable in its `fields`), `detected` (some kind is usable) and per service `available`, `missing_env` and the entries. Agents never name a variable or a kind; they name a provider.
+
+Where to set the variables: `examples/.env` for `make dev` and the examples (see `examples/.env.example`, which lists them), the `EnvironmentFile` of `deploy/govoice.service` or the `env_file` of `deploy/docker-compose.yaml` in production. Nothing else reads a file of secrets.
+
+Keeping things in step: adding a variable means editing the provider's data file (the `fields` entry); `tools/livecheck/creds.go` keeps its own list for choosing live-test profiles and a drift test (`TestCredSpecsMatchCatalog`) fails if the two disagree, so update both, then this table.
+
 ## Catalog file format
 
 One YAML file per provider. Parsing is strict: unknown keys are errors, a file is at most 64 KiB and a list at most 500 entries.
