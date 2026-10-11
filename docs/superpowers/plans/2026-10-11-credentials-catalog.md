@@ -26,7 +26,7 @@
 
 1. **A secret value reaches an API response, log line, trace attribute or timeline** → a sentinel secret in the environment never appears in any API body, server log or trace span (Task 12 `TestNoSecretLeavesTheServer`).
 2. **The variable is removed or changed between publish and call, or between two graph nodes** → the call is refused with a clear not-ready reason naming the variable, no panic, and the next resolve sees the new value (Tasks 3, 6).
-3. **MCP token variable names that escape the prefix**: `TOKEN_SECRET`, `mcp_token_x`, `MCP_TOKEN_` (empty suffix), `MCP_TOKEN_A B`, 49-character suffix → all rejected (Task 8).
+3. **MCP token variable names that escape the prefix**: `TOKEN_SECRET`, `mcp_token_x`, `MCP_TOKEN_` (empty suffix), `MCP_TOKEN_A B`, 49-character suffix → all rejected (Task 7).
 4. **A hostile overlay file**: oversize, unknown keys, tries to override `credentials`/`assemble`, adds a provider with no adapter, duplicate ids → the server starts, the file is skipped and logged, packaged data is unchanged (Task 2).
 5. **A stale client posts `credential_id`** (agent create/update, fallbacks, graph nodes) → 400 `invalid_config` naming the unknown field (Task 5).
 6. **Google with only one of its two secret kinds**: only `GOOGLE_API_KEY` → LLM available, STT and TTS not (`missing_env: [GOOGLE_APPLICATION_CREDENTIALS]`); only the service account → all three available (Task 3).
@@ -46,7 +46,7 @@
 | `server/api/providers.go` (rewrite) | Read-only `GET /api/v1/providers` |
 | `server/agent/{config,fallback,graph,service}.go` | No `credential_id`; `Availability`; `missing_env` |
 | `server/call.go`, `server/graph_call.go`, `server/management.go`, `server/server.go` | Call path and wiring through the resolver |
-| `server/mcp/*`, `server/storage/*` | `auth_env` instead of a credential reference |
+| `server/mcp/*`, `server/storage/*` | `auth_env` instead of a credential reference (Task 7, before the store is deleted in Task 8) |
 | `server/migrations/{sqlite,postgres}/001_initial.sql` | No credentials table; `mcp_servers.auth_env` |
 | deleted: `server/credential/`, `server/provider/`, storage credential repo | |
 | `ui/src/api/client.ts`, `ui/src/routes/{providers,dashboard,onboarding,mcp,agents}/**` | New providers shape, status page, `StageFields` |
@@ -924,7 +924,7 @@ Also implement `Env(provider)`, `Detected(provider)` (any declared service's pre
 
 **Files:**
 - Create: `server/providers.go`, `server/providers_test.go`
-- Rewrite: `server/api/providers.go` (GET only; the credential routes stay until Task 7)
+- Rewrite: `server/api/providers.go` (GET only; the credential routes stay until Task 8)
 - Modify: `server/server.go` (`Server.env`, `Server.resolver`, `Server.availability`), `server/management.go` (pass the new handler), `server/api_boundary_test.go` (`apiTestServer` sets a test environment)
 
 **Interfaces:**
@@ -944,7 +944,7 @@ Also implement `Env(provider)`, `Detected(provider)` (any declared service's pre
 - [ ] **Step 2: Run, expect FAIL.**
 - [ ] **Step 3: Implement.** `Check` order: provider not in the catalog → `unknown_provider`; service not declared, or `!supports(provider, service)` → `unsupported_provider` (`not_in_build` is the API's word for the second case; `Check` uses one code for both because readiness only needs to refuse); `res.Status(...).Detected` false → `missing_credential` with `MissingEnv`. Task 5 introduces `agent.Unavailable`; to keep this task compiling define `type unavailable struct{ Reason string; MissingEnv []string }` here and change it in Task 5, Step 3 (one rename).
   `api.ProvidersHandler.ServeHTTP`: `GET /api/v1/providers` only (405 otherwise); builds the response from `Catalog.Providers()`, and for each declared service computes `available := Supports(p.ID, svc) && Resolver.Status(p.ID, svc).Detected`, `reason` = `not_in_build` when `!Supports`, else `missing_env`. The raw value of any variable is never read by this handler; `Masked` is not used here (status page shows only detection).
-  Wire it in `management.go` in place of the current `SetProviderManagementAPI(&api.ProviderManagement{...})` for the listing route; keep the credential routes in the old handler under their own paths until Task 7 deletes them (`/api/v1/providers/credentials...` continue to hit the old handler).
+  Wire it in `management.go` in place of the current `SetProviderManagementAPI(&api.ProviderManagement{...})` for the listing route; keep the credential routes in the old handler under their own paths until Task 8 deletes them (`/api/v1/providers/credentials...` continue to hit the old handler).
   In `NewServer`: `s.env = os.Getenv`; `s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })`; `s.availability = providerAvailability{...}` with `supports: s.registry.Supports`.
   In `apiTestServer`: set `s.env` to a helper `testProviderEnv(t)` returning a map-backed getenv with `GOOGLE_API_KEY=test-google-api-key`, `GOOGLE_APPLICATION_CREDENTIALS=<temp file containing {"type":"service_account"}>`, `XAI_API_KEY=test-xai-key`.
 - [ ] **Step 4: Run** `go test -race ./server/ -run 'Provider|Availability' -v` → PASS. **Step 5: Commit** `feat(server): provider availability and the catalog-backed providers API`.
@@ -1042,38 +1042,20 @@ func (s *Server) resolveStageSecrets(ctx context.Context, cfg agent.Config, name
 	return secrets, nil
 }
 ```
-(`*catalog.MissingError` already names the variables and never a value.) In `resolveFallbacks` replace the `ResolveCredential` + `ProviderSecret` pair by `secret, err := s.resolver.Secret(cand.Provider, stage)`; on error `skip("credential unavailable")` as before. Delete the `creds, err := s.store.Credentials().List(ctx)` blocks. In `resolveCall` replace `s.credentials == nil` in the guard by `s.resolver == nil`. In `management.go`: `agent.NewService(store, s.availability)`; keep `s.credentials` until Task 7 deletes it.
+(`*catalog.MissingError` already names the variables and never a value.) In `resolveFallbacks` replace the `ResolveCredential` + `ProviderSecret` pair by `secret, err := s.resolver.Secret(cand.Provider, stage)`; on error `skip("credential unavailable")` as before. Delete the `creds, err := s.store.Credentials().List(ctx)` blocks. In `resolveCall` replace `s.credentials == nil` in the guard by `s.resolver == nil`. In `management.go`: `agent.NewService(store, s.availability)`; keep `s.credentials` until Task 8 deletes it.
 - [ ] **Step 3: Test helpers.** `readyTestAgent(t, s)` no longer creates a credential: it builds the config without `credential_id` using providers the test environment (Task 4) supports, and asserts readiness. Mechanical rules for the remaining fallout, applied by running `cd server && go vet ./... 2>&1 | head -50` until clean:
   | Old | New |
   |---|---|
   | `s.credentials.Create(ctx, credential.CreateInput{...})` + `"credential_id":"CRED"` in a config | delete both; configs name only provider/model/voice |
   | `seedCredentials`, `testCredentialID`, `storage.Credential{...}` fixtures | delete |
   | test expecting `invalid_credential_*` or `missing_credential_*` from a deleted credential | set/unset the variable in `s.env` and assert `missing_credential_*` plus `missing_env` |
-  | a test of credential encryption or rotation | belongs to the deleted package: delete with it (Task 7) |
+  | a test of credential encryption or rotation | belongs to the deleted package: delete with it (Task 8) |
 - [ ] **Step 4: Run** `go test -race ./server/ ./server/agent/ ./server/runtime/ -count=1` → PASS.
 - [ ] **Step 5: Commit** `feat(server): the call path reads provider secrets from the environment`.
 
 ---
 
-### Task 7: Delete the credential store
-
-**Files:**
-- Delete: `server/credential/`, `server/provider/`, `server/storage/credential_repository_test.go`, the credential repository in `server/storage/repositories.go` (`CredentialRepository`, `Credential`, `Credentials()`), credential half of `server/api/providers.go` and its tests
-- Modify: `server/migrations/{sqlite,postgres}/001_initial.sql`, `server/management.go`, `server/server.go`, `server/config.go`, `server/config_defaults.go`, `config/{development,production}.yaml`, `server/testdata/effective_*.json`, `server/api_routes.go`
-
-- [ ] **Step 1: Failing tests first** (they must fail on the current tree):
-  1. `server/storage/storage_test.go`: `TestSchemaHasNoCredentialTable` opens a fresh store on both dialects (postgres through the existing `TEST_POSTGRES_DSN` guard) and asserts `SELECT 1 FROM provider_credentials` errors, and that `mcp_servers` has an `auth_env` column and no `auth_credential_id`;
-  2. `server/api_provider_boundary_test.go`: `TestCredentialRoutesAreGone` asserts `GET/POST /api/v1/providers/credentials` and `/api/v1/providers/credentials/x` return 404 with the management key;
-  3. `server/management_test.go`: `TestManagementStartsWithoutAKeyring` sets neither `GOVOICE_CREDENTIAL_KEYS` nor a dev key file and `EnableManagement` still succeeds (dev profile), and no `credential.key` is created in the dev dir.
-- [ ] **Step 2: Edit the initial migrations in place** (both dialects): remove the `CREATE TABLE provider_credentials ...` line; in `mcp_servers` replace `auth_credential_id TEXT REFERENCES provider_credentials(id) ON DELETE RESTRICT` with `auth_env TEXT NOT NULL DEFAULT ''`. Remove any later reference: `grep -rn "provider_credentials\|auth_credential_id" server/migrations server/storage` must return nothing.
-- [ ] **Step 3: Delete and unwire.** `git rm -r server/credential server/provider`; remove `Credentials()` and its repository from `storage`; in `management.go` delete `parseKeyring`, `loadOrCreateDevKey`, `developmentStore`'s key handling (keep its sqlite dev DSN creation), the `credential.NewService` block and `s.credentials`; in `server.go` delete the `credentials *credential.Service` field and the `credential.ErrDecrypt` case in the error mapper; in `config.go` delete `Credentials struct { KeyringEnv ... }` and its defaults/validation; in `api_routes.go` stop mounting the credential routes (the providers listing route from Task 4 stays); in `config/*.yaml` delete the `credentials:` section.
-- [ ] **Step 4: Regenerate goldens** `UPDATE_GOLDEN=1 go test ./server/ -run TestConfig_ShippedYAMLEffectiveGolden`; the diff must be only the removed `Credentials` block.
-- [ ] **Step 5: Run** `cd server && go build ./... && go vet ./... && go test -race -count=1 ./...` → PASS. `grep -rn "GOVOICE_CREDENTIAL_KEYS" . --include='*.go'` returns nothing.
-- [ ] **Step 6: Commit** `refactor: delete the credential store, keyring, credential API and provider package`.
-
----
-
-### Task 8: MCP bearer tokens from `MCP_TOKEN_*` variables
+### Task 7: MCP bearer tokens from `MCP_TOKEN_*` variables
 
 **Files:**
 - Modify: `server/mcp/service.go`, `server/mcp/http.go`, `server/mcp/*_test.go`, `server/storage/repositories.go` (`MCPServer.AuthEnv`), `server/agent/service.go` (`MCPToolSnapshot.AuthEnv`), `server/runtime/mcp.go`, `server/management.go`, `docs/api/mcp.md`, `docs/security/mcp.md`
@@ -1141,7 +1123,26 @@ func (e envTokens) Token(name string) (string, bool) {
 }
 ```
 `Service.credential(ctx, m)` becomes `token(m)` using `s.tokens.Token(m.AuthEnv)`, returning `"MCP authentication unavailable"` when unset; `CreateServer` validates `cfg.AuthEnv` (empty allowed) with `ValidAuthEnv`, replacing the `uuid.Parse` credential check; the endpoint-query error text changes from "use a credential reference" to "use auth_env"; the handler view computes `AuthEnvSet` from `TokenSource`. `ServiceConfig.Credentials` becomes `Tokens TokenSource`; `management.go` passes `mcp.EnvTokens(func(k string) string { return s.env(k) })`. Rename `CapturedTool.credentialID`/`CredentialID()` and `MCPToolSnapshot.CredentialID` to `AuthEnv` (a name, safe to record).
-- [ ] **Step 4: Run** `go test -race ./mcp/ ./agent/ ./runtime/ ./ -count=1` → PASS. **Step 5: Docs:** `docs/api/mcp.md` and `docs/security/mcp.md` describe `auth_env`, the prefix rule and why. **Step 6: Commit** `feat(mcp): bearer tokens come from MCP_TOKEN_ environment variables`.
+- [ ] **Step 3b: Storage and schema (this task, not the next).** Edit the initial migrations in place (both dialects): in `mcp_servers` replace `auth_credential_id TEXT REFERENCES provider_credentials(id) ON DELETE RESTRICT` with `auth_env TEXT NOT NULL DEFAULT ''`. In `server/storage/repositories.go` rename `MCPServer.AuthCredentialID` to `AuthEnv`, update every `mcp_servers` SQL string (`grep -n "auth_credential_id\|AuthCredentialID" server/storage/repositories.go`), and remove the credential repository's "in use by an MCP server" check (the `SELECT name FROM mcp_servers WHERE auth_credential_id=?` block in `Delete`, around lines 378 to 392) together with its test case in `credential_repository_test.go`: credentials are deleted in Task 8 and nothing may reference the old column after this task. `grep -rn "auth_credential_id\|AuthCredentialID" server` must return nothing.
+- [ ] **Step 4: Run** `go test -race ./mcp/ ./agent/ ./runtime/ ./storage/ ./ -count=1` → PASS. **Step 5: Docs:** `docs/api/mcp.md` and `docs/security/mcp.md` describe `auth_env`, the prefix rule and why. **Step 6: Commit** `feat(mcp): bearer tokens come from MCP_TOKEN_ environment variables`.
+
+---
+
+### Task 8: Delete the credential store
+
+**Files:**
+- Delete: `server/credential/`, `server/provider/`, `server/storage/credential_repository_test.go`, the credential repository in `server/storage/repositories.go` (`CredentialRepository`, `Credential`, `Credentials()`), credential half of `server/api/providers.go` and its tests
+- Modify: `server/migrations/{sqlite,postgres}/001_initial.sql`, `server/management.go`, `server/server.go`, `server/config.go`, `server/config_defaults.go`, `config/{development,production}.yaml`, `server/testdata/effective_*.json`, `server/api_routes.go`
+
+- [ ] **Step 1: Failing tests first** (they must fail on the current tree):
+  1. `server/storage/storage_test.go`: `TestSchemaHasNoCredentialTable` opens a fresh store on both dialects (postgres through the existing `TEST_POSTGRES_DSN` guard) and asserts `SELECT 1 FROM provider_credentials` errors, and that `mcp_servers` still has its `auth_env` column;
+  2. `server/api_provider_boundary_test.go`: `TestCredentialRoutesAreGone` asserts `GET/POST /api/v1/providers/credentials` and `/api/v1/providers/credentials/x` return 404 with the management key;
+  3. `server/management_test.go`: `TestManagementStartsWithoutAKeyring` sets neither `GOVOICE_CREDENTIAL_KEYS` nor a dev key file and `EnableManagement` still succeeds (dev profile), and no `credential.key` is created in the dev dir.
+- [ ] **Step 2: Edit the initial migrations in place** (both dialects): remove the `CREATE TABLE provider_credentials ...` line (the `mcp_servers` column was already changed in Task 7). `grep -rn "provider_credentials" server` must return nothing afterwards.
+- [ ] **Step 3: Delete and unwire.** `git rm -r server/credential server/provider`; remove `Credentials()` and its repository from `storage`; in `management.go` delete `parseKeyring`, `loadOrCreateDevKey`, `developmentStore`'s key handling (keep its sqlite dev DSN creation), the `credential.NewService` block and `s.credentials`; in `server.go` delete the `credentials *credential.Service` field and the `credential.ErrDecrypt` case in the error mapper; in `config.go` delete `Credentials struct { KeyringEnv ... }` and its defaults/validation; in `api_routes.go` stop mounting the credential routes (the providers listing route from Task 4 stays); in `config/*.yaml` delete the `credentials:` section.
+- [ ] **Step 4: Regenerate goldens** `UPDATE_GOLDEN=1 go test ./server/ -run TestConfig_ShippedYAMLEffectiveGolden`; the diff must be only the removed `Credentials` block.
+- [ ] **Step 5: Run** `cd server && go build ./... && go vet ./... && go test -race -count=1 ./...` → PASS. `grep -rn "GOVOICE_CREDENTIAL_KEYS" . --include='*.go'` returns nothing.
+- [ ] **Step 6: Commit** `refactor: delete the credential store, keyring, credential API and provider package`.
 
 ---
 
