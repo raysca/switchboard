@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"govoice/core"
@@ -71,7 +72,14 @@ type CallSpec struct {
 	MaxMessages   int
 	// AgentVersionID is the pinned agent version (trace attribute only).
 	AgentVersionID string
-	MaxTokens      int
+	// StoredSessionID is the persisted session row (trace spans attach to it).
+	StoredSessionID string
+	// Graph is set for agents with more than one node: the call starts on the
+	// entry node and moves between nodes by handoff.
+	Graph *CallGraph
+	// OnHandoff, if set, receives the handoff lifecycle (timeline, traces, metrics).
+	OnHandoff func(core.HandoffEvent)
+	MaxTokens int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).
 	Summary agent.SummarizationConfig
 	// History, when set, sees every frame just before the transport (turn rows).
@@ -491,44 +499,53 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if inFilter != nil {
 		built = append(built, inFilter)
 	}
-	llmSpec := call.LLM
-	llmSpec.History = ctxPool
 	// LLM turn-completion protocol (turn.stop: llm-completion): every candidate's
 	// system prompt carries the marker instructions.
 	completion := completionConfig(cfg.Turn.Stop, cfg.Turn.Completion, r.onCompletion)
 	if call.PushToTalk {
 		completion = nil // a release is a definite end of turn: no "incomplete" holds
 	}
-	if completion != nil {
-		llmSpec.SystemPrompt = completionPrompt(llmSpec.SystemPrompt, cfg.Turn.Completion)
-		call.LLMFallbacks = slices.Clone(call.LLMFallbacks)
-		for i := range call.LLMFallbacks {
-			call.LLMFallbacks[i].SystemPrompt = completionPrompt(call.LLMFallbacks[i].SystemPrompt, cfg.Turn.Completion)
-		}
-	}
 	// function_call mute: every LLM stage's tool executor reports in-flight calls.
 	var muteTools *coreturn.ToolActivity
 	if (cfg.Turn.Manager && slices.Contains(cfg.Turn.Mute, coreturn.MuteFunctionCall)) || cfg.Idle.enabled() { // idle also pauses while a tool runs
 		muteTools = coreturn.NewToolActivity()
-		llmSpec.ToolExecutor = muteTools.Wrap(llmSpec.ToolExecutor, llmSpec.Tools)
-		call.LLMFallbacks = slices.Clone(call.LLMFallbacks)
-		for i := range call.LLMFallbacks {
-			call.LLMFallbacks[i].ToolExecutor = muteTools.Wrap(call.LLMFallbacks[i].ToolExecutor, call.LLMFallbacks[i].Tools)
-		}
 	}
 	// Async tools: finished results go through a trigger stage before the LLM
-	// that injects them and starts a model turn once the call is idle.
+	// that injects them and starts a model turn once the call is idle. A graph
+	// call always has one: handoffs flip when the call is idle.
 	var asyncTrigger *core.AsyncTrigger
 	var asstActive func() bool
-	if slices.ContainsFunc(llmSpec.Tools, func(d core.ToolDefinition) bool { return d.Policy.Async }) {
+	if call.Graph != nil || slices.ContainsFunc(call.LLM.Tools, func(d core.ToolDefinition) bool { return d.Policy.Async }) {
 		asyncTrigger = core.NewAsyncTrigger(core.AsyncTriggerConfig{Busy: func() bool { return asstActive != nil && asstActive() },
 			OnTriggered: r.onAsyncTurn, OnDropped: r.onAsyncDrop})
-		llmSpec.AsyncSink = asyncTrigger.Deliver
-		call.LLMFallbacks = slices.Clone(call.LLMFallbacks)
-		for i := range call.LLMFallbacks {
-			call.LLMFallbacks[i].AsyncSink = asyncTrigger.Deliver
-		}
 	}
+	// prepLLM applies the call-wide LLM stage setup to one node's specs; the
+	// entry node uses it here and every later node when it is activated.
+	prepLLM := func(spec StageSpec, fallbacks []StageSpec) (StageSpec, []StageSpec) {
+		spec.History = ctxPool
+		fallbacks = slices.Clone(fallbacks)
+		if completion != nil {
+			spec.SystemPrompt = completionPrompt(spec.SystemPrompt, cfg.Turn.Completion)
+			for i := range fallbacks {
+				fallbacks[i].SystemPrompt = completionPrompt(fallbacks[i].SystemPrompt, cfg.Turn.Completion)
+			}
+		}
+		if muteTools != nil {
+			spec.ToolExecutor = muteTools.Wrap(spec.ToolExecutor, spec.Tools)
+			for i := range fallbacks {
+				fallbacks[i].ToolExecutor = muteTools.Wrap(fallbacks[i].ToolExecutor, fallbacks[i].Tools)
+			}
+		}
+		if asyncTrigger != nil {
+			spec.AsyncSink = asyncTrigger.Deliver
+			for i := range fallbacks {
+				fallbacks[i].AsyncSink = asyncTrigger.Deliver
+			}
+		}
+		return spec, fallbacks
+	}
+	llmSpec, llmFallbacks := prepLLM(call.LLM, call.LLMFallbacks)
+	call.LLMFallbacks = llmFallbacks
 	llmProc, err := r.buildLLM(cfg, call, llmSpec, build)
 	if err != nil {
 		return fail(fmt.Errorf("create llm processor: %w", err))
@@ -539,6 +556,54 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		return fail(fmt.Errorf("create tts processor: %w", err))
 	}
 	built = append(built, ttsProc)
+	if call.Graph != nil {
+		// The entry node is live; every other node is built when the call moves
+		// to it and closed when it leaves. The swaps are the pipeline stages.
+		var lastNode atomic.Pointer[string]
+		buildNode := func(ctx context.Context, id string) (core.NodeStages, error) {
+			ns, err := call.Graph.Resolve(ctx, id)
+			if err != nil {
+				return core.NodeStages{}, fmt.Errorf("resolve node %q: %w", id, err)
+			}
+			defer ns.wipe()
+			spec, fallbacks := prepLLM(ns.LLM, ns.LLMFallbacks)
+			nodeCall := call
+			nodeCall.LLMFallbacks = fallbacks
+			nodeCall.TTS, nodeCall.TTSFallbacks = ns.TTS, ns.TTSFallbacks
+			llm, err := r.buildLLM(cfg, nodeCall, spec, build)
+			if err != nil {
+				return core.NodeStages{}, fmt.Errorf("node %q llm: %w", id, err)
+			}
+			tts, err := r.buildTTS(cfg, nodeCall, build)
+			if err != nil {
+				if c, ok := llm.(interface{ Close() error }); ok {
+					_ = c.Close()
+				}
+				return core.NodeStages{}, fmt.Errorf("node %q tts: %w", id, err)
+			}
+			lastNode.Store(&ns.Name)
+			return core.NodeStages{LLM: llm, TTS: tts}, nil
+		}
+		llmSwap, ttsSwap := core.NewStageSwap(llmProc), core.NewStageSwap(ttsProc)
+		h, err := core.NewHandoff(core.HandoffConfig{
+			Entry: call.Graph.Entry, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
+			Build:   buildNode,
+			OnEvent: call.OnHandoff,
+			Greet: func(string) error {
+				name := "another agent"
+				if n := lastNode.Load(); n != nil {
+					name = *n
+				}
+				return ctxPool.AddMessage(core.Message{Role: core.RoleUser,
+					Content: "[The caller was just transferred to you (" + name + "). Greet them briefly and continue.]"})
+			},
+		})
+		if err != nil {
+			return fail(fmt.Errorf("create handoff: %w", err))
+		}
+		call.Graph.Commit = h.Commit
+		llmProc, ttsProc = llmSwap, ttsSwap
+	}
 
 	transcriptProc, err := coretranscript.NewProcessor(coretranscript.DefaultConfig())
 	if err != nil {

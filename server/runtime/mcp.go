@@ -197,6 +197,9 @@ func (s *Session) Close(ctx context.Context) error {
 	return nil
 }
 
+// ToolName is the model-facing name of a captured MCP tool.
+func ToolName(serverID, remote string) string { return runtimeToolName(serverID, remote) }
+
 var invalidToolName = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
 
 func runtimeToolName(serverID, remote string) string {

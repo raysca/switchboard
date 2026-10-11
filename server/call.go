@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -137,10 +138,12 @@ func (r *turnRecorder) close(ctx context.Context) {
 }
 
 func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, error) {
-	cfg, err := agent.DecodeConfig(rs.Snapshot.Version.Config)
+	g, err := agent.DecodeGraph(rs.Snapshot.Version.Config)
 	if err != nil {
 		return CallSpec{}, err
 	}
+	entry := g.EntryNode()
+	cfg := entry.Config
 	if missing := cfg.Missing(); len(missing) > 0 {
 		return CallSpec{}, fmt.Errorf("agent config incomplete: %v", missing)
 	}
@@ -148,37 +151,22 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	if err != nil {
 		return CallSpec{}, fmt.Errorf("list credentials: %w", err)
 	}
-	secrets := map[string][]byte{}
-	resolved := false
-	defer func() { // an error return must not leave decrypted primaries behind
-		if !resolved {
-			for _, b := range secrets {
-				clear(b)
-			}
-		}
-	}()
-	for _, stage := range cfg.Stages() {
-		if !s.registry.Supports(stage.Provider, stage.Name) {
-			return CallSpec{}, fmt.Errorf("%s provider %q is not available on this server", stage.Name, stage.Provider)
-		}
-		id, reason := agent.ResolveCredential(stage, s.providerDefs, creds)
-		if reason != "" {
-			return CallSpec{}, fmt.Errorf("agent not callable: %s", reason)
-		}
-		secret, err := s.credentials.ProviderSecret(ctx, id, stage.Provider)
-		if err != nil {
-			return CallSpec{}, fmt.Errorf("%s credential: %w", stage.Name, err)
-		}
-		secrets[stage.Name] = secret
+	secrets, err := s.resolveStageSecrets(ctx, cfg, creds, "stt", "llm", "tts")
+	if err != nil {
+		return CallSpec{}, err
 	}
-	resolved = true
 	maxMessages, maxTokens := cfg.Context.Limits()
-	maxParallel := cfg.LLM.MaxParallel
-	if maxParallel <= 0 && s.cfg.Tools.MaxParallel > 0 {
-		maxParallel = s.cfg.Tools.MaxParallel
+	maxParallel := s.maxParallel(cfg)
+	// A one-node graph is a plain agent: every captured tool, no handoffs.
+	tools, exec := rs.Definitions, rs.Executor
+	var graph *CallGraph
+	if len(g.Nodes) > 1 {
+		graph = &CallGraph{Entry: g.Entry, Cue: g.HandoffCue}
+		graph.Resolve = func(ctx context.Context, id string) (NodeSpec, error) { return s.nodeSpec(ctx, rs, g, graph, id) }
+		tools, exec = s.nodeToolset(rs, g, entry, graph)
 	}
 	fallbacks := s.resolveFallbacks(ctx, rs, creds, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
-		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: rs.Definitions, ToolExecutor: rs.Executor, MaxParallel: maxParallel}
+		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
 	})
 	ttsFallbacks := s.resolveFallbacks(ctx, rs, creds, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
@@ -192,16 +180,107 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		STTFallbacks: s.sttFallbacks(ctx, rs, cfg, creds),
 		STT:          StageSpec{Provider: cfg.STT.Provider, Model: cfg.STT.Model, Language: cfg.STT.Language, Secret: secrets["stt"]},
 		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
-			Tools: rs.Definitions, ToolExecutor: rs.Executor, MaxParallel: maxParallel},
+			Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel},
 		TTS:                 StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, Secret: secrets["tts"]},
 		DisableTextCleaning: disableTextCleaning,
 		MaxMessages:         maxMessages,
 		MaxTokens:           maxTokens,
 		Summary:             cfg.Context.Summarization,
 		AgentVersionID:      rs.Snapshot.Version.ID,
+		StoredSessionID:     rs.Pin.ID,
 		Recording:           cfg.Recording.Active(),
 		VADStopMS:           cfg.VADStopMS,
 		STTP99MS:            cfg.STTP99MS,
+		Graph:               graph,
+	}, nil
+}
+
+func (s *Server) maxParallel(cfg agent.Config) int {
+	if mp := cfg.LLM.MaxParallel; mp > 0 {
+		return mp
+	}
+	return max(s.cfg.Tools.MaxParallel, 0)
+}
+
+// resolveStageSecrets decrypts the credential of each named stage. On error
+// the decrypted secrets gathered so far are wiped.
+func (s *Server) resolveStageSecrets(ctx context.Context, cfg agent.Config, creds []storage.Credential, names ...string) (map[string][]byte, error) {
+	secrets := map[string][]byte{}
+	ok := false
+	defer func() {
+		if !ok {
+			for _, b := range secrets {
+				clear(b)
+			}
+		}
+	}()
+	for _, stage := range cfg.Stages() {
+		if !slices.Contains(names, stage.Name) {
+			continue
+		}
+		if !s.registry.Supports(stage.Provider, stage.Name) {
+			return nil, fmt.Errorf("%s provider %q is not available on this server", stage.Name, stage.Provider)
+		}
+		id, reason := agent.ResolveCredential(stage, s.providerDefs, creds)
+		if reason != "" {
+			return nil, fmt.Errorf("agent not callable: %s", reason)
+		}
+		secret, err := s.credentials.ProviderSecret(ctx, id, stage.Provider)
+		if err != nil {
+			return nil, fmt.Errorf("%s credential: %w", stage.Name, err)
+		}
+		secrets[stage.Name] = secret
+	}
+	ok = true
+	return secrets, nil
+}
+
+// nodeToolset is the tools and executor of one node: its listed MCP tools plus
+// a transfer tool per outgoing edge.
+func (s *Server) nodeToolset(rs *runtime.Session, g agent.Graph, n agent.Node, cg *CallGraph) ([]core.ToolDefinition, core.ToolExecutor) {
+	mcp := nodeDefinitions(rs.Definitions, n.Tools)
+	allowed := make(map[string]bool, len(mcp))
+	for _, d := range mcp {
+		allowed[d.Name] = true
+	}
+	defs := append(mcp[:len(mcp):len(mcp)], transferTools(g, n.ID)...)
+	return defs, nodeExecutor(rs.Executor, allowed, transferTargets(g, n.ID), func(target string) error {
+		if cg.Commit == nil {
+			return errors.New("handoff not ready")
+		}
+		return cg.Commit(target)
+	})
+}
+
+// nodeSpec resolves a non-entry node's LLM and TTS when the node is activated:
+// credentials are decrypted now, not held for the whole call.
+func (s *Server) nodeSpec(ctx context.Context, rs *runtime.Session, g agent.Graph, cg *CallGraph, id string) (NodeSpec, error) {
+	n, ok := g.Node(id)
+	if !ok {
+		return NodeSpec{}, fmt.Errorf("unknown node %q", id)
+	}
+	cfg := n.Config
+	creds, err := s.store.Credentials().List(ctx)
+	if err != nil {
+		return NodeSpec{}, fmt.Errorf("list credentials: %w", err)
+	}
+	secrets, err := s.resolveStageSecrets(ctx, cfg, creds, "llm", "tts")
+	if err != nil {
+		return NodeSpec{}, err
+	}
+	tools, exec := s.nodeToolset(rs, g, n, cg)
+	maxParallel := s.maxParallel(cfg)
+	return NodeSpec{
+		Name: n.Name,
+		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
+			Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel},
+		LLMFallbacks: s.resolveFallbacks(ctx, rs, creds, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+			return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
+		}),
+		TTS: StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, Secret: secrets["tts"]},
+		TTSFallbacks: s.resolveFallbacks(ctx, rs, creds, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+			return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
+		}),
 	}, nil
 }
 
