@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -114,7 +116,7 @@ func TestFileJSONProblems(t *testing.T) {
 	files := map[string]string{"/text": "not json", "/dir": "", "/big": big}
 	for _, tc := range []struct{ name, path, class string }{
 		{"unreadable", "/missing", "readable JSON file"},
-		{"not json", "/text", "JSON"},
+		{"not json", "/text", "readable JSON file"},
 		{"directory", "/dir", "readable JSON file"},
 		{"too large", "/big", "readable JSON file"},
 	} {
@@ -124,7 +126,7 @@ func TestFileJSONProblems(t *testing.T) {
 			if st.Detected || !reflect.DeepEqual(st.MissingEnv, []string{gcreds}) {
 				t.Fatalf("status = %+v", st)
 			}
-			if !strings.Contains(st.Detail, gcreds) || !strings.Contains(st.Detail, tc.class) {
+			if want := gcreds + " does not name a " + tc.class; st.Detail != want {
 				t.Fatalf("detail = %q", st.Detail)
 			}
 			if _, err := r.Secret("google", "stt"); err == nil {
@@ -222,5 +224,35 @@ func TestEnvDetectedMasked(t *testing.T) {
 	}
 	if r.Masked("openai") != "" || r.Detected("openai") || !r.Detected("xai") || r.Detected("nope") {
 		t.Fatal("detected/masked mismatch")
+	}
+}
+
+func TestReadLimited(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, n int) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(strings.Repeat("a", n)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	for _, tc := range []struct {
+		name    string
+		path    string
+		wantErr bool
+		wantLen int
+	}{
+		{"directory", dir, true, 0},
+		{"missing", filepath.Join(dir, "nope"), true, 0},
+		{"over limit", write("over", MaxFileBytes+1), true, 0},
+		{"exactly limit", write("exact", MaxFileBytes), false, MaxFileBytes},
+		{"small", write("small", 2), false, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := readLimited(tc.path, MaxFileBytes)
+			if (err != nil) != tc.wantErr || len(b) != tc.wantLen {
+				t.Fatalf("len=%d err=%v", len(b), err)
+			}
+		})
 	}
 }
