@@ -89,11 +89,13 @@ Run control (all flags: `go run ./tools/livecheck -h`): `-profiles a,b|all`, `-s
 | S7 text turn | RTVI `send-text` gets a spoken, correct answer | |
 | S8 muted client | a client that sends nothing outlives `idle_timeout` (3 s) for 9 s because the 1 s pings are answered | |
 
+Harness rule: a server child started from the repo root on the development profile loads `examples/.env` itself, so every harness that filters a child's environment must also set `ENV_FILE=/dev/null` (livecheck, loadtest, the e2e suites and the pipecat eval do).
+
 Each profile and turn mode gets a fresh server child on ephemeral ports (S5 and S8 their own, with short idle/ping timers), a fresh agent store (deleted when the server stops), exactly the profile's `requires`, `optional` and `defaults` variables in its environment (the server reads provider keys there through its catalog; `ENV_FILE=/dev/null` stops it loading `examples/.env` itself), and the server binary is built once with the union of the build tags the selected profiles need (xAI STT/TTS: `xaispeech`). A profile whose required env is missing is SKIPPED with the reason. Secrets are read from `examples/.env` into the harness environment only; beyond its profile's variables the server child inherits an allowlist (PATH, HOME, locale, ONNX runtime paths), never other provider keys or `GOVOICE_DATABASE_DSN`; all output and report files are redacted (patterns plus the literal values of every `*KEY*/*SECRET*/*TOKEN*` variable).
 
 ### Adding a provider profile
 
-1. Vendor already known to `tools/livecheck/creds.go` (google, nvidia, xai, deepgram, cartesia, elevenlabs, openai)? Go to 2. Otherwise add a `credSpecs` entry (env var, how the stored secret is built); stage capabilities come from the server's own catalog (`server/provider/registry.go`), which must already know the provider.
+1. Vendor already known to `tools/livecheck/creds.go` (google, nvidia, xai, deepgram, cartesia, elevenlabs, openai)? Go to 2. Otherwise add a `credSpecs` entry (the env vars each stage reads, equal to the catalog's: `TestCredSpecsMatchCatalog` checks it); stage capabilities come from the server's provider catalog (`server/catalog/data/<provider>.yaml`), which must already list the provider.
 2. Add an entry to `tools/livecheck/profiles.yaml`: `name`, `stages` (provider, model, language, voice; `${VAR:-default}` allowed), `requires` (every env var the stages read, unless `defaults` gives it; `tools/livecheck/creds.go` names them per vendor and a test keeps that table equal to the server catalog), `defaults` (public ids only), `build_tags` if the stages need any, `interims` if you know whether the STT sends interim results, `notes`.
 3. `go test ./tools/livecheck` (validates the file: capabilities and required env, and runs every profile's agent payload through the server's own config validation and catalog detection offline, with exactly the variables the child would get), then `go run ./tools/livecheck -list` (does your environment satisfy it?) and `-dry-run -profiles <name>` (the estimate).
 4. Smoke it: `GOVOICE_LIVE=1 make agent-matrix PROFILES=<name> SCENARIOS=S1 MODES=off` (about 7 provider requests measured; the plan shows an upper bound of about 15 plus any missing clips).
@@ -104,15 +106,18 @@ Limits: timings are small-n samples on one machine and network; S1's WER and "fo
 ## Nightly critical-path job
 
 `.github/workflows/live.yml` runs every night at 03:17 UTC and on manual dispatch. It runs
-`make live-critical` for two profiles in mode `off`, with the call cap split per step (60 per run):
+`make live-critical` for three profiles in mode `off`, with the call cap split per step (56 of 60 per run):
 
 | Profile | Scenarios | Cap |
 |---|---|---|
-| google | S1 baseline, S11 push-to-talk, S12 server-side mute, S13 LLM failover | 31 |
-| xai | S1, S11, S12, S13 | 29 |
+| google | S1 baseline, S11 push-to-talk, S12 server-side mute | 23 |
+| xai | S1, S11, S12 | 23 |
+| xai-llm | S13 LLM failover (xAI primary with a broken key, Gemini fallback) | 10 |
 
-The caps come from the harness's upper-bound estimates (27 calls per profile, plus up to 3 clip
-syntheses on a cold cache). The expected spend is lower (about 18 per profile).
+The caps come from the harness's upper-bound estimates (`-dry-run`: 20 calls per profile for S1 S11 S12,
+plus up to 3 clip syntheses on a cold cache; 7 for S13). The expected spend is lower (about 14 per
+profile, 4 for S13). S13 needs a second LLM-capable provider in the profile: the broken key is in the
+server's environment, so it would break every stage of a single-provider profile.
 
 Manual-only (`make agent-matrix`):
 - S2 barge-in: 16 more calls for google would exceed the 60 cap;

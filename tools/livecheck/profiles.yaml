@@ -77,7 +77,7 @@ profiles:
       llm: {provider: xai, model: "${XAI_MODEL:-grok-2-1212}"}
       tts: {provider: google, voice: en-US-Chirp3-HD-Aoede}
     requires: [XAI_API_KEY, GOOGLE_APPLICATION_CREDENTIALS]
-    optional: [XAI_MODEL]
+    optional: [XAI_MODEL, GOOGLE_API_KEY] # GOOGLE_API_KEY: S13's Gemini fallback (else the service account)
     interims: "no"
     notes: XAI_ENDPOINT is deliberately ignored (production default is the Responses API, which tool calls need).
 

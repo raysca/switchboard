@@ -1,6 +1,6 @@
 # Nightly real-provider tests on the critical call paths (docs/benchmarks/README.md
 # "Nightly critical-path job"). Spends real credit: at most 60 provider calls per run,
-# enforced by the harness (-max-calls per step; the step caps sum to 60).
+# enforced by the harness (-max-calls per step; the step caps sum to 56 of the 60).
 name: live-critical-paths
 
 on:
@@ -41,13 +41,18 @@ jobs:
         with:
           path: .livecheck-clips
           key: livecheck-clips-${{ hashFiles('tools/livecheck/clips.go') }}
-      # Upper bounds (make live-critical dry runs): 27 calls per profile plus up to 3 clip
-      # syntheses on a cold cache. S2 barge-in (16 more for google) does not fit the 60 cap: manual only.
-      - name: google (S1 S11 S12 S13, cap 31)
-        run: make live-critical PROFILES=google SCENARIOS=S1,S11,S12,S13 MAX_CALLS=31 LIVE_ARGS="-out .live-out/google"
-      - name: xai (S1 S11 S12 S13, cap 29)
+      # Upper bounds (livecheck -dry-run, as live-critical runs it): 20 calls per profile for
+      # S1 S11 S12 plus up to 3 clip syntheses on a cold cache; S13 (LLM failover) needs a second
+      # LLM provider, so it runs on xai-llm (xAI primary with a broken key, Gemini fallback): 7.
+      # S2 barge-in (16 more for google) does not fit the 60 cap: manual only. Caps: 23 + 23 + 10 = 56.
+      - name: google (S1 S11 S12, cap 23)
+        run: make live-critical PROFILES=google SCENARIOS=S1,S11,S12 MAX_CALLS=23 LIVE_ARGS="-out .live-out/google"
+      - name: xai (S1 S11 S12, cap 23)
         if: ${{ !cancelled() }}
-        run: make live-critical PROFILES=xai SCENARIOS=S1,S11,S12,S13 MAX_CALLS=29 LIVE_ARGS="-out .live-out/xai"
+        run: make live-critical PROFILES=xai SCENARIOS=S1,S11,S12 MAX_CALLS=23 LIVE_ARGS="-out .live-out/xai"
+      - name: xai-llm (S13 LLM failover, cap 10)
+        if: ${{ !cancelled() }}
+        run: make live-critical PROFILES=xai-llm SCENARIOS=S13 MAX_CALLS=10 LIVE_ARGS="-out .live-out/xai-llm"
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

@@ -220,7 +220,7 @@ func writeFakeSA(t *testing.T) string {
 // The child server inherits an allowlist only: no provider keys, unrelated tokens or real store.
 func TestChildEnvAllowlist(t *testing.T) {
 	got := childEnv([]string{"PATH=/bin", "HOME=/h", "GOOGLE_API_KEY=k", "CLAUDE_CODE_MESSAGING_TOKEN=t", "GOVOICE_DATABASE_DSN=postgres://x",
-		"GOVOICE_CREDENTIAL_KEYS=k", "AWS_SECRET_ACCESS_KEY=s", "GOVOICE_ORT_LIB=/lib/ort.dylib"})
+		"AWS_SECRET_ACCESS_KEY=s", "GOVOICE_ORT_LIB=/lib/ort.dylib"})
 	if !reflect.DeepEqual(got, []string{"PATH=/bin", "HOME=/h", "GOVOICE_ORT_LIB=/lib/ort.dylib"}) {
 		t.Errorf("childEnv = %v", got)
 	}

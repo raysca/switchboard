@@ -35,8 +35,8 @@ const config = {};
 for (const kind of ["stt", "llm", "tts"]) {
   const p = providers.find((p) => p.services[kind]?.available);
   if (!p) {
-    const missing = [...new Set(providers.flatMap((p) => p.services[kind]?.missing_env ?? []))];
-    log(`no ${kind.toUpperCase()} provider detected: skipped; set one of ${missing.join(", ")} in examples/.env (see examples/.env.example) and rerun make dev`);
+    const options = providers.filter((p) => p.services[kind]?.missing_env?.length).map((p) => `${p.id}: ${p.services[kind].missing_env.join(" + ")}`);
+    log(`no ${kind.toUpperCase()} provider detected: skipped; set the variables of one provider (${options.join("; ")}) in examples/.env (see examples/.env.example) and rerun make dev`);
     process.exit(0);
   }
   const svc = p.services[kind];

@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { test, expect, LIVE, PROVIDER, type Stack } from "../lib/graph-stack";
 import { step } from "../lib/evidence";
+import { graphStackFile, readStack } from "../lib/stack";
 
 // Agent graphs end to end in a real browser against a real server. Two modes:
 //  - fake providers (default, free): the fake LLM echoes the node's system prompt as a
@@ -29,7 +30,7 @@ const BUY = "I want to buy a car. Please transfer to sales.";
 type Entry = { id: string; default?: boolean };
 type Service = { available: boolean; missing_env?: string[]; models?: Entry[]; voices?: Entry[] };
 type ProviderStatus = { id: string; detected: boolean; services: Partial<Record<"stt" | "llm" | "tts", Service>> };
-// GET /api/v1/providers, read by the first test.
+// GET /api/v1/providers, read once before the tests (so a single --grep run has it too).
 let providers: ProviderStatus[] = [];
 const catalogDefault = (kind: "stt" | "llm" | "tts") => {
   const svc = providers.find((p) => p.id === PROVIDER)?.services[kind];
@@ -120,9 +121,13 @@ async function openDesigner(page: Page, stack: Stack) {
   await expect(page.getByRole("heading", { name: "Design a graph agent" })).toBeVisible();
 }
 
+test.beforeAll(async () => {
+  if (LIVE && !process.env.E2E_XAI_SECRET) return; // skipped run: no stack
+  providers = (await api<{ data: ProviderStatus[] }>(readStack(graphStackFile), "/providers")).data;
+});
+
 test("providers: the suite's provider is detected and only detected providers are offered", async ({ page, stack }) => {
   // The server reads provider secrets from its environment (global setup); none goes through the API.
-  providers = (await api<{ data: ProviderStatus[] }>(stack, "/providers")).data;
   expect(providers.find((p) => p.id === PROVIDER)?.detected).toBe(true);
   await openDesigner(page, stack);
   for (const kind of ["stt", "llm", "tts"] as const) {
