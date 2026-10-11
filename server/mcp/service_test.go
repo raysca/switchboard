@@ -809,3 +809,27 @@ func TestCreateRejectsLegacyCredentialIDField(t *testing.T) {
 		t.Fatalf("code=%d %s", w.Code, w.Body.String())
 	}
 }
+
+// A row that bypassed Create (an old or hand-edited database) with a variable
+// outside the MCP_TOKEN_ prefix must never send that variable's value out.
+func TestStoredUnprefixedAuthEnvRefusedAtUse(t *testing.T) {
+	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
+	env := map[string]string{"GOVOICE_MANAGEMENT_API_KEY": "mgmt-secret-sentinel"}
+	svc, store := newTestService(t, remote, EnvTokens(func(k string) string { return env[k] }))
+	m := storage.MCPServer{ID: storage.NewID(), Name: "legacy", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", AuthEnv: "GOVOICE_MANAGEMENT_API_KEY", Enabled: true}
+	if err := store.MCP().CreateServer(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Validate(context.Background(), m.ID); err == nil {
+		t.Fatal("validated with an unprefixed auth_env")
+	}
+	if _, err := svc.Refresh(context.Background(), m.ID); err == nil {
+		t.Fatal("refreshed with an unprefixed auth_env")
+	}
+	if remote.seen != "" {
+		t.Fatalf("unprefixed variable reached the remote: %q", remote.seen)
+	}
+	if v := view(m, svc.tokens); v.AuthEnvSet {
+		t.Fatalf("view reports an unprefixed variable as set: %+v", v)
+	}
+}

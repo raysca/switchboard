@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"govoice/core"
@@ -140,5 +142,29 @@ func TestAvailabilityCheck(t *testing.T) {
 	}
 	if u := s.availability.Check("deepgram", "llm"); u.Reason != "unsupported_provider" {
 		t.Fatalf("got %+v", u)
+	}
+}
+
+// A hostile overlay directory must not stop the server: bad files are skipped
+// (and logged) and the packaged catalog still serves.
+func TestNewServerStartsWithHostileOverlay(t *testing.T) {
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"unknown_key.yaml": "id: xai\nbogus: 1\n",
+		"creds.yaml":       "id: xai\ncredentials:\n  - id: key\n    label: x\n    fields:\n      api_key: {env: GOVOICE_MANAGEMENT_API_KEY}\n    assemble: token\n",
+		"notyaml.yaml":     "\x00: [unterminated",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Providers.CatalogDir = dir
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatalf("hostile overlay stopped the server: %v", err)
+	}
+	if p, ok := s.catalog.Provider("xai"); !ok || p.Credentials[0].Fields["api_key"].Env != "XAI_API_KEY" {
+		t.Fatalf("packaged xai entry changed: %+v", p)
 	}
 }
