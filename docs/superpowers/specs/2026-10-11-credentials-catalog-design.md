@@ -21,7 +21,7 @@ Decisions made with the user on 2026-10-11:
 - Provider credentials are encrypted rows in `provider_credentials` (`server/credential`: AES-GCM keyring from `GOVOICE_CREDENTIAL_KEYS` or a generated dev key), managed through `/api/v1/providers/credentials` and the Providers page (add, rotate, update, delete, validate). Each stored row has a provider, a masked suffix and a validation state; there is no label.
 - An agent stage carries `provider`, `model`/`voice` and an explicit `credential_id`. `agent.ResolveCredential` checks the id against stored rows; `Server.resolveStageSecrets` decrypts it per call and again when a graph node is activated; failover candidates carry their own credential ids.
 - MCP servers have `auth_credential_id` (a stored credential of the `mcp` provider); its plaintext is sent to the MCP endpoint as a bearer token.
-- `provider.Definitions()` is a hard-coded list (id, display name, capabilities); xAI's STT/TTS capability depends on the `xaispeech` build tag through a package variable. There is no model or voice list on the server; the UI uses free-text fields.
+- The providers list was a hard-coded `provider.Definitions()` (id, display name, capabilities); xAI's STT/TTS capability depended on the `xaispeech` build tag through a package variable. There is no model or voice list on the server; the UI uses free-text fields.
 - The only env-to-credential mapping is `tools/livecheck/creds.go` (`credSpecs`) and `scripts/dev-seed.mjs`; the harnesses store credentials through the API and strip provider variables from the server's environment.
 
 ## Design
@@ -71,7 +71,7 @@ services:
 | openai | `key` (`OPENAI_API_KEY`, optional `OPENAI_BASE_URL`; json) | none | `gpt-4o-mini` | none |
 | nvidia | `key` (`NVIDIA_API_KEY`, token), `riva` (`NVIDIA_API_KEY`, `NVIDIA_STT_FUNCTION_ID`, `NVIDIA_TTS_FUNCTION_ID`; json) | kind `riva`, needs `function_id`; language | `openai/gpt-oss-20b`; kind `key` | `Magpie-Multilingual.EN-US.Aria`; kind `riva`, needs `tts_function_id` |
 
-`provider.Definitions()` is rebuilt from the catalog (display name, capabilities from the declared services): one source of truth. The `mcp` pseudo-provider disappears (MCP tokens are not provider credentials any more, section 5).
+The providers API is built from the catalog (display name, capabilities from the declared services) and `server/provider` is deleted: one source of truth. The `mcp` pseudo-provider disappears (MCP tokens are not provider credentials any more, section 5).
 
 **Operator overlay (A1).** An optional directory `providers.catalog_dir` in the server config. Files there are merged over the packaged ones by provider id: `models`/`voices`/`languages` entries are added, and an entry with an existing id replaces the packaged one. `credentials` and `assemble` cannot be overridden. An overlay may not introduce a provider the build has no adapter for; that is logged and the file ignored.
 
