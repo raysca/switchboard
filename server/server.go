@@ -45,6 +45,9 @@ type Server struct {
 	timelines             *TimelineRegistry
 	admission             *AdmissionController
 	registry              *Registry
+	env                   func(string) string
+	resolver              *catalog.Resolver
+	availability          providerAvailability
 	validator             *token.Validator
 	management            *auth.Management
 	providerManagementAPI http.Handler
@@ -178,6 +181,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		timelines:    timelines,
 		admission:    admission,
 		registry:     registry,
+		env:          os.Getenv,
 		validator:    validator,
 		management:   management,
 		voiceSignKey: []byte(tokenSecret),
@@ -187,6 +191,8 @@ func NewServer(cfg *Config) (*Server, error) {
 		startedAt:    metrics.StartTime,
 		activeCalls:  make(map[uint64]*activeCall),
 	}
+	s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })
+	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports}
 	if lowVADStopWithoutManager(cfg) {
 		logger.Warn("turn.manager is off with a short vad.stop_ms: turns end on the raw VAD stop and cut callers off mid-sentence; set turn.manager: true or vad.stop_ms: 800")
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,7 +90,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 
 	s.SetStore(store)
 	s.credentials, s.mcpService, s.providerDefs = creds, mcpService, registry
-	s.SetProviderManagementAPI(&api.ProviderManagement{Credentials: creds, Registry: registry})
+	s.SetProviderManagementAPI(s.providersRoutes(&api.ProviderManagement{Credentials: creds, Registry: registry}))
 	s.agents = agent.NewService(store)
 	s.SetAgentManagementAPI(api.NewAgentsHandler(s.agents))
 	s.SetMCPManagementAPI(mcp.Handler(mcpService))
@@ -266,4 +267,13 @@ func loadOrCreateDevKey(path string) (string, error) {
 		return "", err
 	}
 	return entry, nil
+}
+
+// providersRoutes sends the exact listing path to the catalog-backed handler and
+// the credential routes to the old one (deleted in a later task).
+func (s *Server) providersRoutes(credentials http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/providers", api.ProvidersHandler{Catalog: s.catalog, Resolver: s.resolver, Supports: s.registry.Supports})
+	mux.Handle("/api/v1/providers/", credentials)
+	return mux
 }
