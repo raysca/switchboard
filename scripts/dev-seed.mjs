@@ -80,7 +80,7 @@ const agent = await api("POST", "/agents", {
       system_prompt: "You are a concise, friendly voice assistant. Answer in one or two short sentences.",
       credential_id: llm,
     },
-    tts: { provider: "google", voice: "en-US-Journey-F", credential_id: speech },
+    tts: { provider: "google", voice: "en-US-Chirp3-HD-Aoede", credential_id: speech },
   },
 });
 log(`created agent "${AGENT}"`);

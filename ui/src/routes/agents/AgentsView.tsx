@@ -383,7 +383,7 @@ function AgentForm({
             type="text"
             value={draft.ttsVoice}
             onChange={(e) => set({ ttsVoice: e.target.value })}
-            placeholder="Provider default (e.g. en-US-Journey-F)"
+            placeholder="Provider default (e.g. en-US-Chirp3-HD-Aoede)"
           />
         </label>
         {credentialSelect("tts", draft.ttsProvider, draft.ttsCredential, (v) => set({ ttsCredential: v }))}

@@ -174,7 +174,7 @@ describe("OnboardingView", () => {
         config: {
           stt: { provider: "google", credential_id: "cred-1", model: "chirp_2", language: "en-US" },
           llm: { provider: "google", credential_id: "cred-1", model: "gemini-2.5-flash" },
-          tts: { provider: "google", credential_id: "cred-1", voice: "en-US-Journey-F" },
+          tts: { provider: "google", credential_id: "cred-1", voice: "en-US-Chirp3-HD-Aoede" },
         },
       }),
     );

@@ -22,7 +22,7 @@ WS connect with token(agent_id)
 {
   "stt":     {"provider": "google", "model": "chirp_2", "language": "en-US", "credential_id": "..."},
   "llm":     {"provider": "google", "model": "gemini-2.0-flash", "system_prompt": "...", "credential_id": "..."},
-  "tts":     {"provider": "google", "voice": "en-US-Journey-F", "credential_id": "..."},
+  "tts":     {"provider": "google", "voice": "en-US-Chirp3-HD-Aoede", "credential_id": "..."},
   "context": {"max_messages": 64, "max_tokens": 8000}
 }
 ```

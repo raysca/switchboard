@@ -23,7 +23,7 @@ import (
 
 // TTSConfig configures Google Cloud Text-to-Speech V1.
 type TTSConfig struct {
-	Voice                 string        // Pinned: "en-US-Journey-F"
+	Voice                 string        // Default: "en-US-Chirp3-HD-Aoede" (streams); other voices use the unary request
 	LanguageCode          string        // Used when the voice name has no xx-YY prefix (default "en-US")
 	SampleRate            int           // Pinned: 24000 Hz
 	MaxSynthesisUnitChars int           // Pinned: 250
@@ -37,7 +37,7 @@ type TTSConfig struct {
 }
 
 // DefaultVoice is the voice agents get when none is set.
-const DefaultVoice = "en-US-Journey-F"
+const DefaultVoice = "en-US-Chirp3-HD-Aoede"
 
 // DefaultTTSConfig returns configuration matching v1-lock.json.
 func DefaultTTSConfig() TTSConfig {

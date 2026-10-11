@@ -286,3 +286,10 @@ func TestNewStreamingTTSProcessor_NeedsAStreamingClient(t *testing.T) {
 		t.Fatal("a missing client was accepted")
 	}
 }
+
+// The shipped default is a Chirp 3 HD voice, so default calls stream.
+func TestDefaultVoiceStreams(t *testing.T) {
+	if !IsChirp3HD(DefaultVoice) || DefaultTTSConfig().Voice != DefaultVoice {
+		t.Fatalf("DefaultVoice = %q (config voice %q): the default must be a Chirp 3 HD voice", DefaultVoice, DefaultTTSConfig().Voice)
+	}
+}
