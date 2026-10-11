@@ -139,7 +139,11 @@ func Load() (*Catalog, error) {
 }
 
 // Parse decodes one provider file strictly (unknown keys are errors) and validates it.
-func Parse(name string, data []byte) (*Provider, error) {
+func Parse(name string, data []byte) (*Provider, error) { return parse(name, data, false) }
+
+// parse with overlay=true accepts an operator file, which carries no name or
+// service credentials (merge checks those against the packaged provider).
+func parse(name string, data []byte, overlay bool) (*Provider, error) {
 	if len(data) > MaxFileBytes {
 		return nil, fmt.Errorf("%s: larger than %d bytes", name, MaxFileBytes)
 	}
@@ -149,17 +153,17 @@ func Parse(name string, data []byte) (*Provider, error) {
 	if err := dec.Decode(&p); err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	if err := p.validate(); err != nil {
+	if err := p.validate(overlay); err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 	return &p, nil
 }
 
-func (p *Provider) validate() error {
+func (p *Provider) validate(overlay bool) error {
 	if !providerID.MatchString(p.ID) {
 		return fmt.Errorf("provider id %q must match %s", p.ID, providerID)
 	}
-	if strings.TrimSpace(p.Name) == "" {
+	if !overlay && strings.TrimSpace(p.Name) == "" {
 		return errors.New("name is required")
 	}
 	kinds := map[string]*Kind{}
@@ -191,7 +195,7 @@ func (p *Provider) validate() error {
 		if !serviceName[name] || svc == nil {
 			return fmt.Errorf("unknown service %q", name)
 		}
-		if len(svc.Credential) == 0 {
+		if len(svc.Credential) == 0 && !overlay {
 			return fmt.Errorf("service %q needs at least one credential kind", name)
 		}
 		for _, kid := range svc.Credential {

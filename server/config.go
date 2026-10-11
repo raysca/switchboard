@@ -245,6 +245,10 @@ type Config struct {
 	// Provider infrastructure only. What a call runs (models, voices, prompts)
 	// and its credentials come from the stored agent, never from YAML.
 	Providers struct {
+		// CatalogDir is an optional directory of overlay files that add or replace
+		// models, voices and languages in the provider catalog (server/catalog).
+		CatalogDir string `yaml:"catalog_dir"`
+
 		GoogleSTT struct {
 			ProjectID         string        `yaml:"project_id"`
 			Location          string        `yaml:"location"`

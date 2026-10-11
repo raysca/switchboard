@@ -23,6 +23,7 @@ import (
 	"govoice/server/agent"
 	"govoice/server/api"
 	"govoice/server/auth"
+	"govoice/server/catalog"
 	"govoice/server/credential"
 	"govoice/server/mcp"
 	"govoice/server/otelexport"
@@ -39,6 +40,7 @@ type Server struct {
 	otel                  *otelexport.Exporter // nil unless otel.enabled
 	redactor              *redact.Redactor     // sink redaction; never applied to the live LLM context
 	cfg                   *Config
+	catalog               *catalog.Catalog
 	metrics               *Metrics
 	timelines             *TimelineRegistry
 	admission             *AdmissionController
@@ -125,6 +127,13 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 	logger := slog.New(logHandler)
 
+	cat, err := catalog.LoadWithOverlay(cfg.Providers.CatalogDir, func(format string, args ...any) {
+		logger.Warn(fmt.Sprintf(format, args...))
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	metrics := NewMetrics()
 	timelines := NewTimelineRegistry(
 		cfg.Observability.TimelineMaxEvents,
@@ -163,6 +172,7 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 
 	s := &Server{
+		catalog:      cat,
 		cfg:          cfg,
 		metrics:      metrics,
 		timelines:    timelines,

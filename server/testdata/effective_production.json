@@ -134,6 +134,7 @@
   "AggregateTimeout": 2000000000
  },
  "Providers": {
+  "CatalogDir": "",
   "GoogleSTT": {
    "ProjectID": "",
    "Location": "us-central1",
