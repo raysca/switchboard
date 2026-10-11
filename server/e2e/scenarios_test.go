@@ -20,9 +20,7 @@ import (
 	coretools "govoice/core/tools"
 	"govoice/server/agent"
 	"govoice/server/api"
-	"govoice/server/credential"
 	"govoice/server/mcp"
-	"govoice/server/provider"
 	"govoice/server/runtime"
 	"govoice/server/storage"
 	"govoice/server/trace"
@@ -233,43 +231,31 @@ func openScenarioDB(t *testing.T, name string) *storage.Store {
 		t.Fatalf("open scenario database %s: %v", name, err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if name != "scenario1_fresh_install" {
-		seedScenarioCredentials(t, store, "google", "xai")
-	}
 	return store
 }
 
-// seedScenarioCredentials stores one credential per provider; agent readiness
-// requires a resolvable credential for each stage.
-func seedScenarioCredentials(t *testing.T, s *storage.Store, providers ...string) {
-	t.Helper()
-	for _, p := range providers {
-		if err := s.Credentials().Put(context.Background(), storage.Credential{ID: testCredentialID(p), Provider: p, MaskedSuffix: "abcd",
-			ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
-			t.Fatal(err)
-		}
+// fakeAvailability reports the providers in missing as lacking their
+// environment variable; every other provider service can run.
+type fakeAvailability struct{ missing map[string]bool }
+
+func (f *fakeAvailability) Check(provider, _ string) agent.Unavailable {
+	if f.missing[provider] {
+		return agent.Unavailable{Reason: "missing_credential", MissingEnv: []string{strings.ToUpper(provider) + "_API_KEY"}}
 	}
+	return agent.Unavailable{}
 }
 
 // =============================================================================
 // Scenario 1: Fresh Install & Onboarding
 // =============================================================================
-// Clean startup on empty database, zero initial credentials/agents;
-// onboarding configures provider credentials, creates first agent with
+// Clean startup on empty database, zero initial agents; onboarding sets the
+// provider environment, creates first agent with
 // valid readiness evaluation, and exposes immutable v1 version.
 func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 	ctx := context.Background()
 	store := openScenarioDB(t, "scenario1_fresh_install")
 
-	// 1. Invariant: Clean database with zero initial credentials and zero agents
-	initialCreds, err := store.Credentials().List(ctx)
-	if err != nil {
-		t.Fatalf("list credentials on fresh db: %v", err)
-	}
-	if len(initialCreds) != 0 {
-		t.Fatalf("expected 0 initial credentials, got %d", len(initialCreds))
-	}
-
+	// 1. Invariant: Clean database with zero agents
 	initialAgents, err := store.Agents().List(ctx, 10, 0)
 	if err != nil {
 		t.Fatalf("list agents on fresh db: %v", err)
@@ -278,58 +264,29 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 		t.Fatalf("expected 0 initial agents, got %d", len(initialAgents))
 	}
 
-	// 2. Set up provider capability registry and credential service
-	reg := provider.NewRegistry(provider.Definitions())
-	keyring := credential.Keyring{
-		ActiveID: "key-1",
-		Keys:     map[string][]byte{"key-1": []byte(strings.Repeat("k", 32))},
-	}
-	credService, err := credential.NewService(store.Credentials(), keyring, reg)
-	if err != nil {
-		t.Fatalf("new credential service: %v", err)
-	}
+	// 2. Readiness checks provider availability itself; before onboarding no
+	// provider has its environment set.
+	av := &fakeAvailability{missing: map[string]bool{"google": true, "xai": true}}
+	agentService := agent.NewService(store, av)
 
-	// 3. Readiness checks attached provider credentials itself.
-	agentService := agent.NewService(store)
-
-	// 4. Before credentials: an agent cannot be created, because agents are
-	// attached to providers (and their credentials) at creation.
+	// 3. Before onboarding: an agent cannot be created, because agents are
+	// attached to available providers at creation.
 	if _, err := agentService.Create(ctx, agent.CreateRequest{
 		Name:        "Unattached Agent",
 		Description: "Created before provider onboarding",
-		Config:      json.RawMessage(`{"stt":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"xai","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`),
+		Config:      json.RawMessage(`{"stt":{"provider":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google"}}`),
 	}); !errors.Is(err, agent.ErrNotAttached) {
-		t.Fatalf("expected agent creation to require attached credentials, got %v", err)
+		t.Fatalf("expected agent creation to require available providers, got %v", err)
 	}
 
-	// 5. Onboarding: configure provider credentials
-	googleCred, err := credService.Create(ctx, credential.CreateInput{
-		Provider: "google",
-		Secret:   "google-cloud-api-key-test-sentinel-123",
-	})
-	if err != nil {
-		t.Fatalf("create google credential: %v", err)
-	}
-	if !strings.HasPrefix(googleCred.MaskedValue, "••••••") {
-		t.Fatalf("expected secret to be masked in DTO, got %s", googleCred.MaskedValue)
-	}
-
-	xaiCred, err := credService.Create(ctx, credential.CreateInput{
-		Provider: "xai",
-		Secret:   "xai-grok-api-key-test-sentinel-456",
-	})
-	if err != nil {
-		t.Fatalf("create xai credential: %v", err)
-	}
-	if !strings.HasPrefix(xaiCred.MaskedValue, "••••••") {
-		t.Fatalf("expected secret to be masked in DTO, got %s", xaiCred.MaskedValue)
-	}
+	// 4-5. Onboarding: the operator sets the provider environment.
+	av.missing = nil
 
 	// 6. Onboarding creates the first ready agent
 	firstAgent, err := agentService.Create(ctx, agent.CreateRequest{
 		Name:        "Customer Care Bot",
 		Description: "Onboarded primary voice agent",
-		Config:      json.RawMessage(`{"stt":{"provider":"google","model":"google","credential_id":"` + googleCred.ID + `"},"llm":{"provider":"xai","model":"xai","credential_id":"` + xaiCred.ID + `"},"tts":{"provider":"google","voice":"google","credential_id":"` + googleCred.ID + `"}}`),
+		Config:      json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 	})
 	if err != nil {
 		t.Fatalf("create first onboarded agent: %v", err)
@@ -385,10 +342,10 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 func TestScenario2_MixedProviders(t *testing.T) {
 	ctx := context.Background()
 	store := openScenarioDB(t, "scenario2_mixed_providers")
-	agentService := agent.NewService(store)
+	agentService := agent.NewService(store, &fakeAvailability{})
 
 	// 1. Create agent configured with composite multi-provider stack
-	agentConfig := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"xai.llm","system_prompt":"You are a helpful assistant","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"mock.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)
+	agentConfig := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"xai","model":"xai.llm","system_prompt":"You are a helpful assistant"},"tts":{"provider":"google","voice":"mock.tts"}}`)
 	createdAgent, err := agentService.Create(ctx, agent.CreateRequest{
 		Name:        "Mixed Provider Agent",
 		Description: "Google STT + xAI LLM + Mock TTS",
@@ -553,11 +510,11 @@ func TestScenario3_MCPToolLifecycle(t *testing.T) {
 	}
 
 	// 3. Attach tool to agent
-	agentService := agent.NewService(store)
+	agentService := agent.NewService(store, &fakeAvailability{})
 	agentCreated, err := agentService.Create(ctx, agent.CreateRequest{
 		Name:        "Order Assistant",
 		Description: "Agent with MCP order lookup tool",
-		Config:      json.RawMessage(`{"stt":{"provider":"google","model":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"xai","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`),
+		Config:      json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 		MCPTools: []agent.ToolSelection{
 			{ServerID: mcpServer.ID, RemoteName: "lookup_order", SchemaHash: schemaHash, Required: true},
 		},
@@ -657,12 +614,12 @@ func TestScenario3_MCPToolLifecycle(t *testing.T) {
 func TestScenario4_ImmutableAgentVersioning(t *testing.T) {
 	ctx := context.Background()
 	store := openScenarioDB(t, "scenario4_immutable_versioning")
-	agentService := agent.NewService(store)
+	agentService := agent.NewService(store, &fakeAvailability{})
 
 	// 1. Create Agent v1
 	v1Prompt := "You are a professional banking assistant version 1"
 	v1Voice := "voice-v1-banking"
-	v1Config := json.RawMessage(`{"stt":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"grok","system_prompt":"` + v1Prompt + `","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"` + v1Voice + `","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)
+	v1Config := json.RawMessage(`{"stt":{"provider":"google"},"llm":{"provider":"xai","model":"grok","system_prompt":"` + v1Prompt + `"},"tts":{"provider":"google","voice":"` + v1Voice + `"}}`)
 
 	agentV1, err := agentService.Create(ctx, agent.CreateRequest{
 		Name:        "Banking Agent",
@@ -692,7 +649,7 @@ func TestScenario4_ImmutableAgentVersioning(t *testing.T) {
 	// 3. Update Agent to publish contiguous v2 with different prompt and voice
 	v2Prompt := "You are a friendly concierge version 2"
 	v2Voice := "voice-v2-concierge"
-	v2Config := json.RawMessage(`{"stt":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"grok","system_prompt":"` + v2Prompt + `","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"` + v2Voice + `","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)
+	v2Config := json.RawMessage(`{"stt":{"provider":"google"},"llm":{"provider":"xai","model":"grok","system_prompt":"` + v2Prompt + `"},"tts":{"provider":"google","voice":"` + v2Voice + `"}}`)
 
 	agentV2, err := agentService.Update(ctx, agentV1.ID, agent.UpdateRequest{
 		Config: v2Config,
@@ -808,11 +765,11 @@ func TestScenario5_MCPDeletionSafety(t *testing.T) {
 		t.Fatalf("discovery: %v", err)
 	}
 
-	agentService := agent.NewService(store)
+	agentService := agent.NewService(store, &fakeAvailability{})
 	agentCreated, err := agentService.Create(ctx, agent.CreateRequest{
 		Name:        "Logistics Bot",
 		Description: "Bot with shipment tracking",
-		Config:      json.RawMessage(`{"stt":{"provider":"google","model":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"xai","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`),
+		Config:      json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 		MCPTools: []agent.ToolSelection{
 			{ServerID: mcpServer.ID, RemoteName: "track_shipment", SchemaHash: discovery.Tools[0].SchemaHash, Required: true},
 		},
@@ -1040,11 +997,11 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 
 	t.Run("TraceWriteFailureDoesNotCrashPipeline", func(t *testing.T) {
 		store := openScenarioDB(t, "scenario7_trace_outage")
-		agentService := agent.NewService(store)
+		agentService := agent.NewService(store, &fakeAvailability{})
 
 		agentObj, err := agentService.Create(ctx, agent.CreateRequest{
 			Name:   "Fault Resilient Bot",
-			Config: json.RawMessage(`{"stt":{"provider":"google","model":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"xai","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`),
+			Config: json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1141,10 +1098,10 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		agentService := agent.NewService(store)
+		agentService := agent.NewService(store, &fakeAvailability{})
 		agentObj, err := agentService.Create(ctx, agent.CreateRequest{
 			Name:   "MCP Outage Bot",
-			Config: json.RawMessage(`{"stt":{"provider":"google","model":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"xai","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`),
+			Config: json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 			MCPTools: []agent.ToolSelection{
 				{ServerID: serverObj.ID, RemoteName: "lookup_order", SchemaHash: discovery.Tools[0].SchemaHash, Required: false},
 			},
@@ -1234,13 +1191,13 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 	t.Run("ConcurrentSessionIsolation", func(t *testing.T) {
 		// Session A experiences fault; Session B runs concurrently and succeeds
 		store := openScenarioDB(t, "scenario7_concurrent_isolation")
-		agentService := agent.NewService(store)
+		agentService := agent.NewService(store, &fakeAvailability{})
 
 		agentA, _ := agentService.Create(ctx, agent.CreateRequest{
-			Name: "Agent A", Config: json.RawMessage(`{"stt":{"provider":"google","model":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"xai","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`),
+			Name: "Agent A", Config: json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 		})
 		agentB, _ := agentService.Create(ctx, agent.CreateRequest{
-			Name: "Agent B", Config: json.RawMessage(`{"stt":{"provider":"google","model":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"xai","model":"xai","credential_id":"018f0000-0000-7000-8000-000000000002"},"tts":{"provider":"google","voice":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`),
+			Name: "Agent B", Config: json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 		})
 
 		pinA, errA := agentService.StartSession(ctx, agentA.ID, "")
@@ -1265,12 +1222,4 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 func computeSHA256(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
-}
-
-// testCredentialID is the fixed UUIDv7 of the seeded credential for provider p.
-func testCredentialID(p string) string {
-	if p == "xai" {
-		return "018f0000-0000-7000-8000-000000000002"
-	}
-	return "018f0000-0000-7000-8000-000000000001"
 }

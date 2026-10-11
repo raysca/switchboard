@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -624,6 +625,10 @@ func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
 		t.Fatalf("token: %d %s", w.Code, w.Body)
 	}
 	env.set("GOOGLE_APPLICATION_CREDENTIALS", "")
+	a, err := s.agents.Get(t.Context(), agentID)
+	if err != nil || !slices.Contains(a.Readiness.Reasons, "missing_credential_stt") || !slices.Contains(a.Readiness.MissingEnv, "GOOGLE_APPLICATION_CREDENTIALS") {
+		t.Fatalf("readiness = %+v (err %v), want missing_credential_stt naming GOOGLE_APPLICATION_CREDENTIALS", a.Readiness, err)
+	}
 
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()

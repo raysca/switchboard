@@ -18,9 +18,8 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedAPICredentials(t, store)
 	defer store.Close()
-	handler := NewAgentsHandler(agent.NewService(store))
+	handler := NewAgentsHandler(agent.NewService(store, allAvailable{}))
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -29,7 +28,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	created := request(http.MethodPost, "/api/v1/agents", `{"name":"Voice","config":{"stt":{"provider":"google","model":"g.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"g.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"g.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}}`)
+	created := request(http.MethodPost, "/api/v1/agents", `{"name":"Voice","config":{"stt":{"provider":"google","model":"g.stt"},"llm":{"provider":"google","model":"g.llm"},"tts":{"provider":"google","voice":"g.tts"}}}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
 	}
@@ -40,7 +39,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 		t.Fatalf("create response=%s err=%v", created.Body, err)
 	}
 	id := envelope.Data.ID
-	updated := request(http.MethodPut, "/api/v1/agents/"+id, `{"name":"Revised","config":{"stt":{"provider":"google","model":"g.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"g.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"g.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}}`)
+	updated := request(http.MethodPut, "/api/v1/agents/"+id, `{"name":"Revised","config":{"stt":{"provider":"google","model":"g.stt"},"llm":{"provider":"google","model":"g.llm"},"tts":{"provider":"google","voice":"g.tts"}}}`)
 	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"number":2`) {
 		t.Fatalf("update status=%d body=%s", updated.Code, updated.Body)
 	}
@@ -64,7 +63,6 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedAPICredentials(t, store)
 	defer store.Close()
 	server := storage.MCPServer{ID: storage.NewID(), Name: "orders", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
 	if err := store.MCP().CreateServer(context.Background(), server); err != nil {
@@ -74,8 +72,8 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := agent.NewService(store)
-	created, err := service.Create(context.Background(), agent.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"l","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"t","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)})
+	service := agent.NewService(store, allAvailable{})
+	created, err := service.Create(context.Background(), agent.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,9 +111,8 @@ func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedAPICredentials(t, store)
 	defer store.Close()
-	handler := NewAgentsHandler(agent.NewService(store))
+	handler := NewAgentsHandler(agent.NewService(store, allAvailable{}))
 	for _, tc := range []struct {
 		path string
 		body string
@@ -140,28 +137,20 @@ func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {
 	}
 }
 
-// seedAPICredentials stores the credentials agent fixtures attach to.
-func seedAPICredentials(t *testing.T, s *storage.Store) {
-	t.Helper()
-	for p, id := range map[string]string{"google": "018f0000-0000-7000-8000-000000000001", "xai": "018f0000-0000-7000-8000-000000000002"} {
-		if err := s.Credentials().Put(context.Background(), storage.Credential{ID: id, Provider: p, MaskedSuffix: "abcd",
-			ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
+// allAvailable is an environment where every provider service can run.
+type allAvailable struct{}
+
+func (allAvailable) Check(string, string) agent.Unavailable { return agent.Unavailable{} }
 
 func TestAgentFallbackChainRoundTrip(t *testing.T) {
 	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "chain.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedAPICredentials(t, store)
 	defer store.Close()
-	handler := NewAgentsHandler(agent.NewService(store))
-	cred := `"credential_id":"018f0000-0000-7000-8000-000000000001"`
+	handler := NewAgentsHandler(agent.NewService(store, allAvailable{}))
 	body := func(fallbacks string) string {
-		return `{"name":"Chain","config":{"stt":{"provider":"google","model":"s",` + cred + `},"llm":{"provider":"google","model":"m",` + cred + fallbacks + `},"tts":{"provider":"google","voice":"v",` + cred + `},"failover":{"on":["timeout","server_error"]}}}`
+		return `{"name":"Chain","config":{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"m"` + fallbacks + `},"tts":{"provider":"google","voice":"v"},"failover":{"on":["timeout","server_error"]}}}`
 	}
 	post := func(b string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/agents", strings.NewReader(b))
@@ -170,10 +159,10 @@ func TestAgentFallbackChainRoundTrip(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	if w := post(body(`,"fallbacks":[{"provider":"google","model":"m",` + cred + `}]`)); w.Code != http.StatusBadRequest {
+	if w := post(body(`,"fallbacks":[{"provider":"google","model":"m"}]`)); w.Code != http.StatusBadRequest {
 		t.Fatalf("duplicate chain status=%d body=%s", w.Code, w.Body)
 	}
-	created := post(body(`,"fallbacks":[{"provider":"google","model":"backup",` + cred + `}]`))
+	created := post(body(`,"fallbacks":[{"provider":"google","model":"backup"}]`))
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
 	}
