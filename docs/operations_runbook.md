@@ -240,7 +240,7 @@ Kill switches (config, default `false`): `providers.google_tts.disable_streaming
 
 Google quotas, per project: 100 concurrent streaming sessions and 200 Chirp 3 requests per minute. A speaking call holds one stream at a time, so about 100 calls can speak at once per project. Beyond that the stream open fails and that unit is served unary.
 
-Seeing fallbacks: `voice_tts_retries_total` counts retry attempts. For streaming providers a retry is a unary fallback, so a rising rate for Google or xAI means streams are failing and units are being served unary.
+Seeing fallbacks: `voice_tts_retries_total` counts retry attempts across all TTS providers and has no provider label. For Google Chirp 3 HD and xAI a retry is a unary fallback, so a rise while those providers carry the traffic means streams are failing and units are being served unary; the TTS error log lines name the provider. A stream that stays silent for the provider timeout (10 s default) is abandoned and also falls back.
 
 ## Failover timing
 

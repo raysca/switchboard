@@ -3,6 +3,8 @@ package google
 import (
 	"context"
 	"errors"
+	"sync/atomic"
+	"time"
 
 	"govoice/core/netpool"
 	"govoice/core/ttsunit"
@@ -17,7 +19,12 @@ type StreamingTTSProcessor struct {
 	*ttsunit.Runner
 	cfg    TTSConfig
 	client StreamingTTSClient
+	idle   time.Duration // longest a stream (or a fallback request) may go without progress
 }
+
+// streamAttemptCap bounds a whole streaming attempt. The producer is paced to playback speed, so a
+// long unit outlives any request deadline; the idle limit is what detects a stalled stream.
+const streamAttemptCap = 5 * time.Minute
 
 // NewStreamingTTSProcessor needs cfg.Client to implement StreamingTTSClient.
 func NewStreamingTTSProcessor(cfg TTSConfig) (*StreamingTTSProcessor, error) {
@@ -29,10 +36,15 @@ func NewStreamingTTSProcessor(cfg TTSConfig) (*StreamingTTSProcessor, error) {
 	if !ok {
 		return nil, errors.New("google tts streaming: the client does not implement StreamingTTSClient")
 	}
-	p := &StreamingTTSProcessor{cfg: cfg, client: sc}
+	p := &StreamingTTSProcessor{cfg: cfg, client: sc, idle: cfg.RetryPolicy.AttemptTimeout}
+	if p.idle <= 0 {
+		p.idle = ttsRetryPolicy().AttemptTimeout
+	}
+	policy := cfg.RetryPolicy
+	policy.AttemptTimeout = streamAttemptCap
 	p.Runner = ttsunit.New(ttsunit.Config{
 		Provider: "google", Model: cfg.Voice, SampleRate: cfg.SampleRate,
-		Breaker: cfg.CircuitBreaker, Policy: cfg.RetryPolicy, Classify: classify,
+		Breaker: cfg.CircuitBreaker, Policy: policy, Classify: classify,
 		Attempt: p.attempt,
 	})
 	return p, nil
@@ -46,11 +58,13 @@ func (p *StreamingTTSProcessor) attempt(ctx context.Context, u *ttsunit.Unit, at
 		return u.Finish()
 	}
 	if attempt == 0 {
-		if err := p.client.StreamSynthesize(ctx, pieces, p.cfg.Voice, p.cfg.SampleRate, u.Write); err != nil {
+		if err := p.stream(ctx, u, pieces); err != nil {
 			return err
 		}
 		return u.Finish()
 	}
+	ctx, cancel := context.WithTimeout(ctx, p.idle) // the fallback keeps the request's own deadline
+	defer cancel()
 	var audio []byte // nothing is written until every piece is synthesized, so this attempt may retry too
 	for _, piece := range pieces {
 		pcm, err := p.client.SynthesizeSpeech(ctx, piece, p.cfg.Voice, p.cfg.SampleRate)
@@ -63,6 +77,33 @@ func (p *StreamingTTSProcessor) attempt(ctx context.Context, u *ttsunit.Unit, at
 		return err
 	}
 	return u.Finish()
+}
+
+// stream runs the streaming request. It gives up when no audio arrives for p.idle (time spent in
+// u.Write, which waits for playback, does not count), and a failure that is not a client error
+// (an unmapped gRPC code, an idle stall) is made retryable so the unary request serves the unit.
+func (p *StreamingTTSProcessor) stream(ctx context.Context, u *ttsunit.Unit, pieces []string) error {
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var stalled atomic.Bool
+	timer := time.AfterFunc(p.idle, func() { stalled.Store(true); cancel() })
+	defer timer.Stop()
+	err := p.client.StreamSynthesize(sctx, pieces, p.cfg.Voice, p.cfg.SampleRate, func(b []byte) error {
+		timer.Stop()
+		err := u.Write(b)
+		timer.Reset(p.idle)
+		return err
+	})
+	if stalled.Load() && ctx.Err() == nil {
+		return &ProviderError{Capability: "tts", BaseErr: ErrProviderTimeout, SafeMessage: "stream stalled", Retryable: true}
+	}
+	var pe *ProviderError
+	if errors.As(err, &pe) && !pe.Retryable && errors.Is(pe.BaseErr, ErrProviderInternal) {
+		c := *pe
+		c.Retryable = true
+		return &c
+	}
+	return err
 }
 
 // Warm delegates to the synthesis client when it can warm itself.

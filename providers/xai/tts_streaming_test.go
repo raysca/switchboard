@@ -322,3 +322,54 @@ func TestNewStreamingTTSProcessor_RequiresAKey(t *testing.T) {
 		t.Fatal("a missing API key was accepted")
 	}
 }
+
+// A reply may outlive the attempt timeout while audio keeps arriving (the producer is paced to
+// playback speed); only a silent connection is given up on.
+func TestStreamingTTS_LongStreamIsNotCutByTheTimeout(t *testing.T) {
+	f := newWSFake(t, func(ctx context.Context, c *websocket.Conn) {
+		if _, err := readUtterance(ctx, c); err != nil {
+			return
+		}
+		for i := 0; i < 8; i++ { // 8 x 100 ms = 800 ms against a 300 ms limit
+			time.Sleep(100 * time.Millisecond)
+			sendMsg(ctx, c, audioDelta(3000))
+		}
+		sendMsg(ctx, c, wsMsg{Type: "audio.done"})
+		_, _, _ = c.Read(ctx)
+	})
+	cfg := f.cfg(&mockTTSClient{})
+	cfg.Timeout = 300 * time.Millisecond
+	h := wsStart(t, cfg)
+	h.say(t, "t1", 1, "A long sentence", true)
+	wsWait(t, "TTSStopped", func() bool { return len(wsFrames[*core.TTSStoppedFrame](h)) == 1 })
+	if n := len(wsFrames[*core.ErrorFrame](h)); n != 0 {
+		t.Errorf("%d ErrorFrames: a stream that kept delivering was cut", n)
+	}
+}
+
+func TestStreamingTTS_SilentConnectionFallsBackToUnary(t *testing.T) {
+	f := newWSFake(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _ = readUtterance(ctx, c)
+		_, _, _ = c.Read(ctx) // never answers
+	})
+	unary := &mockTTSClient{pcmData: make([]byte, 1920)}
+	cfg := f.cfg(unary)
+	cfg.Timeout = 150 * time.Millisecond
+	h := wsStart(t, cfg)
+	h.say(t, "t1", 1, "Hello", true)
+	wsWait(t, "TTSStopped", func() bool { return len(wsFrames[*core.TTSStoppedFrame](h)) == 1 })
+	unary.mu.Lock()
+	defer unary.mu.Unlock()
+	if unary.calls != 1 {
+		t.Fatalf("unary calls = %d, want 1", unary.calls)
+	}
+}
+
+// An in-band error is not evidence about provider health: the unary retry reports that. Counting it
+// would let one agent with a bad voice open the process-wide breaker for every call.
+func TestWSError_DoesNotCountAgainstTheBreaker(t *testing.T) {
+	v := classify(wsError(wsMsg{Type: "error", Message: "bad voice"}))
+	if !v.Retryable || !v.NoBreaker {
+		t.Fatalf("verdict = %+v, want retryable and NoBreaker", v)
+	}
+}

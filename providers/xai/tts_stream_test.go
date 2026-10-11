@@ -47,7 +47,7 @@ func TestStreamURL(t *testing.T) {
 
 func TestWSErrorIsRetryableAndSanitized(t *testing.T) {
 	pe := wsError(wsMsg{Type: "error", Message: "voice not available, key xai-abcdefghijklmnopqrstuv"})
-	if pe.Class != ClassificationRetryable {
+	if !classify(pe).Retryable {
 		t.Errorf("class = %v, want retryable: the unary retry returns the authoritative error", pe.Class)
 	}
 	if !strings.Contains(pe.Message, "xai-[REDACTED]") || strings.Contains(pe.Message, "abcdefghijkl") {

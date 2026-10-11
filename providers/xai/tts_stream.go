@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -53,13 +54,15 @@ func streamURL(cfg TTSConfig) (string, error) {
 }
 
 // wsError turns a server error message into a retryable ProviderError: the unary retry returns the
-// authoritative classification (a bad voice is a 400 there), so the stream never hides it.
+// authoritative classification (a bad voice is a 400 there), so the stream never hides it. The
+// RateLimit class keeps it off the shared breaker (retryable, not counted): an in-band error says
+// nothing certain about provider health, and one bad agent must not open the breaker for all calls.
 func wsError(m wsMsg) *ProviderError {
 	msg := m.Message
 	if msg == "" {
 		msg = m.Error
 	}
-	return &ProviderError{Capability: "tts", Code: "STREAM_ERROR", Message: SanitizeString(msg), Class: ClassificationRetryable}
+	return &ProviderError{Capability: "tts", Code: "STREAM_ERROR", Message: SanitizeString(msg), Class: ClassificationRateLimit}
 }
 
 // dialTTS opens the TTS WebSocket through the shared HTTP/1.1 pool. A rejected upgrade is mapped
@@ -84,12 +87,17 @@ type wsSession struct{ conn *websocket.Conn }
 
 func (s *wsSession) abort() { s.conn.CloseNow() }
 
+// streamAttemptCap bounds a whole streaming attempt. The producer is paced to playback speed, so a
+// long unit outlives any request deadline; the per-read idle limit detects a stalled connection.
+const streamAttemptCap = 5 * time.Minute
+
 // StreamingTTSProcessor synthesizes over a WebSocket: one connection per reply, reused across its
 // units, with audio forwarded as it arrives. Attempt 0 streams; a retry uses the unary request, so
 // a broken stream never costs the call its speech. Shared unit machinery lives in core/ttsunit.
 type StreamingTTSProcessor struct {
 	*ttsunit.Runner
 	cfg   TTSConfig
+	idle  time.Duration // longest the connection may stay silent (or a fallback request run)
 	wsURL string
 	pool  *netpool.Pool
 	slot  ttsunit.ReplySlot[*wsSession]
@@ -100,6 +108,8 @@ func NewStreamingTTSProcessor(cfg TTSConfig) (*StreamingTTSProcessor, error) {
 		return nil, ErrMissingAPIKey
 	}
 	cfg = normalizeTTSConfig(cfg)
+	idle := cfg.Timeout
+	cfg.RetryPolicy.AttemptTimeout = streamAttemptCap
 	if cfg.Client == nil {
 		cfg.Client = NewRealXAITTSClient()
 	}
@@ -107,7 +117,7 @@ func NewStreamingTTSProcessor(cfg TTSConfig) (*StreamingTTSProcessor, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &StreamingTTSProcessor{cfg: cfg, wsURL: wsURL, pool: netpool.Get(netpool.Options{Provider: "xai", Stage: "tts", HTTP1Only: true})}
+	p := &StreamingTTSProcessor{cfg: cfg, idle: idle, wsURL: wsURL, pool: netpool.Get(netpool.Options{Provider: "xai", Stage: "tts", HTTP1Only: true})}
 	p.slot.Close = (*wsSession).abort
 	p.Runner = ttsunit.New(ttsunit.Config{
 		Provider: "xai", Model: cfg.Voice, SampleRate: cfg.SampleRate,
@@ -138,6 +148,8 @@ func (u *unitRun) attempt(ctx context.Context, attempt int) (err error) {
 	cfg, slot := u.p.cfg, &u.p.slot
 	if attempt > 0 { // the stream failed before audio: the unary request is authoritative
 		slot.Drop()
+		ctx, cancel := context.WithTimeout(ctx, u.p.idle) // the fallback keeps the request's own deadline
+		defer cancel()
 		pcm, err := cfg.Client.Synthesize(ctx, u.Frame.Text, cfg)
 		if err != nil {
 			return err
@@ -176,7 +188,9 @@ func (u *unitRun) attempt(ctx context.Context, attempt int) (err error) {
 		}
 	}
 	for {
-		_, data, err := s.conn.Read(ctx)
+		rctx, cancel := context.WithTimeout(ctx, u.p.idle) // idle limit; time in u.Write (playback pacing) is outside it
+		_, data, err := s.conn.Read(rctx)
+		cancel()
 		if err != nil {
 			return fail(err)
 		}

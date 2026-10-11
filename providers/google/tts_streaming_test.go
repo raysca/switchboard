@@ -10,6 +10,9 @@ import (
 
 	"govoice/core"
 	"govoice/core/resilience"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // streamTestClient fakes both the unary and the streaming client.
@@ -59,10 +62,15 @@ type stHarness struct {
 }
 
 func stStart(t *testing.T, client *streamTestClient, maxAttempts int) *stHarness {
+	return stStartIdle(t, client, maxAttempts, 0)
+}
+
+// stStartIdle sets the policy's AttemptTimeout, which a streaming attempt treats as its idle limit.
+func stStartIdle(t *testing.T, client *streamTestClient, maxAttempts int, idle time.Duration) *stHarness {
 	t.Helper()
 	cfg := DefaultTTSConfig()
 	cfg.Client = client
-	cfg.RetryPolicy = resilience.Policy{MaxAttempts: maxAttempts, InitialBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond}
+	cfg.RetryPolicy = resilience.Policy{MaxAttempts: maxAttempts, InitialBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond, AttemptTimeout: idle}
 	proc, err := NewStreamingTTSProcessor(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -291,5 +299,65 @@ func TestNewStreamingTTSProcessor_NeedsAStreamingClient(t *testing.T) {
 func TestDefaultVoiceStreams(t *testing.T) {
 	if !IsChirp3HD(DefaultVoice) || DefaultTTSConfig().Voice != DefaultVoice {
 		t.Fatalf("DefaultVoice = %q (config voice %q): the default must be a Chirp 3 HD voice", DefaultVoice, DefaultTTSConfig().Voice)
+	}
+}
+
+// A stream may outlive the attempt timeout while data keeps arriving (the producer is paced to
+// playback speed, so a long unit lasts longer than any request deadline).
+func TestStreamingTTS_LongStreamIsNotCutByTheAttemptTimeout(t *testing.T) {
+	client := &streamTestClient{streamFn: func(ctx context.Context, _ []string, onAudio func([]byte) error) error {
+		for i := 0; i < 8; i++ { // 8 x 100 ms = 800 ms against a 300 ms limit
+			select {
+			case <-time.After(100 * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			if err := onAudio(make([]byte, 3000)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}}
+	h := stStartIdle(t, client, 3, 300*time.Millisecond)
+	h.say(t, 1, "A long sentence.", true)
+	stWait(t, "TTSStopped", func() bool { return len(stFrames[*core.TTSStoppedFrame](h)) == 1 })
+	if n := len(stFrames[*core.ErrorFrame](h)); n != 0 {
+		t.Errorf("%d ErrorFrames: a stream that kept delivering was cut", n)
+	}
+	if n := len(stFrames[*core.OutputAudioFrame](h)); n < 8 {
+		t.Errorf("%d audio frames, want the whole sentence", n)
+	}
+}
+
+// A stream that goes silent is given up on after the idle limit and the unit is served unary.
+func TestStreamingTTS_SilentStreamFallsBackToUnary(t *testing.T) {
+	client := &streamTestClient{streamFn: func(ctx context.Context, _ []string, _ func([]byte) error) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	h := stStartIdle(t, client, 3, 150*time.Millisecond)
+	h.say(t, 1, "Hello there.", true)
+	stWait(t, "TTSStopped", func() bool { return len(stFrames[*core.TTSStoppedFrame](h)) == 1 })
+	if client.unaryCount() != 1 {
+		t.Fatalf("unary calls = %d, want the fallback to serve the unit", client.unaryCount())
+	}
+	if n := len(stFrames[*core.ErrorFrame](h)); n != 0 {
+		t.Errorf("%d ErrorFrames, want none: the fallback recovered", n)
+	}
+}
+
+// Internal, Unknown, Unimplemented and the like are not client errors: the stream path may simply
+// be unavailable (not enabled for the project), so the unit must still be served unary.
+func TestStreamingTTS_UnmappedStreamErrorFallsBackToUnary(t *testing.T) {
+	internal := MapError("tts", status.Error(codes.Internal, "stream reset"))
+	client := &streamTestClient{streamFn: func(context.Context, []string, func([]byte) error) error { return internal }}
+	h := stStart(t, client, 3)
+	h.say(t, 1, "Hello there.", true)
+	stWait(t, "TTSStopped", func() bool { return len(stFrames[*core.TTSStoppedFrame](h)) == 1 })
+	if client.unaryCount() != 1 {
+		t.Fatalf("unary calls = %d, want 1", client.unaryCount())
+	}
+	if n := len(stFrames[*core.ErrorFrame](h)); n != 0 {
+		t.Errorf("%d ErrorFrames, want none", n)
 	}
 }
