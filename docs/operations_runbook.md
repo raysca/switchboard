@@ -232,6 +232,16 @@ Metrics (labels `provider`, `stage` only): `voice_provider_warm_dials_total{resu
 
 Manual live check (not run in CI, needs real keys): `RUN_LIVE_DEEPGRAM_TEST=1 DEEPGRAM_API_KEY=... go test -tags integration -run LiveWarm -v ./providers/deepgram` alternates cold and pre-dialed first connects and logs each. For the whole pipeline set `warmup.predial: true` on one canary, place calls, and compare `voice_latency_seconds` (first-turn TTFB stages) and `voice_provider_connect_seconds` against a canary without it; flip the default only if the p50 first-turn gain is real and `warmups_total{result="error"}` stays low.
 
+## TTS streaming
+
+xAI TTS always streams over one WebSocket per reply. Google streams only Chirp 3 HD voices (`<locale>-Chirp3-HD-<Name>`, one `StreamingSynthesize` stream per sentence); every other Google voice uses the unary request. A stream that cannot open, or fails before any audio is sent, retries as the unary request, so the call keeps its speech. Once audio has started, a failure ends the sentence with an error (no replay).
+
+Kill switches (config, default `false`): `providers.google_tts.disable_streaming` and `providers.xai_tts.disable_streaming`. Set `providers.xai_tts.disable_streaming: true` if a proxy blocks WebSockets to the xAI endpoint.
+
+Google quotas, per project: 100 concurrent streaming sessions and 200 Chirp 3 requests per minute. A speaking call holds one stream at a time, so about 100 calls can speak at once per project. Beyond that the stream open fails and that unit is served unary.
+
+Seeing fallbacks: `voice_tts_retries_total` counts retry attempts. For streaming providers a retry is a unary fallback, so a rising rate for Google or xAI means streams are failing and units are being served unary.
+
 ## Failover timing
 
 How long a stage waits on its primary before a fallback takes over. Applies only to agents with `fallbacks` for the stage; a stage without fallbacks keeps the providers' own retries unchanged (LLM: 3 x 30 s, so a hung primary only errors at about 90 s).
