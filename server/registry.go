@@ -80,7 +80,9 @@ type CallSpec struct {
 	Graph *CallGraph
 	// OnHandoff, if set, receives the handoff lifecycle (timeline, traces, metrics).
 	OnHandoff func(core.HandoffEvent)
-	MaxTokens int
+	// OnInjector, if set, receives the call's context injector once the pipeline is built.
+	OnInjector func(ContextInjector)
+	MaxTokens  int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).
 	Summary agent.SummarizationConfig
 	// History, when set, sees every frame just before the transport (turn rows).
@@ -514,14 +516,13 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if (cfg.Turn.Manager && slices.Contains(cfg.Turn.Mute, coreturn.MuteFunctionCall)) || cfg.Idle.enabled() { // idle also pauses while a tool runs
 		muteTools = coreturn.NewToolActivity()
 	}
-	// Async tools: finished results go through a trigger stage before the LLM
-	// that injects them and starts a model turn once the call is idle. A graph
-	// call always has one: handoffs flip when the call is idle.
-	var asyncTrigger *core.AsyncTrigger
+	// The trigger is on every call: finished async tools, handoff flips and operator notes
+	// all wait here for the call to be idle, then inject and start one model turn.
 	var asstActive func() bool
-	if call.Graph != nil || slices.ContainsFunc(call.LLM.Tools, func(d core.ToolDefinition) bool { return d.Policy.Async }) {
-		asyncTrigger = core.NewAsyncTrigger(core.AsyncTriggerConfig{Busy: func() bool { return asstActive != nil && asstActive() },
-			OnTriggered: r.onAsyncTurn, OnDropped: r.onAsyncDrop})
+	asyncTrigger := core.NewAsyncTrigger(core.AsyncTriggerConfig{Busy: func() bool { return asstActive != nil && asstActive() },
+		OnTriggered: r.onAsyncTurn, OnDropped: r.onAsyncDrop})
+	if call.OnInjector != nil {
+		call.OnInjector(newCallInjector(asyncTrigger, ctxPool))
 	}
 	// prepLLM applies the call-wide LLM stage setup to one node's specs; the
 	// entry node uses it here and every later node when it is activated.
@@ -540,11 +541,9 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				fallbacks[i].ToolExecutor = muteTools.Wrap(fallbacks[i].ToolExecutor, fallbacks[i].Tools)
 			}
 		}
-		if asyncTrigger != nil {
-			spec.AsyncSink = asyncTrigger.Deliver
-			for i := range fallbacks {
-				fallbacks[i].AsyncSink = asyncTrigger.Deliver
-			}
+		spec.AsyncSink = asyncTrigger.Deliver
+		for i := range fallbacks {
+			fallbacks[i].AsyncSink = asyncTrigger.Deliver
 		}
 		return spec, fallbacks
 	}
@@ -715,9 +714,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if idleProc != nil { // before the async trigger and the model; zero cost when off
 		procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(idleProc))
 	}
-	if asyncTrigger != nil {
-		procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(asyncTrigger))
-	}
+	procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(asyncTrigger))
 	if dt.agg != nil {
 		procs = slices.Insert(procs, 3, dt.agg) // directly before the user context
 	}

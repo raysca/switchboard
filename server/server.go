@@ -85,6 +85,7 @@ type Server struct {
 
 	mu          sync.Mutex
 	activeCalls map[uint64]*activeCall
+	live        *liveCalls     // stored session id -> context injector of a call running here
 	connecting  sync.WaitGroup // calls admitted but not yet in activeCalls
 	nextCallID  atomic.Uint64
 	textTurns   atomic.Uint64
@@ -175,6 +176,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		cfg:          cfg,
 		metrics:      metrics,
 		timelines:    timelines,
+		live:         newLiveCalls(),
 		admission:    admission,
 		registry:     registry,
 		env:          os.Getenv,
@@ -490,6 +492,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
 	call.PushToTalk = conn.PushToTalk()
+	var injector ContextInjector
+	call.OnInjector = func(i ContextInjector) { injector = i }
 	call.OnHandoff = s.onHandoff(timeline, call.StoredSessionID)
 	cue := s.newCallCue(call.Graph, conn.Cue(), timeline)
 	if cue != nil {
@@ -644,6 +648,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	s.mu.Lock()
 	s.activeCalls[sessionID] = active
 	s.mu.Unlock()
+	if injector != nil && call.StoredSessionID != "" {
+		id, base := call.StoredSessionID, releaseCall
+		s.live.Put(id, injector)
+		releaseCall = func() { s.live.Delete(id); base() }
+	}
 
 	// 5. Cleanup when session closes
 	go func() {
