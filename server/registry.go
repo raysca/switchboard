@@ -91,6 +91,8 @@ type CallSpec struct {
 	DisableTextCleaning bool
 	// VADStopMS overrides server vad.stop_ms if > 0.
 	VADStopMS int
+	// STTP99MS overrides the STT p99 for this call if > 0.
+	STTP99MS int
 	// PushToTalk: the client opted in at client-ready. Turns start and end
 	// only on its push-to-talk messages (ExternalStart/ExternalStop).
 	PushToTalk bool
@@ -589,7 +591,11 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				}
 			}
 			var err error
-			if stop, err = turnStopDetector(cfg.Turn.Stop, cfg.Turn.SpeechTimeout, cfg.Turn.EagerGrace, analyzer); err != nil {
+			st := coreturn.SpeechTimeoutConfig{
+				VADStop: cfg.vadStop(call.VADStopMS), UserSpeechTimeout: cfg.Turn.SpeechTimeout,
+				STTP99: cfg.sttP99(call.STT.Provider, call.STTP99MS), NoTranscriptTimeout: cfg.Turn.NoTranscriptTimeout,
+			}
+			if stop, err = turnStopDetector(cfg.Turn.Stop, st, cfg.Turn.EagerGrace, analyzer); err != nil {
 				return fail(err)
 			}
 		}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -24,18 +25,19 @@ func TestMain(m *testing.M) {
 }
 
 func TestTurnStopDetector(t *testing.T) {
-	if d, err := turnStopDetector(nil, 0, 0, nil); d != nil || err != nil {
-		t.Fatalf("default must be the built-in fallback: %v %v", d, err)
+	// An empty chain is the gated speech timeout (core/turn SpeechTimeout), not nil.
+	if d, err := turnStopDetector(nil, coreturn.SpeechTimeoutConfig{}, 0, nil); d == nil || err != nil {
+		t.Fatalf("default must be the gated speech timeout: %v %v", d, err)
 	}
-	if d, err := turnStopDetector(nil, time.Second, 0, nil); d == nil || err != nil {
+	if d, err := turnStopDetector(nil, coreturn.SpeechTimeoutConfig{UserSpeechTimeout: time.Second}, 0, nil); d == nil || err != nil {
 		t.Fatalf("speech_timeout alone must apply: %v %v", d, err)
 	}
-	if d, err := turnStopDetector([]string{"eager", "speech-timeout"}, time.Second, 0, nil); d == nil || err != nil {
+	if d, err := turnStopDetector([]string{"eager", "speech-timeout"}, coreturn.SpeechTimeoutConfig{UserSpeechTimeout: time.Second}, 0, nil); d == nil || err != nil {
 		t.Fatalf("chain: %v %v", d, err)
 	}
 	for _, bad := range [][]string{{"eager"}, {"speech-timeout", "turn-analyzer"}, {"speech-timeout", "external"},
 		{"speech-timeout", "deferred:eager"}, {"speech-timeout", "nope"}} {
-		if _, err := turnStopDetector(bad, 0, 0, nil); err == nil {
+		if _, err := turnStopDetector(bad, coreturn.SpeechTimeoutConfig{}, 0, nil); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}
@@ -63,17 +65,17 @@ func (holdStrategy) Detect(coreturn.DetectionInput) (coreturn.DetectionDecision,
 func TestTurnStopAnalyzerSubsumesSpeechTimeout(t *testing.T) {
 	an := func(time.Duration) coreturn.UserTurnStopStrategy { return holdStrategy{} }
 	in := coreturn.DetectionInput{SilenceFor: time.Second, SilenceAfter: 700 * time.Millisecond}
-	d, err := turnStopDetector([]string{"turn-analyzer", "speech-timeout"}, 700*time.Millisecond, 0, an)
+	d, err := turnStopDetector([]string{"turn-analyzer", "speech-timeout"}, coreturn.SpeechTimeoutConfig{UserSpeechTimeout: 700 * time.Millisecond}, 0, an)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, done := d.Detect(in); done {
 		t.Fatal("plain speech-timeout in the chain would end every turn the model holds")
 	}
-	if _, err := turnStopDetector([]string{"turn-analyzer"}, 0, 0, an); err == nil {
+	if _, err := turnStopDetector([]string{"turn-analyzer"}, coreturn.SpeechTimeoutConfig{}, 0, an); err == nil {
 		t.Fatal("turn-analyzer without speech-timeout accepted")
 	}
-	if _, err := turnStopDetector([]string{"turn-analyzer", "speech-timeout"}, 0, 0, nil); err == nil {
+	if _, err := turnStopDetector([]string{"turn-analyzer", "speech-timeout"}, coreturn.SpeechTimeoutConfig{}, 0, nil); err == nil {
 		t.Fatal("turn-analyzer accepted without a loaded model")
 	}
 }
@@ -186,9 +188,11 @@ func TestTurnAnalyzerThroughCallPipeline(t *testing.T) {
 			t.Fatalf("reason %v after %v", r, d)
 		}
 	})
-	t.Run("degraded ends at speech_timeout", func(t *testing.T) {
+	t.Run("degraded ends at VAD stop + speech_timeout", func(t *testing.T) {
+		// The analyzer's fallback base is the gated speech timeout's resume window from onset.
+		base := DefaultConfig(ProfileDevelopment).vadStop(0) + speechTimeout
 		r, d := run(t, smartBackend{block: true}, false, 100*time.Millisecond)
-		if r != core.TurnReasonSilence || d < speechTimeout-50*time.Millisecond || d > speechTimeout+400*time.Millisecond {
+		if r != core.TurnReasonSilence || d < base-50*time.Millisecond || d > base+400*time.Millisecond {
 			t.Fatalf("reason %v after %v", r, d)
 		}
 	})
@@ -230,7 +234,7 @@ func TestTurnCompletionConfigValidation(t *testing.T) {
 	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "turn.manager") {
 		t.Fatalf("completion without manager: %v", err)
 	}
-	if _, err := turnStopDetector([]string{"llm-completion"}, 0, 0, nil); err == nil {
+	if _, err := turnStopDetector([]string{"llm-completion"}, coreturn.SpeechTimeoutConfig{}, 0, nil); err == nil {
 		t.Fatal("llm-completion alone must still need speech-timeout")
 	}
 }
@@ -439,7 +443,8 @@ func TestTurnManager_BargeInOverSpeakingTTSAndSilenceCompletion(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// 2. User starts speaking (barge-in interruption)
-	_ = s.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: s.CurrentGeneration()})
+	startGen := s.CurrentGeneration()
+	_ = s.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: startGen})
 
 	// Wait for turn event started
 	deadline := time.Now().Add(2 * time.Second)
@@ -456,7 +461,9 @@ func TestTurnManager_BargeInOverSpeakingTTSAndSilenceCompletion(t *testing.T) {
 	// 3. User finishes speaking after audio frames
 	speech := make([]byte, 640)
 	_ = s.Post(&core.InputAudioFrame{Samples: speech, Encoding: core.EncodingPCM16LE, SampleRate: 16000, Channels: 1})
-	_ = s.Post(&core.TranscriptCandidateFrame{Turn: "turn-2-1", Gen: core.Generation(s.CurrentGeneration()), Text: "stop talking now", Final: true})
+	// The STT keys the transcript by the VAD segment (turn-<gen at start>-<seq>); the turn
+	// processor re-keys it. The gated speech timeout needs it to end the turn.
+	_ = s.Post(&core.TranscriptCandidateFrame{Turn: core.TurnID(fmt.Sprintf("turn-%d-1", startGen)), Gen: core.Generation(s.CurrentGeneration()), Text: "stop talking now", Final: true})
 	_ = s.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: s.CurrentGeneration(), SilenceDuration: 200 * time.Millisecond})
 
 	// 4. Silence ends the turn (TurnEventCompleted)
@@ -469,5 +476,47 @@ func TestTurnManager_BargeInOverSpeakingTTSAndSilenceCompletion(t *testing.T) {
 			t.Fatal("turn event completed was not emitted after silence")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestSTTP99Resolution(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	if got := cfg.sttP99("google", 0); got != 1570*time.Millisecond {
+		t.Fatalf("table: %v", got)
+	}
+	cfg.Turn.STTP99 = map[string]time.Duration{"google": 900 * time.Millisecond}
+	if got := cfg.sttP99("google", 0); got != 900*time.Millisecond {
+		t.Fatalf("server override: %v", got)
+	}
+	if got := cfg.sttP99("google", 1200); got != 1200*time.Millisecond {
+		t.Fatalf("agent override: %v", got)
+	}
+	if got := cfg.sttP99("someone-new", 0); got != time.Second {
+		t.Fatalf("unknown provider: %v", got)
+	}
+}
+
+func TestVADStopResolution(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.VAD.StopMS = 800
+	if got := cfg.vadStop(0); got != 800*time.Millisecond {
+		t.Fatalf("server: %v", got)
+	}
+	if got := cfg.vadStop(300); got != 320*time.Millisecond {
+		t.Fatalf("agent, rounded to 32 ms chunks: %v", got)
+	}
+}
+
+// An empty turn.stop still builds the gated speech timeout (not the bare silence detector).
+func TestEmptyTurnStopIsGatedSpeechTimeout(t *testing.T) {
+	d, err := turnStopDetector(nil, coreturn.SpeechTimeoutConfig{VADStop: 200 * time.Millisecond, STTP99: time.Second}, 0, nil)
+	if err != nil || d == nil {
+		t.Fatalf("d=%v err=%v", d, err)
+	}
+	if _, ok := d.Detect(coreturn.DetectionInput{SilenceFor: 2 * time.Second}); ok {
+		t.Fatal("ended a transcript-less turn before the no-transcript fallback")
+	}
+	if _, ok := d.Detect(coreturn.DetectionInput{SilenceFor: 800 * time.Millisecond, Text: "hi", TextFinal: true}); !ok {
+		t.Fatal("did not end a transcribed turn at the resume window")
 	}
 }

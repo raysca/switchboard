@@ -138,7 +138,7 @@ func validateLimits(cfg *Config) error {
 }
 
 func validateTurn(cfg *Config) error {
-	if _, err := turnStopDetector(cfg.Turn.Stop, cfg.Turn.SpeechTimeout, cfg.Turn.EagerGrace, func(time.Duration) coreturn.UserTurnStopStrategy { return nil }); err != nil {
+	if _, err := turnStopDetector(cfg.Turn.Stop, coreturn.SpeechTimeoutConfig{UserSpeechTimeout: cfg.Turn.SpeechTimeout}, cfg.Turn.EagerGrace, func(time.Duration) coreturn.UserTurnStopStrategy { return nil }); err != nil {
 		return err
 	}
 	if a := cfg.Turn.Analyzer; slices.Contains(cfg.Turn.Stop, "turn-analyzer") {
@@ -152,8 +152,13 @@ func validateTurn(cfg *Config) error {
 			return errors.New("production profile requires turn.analyzer mode 'process' (worker isolation)")
 		}
 	}
-	if cfg.Turn.SpeechTimeout < 0 || cfg.Turn.EagerGrace < 0 {
-		return errors.New("turn.speech_timeout and turn.eager_grace must be >= 0")
+	if cfg.Turn.SpeechTimeout < 0 || cfg.Turn.EagerGrace < 0 || cfg.Turn.NoTranscriptTimeout < 0 {
+		return errors.New("turn.speech_timeout, turn.eager_grace and turn.no_transcript_timeout must be >= 0")
+	}
+	for p, d := range cfg.Turn.STTP99 {
+		if d < 100*time.Millisecond || d > 10*time.Second {
+			return fmt.Errorf("turn.stt_p99.%s must be between 100ms and 10s", p)
+		}
 	}
 	if _, err := coreturn.ParseMuteStrategies(cfg.Turn.Mute, nil); err != nil {
 		return err
@@ -170,8 +175,8 @@ func validateTurn(cfg *Config) error {
 	if !cfg.Turn.Manager && (len(cfg.Turn.Mute) > 0 || cfg.Turn.MaxMute > 0) {
 		return errors.New("turn.mute and turn.max_mute need turn.manager: true")
 	}
-	if !cfg.Turn.Manager && (len(cfg.Turn.Stop) > 0 || cfg.Turn.SpeechTimeout > 0 || cfg.Turn.EagerGrace > 0 || cfg.Turn.MinWords > 0 || cfg.Turn.Completion != (CompletionConfig{})) {
-		return errors.New("turn.stop, turn.speech_timeout, turn.eager_grace and turn.min_words need turn.manager: true")
+	if !cfg.Turn.Manager && (len(cfg.Turn.Stop) > 0 || cfg.Turn.SpeechTimeout > 0 || cfg.Turn.EagerGrace > 0 || cfg.Turn.MinWords > 0 || cfg.Turn.Completion != (CompletionConfig{}) || cfg.Turn.NoTranscriptTimeout > 0 || len(cfg.Turn.STTP99) > 0) {
+		return errors.New("turn.stop, turn.speech_timeout, turn.eager_grace, turn.min_words, turn.no_transcript_timeout and turn.stt_p99 need turn.manager: true")
 	}
 	if cfg.Turn.Completion != (CompletionConfig{}) && !slices.Contains(cfg.Turn.Stop, "llm-completion") {
 		return errors.New("turn.completion needs llm-completion in turn.stop")

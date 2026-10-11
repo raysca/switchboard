@@ -201,6 +201,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		AgentVersionID:      rs.Snapshot.Version.ID,
 		Recording:           cfg.Recording.Active(),
 		VADStopMS:           cfg.VADStopMS,
+		STTP99MS:            cfg.STTP99MS,
 	}, nil
 }
 

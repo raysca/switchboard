@@ -22,6 +22,9 @@ type Config struct {
 	Context ContextLimits `json:"context,omitempty"`
 	// VADStopMS overrides the server VAD stop hangover (200..2000 ms). 0 uses the server default.
 	VADStopMS int `json:"vad_stop_ms,omitempty"`
+	// STTP99MS overrides the STT p99 the speech timeout waits for (100..10000 ms). 0 uses the
+	// server's turn.stt_p99 or the built-in table.
+	STTP99MS int `json:"stt_p99_ms,omitempty"`
 	// AsyncTools lists selected MCP tools ("<mcp_server_id>/<remote_name>") that
 	// run in the background: the model gets an immediate ack and is told the
 	// result when it arrives. Default none.
@@ -170,6 +173,9 @@ func DecodeConfig(raw json.RawMessage) (Config, error) {
 	}
 	if c.VADStopMS < 0 || (c.VADStopMS > 0 && (c.VADStopMS < 200 || c.VADStopMS > 2000)) {
 		return c, fmt.Errorf("%w: vad_stop_ms must be 0 (default) or between 200 and 2000", ErrInvalidConfig)
+	}
+	if c.STTP99MS < 0 || (c.STTP99MS > 0 && (c.STTP99MS < 100 || c.STTP99MS > 10000)) {
+		return c, fmt.Errorf("%w: stt_p99_ms must be 0 (default) or between 100 and 10000", ErrInvalidConfig)
 	}
 	if err := c.Context.Summarization.validate(c.LLM.Provider, c.Context.MaxTokens); err != nil {
 		return c, err

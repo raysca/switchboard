@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"govoice/core/redact"
+	coreturn "govoice/core/turn"
 	"govoice/server/otelexport"
 	"govoice/vad"
 )
@@ -147,9 +148,16 @@ type Config struct {
 		// default wording, prompt the protocol instructions appended to the
 		// system prompt). Costs prompt tokens on every turn and relies on the
 		// model following the protocol; unmarked replies are spoken as-is.
-		Completion    CompletionConfig `yaml:"completion"`
-		SpeechTimeout time.Duration    `yaml:"speech_timeout"`
-		EagerGrace    time.Duration    `yaml:"eager_grace"`
+		Completion CompletionConfig `yaml:"completion"`
+		// SpeechTimeout is the resume window after the VAD stop (Pipecat user_speech_timeout; 0: 600ms).
+		SpeechTimeout time.Duration `yaml:"speech_timeout"`
+		EagerGrace    time.Duration `yaml:"eager_grace"`
+		// NoTranscriptTimeout ends a turn that never got a transcript after this much silence
+		// (0: 5s), so a dead STT cannot hold a turn open until max_turn_duration.
+		NoTranscriptTimeout time.Duration `yaml:"no_transcript_timeout"`
+		// STTP99 overrides the built-in per-provider STT p99 (end of speech to final transcript)
+		// the speech timeout waits for when the final is late.
+		STTP99 map[string]time.Duration `yaml:"stt_p99"`
 		// Mute lists user mute strategies (always, first_speech,
 		// until_first_bot_complete, function_call, critical_output). While any
 		// is muting, VAD starts/stops and transcripts are dropped (audio still
@@ -337,6 +345,24 @@ func (c *Config) TurnAnalyzerMode() string {
 // vad.stop_ms applied (0 keeps the 800 ms default).
 func (c *Config) VADProcessorConfig() vad.ProcessorConfig {
 	return c.VADProcessorConfigForStopMS(0)
+}
+
+// vadStop is the call's VAD stop: the agent override (ms > 0), else vad.stop_ms, rounded up to
+// whole 32 ms chunks like the VAD processor.
+func (c *Config) vadStop(agentMS int) time.Duration {
+	pc := c.VADProcessorConfigForStopMS(agentMS)
+	return time.Duration(pc.StopChunks*vad.ChunkSamples*1000/vad.SampleRate) * time.Millisecond
+}
+
+// sttP99 resolves the primary STT provider's p99: agent override, server map, built-in table.
+func (c *Config) sttP99(provider string, agentMS int) time.Duration {
+	if agentMS > 0 {
+		return time.Duration(agentMS) * time.Millisecond
+	}
+	if d, ok := c.Turn.STTP99[provider]; ok && d > 0 {
+		return d
+	}
+	return coreturn.DefaultSTTP99(provider)
 }
 
 // VADProcessorConfigForStopMS returns the per-call VAD config applying an

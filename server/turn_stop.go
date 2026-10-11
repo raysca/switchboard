@@ -11,7 +11,8 @@ import (
 )
 
 // turnStopDetector builds the user-turn stop chain from turn.stop. Empty
-// means the built-in silence timeout (speech_timeout, default 700ms). A chain
+// means the gated speech timeout (core/turn SpeechTimeout: resume window after
+// the VAD stop, a transcript, final or past the STT p99). A chain
 // must contain speech-timeout: eager alone never ends an unpunctuated turn.
 // external is rejected: push-to-talk is chosen per call by the client
 // (client-ready push_to_talk), not by server config.
@@ -21,14 +22,11 @@ import (
 // turn-analyzer (Smart Turn model) builds its strategy with analyzer(base),
 // which already contains the speech-timeout fallback (base when the model
 // cannot answer, stop_secs when it says incomplete); any speech-timeout entry
-// in such a chain is therefore subsumed by it, since a plain 700ms timeout
-// would end every turn the model wanted to hold.
-func turnStopDetector(stop []string, speechTimeout, eagerGrace time.Duration, analyzer func(base time.Duration) coreturn.UserTurnStopStrategy) (coreturn.TurnDetector, error) {
+// in such a chain is therefore subsumed by it, since a plain timeout would end
+// every turn the model wanted to hold. Its base is analyzerBase(st).
+func turnStopDetector(stop []string, st coreturn.SpeechTimeoutConfig, eagerGrace time.Duration, analyzer func(base time.Duration) coreturn.UserTurnStopStrategy) (coreturn.TurnDetector, error) {
 	if len(stop) == 0 {
-		if speechTimeout > 0 {
-			return coreturn.SpeechTimeout(speechTimeout), nil
-		}
-		return nil, nil
+		return coreturn.SpeechTimeout(st), nil
 	}
 	if !slices.Contains(stop, "speech-timeout") {
 		return nil, errors.New("turn.stop must include speech-timeout as the fallback")
@@ -42,13 +40,13 @@ func turnStopDetector(stop []string, speechTimeout, eagerGrace time.Duration, an
 		switch name {
 		case "speech-timeout":
 			if !withModel {
-				chain = append(chain, coreturn.SpeechTimeout(speechTimeout))
+				chain = append(chain, coreturn.SpeechTimeout(st))
 			}
 		case "turn-analyzer":
 			if analyzer == nil {
 				return nil, errors.New("turn.stop turn-analyzer: smart-turn model is not loaded")
 			}
-			chain = append(chain, analyzer(speechTimeout))
+			chain = append(chain, analyzer(analyzerBase(st)))
 		case "eager":
 			chain = append(chain, coreturn.EagerStop(eagerGrace))
 		case "llm-completion":
@@ -60,6 +58,16 @@ func turnStopDetector(stop []string, speechTimeout, eagerGrace time.Duration, an
 		}
 	}
 	return coreturn.StopChain(chain...), nil
+}
+
+// analyzerBase is the smart-turn fallback silence: the gated speech timeout's resume window
+// from onset (VAD stop + user speech timeout).
+func analyzerBase(st coreturn.SpeechTimeoutConfig) time.Duration {
+	us := st.UserSpeechTimeout
+	if us <= 0 {
+		us = coreturn.DefaultUserSpeechTimeout
+	}
+	return st.VADStop + us
 }
 
 // CompletionConfig is turn.completion.

@@ -88,6 +88,8 @@
   },
   "SpeechTimeout": 0,
   "EagerGrace": 0,
+  "NoTranscriptTimeout": 0,
+  "STTP99": null,
   "Mute": null,
   "MaxMute": 0,
   "Analyzer": {
