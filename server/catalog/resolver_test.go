@@ -210,20 +210,14 @@ func TestUnknown(t *testing.T) {
 	}
 }
 
-func TestEnvDetectedMasked(t *testing.T) {
+func TestEnvDetected(t *testing.T) {
 	r := newTestResolver(t, map[string]string{"XAI_API_KEY": "abcdefgh", "NVIDIA_API_KEY": "xy"}, nil)
 	want := []string{"NVIDIA_API_KEY", "NVIDIA_STT_FUNCTION_ID", "NVIDIA_TTS_FUNCTION_ID"}
 	if got := r.Env("nvidia"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("env = %v", got)
 	}
-	if got := r.Masked("xai"); got != "efgh" {
-		t.Fatalf("masked = %q", got)
-	}
-	if got := r.Masked("nvidia"); got != "xy" {
-		t.Fatalf("short masked = %q", got)
-	}
-	if r.Masked("openai") != "" || r.Detected("openai") || !r.Detected("xai") || r.Detected("nope") {
-		t.Fatal("detected/masked mismatch")
+	if r.Detected("openai") || !r.Detected("xai") || !r.Detected("nvidia") || r.Detected("nope") {
+		t.Fatal("detected mismatch")
 	}
 }
 

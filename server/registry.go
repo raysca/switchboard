@@ -30,7 +30,8 @@ import (
 
 // ProcessorFactory instantiates a core.Processor for a specific provider.
 // StageSpec is one provider stage of a call, resolved from the stored agent.
-// Secret is the decrypted credential for this stage's provider only.
+// Secret is the credential assembled from the environment for this stage's
+// provider only (server/catalog); the caller wipes it after the build.
 type StageSpec struct {
 	Provider     string
 	Model        string
@@ -417,7 +418,7 @@ func NewRegistry() *Registry {
 // registerFakeProviders is set only by the fakeproviders build (registry_fake.go).
 var registerFakeProviders func(*Registry)
 
-// apiKey validates a stored API key credential: a single non-empty token.
+// apiKey validates an API key credential: a single non-empty token.
 func apiKey(secret []byte) (string, error) {
 	key := strings.TrimSpace(string(secret))
 	if key == "" || strings.ContainsAny(key, " \t\r\n") {
@@ -427,7 +428,7 @@ func apiKey(secret []byte) (string, error) {
 }
 
 // openAICredential accepts a bare API key or {"api_key","base_url"} JSON. The
-// base URL is chosen by whoever stored the credential (the agent owner).
+// base URL is chosen by the operator (OPENAI_BASE_URL in the environment).
 func openAICredential(secret []byte) (key, baseURL string, err error) {
 	trimmed := strings.TrimSpace(string(secret))
 	if !strings.HasPrefix(trimmed, "{") {

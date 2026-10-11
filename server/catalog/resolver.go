@@ -202,33 +202,6 @@ func (r *Resolver) Detected(provider string) bool {
 	return false
 }
 
-// Masked is the last four characters of the first detected token credential,
-// for the status page; empty when there is none.
-func (r *Resolver) Masked(provider string) string {
-	p, ok := r.cat.Provider(provider)
-	if !ok {
-		return ""
-	}
-	for i := range p.Credentials {
-		k := &p.Credentials[i]
-		if k.Assemble != "token" {
-			continue
-		}
-		vals, missing, _ := r.values(k)
-		if len(missing) > 0 {
-			continue
-		}
-		for _, v := range vals {
-			rs := []rune(v)
-			if len(rs) > 4 {
-				rs = rs[len(rs)-4:]
-			}
-			return string(rs)
-		}
-	}
-	return ""
-}
-
 func assemble(k *Kind, vals map[string]string) ([]byte, error) {
 	switch k.Assemble {
 	case "token", "file_json":
