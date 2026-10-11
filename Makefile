@@ -143,7 +143,14 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e drives real Google providers and spends API credit: run GOVOICE_LIVE=1 make e2e"; exit 1; }
 	cd e2e && npm install --no-audit --no-fund && npx playwright install chromium && npx playwright test
 
-.PHONY: e2e
+# Agent graphs in a real browser against the FAKE providers: free and offline (about 1 min). Builds
+# bin/server-fake (-tags fakeproviders), starts it with the admin UI, then drives the graph designer, a
+# live call with a handoff, republish, a failed handoff and a plain agent (e2e/tests-fake).
+e2e-fake: ## free|Playwright browser e2e for agent graphs against the fake providers (about 1 min)
+	cd ui && npm ci --no-audit --no-fund
+	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test -c playwright.fake.config.ts
+
+.PHONY: e2e e2e-fake
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a

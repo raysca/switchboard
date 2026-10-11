@@ -259,6 +259,11 @@ func (r *graphRigE2E) spanNames(sessionID string) map[string]bool {
 	names := map[string]bool{}
 	for _, sp := range spans {
 		names[sp.Name] = true
+		// The designer replays the path from these attributes; the trace allowlists
+		// drop unknown keys, so they must really be persisted.
+		if sp.Name == "handoff.active" && (!strings.Contains(sp.AttributesJSON, `"from_node":"front"`) || !strings.Contains(sp.AttributesJSON, `"to_node":"sales"`)) {
+			r.t.Fatalf("handoff.active attributes = %s", sp.AttributesJSON)
+		}
 	}
 	return names
 }

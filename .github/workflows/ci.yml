@@ -3,7 +3,7 @@
 # Postgres store tests and the production image smoke all pass. No provider keys are used anywhere:
 # tests use fake providers and the smoke test starts the image without credentials.
 #
-# Required status checks to configure on main: linux, macos, postgres, image-smoke.
+# Required status checks to configure on main: linux, macos, postgres, image-smoke, graph-e2e.
 # perf-gate.yml is advisory (see docs/benchmarks/README.md, "CI policy").
 name: ci
 on:
@@ -36,6 +36,34 @@ jobs:
       - run: npm ci --prefix tools/compat   # released @pipecat-ai client packages for the compat tests
       - run: make ort
       - run: make verify
+
+  # Agent graphs in a real browser against the fake providers (no keys, no cost): the designer, a live
+  # call with a handoff, the live graph view, republish and a failed handoff. Gates merging the feature.
+  graph-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: make ort
+      - run: npm ci --prefix e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - run: make e2e-fake
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: graph-e2e-report
+          path: |
+            e2e/test-results-fake
+            e2e/playwright-report-fake
+            e2e/evidence
+          retention-days: 7
 
   # The reference platform for the committed benchmarks; also proves the macOS cgo/ORT path.
   macos:

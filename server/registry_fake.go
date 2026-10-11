@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -51,7 +52,12 @@ func init() {
 			}
 			return core.NewFakeLLMProcessor(cfg), nil
 		})
-		r.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
+		r.Register("google.tts", func(_ *Config, spec StageSpec) (core.Processor, error) {
+			// A node whose voice is "brokenvoice" cannot be built: the e2e suite uses it to
+			// make a handoff fail. Exists only in this build tag.
+			if spec.Voice == "brokenvoice" {
+				return nil, errors.New("fake tts: voice brokenvoice is unavailable")
+			}
 			return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2}), nil
 		})
 	}

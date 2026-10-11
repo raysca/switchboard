@@ -73,7 +73,7 @@ func (s *Server) onHandoff(tl *SessionTimeline, storedSessionID string) func(cor
 		}
 		if s.mgmt != nil && s.mgmt.traces != nil && storedSessionID != "" {
 			ev := core.NewTraceEvent("handoff."+string(e.Kind), time.Now(), core.SessionID(storedSessionID), "", 0, core.TracePolicy{},
-				map[string]any{"from": e.From, "to": e.To})
+				map[string]any{"from_node": e.From, "to_node": e.To})
 			core.StartSpanSafe(context.Background(), s.mgmt.traces, ev).End(e.Err)
 		}
 	}

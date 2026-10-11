@@ -17,7 +17,9 @@ export type Stack = {
 };
 
 export const stackFile = path.resolve(__dirname, "../.stack.json");
-export const readStack = (): Stack => JSON.parse(fs.readFileSync(stackFile, "utf8"));
+// The fake-providers stack (playwright.fake.config.ts) has its own file, so both suites can coexist.
+export const fakeStackFile = path.resolve(__dirname, "../.stack-fake.json");
+export const readStack = (file: string = stackFile): Stack => JSON.parse(fs.readFileSync(file, "utf8"));
 
 export const SKIP_REASON = "No Google credential (GOOGLE_APPLICATION_CREDENTIALS service-account file or GOOGLE_API_KEY in examples/.env): e2e suite skipped";
 

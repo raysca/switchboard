@@ -18,7 +18,7 @@ const traces = (...spans: [string, string][]): SessionTracesDTO => ({
   session_id: "s1",
   events: [],
   tool_calls: [],
-  spans: spans.map(([name, at], i) => ({ id: `${i}`, name, started_at: at, attributes: { from: "front", to: "sales" } })),
+  spans: spans.map(([name, at], i) => ({ id: `${i}`, name, started_at: at, attributes: { from_node: "front", to_node: "sales" } })),
 });
 
 function renderLive(client: Partial<ApiClient>, props: Partial<React.ComponentProps<typeof LiveGraph>> = {}) {

@@ -62,6 +62,7 @@ func TestOnHandoffRecordsTimelineAndTraceSpans(t *testing.T) {
 		t.Fatal("a failed handoff must carry its error")
 	}
 	names := map[string]bool{}
+	attrs := map[string]string{} // span name -> attributes JSON
 	for end := time.Now().Add(3 * time.Second); len(names) < 3 && time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
 		spans, err := s.mgmt.store.Traces().Spans(t.Context(), pin.ID, "")
 		if err != nil {
@@ -69,7 +70,13 @@ func TestOnHandoffRecordsTimelineAndTraceSpans(t *testing.T) {
 		}
 		for _, sp := range spans {
 			names[sp.Name] = true
+			attrs[sp.Name] = sp.AttributesJSON
 		}
+	}
+	// The designer replays the path from these two attributes: the trace adapter
+	// drops any key outside its allowlist, so assert they actually persisted.
+	if a := attrs["handoff.active"]; !strings.Contains(a, `"from_node":"front"`) || !strings.Contains(a, `"to_node":"sales"`) {
+		t.Fatalf("handoff.active attributes = %s, want from_node and to_node", attrs["handoff.active"])
 	}
 	for _, want := range []string{"handoff.preparing", "handoff.active", "handoff.failed"} {
 		if !names[want] {

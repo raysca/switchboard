@@ -11,7 +11,7 @@ const span = (name: string, from: string, to: string, at: string, id = `${name}-
   id,
   name: `handoff.${name}`,
   started_at: at,
-  attributes: { from, to },
+  attributes: { from_node: from, to_node: to },
 });
 const idleVoice = { userSpeaking: false, botSpeaking: false, thinking: false };
 

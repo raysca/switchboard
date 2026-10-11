@@ -47,8 +47,8 @@ export function deriveView(entry: string, allSpans: TraceSpanDTO[], edges: Graph
   const trail: GraphView["trail"] = [{ node: entry, since: spans[0]?.started_at ?? "" }];
 
   for (const s of spans) {
-    const from = attr(s, "from");
-    const to = attr(s, "to");
+    const from = attr(s, "from_node");
+    const to = attr(s, "to_node");
     if (!from || !to) continue;
     switch (s.name) {
       case "handoff.preparing":
