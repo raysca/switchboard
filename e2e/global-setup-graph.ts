@@ -4,17 +4,19 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fakeStackFile, type Stack } from "./lib/stack";
+import { graphStackFile, type Stack } from "./lib/stack";
 import { stopStack } from "./global-teardown";
 
-// Starts the stack with the FAKE providers (go build -tags fakeproviders): no
-// secrets, no network, no cost. The fake LLM labels each reply with its node's
-// prompt and calls a node's transfer tool on "transfer to <node>", so the graph
-// designer and the handoff can be driven end to end from a browser.
+// Starts the stack for the graph suite. By default with the FAKE providers (go
+// build -tags fakeproviders): no secrets, no network, no cost; the fake LLM labels
+// each reply with its node's prompt and calls a node's transfer tool on "transfer
+// to <node>". With E2E_PROVIDER=xai it is the real server (go build -tags
+// xaispeech) and the specs use a stored xAI credential: real STT/LLM/TTS calls.
 // Ports differ from the paid suite's, so both can run on one machine.
+const LIVE = process.env.E2E_PROVIDER === "xai";
 const PORTS = { public: 18581, admin: 19591, ui: 15174 };
 const repo = path.resolve(__dirname, "..");
-const logDir = path.join(__dirname, "test-results-fake", "logs");
+const logDir = path.join(__dirname, "test-results-graph", "logs");
 
 async function portOpen(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -43,18 +45,23 @@ function start(name: string, cmd: string, args: string[], cwd: string, env: Node
 }
 
 export default async function globalSetup() {
+  if (LIVE && !process.env.E2E_XAI_SECRET) {
+    console.warn("\n[e2e] No XAI_API_KEY (env or examples/.env): the live xAI run is skipped\n");
+    return;
+  }
   fs.mkdirSync(logDir, { recursive: true });
   fs.rmSync(path.join(__dirname, "evidence"), { recursive: true, force: true });
   for (const [name, port] of Object.entries(PORTS))
     if (await portOpen(port)) throw new Error(`port ${port} (${name}) already in use; stop the old stack first`);
 
-  // The tags match `make build` (xaispeech) plus the fake providers. Never ship this binary.
-  execFileSync("go", ["build", "-tags", "xaispeech fakeproviders", "-o", "bin/server-fake", "./cmd/server"], {
+  // The tags match `make build` (xaispeech); the fake build adds fakeproviders. Never ship the fake binary.
+  const bin = LIVE ? "bin/server-live" : "bin/server-fake";
+  execFileSync("go", ["build", "-tags", LIVE ? "xaispeech" : "xaispeech fakeproviders", "-o", bin, "./cmd/server"], {
     cwd: repo,
     stdio: ["ignore", fs.openSync(path.join(logDir, "build.log"), "w"), "inherit"],
   });
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "govoice-e2e-fake-"));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "govoice-e2e-graph-"));
   const origins = [`http://127.0.0.1:${PORTS.ui}`, `http://localhost:${PORTS.ui}`];
   const config = fs
     .readFileSync(path.join(repo, "config/development.yaml"), "utf8")
@@ -77,16 +84,16 @@ export default async function globalSetup() {
     logDir,
     pids: {},
   };
-  const save = () => fs.writeFileSync(fakeStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
+  const save = () => fs.writeFileSync(graphStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
   save();
 
   try {
-    stack.pids.server = start("server", path.join(repo, "bin/server-fake"), ["-config", configPath, "-vad-mode", "inprocess"], repo, {
+    stack.pids.server = start("server", path.join(repo, bin), ["-config", configPath, "-vad-mode", "inprocess"], repo, {
       GOVOICE_ROOT: repo,
       GOVOICE_DEV_DIR: stack.devDir,
       TOKEN_SECRET: stack.tokenSecret,
       GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
-      GOVOICE_FAKE_LLM_LABEL: "1",
+      ...(LIVE ? {} : { GOVOICE_FAKE_LLM_LABEL: "1" }),
     });
     save();
     stack.pids.ui = start("ui", process.execPath, [path.join(repo, "ui/node_modules/vite/bin/vite.js"), "--config", path.join(__dirname, "vite.e2e.config.mjs")], path.join(repo, "ui"), {
@@ -99,7 +106,7 @@ export default async function globalSetup() {
     await waitFor("server /ready", async () => (await fetch(`${stack.adminUrl}/ready`)).status === 200);
     await waitFor("admin UI", async () => (await fetch(stack.uiUrl)).ok);
   } catch (err) {
-    stopStack(fakeStackFile);
+    stopStack(graphStackFile);
     throw err;
   }
 }

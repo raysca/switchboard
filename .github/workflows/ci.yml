@@ -60,8 +60,8 @@ jobs:
         with:
           name: graph-e2e-report
           path: |
-            e2e/test-results-fake
-            e2e/playwright-report-fake
+            e2e/test-results-graph
+            e2e/playwright-report-graph
             e2e/evidence
           retention-days: 7
 

@@ -145,12 +145,19 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 
 # Agent graphs in a real browser against the FAKE providers: free and offline (about 1 min). Builds
 # bin/server-fake (-tags fakeproviders), starts it with the admin UI, then drives the graph designer, a
-# live call with a handoff, republish, a failed handoff and a plain agent (e2e/tests-fake).
+# live call with a handoff, republish, a failed handoff and a plain agent (e2e/tests-graph).
 e2e-fake: ## free|Playwright browser e2e for agent graphs against the fake providers (about 1 min)
 	cd ui && npm ci --no-audit --no-fund
-	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test -c playwright.fake.config.ts
+	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test -c playwright.graph.config.ts
 
-.PHONY: e2e e2e-fake
+# The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
+# XAI_API_KEY (env or examples/.env; XAI_MODEL optional). Roughly 20 provider requests per run.
+e2e-xai: ## paid|Playwright browser e2e for agent graphs against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
+	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e-xai drives real xAI providers and spends API credit: run GOVOICE_LIVE=1 make e2e-xai"; exit 1; }
+	cd ui && npm ci --no-audit --no-fund
+	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.graph.config.ts
+
+.PHONY: e2e e2e-fake e2e-xai
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a

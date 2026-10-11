@@ -81,23 +81,29 @@ lets the bot answer before the question repeats (a repeat is a barge-in).
 - `test-results/`: per-test screenshots, plus video and trace on failure, and
   `logs/*.log` (build, server, ui, custom-client).
 
-## Fake-providers suite (agent graphs): `make e2e-fake`
+## Agent graph suite: fake providers or live xAI
 
-Free, offline and deterministic: `playwright.fake.config.ts` builds `bin/server-fake`
-(`-tags "xaispeech fakeproviders"`, never ship it), starts it with the admin UI on
-their own ports (public 18581, admin 19591, UI 15174) and runs `tests-fake/`:
+`playwright.graph.config.ts` runs `tests-graph/` against a stack it starts itself, on its
+own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid Google suite.
 
-1. Designer: draw a two-agent graph with a handoff and publish it; the stored
-   version is the graph (STT only on the entry node).
-2. Call: the front agent answers, `transfer to sales` hands the call over, the
-   sales agent greets and answers, the live graph view moves to Sales, and the
-   stored session has the `handoff.*` trace spans.
-3. Designer: reopen, edit the handoff, republish (v2), a new call works.
-4. Failure: a sales node whose voice cannot be built (`brokenvoice`) leaves the
-   caller with the front agent.
-5. A plain one-node agent is unchanged (no graph view, no transfer tool).
+| | `make e2e-fake` (default) | `GOVOICE_LIVE=1 make e2e-xai` |
+|---|---|---|
+| Server | `bin/server-fake` (`-tags "xaispeech fakeproviders"`, never ship it) | `bin/server-live` (`-tags xaispeech`) |
+| Providers | fake STT/LLM/TTS | real xAI STT, Grok, TTS |
+| Cost | none, about 20 s | about 20 provider requests |
+| Handoff | the fake LLM calls the transfer tool on "transfer to `<node>`" | the model calls it from the front prompt |
+| Assertions | exact (the fake labels each reply with its node's prompt) | marker words (the sales prompt demands "catalogue") |
 
-The fake LLM (`GOVOICE_FAKE_LLM_LABEL=1`) prefixes each reply with the node's system
-prompt (`[FRONT] You said: ...`) and calls a node's transfer tool on "transfer to
-`<node name>`"; the server-side twin is `server/graph_e2e_test.go`
-(`make test-graph-e2e`). CI runs this suite as the `graph-e2e` job.
+The xAI key is `XAI_API_KEY` from the environment or `examples/.env` (`XAI_MODEL` optional,
+default `grok-2-1212`). It goes from the test process to the management API only: it is never
+typed into the browser, and live runs keep no traces. Without a key every live test is skipped.
+
+Tests: (1) designer: draw a two-agent graph with a handoff and publish it; the stored version is
+the graph (STT only on the entry node). (2) Call: the front agent answers, the call is handed to
+sales, the live graph view moves to Sales, and the stored session has the `handoff.*` trace spans
+with `from_node` and `to_node`. (3) Designer: reopen, edit the handoff, republish (v2), a new call
+works. (4) Fake only: a sales node whose voice cannot be built (`brokenvoice`) leaves the caller
+with the front agent. (5) A plain one-node agent is unchanged.
+
+The server-side twin of the fake suite is `server/graph_e2e_test.go` (`make test-graph-e2e`). CI
+runs the fake suite as the `graph-e2e` job.
