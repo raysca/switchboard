@@ -1,7 +1,7 @@
 # Agent Graph (Multi-Agent Handoff) Design
 
 **Date:** 2026-10-11
-**Status:** scope approved in conversation; awaiting written-spec review.
+**Status:** scope approved in conversation; revised 2026-10-11 after review (one active node, no pre-build; live graph visualisation); awaiting written-spec review.
 
 ## Intent
 
@@ -17,6 +17,8 @@ Decisions made with the user on 2026-10-11:
 3. **Providers live in the node inspector,** not as separate canvas nodes.
 4. **Owned nodes, no shared library.** Each graph defines its own nodes; there is no cross-graph agent reuse.
 5. **The canvas is the only way to author agents.** The graph *is* the agent: no `flows` table.
+6. **Exactly one node is active at a time.** Only the active node's LLM and TTS exist; a node is built when it is activated and closed when it is left. Nothing is pre-built.
+7. **The designer shows the call moving through the graph,** live while testing and as a replay of past sessions.
 
 ## Current behaviour (main at e5c2259)
 
@@ -58,24 +60,24 @@ Decisions made with the user on 2026-10-11:
 - `sessions` is unchanged. Its `agent_version_id` is the pinned graph; its provenance trigger still holds.
 - Readiness (`agentReadiness`) and runtime capture cover the **union of all nodes' tools** and all nodes' credentials. A graph is ready only if every node is ready, so a handoff can never fail on resolution mid-call.
 
-### 3. Runtime: swapping the active node
+### 3. Runtime: one active node
 
-The core mechanism lives in `core/` and knows nothing about servers or graphs: a **stage switch**, a processor that holds N pre-built stage processors (LLM or TTS) and forwards frames to whichever is active.
+Think of the call as a token moving through the graph: exactly one node holds it. The core mechanism lives in `core/` and knows nothing about servers or graphs: a **node host**, a processor that owns the single active node's stage processors (LLM chain and TTS) and forwards frames to them. The server hands it a `build(nodeID)` function; the host calls it on activation and closes what it replaced.
 
-- **Pre-build.** At call start the server builds every node's LLM chain (including that node's own failover wrapper and its system prompt with the turn-completion suffix) and every node's TTS. Only the active ones receive frames. Building at call start, rather than at handoff, keeps handoff latency off the audio path. Cost: up to 8 LLM and TTS processors per call. Provider connections must therefore be opened lazily by each processor, not at build time; the plan must confirm this per provider and keep the call's resource use bounded.
-- **Shared history.** All nodes share the one context pool, so history carries across. System prompts are not part of the history, so nothing needs rewriting.
+- **Activate on demand.** Call start builds only the entry node. A node's LLM chain (with its own failover wrapper and its system prompt with the turn-completion suffix) and TTS are built when the node is activated and `Close()`d when it is left. Provider connections are therefore never open for nodes the call is not in. Peak per call: one active node, plus the incoming node during a handoff (below).
+- **Shared state lives outside nodes.** The context pool (history), STT, VAD, turn manager, transport and recording are call-level. A node holds no conversation state, so closing it loses nothing; system prompts are not part of the history, so nothing needs rewriting.
 - **Handoff tool.** For the active node, the server injects one tool per outgoing edge, `transfer_to_<slug>`, whose description is the edge condition, next to the node's own tools. The tool is **terminal**: the old node's tool loop does not run a follow-up round.
-- **Flip.** When a transfer tool executes, the switch records the target. The flip happens at the end of the old node's turn, once any bridge sentence it already produced has been spoken or interrupted. The new node's LLM then starts a turn on the shared history (it greets, or answers the caller's interruption), reusing the existing async-trigger mechanism (`core/async_trigger.go`) that starts a model turn once the call is idle.
-- **Generation fencing.** The flip bumps the generation, so late frames from the old node's LLM or TTS are dropped like any interrupted turn. Barge-in during a pending flip does not cancel the handoff (the tool call already committed); the new node answers the interruption.
-- **Voice change.** The TTS switch flips with the LLM switch. Text already queued for the old voice is flushed or interrupted by the generation bump, never spoken in the new voice.
-- **Failover** is unchanged within a node; a node's fallback chain is its own.
-- **Loops.** Edges may form cycles (Sales back to Front). A per-call cap on handoffs (default 10) ends a ping-pong by removing transfer tools from then on.
+- **Commit, build, flip.** When a transfer tool executes the handoff is committed: the host starts building the target node *immediately* (state `preparing`), concurrently with the old node finishing any bridge sentence it already produced. This hides the target's connection time (a TTS connect is the slow part) behind speech the caller is already hearing. The flip happens once both are done: the old node has drained or been interrupted, and the target is built. Then the old node is closed, the generation is bumped, and the new node's LLM starts a turn on the shared history (it greets, or answers the caller's interruption), reusing the existing async-trigger mechanism (`core/async_trigger.go`). If building serially after the drain proves fast enough in the live tests, the overlap is dropped and the call never holds more than one node.
+- **Closing a left node.** Closing cancels the node's in-flight generation (the generation bump already makes its late frames droppable), then calls `Close()` on its processors. Text still queued for the old voice is flushed or interrupted by the bump, never spoken in the new voice. Closing runs on the session supervisor (`session.Go`) and is bounded by a timeout so a hung provider cannot stall the call.
+- **Build failure.** If the target cannot be built (provider outage; credentials were checked at call start), the flip does not happen: the old node stays active, a `handoff_failed` event is recorded, and the call continues. The caller may have heard "let me transfer you"; the next caller turn is answered by the old node. Within a node, the existing failover chain still applies.
+- **Barge-in during a pending handoff** does not cancel it (the tool call already committed); the new node answers the interruption.
+- **Loops.** Edges may form cycles (Sales back to Front). A per-call cap on handoffs (default 10) ends a ping-pong by removing transfer tools from then on. Re-entering a node builds it again; nothing is cached.
 - **Tool history across nodes.** Past tool calls from another node stay in the shared history as call/result pairs. Whether each provider accepts history containing tools absent from the current tool list is an open risk: verify with the live provider tests; if one rejects it, replace the other node's tool exchanges with plain text for that provider.
 
 ### 4. Server surface
 
 - `/api/v1/agents` accepts and returns the graph config (schema 2) as well as the flat one. A `PUT` publishes a new version atomically (one row plus its tool rows), so a half-published graph is impossible.
-- Observability: each handoff is a timeline event (`handoff`: from node, to node, edge id, agent version), recorded on the same call timeline. Turn rows carry the node id so transcripts show which agent spoke. Metrics: `voice_handoffs_total{from,to}` and a handoff-latency histogram.
+- Observability: `TimelineEvent` (`server/timeline.go`) gains a `node` field, set on every event the active node produces, so the existing `llm_*`, `tts_*`, `interruption` and `error` events say which node they came from. New event types: `handoff` (from, to, edge id), `node_preparing`, `node_active`, `node_closed` and `handoff_failed`. Turn rows carry the node id so transcripts show which agent spoke. Metrics: `voice_handoffs_total{from,to}` and a handoff-latency histogram (commit to first audio from the new node).
 - Existing readiness and the "agent not ready" error path are reused; the not-ready reason names the node.
 
 ### 5. Designer UI
@@ -84,14 +86,19 @@ The core mechanism lives in `core/` and knows nothing about servers or graphs: a
 - Nodes show name, LLM, voice and tool count. Edges show their condition as a label. The entry node is marked and can be changed.
 - The inspector for a selected node is today's agent form (`AgentsView.tsx`) moved into a side panel; an edge selection shows the condition editor.
 - A new agent starts as a single entry node, so the single-agent case feels like today's form.
-- **Test panel.** The existing voice test (`AgentVoiceTest.tsx`) runs against the draft or published graph and highlights the active node live, driven by the `handoff` timeline events.
+- **Live graph view (debugging while authoring).** The test panel sits beside the canvas and runs the draft or published graph. The canvas is driven by the call's timeline events, nothing new on the wire beyond section 4:
+  - the active node is highlighted, with its live activity derived from the events: *listening* (`speech_start` to `speech_stop`), *thinking* (`llm_start` to `llm_first_token`), *speaking* (`tts_audio`), *tool running*, *interrupted*, *error*;
+  - a node being built shows *preparing*; a node that was left is dimmed and marked visited;
+  - when a handoff commits, the traversed edge animates and shows its condition and the moment of the flip;
+  - a trail lists the nodes visited with timestamps, and selecting a trail entry or a node filters the transcript and timeline to that node;
+  - the same view replays a past session from its stored timeline, so a bad handoff can be debugged after the call.
 - Publish is an explicit action; unpublished canvas edits are held client-side and validated with the server's rules.
 
 ## Testing
 
-- **core:** stage switch unit tests under `-race`: frames reach only the active stage; flip at turn end; generation fencing drops late old-node frames; barge-in during a pending flip; handoff cap; no goroutine leaks on close.
+- **core:** node host unit tests under `-race`: frames reach only the active node; the left node is closed exactly once and its processors are not used after the flip; at most two nodes exist during a handoff and one otherwise (count builds and closes); generation fencing drops late old-node frames; barge-in during a pending flip; failed build keeps the old node active; hung close is bounded; handoff cap; no goroutine leaks.
 - **server:** graph validation table tests; schema-1 wrapping; tool-row migration on both dialects; readiness fails with the node named; atomic publish; session pins the graph and a later publish does not change a live call; two-node scripted-LLM call end to end using the fake providers (`server/agent_call_test.go` style).
-- **ui:** vitest for canvas validation, add/remove node and edge, inspector editing, publish payload.
+- **ui:** vitest for canvas validation, add/remove node and edge, inspector editing, publish payload, and the live view (a scripted event stream moves the highlight, animates the edge on `handoff`, shows `preparing`, dims left nodes, and a stored timeline replays the same path).
 - **live:** a new livecheck scenario in the nightly critical path (two nodes, one handoff, different voices) against google and xai, within the existing 60-call cap. This is also where the tool-history risk above gets answered.
 - Verification gate per AGENTS.md: `gofmt -w .`, `make verify`, independent adversarial review including the YAGNI audit.
 
@@ -101,7 +108,7 @@ Shared or reusable agents across graphs; STT or language switching mid-call; det
 
 ## Risks
 
-- **Pre-building every node's stages** may open too many provider connections per call. Mitigation: lazy connection in each processor and the 8-node cap; measure in the plan's first task.
+- **Handoff latency** now includes building the target node. The overlap with the old node's bridge sentence hides most of it; the commit-to-first-audio histogram measures it, and the live test sets the budget.
+- **Cleanup on a left node:** a processor whose `Close()` does not stop its goroutines would leak per handoff. The node host tests count goroutines; the plan audits each provider's `Close()`.
 - **Cross-node tool history** may be rejected by some providers (see section 3).
-- **Handoff latency** (tool call, old-node drain, new-node first token) adds a visible gap; the bridge sentence from the old node is the mitigation, and the timeline events make the gap measurable.
 - **Replacing the agent form** with a canvas is a UI-wide change; the one-node case must stay as quick to use as the form.
