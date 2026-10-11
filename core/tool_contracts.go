@@ -64,4 +64,7 @@ type AsyncToolResult struct {
 	Result  ToolResult
 	Message Message
 	Inject  func() error
+	// NoTurn: inject the message when the call is idle but do not, on its own, start a model
+	// turn (an operator note without run). A batch starts one turn if any item lacks it.
+	NoTurn bool
 }

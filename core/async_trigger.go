@@ -46,6 +46,7 @@ type AsyncTrigger struct {
 
 	// monotonic offset from monoBase; 0 means off.
 	vadUser, turnUser, bot, reply atomic.Int64
+	ready                         atomic.Bool
 
 	DroppedCount   atomic.Uint64 // results whose injection failed (loop closed)
 	TriggeredCount atomic.Uint64 // model turns started
@@ -72,8 +73,12 @@ var monoBase = time.Now()
 
 func (t *AsyncTrigger) Attach(s SessionController, index int) error {
 	t.session, t.index = s, index
+	t.ready.Store(true)
 	return nil
 }
+
+// Ready reports that the trigger is attached to a started session, so Deliver can run.
+func (t *AsyncTrigger) Ready() bool { return t.ready.Load() }
 
 func set(a *atomic.Int64, on bool) {
 	if !on {
@@ -194,17 +199,20 @@ func (t *AsyncTrigger) fire() {
 	turn := fmt.Sprintf("async-%d", t.seq)
 	t.mu.Unlock()
 	var names string
-	injected := 0
+	turns := 0
 	for _, r := range batch {
 		if r.Inject() != nil {
 			t.dropped()
 			continue
 		}
-		if injected++; injected <= 3 {
+		if r.NoTurn {
+			continue
+		}
+		if turns++; turns <= 3 {
 			names += " " + r.Call.Name
 		}
 	}
-	if injected == 0 {
+	if turns == 0 {
 		return
 	}
 	t.reply.Store(int64(time.Since(monoBase)))
