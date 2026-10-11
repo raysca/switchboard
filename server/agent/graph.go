@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-
-	"govoice/server/provider"
-	"govoice/server/storage"
 )
 
 // Graph limits keep a stored agent and a call's node set bounded.
@@ -217,20 +214,23 @@ func EntryConfig(raw json.RawMessage) (Config, error) {
 // Problems lists attachment problems for every node. Non-entry nodes have no
 // STT of their own, so they are checked with the entry's STT borrowed; their
 // problems are prefixed with the node id.
-func (g Graph) Problems(reg *provider.Registry, creds []storage.Credential) []string {
+func (g Graph) Problems(av Availability) (reasons, missingEnv []string) {
 	entry := g.EntryNode().Config
-	var out []string
 	for _, n := range g.Nodes {
 		c := n.Config
 		prefix := ""
 		if n.ID != g.Entry {
 			c.STT, prefix = entry.STT, n.ID+":"
 		}
-		for _, p := range append(AttachmentProblems(c, reg, creds), FallbackProblems(c, reg, creds)...) {
-			out = append(out, prefix+p)
+		r1, e1 := AttachmentProblems(c, av)
+		r2, e2 := FallbackProblems(c, av)
+		for _, p := range append(r1, r2...) {
+			reasons = append(reasons, prefix+p)
 		}
+		missingEnv = append(missingEnv, e1...)
+		missingEnv = append(missingEnv, e2...)
 	}
-	return out
+	return reasons, uniq(missingEnv)
 }
 
 // checkNodeTools rejects a node that exposes a tool the agent version has not selected.

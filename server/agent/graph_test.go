@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-const flatCfg = `{"stt":{"provider":"deepgram","credential_id":"c1"},"llm":{"provider":"openai","model":"m","credential_id":"c2","system_prompt":"hi"},"tts":{"provider":"cartesia","voice":"v","credential_id":"c3"}}`
+const flatCfg = `{"stt":{"provider":"deepgram"},"llm":{"provider":"openai","model":"m","system_prompt":"hi"},"tts":{"provider":"cartesia","voice":"v"}}`
 
 func node(id, name string, extra string) string {
-	cfg := `{"llm":{"provider":"openai","model":"m","credential_id":"c2","system_prompt":"` + name + `"},"tts":{"provider":"cartesia","voice":"v","credential_id":"c3"}` + extra + `}`
+	cfg := `{"llm":{"provider":"openai","model":"m","system_prompt":"` + name + `"},"tts":{"provider":"cartesia","voice":"v"}` + extra + `}`
 	return `{"id":"` + id + `","name":"` + name + `","config":` + cfg + `}`
 }
 
@@ -79,8 +79,8 @@ func TestDecodeGraphBounds(t *testing.T) {
 }
 
 func TestSummarizationNeedsEverySummarizingLLM(t *testing.T) {
-	entry := `{"stt":{"provider":"deepgram","credential_id":"c1"},"llm":{"provider":"openai","model":"m","credential_id":"c2"},"tts":{"provider":"cartesia","credential_id":"c3"},"context":{"summarization":{"enabled":true}}}`
-	other := `{"id":"b","name":"B","config":{"llm":{"provider":"cartesia","model":"m","credential_id":"c2"},"tts":{"provider":"cartesia","credential_id":"c3"}}}`
+	entry := `{"stt":{"provider":"deepgram"},"llm":{"provider":"openai","model":"m"},"tts":{"provider":"cartesia"},"context":{"summarization":{"enabled":true}}}`
+	other := `{"id":"b","name":"B","config":{"llm":{"provider":"cartesia","model":"m"},"tts":{"provider":"cartesia"}}}`
 	raw := `{"entry":"a","nodes":[{"id":"a","name":"A","config":` + entry + `},` + other + `],"edges":[]}`
 	if _, err := DecodeGraph(json.RawMessage(raw)); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("want ErrInvalidConfig, got %v", err)

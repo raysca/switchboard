@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"govoice/server/provider"
 	"govoice/server/storage"
 )
 
@@ -20,12 +19,12 @@ const maxReadinessReasons = 8
 var ErrNotFound = sql.ErrNoRows
 
 type Service struct {
-	store     *storage.Store
-	providers *provider.Registry
+	store *storage.Store
+	av    Availability
 }
 
-func NewService(store *storage.Store) *Service {
-	return &Service{store: store, providers: provider.NewRegistry(provider.Definitions())}
+func NewService(store *storage.Store, av Availability) *Service {
+	return &Service{store: store, av: av}
 }
 
 type CreateRequest struct {
@@ -86,6 +85,7 @@ type ToolDependency struct {
 type Readiness struct {
 	State            string           `json:"state"`
 	Reasons          []string         `json:"reasons"`
+	MissingEnv       []string         `json:"missing_env,omitempty"`
 	ToolDependencies []ToolDependency `json:"tool_dependencies,omitempty"`
 }
 
@@ -155,8 +155,7 @@ func (s *Service) Get(ctx context.Context, id string) (Agent, error) {
 	if err != nil {
 		return Agent{}, err
 	}
-	creds, credErr := s.store.Credentials().List(ctx)
-	return s.fromRow(ctx, row, creds, credErr)
+	return s.fromRow(ctx, row)
 }
 
 func (s *Service) List(ctx context.Context, limit, offset int) ([]Agent, error) {
@@ -165,9 +164,8 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Agent, error) 
 		return nil, err
 	}
 	out := make([]Agent, 0, len(rows))
-	creds, credErr := s.store.Credentials().List(ctx)
 	for _, row := range rows {
-		a, err := s.fromRow(ctx, row, creds, credErr)
+		a, err := s.fromRow(ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -249,8 +247,7 @@ func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, erro
 		return Snapshot{}, err
 	}
 	version := toVersion(v)
-	creds, credErr := s.store.Credentials().List(ctx)
-	readiness, tools := s.agentReadiness(ctx, v, row.Enabled, row.Archived, creds, credErr)
+	readiness, tools := s.agentReadiness(ctx, v, row.Enabled, row.Archived)
 	if readiness.State == ReadinessNotReady || readiness.State == ReadinessNeedsToolReview || readiness.State == ReadinessToolUnavailable {
 		return Snapshot{}, errors.New("agent not ready")
 	}
@@ -318,8 +315,7 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 		}
 	}
 	if runtimeTools == nil {
-		creds, credErr := s.store.Credentials().List(ctx)
-		_, runtimeTools = s.agentReadiness(ctx, v, true, false, creds, credErr)
+		_, runtimeTools = s.agentReadiness(ctx, v, true, false)
 	}
 	return Snapshot{AgentID: session.AgentID, Version: version, ConfigHash: session.ConfigHash, MCPTools: runtimeTools}, nil
 }
@@ -357,9 +353,7 @@ func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelect
 	return toVersionWithTools(version, selected), nil
 }
 
-// fromRow takes the credential list (and its load error) so List reads it
-// once per request instead of once per agent.
-func (s *Service) fromRow(ctx context.Context, row storage.Agent, creds []storage.Credential, credErr error) (Agent, error) {
+func (s *Service) fromRow(ctx context.Context, row storage.Agent) (Agent, error) {
 	a := Agent{ID: row.ID, Name: row.Name, Description: row.Description, Enabled: row.Enabled, Archived: row.Archived, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 	if row.CurrentVersionID != "" {
 		v, err := s.store.Agents().Version(ctx, row.CurrentVersionID)
@@ -367,7 +361,7 @@ func (s *Service) fromRow(ctx context.Context, row storage.Agent, creds []storag
 			return Agent{}, err
 		}
 		converted := toVersion(v)
-		a.Readiness, _ = s.agentReadiness(ctx, v, row.Enabled, row.Archived, creds, credErr)
+		a.Readiness, _ = s.agentReadiness(ctx, v, row.Enabled, row.Archived)
 		a.Version = &converted
 	} else {
 		a.Readiness = Readiness{State: ReadinessNotReady, Reasons: []string{"missing_configuration"}}
@@ -384,8 +378,8 @@ const (
 )
 
 // agentReadiness evaluates an already-loaded version (with its MCPTools)
-// against the given credential list.
-func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersion, enabled, archived bool, creds []storage.Credential, credErr error) (Readiness, []MCPToolSnapshot) {
+// against the current provider availability.
+func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersion, enabled, archived bool) (Readiness, []MCPToolSnapshot) {
 	if version.MCPReviewRequired {
 		return Readiness{State: ReadinessNeedsToolReview, Reasons: []string{"mcp_tools_detached_review_required"}, ToolDependencies: []ToolDependency{}}, nil
 	}
@@ -393,12 +387,10 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 	if parseErr != nil {
 		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_config"}}, nil
 	}
-	if credErr != nil {
-		return Readiness{State: ReadinessNotReady, Reasons: []string{"readiness_unavailable"}}, nil
-	}
-	// A stored agent can stop being callable later, e.g. when an attached
-	// credential is deleted or marked invalid.
-	reasons := append(make([]string, 0, maxReadinessReasons), parsed.Problems(s.providers, creds)...)
+	// A stored agent can stop being callable later, e.g. when the environment
+	// no longer carries a provider's credentials.
+	problems, missingEnv := parsed.Problems(s.av)
+	reasons := append(make([]string, 0, maxReadinessReasons), problems...)
 	if archived {
 		reasons = append(reasons, "archived")
 	} else if !enabled {
@@ -408,7 +400,7 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 		reasons = reasons[:maxReadinessReasons]
 	}
 	if len(reasons) > 0 {
-		return Readiness{State: ReadinessNotReady, Reasons: reasons}, nil
+		return Readiness{State: ReadinessNotReady, Reasons: reasons, MissingEnv: missingEnv}, nil
 	}
 	selections := version.MCPTools
 	dependencies := make([]ToolDependency, 0, len(selections))
@@ -467,7 +459,6 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 		}
 		snapshots = append(snapshots, MCPToolSnapshot{ServerID: server.ID, ServerName: server.Name, Endpoint: server.Endpoint, Transport: server.Transport, CredentialID: server.AuthCredentialID, RemoteName: selection.RemoteName, SchemaJSON: json.RawMessage(schema), SchemaHash: selection.SchemaHash, Required: selection.Required})
 	}
-	// Providers, capabilities and credentials were checked above.
 	base := Readiness{State: ReadinessReady, Reasons: []string{}, ToolDependencies: dependencies}
 	if requiredFailure != "" {
 		base.State = requiredFailure
@@ -489,11 +480,11 @@ func validateDetails(name, description string) error {
 }
 
 // ErrNotAttached is returned when an agent config is not attached to a usable
-// set of providers and credentials.
+// set of providers.
 var ErrNotAttached = errors.New("agent must be attached to providers")
 
-// attachedConfig validates that raw names a provider and an existing matching
-// credential for every stage, then returns its canonical form.
+// attachedConfig validates that raw names a provider and an available
+// available provider for every stage, then returns its canonical form.
 func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	canonical, err := normalizeConfig(raw)
 	if err != nil {
@@ -503,11 +494,7 @@ func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json
 	if err != nil {
 		return nil, err
 	}
-	creds, err := s.store.Credentials().List(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list credentials: %w", err)
-	}
-	problems := g.Problems(s.providers, creds)
+	problems, _ := g.Problems(s.av)
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrNotAttached, strings.Join(problems, ", "))
 	}

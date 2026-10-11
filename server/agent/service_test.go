@@ -11,31 +11,20 @@ import (
 	"govoice/server/storage"
 )
 
-func testService(t *testing.T) *Service {
+func testService(t *testing.T) *Service { return testServiceWith(t, ready()) }
+
+func testServiceWith(t *testing.T, av Availability) *Service {
 	t.Helper()
 	s, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/agents.db"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	seedCredentials(t, s, "google", "xai")
-	return NewService(s)
-}
-
-// seedCredentials stores one credential per provider so complete agents are
-// ready; readiness requires a resolvable credential for every stage.
-func seedCredentials(t *testing.T, s *storage.Store, providers ...string) {
-	t.Helper()
-	for _, p := range providers {
-		if err := s.Credentials().Put(context.Background(), storage.Credential{ID: testCredentialID(p), Provider: p, MaskedSuffix: "abcd",
-			ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	return NewService(s, av)
 }
 
 func validConfig() json.RawMessage {
-	return json.RawMessage(`{"stt":{"provider":"google","model":"google.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"google.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"google.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)
+	return json.RawMessage(`{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}`)
 }
 
 func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
@@ -48,7 +37,7 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 	if a.Version == nil || a.Version.Number != 1 || a.Readiness.State != ReadinessReady {
 		t.Fatalf("created agent=%+v", a)
 	}
-	changed := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"google.llm","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"google.tts","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)
+	changed := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}`)
 	updated, err := svc.Update(ctx, a.ID, UpdateRequest{Name: stringPointer("Support v2"), Config: changed})
 	if err != nil {
 		t.Fatal(err)
@@ -79,9 +68,9 @@ func TestCreateRequiresAttachedProvidersWithSafeReasons(t *testing.T) {
 			t.Fatalf("err %q lacks %s", err, want)
 		}
 	}
-	bad := `{"stt":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000002"},"llm":{"provider":"google","model":"m","credential_id":"018f0000-0000-7000-8000-0000000000ff"},"tts":{"provider":"google"}}`
-	_, err = svc.Create(context.Background(), CreateRequest{Name: "Wrong creds", Config: json.RawMessage(bad)})
-	for _, want := range []string{"invalid_credential_stt", "missing_credential_llm", "missing_credential_tts"} {
+	svc = testServiceWith(t, fakeAvail{"google/stt": {Reason: "missing_credential"}, "google/llm": {Reason: "unknown_provider"}})
+	_, err = svc.Create(context.Background(), CreateRequest{Name: "Unavailable", Config: validConfig()})
+	for _, want := range []string{"missing_credential_stt", "unknown_provider_llm"} {
 		if !errors.Is(err, ErrNotAttached) || !strings.Contains(err.Error(), want) {
 			t.Fatalf("err %v lacks %s", err, want)
 		}
@@ -99,7 +88,7 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":{"provider":"google","model":"x","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"y","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"z","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)})
+	_, err = svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":{"provider":"google","model":"x"},"llm":{"provider":"google","model":"y"},"tts":{"provider":"google","voice":"z"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +261,7 @@ func TestDetachRequiresExplicitMCPReviewAndHistoricalSelectionsRemainReadable(t 
 	if err != nil || len(historical.MCPTools) != 1 || historical.MCPTools[0] != selection {
 		t.Fatalf("historical selection=%+v err=%v", historical.MCPTools, err)
 	}
-	if _, err := svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":{"provider":"google","model":"s2","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"l2","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"t2","credential_id":"018f0000-0000-7000-8000-000000000001"}}`)}); err != nil {
+	if _, err := svc.Update(ctx, a.ID, UpdateRequest{Config: json.RawMessage(`{"stt":{"provider":"google","model":"s2"},"llm":{"provider":"google","model":"l2"},"tts":{"provider":"google","voice":"t2"}}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if changed, err := svc.Get(ctx, a.ID); err != nil || changed.Readiness.State != ReadinessNeedsToolReview {
@@ -366,7 +355,7 @@ func TestConcurrentConfigUpdatesAllocateContiguousVersions(t *testing.T) {
 	errCh := make(chan error, updates)
 	for i := 0; i < updates; i++ {
 		go func(i int) {
-			config := json.RawMessage(fmt.Sprintf(`{"stt":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"m%d","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","credential_id":"018f0000-0000-7000-8000-000000000001"}}`, i))
+			config := json.RawMessage(fmt.Sprintf(`{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m%d"},"tts":{"provider":"google"}}`, i))
 			_, err := svc.Update(ctx, created.ID, UpdateRequest{Config: config})
 			errCh <- err
 		}(i)
@@ -418,51 +407,27 @@ func TestConcurrentPartialUpdatesPreserveOmittedFields(t *testing.T) {
 	}
 }
 
-func TestRuntimeResolutionRejectsIncompleteConfig(t *testing.T) {
-	svc := testService(t)
+func TestRuntimeResolutionFollowsProviderAvailability(t *testing.T) {
+	av := fakeAvail{}
+	svc := testServiceWith(t, av)
 	ctx := context.Background()
-	// An attached credential cannot be deleted, but it can turn invalid; the
-	// agent then becomes uncallable.
-	attached, err := svc.Create(ctx, CreateRequest{Name: "Credential turns invalid", Config: validConfig()})
+	a, err := svc.Create(ctx, CreateRequest{Name: "Env disappears", Config: validConfig()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.store.Credentials().Delete(ctx, testCredentialID("google")); !errors.Is(err, storage.ErrCredentialInUse) {
-		t.Fatalf("deleting an attached credential: err=%v", err)
+	av["google/stt"] = Unavailable{Reason: "missing_credential", MissingEnv: []string{"GOOGLE_APPLICATION_CREDENTIALS"}}
+	if _, err := svc.ResolveCurrent(ctx, a.ID); err == nil {
+		t.Fatal("runtime resolved an agent whose provider lost its credentials")
 	}
-	row, err := svc.store.Credentials().Get(ctx, testCredentialID("google"))
-	if err != nil {
-		t.Fatal(err)
+	got, _ := svc.Get(ctx, a.ID)
+	if got.Readiness.State != ReadinessNotReady || !strings.Contains(strings.Join(got.Readiness.Reasons, ","), "missing_credential_stt") ||
+		len(got.Readiness.MissingEnv) != 1 || got.Readiness.MissingEnv[0] != "GOOGLE_APPLICATION_CREDENTIALS" {
+		t.Fatalf("readiness = %+v", got.Readiness)
 	}
-	row.ValidationState = "invalid"
-	if err := svc.store.Credentials().ReplaceIfUnchanged(ctx, row.KeyID, row.Ciphertext, row); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.ResolveCurrent(ctx, attached.ID); err == nil {
-		t.Fatal("runtime resolved an agent whose credential is invalid")
-	}
-	if got, _ := svc.Get(ctx, attached.ID); got.Readiness.State != ReadinessNotReady || !strings.Contains(strings.Join(got.Readiness.Reasons, ","), "invalid_credential_") {
-		t.Fatalf("readiness after credential turned invalid = %+v", got.Readiness)
-	}
-	row.ValidationState = "unvalidated"
-	if err := svc.store.Credentials().ReplaceIfUnchanged(ctx, row.KeyID, row.Ciphertext, row); err != nil {
-		t.Fatal(err)
-	}
-	fullyReady, err := svc.Create(ctx, CreateRequest{Name: "Validated", Config: validConfig()})
-	if err != nil || fullyReady.Readiness.State != ReadinessReady {
-		t.Fatalf("validated readiness=%+v err=%v", fullyReady.Readiness, err)
-	}
-	if _, err := svc.ResolveCurrent(ctx, fullyReady.ID); err != nil {
-		t.Fatalf("validated agent could not resolve: %v", err)
+	delete(av, "google/stt")
+	if _, err := svc.ResolveCurrent(ctx, a.ID); err != nil {
+		t.Fatalf("agent did not recover: %v", err)
 	}
 }
 
 func stringPointer(value string) *string { return &value }
-
-// testCredentialID is the fixed UUIDv7 of the seeded credential for provider p.
-func testCredentialID(p string) string {
-	if p == "xai" {
-		return "018f0000-0000-7000-8000-000000000002"
-	}
-	return "018f0000-0000-7000-8000-000000000001"
-}

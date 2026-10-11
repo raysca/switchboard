@@ -16,17 +16,15 @@ import (
 	"govoice/server/storage"
 )
 
-const credG = "018f0000-0000-7000-8000-000000000001"
-
 func chainConfig(t *testing.T, llmFallbacks, extra string) json.RawMessage {
 	t.Helper()
-	return json.RawMessage(`{"stt":{"provider":"google","model":"s","credential_id":"` + credG + `"},` +
-		`"llm":{"provider":"google","model":"m1","credential_id":"` + credG + `"` + llmFallbacks + `},` +
-		`"tts":{"provider":"google","voice":"v","credential_id":"` + credG + `"}` + extra + `}`)
+	return json.RawMessage(`{"stt":{"provider":"google","model":"s"},` +
+		`"llm":{"provider":"google","model":"m1"` + llmFallbacks + `},` +
+		`"tts":{"provider":"google","voice":"v"}` + extra + `}`)
 }
 
 func fb(model string) string {
-	return `{"provider":"google","model":"` + model + `","credential_id":"` + credG + `"}`
+	return `{"provider":"google","model":"` + model + `"}`
 }
 
 func TestChainValidation(t *testing.T) {
@@ -34,7 +32,7 @@ func TestChainValidation(t *testing.T) {
 		"too long":       `,"fallbacks":[` + fb("a") + `,` + fb("b") + `,` + fb("c") + `]`,
 		"duplicate":      `,"fallbacks":[` + fb("a") + `,` + fb("a") + `]`,
 		"dup of primary": `,"fallbacks":[` + fb("m1") + `]`,
-		"no model":       `,"fallbacks":[{"provider":"google","credential_id":"` + credG + `"}]`,
+		"no model":       `,"fallbacks":[{"provider":"google"}]`,
 		"unknown field":  `,"fallbacks":[{"provider":"google","model":"a","temperature":1}]`,
 	}
 	for name, fbs := range bad {
@@ -50,23 +48,24 @@ func TestChainValidation(t *testing.T) {
 	}
 }
 
-func TestCreateValidatesFallbackProviderCredentialCapability(t *testing.T) {
-	svc := testService(t)
+func TestCreateValidatesFallbackAvailability(t *testing.T) {
+	svc := testServiceWith(t, fakeAvail{
+		"acme/llm":     {Reason: "unknown_provider"},
+		"xai/llm":      {Reason: "missing_credential"},
+		"deepgram/tts": {Reason: "unsupported_provider"},
+	})
 	ctx := context.Background()
-	cases := map[string]string{
-		"unknown provider":   `{"provider":"acme","model":"a","credential_id":"` + credG + `"}`,
-		"no credential":      `{"provider":"google","model":"a"}`,
-		"wrong cred owner":   `{"provider":"xai","model":"a","credential_id":"` + credG + `"}`,
-		"mcp not a provider": `{"provider":"mcp","model":"a","credential_id":"` + credG + `"}`,
-	}
-	for name, f := range cases {
+	for name, f := range map[string]string{
+		"unknown provider": `{"provider":"acme","model":"a"}`,
+		"no credential":    `{"provider":"xai","model":"a"}`,
+	} {
 		_, err := svc.Create(ctx, CreateRequest{Name: name, Config: chainConfig(t, `,"fallbacks":[`+f+`]`, "")})
-		if !errors.Is(err, ErrNotAttached) || !strings.Contains(err.Error(), "_fallback_1") {
+		if !errors.Is(err, ErrNotAttached) || !strings.Contains(err.Error(), "_llm_fallback_1") {
 			t.Errorf("%s: err=%v", name, err)
 		}
 	}
 	// Stage capability: deepgram is STT-only, so it cannot back up TTS.
-	tts := strings.Replace(string(chainConfig(t, "", "")), `"voice":"v",`, `"voice":"v","fallbacks":[{"provider":"deepgram","credential_id":"`+credG+`"}],`, 1)
+	tts := strings.Replace(string(chainConfig(t, "", "")), `"voice":"v"`, `"voice":"v","fallbacks":[{"provider":"deepgram"}]`, 1)
 	if _, err := svc.Create(ctx, CreateRequest{Name: "cap", Config: json.RawMessage(tts)}); err == nil || !strings.Contains(err.Error(), "unsupported_provider_tts_fallback_1") {
 		t.Errorf("tts fallback without capability: err=%v", err)
 	}

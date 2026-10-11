@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"govoice/core/resilience"
-	"govoice/server/provider"
-	"govoice/server/storage"
 )
 
 // MaxChainLength bounds primary + fallbacks per stage.
@@ -17,22 +16,19 @@ const MaxChainLength = 3
 // STTFallback, LLMFallback and TTSFallback are the per-stage fields a fallback
 // may set. The LLM system prompt and context limits are shared with the primary.
 type STTFallback struct {
-	Provider     string `json:"provider"`
-	Model        string `json:"model,omitempty"`
-	Language     string `json:"language,omitempty"`
-	CredentialID string `json:"credential_id,omitempty"`
+	Provider string `json:"provider"`
+	Model    string `json:"model,omitempty"`
+	Language string `json:"language,omitempty"`
 }
 
 type LLMFallback struct {
-	Provider     string `json:"provider"`
-	Model        string `json:"model"`
-	CredentialID string `json:"credential_id,omitempty"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
 }
 
 type TTSFallback struct {
-	Provider     string `json:"provider"`
-	Voice        string `json:"voice,omitempty"`
-	CredentialID string `json:"credential_id,omitempty"`
+	Provider string `json:"provider"`
+	Voice    string `json:"voice,omitempty"`
 }
 
 // Failover classes: the kinds of primary failure that may move a stage to its
@@ -91,17 +87,16 @@ func (p FailoverPolicy) Allows(class string) bool {
 
 // Candidate is one entry of a stage chain; Index 0 is the primary.
 type Candidate struct {
-	Stage        string
-	Index        int
-	Provider     string
-	Model        string
-	Voice        string
-	Language     string
-	CredentialID string
+	Stage    string
+	Index    int
+	Provider string
+	Model    string
+	Voice    string
+	Language string
 }
 
 func (c Candidate) key() string {
-	return strings.Join([]string{c.Provider, c.Model, c.Voice, c.Language, c.CredentialID}, "\x00")
+	return strings.Join([]string{c.Provider, c.Model, c.Voice, c.Language}, "\x00")
 }
 
 // Chain returns the full ordered chain (primary first) for "stt", "llm" or "tts".
@@ -109,19 +104,19 @@ func (c Config) Chain(stage string) []Candidate {
 	var out []Candidate
 	switch stage {
 	case "stt":
-		out = append(out, Candidate{Provider: c.STT.Provider, Model: c.STT.Model, Language: c.STT.Language, CredentialID: c.STT.CredentialID})
+		out = append(out, Candidate{Provider: c.STT.Provider, Model: c.STT.Model, Language: c.STT.Language})
 		for _, f := range c.STT.Fallbacks {
-			out = append(out, Candidate{Provider: f.Provider, Model: f.Model, Language: f.Language, CredentialID: f.CredentialID})
+			out = append(out, Candidate{Provider: f.Provider, Model: f.Model, Language: f.Language})
 		}
 	case "llm":
-		out = append(out, Candidate{Provider: c.LLM.Provider, Model: c.LLM.Model, CredentialID: c.LLM.CredentialID})
+		out = append(out, Candidate{Provider: c.LLM.Provider, Model: c.LLM.Model})
 		for _, f := range c.LLM.Fallbacks {
-			out = append(out, Candidate{Provider: f.Provider, Model: f.Model, CredentialID: f.CredentialID})
+			out = append(out, Candidate{Provider: f.Provider, Model: f.Model})
 		}
 	case "tts":
-		out = append(out, Candidate{Provider: c.TTS.Provider, Voice: c.TTS.Voice, CredentialID: c.TTS.CredentialID})
+		out = append(out, Candidate{Provider: c.TTS.Provider, Voice: c.TTS.Voice})
 		for _, f := range c.TTS.Fallbacks {
-			out = append(out, Candidate{Provider: f.Provider, Voice: f.Voice, CredentialID: f.CredentialID})
+			out = append(out, Candidate{Provider: f.Provider, Voice: f.Voice})
 		}
 	}
 	for i := range out {
@@ -142,8 +137,6 @@ type BreakerOpen func(stage, providerID string) bool
 // An open entry tried last costs one immediate ErrCircuitOpen. open must report
 // true only while the breaker would refuse (Open and inside its cooldown). A
 // nil open keeps chain order.
-// ponytail: a credential deleted after publish fails at runtime and is handled
-// by the failover itself.
 func (c Config) Candidates(stage string, open BreakerOpen) []Candidate {
 	chain := c.Chain(stage)
 	if open == nil {
@@ -211,19 +204,16 @@ func (c *Config) normalizeFallbacks() {
 	}
 }
 
-// FallbackProblems checks every fallback like a primary: provider exists, has
-// the stage capability, credential present and matching. Reasons look like
-// "missing_credential_llm_fallback_1". Used at publish time only; a later
-// credential loss does not make the agent not_ready, the resolver/failover copes.
-func FallbackProblems(c Config, registry *provider.Registry, creds []storage.Credential) []string {
-	var problems []string
+// FallbackProblems checks every fallback like a primary. Reasons look like
+// "missing_credential_llm_fallback_1". Used at publish time only.
+func FallbackProblems(c Config, av Availability) (reasons, missingEnv []string) {
 	for _, stage := range []string{"stt", "llm", "tts"} {
 		for _, cand := range c.Chain(stage)[1:] {
-			_, reason := ResolveCredential(Stage{Name: stage, Provider: cand.Provider, CredentialID: cand.CredentialID}, registry, creds)
-			if reason != "" {
-				problems = append(problems, fmt.Sprintf("%s_fallback_%d", reason, cand.Index))
+			if u := av.Check(cand.Provider, stage); u.Reason != "" {
+				reasons = append(reasons, u.Reason+"_"+stage+"_fallback_"+strconv.Itoa(cand.Index))
+				missingEnv = append(missingEnv, u.MissingEnv...)
 			}
 		}
 	}
-	return problems
+	return reasons, uniq(missingEnv)
 }

@@ -7,14 +7,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"govoice/server/provider"
-	"govoice/server/storage"
 )
 
 // Config is the typed agent configuration (schema v2). It is the only source
-// of what a call runs. Every stage is attached to a provider and to one of that
-// provider's stored credentials by ID.
+// of what a call runs. Every stage is attached to a provider; credentials come
+// from the catalog and environment, never from the config.
 type Config struct {
 	STT     STTConfig     `json:"stt"`
 	LLM     LLMConfig     `json:"llm"`
@@ -48,28 +45,25 @@ type RecordingConfig struct {
 func (r RecordingConfig) Active() bool { return r.Enabled && r.DisclosureConfirmed }
 
 type STTConfig struct {
-	Provider     string        `json:"provider"`
-	Model        string        `json:"model,omitempty"`
-	Language     string        `json:"language,omitempty"`
-	CredentialID string        `json:"credential_id,omitempty"`
-	Fallbacks    []STTFallback `json:"fallbacks,omitempty"`
+	Provider  string        `json:"provider"`
+	Model     string        `json:"model,omitempty"`
+	Language  string        `json:"language,omitempty"`
+	Fallbacks []STTFallback `json:"fallbacks,omitempty"`
 }
 
 type LLMConfig struct {
 	Provider     string        `json:"provider"`
 	Model        string        `json:"model"`
 	SystemPrompt string        `json:"system_prompt,omitempty"`
-	CredentialID string        `json:"credential_id,omitempty"`
 	Fallbacks    []LLMFallback `json:"fallbacks,omitempty"`
 	// MaxParallel bounds concurrently executing tool calls within one round (1..16, 0 keeps default 1).
 	MaxParallel int `json:"max_parallel,omitempty"`
 }
 
 type TTSConfig struct {
-	Provider     string        `json:"provider"`
-	Voice        string        `json:"voice,omitempty"`
-	CredentialID string        `json:"credential_id,omitempty"`
-	Fallbacks    []TTSFallback `json:"fallbacks,omitempty"`
+	Provider  string        `json:"provider"`
+	Voice     string        `json:"voice,omitempty"`
+	Fallbacks []TTSFallback `json:"fallbacks,omitempty"`
 	// CleanText controls whether markdown, emojis, and formatting markers are stripped
 	// before synthesis. When nil or true, text cleaning is active. Set false to disable.
 	CleanText *bool `json:"clean_text,omitempty"`
@@ -219,56 +213,48 @@ func (c Config) Missing() []string {
 	return reasons
 }
 
+// Availability says whether a build and environment can run provider/service.
+type Availability interface {
+	Check(provider, service string) Unavailable
+}
+
+// Unavailable says why a provider service cannot run; the zero value means it can.
+type Unavailable struct {
+	Reason     string
+	MissingEnv []string
+}
+
 // Stage names one provider slot of an agent.
 type Stage struct {
-	Name         string // "stt" | "llm" | "tts"
-	Provider     string
-	CredentialID string
+	Name     string // "stt" | "llm" | "tts"
+	Provider string
 }
 
 func (c Config) Stages() []Stage {
 	return []Stage{
-		{Name: "stt", Provider: c.STT.Provider, CredentialID: c.STT.CredentialID},
-		{Name: "llm", Provider: c.LLM.Provider, CredentialID: c.LLM.CredentialID},
-		{Name: "tts", Provider: c.TTS.Provider, CredentialID: c.TTS.CredentialID},
+		{Name: "stt", Provider: c.STT.Provider},
+		{Name: "llm", Provider: c.LLM.Provider},
+		{Name: "tts", Provider: c.TTS.Provider},
 	}
 }
 
-// ResolveCredential checks the credential a stage is attached to: it must be
-// named explicitly, exist, belong to the stage's provider and not be marked
-// invalid. It returns a readiness reason (e.g. "missing_credential_stt") otherwise.
-func ResolveCredential(stage Stage, registry *provider.Registry, creds []storage.Credential) (string, string) {
-	if _, ok := registry.Provider(stage.Provider); !ok || stage.Provider == provider.MCPProviderID {
-		return "", "unknown_provider_" + stage.Name
+// AttachmentProblems lists why a config cannot run: missing fields, or stages
+// whose provider is unknown, unsupported or lacks credentials in the environment.
+func AttachmentProblems(c Config, av Availability) (reasons, missingEnv []string) {
+	if m := c.Missing(); len(m) > 0 {
+		return m, nil
 	}
-	if !registry.Supports(stage.Provider, provider.Capability(stage.Name)) {
-		return "", "unsupported_provider_" + stage.Name
-	}
-	if stage.CredentialID == "" {
-		return "", "missing_credential_" + stage.Name
-	}
-	for _, c := range creds {
-		if c.ID == stage.CredentialID {
-			if c.Provider != stage.Provider || c.ValidationState == "invalid" {
-				return "", "invalid_credential_" + stage.Name
-			}
-			return c.ID, ""
+	for _, st := range c.Stages() {
+		if u := av.Check(st.Provider, st.Name); u.Reason != "" {
+			reasons = append(reasons, u.Reason+"_"+st.Name)
+			missingEnv = append(missingEnv, u.MissingEnv...)
 		}
 	}
-	return "", "missing_credential_" + stage.Name
+	return reasons, uniq(missingEnv)
 }
 
-// AttachmentProblems lists why a config is not attached to a usable set of
-// providers: missing fields, or stages whose provider/credential cannot run.
-func AttachmentProblems(c Config, registry *provider.Registry, creds []storage.Credential) []string {
-	problems := c.Missing()
-	if len(problems) > 0 {
-		return problems
-	}
-	for _, stage := range c.Stages() {
-		if _, reason := ResolveCredential(stage, registry, creds); reason != "" {
-			problems = append(problems, reason)
-		}
-	}
-	return problems
+// uniq sorts and de-duplicates ss.
+func uniq(ss []string) []string {
+	slices.Sort(ss)
+	return slices.Compact(ss)
 }
