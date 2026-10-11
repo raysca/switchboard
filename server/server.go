@@ -79,7 +79,8 @@ type Server struct {
 	publicAddr   string // bound addresses after Start (useful with ":0")
 	adminAddr    string
 	wsServer     *ws.Server
-	underlay     func() ws.Underlay // background ambience factory, nil when off
+	underlay     func() ws.Underlay            // background ambience factory, nil when off
+	cues         map[string]func() ws.Underlay // handoff cue sounds by name
 
 	mu          sync.Mutex
 	activeCalls map[uint64]*activeCall
@@ -192,6 +193,9 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 
 	if s.underlay, err = loadBackground(cfg, ws.FixedPlayerSampleRate); err != nil {
+		return nil, err
+	}
+	if s.cues, err = loadCues(cfg, ws.FixedPlayerSampleRate); err != nil {
 		return nil, err
 	}
 	s.setupRoutes()
@@ -383,6 +387,7 @@ func (s *Server) setupRoutes() {
 	}
 
 	wsCfg.Underlay = s.underlay
+	wsCfg.Cues = len(s.cues) > 0
 	s.wsServer = ws.NewServer(wsCfg)
 	s.wsServer.OnSessionReady = s.onSessionReady
 	s.wsServer.OnText = s.onText
@@ -474,6 +479,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 	call.PushToTalk = conn.PushToTalk()
 	call.OnHandoff = s.onHandoff(timeline, call.StoredSessionID)
+	cue := s.newCallCue(call.Graph, conn.Cue(), timeline)
+	if cue != nil {
+		base := call.OnHandoff
+		call.OnHandoff = func(e core.HandoffEvent) { base(e); cue.onHandoff(e) }
+	}
 	phase := "build_pipeline"
 	var stopRecording func()
 	fail := func(err error) (*core.Session, error) {
@@ -523,12 +533,14 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	session.OnFrame = func(f core.Frame, dir core.Direction) {
 		switch f.Type() {
 		case core.FrameUserStartedSpeaking:
+			cue.userSpeech(true)
 			if !speechActive {
 				speechActive = true
 				firstTokenRecorded = false
 				timeline.Record(TimelineEvent{Type: EventSpeechStart})
 			}
 		case core.FrameUserStoppedSpeaking:
+			cue.userSpeech(false)
 			if speechActive {
 				speechActive = false
 				timeline.Record(TimelineEvent{Type: EventSpeechStop})
@@ -558,6 +570,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			}
 		case core.FrameOutputAudio:
 			// Audio frames stream directly to client; first chunk per unit is covered by EventTTSUnit
+			cue.botAudio()
 		case core.FrameInterruption:
 			intr := f.(*core.InterruptionFrame)
 			if intr.Gen != lastInterruption {

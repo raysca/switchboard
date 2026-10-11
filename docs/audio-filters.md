@@ -95,3 +95,18 @@ Cost and limits:
 - If a flush or arriving speech races an ambience frame between mixing and write, the ambience position skips one frame (a possible tick, once).
 - A one-shot also starts with that 5 ms blend. A one-shot (`loop: false`) ends in silence and the writer stops emitting.
 - An ambience write failure ends the connection like any slow-client error.
+
+## Handoff cues (graph agents)
+
+A graph agent can play a sound while the call is between agents, so the caller never hears dead air. Sounds are operator files named under `audio.cues` (PCM16 mono WAV, resampled once at startup):
+
+```yaml
+audio:
+  cues:
+    chime:
+      file: /etc/govoice/chime.wav
+      gain_db: -20   # -60..0, default -20
+      loop: false    # default true; a one-shot chime vs a bed that loops until the new agent speaks
+```
+
+The agent picks one with `handoff_cue: {name: chime, after_ms: 300}` in its graph config. The cue starts only if the gap after the old agent's last audio outlasts `after_ms` (default 300), so quick handoffs stay silent. It fades out (30 ms) on the new agent's first audio, when the caller speaks, if the handoff fails, or after 10 s. Cue frames are non-speech, uninterruptible output like the background: recordings and heard-text ignore them. The timeline records `cue_start` and `cue_stop` (with the reason). An unknown cue name logs a warning and the call runs without a cue. At most 8 cues; names match `[a-z0-9_-]{1,32}`.

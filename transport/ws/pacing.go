@@ -676,6 +676,13 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 	}
 }
 
+// wake nudges an idle Run loop to re-check the underlay (a cue just started).
+func (w *PacedWriter) wake() {
+	w.mu.Lock()
+	w.cond.Broadcast()
+	w.mu.Unlock()
+}
+
 func (w *PacedWriter) next(ctx context.Context) (*pacedFrame, time.Duration, time.Time, chan struct{}, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

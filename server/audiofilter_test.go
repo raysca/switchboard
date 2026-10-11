@@ -171,3 +171,54 @@ func TestBackgroundLoadedOncePerProcessCursorPerSession(t *testing.T) {
 }
 
 func ptrF(v float64) *float64 { return &v }
+
+func TestAudioCuesValidationAndLoad(t *testing.T) {
+	pcm := make([]byte, 2*2400)
+	wav := append([]byte("RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data"), byte(len(pcm)), byte(len(pcm)>>8), 0, 0)
+	path := filepath.Join(t.TempDir(), "chime.wav")
+	if err := os.WriteFile(path, append(wav, pcm...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := DefaultConfig(ProfileDevelopment)
+	if mk, err := loadCues(c, 24000); mk != nil || err != nil {
+		t.Fatalf("no cues configured must mean none: %v %v", mk, err)
+	}
+	c.Audio.Cues = map[string]CueConfig{"chime": {File: path, Loop: ptrB(false)}}
+	if err := validateAudio(c); err != nil {
+		t.Fatalf("valid cue rejected: %v", err)
+	}
+	mk, err := loadCues(c, 24000)
+	if err != nil || mk["chime"] == nil {
+		t.Fatalf("load: %v %v", mk, err)
+	}
+	a, b := mk["chime"](), mk["chime"]()
+	if a == b || a.Rate() != 24000 {
+		t.Fatal("each call needs its own cursor at the player rate")
+	}
+	for name, cues := range map[string]map[string]CueConfig{
+		"no-file":   {"chime": {}},
+		"bad-name":  {"Bad Name!": {File: path}},
+		"gain-high": {"chime": {File: path, GainDB: ptrF(3)}},
+		"too-many":  tooManyCues(path),
+	} {
+		c := DefaultConfig(ProfileDevelopment)
+		c.Audio.Cues = cues
+		if err := validateAudio(c); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	c.Audio.Cues = map[string]CueConfig{"chime": {File: filepath.Join(t.TempDir(), "nope.wav")}}
+	if _, err := loadCues(c, 24000); err == nil {
+		t.Fatal("missing file accepted")
+	}
+}
+
+func tooManyCues(path string) map[string]CueConfig {
+	m := map[string]CueConfig{}
+	for i := range maxCues + 1 {
+		m["c"+string(rune('a'+i))] = CueConfig{File: path}
+	}
+	return m
+}
+
+func ptrB(v bool) *bool { return &v }

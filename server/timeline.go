@@ -40,6 +40,8 @@ const (
 	EventNodeActive    TimelineEventType = "node_active"    // Details = node now answering
 	EventNodeClosed    TimelineEventType = "node_closed"    // Details = node left and closed
 	EventHandoffFailed TimelineEventType = "handoff_failed" // Details = target node, Error = cause
+	EventCueStart      TimelineEventType = "cue_start"      // the handoff cue began playing
+	EventCueStop       TimelineEventType = "cue_stop"       // Details = why (first_audio, barge_in, failed, cap)
 )
 
 // TimelineEvent represents an immutable diagnostic record in a session trace.

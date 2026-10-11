@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -41,7 +42,54 @@ func validateAudio(cfg *Config) error {
 	} else if g := b.GainDB; g != nil && (*g < -60 || *g > 0 || *g != *g) {
 		return fmt.Errorf("audio.background.gain_db %v out of range -60..0", *g)
 	}
+	if err := validateCues(cfg.Audio.Cues); err != nil {
+		return err
+	}
 	return nil
+}
+
+const maxCues = 8
+
+var cueName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+
+func validateCues(cues map[string]CueConfig) error {
+	if len(cues) > maxCues {
+		return fmt.Errorf("audio.cues: at most %d cues", maxCues)
+	}
+	for name, c := range cues {
+		switch {
+		case !cueName.MatchString(name):
+			return fmt.Errorf("audio.cues: name %q must match %s", name, cueName)
+		case c.File == "":
+			return fmt.Errorf("audio.cues.%s.file is required", name)
+		case c.GainDB != nil && (*c.GainDB < -60 || *c.GainDB > 0 || *c.GainDB != *c.GainDB):
+			return fmt.Errorf("audio.cues.%s.gain_db %v out of range -60..0", name, *c.GainDB)
+		}
+	}
+	return nil
+}
+
+// loadCues reads every cue file once for the process (resampled to the
+// transport's fixed player rate) and returns a per-call cursor factory by name,
+// or nil when none are configured.
+func loadCues(cfg *Config, rate int) (map[string]func() ws.Underlay, error) {
+	if len(cfg.Audio.Cues) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]func() ws.Underlay, len(cfg.Audio.Cues))
+	for name, c := range cfg.Audio.Cues {
+		gain := -20.0
+		if c.GainDB != nil {
+			gain = *c.GainDB
+		}
+		a, err := mixer.LoadAsset(c.File, rate, gain)
+		if err != nil {
+			return nil, fmt.Errorf("audio.cues.%s.file: %w", name, err)
+		}
+		loop := c.Loop == nil || *c.Loop
+		out[name] = func() ws.Underlay { return a.NewCursor(loop) }
+	}
+	return out, nil
 }
 
 // buildOutputGain returns the pre-transport gain stage, or nil at 0 dB.

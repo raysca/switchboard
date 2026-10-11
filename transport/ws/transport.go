@@ -53,6 +53,9 @@ type ServerConfig struct {
 	// Underlay builds one session's background ambience (nil: none). Its Rate
 	// must equal FixedPlayerRate. See PacedWriter.Underlay.
 	Underlay func() Underlay
+	// Cues gives every session a CueUnderlay (Connection.Cue) so the server can
+	// play a sound over the call at run time; the background, if any, is kept.
+	Cues bool
 }
 
 // DefaultServerConfig returns production-ready server parameters.
@@ -86,6 +89,7 @@ type Connection struct {
 	claims     *token.Claims
 	cfg        ServerConfig
 	pacer      *PacedWriter
+	cue        *CueUnderlay                 // nil unless ServerConfig.Cues
 	session    atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
 	tap        atomic.Pointer[AudioTap]     // optional call recorder; nil = none
 	seqCounter atomic.Uint64
@@ -449,8 +453,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return wsConn.Write(ctx, websocket.MessageBinary, data)
 	})
 	conn.pacer = pacer
+	var background Underlay
 	if s.cfg.Underlay != nil {
-		pacer.Underlay = s.cfg.Underlay() // per-session cursor over shared ambience
+		background = s.cfg.Underlay() // per-session cursor over shared ambience
+	}
+	switch {
+	case s.cfg.Cues:
+		conn.cue = NewCueUnderlay(background)
+		conn.cue.wake = pacer.wake
+		pacer.Underlay = conn.cue
+	case background != nil:
+		pacer.Underlay = background
 	}
 
 	// Completion and speaking callbacks run outside pacer locks. Speaking is
@@ -1163,3 +1176,6 @@ func (c *Connection) AgentID() string {
 func (c *Connection) ID() uint64 {
 	return c.id
 }
+
+// Cue is the session's run-time cue player (nil unless ServerConfig.Cues).
+func (c *Connection) Cue() *CueUnderlay { return c.cue }

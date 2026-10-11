@@ -222,6 +222,9 @@ type Config struct {
 			GainDB *float64 `yaml:"gain_db"` // -60..0, default -30 when unset
 			Loop   *bool    `yaml:"loop"`    // default true
 		} `yaml:"background"`
+		// Cues are named sounds a graph agent plays while the call is between
+		// agents (handoff_cue). See docs/audio-filters.md.
+		Cues map[string]CueConfig `yaml:"cues"`
 	} `yaml:"audio"`
 
 	// Idle: user-idle prompts/hang-up and the stuck-bot watchdog (see IdleConfig).
@@ -379,4 +382,12 @@ func (c *Config) VADProcessorConfigForStopMS(overrideMS int) vad.ProcessorConfig
 		pc.StopChunks = (ms + chunkMS - 1) / chunkMS
 	}
 	return pc
+}
+
+// CueConfig is one handoff cue sound: a PCM16 mono WAV, played once or looped
+// until the new agent speaks. GainDB is -60..0 (default -20).
+type CueConfig struct {
+	File   string   `yaml:"file"`
+	GainDB *float64 `yaml:"gain_db"`
+	Loop   *bool    `yaml:"loop"` // default true
 }
