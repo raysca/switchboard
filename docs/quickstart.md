@@ -249,6 +249,8 @@ Push-to-talk calls ignore `turn.stop`, `turn.min_words` and the smart-turn
 model, but `turn.mute` strategies still apply: with `always`, a press while
 the bot talks does not interrupt it.
 
+A backend can steer a live call with the management key: `POST /api/v1/sessions/$SESSION_ID/context` with `{"messages":[{"content":"the caller is on the billing page"}],"run":true}` adds an operator note and makes the agent respond when the call is quiet. `$SESSION_ID` is the voice token's `jti`; see [the API doc](api/v1.md).
+
 ### DTMF (keypad tones)
 
 Off by default; enable per server under `dtmf:`. `detect: true` finds keypad
