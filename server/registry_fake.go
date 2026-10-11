@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"govoice/core"
@@ -29,13 +30,26 @@ func init() {
 			}
 			return passSTT{}, nil
 		})
-		r.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) {
+		r.Register("google.llm", func(_ *Config, spec StageSpec) (core.Processor, error) {
 			// Echo the user's text so scenarios prove their input reached the LLM.
 			// GOVOICE_FAKE_LLM_DELAY (a Go duration) delays every chunk: only the
 			// perf-gate self-test (make perf-gate-selftest) sets it, to prove a
 			// latency regression fails the gate. Exists only in this build tag.
 			delay, _ := time.ParseDuration(os.Getenv("GOVOICE_FAKE_LLM_DELAY"))
-			return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"You said: "}, EchoUser: true, ChunkDelay: delay}), nil
+			cfg := core.FakeLLMConfig{ResponseChunks: []string{"You said: "}, EchoUser: true, ChunkDelay: delay, Executor: spec.ToolExecutor,
+				ToolOnPhrase: map[string]string{}, AfterTool: "Connecting you."}
+			// Graph agents: GOVOICE_FAKE_LLM_LABEL=1 prefixes each reply with the node's
+			// system prompt in brackets, so a test can tell which agent answered; a user
+			// message "transfer to <node name>" makes the fake call that node's transfer tool.
+			if os.Getenv("GOVOICE_FAKE_LLM_LABEL") != "" {
+				cfg.Label = "[" + spec.SystemPrompt + "] "
+			}
+			for _, d := range spec.Tools {
+				if node, ok := strings.CutPrefix(d.Name, "transfer_to_"); ok {
+					cfg.ToolOnPhrase["transfer to "+strings.ReplaceAll(node, "_", " ")] = d.Name
+				}
+			}
+			return core.NewFakeLLMProcessor(cfg), nil
 		})
 		r.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
 			return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2}), nil

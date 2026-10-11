@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -175,6 +177,36 @@ type FakeLLMConfig struct {
 	// non-fatal ErrorFrame instead of the final LLMTextFrame (provider failure).
 	FailWith  error
 	FailAfter int
+	// Label prefixes every reply (for example "[front] ") so a test can tell
+	// which agent of a graph answered.
+	Label string
+	// ToolOnPhrase maps a lower-case phrase to a tool name. A user message that
+	// contains the phrase makes the model call that tool through Executor and
+	// answer AfterTool (default "OK.") instead of its normal reply, the way a
+	// real model answers after a tool round.
+	ToolOnPhrase map[string]string
+	Executor     ToolExecutor
+	AfterTool    string
+}
+
+// toolFor is the tool the message asks the fake model to call (the first
+// matching phrase in sorted order, so the choice is deterministic).
+func (c FakeLLMConfig) toolFor(msg string) string {
+	if c.Executor == nil {
+		return ""
+	}
+	msg = strings.ToLower(msg)
+	phrases := make([]string, 0, len(c.ToolOnPhrase))
+	for p := range c.ToolOnPhrase {
+		phrases = append(phrases, p)
+	}
+	sort.Strings(phrases)
+	for _, p := range phrases {
+		if strings.Contains(msg, p) {
+			return c.ToolOnPhrase[p]
+		}
+	}
+	return ""
 }
 
 // FakeLLMProcessor simulates streamed or non-streamed LLM responses.
@@ -225,6 +257,18 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 			chunks := p.cfg.ResponseChunks
 			if p.cfg.EchoUser {
 				chunks = append(chunks[:len(chunks):len(chunks)], um.Content)
+			}
+			if tool := p.cfg.toolFor(um.Content); tool != "" {
+				_, _ = p.cfg.Executor.Execute(c, ToolCall{ID: "fake-" + um.Turn, Name: tool, Arguments: json.RawMessage(`{}`),
+					TurnID: TurnID(um.Turn), Generation: Generation(gen)})
+				after := p.cfg.AfterTool
+				if after == "" {
+					after = "OK."
+				}
+				chunks = []string{after}
+			}
+			if p.cfg.Label != "" {
+				chunks = append([]string{p.cfg.Label}, chunks...)
 			}
 			for i, chunk := range chunks {
 				if p.cfg.FailWith != nil && i == p.cfg.FailAfter {
