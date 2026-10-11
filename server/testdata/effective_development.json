@@ -137,7 +137,8 @@
    "RotationThreshold": 240000000000
   },
   "GoogleTTS": {
-   "SampleRate": 24000
+   "SampleRate": 24000,
+   "DisableStreaming": false
   },
   "XAILLM": {
    "Endpoint": "https://api.x.ai/v1/responses"
@@ -152,7 +153,8 @@
    "Endpoint": "wss://api.x.ai/v1/stt"
   },
   "XAITTS": {
-   "Endpoint": "https://api.x.ai/v1/tts"
+   "Endpoint": "https://api.x.ai/v1/tts",
+   "DisableStreaming": false
   }
  },
  "Observability": {
