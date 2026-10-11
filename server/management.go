@@ -91,7 +91,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.SetStore(store)
 	s.credentials, s.mcpService, s.providerDefs = creds, mcpService, registry
 	s.SetProviderManagementAPI(s.providersRoutes(&api.ProviderManagement{Credentials: creds, Registry: registry}))
-	s.agents = agent.NewService(store)
+	s.agents = agent.NewService(store, s.availability)
 	s.SetAgentManagementAPI(api.NewAgentsHandler(s.agents))
 	s.SetMCPManagementAPI(mcp.Handler(mcpService))
 	s.SetSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
