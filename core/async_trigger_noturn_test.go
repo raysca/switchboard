@@ -98,4 +98,5 @@ func TestAsyncTriggerOverflowKeepsTheRequestedTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "the requested reply", func() bool { return r.llm.count() == 1 })
+	never(t, "a second turn", func() bool { return r.llm.count() != 1 })
 }

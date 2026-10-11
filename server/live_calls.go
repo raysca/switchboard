@@ -3,10 +3,10 @@ package server
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"govoice/core"
 )
@@ -59,13 +59,40 @@ func (c *callInjector) Run() {
 	c.trigger.Deliver(core.AsyncToolResult{Call: core.ToolCall{Name: runLLMName}, Inject: func() error { return nil }})
 }
 
-// noteMarker matches the start of an operator note in any case or spacing.
-var noteMarker = regexp.MustCompile(`(?i)\[\s*note from the operator`)
+// serverMarkers are the phrases (letters only) that introduce text the server itself places in a
+// call's history as a user-role message: operator notes and the idle / turn-completion notices.
+var serverMarkers = []string{"notefromtheoperator", "turncompletionnotice", "idlenotice", "systemnotice"}
 
-// neutralizeNoteMarker defuses the operator-note marker in text a caller supplied (spoken or
-// typed), so only the server can author an operator note.
+// bracketRepl turns every bracket form into parentheses.
+var bracketRepl = strings.NewReplacer("[", "(", "]", ")", "［", "(", "］", ")", "【", "(", "】", ")", "〔", "(", "〕", ")", "「", "(", "」", ")")
+
+// letters keeps only the letters of s, lower-cased, with full-width Latin folded to ASCII, so
+// spacing, punctuation, zero-width characters and full-width spelling do not hide a phrase.
+func letters(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r >= 0xFF21 && r <= 0xFF3A || r >= 0xFF41 && r <= 0xFF5A { // full-width Latin
+			r -= 0xFEE0
+		}
+		if unicode.IsLetter(r) {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return b.String()
+}
+
+// neutralizeNoteMarker defuses text a caller supplied (spoken or typed) that tries to pass as a
+// server-authored notice: when it mentions one of serverMarkers, its brackets become parentheses.
+// This is a heuristic (look-alike letters from other scripts are not folded); the model still
+// treats caller text as untrusted.
 func neutralizeNoteMarker(s string) string {
-	return noteMarker.ReplaceAllString(s, "(note from the operator")
+	l := letters(s)
+	for _, m := range serverMarkers {
+		if strings.Contains(l, m) {
+			return bracketRepl.Replace(s)
+		}
+	}
+	return s
 }
 
 // sessionInjector ends with its session: once the session is closing the call is gone, even
