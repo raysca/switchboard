@@ -335,8 +335,14 @@ func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter)
 	}
 	p.segs = append(p.segs, segment{turn: seg})
 	p.vadSpeaking = true
-	return p.observe(e, "", false)
+	// A new segment has no final yet, so the turn's text is no longer final: an earlier
+	// segment's final must not end the turn while the resumed words are still being transcribed.
+	return p.observe(e, p.joined(), p.lastFinal())
 }
+
+// lastFinal reports whether the turn's newest segment has its final transcript: the turn's
+// text is final only then (an earlier segment's late final does not unsettle a final tail).
+func (p *Processor) lastFinal() bool { return len(p.segs) > 0 && p.segs[len(p.segs)-1].final }
 
 // onPushToTalk applies a push-to-talk press or release and consumes the frame.
 // A press is ExternalStart evidence for the current or next VAD segment, so
@@ -418,10 +424,7 @@ func (p *Processor) onCandidate(c *core.TranscriptCandidateFrame, e core.Emitter
 	out.Turn, out.Gen, out.Text = p.id, p.wireGen(), p.joined()
 	// The manager owns the turn boundary: an STT end-of-utterance would let the finalizer commit
 	// the turn 200 ms later, before resumed speech can join it. TurnEventCompleted commits it.
-	out.Final, out.EndOfUtterance = c.Final || c.EndOfUtterance, false
-	if idx != len(p.segs)-1 {
-		out.Final = false
-	}
+	out.Final, out.EndOfUtterance = p.lastFinal(), false
 	p.candGen = uint64(out.Gen)
 	if err := e.Push(&out); err != nil {
 		return err

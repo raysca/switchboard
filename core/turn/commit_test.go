@@ -14,8 +14,14 @@ func newCommitHarness(t *testing.T) *harness {
 	t.Helper()
 	cfg := DefaultConfig()
 	cfg.StartStrategies = []UserTurnStartStrategy{ExternalStart()}
+	return newCommitHarnessWith(t, cfg, StopChain(ExternalStop()))
+}
+
+// newCommitHarnessWith is the finalizer-backed harness for any start config and stop detector.
+func newCommitHarnessWith(t *testing.T, cfg Config, det TurnDetector) *harness {
+	t.Helper()
 	h := &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &core.PassthroughProcessor{}}
-	proc, err := NewProcessor(cfg, ProcessorOptions{Clock: h.clk, Detector: StopChain(ExternalStop())})
+	proc, err := NewProcessor(cfg, ProcessorOptions{Clock: h.clk, Detector: det})
 	if err != nil {
 		t.Fatal(err)
 	}
