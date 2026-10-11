@@ -3,13 +3,19 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -35,14 +41,15 @@ const e2eMgmtKey = "management-test-key-32-bytes-long-and-separate"
 // stageProbe wraps the fake stage factories: it counts builds and closes per
 // node (LLM by prompt, TTS by voice), can fail or hold a node's build.
 type stageProbe struct {
-	mu      sync.Mutex
-	built   map[string]int
-	closed  map[string]int
-	failTTS string        // a TTS voice whose build fails
-	holdTTS string        // a TTS voice whose build waits for gate
-	gate    chan struct{} // closed to let the held build finish
-	entered chan struct{} // closed when the held build starts
-	once    sync.Once
+	mu            sync.Mutex
+	built         map[string]int
+	closed        map[string]int
+	failTTS       string        // a TTS voice whose build fails
+	holdTTS       string        // a TTS voice whose build waits for gate
+	failAfterHold bool          // the held build fails once released (a provider that times out)
+	gate          chan struct{} // closed to let the held build finish
+	entered       chan struct{} // closed when the held build starts
+	once          sync.Once
 }
 
 func (p *stageProbe) count(m map[string]int, k string) int {
@@ -89,6 +96,9 @@ func (p *stageProbe) install(s *Server) {
 				if key == p.holdTTS && key != "" {
 					p.once.Do(func() { close(p.entered) })
 					<-p.gate
+					if p.failAfterHold {
+						return nil, errors.New("tts provider timed out")
+					}
 				}
 			}
 			proc, err := orig(cfg, spec)
@@ -116,18 +126,31 @@ type graphRigE2E struct {
 	agentID string
 }
 
-func graphConfigJSON(cred, salesPrompt, salesVoice string) json.RawMessage {
+func graphConfigJSON(cred, salesPrompt, salesVoice string, cue ...string) json.RawMessage {
+	tail := ""
+	if len(cue) > 0 {
+		tail = `,"handoff_cue":` + cue[0]
+	}
 	stage := func(extra string) string { return `"provider":"google","credential_id":"` + cred + `"` + extra }
 	return json.RawMessage(`{"entry":"front","nodes":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{` + stage(`,"model":"s"`) + `},"llm":{` + stage(`,"model":"m","system_prompt":"FRONT"`) + `},"tts":{` + stage(`,"voice":"frontvoice"`) + `}}},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{` + stage(`,"model":"m","system_prompt":"`+salesPrompt+`"`) + `},"tts":{` + stage(`,"voice":"`+salesVoice+`"`) + `}}}],` +
-		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)
+		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]` + tail + `}`)
 }
 
-func newGraphRigE2E(t *testing.T, probe *stageProbe) *graphRigE2E {
+func newGraphRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *graphRigE2E {
 	t.Helper()
 	t.Setenv("GOVOICE_FAKE_LLM_LABEL", "1")
-	s := apiTestServer(t)
+	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", e2eMgmtKey)
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
+	for _, m := range mods {
+		m(cfg)
+	}
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
 	cred, err := s.credentials.Create(t.Context(), credential.CreateInput{Provider: "google", Secret: "test-google-api-key"})
@@ -140,8 +163,8 @@ func newGraphRigE2E(t *testing.T, probe *stageProbe) *graphRigE2E {
 	return &graphRigE2E{t: t, s: s, ts: ts, probe: probe, credID: cred.ID}
 }
 
-func (r *graphRigE2E) createGraphAgent(salesVoice string) string {
-	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Dealership", Config: graphConfigJSON(r.credID, "SALES", salesVoice)})
+func (r *graphRigE2E) createGraphAgent(salesVoice string, cue ...string) string {
+	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Dealership", Config: graphConfigJSON(r.credID, "SALES", salesVoice, cue...)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		r.t.Fatalf("graph agent: %+v err=%v", a.Readiness, err)
 	}
@@ -157,7 +180,16 @@ type e2eCall struct {
 	sessionID string // the stored session (the token's jti)
 	mu        sync.Mutex
 	texts     []string
+	audio     []audioArrival
 	seq       int
+}
+
+// audioArrival is one bot audio frame on the wire. The fake TTS sends silence,
+// so a frame with a high peak is the handoff cue.
+type audioArrival struct {
+	at   time.Time
+	peak int
+	dur  time.Duration
 }
 
 func (r *graphRigE2E) dial(agentID string) *e2eCall {
@@ -199,13 +231,38 @@ func (c *e2eCall) read() {
 			return
 		}
 		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
-			if m, ok := f.(*ws.WireMessageFrame); ok && strings.Contains(m.Data, "bot-llm-text") {
+			switch m := f.(type) {
+			case *ws.WireMessageFrame:
+				if strings.Contains(m.Data, "bot-llm-text") {
+					c.mu.Lock()
+					c.texts = append(c.texts, m.Data)
+					c.mu.Unlock()
+				}
+			case *core.InputAudioFrame: // server-to-client audio decodes as an audio frame
+				peak := 0
+				for i := 0; i+1 < len(m.Samples); i += 2 {
+					v := int(int16(binary.LittleEndian.Uint16(m.Samples[i:])))
+					peak = max(peak, v, -v)
+				}
 				c.mu.Lock()
-				c.texts = append(c.texts, m.Data)
+				c.audio = append(c.audio, audioArrival{at: time.Now(), peak: peak, dur: m.Duration})
 				c.mu.Unlock()
 			}
 		}
 	}
+}
+
+// cueFrames counts the bot audio frames that carry sound (the cue; speech is silent in the fake).
+func (c *e2eCall) cueFrames() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, a := range c.audio {
+		if a.peak > 2000 {
+			n++
+		}
+	}
+	return n
 }
 
 func (c *e2eCall) say(text string) {
@@ -456,5 +513,171 @@ func TestGraphE2EFlatAgentHasNoHandoffs(t *testing.T) {
 	}
 	if r.s.metrics.handoff.total.Load() != 0 {
 		t.Fatal("no handoff metrics for a flat agent")
+	}
+}
+
+// ---- Handoff cue, end to end -------------------------------------------------
+// A real server with audio.cues configured, a graph agent with a handoff_cue and a
+// WebSocket client that decodes the bot's audio frames: the cue is a tone on the
+// wire (the fake TTS sends silence), so its start, its length and its stop are
+// observable bytes, not just timeline events.
+
+// cueWAV is a 0.4 s 440 Hz tone, PCM16 mono 24 kHz (the transport's player rate).
+func cueWAV(t *testing.T) string {
+	t.Helper()
+	const rate, n = 24000, 9600
+	pcm := make([]byte, 2*n)
+	for i := 0; i < n; i++ {
+		binary.LittleEndian.PutUint16(pcm[2*i:], uint16(int16(12000*math.Sin(2*math.Pi*440*float64(i)/rate))))
+	}
+	var b bytes.Buffer
+	b.WriteString("RIFF")
+	_ = binary.Write(&b, binary.LittleEndian, uint32(36+len(pcm)))
+	b.WriteString("WAVEfmt ")
+	_ = binary.Write(&b, binary.LittleEndian, struct {
+		Size             uint32
+		Format, Channels uint16
+		Rate, ByteRate   uint32
+		Align, Bits      uint16
+	}{16, 1, 1, rate, rate * 2, 2, 16})
+	b.WriteString("data")
+	_ = binary.Write(&b, binary.LittleEndian, uint32(len(pcm)))
+	b.Write(pcm)
+	path := filepath.Join(t.TempDir(), "chime.wav")
+	if err := os.WriteFile(path, b.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func withCue(t *testing.T) func(*Config) {
+	path := cueWAV(t)
+	return func(c *Config) {
+		gain, loop := 0.0, true
+		c.Audio.Cues = map[string]CueConfig{"chime": {File: path, GainDB: &gain, Loop: &loop}}
+	}
+}
+
+func (r *graphRigE2E) cueStopReason() string {
+	for _, e := range r.timeline() {
+		if e.Type == EventCueStop {
+			return e.Details
+		}
+	}
+	return ""
+}
+
+// The cue fills the gap while the next agent is being built, then stops with a
+// short fade when the new agent speaks.
+func TestGraphE2ECuePlaysInTheHandoffGapAndStopsWhenSalesSpeaks(t *testing.T) {
+	probe := newProbe()
+	probe.holdTTS = "slowvoice" // the sales build takes as long as the test wants
+	r := newGraphRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createGraphAgent("slowvoice", `{"name":"chime","after_ms":50}`))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+
+	c.say("hello")
+	c.waitReplies("[FRONT", 1)
+	time.Sleep(300 * time.Millisecond)
+	if c.cueFrames() != 0 || r.has(EventCueStart, "") {
+		t.Fatal("a cue must not play outside a handoff")
+	}
+
+	c.say("transfer to sales")
+	c.waitReplies("Connecting you.", 1)
+	<-probe.entered
+	eventually(t, "cue on the wire", func() bool { return r.has(EventCueStart, "") && c.cueFrames() >= 5 })
+	playing := c.cueFrames()
+	time.Sleep(200 * time.Millisecond)
+	if c.cueFrames() <= playing {
+		t.Fatal("the cue must keep playing while the next agent is being built")
+	}
+
+	close(probe.gate) // sales is built; it greets
+	c.waitReplies("[SALES", 1)
+	eventually(t, "cue stopped by the new agent's first audio", func() bool { return r.cueStopReason() == "first_audio" })
+
+	time.Sleep(400 * time.Millisecond) // past the 30 ms fade
+	stopped := c.cueFrames()
+	time.Sleep(300 * time.Millisecond)
+	if c.cueFrames() != stopped {
+		t.Fatal("the cue kept playing after the sales agent spoke")
+	}
+	// In the gap the cue is paced audio, not a burst: 20 ms frames about 20 ms apart. (Its 30 ms
+	// fade runs under the new agent's first speech frames, which are not 20 ms.)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var gaps []time.Duration
+	var prev time.Time
+	for _, a := range c.audio {
+		if a.peak > 2000 && a.dur == 20*time.Millisecond {
+			if !prev.IsZero() {
+				gaps = append(gaps, a.at.Sub(prev))
+			}
+			prev = a.at
+		}
+	}
+	if len(gaps) < 5 {
+		t.Fatalf("only %d paced cue frames in the gap", len(gaps)+1)
+	}
+	slices.Sort(gaps)
+	if med := gaps[len(gaps)/2]; med < 10*time.Millisecond || med > 40*time.Millisecond {
+		t.Fatalf("cue frames arrive %v apart, want about 20 ms (paced, not a burst)", med)
+	}
+}
+
+// A handoff quicker than after_ms stays silent: nothing on the wire, no cue event.
+func TestGraphE2EQuickHandoffPlaysNoCue(t *testing.T) {
+	probe := newProbe()
+	r := newGraphRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createGraphAgent("salesvoice", `{"name":"chime","after_ms":8000}`))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+
+	c.say("transfer to sales")
+	c.waitReplies("[SALES", 1)
+	time.Sleep(500 * time.Millisecond)
+	if c.cueFrames() != 0 || r.has(EventCueStart, "") {
+		t.Fatalf("a quick handoff must be silent (cue frames=%d)", c.cueFrames())
+	}
+}
+
+// The next agent cannot be built while the cue plays: the cue ends, the caller
+// keeps the first agent, and no sound is left behind.
+func TestGraphE2ECueStopsWhenTheHandoffFails(t *testing.T) {
+	probe := newProbe()
+	probe.holdTTS, probe.failAfterHold = "slowvoice", true
+	r := newGraphRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createGraphAgent("slowvoice", `{"name":"chime","after_ms":50}`))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+
+	c.say("transfer to sales")
+	c.waitReplies("Connecting you.", 1)
+	<-probe.entered
+	eventually(t, "cue on the wire", func() bool { return c.cueFrames() >= 3 })
+
+	close(probe.gate) // the build now fails
+	eventually(t, "handoff failed", func() bool { return r.has(EventHandoffFailed, "sales") })
+	eventually(t, "cue stopped because the handoff failed", func() bool { return r.cueStopReason() == "failed" })
+	time.Sleep(400 * time.Millisecond)
+	stopped := c.cueFrames()
+	time.Sleep(300 * time.Millisecond)
+	if c.cueFrames() != stopped {
+		t.Fatal("the cue kept playing after the handoff failed")
+	}
+
+	c.say("are you still there")
+	c.waitReplies("[FRONT", 2) // the caller is still with the front agent
+}
+
+// An agent that names a sound the server does not have still hands off, silently.
+func TestGraphE2EUnknownCueNameStillHandsOff(t *testing.T) {
+	probe := newProbe()
+	r := newGraphRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createGraphAgent("salesvoice", `{"name":"missing","after_ms":50}`))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	c.say("transfer to sales")
+	c.waitReplies("[SALES", 1)
+	if c.cueFrames() != 0 || r.has(EventCueStart, "") {
+		t.Fatal("an unknown cue must play nothing")
 	}
 }

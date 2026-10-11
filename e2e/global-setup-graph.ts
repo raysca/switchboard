@@ -44,6 +44,26 @@ function start(name: string, cmd: string, args: string[], cwd: string, env: Node
   return child.pid!;
 }
 
+function toneWav(rate: number, seconds: number, hz: number, amplitude: number): Buffer {
+  const n = Math.round(rate * seconds);
+  const pcm = Buffer.alloc(2 * n);
+  for (let i = 0; i < n; i++) pcm.writeInt16LE(Math.round(amplitude * Math.sin((2 * Math.PI * hz * i) / rate)), 2 * i);
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0);
+  h.writeUInt32LE(36 + pcm.length, 4);
+  h.write("WAVEfmt ", 8);
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); // PCM
+  h.writeUInt16LE(1, 22); // mono
+  h.writeUInt32LE(rate, 24);
+  h.writeUInt32LE(rate * 2, 28);
+  h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34);
+  h.write("data", 36);
+  h.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([h, pcm]);
+}
+
 export default async function globalSetup() {
   if (LIVE && !process.env.E2E_XAI_SECRET) {
     console.warn("\n[e2e] No XAI_API_KEY (env or examples/.env): the live xAI run is skipped\n");
@@ -68,8 +88,11 @@ export default async function globalSetup() {
     .replace(/^public_listen_addr:.*$/m, `public_listen_addr: "127.0.0.1:${PORTS.public}"`)
     .replace(/^admin_listen_addr:.*$/m, `admin_listen_addr: "127.0.0.1:${PORTS.admin}"`)
     .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n${origins.map((o) => `  - "${o}"\n`).join("")}`);
+  // A handoff cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the agents can name as "chime".
+  const chime = path.join(tmpDir, "chime.wav");
+  fs.writeFileSync(chime, toneWav(24000, 0.4, 440, 12000));
   const configPath = path.join(tmpDir, "server.yaml");
-  fs.writeFileSync(configPath, config);
+  fs.writeFileSync(configPath, `${config}\naudio:\n  cues:\n    chime:\n      file: "${chime}"\n      gain_db: -20\n`);
 
   const stack: Stack = {
     repo,

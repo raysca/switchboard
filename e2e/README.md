@@ -100,10 +100,11 @@ typed into the browser, and live runs keep no traces. Without a key every live t
 
 Tests: (1) designer: draw a two-agent graph with a handoff and publish it; the stored version is
 the graph (STT only on the entry node). (2) Call: the front agent answers, the call is handed to
-sales, the live graph view moves to Sales, and the stored session has the `handoff.*` trace spans
-with `from_node` and `to_node`. (3) Designer: reopen, edit the handoff, republish (v2), a new call
+sales, the live graph view moves to Sales, the stored session has the `handoff.*` trace spans
+with `from_node` and `to_node`, and the server's session timeline shows the handoff cue (the `chime` sound
+the stack configures and the designer names) starting in the gap and stopping on the sales agent's first audio. (3) Designer: reopen, edit the handoff, republish (v2), a new call
 works. (4) Fake only: a sales node whose voice cannot be built (`brokenvoice`) leaves the caller
 with the front agent. (5) A plain one-node agent is unchanged.
 
-The server-side twin of the fake suite is `server/graph_e2e_test.go` (`make test-graph-e2e`). CI
+The server-side twin of the fake suite is `server/graph_e2e_test.go` (`make test-graph-e2e`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
 runs the fake suite as the `graph-e2e` job.

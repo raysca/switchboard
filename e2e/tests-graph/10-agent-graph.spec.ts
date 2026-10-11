@@ -39,6 +39,17 @@ async function api<T>(stack: Stack, route: string, init?: RequestInit): Promise<
   return (await res.json()) as T;
 }
 
+// The server-side timeline of the session that moved between agents (admin listener).
+async function timelineEvents(stack: Stack): Promise<{ type: string; details?: string }[]> {
+  for (let id = 1; id <= 10; id++) {
+    const res = await fetch(`${stack.adminUrl}/debug/timeline?session=${id}`);
+    if (!res.ok) continue;
+    const body = (await res.json()) as { events: { type: string; details?: string }[] };
+    if (body.events.some((e) => e.type === "handoff")) return body.events;
+  }
+  return [];
+}
+
 async function connectAdmin(page: Page, stack: Stack) {
   await page.goto(`${stack.uiUrl}/dashboard`);
   await page.getByLabel("Management key").fill(stack.managementKey);
@@ -127,6 +138,9 @@ test("designer: draw a two-agent graph with a handoff and publish it", async ({ 
   await page.getByLabel("Hand off when").fill("The caller wants to buy a car or asks about prices.");
   await page.getByRole("button", { name: "Add handoff" }).click();
   await expect(page.getByRole("button", { name: "Main agent → Sales" })).toBeVisible();
+  // The sound that fills the gap while the call is between agents (the server has "chime").
+  await page.getByLabel("Sound name").fill("chime");
+  await page.getByLabel("Start after (ms)").fill("50");
   await step(page, "graph designed");
 
   await page.getByRole("button", { name: "Publish" }).click();
@@ -144,6 +158,7 @@ test("designer: draw a two-agent graph with a handoff and publish it", async ({ 
   expect(cfg.nodes[1].config.llm.system_prompt).toBe(SALES_PROMPT);
   expect(cfg.edges).toHaveLength(1);
   expect(cfg.entry).toBe(cfg.nodes[0].id);
+  expect(cfg.handoff_cue).toEqual({ name: "chime", after_ms: 50 });
 });
 
 test("call: the front agent hands the call to sales and the live graph follows", async ({ page, stack }) => {
@@ -179,6 +194,16 @@ test("call: the front agent hands the call to sales and the live graph follows",
       return [t.data.spans.some((s) => s.name === "handoff.preparing"), !!active?.attributes?.from_node, !!active?.attributes?.to_node];
     })
     .toEqual([true, true, true]);
+
+  // The cue played over the gap between the agents and stopped when sales spoke: the
+  // server's session timeline has both events (the first call of this stack is session 1).
+  await expect
+    .poll(async () => {
+      const events = await timelineEvents(stack);
+      const stop = events.find((e) => e.type === "cue_stop");
+      return [events.some((e) => e.type === "cue_start"), stop?.details];
+    })
+    .toEqual([true, "first_audio"]);
 
   await page.getByTestId("disconnect-btn").click();
   await expect(page.getByTestId("connection-state")).toHaveText(/disconnected/i);
