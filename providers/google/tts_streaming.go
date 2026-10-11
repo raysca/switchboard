@@ -94,7 +94,7 @@ func (p *StreamingTTSProcessor) stream(ctx context.Context, u *ttsunit.Unit, pie
 		timer.Reset(p.idle)
 		return err
 	})
-	if stalled.Load() && ctx.Err() == nil {
+	if err != nil && stalled.Load() && ctx.Err() == nil {
 		return &ProviderError{Capability: "tts", BaseErr: ErrProviderTimeout, SafeMessage: "stream stalled", Retryable: true}
 	}
 	var pe *ProviderError

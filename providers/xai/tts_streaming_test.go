@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -371,5 +372,30 @@ func TestWSError_DoesNotCountAgainstTheBreaker(t *testing.T) {
 	v := classify(wsError(wsMsg{Type: "error", Message: "bad voice"}))
 	if !v.Retryable || !v.NoBreaker {
 		t.Fatalf("verdict = %+v, want retryable and NoBreaker", v)
+	}
+}
+
+type hangingClient struct{}
+
+func (hangingClient) Synthesize(ctx context.Context, _ string, _ TTSConfig) ([]byte, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// A stalled stream followed by a stalled fallback must surface as resilience.ErrTimeout, the cause
+// TTS failover recognizes; a bare context.DeadlineExceeded would not trigger the fallback provider.
+func TestStreamingTTS_StallIsReportedAsATimeout(t *testing.T) {
+	f := newWSFake(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _ = readUtterance(ctx, c)
+		_, _, _ = c.Read(ctx) // never answers
+	})
+	cfg := f.cfg(hangingClient{})
+	cfg.Timeout = 150 * time.Millisecond
+	cfg.RetryPolicy.MaxAttempts = 2
+	h := wsStart(t, cfg)
+	h.say(t, "t1", 1, "Hello", true)
+	wsWait(t, "the error", func() bool { return len(wsFrames[*core.ErrorFrame](h)) >= 1 })
+	if err := wsFrames[*core.ErrorFrame](h)[0].Err; !errors.Is(err, resilience.ErrTimeout) {
+		t.Fatalf("error = %v, want it to be resilience.ErrTimeout", err)
 	}
 }

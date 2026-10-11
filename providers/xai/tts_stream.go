@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core/netpool"
+	"govoice/core/resilience"
 	"govoice/core/ttsunit"
 )
 
@@ -148,11 +150,11 @@ func (u *unitRun) attempt(ctx context.Context, attempt int) (err error) {
 	cfg, slot := u.p.cfg, &u.p.slot
 	if attempt > 0 { // the stream failed before audio: the unary request is authoritative
 		slot.Drop()
-		ctx, cancel := context.WithTimeout(ctx, u.p.idle) // the fallback keeps the request's own deadline
+		fctx, cancel := context.WithTimeoutCause(ctx, u.p.idle, resilience.ErrTimeout) // the fallback keeps the request's own deadline
 		defer cancel()
-		pcm, err := cfg.Client.Synthesize(ctx, u.Frame.Text, cfg)
+		pcm, err := cfg.Client.Synthesize(fctx, u.Frame.Text, cfg)
 		if err != nil {
-			return err
+			return timedOut(fctx, ctx, err)
 		}
 		if err := u.Write(pcm); err != nil {
 			return err
@@ -188,11 +190,11 @@ func (u *unitRun) attempt(ctx context.Context, attempt int) (err error) {
 		}
 	}
 	for {
-		rctx, cancel := context.WithTimeout(ctx, u.p.idle) // idle limit; time in u.Write (playback pacing) is outside it
+		rctx, cancel := context.WithTimeoutCause(ctx, u.p.idle, resilience.ErrTimeout) // idle limit; time in u.Write (playback pacing) is outside it
 		_, data, err := s.conn.Read(rctx)
 		cancel()
 		if err != nil {
-			return fail(err)
+			return timedOut(rctx, ctx, fail(err))
 		}
 		var m wsMsg
 		if json.Unmarshal(data, &m) != nil {
@@ -213,4 +215,14 @@ func (u *unitRun) attempt(ctx context.Context, attempt int) (err error) {
 			return wsError(m)
 		}
 	}
+}
+
+// timedOut reports an idle-limit expiry as resilience.ErrTimeout, the cause TTS failover recognizes
+// (a bare context.DeadlineExceeded would not trigger the fallback provider). A cancel from the
+// caller's own ctx (barge-in, shutdown) is left as it was.
+func timedOut(limit, parent context.Context, err error) error {
+	if parent.Err() == nil && errors.Is(context.Cause(limit), resilience.ErrTimeout) {
+		return fmt.Errorf("%w: %w", resilience.ErrTimeout, err)
+	}
+	return err
 }
