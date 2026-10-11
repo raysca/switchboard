@@ -7,7 +7,8 @@
 
 Replies should start sooner after the caller stops talking, without cutting callers off mid-sentence. Success:
 - voice-to-voice latency on the nightly live S1 test goes down;
-- the push-to-talk, mute and mid-utterance-pause scenarios (S11, S12, S4) do not regress;
+- the push-to-talk and mute scenarios (S11, S12) do not regress;
+- hesitations shorter than the resume window (S10, 400 ms) stay one turn. A pause longer than about 0.8 s inside one utterance (S4's default 1 s) splits it into two turns, as in Pipecat. Accepted by the user on 2026-10-11 after the final review; the window is tuned from live S4/S10 numbers if needed;
 - no turn ends before its transcript (or before a bounded fallback).
 
 The user made three decisions on 2026-10-11:
