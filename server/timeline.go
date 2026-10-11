@@ -33,6 +33,13 @@ const (
 	EventLatency         TimelineEventType = "latency" // Details = stage, DurationMs = value
 	EventError           TimelineEventType = "error"
 	EventDisconnect      TimelineEventType = "disconnect"
+
+	// Graph calls: the call moving between agents (nodes).
+	EventNodePreparing TimelineEventType = "node_preparing" // Details = target node being built
+	EventHandoff       TimelineEventType = "handoff"        // Details = "from->to", DurationMs = commit to active
+	EventNodeActive    TimelineEventType = "node_active"    // Details = node now answering
+	EventNodeClosed    TimelineEventType = "node_closed"    // Details = node left and closed
+	EventHandoffFailed TimelineEventType = "handoff_failed" // Details = target node, Error = cause
 )
 
 // TimelineEvent represents an immutable diagnostic record in a session trace.
@@ -43,6 +50,7 @@ type TimelineEvent struct {
 	Gen        uint64            `json:"gen,omitempty"`
 	Type       TimelineEventType `json:"type"`
 	Provider   string            `json:"provider,omitempty"`
+	Node       string            `json:"node,omitempty"` // graph node that produced the event
 	Details    string            `json:"details,omitempty"`
 	DurationMs int64             `json:"duration_ms,omitempty"`
 	Error      string            `json:"error,omitempty"`
@@ -54,6 +62,7 @@ type SessionTimeline struct {
 	maxEvents int
 	ttl       time.Duration
 
+	node         atomic.Pointer[string] // graph node answering the call; stamped on events
 	mu           sync.Mutex
 	events       []TimelineEvent
 	head         int
@@ -86,6 +95,11 @@ func (t *SessionTimeline) Record(e TimelineEvent) {
 		e.Timestamp = time.Now()
 	}
 	e.SessionID = t.sessionID
+	if e.Node == "" {
+		if n := t.node.Load(); n != nil {
+			e.Node = *n
+		}
+	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -102,6 +116,9 @@ func (t *SessionTimeline) Record(e TimelineEvent) {
 		t.droppedCount.Add(1)
 	}
 }
+
+// SetNode records which graph node answers the call; later events carry it.
+func (t *SessionTimeline) SetNode(id string) { t.node.Store(&id) }
 
 // Events returns an ordered copy of all non-expired events.
 func (t *SessionTimeline) Events() []TimelineEvent {

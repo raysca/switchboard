@@ -473,6 +473,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		return nil, fmt.Errorf("resolve agent: %w", err)
 	}
 	call.PushToTalk = conn.PushToTalk()
+	call.OnHandoff = s.onHandoff(timeline, call.StoredSessionID)
 	phase := "build_pipeline"
 	var stopRecording func()
 	fail := func(err error) (*core.Session, error) {

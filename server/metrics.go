@@ -121,6 +121,7 @@ type Metrics struct {
 	AsyncToolResultsDroppedTotal atomic.Uint64
 	filters                      filterMetrics
 	summary                      summaryMetrics
+	handoff                      handoffMetrics
 	// completion verdicts: complete, incomplete_short, incomplete_long, no_marker.
 	completion [4]atomic.Uint64
 }
@@ -349,6 +350,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 
 	m.filters.write(w)
 	m.summary.write(w)
+	m.handoff.write(w)
 
 	// Transport
 

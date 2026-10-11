@@ -98,6 +98,12 @@ Voice Framework V1 provides an in-memory, circular ring buffer for deep incident
 - **Zero Content Leakage**: Transcripts and audio samples are **omitted by default**; only event names, state transitions, generation IDs, and latencies are recorded.
 - **Non-Blocking**: The timeline logger never blocks the session run loop. If the ring buffer fills, older events are overwritten and an `evicted_count` counter is incremented.
 
+### Graph agents (handoffs)
+
+An agent with more than one node moves the call between nodes. Every timeline event carries a `node` field (the node that was answering). Handoffs add these event types: `node_preparing` (target being built), `handoff` (`from->to`, `duration_ms` from the transfer to the new node being active), `node_active`, `node_closed` (the left node was closed) and `handoff_failed` (the caller stays with the old node; `error` is redacted). When storage is enabled the same lifecycle is persisted as trace spans named `handoff.preparing`, `handoff.active`, `handoff.closed`, `handoff.failed` (attributes `from`, `to`) on the stored session, so the designer can replay the path.
+
+Metrics (unlabelled: node ids are tenant data): `voice_handoffs_total`, `voice_handoff_failures_total`, and the `voice_handoff_seconds` histogram.
+
 ---
 
 ## 5. Incident Interpretation Runbook
