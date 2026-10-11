@@ -43,6 +43,7 @@ describe("ProvidersView", () => {
     const gRow = (await screen.findByRole("cell", { name: /Google/ })).closest("tr")!;
     expect(within(gRow).getByText("Detected")).toBeVisible();
     expect(within(gRow).getByText(/stt, llm/i)).toBeVisible();
+    expect(within(gRow).getByText(/tts not in this build/i)).toBeVisible();
     const xRow = screen.getByRole("cell", { name: /xAI/ }).closest("tr")!;
     expect(within(xRow).getByText("Not detected")).toBeVisible();
     expect(within(xRow).getByText(/XAI_API_KEY/)).toBeVisible();

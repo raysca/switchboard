@@ -13,12 +13,12 @@ const SERVICES = ["stt", "llm", "tts"] as const;
 function describeServices(p: ProviderStatus) {
   const unlocked = SERVICES.filter((s) => p.services[s]?.available);
   const missing = new Set<string>();
-  let notInBuild = false;
+  const notInBuild: string[] = [];
   for (const s of SERVICES) {
     const svc = p.services[s];
     if (!svc || svc.available) continue;
     if (svc.reason === "missing_env") svc.missing_env?.forEach((v) => missing.add(v));
-    else notInBuild = true;
+    else notInBuild.push(s);
   }
   return { unlocked, missing: [...missing], notInBuild };
 }
@@ -93,8 +93,8 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
                             Set <code>{missing.join(", ")}</code>
                           </>
                         )}
-                        {notInBuild && <div className="subtext">Some services are not in this build.</div>}
-                        {missing.length === 0 && !notInBuild && "—"}
+                        {notInBuild.length > 0 && <div className="subtext">{notInBuild.join(", ")} not in this build</div>}
+                        {missing.length === 0 && notInBuild.length === 0 && "—"}
                       </td>
                     </tr>
                   );

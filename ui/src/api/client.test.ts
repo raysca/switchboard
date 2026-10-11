@@ -178,6 +178,20 @@ describe("management client", () => {
       expect(fetcher).toHaveBeenCalledWith("/api/v1/providers", expect.any(Object));
     });
 
+    it("parses entries with and without default (the server omits default=false)", async () => {
+      const fetcher = vi.fn<typeof fetch>(async () =>
+        new Response(JSON.stringify({ data: [{
+          id: "g", display_name: "G", capabilities: ["llm"], detected: true, env: [],
+          services: { llm: { available: true, custom: false, models: [
+            { id: "a", label: "A", default: true }, { id: "b", label: "B" },
+          ] } },
+        }] }), { status: 200 }),
+      );
+      const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+      const models = (await client.getProviders())[0].services.llm?.models;
+      expect(models).toEqual([{ id: "a", label: "A", default: true }, { id: "b", label: "B" }]);
+    });
+
     it("has no credential methods", () => {
       const client = createApiClient(() => ({ key: "k", generation: 1 }), vi.fn<typeof fetch>());
       for (const m of ["getCredentials", "createCredential", "updateCredential", "deleteCredential", "rotateCredential", "validateCredential"]) {
