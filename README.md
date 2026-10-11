@@ -102,7 +102,7 @@ YAML defines no pipelines, models, voices or provider keys. Provider keys are en
 
 To rotate a key, change the variable and restart.
 
-> **Release note (environment-only credentials):** delete `.govoice-dev` (or any development database): the schema changed in place; nothing is migrated. The credential API, `GOVOICE_CREDENTIAL_KEYS` and `credential_id` are gone; set the provider variables and recreate agents.
+> **Release note (environment-only credentials):** delete `.govoice-dev` (or any development database): the schema changed in place; nothing is migrated. The credential API, `GOVOICE_CREDENTIAL_KEYS` and `credential_id` are gone; set the provider variables and recreate agents. Self-hosted NVIDIA NIM and Riva endpoints are not supported in this release: `nvidia` always uses the hosted NIM (`integrate.api.nvidia.com`) and NVCF Riva endpoints, and `providers.nvidia.allow_private` is removed (a config that still sets it fails to load). They come back as catalog environment fields when needed.
 
 [docs/quickstart.md](docs/quickstart.md) has the full commands.
 

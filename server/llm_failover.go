@@ -74,9 +74,7 @@ func (r *Registry) llmBreaker(spec StageSpec) *resilience.Breaker {
 	case "xai":
 		return r.xaiLLMBreaker
 	case "nvidia":
-		if _, baseURL, err := nvidiaLLMTarget(spec.Secret); err == nil {
-			return r.nvidiaBreaker("llm|" + baseURL)
-		}
+		return r.nvidiaBreaker("llm|" + nvidiaNIMBaseURL)
 	case "openai":
 		if _, baseURL, err := openAICredential(spec.Secret); err == nil {
 			br, _ := r.openaiBreakers.LoadOrStore(baseURL, resilience.NewBreaker(resilience.DefaultConfig()))

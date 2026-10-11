@@ -147,9 +147,6 @@
   "OpenAILLM": {
    "AllowPrivateBaseURL": false
   },
-  "Nvidia": {
-   "AllowPrivate": false
-  },
   "XAISTT": {
    "Endpoint": "wss://api.x.ai/v1/stt"
   },

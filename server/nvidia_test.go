@@ -15,30 +15,23 @@ func TestNvidiaRegistration(t *testing.T) {
 	}
 }
 
+// Hosted endpoints only: a secret naming a base URL or a Riva endpoint (from an
+// old stored credential) is not honoured, and every nvidia stage uses the one
+// breaker of its hosted endpoint.
 func TestNvidiaLLM(t *testing.T) {
 	reg := NewRegistry()
 	build := reg.factories["nvidia.llm"]
-	// Bare key: NIM default URL and model, no private access.
 	p, err := build(&Config{}, StageSpec{Provider: "nvidia", Secret: []byte("nvapi-0123456789")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = p.(core.LLMCounters)
 	if _, ok := reg.nvidiaBreakers.Load("llm|" + nvidiaNIMBaseURL); !ok {
-		t.Fatal("breaker not keyed by default base URL")
+		t.Fatal("breaker not keyed by the NIM base URL")
 	}
-	// Self-hosted NIM: refused until the operator opts in; breaker per base URL.
-	nim := StageSpec{Secret: []byte(`{"api_key":"k","base_url":"http://10.0.0.5:8000/v1"}`)}
-	if _, err := build(&Config{}, nim); err == nil {
-		t.Fatal("private http base_url must be refused by default")
-	}
-	var opt Config
-	opt.Providers.Nvidia.AllowPrivate = true
-	if _, err := build(&opt, nim); err != nil {
-		t.Fatal(err)
-	}
-	if reg.llmBreaker(StageSpec{Provider: "nvidia", Secret: nim.Secret}) == reg.llmBreaker(StageSpec{Provider: "nvidia", Secret: []byte("nvapi-0123456789")}) {
-		t.Fatal("nvidia breakers must be scoped per base URL")
+	self := []byte(`{"api_key":"k","base_url":"http://10.0.0.5:8000/v1"}`)
+	if reg.llmBreaker(StageSpec{Provider: "nvidia", Secret: self}) != reg.llmBreaker(StageSpec{Provider: "nvidia", Secret: []byte("nvapi-0123456789")}) {
+		t.Fatal("a base_url in the secret must not select a self-hosted NIM")
 	}
 	if _, err := build(&Config{}, StageSpec{Secret: []byte("two words")}); err == nil {
 		t.Fatal("bad credential accepted")
@@ -48,8 +41,7 @@ func TestNvidiaLLM(t *testing.T) {
 func TestNvidiaSTT(t *testing.T) {
 	reg := NewRegistry()
 	build := reg.factories["nvidia.stt"]
-	// Hosted: needs function_id.
-	if _, err := build(&Config{}, StageSpec{Secret: []byte("nvapi-0123456789")}); err == nil {
+	if _, err := build(&Config{}, StageSpec{Secret: []byte(`{"api_key":"nvapi-0123456789"}`)}); err == nil {
 		t.Fatal("hosted endpoint without function_id accepted")
 	}
 	p, err := build(&Config{}, StageSpec{Language: "en-US", Secret: []byte(`{"api_key":"nvapi-0123456789","function_id":"abc"}`)})
@@ -57,23 +49,12 @@ func TestNvidiaSTT(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.(*nvidia.STTProcessor).Close()
-	// Self-hosted plaintext Riva needs no key, but needs the operator opt-in.
-	self := StageSpec{Secret: []byte(`{"endpoint":"riva.internal:50051","use_tls":false}`)}
-	if _, err := build(&Config{}, self); err == nil {
-		t.Fatal("plaintext endpoint accepted without allow_private")
+	// An endpoint in the secret is ignored: no key, so the hosted endpoint refuses it.
+	if _, err := build(&Config{}, StageSpec{Secret: []byte(`{"endpoint":"riva.internal:50051","use_tls":false}`)}); err == nil {
+		t.Fatal("self-hosted Riva endpoint honoured")
 	}
-	var opt Config
-	opt.Providers.Nvidia.AllowPrivate = true
-	p, err = build(&opt, self)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.(*nvidia.STTProcessor).Close()
-	if br, ok := reg.nvidiaBreakers.Load("stt|riva.internal:50051"); !ok || br != reg.nvidiaSTTBreaker(self.Secret) {
-		t.Fatal("stt breaker not scoped per endpoint")
-	}
-	if reg.nvidiaSTTBreaker(self.Secret) == reg.nvidiaSTTBreaker([]byte("nvapi-0123456789")) {
-		t.Fatal("failover check must use the endpoint's breaker")
+	if _, ok := reg.nvidiaBreakers.Load("stt|riva.internal:50051"); ok {
+		t.Fatal("breaker created for a self-hosted endpoint")
 	}
 	if reg.sttBreaker("nvidia") == nil {
 		t.Fatal("no stt breaker for failover")
@@ -83,17 +64,18 @@ func TestNvidiaSTT(t *testing.T) {
 func TestNvidiaTTS(t *testing.T) {
 	reg := NewRegistry()
 	build := reg.factories["nvidia.tts"]
-	if _, err := build(&Config{}, StageSpec{Secret: []byte("nvapi-0123456789")}); err == nil {
+	if _, err := build(&Config{}, StageSpec{Secret: []byte(`{"api_key":"nvapi-0123456789"}`)}); err == nil {
 		t.Fatal("hosted endpoint without function_id accepted")
 	}
 	if _, err := build(&Config{}, StageSpec{Secret: []byte("two words")}); err == nil {
 		t.Fatal("bad credential accepted")
 	}
-	// Any allowed pipeline rate builds (Riva output is resampled); self-hosted needs no key.
+	if _, err := build(&Config{}, StageSpec{Secret: []byte(`{"endpoint":"riva.internal:50051","use_tls":false}`)}); err == nil {
+		t.Fatal("self-hosted Riva endpoint honoured")
+	}
 	var cfg Config
-	cfg.Providers.GoogleTTS.SampleRate = 16000
-	cfg.Providers.Nvidia.AllowPrivate = true // plaintext Riva needs the opt-in
-	p, err := build(&cfg, StageSpec{Voice: "English-US.Female-1", Secret: []byte(`{"endpoint":"riva.internal:50051","use_tls":false}`)})
+	cfg.Providers.GoogleTTS.SampleRate = 16000 // any allowed pipeline rate builds (Riva resamples)
+	p, err := build(&cfg, StageSpec{Voice: "English-US.Female-1", Failover: true, Secret: []byte(`{"api_key":"nvapi-0123456789","function_id":"abc"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,15 +83,8 @@ func TestNvidiaTTS(t *testing.T) {
 	if _, ok := p.(core.TTSCounters); !ok {
 		t.Fatal("nvidia TTS must export counters")
 	}
-	if _, ok := reg.nvidiaBreakers.Load("tts|riva.internal:50051"); !ok {
-		t.Fatal("tts breaker not scoped per endpoint")
-	}
 	if reg.ttsBreaker("nvidia") == nil || reg.ttsBreaker("nvidia") == reg.sttBreaker("nvidia") {
 		t.Fatal("nvidia TTS needs its own breaker")
-	}
-	self := []byte(`{"endpoint":"riva.internal:50051","use_tls":false}`)
-	if br, _ := reg.nvidiaBreakers.Load("tts|riva.internal:50051"); br != reg.nvidiaRivaBreaker("tts", self) || br == reg.ttsBreaker("nvidia") {
-		t.Fatal("failover check must use the endpoint's tts breaker")
 	}
 	// NVCF hosts ASR and TTS as separate functions: tts_function_id wins for TTS.
 	if c, _ := nvidiaSTTCredential([]byte(`{"api_key":"nvapi-0123456789","function_id":"asr","tts_function_id":" tts "}`)); c.FunctionID != "asr" || c.TTSFuncID != "tts" {
@@ -118,14 +93,6 @@ func TestNvidiaTTS(t *testing.T) {
 	if c, _ := nvidiaSTTCredential([]byte(`{"api_key":"nvapi-0123456789","function_id":"asr"}`)); c.TTSFuncID != "asr" {
 		t.Fatal("tts_function_id falls back to function_id")
 	}
-	if _, err := build(&Config{}, StageSpec{Secret: []byte(`{"endpoint":"riva.internal:50051","use_tls":false}`)}); err == nil {
-		t.Fatal("plaintext without allow_private accepted")
-	}
-	hosted, err := build(&Config{}, StageSpec{Failover: true, Secret: []byte(`{"api_key":"nvapi-0123456789","function_id":"abc"}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	hosted.(*nvidia.TTSProcessor).Close()
 	// ClientError rides the failover classification.
 	if got := ttsClassify(&nvidia.ProviderError{Capability: "tts", Code: "Unauthenticated", ClientError: true}); got != agent.ClassClient {
 		t.Fatalf("class=%q", got)

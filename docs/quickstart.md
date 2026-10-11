@@ -16,7 +16,7 @@ This guide gets you up and running with a real, live voice conversation using Vo
 
 Provider keys come from the server's environment only: the server never stores them and no API accepts them. [providers.md](providers.md) lists every variable and what it unlocks.
 
-> **Upgrading from a build with stored credentials:** delete `.govoice-dev` (or any development database): the schema changed in place; nothing is migrated. Then set the provider variables below and recreate your agents (without `credential_id`).
+> **Upgrading from a build with stored credentials:** delete `.govoice-dev` (or any development database): the schema changed in place; nothing is migrated. Then set the provider variables below and recreate your agents (without `credential_id`). Self-hosted NVIDIA NIM and Riva endpoints are not supported in this release: `nvidia` always uses the hosted NIM (`integrate.api.nvidia.com`) and NVCF Riva endpoints, and `providers.nvidia.allow_private` is removed (a config that still sets it fails to load). They come back as catalog environment fields when needed.
 
 ---
 

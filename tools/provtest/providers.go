@@ -28,7 +28,7 @@ type Provider struct {
 	Need []string
 	// Optional lists env names the row also reads (besides ModelEnv).
 	Optional []string
-	// Secret builds the stored credential the server factory expects.
+	// Secret builds the credential the server factory expects (what the catalog assembles from the env).
 	Secret func(Env) ([]byte, error)
 	// BadKey is the invalid API key substituted for the real one ("" = generic).
 	BadKey string

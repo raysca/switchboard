@@ -80,7 +80,7 @@ func Dial(cfg ConnConfig) (*Conn, error) {
 	creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 	if cfg.Insecure {
 		if !cfg.AllowPrivate {
-			return nil, errors.New("nvidia: plaintext endpoint requires providers.nvidia.allow_private")
+			return nil, errors.New("nvidia: plaintext endpoint requires AllowPrivate")
 		}
 		creds = insecure.NewCredentials()
 	}

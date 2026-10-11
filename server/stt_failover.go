@@ -62,7 +62,7 @@ func (r *Registry) sttBreaker(provider string) *resilience.Breaker {
 	case "deepgram":
 		return r.deepgramBreaker
 	case "nvidia":
-		return r.nvidiaBreaker("stt|" + nvidia.DefaultEndpoint) // hosted; custom endpoints keep their own
+		return r.nvidiaBreaker("stt|" + nvidia.DefaultEndpoint)
 	case "cartesia":
 		return r.cartesiaSTTBreaker
 	case "elevenlabs":
@@ -96,9 +96,6 @@ func (r *Registry) buildSTT(cfg *Config, call CallSpec, build func(string, Stage
 		}
 		c := core.STTCandidate{Provider: sp.Provider, Proc: p}
 		br := r.sttBreaker(sp.Provider)
-		if sp.Provider == "nvidia" { // per endpoint: a tenant's self-hosted Riva has its own
-			br = r.nvidiaSTTBreaker(sp.Secret)
-		}
 		if br != nil {
 			c.Open = br.WouldRefuse
 		}

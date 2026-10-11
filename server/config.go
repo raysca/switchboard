@@ -271,14 +271,6 @@ type Config struct {
 			AllowPrivateBaseURL bool `yaml:"allow_private_base_url"`
 		} `yaml:"openai_llm"`
 
-		// Nvidia: NIM base URLs and Riva endpoints come from the environment;
-		// loopback/private targets (self-hosted NIM or Riva) and plaintext http
-		// are refused unless the operator opts in. Link-local and metadata
-		// addresses stay blocked regardless.
-		Nvidia struct {
-			AllowPrivate bool `yaml:"allow_private"`
-		} `yaml:"nvidia"`
-
 		XAISTT struct {
 			Endpoint string `yaml:"endpoint"`
 		} `yaml:"xai_stt"`

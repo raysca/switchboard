@@ -130,7 +130,6 @@ warmup:
 # otel: {enabled: false, endpoint: "", protocol: "", sampling_ratio: 1.0, service_name: "", capture_content: false}
 # providers:
 #   openai_llm: {allow_private_base_url: false}   # self-hosted OpenAI-compatible endpoints
-#   nvidia: {allow_private: false}                # self-hosted NIM (nvidia.llm) and Riva (nvidia.stt, nvidia.tts)
 # nvidia secrets come from the environment, not from this file (not a config block):
 # - nvidia.llm: NVIDIA_API_KEY (default model openai/gpt-oss-20b, base https://integrate.api.nvidia.com/v1)
 # - nvidia.stt/tts: NVIDIA_API_KEY plus NVIDIA_STT_FUNCTION_ID=1598d209-5e27-4d3c-8079-4751568b1081 and NVIDIA_TTS_FUNCTION_ID=877104f7-e885-42b9-8de8-f6e4c6303969

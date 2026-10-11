@@ -132,7 +132,7 @@ type Registry struct {
 	elevenlabsBreaker    *resilience.Breaker
 	elevenlabsSTTBreaker *resilience.Breaker
 
-	nvidiaBreakers sync.Map // "llm|<base url>" / "stt|<endpoint>" -> *resilience.Breaker (nvidia.go)
+	nvidiaBreakers sync.Map // "llm|<base url>" / "stt|<endpoint>" / "tts|<endpoint>" (hosted) -> *resilience.Breaker (nvidia.go)
 	metrics        *Metrics // set by BindMetrics; per-endpoint breakers export their state through it
 
 	turnBackend smartturn.Backend // smart-turn model; nil unless turn.stop has turn-analyzer

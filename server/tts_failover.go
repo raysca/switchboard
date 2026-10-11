@@ -45,7 +45,7 @@ func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
 	case "elevenlabs":
 		return r.elevenlabsBreaker
 	case "nvidia":
-		return r.nvidiaBreaker("tts|" + nvidia.DefaultEndpoint) // hosted; custom endpoints keep their own
+		return r.nvidiaBreaker("tts|" + nvidia.DefaultEndpoint)
 	}
 	return nil
 }
@@ -107,9 +107,6 @@ func (r *Registry) buildTTS(cfg *Config, call CallSpec, build func(string, Stage
 		}
 		c := core.TTSCandidate{Provider: sp.Provider, Proc: p, Rate: ttsRate(cfg)}
 		br := r.ttsBreaker(sp.Provider)
-		if sp.Provider == "nvidia" { // per endpoint, as in buildSTT
-			br = r.nvidiaRivaBreaker("tts", sp.Secret)
-		}
 		if br != nil {
 			c.Open = br.WouldRefuse
 		}

@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	// nvidiaNIMBaseURL is build.nvidia.com's OpenAI-compatible endpoint;
-	// self-hosted NIM sets base_url in the environment credential.
+	// nvidiaNIMBaseURL is build.nvidia.com's OpenAI-compatible endpoint. Only the
+	// hosted NIM and NVCF Riva endpoints are supported: self-hosted ones would need
+	// catalog env fields (base URL, endpoint, TLS) and an opt-in, added when needed.
 	nvidiaNIMBaseURL = "https://integrate.api.nvidia.com/v1"
 	// Live-checked 2026-10 (docs/benchmarks/nvidia-live.md): streams, usage, one tool call,
 	// first token ~0.4-0.9 s (one 1.5 s). Pipecat's default nemotron-3-super reasons for
@@ -25,9 +26,8 @@ const (
 	nvidiaNIMModel = "openai/gpt-oss-20b"
 )
 
-// nvidiaBreaker returns the breaker for key ("llm|<base url>", "stt|<endpoint>", "tts|<endpoint>"):
-// one tenant's broken self-hosted NIM or Riva must not open it for the others.
-// ponytail: never evicted; bounded by the distinct endpoints stored.
+// nvidiaBreaker returns the breaker for key ("llm|<base url>", "stt|<endpoint>", "tts|<endpoint>");
+// the endpoint is the metric label. Only the three hosted endpoints exist.
 func (r *Registry) nvidiaBreaker(key string) *resilience.Breaker {
 	br, loaded := r.nvidiaBreakers.LoadOrStore(key, resilience.NewBreaker(resilience.DefaultConfig()))
 	b := br.(*resilience.Breaker)
@@ -51,69 +51,32 @@ func endpointLabel(ep string) string {
 	return ep
 }
 
-// nvidiaLLMTarget resolves the environment credential to key and base URL.
-func nvidiaLLMTarget(secret []byte) (key, baseURL string, err error) {
-	if key, baseURL, err = openAICredential(secret); err != nil {
-		return "", "", err
-	}
-	if baseURL == "" {
-		baseURL = nvidiaNIMBaseURL
-	}
-	return key, baseURL, nil
-}
-
-// nvidiaSTTCredential accepts a bare NVCF API key (then the hosted endpoint
-// still needs a function id, so it fails there) or JSON
-// {"api_key","function_id","tts_function_id","endpoint","use_tls"}. NVCF hosts
-// ASR and TTS as different functions, so nvidia.tts takes tts_function_id when
-// set (else function_id). use_tls defaults to true;
-// self-hosted Riva sets {"endpoint":"host:50051","use_tls":false} (no key needed).
+// nvidiaSTTCredential parses the assembled Riva secret
+// {"api_key","function_id","tts_function_id"}. NVCF hosts ASR and TTS as
+// different functions, so nvidia.tts takes tts_function_id when set (else function_id).
 func nvidiaSTTCredential(secret []byte) (c struct {
 	APIKey     string `json:"api_key"`
 	FunctionID string `json:"function_id"`
 	TTSFuncID  string `json:"tts_function_id"`
-	Endpoint   string `json:"endpoint"`
-	UseTLS     *bool  `json:"use_tls"`
 }, err error) {
-	trimmed := strings.TrimSpace(string(secret))
-	if !strings.HasPrefix(trimmed, "{") {
-		c.APIKey, err = apiKey(secret)
-		return c, err
-	}
-	if json.Unmarshal([]byte(trimmed), &c) != nil {
+	if json.Unmarshal(secret, &c) != nil {
 		return c, errors.New("credential is not valid JSON")
 	}
-	if c.APIKey = strings.TrimSpace(c.APIKey); c.APIKey != "" {
-		if c.APIKey, err = apiKey([]byte(c.APIKey)); err != nil {
-			return c, err
-		}
+	if c.APIKey, err = apiKey([]byte(c.APIKey)); err != nil {
+		return c, err
 	}
-	c.FunctionID, c.Endpoint = strings.TrimSpace(c.FunctionID), strings.TrimSpace(c.Endpoint)
+	c.FunctionID = strings.TrimSpace(c.FunctionID)
 	if c.TTSFuncID = strings.TrimSpace(c.TTSFuncID); c.TTSFuncID == "" {
 		c.TTSFuncID = c.FunctionID
 	}
 	return c, nil
 }
 
-// nvidiaSTTBreaker is the breaker of the Riva endpoint the credential names
-// (the hosted one by default), shared by the factory and the failover check.
-func (r *Registry) nvidiaSTTBreaker(secret []byte) *resilience.Breaker {
-	return r.nvidiaRivaBreaker("stt", secret)
-}
-
-func (r *Registry) nvidiaRivaBreaker(stage string, secret []byte) *resilience.Breaker {
-	ep := nvidia.DefaultEndpoint
-	if c, err := nvidiaSTTCredential(secret); err == nil && c.Endpoint != "" {
-		ep = c.Endpoint
-	}
-	return r.nvidiaBreaker(stage + "|" + ep)
-}
-
 // registerNvidia adds nvidia.llm (NIM chat completions through providers/openai)
-// nvidia.stt (Riva streaming ASR) and nvidia.tts (Riva streaming TTS). All honour providers.nvidia.allow_private.
+// nvidia.stt (Riva streaming ASR) and nvidia.tts (Riva streaming TTS), all on the hosted endpoints.
 func (r *Registry) registerNvidia() {
 	r.Register("nvidia.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		key, baseURL, err := nvidiaLLMTarget(spec.Secret)
+		key, err := apiKey(spec.Secret)
 		if err != nil {
 			return nil, fmt.Errorf("nvidia.llm: %w", err)
 		}
@@ -121,8 +84,8 @@ func (r *Registry) registerNvidia() {
 		if model == "" {
 			model = nvidiaNIMModel
 		}
-		oaCfg := openai.Config{Provider: "nvidia", Model: model, BaseURL: baseURL, SystemPrompt: spec.SystemPrompt, APIKey: key,
-			CircuitBreaker: r.nvidiaBreaker("llm|" + baseURL), AllowPrivate: cfg.Providers.Nvidia.AllowPrivate}
+		oaCfg := openai.Config{Provider: "nvidia", Model: model, BaseURL: nvidiaNIMBaseURL, SystemPrompt: spec.SystemPrompt, APIKey: key,
+			CircuitBreaker: r.nvidiaBreaker("llm|" + nvidiaNIMBaseURL)}
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
@@ -139,26 +102,21 @@ func (r *Registry) registerNvidia() {
 			return nil, fmt.Errorf("nvidia.stt: %w", err)
 		}
 		sttCfg := nvidia.DefaultSTTConfig()
-		if c.Endpoint != "" {
-			sttCfg.Endpoint = c.Endpoint
-		}
 		sttCfg.APIKey, sttCfg.FunctionID = c.APIKey, c.FunctionID
-		sttCfg.Insecure = c.UseTLS != nil && !*c.UseTLS
-		sttCfg.AllowPrivate = cfg.Providers.Nvidia.AllowPrivate
 		if spec.Model != "" {
 			sttCfg.Model = spec.Model
 		}
 		if spec.Language != "" {
 			sttCfg.Language = spec.Language
 		}
-		sttCfg.CircuitBreaker = r.nvidiaSTTBreaker(spec.Secret)
+		sttCfg.CircuitBreaker = r.sttBreaker("nvidia")
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
 		}
 		return nvidia.NewSTTProcessor(sttCfg)
 	})
 
-	// The credential is the STT one (plus tts_function_id on NVCF). Riva is asked
+	// The credential is the STT one (plus tts_function_id). Riva is asked
 	// for the pipeline rate and resamples server side (see nvidia.TTSConfig).
 	r.Register("nvidia.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
 		c, err := nvidiaSTTCredential(spec.Secret)
@@ -166,12 +124,7 @@ func (r *Registry) registerNvidia() {
 			return nil, fmt.Errorf("nvidia.tts: %w", err)
 		}
 		ttsCfg := nvidia.DefaultTTSConfig()
-		if c.Endpoint != "" {
-			ttsCfg.Endpoint = c.Endpoint
-		}
 		ttsCfg.APIKey, ttsCfg.FunctionID = c.APIKey, c.TTSFuncID
-		ttsCfg.Insecure = c.UseTLS != nil && !*c.UseTLS
-		ttsCfg.AllowPrivate = cfg.Providers.Nvidia.AllowPrivate
 		if spec.Voice != "" {
 			ttsCfg.Voice = spec.Voice
 		}
@@ -182,7 +135,7 @@ func (r *Registry) registerNvidia() {
 			ttsCfg.Model = spec.Model
 		}
 		ttsCfg.SampleRate = ttsRate(cfg)
-		ttsCfg.CircuitBreaker = r.nvidiaRivaBreaker("tts", spec.Secret)
+		ttsCfg.CircuitBreaker = r.ttsBreaker("nvidia")
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}

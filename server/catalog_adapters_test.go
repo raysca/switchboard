@@ -64,11 +64,17 @@ func TestAdapterParsesNvidiaSecret(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if svc == "llm" {
+			if key, err := apiKey(b); err != nil || key != "nkey" {
+				t.Fatalf("llm: %q, %v", key, err)
+			}
+			continue
+		}
 		c, err := nvidiaSTTCredential(b)
 		if err != nil || c.APIKey != "nkey" {
 			t.Fatalf("%s: %+v, %v", svc, c, err)
 		}
-		if svc != "llm" && (c.FunctionID != "f1" || c.TTSFuncID != "f2") {
+		if c.FunctionID != "f1" || c.TTSFuncID != "f2" {
 			t.Fatalf("%s function ids: %+v", svc, c)
 		}
 	}
