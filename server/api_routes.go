@@ -126,6 +126,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			s.mcpManagementAPI.ServeHTTP(w, r)
 			return
 		}
+		if id, action, ok := liveCallRoute(r.URL.Path); ok {
+			s.handleLiveCall(w, r, requestID, id, action)
+			return
+		}
 		if r.URL.Path == "/api/v1/sessions" || strings.HasPrefix(r.URL.Path, "/api/v1/sessions/") {
 			if s.sessionManagementAPI == nil {
 				api.WriteError(w, http.StatusServiceUnavailable, "session_management_unavailable", "session management storage is unavailable", requestID)
