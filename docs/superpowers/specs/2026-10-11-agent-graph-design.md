@@ -19,6 +19,7 @@ Decisions made with the user on 2026-10-11:
 5. **The canvas is the only way to author agents.** The graph *is* the agent: no `flows` table.
 6. **Exactly one node is active at a time.** Only the active node's LLM and TTS exist; a node is built when it is activated and closed when it is left. Nothing is pre-built.
 7. **The designer shows the call moving through the graph,** live while testing and as a replay of past sessions.
+8. **A handoff cue covers the gap.** A tone or bed sound plays while the call is between agents, so the caller never hears dead air.
 
 ## Current behaviour (main at e5c2259)
 
@@ -74,6 +75,18 @@ Think of the call as a token moving through the graph: exactly one node holds it
 - **Loops.** Edges may form cycles (Sales back to Front). A per-call cap on handoffs (default 10) ends a ping-pong by removing transfer tools from then on. Re-entering a node builds it again; nothing is cached.
 - **Tool history across nodes.** Past tool calls from another node stay in the shared history as call/result pairs. Whether each provider accepts history containing tools absent from the current tool list is an open risk: verify with the live provider tests; if one rejects it, replace the other node's tool exchanges with plain text for that provider.
 
+### 3a. Handoff cue (tone or bed)
+
+The gap the caller hears is from the end of the old node's audio to the first audio of the new node (build, LLM first token, TTS first byte). A cue fills it.
+
+- **Reuse the output underlay.** The paced writer already mixes a per-session `Underlay` (`mixer.Cursor`) under speech and emits it alone as 20 ms non-speech frames while the queue is empty (`transport/ws/pacing.go`); those frames are uninterruptible, ignored by recording and heard-text, and never change speaking state. A cue is the same kind of audio, so no new mixing path is needed.
+- **Runtime control.** Today the underlay is fixed per session at connect (`PacerConfig.Underlay`, a factory in `server/audiofilter.go`). The one change in `transport/ws`: the session underlay becomes a small wrapper that mixes the background (if any) with an optional *cue cursor* that the server can start and stop at runtime. The stop is a short fade (reusing the mixer's gain helpers) so it never clicks.
+- **Sounds are operator-provided files,** loaded once at startup like the background (`mixer.LoadAsset`: PCM16 WAV, size-capped, resampled once, gain baked in). Server config gains a named set, `audio.cues: {name: {file, gain_db}}`. The graph refers to one by name. Nothing is uploaded through the API.
+- **Graph setting.** The entry node's config (call-level) gains `handoff_cue: {name, after_ms}`; empty means no cue. Tone versus bed is just which file the operator supplies (a short chime plays once; a looping bed plays until stopped), through the existing `loop` behaviour of the cursor, so there is no separate mode field.
+- **When it plays.** The host starts the cue when the old node's audio has drained and `after_ms` (default 300 ms) has passed without the new node producing audio. A handoff that completes sooner plays no cue, so fast handoffs stay silent instead of getting a clipped sound. It stops, with the fade, on the new node's first audio frame, on barge-in (the caller speaking), on `handoff_failed`, and after a hard cap (default 10 s) so a stuck handoff cannot play forever.
+- **Events.** The timeline records `cue_start` and `cue_stop` (with the reason), and the live graph view shows a cue as a badge on the traversed edge. Handoff latency is measured both with and without the cue, so the cue never hides a regression.
+- **Why not the old node's speech instead?** The old node's bridge sentence is still the first mitigation, since the model can say it for free; the cue covers whatever gap remains after it.
+
 ### 4. Server surface
 
 - `/api/v1/agents` accepts and returns the graph config (schema 2) as well as the flat one. A `PUT` publishes a new version atomically (one row plus its tool rows), so a half-published graph is impossible.
@@ -98,17 +111,20 @@ Think of the call as a token moving through the graph: exactly one node holds it
 
 - **core:** node host unit tests under `-race`: frames reach only the active node; the left node is closed exactly once and its processors are not used after the flip; at most two nodes exist during a handoff and one otherwise (count builds and closes); generation fencing drops late old-node frames; barge-in during a pending flip; failed build keeps the old node active; hung close is bounded; handoff cap; no goroutine leaks.
 - **server:** graph validation table tests; schema-1 wrapping; tool-row migration on both dialects; readiness fails with the node named; atomic publish; session pins the graph and a later publish does not change a live call; two-node scripted-LLM call end to end using the fake providers (`server/agent_call_test.go` style).
+- **audio/transport:** the cue wrapper under `-race`: cue mixes with and without a background; start and stop at runtime; fade on stop; cue frames stay non-speech (not recorded, no speaking state); a cue shorter than the gap loops, a one-shot ends cleanly; the hard cap stops it.
+- **server:** the host plays no cue when the new node's audio arrives before `after_ms`, and stops it on first audio, barge-in and failure.
 - **ui:** vitest for canvas validation, add/remove node and edge, inspector editing, publish payload, and the live view (a scripted event stream moves the highlight, animates the edge on `handoff`, shows `preparing`, dims left nodes, and a stored timeline replays the same path).
 - **live:** a new livecheck scenario in the nightly critical path (two nodes, one handoff, different voices) against google and xai, within the existing 60-call cap. This is also where the tool-history risk above gets answered.
 - Verification gate per AGENTS.md: `gofmt -w .`, `make verify`, independent adversarial review including the YAGNI audit.
 
 ## Out of scope
 
-Shared or reusable agents across graphs; STT or language switching mid-call; deterministic (non-LLM) edge conditions; nested graphs; per-node recording or VAD settings; A/B or traffic-split between graph versions.
+Per-edge cues or uploading cue sounds through the API; shared or reusable agents across graphs; STT or language switching mid-call; deterministic (non-LLM) edge conditions; nested graphs; per-node recording or VAD settings; A/B or traffic-split between graph versions.
 
 ## Risks
 
 - **Handoff latency** now includes building the target node. The overlap with the old node's bridge sentence hides most of it; the commit-to-first-audio histogram measures it, and the live test sets the budget.
+- **A cue sounds worse than silence** if it starts late or cuts abruptly; the `after_ms` threshold and the fade are the guards, and the live test listens to a recording of one handoff.
 - **Cleanup on a left node:** a processor whose `Close()` does not stop its goroutines would leak per handoff. The node host tests count goroutines; the plan audits each provider's `Close()`.
 - **Cross-node tool history** may be rejected by some providers (see section 3).
 - **Replacing the agent form** with a canvas is a UI-wide change; the one-node case must stay as quick to use as the form.
