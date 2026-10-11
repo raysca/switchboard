@@ -57,8 +57,9 @@ func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
 // base (a zero base field counts as unset). The last candidate keeps its full
 // policy. LLMs are instead bounded by the first-token deadline (core.LLMFailover).
 //
-// ponytail: tts keeps its attempt timeout because every tts provider applies it
-// to the whole unit (dial through the last audio byte), so shortening it would
+// ponytail: tts keeps its attempt timeout because the unary tts providers apply it
+// to the whole unit (dial through the last audio byte; the Google and xAI streaming paths use it
+// as an idle limit instead), so shortening it would
 // cut long sentences mid-word; a first-audio deadline in ttsunit is the upgrade
 // if 2 x 15 s proves too slow.
 func failoverPolicy(stage string, base resilience.Policy) resilience.Policy {

@@ -182,13 +182,16 @@ func (p *TTSProcessor) TTSCounts() (req, errs, retries, stale uint64) {
 	return p.RequestsTotal.Load(), p.ErrorsTotal.Load(), p.RetriesTotal.Load(), p.StaleTotal.Load()
 }
 
-// NewTTSProcessor creates a new xAI TTSProcessor.
-func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
+// normalizeTTSConfig fills the defaults the unary and streaming processors share.
+func normalizeTTSConfig(cfg TTSConfig) TTSConfig {
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = "https://api.x.ai/v1/tts"
 	}
 	if cfg.Voice == "" {
 		cfg.Voice = "eve"
+	}
+	if cfg.Language == "" {
+		cfg.Language = "en" // the WebSocket requires a language
 	}
 	if cfg.SampleRate <= 0 {
 		cfg.SampleRate = 24000
@@ -200,6 +203,12 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 		cfg.RetryPolicy.MaxAttempts = resilience.DefaultPolicy().MaxAttempts
 	}
 	cfg.RetryPolicy.AttemptTimeout = cfg.Timeout // Timeout is the one knob: it bounds each synthesis request
+	return cfg
+}
+
+// NewTTSProcessor creates a new xAI TTSProcessor.
+func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
+	cfg = normalizeTTSConfig(cfg)
 	client := cfg.Client
 	if client == nil {
 		client = NewRealXAITTSClient()

@@ -40,6 +40,8 @@ This generates:
 
 The turn manager is on by default (see "Turn taking" below). Optional features (Smart Turn, idle, DTMF, recording, OTel, redaction, audio filters, failover) are off by default and listed as commented examples at the end of `config/development.yaml`; defaults and semantics per key are in the "Default" column of [pipecat-parity-matrix.md](pipecat-parity-matrix.md).
 
+TTS streams by default. Two optional kill switches: `providers.google_tts.disable_streaming: true` serves Google voices with the unary request, and `providers.xai_tts.disable_streaming: true` does the same for xAI.
+
 The agent store is required. Set its DSN, the credential encryption keyring and the management API key:
 
 In the development profile you can skip the first two variables: the server then creates `.govoice-dev/govoice.db` and a persisted credential key in `.govoice-dev/credential.key`. Production always requires both.
@@ -116,7 +118,7 @@ AGENT_ID=$(curl -fsS -X POST "$ADMIN/api/v1/agents" \
     "config": {
       "stt": {"provider": "google", "model": "chirp_2", "language": "en-US"},
       "llm": {"provider": "google", "model": "gemini-2.5-flash", "system_prompt": "You are a friendly voice assistant. Keep answers short."},
-      "tts": {"provider": "google", "voice": "en-US-Journey-F"}
+      "tts": {"provider": "google", "voice": "en-US-Chirp3-HD-Aoede"}
     }
   }' | jq -r .data.id)
 

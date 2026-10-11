@@ -22,7 +22,7 @@ profiles:
     stages:
       stt: {provider: google, model: chirp_2, language: en-US}
       llm: {provider: google, model: gemini-2.5-flash}
-      tts: {provider: google, voice: en-US-Journey-F}
+      tts: {provider: google, voice: en-US-Chirp3-HD-Aoede}
     requires: [GOOGLE_API_KEY, GOOGLE_APPLICATION_CREDENTIALS]
     interims: "no"
     notes: chirp_2 sends no interim results, so S3 (min_words backchannel) is N/A.
@@ -32,7 +32,7 @@ profiles:
     stages:
       stt: {provider: google, model: latest_long, language: en-US}
       llm: {provider: google, model: gemini-2.5-flash}
-      tts: {provider: google, voice: en-US-Journey-F}
+      tts: {provider: google, voice: en-US-Chirp3-HD-Aoede}
     requires: [GOOGLE_API_KEY, GOOGLE_APPLICATION_CREDENTIALS]
     interims: "yes"
 
@@ -74,7 +74,7 @@ profiles:
     stages:
       stt: {provider: google, model: chirp_2, language: en-US}
       llm: {provider: xai, model: "${XAI_MODEL:-grok-2-1212}"}
-      tts: {provider: google, voice: en-US-Journey-F}
+      tts: {provider: google, voice: en-US-Chirp3-HD-Aoede}
     requires: [XAI_API_KEY, GOOGLE_APPLICATION_CREDENTIALS]
     optional: [XAI_MODEL]
     interims: "no"
