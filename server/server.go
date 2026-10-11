@@ -24,7 +24,6 @@ import (
 	"govoice/server/api"
 	"govoice/server/auth"
 	"govoice/server/catalog"
-	"govoice/server/credential"
 	"govoice/server/mcp"
 	"govoice/server/otelexport"
 	"govoice/server/storage"
@@ -63,7 +62,6 @@ type Server struct {
 	mgmt                  *management
 	agents                *agent.Service
 	mcpService            *mcp.Service
-	credentials           *credential.Service
 	logger                *slog.Logger
 
 	ready        atomic.Bool
@@ -1262,8 +1260,6 @@ func (s *Server) finishCall(sessionID uint64, principal, agentID string, session
 func (s *Server) logSetupFailure(session uint64, agentID, phase string, err error) {
 	category := phase
 	switch {
-	case errors.Is(err, credential.ErrDecrypt):
-		category = "credential_decrypt"
 	case errors.Is(err, context.DeadlineExceeded):
 		category = "timeout"
 	}

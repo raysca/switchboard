@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"govoice/server/provider"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -122,19 +121,16 @@ func TestScenarioC_InterchangeabilityDeployed(t *testing.T) {
 	}
 }
 
-// xAI speech is experimental: neither offered to agents nor buildable by default.
+// xAI speech is experimental: not buildable by default.
 func TestFullXAI_NotAdvertised(t *testing.T) {
 	srv, err := NewServer(DefaultConfig(ProfileDevelopment))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// What agents are offered must match what this build can run.
-	reg := provider.NewRegistry(provider.Definitions())
+	// The providers listing reports a service as not_in_build via registry.Supports.
 	for _, stage := range []string{"stt", "tts"} {
-		built := srv.registry.Supports("xai", stage)
-		advertised := reg.Supports("xai", provider.Capability(stage))
-		if built != xaiSpeechEnabled || advertised != xaiSpeechEnabled {
-			t.Fatalf("xai %s: built=%v advertised=%v, want %v", stage, built, advertised, xaiSpeechEnabled)
+		if built := srv.registry.Supports("xai", stage); built != xaiSpeechEnabled {
+			t.Fatalf("xai %s: built=%v, want %v", stage, built, xaiSpeechEnabled)
 		}
 	}
 }

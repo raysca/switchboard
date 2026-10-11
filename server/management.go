@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,9 +14,7 @@ import (
 	"govoice/core/record"
 	"govoice/server/agent"
 	"govoice/server/api"
-	"govoice/server/credential"
 	"govoice/server/mcp"
-	"govoice/server/provider"
 	"govoice/server/retention"
 	"govoice/server/storage"
 	"govoice/server/trace"
@@ -40,20 +36,15 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		return errors.New("storage.dialect is required: calls run stored agents")
 	}
 	dsnEnv := envOr(s.cfg.Storage.DSNEnv, "GOVOICE_DATABASE_DSN")
-	keyEnv := envOr(s.cfg.Credentials.KeyringEnv, "GOVOICE_CREDENTIAL_KEYS")
-	dsn, rawKeyring := os.Getenv(dsnEnv), os.Getenv(keyEnv)
-	if s.cfg.Profile == ProfileDevelopment && (dsn == "" || rawKeyring == "") {
+	dsn := os.Getenv(dsnEnv)
+	if s.cfg.Profile == ProfileDevelopment && dsn == "" {
 		var err error
-		if dsn, rawKeyring, err = s.developmentStore(dsn, rawKeyring); err != nil {
+		if dsn, err = s.developmentStore(); err != nil {
 			return err
 		}
 	}
 	if dsn == "" {
 		return fmt.Errorf("storage enabled but %s is empty", dsnEnv)
-	}
-	keyring, err := parseKeyring(rawKeyring)
-	if err != nil {
-		return err
 	}
 	store, err := storage.Open(ctx, storage.Config{Dialect: storage.Dialect(s.cfg.Storage.Dialect), DSN: dsn})
 	if err != nil {
@@ -62,11 +53,6 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	m := &management{store: store}
 	fail := func(err error) error { m.close(); return err }
 
-	registry := provider.NewRegistry(provider.Definitions())
-	creds, err := credential.NewService(store.Credentials(), keyring, registry)
-	if err != nil {
-		return fail(fmt.Errorf("credential service: %w", err))
-	}
 	m.traces = trace.NewAdapter(store.Traces())
 	mcpService, err := mcp.NewService(mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcp.EnvTokens(func(k string) string { return s.env(k) }), Tracer: m.traces})
 	if err != nil {
@@ -89,8 +75,8 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	}
 
 	s.SetStore(store)
-	s.credentials, s.mcpService = creds, mcpService
-	s.SetProviderManagementAPI(s.providersRoutes(&api.ProviderManagement{Credentials: creds, Registry: registry}))
+	s.mcpService = mcpService
+	s.SetProviderManagementAPI(s.providersRoutes())
 	s.agents = agent.NewService(store, s.availability)
 	s.SetAgentManagementAPI(api.NewAgentsHandler(s.agents))
 	s.SetMCPManagementAPI(mcp.Handler(mcpService))
@@ -185,95 +171,32 @@ func envOr(name, fallback string) string {
 	return name
 }
 
-// parseKeyring reads "id:base64key[,id:base64key]"; the first entry is active.
-func parseKeyring(raw string) (credential.Keyring, error) {
-	kr := credential.Keyring{Keys: map[string][]byte{}}
-	for _, entry := range strings.Split(raw, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		id, enc, ok := strings.Cut(entry, ":")
-		key, err := base64.StdEncoding.DecodeString(enc)
-		if !ok || id == "" || err != nil || len(key) != 32 {
-			return kr, errors.New("credential keyring must be id:base64(32-byte key) entries")
-		}
-		if kr.ActiveID == "" {
-			kr.ActiveID = id
-		}
-		kr.Keys[id] = key
-	}
-	if kr.ActiveID == "" {
-		return kr, errors.New("storage enabled but credential keyring is empty")
-	}
-	return kr, nil
-}
-
 // closeManagement is called from Shutdown after calls have drained.
 func (s *Server) closeManagement() {
 	s.mgmt.close()
 	s.mgmt = nil
 }
 
-// developmentStore fills in a local SQLite DSN and a persisted credential key
-// for the development profile, so a fresh checkout runs without setup. The
-// directory defaults to .govoice-dev (override with GOVOICE_DEV_DIR). Production
-// never reaches this path and fails closed without explicit secrets.
-func (s *Server) developmentStore(dsn, rawKeyring string) (string, string, error) {
+// developmentStore returns a local SQLite DSN for the development profile, so a
+// fresh checkout runs without setup. The directory defaults to .govoice-dev
+// (override with GOVOICE_DEV_DIR). Production never reaches this path and fails
+// closed without an explicit DSN.
+func (s *Server) developmentStore() (string, error) {
 	dir := os.Getenv("GOVOICE_DEV_DIR")
 	if dir == "" {
 		dir = ".govoice-dev"
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", "", fmt.Errorf("development store: %w", err)
+		return "", fmt.Errorf("development store: %w", err)
 	}
-	if dsn == "" {
-		dsn = filepath.Join(dir, "govoice.db")
-	}
-	if rawKeyring == "" {
-		key, err := loadOrCreateDevKey(filepath.Join(dir, "credential.key"))
-		if err != nil {
-			return "", "", fmt.Errorf("development credential key: %w", err)
-		}
-		rawKeyring = key
-	}
-	s.logger.Warn("development profile: using a local agent store and credential key; never use these in production", slog.String("dir", dir))
-	return dsn, rawKeyring, nil
+	s.logger.Warn("development profile: using a local agent store; never use it in production", slog.String("dir", dir))
+	return filepath.Join(dir, "govoice.db"), nil
 }
 
-// loadOrCreateDevKey returns the keyring entry stored at path, creating a new
-// random 32-byte key (mode 0600) on first use so stored credentials stay
-// decryptable across restarts.
-func loadOrCreateDevKey(path string) (string, error) {
-	if b, err := os.ReadFile(path); err == nil {
-		return strings.TrimSpace(string(b)), nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return "", err
-	}
-	entry := "dev:" + base64.StdEncoding.EncodeToString(key)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) { // created concurrently: use that one
-		return loadOrCreateDevKey(path)
-	}
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(entry + "\n"); err != nil {
-		return "", err
-	}
-	return entry, nil
-}
-
-// providersRoutes sends the exact listing path to the catalog-backed handler and
-// the credential routes to the old one (deleted in a later task).
-func (s *Server) providersRoutes(credentials http.Handler) http.Handler {
+// providersRoutes serves only the read-only provider listing; every other path
+// under /api/v1/providers/ is a 404.
+func (s *Server) providersRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/providers", api.ProvidersHandler{Catalog: s.catalog, Resolver: s.resolver, Supports: s.registry.Supports})
-	mux.Handle("/api/v1/providers/", credentials)
 	return mux
 }

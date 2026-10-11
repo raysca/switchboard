@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"govoice/server/provider"
+	"govoice/server/catalog"
 )
 
 //go:embed profiles.yaml
@@ -45,12 +45,23 @@ type Profile struct {
 	Notes     string                       `yaml:"notes"`
 }
 
-// providers is the server's own capability catalog. xAI STT/TTS are listed only in a
-// -tags xaispeech build; the harness adds that tag itself (Profile.tags), so they are accepted.
-var providers = provider.NewRegistry(provider.Definitions())
+// providers is the server's own provider catalog. xAI STT/TTS are accepted: the harness adds
+// the xaispeech tag itself (Profile.tags).
+var providers = func() *catalog.Catalog {
+	c, err := catalog.Load()
+	if err != nil {
+		panic(err)
+	}
+	return c
+}()
 
 func serves(prov, stage string) bool {
-	return (prov == "xai" && stage != "llm") || providers.Supports(prov, provider.Capability(stage))
+	if prov == "xai" && stage != "llm" {
+		return true
+	}
+	p, ok := providers.Provider(prov)
+	_, has := p.Services[stage]
+	return ok && has
 }
 
 func (p Profile) stages() map[string]Stage {

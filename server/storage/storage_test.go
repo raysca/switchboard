@@ -424,7 +424,6 @@ func TestRepositoryRejectsInvalidDurableIDs(t *testing.T) {
 		name string
 		run  func() error
 	}{
-		{"credential", func() error { return s.Credentials().Put(ctx, Credential{ID: bad, KeyID: "k", Ciphertext: []byte{1}}) }},
 		{"mcp", func() error { return s.MCP().CreateServer(ctx, MCPServer{ID: bad}) }},
 		{"session", func() error {
 			return s.Sessions().Create(ctx, SessionRecord{ID: bad, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash})
@@ -705,7 +704,7 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	}
 }
 
-func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
+func TestRepositoryMCPAndHistory(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	a := Agent{ID: NewID(), Name: "A", Enabled: true}
@@ -715,14 +714,6 @@ func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
 	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
-	}
-	cred := Credential{ID: NewID(), Provider: "xai", MaskedSuffix: "1234", ValidationState: "valid", Ciphertext: []byte{1, 2, 3}, KeyID: "k1"}
-	if err := s.Credentials().Put(ctx, cred); err != nil {
-		t.Fatal(err)
-	}
-	gotCred, err := s.Credentials().Get(ctx, cred.ID)
-	if err != nil || gotCred.KeyID != "k1" || len(gotCred.Ciphertext) != 3 {
-		t.Fatalf("credential=%+v err=%v", gotCred, err)
 	}
 	m := MCPServer{ID: NewID(), Name: "M", Endpoint: "https://m.example", Transport: "streamable-http", AuthEnv: "MCP_TOKEN_X", Enabled: true}
 	if err := s.MCP().CreateServer(ctx, m); err != nil {
@@ -1005,14 +996,6 @@ func TestRepositoryContract(t *testing.T) {
 			if err := s.Agents().Create(ctx, a); err != nil {
 				t.Fatal(err)
 			}
-			cred := Credential{ID: NewID(), Provider: "test", KeyID: "k", Ciphertext: []byte{1}, CapabilitiesJSON: `{"b":2,"a":1}`}
-			if err := s.Credentials().Put(ctx, cred); err != nil {
-				t.Fatal(err)
-			}
-			gotC, err := s.Credentials().Get(ctx, cred.ID)
-			if err != nil || gotC.CapabilitiesJSON != `{"a":1,"b":2}` {
-				t.Fatalf("credential=%+v err=%v", gotC, err)
-			}
 			m := MCPServer{ID: NewID(), Name: "m", Enabled: true}
 			if err := s.MCP().CreateServer(ctx, m); err != nil {
 				t.Fatal(err)
@@ -1121,59 +1104,29 @@ func TestRepositoryContract(t *testing.T) {
 	}
 }
 
-// A credential attached to an active agent's current version cannot be deleted;
-// archiving the agent or re-attaching it to another credential releases it.
-func TestCredentialDeleteBlockedWhileAttached(t *testing.T) {
-	ctx := context.Background()
-	s, err := Open(ctx, Config{Dialect: SQLite, DSN: filepath.Join(t.TempDir(), "creds.db")})
-	if err != nil {
-		t.Fatal(err)
+// The credential table is gone; secrets live in the environment. MCP servers
+// still name their bearer token variable.
+func TestSchemaHasNoCredentialTable(t *testing.T) {
+	check := func(t *testing.T, s *Store) {
+		t.Helper()
+		if _, err := s.DB().ExecContext(context.Background(), "SELECT 1 FROM provider_credentials"); err == nil {
+			t.Fatal("provider_credentials still exists")
+		}
+		if _, err := s.DB().ExecContext(context.Background(), "SELECT auth_env FROM mcp_servers"); err != nil {
+			t.Fatalf("mcp_servers.auth_env: %v", err)
+		}
 	}
-	defer s.Close()
-	put := func() string {
-		id := NewID()
-		if err := s.Credentials().Put(ctx, Credential{ID: id, Provider: "google", MaskedSuffix: "abcd", ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
+	t.Run("sqlite", func(t *testing.T) { check(t, testStore(t)) })
+	t.Run("postgres", func(t *testing.T) {
+		dsn := os.Getenv("TEST_POSTGRES_DSN")
+		if dsn == "" {
+			t.Skip("TEST_POSTGRES_DSN not set")
+		}
+		s, err := Open(context.Background(), Config{Dialect: Postgres, DSN: dsn})
+		if err != nil {
 			t.Fatal(err)
 		}
-		return id
-	}
-	used, other, unused := put(), put(), put()
-	cfg := func(id string) []byte {
-		return []byte(`{"llm":{"credential_id":"` + id + `","model":"m","provider":"google"},"stt":{"credential_id":"` + id + `","provider":"google"},"tts":{"credential_id":"` + id + `","provider":"google"}}`)
-	}
-	agentID := NewID()
-	if err := s.Agents().Create(ctx, Agent{ID: agentID, Name: "Support", Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Agents().PublishVersion(ctx, agentID, 1, cfg(used), nil); err != nil {
-		t.Fatal(err)
-	}
-
-	err = s.Credentials().Delete(ctx, used)
-	var inUse *CredentialInUseError
-	if !errors.As(err, &inUse) || len(inUse.Agents) != 1 || inUse.Agents[0].AgentID != agentID || inUse.Agents[0].AgentName != "Support" {
-		t.Fatalf("delete attached: err=%v", err)
-	}
-	if _, err := s.Credentials().Get(ctx, used); err != nil {
-		t.Fatalf("attached credential was deleted: %v", err)
-	}
-	if err := s.Credentials().Delete(ctx, unused); err != nil {
-		t.Fatalf("delete unattached: %v", err)
-	}
-
-	// Only the current version counts: after re-attaching, the old credential is free.
-	if _, err := s.Agents().PublishVersion(ctx, agentID, 2, cfg(other), nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Credentials().Delete(ctx, used); err != nil {
-		t.Fatalf("delete after re-attach: %v", err)
-	}
-	// Archived agents do not hold their credentials.
-	if err := s.Agents().Archive(ctx, agentID); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Credentials().Delete(ctx, other); err != nil {
-		t.Fatalf("delete after archive: %v", err)
-	}
-
+		defer s.Close()
+		check(t, s)
+	})
 }

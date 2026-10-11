@@ -1,7 +1,6 @@
 -- +goose Up
 CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, archived INTEGER NOT NULL DEFAULT 0, current_version_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE agent_versions (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT, version INTEGER NOT NULL, schema_version INTEGER NOT NULL, config_json TEXT NOT NULL, config_hash TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(agent_id,version));
-CREATE TABLE provider_credentials (id TEXT PRIMARY KEY, provider TEXT NOT NULL, masked_suffix TEXT NOT NULL, validation_state TEXT NOT NULL, validated_at TEXT, capabilities_json TEXT NOT NULL, ciphertext BLOB NOT NULL, key_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, name TEXT NOT NULL, endpoint TEXT NOT NULL, transport TEXT NOT NULL, auth_env TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL, validation_state TEXT NOT NULL, latest_discovery_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE mcp_discoveries (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, discovery_hash TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE mcp_tools (discovery_id TEXT NOT NULL REFERENCES mcp_discoveries(id) ON DELETE RESTRICT, remote_name TEXT NOT NULL, schema_json TEXT NOT NULL, schema_hash TEXT NOT NULL, PRIMARY KEY(discovery_id,remote_name));

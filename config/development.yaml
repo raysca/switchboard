@@ -74,13 +74,11 @@ observability:
   timeline_max_events: 500
   timeline_ttl: 10m
 
-# Agent store (required): calls run stored agents with stored provider
-# credentials. The server requires:
+# Agent store (required): calls run stored agents. The server requires:
 #   GOVOICE_DATABASE_DSN     storage DSN (file path for sqlite, URL for postgres)
-#   GOVOICE_CREDENTIAL_KEYS  "id:base64(32-byte key)[,id:...]", first is active
-# In this development profile both are optional: when unset the server creates
-# .govoice-dev/govoice.db and a persisted key in .govoice-dev/credential.key
-# (override the directory with GOVOICE_DEV_DIR). Production always requires both.
+# In this development profile it is optional: when unset the server creates
+# .govoice-dev/govoice.db (override the directory with GOVOICE_DEV_DIR).
+# Production always requires it.
 storage:
   dialect: "sqlite"
 

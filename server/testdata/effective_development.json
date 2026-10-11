@@ -24,9 +24,6 @@
   "Dialect": "sqlite",
   "DSNEnv": ""
  },
- "Credentials": {
-  "KeyringEnv": ""
- },
  "Token": {
   "SecretEnv": "TOKEN_SECRET",
   "Secret": "dev-insecure-secret-key-for-testing-only-12345",

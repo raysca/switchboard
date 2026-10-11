@@ -54,9 +54,6 @@ type Config struct {
 		Dialect string `yaml:"dialect"` // "sqlite" | "postgres"
 		DSNEnv  string `yaml:"dsn_env"` // env var holding the DSN (default GOVOICE_DATABASE_DSN)
 	} `yaml:"storage"`
-	Credentials struct {
-		KeyringEnv string `yaml:"keyring_env"` // env var: "id:base64key[,id:base64key]", first is active (default GOVOICE_CREDENTIAL_KEYS)
-	} `yaml:"credentials"`
 
 	// Admission Token
 	Token struct {

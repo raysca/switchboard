@@ -4,12 +4,9 @@ import (
 	"encoding/json"
 	"os"
 
-	"encoding/base64"
 	"govoice/server/agent"
-	"govoice/server/credential"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -19,7 +16,6 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 	s := apiTestServer(t)
 	key := "management-test-key-32-bytes-long-and-separate"
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
-	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "k1:"+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
 	s.cfg.Storage.Dialect = "sqlite"
 	s.cfg.Retention.Enabled = true
 
@@ -42,21 +38,10 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 	}
 }
 
-func TestEnableManagementFailsClosedWithoutSecrets(t *testing.T) {
-	s := apiTestServer(t)
-	s.cfg.Storage.Dialect = "sqlite"
-	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
-	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "k1:short")
-	if err := s.EnableManagement(t.Context()); err == nil {
-		t.Fatal("expected failure with an invalid key")
-	}
-}
-
 // enableTestManagement wires a throwaway SQLite agent store into s.
 func enableTestManagement(t *testing.T, s *Server) {
 	t.Helper()
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
-	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "k1:"+base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))))
 	s.cfg.Storage.Dialect = "sqlite"
 	if err := s.EnableManagement(t.Context()); err != nil {
 		t.Fatal(err)
@@ -97,46 +82,29 @@ func TestUnavailableAgentProvidersReported(t *testing.T) {
 	}
 }
 
-// Development needs no setup: a local store and a persisted key are created,
-// and credentials stored in one run are still decryptable in the next.
-func TestDevelopmentAutoCreatesLocalStoreAndKey(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("GOVOICE_DEV_DIR", dir)
-	t.Setenv("GOVOICE_DATABASE_DSN", "")
-	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "")
-
-	first := apiTestServer(t)
-	if err := first.EnableManagement(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	cred, err := first.credentials.Create(t.Context(), credential.CreateInput{Provider: "google", Secret: "dev-google-key"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	first.closeManagement()
-	info, err := os.Stat(filepath.Join(dir, "credential.key"))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("dev key file: %v mode=%v", err, info.Mode())
-	}
-
-	second := apiTestServer(t)
-	if err := second.EnableManagement(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(second.closeManagement)
-	if got, err := second.credentials.ProviderSecret(t.Context(), cred.ID, "google"); err != nil || string(got) != "dev-google-key" {
-		t.Fatalf("credential not readable after restart: %q %v", got, err)
-	}
-}
-
-func TestProductionRequiresExplicitStoreAndKey(t *testing.T) {
+func TestProductionRequiresExplicitStore(t *testing.T) {
 	t.Setenv("GOVOICE_DEV_DIR", t.TempDir())
 	t.Setenv("GOVOICE_DATABASE_DSN", "")
-	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "")
 	s := apiTestServer(t)
 	s.cfg.Profile = ProfileProduction
 	if err := s.EnableManagement(t.Context()); err == nil {
 		s.closeManagement()
-		t.Fatal("production enabled storage without explicit DSN and keyring")
+		t.Fatal("production enabled storage without an explicit DSN")
+	}
+}
+
+// The environment is the only secret store: development needs no key and
+// writes no key file.
+func TestManagementStartsWithoutAKeyring(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GOVOICE_DEV_DIR", dir)
+	t.Setenv("GOVOICE_DATABASE_DSN", "")
+	s := apiTestServer(t)
+	if err := s.EnableManagement(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.closeManagement)
+	if _, err := os.Stat(filepath.Join(dir, "credential.key")); !os.IsNotExist(err) {
+		t.Fatalf("credential.key exists or unexpected error: %v", err)
 	}
 }

@@ -26,9 +26,6 @@
   "Dialect": "postgres",
   "DSNEnv": ""
  },
- "Credentials": {
-  "KeyringEnv": ""
- },
  "Token": {
   "SecretEnv": "TOKEN_SECRET",
   "Secret": "",

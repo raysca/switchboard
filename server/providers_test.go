@@ -58,7 +58,7 @@ func installProviders(s *Server) {
 	s.registry.Register("xai.stt", stub)
 	s.registry.Register("xai.tts", stub)
 	s.registry.Register("xai.llm", stub)
-	s.SetProviderManagementAPI(s.providersRoutes(http.NotFoundHandler()))
+	s.SetProviderManagementAPI(s.providersRoutes())
 }
 
 func TestProvidersNoKeys(t *testing.T) {
