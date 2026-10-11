@@ -612,7 +612,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if err != nil {
 		return fail(fmt.Errorf("create transcript finalizer: %w", err))
 	}
-	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
+	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true, Sanitize: neutralizeNoteMarker})
 	asstCfg := core.DefaultAssistantContextConfig()
 	asstCfg.DisableTextCleaning = call.DisableTextCleaning
 	asstCfg.FirstClauseMinLength = cfg.FirstClauseChars

@@ -650,13 +650,14 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	s.mu.Unlock()
 	if injector != nil && call.StoredSessionID != "" {
 		id, base := call.StoredSessionID, releaseCall
-		s.live.Put(id, injector)
+		s.live.Put(id, &sessionInjector{ContextInjector: injector, sess: session})
 		releaseCall = func() { s.live.Delete(id); base() }
 	}
 
 	// 5. Cleanup when session closes
 	go func() {
 		<-session.Done()
+		s.live.Delete(call.StoredSessionID) // gone for operators before teardown work starts
 		s.finishCall(sessionID, principal, agentID, session, conn, timeline, errProviders, releaseCall, stopRecording)
 	}()
 

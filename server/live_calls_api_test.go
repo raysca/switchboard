@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"govoice/core"
 )
 
 const testMgmtKey = "management-test-key-32-bytes-long-and-separate"
@@ -125,5 +127,52 @@ func TestLiveCallRoutesDoNotShadowSessionHistory(t *testing.T) {
 	s := apiTestServer(t)
 	if w := apiRequest(s, http.MethodGet, "/api/v1/sessions", testMgmtKey, ""); w.Code != http.StatusServiceUnavailable {
 		t.Errorf("sessions list without storage: status = %d, want 503 as before", w.Code)
+	}
+}
+
+type endedInjector struct{ recInjector }
+
+func (*endedInjector) Ended() bool { return true }
+
+// A call whose session is already closing is gone, not "starting": 404, and nothing is delivered.
+func TestLiveCallRoutesReportAnEndingCallAsGone(t *testing.T) {
+	s := apiTestServer(t)
+	inj := &endedInjector{recInjector{ready: true}}
+	s.live.Put("ending", inj)
+	body := `{"messages":[{"content":"hi"}]}`
+	if w := apiRequest(s, http.MethodPost, "/api/v1/sessions/ending/context", testMgmtKey, body); w.Code != http.StatusNotFound {
+		t.Errorf("context on an ending call: status = %d, want 404", w.Code)
+	}
+	if w := apiRequest(s, http.MethodPost, "/api/v1/sessions/ending/run", testMgmtKey, ""); w.Code != http.StatusNotFound {
+		t.Errorf("run on an ending call: status = %d, want 404", w.Code)
+	}
+	if len(inj.notes) != 0 || inj.ran != 0 {
+		t.Errorf("delivered %v / %d runs to an ended call", inj.notes, inj.ran)
+	}
+}
+
+func TestSessionInjectorEndsWithItsSession(t *testing.T) {
+	trig := core.NewAsyncTrigger(core.AsyncTriggerConfig{})
+	pipe, err := core.NewPipeline(trig, &core.PassthroughProcessor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inj := &sessionInjector{ContextInjector: newCallInjector(trig, core.NewConversationContext(core.ContextConfig{})), sess: sess}
+	if inj.Ready() {
+		t.Fatal("ready before the session started")
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if !inj.Ready() || inj.Ended() {
+		t.Fatalf("running session: ready=%t ended=%t", inj.Ready(), inj.Ended())
+	}
+	_ = sess.Close()
+	if inj.Ready() || !inj.Ended() {
+		t.Fatalf("closed session: ready=%t ended=%t", inj.Ready(), inj.Ended())
 	}
 }

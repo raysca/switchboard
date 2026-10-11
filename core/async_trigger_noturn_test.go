@@ -78,3 +78,24 @@ func TestAsyncTriggerReadyOnlyOnceAttached(t *testing.T) {
 		t.Fatal("an attached trigger reports not ready")
 	}
 }
+
+// A burst past MaxQueue injects the oldest item at once; if that item asked for a reply, the
+// reply must not be lost with it.
+func TestAsyncTriggerOverflowKeepsTheRequestedTurn(t *testing.T) {
+	r := newTriggerRig(t, func(c *core.AsyncTriggerConfig) { c.MaxQueue = 2 })
+	o := &orderLog{}
+	if err := r.sess.Post(&core.UserStartedSpeakingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	r.deliverItem(o, "run", false) // wants a reply
+	r.deliverItem(o, "n1", true)
+	r.deliverItem(o, "n2", true) // overflow: "run" is injected now, without a turn of its own
+	if got := o.list(); !slices.Equal(got, []string{"run"}) {
+		t.Fatalf("after overflow injected = %v, want just the evicted item", got)
+	}
+	if err := r.sess.Post(&core.UserStoppedSpeakingFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the requested reply", func() bool { return r.llm.count() == 1 })
+}

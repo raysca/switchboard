@@ -122,11 +122,16 @@ func (t *AsyncTrigger) Deliver(r AsyncToolResult) {
 	}
 	t.mu.Lock()
 	var early func() error
+	evictedWantedTurn := false
 	if len(t.queue) >= t.cfg.MaxQueue {
 		early = t.queue[0].Inject
+		evictedWantedTurn = !t.queue[0].NoTurn
 		t.queue = t.queue[1:]
 	}
 	t.queue = append(t.queue, r)
+	if evictedWantedTurn { // the evicted item is injected now, so its reply rides on the next one
+		t.queue[0].NoTurn = false
+	}
 	start := !t.running
 	t.running = true
 	t.mu.Unlock()

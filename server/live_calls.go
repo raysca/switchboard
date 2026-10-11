@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,25 @@ func (c *callInjector) Note(content string, run bool) {
 func (c *callInjector) Run() {
 	c.trigger.Deliver(core.AsyncToolResult{Call: core.ToolCall{Name: runLLMName}, Inject: func() error { return nil }})
 }
+
+// noteMarker matches the start of an operator note in any case or spacing.
+var noteMarker = regexp.MustCompile(`(?i)\[\s*note from the operator`)
+
+// neutralizeNoteMarker defuses the operator-note marker in text a caller supplied (spoken or
+// typed), so only the server can author an operator note.
+func neutralizeNoteMarker(s string) string {
+	return noteMarker.ReplaceAllString(s, "(note from the operator")
+}
+
+// sessionInjector ends with its session: once the session is closing the call is gone, even
+// though the live map entry is only removed when teardown finishes.
+type sessionInjector struct {
+	ContextInjector
+	sess *core.Session
+}
+
+func (s *sessionInjector) Ended() bool { return s.sess.State() > core.StateRunning }
+func (s *sessionInjector) Ready() bool { return !s.Ended() && s.ContextInjector.Ready() }
 
 type liveStatus int
 

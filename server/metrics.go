@@ -334,7 +334,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	for i, v := range completionVerdicts {
 		fmt.Fprintf(w, "voice_turn_completion_total{verdict=%q} %d\n", v, m.completion[i].Load())
 	}
-	fmt.Fprintf(w, "# HELP voice_async_tool_results_dropped_total Finished async tool results that could not be injected (session closing).\n# TYPE voice_async_tool_results_dropped_total counter\nvoice_async_tool_results_dropped_total %d\n", m.AsyncToolResultsDroppedTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_async_tool_results_dropped_total Finished async tool results or operator context notes that could not be injected (session closing, context budget).\n# TYPE voice_async_tool_results_dropped_total counter\nvoice_async_tool_results_dropped_total %d\n", m.AsyncToolResultsDroppedTotal.Load())
 
 	for _, c := range []struct {
 		name, help string

@@ -54,6 +54,10 @@ func (s *Server) handleLiveCall(w http.ResponseWriter, r *http.Request, requestI
 		api.WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests for this call", requestID)
 		return
 	}
+	if e, ok := inj.(interface{ Ended() bool }); ok && e.Ended() {
+		api.WriteError(w, http.StatusNotFound, "not_found", "the call has ended", requestID)
+		return
+	}
 	if !inj.Ready() {
 		api.WriteError(w, http.StatusConflict, "call_not_ready", "the call is still starting; retry shortly", requestID)
 		return
