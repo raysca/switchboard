@@ -13,7 +13,7 @@ Status: spike works for scripted, text-modality scenarios. Not adopted for audio
    Go builds need the repo's `SDKROOT`/`CGO_LDFLAGS`, so run it through make.
 2. Refuses to start if a port is taken, then runs that binary on 18680/19690 (override with
    `EVAL_PUBLIC_PORT`/`EVAL_ADMIN_PORT`) with a throwaway store in `.govoice-eval-pipecat/` (git-ignored,
-   kept for logs), creates a fake credential and agent over the admin API, mints one single-use voice token per
+   kept for logs), sets fake Google variables in the server's environment, creates an agent over the admin API, mints one single-use voice token per
    scenario file. The server is killed on exit, pass or fail.
 3. Runs `tools/eval/pipecat/run_eval.py` (stock `pipecat.evals run` plus a framing shim) against
    `ws://.../ws?token=...`. The token is masked in the output.

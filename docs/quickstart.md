@@ -8,13 +8,15 @@ This guide gets you up and running with a real, live voice conversation using Vo
 
 - **Go**: Version 1.27.1 or higher
 - **Node.js**: Version 20+ (Node 22 LTS recommended)
-- **Google credential**: either a Gemini/Google API key, or a service-account JSON key with `Speech-to-Text API`, `Cloud Text-to-Speech API`, and `Vertex AI` enabled.
+- **Google**: a service-account JSON key file with `Speech-to-Text API`, `Cloud Text-to-Speech API` and `Vertex AI` enabled (STT, TTS and the LLM), optionally plus a Gemini API key (preferred for the LLM).
 - **xAI API key** (optional): xAI can serve the LLM stage. xAI STT/TTS exist only in builds made with `-tags xaispeech`.
 - `curl`, `openssl` and `jq` for the commands below.
 - **ONNX Runtime 1.29.0**: not committed (ignored by version control), so a fresh clone needs `make ort` once (downloads the pinned release for your OS/arch). `make build` fails with that hint when it is missing. The Silero and Smart Turn models are tracked in `third_party/`.
 - `make build`, `make test` and `make verify` build with `-tags xaispeech` (xAI STT/TTS), like the production image.
 
-Provider credentials are not read from the environment. `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` and `XAI_API_KEY` are ignored by the server. You add credentials through the management API, and the server stores them encrypted.
+Provider keys come from the server's environment only: the server never stores them and no API accepts them. [providers.md](providers.md) lists every variable and what it unlocks.
+
+> **Upgrading from a build with stored credentials:** delete `.govoice-dev` (or any development database): the schema changed in place; nothing is migrated. Then set the provider variables below and recreate your agents (without `credential_id`).
 
 ---
 
@@ -36,25 +38,41 @@ This generates:
 
 ## 3. Configuration and Secrets
 
-`config/development.yaml` works as-is. YAML holds only infrastructure: listeners, TLS, limits, VAD, the token issuer, provider infrastructure (Google project/location/stream quotas, xAI endpoints) and `storage.dialect`. Models, voices, prompts and credentials belong to stored agents. A `pipelines:` section is rejected at startup.
+`config/development.yaml` works as-is. YAML holds only infrastructure: listeners, TLS, limits, VAD, the token issuer, provider infrastructure (Google project/location/stream quotas, xAI endpoints) and `storage.dialect`. Models, voices and prompts belong to stored agents; provider keys belong to the environment. A `pipelines:` section is rejected at startup.
 
 The turn manager is on by default (see "Turn taking" below). Optional features (Smart Turn, idle, DTMF, recording, OTel, redaction, audio filters, failover) are off by default and listed as commented examples at the end of `config/development.yaml`; defaults and semantics per key are in the "Default" column of [pipecat-parity-matrix.md](pipecat-parity-matrix.md).
 
 TTS streams by default. Two optional kill switches: `providers.google_tts.disable_streaming: true` serves Google voices with the unary request, and `providers.xai_tts.disable_streaming: true` does the same for xAI.
 
-The agent store is required. Set its DSN, the credential encryption keyring and the management API key:
+The agent store is required. Set its DSN, the management API key and the provider variables:
 
-In the development profile you can skip the first two variables: the server then creates `.govoice-dev/govoice.db` and a persisted credential key in `.govoice-dev/credential.key`. Production always requires both.
+In the development profile you can skip the DSN: the server then creates `.govoice-dev/govoice.db`. Production always requires it.
 
 ```bash
 mkdir -p data
 # SQLite file (development.yaml uses storage.dialect: sqlite). For postgres use a postgres:// URL.
 export GOVOICE_DATABASE_DSN="$PWD/data/govoice.db"
-# "id:base64(32-byte key)[,id:...]"; the first entry encrypts new secrets. Keep it: losing it makes stored credentials unreadable.
-export GOVOICE_CREDENTIAL_KEYS="k1:$(openssl rand -base64 32)"
 # Management API bearer key, at least 32 bytes.
 export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"
+# Provider keys (set the ones you use; see docs/providers.md for the full table).
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json  # Google STT, TTS (and LLM via Vertex AI)
+export GOOGLE_API_KEY="your-gemini-api-key"                  # optional: Google LLM via the Gemini API
+# export XAI_API_KEY="your-xai-api-key"                      # optional: xAI LLM, STT and TTS
 ```
+
+| Variable | Unlocks |
+|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | Google STT, TTS, LLM (path to a service-account JSON file) |
+| `GOOGLE_API_KEY` | Google LLM |
+| `XAI_API_KEY` | xAI LLM, STT, TTS |
+| `OPENAI_API_KEY` (+ optional `OPENAI_BASE_URL`) | OpenAI-compatible LLM |
+| `NVIDIA_API_KEY` (+ `NVIDIA_STT_FUNCTION_ID`, `NVIDIA_TTS_FUNCTION_ID`) | NVIDIA LLM (and Riva STT, TTS) |
+| `DEEPGRAM_API_KEY` | Deepgram STT |
+| `CARTESIA_API_KEY` | Cartesia STT, TTS |
+| `ELEVENLABS_API_KEY` | ElevenLabs STT, TTS |
+| `MCP_TOKEN_<NAME>` | Bearer token of an MCP server (`auth_env`) |
+
+To rotate a key, change the variable and restart the server.
 
 ---
 
@@ -88,25 +106,15 @@ AUTH="Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY"
 
 ---
 
-## 5. Add a Provider Credential, Create an Agent, Issue a Token
+## 5. Check Providers, Create an Agent, Issue a Token
 
-### 5a. Add a Google credential
-
-The secret is either an API key or a service-account JSON key (`"type": "service_account"`). Pretty-printed JSON is accepted; API keys must be a single token.
+### 5a. Check which providers are available
 
 ```bash
-# API key:
-SECRET="your-google-api-key"
-# Or a service-account key:
-# SECRET="$(jq -c . /path/to/sa-key.json)"
-
-CRED_ID=$(jq -n --arg s "$SECRET" '{provider: "google", secret: $s}' |
-  curl -fsS -X POST "$ADMIN/api/v1/providers/credentials" \
-    -H "$AUTH" -H 'Content-Type: application/json' --data-binary @- | jq -r .data.id)
-echo "$CRED_ID"
+curl -fsS "$ADMIN/api/v1/providers" -H "$AUTH" | jq '.data[] | {id, detected, capabilities}'
 ```
 
-The response holds only a masked suffix. `GET /api/v1/providers/credentials` lists credentials. For xAI, post `{"provider": "xai", "secret": "<xai-api-key>"}`.
+A provider whose variables are not set reports each service with `"reason": "missing_env"` and the variable names in `missing_env`. Values are never returned.
 
 ### 5b. Create an agent
 
@@ -126,7 +134,7 @@ curl -fsS "$ADMIN/api/v1/agents/$AGENT_ID" -H "$AUTH" | jq -r .data.readiness.st
 # ready
 ```
 
-Each stage must name its `credential_id`: an agent is attached to its providers and their credentials when it is created, and creation fails with `400 agent_not_attached` if a stage has no provider, no credential, or a credential of another provider. A credential cannot be deleted while an agent is attached to it (`409 credential_in_use` lists the agents); if it is marked invalid, the agent becomes not ready (`invalid_credential_<stage>`). To use xAI for the LLM, set `"llm": {"provider": "xai", "model": "<grok-model>", ...}` after adding an xAI credential.
+Each stage names only a provider: creation fails with `400 agent_not_attached` if a stage has no provider, or its provider's variables for that service are not set (`missing_credential_<stage>`). If a variable is removed later, the agent becomes not ready and `readiness.missing_env` names the variable. To use xAI for the LLM, set `XAI_API_KEY`, restart, and use `"llm": {"provider": "xai", "model": "grok-2-1212", ...}`.
 
 ### 5c. Issue a voice token
 

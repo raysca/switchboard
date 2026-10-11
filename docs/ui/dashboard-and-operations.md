@@ -98,7 +98,7 @@ The overall `health` status is evaluated deterministically:
    - **p95 Latency**: 95th percentile turn latency (with average latency subtext).
 4. **Readiness Summary Cards**:
    - **Agent Readiness**: count of total configured vs ready and configured agents with deep-link to `/agents`.
-   - **Provider Readiness**: count of detected providers and validated API credentials with deep-link to `/providers`.
+   - **Provider Readiness**: count of providers whose environment variables are detected, with a deep-link to `/providers`.
 5. **Recent Session Activity Feed**:
    - Shows latest 5 sessions with masked ID, status badge, turn count, relative start time, and direct deep-link button (`/sessions/:id`).
    - If empty, displays descriptive empty state prompting user to connect a voice client.

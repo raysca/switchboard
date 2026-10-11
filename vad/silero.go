@@ -127,7 +127,7 @@ func InitORT() error {
 
 // WorkerEnv is the whole environment of an ORT worker child: only what locating
 // the models and ONNX Runtime needs. The parent's secrets (database DSN,
-// credential keys, provider API keys) never reach the child.
+// management key, provider API keys, MCP tokens) never reach the child.
 func WorkerEnv() []string {
 	var env []string
 	for _, k := range []string{"GOVOICE_ROOT", "GOVOICE_ORT_LIB", "GOVOICE_MODEL_PATH", "GOVOICE_TURN_MODEL_PATH",

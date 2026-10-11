@@ -59,16 +59,14 @@ The server also requires the agent store and its secrets. It refuses to start wi
 | `TOKEN_SECRET` | Voice token signing secret (32+ characters). |
 | `GOVOICE_MANAGEMENT_API_KEY` | Management API bearer key, at least 32 bytes, different from `TOKEN_SECRET`. |
 | `GOVOICE_DATABASE_DSN` | Agent store DSN: a `postgres://` URL (`config/production.yaml` uses `storage.dialect: postgres`) or a SQLite file path. |
-| `GOVOICE_CREDENTIAL_KEYS` | `id:base64(32-byte key)[,id:...]`; the first entry encrypts new provider secrets. Generate a key with `openssl rand -base64 32`. Back it up: stored credentials cannot be decrypted without it. To rotate, put the new key first, keep the old one, then call `POST /api/v1/providers/credentials/{id}/rotate`. |
-
-Provider credentials (Google API key or service-account JSON, xAI API key) are not environment variables or mounted files. Add them after start-up with `POST /api/v1/providers/credentials`, then create agents with `POST /api/v1/agents` (see `docs/quickstart.md`). `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` and `XAI_API_KEY` are ignored.
+Provider keys are environment variables too, read on demand and never stored: `GOOGLE_APPLICATION_CREDENTIALS` (path to a mounted service-account JSON file), `GOOGLE_API_KEY`, `XAI_API_KEY`, `OPENAI_API_KEY`, `NVIDIA_API_KEY`, `DEEPGRAM_API_KEY`, `CARTESIA_API_KEY`, `ELEVENLABS_API_KEY` and `MCP_TOKEN_<NAME>` for MCP servers; [providers.md](providers.md) has the full table. Set the ones you use, then create agents with `POST /api/v1/agents` (see `docs/quickstart.md`); `GET /api/v1/providers` shows which are detected. To rotate a key, change the variable and restart. Upgrading from a build with stored credentials: the schema changed in place and nothing is migrated; start from a fresh database and recreate agents.
 
 ### Step 3: Run with Docker Compose
 Use the reference compose configuration in `deploy/docker-compose.yaml`:
 ```bash
 docker compose -f deploy/docker-compose.yaml up -d
 ```
-The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at `/tmp`. The compose file also starts a `postgres` service for the agent store; set `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY`, `GOVOICE_CREDENTIAL_KEYS` and `POSTGRES_PASSWORD` before `up`. `deploy/smoke.sh` is the keyless release check (no provider key, costs nothing): it builds the image, starts it next to a throwaway Postgres and probes `/ready` and `/metrics` from outside the container, checks that xAI speech is in the build and that SIGTERM exits 0. `deploy/smoke-google.sh` runs the compose stack end to end with a Google key: it adds a credential, creates an agent and issues a voice token.
+The container runs with `read_only: true`, `cap_drop: ALL`, and tmpfs mounted at `/tmp`. The compose file also starts a `postgres` service for the agent store; set `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY` and `POSTGRES_PASSWORD` before `up`, and put the provider variables in `deploy/govoice.env` (mode 600, read through `env_file`; mount a Google service-account file read-only and point `GOOGLE_APPLICATION_CREDENTIALS` at it). `deploy/smoke.sh` is the keyless release check (no provider key, costs nothing): it builds the image, starts it next to a throwaway Postgres and probes `/ready` and `/metrics` from outside the container, checks that xAI speech is in the build and that SIGTERM exits 0. `deploy/smoke-google.sh` runs the compose stack end to end with a Google service account (`GOOGLE_APPLICATION_CREDENTIALS` on the host, mounted read-only): it creates an agent, checks it is ready and issues a voice token.
 
 **Listeners.** `public_listen_addr` (`:8080`) serves `/ws` and `/health`. `admin_listen_addr` (`127.0.0.1:9090`, container loopback) serves the management API (`/api/v1`, bearer auth) and `/debug/timeline`; compose does not publish it, so run management calls with `docker exec govoice-server curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...` (Kubernetes: `kubectl port-forward` or `exec`). `probe_listen_addr` (`0.0.0.0:9092`) serves only `/health`, `/ready` and `/metrics` without auth, so kubelet probes and Prometheus can reach the container; compose publishes it on `127.0.0.1` only. Never bind the admin listener beyond loopback, and keep the probe port off public ingress (cluster network only).
 
@@ -107,8 +105,8 @@ sudo cp config/production.yaml /etc/govoice/production.yaml   # the unit reads p
 
 # Copy and enable systemd unit
 sudo cp deploy/govoice.service /etc/systemd/system/govoice.service
-# /etc/govoice/env (mode 600) must set TOKEN_SECRET, GOVOICE_MANAGEMENT_API_KEY,
-# GOVOICE_DATABASE_DSN and GOVOICE_CREDENTIAL_KEYS (see Path A, Step 2).
+# /etc/govoice/env (mode 600) must set TOKEN_SECRET, GOVOICE_MANAGEMENT_API_KEY and
+# GOVOICE_DATABASE_DSN, plus the provider variables you use (see Path A, Step 2).
 sudo systemctl daemon-reload
 sudo systemctl enable --now govoice.service
 ```
@@ -199,7 +197,7 @@ docker stop -t 60 govoice-server   # at least drain_timeout + 5 s (50 s in produ
 - **Underlying Mechanism**: 5 consecutive failures occurred against the provider (Google, xAI or an Nvidia endpoint) STT, LLM, or TTS.
 - **Action Required**:
   1. Check GCP Service Health status for Speech-to-Text or Vertex AI.
-  2. Verify the stored credential (`POST /api/v1/providers/credentials/{id}/validate`) and IAM permissions.
+  2. Verify the provider key in the server's environment (`GET /api/v1/providers` shows whether it is detected; a wrong value shows up as provider errors) and IAM permissions.
   3. Circuits will automatically probe the provider in Half-Open state after 30 seconds of cooldown.
   4. Agents with STT fallbacks move the open utterance to the next provider and replay its buffered audio (`voice_stt_failover_total`); each new utterance tries the primary again once its breaker allows. `stt.replay_buffer` (default `10s`, max `60s`, ~32 KB/s per call with fallbacks) bounds how much of a long utterance survives; `voice_stt_replay_dropped_bytes_total` counts utterance audio that did not fit.
 

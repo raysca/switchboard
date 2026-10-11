@@ -9,7 +9,7 @@ Voice Framework V1 is a high-performance, low-latency, resilient voice agent run
 - **Unmodified Pipecat Compatibility**: Integrates seamlessly with official, unmodified `@pipecat-ai/client-js@1.13.1` and `@pipecat-ai/websocket-transport@1.7.2` using binary Protobuf frames and the RTVI 2.1.0 protocol.
 - **Sub-200ms Barge-In Interruption**: On user speech the server stops sending assistant audio. The pinned Pipecat client does not clear audio it has already buffered; residual playback is bounded by the 100 ms server pacing queue.
 - **Fault-Isolated Neural VAD**: Runs Silero VAD inside supervised worker child processes, ensuring that native C/C++ or ONNX faults or segmentation faults cannot crash the Go server.
-- **Stored Agents**: Every call runs a stored agent (STT, LLM and TTS provider, model, voice, prompt, MCP tools) managed through the `/api/v1` management API. Provider credentials are stored encrypted, and each call pins the agent version it started with.
+- **Stored Agents**: Every call runs a stored agent (STT, LLM and TTS provider, model, voice, prompt, MCP tools) managed through the `/api/v1` management API. Provider keys come from the server's environment only (never stored or returned; see [docs/providers.md](docs/providers.md)), and each call pins the agent version it started with.
 - **Agent Graphs (multi-agent handoff)**: An agent can be a graph of agents drawn on a canvas in the admin UI: each node has its own prompt, MCP tools, LLM and voice, and the model hands the call to another node through a generated `transfer_to_<node>` tool. Only the node holding the call is built; a left node is closed. A configurable sound can cover the gap. See [Management API v1](docs/api/v1.md) and [audio](docs/audio-filters.md).
 - **Provider Interchangeability**: Agents can use Google Cloud for every stage (Chirp 2 STT + Gemini LLM + Chirp 3 HD TTS) or swap in xAI Grok for the LLM (Scenario C) with zero core runtime modifications. xAI STT/TTS are only available in builds made with `-tags xaispeech`. Also available: Nvidia (NIM LLM plus Riva STT and TTS over gRPC; live-checked, see [docs/benchmarks/nvidia-live.md](docs/benchmarks/nvidia-live.md)), Cartesia and ElevenLabs STT and TTS, and Deepgram STT.
 - **Ping Liveness**: The server pings every WebSocket (`limits.ping_interval`, default 15 s) and drops a peer that misses two pings in a row, so dead connections free their slot while muted or text-only clients stay connected.
@@ -33,10 +33,11 @@ make example-go NAME=google_pipeline   # standalone Go examples
 
 `make dev` builds everything, installs UI dependencies, generates the management
 key and token secret, and starts the server and admin UI. The server creates a
-local SQLite store and credential key in `.govoice-dev/` (git-ignored; delete it
-to start over). If `examples/.env` (template: `examples/.env.example`) has `GOOGLE_API_KEY` and/or
-`GOOGLE_APPLICATION_CREDENTIALS`, it also adds them as provider credentials and
-creates a ready "Dev Assistant" agent that the examples call. The management key
+local SQLite store in `.govoice-dev/` (git-ignored; delete it to start over).
+Provider keys come from `examples/.env` (template: `examples/.env.example`), which
+the dev server reads as its environment; nothing is stored. If any provider is set,
+`make dev` creates a ready "Dev Assistant" agent from the detected providers that
+the examples call. The management key
 for the admin UI is in `.govoice-dev/dev.env`. Ports default to 8080 (public),
 9090 (admin), 5173 (UI) and 3000 (web client); if one is taken, run e.g.
 `PUBLIC_PORT=18080 ADMIN_PORT=19090 make dev` (the examples follow).
@@ -62,12 +63,13 @@ make verify
 Validates code formatting, runs all tests with `-race` across all modules (root, `core`, every `providers/*`, `server`, including `vad`, `smartturn`, `transport`, `tools/*`), verifies Protobuf binary fixtures, and confirms the compatibility manifest.
 
 ### 3. Launch Development Server
-The agent store is required. Provide its DSN, the credential encryption keyring and a management API key:
+The agent store is required. Provide its DSN, a management API key and the provider variables you use:
 ```bash
 mkdir -p data
 export GOVOICE_DATABASE_DSN="$PWD/data/govoice.db"            # sqlite path, or a postgres:// URL with storage.dialect: postgres
-export GOVOICE_CREDENTIAL_KEYS="k1:$(openssl rand -base64 32)"  # id:base64(32-byte key)[,id:...]; first is active
 export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"     # >= 32 bytes
+export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json      # Google STT, TTS, LLM
+export XAI_API_KEY="..."                                        # optional: xAI LLM, STT, TTS
 ./bin/server -config config/development.yaml
 ```
 
@@ -80,13 +82,27 @@ curl http://127.0.0.1:9090/ready
 # {"circuits":{...},"status":"ready"}
 ```
 
-### 4. Add a Credential, Create an Agent, Connect
-YAML no longer defines pipelines, models, voices or provider keys, and the server does not read `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` or `XAI_API_KEY`. Instead:
+### 4. Set the Variables, Create an Agent, Connect
+YAML defines no pipelines, models, voices or provider keys. Provider keys are environment variables, read on demand and never stored:
 
-1. `POST /api/v1/providers/credentials` with `{"provider": "google", "secret": "<api key or service-account JSON>"}`.
+| Variable | Unlocks |
+|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` (path to a service-account JSON) | Google STT, TTS, LLM |
+| `GOOGLE_API_KEY` | Google LLM (Gemini API) |
+| `XAI_API_KEY` | xAI LLM, STT, TTS |
+| `OPENAI_API_KEY`, optional `OPENAI_BASE_URL` | OpenAI-compatible LLM |
+| `NVIDIA_API_KEY`, `NVIDIA_STT_FUNCTION_ID`, `NVIDIA_TTS_FUNCTION_ID` | NVIDIA LLM, Riva STT, TTS |
+| `DEEPGRAM_API_KEY` / `CARTESIA_API_KEY` / `ELEVENLABS_API_KEY` | Deepgram STT / Cartesia STT, TTS / ElevenLabs STT, TTS |
+| `MCP_TOKEN_<NAME>` | MCP server bearer token (`auth_env`) |
+
+1. `GET /api/v1/providers` shows which providers are detected (variable names only).
 2. `POST /api/v1/agents` with a `config` naming the `stt`, `llm` and `tts` providers.
 3. `POST /api/v1/voice-tokens` with `{"principal": "...", "agent_id": "..."}`.
 4. Connect to `ws://127.0.0.1:8080/ws?token=<token>`.
+
+To rotate a key, change the variable and restart.
+
+> **Release note (environment-only credentials):** delete `.govoice-dev` (or any development database): the schema changed in place; nothing is migrated. The credential API, `GOVOICE_CREDENTIAL_KEYS` and `credential_id` are gone; set the provider variables and recreate agents.
 
 [docs/quickstart.md](docs/quickstart.md) has the full commands.
 
@@ -94,8 +110,9 @@ YAML no longer defines pipelines, models, voices or provider keys, and the serve
 
 ## Documentation Index
 
-- [Quick Start Guide](docs/quickstart.md): Step-by-step guide to starting the server with its agent store, adding a provider credential, creating an agent, issuing a voice token, and connecting with the Pipecat JS client.
-- [Management API v1](docs/api/v1.md): Agents, provider credentials, voice tokens, MCP servers and sessions.
+- [Quick Start Guide](docs/quickstart.md): Step-by-step guide to starting the server with its agent store, setting the provider variables, creating an agent, issuing a voice token, and connecting with the Pipecat JS client.
+- [Management API v1](docs/api/v1.md): Agents, providers, voice tokens, MCP servers and sessions.
+- [Providers](docs/providers.md): The environment variables per provider, the catalog format and the overlay directory for extra models and voices.
 - [Architecture Overview](docs/architecture.md): Core runtime model, 7-stage pipeline, generations, interruption barriers, and memory bounds.
 - [Wire Protocol & RTVI](docs/wire_protocol.md): Protobuf framing, RTVI 2.1.0 event dictionary, audio formats, resampling, and media-clock pacing.
 - [Providers & Lifecycle](docs/providers.md): Google Cloud STT/LLM/TTS, xAI Grok LLM, stream rotation, retries, and circuit breakers.

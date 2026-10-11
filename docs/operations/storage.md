@@ -20,6 +20,6 @@ Agent version publication accepts the normalized config and selected MCP tools t
 
 JSON values are canonicalized before writing. PostgreSQL stores the canonical bytes in `TEXT` columns so JSONB cannot rewrite exponent notation, escaped NUL, or large numeric values after their hashes are computed. Both dialects store UTC timestamps at fixed microsecond precision for consistent lexical ordering and PostgreSQL round trips. A later canonicalization change needs a new schema version and migration.
 
-Repository methods store ciphertext bytes but do not encrypt, decrypt, validate provider credentials, or decide what text may be retained. Callers must apply the Task 16 secret policy and Task 19 trace retention policy before writing. No raw audio column exists.
+No table holds provider secrets: they live in the server's environment. Repository methods do not decide what text may be retained. Callers must apply the Task 16 secret policy and Task 19 trace retention policy before writing. No raw audio column exists.
 
 PostgreSQL integration tests run when `TEST_POSTGRES_DSN` is set to an isolated test database. They are skipped in the default local suite when no DSN is available.

@@ -1,20 +1,32 @@
 # Provider credential security
 
-The server stores provider credentials as authenticated ciphertext. `server/credential` uses AES-256-GCM, a fresh cryptographically random nonce for every write, and an explicit key ID stored beside each ciphertext. The nonce is prefixed to the ciphertext. Associated data binds the credential ID, provider ID and key ID, so moving ciphertext between rows or changing its provider/key metadata fails authentication. Truncation, tampering and unknown key IDs fail closed.
+Provider secrets exist only in the server's process environment. There is no credential store, no credential API and no encryption keyring: the database has no secret column, and `GOVOICE_CREDENTIAL_KEYS` is no longer read. [providers.md](../providers.md) lists every variable.
 
-The host supplies a `Keyring` before serving management requests. It must contain a 32-byte key for the active key ID and every older key ID still present in storage. Keep these keys in deployment secret management or a KMS-backed host configuration, separate from the database and its backups. Never place encryption keys in the database, agent configuration, logs, traces or API responses. Loss of every key capable of decrypting a row makes that credential unrecoverable.
+## What is read, and when
 
-To rotate keys, deploy the new key alongside all old keys and select the new key ID as active. Call `POST /api/v1/providers/credentials/{id}/rotate` for each credential, then verify that no stored row still references the retired key ID before removing that old key from the host keyring. Rotation uses compare-and-replace against the prior key ID and ciphertext, so a concurrent credential replacement cannot be overwritten. The rotation route returns only the masked DTO. Keep the old key available until migration is complete; encrypted database backups also require the matching historical key.
+- The packaged provider catalog (`server/catalog`) maps each provider to the variable names it reads. The server reads only those names, plus `MCP_TOKEN_*` for MCP servers.
+- Variables are read on demand and never cached: when agent readiness is computed, when `GET /api/v1/providers` is served, and when a call starts. A call assembles the secrets for its own stages (and failover candidates) only, hands them to the provider clients, and zeroes the buffers once the clients are built or the build fails.
+- `GOOGLE_APPLICATION_CREDENTIALS` is a path. The server reads only the path an operator put in that variable, at most 64 KiB, and accepts it only if it is valid JSON.
+- A value with whitespace or control characters inside it, or one starting with `$`, is treated as missing rather than used.
 
-The browser can submit a secret once when creating or replacing a credential. Management reads return a mask containing only the last four Unicode characters when the value is longer than four characters, otherwise only mask characters. No API accepts a plaintext retrieval operation. Provider IDs and capabilities are selected from a static registry; API-key contents are never inspected to guess capabilities.
+## Who can see it
 
-Validation is separate from storage and capability support. New or replaced credentials start as `unvalidated`; only an explicitly installed provider validator can mark them `valid`, `invalid` or `error`. The framework does not invent network probes or treat absent validation adapters as success. Validator errors and panics are reduced to safe states before persistence and are not returned or logged. Validation uses transient decrypted bytes, and the byte slice is cleared on normal return, error return or panic recovery. Provider implementations must honor context cancellation, must not retain the supplied byte slice, and must not log their input secret.
+Nobody, through the server. Management responses, readiness (`missing_env`), errors, logs, traces, the call timeline and metrics name variables, never values. `server/secret_leak_test.go` sets sentinel values for an API key, a service-account file and an MCP token, runs a call on the fake providers, and checks that no sentinel appears in any management route, `/metrics`, `/debug/timeline` or the server log. The VAD and Smart Turn worker processes receive an allowlisted environment (`vad.WorkerEnv`) that excludes every provider variable.
 
-Model and voice discovery uses provider-specific adapters behind a bounded registry boundary. Results are capped at 100 models and 100 voices, each option is length-limited and rejects control characters and duplicate IDs, then results are sorted for deterministic API output. Adapter errors are replaced by a generic discovery failure. Discovery capability metadata and agent readiness are independent of process liveness: missing or invalid provider credentials affect the relevant agent capability readiness, not whole-server liveness/readiness.
+Environment values are server-wide: every agent on the server uses the same key for a provider. There is no per-tenant isolation.
 
-Assumptions for this phase:
+## MCP bearer tokens
 
-- The server loads the keyring from `GOVOICE_CREDENTIAL_KEYS` (`id:base64(32-byte key)[,id:...]`, first entry active) and refuses to start without it. KMS integration is not provided.
-- Google declares LLM, STT and TTS support; xAI declares LLM only, plus STT and TTS in builds tagged `xaispeech`. This is a selectable server capability contract, not a claim that every API key or account currently has each service enabled.
-- Calls decrypt only the credentials their agent's stages resolve to (explicit `credential_id`, or the provider's only usable credential) and hold them in memory; the server no longer reads `GOOGLE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS` or `XAI_API_KEY`. A Google secret is an API key or service-account JSON. Credentials for provider `mcp` are bearer tokens for MCP servers and are never used by agent stages.
-- Live provider validation and network discovery are not inferred from stored-key shape. Until an adapter is configured, validation/discovery reports unavailable.
+An MCP server names its token with `auth_env`, which must match `MCP_TOKEN_[A-Z0-9_]{1,48}`. The prefix is checked when the server is created and again every time the token is read, so a management-key holder can never make the server send an unrelated secret (a provider key, `GOVOICE_MANAGEMENT_API_KEY`) to an endpoint they choose, even through a row written straight into the database. Responses carry `auth_env` and `auth_env_set`, never the token.
+
+## Rotation
+
+Rotation is a redeploy: change the variable (or the service-account file) and restart. A call already running keeps the clients it built with the old key until it ends. There is no in-place rotate action by design.
+
+## Catalog overlay
+
+`providers.catalog_dir` lets an operator add models, voices and languages. Overlay files are parsed strictly (unknown keys rejected, 64 KiB per file, 500 entries per list) and cannot change which variables a provider reads; a bad file is skipped and logged.
+
+## Upgrading from stored credentials
+
+Earlier builds stored credentials encrypted in the agent store and agents carried `credential_id`. The schema changed in place and nothing is migrated: delete a development database (`.govoice-dev/`), set the provider variables, and recreate agents. A config that still sends `credential_id` is rejected with `400`.

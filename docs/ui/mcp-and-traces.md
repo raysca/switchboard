@@ -39,8 +39,8 @@ The MCP management view provides complete lifecycle management, tool discovery i
   - `disabled` (neutral tone): Server is disabled for new agent assignments.
 
 ### Add Server Workflow
-- Captures server name, optional description, remote endpoint URL (e.g. `https://mcp.example.com/rpc`), transport configuration (`streamable-http`), credential selection from configured provider credentials, and enabled toggle.
-- In accordance with V2 security policies, endpoint query parameters and embedded user-info are disallowed; authentication uses explicit credential references.
+- Captures server name, optional description, remote endpoint URL (e.g. `https://mcp.example.com/rpc`), transport configuration (`streamable-http`), an optional token variable (`auth_env`, must match `MCP_TOKEN_[A-Z0-9_]{1,48}`; the view shows whether it is set, never its value), and enabled toggle.
+- In accordance with V2 security policies, endpoint query parameters and embedded user-info are disallowed; authentication uses a named `MCP_TOKEN_*` environment variable.
 
 ### Server Detail & Discovered Tools
 - Inspects remote capabilities retrieved through MCP discovery snapshots:
@@ -103,7 +103,7 @@ The chronological turn timeline renders the conversational and diagnostic histor
 
 ## 5. Privacy Mode Compliance & Security Invariants
 
-- **No Secrets in Browser:** Provider and MCP credentials never appear in API responses, component state, or trace views. Only masked references or key identifiers are rendered.
+- **No Secrets in Browser:** Provider and MCP credentials never appear in API responses, component state, or trace views. Only variable names and whether they are set are rendered.
 - **No Raw Audio in Traces:** The UI renders no `<audio>` elements or streaming media tags. Voice telemetry contains only text transcripts and latency numbers.
 - **Metadata-Only Policy Compliance:** When transcripts or responses are redacted under privacy controls, the UI displays explicit `[Metadata only - speech content omitted]` and `[Metadata only - response content omitted]` placeholders rather than blank space or errors.
 - **Bounded Request Decoding:** Test argument inputs are capped at 64 KiB, matching the backend decoder boundary.

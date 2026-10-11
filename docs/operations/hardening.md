@@ -13,8 +13,8 @@ This document describes the production security controls, runtime operational co
 - **Key Separation**: Per contract §12, the management API secret must be strictly distinct from the voice WebSocket token signing key (`TOKEN_SECRET`). Reusing the same key for both boundaries is rejected at server startup.
 
 ### 1.2 Secret & Credential Redaction
-- **Storage Encryption Boundary**: All provider credentials (API keys, service account JSON) stored in SQL repositories are encrypted at rest using AES-GCM or KMS envelope encryption before insertion.
-- **Response Redaction**: Management APIs and UI clients never receive plaintext secrets after creation. Responses return masked representations (`••••••••XXXX`) showing at most the trailing 4 characters.
+- **Environment Only**: Provider keys (API keys, the service-account file path) and MCP bearer tokens live in the server's environment and are never written to the database. See [docs/security/credentials.md](../security/credentials.md).
+- **Response Redaction**: No management API accepts or returns a secret value. `GET /api/v1/providers`, agent readiness (`missing_env`) and MCP server views (`auth_env`, `auth_env_set`) name variables, never values.
 - **Zero Raw Audio Persistence**: No database table contains raw audio columns or audio payloads. Traces only retain structural latency, spans, events, and turn metadata.
 
 ### 1.3 Destination Controls for MCP Servers

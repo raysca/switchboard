@@ -45,7 +45,7 @@ Voice testing runs through four deterministic stages:
 1. **Token Minting (`POST /api/v1/voice-tokens`):**
    - The UI requests an admission token with `principal: "agent-test-${agent.id}"` and `agent_id: agent.id`. The server returns 409 `agent_not_ready` if the agent cannot take calls.
    - The token contains claims with the session's unique identifier (`jti`), the `agent_id` the call runs, and lifetime.
-   - The token is passed as a query parameter when establishing the WebSocket connection (`/ws?token=${token}`). The call runs the agent's current version with its stored provider credentials.
+   - The token is passed as a query parameter when establishing the WebSocket connection (`/ws?token=${token}`). The call runs the agent's current version with the provider keys from the server's environment.
 
 2. **WebSocket Upgrade & RTVI Handshake:**
    - Client connects via WebSocket (`ws://` or `wss://`).
