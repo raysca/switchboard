@@ -10,7 +10,7 @@ export type Stack = {
   customClientUrl: string; // examples/rtvi_client
   managementKey: string;
   tokenSecret: string;
-  devDir: string; // throwaway agent store + credential key
+  devDir: string; // throwaway agent store
   tmpDir: string;
   logDir: string;
   pids: Record<string, number>;

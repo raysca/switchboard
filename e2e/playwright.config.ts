@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 // Provider secrets for specs, from examples/.env (never printed). Real env wins.
-// E2E_GOOGLE_SECRET is what the test stores as the Google credential: the
+// E2E_GOOGLE_SECRET is the speech secret global-setup hands the server: the
 // service-account JSON when GOOGLE_APPLICATION_CREDENTIALS points at one (needed
 // for streaming Speech-to-Text v2), otherwise GOOGLE_API_KEY.
 const examplesDir = path.resolve(__dirname, "../examples");

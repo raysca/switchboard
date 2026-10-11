@@ -6,8 +6,8 @@ import path from "node:path";
 // deterministic; make e2e-fake). E2E_PROVIDER=xai: live xAI (make e2e-xai, spends
 // API credit). It proves the graph designer, the stored graph agent, the live call
 // and the handoff work together. The paid Google suite is playwright.config.ts.
-// The xAI key comes from the environment or examples/.env and is only ever sent
-// to the management API from this process, never typed into the browser.
+// The xAI key comes from the environment or examples/.env and is only ever passed
+// to the server process's environment: never to the API or the browser.
 const live = process.env.E2E_PROVIDER === "xai";
 if (live && !process.env.E2E_XAI_SECRET) {
   const envFile = path.resolve(__dirname, "../examples/.env");
@@ -17,8 +17,6 @@ if (live && !process.env.E2E_XAI_SECRET) {
     for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
       const m = line.match(/^\s*XAI_API_KEY\s*=\s*(.*?)\s*$/);
       if (m && m[1]) process.env.E2E_XAI_SECRET = m[1].replace(/^["']|["']$/g, "");
-      const model = line.match(/^\s*XAI_MODEL\s*=\s*(.*?)\s*$/);
-      if (model && model[1] && !process.env.XAI_MODEL) process.env.XAI_MODEL = model[1].replace(/^["']|["']$/g, "");
     }
   }
 }

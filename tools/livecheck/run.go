@@ -72,7 +72,7 @@ type runCfg struct {
 	logLevel        string
 }
 
-// runPlan executes the plan: one fresh server (ephemeral ports, own credential store) per
+// runPlan executes the plan: one fresh server (ephemeral ports, own agent store and provider env) per
 // profile x mode x server class. Failures are recorded per result and never abort other profiles.
 func runPlan(ctx context.Context, cfg runCfg, rep *Report) {
 	spent := cfg.spentBase
@@ -160,8 +160,15 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 			record(it, &Result{Status: stErr, Reason: redact(err)})
 		}
 	}
+	var env []string
+	if !first.prof.Fake {
+		env = providerEnv(first.prof, cfg.env)
+		if first.sc.class.name == classFailover.name {
+			env = brokenEnv(first.prof, env)
+		}
+	}
 	srv, err := startServer(ctx, serverSpec{root: cfg.root, bin: cfg.bin, work: cfg.work, name: name, mode: first.mode,
-		class: first.sc.class, infra: first.prof.Infra, fake: first.prof.Fake, logLevel: cfg.logLevel})
+		class: first.sc.class, infra: first.prof.Infra, fake: first.prof.Fake, env: env, logLevel: cfg.logLevel})
 	if err != nil {
 		failAll(fmt.Errorf("start server: %w", err))
 		return
@@ -182,11 +189,11 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 	}
 	var agent string
 	if first.sc.class.name == classFailover.name {
-		agent, err = srv.provisionFailover(first.prof, cfg.env)
+		agent, err = srv.provisionFailover(first.prof)
 	} else if first.sc.class.name == classGraph.name {
-		agent, err = srv.provisionGraph(first.prof, cfg.env)
+		agent, err = srv.provisionGraph(first.prof)
 	} else {
-		agent, err = srv.provision(first.prof, cfg.env, mcp)
+		agent, err = srv.provision(first.prof, mcp)
 	}
 	if err != nil {
 		failAll(fmt.Errorf("provision: %w", err))

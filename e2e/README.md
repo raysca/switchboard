@@ -16,19 +16,23 @@ Needs: Go toolchain (`make build`), `ui/node_modules` and
 `examples/.env`):
 
 - `GOOGLE_APPLICATION_CREDENTIALS`: service-account JSON (path, relative to
-  `examples/`), stored as the speech credential (STT + TTS). Streaming
-  Speech-to-Text v2 does not accept API keys.
-- `GOOGLE_API_KEY`: Gemini API key, stored as the LLM credential (service
-  accounts often lack Vertex AI `aiplatform.endpoints.predict`).
+  `examples/`), for speech (STT + TTS). Streaming Speech-to-Text v2 does not
+  accept API keys.
+- `GOOGLE_API_KEY`: Gemini API key, for the LLM (service accounts often lack
+  Vertex AI `aiplatform.endpoints.predict`).
 
-`E2E_GOOGLE_SECRET` / `E2E_GOOGLE_LLM_SECRET` override either. Without a Google
+`E2E_GOOGLE_SECRET` / `E2E_GOOGLE_LLM_SECRET` override either. Global setup hands
+them to the server process as `GOOGLE_APPLICATION_CREDENTIALS` (the JSON written to
+a mode-600 temp file) and `GOOGLE_API_KEY`; no other provider variable reaches it,
+and no secret goes through the management API or the browser. Without a Google
 secret the stack is not started and every test is skipped.
 
 ## Scenario (`tests/10-full-stack.spec.ts`)
 
-1. Admin UI: add both Google credentials (masked, never echoed), create agent
-   "E2E Concierge" (STT/TTS on the service account, LLM `gemini-2.5-flash` on
-   the API key), check it is `ready` and each stage saved the right credential.
+1. Admin UI: the Providers page shows Google detected (and no secret in the
+   page); create agent "E2E Concierge" from the catalog dropdowns (`chirp_2`,
+   `gemini-2.5-flash`, `en-US-Chirp3-HD-Aoede`), check it is `ready` and the
+   stored config names no credential.
 2. Admin debug client: voice call (the fake mic asks "What is two plus two?",
    bot answers "4"), then mute and a typed text turn ("capital of France" ->
    "Paris"), then disconnect.
@@ -94,11 +98,16 @@ own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid
 | Handoff | the fake LLM calls the transfer tool on "transfer to `<node>`" | the model calls it from the front prompt |
 | Assertions | exact (the fake labels each reply with its node's prompt) | marker words (the sales prompt demands "catalogue") |
 
-The xAI key is `XAI_API_KEY` from the environment or `examples/.env` (`XAI_MODEL` optional,
-default `grok-2-1212`). It goes from the test process to the management API only: it is never
-typed into the browser, and live runs keep no traces. Without a key every live test is skipped.
+The xAI key is `XAI_API_KEY` from the environment or `examples/.env`; global setup passes it to
+the server process as `XAI_API_KEY` and nothing else. The fake stack gets placeholders
+(`GOOGLE_API_KEY=fake-google-key` and a stub service-account file) so the catalog detects
+Google. Models and voices are the catalog defaults, except the fake's own (`fake-llm`,
+`frontvoice`, `salesvoice`), entered through "Other…". The key never goes through the
+management API or the browser, and live runs keep no traces. Without a key every live test
+is skipped.
 
-Tests: (1) designer: draw a two-agent graph with a handoff and publish it; the stored version is
+Tests: (0) providers: `GET /api/v1/providers` reports the suite's provider detected, and the
+designer's provider dropdowns list only detected providers. (1) designer: draw a two-agent graph with a handoff and publish it; the stored version is
 the graph (STT only on the entry node). (2) Call: the front agent answers, the call is handed to
 sales, the live graph view moves to Sales, the stored session has the `handoff.*` trace spans
 with `from_node` and `to_node`, and the server's session timeline shows the handoff cue (the `chime` sound

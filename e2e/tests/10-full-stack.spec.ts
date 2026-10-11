@@ -2,14 +2,13 @@ import type { Page } from "@playwright/test";
 import { test, expect, type Stack } from "../lib/stack";
 import { step } from "../lib/evidence";
 
-// One end-to-end run with real providers: the admin UI sets up a provider
-// credential and an agent, the admin debug client calls it by voice and text,
+// One end-to-end run with real providers: the server reads the Google secrets from
+// its environment, the admin UI creates an agent, the admin debug client calls it by voice and text,
 // the custom client calls it, and the admin UI deletes it. Every step leaves a
 // numbered screenshot in e2e/evidence/.
 test.describe.configure({ mode: "serial" });
-// Secrets must not reach the HTML report: Playwright titles fill steps with the
-// value and traces snapshot input values. So no traces here (video and the
-// error context remain), and secrets are typed from inside the page.
+// No traces here (video and the error context remain): the run is paid, and the
+// report must never hold anything near a secret.
 test.use({ trace: "off" });
 
 const AGENT = "E2E Concierge";
@@ -40,51 +39,33 @@ async function openAgentDetail(page: Page) {
   await expect(heading).toBeVisible();
 }
 
-test("admin UI: add a Google credential and create a ready agent", async ({ page, stack }) => {
+test("admin UI: Google is detected from the server environment and a ready agent is created", async ({ page, stack }) => {
   await connectAdmin(page, stack);
   await step(page, "admin connected");
 
-  // Speech (STT/TTS) uses the service account; the LLM uses the Gemini API key.
-  // When they are the same secret, one credential backs every stage.
-  const speechSecret = process.env.E2E_GOOGLE_SECRET!;
-  const llmSecret = process.env.E2E_GOOGLE_LLM_SECRET ?? speechSecret;
-  const secrets = [...new Set([speechSecret, llmSecret])];
-  await page.exposeFunction("__e2eSecret", (i: number) => secrets[i]);
+  // The secrets reach the server process as environment variables (global-setup):
+  // they never pass through the API or the browser. The providers page shows only status.
+  const secrets = [process.env.E2E_GOOGLE_SECRET!, process.env.E2E_GOOGLE_LLM_SECRET].filter((s): s is string => !!s);
   await page.getByRole("link", { name: "Providers", exact: true }).first().click();
-  for (let i = 0; i < secrets.length; i++) {
-    await page.getByLabel("Provider service").selectOption("google");
-    await page.getByLabel("API key / secret").evaluate(async (el, index) => {
-      const value = await (window as unknown as { __e2eSecret(i: number): Promise<string> }).__e2eSecret(index);
-      // React tracks the native setter; set through it, then announce the input.
-      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value")!.set!.call(el, value);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    }, i);
-    await page.getByRole("button", { name: "Add credential" }).click();
-    await expect(page.getByLabel("API key / secret")).toHaveValue("");
-  }
-  await expect(page.getByText(/••••/).first()).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "Google" })).toContainText("Detected");
   const html = await page.content();
   const echoed = secrets.some((secret) => html.includes(secret.trim().slice(0, 24)));
-  expect(echoed, "a stored secret is echoed in the page").toBe(false);
-  await step(page, "google credentials added (masked)");
-  const speechCredential = await credentialIdFor(stack, speechSecret);
-  const llmCredential = await credentialIdFor(stack, llmSecret);
+  expect(echoed, "a provider secret is echoed in the page").toBe(false);
+  await step(page, "google detected (no secret shown)");
 
   await page.getByRole("link", { name: "Agents", exact: true }).first().click();
   await page.getByRole("button", { name: "+ Create agent" }).click();
   await page.getByLabel("Agent name").fill(AGENT);
   await page.getByLabel("Description").fill("Created by the full-stack e2e test");
-  for (const [stage, credentialId] of [["STT", speechCredential], ["LLM", llmCredential], ["TTS", speechCredential]]) {
-    await page.getByLabel(`${stage} provider`).selectOption("google");
-    await page.getByLabel(`${stage} credential`).selectOption(credentialId);
-  }
-  await page.getByLabel("STT model").fill("chirp_2");
-  await page.getByLabel("STT language").fill("en-US");
-  await page.getByLabel("LLM model").fill("gemini-2.5-flash");
+  // Picking the provider fills its catalog defaults; select them explicitly anyway.
+  for (const stage of ["STT", "LLM", "TTS"]) await page.getByLabel(`${stage} provider`).selectOption("google");
+  await page.getByRole("combobox", { name: "STT model", exact: true }).selectOption("chirp_2");
+  await page.getByLabel("STT language").selectOption("en-US");
+  await page.getByRole("combobox", { name: "LLM model", exact: true }).selectOption("gemini-2.5-flash");
   await page
     .getByLabel("System prompt")
     .fill("You are a concise voice assistant. Answer in one short sentence.");
-  await page.getByLabel("TTS voice").fill("en-US-Journey-F");
+  await page.getByRole("combobox", { name: "Voice", exact: true }).selectOption("en-US-Chirp3-HD-Aoede");
   await step(page, "agent form filled");
   await page.getByRole("button", { name: "Save agent" }).click();
 
@@ -92,10 +73,10 @@ test("admin UI: add a Google credential and create a ready agent", async ({ page
   await expect(page.getByTestId("agent-readiness")).toHaveText(/^ready/);
   agentId = await agentIdFromApi(stack);
   expect(agentId).not.toBe("");
-  const saved = await api<{ data: { current_version: { config: Record<string, { credential_id: string }> } } }>(stack, `/agents/${agentId}`);
-  expect(saved.data.current_version.config.stt.credential_id).toBe(speechCredential);
-  expect(saved.data.current_version.config.llm.credential_id).toBe(llmCredential);
-  expect(saved.data.current_version.config.tts.credential_id).toBe(speechCredential);
+  const saved = await api<{ data: { current_version: { config: Record<string, Record<string, unknown>> } } }>(stack, `/agents/${agentId}`);
+  const cfg = saved.data.current_version.config;
+  expect([cfg.stt.provider, cfg.stt.model, cfg.llm.model, cfg.tts.voice]).toEqual(["google", "chirp_2", "gemini-2.5-flash", "en-US-Chirp3-HD-Aoede"]);
+  expect(JSON.stringify(cfg)).not.toContain("credential");
   await step(page, "agent ready");
 });
 
@@ -181,13 +162,4 @@ async function api<T>(stack: Stack, route: string): Promise<T> {
 async function agentIdFromApi(stack: Stack): Promise<string> {
   const body = await api<{ data: { id: string; name: string }[] }>(stack, "/agents");
   return body.data.find((a) => a.name === AGENT)?.id ?? "";
-}
-
-// The id of the stored credential whose masked value ends like secret.
-async function credentialIdFor(stack: Stack, secret: string): Promise<string> {
-  const body = await api<{ data: { id: string; masked_value: string }[] }>(stack, "/providers/credentials");
-  const suffix = [...secret.trim()].slice(-4).join("");
-  const match = body.data.find((c) => c.masked_value.endsWith(suffix));
-  expect(match, "credential stored for secret").toBeTruthy();
-  return match!.id;
 }

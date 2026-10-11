@@ -11,8 +11,7 @@ import (
 	"testing"
 
 	"govoice/server/agent"
-	"govoice/server/provider"
-	"govoice/server/storage"
+	"govoice/server/catalog"
 )
 
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
@@ -78,9 +77,6 @@ func TestGateSkipsWithReason(t *testing.T) {
 		t.Errorf("nvidia gated: %s", why)
 	}
 	if why := by["nvidia"].gate(envOf(nil)); why != "missing env: NVIDIA_API_KEY" {
-		t.Errorf("reason = %q", why)
-	}
-	if why := by["google"].gate(envOf(map[string]string{"GOOGLE_API_KEY": "k", "GOOGLE_APPLICATION_CREDENTIALS": "/nonexistent.json"})); !strings.Contains(why, "not readable") {
 		t.Errorf("reason = %q", why)
 	}
 	if by["fake"].gate(envOf(nil)) != "" {
@@ -156,111 +152,62 @@ func TestSelectProfiles(t *testing.T) {
 	}
 }
 
-// A mixed-vendor profile stores one credential per provider and references them per stage.
-func TestCredPlanMixedVendors(t *testing.T) {
-	ps, _ := loadProfiles("")
-	var p Profile
-	for _, x := range ps {
-		if x.Name == "cartesia-nvidia" {
-			p = x
-		}
-	}
-	secrets, stageKey, err := credPlan(p, p.lookup(envOf(map[string]string{"CARTESIA_API_KEY": "ck", "NVIDIA_API_KEY": "nk"})))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(secrets) != 3 { // cartesia, nvidia llm key, nvidia riva json
-		t.Fatalf("secrets = %d: %v", len(secrets), stageKey)
-	}
-	if stageKey["stt"] != "cartesia/key" || stageKey["llm"] != "nvidia/llm" || stageKey["tts"] != "nvidia/riva" {
-		t.Errorf("stageKey = %v", stageKey)
-	}
-	if secrets["nvidia/llm"] != "nk" || !strings.Contains(secrets["nvidia/riva"], "877104f7-e885-42b9-8de8-f6e4c6303969") {
-		t.Error("nvidia secrets wrong")
-	}
-	cfg := agentConfig(p.resolve(envOf(nil)), map[string]string{"stt": "c1", "llm": "c2", "tts": "c3"})
-	llm := cfg["llm"].(map[string]any)
-	if llm["credential_id"] != "c2" || llm["system_prompt"] != systemPrompt {
-		t.Errorf("llm stage = %v", llm)
-	}
-}
-
 func TestStandardAgentIsIdenticalAcrossProfiles(t *testing.T) {
 	ps, _ := loadProfiles("")
 	for _, p := range ps {
-		if agentConfig(p, nil)["llm"].(map[string]any)["system_prompt"] != systemPrompt {
+		if agentConfig(p)["llm"].(map[string]any)["system_prompt"] != systemPrompt {
 			t.Errorf("%s differs", p.Name)
 		}
 	}
 }
 
-// Every profile's management payload passes the REAL server validation offline: strict decode,
-// provider ids and stage capabilities (server/agent), the server's own factories, and
-// per-stage credential references to a credential of the right provider.
+// catalogAvailability answers like the server's own check, minus the build's adapter support.
+type catalogAvailability struct{ res *catalog.Resolver }
+
+func (a catalogAvailability) Check(prov, svc string) agent.Unavailable {
+	if !serves(prov, svc) {
+		return agent.Unavailable{Reason: "unsupported_provider"}
+	}
+	if st := a.res.Status(prov, svc); !st.Detected {
+		return agent.Unavailable{Reason: "missing_credential", MissingEnv: st.MissingEnv}
+	}
+	return agent.Unavailable{}
+}
+
+// Every profile's management payload passes the REAL server validation offline (strict decode,
+// stage capabilities) and the server's catalog detects every stage from exactly the variables
+// the harness hands the child (providerEnv), with its requires set and no other variable.
 func TestProfilesPassServerValidation(t *testing.T) {
 	ps, _ := loadProfiles("")
+	sa := writeFakeSA(t)
 	for _, p := range ps {
 		if p.Fake {
 			continue
 		}
-		env := map[string]string{}
+		env := map[string]string{"PROVIDER_NOISE_API_KEY": "must-not-pass"}
 		for _, v := range p.Requires {
 			env[v] = "fake-" + strings.ToLower(v)
 		}
-		env["GOOGLE_APPLICATION_CREDENTIALS"] = writeFakeSA(t)
-		lk := p.lookup(envOf(env))
-		secrets, stageKey, err := credPlan(p, lk)
-		if err != nil {
-			t.Errorf("%s: %v", p.Name, err)
-			continue
+		if slices.Contains(p.Requires, "GOOGLE_APPLICATION_CREDENTIALS") {
+			env["GOOGLE_APPLICATION_CREDENTIALS"] = sa
 		}
-		var creds []storage.Credential
-		ids := map[string]string{}
-		for k := range secrets {
-			prov, _, _ := strings.Cut(k, "/")
-			ids[k] = "cred_" + strings.ReplaceAll(k, "/", "_")
-			creds = append(creds, storage.Credential{ID: ids[k], Provider: prov, ValidationState: "valid"})
+		child := map[string]string{}
+		for _, kv := range providerEnv(p, envOf(env)) {
+			k, v, _ := strings.Cut(kv, "=")
+			child[k] = v
 		}
-		cred := map[string]string{}
-		for st, k := range stageKey {
-			cred[st] = ids[k]
+		if _, leaked := child["PROVIDER_NOISE_API_KEY"]; leaked {
+			t.Fatalf("%s: providerEnv passed a variable the profile does not name", p.Name)
 		}
-		raw, _ := json.Marshal(agentConfig(p.resolve(envOf(env)), cred))
+		raw, _ := json.Marshal(agentConfig(p.resolve(envOf(env))))
 		c, err := agent.DecodeConfig(raw)
 		if err != nil {
 			t.Errorf("%s: %v", p.Name, err)
 			continue
 		}
-		defs := provider.Definitions()
-		if slices.Contains(p.tags(), "xaispeech") { // what -tags xaispeech compiles in (server/provider/xaispeech.go)
-			for i := range defs {
-				if defs[i].ID == "xai" {
-					defs[i].Capabilities = []provider.Capability{provider.CapabilityLLM, provider.CapabilitySTT, provider.CapabilityTTS}
-				}
-			}
+		if probs, missing := agent.AttachmentProblems(c, catalogAvailability{catalog.NewResolver(providers, envOf(child))}); len(probs) > 0 {
+			t.Errorf("%s: %v (missing %v)", p.Name, probs, missing)
 		}
-		if probs := agent.AttachmentProblems(c, provider.NewRegistry(defs), creds); len(probs) > 0 {
-			t.Errorf("%s: %v", p.Name, probs)
-		}
-		if s := secrets["nvidia/riva"]; s != "" {
-			var nv struct{ APIKey, FunctionID, TTSFunctionID string }
-			_ = json.Unmarshal([]byte(strings.NewReplacer("api_key", "APIKey", "tts_function_id", "TTSFunctionID", "function_id", "FunctionID").Replace(s)), &nv)
-			if nv.APIKey == "" || (p.Stages.TTS.Provider == "nvidia" && nv.TTSFunctionID == "") || (p.Stages.STT.Provider == "nvidia" && nv.FunctionID == "") {
-				t.Errorf("%s: riva credential lacks key or function ids", p.Name)
-			}
-		}
-	}
-	// without the tag the server rejects xai speech: the harness must build with it
-	p := Profile{}
-	p.Stages.STT, p.Stages.LLM, p.Stages.TTS = Stage{Provider: "xai"}, Stage{Provider: "xai", Model: "m"}, Stage{Provider: "xai"}
-	raw, _ := json.Marshal(agentConfig(p, map[string]string{"stt": "c", "llm": "c", "tts": "c"}))
-	c, _ := agent.DecodeConfig(raw)
-	// (skipped when this test binary itself is built with -tags xaispeech, as make test does)
-	if provider.NewRegistry(provider.Definitions()).Supports("xai", provider.CapabilitySTT) {
-		return
-	}
-	if probs := agent.AttachmentProblems(c, provider.NewRegistry(provider.Definitions()), []storage.Credential{{ID: "c", Provider: "xai"}}); len(probs) == 0 {
-		t.Error("untagged registry accepted xai speech; drop the implied xaispeech tag")
 	}
 }
 

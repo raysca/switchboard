@@ -56,7 +56,7 @@ var providers = func() *catalog.Catalog {
 }()
 
 func serves(prov, stage string) bool {
-	p, ok := providers.Provider(strings.ToLower(strings.TrimSpace(prov)))
+	p, ok := providers.Provider(normProvider(prov))
 	if !ok {
 		return false
 	}
@@ -92,15 +92,15 @@ func (p Profile) validate() error {
 			return fmt.Errorf("profile %s: requires entry %q is not an env var name", p.Name, v)
 		}
 	}
-	// every variable the stage credentials read must be declared, or gating would pass and provisioning fail
+	// every variable a stage reads must be declared (or defaulted), or gating would pass and the call fail
 	if !p.Fake {
 		for stage, s := range p.stages() {
-			cs := credSpecs[s.Provider]
-			if cs == nil {
+			vars := credSpecs[normProvider(s.Provider)]
+			if vars == nil {
 				return fmt.Errorf("profile %s: no credential handling for provider %q (add it in creds.go)", p.Name, s.Provider)
 			}
-			for _, v := range cs.requires(stage) {
-				if !slices.Contains(p.Requires, v) {
+			for _, v := range vars(stage) {
+				if _, def := p.Defaults[v]; !def && !slices.Contains(p.Requires, v) {
 					return fmt.Errorf("profile %s: %s uses %s but requires does not list it", p.Name, stage, v)
 				}
 			}
@@ -248,11 +248,6 @@ func (p Profile) gate(env func(string) string) string {
 	if len(missing) > 0 {
 		return "missing env: " + strings.Join(missing, ", ")
 	}
-	for stage, s := range p.stages() {
-		if _, err := credSpecs[s.Provider].secret(stage, lk); err != nil {
-			return fmt.Sprintf("%s credential: %v", stage, err)
-		}
-	}
 	return ""
 }
 
@@ -260,7 +255,7 @@ func (p Profile) gate(env func(string) string) string {
 func (p Profile) tags() []string {
 	t := slices.Clone(p.BuildTags)
 	for stage, s := range p.stages() {
-		if s.Provider == "xai" && stage != "llm" {
+		if normProvider(s.Provider) == "xai" && stage != "llm" {
 			t = append(t, "xaispeech")
 		}
 	}

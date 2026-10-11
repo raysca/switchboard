@@ -6,23 +6,39 @@ import (
 	"testing"
 )
 
-func TestFailoverConfigBreaksPrimaryAndFallsBackToRealKey(t *testing.T) {
-	p := Profile{Name: "x"}
-	p.Stages.STT = Stage{Provider: "xai"}
-	p.Stages.LLM = Stage{Provider: "xai", Model: "grok-3-mini"}
-	p.Stages.TTS = Stage{Provider: "xai", Voice: "eve"}
-	cfg := failoverConfig(p, map[string]string{"stt": "c-stt", "llm": "c-llm", "tts": "c-tts"}, "c-bad")
+func TestFailoverFallsBackToAnotherProviderWithTheBrokenKeyInTheEnv(t *testing.T) {
+	ps, _ := loadProfiles("")
+	by := map[string]Profile{}
+	for _, p := range ps {
+		by[p.Name] = p
+	}
+	p := by["xai-llm"].resolve(envOf(nil))
+	prov, model, na := failoverPeer(p)
+	if na != "" || prov != "google" || model != "gemini-2.5-flash" {
+		t.Fatalf("peer = %q %q (na %q), want google on its catalog default", prov, model, na)
+	}
+	cfg := failoverConfig(p, prov, model)
 	llm := cfg["llm"].(map[string]any)
-	if llm["credential_id"] != "c-bad" {
-		t.Fatalf("primary credential = %v, want the broken one", llm["credential_id"])
+	if llm["provider"] != "xai" {
+		t.Fatalf("primary = %v", llm["provider"])
 	}
 	fb := llm["fallbacks"].([]map[string]any)
-	if len(fb) != 1 || fb[0]["credential_id"] != "c-llm" || fb[0]["provider"] != "xai" || fb[0]["model"] != "grok-3-mini" {
-		t.Fatalf("fallbacks = %v, want the real key on the same provider and model", fb)
+	if len(fb) != 1 || fb[0]["provider"] != "google" || fb[0]["model"] != "gemini-2.5-flash" {
+		t.Fatalf("fallbacks = %v", fb)
 	}
-	on := cfg["failover"].(map[string]any)["on"].([]string)
-	if !slices.Contains(on, "client_error") {
+	if on := cfg["failover"].(map[string]any)["on"].([]string); !slices.Contains(on, "client_error") {
 		t.Fatalf("failover classes %v must include client_error (a rejected key)", on)
+	}
+	env := providerEnv(p, envOf(map[string]string{"XAI_API_KEY": "xai-realrealrealreal", "GOOGLE_APPLICATION_CREDENTIALS": "/sa.json"}))
+	got := brokenEnv(p, env)
+	if !slices.Contains(got, "XAI_API_KEY=xai-realrealrealzzzz") || !slices.Contains(got, "GOOGLE_APPLICATION_CREDENTIALS=/sa.json") || len(got) != len(env) {
+		t.Fatalf("brokenEnv = %v", got)
+	}
+	// one provider for everything: the broken key would break speech too
+	for _, n := range []string{"xai", "google", "nvidia", "deepgram-openai-cartesia"} {
+		if _, _, na := failoverPeer(by[n]); na == "" {
+			t.Errorf("%s: S13 must be N/A", n)
+		}
 	}
 }
 
@@ -56,7 +72,7 @@ func TestGraphConfigHasEntryWithSTTAndASalesNodeWithout(t *testing.T) {
 	p.Stages.STT = Stage{Provider: "xai"}
 	p.Stages.LLM = Stage{Provider: "xai", Model: "grok-3-mini"}
 	p.Stages.TTS = Stage{Provider: "xai", Voice: "eve"}
-	cfg := graphConfig(p, map[string]string{"stt": "c-stt", "llm": "c-llm", "tts": "c-tts"})
+	cfg := graphConfig(p)
 	nodes := cfg["nodes"].([]map[string]any)
 	if cfg["entry"] != "front" || len(nodes) != 2 {
 		t.Fatalf("entry=%v nodes=%d", cfg["entry"], len(nodes))

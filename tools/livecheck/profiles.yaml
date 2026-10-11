@@ -1,13 +1,14 @@
 # Provider profiles for the agent-level matrix (tools/livecheck, `make agent-matrix`).
 # A profile is one STT + LLM + TTS combination. Adding a provider means adding an entry here,
-# not code (unless the vendor is new to the harness: then also credential handling in creds.go).
+# not code (unless the vendor is new to the harness: then also its variables in creds.go).
 #
 #   name        unique, used by -profiles a,b
 #   stages      stt/llm/tts: provider (+ model, language, voice). ${VAR} and ${VAR:-default}
 #               are expanded from the environment (then `defaults`) when the profile runs.
 #   requires    env vars that must be set (non-empty, after `defaults`) or the profile is SKIPPED.
-#               Must include every variable the stage credentials read (a unit test checks this).
-#   optional    env vars that change the run when set (documentation only).
+#               Must include every variable the stages read, unless `defaults` gives it (a unit test
+#               checks this). requires, optional and defaults are the ONLY variables the server child gets.
+#   optional    env vars that change the run when set (passed to the server child when set).
 #   defaults    values used when the env var is unset (public ids only, never secrets).
 #   build_tags  server build tags this profile needs; the harness builds ONE server binary with
 #               the union of the selected profiles' tags (xai STT/TTS are implied: xaispeech).

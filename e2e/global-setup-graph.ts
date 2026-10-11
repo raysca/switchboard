@@ -11,7 +11,7 @@ import { stopStack } from "./global-teardown";
 // build -tags fakeproviders): no secrets, no network, no cost; the fake LLM labels
 // each reply with its node's prompt and calls a node's transfer tool on "transfer
 // to <node>". With E2E_PROVIDER=xai it is the real server (go build -tags
-// xaispeech) and the specs use a stored xAI credential: real STT/LLM/TTS calls.
+// xaispeech) reading XAI_API_KEY from its environment: real STT/LLM/TTS calls.
 // Ports differ from the paid suite's, so both can run on one machine.
 const LIVE = process.env.E2E_PROVIDER === "xai";
 const PORTS = { public: 18581, admin: 19591, ui: 15174 };
@@ -35,11 +35,16 @@ async function waitFor(what: string, ok: () => Promise<boolean>, timeoutMs = 90_
   throw new Error(`timed out waiting for ${what} (logs: ${logDir})`);
 }
 
+// Every catalog provider's variables (server/catalog/data), MCP tokens and the suite's own.
+const PROVIDER_VARS = /^(GOOGLE_|GEMINI_|XAI_|DEEPGRAM_|CARTESIA_|ELEVENLABS_|OPENAI_|NVIDIA_|MCP_TOKEN_|E2E_)/;
+
 function start(name: string, cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): number {
   const log = fs.openSync(path.join(logDir, `${name}.log`), "w");
   // detached => own process group, so teardown can kill children (vite, go) too.
-  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GOOGLE_|GEMINI_|XAI_|E2E_)/.test(k)));
-  const child = spawn(cmd, args, { cwd, env: { ...base, ...env }, stdio: ["ignore", log, log], detached: true });
+  // No provider variables are inherited: a child gets exactly the ones passed in env.
+  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !PROVIDER_VARS.test(k)));
+  // ENV_FILE=/dev/null: a development server would otherwise load examples/.env itself.
+  const child = spawn(cmd, args, { cwd, env: { ...base, ENV_FILE: "/dev/null", ...env }, stdio: ["ignore", log, log], detached: true });
   child.unref();
   return child.pid!;
 }
@@ -107,6 +112,16 @@ export default async function globalSetup() {
     logDir,
     pids: {},
   };
+  // The server reads provider secrets from its environment only. Fake: placeholders, so the
+  // catalog detects google (the fake build never uses them). Live: the xAI key and nothing else.
+  let providerEnv: Record<string, string>;
+  if (LIVE) providerEnv = { XAI_API_KEY: process.env.E2E_XAI_SECRET! };
+  else {
+    const sa = path.join(tmpDir, "sa.json");
+    fs.writeFileSync(sa, JSON.stringify({ type: "service_account" }), { mode: 0o600 });
+    providerEnv = { GOOGLE_API_KEY: "fake-google-key", GOOGLE_APPLICATION_CREDENTIALS: sa, GOVOICE_FAKE_LLM_LABEL: "1" };
+  }
+
   const save = () => fs.writeFileSync(graphStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
   save();
 
@@ -116,7 +131,7 @@ export default async function globalSetup() {
       GOVOICE_DEV_DIR: stack.devDir,
       TOKEN_SECRET: stack.tokenSecret,
       GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
-      ...(LIVE ? {} : { GOVOICE_FAKE_LLM_LABEL: "1" }),
+      ...providerEnv,
     });
     save();
     stack.pids.ui = start("ui", process.execPath, [path.join(repo, "ui/node_modules/vite/bin/vite.js"), "--config", path.join(__dirname, "vite.e2e.config.mjs")], path.join(repo, "ui"), {

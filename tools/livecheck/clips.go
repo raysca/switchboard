@@ -19,6 +19,7 @@ import (
 	"govoice/providers/google"
 	"govoice/providers/nvidia"
 	"govoice/providers/nvidia/rivapb"
+	"govoice/server/catalog"
 )
 
 const (
@@ -263,9 +264,9 @@ type synthesizer interface {
 
 // newSynth prefers Google TTS (what the shared clip set uses), else NVIDIA Riva TTS.
 func newSynth(ctx context.Context, env func(string) string) (synthesizer, error) {
-	if sa, ok := credSpecs["google"].secret("tts", env); ok == nil {
+	if sa, err := catalog.NewResolver(providers, env).Secret("google", "tts"); err == nil {
 		cfg := google.DefaultTTSConfig()
-		cfg.CredentialsJSON = []byte(sa)
+		cfg.CredentialsJSON = sa
 		if cli, err := google.NewRealGoogleTTSClient(ctx, cfg); err == nil {
 			return &googleSynth{cli}, nil
 		}

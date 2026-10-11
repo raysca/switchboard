@@ -72,7 +72,7 @@ type server struct {
 	public, admin string
 	key           string
 	log           string
-	data          string // credential store; removed at stop, even with -keep-work
+	data          string // agent store; removed at stop, even with -keep-work
 	done          chan struct{}
 	calls         int
 	lastReq       atomic.Int64 // last good requestTotal
@@ -121,6 +121,7 @@ type serverSpec struct {
 	class           serverClass
 	infra           map[string]map[string]string // providers.<name>.<key>
 	fake            bool
+	env             []string // provider variables ("K=V") for the child: providerEnv, brokenEnv
 	logLevel        string
 }
 
@@ -182,8 +183,8 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 // childEnvAllow is everything the server child inherits. An allowlist, not a denylist: provider
-// keys (the child must use stored credentials only), unrelated tokens, and GOVOICE_DATABASE_DSN /
-// GOVOICE_CREDENTIAL_KEYS (they would point the child at a real store that outlives the run) stay out.
+// keys (the child gets exactly its profile's variables through serverSpec.env), unrelated tokens,
+// and GOVOICE_DATABASE_DSN (it would point the child at a real store that outlives the run) stay out.
 var childEnvAllow = []string{"PATH", "HOME", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL", "TZ",
 	"DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH", "ORT_DISABLE_TELEMETRY", "GOVOICE_ORT_LIB", "GOVOICE_MODEL_PATH",
 	"GOVOICE_FAKE_LLM_DELAY"} // read only by -tags fakeproviders: emulates provider latency in the self-test
@@ -223,9 +224,15 @@ func startServer(ctx context.Context, sp serverSpec) (*server, error) {
 	s.cmd.Stdout, s.cmd.Stderr = logf, logf
 	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	s.cmd.Env = append(childEnv(os.Environ()), "GOVOICE_ROOT="+sp.root, "GOVOICE_DEV_DIR="+s.data,
-		"GOVOICE_MANAGEMENT_API_KEY="+s.key, "TOKEN_SECRET="+randHex(32))
-	if sp.fake {
-		s.cmd.Env = append(s.cmd.Env, "GOVOICE_FAKE_STT=audio")
+		"GOVOICE_MANAGEMENT_API_KEY="+s.key, "TOKEN_SECRET="+randHex(32),
+		"ENV_FILE=/dev/null") // a development server would otherwise load examples/.env itself
+	s.cmd.Env = append(s.cmd.Env, sp.env...)
+	if sp.fake { // placeholders: the fake build ignores them, but the catalog must detect google
+		sa := filepath.Join(dir, "sa.json")
+		if err := os.WriteFile(sa, []byte(`{"type":"service_account"}`), 0o600); err != nil {
+			return nil, err
+		}
+		s.cmd.Env = append(s.cmd.Env, "GOVOICE_FAKE_STT=audio", "GOOGLE_API_KEY=fake-google-key", "GOOGLE_APPLICATION_CREDENTIALS="+sa)
 	}
 	if err := s.cmd.Start(); err != nil {
 		logf.Close()
@@ -252,7 +259,7 @@ func startServer(ctx context.Context, sp serverSpec) (*server, error) {
 	return nil, fmt.Errorf("server not ready in 60s (log: %s)", s.log)
 }
 
-// stop terminates the process group (server and its workers) and deletes the credential store.
+// stop terminates the process group (server and its workers) and deletes the agent store.
 func (s *server) stop() {
 	if s == nil || s.cmd == nil || s.cmd.Process == nil {
 		return
@@ -265,7 +272,7 @@ func (s *server) stop() {
 	}
 	_ = syscall.Kill(-pg, syscall.SIGKILL)
 	<-s.done
-	_ = os.RemoveAll(s.data) // stored provider credentials never outlive the run
+	_ = os.RemoveAll(s.data) // the run's agent store never outlives it
 }
 
 // call is one management API request. Response bodies are never echoed: they could contain secrets.

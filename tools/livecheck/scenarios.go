@@ -210,13 +210,11 @@ var scenarios = []scenario{
 		// one turn; the rejected primary request counts as one more LLM request
 		shape: func(*opts) shape { return shape{turns: 1, short: true, extraLLM: 1} },
 		na: func(p Profile, _ mode, _ *opts) string {
-			switch {
-			case p.Fake:
+			if p.Fake {
 				return "fake LLM accepts any key"
-			case p.Stages.LLM.Provider == "openai":
-				return "openai credentials are JSON (key + base URL); brokenSecret would make them unparseable"
 			}
-			return ""
+			_, _, why := failoverPeer(p)
+			return why
 		}, run: s13},
 	{id: "S14", title: "agent graph: handoff from Front to Sales, then Sales answers", class: classGraph,
 		// text turns only. Reply 1: the transfer round and Front's farewell (2 LLM requests), then Sales'
@@ -769,7 +767,7 @@ func s12(x *sctx, r *Result) {
 	r.check("no rejected client message", !c.has(mark, "error"), "")
 }
 
-// s13: the primary LLM's key is rejected; the fallback (same provider, real key) answers.
+// s13: the primary LLM's key is rejected; the fallback (another provider, see failoverPeer) answers.
 func s13(x *sctx, r *Result) {
 	c := x.c
 	before := x.srv.failovers()

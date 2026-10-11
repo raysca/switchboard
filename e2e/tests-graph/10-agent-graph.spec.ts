@@ -23,12 +23,20 @@ const FRONT_PROMPT =
 const SALES_PROMPT = "You are the sales agent of a car dealership. Answer in one short sentence and always use the word 'catalogue'.";
 const SALES = /catalogue/i;
 const FRONT = /front desk/i; // fake only: the label
-const LLM_MODEL = LIVE ? (process.env.XAI_MODEL ?? "grok-2-1212") : "fake-llm";
 // Contains the fake's trigger phrase and reads as a natural request to a real model.
 const BUY = "I want to buy a car. Please transfer to sales.";
 
-
-let credentialId = "";
+type Entry = { id: string; default?: boolean };
+type Service = { available: boolean; missing_env?: string[]; models?: Entry[]; voices?: Entry[] };
+type ProviderStatus = { id: string; detected: boolean; services: Partial<Record<"stt" | "llm" | "tts", Service>> };
+// GET /api/v1/providers, read by the first test.
+let providers: ProviderStatus[] = [];
+const catalogDefault = (kind: "stt" | "llm" | "tts") => {
+  const svc = providers.find((p) => p.id === PROVIDER)?.services[kind];
+  return (kind === "tts" ? svc?.voices : svc?.models)?.find((e) => e.default)?.id ?? "";
+};
+// The fake's own model and voice names are not in the catalog: entered through "Other…".
+const LLM_MODEL = () => (LIVE ? catalogDefault("llm") : "fake-llm");
 
 async function api<T>(stack: Stack, route: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${stack.adminUrl}/api/v1${route}`, {
@@ -94,43 +102,74 @@ const liveStatus = (page: Page) => page.getByRole("status").filter({ hasText: /i
 const pathTaken = (page: Page) => page.getByRole("list", { name: /path taken/i });
 const botReplies = (page: Page) => page.getByTestId("transcript-bot");
 
-async function fillStage(page: Page, stage: "STT" | "LLM" | "TTS") {
-  await page.getByLabel(`${stage} provider`).selectOption(PROVIDER);
-  await page.getByLabel(`${stage} credential`).selectOption(credentialId);
+// A model or voice dropdown: the catalog default, or "Other…" and a typed value.
+async function pick(page: Page, label: string, value: string) {
+  // By role: a label's text includes its select's option texts, so getByLabel cannot match exactly.
+  const select = page.getByRole("combobox", { name: label, exact: true });
+  if (await select.locator(`option[value="${value}"]`).count()) return select.selectOption(value);
+  await select.selectOption({ label: "Other…" });
+  await page.getByRole("textbox", { name: `${label} (custom)`, exact: true }).fill(value);
 }
 
-const stage = (extra: object = {}) => ({ provider: PROVIDER, credential_id: credentialId, ...extra });
+const stage = (extra: object = {}) => ({ provider: PROVIDER, ...extra });
 
-test("designer: draw a two-agent graph with a handoff and publish it", async ({ page, stack }) => {
-  // The provider credential. The secret goes from this process to the management
-  // API only: it never enters the browser, a trace or a report.
-  const created = await api<{ data: { id: string } }>(stack, "/providers/credentials", {
-    method: "POST",
-    body: JSON.stringify({ provider: PROVIDER, secret: LIVE ? process.env.E2E_XAI_SECRET : "fake-google-secret-for-e2e" }),
-  });
-  credentialId = created.data.id;
-
+async function openDesigner(page: Page, stack: Stack) {
   await connectAdmin(page, stack);
   await openAgentsList(page);
   await page.getByRole("button", { name: "+ Create graph agent" }).click();
   await expect(page.getByRole("heading", { name: "Design a graph agent" })).toBeVisible();
+}
+
+test("providers: the suite's provider is detected and only detected providers are offered", async ({ page, stack }) => {
+  // The server reads provider secrets from its environment (global setup); none goes through the API.
+  providers = (await api<{ data: ProviderStatus[] }>(stack, "/providers")).data;
+  expect(providers.find((p) => p.id === PROVIDER)?.detected).toBe(true);
+  await openDesigner(page, stack);
+  for (const kind of ["stt", "llm", "tts"] as const) {
+    const offered = await page.getByLabel(`${kind.toUpperCase()} provider`).locator("option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+    const available = providers.filter((p) => p.services[kind]?.available).map((p) => p.id);
+    expect(offered, `${kind} provider options`).toEqual(["", ...available]);
+    expect(available, "the child gets only the suite's provider variables").toEqual([PROVIDER]);
+  }
+});
+
+test("providers: with no STT provider available the designer names the variables to set", async ({ page, stack }) => {
+  // Same server, one service taken away in the response: what an operator without speech keys sees.
+  await page.route("**/api/v1/providers", async (route) => {
+    const res = await route.fetch();
+    const body = (await res.json()) as { data: ProviderStatus[] };
+    for (const p of body.data) {
+      const stt = p.services.stt;
+      if (stt?.available) Object.assign(stt, { available: false, reason: "missing_env", missing_env: ["E2E_MISSING_STT_KEY"] });
+    }
+    await route.fulfill({ response: res, json: body });
+  });
+  await openDesigner(page, stack);
+  const note = page.getByRole("note").filter({ hasText: "No STT provider is available" });
+  await expect(note).toContainText("E2E_MISSING_STT_KEY");
+  await expect(page.getByLabel("STT provider").locator("option")).toHaveCount(1);
+  await step(page, "no STT provider: empty-state note");
+});
+
+test("designer: draw a two-agent graph with a handoff and publish it", async ({ page, stack }) => {
+  await openDesigner(page, stack);
   await page.getByLabel("Agent name").fill(AGENT);
 
   // The entry node answers first and owns speech-to-text.
-  await fillStage(page, "STT");
-  if (!LIVE) await page.getByLabel("STT model").fill("chirp");
-  await fillStage(page, "LLM");
-  await page.getByLabel("LLM model").fill(LLM_MODEL);
+  await page.getByLabel("STT provider").selectOption(PROVIDER);
+  await pick(page, "STT model", catalogDefault("stt"));
+  await page.getByLabel("LLM provider").selectOption(PROVIDER);
+  await pick(page, "LLM model", LLM_MODEL());
   await page.getByLabel("System prompt").fill(FRONT_PROMPT);
-  await fillStage(page, "TTS");
-  if (!LIVE) await page.getByLabel("Voice").fill("frontvoice");
+  await page.getByLabel("TTS provider").selectOption(PROVIDER);
+  await pick(page, "Voice", LIVE ? catalogDefault("tts") : "frontvoice");
 
   // A second agent: it starts from the entry's model and voice; give it its own prompt.
   await page.getByLabel("New agent node").fill("Sales");
   await page.getByRole("button", { name: "Add agent" }).click();
   await expect(page.getByLabel("Node name")).toHaveValue("Sales");
   await page.getByLabel("System prompt").fill(SALES_PROMPT);
-  if (!LIVE) await page.getByLabel("Voice").fill("salesvoice");
+  if (!LIVE) await pick(page, "Voice", "salesvoice");
 
   // The handoff between them.
   await page.locator("#handoff-from").selectOption({ label: "Main agent" });
@@ -156,6 +195,9 @@ test("designer: draw a two-agent graph with a handoff and publish it", async ({ 
   expect(cfg.nodes[0].config.stt).toBeTruthy();
   expect(cfg.nodes[1].config.stt).toBeUndefined();
   expect(cfg.nodes[1].config.llm.system_prompt).toBe(SALES_PROMPT);
+  // The dropdowns stored the catalog default, or the "Other…" value typed for the fake.
+  expect(cfg.nodes[0].config.llm.model).toBe(LLM_MODEL());
+  expect(cfg.nodes.map((n: any) => n.config.tts.voice)).toEqual(LIVE ? [catalogDefault("tts"), catalogDefault("tts")] : ["frontvoice", "salesvoice"]);
   expect(cfg.edges).toHaveLength(1);
   expect(cfg.entry).toBe(cfg.nodes[0].id);
   expect(cfg.handoff_cue).toEqual({ name: "chime", after_ms: 50 });
@@ -281,7 +323,7 @@ test("failure: a sales node that cannot be built leaves the caller with the fron
 test("a plain agent still works unchanged", async ({ page, stack }) => {
   await api(stack, "/agents", {
     method: "POST",
-    body: JSON.stringify({ name: "E2E Plain", config: { stt: stage(LIVE ? {} : { model: "chirp" }), llm: stage({ model: LLM_MODEL, system_prompt: "You are PLAIN. Answer in one short sentence." }), tts: stage() } }),
+    body: JSON.stringify({ name: "E2E Plain", config: { stt: stage(LIVE ? {} : { model: "chirp" }), llm: stage({ model: LLM_MODEL(), system_prompt: "You are PLAIN. Answer in one short sentence." }), tts: stage() } }),
   });
   await connectAdmin(page, stack);
   await openAgentDetail(page, "E2E Plain");

@@ -6,8 +6,9 @@
 // Real providers spend API credit, so a run needs GOVOICE_LIVE=1 (or -yes) after the
 // provider-request estimate is printed. `-selftest` runs the same engine offline against a
 // `-tags fakeproviders` server (no network, no cost). Secrets come from examples/.env into
-// the process environment only, are stored through the management API like `make dev` does,
-// and every byte of output and every report file is redacted.
+// the process environment only, reach each server child as exactly the variables its profile
+// names (the server reads them through its provider catalog), and every byte of output and
+// every report file is redacted.
 //
 // Examples:
 //
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"govoice/examples/envload"
+	"govoice/server/catalog"
 )
 
 func main() {
@@ -202,7 +204,7 @@ func realMain(args []string) int {
 		return 1
 	}
 	if *keep {
-		fmt.Fprintln(stdout, "keeping", work, "(server logs and configs; mode 0700; each server's credential store is deleted when it stops)")
+		fmt.Fprintln(stdout, "keeping", work, "(server logs and configs; mode 0700; each server's agent store is deleted when it stops)")
 	} else {
 		defer os.RemoveAll(work)
 	}
@@ -249,7 +251,7 @@ func realMain(args []string) int {
 	}
 	act := newSpend(*maxCalls, synthN)
 	if *probe {
-		sa, err := credSpecs["google"].secret("stt", env)
+		sa, err := catalog.NewResolver(providers, env).Secret("google", "stt")
 		if err != nil {
 			fmt.Fprintln(stderr, "stt probe:", err)
 			return 1
@@ -258,8 +260,8 @@ func realMain(args []string) int {
 		if model == "" {
 			model = "chirp_2"
 		}
-		sttProbe(ctx, "question", model, cl["question"], []byte(sa))
-		sttProbe(ctx, "pause", model, pauseClip(cl, o.pause), []byte(sa))
+		sttProbe(ctx, "question", model, cl["question"], sa)
+		sttProbe(ctx, "pause", model, pauseClip(cl, o.pause), sa)
 		return 0
 	}
 	for _, s := range clipSpecs {

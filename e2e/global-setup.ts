@@ -29,13 +29,16 @@ async function waitFor(what: string, ok: () => Promise<boolean>, timeoutMs = 60_
   throw new Error(`timed out waiting for ${what} (logs: ${logDir})`);
 }
 
+// Every catalog provider's variables (server/catalog/data), MCP tokens and the suite's own.
+const PROVIDER_VARS = /^(GOOGLE_|GEMINI_|XAI_|DEEPGRAM_|CARTESIA_|ELEVENLABS_|OPENAI_|NVIDIA_|MCP_TOKEN_|E2E_)/;
+
 function start(name: string, cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): number {
   const log = fs.openSync(path.join(logDir, `${name}.log`), "w");
   // detached => own process group, so teardown can kill children (vite, go) too.
-  // No provider secrets in children: the server must use only the credentials the
-  // test stores (Google falls back to GOOGLE_API_KEY from the environment).
-  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(GOOGLE_|GEMINI_|XAI_|E2E_)/.test(k)));
-  const child = spawn(cmd, args, { cwd, env: { ...base, ...env }, stdio: ["ignore", log, log], detached: true });
+  // No provider variables are inherited: a child gets exactly the ones passed in env.
+  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !PROVIDER_VARS.test(k)));
+  // ENV_FILE=/dev/null: a development server would otherwise load examples/.env itself.
+  const child = spawn(cmd, args, { cwd, env: { ...base, ENV_FILE: "/dev/null", ...env }, stdio: ["ignore", log, log], detached: true });
   child.unref();
   return child.pid!;
 }
@@ -75,6 +78,18 @@ export default async function globalSetup() {
     logDir,
     pids: {},
   };
+  // The server reads provider secrets from its environment only: the service account
+  // as a file (GOOGLE_APPLICATION_CREDENTIALS), the Gemini key as GOOGLE_API_KEY.
+  const speech = process.env.E2E_GOOGLE_SECRET!;
+  const isSA = speech.trim().startsWith("{");
+  const providerEnv: Record<string, string> = {};
+  if (isSA) {
+    providerEnv.GOOGLE_APPLICATION_CREDENTIALS = path.join(tmpDir, "sa.json");
+    fs.writeFileSync(providerEnv.GOOGLE_APPLICATION_CREDENTIALS, speech, { mode: 0o600 });
+  }
+  const llmKey = process.env.E2E_GOOGLE_LLM_SECRET ?? (isSA ? "" : speech);
+  if (llmKey) providerEnv.GOOGLE_API_KEY = llmKey;
+
   const save = () => fs.writeFileSync(stackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
   save();
 
@@ -84,6 +99,7 @@ export default async function globalSetup() {
       GOVOICE_DEV_DIR: stack.devDir,
       TOKEN_SECRET: stack.tokenSecret,
       GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
+      ...providerEnv,
     });
     save();
     stack.pids.ui = start("ui", process.execPath, [path.join(repo, "ui/node_modules/vite/bin/vite.js"), "--config", path.join(__dirname, "vite.e2e.config.mjs")], path.join(repo, "ui"), {

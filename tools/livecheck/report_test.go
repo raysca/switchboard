@@ -197,14 +197,12 @@ func TestJ1ClipIndex(t *testing.T) {
 }
 
 func TestMCPToolPayloads(t *testing.T) {
-	// the agent config references the credential ids it is given and nothing else
+	// the agent config carries the stage fields and no credential reference
 	p := Profile{Name: "x"}
 	p.Stages.STT, p.Stages.LLM, p.Stages.TTS = Stage{Provider: "deepgram", Language: "en"}, Stage{Provider: "openai", Model: "m"}, Stage{Provider: "cartesia"}
-	b, _ := json.Marshal(agentConfig(p, map[string]string{"stt": "s", "llm": "l", "tts": "t"}))
-	for _, want := range []string{`"credential_id":"s"`, `"credential_id":"l"`, `"credential_id":"t"`, `"model":"m"`} {
-		if !strings.Contains(string(b), want) {
-			t.Errorf("config lacks %s: %s", want, b)
-		}
+	b, _ := json.Marshal(agentConfig(p))
+	if !strings.Contains(string(b), `"model":"m"`) || strings.Contains(string(b), "credential") {
+		t.Errorf("config = %s", b)
 	}
 	if strings.Contains(string(b), `"model":""`) {
 		t.Error("empty fields must be omitted")

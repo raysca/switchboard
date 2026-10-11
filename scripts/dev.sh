@@ -5,9 +5,12 @@
 #   make example-cli [TEXT="..."]              CLI call to the dev agent (voice clip, or a text turn)
 #   make example-go NAME=google_pipeline       standalone Go example (reads examples/.env)
 #
-# State lives in .govoice-dev/ (git-ignored): the SQLite agent store and credential
-# key (created by the server), plus dev.env with the generated management key,
-# token secret, ports and dev agent id. Delete the directory to start over.
+# Provider keys come from examples/.env (see examples/.env.example): the development
+# server loads it itself at start (the environment wins; a relative
+# GOOGLE_APPLICATION_CREDENTIALS resolves against examples/), so nothing is stored.
+# State lives in .govoice-dev/ (git-ignored): the SQLite agent store (created by the
+# server), plus dev.env with the generated management key, token secret, ports and
+# dev agent id. Delete the directory to start over.
 # Ports: PUBLIC_PORT (8080), ADMIN_PORT (9090), UI_PORT (5173), CLIENT_PORT (3000).
 set -euo pipefail
 
@@ -48,7 +51,7 @@ load_env() {
 
 server_up() { curl -fsS "$GOVOICE_ADMIN_URL/ready" >/dev/null 2>&1; }
 require_server() { server_up || die "no dev server at $GOVOICE_ADMIN_URL; start it with 'make dev'"; }
-require_agent() { [[ -n "${GOVOICE_DEV_AGENT_ID:-}" ]] || die "no dev agent yet: add Google secrets to examples/.env and rerun 'make dev', or create one in the admin UI and set GOVOICE_DEV_AGENT_ID in ${DEV_ENV#"$ROOT"/}"; }
+require_agent() { [[ -n "${GOVOICE_DEV_AGENT_ID:-}" ]] || die "no dev agent yet: add provider keys to examples/.env and rerun 'make dev', or create one in the admin UI and set GOVOICE_DEV_AGENT_ID in ${DEV_ENV#"$ROOT"/}"; }
 
 # Starts a background process with prefixed output; remembers its pid.
 PIDS=()
@@ -100,7 +103,7 @@ cmd_up() {
     Admin API       $GOVOICE_ADMIN_URL
     Voice WebSocket $GOVOICE_WS_URL
     Dev agent       ${GOVOICE_DEV_AGENT_ID:-none (see [seed] above)}
-    Data            ${DEV_DIR#"$ROOT"/}/  (SQLite store, credential key, dev.env)
+    Data            ${DEV_DIR#"$ROOT"/}/  (SQLite store, dev.env)
 
   In another terminal: make example-web | make example-cli TEXT="Hello" | make example-go NAME=google_pipeline
   Ctrl-C stops everything.

@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
+
+	"govoice/server/catalog"
 )
 
 // systemPrompt is the ONE standard agent prompt, identical across profiles. The long-answer
@@ -15,11 +18,11 @@ const systemPrompt = "You are a voice assistant. Answer in one or two short sent
 // server the operator supplies with -mcp-url: the server only accepts public HTTPS MCP endpoints.
 const toolName = "get_time"
 
-// agentConfig is the stored agent config for a resolved profile and its credential ids per
-// stage. Stage structure is the only thing that differs between profiles.
-func agentConfig(p Profile, cred map[string]string) map[string]any {
-	stage := func(s Stage, name string, extra map[string]any) map[string]any {
-		m := map[string]any{"provider": s.Provider, "credential_id": cred[name]}
+// agentConfig is the stored agent config for a resolved profile. Stage structure is the only
+// thing that differs between profiles; the server reads every secret from its environment.
+func agentConfig(p Profile) map[string]any {
+	stage := func(s Stage, extra map[string]any) map[string]any {
+		m := map[string]any{"provider": s.Provider}
 		for k, v := range extra {
 			if v != "" {
 				m[k] = v
@@ -28,25 +31,16 @@ func agentConfig(p Profile, cred map[string]string) map[string]any {
 		return m
 	}
 	return map[string]any{
-		"stt": stage(p.Stages.STT, "stt", map[string]any{"model": p.Stages.STT.Model, "language": p.Stages.STT.Language}),
-		"llm": stage(p.Stages.LLM, "llm", map[string]any{"model": p.Stages.LLM.Model, "system_prompt": systemPrompt}),
-		"tts": stage(p.Stages.TTS, "tts", map[string]any{"voice": p.Stages.TTS.Voice}),
+		"stt": stage(p.Stages.STT, map[string]any{"model": p.Stages.STT.Model, "language": p.Stages.STT.Language}),
+		"llm": stage(p.Stages.LLM, map[string]any{"model": p.Stages.LLM.Model, "system_prompt": systemPrompt}),
+		"tts": stage(p.Stages.TTS, map[string]any{"voice": p.Stages.TTS.Voice}),
 	}
 }
 
-// provision stores one credential per distinct provider/role the profile needs (a mixed-vendor
-// profile therefore gets several), creates the standard agent referencing them per stage and,
-// with mcpURL set, attaches the get_time tool. It returns the agent id.
-func (s *server) provision(p Profile, env func(string) string, mcpURL string) (string, error) {
-	secrets, stageKey, err := credPlan(p, env)
-	if err != nil {
-		return "", err
-	}
-	cred, err := s.storeCreds(secrets, stageKey)
-	if err != nil {
-		return "", err
-	}
-	agent, err := s.id("agents", map[string]any{"name": "Live Check", "description": "livecheck " + p.Name, "config": agentConfig(p, cred)})
+// provision creates the standard agent and, with mcpURL set, attaches the get_time tool.
+// It returns the agent id.
+func (s *server) provision(p Profile, mcpURL string) (string, error) {
+	agent, err := s.id("agents", map[string]any{"name": "Live Check", "description": "livecheck " + p.Name, "config": agentConfig(p)})
 	if err != nil {
 		return "", err
 	}
@@ -58,40 +52,49 @@ func (s *server) provision(p Profile, env func(string) string, mcpURL string) (s
 	return agent, nil
 }
 
-// storeCreds stores each distinct secret once and returns stage -> credential id.
-func (s *server) storeCreds(secrets, stageKey map[string]string) (map[string]string, error) {
-	var keys []string
-	for k := range secrets {
-		keys = append(keys, k)
+// failoverPeer is the provider S13 falls back to: another stage's provider that also serves
+// llm, on its catalog default model. The primary's variables are broken for the whole server
+// child, so the primary provider must serve the llm stage only. na says why S13 cannot run.
+func failoverPeer(p Profile) (provider, model, na string) {
+	prim := normProvider(p.Stages.LLM.Provider)
+	if normProvider(p.Stages.STT.Provider) == prim || normProvider(p.Stages.TTS.Provider) == prim {
+		return "", "", "the broken " + prim + " key would also break STT/TTS: S13 needs two providers, the LLM's on the llm stage only"
 	}
-	sort.Strings(keys)
-	ids := map[string]string{}
-	for _, k := range keys {
-		theRedactor.add(secrets[k])
-		prov, _, _ := strings.Cut(k, "/")
-		id, err := s.id("providers/credentials", map[string]string{"provider": prov, "secret": secrets[k]})
-		if err != nil {
-			return nil, fmt.Errorf("store %s credential: %w", prov, err)
+	for _, c := range []string{p.Stages.STT.Provider, p.Stages.TTS.Provider} {
+		pr, ok := providers.Provider(normProvider(c))
+		if !ok || pr.Services["llm"] == nil {
+			continue
 		}
-		ids[k] = id
+		if e, ok := catalog.DefaultEntry(pr.Services["llm"].Models); ok {
+			return pr.ID, e.ID, ""
+		}
 	}
-	cred := map[string]string{}
-	for stage, k := range stageKey {
-		cred[stage] = ids[k]
-	}
-	return cred, nil
+	return "", "", "S13 needs two providers: no STT/TTS provider of this profile also serves llm as the fallback"
 }
 
-// failoverConfig is the standard agent with its primary LLM on a broken credential and one
-// fallback: the same provider and model on the real credential. Every failure class may fail
-// over, client_error included (a rejected key), so a call must be answered by the fallback.
-func failoverConfig(p Profile, cred map[string]string, badLLMCred string) map[string]any {
-	cfg := agentConfig(p, cred)
-	llm := cfg["llm"].(map[string]any)
-	llm["fallbacks"] = []map[string]any{{"provider": p.Stages.LLM.Provider, "model": p.Stages.LLM.Model, "credential_id": cred["llm"]}}
-	llm["credential_id"] = badLLMCred
+// failoverConfig is the standard agent with one LLM fallback on another provider. The primary's
+// key is broken in the server's environment (see brokenEnv). Every failure class may fail over,
+// client_error included (a rejected key), so a call must be answered by the fallback.
+func failoverConfig(p Profile, fbProvider, fbModel string) map[string]any {
+	cfg := agentConfig(p)
+	cfg["llm"].(map[string]any)["fallbacks"] = []map[string]any{{"provider": fbProvider, "model": fbModel}}
 	cfg["failover"] = map[string]any{"on": []string{"client_error", "server_error", "timeout", "circuit_open"}}
 	return cfg
+}
+
+// brokenEnv replaces the values of the variables the profile's LLM stage reads with keys the
+// provider rejects (env holds "K=V" entries).
+func brokenEnv(p Profile, env []string) []string {
+	vars := credSpecs[normProvider(p.Stages.LLM.Provider)]("llm")
+	out := slices.Clone(env)
+	for i, kv := range out {
+		if k, v, _ := strings.Cut(kv, "="); slices.Contains(vars, k) {
+			bad := brokenSecret(v)
+			theRedactor.add(bad)
+			out[i] = k + "=" + bad
+		}
+	}
+	return out
 }
 
 // graphMarker is the word the Sales node must say in every reply, so S14 can tell which agent
@@ -100,11 +103,11 @@ const graphMarker = "catalogue"
 
 // graphConfig is the two-node agent for S14: Front hands buyers to Sales. Both nodes use the
 // profile's providers; only Front (the entry) has STT, as the server requires.
-func graphConfig(p Profile, cred map[string]string) map[string]any {
-	front := agentConfig(p, cred)
+func graphConfig(p Profile) map[string]any {
+	front := agentConfig(p)
 	front["llm"].(map[string]any)["system_prompt"] = "You are the front desk of a car dealership. Answer in one short sentence. " +
 		"If the caller wants to buy a car or asks about prices, call the transfer_to_sales tool, then say one short sentence that you are connecting them."
-	sales := agentConfig(p, cred)
+	sales := agentConfig(p)
 	delete(sales, "stt")
 	sales["llm"].(map[string]any)["system_prompt"] = "You are the sales agent of a car dealership. Answer in one short sentence and always use the word '" + graphMarker + "'."
 	return map[string]any{
@@ -118,20 +121,12 @@ func graphConfig(p Profile, cred map[string]string) map[string]any {
 }
 
 // provisionGraph creates the two-node agent for S14 and returns its id.
-func (s *server) provisionGraph(p Profile, env func(string) string) (string, error) {
-	secrets, stageKey, err := credPlan(p, env)
-	if err != nil {
-		return "", err
-	}
-	cred, err := s.storeCreds(secrets, stageKey)
-	if err != nil {
-		return "", err
-	}
-	return s.id("agents", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": graphConfig(p, cred)})
+func (s *server) provisionGraph(p Profile) (string, error) {
+	return s.id("agents", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": graphConfig(p)})
 }
 
 // brokenSecret keeps a key's length and prefix but changes its last characters, so the provider
-// rejects it as invalid instead of the server refusing to store it.
+// rejects it as invalid rather than the server reading it as unset.
 func brokenSecret(s string) string {
 	if len(s) < 8 {
 		return s + "-invalid"
@@ -140,23 +135,12 @@ func brokenSecret(s string) string {
 }
 
 // provisionFailover creates the failover agent for S13 and returns its id.
-func (s *server) provisionFailover(p Profile, env func(string) string) (string, error) {
-	secrets, stageKey, err := credPlan(p, env)
-	if err != nil {
-		return "", err
+func (s *server) provisionFailover(p Profile) (string, error) {
+	prov, model, na := failoverPeer(p)
+	if na != "" {
+		return "", errors.New(na)
 	}
-	cred, err := s.storeCreds(secrets, stageKey)
-	if err != nil {
-		return "", err
-	}
-	bad := brokenSecret(secrets[stageKey["llm"]])
-	theRedactor.add(bad)
-	prov, _, _ := strings.Cut(stageKey["llm"], "/")
-	badID, err := s.id("providers/credentials", map[string]string{"provider": prov, "secret": bad})
-	if err != nil {
-		return "", fmt.Errorf("store broken %s credential: %w", prov, err)
-	}
-	return s.id("agents", map[string]any{"name": "Live Check Failover", "description": "livecheck failover " + p.Name, "config": failoverConfig(p, cred, badID)})
+	return s.id("agents", map[string]any{"name": "Live Check Failover", "description": "livecheck failover " + p.Name, "config": failoverConfig(p, prov, model)})
 }
 
 // attachTool registers the MCP server, discovers its tools and selects get_time for the agent.
