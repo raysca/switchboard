@@ -340,8 +340,7 @@ type CredentialAgentReference struct {
 // CredentialInUseError carries the agents and MCP servers (names) that block a
 // credential deletion.
 type CredentialInUseError struct {
-	Agents     []CredentialAgentReference
-	MCPServers []string
+	Agents []CredentialAgentReference
 }
 
 func (e *CredentialInUseError) Error() string { return ErrCredentialInUse.Error() }
@@ -375,23 +374,8 @@ WHERE a.archived = ? AND v.config_json LIKE ? ORDER BY a.name, a.id`), boolValue
 			return err
 		}
 		rows.Close()
-		// mcp_servers.auth_credential_id is ON DELETE RESTRICT: report it as in use.
-		var servers []string
-		mcpRows, err := tx.QueryContext(ctx, r.s.bind("SELECT name FROM mcp_servers WHERE auth_credential_id=? ORDER BY name"), id)
-		if err != nil {
-			return err
-		}
-		for mcpRows.Next() {
-			var name string
-			if err := mcpRows.Scan(&name); err != nil {
-				mcpRows.Close()
-				return err
-			}
-			servers = append(servers, name)
-		}
-		mcpRows.Close()
-		if len(refs) > 0 || len(servers) > 0 {
-			return &CredentialInUseError{Agents: refs, MCPServers: servers}
+		if len(refs) > 0 {
+			return &CredentialInUseError{Agents: refs}
 		}
 		result, err := tx.ExecContext(ctx, r.s.bind("DELETE FROM provider_credentials WHERE id=?"), id)
 		if err != nil {
@@ -437,10 +421,10 @@ func (r CredentialRepository) List(ctx context.Context) ([]Credential, error) {
 }
 
 type MCPServer struct {
-	ID, Name, Endpoint, Transport, AuthCredentialID, ValidationState, LatestDiscoveryID string
-	Description                                                                         string
-	Enabled, PendingDelete                                                              bool
-	LastConnectedAt, LastDiscoveredAt, CreatedAt, UpdatedAt                             time.Time
+	ID, Name, Endpoint, Transport, AuthEnv, ValidationState, LatestDiscoveryID string
+	Description                                                                string
+	Enabled, PendingDelete                                                     bool
+	LastConnectedAt, LastDiscoveredAt, CreatedAt, UpdatedAt                    time.Time
 }
 type MCPTool struct {
 	RemoteName  string
@@ -460,24 +444,22 @@ func (r MCPRepository) CreateServer(ctx context.Context, m MCPServer) error {
 	if err := validID(m.ID); err != nil {
 		return err
 	}
-	if err := optionalID(m.AuthCredentialID); err != nil {
-		return err
-	}
 	now := utc(time.Now())
-	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO mcp_servers(id,name,endpoint,transport,auth_credential_id,enabled,validation_state,created_at,updated_at,description) VALUES(?,?,?,?,?,?,?,?,?,?)"), m.ID, m.Name, m.Endpoint, m.Transport, nullable(m.AuthCredentialID), boolValue(r.s.dialect, m.Enabled), m.ValidationState, now, now, m.Description)
+	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO mcp_servers(id,name,endpoint,transport,auth_env,enabled,validation_state,created_at,updated_at,description) VALUES(?,?,?,?,?,?,?,?,?,?)"), m.ID, m.Name, m.Endpoint, m.Transport, m.AuthEnv, boolValue(r.s.dialect, m.Enabled), m.ValidationState, now, now, m.Description)
 	return err
 }
 
 func (r MCPRepository) Server(ctx context.Context, id string) (MCPServer, error) {
 	var m MCPServer
-	var auth, latest, connected, discovered sql.NullString
+	var auth string
+	var latest, connected, discovered sql.NullString
 	var enabled bool
 	var created, updated string
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,endpoint,transport,auth_credential_id,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at,pending_delete FROM mcp_servers WHERE id=?"), id).Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated, &m.PendingDelete)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,endpoint,transport,auth_env,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at,pending_delete FROM mcp_servers WHERE id=?"), id).Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated, &m.PendingDelete)
 	if err != nil {
 		return m, err
 	}
-	m.AuthCredentialID, m.LatestDiscoveryID, m.Enabled = auth.String, latest.String, enabled
+	m.AuthEnv, m.LatestDiscoveryID, m.Enabled = auth, latest.String, enabled
 	if m.CreatedAt, err = parseTime(created); err != nil {
 		return m, err
 	}
@@ -498,7 +480,7 @@ func (r MCPRepository) Server(ctx context.Context, id string) (MCPServer, error)
 }
 
 func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
-	rows, err := r.s.db.QueryContext(ctx, "SELECT id,name,description,endpoint,transport,auth_credential_id,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at,pending_delete FROM mcp_servers ORDER BY name,id")
+	rows, err := r.s.db.QueryContext(ctx, "SELECT id,name,description,endpoint,transport,auth_env,enabled,validation_state,latest_discovery_id,last_connected_at,last_discovered_at,created_at,updated_at,pending_delete FROM mcp_servers ORDER BY name,id")
 	if err != nil {
 		return nil, err
 	}
@@ -506,13 +488,14 @@ func (r MCPRepository) ListServers(ctx context.Context) ([]MCPServer, error) {
 	var out []MCPServer
 	for rows.Next() {
 		var m MCPServer
-		var auth, latest, connected, discovered sql.NullString
+		var auth string
+		var latest, connected, discovered sql.NullString
 		var enabled bool
 		var created, updated string
 		if err := rows.Scan(&m.ID, &m.Name, &m.Description, &m.Endpoint, &m.Transport, &auth, &enabled, &m.ValidationState, &latest, &connected, &discovered, &created, &updated, &m.PendingDelete); err != nil {
 			return nil, err
 		}
-		m.AuthCredentialID, m.LatestDiscoveryID, m.Enabled = auth.String, latest.String, enabled
+		m.AuthEnv, m.LatestDiscoveryID, m.Enabled = auth, latest.String, enabled
 		if m.CreatedAt, err = parseTime(created); err != nil {
 			return nil, err
 		}

@@ -121,9 +121,6 @@ func (h *ProviderManagement) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			var inUse *storage.CredentialInUseError
 			if errors.As(err, &inUse) {
 				msg := "credential is attached to agents; attach those agents to another credential or archive them first"
-				if len(inUse.MCPServers) > 0 {
-					msg = "credential is used by MCP servers (" + strings.Join(inUse.MCPServers, ", ") + ") or agents; change or remove them first"
-				}
 				WriteJSON(w, http.StatusConflict, ErrorResponse{Error: Error{Code: "credential_in_use", Message: msg, RequestID: requestID, Details: inUse.Agents}})
 				return
 			}

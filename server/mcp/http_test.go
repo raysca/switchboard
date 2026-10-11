@@ -13,7 +13,7 @@ import (
 
 func TestManagementHandlerProtectsMCPAndNeverReturnsSecretEndpointQuery(t *testing.T) {
 	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
-	svc, _ := newTestService(t, remote, testCredential{token: "mcp-secret-sentinel"})
+	svc, _ := newTestService(t, remote, testTokens{"MCP_TOKEN_X": "mcp-secret-sentinel"})
 	handler := Handler(svc)
 	request := httptest.NewRequest("POST", "/api/v1/mcp-servers", strings.NewReader(`{"name":"orders","endpoint":"https://mcp.example/rpc?token=url-secret-sentinel","transport":"streamable-http","enabled":true}`))
 	request.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
@@ -60,7 +60,7 @@ func TestManagementHandlerProtectsMCPAndNeverReturnsSecretEndpointQuery(t *testi
 
 func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
-	svc, _ := newTestService(t, remote, testCredential{})
+	svc, _ := newTestService(t, remote, testTokens{})
 	discovery, err := svc.Refresh(context.Background(), mustCreateMCP(t, svc))
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func mustCreateMCP(t *testing.T, svc *Service) string {
 
 func TestAuthenticatedMCPCreateValidateDetailAndExecuteJSONContract(t *testing.T) {
 	remote := &testRemote{tools: []RemoteTool{{Name: "lookup_order", Description: "lookup", InputSchema: json.RawMessage(`{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}`)}}}
-	svc, _ := newTestService(t, remote, testCredential{})
+	svc, _ := newTestService(t, remote, testTokens{})
 	h := Handler(svc)
 	do := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))

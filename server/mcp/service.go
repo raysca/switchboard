@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/google/uuid"
 	"govoice/core"
 	"govoice/server/storage"
 )
@@ -80,9 +79,6 @@ type RemoteClient interface {
 	ListTools(context.Context, string, string) ([]RemoteTool, error)
 	CallTool(context.Context, string, string, string, json.RawMessage) (RemoteResult, error)
 }
-type CredentialResolver interface {
-	Resolve(context.Context, string) (string, error)
-}
 type DestinationPolicy interface {
 	Validate(context.Context, *url.URL) error
 }
@@ -90,7 +86,7 @@ type DestinationPolicy interface {
 type ServiceConfig struct {
 	Store                                            *storage.Store
 	Remote                                           RemoteClient
-	Credentials                                      CredentialResolver
+	Tokens                                           TokenSource
 	Destinations                                     DestinationPolicy
 	Tracer                                           core.Tracer
 	Timeout                                          time.Duration
@@ -99,19 +95,19 @@ type ServiceConfig struct {
 type Service struct {
 	store                              *storage.Store
 	remote                             RemoteClient
-	credentials                        CredentialResolver
+	tokens                             TokenSource
 	destinations                       DestinationPolicy
 	tracer                             core.Tracer
 	timeout                            time.Duration
 	maxSchema, maxResult, maxArguments int
 }
 type ServerConfig struct {
-	Name         string `json:"name"`
-	Description  string `json:"description,omitempty"`
-	Endpoint     string `json:"endpoint"`
-	Transport    string `json:"transport,omitempty"`
-	CredentialID string `json:"credential_id,omitempty"`
-	Enabled      bool   `json:"enabled"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Endpoint    string `json:"endpoint"`
+	Transport   string `json:"transport,omitempty"`
+	AuthEnv     string `json:"auth_env,omitempty"`
+	Enabled     bool   `json:"enabled"`
 }
 type ToolResult struct {
 	ExecutionID string
@@ -127,9 +123,9 @@ type ToolResult struct {
 // resolved bearer token. Server disable and discovery refresh do not change it;
 // pending deletion waits for the owning session to drain.
 type CapturedTool struct {
-	owner                                                                                         *Service
-	serverID, serverName, name, description, schemaHash, endpoint, token, transport, credentialID string
-	schema                                                                                        json.RawMessage
+	owner                                                                                    *Service
+	serverID, serverName, name, description, schemaHash, endpoint, token, transport, authEnv string
+	schema                                                                                   json.RawMessage
 }
 
 func (t *CapturedTool) String() string {
@@ -188,11 +184,11 @@ func (t *CapturedTool) Transport() string {
 	}
 	return t.transport
 }
-func (t *CapturedTool) CredentialID() string {
+func (t *CapturedTool) AuthEnv() string {
 	if t == nil {
 		return ""
 	}
-	return t.credentialID
+	return t.authEnv
 }
 
 func (s *Service) CaptureTool(ctx context.Context, id, name, schemaHash string) (*CapturedTool, error) {
@@ -224,11 +220,11 @@ func (s *Service) CaptureTool(ctx context.Context, id, name, schemaHash string) 
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	token, err := s.credential(ctx, m)
+	token, err := s.token(m)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	return &CapturedTool{owner: s, serverID: m.ID, serverName: m.Name, name: selected.RemoteName, description: selected.Description, schemaHash: selected.SchemaHash, endpoint: u.String(), token: token, transport: m.Transport, credentialID: m.AuthCredentialID, schema: append(json.RawMessage(nil), selected.SchemaJSON...)}, nil
+	return &CapturedTool{owner: s, serverID: m.ID, serverName: m.Name, name: selected.RemoteName, description: selected.Description, schemaHash: selected.SchemaHash, endpoint: u.String(), token: token, transport: m.Transport, authEnv: m.AuthEnv, schema: append(json.RawMessage(nil), selected.SchemaJSON...)}, nil
 }
 
 func (t *CapturedTool) Execute(ctx context.Context, args json.RawMessage) (ToolResult, error) {
@@ -272,7 +268,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	if cfg.Tracer == nil {
 		cfg.Tracer = core.NoopTracer{}
 	}
-	return &Service{store: cfg.Store, remote: cfg.Remote, credentials: cfg.Credentials, destinations: cfg.Destinations, tracer: cfg.Tracer, timeout: cfg.Timeout, maxSchema: cfg.MaxSchemaBytes, maxResult: cfg.MaxResultBytes, maxArguments: cfg.MaxArgumentBytes}, nil
+	return &Service{store: cfg.Store, remote: cfg.Remote, tokens: cfg.Tokens, destinations: cfg.Destinations, tracer: cfg.Tracer, timeout: cfg.Timeout, maxSchema: cfg.MaxSchemaBytes, maxResult: cfg.MaxResultBytes, maxArguments: cfg.MaxArgumentBytes}, nil
 }
 
 // HTTPSDestinationPolicy is the safe default: remote endpoints require HTTPS,
@@ -308,7 +304,7 @@ func (s *Service) Create(ctx context.Context, cfg ServerConfig) (storage.MCPServ
 		return storage.MCPServer{}, errors.New("invalid MCP endpoint")
 	}
 	if u.RawQuery != "" {
-		return storage.MCPServer{}, errors.New("MCP endpoint query parameters are not accepted; use a credential reference")
+		return storage.MCPServer{}, errors.New("MCP endpoint query parameters are not accepted; use auth_env")
 	}
 	if err = s.destinations.Validate(ctx, u); err != nil {
 		return storage.MCPServer{}, errors.New("MCP destination denied")
@@ -316,12 +312,10 @@ func (s *Service) Create(ctx context.Context, cfg ServerConfig) (storage.MCPServ
 	if strings.TrimSpace(cfg.Name) == "" || len(cfg.Name) > 128 || len(cfg.Description) > 1024 {
 		return storage.MCPServer{}, errors.New("invalid MCP server metadata")
 	}
-	if cfg.CredentialID != "" {
-		if _, err := uuid.Parse(cfg.CredentialID); err != nil {
-			return storage.MCPServer{}, errors.New("invalid MCP credential reference")
-		}
+	if cfg.AuthEnv != "" && !ValidAuthEnv(cfg.AuthEnv) {
+		return storage.MCPServer{}, errors.New("invalid MCP auth_env")
 	}
-	m := storage.MCPServer{ID: storage.NewID(), Name: strings.TrimSpace(cfg.Name), Description: cfg.Description, Endpoint: u.String(), Transport: cfg.Transport, AuthCredentialID: cfg.CredentialID, Enabled: cfg.Enabled, ValidationState: StateNotValidated}
+	m := storage.MCPServer{ID: storage.NewID(), Name: strings.TrimSpace(cfg.Name), Description: cfg.Description, Endpoint: u.String(), Transport: cfg.Transport, AuthEnv: cfg.AuthEnv, Enabled: cfg.Enabled, ValidationState: StateNotValidated}
 	if !m.Enabled {
 		m.ValidationState = StateDisabled
 	}
@@ -352,18 +346,16 @@ func (s *Service) DetachAndDelete(ctx context.Context, id string) error {
 	return s.store.MCP().DetachAndDelete(ctx, id)
 }
 
-func (s *Service) credential(ctx context.Context, m storage.MCPServer) (string, error) {
-	if m.AuthCredentialID == "" {
+func (s *Service) token(m storage.MCPServer) (string, error) {
+	if m.AuthEnv == "" {
 		return "", nil
 	}
-	if s.credentials == nil {
-		return "", errors.New("credential resolver unavailable")
+	if s.tokens != nil {
+		if token, ok := s.tokens.Token(m.AuthEnv); ok {
+			return token, nil
+		}
 	}
-	token, err := s.credentials.Resolve(ctx, m.AuthCredentialID)
-	if err != nil || token == "" {
-		return "", errors.New("MCP authentication unavailable")
-	}
-	return token, nil
+	return "", errors.New("MCP authentication unavailable")
 }
 func (s *Service) endpoint(ctx context.Context, m storage.MCPServer) (*url.URL, error) {
 	if m.Transport != TransportStreamableHTTP {
@@ -427,7 +419,7 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 		end(err)
 		return storage.MCPDiscovery{}, ErrUnavailable
 	}
-	token, err := s.credential(ctx, m)
+	token, err := s.token(m)
 	if err != nil {
 		_ = s.store.MCP().SetValidation(ctx, m.ID, StateAuthenticationFailed, time.Time{}, time.Time{})
 		end(err)

@@ -724,7 +724,7 @@ func TestRepositoryCredentialMCPAndHistory(t *testing.T) {
 	if err != nil || gotCred.KeyID != "k1" || len(gotCred.Ciphertext) != 3 {
 		t.Fatalf("credential=%+v err=%v", gotCred, err)
 	}
-	m := MCPServer{ID: NewID(), Name: "M", Endpoint: "https://m.example", Transport: "streamable-http", AuthCredentialID: cred.ID, Enabled: true}
+	m := MCPServer{ID: NewID(), Name: "M", Endpoint: "https://m.example", Transport: "streamable-http", AuthEnv: "MCP_TOKEN_X", Enabled: true}
 	if err := s.MCP().CreateServer(ctx, m); err != nil {
 		t.Fatal(err)
 	}
@@ -1176,12 +1176,4 @@ func TestCredentialDeleteBlockedWhileAttached(t *testing.T) {
 		t.Fatalf("delete after archive: %v", err)
 	}
 
-	// An MCP server's auth credential is in use too (409, not a FK error/500).
-	mcpCred := put()
-	if err := s.MCP().CreateServer(ctx, MCPServer{ID: NewID(), Name: "Orders", Endpoint: "https://m.example", Transport: "streamable-http", AuthCredentialID: mcpCred, Enabled: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Credentials().Delete(ctx, mcpCred); !errors.As(err, &inUse) || len(inUse.MCPServers) != 1 || inUse.MCPServers[0] != "Orders" {
-		t.Fatalf("delete MCP auth credential: err=%v", err)
-	}
 }

@@ -142,7 +142,7 @@ func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Se
 	for _, item := range items {
 		definitions = append(definitions, item.definition)
 		tool := item.handler
-		metadata = append(metadata, agent.MCPToolSnapshot{ServerID: tool.ServerID(), ServerName: tool.ServerName(), Endpoint: tool.Endpoint(), Transport: tool.Transport(), CredentialID: tool.CredentialID(), RemoteName: tool.Name(), Description: tool.Description(), SchemaJSON: tool.Schema(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
+		metadata = append(metadata, agent.MCPToolSnapshot{ServerID: tool.ServerID(), ServerName: tool.ServerName(), Endpoint: tool.Endpoint(), Transport: tool.Transport(), AuthEnv: tool.AuthEnv(), RemoteName: tool.Name(), Description: tool.Description(), SchemaJSON: tool.Schema(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
 		references = append(references, agent.ToolSelection{ServerID: tool.ServerID(), RemoteName: tool.Name(), SchemaHash: tool.SchemaHash(), Required: item.definition.Policy.Required})
 	}
 	snapshot.MCPTools = metadata

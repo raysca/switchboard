@@ -68,7 +68,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		return fail(fmt.Errorf("credential service: %w", err))
 	}
 	m.traces = trace.NewAdapter(store.Traces())
-	mcpService, err := mcp.NewService(mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Credentials: creds, Tracer: m.traces})
+	mcpService, err := mcp.NewService(mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcp.EnvTokens(func(k string) string { return s.env(k) }), Tracer: m.traces})
 	if err != nil {
 		return fail(fmt.Errorf("mcp service: %w", err))
 	}

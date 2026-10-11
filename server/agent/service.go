@@ -61,16 +61,16 @@ type ToolSelection struct {
 }
 
 type MCPToolSnapshot struct {
-	ServerID     string          `json:"mcp_server_id"`
-	ServerName   string          `json:"server_name"`
-	Endpoint     string          `json:"endpoint"`
-	Transport    string          `json:"transport"`
-	CredentialID string          `json:"credential_id,omitempty"`
-	RemoteName   string          `json:"remote_name"`
-	Description  string          `json:"description"`
-	SchemaJSON   json.RawMessage `json:"input_schema"`
-	SchemaHash   string          `json:"schema_hash"`
-	Required     bool            `json:"required"`
+	ServerID    string          `json:"mcp_server_id"`
+	ServerName  string          `json:"server_name"`
+	Endpoint    string          `json:"endpoint"`
+	Transport   string          `json:"transport"`
+	AuthEnv     string          `json:"auth_env,omitempty"`
+	RemoteName  string          `json:"remote_name"`
+	Description string          `json:"description"`
+	SchemaJSON  json.RawMessage `json:"input_schema"`
+	SchemaHash  string          `json:"schema_hash"`
+	Required    bool            `json:"required"`
 }
 
 type ToolDependency struct {
@@ -457,7 +457,7 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 			}
 			continue
 		}
-		snapshots = append(snapshots, MCPToolSnapshot{ServerID: server.ID, ServerName: server.Name, Endpoint: server.Endpoint, Transport: server.Transport, CredentialID: server.AuthCredentialID, RemoteName: selection.RemoteName, SchemaJSON: json.RawMessage(schema), SchemaHash: selection.SchemaHash, Required: selection.Required})
+		snapshots = append(snapshots, MCPToolSnapshot{ServerID: server.ID, ServerName: server.Name, Endpoint: server.Endpoint, Transport: server.Transport, AuthEnv: server.AuthEnv, RemoteName: selection.RemoteName, SchemaJSON: json.RawMessage(schema), SchemaHash: selection.SchemaHash, Required: selection.Required})
 	}
 	base := Readiness{State: ReadinessReady, Reasons: []string{}, ToolDependencies: dependencies}
 	if requiredFailure != "" {

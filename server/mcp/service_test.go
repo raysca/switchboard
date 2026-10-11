@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -40,12 +42,9 @@ func (r *testRemote) CallTool(ctx context.Context, endpoint, bearer, name string
 	return RemoteResult{JSON: json.RawMessage(`{"ok":true}`)}, nil
 }
 
-type testCredential struct {
-	token string
-	err   error
-}
+type testTokens map[string]string
 
-func (c testCredential) Resolve(context.Context, string) (string, error) { return c.token, c.err }
+func (t testTokens) Token(name string) (string, bool) { v, ok := t[name]; return v, ok && v != "" }
 
 type allowHTTP struct{}
 
@@ -56,23 +55,23 @@ func (allowHTTP) Validate(_ context.Context, u *url.URL) error {
 	return errors.New("destination denied")
 }
 
-func newTestService(t *testing.T, remote RemoteClient, cred CredentialResolver) (*Service, *storage.Store) {
+func newTestService(t *testing.T, remote RemoteClient, tokens TokenSource) (*Service, *storage.Store) {
 	t.Helper()
 	s, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/mcp.db"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	svc, err := NewService(ServiceConfig{Store: s, Remote: remote, Credentials: cred, Destinations: allowHTTP{}, Timeout: 100 * time.Millisecond, MaxResultBytes: 128})
+	svc, err := NewService(ServiceConfig{Store: s, Remote: remote, Tokens: tokens, Destinations: allowHTTP{}, Timeout: 100 * time.Millisecond, MaxResultBytes: 128})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return svc, s
 }
 
-func createTestServer(t *testing.T, s *Service, endpoint, credential string) storage.MCPServer {
+func createTestServer(t *testing.T, s *Service, endpoint, authEnv string) storage.MCPServer {
 	t.Helper()
-	server, err := s.Create(context.Background(), ServerConfig{Name: "test", Endpoint: endpoint, Transport: "streamable-http", CredentialID: credential, Enabled: true})
+	server, err := s.Create(context.Background(), ServerConfig{Name: "test", Endpoint: endpoint, Transport: "streamable-http", AuthEnv: authEnv, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +83,7 @@ func TestRefreshPersistsSortedCanonicalImmutableSnapshots(t *testing.T) {
 		{Name: "zeta", Description: "last", InputSchema: json.RawMessage(`{"type":"object","properties":{"v":{"type":"string"}}}`)},
 		{Name: "alpha", InputSchema: json.RawMessage(`{"properties":{"id":{"type":"integer"}},"type":"object"}`)},
 	}}
-	svc, store := newTestService(t, remote, testCredential{})
+	svc, store := newTestService(t, remote, testTokens{})
 	server := createTestServer(t, svc, "https://mcp.example/rpc", "")
 	first, err := svc.Refresh(context.Background(), server.ID)
 	if err != nil {
@@ -124,7 +123,7 @@ func TestRefreshRejectsMalformedAndOversizedSchemasWithoutPublishing(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := &testRemote{tools: []RemoteTool{{Name: "bad", InputSchema: tc.schema}}}
-			svc, store := newTestService(t, remote, testCredential{})
+			svc, store := newTestService(t, remote, testTokens{})
 			server := createTestServer(t, svc, "https://mcp.example/rpc", "")
 			if _, err := svc.Refresh(context.Background(), server.ID); err == nil {
 				t.Fatal("accepted invalid schema")
@@ -138,13 +137,9 @@ func TestRefreshRejectsMalformedAndOversizedSchemasWithoutPublishing(t *testing.
 
 func TestExecuteValidatesArgumentsBoundsResultsAndSanitizesErrors(t *testing.T) {
 	const credential = "credential-secret-sentinel"
-	credentialID := storage.NewID()
 	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object","required":["id"],"properties":{"id":{"type":"string"}}}`)}}}
-	svc, store := newTestService(t, remote, testCredential{token: credential})
-	if err := store.Credentials().Put(context.Background(), storage.Credential{ID: credentialID, Provider: "mcp", Ciphertext: []byte("encrypted"), KeyID: "test-key"}); err != nil {
-		t.Fatal(err)
-	}
-	server := createTestServer(t, svc, "https://mcp.example/rpc", credentialID)
+	svc, _ := newTestService(t, remote, testTokens{"MCP_TOKEN_CRM": credential})
+	server := createTestServer(t, svc, "https://mcp.example/rpc", "MCP_TOKEN_CRM")
 	if _, err := svc.Refresh(context.Background(), server.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +180,7 @@ func TestRefreshAndExecuteHonorTimeoutAndCancellation(t *testing.T) {
 			return nil, nil
 		}
 	}}
-	svc, _ := newTestService(t, remote, testCredential{})
+	svc, _ := newTestService(t, remote, testTokens{})
 	server := createTestServer(t, svc, "https://mcp.example/rpc", "")
 	start := time.Now()
 	if _, err := svc.Refresh(context.Background(), server.ID); err == nil {
@@ -203,7 +198,7 @@ func TestRefreshAndExecuteHonorTimeoutAndCancellation(t *testing.T) {
 
 func TestCanceledContextStopsBeforeStorageOrRemoteWork(t *testing.T) {
 	remote := &testRemote{tools: []RemoteTool{{Name: "unused", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
-	svc, _ := newTestService(t, remote, testCredential{})
+	svc, _ := newTestService(t, remote, testTokens{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := svc.Refresh(ctx, storage.NewID()); !errors.Is(err, context.Canceled) {
@@ -216,7 +211,7 @@ func TestCanceledContextStopsBeforeStorageOrRemoteWork(t *testing.T) {
 
 func TestTypedAuthenticationFailureUpdatesValidationState(t *testing.T) {
 	remote := &testRemote{list: func(context.Context) ([]RemoteTool, error) { return nil, ErrAuthenticationFailed }}
-	svc, _ := newTestService(t, remote, testCredential{})
+	svc, _ := newTestService(t, remote, testTokens{})
 	server := createTestServer(t, svc, "https://mcp.example/rpc", "")
 	if _, err := svc.Refresh(context.Background(), server.ID); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("refresh error=%v", err)
@@ -247,7 +242,7 @@ func TestTypedConnectionAndInitializeFailuresPrecedeDiscoveryFallback(t *testing
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			remote := &testRemote{list: func(context.Context) ([]RemoteTool, error) { return nil, tc.err }}
-			svc, _ := newTestService(t, remote, testCredential{})
+			svc, _ := newTestService(t, remote, testTokens{})
 			server := createTestServer(t, svc, "https://mcp.example/rpc", "")
 			if _, err := svc.Refresh(context.Background(), server.ID); err == nil {
 				t.Fatal("expected refresh failure")
@@ -308,7 +303,7 @@ func TestSchemaDialectAllowlistMatchesValidatorAndAcceptedSchemasValidate(t *tes
 				t.Fatalf("accepted dialect did not execute: %v", err)
 			}
 			remote := &testRemote{tools: []RemoteTool{{Name: "echo", InputSchema: raw}}}
-			svc, _ := newTestService(t, remote, testCredential{})
+			svc, _ := newTestService(t, remote, testTokens{})
 			server := createTestServer(t, svc, "https://mcp.example/rpc", "")
 			if _, err := svc.Refresh(context.Background(), server.ID); err != nil {
 				t.Fatal(err)
@@ -324,7 +319,7 @@ func TestRefreshRejectsUnsupportedReferenceKeywordsWithoutReplacingDiscovery(t *
 	for _, keyword := range []string{"$dynamicRef", "$recursiveRef", "$dynamicAnchor", "$recursiveAnchor", "$anchor", "$id", "$REF", "$DynamicRef"} {
 		t.Run(keyword, func(t *testing.T) {
 			remote := &testRemote{tools: []RemoteTool{{Name: "echo", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
-			svc, store := newTestService(t, remote, testCredential{})
+			svc, store := newTestService(t, remote, testTokens{})
 			server := createTestServer(t, svc, "https://mcp.example/rpc", "")
 			previous, err := svc.Refresh(context.Background(), server.ID)
 			if err != nil {
@@ -711,7 +706,7 @@ func TestConcurrentExecutionsHaveDistinctTraceAndResponseIdentityWithParent(t *t
 }
 
 func TestCreateRejectsUnsupportedLocalAndUnsafeRemoteDestination(t *testing.T) {
-	svc, _ := newTestService(t, &testRemote{}, testCredential{})
+	svc, _ := newTestService(t, &testRemote{}, testTokens{})
 	for _, cfg := range []ServerConfig{
 		{Name: "local", Transport: "stdio", Enabled: true},
 		{Name: "plain", Transport: "streamable-http", Endpoint: "http://example.org/mcp", Enabled: true},
@@ -735,7 +730,7 @@ func TestLongCallUsesCallerDeadlineAndCancellation(t *testing.T) {
 			return RemoteResult{}, ctx.Err()
 		}
 	}}
-	svc, _ := newTestService(t, remote, testCredential{})
+	svc, _ := newTestService(t, remote, testTokens{})
 	server := createTestServer(t, svc, "https://mcp.example/rpc", "")
 	discovery, err := svc.Refresh(context.Background(), server.ID)
 	if err != nil {
@@ -763,5 +758,54 @@ func TestLongCallUsesCallerDeadlineAndCancellation(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(time.Second):
 		t.Fatal("remote call not cancelled")
+	}
+}
+
+func TestAuthEnvCreateValidationAndViews(t *testing.T) {
+	remote := &testRemote{tools: []RemoteTool{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}}
+	tokens := testTokens{}
+	svc, _ := newTestService(t, remote, tokens)
+	_, err := svc.Create(context.Background(), ServerConfig{Name: "bad", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", AuthEnv: "TOKEN_SECRET", Enabled: true})
+	if err == nil || !strings.Contains(err.Error(), "invalid MCP auth_env") {
+		t.Fatalf("err=%v", err)
+	}
+	server := createTestServer(t, svc, "https://mcp.example/rpc", "MCP_TOKEN_CRM")
+
+	// Unset variable: validation takes the existing failure path.
+	if v := view(server, svc.tokens); v.AuthEnv != "MCP_TOKEN_CRM" || v.AuthEnvSet {
+		t.Fatalf("view=%+v", v)
+	}
+	if _, err := svc.Validate(context.Background(), server.ID); err == nil {
+		t.Fatal("validated without token")
+	}
+	got, _ := svc.Get(context.Background(), server.ID)
+	if got.ValidationState != StateAuthenticationFailed || remote.seen != "" {
+		t.Fatalf("state=%s seen=%q", got.ValidationState, remote.seen)
+	}
+
+	tokens["MCP_TOKEN_CRM"] = "bearer-secret-sentinel"
+	if v := view(server, svc.tokens); !v.AuthEnvSet {
+		t.Fatalf("view=%+v", v)
+	}
+	if _, err := svc.Validate(context.Background(), server.ID); err != nil {
+		t.Fatal(err)
+	}
+	if remote.seen != "bearer-secret-sentinel" {
+		t.Fatalf("bearer did not reach remote: %q", remote.seen)
+	}
+	raw, _ := json.Marshal(view(server, svc.tokens))
+	if strings.Contains(string(raw), "bearer-secret-sentinel") || !strings.Contains(string(raw), `"auth_env_set":true`) {
+		t.Fatalf("view json=%s", raw)
+	}
+}
+
+func TestCreateRejectsLegacyCredentialIDField(t *testing.T) {
+	svc, _ := newTestService(t, &testRemote{}, testTokens{})
+	request := httptest.NewRequest("POST", "/api/v1/mcp-servers", strings.NewReader(`{"name":"o","endpoint":"https://mcp.example/rpc","credential_id":"x","enabled":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	Handler(svc).ServeHTTP(w, request)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code=%d %s", w.Code, w.Body.String())
 	}
 }

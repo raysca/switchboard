@@ -27,7 +27,7 @@ func Handler(service *Service) http.Handler {
 			}
 			views := make([]ServerView, 0, len(servers))
 			for _, m := range servers {
-				views = append(views, view(m))
+				views = append(views, view(m, service.tokens))
 			}
 			api.WriteJSON(w, 200, api.SuccessResponse[[]ServerView]{Data: views})
 		case http.MethodPost:
@@ -41,7 +41,7 @@ func Handler(service *Service) http.Handler {
 				api.WriteError(w, 400, "invalid_mcp_server", "MCP server configuration is invalid", id)
 				return
 			}
-			api.WriteJSON(w, http.StatusCreated, api.SuccessResponse[ServerView]{Data: view(m)})
+			api.WriteJSON(w, http.StatusCreated, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
 		default:
 			w.Header().Set("Allow", "GET, POST")
 			api.WriteError(w, 405, "method_not_allowed", "method is not supported", id)
@@ -72,7 +72,7 @@ func Handler(service *Service) http.Handler {
 			api.WriteError(w, 404, "not_found", "MCP server not found", id)
 			return
 		}
-		response := ServerDetail{ServerView: view(m)}
+		response := ServerDetail{ServerView: view(m, service.tokens)}
 		if m.LatestDiscoveryID != "" {
 			d, err := service.store.MCP().Discovery(r.Context(), m.LatestDiscoveryID)
 			if err == nil {
@@ -93,7 +93,7 @@ func Handler(service *Service) http.Handler {
 			api.WriteError(w, 404, "not_found", "MCP server not found", id)
 			return
 		}
-		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
+		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/enable", func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(w, r)
@@ -107,7 +107,7 @@ func Handler(service *Service) http.Handler {
 			api.WriteError(w, 404, "not_found", "MCP server not found", id)
 			return
 		}
-		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
+		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/detach-delete", func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(w, r)
@@ -132,7 +132,7 @@ func Handler(service *Service) http.Handler {
 			api.WriteJSON(w, 200, api.SuccessResponse[DetachResult]{Data: DetachResult{Deleted: true}})
 			return
 		}
-		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: view(m)}})
+		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: view(m, service.tokens)}})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/validate", func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(w, r)
@@ -142,7 +142,7 @@ func Handler(service *Service) http.Handler {
 			return
 		}
 		// Validation failures are reported in the view, not as an HTTP error.
-		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m)})
+		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/tools/{tool}/test", func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(w, r)
@@ -176,7 +176,8 @@ type ServerView struct {
 	Description       string     `json:"description"`
 	Endpoint          string     `json:"endpoint"`
 	Transport         string     `json:"transport"`
-	CredentialID      string     `json:"credential_id,omitempty"`
+	AuthEnv           string     `json:"auth_env,omitempty"`
+	AuthEnvSet        bool       `json:"auth_env_set"`
 	ValidationState   string     `json:"validation_state"`
 	LatestDiscoveryID string     `json:"latest_discovery_id,omitempty"`
 	Enabled           bool       `json:"enabled"`
@@ -214,7 +215,11 @@ type ExecutionView struct {
 	Result      json.RawMessage `json:"result"`
 }
 
-func view(m storage.MCPServer) ServerView {
+func view(m storage.MCPServer, tokens TokenSource) ServerView {
+	authSet := false
+	if m.AuthEnv != "" && tokens != nil {
+		_, authSet = tokens.Token(m.AuthEnv)
+	}
 	var connected, discovered *time.Time
 	if !m.LastConnectedAt.IsZero() {
 		t := m.LastConnectedAt
@@ -224,7 +229,7 @@ func view(m storage.MCPServer) ServerView {
 		t := m.LastDiscoveredAt
 		discovered = &t
 	}
-	return ServerView{ID: m.ID, Name: m.Name, Description: m.Description, Endpoint: safeEndpoint(m.Endpoint), Transport: m.Transport, CredentialID: m.AuthCredentialID, ValidationState: m.ValidationState, LatestDiscoveryID: m.LatestDiscoveryID, Enabled: m.Enabled, PendingDeletion: m.PendingDelete, LastConnectedAt: connected, LastDiscoveredAt: discovered}
+	return ServerView{ID: m.ID, Name: m.Name, Description: m.Description, Endpoint: safeEndpoint(m.Endpoint), Transport: m.Transport, AuthEnv: m.AuthEnv, AuthEnvSet: authSet, ValidationState: m.ValidationState, LatestDiscoveryID: m.LatestDiscoveryID, Enabled: m.Enabled, PendingDeletion: m.PendingDelete, LastConnectedAt: connected, LastDiscoveredAt: discovered}
 }
 func safeEndpoint(raw string) string {
 	u, err := url.Parse(raw)
