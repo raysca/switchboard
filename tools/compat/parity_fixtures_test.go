@@ -176,7 +176,12 @@ func TestParityTurnStartStop(t *testing.T) {
 				t.Fatalf("unknown start strategy %q", s.Kind)
 			}
 		}
-		m, err := turn.NewManager(cfg, turn.SpeechTimeout(0))
+		// Pipecat's speech-timeout strategy alone: vad_stop events are explicit (no VAD stop
+		// offset), stop_ms is user_speech_timeout, finals are finalized (no STT p99 wait), and
+		// the aggregator's no-transcript timeout is outside the strategy.
+		m, err := turn.NewManager(cfg, turn.SpeechTimeout(turn.SpeechTimeoutConfig{
+			UserSpeechTimeout: ms(p.StopMs), STTP99: time.Hour, NoTranscriptTimeout: time.Hour,
+		}))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -156,7 +156,7 @@ func rates(name string, us []Utterance, held func(Utterance) (bool, error)) Rate
 // SpeechTimeoutRates drives the real SpeechTimeout strategy with the user
 // silent for longer than its timeout.
 func SpeechTimeoutRates(us []Utterance) Rates {
-	d := coreturn.SpeechTimeout(700 * time.Millisecond)
+	d := coreturn.SpeechTimeout(coreturn.SpeechTimeoutConfig{UserSpeechTimeout: 700 * time.Millisecond})
 	r := rates("speech-timeout", us, func(u Utterance) (bool, error) {
 		_, ended := d.Detect(coreturn.DetectionInput{SilenceFor: 800 * time.Millisecond, SilenceAfter: 700 * time.Millisecond, Text: u.User, TextFinal: true})
 		return !ended, nil

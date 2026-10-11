@@ -470,13 +470,6 @@
   },
   {
    "id": "speech_timeout_waits_for_transcript",
-   "intentional_difference": {
-    "go": [
-     "100:turn_started",
-     "1600:turn_stopped"
-    ],
-    "reason": "go-voice SpeechTimeout has no wait-for-transcript gate (ponytail in core/turn/stop.go): the turn ends silence-after-VAD-stop even if the transcript is late; Pipecat holds the stop until a transcript arrives."
-   },
    "params": {
     "end_ms": 6000,
     "start": [
@@ -509,13 +502,6 @@
   },
   {
    "id": "speech_timeout_no_transcript_never_stops",
-   "intentional_difference": {
-    "go": [
-     "100:turn_started",
-     "1600:turn_stopped"
-    ],
-    "reason": "Same missing transcript gate: go-voice ends a transcript-less turn after the silence timeout (the empty turn is then dropped downstream); Pipecat never stops it."
-   },
    "params": {
     "end_ms": 6000,
     "start": [

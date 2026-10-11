@@ -505,12 +505,6 @@ DIFFS = {
     "turn/transcription_interim_starts_turn": (
         "go-voice starts the silence clock when a turn opens from a transcript, so speech-timeout ends it 600ms later; Pipecat's speech-timeout waits for a final transcript or VAD stop (only user_turn_stop_timeout, default 5s, ends it).",
         ["200:turn_started", "800:turn_stopped"]),
-    "turn/speech_timeout_waits_for_transcript": (
-        "go-voice SpeechTimeout has no wait-for-transcript gate (ponytail in core/turn/stop.go): the turn ends silence-after-VAD-stop even if the transcript is late; Pipecat holds the stop until a transcript arrives.",
-        ["100:turn_started", "1600:turn_stopped"]),
-    "turn/speech_timeout_no_transcript_never_stops": (
-        "Same missing transcript gate: go-voice ends a transcript-less turn after the silence timeout (the empty turn is then dropped downstream); Pipecat never stops it.",
-        ["100:turn_started", "1600:turn_stopped"]),
     "turn/wake_phrase_single_activation": (
         "go-voice WakePhraseStart has only the inactivity-timeout mode (ponytail in core/turn/start.go): activity keeps it awake, so the later speech starts a turn; Pipecat single_activation stops refreshing the window and falls back to idle.",
         ["100:turn_started", "1600:turn_stopped", "3500:turn_started", "4700:turn_stopped"]),
