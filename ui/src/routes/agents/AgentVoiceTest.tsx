@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import type { ApiClient, AgentDTO } from "../../api/client";
 import {
@@ -8,6 +8,8 @@ import {
 import type { BrowserAudioController } from "../../voice/audio";
 import { PipecatDebugPanel } from "../../components/debug/PipecatDebugPanel";
 import { ActionButton, Status } from "../../components/primitives";
+import { LiveGraph } from "./graph/LiveGraph";
+import { fromAgentConfig } from "./graph/model";
 
 export interface AgentVoiceTestProps {
   agent: AgentDTO;
@@ -37,6 +39,11 @@ export function AgentVoiceTest({
   // Mirrors the server: only these readiness states may take calls.
   const callable = agent.readiness.state === "ready" || agent.readiness.state === "ready_with_tool_warning";
   const voiceClient = voiceClientRef.current;
+  // A graph agent shows the call moving between its nodes while you test it.
+  const graph = useMemo(() => {
+    const g = fromAgentConfig(agent.current_version?.config);
+    return g.nodes.length > 1 ? g : null;
+  }, [agent.current_version?.config]);
   const [state, setState] = useState<VoiceClientState>(() =>
     voiceClient.getState(),
   );
@@ -568,6 +575,19 @@ export function AgentVoiceTest({
               View session trace
             </Link>
           </div>
+        </div>
+      )}
+
+      {graph && (
+        <div style={{ marginBottom: "20px" }}>
+          <LiveGraph
+            graph={graph}
+            sessionId={state.sessionId}
+            client={client}
+            userSpeaking={state.isUserSpeaking}
+            botSpeaking={state.isBotSpeaking}
+            live={isConnectedOrReady || isConnecting}
+          />
         </div>
       )}
 
