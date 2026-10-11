@@ -1,0 +1,19 @@
+id: cartesia
+name: Cartesia
+credentials:
+  - id: key
+    label: Cartesia API key
+    fields:
+      api_key: {env: CARTESIA_API_KEY}
+    assemble: token
+services:
+  stt:
+    credential: [key]
+    models:
+      - {id: ink-whisper, label: Ink Whisper, default: true}
+    languages:
+      - {id: en, label: English, default: true}
+  tts:
+    credential: [key]
+    voices:
+      - {id: 694f9389-aac1-45b6-b726-9d9369183238, label: Default voice, default: true}

@@ -1,0 +1,19 @@
+id: elevenlabs
+name: ElevenLabs
+credentials:
+  - id: key
+    label: ElevenLabs API key
+    fields:
+      api_key: {env: ELEVENLABS_API_KEY}
+    assemble: token
+services:
+  stt:
+    credential: [key]
+    models:
+      - {id: scribe_v2_realtime, label: Scribe v2 realtime, default: true}
+    languages:
+      - {id: en, label: English, default: true}
+  tts:
+    credential: [key]
+    voices:
+      - {id: 21m00Tcm4TlvDq8ikWAM, label: Rachel, default: true}

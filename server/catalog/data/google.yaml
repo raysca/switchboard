@@ -1,0 +1,29 @@
+id: google
+name: Google
+credentials:
+  - id: api_key
+    label: Google API key
+    fields:
+      api_key: {env: GOOGLE_API_KEY}
+    assemble: token
+  - id: service_account
+    label: Google service account
+    fields:
+      path: {env: GOOGLE_APPLICATION_CREDENTIALS}
+    assemble: file_json
+services:
+  llm:
+    credential: [api_key, service_account]
+    models:
+      - {id: gemini-2.5-flash, label: Gemini 2.5 Flash, default: true}
+  stt:
+    credential: [service_account]
+    models:
+      - {id: chirp_2, label: Chirp 2, default: true}
+      - {id: latest_long, label: Latest long}
+    languages:
+      - {id: en-US, label: English (US), default: true}
+  tts:
+    credential: [service_account]
+    voices:
+      - {id: en-US-Chirp3-HD-Aoede, label: Chirp 3 HD Aoede (en-US), default: true}

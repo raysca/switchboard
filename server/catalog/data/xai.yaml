@@ -1,0 +1,24 @@
+id: xai
+name: xAI
+credentials:
+  - id: key
+    label: xAI API key
+    fields:
+      api_key: {env: XAI_API_KEY}
+    assemble: token
+services:
+  llm:
+    credential: [key]
+    models:
+      - {id: grok-2-1212, label: Grok 2, default: true}
+  stt:
+    credential: [key]
+    models:
+      - {id: grok-voice-transcribe-2.0, label: Grok voice transcribe 2.0, default: true}
+    languages:
+      - {id: en, label: English, default: true}
+  tts:
+    credential: [key]
+    voices:
+      - {id: eve, label: Eve, default: true}
+      - {id: ara, label: Ara}

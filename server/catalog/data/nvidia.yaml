@@ -1,0 +1,30 @@
+id: nvidia
+name: NVIDIA (NIM, Riva)
+credentials:
+  - id: key
+    label: NVIDIA API key
+    fields:
+      api_key: {env: NVIDIA_API_KEY}
+    assemble: token
+  - id: riva
+    label: NVIDIA API key with Riva function ids
+    fields:
+      api_key: {env: NVIDIA_API_KEY}
+      function_id: {env: NVIDIA_STT_FUNCTION_ID, optional: true}
+      tts_function_id: {env: NVIDIA_TTS_FUNCTION_ID, optional: true}
+    assemble: json
+services:
+  llm:
+    credential: [key]
+    models:
+      - {id: openai/gpt-oss-20b, label: GPT-OSS 20B, default: true}
+  stt:
+    credential: [riva]
+    needs: [function_id]
+    languages:
+      - {id: en-US, label: English (US), default: true}
+  tts:
+    credential: [riva]
+    needs: [tts_function_id]
+    voices:
+      - {id: Magpie-Multilingual.EN-US.Aria, label: Magpie Aria (en-US), default: true}

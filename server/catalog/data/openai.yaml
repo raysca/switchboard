@@ -1,0 +1,14 @@
+id: openai
+name: OpenAI-compatible
+credentials:
+  - id: key
+    label: OpenAI-compatible API key
+    fields:
+      api_key: {env: OPENAI_API_KEY}
+      base_url: {env: OPENAI_BASE_URL, optional: true}
+    assemble: json
+services:
+  llm:
+    credential: [key]
+    models:
+      - {id: gpt-4o-mini, label: GPT-4o mini, default: true}

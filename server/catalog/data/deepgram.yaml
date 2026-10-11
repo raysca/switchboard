@@ -1,0 +1,15 @@
+id: deepgram
+name: Deepgram
+credentials:
+  - id: key
+    label: Deepgram API key
+    fields:
+      api_key: {env: DEEPGRAM_API_KEY}
+    assemble: token
+services:
+  stt:
+    credential: [key]
+    models:
+      - {id: nova-3, label: Nova 3, default: true}
+    languages:
+      - {id: en, label: English, default: true}
