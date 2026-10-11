@@ -142,84 +142,48 @@ describe("management client", () => {
   });
 
   describe("providers API", () => {
-    it("lists provider definitions with capabilities", async () => {
+    const svc = (extra = {}) => ({ available: true, custom: true, ...extra });
+    const sample = [
+      {
+        id: "google", display_name: "Google", capabilities: ["stt", "llm", "tts"],
+        detected: true, env: ["GOOGLE_API_KEY"],
+        services: {
+          stt: svc({ languages: [{ id: "en-US", label: "English", default: true }] }),
+          llm: svc({ models: [{ id: "gemini-2.5-flash", label: "Gemini Flash" }] }),
+          tts: svc({ voices: [{ id: "aoede", label: "Aoede" }] }),
+        },
+      },
+      {
+        id: "xai", display_name: "xAI", capabilities: [], detected: false, env: ["XAI_API_KEY"],
+        services: { llm: { available: false, reason: "missing_env", missing_env: ["XAI_API_KEY"], custom: false } },
+      },
+      {
+        id: "deepgram", display_name: "Deepgram", capabilities: [], detected: true, env: ["DEEPGRAM_API_KEY"],
+        services: { stt: { available: false, reason: "not_in_build" } },
+      },
+    ];
+
+    it("parses detected, undetected and not_in_build providers", async () => {
       const fetcher = vi.fn<typeof fetch>(async () =>
-        new Response(
-          JSON.stringify({
-            data: [
-              {
-                id: "google",
-                display_name: "Google",
-                capabilities: ["llm", "stt", "tts"],
-                auth_required: true,
-              },
-            ],
-          }),
-          { status: 200 },
-        ),
+        new Response(JSON.stringify({ data: sample }), { status: 200 }),
       );
-      const client = createApiClient(
-        () => ({ key: "test-key", generation: 1 }),
-        fetcher,
-      );
+      const client = createApiClient(() => ({ key: "test-key", generation: 1 }), fetcher);
       const providers = await client.getProviders();
-      expect(providers).toHaveLength(1);
-      expect(providers[0].id).toBe("google");
+      expect(providers).toHaveLength(3);
+      expect(providers[0].detected).toBe(true);
+      expect(providers[0].services.llm?.models?.[0].id).toBe("gemini-2.5-flash");
+      expect(providers[1].services.llm?.missing_env).toEqual(["XAI_API_KEY"]);
+      expect(providers[2].services.stt?.reason).toBe("not_in_build");
+      expect(providers[2].services.stt?.custom).toBe(true);
       expect(fetcher).toHaveBeenCalledWith("/api/v1/providers", expect.any(Object));
     });
 
-    it("handles credential lifecycle: list, create, rotate, update, delete", async () => {
-      const cred = {
-        id: "cred-1",
-        provider: "google",
-        masked_value: "••••••••1234",
-        validation_state: "unvalidated",
-        capabilities: ["llm", "stt", "tts"],
-        created_at: "2026-10-05T12:00:00Z",
-        updated_at: "2026-10-05T12:00:00Z",
-      };
-      const fetcher = vi.fn<typeof fetch>()
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: [cred] }), { status: 200 }),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: cred }), { status: 201 }),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: cred }), { status: 200 }),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: cred }), { status: 200 }),
-        )
-        .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: { deleted: true } }), { status: 200 }),
-        );
-
-      const client = createApiClient(
-        () => ({ key: "test-key", generation: 1 }),
-        fetcher,
-      );
-
-      const list = await client.getCredentials();
-      expect(list).toEqual([cred]);
-
-      const created = await client.createCredential({ provider: "google", secret: "super-secret" });
-      expect(created.masked_value).toBe("••••••••1234");
-      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/providers/credentials", expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ provider: "google", secret: "super-secret" }),
-      }));
-
-      const rotated = await client.rotateCredential("cred-1");
-      expect(rotated.id).toBe("cred-1");
-
-      const updated = await client.updateCredential("cred-1", { secret: "new-secret" });
-      expect(updated.id).toBe("cred-1");
-
-      const deleted = await client.deleteCredential("cred-1");
-      expect(deleted.deleted).toBe(true);
+    it("has no credential methods", () => {
+      const client = createApiClient(() => ({ key: "k", generation: 1 }), vi.fn<typeof fetch>());
+      for (const m of ["getCredentials", "createCredential", "updateCredential", "deleteCredential", "rotateCredential", "validateCredential"]) {
+        expect(m in client).toBe(false);
+      }
     });
-
   });
 
   describe("agents API", () => {
@@ -277,9 +241,9 @@ describe("management client", () => {
         name: "Customer Support",
         description: "Assists customers",
         config: {
-          stt: { provider: "google", model: "chirp_2", language: "en-US", credential_id: "cred-1" },
-          llm: { provider: "google", model: "gemini-2.0-flash", credential_id: "cred-1" },
-          tts: { provider: "google", voice: "en-US-Journey-F", credential_id: "cred-1" },
+          stt: { provider: "google", model: "chirp_2", language: "en-US" },
+          llm: { provider: "google", model: "gemini-2.0-flash" },
+          tts: { provider: "google", voice: "en-US-Journey-F" },
         },
       });
       expect(created.id).toBe("agent-1");
@@ -510,17 +474,10 @@ describe("management client", () => {
 });
 
 describe("agentConfigV2Schema", () => {
-  const stage = { provider: "google", credential_id: "cred-1" };
-  const valid = { stt: stage, llm: { ...stage, model: "gemini-2.0-flash" }, tts: stage };
-
-  it("requires a non-empty credential_id on every stage", () => {
-    expect(agentConfigV2Schema.safeParse(valid).success).toBe(true);
-    for (const key of ["stt", "llm", "tts"] as const) {
-      const { credential_id: _, ...noCred } = valid[key];
-      expect(agentConfigV2Schema.safeParse({ ...valid, [key]: noCred }).success).toBe(false);
-      expect(
-        agentConfigV2Schema.safeParse({ ...valid, [key]: { ...valid[key], credential_id: " " } }).success,
-      ).toBe(false);
-    }
+  it("does not require or expose credential_id", () => {
+    const stage = { provider: "google" };
+    const cfg = { stt: stage, llm: { ...stage, model: "gemini-2.0-flash" }, tts: stage };
+    const parsed = agentConfigV2Schema.parse({ ...cfg, stt: { ...stage, credential_id: "x" } });
+    expect(parsed.stt).not.toHaveProperty("credential_id");
   });
 });

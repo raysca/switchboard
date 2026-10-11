@@ -54,10 +54,8 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
       { id: "agent-2", name: "Sales Agent", readiness: { state: "not_ready" } },
     ]),
     getProviders: vi.fn().mockResolvedValue([
-      { id: "google", display_name: "Google Gemini", capabilities: ["llm", "stt", "tts"] },
-    ]),
-    getCredentials: vi.fn().mockResolvedValue([
-      { id: "cred-1", provider: "google", validation_state: "valid", masked_value: "AIza...1234" },
+      { id: "google", display_name: "Google Gemini", capabilities: ["llm", "stt", "tts"], detected: true, env: [], services: {} },
+      { id: "xai", display_name: "xAI", capabilities: [], detected: false, env: [], services: {} },
     ]),
     getSessions: vi.fn().mockResolvedValue([
       {
@@ -123,7 +121,7 @@ describe("DashboardView", () => {
     expect(screen.getByText("Agent Readiness")).toBeVisible();
     expect(screen.getByText("1 Ready")).toBeVisible();
     expect(screen.getByText("Provider Readiness")).toBeVisible();
-    expect(screen.getByText("1 / 1 Validated Keys")).toBeVisible();
+    expect(screen.getByText("1 / 2 providers detected")).toBeVisible();
 
     // Recent Sessions
     expect(screen.getByText("Recent Session Activity")).toBeVisible();

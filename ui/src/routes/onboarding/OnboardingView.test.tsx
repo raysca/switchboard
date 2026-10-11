@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { OnboardingView } from "./OnboardingView";
-import { ApiError, type ApiClient } from "../../api/client";
+import type { ApiClient, ProviderStatus } from "../../api/client";
 
 function renderWithProviders(ui: React.ReactElement) {
   const queryClient = new QueryClient({
@@ -17,291 +17,85 @@ function renderWithProviders(ui: React.ReactElement) {
   );
 }
 
+const full = { available: true, custom: true };
+const google: ProviderStatus = {
+  id: "google", display_name: "Google", capabilities: ["stt", "llm", "tts"], detected: true, env: ["GOOGLE_API_KEY"],
+  services: { stt: full, llm: full, tts: full },
+};
+const xai: ProviderStatus = {
+  id: "xai", display_name: "xAI", capabilities: ["llm"], detected: true, env: ["XAI_API_KEY"],
+  services: { llm: full },
+};
+const undetected: ProviderStatus = { ...google, detected: false, capabilities: [] };
+const agent = {
+  id: "agent-1", name: "Front Desk", description: "", enabled: true, archived: false,
+  current_version: null, readiness: { state: "ready", reasons: [] },
+  created_at: "2026-10-05T12:00:00Z", updated_at: "2026-10-05T12:00:00Z",
+};
+
 function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
-    issueVoiceToken: vi.fn(),
-    getProviders: vi.fn().mockResolvedValue([
-      { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
-    ]),
-    getCredentials: vi.fn().mockResolvedValue([]),
-    createCredential: vi.fn(),
-    updateCredential: vi.fn(),
-    deleteCredential: vi.fn(),
-    validateCredential: vi.fn(),
-    rotateCredential: vi.fn(),
-    getProviderDiscovery: vi.fn(),
+    getProviders: vi.fn().mockResolvedValue([google]),
     getAgents: vi.fn().mockResolvedValue([]),
-    createAgent: vi.fn(),
-    updateAgent: vi.fn(),
-    archiveAgent: vi.fn(),
-    duplicateAgent: vi.fn(),
+    createAgent: vi.fn().mockResolvedValue(agent),
     ...overrides,
-  } as ApiClient;
+  } as unknown as ApiClient;
 }
 
 describe("OnboardingView", () => {
-  it("shows prompt to connect when no management key is entered", () => {
-    const client = createMockClient();
-    renderWithProviders(<OnboardingView client={client} keyValue={null} />);
+  it("prompts for a management key when absent", () => {
+    renderWithProviders(<OnboardingView client={createMockClient()} keyValue={null} />);
     expect(screen.getByRole("heading", { name: /onboarding setup/i })).toBeVisible();
     expect(screen.getByText(/enter a management key/i)).toBeVisible();
   });
 
-  it("guides empty install (0 credentials, 0 agents) through step 1: connect provider", async () => {
-    const client = createMockClient({
-      getCredentials: vi.fn().mockResolvedValue([]),
-      getAgents: vi.fn().mockResolvedValue([]),
-    });
+  it("step 1 says which variables to set and has no credential form", async () => {
+    const client = createMockClient({ getProviders: vi.fn().mockResolvedValue([undetected, { ...xai, detected: false }]) });
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-
-    expect(await screen.findByRole("heading", { name: /step 1: connect your first provider/i })).toBeVisible();
-    expect(screen.getByLabelText("Select provider")).toBeVisible();
-    const secretInput = screen.getByLabelText(/secret|api key/i);
-    expect(secretInput).toHaveAttribute("type", "password");
+    expect(await screen.findByRole("heading", { name: /step 1: set a provider key/i })).toBeVisible();
+    expect(screen.getByText(/GOOGLE_API_KEY/)).toBeVisible();
+    expect(screen.getByText(/XAI_API_KEY/)).toBeVisible();
+    expect(screen.queryByLabelText(/secret|api key/i)).toBeNull();
+    expect(screen.queryByText(/add a credential|connect provider/i)).toBeNull();
   });
 
-  it("offers only providers that can run every stage (never xAI-LLM-only or mcp)", async () => {
-    const client = createMockClient({
-      getProviders: vi.fn().mockResolvedValue([
-        { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
-        { id: "xai", display_name: "xAI", capabilities: ["llm"], auth_required: true },
-        { id: "mcp", display_name: "MCP server token", capabilities: ["mcp"], auth_required: true },
-      ]),
-    });
-    renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-    const select = await screen.findByLabelText("Select provider");
-    await waitFor(() => expect(client.getProviders).toHaveBeenCalled());
-    const options = Array.from(select.querySelectorAll("option")).map((o) => o.getAttribute("value"));
-    expect(options).toEqual(["google"]);
-  });
-
-  it("submits credential, masks value, clears secret input, and advances to step 2: create agent", async () => {
-    let credentialsList: any[] = [];
-    const client = createMockClient({
-      getCredentials: vi.fn().mockImplementation(() => Promise.resolve(credentialsList)),
-      getAgents: vi.fn().mockResolvedValue([]),
-      createCredential: vi.fn().mockImplementation(async ({ provider, secret }) => {
-        expect(secret).toBe("secret-api-token-12345");
-        const newCred = {
-          id: "cred-new",
-          provider,
-          masked_value: "••••••••2345",
-          validation_state: "unvalidated",
-          capabilities: ["llm", "stt", "tts"],
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        };
-        credentialsList = [newCred];
-        return newCred;
-      }),
-    });
-
+  it("advances to step 2 once any provider is detected and creates an agent without credential ids", async () => {
+    const client = createMockClient();
     const user = userEvent.setup();
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-
-    const secretInput = await screen.findByLabelText(/secret|api key/i);
-    await user.type(secretInput, "secret-api-token-12345");
-    await user.click(screen.getByRole("button", { name: /connect provider/i }));
-
-    expect(client.createCredential).toHaveBeenCalledWith({
-      provider: "google",
-      secret: "secret-api-token-12345",
-    });
-
-    // Advances to step 2
-    expect(await screen.findByRole("heading", { name: /step 2: create your first agent/i })).toBeVisible();
-    expect(screen.getByText(/••••••••2345/)).toBeVisible();
-    // Secret is never leaked into text
-    expect(screen.queryByText("secret-api-token-12345")).toBeNull();
-  });
-
-  it("creates first agent, displays readiness badge, and confirms completion", async () => {
-    let agentsList: any[] = [];
-    const client = createMockClient({
-      getCredentials: vi.fn().mockResolvedValue([
-        {
-          id: "cred-1",
-          provider: "google",
-          masked_value: "••••••••1234",
-          validation_state: "valid",
-          capabilities: ["llm", "stt", "tts"],
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        },
-      ]),
-      getAgents: vi.fn().mockImplementation(() => Promise.resolve(agentsList)),
-      createAgent: vi.fn().mockImplementation(async (payload) => {
-        const newAgent = {
-          id: "agent-1",
-          name: payload.name,
-          description: payload.description,
-          enabled: true,
-          archived: false,
-          current_version: {
-            id: "ver-1",
-            number: 1,
-            schema_version: 1,
-            config: payload.config,
-            config_hash: "hash-001",
-            created_at: "2026-10-05T12:00:00Z",
-            mcp_tools: [],
-          },
-          readiness: {
-            state: "ready",
-            reasons: [],
-          },
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        };
-        agentsList = [newAgent];
-        return newAgent;
-      }),
-    });
-
-    const user = userEvent.setup();
-    renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-
-    expect(await screen.findByRole("heading", { name: /step 2: create your first agent/i })).toBeVisible();
-
+    await screen.findByRole("heading", { name: /step 2: create your first agent/i });
     await user.type(screen.getByLabelText(/agent name/i), "Concierge");
-    await user.type(screen.getByLabelText(/description/i), "Primary concierge agent");
     await user.click(screen.getByRole("button", { name: /create agent/i }));
-
-    expect(client.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "Concierge",
-        description: "Primary concierge agent",
-        config: {
-          stt: { provider: "google", credential_id: "cred-1", model: "chirp_2", language: "en-US" },
-          llm: { provider: "google", credential_id: "cred-1", model: "gemini-2.5-flash" },
-          tts: { provider: "google", credential_id: "cred-1", voice: "en-US-Chirp3-HD-Aoede" },
-        },
-      }),
-    );
-
-    expect(await screen.findByText(/system configured and ready/i)).toBeVisible();
-    expect(screen.getByText("Concierge")).toBeVisible();
-    expect(screen.getByText("Ready")).toBeVisible();
+    await waitFor(() => expect(client.createAgent).toHaveBeenCalled());
+    const cfg = (client.createAgent as ReturnType<typeof vi.fn>).mock.calls[0][0].config;
+    expect(cfg.stt).toEqual({ provider: "google", model: "chirp_2", language: "en-US" });
+    expect(cfg.llm).toEqual({ provider: "google", model: "gemini-2.5-flash" });
+    expect(cfg.tts).toEqual({ provider: "google", voice: "en-US-Chirp3-HD-Aoede" });
   });
 
-  it("displays error banner with request ID when credential creation fails", async () => {
-    const client = createMockClient({
-      getCredentials: vi.fn().mockResolvedValue([]),
-      getAgents: vi.fn().mockResolvedValue([]),
-      createCredential: vi.fn().mockRejectedValue(
-        new ApiError("Invalid credential payload", "invalid_request", 400, "req-fail-42"),
-      ),
-    });
-
+  it("explains why Create agent cannot run when no detected provider covers every stage", async () => {
+    const client = createMockClient({ getProviders: vi.fn().mockResolvedValue([xai]) });
     const user = userEvent.setup();
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-
-    const secretInput = await screen.findByLabelText(/secret|api key/i);
-    await user.type(secretInput, "invalid-key");
-    await user.click(screen.getByRole("button", { name: /connect provider/i }));
-
-    expect(await screen.findByRole("alert")).toBeVisible();
-    expect(screen.getByText("Invalid credential payload")).toBeVisible();
-    expect(screen.getByText(/req-fail-42/)).toBeVisible();
+    await screen.findByRole("heading", { name: /step 2: create your first agent/i });
+    await user.type(screen.getByLabelText(/agent name/i), "Concierge");
+    await user.click(screen.getByRole("button", { name: /create agent/i }));
+    expect(await screen.findByText(/no detected provider can run/i)).toBeVisible();
+    expect(client.createAgent).not.toHaveBeenCalled();
   });
 
-  it("shows system is already configured when credentials and agents exist", async () => {
-    const client = createMockClient({
-      getCredentials: vi.fn().mockResolvedValue([
-        {
-          id: "cred-1",
-          provider: "google",
-          masked_value: "••••••••1234",
-          validation_state: "valid",
-          capabilities: ["llm", "stt", "tts"],
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        },
-      ]),
-      getAgents: vi.fn().mockResolvedValue([
-        {
-          id: "agent-1",
-          name: "Front Desk",
-          description: "Greeting bot",
-          enabled: true,
-          archived: false,
-          current_version: {
-            id: "ver-1",
-            number: 1,
-            schema_version: 1,
-            config: { stt: "google", llm: "google", tts: "google" },
-            config_hash: "hash-001",
-            created_at: "2026-10-05T12:00:00Z",
-            mcp_tools: [],
-          },
-          readiness: { state: "ready", reasons: [] },
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        },
-      ]),
-    });
-
+  it("shows the configured state when a provider is detected and an agent exists", async () => {
+    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([agent]) });
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
     expect(await screen.findByText(/system configured and ready/i)).toBeVisible();
     expect(screen.getByText("Front Desk")).toBeVisible();
     expect(screen.getByRole("link", { name: /manage agents/i })).toBeVisible();
-    expect(screen.getByRole("link", { name: /manage providers/i })).toBeVisible();
-  });
-
-  it("explains why Create agent cannot run when no credential covers every stage", async () => {
-    const client = createMockClient({
-      getCredentials: vi.fn().mockResolvedValue([
-        {
-          id: "cred-x",
-          provider: "xai",
-          masked_value: "••••••••9999",
-          validation_state: "valid",
-          capabilities: ["llm"],
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        },
-      ]),
-    });
-    const user = userEvent.setup();
-    renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-    await screen.findByRole("heading", { name: /step 2: create your first agent/i });
-    await waitFor(() => expect(client.getProviders).toHaveBeenCalled());
-    await user.type(screen.getByLabelText(/agent name/i), "Concierge");
-    await user.click(screen.getByRole("button", { name: /create agent/i }));
-    expect(await screen.findByText(/no connected credential can run/i)).toBeVisible();
-    expect(client.createAgent).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: /view providers/i })).toBeVisible();
   });
 
   it("treats an install whose only agent is archived as having no agents", async () => {
-    const client = createMockClient({
-      getCredentials: vi.fn().mockResolvedValue([
-        {
-          id: "cred-1",
-          provider: "google",
-          masked_value: "••••••••1234",
-          validation_state: "valid",
-          capabilities: ["llm", "stt", "tts"],
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        },
-      ]),
-      getAgents: vi.fn().mockResolvedValue([
-        {
-          id: "agent-1",
-          name: "Deleted Bot",
-          description: "",
-          enabled: true,
-          archived: true,
-          current_version: null,
-          readiness: { state: "ready", reasons: [] },
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        },
-      ]),
-    });
-
+    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([{ ...agent, archived: true }]) });
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
     expect(await screen.findByRole("heading", { name: /step 2: create your first agent/i })).toBeVisible();
-    expect(screen.queryByText("Deleted Bot")).toBeNull();
   });
 });

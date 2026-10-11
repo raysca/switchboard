@@ -60,41 +60,33 @@ const operationsStatusEnvelope = z.object({
 
 
 // Provider schemas & types
-export const providerDefinitionSchema = z.object({
+const catalogEntrySchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  default: z.boolean().optional(),
+});
+export const serviceStatusSchema = z.object({
+  available: z.boolean(),
+  reason: z.enum(["missing_env", "not_in_build"]).optional(),
+  missing_env: z.array(z.string()).optional(),
+  models: z.array(catalogEntrySchema).optional(),
+  voices: z.array(catalogEntrySchema).optional(),
+  languages: z.array(catalogEntrySchema).optional(),
+  custom: z.boolean().optional().default(true),
+});
+export const providerStatusSchema = z.object({
   id: z.string(),
   display_name: z.string(),
   capabilities: z.array(z.string()),
-  auth_required: z.boolean(),
+  detected: z.boolean(),
+  env: z.array(z.string()),
+  // partialRecord: the server omits services a provider lacks.
+  services: z.partialRecord(z.enum(["stt", "llm", "tts"]), serviceStatusSchema),
 });
-export type ProviderDefinition = z.infer<typeof providerDefinitionSchema>;
+export type ProviderStatus = z.infer<typeof providerStatusSchema>;
 
 const providersEnvelope = z.object({
-  data: z.array(providerDefinitionSchema),
-});
-
-export const credentialDTOSchema = z.object({
-  id: z.string(),
-  provider: z.string(),
-  masked_value: z.string(),
-  validation_state: z.string(),
-  validated_at: z.string().nullish(),
-  capabilities: z.array(z.string()),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
-export type CredentialDTO = z.infer<typeof credentialDTOSchema>;
-
-const credentialsEnvelope = z.object({
-  data: z.array(credentialDTOSchema),
-});
-const credentialEnvelope = z.object({
-  data: credentialDTOSchema,
-});
-
-const deleteEnvelope = z.object({
-  data: z.object({
-    deleted: z.boolean(),
-  }),
+  data: z.array(providerStatusSchema),
 });
 
 // Agent schemas & types
@@ -161,28 +153,24 @@ const archiveEnvelope = z.object({
 });
 
 // Agent config schema v2: one typed block per stage. Every stage names its
-// provider and an explicit credential of that provider (no implicit fallback).
+// provider; secrets come from server environment variables, never the config.
 const nonEmpty = z.string().trim().min(1);
-const credentialRef = nonEmpty;
 export const agentConfigV2Schema = z.object({
-  // Mirrors the server: provider and credential_id are required per stage and
+  // Mirrors the server: provider is required per stage and
   // llm.model is required; stt.model and tts.voice fall back to provider defaults.
   stt: z.object({
     provider: nonEmpty,
     model: z.string().optional(),
     language: z.string().optional(),
-    credential_id: credentialRef,
   }),
   llm: z.object({
     provider: nonEmpty,
     model: nonEmpty,
     system_prompt: z.string().optional(),
-    credential_id: credentialRef,
   }),
   tts: z.object({
     provider: nonEmpty,
     voice: z.string().optional(),
-    credential_id: credentialRef,
   }),
   context: z
     .object({
@@ -221,7 +209,6 @@ export const mcpServerSchema = z.object({
   description: z.string().optional().default(""),
   endpoint: z.string(),
   transport: z.string().optional().default("streamable-http"),
-  credential_id: z.string().nullish(),
   validation_state: z.string(),
   latest_discovery_id: z.string().nullish(),
   enabled: z.boolean(),
@@ -274,7 +261,6 @@ export type CreateMCPServerInput = {
   description?: string;
   endpoint: string;
   transport?: string;
-  credential_id?: string;
   enabled?: boolean;
 };
 
@@ -502,39 +488,6 @@ export function createApiClient(
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
     getProviders: async () =>
       (await request("/providers", providersEnvelope)).data,
-    getCredentials: async () =>
-      (await request("/providers/credentials", credentialsEnvelope)).data,
-    createCredential: async (input: { provider: string; secret: string }) =>
-      (
-        await request("/providers/credentials", credentialEnvelope, {
-          method: "POST",
-          body: input,
-        })
-      ).data,
-    updateCredential: async (id: string, input: { secret: string }) =>
-      (
-        await request(
-          `/providers/credentials/${encodeURIComponent(id)}`,
-          credentialEnvelope,
-          { method: "PUT", body: input },
-        )
-      ).data,
-    deleteCredential: async (id: string) =>
-      (
-        await request(
-          `/providers/credentials/${encodeURIComponent(id)}`,
-          deleteEnvelope,
-          { method: "DELETE" },
-        )
-      ).data,
-    rotateCredential: async (id: string) =>
-      (
-        await request(
-          `/providers/credentials/${encodeURIComponent(id)}/rotate`,
-          credentialEnvelope,
-          { method: "POST" },
-        )
-      ).data,
     // ponytail: one page of the server max (100); page through when someone has more agents.
     // Includes archived agents (sessions still name them); list views filter them out.
     getAgents: async () =>

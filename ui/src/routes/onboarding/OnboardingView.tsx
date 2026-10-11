@@ -3,7 +3,6 @@ import { Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
-  type CredentialDTO,
   type AgentDTO,
   type CreateAgentInput,
   ApiError,
@@ -25,11 +24,6 @@ export type OnboardingViewProps = {
 export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const queryClient = useQueryClient();
 
-  // Step 1: Provider form state
-  const [providerChoice, setProviderChoice] = useState("google");
-  const [secretDraft, setSecretDraft] = useState("");
-  const [providerError, setProviderError] = useState<ApiError | null>(null);
-
   // Step 2: Agent form state
   const [agentNameDraft, setAgentNameDraft] = useState("");
   const [agentDescDraft, setAgentDescDraft] = useState("");
@@ -45,31 +39,11 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     retry: false,
   });
 
-  const credentialsQuery = useQuery({
-    queryKey: ["credentials"],
-    queryFn: client.getCredentials,
-    enabled: !!keyValue,
-    retry: false,
-  });
-
   const agentsQuery = useQuery({
     queryKey: ["agents"],
     queryFn: () => client.getAgents(),
     enabled: !!keyValue,
     retry: false,
-  });
-
-  const createCredMutation = useMutation({
-    mutationFn: (payload: { provider: string; secret: string }) =>
-      client.createCredential(payload),
-    onSuccess: () => {
-      setSecretDraft("");
-      setProviderError(null);
-      void queryClient.invalidateQueries({ queryKey: ["credentials"] });
-    },
-    onError: (err) => {
-      setProviderError(asApiError(err, "Failed to connect provider"));
-    },
   });
 
   const createAgentMutation = useMutation({
@@ -83,13 +57,6 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     },
   });
 
-  function handleConnectProvider(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const secret = secretDraft.trim();
-    if (!secret) return;
-    createCredMutation.mutate({ provider: providerChoice, secret });
-  }
-
   function handleCreateAgent(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const name = agentNameDraft.trim();
@@ -97,46 +64,44 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     const llm = agentLlmDraft.trim();
     const tts = agentTtsDraft.trim();
     if (!name || !stt || !llm || !tts) return;
-    if (!agentCredential) {
+    if (!agentProvider) {
       setAgentError(
         new ApiError(
           providersQuery.isSuccess
-            ? "No connected credential can run speech-to-text, LLM and text-to-speech. Add one (for example Google) on the Providers page."
+            ? "No detected provider can run speech-to-text, LLM and text-to-speech. Set the variables for one on the server (see the Providers page)."
             : "The provider list has not loaded yet. Reload the page and try again.",
-          "no_credential",
+          "no_provider",
           0,
           "",
         ),
       );
       return;
     }
-    // ponytail: onboarding uses the step-1 credential for every stage; the Agents page edits each stage.
-    const { provider, id: credential_id } = agentCredential;
+    // ponytail: onboarding uses one detected provider for every stage; the Agents page edits each stage.
+    const provider = agentProvider;
     createAgentMutation.mutate({
       name,
       description: agentDescDraft.trim(),
       enabled: true,
       config: {
-        stt: { provider, credential_id, model: stt, language: "en-US" },
-        llm: { provider, credential_id, model: llm },
-        tts: { provider, credential_id, voice: tts },
+        stt: { provider, model: stt, language: "en-US" },
+        llm: { provider, model: llm },
+        tts: { provider, voice: tts },
       },
     });
   }
 
-  // Onboarding uses one provider for every stage, so offer only providers that
-  // can do speech-to-text, LLM and text-to-speech (never the "mcp" token type).
-  const providers = (providersQuery.data ?? []).filter((p) =>
+  const providers = providersQuery.data ?? [];
+  const detected = providers.filter((p) => p.detected);
+  // Onboarding uses one provider for every stage: a detected one that can run all three.
+  const agentProvider = detected.find((p) =>
     ["stt", "llm", "tts"].every((cap) => p.capabilities.includes(cap)),
-  );
-  const credentials = credentialsQuery.data ?? [];
+  )?.id;
   const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
-  // The credential connected in step 1: the first one whose provider can run every stage.
-  const agentCredential = credentials.find((c) => providers.some((p) => p.id === c.provider));
 
-  const hasCredentials = credentials.length > 0;
+  const hasProvider = detected.length > 0;
   const hasAgents = agents.length > 0;
-  const isFullyConfigured = hasCredentials && hasAgents;
+  const isFullyConfigured = hasProvider && hasAgents;
 
   return (
     <>
@@ -149,14 +114,14 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
         <EmptyState title="Connect to start onboarding">
           Enter a management key below to begin onboarding setup.
         </EmptyState>
-      ) : credentialsQuery.isPending || agentsQuery.isPending ? (
+      ) : providersQuery.isPending || agentsQuery.isPending ? (
         <LoadingState label="Checking system configuration" />
-      ) : credentialsQuery.isError ? (
+      ) : providersQuery.isError ? (
         <ErrorState
           title="Setup check failed"
-          error={credentialsQuery.error as ApiError}
+          error={providersQuery.error as ApiError}
           onRetry={() => {
-            void credentialsQuery.refetch();
+            void providersQuery.refetch();
           }}
         />
       ) : agentsQuery.isError ? (
@@ -177,7 +142,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
           >
             <h2>System configured and ready</h2>
             <p>
-              Your setup is complete with {credentials.length} provider credential(s) and{" "}
+              Your setup is complete with {detected.length} detected provider(s) and{" "}
               {agents.length} configured agent(s).
             </p>
           </div>
@@ -199,19 +164,17 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
               }}
             >
               <h3 style={{ margin: "0 0 12px", fontSize: "1.1rem" }}>
-                Connected Providers ({credentials.length})
+                Detected Providers ({detected.length})
               </h3>
               <ul style={{ paddingLeft: "18px", margin: "0 0 16px" }}>
-                {credentials.map((c: CredentialDTO) => (
-                  <li key={c.id} style={{ marginBottom: "6px" }}>
-                    <strong>{c.provider}</strong>{" "}
-                    <code style={{ fontSize: "0.85rem" }}>{c.masked_value}</code> (
-                    {c.validation_state})
+                {detected.map((p) => (
+                  <li key={p.id} style={{ marginBottom: "6px" }}>
+                    <strong>{p.display_name}</strong> ({p.capabilities.join(", ") || "no services"})
                   </li>
                 ))}
               </ul>
               <Link to="/providers" className="action-button-small">
-                Manage providers
+                View providers
               </Link>
             </div>
 
@@ -241,61 +204,22 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
             </div>
           </div>
         </div>
-      ) : !hasCredentials ? (
-        /* Step 1: Connect Provider */
+      ) : !hasProvider ? (
+        /* Step 1: Set a provider key */
         <div className="onboarding-step" style={{ marginTop: "32px" }}>
           <section aria-labelledby="step1-heading">
-            <h2 id="step1-heading">Step 1: Connect your first provider</h2>
+            <h2 id="step1-heading">Step 1: Set a provider key</h2>
             <p style={{ color: "#53666b", marginBottom: "20px" }}>
-              Voice agents need a provider (like Google or xAI) for speech recognition, LLM
-              reasoning, and speech synthesis.
+              Voice agents need a provider for speech recognition, LLM reasoning, and speech
+              synthesis. Set one of these environment variables on the server and restart it:
             </p>
-
-            {providerError && (
-              <ErrorState
-                title="Failed to connect provider"
-                error={providerError}
-                onRetry={() => setProviderError(null)}
-              />
-            )}
-
-            <form onSubmit={handleConnectProvider} className="form-card">
-              <label className="form-field" htmlFor="onboard-provider-select">
-                <span>Select provider</span>
-                <select
-                  id="onboard-provider-select"
-                  value={providerChoice}
-                  onChange={(e) => setProviderChoice(e.target.value)}
-                >
-                  {providers.length > 0 ? (
-                    providers.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.display_name}
-                      </option>
-                    ))
-                  ) : (
-                    <option value="google">Google</option>
-                  )}
-                </select>
-              </label>
-
-              <label className="form-field" htmlFor="onboard-secret-input">
-                <span>API key / secret</span>
-                <input
-                  id="onboard-secret-input"
-                  type="password"
-                  autoComplete="off"
-                  value={secretDraft}
-                  onChange={(e) => setSecretDraft(e.target.value)}
-                  placeholder="Enter API key or secret token"
-                  required
-                />
-              </label>
-
-              <ActionButton type="submit" disabled={createCredMutation.isPending}>
-                {createCredMutation.isPending ? "Connecting…" : "Connect provider"}
-              </ActionButton>
-            </form>
+            <ul style={{ paddingLeft: "18px" }}>
+              {providers.map((p) => (
+                <li key={p.id}>
+                  {p.display_name}: <code>{p.env.join(", ")}</code>
+                </li>
+              ))}
+            </ul>
           </section>
         </div>
       ) : (
@@ -304,8 +228,8 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
           <section aria-labelledby="step2-heading">
             <h2 id="step2-heading">Step 2: Create your first agent</h2>
             <p style={{ color: "#53666b", marginBottom: "16px" }}>
-              Provider connected: <strong>{agentCredential?.provider}</strong> (
-              <code>{agentCredential?.masked_value}</code>). Now configure your first voice agent.
+              Provider detected: <strong>{agentProvider ?? detected.map((p) => p.display_name).join(", ")}</strong>.
+              Now configure your first voice agent.
             </p>
 
             {agentError && (
@@ -356,7 +280,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                   Voice stack configuration
                 </h3>
                 <p style={{ margin: "0 0 12px" }}>
-                  Provider for all stages: <code>{agentCredential?.provider ?? "none connected"}</code>
+                  Provider for all stages: <code>{agentProvider ?? "none detected"}</code>
                 </p>
 
                 <label className="form-field" htmlFor="onboard-agent-stt">

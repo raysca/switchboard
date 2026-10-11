@@ -59,13 +59,6 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
     retry: false,
   });
 
-  const credentialsQuery = useQuery({
-    queryKey: ["credentials"],
-    queryFn: () => client.getCredentials(),
-    enabled: !!keyValue,
-    retry: false,
-  });
-
   const sessionsQuery = useQuery({
     queryKey: ["dashboard-sessions"],
     queryFn: () => client.getSessions({ limit: 5 }),
@@ -131,15 +124,13 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
   const op = operationsQuery.data;
   const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
   const providers = providersQuery.data ?? [];
-  const credentials = credentialsQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];
 
   // Readiness calculations
   const readyAgentsCount = agents.filter((a) => a.readiness?.state === "ready").length;
   const totalAgents = agents.length;
 
-  const totalCredentials = credentials.length;
-  const validatedCredentials = credentials.filter((c) => c.validation_state === "valid").length;
+  const detectedProviders = providers.filter((p) => p.detected).length;
 
   const nearCapacity = op.capacity_utilization >= 0.9 || (op.max_sessions > 0 && op.active_sessions >= op.max_sessions);
 
@@ -242,14 +233,14 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
           </div>
           <div className="summary-card-stats">
             <span className="stat-value">{providers.length}</span>
-            <span className="stat-label">available providers</span>
+            <span className="stat-label">known providers</span>
           </div>
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-            <span className={`badge ${validatedCredentials > 0 ? "badge--good" : "badge--neutral"}`}>
-              {validatedCredentials} / {totalCredentials} Validated Keys
+            <span className={`badge ${detectedProviders > 0 ? "badge--good" : "badge--neutral"}`}>
+              {detectedProviders} / {providers.length} providers detected
             </span>
-            {totalCredentials === 0 && (
-              <span className="subtext">No provider credentials saved.</span>
+            {detectedProviders === 0 && (
+              <span className="subtext">No provider keys found in the server environment.</span>
             )}
           </div>
         </div>
