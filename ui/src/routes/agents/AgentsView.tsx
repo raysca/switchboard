@@ -22,13 +22,19 @@ import {
   Status,
 } from "../../components/primitives";
 import { AgentVoiceTest } from "./AgentVoiceTest";
+import { GraphDesigner } from "./graph/GraphDesigner";
 
 export type AgentsViewProps = {
   client: ApiClient;
   keyValue: string | null;
 };
 
-type ViewMode = "list" | "create" | "detail" | "edit";
+type ViewMode = "list" | "create" | "detail" | "edit" | "design";
+
+/** A stored graph agent (nodes joined by handoffs); the flat form cannot edit it. */
+function isGraphAgent(agent: AgentDTO): boolean {
+  return Array.isArray(agent.current_version?.config?.nodes);
+}
 
 function getReadinessTone(state: string): "good" | "bad" | "neutral" {
   switch (state) {
@@ -519,10 +525,17 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
     setSelectedAgentId(agent.id);
     setFormError(null);
     setSaveSuccessMessage(null);
-    setMode("edit");
+    setMode(isGraphAgent(agent) ? "design" : "edit");
   }
 
-  const formOpen = mode === "create" || mode === "edit";
+  function startDesign(agent: AgentDTO | null) {
+    setSelectedAgentId(agent?.id ?? null);
+    setFormError(null);
+    setSaveSuccessMessage(null);
+    setMode("design");
+  }
+
+  const formOpen = mode === "create" || mode === "edit" || mode === "design";
   const providersQuery = useQuery({
     queryKey: ["providers"],
     queryFn: () => client.getProviders(),
@@ -612,7 +625,10 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                 }}
               >
                 <h2 id="agents-list-heading">Configured agents ({agents.length})</h2>
-                <ActionButton onClick={startCreate}>+ Create agent</ActionButton>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <ActionButton onClick={startCreate}>+ Create agent</ActionButton>
+                  <ActionButton onClick={() => startDesign(null)}>+ Create graph agent</ActionButton>
+                </div>
               </div>
 
               {agents.length === 0 ? (
@@ -802,6 +818,43 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
             </section>
           )}
 
+          {/* Designer View: agents as a graph of nodes and handoffs */}
+          {mode === "design" && (
+            <section aria-labelledby="design-agent-heading">
+              <h2 id="design-agent-heading">
+                {selectedAgent ? `Design ${selectedAgent.name}` : "Design a graph agent"}
+              </h2>
+              <p style={{ color: "#53666b", marginBottom: "20px" }}>
+                Each node is an agent with its own model and voice; a handoff lets one agent pass
+                the call to another. Publishing creates a new immutable version
+                {selectedAgent ? ` (v${(selectedAgent.current_version?.number ?? 1) + 1})` : ""};
+                calls already in progress keep the version they started on.
+              </p>
+              {formError && (
+                <ErrorState
+                  title="Failed to save agent"
+                  error={formError}
+                  onRetry={() => setFormError(null)}
+                />
+              )}
+              {optionsError}
+              <GraphDesigner
+                key={selectedAgent?.id ?? "new"}
+                agent={selectedAgent ?? null}
+                providers={providers}
+                credentials={credentials}
+                pending={createMutation.isPending || updateMutation.isPending}
+                submitLabel="Publish"
+                onSubmit={(input) =>
+                  selectedAgent
+                    ? updateMutation.mutate({ id: selectedAgent.id, payload: input })
+                    : createMutation.mutate(input)
+                }
+                onCancel={() => setMode(selectedAgent ? "detail" : "list")}
+              />
+            </section>
+          )}
+
           {/* Detail View */}
           {mode === "detail" && selectedAgent && (
             <section aria-labelledby="agent-detail-heading">
@@ -828,6 +881,14 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                   >
                     Edit
                   </button>
+                  {!isGraphAgent(selectedAgent) && (
+                    <button
+                      className="action-button-small"
+                      onClick={() => startDesign(selectedAgent)}
+                    >
+                      Open designer
+                    </button>
+                  )}
                   <button
                     className="action-button-small"
                     onClick={() => duplicateMutation.mutate(selectedAgent.id)}

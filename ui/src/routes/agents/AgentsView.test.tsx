@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router";
@@ -563,5 +563,41 @@ describe("AgentsView", () => {
 
     expect(await screen.findByText("Implicit Cred Bot")).toBeVisible();
     expect(screen.getByText("Needs reconfiguration")).toBeVisible();
+  });
+
+  it("opens the designer to create a graph agent and to edit a stored graph", async () => {
+    const graph = createMockAgent({
+      id: "agent-graph",
+      name: "Two Node Bot",
+      current_version: {
+        id: "ver-g",
+        number: 3,
+        schema_version: 1,
+        config: {
+          entry: "front",
+          nodes: [
+            { id: "front", name: "Front", config: v2Config },
+            { id: "sales", name: "Sales", config: { llm: v2Config.llm, tts: v2Config.tts } },
+          ],
+          edges: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
+        },
+        config_hash: "hash-g",
+        created_at: "2026-10-05T12:00:00Z",
+        mcp_tools: [],
+      },
+    });
+    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([createMockAgent(), graph]) });
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    await screen.findByText("Two Node Bot");
+    await user.click(screen.getByRole("button", { name: /create graph agent/i }));
+    expect(await screen.findByRole("heading", { name: /design a graph agent/i })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    const row = screen.getByText("Two Node Bot").closest("tr") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: /edit/i }));
+    expect(await screen.findByRole("heading", { name: /design two node bot/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /front → sales/i })).toBeVisible();
   });
 });

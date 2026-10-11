@@ -193,18 +193,25 @@ export const agentConfigV2Schema = z.object({
 });
 export type AgentConfigV2 = z.infer<typeof agentConfigV2Schema>;
 
+/**
+ * What the agents API accepts as `config`: the flat stage config, or a graph
+ * ({entry, nodes, edges, handoff_cue}) whose nodes carry flat stage configs.
+ * The server validates graphs (server/agent/graph.go); the designer mirrors it.
+ */
+export type AgentConfigPayload = AgentConfigV2 | Record<string, unknown>;
+
 export type CreateAgentInput = {
   name: string;
   description: string;
   enabled?: boolean;
-  config: AgentConfigV2;
+  config: AgentConfigPayload;
 };
 
 export type UpdateAgentInput = {
   name?: string;
   description?: string;
   enabled?: boolean;
-  config?: AgentConfigV2;
+  config?: AgentConfigPayload;
 };
 
 // MCP schemas & types
