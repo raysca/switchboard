@@ -74,3 +74,27 @@ func TestCommitResumedSegmentKeepsAllWords(t *testing.T) {
 		t.Fatalf("commits=%q, want exactly one with all the words", c)
 	}
 }
+
+// A rejected backchannel must stay rejected when a noise blip follows after the bot stops:
+// re-observing old text must not re-run start strategies for a turn that never started.
+func TestBackchannelThenNoiseBlipStartsNoTurn(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.StartStrategies = []UserTurnStartStrategy{MinWordsStart(3, true)}
+	h := newHarness(t, cfg)
+	h.botSpeaks()
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = h.sess.Post(&core.TranscriptCandidateFrame{Turn: "turn-1-1", Gen: 1, Text: "uh-huh", Final: true})
+	h.settle()
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 2, Gen: 1, SilenceDuration: 200 * time.Millisecond})
+	h.run(200*time.Millisecond, func() bool { return false })
+	_ = h.sess.Reenter(&core.SpeakingStateFrame{State: core.SpeakingStopped, Turn: "bot-1", Gen: 1}, core.Upstream, h.sess.TailIndex(), 0)
+	h.settle()
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 3, Gen: 1}) // cough or breath: the STT emits nothing
+	h.settle()
+	h.run(100*time.Millisecond, func() bool { return false })
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{Seq: 4, Gen: 1, SilenceDuration: 200 * time.Millisecond})
+	h.run(3*time.Second, func() bool { return false })
+	if n := len(h.events(core.TurnEventStarted)); n != 0 {
+		t.Fatalf("backchannel admitted as a user turn by a noise blip (%d starts, %d interruptions)", n, h.asst.InterruptionCount.Load())
+	}
+}

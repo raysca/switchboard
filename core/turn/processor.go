@@ -335,6 +335,11 @@ func (p *Processor) onVADStart(v *core.UserStartedSpeakingFrame, e core.Emitter)
 	}
 	p.segs = append(p.segs, segment{turn: seg})
 	p.vadSpeaking = true
+	if !p.started {
+		// Not admitted yet: re-observing old text would re-run the start strategies on it
+		// (a rejected backchannel plus a noise blip would start a turn).
+		return p.observe(e, "", false)
+	}
 	// A new segment has no final yet, so the turn's text is no longer final: an earlier
 	// segment's final must not end the turn while the resumed words are still being transcribed.
 	return p.observe(e, p.joined(), p.lastFinal())
