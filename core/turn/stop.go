@@ -43,19 +43,53 @@ func (c stopChain) Detect(in DetectionInput) (DetectionDecision, bool) {
 	return DetectionDecision{}, false
 }
 
-// SpeechTimeout ends the turn after the user has been silent for after
-// (zero: the manager's Config.SilenceTimeout). With the default it is exactly
-// SilenceDetector, the historical behavior. ponytail: no wait-for-transcript
-// gate; add when a provider needs it.
-func SpeechTimeout(after time.Duration) UserTurnStopStrategy { return speechTimeout{after} }
+// Defaults for SpeechTimeoutConfig zero values (Pipecat user_speech_timeout and the aggregator's
+// user_turn_stop_timeout).
+const (
+	DefaultUserSpeechTimeout   = 600 * time.Millisecond
+	DefaultNoTranscriptTimeout = 5 * time.Second
+)
 
-type speechTimeout struct{ after time.Duration }
+// SpeechTimeoutConfig sets the speech-timeout stop for one call. All durations compare with
+// DetectionInput.SilenceFor, which counts from silence onset.
+type SpeechTimeoutConfig struct {
+	VADStop             time.Duration // the call's VAD stop: onset to the VAD stop event
+	UserSpeechTimeout   time.Duration // resume window after the VAD stop (0: 600ms)
+	STTP99              time.Duration // primary STT p99, end of speech to final (0: UnknownSTTP99)
+	NoTranscriptTimeout time.Duration // end an untranscribed turn after this silence (0: 5s)
+}
+
+// SpeechTimeout is Pipecat's speech-timeout stop: the turn ends once the user has been silent
+// for the VAD stop plus the resume window, a transcript exists, and it is final or the STT's p99
+// has passed. A turn with no transcript ends after NoTranscriptTimeout (dropped downstream), so
+// a dead STT cannot wedge it.
+func SpeechTimeout(cfg SpeechTimeoutConfig) UserTurnStopStrategy {
+	if cfg.UserSpeechTimeout <= 0 {
+		cfg.UserSpeechTimeout = DefaultUserSpeechTimeout
+	}
+	if cfg.STTP99 <= 0 {
+		cfg.STTP99 = UnknownSTTP99
+	}
+	if cfg.NoTranscriptTimeout <= 0 {
+		cfg.NoTranscriptTimeout = DefaultNoTranscriptTimeout
+	}
+	return speechTimeout(cfg)
+}
+
+type speechTimeout SpeechTimeoutConfig
 
 func (s speechTimeout) Detect(in DetectionInput) (DetectionDecision, bool) {
-	if s.after > 0 {
-		in.SilenceAfter = s.after
+	stop := DetectionDecision{Reason: core.TurnReasonSilence}
+	if in.SilenceFor >= s.NoTranscriptTimeout {
+		return stop, true
 	}
-	return SilenceDetector{}.Detect(in)
+	if in.SilenceFor < s.VADStop+s.UserSpeechTimeout || strings.TrimSpace(in.Text) == "" {
+		return DetectionDecision{}, false
+	}
+	if in.TextFinal || in.SilenceFor >= s.STTP99 {
+		return stop, true
+	}
+	return DetectionDecision{}, false
 }
 
 // TurnAnalyzer is the audio-based end-of-turn model seam (the ONNX smart-turn

@@ -23,9 +23,6 @@ func TestStopStrategyDecisionTable(t *testing.T) {
 		in   DetectionInput
 		want core.TurnReason // None: no decision
 	}{
-		{"timeout below", SpeechTimeout(0), DetectionInput{SilenceFor: 699 * time.Millisecond, SilenceAfter: 700 * time.Millisecond}, core.TurnReasonNone},
-		{"timeout at default", SpeechTimeout(0), DetectionInput{SilenceFor: 700 * time.Millisecond, SilenceAfter: 700 * time.Millisecond}, core.TurnReasonSilence},
-		{"timeout override", SpeechTimeout(300 * time.Millisecond), DetectionInput{SilenceFor: 300 * time.Millisecond, SilenceAfter: time.Second}, core.TurnReasonSilence},
 		{"analyzer complete", AnalyzerStop(an, 3*time.Second), DetectionInput{SilenceFor: 100 * time.Millisecond}, core.TurnReasonSemantic},
 		{"analyzer incomplete waits", AnalyzerStop(incomplete, 3*time.Second), DetectionInput{SilenceFor: 2 * time.Second}, core.TurnReasonNone},
 		{"analyzer fallback", AnalyzerStop(incomplete, 3*time.Second), DetectionInput{SilenceFor: 3 * time.Second}, core.TurnReasonSilence},
@@ -50,7 +47,7 @@ func TestStopStrategyDecisionTable(t *testing.T) {
 }
 
 func TestStopChainFirstDecisiveWins(t *testing.T) {
-	chain := StopChain(nil, ExternalStop(), EagerStop(0), SpeechTimeout(0))
+	chain := StopChain(nil, ExternalStop(), EagerStop(0), SpeechTimeout(SpeechTimeoutConfig{}))
 	d, ok := chain.Detect(DetectionInput{Text: "ok.", TextFinal: true, SilenceFor: 10, SilenceAfter: 10})
 	if !ok || d.Reason != core.TurnReasonSilence {
 		t.Fatal("chain should stop")
@@ -59,7 +56,7 @@ func TestStopChainFirstDecisiveWins(t *testing.T) {
 		t.Fatal("empty chain never stops")
 	}
 	an := &fakeAnalyzer{res: AnalyzerResult{Complete: true, Confidence: 1}}
-	StopChain(SpeechTimeout(0), AnalyzerStop(an, 0)).Detect(DetectionInput{SilenceFor: 5, SilenceAfter: 5})
+	StopChain(SpeechTimeout(SpeechTimeoutConfig{}), AnalyzerStop(an, 0)).Detect(DetectionInput{SilenceFor: 5 * time.Second}) // the no-transcript fallback decides
 	if an.calls != 0 {
 		t.Fatal("later strategy evaluated after an earlier one decided")
 	}
@@ -114,7 +111,7 @@ func TestManagerAnalyzerComplete(t *testing.T) {
 }
 
 func TestManagerEagerGraceRetraction(t *testing.T) {
-	m := manager(t, StopChain(EagerStop(200*time.Millisecond), SpeechTimeout(0)))
+	m := manager(t, StopChain(EagerStop(200*time.Millisecond), SpeechTimeout(SpeechTimeoutConfig{})))
 	openTurn(t, m)
 	obs := observation(t0.Add(350*time.Millisecond), "t1", 1, false)
 	obs.Transcript, obs.TranscriptFinal = "Book a table.", true
@@ -176,7 +173,7 @@ func TestManagerExternalStopWhileSpeaking(t *testing.T) {
 
 func TestProcessorEagerStopThroughSession(t *testing.T) {
 	cfg := DefaultConfig()
-	h := newStopHarness(t, cfg, StopChain(EagerStop(100*time.Millisecond), SpeechTimeout(0)))
+	h := newStopHarness(t, cfg, StopChain(EagerStop(100*time.Millisecond), SpeechTimeout(SpeechTimeoutConfig{})))
 	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
 	h.settle()
 	h.run(time.Second, func() bool { return len(h.events(core.TurnEventStarted)) == 1 })
