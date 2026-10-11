@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func writeFiles(t *testing.T, files map[string]string) string {
@@ -116,5 +118,28 @@ func TestOverlayDirHandling(t *testing.T) {
 	}
 	if _, ok := c.Provider("xai"); !ok {
 		t.Fatal("xai missing")
+	}
+}
+
+func TestOverlayFIFOIsSkippedNotBlocking(t *testing.T) {
+	dir := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe.yaml"), 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	var logs []string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := LoadWithOverlay(dir, func(f string, a ...any) { logs = append(logs, f) }); err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a FIFO in the overlay dir blocked start-up")
+	}
+	if len(logs) != 1 {
+		t.Fatalf("logs = %v", logs)
 	}
 }

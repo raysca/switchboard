@@ -25,7 +25,6 @@ type Status struct {
 	Declared   bool
 	Detected   bool
 	MissingEnv []string
-	Detail     string
 }
 
 // Resolver reads credentials from the environment on every call; it caches nothing.
@@ -43,19 +42,19 @@ func NewResolverWithFS(c *Catalog, getenv func(string) string, read func(string,
 	return &Resolver{cat: c, getenv: getenv, readFile: read}
 }
 
+// readLimited reads a regular file of at most max bytes. The type is checked
+// before opening: opening a FIFO for reading blocks until a writer appears.
 func readLimited(path string, max int64) ([]byte, error) {
+	if st, err := os.Stat(path); err != nil {
+		return nil, err
+	} else if !st.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if st.IsDir() {
-		return nil, errors.New("is a directory")
-	}
 	b, err := io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, err
@@ -67,8 +66,10 @@ func readLimited(path string, max int64) ([]byte, error) {
 }
 
 // values reads a kind's fields from the environment now. missing lists the
-// variables that are required but unusable; detail says why for file fields.
-func (r *Resolver) values(k *Kind) (vals map[string]string, missing []string, detail string) {
+// variables that are required but unset, plus every set variable whose value is
+// unusable: an optional field that is set but bad (OPENAI_BASE_URL=$GROQ_URL)
+// must not be dropped, or the key would go to the default endpoint.
+func (r *Resolver) values(k *Kind) (vals map[string]string, missing []string) {
 	vals = map[string]string{}
 	ids := make([]string, 0, len(k.Fields))
 	for id := range k.Fields {
@@ -85,42 +86,42 @@ func (r *Resolver) values(k *Kind) (vals map[string]string, missing []string, de
 			continue
 		}
 		if k.Assemble == "file_json" {
+			// file_json is a service-account key: a user ADC file or any other JSON
+			// would be handed to the adapter only to fail at call time.
 			b, err := r.readFile(v, MaxFileBytes)
-			var raw json.RawMessage
-			if err != nil || json.Unmarshal(b, &raw) != nil {
+			var sa struct {
+				Type string `json:"type"`
+			}
+			if err != nil || json.Unmarshal(b, &sa) != nil || sa.Type != "service_account" {
 				missing = append(missing, f.Env)
-				detail = f.Env + " does not name a readable JSON file"
 				continue
 			}
-			compact, _ := json.Marshal(raw)
+			compact, _ := json.Marshal(json.RawMessage(b))
 			vals[id] = string(compact)
 			continue
 		}
 		if strings.HasPrefix(v, "$") || strings.IndexFunc(v, func(c rune) bool { return c <= ' ' || c == 0x7f }) >= 0 {
-			if !f.Optional {
-				missing = append(missing, f.Env)
-			}
-			detail = f.Env + " is not a single token"
+			missing = append(missing, f.Env)
 			continue
 		}
 		vals[id] = v
 	}
-	return vals, missing, detail
+	return vals, missing
 }
 
 // satisfies reports whether kind k can serve svc, and what is missing if not.
-func (r *Resolver) satisfies(k *Kind, svc *Service) (map[string]string, []string, string, bool) {
-	vals, missing, detail := r.values(k)
+func (r *Resolver) satisfies(k *Kind, svc *Service) (map[string]string, []string, bool) {
+	vals, missing := r.values(k)
 	for _, need := range svc.Needs {
 		f, has := k.Fields[need]
 		if !has {
-			return nil, nil, "", false
+			return nil, nil, false
 		}
 		if _, got := vals[need]; !got {
 			missing = append(missing, f.Env)
 		}
 	}
-	return vals, uniq(missing), detail, len(missing) == 0
+	return vals, uniq(missing), len(missing) == 0
 }
 
 func (r *Resolver) service(provider, service string) (*Provider, *Service, bool) {
@@ -138,18 +139,17 @@ func (r *Resolver) Status(provider, service string) Status {
 		return Status{}
 	}
 	var firstMissing []string
-	var firstDetail string
 	for i, kid := range svc.Credential {
 		k, _ := p.Kind(kid)
-		_, missing, detail, ok := r.satisfies(k, svc)
+		_, missing, ok := r.satisfies(k, svc)
 		if ok {
 			return Status{Declared: true, Detected: true}
 		}
 		if i == 0 {
-			firstMissing, firstDetail = missing, detail
+			firstMissing = missing
 		}
 	}
-	return Status{Declared: true, MissingEnv: firstMissing, Detail: firstDetail}
+	return Status{Declared: true, MissingEnv: firstMissing}
 }
 
 // Secret assembles a fresh buffer; the caller wipes it.
@@ -161,7 +161,7 @@ func (r *Resolver) Secret(provider, service string) ([]byte, error) {
 	var firstMissing []string
 	for i, kid := range svc.Credential {
 		k, _ := p.Kind(kid)
-		vals, missing, _, ok := r.satisfies(k, svc)
+		vals, missing, ok := r.satisfies(k, svc)
 		if !ok {
 			if i == 0 {
 				firstMissing = missing

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -113,21 +114,22 @@ func TestGoogleKinds(t *testing.T) {
 
 func TestFileJSONProblems(t *testing.T) {
 	big := `{"x":"` + strings.Repeat("a", MaxFileBytes) + `"}`
-	files := map[string]string{"/text": "not json", "/dir": "", "/big": big}
-	for _, tc := range []struct{ name, path, class string }{
-		{"unreadable", "/missing", "readable JSON file"},
-		{"not json", "/text", "readable JSON file"},
-		{"directory", "/dir", "readable JSON file"},
-		{"too large", "/big", "readable JSON file"},
+	files := map[string]string{"/text": "not json", "/dir": "", "/big": big,
+		"/adc.json": `{"type":"authorized_user","refresh_token":"r"}`, "/array.json": `[1]`, "/untyped.json": `{"private_key":"pk"}`}
+	for _, tc := range []struct{ name, path string }{
+		{"unreadable", "/missing"},
+		{"not json", "/text"},
+		{"directory", "/dir"},
+		{"too large", "/big"},
+		{"user ADC file", "/adc.json"},
+		{"json array", "/array.json"},
+		{"no type", "/untyped.json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newTestResolver(t, map[string]string{gcreds: tc.path}, files)
 			st := r.Status("google", "stt")
 			if st.Detected || !reflect.DeepEqual(st.MissingEnv, []string{gcreds}) {
 				t.Fatalf("status = %+v", st)
-			}
-			if want := gcreds + " does not name a " + tc.class; st.Detail != want {
-				t.Fatalf("detail = %q", st.Detail)
 			}
 			if _, err := r.Secret("google", "stt"); err == nil {
 				t.Fatal("want error")
@@ -145,13 +147,20 @@ func TestOpenAIJSON(t *testing.T) {
 		{"key only", map[string]string{"OPENAI_API_KEY": "k"}, `{"api_key":"k"}`},
 		{"key and base", map[string]string{"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://h/v1"}, `{"api_key":"k","base_url":"http://h/v1"}`},
 		{"base only", map[string]string{"OPENAI_BASE_URL": "http://h/v1"}, ""},
+		// A set but unusable optional field must not be dropped: the key would go to api.openai.com.
+		{"unexpanded base", map[string]string{"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "$GROQ_URL"}, ""},
+		{"base with space", map[string]string{"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://h /v1"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newTestResolver(t, tc.env, nil)
 			b, err := r.Secret("openai", "llm")
 			if tc.want == "" {
-				if err == nil || r.Status("openai", "llm").Detected {
+				st := r.Status("openai", "llm")
+				if err == nil || st.Detected {
 					t.Fatalf("want not detected, got %q", b)
+				}
+				if v := tc.env["OPENAI_BASE_URL"]; v != "" && tc.env["OPENAI_API_KEY"] != "" && !reflect.DeepEqual(st.MissingEnv, []string{"OPENAI_BASE_URL"}) {
+					t.Fatalf("missing = %v", st.MissingEnv)
 				}
 				return
 			}
@@ -241,6 +250,7 @@ func TestReadLimited(t *testing.T) {
 		{"over limit", write("over", MaxFileBytes+1), true, 0},
 		{"exactly limit", write("exact", MaxFileBytes), false, MaxFileBytes},
 		{"small", write("small", 2), false, 2},
+		{"fifo", fifo(t, dir), true, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, err := readLimited(tc.path, MaxFileBytes)
@@ -249,4 +259,15 @@ func TestReadLimited(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fifo makes a named pipe: opening it for reading blocks until a writer appears,
+// so a reader that opens before checking the file type hangs.
+func fifo(t *testing.T, dir string) string {
+	t.Helper()
+	p := filepath.Join(dir, "pipe")
+	if err := syscall.Mkfifo(p, 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	return p
 }

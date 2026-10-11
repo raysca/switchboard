@@ -6,8 +6,9 @@ Provider secrets exist only in the server's process environment. There is no cre
 
 - The packaged provider catalog (`server/catalog`) maps each provider to the variable names it reads. The server reads only those names, plus `MCP_TOKEN_*` for MCP servers.
 - Variables are read on demand and never cached: when agent readiness is computed, when `GET /api/v1/providers` is served, and when a call starts. A call assembles the secrets for its own stages (and failover candidates) only, hands them to the provider clients, and zeroes the buffers once the clients are built or the build fails.
-- `GOOGLE_APPLICATION_CREDENTIALS` is a path. The server reads only the path an operator put in that variable, at most 64 KiB, and accepts it only if it is valid JSON.
-- A value with whitespace or control characters inside it, or one starting with `$`, is treated as missing rather than used.
+- `GOOGLE_APPLICATION_CREDENTIALS` is a path. The server reads only the path an operator put in that variable, only if it is a regular file (a FIFO or device is refused before opening), at most 64 KiB, and accepts it only if it is a JSON object with `"type": "service_account"`.
+- A value with whitespace or control characters inside it, or one starting with `$`, is treated as missing rather than used, for optional variables too (a bad `OPENAI_BASE_URL` makes OpenAI undetected instead of sending the key to the default endpoint).
+- Overlay catalog files are opened only if they are regular files.
 
 ## Who can see it
 

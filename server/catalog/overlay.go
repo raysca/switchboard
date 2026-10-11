@@ -33,6 +33,12 @@ func LoadWithOverlay(dir string, logf func(format string, args ...any)) (*Catalo
 }
 
 func (c *Catalog) mergeFile(path string) error {
+	// Checked before opening: opening a FIFO for reading blocks start-up.
+	if st, err := os.Stat(path); err != nil {
+		return err
+	} else if !st.Mode().IsRegular() {
+		return fmt.Errorf("%s: not a regular file", path)
+	}
 	fh, err := os.Open(path)
 	if err != nil {
 		return err
