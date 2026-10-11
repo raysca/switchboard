@@ -114,7 +114,8 @@
    "File": "",
    "GainDB": null,
    "Loop": null
-  }
+  },
+  "Cues": null
  },
  "Idle": {
   "UserTimeout": 30000000000,
