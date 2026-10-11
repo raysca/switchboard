@@ -34,7 +34,7 @@ The user decided on 2026-10-11: server side only (no RTVI message); the first ve
 ### 2. Notes in history
 
 - A note is stored as a **user-role** message `[note from the operator] <content>`, the same shape handoff's Greet uses. Rationale: providers differ on system messages in mid-history, and a user-attributed message without the marker would let the operator impersonate the caller. The agent's real system prompt is untouched.
-- Injection goes through the shared history's `AddMessage` under the tool loop's round lock (`injectAsync`'s rule: never while a tool round is in flight, never after close), so it respects the context budget and eviction.
+- Injection calls the shared history's `AddMessage`. While a tool round is open the context already queues plain messages (bounded, flushed when the last round ends), so a note never lands between a tool call and its result, and it respects the context budget and eviction.
 
 ### 3. Server: always-on trigger and a live-call registry
 
@@ -46,7 +46,7 @@ The user decided on 2026-10-11: server side only (no RTVI message); the first ve
 
 - `POST /api/v1/sessions/{id}/context` with `{"messages":[{"content":"..."}], "run": false}`
 - `POST /api/v1/sessions/{id}/run` (no body)
-- Responses: `202 {"data":{"accepted":N}}`; `400 invalid_request` (empty list, more than 8 messages, a message outside 1–4096 bytes of valid UTF-8, unknown fields); `404 not_found` (id not a live call on this instance); `409 call_closing`; `429 rate_limited`.
+- Responses: `202 {"data":{"accepted":N}}`; `400 invalid_request` (empty list, more than 8 messages, a message outside 1–4096 bytes of valid UTF-8 without NUL, unknown fields); `404 not_found` (id not a live call on this instance, including a call that just ended); `409 call_not_ready` (the call exists but its pipeline has not started yet; retry); `429 rate_limited`.
 - Rate limit per session: a token bucket of 4 requests burst, 1 per second. History growth is also bounded by the existing queue cap and context budget.
 - A voice token cannot authenticate these routes (the existing `/api/v1` boundary). Calls are per-instance: a request to another instance gets 404, which matches the session-affinity guidance in the runbook.
 - Logging and traces record session id, message count and `run`, never the content.
@@ -60,7 +60,7 @@ The user decided on 2026-10-11: server side only (no RTVI message); the first ve
 - Notes while the caller is speaking or the bot is replying wait for idle; they never interleave with a tool round.
 - A note with `run` after a caller turn already started: one turn, not two.
 - The call ends while notes are queued: dropped, counted, no panic, no write after close.
-- Notes for a call that has just ended return 404 or 409, not 500.
+- Notes for a call that has just ended return 404, and for one still starting 409, never 500 and never a silent drop.
 - Maximum payloads, empty content, non-UTF-8, control characters in content (stored as given; the marker prefix cannot be forged away because it is added server-side).
 - A burst from a script (the 8-item queue cap, the 429 rate limit) leaves the call healthy.
 - Metrics: `OnTriggered` counts these turns; the async-turn counter's help text and runbook say so.
