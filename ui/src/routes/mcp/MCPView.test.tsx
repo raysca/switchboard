@@ -30,6 +30,8 @@ function createMockServer(overrides: Partial<MCPServerDTO> = {}): MCPServerDTO {
     transport: "streamable-http",
     validation_state: "valid",
     latest_discovery_id: "disc-hash-123456",
+    auth_env: "",
+    auth_env_set: false,
     enabled: true,
     ...overrides,
   };
@@ -76,9 +78,6 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
       duration_ms: 42,
       result: { name: "Alice", id: "cust-1" },
     }),
-    getCredentials: vi.fn().mockResolvedValue([
-      { id: "cred-1", provider: "mcp", masked_value: "••••1234" },
-    ]),
     getAgents: vi.fn().mockResolvedValue([]),
     ...overrides,
   } as ApiClient;
@@ -120,7 +119,7 @@ describe("MCPView", () => {
     expect(screen.getByText("disabled")).toBeVisible();
   });
 
-  it("supports creating a new MCP server with transport and credential", async () => {
+  it("supports creating a new MCP server with transport and a token variable", async () => {
     const user = userEvent.setup();
     const createMCPServer = vi.fn().mockResolvedValue(createMockServer({ id: "s-new", name: "New Server" }));
     const client = createMockClient({ createMCPServer });
@@ -132,6 +131,8 @@ describe("MCPView", () => {
     await user.type(screen.getByLabelText("Server Name"), "New Server");
     await user.type(screen.getByLabelText("Endpoint URL"), "https://mcp.example.com/new");
 
+    await user.type(screen.getByLabelText(/token variable/i), "MCP_TOKEN_CRM");
+
     await user.click(screen.getByRole("button", { name: "Create Server" }));
 
     expect(createMCPServer).toHaveBeenCalledWith(
@@ -139,8 +140,36 @@ describe("MCPView", () => {
         name: "New Server",
         endpoint: "https://mcp.example.com/new",
         transport: "streamable-http",
+        auth_env: "MCP_TOKEN_CRM",
       }),
     );
+  });
+
+  it("blocks a token variable without the MCP_TOKEN_ prefix", async () => {
+    const user = userEvent.setup();
+    const createMCPServer = vi.fn();
+    renderWithProviders(<MCPView client={createMockClient({ createMCPServer })} keyValue="test-key" />);
+
+    await user.click(await screen.findByRole("button", { name: "Add MCP Server" }));
+    await user.type(screen.getByLabelText("Server Name"), "Bad");
+    await user.type(screen.getByLabelText("Endpoint URL"), "https://mcp.example.com/bad");
+    await user.type(screen.getByLabelText(/token variable/i), "TOKEN_SECRET");
+    await user.click(screen.getByRole("button", { name: "Create Server" }));
+
+    expect(screen.getByText(/must start with MCP_TOKEN_/)).toBeVisible();
+    expect(createMCPServer).not.toHaveBeenCalled();
+  });
+
+  it("shows whether the server's token variable is set", async () => {
+    const server = createMockServer({ auth_env: "MCP_TOKEN_CRM", auth_env_set: true });
+    const client = createMockClient({
+      getMCPServers: vi.fn().mockResolvedValue([server]),
+      getMCPServer: vi.fn().mockResolvedValue(createMockServerDetail({ ...server })),
+    });
+    renderWithProviders(<MCPView client={client} keyValue="test-key" />, "/mcp-servers/mcp-server-1");
+
+    expect(await screen.findByText("MCP_TOKEN_CRM")).toBeVisible();
+    expect(screen.getByText("variable is set")).toBeVisible();
   });
 
   it("displays server detail view, discovered tools, and JSON schema viewer", async () => {

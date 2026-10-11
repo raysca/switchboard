@@ -25,6 +25,11 @@ export type MCPViewProps = {
 
 type ViewMode = "list" | "create" | "detail";
 
+// Mirrors the server: only MCP_TOKEN_* variables can be named, so a management key
+// cannot point a server at an unrelated secret.
+const AUTH_ENV_PREFIX = "MCP_TOKEN_";
+const AUTH_ENV_PATTERN = /^MCP_TOKEN_[A-Z0-9_]{1,48}$/;
+
 export function getMCPStatusTone(server: MCPServerDTO): "good" | "bad" | "neutral" {
   if (!server.enabled || server.validation_state === "disabled") {
     return "neutral";
@@ -89,7 +94,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   const [descriptionDraft, setDescriptionDraft] = useState("");
   const [endpointDraft, setEndpointDraft] = useState("");
   const [transportDraft, setTransportDraft] = useState("streamable-http");
-  const [credentialDraft, setCredentialDraft] = useState("");
+  const [authEnvDraft, setAuthEnvDraft] = useState("");
   const [enabledDraft, setEnabledDraft] = useState(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -120,13 +125,6 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   const serversQuery = useQuery({
     queryKey: ["mcp-servers"],
     queryFn: () => client.getMCPServers(),
-    enabled: !!keyValue,
-    retry: false,
-  });
-
-  const credentialsQuery = useQuery({
-    queryKey: ["credentials"],
-    queryFn: () => client.getCredentials(),
     enabled: !!keyValue,
     retry: false,
   });
@@ -271,13 +269,17 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
       setFormError("Endpoint URL is required");
       return;
     }
+    if (authEnvDraft.trim() && !AUTH_ENV_PATTERN.test(authEnvDraft.trim())) {
+      setFormError(`Token variable must start with ${AUTH_ENV_PREFIX} (for example ${AUTH_ENV_PREFIX}CRM).`);
+      return;
+    }
     // onError reports failures.
     createMutation.mutate({
       name: nameDraft.trim(),
       description: descriptionDraft.trim() || undefined,
       endpoint: endpointDraft.trim(),
       transport: transportDraft,
-      credential_id: credentialDraft || undefined,
+      auth_env: authEnvDraft.trim() || undefined,
       enabled: enabledDraft,
     });
   }
@@ -365,7 +367,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
                 setDescriptionDraft("");
                 setEndpointDraft("");
                 setTransportDraft("streamable-http");
-                setCredentialDraft("");
+                setAuthEnvDraft("");
                 setEnabledDraft(true);
                 setFormError(null);
                 setActionError(null);
@@ -477,20 +479,19 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
                 <option value="streamable-http">Streamable HTTP (recommended)</option>
               </select>
             </label>
-            <label className="form-field" htmlFor="mcp-credential">
-              <span>Authentication Credential (optional)</span>
-              <select
-                id="mcp-credential"
-                value={credentialDraft}
-                onChange={(e) => setCredentialDraft(e.target.value)}
-              >
-                <option value="">(None / No credential)</option>
-                {(credentialsQuery.data ?? []).map((cred) => (
-                  <option key={cred.id} value={cred.id}>
-                    {cred.provider} ({cred.masked_value})
-                  </option>
-                ))}
-              </select>
+            <label className="form-field" htmlFor="mcp-auth-env">
+              <span>Token variable (optional)</span>
+              <input
+                id="mcp-auth-env"
+                type="text"
+                value={authEnvDraft}
+                onChange={(e) => setAuthEnvDraft(e.target.value)}
+                placeholder={`${AUTH_ENV_PREFIX}CRM`}
+              />
+              <small>
+                Name of a server environment variable starting with <code>{AUTH_ENV_PREFIX}</code>. Its value is sent
+                as the bearer token to this server only.
+              </small>
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.9rem" }}>
               <input
@@ -611,9 +612,18 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
                       <div className="value">{server.transport}</div>
                     </div>
                     <div className="meta-card">
-                      <div className="label">Credential</div>
+                      <div className="label">Token variable</div>
                       <div className="value" style={{ fontSize: "0.85rem" }}>
-                        {server.credential_id ? <code>{server.credential_id}</code> : "None"}
+                        {server.auth_env ? (
+                          <>
+                            <code>{server.auth_env}</code>{" "}
+                            <Status tone={server.auth_env_set ? "good" : "bad"}>
+                              {server.auth_env_set ? "variable is set" : "variable is not set"}
+                            </Status>
+                          </>
+                        ) : (
+                          "None"
+                        )}
                       </div>
                     </div>
                     <div className="meta-card">

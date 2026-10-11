@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react";
-import type { AgentDTO, CreateAgentInput, CredentialDTO, ProviderDefinition } from "../../../api/client";
+import type { AgentDTO, CreateAgentInput, ProviderStatus } from "../../../api/client";
 import { Canvas, type Selection } from "./Canvas";
 import { EdgeInspector, NodeInspector } from "./Inspector";
 import {
@@ -20,8 +20,7 @@ import {
 
 type GraphDesignerProps = {
   agent: AgentDTO | null;
-  providers: ProviderDefinition[];
-  credentials: CredentialDTO[];
+  providers: ProviderStatus[];
   pending: boolean;
   submitLabel: string;
   onSubmit: (input: CreateAgentInput) => void;
@@ -31,7 +30,7 @@ type GraphDesignerProps = {
 };
 
 /** Draws an agent as a graph: nodes are agents, edges are handoffs. */
-export function GraphDesigner({ agent, providers, credentials, pending, submitLabel, onSubmit, onCancel, testPanel }: GraphDesignerProps) {
+export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit, onCancel, testPanel }: GraphDesignerProps) {
   const [name, setName] = useState(agent?.name ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
   const [graph, setGraph] = useState<GraphDraft>(() => {
@@ -141,7 +140,6 @@ export function GraphDesigner({ agent, providers, credentials, pending, submitLa
               node={node}
               isEntry={node.id === graph.entry}
               providers={providers}
-              credentials={credentials}
               onChange={(patch) => setGraph((g) => updateNode(g, node.id, patch))}
               onMakeEntry={() => setGraph((g) => setEntry(g, node.id))}
               onRemove={() => {

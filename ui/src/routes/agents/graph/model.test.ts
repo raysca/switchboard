@@ -12,7 +12,7 @@ import {
   validate,
 } from "./model";
 
-const stage = { provider: "google", credential_id: "c1" };
+const stage = { provider: "google" };
 const flat = {
   stt: { ...stage, model: "chirp" },
   llm: { ...stage, model: "gemini", system_prompt: "You are the front desk." },
@@ -86,7 +86,7 @@ describe("graph model", () => {
   it("validate reports duplicate slugs and missing stage fields", () => {
     let g = addNode(addNode(fromAgentConfig(flat), "Sales Team"), "sales team");
     expect(validate(g).join(" ")).toMatch(/unique/);
-    g = fromAgentConfig({ ...flat, llm: { provider: "google", credential_id: "c1", model: "" } });
+    g = fromAgentConfig({ ...flat, llm: { provider: "google", model: "" } });
     expect(validate(g).join(" ")).toMatch(/LLM model/);
   });
 
@@ -108,6 +108,13 @@ describe("graph model", () => {
     const payload = toPayload(g) as { nodes: { config: Record<string, unknown> }[] };
     expect(payload.nodes[1].config.stt).toBeUndefined();
     expect(payload.nodes[1].config.vad_stop_ms).toBeUndefined();
+  });
+
+  it("needs only providers and a model, and never emits credential_id", () => {
+    const g = addNode(fromAgentConfig(flat), "Sales");
+    expect(validate(g)).toEqual([]);
+    expect(JSON.stringify(toPayload(g))).not.toContain("credential");
+    expect(validate(fromAgentConfig({ ...flat, stt: {} })).join(" ")).toMatch(/STT provider/);
   });
 
   it("slug matches the server's tool-name rule", () => {

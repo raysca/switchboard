@@ -18,9 +18,9 @@ function renderWithProviders(ui: React.ReactElement) {
 }
 
 const v2Config = {
-  stt: { provider: "google", model: "chirp_2", language: "en-US", credential_id: "cred-g1" },
-  llm: { provider: "google", model: "gemini-2.0-flash", system_prompt: "Be brief.", credential_id: "cred-g1" },
-  tts: { provider: "google", voice: "en-US-Journey-F", credential_id: "cred-g1" },
+  stt: { provider: "google", model: "chirp_2", language: "en-US" },
+  llm: { provider: "google", model: "gemini-2.0-flash", system_prompt: "Be brief." },
+  tts: { provider: "google", voice: "en-US-Journey-F" },
 };
 
 function createMockAgent(overrides: Partial<AgentDTO> = {}): AgentDTO {
@@ -49,39 +49,30 @@ function createMockAgent(overrides: Partial<AgentDTO> = {}): AgentDTO {
   };
 }
 
+const svc = (extra: object) => ({ available: true, custom: true, ...extra });
+const providers = [
+  {
+    id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], detected: true, env: ["GOOGLE_API_KEY"],
+    services: {
+      stt: svc({ models: [{ id: "chirp_2", label: "Chirp 2", default: true }], languages: [{ id: "en-US", label: "English (US)", default: true }] }),
+      llm: svc({ models: [{ id: "gemini-2.0-flash", label: "Gemini 2.0 Flash", default: true }] }),
+      tts: svc({ voices: [{ id: "en-US-Journey-F", label: "Journey F", default: true }] }),
+    },
+  },
+  {
+    id: "deepgram", display_name: "Deepgram", capabilities: ["stt"], detected: true, env: ["DEEPGRAM_API_KEY"],
+    services: { stt: svc({ models: [{ id: "nova-3", label: "Nova 3", default: true }], languages: [{ id: "en-US", label: "English (US)", default: true }] }) },
+  },
+  {
+    id: "xai", display_name: "xAI", capabilities: ["llm"], detected: false, env: ["XAI_API_KEY"],
+    services: { llm: { available: false, reason: "missing_env", missing_env: ["XAI_API_KEY"], custom: true } },
+  },
+];
+
 function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     issueVoiceToken: vi.fn(),
-    getProviders: vi.fn().mockResolvedValue([
-      { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
-      { id: "deepgram", display_name: "Deepgram", capabilities: ["stt"], auth_required: true },
-      { id: "mcp", display_name: "MCP", capabilities: ["mcp", "stt", "llm", "tts"], auth_required: true },
-    ]),
-    getCredentials: vi.fn().mockResolvedValue([
-      {
-        id: "cred-g1",
-        provider: "google",
-        masked_value: "••••1111",
-        validation_state: "valid",
-        capabilities: ["llm", "stt", "tts"],
-        created_at: "2026-10-05T12:00:00Z",
-        updated_at: "2026-10-05T12:00:00Z",
-      },
-      {
-        id: "cred-dg",
-        provider: "deepgram",
-        masked_value: "••••2222",
-        validation_state: "valid",
-        capabilities: ["stt"],
-        created_at: "2026-10-05T12:00:00Z",
-        updated_at: "2026-10-05T12:00:00Z",
-      },
-    ]),
-    createCredential: vi.fn(),
-    updateCredential: vi.fn(),
-    deleteCredential: vi.fn(),
-    validateCredential: vi.fn(),
-    rotateCredential: vi.fn(),
+    getProviders: vi.fn().mockResolvedValue(providers),
     getProviderDiscovery: vi.fn(),
     getAgents: vi.fn().mockResolvedValue([createMockAgent()]),
     createAgent: vi.fn(),
@@ -158,28 +149,21 @@ describe("AgentsView", () => {
 
     await user.type(screen.getByLabelText(/agent name/i), "Billing Bot");
     await user.type(screen.getByLabelText(/description/i), "Handles invoice questions");
-    // Providers load asynchronously; MCP is never offered for a voice stage.
+    // Providers load asynchronously; only providers that are available are offered.
     const sttProvider = await screen.findByLabelText("STT provider");
     await screen.findByRole("option", { name: "Deepgram" });
-    expect(screen.queryByRole("option", { name: "MCP" })).toBeNull();
+    expect(screen.queryByRole("option", { name: "xAI" })).toBeNull();
     expect(
       Array.from((screen.getByLabelText("LLM provider") as HTMLSelectElement).options).map((o) => o.value),
     ).toEqual(["", "google"]);
 
+    // Choosing a provider fills the catalog defaults.
     await user.selectOptions(sttProvider, "deepgram");
-    await user.type(screen.getByLabelText("STT model"), "nova-3");
-    // Credential choices are filtered to the stage's provider.
-    const sttCred = screen.getByLabelText("STT credential") as HTMLSelectElement;
-    expect(Array.from(sttCred.options).map((o) => o.value)).toEqual(["", "cred-dg"]);
-    await user.selectOptions(sttCred, "cred-dg");
-
+    expect(screen.getByLabelText("STT model")).toHaveValue("nova-3");
     await user.selectOptions(screen.getByLabelText("LLM provider"), "google");
-    await user.type(screen.getByLabelText("LLM model"), "gemini-2.0-flash");
     await user.type(screen.getByLabelText("System prompt"), "Be helpful.");
-    await user.selectOptions(screen.getByLabelText("LLM credential"), "cred-g1");
     await user.selectOptions(screen.getByLabelText("TTS provider"), "google");
-    await user.type(screen.getByLabelText("TTS voice"), "en-US-Journey-F");
-    await user.selectOptions(screen.getByLabelText("TTS credential"), "cred-g1");
+    expect(screen.queryByLabelText(/credential/i)).toBeNull();
     await user.type(screen.getByLabelText("Max messages"), "64");
 
     await user.click(screen.getByRole("button", { name: /save agent/i }));
@@ -189,9 +173,9 @@ describe("AgentsView", () => {
       description: "Handles invoice questions",
       enabled: true,
       config: {
-        stt: { provider: "deepgram", model: "nova-3", language: "en-US", credential_id: "cred-dg" },
-        llm: { provider: "google", model: "gemini-2.0-flash", system_prompt: "Be helpful.", credential_id: "cred-g1" },
-        tts: { provider: "google", voice: "en-US-Journey-F", credential_id: "cred-g1" },
+        stt: { provider: "deepgram", model: "nova-3", language: "en-US" },
+        llm: { provider: "google", model: "gemini-2.0-flash", system_prompt: "Be helpful." },
+        tts: { provider: "google", voice: "en-US-Journey-F" },
         context: { max_messages: 64 },
       },
     });
@@ -436,12 +420,10 @@ describe("AgentsView", () => {
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("STT provider is required.");
     expect(alert).toHaveTextContent("LLM model is required.");
-    expect(alert).toHaveTextContent("STT credential is required.");
-    expect(alert).toHaveTextContent("LLM credential is required.");
-    expect(alert).toHaveTextContent("TTS credential is required.");
     // Matches the server: STT model and TTS voice fall back to provider defaults.
     expect(alert).not.toHaveTextContent("STT model is required.");
     expect(alert).not.toHaveTextContent("TTS voice is required.");
+    expect(alert).not.toHaveTextContent("credential");
     expect(alert).toHaveTextContent("Max tokens must be a positive whole number.");
     expect(client.createAgent).not.toHaveBeenCalled();
   });
@@ -473,95 +455,27 @@ describe("AgentsView", () => {
     expect(screen.getByText(/uses an old format/i)).toBeVisible();
     // Stage fields start empty rather than carrying the old flat strings.
     expect(screen.getByLabelText("STT provider")).toHaveValue("");
-    expect(screen.getByLabelText("LLM model")).toHaveValue("");
+    expect(screen.getByLabelText("LLM provider")).toHaveValue("");
   });
 
-  it("requires a credential even when the provider has exactly one", async () => {
-    const client = createMockClient();
-    const user = userEvent.setup();
-    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
-
-    expect(await screen.findByText("Customer Support")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /create agent/i }));
-    await user.type(screen.getByLabelText(/agent name/i), "No Creds");
-    await screen.findByRole("option", { name: "Deepgram" });
-    for (const cap of ["STT", "LLM", "TTS"]) {
-      await user.selectOptions(screen.getByLabelText(`${cap} provider`), "google");
-    }
-    await user.type(screen.getByLabelText("LLM model"), "gemini-2.0-flash");
-    expect(screen.queryByRole("option", { name: /automatic/i })).toBeNull();
-    await user.click(screen.getByRole("button", { name: /save agent/i }));
-
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("STT credential is required.");
-    expect(alert).toHaveTextContent("TTS credential is required.");
-    expect(alert).not.toHaveTextContent("provider is required");
-    expect(client.createAgent).not.toHaveBeenCalled();
-  });
-
-  it("clears the stage credential when its provider changes", async () => {
-    const client = createMockClient();
-    const user = userEvent.setup();
-    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
-
-    expect(await screen.findByText("Customer Support")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /create agent/i }));
-    await screen.findByRole("option", { name: "Deepgram" });
-    await user.selectOptions(screen.getByLabelText("STT provider"), "google");
-    await user.selectOptions(screen.getByLabelText("STT credential"), "cred-g1");
-    expect(screen.getByLabelText("STT credential")).toHaveValue("cred-g1");
-
-    await user.selectOptions(screen.getByLabelText("STT provider"), "deepgram");
-    const sttCred = screen.getByLabelText("STT credential") as HTMLSelectElement;
-    expect(sttCred).toHaveValue("");
-    expect(Array.from(sttCred.options).map((o) => o.value)).toEqual(["", "cred-dg"]);
-  });
-
-  it("links to Providers when the selected provider has no credentials", async () => {
-    const client = createMockClient({
-      getCredentials: vi.fn().mockResolvedValue([
-        {
-          id: "cred-g1",
-          provider: "google",
-          masked_value: "••••1111",
-          validation_state: "valid",
-          capabilities: ["llm", "stt", "tts"],
-          created_at: "2026-10-05T12:00:00Z",
-          updated_at: "2026-10-05T12:00:00Z",
-        },
-      ]),
-    });
-    const user = userEvent.setup();
-    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
-
-    expect(await screen.findByText("Customer Support")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /create agent/i }));
-    await screen.findByRole("option", { name: "Deepgram" });
-    expect(screen.queryByText(/no stt credentials/i)).toBeNull();
-
-    await user.selectOptions(screen.getByLabelText("STT provider"), "deepgram");
-    expect(screen.getByText(/no stt credentials for this provider/i)).toBeVisible();
-    expect(screen.getByRole("link", { name: /providers page/i })).toHaveAttribute("href", "/providers");
-  });
-
-  it("flags agents whose stored config lacks a stage credential as needing reconfiguration", async () => {
-    const noCred = createMockAgent({
-      id: "agent-nocred",
-      name: "Implicit Cred Bot",
+  it("flags agents whose stored config lacks a stage provider as needing reconfiguration", async () => {
+    const noTts = createMockAgent({
+      id: "agent-notts",
+      name: "No TTS Bot",
       current_version: {
         id: "ver-nc",
         number: 2,
         schema_version: 2,
-        config: { ...v2Config, tts: { provider: "google", voice: "en-US-Journey-F" } },
+        config: { ...v2Config, tts: { voice: "en-US-Journey-F" } },
         config_hash: "hash-nc",
         created_at: "2026-10-05T12:00:00Z",
         mcp_tools: [],
       },
     });
-    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([noCred]) });
+    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([noTts]) });
     renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
 
-    expect(await screen.findByText("Implicit Cred Bot")).toBeVisible();
+    expect(await screen.findByText("No TTS Bot")).toBeVisible();
     expect(screen.getByText("Needs reconfiguration")).toBeVisible();
   });
 

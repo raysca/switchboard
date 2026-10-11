@@ -1,5 +1,5 @@
-import { Link } from "react-router";
-import type { CredentialDTO, ProviderDefinition } from "../../../api/client";
+import type { ProviderStatus } from "../../../api/client";
+import { StageFields, type StageValue } from "../StageFields";
 import type { GraphEdge, GraphNode, NodeConfig } from "./model";
 
 type Capability = "stt" | "llm" | "tts";
@@ -7,8 +7,7 @@ type Capability = "stt" | "llm" | "tts";
 type NodeInspectorProps = {
   node: GraphNode;
   isEntry: boolean;
-  providers: ProviderDefinition[];
-  credentials: CredentialDTO[];
+  providers: ProviderStatus[];
   onChange: (patch: Partial<Omit<GraphNode, "id">>) => void;
   onMakeEntry: () => void;
   onRemove: () => void;
@@ -19,81 +18,35 @@ const rec = (v: unknown): Record<string, unknown> =>
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** Edits one node: its name and its own LLM and voice (STT only on the entry node). */
-export function NodeInspector({ node, isEntry, providers, credentials, onChange, onMakeEntry, onRemove }: NodeInspectorProps) {
+export function NodeInspector({ node, isEntry, providers, onChange, onMakeEntry, onRemove }: NodeInspectorProps) {
   const setStage = (cap: Capability, patch: Record<string, unknown>) => {
     const config: NodeConfig = { ...node.config, [cap]: { ...rec(node.config[cap]), ...patch } };
     onChange({ config });
   };
   const id = (suffix: string) => `node-${node.id}-${suffix}`;
-  const providerOptions = (cap: Capability) =>
-    providers.filter((p) => p.id !== "mcp" && p.capabilities.includes(cap));
-
   const stageFields = (cap: Capability) => {
     const stage = rec(node.config[cap]);
-    const provider = str(stage.provider);
-    const options = credentials.filter((c) => c.provider === provider);
     return (
       <fieldset className="stage-box">
         <legend>{cap === "stt" ? "Speech-to-text" : cap === "llm" ? "Language model" : "Voice"}</legend>
-        <label className="form-field" htmlFor={id(`${cap}-provider`)}>
-          <span>{cap.toUpperCase()} provider</span>
-          <select
-            id={id(`${cap}-provider`)}
-            value={provider}
-            onChange={(e) => setStage(cap, { provider: e.target.value, credential_id: "" })}
-          >
-            <option value="">Select a provider</option>
-            {providerOptions(cap).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.display_name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {cap === "stt" && (
-          <label className="form-field" htmlFor={id("stt-model")}>
-            <span>STT model</span>
-            <input id={id("stt-model")} type="text" value={str(stage.model)} onChange={(e) => setStage("stt", { model: e.target.value })} />
-          </label>
-        )}
+        <StageFields
+          kind={cap}
+          providers={providers}
+          idPrefix={id(cap)}
+          value={{ provider: str(stage.provider), model: str(stage.model), voice: str(stage.voice), language: str(stage.language) }}
+          onChange={(v: StageValue) =>
+            setStage(cap, {
+              provider: v.provider,
+              ...(cap === "tts" ? { voice: v.voice } : { model: v.model }),
+              ...(cap === "stt" ? { language: v.language } : {}),
+            })
+          }
+        />
         {cap === "llm" && (
-          <>
-            <label className="form-field" htmlFor={id("llm-model")}>
-              <span>LLM model</span>
-              <input id={id("llm-model")} type="text" value={str(stage.model)} onChange={(e) => setStage("llm", { model: e.target.value })} />
-            </label>
-            <label className="form-field" htmlFor={id("llm-prompt")}>
-              <span>System prompt</span>
-              <textarea id={id("llm-prompt")} rows={6} value={str(stage.system_prompt)} onChange={(e) => setStage("llm", { system_prompt: e.target.value })} />
-            </label>
-          </>
-        )}
-        {cap === "tts" && (
-          <label className="form-field" htmlFor={id("tts-voice")}>
-            <span>Voice</span>
-            <input id={id("tts-voice")} type="text" value={str(stage.voice)} onChange={(e) => setStage("tts", { voice: e.target.value })} />
+          <label className="form-field" htmlFor={id("llm-prompt")}>
+            <span>System prompt</span>
+            <textarea id={id("llm-prompt")} rows={6} value={str(stage.system_prompt)} onChange={(e) => setStage("llm", { system_prompt: e.target.value })} />
           </label>
-        )}
-        <label className="form-field" htmlFor={id(`${cap}-credential`)}>
-          <span>{cap.toUpperCase()} credential</span>
-          <select
-            id={id(`${cap}-credential`)}
-            value={str(stage.credential_id)}
-            disabled={!provider}
-            onChange={(e) => setStage(cap, { credential_id: e.target.value })}
-          >
-            <option value="">Select a credential</option>
-            {options.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.masked_value} ({c.validation_state})
-              </option>
-            ))}
-          </select>
-        </label>
-        {provider && options.length === 0 && (
-          <p className="subtext" role="note">
-            No {cap.toUpperCase()} credentials for this provider. <Link to="/providers">Add one on the Providers page</Link>.
-          </p>
         )}
       </fieldset>
     );

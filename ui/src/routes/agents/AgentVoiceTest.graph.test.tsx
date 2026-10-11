@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router";
 import type { AgentDTO, ApiClient } from "../../api/client";
 import { AgentVoiceTest } from "./AgentVoiceTest";
 
-const stage = { provider: "google", credential_id: "c" };
+const stage = { provider: "google" };
 const node = (id: string, name: string, extra = {}) => ({
   id,
   name,

@@ -1,13 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, useLocation, useParams } from "react-router";
+import { useLocation, useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
   type AgentDTO,
   type AgentConfigV2,
   type CreateAgentInput,
-  type CredentialDTO,
-  type ProviderDefinition,
+  type ProviderStatus,
   type UpdateAgentInput,
   agentConfigV2Schema,
   ApiError,
@@ -22,6 +21,7 @@ import {
   Status,
 } from "../../components/primitives";
 import { AgentVoiceTest } from "./AgentVoiceTest";
+import { StageFields } from "./StageFields";
 import { GraphDesigner } from "./graph/GraphDesigner";
 
 export type AgentsViewProps = {
@@ -76,21 +76,18 @@ type AgentDraft = {
   sttProvider: string;
   sttModel: string;
   sttLanguage: string;
-  sttCredential: string;
   llmProvider: string;
   llmModel: string;
   llmPrompt: string;
-  llmCredential: string;
   ttsProvider: string;
   ttsVoice: string;
-  ttsCredential: string;
   maxMessages: string;
   maxTokens: string;
 };
 
 /**
  * Returns the typed v2 config, or null when the stored config predates schema v2
- * or lacks a stage credential; either way the agent needs reconfiguration.
+ * or lacks a stage provider; either way the agent needs reconfiguration.
  */
 function agentConfigV2(agent: AgentDTO): AgentConfigV2 | null {
   const parsed = agentConfigV2Schema.safeParse(agent.current_version?.config);
@@ -105,15 +102,12 @@ function draftFromAgent(agent: AgentDTO | null): AgentDraft {
     enabled: agent?.enabled ?? true,
     sttProvider: cfg?.stt.provider ?? "",
     sttModel: cfg?.stt.model ?? "",
-    sttLanguage: cfg?.stt.language ?? "en-US",
-    sttCredential: cfg?.stt.credential_id ?? "",
+    sttLanguage: cfg?.stt.language ?? "",
     llmProvider: cfg?.llm.provider ?? "",
     llmModel: cfg?.llm.model ?? "",
     llmPrompt: cfg?.llm.system_prompt ?? "",
-    llmCredential: cfg?.llm.credential_id ?? "",
     ttsProvider: cfg?.tts.provider ?? "",
     ttsVoice: cfg?.tts.voice ?? "",
-    ttsCredential: cfg?.tts.credential_id ?? "",
     maxMessages: cfg?.context?.max_messages?.toString() ?? "",
     maxTokens: cfg?.context?.max_tokens?.toString() ?? "",
   };
@@ -127,12 +121,9 @@ function buildAgentConfig(d: AgentDraft): { config: AgentConfigV2 } | { errors: 
   };
   need(d.name, "Agent name");
   need(d.sttProvider, "STT provider");
-  need(d.sttCredential, "STT credential");
   need(d.llmProvider, "LLM provider");
   need(d.llmModel, "LLM model");
-  need(d.llmCredential, "LLM credential");
   need(d.ttsProvider, "TTS provider");
-  need(d.ttsCredential, "TTS credential");
   const limit = (value: string, label: string) => {
     if (!value.trim()) return undefined;
     const n = Number(value);
@@ -152,18 +143,15 @@ function buildAgentConfig(d: AgentDraft): { config: AgentConfigV2 } | { errors: 
       provider: d.sttProvider,
       ...(d.sttModel.trim() ? { model: d.sttModel.trim() } : {}),
       ...(d.sttLanguage.trim() ? { language: d.sttLanguage.trim() } : {}),
-      credential_id: d.sttCredential,
     },
     llm: {
       provider: d.llmProvider,
       model: d.llmModel.trim(),
       ...(d.llmPrompt.trim() ? { system_prompt: d.llmPrompt.trim() } : {}),
-      credential_id: d.llmCredential,
     },
     tts: {
       provider: d.ttsProvider,
       ...(d.ttsVoice.trim() ? { voice: d.ttsVoice.trim() } : {}),
-      credential_id: d.ttsCredential,
     },
   };
   if (maxMessages !== undefined || maxTokens !== undefined) {
@@ -177,8 +165,7 @@ function buildAgentConfig(d: AgentDraft): { config: AgentConfigV2 } | { errors: 
 
 type AgentFormProps = {
   agent: AgentDTO | null;
-  providers: ProviderDefinition[];
-  credentials: CredentialDTO[];
+  providers: ProviderStatus[];
   pending: boolean;
   submitLabel: string;
   onSubmit: (input: CreateAgentInput) => void;
@@ -188,7 +175,6 @@ type AgentFormProps = {
 function AgentForm({
   agent,
   providers,
-  credentials,
   pending,
   submitLabel,
   onSubmit,
@@ -213,60 +199,6 @@ function AgentForm({
       config: result.config,
     });
   }
-
-  // "mcp" holds MCP tokens only; never a voice stage provider.
-  const providerOptions = (cap: Capability) =>
-    providers.filter((p) => p.id !== "mcp" && p.capabilities.includes(cap));
-
-  const providerSelect = (cap: Capability, value: string, onChange: (v: string) => void) => (
-    <label className="form-field" htmlFor={`agent-${cap}-provider`}>
-      <span>{cap.toUpperCase()} provider</span>
-      <select id={`agent-${cap}-provider`} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Select a provider</option>
-        {providerOptions(cap).map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.display_name}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-
-  const credentialSelect = (
-    cap: Capability,
-    provider: string,
-    value: string,
-    onChange: (v: string) => void,
-  ) => {
-    const options = credentials.filter((c) => c.provider === provider);
-    return (
-      <>
-        <label className="form-field" htmlFor={`agent-${cap}-credential`}>
-          <span>{cap.toUpperCase()} credential</span>
-          <select
-            id={`agent-${cap}-credential`}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            disabled={!provider}
-            required
-          >
-            <option value="">Select a credential</option>
-            {options.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.masked_value} ({c.validation_state})
-              </option>
-            ))}
-          </select>
-        </label>
-        {provider && options.length === 0 && (
-          <p className="subtext" role="note">
-            No {cap.toUpperCase()} credentials for this provider.{" "}
-            <Link to="/providers">Add one on the Providers page</Link>.
-          </p>
-        )}
-      </>
-    );
-  };
 
   const stageBox = {
     border: "1px solid #c9d3d2",
@@ -328,44 +260,24 @@ function AgentForm({
 
       <fieldset style={stageBox}>
         <legend>Speech-to-text</legend>
-        {providerSelect("stt", draft.sttProvider, (v) => set({ sttProvider: v, sttCredential: "" }))}
-        <label className="form-field" htmlFor="agent-stt-model">
-          <span>STT model</span>
-          <input
-            id="agent-stt-model"
-            type="text"
-            value={draft.sttModel}
-            onChange={(e) => set({ sttModel: e.target.value })}
-            placeholder="Provider default (e.g. chirp_2)"
-          />
-        </label>
-        <label className="form-field" htmlFor="agent-stt-language">
-          <span>STT language</span>
-          <input
-            id="agent-stt-language"
-            type="text"
-            value={draft.sttLanguage}
-            onChange={(e) => set({ sttLanguage: e.target.value })}
-            placeholder="e.g. en-US"
-          />
-        </label>
-        {credentialSelect("stt", draft.sttProvider, draft.sttCredential, (v) => set({ sttCredential: v }))}
+        <StageFields
+          kind="stt"
+          providers={providers}
+          idPrefix="agent-stt"
+          value={{ provider: draft.sttProvider, model: draft.sttModel, language: draft.sttLanguage }}
+          onChange={(v) => set({ sttProvider: v.provider, sttModel: v.model ?? "", sttLanguage: v.language ?? "" })}
+        />
       </fieldset>
 
       <fieldset style={stageBox}>
         <legend>Language model</legend>
-        {providerSelect("llm", draft.llmProvider, (v) => set({ llmProvider: v, llmCredential: "" }))}
-        <label className="form-field" htmlFor="agent-llm-model">
-          <span>LLM model</span>
-          <input
-            id="agent-llm-model"
-            type="text"
-            value={draft.llmModel}
-            onChange={(e) => set({ llmModel: e.target.value })}
-            placeholder="e.g. gemini-2.5-flash"
-            required
-          />
-        </label>
+        <StageFields
+          kind="llm"
+          providers={providers}
+          idPrefix="agent-llm"
+          value={{ provider: draft.llmProvider, model: draft.llmModel }}
+          onChange={(v) => set({ llmProvider: v.provider, llmModel: v.model ?? "" })}
+        />
         <label className="form-field" htmlFor="agent-llm-prompt">
           <span>System prompt</span>
           <textarea
@@ -376,23 +288,17 @@ function AgentForm({
             rows={4}
           />
         </label>
-        {credentialSelect("llm", draft.llmProvider, draft.llmCredential, (v) => set({ llmCredential: v }))}
       </fieldset>
 
       <fieldset style={stageBox}>
         <legend>Text-to-speech</legend>
-        {providerSelect("tts", draft.ttsProvider, (v) => set({ ttsProvider: v, ttsCredential: "" }))}
-        <label className="form-field" htmlFor="agent-tts-voice">
-          <span>TTS voice</span>
-          <input
-            id="agent-tts-voice"
-            type="text"
-            value={draft.ttsVoice}
-            onChange={(e) => set({ ttsVoice: e.target.value })}
-            placeholder="Provider default (e.g. en-US-Chirp3-HD-Aoede)"
-          />
-        </label>
-        {credentialSelect("tts", draft.ttsProvider, draft.ttsCredential, (v) => set({ ttsCredential: v }))}
+        <StageFields
+          kind="tts"
+          providers={providers}
+          idPrefix="agent-tts"
+          value={{ provider: draft.ttsProvider, voice: draft.ttsVoice }}
+          onChange={(v) => set({ ttsProvider: v.provider, ttsVoice: v.voice ?? "" })}
+        />
       </fieldset>
 
       <fieldset style={{ ...stageBox, marginBottom: "16px" }}>
@@ -542,22 +448,14 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
     enabled: !!keyValue && formOpen,
     retry: false,
   });
-  const credentialsQuery = useQuery({
-    queryKey: ["credentials"],
-    queryFn: () => client.getCredentials(),
-    enabled: !!keyValue && formOpen,
-    retry: false,
-  });
   const providers = providersQuery.data ?? [];
-  const credentials = credentialsQuery.data ?? [];
-  const optionsFailure = providersQuery.error ?? credentialsQuery.error;
+  const optionsFailure = providersQuery.error;
   const optionsError = optionsFailure ? (
     <ErrorState
-      title="Failed to load providers or credentials"
+      title="Failed to load providers"
       error={optionsFailure as ApiError}
       onRetry={() => {
         void providersQuery.refetch();
-        void credentialsQuery.refetch();
       }}
     />
   ) : null;
@@ -764,7 +662,6 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
               <AgentForm
                 agent={null}
                 providers={providers}
-                credentials={credentials}
                 pending={createMutation.isPending}
                 submitLabel="Save agent"
                 onSubmit={(input) => createMutation.mutate(input)}
@@ -788,8 +685,8 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                 </p>
                 {!agentConfigV2(selectedAgent) && (
                   <p>
-                    This agent's stored configuration uses an old format or is missing stage
-                    credentials. Choose a provider and credential for every stage to reconfigure it.
+                    This agent's stored configuration uses an old format or is missing a stage
+                    provider. Choose a provider for every stage to reconfigure it.
                   </p>
                 )}
               </div>
@@ -807,7 +704,6 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                 key={selectedAgent.id}
                 agent={selectedAgent}
                 providers={providers}
-                credentials={credentials}
                 pending={updateMutation.isPending}
                 submitLabel="Save changes"
                 onSubmit={(input) =>
@@ -842,7 +738,6 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                 key={selectedAgent?.id ?? "new"}
                 agent={selectedAgent ?? null}
                 providers={providers}
-                credentials={credentials}
                 pending={createMutation.isPending || updateMutation.isPending}
                 submitLabel="Publish"
                 onSubmit={(input) =>
@@ -973,8 +868,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                   {!agentConfigV2(selectedAgent) && (
                     <div style={{ marginTop: "8px", fontSize: "0.8rem" }}>
                       Needs reconfiguration: this configuration predates typed agent configs or
-                      lacks stage credentials. Edit the agent to choose a provider and credential
-                      for each stage.
+                      lacks a stage provider. Edit the agent to choose a provider for each stage.
                     </div>
                   )}
                   {selectedAgent.readiness.reasons &&

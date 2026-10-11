@@ -5,7 +5,7 @@ import type { ApiClient, SessionTracesDTO } from "../../../api/client";
 import { LiveGraph } from "./LiveGraph";
 import { fromAgentConfig } from "./model";
 
-const stage = { provider: "google", credential_id: "c" };
+const stage = { provider: "google" };
 const graph = fromAgentConfig({
   entry: "front",
   nodes: [

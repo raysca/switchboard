@@ -2,19 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import type { AgentDTO, CredentialDTO, ProviderDefinition } from "../../../api/client";
+import type { AgentDTO, ProviderStatus } from "../../../api/client";
 import { GraphDesigner } from "./GraphDesigner";
 
-const providers: ProviderDefinition[] = [
-  { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], auth_required: true },
-];
-const credentials: CredentialDTO[] = [
-  { id: "cred-g1", provider: "google", masked_value: "…abcd", validation_state: "valid", capabilities: [], created_at: "", updated_at: "" },
+const svc = { available: true, custom: true };
+const providers: ProviderStatus[] = [
+  { id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], detected: true, env: ["GOOGLE_API_KEY"], services: { stt: svc, llm: svc, tts: svc } },
 ];
 const flat = {
-  stt: { provider: "google", model: "chirp", credential_id: "cred-g1" },
-  llm: { provider: "google", model: "gemini", system_prompt: "Front desk.", credential_id: "cred-g1" },
-  tts: { provider: "google", voice: "v", credential_id: "cred-g1" },
+  stt: { provider: "google", model: "chirp" },
+  llm: { provider: "google", model: "gemini", system_prompt: "Front desk." },
+  tts: { provider: "google", voice: "v" },
 };
 const agent = (config: unknown): AgentDTO => ({
   id: "a1",
@@ -32,7 +30,7 @@ function setup(a: AgentDTO | null) {
   const onSubmit = vi.fn();
   render(
     <MemoryRouter>
-      <GraphDesigner agent={a} providers={providers} credentials={credentials} pending={false} submitLabel="Publish" onSubmit={onSubmit} onCancel={vi.fn()} />
+      <GraphDesigner agent={a} providers={providers} pending={false} submitLabel="Publish" onSubmit={onSubmit} onCancel={vi.fn()} />
     </MemoryRouter>,
   );
   return { onSubmit, user: userEvent.setup() };

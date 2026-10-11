@@ -211,6 +211,8 @@ export const mcpServerSchema = z.object({
   transport: z.string().optional().default("streamable-http"),
   validation_state: z.string(),
   latest_discovery_id: z.string().nullish(),
+  auth_env: z.string().optional().default(""),
+  auth_env_set: z.boolean().optional().default(false),
   enabled: z.boolean(),
   pending_deletion: z.boolean().optional(),
   last_connected_at: z.string().nullish(),
@@ -261,6 +263,7 @@ export type CreateMCPServerInput = {
   description?: string;
   endpoint: string;
   transport?: string;
+  auth_env?: string;
   enabled?: boolean;
 };
 

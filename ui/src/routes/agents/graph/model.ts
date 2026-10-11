@@ -186,14 +186,11 @@ export function validate(g: GraphDraft): string[] {
     };
     need(llm.provider, "LLM provider");
     need(llm.model, "LLM model");
-    need(llm.credential_id, "LLM credential");
     need(tts.provider, "TTS provider");
-    need(tts.credential_id, "TTS credential");
     if (n.id === g.entry) {
       const stt = asRecord(n.config.stt);
       need(stt.provider, "STT provider");
-      need(stt.credential_id, "STT credential");
-    }
+      }
   }
   return errors;
 }
