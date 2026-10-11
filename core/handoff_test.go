@@ -251,3 +251,68 @@ func TestHandoffPartialFlipStillClosesReplacedTTS(t *testing.T) {
 		t.Fatalf("the old model stays active and open: active=%s llmClosed=%d", h.Active(), env.oldLLM.closed.Load())
 	}
 }
+
+func TestHandoffCloseReleasesBuiltButUnactivatedNode(t *testing.T) {
+	h, env := newHandoffEnv(t, func(c *HandoffConfig) { c.Trigger = busy(newTrigger()) })
+	_ = h.Commit("sales")
+	env.waitReady(t, h) // built, parked: the caller is mid-speech, so no flip yet
+	if err := env.llm.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if env.newLLM.closed.Load() != 1 || env.newTTS.closed.Load() != 1 {
+		t.Fatalf("a parked node must be closed with the session: llm=%d tts=%d", env.newLLM.closed.Load(), env.newTTS.closed.Load())
+	}
+}
+
+func TestHandoffBuildFinishingAfterCloseClosesItsStages(t *testing.T) {
+	release := make(chan struct{})
+	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
+		c.Build = func(context.Context, string) (NodeStages, error) {
+			<-release
+			return NodeStages{LLM: nil, TTS: nil}, nil // replaced below
+		}
+	})
+	late := NodeStages{LLM: &probeStage{}, TTS: &probeStage{}}
+	h.cfg.Build = func(context.Context, string) (NodeStages, error) { <-release; return late, nil }
+	_ = h.Commit("sales")
+	_ = env.llm.Close() // the call ends while the node is still being built
+	close(release)
+	eventually(t, "late stages closed", func() bool {
+		return late.LLM.(*probeStage).closed.Load() == 1 && late.TTS.(*probeStage).closed.Load() == 1
+	})
+	if h.Active() != "front" {
+		t.Fatal("a closed handoff must not flip")
+	}
+}
+
+func TestHandoffFailedFlipClosesEveryStageItDidNotInstall(t *testing.T) {
+	llm, tts := &failAttach{}, &probeStage{}
+	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
+		c.Build = func(context.Context, string) (NodeStages, error) { return NodeStages{LLM: llm, TTS: tts}, nil }
+	})
+	_ = h.Commit("sales")
+	env.waitEvent(t, HandoffFailed)
+	eventually(t, "uninstalled llm closed", func() bool { return llm.closed.Load() == 1 })
+	if tts.closed.Load() != 0 {
+		t.Fatal("the TTS that was installed is in use and must stay open")
+	}
+
+	// TTS cannot be attached: neither new stage is installed, both must be closed.
+	llm2, tts2 := &probeStage{}, &failAttach{}
+	h2, env2 := newHandoffEnv(t, func(c *HandoffConfig) {
+		c.Build = func(context.Context, string) (NodeStages, error) { return NodeStages{LLM: llm2, TTS: tts2}, nil }
+	})
+	_ = h2.Commit("sales")
+	env2.waitEvent(t, HandoffFailed)
+	eventually(t, "both uninstalled stages closed", func() bool { return llm2.closed.Load() == 1 && tts2.closed.Load() == 1 })
+}
+
+func TestHandoffUserTurnFlipKeepsTheCallersGeneration(t *testing.T) {
+	h, env := newHandoffEnv(t, func(c *HandoffConfig) { c.Trigger = busy(newTrigger()) })
+	_ = h.Commit("sales")
+	env.waitReady(t, h)
+	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t1", Gen: 0}, Downstream, nopEmitter{})
+	if env.sess.gens.Load() != 0 {
+		t.Fatalf("the caller's committed turn already fenced the old node; bumping again makes the new node's reply stale (gen=%d)", env.sess.gens.Load())
+	}
+}

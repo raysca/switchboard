@@ -40,13 +40,18 @@ function newId(): string {
 const asRecord = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
-/** Reads a stored agent config, flat or graph, as a draft. */
-export function fromAgentConfig(raw: unknown): GraphDraft {
+/**
+ * Reads a stored agent config, flat or graph, as a draft. A flat agent exposes
+ * every MCP tool selected on its version; as a graph's entry node it must list
+ * them (selectedTools, "<mcp_server_id>/<remote_name>"), or adding a second
+ * node would silently remove its tools.
+ */
+export function fromAgentConfig(raw: unknown, selectedTools: string[] = []): GraphDraft {
   const cfg = asRecord(raw);
   if (!Array.isArray(cfg.nodes)) {
     return {
       entry: "main",
-      nodes: [{ id: "main", name: "main", config: cfg, tools: [], position: { x: 0, y: 0 } }],
+      nodes: [{ id: "main", name: "main", config: cfg, tools: [...selectedTools], position: { x: 0, y: 0 } }],
       edges: [],
     };
   }
@@ -76,7 +81,8 @@ export function fromAgentConfig(raw: unknown): GraphDraft {
 
 /** The config to send: the flat form for a plain one-node agent, else the graph. */
 export function toPayload(g: GraphDraft): unknown {
-  const plain = g.nodes.length === 1 && g.edges.length === 0 && g.nodes[0].tools.length === 0 && !g.handoff_cue;
+  // A one-node agent exposes every selected tool, so its tool list needs no graph form.
+  const plain = g.nodes.length === 1 && g.edges.length === 0 && !g.handoff_cue;
   if (plain) return g.nodes[0].config;
   return {
     entry: g.entry,
@@ -163,6 +169,9 @@ export function validate(g: GraphDraft): string[] {
   const errors: string[] = [];
   if (g.nodes.length === 0 || g.nodes.length > MAX_NODES) errors.push(`A graph has 1 to ${MAX_NODES} nodes.`);
   if (!g.nodes.some((n) => n.id === g.entry)) errors.push("Choose an entry node.");
+  const cue = g.handoff_cue;
+  if (cue && !/^[a-z0-9_-]{1,32}$/.test(cue.name)) errors.push("The handoff sound name uses lower-case letters, digits, _ and - (up to 32).");
+  if (cue?.after_ms !== undefined && (cue.after_ms < 0 || cue.after_ms > 10000)) errors.push("The handoff sound starts after 0 to 10000 ms.");
   const slugs = new Set<string>();
   for (const n of g.nodes) {
     const label = n.name.trim() || n.id;

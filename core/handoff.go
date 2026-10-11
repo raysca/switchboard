@@ -13,6 +13,7 @@ var (
 	ErrHandoffPending = errors.New("core: a handoff is already in progress")
 	ErrHandoffLimit   = errors.New("core: handoff limit reached for this call")
 	ErrHandoffFlipped = errors.New("core: handoff already completed by the caller's turn")
+	ErrHandoffClosed  = errors.New("core: handoff closed with the session")
 )
 
 type HandoffEventKind string
@@ -64,6 +65,7 @@ type Handoff struct {
 	ready   *NodeStages // built target waiting for the flip
 	started time.Time
 	count   int
+	closed  bool
 }
 
 func NewHandoff(cfg HandoffConfig) (*Handoff, error) {
@@ -81,7 +83,32 @@ func NewHandoff(cfg HandoffConfig) (*Handoff, error) {
 	}
 	h := &Handoff{cfg: cfg, active: cfg.Entry}
 	cfg.LLM.SetBefore(h.beforeLLM)
+	cfg.LLM.AddCloser(h.Close)
 	return h, nil
+}
+
+func closeProc(p Processor) {
+	if c, ok := p.(Closer); ok {
+		_ = c.Close()
+	}
+}
+
+func closeStages(s NodeStages) {
+	closeProc(s.LLM)
+	closeProc(s.TTS)
+}
+
+// Close ends the handoff with the session: a node built but never installed
+// is closed, and a build still running closes its stages when it finishes.
+func (h *Handoff) Close() {
+	h.mu.Lock()
+	h.closed = true
+	parked := h.ready
+	h.pending, h.ready = "", nil
+	h.mu.Unlock()
+	if parked != nil {
+		closeStages(*parked)
+	}
 }
 
 func (h *Handoff) Active() string {
@@ -112,6 +139,9 @@ func (h *Handoff) Commit(target string) error {
 	}
 	h.mu.Lock()
 	switch {
+	case h.closed:
+		h.mu.Unlock()
+		return ErrHandoffClosed
 	case h.pending != "":
 		h.mu.Unlock()
 		return ErrHandoffPending
@@ -144,6 +174,11 @@ func (h *Handoff) build(ctx context.Context, from, target string) {
 		return
 	}
 	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		closeStages(stages) // the call ended while this node was being built
+		return
+	}
 	h.ready = &stages
 	h.mu.Unlock()
 	h.cfg.Trigger.Deliver(AsyncToolResult{
@@ -199,12 +234,21 @@ func (h *Handoff) flip(target string, viaTrigger bool) error {
 		h.mu.Unlock()
 		if retireTTS != nil { // the TTS swap succeeded: do not leak the stage it replaced
 			h.retire(h.cfg.LLM.Session(), from, retireTTS)
+			closeProc(stages.LLM) // never installed
+		} else {
+			closeStages(stages) // neither was installed
 		}
 		h.emit(HandoffEvent{Kind: HandoffFailed, From: from, To: target, Err: err, Elapsed: time.Since(started)})
 		return err
 	}
 	sc := h.cfg.LLM.Session()
-	sc.IncrementGeneration() // late frames of the old node are stale
+	if viaTrigger {
+		// Idle flip: late frames of the old node are stale. A flip at the caller's
+		// turn must not bump: that turn was admitted (and its interruption fenced
+		// the old node) at the current generation, and the new node's reply has to
+		// carry it or the assistant context discards the reply as stale.
+		sc.IncrementGeneration()
+	}
 	h.retire(sc, from, retireLLM, retireTTS)
 	h.emit(HandoffEvent{Kind: HandoffActive, From: from, To: target, Elapsed: time.Since(started)})
 	if viaTrigger && h.cfg.Greet != nil {

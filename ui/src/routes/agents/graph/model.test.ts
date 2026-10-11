@@ -113,4 +113,22 @@ describe("graph model", () => {
   it("slug matches the server's tool-name rule", () => {
     expect(slug("Sales Team!")).toBe("sales_team");
   });
+
+  it("seeds a flat agent's entry node with the agent's selected MCP tools", () => {
+    const g = fromAgentConfig(flat, ["srv/lookup"]);
+    expect(g.nodes[0].tools).toEqual(["srv/lookup"]);
+    // a one-node agent still publishes as the flat config: it exposes every selected tool anyway
+    expect(toPayload(g)).toEqual(flat);
+    const two = addNode(g, "Sales");
+    const payload = toPayload(two) as { nodes: { tools?: string[] }[] };
+    expect(payload.nodes[0].tools).toEqual(["srv/lookup"]);
+    expect(payload.nodes[1].tools).toBeUndefined();
+  });
+
+  it("validate rejects a handoff sound name the server would reject", () => {
+    const base = addNode(fromAgentConfig(flat), "Sales");
+    expect(validate({ ...base, handoff_cue: { name: "Bad Name" } }).join(" ")).toMatch(/sound name/);
+    expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 20000 } }).join(" ")).toMatch(/after/);
+    expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 300 } })).toEqual([]);
+  });
 });

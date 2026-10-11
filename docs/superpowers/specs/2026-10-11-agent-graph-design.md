@@ -128,3 +128,14 @@ Per-edge cues or uploading cue sounds through the API; shared or reusable agents
 - **Cleanup on a left node:** a processor whose `Close()` does not stop its goroutines would leak per handoff. The node host tests count goroutines; the plan audits each provider's `Close()`.
 - **Cross-node tool history** may be rejected by some providers (see section 3).
 - **Replacing the agent form** with a canvas is a UI-wide change; the one-node case must stay as quick to use as the form.
+
+## Revisions made while planning and building (2026-10-11)
+
+Reading the code and reviewing the branch changed these details; the design is otherwise as approved above.
+1. **No `node_id` column, no migration.** MCP tools stay selected per agent version (`agent_mcp_tools` is unchanged). Each node lists the tools it exposes in `tools: ["<mcp_server_id>/<remote_name>"]` (the same reference form as `async_tools`). Readiness and runtime capture still cover the union. A flat agent has no `tools` list and exposes every selected tool; the designer seeds the entry node's `tools` from the version's selected tools when it turns a flat agent into a graph, so adding a node does not remove them.
+2. **Graphs are detected by shape (a top-level `nodes` key); `schema_version` stays 1.** Layout positions live in the config and are hashed: publishing is an explicit action, so a layout change publishes a new version. Node ids match `^[A-Za-z0-9_-]{1,32}$` and `handoff_cue.name` matches `^[a-z0-9_-]{1,32}$` with `after_ms` 0 to 10000, because they reach logs, trace attributes and the UI.
+3. **The transfer tool is not special-cased inside the tool loop.** Its result tells the model to say one short sentence and stop; that sentence is the bridge line. The flip then happens when the call is idle (riding `AsyncTrigger`), or just before the caller's next turn reaches the model. An idle flip bumps the generation; a flip at the caller's turn does not, because that turn already fenced the old node and the new node's reply must carry its generation.
+4. **Credentials are resolved when a node is activated,** not held for the whole call.
+5. **Live view data** comes from `handoff.*` trace spans (polled through the session traces API) for which node holds the call, and from the voice client's speaking state for what it is doing. Replay of a finished session on the session page is not built (the API cannot return the pinned version's graph).
+6. **Handoff metrics are unlabelled** (`voice_handoffs_total`, `voice_handoff_failures_total`, `voice_handoff_seconds`): node ids are tenant data, so labels would have unbounded cardinality. Per-node detail lives in timeline events (every event carries `node` once a handoff has happened) and trace spans.
+7. **A node that is built but never installed is closed** when the call ends or the flip fails (`Handoff.Close`, registered on the LLM stage).

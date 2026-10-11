@@ -26,6 +26,7 @@ type StageSwap struct {
 	index   int
 	before  func(Frame, Direction)
 	ctxProv func() []Message
+	closers []func()
 }
 
 type swapSlot struct {
@@ -124,7 +125,21 @@ func (s *StageSwap) Replace(next Processor) (func(time.Duration) error, error) {
 	}, nil
 }
 
+// AddCloser registers cleanup that runs when the stage closes: whoever parks
+// a not-yet-installed replacement (Handoff) releases it with the session.
+func (s *StageSwap) AddCloser(fn func()) {
+	s.mu.Lock()
+	s.closers = append(s.closers, fn)
+	s.mu.Unlock()
+}
+
 func (s *StageSwap) Close() error {
+	s.mu.Lock()
+	closers := s.closers
+	s.mu.Unlock()
+	for _, fn := range closers {
+		fn()
+	}
 	if c, ok := s.cur.Load().p.(Closer); ok {
 		return c.Close()
 	}

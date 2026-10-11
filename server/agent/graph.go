@@ -73,7 +73,15 @@ type rawGraph struct {
 	HandoffCue *HandoffCue `json:"handoff_cue"`
 }
 
-var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
+var (
+	nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
+	// Node ids and cue names are tenant data that reach logs, trace attributes
+	// and the UI: keep them short and plain.
+	nodeID  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+	cueName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
+)
+
+const maxCueAfterMS = 10000
 
 func slug(name string) string {
 	return strings.Trim(nonSlug.ReplaceAllString(strings.ToLower(name), "_"), "_")
@@ -115,8 +123,8 @@ func DecodeGraph(raw json.RawMessage) (Graph, error) {
 		name := strings.TrimSpace(rn.Name)
 		s := slug(name)
 		switch {
-		case rn.ID == "" || ids[rn.ID]:
-			return Graph{}, invalid("node ids must be non-empty and unique")
+		case !nodeID.MatchString(rn.ID) || ids[rn.ID]:
+			return Graph{}, invalid("node ids must be unique and match %s", nodeID)
 		case name == "" || len(name) > 64 || s == "":
 			return Graph{}, invalid("node %q needs a name of 1 to 64 characters with a letter or digit", rn.ID)
 		case slugs[s]:
@@ -128,6 +136,9 @@ func DecodeGraph(raw json.RawMessage) (Graph, error) {
 			return Graph{}, fmt.Errorf("node %q: %w", rn.ID, err)
 		}
 		g.Nodes = append(g.Nodes, Node{ID: rn.ID, Name: name, Config: cfg, Tools: rn.Tools, Position: rn.Position})
+	}
+	if c := g.HandoffCue; c != nil && (!cueName.MatchString(c.Name) || c.AfterMS < 0 || c.AfterMS > maxCueAfterMS) {
+		return Graph{}, invalid("handoff_cue needs a name matching %s and after_ms between 0 and %d", cueName, maxCueAfterMS)
 	}
 	if !ids[g.Entry] {
 		return Graph{}, invalid("entry %q is not a node", g.Entry)

@@ -86,3 +86,30 @@ func TestSummarizationNeedsEverySummarizingLLM(t *testing.T) {
 		t.Fatalf("want ErrInvalidConfig, got %v", err)
 	}
 }
+
+func TestDecodeGraphRejectsUnsafeIDsAndCue(t *testing.T) {
+	front := func(id string) string { return `{"id":"` + id + `","name":"Front","config":` + flatCfg + `}` }
+	graph := func(entry, node, extra string) string {
+		return `{"entry":"` + entry + `","nodes":[` + node + `],"edges":[]` + extra + `}`
+	}
+	cases := map[string]string{
+		"id with spaces":     graph("a b", front("a b"), ""),
+		"id with arrow":      graph("a->b", front("a->b"), ""),
+		"id too long":        graph(strings.Repeat("x", 33), front(strings.Repeat("x", 33)), ""),
+		"cue name uppercase": graph("f", front("f"), `,"handoff_cue":{"name":"Chime"}`),
+		"cue name too long":  graph("f", front("f"), `,"handoff_cue":{"name":"`+strings.Repeat("c", 33)+`"}`),
+		"cue after negative": graph("f", front("f"), `,"handoff_cue":{"name":"chime","after_ms":-1}`),
+		"cue after huge":     graph("f", front("f"), `,"handoff_cue":{"name":"chime","after_ms":600000}`),
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := DecodeGraph(json.RawMessage(raw)); !errors.Is(err, ErrInvalidConfig) {
+				t.Fatalf("want ErrInvalidConfig, got %v", err)
+			}
+		})
+	}
+	ok := graph("f_1-a", front("f_1-a"), `,"handoff_cue":{"name":"chime","after_ms":300}`)
+	if _, err := DecodeGraph(json.RawMessage(ok)); err != nil {
+		t.Fatalf("valid ids and cue rejected: %v", err)
+	}
+}

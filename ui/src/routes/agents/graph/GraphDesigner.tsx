@@ -35,7 +35,8 @@ export function GraphDesigner({ agent, providers, credentials, pending, submitLa
   const [name, setName] = useState(agent?.name ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
   const [graph, setGraph] = useState<GraphDraft>(() => {
-    const g = fromAgentConfig(agent?.current_version?.config ?? {});
+    const tools = (agent?.current_version?.mcp_tools ?? []).map((t) => `${t.mcp_server_id}/${t.remote_name}`);
+    const g = fromAgentConfig(agent?.current_version?.config ?? {}, tools);
     return agent ? g : { ...g, nodes: g.nodes.map((n) => ({ ...n, name: "Main agent" })) };
   });
   const [selected, setSelected] = useState<Selection>(() => ({ kind: "node", id: graph.entry }));

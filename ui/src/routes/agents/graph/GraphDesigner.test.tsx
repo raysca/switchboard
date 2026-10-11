@@ -68,6 +68,17 @@ describe("GraphDesigner", () => {
     expect(config.entry).toBe("main");
   });
 
+  it("keeps the agent's MCP tools on the entry node when a node is added", async () => {
+    const withTools = agent(flat);
+    withTools.current_version!.mcp_tools = [{ mcp_server_id: "srv", remote_name: "lookup", schema_hash: "h", required: false }];
+    const { onSubmit, user } = setup(withTools);
+    await user.type(screen.getByLabelText("New agent node"), "Sales");
+    await user.click(screen.getByRole("button", { name: "Add agent" }));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    const config = onSubmit.mock.calls[0][0].config as { nodes: { tools?: string[] }[] };
+    expect(config.nodes[0].tools).toEqual(["srv/lookup"]);
+  });
+
   it("refuses to publish an incomplete new agent and lists what is missing", async () => {
     const { onSubmit, user } = setup(null);
     await user.click(screen.getByRole("button", { name: "Publish" }));
