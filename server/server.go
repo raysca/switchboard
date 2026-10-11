@@ -27,7 +27,6 @@ import (
 	"govoice/server/credential"
 	"govoice/server/mcp"
 	"govoice/server/otelexport"
-	"govoice/server/provider"
 	"govoice/server/storage"
 	"govoice/smartturn"
 	"govoice/transport/token"
@@ -65,7 +64,6 @@ type Server struct {
 	agents                *agent.Service
 	mcpService            *mcp.Service
 	credentials           *credential.Service
-	providerDefs          *provider.Registry
 	logger                *slog.Logger
 
 	ready        atomic.Bool

@@ -25,11 +25,11 @@ const resolveTimeout = 10 * time.Second
 
 // resolveCall pins the token's agent for a new call: it captures the agent's
 // MCP tools, persists the session row, and resolves each stage's provider and
-// credential. release ends the persisted session and must run exactly once.
+// secret. release ends the persisted session and must run exactly once.
 // The session row takes the token's single-use jti as its id, so a client that
 // holds the token can find its session (the admin voice test links to it).
 func (s *Server) resolveCall(ctx context.Context, agentID, tokenID string) (CallSpec, func(), error) {
-	if s.agents == nil || s.mcpService == nil || s.credentials == nil || s.store == nil {
+	if s.agents == nil || s.mcpService == nil || s.resolver == nil || s.store == nil {
 		return CallSpec{}, nil, errAgentsUnavailable
 	}
 	if agentID == "" {
@@ -147,11 +147,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	if missing := cfg.Missing(); len(missing) > 0 {
 		return CallSpec{}, fmt.Errorf("agent config incomplete: %v", missing)
 	}
-	creds, err := s.store.Credentials().List(ctx)
-	if err != nil {
-		return CallSpec{}, fmt.Errorf("list credentials: %w", err)
-	}
-	secrets, err := s.resolveStageSecrets(ctx, cfg, creds, "stt", "llm", "tts")
+	secrets, err := s.resolveStageSecrets(ctx, cfg, "stt", "llm", "tts")
 	if err != nil {
 		return CallSpec{}, err
 	}
@@ -165,10 +161,10 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		graph.Resolve = func(ctx context.Context, id string) (NodeSpec, error) { return s.nodeSpec(ctx, rs, g, graph, id) }
 		tools, exec = s.nodeToolset(rs, g, entry, graph)
 	}
-	fallbacks := s.resolveFallbacks(ctx, rs, creds, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+	fallbacks := s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
 	})
-	ttsFallbacks := s.resolveFallbacks(ctx, rs, creds, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+	ttsFallbacks := s.resolveFallbacks(ctx, rs, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
 	})
 	var disableTextCleaning bool
@@ -177,7 +173,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	}
 	return CallSpec{
 		LLMFallbacks: fallbacks, TTSFallbacks: ttsFallbacks, Failover: cfg.Failover,
-		STTFallbacks: s.sttFallbacks(ctx, rs, cfg, creds),
+		STTFallbacks: s.sttFallbacks(ctx, rs, cfg),
 		STT:          StageSpec{Provider: cfg.STT.Provider, Model: cfg.STT.Model, Language: cfg.STT.Language, Secret: secrets["stt"]},
 		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
 			Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel},
@@ -202,9 +198,9 @@ func (s *Server) maxParallel(cfg agent.Config) int {
 	return max(s.cfg.Tools.MaxParallel, 0)
 }
 
-// resolveStageSecrets decrypts the credential of each named stage. On error
-// the decrypted secrets gathered so far are wiped.
-func (s *Server) resolveStageSecrets(ctx context.Context, cfg agent.Config, creds []storage.Credential, names ...string) (map[string][]byte, error) {
+// resolveStageSecrets reads the secret of each named stage from the
+// environment, now. On error the secrets gathered so far are wiped.
+func (s *Server) resolveStageSecrets(ctx context.Context, cfg agent.Config, names ...string) (map[string][]byte, error) {
 	secrets := map[string][]byte{}
 	ok := false
 	defer func() {
@@ -221,13 +217,9 @@ func (s *Server) resolveStageSecrets(ctx context.Context, cfg agent.Config, cred
 		if !s.registry.Supports(stage.Provider, stage.Name) {
 			return nil, fmt.Errorf("%s provider %q is not available on this server", stage.Name, stage.Provider)
 		}
-		id, reason := agent.ResolveCredential(stage, s.providerDefs, creds)
-		if reason != "" {
-			return nil, fmt.Errorf("agent not callable: %s", reason)
-		}
-		secret, err := s.credentials.ProviderSecret(ctx, id, stage.Provider)
+		secret, err := s.resolver.Secret(stage.Provider, stage.Name)
 		if err != nil {
-			return nil, fmt.Errorf("%s credential: %w", stage.Name, err)
+			return nil, fmt.Errorf("agent not callable: %s credential: %w", stage.Name, err)
 		}
 		secrets[stage.Name] = secret
 	}
@@ -253,18 +245,14 @@ func (s *Server) nodeToolset(rs *runtime.Session, g agent.Graph, n agent.Node, c
 }
 
 // nodeSpec resolves a non-entry node's LLM and TTS when the node is activated:
-// credentials are decrypted now, not held for the whole call.
+// secrets are read from the environment now, not held for the whole call.
 func (s *Server) nodeSpec(ctx context.Context, rs *runtime.Session, g agent.Graph, cg *CallGraph, id string) (NodeSpec, error) {
 	n, ok := g.Node(id)
 	if !ok {
 		return NodeSpec{}, fmt.Errorf("unknown node %q", id)
 	}
 	cfg := n.Config
-	creds, err := s.store.Credentials().List(ctx)
-	if err != nil {
-		return NodeSpec{}, fmt.Errorf("list credentials: %w", err)
-	}
-	secrets, err := s.resolveStageSecrets(ctx, cfg, creds, "llm", "tts")
+	secrets, err := s.resolveStageSecrets(ctx, cfg, "llm", "tts")
 	if err != nil {
 		return NodeSpec{}, err
 	}
@@ -274,11 +262,11 @@ func (s *Server) nodeSpec(ctx context.Context, rs *runtime.Session, g agent.Grap
 		Name: n.Name,
 		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
 			Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel},
-		LLMFallbacks: s.resolveFallbacks(ctx, rs, creds, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+		LLMFallbacks: s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 			return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
 		}),
 		TTS: StageSpec{Provider: cfg.TTS.Provider, Voice: cfg.TTS.Voice, Secret: secrets["tts"]},
-		TTSFallbacks: s.resolveFallbacks(ctx, rs, creds, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+		TTSFallbacks: s.resolveFallbacks(ctx, rs, "tts", cfg, &s.metrics.TTSFallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 			return StageSpec{Provider: c.Provider, Voice: c.Voice, Secret: secret}
 		}),
 	}, nil
@@ -286,7 +274,7 @@ func (s *Server) nodeSpec(ctx context.Context, rs *runtime.Session, g agent.Grap
 
 // resolveFallbacks resolves the chain after the primary for one stage. A
 // fallback that cannot be resolved now is skipped (logged and counted), not fatal.
-func (s *Server) resolveFallbacks(ctx context.Context, rs *runtime.Session, creds []storage.Credential, stage string, cfg agent.Config, skipped *atomic.Uint64, build func(agent.Candidate, []byte) StageSpec) []StageSpec {
+func (s *Server) resolveFallbacks(ctx context.Context, rs *runtime.Session, stage string, cfg agent.Config, skipped *atomic.Uint64, build func(agent.Candidate, []byte) StageSpec) []StageSpec {
 	var out []StageSpec
 	for _, cand := range cfg.Chain(stage)[1:] {
 		skip := func(why string) {
@@ -297,12 +285,7 @@ func (s *Server) resolveFallbacks(ctx context.Context, rs *runtime.Session, cred
 			skip("provider not available")
 			continue
 		}
-		id, reason := agent.ResolveCredential(agent.Stage{Name: stage, Provider: cand.Provider, CredentialID: cand.CredentialID}, s.providerDefs, creds)
-		if reason != "" {
-			skip(reason)
-			continue
-		}
-		secret, err := s.credentials.ProviderSecret(ctx, id, cand.Provider)
+		secret, err := s.resolver.Secret(cand.Provider, stage)
 		if err != nil {
 			skip("credential unavailable")
 			continue
@@ -312,7 +295,7 @@ func (s *Server) resolveFallbacks(ctx context.Context, rs *runtime.Session, cred
 	return out
 }
 
-// wipeSecrets zeroes the decrypted credentials once provider clients are built;
+// wipeSecrets zeroes the secrets once provider clients are built;
 // adapters copy what they need (API key strings, parsed service accounts).
 func (c *CallSpec) wipeSecrets() {
 	for _, b := range [][]byte{c.STT.Secret, c.LLM.Secret, c.TTS.Secret} {

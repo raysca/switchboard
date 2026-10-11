@@ -12,10 +12,7 @@ import (
 	"govoice/server/storage"
 )
 
-const (
-	graphMgmtKey = "management-test-key-32-bytes-long-and-separate"
-	graphCred    = "018f0000-0000-7000-8000-000000000001"
-)
+const graphMgmtKey = "management-test-key-32-bytes-long-and-separate"
 
 func graphAPIServer(t *testing.T) *Server {
 	t.Helper()
@@ -25,17 +22,14 @@ func graphAPIServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := store.Credentials().Put(t.Context(), storage.Credential{ID: graphCred, Provider: "google", MaskedSuffix: "abcd", ValidationState: "unvalidated", CapabilitiesJSON: "[]", Ciphertext: []byte("x"), KeyID: "k"}); err != nil {
-		t.Fatal(err)
-	}
-	s.SetAgentManagementAPI(api.NewAgentsHandler(agent.NewService(store)))
+	s.SetAgentManagementAPI(api.NewAgentsHandler(agent.NewService(store, s.availability)))
 	return s
 }
 
 func graphStages(stt bool) string {
-	stages := `"llm":{"provider":"google","model":"m","credential_id":"` + graphCred + `"},"tts":{"provider":"google","voice":"v","credential_id":"` + graphCred + `"}`
+	stages := `"llm":{"provider":"google","model":"m"},"tts":{"provider":"google","voice":"v"}`
 	if stt {
-		stages = `"stt":{"provider":"google","model":"s","credential_id":"` + graphCred + `"},` + stages
+		stages = `"stt":{"provider":"google","model":"s"},` + stages
 	}
 	return stages
 }

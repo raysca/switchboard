@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,24 +19,26 @@ import (
 
 	"govoice/core"
 	"govoice/server/agent"
+	"govoice/server/catalog"
+	"govoice/server/runtime"
 	"govoice/server/storage"
 	"govoice/transport/ws"
 )
 
-// End to end: a stored agent and stored credential drive a real WebSocket call.
-// The call's provider factories must receive exactly the agent's settings and
-// the decrypted credential, the session row must be persisted while the call
-// runs and ended when it hangs up.
+// End to end: a stored agent and the provider environment drive a real
+// WebSocket call. The call's provider factories must receive exactly the
+// agent's settings and the environment's secrets, the session row must be
+// persisted while the call runs and ended when it hangs up.
 func TestStoredAgentDrivesCall(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	vars := testProviderVars(t)
+	vars["GOOGLE_API_KEY"] = "stored-google-key"
+	s.env = mapEnv(vars)
+	const serviceAccount = `{"type":"service_account"}` // testProviderVars' file, compacted
 	enableTestManagement(t, s)
-	cred, err := s.credentials.Create(t.Context(), credentialInput("google", "stored-google-key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Billing", Config: json.RawMessage(strings.ReplaceAll(
-		`{"stt":{"provider":"google","model":"chirp_2","language":"en-GB","credential_id":"018f0000-0000-7000-8000-000000000001"},"llm":{"provider":"google","model":"gemini-test","system_prompt":"You handle billing.","credential_id":"018f0000-0000-7000-8000-000000000001"},"tts":{"provider":"google","voice":"en-GB-Neural2-A","credential_id":"018f0000-0000-7000-8000-000000000001"},"context":{"max_messages":12,"max_tokens":900}}`, "018f0000-0000-7000-8000-000000000001", cred.ID))})
+	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Billing", Config: json.RawMessage(
+		`{"stt":{"provider":"google","model":"chirp_2","language":"en-GB"},"llm":{"provider":"google","model":"gemini-test","system_prompt":"You handle billing."},"tts":{"provider":"google","voice":"en-GB-Neural2-A"},"context":{"max_messages":12,"max_tokens":900}}`)})
 	if err != nil || created.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("agent=%+v err=%v", created.Readiness, err)
 	}
@@ -108,13 +111,13 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 	mu.Lock()
 	stt, llm, tts := got["stt"], got["llm"], got["tts"]
 	mu.Unlock()
-	if stt.Model != "chirp_2" || stt.Language != "en-GB" || string(stt.Secret) != "stored-google-key" {
+	if stt.Model != "chirp_2" || stt.Language != "en-GB" || string(stt.Secret) != serviceAccount {
 		t.Fatalf("stt spec = %+v", stt)
 	}
 	if llm.Model != "gemini-test" || llm.SystemPrompt != "You handle billing." || string(llm.Secret) != "stored-google-key" || llm.History == nil {
 		t.Fatalf("llm spec = %+v", llm)
 	}
-	if tts.Voice != "en-GB-Neural2-A" || string(tts.Secret) != "stored-google-key" {
+	if tts.Voice != "en-GB-Neural2-A" || string(tts.Secret) != serviceAccount {
 		t.Fatalf("tts spec = %+v", tts)
 	}
 
@@ -122,7 +125,7 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 	for _, b := range received {
 		for _, c := range b {
 			if c != 0 {
-				t.Fatal("decrypted credential was not wiped after the pipeline was built")
+				t.Fatal("provider secret was not wiped after the pipeline was built")
 			}
 		}
 	}
@@ -142,9 +145,19 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 	if _, err := s.agents.Update(t.Context(), created.ID, agent.UpdateRequest{Enabled: &disabled}); err != nil {
 		t.Fatal(err)
 	}
+	dialUntilRefused(t, ts, resp.Data.Token)
+	if n := activeSessions(""); n != 1 {
+		t.Fatalf("disabled agent started a session: %d sessions", n)
+	}
+}
+
+// dialUntilRefused dials with token, says client-ready and reads until the
+// server ends the connection.
+func dialUntilRefused(t *testing.T, ts *httptest.Server, token string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	late, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"?token="+resp.Data.Token, nil)
+	late, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"?token="+token, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,11 +165,8 @@ func TestStoredAgentDrivesCall(t *testing.T) {
 	_ = late.Write(ctx, websocket.MessageBinary, ready)
 	for {
 		if _, _, err := late.Read(ctx); err != nil {
-			break // server refuses the call
+			return // server refuses the call
 		}
-	}
-	if n := activeSessions(""); n != 1 {
-		t.Fatalf("disabled agent started a session: %d sessions", n)
 	}
 }
 
@@ -374,16 +384,12 @@ func TestStoredAgent_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
-	cred, err := s.credentials.Create(t.Context(), credentialInput("google", "stored-google-key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfgJSON := strings.ReplaceAll(`{
+	cfgJSON := `{
 		"vad_stop_ms": 450,
-		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
-		"llm": {"provider": "google", "model": "gemini-test", "credential_id": "018f0000-0000-7000-8000-000000000001", "max_parallel": 4},
-		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001"}
-	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+		"stt": {"provider": "google", "model": "chirp_2"},
+		"llm": {"provider": "google", "model": "gemini-test", "max_parallel": 4},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A"}
+	}`
 
 	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "ParallelAgent", Config: json.RawMessage(cfgJSON)})
 	if err != nil || created.Readiness.State != agent.ReadinessReady {
@@ -455,18 +461,14 @@ func TestStoredAgent_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T
 	s.cfg.Tools.MaxParallel = 3
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
-	cred, err := s.credentials.Create(t.Context(), credentialInput("google", "stored-google-key"))
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	// Agent config with no agent-level max_parallel and an LLM fallback
-	cfgJSON := strings.ReplaceAll(`{
-		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
-		"llm": {"provider": "google", "model": "gemini-primary", "credential_id": "018f0000-0000-7000-8000-000000000001",
-			"fallbacks": [{"provider": "google", "model": "gemini-fallback", "credential_id": "018f0000-0000-7000-8000-000000000001"}]},
-		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001"}
-	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+	cfgJSON := `{
+		"stt": {"provider": "google", "model": "chirp_2"},
+		"llm": {"provider": "google", "model": "gemini-primary",
+			"fallbacks": [{"provider": "google", "model": "gemini-fallback"}]},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A"}
+	}`
 
 	created, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "FallbackParallelAgent", Config: json.RawMessage(cfgJSON)})
 	if err != nil || created.Readiness.State != agent.ReadinessReady {
@@ -494,17 +496,13 @@ func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
 	s := apiTestServer(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
-	cred, err := s.credentials.Create(t.Context(), credentialInput("google", "stored-google-key"))
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	// 1. Default (unspecified clean_text): text cleaning enabled -> DisableTextCleaning == false
-	cfgDefault := strings.ReplaceAll(`{
-		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
-		"llm": {"provider": "google", "model": "gemini-primary", "credential_id": "018f0000-0000-7000-8000-000000000001"},
-		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001"}
-	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+	cfgDefault := `{
+		"stt": {"provider": "google", "model": "chirp_2"},
+		"llm": {"provider": "google", "model": "gemini-primary"},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A"}
+	}`
 	createdDefault, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "DefaultAgent", Config: json.RawMessage(cfgDefault)})
 	if err != nil {
 		t.Fatalf("agent creation failed: %v", err)
@@ -519,11 +517,11 @@ func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
 	}
 
 	// 2. clean_text: false -> DisableTextCleaning == true
-	cfgDisabled := strings.ReplaceAll(`{
-		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
-		"llm": {"provider": "google", "model": "gemini-primary", "credential_id": "018f0000-0000-7000-8000-000000000001"},
-		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001", "clean_text": false}
-	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+	cfgDisabled := `{
+		"stt": {"provider": "google", "model": "chirp_2"},
+		"llm": {"provider": "google", "model": "gemini-primary"},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "clean_text": false}
+	}`
 	createdDisabled, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "DisabledCleanAgent", Config: json.RawMessage(cfgDisabled)})
 	if err != nil {
 		t.Fatalf("agent creation failed: %v", err)
@@ -538,11 +536,11 @@ func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
 	}
 
 	// 3. clean_text: true -> DisableTextCleaning == false
-	cfgEnabled := strings.ReplaceAll(`{
-		"stt": {"provider": "google", "model": "chirp_2", "credential_id": "018f0000-0000-7000-8000-000000000001"},
-		"llm": {"provider": "google", "model": "gemini-primary", "credential_id": "018f0000-0000-7000-8000-000000000001"},
-		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "credential_id": "018f0000-0000-7000-8000-000000000001", "clean_text": true}
-	}`, "018f0000-0000-7000-8000-000000000001", cred.ID)
+	cfgEnabled := `{
+		"stt": {"provider": "google", "model": "chirp_2"},
+		"llm": {"provider": "google", "model": "gemini-primary"},
+		"tts": {"provider": "google", "voice": "en-GB-Neural2-A", "clean_text": true}
+	}`
 	createdEnabled, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "ExplicitCleanAgent", Config: json.RawMessage(cfgEnabled)})
 	if err != nil {
 		t.Fatalf("agent creation failed: %v", err)
@@ -554,5 +552,112 @@ func TestStoredAgent_CleanTextConfiguration(t *testing.T) {
 	defer releaseEnabled()
 	if specEnabled.DisableTextCleaning {
 		t.Errorf("expected DisableTextCleaning=false when clean_text=true, got true")
+	}
+}
+
+// liveEnv is a test environment that can change while a call runs.
+type liveEnv struct {
+	mu sync.Mutex
+	m  map[string]string
+}
+
+func newLiveEnv(m map[string]string) *liveEnv { return &liveEnv{m: m} }
+
+func (e *liveEnv) get(k string) string { e.mu.Lock(); defer e.mu.Unlock(); return e.m[k] }
+
+// set changes a variable; "" removes it.
+func (e *liveEnv) set(k, v string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if v == "" {
+		delete(e.m, k)
+		return
+	}
+	e.m[k] = v
+}
+
+// A stage secret is read from the environment each time it is resolved, and a
+// missing one names the variable, never a value.
+func TestStageSecretsComeFromTheEnvironmentAtCallTime(t *testing.T) {
+	s := apiTestServer(t)
+	env := newLiveEnv(map[string]string{"GOOGLE_API_KEY": "k1"})
+	s.env = env.get
+	cfg, err := agent.DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","model":"m"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolve := func() (string, error) {
+		secrets, err := s.resolveStageSecrets(t.Context(), cfg, "llm")
+		return string(secrets["llm"]), err
+	}
+	if got, err := resolve(); err != nil || got != "k1" {
+		t.Fatalf("got %q %v, want k1", got, err)
+	}
+	env.set("GOOGLE_API_KEY", "k2")
+	if got, err := resolve(); err != nil || got != "k2" {
+		t.Fatalf("got %q %v, want k2 (live)", got, err)
+	}
+	env.set("GOOGLE_API_KEY", "")
+	_, err = resolve()
+	var missing *catalog.MissingError
+	if !errors.As(err, &missing) || !strings.Contains(err.Error(), "GOOGLE_API_KEY") || strings.Contains(err.Error(), "k2") {
+		t.Fatalf("err = %v, want a MissingError naming GOOGLE_API_KEY", err)
+	}
+}
+
+// A call whose provider variable disappeared after the token was minted is
+// refused before any session row exists.
+func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
+	s := apiTestServer(t)
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	env := newLiveEnv(testProviderVars(t))
+	s.env = env.get
+	agentID := readyTestAgent(t, s)
+	for _, stage := range []string{"stt", "llm", "tts"} {
+		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	}
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
+	var resp struct {
+		Data struct{ Token string } `json:"data"`
+	}
+	if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &resp) != nil {
+		t.Fatalf("token: %d %s", w.Code, w.Body)
+	}
+	env.set("GOOGLE_APPLICATION_CREDENTIALS", "")
+
+	ts := httptest.NewServer(s.wsServer)
+	defer ts.Close()
+	dialUntilRefused(t, ts, resp.Data.Token)
+	rows, err := s.store.Sessions().List(t.Context(), storage.SessionFilter{AgentID: agentID})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("refused call left sessions %v (err %v)", rows, err)
+	}
+}
+
+// Fallbacks resolve their secret by provider; one whose variable is unset is
+// skipped and counted, not fatal.
+func TestFallbackSecretsResolveByProvider(t *testing.T) {
+	s := apiTestServer(t)
+	env := newLiveEnv(map[string]string{"GOOGLE_API_KEY": "g", "XAI_API_KEY": "x"})
+	s.env = env.get
+	cfg, err := agent.DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","model":"m","fallbacks":[{"provider":"xai","model":"grok"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := &runtime.Session{}
+	build := func(c agent.Candidate, secret []byte) StageSpec {
+		return StageSpec{Provider: c.Provider, Secret: secret}
+	}
+	got := s.resolveFallbacks(t.Context(), rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, build)
+	if len(got) != 1 || got[0].Provider != "xai" || string(got[0].Secret) != "x" {
+		t.Fatalf("fallbacks = %+v", got)
+	}
+	env.set("XAI_API_KEY", "")
+	before := s.metrics.LLMFallbacksSkippedTotal.Load()
+	if got := s.resolveFallbacks(t.Context(), rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, build); len(got) != 0 {
+		t.Fatalf("unset fallback kept: %+v", got)
+	}
+	if n := s.metrics.LLMFallbacksSkippedTotal.Load() - before; n != 1 {
+		t.Fatalf("skipped counter moved by %d, want 1", n)
 	}
 }

@@ -26,7 +26,6 @@ import (
 
 	"govoice/core"
 	"govoice/server/agent"
-	"govoice/server/credential"
 	"govoice/transport/ws"
 )
 
@@ -122,16 +121,15 @@ type graphRigE2E struct {
 	s       *Server
 	ts      *httptest.Server
 	probe   *stageProbe
-	credID  string
 	agentID string
 }
 
-func graphConfigJSON(cred, salesPrompt, salesVoice string, cue ...string) json.RawMessage {
+func graphConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessage {
 	tail := ""
 	if len(cue) > 0 {
 		tail = `,"handoff_cue":` + cue[0]
 	}
-	stage := func(extra string) string { return `"provider":"google","credential_id":"` + cred + `"` + extra }
+	stage := func(extra string) string { return `"provider":"google"` + extra }
 	return json.RawMessage(`{"entry":"front","nodes":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{` + stage(`,"model":"s"`) + `},"llm":{` + stage(`,"model":"m","system_prompt":"FRONT"`) + `},"tts":{` + stage(`,"voice":"frontvoice"`) + `}}},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{` + stage(`,"model":"m","system_prompt":"`+salesPrompt+`"`) + `},"tts":{` + stage(`,"voice":"`+salesVoice+`"`) + `}}}],` +
@@ -151,20 +149,17 @@ func newGraphRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *gra
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.env = testProviderEnv(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
-	cred, err := s.credentials.Create(t.Context(), credential.CreateInput{Provider: "google", Secret: "test-google-api-key"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	probe.install(s)
 	ts := httptest.NewServer(s.wsServer)
 	t.Cleanup(ts.Close)
-	return &graphRigE2E{t: t, s: s, ts: ts, probe: probe, credID: cred.ID}
+	return &graphRigE2E{t: t, s: s, ts: ts, probe: probe}
 }
 
 func (r *graphRigE2E) createGraphAgent(salesVoice string, cue ...string) string {
-	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Dealership", Config: graphConfigJSON(r.credID, "SALES", salesVoice, cue...)})
+	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Dealership", Config: graphConfigJSON("SALES", salesVoice, cue...)})
 	if err != nil || a.Readiness.State != agent.ReadinessReady {
 		r.t.Fatalf("graph agent: %+v err=%v", a.Readiness, err)
 	}
@@ -472,7 +467,7 @@ func TestGraphE2ERepublishMidCallKeepsTheCallsGraph(t *testing.T) {
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
 
-	v2 := graphConfigJSON(r.credID, "SALESV2", "salesvoice")
+	v2 := graphConfigJSON("SALESV2", "salesvoice")
 	if _, err := r.s.agents.Update(t.Context(), r.agentID, agent.UpdateRequest{Config: v2}); err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +488,7 @@ func TestGraphE2EFlatAgentHasNoHandoffs(t *testing.T) {
 	probe := newProbe()
 	r := newGraphRigE2E(t, probe)
 	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Flat", Config: json.RawMessage(
-		`{"stt":{"provider":"google","credential_id":"` + r.credID + `"},"llm":{"provider":"google","model":"m","system_prompt":"FLAT","credential_id":"` + r.credID + `"},"tts":{"provider":"google","credential_id":"` + r.credID + `"}}`)})
+		`{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m","system_prompt":"FLAT"},"tts":{"provider":"google"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

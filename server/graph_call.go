@@ -12,8 +12,8 @@ import (
 	"govoice/server/runtime"
 )
 
-// NodeSpec is one graph node's LLM and TTS stages, resolved with freshly
-// decrypted credentials when the node is activated.
+// NodeSpec is one graph node's LLM and TTS stages, resolved with secrets read
+// from the environment when the node is activated.
 type NodeSpec struct {
 	Name         string
 	LLM          StageSpec
@@ -22,7 +22,7 @@ type NodeSpec struct {
 	TTSFallbacks []StageSpec
 }
 
-// wipe zeroes the decrypted credentials once the node's processors are built.
+// wipe zeroes the secrets once the node's processors are built.
 func (n *NodeSpec) wipe() {
 	clear(n.LLM.Secret)
 	clear(n.TTS.Secret)

@@ -64,19 +64,15 @@ func enableTestManagement(t *testing.T, s *Server) {
 	t.Cleanup(s.closeManagement)
 }
 
-// readyTestAgent enables the agent store and creates a complete agent backed
-// by a stored Google credential; it returns the agent ID.
+// readyTestAgent enables the agent store and creates a complete Google agent,
+// ready on the test provider environment; it returns the agent ID.
 func readyTestAgent(t *testing.T, s *Server) string {
 	t.Helper()
 	if s.agents == nil {
 		enableTestManagement(t, s)
 	}
-	cred, err := s.credentials.Create(t.Context(), credential.CreateInput{Provider: "google", Secret: "test-google-api-key"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Support", Config: json.RawMessage(strings.ReplaceAll(
-		`{"stt":{"provider":"google","model":"chirp_2","credential_id":"CRED"},"llm":{"provider":"google","model":"gemini-2.0-flash","credential_id":"CRED"},"tts":{"provider":"google","voice":"en-US-Journey-F","credential_id":"CRED"}}`, "CRED", cred.ID))})
+	a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Support", Config: json.RawMessage(
+		`{"stt":{"provider":"google","model":"chirp_2"},"llm":{"provider":"google","model":"gemini-2.0-flash"},"tts":{"provider":"google","voice":"en-US-Journey-F"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,10 +95,6 @@ func TestUnavailableAgentProvidersReported(t *testing.T) {
 	if len(bad) != 1 || bad[0] != "agent "+id+" tts=google" {
 		t.Fatalf("got %v", bad)
 	}
-}
-
-func credentialInput(provider, secret string) credential.CreateInput {
-	return credential.CreateInput{Provider: provider, Secret: secret}
 }
 
 // Development needs no setup: a local store and a persisted key are created,
@@ -146,26 +138,5 @@ func TestProductionRequiresExplicitStoreAndKey(t *testing.T) {
 	if err := s.EnableManagement(t.Context()); err == nil {
 		s.closeManagement()
 		t.Fatal("production enabled storage without explicit DSN and keyring")
-	}
-}
-
-func TestDeleteCredentialAttachedToAgentIsRefused(t *testing.T) {
-	s := apiTestServer(t)
-	agentID := readyTestAgent(t, s)
-	creds, err := s.credentials.List(t.Context())
-	if err != nil || len(creds) != 1 {
-		t.Fatalf("creds=%v err=%v", creds, err)
-	}
-	key := "management-test-key-32-bytes-long-and-separate"
-	path := "/api/v1/providers/credentials/" + creds[0].ID
-	w := apiRequest(s, http.MethodDelete, path, key, "")
-	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"credential_in_use"`) || !strings.Contains(w.Body.String(), agentID) {
-		t.Fatalf("delete attached credential: %d %s", w.Code, w.Body)
-	}
-	if err := s.agents.Archive(t.Context(), agentID); err != nil {
-		t.Fatal(err)
-	}
-	if w := apiRequest(s, http.MethodDelete, path, key, ""); w.Code != http.StatusOK {
-		t.Fatalf("delete after archiving the agent: %d %s", w.Code, w.Body)
 	}
 }

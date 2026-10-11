@@ -33,11 +33,17 @@ func apiTestServer(t *testing.T) *Server {
 // testProviderEnv is a map-backed environment with google and xai credentials.
 func testProviderEnv(t *testing.T) func(string) string {
 	t.Helper()
+	return mapEnv(testProviderVars(t))
+}
+
+// testProviderVars are the google and xai variables of testProviderEnv.
+func testProviderVars(t *testing.T) map[string]string {
+	t.Helper()
 	sa := filepath.Join(t.TempDir(), "sa.json")
 	if err := os.WriteFile(sa, []byte(`{"type":"service_account"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return mapEnv(map[string]string{"GOOGLE_API_KEY": "test-google-api-key", "GOOGLE_APPLICATION_CREDENTIALS": sa, "XAI_API_KEY": "test-xai-key"})
+	return map[string]string{"GOOGLE_API_KEY": "test-google-api-key", "GOOGLE_APPLICATION_CREDENTIALS": sa, "XAI_API_KEY": "test-xai-key"}
 }
 
 func apiRequest(s *Server, method, path, bearer, body string) *httptest.ResponseRecorder {

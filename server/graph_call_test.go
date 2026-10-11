@@ -15,8 +15,8 @@ func runtimeName(serverID, remote string) string { return runtime.ToolName(serve
 
 func twoNodeGraph(t *testing.T) agent.Graph {
 	t.Helper()
-	flat := `{"stt":{"provider":"google","credential_id":"c"},"llm":{"provider":"google","model":"m","credential_id":"c"},"tts":{"provider":"google","credential_id":"c"}}`
-	node := `{"llm":{"provider":"google","model":"m","credential_id":"c"},"tts":{"provider":"google","credential_id":"c"}}`
+	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
+	node := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	g, err := agent.DecodeGraph(json.RawMessage(`{"entry":"front","nodes":[` +
 		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + node + `}],` +
 		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`))
@@ -79,5 +79,31 @@ func TestNodeDefinitionsKeepsOnlyListedTools(t *testing.T) {
 	}
 	if len(nodeDefinitions(all, nil)) != 0 {
 		t.Fatal("a node that lists no tools exposes none")
+	}
+}
+
+// A non-entry node's secret is read when the node is activated, not at call
+// start: a variable changed mid-call reaches the node's spec.
+func TestGraphNodeActivationRereadsTheEnvironment(t *testing.T) {
+	s := apiTestServer(t)
+	env := newLiveEnv(testProviderVars(t))
+	s.env = env.get
+	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
+	node := `{"llm":{"provider":"xai","model":"grok"},"tts":{"provider":"google"}}`
+	raw := json.RawMessage(`{"entry":"front","nodes":[` +
+		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + node + `}],` +
+		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+	rs := &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: raw}}}
+	call, err := s.callSpec(t.Context(), rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.set("XAI_API_KEY", "rotated-xai-key")
+	spec, err := call.Graph.Resolve(t.Context(), "sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.LLM.Provider != "xai" || string(spec.LLM.Secret) != "rotated-xai-key" {
+		t.Fatalf("sales llm = %s %q, want the rotated xai key", spec.LLM.Provider, spec.LLM.Secret)
 	}
 }

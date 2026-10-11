@@ -26,6 +26,7 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.env = testProviderEnv(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	agentID := readyTestAgent(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {

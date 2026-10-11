@@ -18,7 +18,6 @@ import (
 	"govoice/providers/xai"
 	"govoice/server/agent"
 	"govoice/server/runtime"
-	"govoice/server/storage"
 )
 
 // maxSTTReplay caps the configurable replay buffer (60 s of 16 kHz PCM16 mono
@@ -133,8 +132,8 @@ func closeSTT(cands []core.STTCandidate) {
 // sttFallbacks resolves the STT chain after the primary. A fallback that cannot
 // be resolved now is skipped (logged and counted), not fatal. The fallback
 // inherits the primary's language unless it sets its own; model is provider-specific.
-func (s *Server) sttFallbacks(ctx context.Context, rs *runtime.Session, cfg agent.Config, creds []storage.Credential) []StageSpec {
-	return s.resolveFallbacks(ctx, rs, creds, "stt", cfg, &s.metrics.stt.FallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+func (s *Server) sttFallbacks(ctx context.Context, rs *runtime.Session, cfg agent.Config) []StageSpec {
+	return s.resolveFallbacks(ctx, rs, "stt", cfg, &s.metrics.stt.FallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
 		lang := c.Language
 		if lang == "" {
 			lang = cfg.STT.Language
