@@ -16,7 +16,7 @@ import (
 
 const (
 	// nvidiaNIMBaseURL is build.nvidia.com's OpenAI-compatible endpoint;
-	// self-hosted NIM sets base_url in the stored credential.
+	// self-hosted NIM sets base_url in the environment credential.
 	nvidiaNIMBaseURL = "https://integrate.api.nvidia.com/v1"
 	// Live-checked 2026-10 (docs/benchmarks/nvidia-live.md): streams, usage, one tool call,
 	// first token ~0.4-0.9 s (one 1.5 s). Pipecat's default nemotron-3-super reasons for
@@ -51,7 +51,7 @@ func endpointLabel(ep string) string {
 	return ep
 }
 
-// nvidiaLLMTarget resolves the stored credential to key and base URL.
+// nvidiaLLMTarget resolves the environment credential to key and base URL.
 func nvidiaLLMTarget(secret []byte) (key, baseURL string, err error) {
 	if key, baseURL, err = openAICredential(secret); err != nil {
 		return "", "", err
@@ -81,7 +81,7 @@ func nvidiaSTTCredential(secret []byte) (c struct {
 		return c, err
 	}
 	if json.Unmarshal([]byte(trimmed), &c) != nil {
-		return c, errors.New("stored credential is not valid JSON")
+		return c, errors.New("credential is not valid JSON")
 	}
 	if c.APIKey = strings.TrimSpace(c.APIKey); c.APIKey != "" {
 		if c.APIKey, err = apiKey([]byte(c.APIKey)); err != nil {

@@ -56,12 +56,12 @@ var providers = func() *catalog.Catalog {
 }()
 
 func serves(prov, stage string) bool {
-	if prov == "xai" && stage != "llm" {
-		return true
+	p, ok := providers.Provider(strings.ToLower(strings.TrimSpace(prov)))
+	if !ok {
+		return false
 	}
-	p, ok := providers.Provider(prov)
 	_, has := p.Services[stage]
-	return ok && has
+	return has
 }
 
 func (p Profile) stages() map[string]Stage {

@@ -52,8 +52,8 @@ vad:
   queue_cap: 8192
   stop_ms: 200         # silence that ends a VAD speech segment (200..2000, 32 ms steps); the turn manager's speech timeout guards mid-sentence cuts
 
-# Provider infrastructure only. Models, voices, prompts and credentials belong to
-# stored agents and provider credentials (see /api/v1/agents, /api/v1/providers).
+# Provider infrastructure only. Models, voices and prompts belong to stored agents;
+# provider secrets come from the environment (variables listed by GET /api/v1/providers).
 providers:
   google_stt:
     project_id: ""
@@ -131,7 +131,7 @@ warmup:
 # providers:
 #   openai_llm: {allow_private_base_url: false}   # self-hosted OpenAI-compatible endpoints
 #   nvidia: {allow_private: false}                # self-hosted NIM (nvidia.llm) and Riva (nvidia.stt, nvidia.tts)
-# nvidia credentials (stored through the management API, not here; not a config block):
-# - nvidia.llm: bare NVIDIA_API_KEY (default model openai/gpt-oss-20b, base https://integrate.api.nvidia.com/v1)
-# - nvidia.stt/tts: {"api_key":"nvapi-...","function_id":"1598d209-5e27-4d3c-8079-4751568b1081","tts_function_id":"877104f7-e885-42b9-8de8-f6e4c6303969"}
+# nvidia secrets come from the environment, not from this file (not a config block):
+# - nvidia.llm: NVIDIA_API_KEY (default model openai/gpt-oss-20b, base https://integrate.api.nvidia.com/v1)
+# - nvidia.stt/tts: NVIDIA_API_KEY plus NVIDIA_STT_FUNCTION_ID=1598d209-5e27-4d3c-8079-4751568b1081 and NVIDIA_TTS_FUNCTION_ID=877104f7-e885-42b9-8de8-f6e4c6303969
 # - (NVCF hosted Parakeet CTC 1.1b ASR and Magpie TTS Multilingual, voice Magpie-Multilingual.EN-US.Aria; verified live 2026-10)

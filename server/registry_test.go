@@ -102,9 +102,9 @@ func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
 		MaxMessages: 10, MaxTokens: 1000,
 	}
 
-	// Real factories fail closed without a stored credential.
+	// Real factories fail closed without a credential.
 	if _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {
-		t.Fatal("expected build to fail without provider credentials")
+		t.Fatal("expected build to fail without provider secrets")
 	}
 	call.STT.Secret, call.LLM.Secret, call.TTS.Secret = []byte("$ENV_REF"), []byte("bad key with spaces"), nil
 	if _, err := reg.BuildCallPipeline(cfg, call, vadProc, sink); err == nil {

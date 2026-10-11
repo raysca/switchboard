@@ -279,7 +279,7 @@ func NewRegistry() *Registry {
 	})
 
 	// openai.llm covers OpenAI and any chat-completions server (Groq, Together,
-	// vLLM). The stored credential is a bare API key (OpenAI) or JSON
+	// vLLM). The credential is a bare API key (OpenAI) or JSON
 	// {"api_key":"...","base_url":"https://api.groq.com/openai/v1"}.
 	r.Register("openai.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
 		key, baseURL, err := openAICredential(spec.Secret)
@@ -421,7 +421,7 @@ var registerFakeProviders func(*Registry)
 func apiKey(secret []byte) (string, error) {
 	key := strings.TrimSpace(string(secret))
 	if key == "" || strings.ContainsAny(key, " \t\r\n") {
-		return "", errors.New("stored credential must be a single API key")
+		return "", errors.New("credential must be a single API key")
 	}
 	return key, nil
 }
@@ -439,7 +439,7 @@ func openAICredential(secret []byte) (key, baseURL string, err error) {
 		BaseURL string `json:"base_url"`
 	}
 	if jerr := json.Unmarshal([]byte(trimmed), &c); jerr != nil {
-		return "", "", errors.New("stored credential is not valid JSON")
+		return "", "", errors.New("credential is not valid JSON")
 	}
 	if key, err = apiKey([]byte(c.APIKey)); err != nil {
 		return "", "", err

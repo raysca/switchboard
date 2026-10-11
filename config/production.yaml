@@ -64,8 +64,8 @@ vad:
   queue_cap: 8192
   stop_ms: 200         # silence that ends a VAD speech segment (200..2000, 32 ms steps); the turn manager's speech timeout guards mid-sentence cuts
 
-# Provider infrastructure only. Models, voices, prompts and credentials belong to
-# stored agents and provider credentials (see /api/v1/agents, /api/v1/providers).
+# Provider infrastructure only. Models, voices and prompts belong to stored agents;
+# provider secrets come from the environment (variables listed by GET /api/v1/providers).
 providers:
   google_stt:
     project_id: ""

@@ -80,7 +80,7 @@ func rejectRemovedKeys(data []byte) error {
 		}
 		for _, key := range []string{"model", "language_code", "language", "voice", "system_prompt", "api_key_env", "credentials_file", "auth_mode"} {
 			if _, ok := settings[key]; ok {
-				return fmt.Errorf("config: providers.%s.%s is no longer supported; models, voices, prompts and credentials belong to stored agents and provider credentials", provider, key)
+				return fmt.Errorf("config: providers.%s.%s is no longer supported; models, voices and prompts belong to stored agents and provider secrets come from the environment", provider, key)
 			}
 		}
 	}

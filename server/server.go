@@ -474,7 +474,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	timeline.Record(TimelineEvent{Type: EventAuthenticate, Details: fmt.Sprintf("principal=%s", principal)})
 	timeline.Record(TimelineEvent{Type: EventReady, Details: "rtvi ready"})
 
-	// 2. Pin the token's stored agent and resolve providers and credentials
+	// 2. Pin the token's stored agent and resolve providers and their environment secrets
 	resolveCtx, cancelResolve := context.WithTimeout(conn.Context(), resolveTimeout)
 	tokenID := ""
 	if claims := conn.Claims(); claims != nil {

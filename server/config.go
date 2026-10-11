@@ -48,7 +48,7 @@ type Config struct {
 		APIKeyEnv string `yaml:"api_key_env"`
 	} `yaml:"management"`
 
-	// Durable management plane (agents, provider credentials, MCP, session
+	// Durable management plane (agents, MCP, session
 	// history). Disabled when Storage.Dialect is empty; retention: see Retention.
 	Storage struct {
 		Dialect string `yaml:"dialect"` // "sqlite" | "postgres"
@@ -240,7 +240,7 @@ type Config struct {
 
 	// Provider Configurations
 	// Provider infrastructure only. What a call runs (models, voices, prompts)
-	// and its credentials come from the stored agent, never from YAML.
+	// comes from the stored agent and its secrets from the environment, never from YAML.
 	Providers struct {
 		// CatalogDir is an optional directory of overlay files that add or replace
 		// models, voices and languages in the provider catalog (server/catalog).
@@ -263,7 +263,7 @@ type Config struct {
 			Endpoint string `yaml:"endpoint"`
 		} `yaml:"xai_llm"`
 
-		// OpenAILLM base URLs come from stored credentials, so the server
+		// OpenAILLM base URLs come from the environment, so the server
 		// refuses http and loopback/private/link-local targets (SSRF) unless
 		// the operator opts in here for self-hosted vLLM. Metadata and
 		// link-local addresses stay blocked regardless.
@@ -271,7 +271,7 @@ type Config struct {
 			AllowPrivateBaseURL bool `yaml:"allow_private_base_url"`
 		} `yaml:"openai_llm"`
 
-		// Nvidia: NIM base URLs and Riva endpoints come from stored credentials;
+		// Nvidia: NIM base URLs and Riva endpoints come from the environment;
 		// loopback/private targets (self-hosted NIM or Riva) and plaintext http
 		// are refused unless the operator opts in. Link-local and metadata
 		// addresses stay blocked regardless.
