@@ -1,19 +1,19 @@
 #!/bin/bash
 # Release smoke test: builds the image, starts deploy/docker-compose.yaml (server,
-# postgres agent store, nginx), then adds a Google credential and an agent through
-# the management API and issues a voice token for that agent.
+# postgres agent store, nginx) with a Google service account mounted read-only, then
+# creates an agent through the management API (it must be ready: the server found
+# the account through GOOGLE_APPLICATION_CREDENTIALS) and issues a voice token for it.
 #
-# Required: TOKEN_SECRET, SMOKE_GOOGLE_SECRET_FILE (a file holding a Google API key
-# or a service-account JSON key), docker, openssl, jq.
-# GOVOICE_MANAGEMENT_API_KEY, GOVOICE_CREDENTIAL_KEYS and POSTGRES_PASSWORD are
-# generated when unset.
+# Required: TOKEN_SECRET, GOOGLE_APPLICATION_CREDENTIALS (host path of a Google
+# service-account JSON key), docker, openssl, jq.
+# GOVOICE_MANAGEMENT_API_KEY and POSTGRES_PASSWORD are generated when unset.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 test -n "${TOKEN_SECRET:-}"
-test -r "${SMOKE_GOOGLE_SECRET_FILE:-}"
+test -r "${GOOGLE_APPLICATION_CREDENTIALS:-}"
 command -v jq >/dev/null
+jq -e '.type == "service_account"' "$GOOGLE_APPLICATION_CREDENTIALS" >/dev/null
 export GOVOICE_MANAGEMENT_API_KEY="${GOVOICE_MANAGEMENT_API_KEY:-$(openssl rand -hex 32)}"
-export GOVOICE_CREDENTIAL_KEYS="${GOVOICE_CREDENTIAL_KEYS:-smoke:$(openssl rand -base64 32)}"
 export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(openssl rand -hex 24)}"
 mkdir -p deploy/certs
 if [[ ! -f deploy/certs/voice.example.com.crt ]]; then
@@ -23,9 +23,23 @@ if [[ ! -f deploy/certs/voice.example.com.crt ]]; then
   cp deploy/certs/voice.example.com.key deploy/certs/admin.key
 fi
 docker build -f deploy/Dockerfile -t govoice:release-security .
+# The service account reaches the container as a read-only file, never through the API.
+# A 0444 copy inside a 0700 directory: readable by the container user, not by other host users.
+sadir="$(mktemp -d)"
+cp "$GOOGLE_APPLICATION_CREDENTIALS" "$sadir/google-sa.json"
+chmod 444 "$sadir/google-sa.json"
+cat >"$sadir/override.yaml" <<EOF
+services:
+  govoice:
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/google-sa.json
+    volumes:
+      - $sadir/google-sa.json:/run/secrets/google-sa.json:ro
+EOF
+compose() { docker compose -f deploy/docker-compose.yaml -f "$sadir/override.yaml" "$@"; }
 # -v: a kept postgres volume keeps the previous run's random password.
-trap 'docker compose -f deploy/docker-compose.yaml down -v' EXIT
-docker compose -f deploy/docker-compose.yaml up -d
+trap 'compose down -v; rm -rf "$sadir"' EXIT
+compose up -d
 for _ in $(seq 1 30); do
   if curl -fsS --insecure https://127.0.0.1/health; then
     break
@@ -45,17 +59,11 @@ api() {
 
 docker exec govoice-server curl -fsS http://127.0.0.1:9090/ready
 
-# Service-account JSON is compacted (secrets may not contain control characters);
-# anything else is treated as an API key. The secret only travels through pipes.
-cred_id="$({ jq -c . "$SMOKE_GOOGLE_SECRET_FILE" 2>/dev/null || tr -d '\r\n' <"$SMOKE_GOOGLE_SECRET_FILE"; } |
-  jq -Rs '{provider: "google", secret: rtrimstr("\n")}' |
-  api POST /api/v1/providers/credentials | jq -er .data.id)"
-
-# credential_id is explicit so credentials left by earlier runs cannot make it ambiguous.
-agent="$(jq -n --arg c "$cred_id" '{name: "smoke", config: {
-  stt: {provider: "google", model: "chirp_2", language: "en-US", credential_id: $c},
-  llm: {provider: "google", model: "gemini-2.5-flash", system_prompt: "You are a release smoke test.", credential_id: $c},
-  tts: {provider: "google", voice: "en-US-Chirp3-HD-Aoede", credential_id: $c}}}' |
+# No credential is sent anywhere: the agent names providers, the server reads the environment.
+agent="$(jq -n '{name: "smoke", config: {
+  stt: {provider: "google", model: "chirp_2", language: "en-US"},
+  llm: {provider: "google", model: "gemini-2.5-flash", system_prompt: "You are a release smoke test."},
+  tts: {provider: "google", voice: "en-US-Chirp3-HD-Aoede"}}}' |
   api POST /api/v1/agents)"
 agent_id="$(jq -er .data.id <<<"$agent")"
 test "$(jq -r .data.readiness.state <<<"$agent")" = "ready"

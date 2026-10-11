@@ -9,8 +9,8 @@
 #   - the probe port does not serve the management API or /debug/timeline,
 #   - xAI speech and the other launch providers are in the build (management API via docker exec),
 #   - SIGTERM drains and exits 0.
-# Containers and the network are removed on exit. For the full flow with a Google key (credential,
-# agent, voice token through nginx) see deploy/smoke-google.sh.
+# Containers and the network are removed on exit. For the full flow with a Google service account
+# (agent, voice token through nginx) see deploy/smoke-google.sh.
 #
 # Required: docker, curl, openssl. Optional: SMOKE_IMAGE=<already built image>.
 set -euo pipefail
@@ -49,7 +49,6 @@ trap 'rm -f "$envfile"; cleanup' EXIT
 cat >"$envfile" <<EOF
 TOKEN_SECRET=$(openssl rand -hex 32)
 GOVOICE_MANAGEMENT_API_KEY=$mgmt
-GOVOICE_CREDENTIAL_KEYS=smoke:$(openssl rand -base64 32)
 GOVOICE_DATABASE_DSN=postgres://govoice:$pgpass@$run-pg:5432/govoice?sslmode=disable
 EOF
 docker run -d --name "$run-app" --network "$run-net" --read-only --cap-drop ALL \
@@ -86,9 +85,10 @@ providers="$(docker exec "$run-app" sh -c 'curl -fsS -H "Authorization: Bearer $
 for p in google xai nvidia; do
   grep -q "\"id\":\"$p\"" <<<"$providers" || fail "provider $p missing from the build"
 done
-# xAI speech is compiled in (-tags xaispeech): the xai provider advertises stt and tts, not just llm.
-jq_xai="$(tr -d ' \n' <<<"$providers" | sed 's/.*{"id":"xai"//; s/}.*//')"
-[[ "$jq_xai" == *'"stt"'* && "$jq_xai" == *'"tts"'* ]] || fail "xAI STT/TTS missing from the image (built without -tags xaispeech?): $jq_xai"
+# xAI speech is compiled in (-tags xaispeech): the xai provider lists stt and tts, and none of its
+# services is "not_in_build" (with no keys set they report "missing_env" instead).
+jq_xai="$(tr -d ' \n' <<<"$providers" | sed 's/.*{"id":"xai"//; s/{"id":"[a-z]*","display_name".*//')"
+[[ "$jq_xai" == *'"stt"'* && "$jq_xai" == *'"tts"'* && "$jq_xai" != *not_in_build* ]] || fail "xAI STT/TTS missing from the image (built without -tags xaispeech?): $jq_xai"
 
 docker kill -s TERM "$run-app" >/dev/null
 docker wait "$run-app" >/dev/null

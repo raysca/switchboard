@@ -9,8 +9,11 @@ Type=simple
 User=govoice
 Group=govoice
 
-# Binary and configuration. The environment file must set TOKEN_SECRET,
-# GOVOICE_MANAGEMENT_API_KEY, GOVOICE_DATABASE_DSN and GOVOICE_CREDENTIAL_KEYS.
+# Binary and configuration. The environment file (chmod 600, owned by root) must set
+# TOKEN_SECRET, GOVOICE_MANAGEMENT_API_KEY and GOVOICE_DATABASE_DSN, plus the provider
+# variables for the providers you use (XAI_API_KEY, GOOGLE_API_KEY,
+# GOOGLE_APPLICATION_CREDENTIALS=<path readable by govoice>, MCP_TOKEN_*; see
+# docs/providers.md). Provider keys are never stored: rotating one is an edit and a restart.
 WorkingDirectory=/opt/govoice
 EnvironmentFile=-/etc/govoice/env
 Environment=GOVOICE_ROOT=/opt/govoice

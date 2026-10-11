@@ -55,3 +55,6 @@ e2e/playwright-report-graph/
 # provider conformance run output (tools/provtest)
 provtest-results.json
 .livecheck-clips/
+
+# Deploy secrets (provider keys for docker compose)
+deploy/govoice.env

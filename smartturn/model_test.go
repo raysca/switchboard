@@ -233,7 +233,7 @@ func TestWorkerEnvSanitizedAndStderrReported(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nenv >&2\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GOVOICE_CREDENTIAL_KEYS", "s3cret-key")
+	t.Setenv("XAI_API_KEY", "s3cret-key") // provider keys live in the environment
 	t.Setenv("GOVOICE_ROOT", vad.Root())
 	_, err := NewPool(PoolConfig{Binary: script})
 	if err == nil {

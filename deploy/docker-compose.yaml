@@ -22,12 +22,17 @@ services:
         condition: service_healthy
     volumes:
       - govoice_logs:/var/log/govoice:rw
-    # Provider credentials are not passed in here: add them through
-    # POST /api/v1/providers/credentials; they are stored encrypted in the agent store.
+    # Provider keys come from the environment only and are never stored: put them in
+    # deploy/govoice.env (chmod 600, not committed), one per line, e.g. XAI_API_KEY=...,
+    # GOOGLE_API_KEY=..., MCP_TOKEN_CRM=... (docs/providers.md lists every variable).
+    # A Google service account is a file: mount it read-only and point
+    # GOOGLE_APPLICATION_CREDENTIALS at the path inside the container.
+    env_file:
+      - path: ./govoice.env
+        required: false
     environment:
       - TOKEN_SECRET=${TOKEN_SECRET:?TOKEN_SECRET is required and must not be the public development key}
       - GOVOICE_MANAGEMENT_API_KEY=${GOVOICE_MANAGEMENT_API_KEY:?GOVOICE_MANAGEMENT_API_KEY is required (>= 32 bytes)}
-      - GOVOICE_CREDENTIAL_KEYS=${GOVOICE_CREDENTIAL_KEYS:?GOVOICE_CREDENTIAL_KEYS is required (id:base64 32-byte key)}
       # POSTGRES_PASSWORD must be URL-safe (e.g. openssl rand -hex 24).
       - GOVOICE_DATABASE_DSN=postgres://govoice:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/govoice?sslmode=disable
     ports:
