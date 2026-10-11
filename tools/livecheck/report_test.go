@@ -272,3 +272,13 @@ func TestMergeDocsAccumulates(t *testing.T) {
 		}
 	}
 }
+
+func TestReportComparesMeasuredFinalToSTTP99(t *testing.T) {
+	rep := &Report{Modes: []string{"off"}, Scenarios: []string{"S1"},
+		Profiles: []ProfileReport{{Name: "google", STT: "google chirp_2 en-US"}},
+		Results:  []*Result{{Profile: "google", Mode: "off", Scenario: "S1", Status: stPass, Metrics: []KV{{"t1.final_tr_ms", int64(1400)}}}}}
+	md := renderMarkdown(rep)
+	if !strings.Contains(md, "STT final vs built-in p99") || !strings.Contains(md, "| google | off | 1400 ms | 1570 |") {
+		t.Fatalf("missing STT p99 comparison:\n%s", md)
+	}
+}

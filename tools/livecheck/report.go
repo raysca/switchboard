@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	coreturn "govoice/core/turn"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -280,6 +281,18 @@ func renderMarkdown(rep *Report) string {
 				w(" %s |", med(rs, "t1.bd_"+k+"_ms"))
 			}
 			w("\n")
+		}
+	}
+
+	w("\n## STT final vs built-in p99\n\nMedian clip end to final user transcription (S1) next to the p99 the speech timeout waits for (core/turn DefaultSTTP99); a measured value near or above the p99 means the table is stale.\n\n")
+	w("| profile | mode | final (ms) | p99 (ms) |\n|---|---|---|---|\n")
+	for _, p := range rep.Profiles {
+		for _, m := range rep.Modes {
+			rs := g[[3]string{p.Name, m, "S1"}]
+			if len(rs) == 0 || rs[0].Status == stNA || p.STT == "" {
+				continue
+			}
+			w("| %s | %s | %s | %d |\n", p.Name, m, med(rs, "t1.final_tr_ms"), coreturn.DefaultSTTP99(strings.Fields(p.STT)[0]).Milliseconds())
 		}
 	}
 
