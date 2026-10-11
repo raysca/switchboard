@@ -34,6 +34,14 @@ type providerView struct {
 	Services     map[string]serviceView `json:"services"`
 }
 
+// envOrEmpty keeps "env" a JSON array (never null) for providers with no variables.
+func envOrEmpty(env []string) []string {
+	if env == nil {
+		return []string{}
+	}
+	return env
+}
+
 func (h ProvidersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := RequestIDFromContext(r.Context())
 	if requestID == "" {
@@ -49,7 +57,7 @@ func (h ProvidersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, p := range ps {
 		v := providerView{
 			ID: p.ID, DisplayName: p.Name, Capabilities: []string{},
-			Detected: h.Resolver.Detected(p.ID), Env: h.Resolver.Env(p.ID),
+			Detected: h.Resolver.Detected(p.ID), Env: envOrEmpty(h.Resolver.Env(p.ID)),
 			Services: make(map[string]serviceView, len(p.Services)),
 		}
 		for _, name := range []string{catalog.ServiceSTT, catalog.ServiceLLM, catalog.ServiceTTS} {

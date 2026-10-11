@@ -71,9 +71,9 @@ type Service struct {
 }
 
 type Entry struct {
-	ID      string `yaml:"id"`
-	Label   string `yaml:"label"`
-	Default bool   `yaml:"default"`
+	ID      string `yaml:"id" json:"id"`
+	Label   string `yaml:"label" json:"label"`
+	Default bool   `yaml:"default" json:"default,omitempty"`
 }
 
 // AllowsCustom reports whether the UI may offer an "Other..." free-text entry.
