@@ -33,8 +33,8 @@ func dtmfTestPipeline(t *testing.T, cfg *Config) (*core.Pipeline, []StageSpec) {
 
 func TestDTMFDisabledByDefaultLeavesPipelineAndToolsUnchanged(t *testing.T) {
 	pipe, specs := dtmfTestPipeline(t, DefaultConfig(ProfileDevelopment))
-	if pipe.Len() != 9 {
-		t.Fatalf("pipeline has %d processors, want 9", pipe.Len())
+	if pipe.Len() != 10 { // with the turn processor (manager on by default)
+		t.Fatalf("pipeline has %d processors, want 10", pipe.Len())
 	}
 	for _, s := range specs {
 		for _, d := range s.Tools {

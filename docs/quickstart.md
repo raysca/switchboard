@@ -38,7 +38,7 @@ This generates:
 
 `config/development.yaml` works as-is. YAML holds only infrastructure: listeners, TLS, limits, VAD, the token issuer, provider infrastructure (Google project/location/stream quotas, xAI endpoints) and `storage.dialect`. Models, voices, prompts and credentials belong to stored agents. A `pipelines:` section is rejected at startup.
 
-Optional features (turn manager, Smart Turn, idle, DTMF, recording, OTel, redaction, audio filters, failover) are off by default and listed as commented examples at the end of `config/development.yaml`; defaults and semantics per key are in the "Default" column of [pipecat-parity-matrix.md](pipecat-parity-matrix.md).
+The turn manager is on by default (see "Turn taking" below). Optional features (Smart Turn, idle, DTMF, recording, OTel, redaction, audio filters, failover) are off by default and listed as commented examples at the end of `config/development.yaml`; defaults and semantics per key are in the "Default" column of [pipecat-parity-matrix.md](pipecat-parity-matrix.md).
 
 The agent store is required. Set its DSN, the credential encryption keyring and the management API key:
 
@@ -199,6 +199,17 @@ client.on("bot-stopped-speaking", () => {
 // Connect to the session
 await client.connect();
 ```
+
+### Turn taking
+
+The turn manager is on by default, and turns end the way Pipecat ends them. A user turn ends once all three hold:
+- the caller has been silent for the VAD stop (`vad.stop_ms`, 200 ms) plus a resume window (`turn.speech_timeout`, 600 ms);
+- a transcript exists;
+- the transcript is final, or the STT's p99 latency has passed.
+
+The p99 values are built in per provider (`core/turn/sttp99.go`: Google 1.57 s, xAI 2.14 s, Deepgram 0.35 s, ...). Override them with `turn.stt_p99` (per provider) or the agent's `stt_p99_ms`. A turn that never gets a transcript ends after `turn.no_transcript_timeout` (5 s).
+
+Upgrading from a release with the turn manager off: `turn.manager: false` restores turns that end on the raw VAD stop, but then set `vad.stop_ms: 800` too. A 200 ms raw stop cuts callers off mid-sentence, and the server logs a warning at startup.
 
 ### Text turns
 

@@ -50,7 +50,7 @@ vad:
   model_path: "third_party/silero_vad.onnx"
   ort_lib_path: ""
   queue_cap: 8192
-  stop_ms: 800         # silence that ends a VAD speech segment (200..2000, 32 ms steps); lower = faster replies, more mid-sentence cuts
+  stop_ms: 200         # silence that ends a VAD speech segment (200..2000, 32 ms steps); the turn manager's speech timeout guards mid-sentence cuts
 
 # Provider infrastructure only. Models, voices, prompts and credentials belong to
 # stored agents and provider credentials (see /api/v1/agents, /api/v1/providers).
@@ -106,10 +106,12 @@ warmup:
 # docs/pipecat-parity-matrix.md ("Default" column) and docs/quickstart.md.
 # stt: {replay_buffer: 10s}              # STT failover replay window
 # turn:
-#   manager: true                        # off by default; required for every key below
+#   manager: true                        # on by default; false ends turns on the raw VAD stop (set vad.stop_ms: 800)
 #   min_words: 0                         # >0: barge-in needs N words
 #   stop: [speech-timeout]               # speech-timeout | eager | llm-completion | turn-analyzer
-#   speech_timeout: 700ms
+#   speech_timeout: 600ms                # resume window after the VAD stop
+#   no_transcript_timeout: 5s            # end a turn that never got a transcript
+#   stt_p99: {}                          # provider: duration, overrides the built-in STT p99
 #   eager_grace: 200ms
 #   completion: {}                       # llm-completion tuning
 #   mute: []                             # always | first_speech | until_first_bot_complete | function_call | critical_output

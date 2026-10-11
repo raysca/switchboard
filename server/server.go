@@ -176,6 +176,9 @@ func NewServer(cfg *Config) (*Server, error) {
 		startedAt:    metrics.StartTime,
 		activeCalls:  make(map[uint64]*activeCall),
 	}
+	if lowVADStopWithoutManager(cfg) {
+		logger.Warn("turn.manager is off with a short vad.stop_ms: turns end on the raw VAD stop and cut callers off mid-sentence; set turn.manager: true or vad.stop_ms: 800")
+	}
 
 	if s.redactor, err = redact.New(cfg.Privacy.Redaction); err != nil {
 		return nil, err

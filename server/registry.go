@@ -447,9 +447,11 @@ func (r *Registry) Supports(provider, stage string) bool {
 	return ok
 }
 
-// CallUserContextIndex is the position of the user context processor in a
-// call pipeline; committed user turns (including client text) enter there.
-const CallUserContextIndex = 3
+// CallUserContextIndex is the position of the user context processor in the
+// default call pipeline (turn processor installed); committed user turns
+// (including client text) enter there. Callers look the processor up by type
+// and use this only as the fallback.
+const CallUserContextIndex = 4
 
 // BuildCallPipeline builds VAD -> STT -> transcript -> user context -> LLM ->
 // assistant context -> TTS -> transport for one call of a stored agent.

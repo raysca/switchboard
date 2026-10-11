@@ -185,6 +185,9 @@ func TestCallPipelineSTTFailoverLLMGetsWholeUtteranceOnce(t *testing.T) {
 	}
 	audio(3)
 	audio(4)
+	// A real utterance: the turn manager (on by default) ignores speech shorter than
+	// its 150 ms minimum, and this test is about failover, not backchannels.
+	time.Sleep(300 * time.Millisecond)
 	post(&core.UserStoppedSpeakingFrame{Gen: gen})
 
 	const want = "Heard: book a table for two"

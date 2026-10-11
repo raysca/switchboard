@@ -52,7 +52,7 @@ func TestLoadConfig_DocumentedDefaults(t *testing.T) {
 		"otel defaults":         c.OTel.QueueSize == 2048 && c.OTel.ShutdownTimeout == 5*time.Second && c.OTel.SamplingRatio == nil,
 		"timeline 500/10m":      c.Observability.TimelineMaxEvents == 500 && c.Observability.TimelineTTL == 10*time.Minute,
 		"retention off":         !c.Retention.Enabled && c.Retention.ContentRetentionDays == 7 && c.Retention.MetadataRetentionDays == 30,
-		"turn manager off":      !c.Turn.Manager,
+		"turn manager on":       c.Turn.Manager && c.VAD.StopMS == 200,
 	} {
 		if !ok {
 			t.Errorf("default not applied: %s", name)
@@ -157,5 +157,30 @@ func TestDevelopmentYAMLExamplesLoad(t *testing.T) {
 		if _, err := loadYAML(t, "profile: development\n"+b+"\n"); err != nil {
 			t.Errorf("example does not load:\n%s\n%v", b, err)
 		}
+	}
+}
+
+func TestDefaultsAreTurnManagerOnWith200msVADStop(t *testing.T) {
+	for _, p := range []Profile{ProfileDevelopment, ProfileProduction} {
+		c := DefaultConfig(p)
+		if !c.Turn.Manager || c.VAD.StopMS != 200 {
+			t.Fatalf("%s: manager=%t stop_ms=%d, want true and 200", p, c.Turn.Manager, c.VAD.StopMS)
+		}
+	}
+}
+
+// An existing YAML that turns the manager off still loads with the new defaults.
+func TestManagerOffStillLoads(t *testing.T) {
+	c := DefaultConfig(ProfileDevelopment)
+	c.Turn.Manager = false
+	if err := validateTurn(c); err != nil {
+		t.Fatalf("turn.manager: false with defaults rejected: %v", err)
+	}
+	if !lowVADStopWithoutManager(c) {
+		t.Fatal("200ms VAD stop with the manager off must warn")
+	}
+	c.VAD.StopMS = 800
+	if lowVADStopWithoutManager(c) {
+		t.Fatal("800ms VAD stop with the manager off must not warn")
 	}
 }

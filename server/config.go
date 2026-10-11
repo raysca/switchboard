@@ -128,7 +128,8 @@ type Config struct {
 	} `yaml:"tools"`
 
 	// Turn routes live calls through the turn manager (core/turn.Processor).
-	// Off by default: user turns then end on raw VAD stop as before.
+	// On by default: turns end on the transcript-gated speech timeout (Pipecat
+	// parity). Off: turns end on the raw VAD stop, which needs vad.stop_ms ~800.
 	Turn struct {
 		Manager  bool `yaml:"manager"`
 		MinWords int  `yaml:"min_words"` // >0: barge-in needs this many words while the bot speaks
@@ -342,7 +343,7 @@ func (c *Config) TurnAnalyzerMode() string {
 }
 
 // VADProcessorConfig is the per-call VAD config: library defaults with
-// vad.stop_ms applied (0 keeps the 800 ms default).
+// vad.stop_ms applied (0 keeps the 200 ms default).
 func (c *Config) VADProcessorConfig() vad.ProcessorConfig {
 	return c.VADProcessorConfigForStopMS(0)
 }

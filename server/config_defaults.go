@@ -55,7 +55,8 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.VAD.Workers = 4
 	cfg.VAD.Batch = 8
 	cfg.VAD.QueueCap = 8192
-	cfg.VAD.StopMS = 800
+	cfg.VAD.StopMS = 200 // Pipecat VAD_STOP_SECS; the gated speech timeout guards mid-sentence cuts
+	cfg.Turn.Manager = true
 	// Model paths stay empty: the vad and smartturn packages resolve their
 	// default artifacts (and GOVOICE_*_MODEL_PATH) themselves.
 	cfg.Turn.Analyzer.Workers = 1

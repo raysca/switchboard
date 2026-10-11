@@ -224,8 +224,8 @@ func TestConfig_Retention(t *testing.T) {
 
 func TestConfig_VADStopMS(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	if got := cfg.VADProcessorConfig().StopChunks; got != 25 {
-		t.Fatalf("default StopChunks=%d, want 25 (800 ms)", got)
+	if got := cfg.VADProcessorConfig().StopChunks; got != 7 {
+		t.Fatalf("default StopChunks=%d, want 7 (200 ms)", got)
 	}
 	for ms, want := range map[int]int{200: 7, 300: 10, 500: 16, 2000: 63} {
 		cfg.VAD.StopMS = ms

@@ -263,3 +263,13 @@ func ResolveTokenSecret(cfg *Config) (string, error) {
 	}
 	return secret, nil
 }
+
+// lowVADStopWithoutManager reports a config where turns end on a short raw VAD stop: with the
+// turn manager off nothing waits for the transcript, so callers get cut off mid-sentence.
+func lowVADStopWithoutManager(c *Config) bool {
+	ms := c.VAD.StopMS
+	if ms == 0 {
+		ms = 200
+	}
+	return !c.Turn.Manager && ms < 500
+}
