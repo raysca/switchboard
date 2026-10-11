@@ -61,7 +61,7 @@ Fixed = merged on `main`. Commit hashes are the fixing commits; "open" means no 
 | M2-04 | fixed | 4f35ba0 |
 | M2-05 | fixed | 5b49ad7 (runbook affinity and drain text) |
 | M2-06 | fixed | 9c66b1d (probe listener; admin stays on loopback) |
-| M3-01 | fixed, partial | d057147 (bounded look-ahead), add3ee8. Deferred: true `StreamingSynthesize` for Google TTS |
+| M3-01 | fixed, partial | d057147 (bounded look-ahead), add3ee8. `StreamingSynthesize` built 2026-10-11 for Chirp 3 HD voices |
 | M3-02 | fixed | 57f4cf6 |
 | M3-03 | fixed | 62ff1de |
 | M3-04 | fixed, partial | 26e81b8 (quota 429 no longer opens shared breakers; per-stage xAI breakers). Deferred: per-tenant breaker keys |
@@ -95,7 +95,6 @@ Found and fixed during round 7 verification (not in the original audit): idle sp
 - M1-06, M1-07, M1-08, M1-09 (low).
 - M4-18: nginx 503 retry for multi-instance edges.
 - Pin the macOS ONNX Runtime sha256 in `scripts/fetch-ort.sh`.
-- Google TTS `StreamingSynthesize` (look-ahead removes most gaps, not the unary first-byte cost).
 - Per-tenant breaker keys (breakers are still process-wide per stage).
 - Rolling upgrades: startup now fails when a stored agent uses a provider with no factory (runbook "Rolling upgrades").
 - IPv6 /48 overflow-bucket starvation (M2-01 residual).

@@ -13,6 +13,7 @@ import (
 	"govoice/core"
 	coretranscript "govoice/core/transcript"
 	coreturn "govoice/core/turn"
+	"govoice/providers/google"
 	"govoice/vad"
 )
 
@@ -561,6 +562,35 @@ func TestPushToTalkCallSkipsLLMCompletion(t *testing.T) {
 		}
 		if got := strings.Contains(prompt, core.CompletionInstructions); got == ptt {
 			t.Fatalf("push_to_talk=%t: prompt carries completion protocol=%t", ptt, got)
+		}
+	}
+}
+
+// Chirp 3 HD voices stream, every other voice stays unary, and the kill switch restores unary.
+func TestGoogleTTSFactoryStreamsChirp3HDOnly(t *testing.T) {
+	reg := NewRegistry()
+	f := reg.factories["google.tts"]
+	for _, c := range []struct {
+		voice     string
+		disable   bool
+		streaming bool
+	}{
+		{"en-US-Chirp3-HD-Aoede", false, true},
+		{"en-US-Journey-F", false, false},
+		{"en-US-Chirp-HD-D", false, false},
+		{"en-US-Chirp3-HD-Aoede", true, false},
+	} {
+		cfg := DefaultConfig(ProfileDevelopment)
+		cfg.Providers.GoogleTTS.DisableStreaming = c.disable
+		p, err := f(cfg, StageSpec{Voice: c.voice, Secret: []byte("test-api-key-0123456789")})
+		if err != nil {
+			t.Fatalf("%s: %v", c.voice, err)
+		}
+		if _, streaming := p.(*google.StreamingTTSProcessor); streaming != c.streaming {
+			t.Errorf("voice %s disable=%t: streaming=%t, want %t (%T)", c.voice, c.disable, streaming, c.streaming, p)
+		}
+		if cl, ok := p.(interface{ Close() error }); ok {
+			_ = cl.Close()
 		}
 	}
 }

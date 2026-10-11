@@ -256,6 +256,9 @@ func NewRegistry() *Registry {
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
+		if google.IsChirp3HD(ttsCfg.Voice) && !cfg.Providers.GoogleTTS.DisableStreaming {
+			return google.NewStreamingTTSProcessor(ttsCfg)
+		}
 		return google.NewTTSProcessor(ttsCfg)
 	})
 

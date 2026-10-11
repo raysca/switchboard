@@ -253,6 +253,9 @@ type Config struct {
 
 		GoogleTTS struct {
 			SampleRate int `yaml:"sample_rate"`
+			// DisableStreaming turns StreamingSynthesize off for Chirp 3 HD voices: they then use
+			// the unary request like every other voice.
+			DisableStreaming bool `yaml:"disable_streaming"`
 		} `yaml:"google_tts"`
 
 		XAILLM struct {
@@ -281,6 +284,8 @@ type Config struct {
 
 		XAITTS struct {
 			Endpoint string `yaml:"endpoint"`
+			// DisableStreaming turns the WebSocket off: every unit is one POST /v1/tts again.
+			DisableStreaming bool `yaml:"disable_streaming"`
 		} `yaml:"xai_tts"`
 	} `yaml:"providers"`
 
