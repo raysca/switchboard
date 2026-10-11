@@ -167,8 +167,15 @@ func StartServer(ctx context.Context, o ServerOpts) (*Server, error) {
 	s.cmd.Dir = o.Root
 	s.cmd.Stdout, s.cmd.Stderr = logf, logf
 	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Placeholder google keys so the catalog detects google (the fake build never uses them); they
+	// override inherited values (last wins). ENV_FILE=/dev/null: no examples/.env autoload.
+	sa := filepath.Join(o.WorkDir, "sa.json")
+	if err := os.WriteFile(sa, []byte(`{"type":"service_account"}`), 0o600); err != nil {
+		return nil, err
+	}
 	s.cmd.Env = append(os.Environ(), "GOVOICE_ROOT="+o.Root, "GOVOICE_DEV_DIR="+dev, "GOVOICE_MANAGEMENT_API_KEY="+s.key,
-		"TOKEN_SECRET="+randHex(32), "GOVOICE_FAKE_STT=audio")
+		"TOKEN_SECRET="+randHex(32), "GOVOICE_FAKE_STT=audio", "ENV_FILE=/dev/null",
+		"GOOGLE_API_KEY=fake-loadtest-key", "GOOGLE_APPLICATION_CREDENTIALS="+sa)
 	if err := s.cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -280,20 +287,12 @@ func (s *Server) api(path string, body any) (json.RawMessage, error) {
 	return env.Data, nil
 }
 
-// Provision creates the fake credential and agent, returning the agent id.
+// Provision creates the fake agent, returning its id.
 func (s *Server) Provision() (string, error) {
-	d, err := s.api("providers/credentials", map[string]string{"provider": "google", "secret": "fake-loadtest-key"})
-	if err != nil {
-		return "", err
-	}
-	var cred struct{ ID string }
-	if err := json.Unmarshal(d, &cred); err != nil || cred.ID == "" {
-		return "", fmt.Errorf("credential response: %v", err)
-	}
-	d, err = s.api("agents", map[string]any{"name": "Loadtest Fake", "description": "fake providers", "config": map[string]any{
-		"stt": map[string]any{"provider": "google", "model": "chirp_2", "language": "en-US", "credential_id": cred.ID},
-		"llm": map[string]any{"provider": "google", "model": "fake", "system_prompt": "fake", "credential_id": cred.ID},
-		"tts": map[string]any{"provider": "google", "voice": "fake", "credential_id": cred.ID}}})
+	d, err := s.api("agents", map[string]any{"name": "Loadtest Fake", "description": "fake providers", "config": map[string]any{
+		"stt": map[string]any{"provider": "google", "model": "chirp_2", "language": "en-US"},
+		"llm": map[string]any{"provider": "google", "model": "fake", "system_prompt": "fake"},
+		"tts": map[string]any{"provider": "google", "voice": "fake"}}})
 	if err != nil {
 		return "", err
 	}

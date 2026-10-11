@@ -26,6 +26,10 @@ sed -e "s|^public_listen_addr:.*|public_listen_addr: \"127.0.0.1:$PUB\"|" \
     config/development.yaml > "$OUT/server.yaml"
 
 export GOVOICE_DEV_DIR="$OUT/data" GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)" TOKEN_SECRET="$(openssl rand -hex 32)"
+# Placeholder google keys so the catalog detects google (the fake build never uses them);
+# ENV_FILE=/dev/null stops the development server loading examples/.env itself.
+(umask 077; echo '{"type":"service_account"}' > "$OUT/sa.json")
+export GOOGLE_API_KEY=fake-eval-key GOOGLE_APPLICATION_CREDENTIALS="$OUT/sa.json" ENV_FILE=/dev/null
 mkdir -p "$GOVOICE_DEV_DIR"; chmod 700 "$GOVOICE_DEV_DIR"
 "$OUT/server-fake" -config "$OUT/server.yaml" -vad-mode inprocess >"$OUT/server.log" 2>&1 &
 SRV=$!; trap 'kill $SRV 2>/dev/null; wait $SRV 2>/dev/null || true' EXIT
@@ -35,8 +39,7 @@ for _ in $(seq 1 100); do curl -fsS "http://127.0.0.1:$ADM/ready" >/dev/null 2>&
 
 api() { curl -fsS -X POST "http://127.0.0.1:$ADM/api/v1/$1" -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" -H 'Content-Type: application/json' -d "$2"; }
 jid() { python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["id"])'; }
-CRED=$(api providers/credentials '{"provider":"google","secret":"fake-eval-key"}' | jid)
-AGENT=$(api agents "{\"name\":\"Eval Fake\",\"description\":\"fake providers\",\"config\":{\"stt\":{\"provider\":\"google\",\"model\":\"chirp_2\",\"language\":\"en-US\",\"credential_id\":\"$CRED\"},\"llm\":{\"provider\":\"google\",\"model\":\"fake\",\"system_prompt\":\"fake\",\"credential_id\":\"$CRED\"},\"tts\":{\"provider\":\"google\",\"voice\":\"fake\",\"credential_id\":\"$CRED\"}}}" | jid)
+AGENT=$(api agents '{"name":"Eval Fake","description":"fake providers","config":{"stt":{"provider":"google","model":"chirp_2","language":"en-US"},"llm":{"provider":"google","model":"fake","system_prompt":"fake"},"tts":{"provider":"google","voice":"fake"}}}' | jid)
 
 fail=0
 for f in tools/eval/pipecat/scenarios/*.yaml; do
