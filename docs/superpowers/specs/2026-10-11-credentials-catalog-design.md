@@ -65,9 +65,9 @@ services:
 |---|---|---|---|---|
 | google | `api_key` (`GOOGLE_API_KEY`, token), `service_account` (`GOOGLE_APPLICATION_CREDENTIALS`, file_json) | `chirp_2` (default), `latest_long`; kind `service_account` | `gemini-2.5-flash`; kinds `api_key` then `service_account` | `en-US-Chirp3-HD-Aoede`; kind `service_account` |
 | xai | `key` (`XAI_API_KEY`) | `grok-voice-transcribe-2.0` | `grok-2-1212` | voices `eve`, `ara` |
-| elevenlabs | `key` (`ELEVENLABS_API_KEY`) | `scribe_v2_realtime` | none | model `eleven_flash_v2_5`; voice `21m00Tcm4TlvDq8ikWAM` |
+| elevenlabs | `key` (`ELEVENLABS_API_KEY`) | `scribe_v2_realtime` | none | voice `21m00Tcm4TlvDq8ikWAM` |
 | deepgram | `key` (`DEEPGRAM_API_KEY`) | `nova-3` | none | none |
-| cartesia | `key` (`CARTESIA_API_KEY`) | `ink-whisper` | none | model `sonic-3`; voice `694f9389-aac1-45b6-b726-9d9369183238` |
+| cartesia | `key` (`CARTESIA_API_KEY`) | `ink-whisper` | none | voice `694f9389-aac1-45b6-b726-9d9369183238` |
 | openai | `key` (`OPENAI_API_KEY`, optional `OPENAI_BASE_URL`; json) | none | `gpt-4o-mini` | none |
 | nvidia | `key` (`NVIDIA_API_KEY`, token), `riva` (`NVIDIA_API_KEY`, `NVIDIA_STT_FUNCTION_ID`, `NVIDIA_TTS_FUNCTION_ID`; json) | kind `riva`, needs `function_id`; language | `openai/gpt-oss-20b`; kind `key` | `Magpie-Multilingual.EN-US.Aria`; kind `riva`, needs `tts_function_id` |
 
@@ -86,7 +86,7 @@ services:
 
 ### 3. What is deleted
 
-`server/credential` (service, keyring, encryption, validation against provider APIs); `storage` credential repository and `provider_credentials`; the credential half of `server/api/providers.go`; `credentials.keyring_env` and `GOVOICE_CREDENTIAL_KEYS` (and the dev-mode generated key); the Providers page's add, rotate, update, delete and validate controls; `credential_id` everywhere in agent config (a stored or posted `credential_id` is rejected by the strict decoder, loudly, so a stale client is noticed); the "validated keys" counters on the dashboard. The initial migrations (sqlite and postgres) are edited in place: `provider_credentials` is removed, and `mcp_servers.auth_credential_id` becomes `auth_env TEXT NOT NULL DEFAULT ''`. No data migration, no drop migration.
+`server/provider` (the hard-coded definitions and the `xaiCapabilities` build-tag hook; the catalog replaces it, and adapter-factory presence, `registry.Supports`, already encodes the `xaispeech` tag); `server/credential` (service, keyring, encryption, validation against provider APIs); `storage` credential repository and `provider_credentials`; the credential half of `server/api/providers.go`; `credentials.keyring_env` and `GOVOICE_CREDENTIAL_KEYS` (and the dev-mode generated key); the Providers page's add, rotate, update, delete and validate controls; `credential_id` everywhere in agent config (a stored or posted `credential_id` is rejected by the strict decoder, loudly, so a stale client is noticed); the "validated keys" counters on the dashboard. The initial migrations (sqlite and postgres) are edited in place: `provider_credentials` is removed, and `mcp_servers.auth_credential_id` becomes `auth_env TEXT NOT NULL DEFAULT ''`. No data migration, no drop migration.
 
 ### 4. Agent config, readiness and the API
 
@@ -110,7 +110,7 @@ A service is **available** when the catalog declares it, this build has its adap
 
 ### 5. MCP bearer tokens
 
-An MCP server entry names `auth_env` (for example `MCP_TOKEN_CRM`) instead of a credential id. The name must match `^MCP_TOKEN_[A-Z0-9_]{1,48}$`: without the prefix, anyone with the management key could point a server at `TOKEN_SECRET` or `XAI_API_KEY` and have it sent to an endpoint they control. The value is read when the server connects or a tool is called, and sent only to that server's endpoint. API views show `auth_env` and `auth_env_set` (true or false), never the value. An unset variable makes the server validation state `auth_missing` (the same readiness path as an unavailable server).
+An MCP server entry names `auth_env` (for example `MCP_TOKEN_CRM`) instead of a credential id. The name must match `^MCP_TOKEN_[A-Z0-9_]{1,48}$`: without the prefix, anyone with the management key could point a server at `TOKEN_SECRET` or `XAI_API_KEY` and have it sent to an endpoint they control. The value is read when the server connects or a tool is called, and sent only to that server's endpoint. API views show `auth_env` and `auth_env_set` (true or false), never the value.
 
 ### 6. UI
 
