@@ -128,6 +128,13 @@ func (s *Service) create(ctx context.Context, req CreateRequest, mcpReviewRequir
 	if err != nil {
 		return Agent{}, err
 	}
+	g, err := DecodeGraph(config)
+	if err != nil {
+		return Agent{}, err
+	}
+	if err := checkNodeTools(g, req.MCPTools); err != nil {
+		return Agent{}, err
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -177,6 +184,9 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Age
 		if err != nil {
 			return Agent{}, err
 		}
+		if err := s.checkConfigTools(ctx, id, config); err != nil {
+			return Agent{}, err
+		}
 	}
 	if _, _, err := s.store.Agents().MutateAndPublish(ctx, id, storage.AgentMutation{
 		Name: req.Name, Description: req.Description, Enabled: req.Enabled,
@@ -184,6 +194,28 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Age
 		return Agent{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+// checkConfigTools verifies a graph's node tools against the tools the agent's
+// current version has selected (a publish copies them forward).
+func (s *Service) checkConfigTools(ctx context.Context, id string, config json.RawMessage) error {
+	g, err := DecodeGraph(config)
+	if err != nil {
+		return err
+	}
+	row, err := s.store.Agents().Current(ctx, id)
+	if err != nil {
+		return err
+	}
+	var selected []ToolSelection
+	if row.CurrentVersionID != "" {
+		rows, err := s.store.Agents().SelectedTools(ctx, row.CurrentVersionID)
+		if err != nil {
+			return err
+		}
+		selected = fromStorageSelections(rows)
+	}
+	return checkNodeTools(g, selected)
 }
 
 func (s *Service) Archive(ctx context.Context, id string) error {
@@ -311,6 +343,13 @@ func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelect
 	if err != nil {
 		return Version{}, err
 	}
+	g, err := DecodeGraph(current.ConfigJSON)
+	if err != nil {
+		return Version{}, err
+	}
+	if err := checkNodeTools(g, tools); err != nil {
+		return Version{}, err
+	}
 	version, err := s.store.Agents().PublishVersion(ctx, id, current.Version+1, current.ConfigJSON, selected)
 	if err != nil {
 		return Version{}, err
@@ -350,7 +389,7 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 	if version.MCPReviewRequired {
 		return Readiness{State: ReadinessNeedsToolReview, Reasons: []string{"mcp_tools_detached_review_required"}, ToolDependencies: []ToolDependency{}}, nil
 	}
-	parsed, parseErr := DecodeConfig(version.ConfigJSON)
+	parsed, parseErr := DecodeGraph(version.ConfigJSON)
 	if parseErr != nil {
 		return Readiness{State: ReadinessNotReady, Reasons: []string{"invalid_config"}}, nil
 	}
@@ -359,7 +398,7 @@ func (s *Service) agentReadiness(ctx context.Context, version storage.AgentVersi
 	}
 	// A stored agent can stop being callable later, e.g. when an attached
 	// credential is deleted or marked invalid.
-	reasons := append(make([]string, 0, maxReadinessReasons), AttachmentProblems(parsed, s.providers, creds)...)
+	reasons := append(make([]string, 0, maxReadinessReasons), parsed.Problems(s.providers, creds)...)
 	if archived {
 		reasons = append(reasons, "archived")
 	} else if !enabled {
@@ -460,7 +499,7 @@ func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := DecodeConfig(canonical)
+	g, err := DecodeGraph(canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +507,7 @@ func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json
 	if err != nil {
 		return nil, fmt.Errorf("list credentials: %w", err)
 	}
-	problems := append(AttachmentProblems(cfg, s.providers, creds), FallbackProblems(cfg, s.providers, creds)...)
+	problems := g.Problems(s.providers, creds)
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrNotAttached, strings.Join(problems, ", "))
 	}
@@ -483,7 +522,7 @@ func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return nil, errors.New("agent config must be a JSON object")
 	}
-	if _, err := DecodeConfig(raw); err != nil {
+	if _, err := DecodeGraph(raw); err != nil {
 		return nil, err
 	}
 	canonical, err := storage.CanonicalJSON(raw)

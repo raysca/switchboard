@@ -139,14 +139,16 @@ func (s *Server) unavailableAgentProviders(ctx context.Context) []string {
 			if !a.Enabled || a.Archived || a.Version == nil {
 				continue
 			}
-			cfg, err := agent.DecodeConfig(a.Version.Config)
+			g, err := agent.DecodeGraph(a.Version.Config)
 			if err != nil {
 				continue
 			}
-			for _, stage := range []string{"stt", "llm", "tts"} {
-				for _, c := range cfg.Chain(stage) {
-					if c.Provider != "" && !s.registry.Supports(c.Provider, stage) {
-						bad = append(bad, fmt.Sprintf("agent %s %s=%s", a.ID, stage, c.Provider))
+			for _, n := range g.Nodes {
+				for _, stage := range []string{"stt", "llm", "tts"} {
+					for _, c := range n.Config.Chain(stage) {
+						if c.Provider != "" && !s.registry.Supports(c.Provider, stage) {
+							bad = append(bad, fmt.Sprintf("agent %s %s=%s", a.ID, stage, c.Provider))
+						}
 					}
 				}
 			}

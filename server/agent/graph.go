@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"govoice/server/provider"
+	"govoice/server/storage"
 )
 
 // Graph limits keep a stored agent and a call's node set bounded.
@@ -198,4 +201,39 @@ func EntryConfig(raw json.RawMessage) (Config, error) {
 		return Config{}, err
 	}
 	return g.EntryNode().Config, nil
+}
+
+// Problems lists attachment problems for every node. Non-entry nodes have no
+// STT of their own, so they are checked with the entry's STT borrowed; their
+// problems are prefixed with the node id.
+func (g Graph) Problems(reg *provider.Registry, creds []storage.Credential) []string {
+	entry := g.EntryNode().Config
+	var out []string
+	for _, n := range g.Nodes {
+		c := n.Config
+		prefix := ""
+		if n.ID != g.Entry {
+			c.STT, prefix = entry.STT, n.ID+":"
+		}
+		for _, p := range append(AttachmentProblems(c, reg, creds), FallbackProblems(c, reg, creds)...) {
+			out = append(out, prefix+p)
+		}
+	}
+	return out
+}
+
+// checkNodeTools rejects a node that exposes a tool the agent version has not selected.
+func checkNodeTools(g Graph, selected []ToolSelection) error {
+	have := make(map[string]bool, len(selected))
+	for _, s := range selected {
+		have[s.ServerID+"/"+s.RemoteName] = true
+	}
+	for _, n := range g.Nodes {
+		for _, t := range n.Tools {
+			if !have[t] {
+				return invalid("node %q lists tool %q that the agent has not selected", n.ID, t)
+			}
+		}
+	}
+	return nil
 }

@@ -117,7 +117,7 @@ func StartSession(ctx context.Context, agents *agent.Service, mcpService *mcp.Se
 		return nil, err
 	}
 	items := make([]captured, 0, len(snapshot.MCPTools))
-	agentCfg, _ := agent.DecodeConfig(snapshot.Version.Config) // already validated at publish; unusable config = no async tools
+	agentCfg, _ := agent.EntryConfig(snapshot.Version.Config) // already validated at publish; unusable config = no async tools
 	for _, tool := range snapshot.MCPTools {
 		capturedTool, captureErr := mcpService.CaptureTool(ctx, tool.ServerID, tool.RemoteName, tool.SchemaHash)
 		if captureErr != nil {
