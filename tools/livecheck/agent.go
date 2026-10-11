@@ -94,6 +94,42 @@ func failoverConfig(p Profile, cred map[string]string, badLLMCred string) map[st
 	return cfg
 }
 
+// graphMarker is the word the Sales node must say in every reply, so S14 can tell which agent
+// answered without trusting the model to announce itself.
+const graphMarker = "catalogue"
+
+// graphConfig is the two-node agent for S14: Front hands buyers to Sales. Both nodes use the
+// profile's providers; only Front (the entry) has STT, as the server requires.
+func graphConfig(p Profile, cred map[string]string) map[string]any {
+	front := agentConfig(p, cred)
+	front["llm"].(map[string]any)["system_prompt"] = "You are the front desk of a car dealership. Answer in one short sentence. " +
+		"If the caller wants to buy a car or asks about prices, call the transfer_to_sales tool, then say one short sentence that you are connecting them."
+	sales := agentConfig(p, cred)
+	delete(sales, "stt")
+	sales["llm"].(map[string]any)["system_prompt"] = "You are the sales agent of a car dealership. Answer in one short sentence and always use the word '" + graphMarker + "'."
+	return map[string]any{
+		"entry": "front",
+		"nodes": []map[string]any{
+			{"id": "front", "name": "Front desk", "config": front},
+			{"id": "sales", "name": "Sales", "config": sales},
+		},
+		"edges": []map[string]any{{"id": "e1", "from": "front", "to": "sales", "condition": "The caller wants to buy a car or asks about prices."}},
+	}
+}
+
+// provisionGraph creates the two-node agent for S14 and returns its id.
+func (s *server) provisionGraph(p Profile, env func(string) string) (string, error) {
+	secrets, stageKey, err := credPlan(p, env)
+	if err != nil {
+		return "", err
+	}
+	cred, err := s.storeCreds(secrets, stageKey)
+	if err != nil {
+		return "", err
+	}
+	return s.id("agents", map[string]any{"name": "Live Check Graph", "description": "livecheck graph " + p.Name, "config": graphConfig(p, cred)})
+}
+
 // brokenSecret keeps a key's length and prefix but changes its last characters, so the provider
 // rejects it as invalid instead of the server refusing to store it.
 func brokenSecret(s string) string {

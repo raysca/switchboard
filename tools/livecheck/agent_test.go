@@ -2,6 +2,7 @@ package main
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,35 @@ func TestBuildPlanCoversEveryScenario(t *testing.T) {
 		if !got[sc.id] {
 			t.Errorf("%s (class %s) is missing from the plan", sc.id, sc.class.name)
 		}
+	}
+}
+
+func TestGraphConfigHasEntryWithSTTAndASalesNodeWithout(t *testing.T) {
+	p := Profile{Name: "x"}
+	p.Stages.STT = Stage{Provider: "xai"}
+	p.Stages.LLM = Stage{Provider: "xai", Model: "grok-3-mini"}
+	p.Stages.TTS = Stage{Provider: "xai", Voice: "eve"}
+	cfg := graphConfig(p, map[string]string{"stt": "c-stt", "llm": "c-llm", "tts": "c-tts"})
+	nodes := cfg["nodes"].([]map[string]any)
+	if cfg["entry"] != "front" || len(nodes) != 2 {
+		t.Fatalf("entry=%v nodes=%d", cfg["entry"], len(nodes))
+	}
+	front := nodes[0]["config"].(map[string]any)
+	sales := nodes[1]["config"].(map[string]any)
+	if _, ok := front["stt"]; !ok {
+		t.Fatal("the entry node needs STT")
+	}
+	if _, ok := sales["stt"]; ok {
+		t.Fatal("only the entry node may set STT")
+	}
+	if !strings.Contains(sales["llm"].(map[string]any)["system_prompt"].(string), graphMarker) {
+		t.Fatal("the sales prompt must carry the marker word S14 looks for")
+	}
+	if front["llm"].(map[string]any)["system_prompt"] == sales["llm"].(map[string]any)["system_prompt"] {
+		t.Fatal("each node needs its own prompt")
+	}
+	e := cfg["edges"].([]map[string]any)
+	if len(e) != 1 || e[0]["from"] != "front" || e[0]["to"] != "sales" {
+		t.Fatalf("edges = %v", e)
 	}
 }

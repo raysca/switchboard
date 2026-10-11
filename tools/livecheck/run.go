@@ -26,7 +26,7 @@ func buildPlan(profs []Profile, ms []mode, scs []scenario, repeat int, o *opts) 
 	var plan []planItem
 	for _, p := range profs {
 		for _, m := range ms {
-			for _, class := range []serverClass{classBase, classIdle, classPing, classFailover} {
+			for _, class := range []serverClass{classBase, classIdle, classPing, classFailover, classGraph} {
 				for _, sc := range scs {
 					if sc.class.name != class.name {
 						continue
@@ -183,6 +183,8 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 	var agent string
 	if first.sc.class.name == classFailover.name {
 		agent, err = srv.provisionFailover(first.prof, cfg.env)
+	} else if first.sc.class.name == classGraph.name {
+		agent, err = srv.provisionGraph(first.prof, cfg.env)
 	} else {
 		agent, err = srv.provision(first.prof, cfg.env, mcp)
 	}

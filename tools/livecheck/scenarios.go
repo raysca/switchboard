@@ -218,6 +218,16 @@ var scenarios = []scenario{
 			}
 			return ""
 		}, run: s13},
+	{id: "S14", title: "agent graph: handoff from Front to Sales, then Sales answers", class: classGraph,
+		// text turns only. Reply 1: the transfer round and Front's farewell (2 LLM requests), then Sales'
+		// greeting (1); turn 2 is one Sales reply. Three short replies, four LLM requests in all.
+		shape: func(*opts) shape { return shape{turns: 3, extraLLM: 1, short: true, noSTT: true} },
+		na: func(p Profile, _ mode, _ *opts) string {
+			if p.Fake {
+				return "fake LLM has no tools, so it cannot call the transfer tool"
+			}
+			return ""
+		}, run: s14},
 }
 
 func scenarioByID(id string) (scenario, bool) {
@@ -781,4 +791,40 @@ func s13(x *sctx, r *Result) {
 	if x.content() {
 		r.check("answer is four", fourRe.MatchString(said), "")
 	}
+}
+
+// s14: Front hands a buyer to Sales; Sales answers the greeting and the next turn.
+func s14(x *sctx, r *Result) {
+	c := x.c
+	said := func(mark time.Time) string { return strings.ToLower(c.texts(mark, "bot-llm-text", false)) }
+	c.quiet(400 * time.Millisecond)
+	mark := time.Now()
+	if err := c.sendText("I would like to buy a car. What are your prices?"); err != nil {
+		r.abort(redact(err))
+		return
+	}
+	reached := c.wait(45*time.Second, func() bool { return strings.Contains(said(mark), graphMarker) })
+	r.check("handoff reached the sales agent", reached, "")
+	r.m("reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
+	if reached {
+		r.m("handoff_ms", msv(time.Since(mark)))
+	}
+	c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
+	handoffs := 0
+	for _, e := range x.srv.timelineEvents(c.n) {
+		if e.Type == "handoff" {
+			handoffs++
+			r.m("handoff", e.Details)
+		}
+	}
+	r.check("server recorded the handoff", handoffs == 1, fmt.Sprint(handoffs))
+
+	c.quiet(600 * time.Millisecond)
+	mark = time.Now()
+	if err := c.sendText("What kinds of cars do you sell?"); err != nil {
+		r.abort(redact(err))
+		return
+	}
+	ok := c.wait(30*time.Second, func() bool { return strings.Contains(said(mark), graphMarker) })
+	r.check("the next turn is answered by the sales agent", ok, "")
 }

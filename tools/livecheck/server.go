@@ -61,6 +61,8 @@ var (
 	// classFailover runs S13 in its own server: its broken primary key must not open the
 	// process-wide breaker for the other scenarios.
 	classFailover = serverClass{"failover", ""}
+	// classGraph runs S14 in its own server: its agent is a two-node graph.
+	classGraph = serverClass{"graph", ""}
 )
 
 const pingIdleTimeout = 3 * time.Second
