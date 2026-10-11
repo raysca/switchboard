@@ -10,7 +10,8 @@ services:
   llm:
     credential: [key]
     models:
-      - {id: grok-2-1212, label: Grok 2, default: true}
+      - {id: grok-4.20-0309-non-reasoning, label: Grok 4.20 (non-reasoning), default: true}
+      - {id: grok-4.3, label: Grok 4.3}
   stt:
     credential: [key]
     models:

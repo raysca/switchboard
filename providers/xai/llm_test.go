@@ -98,7 +98,7 @@ func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 
 	cfg := Config{
 		Endpoint:   server.URL,
-		Model:      "grok-2-1212",
+		Model:      "grok-4.20-0309-non-reasoning",
 		APIKey:     "xai-test-key-1234567890",
 		HTTPClient: server.Client(),
 		ContextProvider: func() []core.Message {
@@ -153,8 +153,8 @@ func TestLLM_StoreFalseAndContextResending(t *testing.T) {
 	}
 
 	// Verify model
-	if body.Model != "grok-2-1212" {
-		t.Fatalf("expected model grok-2-1212, got: %s", body.Model)
+	if body.Model != "grok-4.20-0309-non-reasoning" {
+		t.Fatalf("expected model grok-4.20-0309-non-reasoning, got: %s", body.Model)
 	}
 
 	// Verify auth header
@@ -239,7 +239,7 @@ func TestLLM_GenerationFencing(t *testing.T) {
 
 	cfg := Config{
 		Endpoint:   server.URL,
-		Model:      "grok-2-1212",
+		Model:      "grok-4.20-0309-non-reasoning",
 		APIKey:     "xai-test-key",
 		HTTPClient: server.Client(),
 	}
@@ -297,7 +297,7 @@ func TestLLM_InterruptionCancellation(t *testing.T) {
 
 	cfg := Config{
 		Endpoint:   server.URL,
-		Model:      "grok-2-1212",
+		Model:      "grok-4.20-0309-non-reasoning",
 		APIKey:     "xai-test-key",
 		HTTPClient: server.Client(),
 	}

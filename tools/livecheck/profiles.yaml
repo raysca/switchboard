@@ -57,14 +57,14 @@ profiles:
     description: xAI STT + Grok + xAI TTS
     stages:
       stt: {provider: xai, language: en}
-      llm: {provider: xai, model: "${XAI_MODEL:-grok-2-1212}"}
+      llm: {provider: xai, model: "${XAI_MODEL:-grok-4.20-0309-non-reasoning}"}
       tts: {provider: xai}
     requires: [XAI_API_KEY]
     optional: [XAI_MODEL]
     build_tags: [xaispeech]
     notes: >-
       STT grok-voice-transcribe-2.0 and TTS voice eve are the adapter defaults (wss://api.x.ai/v1/stt,
-      https://api.x.ai/v1/tts); LLM grok-2-1212 is the adapter's pinned id (XAI_MODEL overrides).
+      https://api.x.ai/v1/tts); LLM grok-4.20-0309-non-reasoning is the adapter's pinned id (XAI_MODEL overrides).
       XAI_ENDPOINT from examples/.env is deliberately NOT passed on: production reads
       providers.xai_llm.endpoint from server.yaml and defaults to the Responses API (/v1/responses),
       which tool calls need; examples/ points it at chat/completions.
@@ -74,7 +74,7 @@ profiles:
     description: Google Chirp 2 STT + Grok + Google TTS
     stages:
       stt: {provider: google, model: chirp_2, language: en-US}
-      llm: {provider: xai, model: "${XAI_MODEL:-grok-2-1212}"}
+      llm: {provider: xai, model: "${XAI_MODEL:-grok-4.20-0309-non-reasoning}"}
       tts: {provider: google, voice: en-US-Chirp3-HD-Aoede}
     requires: [XAI_API_KEY, GOOGLE_APPLICATION_CREDENTIALS]
     optional: [XAI_MODEL, GOOGLE_API_KEY] # GOOGLE_API_KEY: S13's Gemini fallback (else the service account)

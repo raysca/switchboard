@@ -99,7 +99,7 @@ func TestResolveExpandsEnvAndDefaults(t *testing.T) {
 		t.Errorf("xai profile passed XAI_ENDPOINT through: %+v", r.Infra)
 	}
 	r = by["xai"].resolve(envOf(nil))
-	if r.Stages.LLM.Model != "grok-2-1212" {
+	if r.Stages.LLM.Model != "grok-4.20-0309-non-reasoning" {
 		t.Errorf("default model = %q", r.Stages.LLM.Model)
 	}
 	if _, ok := r.Infra["xai_llm"]["endpoint"]; ok {

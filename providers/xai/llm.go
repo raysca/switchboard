@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	PinnedModelID  = "grok-2-1212"
+	PinnedModelID  = "grok-4.20-0309-non-reasoning"
 	PinnedEndpoint = "https://api.x.ai/v1/responses"
 )
 

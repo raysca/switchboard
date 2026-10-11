@@ -138,7 +138,7 @@ func main() {
 	userCtxProc := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 
 	// 4. Initialize Native xAI LLM Processor (Grok-2 streaming)
-	model := "grok-2-1212"
+	model := "grok-4.20-0309-non-reasoning"
 	if envModel := os.Getenv("XAI_MODEL"); envModel != "" {
 		model = envModel
 	}

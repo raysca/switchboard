@@ -70,7 +70,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	t.Cleanup(r.ts.Close)
 
 	plain, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Plain", Config: json.RawMessage(
-		`{"stt":{"provider":"google","model":"chirp_2"},"llm":{"provider":"xai","model":"grok-2-1212"},"tts":{"provider":"google","voice":"en-US-Chirp3-HD-Aoede"}}`)})
+		`{"stt":{"provider":"google","model":"chirp_2"},"llm":{"provider":"xai","model":"grok-4.20-0309-non-reasoning"},"tts":{"provider":"google","voice":"en-US-Chirp3-HD-Aoede"}}`)})
 	if err != nil || plain.Readiness.State != agent.ReadinessReady {
 		t.Fatalf("plain agent: %+v err=%v", plain.Readiness, err)
 	}

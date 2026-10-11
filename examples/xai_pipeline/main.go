@@ -62,7 +62,7 @@ func main() {
 	userCtxProc := core.NewUserContextProcessor(convCtx, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 
 	// 4. xAI LLM Processor (Drop-in substitution for Google LLM)
-	model := "grok-2-1212"
+	model := "grok-4.20-0309-non-reasoning"
 	if envModel := os.Getenv("XAI_MODEL"); envModel != "" {
 		model = envModel
 	}

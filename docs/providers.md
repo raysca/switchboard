@@ -41,7 +41,7 @@ services:
   llm:
     credential: [key]       # kinds that serve this service, in preference order
     models:
-      - {id: grok-2-1212, label: Grok 2, default: true}
+      - {id: grok-4.20-0309-non-reasoning, label: Grok 4.20, default: true}
   tts:
     credential: [key]
     voices:
