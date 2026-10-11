@@ -67,8 +67,6 @@ function getReadinessLabel(state: string): string {
   }
 }
 
-type Capability = "stt" | "llm" | "tts";
-
 type AgentDraft = {
   name: string;
   description: string;

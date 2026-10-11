@@ -190,7 +190,7 @@ export function validate(g: GraphDraft): string[] {
     if (n.id === g.entry) {
       const stt = asRecord(n.config.stt);
       need(stt.provider, "STT provider");
-      }
+    }
   }
   return errors;
 }

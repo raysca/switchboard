@@ -156,7 +156,7 @@ describe("MCPView", () => {
     await user.type(screen.getByLabelText(/token variable/i), "TOKEN_SECRET");
     await user.click(screen.getByRole("button", { name: "Create Server" }));
 
-    expect(screen.getByText(/must start with MCP_TOKEN_/)).toBeVisible();
+    expect(screen.getByText(/must match MCP_TOKEN_ followed by A-Z, 0-9 or _ \(max 48\)/)).toBeVisible();
     expect(createMCPServer).not.toHaveBeenCalled();
   });
 

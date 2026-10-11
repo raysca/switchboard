@@ -101,4 +101,38 @@ describe("StageFields", () => {
     render(<Harness kind="stt" providers={[google]} initial={{ provider: "google", model: "chirp_2" }} />);
     expect(screen.getByLabelText("STT language")).toBeInTheDocument();
   });
+
+  it("keeps the fields beside the note when the stored provider is unavailable", () => {
+    render(<Harness kind="llm" providers={[xai]} initial={{ provider: "xai", model: "grok" }} />);
+    expect(screen.getByRole("note")).toHaveTextContent("XAI_API_KEY");
+    expect(screen.getByLabelText("LLM provider")).toHaveValue("xai");
+    expect(screen.getByLabelText("LLM model")).toHaveValue("grok");
+  });
+
+  it("shows a stored model and language absent from a closed catalog", () => {
+    const strict = { ...google, services: { ...google.services, stt: svc({ custom: false, models: [{ id: "m", label: "M" }], languages: [{ id: "en-US", label: "English" }] }) } };
+    render(<Harness kind="stt" providers={[strict]} initial={{ provider: "google", model: "old", language: "xx" }} />);
+    expect(screen.getByLabelText("STT model")).toHaveValue("old");
+    expect(screen.getByLabelText("STT language")).toHaveValue("xx");
+    expect(screen.queryByRole("option", { name: "Other…" })).toBeNull();
+  });
+
+  it("renders no note while providers are loading", () => {
+    render(<Harness kind="llm" providers={[]} initial={{ provider: "" }} />);
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("omits the variable list when none is missing", () => {
+    const nb: ProviderStatus = { ...xai, services: { llm: { available: false, reason: "not_in_build", custom: true } } };
+    render(<Harness kind="llm" providers={[nb]} initial={{ provider: "" }} />);
+    expect(screen.getByRole("note").textContent).toBe("No LLM provider is available.");
+  });
+
+  it("replaces the old model with the new provider's default", async () => {
+    const other: ProviderStatus = { ...google, id: "g2", display_name: "G2", services: { ...google.services, llm: svc({ models: [{ id: "n", label: "N", default: true }] }) } };
+    const spy = vi.fn();
+    render(<Harness kind="llm" providers={[google, other]} initial={{ provider: "google", model: "gemini-pro" }} spy={spy} />);
+    await userEvent.selectOptions(screen.getByLabelText("LLM provider"), "g2");
+    expect(spy).toHaveBeenLastCalledWith({ provider: "g2", model: "n" });
+  });
 });

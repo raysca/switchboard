@@ -270,7 +270,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
       return;
     }
     if (authEnvDraft.trim() && !AUTH_ENV_PATTERN.test(authEnvDraft.trim())) {
-      setFormError(`Token variable must start with ${AUTH_ENV_PREFIX} (for example ${AUTH_ENV_PREFIX}CRM).`);
+      setFormError(`Token variable must match ${AUTH_ENV_PREFIX} followed by A-Z, 0-9 or _ (max 48).`);
       return;
     }
     // onError reports failures.

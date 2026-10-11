@@ -22,11 +22,14 @@ export function StageFields({ kind, providers, value, onChange, idPrefix }: Prop
   const [otherChosen, setOtherChosen] = useState(false);
 
   const available = providers.filter((p) => p.services[kind]?.available);
-  if (available.length === 0) {
+  // No note while providers are still loading (empty list); name the variables once known.
+  let note = null;
+  if (available.length === 0 && providers.length > 0) {
     const missing = [...new Set(providers.flatMap((p) => p.services[kind]?.missing_env ?? []))];
-    return (
+    note = (
       <p className="subtext" role="note">
-        No {upper} provider is available. Set one of these on the server and restart it: {missing.join(", ")}.
+        No {upper} provider is available.
+        {missing.length > 0 && ` Set one of these on the server and restart it: ${missing.join(", ")}.`}
       </p>
     );
   }
@@ -52,6 +55,7 @@ export function StageFields({ kind, providers, value, onChange, idPrefix }: Prop
 
   return (
     <>
+      {note}
       <label className="form-field" htmlFor={`${idPrefix}-provider`}>
         <span>{upper} provider</span>
         <select id={`${idPrefix}-provider`} value={value.provider} onChange={(e) => pickProvider(e.target.value)}>
@@ -71,14 +75,15 @@ export function StageFields({ kind, providers, value, onChange, idPrefix }: Prop
           <span>{fieldLabel}</span>
           <select
             id={`${idPrefix}-${field}`}
-            value={known ? current : showOther ? OTHER : ""}
+            value={known || (!showOther && current !== "") ? current : showOther ? OTHER : ""}
             onChange={(e) => {
               const v = e.target.value;
               setOtherChosen(v === OTHER);
               onChange({ ...value, [field]: v === OTHER ? "" : v });
             }}
           >
-            {!known && !showOther && <option value="">Select…</option>}
+            {!known && !showOther && current === "" && <option value="">Select…</option>}
+            {!known && !showOther && current !== "" && <option value={current}>{current}</option>}
             {entries.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.label}
@@ -107,7 +112,8 @@ export function StageFields({ kind, providers, value, onChange, idPrefix }: Prop
             value={value.language ?? ""}
             onChange={(e) => onChange({ ...value, language: e.target.value })}
           >
-            {!languages.some((l) => l.id === value.language) && <option value="">Select…</option>}
+            {!languages.some((l) => l.id === value.language) &&
+              (value.language ? <option value={value.language}>{value.language}</option> : <option value="">Select…</option>)}
             {languages.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.label}

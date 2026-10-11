@@ -1,8 +1,6 @@
 import type { ProviderStatus } from "../../../api/client";
-import { StageFields, type StageValue } from "../StageFields";
+import { StageFields, type StageKind, type StageValue } from "../StageFields";
 import type { GraphEdge, GraphNode, NodeConfig } from "./model";
-
-type Capability = "stt" | "llm" | "tts";
 
 type NodeInspectorProps = {
   node: GraphNode;
@@ -19,12 +17,12 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** Edits one node: its name and its own LLM and voice (STT only on the entry node). */
 export function NodeInspector({ node, isEntry, providers, onChange, onMakeEntry, onRemove }: NodeInspectorProps) {
-  const setStage = (cap: Capability, patch: Record<string, unknown>) => {
+  const setStage = (cap: StageKind, patch: Record<string, unknown>) => {
     const config: NodeConfig = { ...node.config, [cap]: { ...rec(node.config[cap]), ...patch } };
     onChange({ config });
   };
   const id = (suffix: string) => `node-${node.id}-${suffix}`;
-  const stageFields = (cap: Capability) => {
+  const stageFields = (cap: StageKind) => {
     const stage = rec(node.config[cap]);
     return (
       <fieldset className="stage-box">
