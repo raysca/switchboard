@@ -45,6 +45,10 @@ type Store struct {
 	finalizePendingDeletesHook func(context.Context) error
 }
 
+// ErrPreEnvironmentCredentials refuses a database made before provider secrets
+// moved to the environment.
+var ErrPreEnvironmentCredentials = errors.New("database predates environment credentials; recreate it (see release note)")
+
 func Open(ctx context.Context, cfg Config) (*Store, error) {
 	if cfg.DSN == "" {
 		return nil, errors.New("storage DSN required")
@@ -96,6 +100,11 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	}
 	if err = db.PingContext(ctx); err != nil {
 		return fail(err)
+	}
+	// The credentials table was dropped from the schema in place, so an older
+	// database still has it and nothing would migrate it.
+	if _, err := db.ExecContext(ctx, "SELECT 1 FROM provider_credentials WHERE 1=0"); err == nil {
+		return fail(ErrPreEnvironmentCredentials)
 	}
 	fsys, err := fs.Sub(migrations.Files, subdir)
 	if err != nil {

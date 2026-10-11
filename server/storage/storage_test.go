@@ -1130,3 +1130,20 @@ func TestSchemaHasNoCredentialTable(t *testing.T) {
 		check(t, s)
 	})
 }
+
+// A database from the stored-credentials era keeps provider_credentials (the
+// schema changed in place, nothing is migrated): refuse it with a clear message.
+func TestOpenRefusesPreEnvironmentCredentialsDatabase(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "old.db")
+	s, err := Open(context.Background(), Config{Dialect: SQLite, DSN: dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().ExecContext(context.Background(), "CREATE TABLE provider_credentials (id TEXT PRIMARY KEY)"); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	if _, err := Open(context.Background(), Config{Dialect: SQLite, DSN: dsn}); !errors.Is(err, ErrPreEnvironmentCredentials) {
+		t.Fatalf("err = %v", err)
+	}
+}
