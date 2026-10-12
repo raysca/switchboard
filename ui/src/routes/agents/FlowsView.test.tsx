@@ -71,6 +71,7 @@ describe("FlowsView", () => {
     expect(within(row).getByText("Ready")).toBeVisible();
     expect(within(row).getByText("4 steps · 3 routes · 0 tools")).toBeVisible();
     await waitFor(() => expect(within(row).getByText("2 calls live, 1 on an earlier version")).toBeVisible());
+    expect(within(row).getByRole("link", { name: "2 calls live, 1 on an earlier version" })).toHaveAttribute("href", "/sessions?flow=a1&outcome=live");
     const second = screen.getByRole("link", { name: "Appointments" }).closest("li") as HTMLElement;
     expect(within(second).getByText("Disabled")).toBeVisible();
     expect(within(second).getByText("1 step · 0 routes · 0 tools")).toBeVisible();

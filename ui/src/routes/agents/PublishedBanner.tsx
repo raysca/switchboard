@@ -11,7 +11,7 @@ export function PublishedBanner({ flowName, version, olderCalls, onDismiss }: Pu
         <b>Published v{version}.</b> {flowName.trim() || "This flow"} now answers new calls with it.
         {olderCalls > 0 && ` ${olderCalls} ${olderCalls === 1 ? "call is" : "calls are"} finishing on an earlier version and will end on their own.`}
       </p>
-      <Link to="/sessions" className="action-button-small">
+      <Link to="/sessions?outcome=live" className="action-button-small">
         Watch calls
       </Link>
       <button type="button" className="icon-button" aria-label="Dismiss" onClick={onDismiss}>

@@ -210,17 +210,17 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
         </li>
       </ul>
 
-      <section className="section-block" aria-label="Recent session activity">
+      <section className="section-block" aria-label="Recent calls">
         <div className="section-row">
-          <h2>Recent sessions</h2>
+          <h2>Recent calls</h2>
           <Link to="/sessions" className="ledger__link">
-            View all sessions
+            View all calls
           </Link>
         </div>
 
         {sessions.length === 0 ? (
-          <EmptyState title="No recent sessions">
-            No voice sessions recorded yet. Start a session or voice test to view activity traces.
+          <EmptyState title="No recent calls">
+            No calls recorded yet. Test a flow to see one here.
           </EmptyState>
         ) : (
           <DataTable

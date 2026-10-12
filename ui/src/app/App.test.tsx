@@ -35,7 +35,7 @@ describe("admin shell", () => {
       "Flows",
       "Providers",
       "MCP Servers",
-      "Sessions",
+      "Calls",
       "Server",
     ]) {
       expect(screen.getByRole("link", { name })).toBeVisible();
@@ -50,9 +50,9 @@ describe("admin shell", () => {
     expect(
       screen.getByRole("link", { name: /skip to content/i }),
     ).toHaveFocus();
-    await user.click(screen.getByRole("link", { name: "Sessions" }));
-    expect(screen.getByRole("heading", { name: "Sessions" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Sessions" })).toHaveFocus();
+    await user.click(screen.getByRole("link", { name: "Calls" }));
+    expect(screen.getByRole("heading", { name: "Calls" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Calls" })).toHaveFocus();
   });
 
   it("asks for management access and never requests microphone access at boot", () => {
@@ -179,8 +179,8 @@ describe("admin shell", () => {
     }
   });
 
-  it("renders sessions area for direct session link /sessions/:sessionId", () => {
+  it("renders the call page for a direct link /sessions/:sessionId", () => {
     render(<App initialPath="/sessions/test-session-123" />);
-    expect(screen.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Connect to see this call" })).toBeVisible();
   });
 });

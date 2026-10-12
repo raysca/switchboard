@@ -23,8 +23,8 @@ import { ProvidersView } from "../routes/providers/ProvidersView";
 import { FlowsView } from "../routes/agents/FlowsView";
 import { FlowPage } from "../routes/agents/FlowPage";
 import { MCPView } from "../routes/mcp/MCPView";
-import { SessionsView } from "../routes/sessions/SessionsView";
-import { SessionDetailView } from "../routes/sessions/SessionDetailView";
+import { CallsView } from "../routes/sessions/CallsView";
+import { CallView } from "../routes/sessions/CallView";
 import { DashboardView } from "../routes/dashboard/DashboardView";
 import { ServerView } from "../routes/server/ServerView";
 import { sections } from "../routes/sections";
@@ -205,12 +205,12 @@ export function App({ initialPath }: { initialPath?: string }) {
                 />
                 <Route
                   path="/sessions"
-                  element={<SessionsView client={client} keyValue={keyValue} />}
+                  element={<CallsView client={client} keyValue={keyValue} />}
                 />
                 <Route
                   path="/sessions/:sessionId"
                   element={
-                    <SessionDetailView client={client} keyValue={keyValue} />
+                    <CallView client={client} keyValue={keyValue} />
                   }
                 />
                 <Route

@@ -123,10 +123,10 @@ describe("DashboardView", () => {
     expect(await screen.findByText("1 of 2 detected")).toBeVisible();
 
     // Recent Sessions
-    expect(screen.getByRole("heading", { name: "Recent sessions" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Recent calls" })).toBeVisible();
     expect(screen.getByText("sess-abc…")).toBeVisible();
     expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/sessions/sess-abc-1234");
-    expect(screen.getByRole("link", { name: "View all sessions" })).toHaveAttribute("href", "/sessions");
+    expect(screen.getByRole("link", { name: "View all calls" })).toHaveAttribute("href", "/sessions");
   });
 
   it("renders capacity warning alert box and degraded status when utilization is high", async () => {
@@ -156,7 +156,7 @@ describe("DashboardView", () => {
 
     renderWithProviders(<DashboardView client={client} keyValue="test-key" />);
 
-    expect(await screen.findByText("No recent sessions")).toBeVisible();
-    expect(screen.getByText(/No voice sessions recorded yet/)).toBeVisible();
+    expect(await screen.findByText("No recent calls")).toBeVisible();
+    expect(screen.getByText(/No calls recorded yet/)).toBeVisible();
   });
 });

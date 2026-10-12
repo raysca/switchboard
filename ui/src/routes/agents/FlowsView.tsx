@@ -154,7 +154,9 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
                     </p>
                     {live.live > 0 && (
                       <p>
-                        {plural(live.live, "call", "calls")} live{live.onOlderVersion > 0 ? `, ${live.onOlderVersion} on an earlier version` : ""}
+                        <Link to={`/sessions?flow=${encodeURIComponent(f.id)}&outcome=live`}>
+                          {plural(live.live, "call", "calls")} live{live.onOlderVersion > 0 ? `, ${live.onOlderVersion} on an earlier version` : ""}
+                        </Link>
                       </p>
                     )}
                   </div>

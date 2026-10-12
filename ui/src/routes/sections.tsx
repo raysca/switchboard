@@ -4,6 +4,6 @@ export const sections = [
   { path: "/flows", name: "Flows", icon: "Fl" },
   { path: "/providers", name: "Providers", icon: "Pr" },
   { path: "/mcp-servers", name: "MCP Servers", icon: "Mc" },
-  { path: "/sessions", name: "Sessions", icon: "Se" },
+  { path: "/sessions", name: "Calls", icon: "Ca" },
   { path: "/server", name: "Server", icon: "Sv" },
 ];
