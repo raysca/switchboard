@@ -1536,3 +1536,14 @@ legend {
     animation: none;
   }
 }
+.agent-node--incomplete {
+  border-style: dashed;
+  border-color: var(--ink-2);
+}
+.agent-node--incomplete .agent-node__status {
+  color: var(--bad);
+}
+.agent-canvas .agent-edge--draft .react-flow__edge-path {
+  stroke: var(--ink-2);
+  stroke-dasharray: 5 4;
+}
