@@ -1,6 +1,6 @@
-# Voice Framework V1 — Quick Start Guide
+# Switchboard — Quick Start Guide
 
-This guide gets you up and running with a real, live voice conversation using Voice Framework V1 and the official `@pipecat-ai/client-js` library.
+This guide gets you up and running with a real, live voice conversation using Switchboard and the official `@pipecat-ai/client-js` library.
 
 ---
 
@@ -266,7 +266,7 @@ can be PINs or card numbers: they are conversation content (see
 
 ## 7. Running Independent Examples
 
-Voice Framework V1 includes runnable standalone examples in `examples/` that construct complete voice pipelines programmatically without the HTTP/WebSocket server. Unlike the server, these examples read provider credentials from the environment (`GOOGLE_API_KEY` or `GOOGLE_APPLICATION_CREDENTIALS`, and `XAI_API_KEY`):
+Switchboard includes runnable standalone examples in `examples/` that construct complete voice pipelines programmatically without the HTTP/WebSocket server. Unlike the server, these examples read provider credentials from the environment (`GOOGLE_API_KEY` or `GOOGLE_APPLICATION_CREDENTIALS`, and `XAI_API_KEY`):
 
 ```bash
 # 1. Complete Google Voice Pipeline (Silero VAD + Google STT + Gemini LLM + Cloud TTS)

@@ -104,7 +104,7 @@ export function App({ initialPath }: { initialPath?: string }) {
               <span className="brand-mark" aria-hidden="true">
                 ⌁
               </span>
-              <span>go-voice</span>
+              <span>Switchboard</span>
             </div>
             <nav aria-label="Main navigation" className="navigation">
               {sections.map((section) => (

@@ -98,7 +98,7 @@ cmd_up() {
 
   cat <<EOF
 
-  go-voice dev stack
+  Switchboard dev stack
     Admin UI        http://127.0.0.1:$UI_PORT   (management key: grep MANAGEMENT ${DEV_ENV#"$ROOT"/})
     Admin API       $GOVOICE_ADMIN_URL
     Voice WebSocket $GOVOICE_WS_URL

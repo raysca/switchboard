@@ -1,10 +1,10 @@
 # Retention and Privacy Operations
 
-This document describes the operational management of trace retention, privacy controls, and OpenTelemetry export in Voice Platform V2.
+This document describes the operational management of trace retention, privacy controls, and OpenTelemetry export in Switchboard.
 
 ## Overview
 
-Voice Platform V2 distinguishes operational metadata from conversational content:
+Switchboard distinguishes operational metadata from conversational content:
 - **Operational metadata:** Session start/end timestamps, turn ordering, latencies, provider names, models, safe error categories, and span trees needed for reliability monitoring and diagnostic debugging.
 - **Conversational content:** User speech transcripts, assistant response text, tool call arguments, and tool results containing user inputs or private data.
 

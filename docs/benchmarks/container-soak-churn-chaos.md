@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-To validate production readiness, resource sizing, call churn stability, and fault tolerance without incurring cloud provider charges, a comprehensive automated performance and chaos suite was executed against the **go-voice** server running inside a resource-constrained Docker container with zero paid cloud dependencies (`-tags fakeproviders`).
+To validate production readiness, resource sizing, call churn stability, and fault tolerance without incurring cloud provider charges, a comprehensive automated performance and chaos suite was executed against the **Switchboard** server running inside a resource-constrained Docker container with zero paid cloud dependencies (`-tags fakeproviders`).
 
 ### Sizing & Budget Constraints
 - **Container Environment:** Linux container on macOS host (`arm64`), managed via Docker Compose (`deploy/docker-compose.perf.yaml`).
@@ -12,9 +12,9 @@ To validate production readiness, resource sizing, call churn stability, and fau
 - **Cloud Provider Spend:** **\$0.00** (100% offline fake STT, LLM, TTS providers with real audio streaming, protobuf binary wire framing, and Silero VAD running in process-isolated worker).
 - **Automated Runner:** `scripts/run-container-perf.sh`
 - **Generated Test Artifacts:**
-  - Capacity Report: [`reports/capacity-container.md`](file:///Users/raymondottun/Projects/go-voice/reports/capacity-container.md) ([JSON](file:///Users/raymondottun/Projects/go-voice/reports/capacity-container.json))
-  - Call Churn Report: [`reports/churn-container.md`](file:///Users/raymondottun/Projects/go-voice/reports/churn-container.md) ([JSON](file:///Users/raymondottun/Projects/go-voice/reports/churn-container.json))
-  - Chaos & Fault Injection Report: [`reports/chaos-container.md`](file:///Users/raymondottun/Projects/go-voice/reports/chaos-container.md) ([JSON](file:///Users/raymondottun/Projects/go-voice/reports/chaos-container.json))
+  - Capacity Report: [`reports/capacity-container.md`](../../reports/capacity-container.md) ([JSON](../../reports/capacity-container.json))
+  - Call Churn Report: [`reports/churn-container.md`](../../reports/churn-container.md) ([JSON](../../reports/churn-container.json))
+  - Chaos & Fault Injection Report: [`reports/chaos-container.md`](../../reports/chaos-container.md) ([JSON](../../reports/chaos-container.json))
 
 ---
 

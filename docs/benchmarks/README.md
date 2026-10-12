@@ -1,4 +1,4 @@
-# Performance gates (P5-5)
+# Performance gates
 
 `make perf-gate` fails when latency, capacity cost or leaks regress against a committed baseline **for the same machine class**. Nothing is ever compared across machines: a baseline is a file named after a label, `docs/benchmarks/baselines/<label>.json` (loadtest) and `<label>.bench.json` (framework bench). The label is `PERF_BASELINE` if set, else `<os>-<arch>-<cpus>c` (`darwin-arm64-12c`). The loadtest comparison also refuses a baseline whose OS, arch, CPU count, CPU model (unknown on either side counts as different) or run shape differs from the current run; the bench compares OS/arch/CPU count and run shape only, so an Apple M1 vs M4 with the same core count is caught by the loadtest half of the gate, not the bench half.
 

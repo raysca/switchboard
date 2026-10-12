@@ -1,12 +1,12 @@
-# Voice Framework V1 — Observability, Health & Telemetry
+# Switchboard — Observability, Health & Telemetry
 
-This document details the configuration profiles, health and readiness endpoints, Prometheus metrics, per-session diagnostic timelines, and incident troubleshooting runbooks for Voice Framework V1.
+This document details the configuration profiles, health and readiness endpoints, Prometheus metrics, per-session diagnostic timelines, and incident troubleshooting runbooks for Switchboard.
 
 ---
 
 ## 1. Configuration Profiles
 
-Voice Framework V1 uses validated YAML configuration files loaded via `server/config.go`. Unknown fields are rejected at startup (`KnownFields(true)`).
+Switchboard uses validated YAML configuration files loaded via `server/config.go`. Unknown fields are rejected at startup (`KnownFields(true)`).
 
 ### Profile Comparison
 
@@ -92,7 +92,7 @@ The series for smart-turn, audio filters, summaries, failover and warm-up are de
 
 ## 4. Per-Session Diagnostic Timeline
 
-Voice Framework V1 provides an in-memory, circular ring buffer for deep incident diagnostics at `GET /debug/timeline?session=<ID>` on the admin listener:
+Switchboard provides an in-memory, circular ring buffer for deep incident diagnostics at `GET /debug/timeline?session=<ID>` on the admin listener:
 - **Buffer Size**: Bounded to `observability.timeline_max_events` events per session (1000 in production.yaml).
 - **TTL**: Idle rings are evicted after `observability.timeline_ttl` (15m in production.yaml).
 - **Zero Content Leakage**: Transcripts and audio samples are **omitted by default**; only event names, state transitions, generation IDs, and latencies are recorded.

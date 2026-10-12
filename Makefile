@@ -65,7 +65,7 @@ eval-turn: ## free|Turn-quality gate (fake oracles; fails on threshold regressio
 
 # Paired Pipecat fixtures (docs/pipecat-parity-matrix.md): re-executes the pinned pipecat-impl components
 # from its venv (`cd pipecat-impl && uv sync` once) and rewrites tools/compat/testdata/parity/*.json.
-# Offline and deterministic; `go test ./tools/compat/...` compares go-voice against the committed goldens.
+# Offline and deterministic; `go test ./tools/compat/...` compares Switchboard against the committed goldens.
 parity-regen: ## free|Regenerate the paired Pipecat goldens (needs pipecat-impl venv)
 	@test -x pipecat-impl/.venv/bin/python || { echo "pipecat-impl/.venv missing: cd pipecat-impl && uv sync"; exit 1; }
 	cd pipecat-impl && .venv/bin/python ../tools/compat/parity/gen_goldens.py

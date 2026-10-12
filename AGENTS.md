@@ -2,9 +2,9 @@
 
 ## Mission & Identity
 
-**go-voice** is a high-throughput, low-latency, and resource-efficient Go implementation of the [Pipecat](https://github.com/pipecat-ai/pipecat) voice AI pipeline framework. It provides full compatibility with the official, unmodified Pipecat web clients (`@pipecat-ai/client-js`, `@pipecat-ai/websocket-transport`) using binary Protobuf frames and the RTVI 2.1.0 protocol over WebSockets.
+**Switchboard** is a high-throughput, low-latency, and resource-efficient Go implementation of the [Pipecat](https://github.com/pipecat-ai/pipecat) voice AI pipeline framework. It provides full compatibility with the official, unmodified Pipecat web clients (`@pipecat-ai/client-js`, `@pipecat-ai/websocket-transport`) using binary Protobuf frames and the RTVI 2.1.0 protocol over WebSockets.
 
-While Python Pipecat is hindered by interpreter GIL contention, heavy CPU overhead, and high per-session memory footprints, **go-voice** is engineered for industrial concurrency:
+While Python Pipecat is hindered by interpreter GIL contention, heavy CPU overhead, and high per-session memory footprints, **Switchboard** is engineered for industrial concurrency:
 - **Low Memory & CPU Consumption:** Bounded memory structures, ring-buffered history, zero-copy audio frames, and media-clock paced writers.
 - **Sub-200ms Barge-In Interruption:** Generation fencing that drops late model frames instantly upon speech detection.
 - **Crash Isolation:** Native C/C++ ONNX Runtime dependencies (Silero VAD, Smart Turn) run in supervised worker child processes, shielding the Go server process from segmentation faults.

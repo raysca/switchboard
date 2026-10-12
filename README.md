@@ -1,6 +1,6 @@
-# Voice Framework V1
+# Switchboard
 
-Voice Framework V1 is a high-performance, low-latency, resilient voice agent runtime built in Go. It connects bidirectional WebSocket voice clients to Google Cloud and xAI neural speech and language models with deterministic turn-taking, sub-200ms barge-in interruption, and bounded resource safety.
+Switchboard is a high-performance, low-latency, resilient voice agent runtime built in Go. It connects bidirectional WebSocket voice clients to Google Cloud and xAI neural speech and language models with deterministic turn-taking, sub-200ms barge-in interruption, and bounded resource safety.
 
 ---
 
@@ -111,24 +111,34 @@ To rotate a key, change the variable and restart.
 
 ## Documentation Index
 
-- [Quick Start Guide](docs/quickstart.md): Step-by-step guide to starting the server with its agent store, setting the provider variables, creating an agent, issuing a voice token, and connecting with the Pipecat JS client.
-- [Management API v1](docs/api/v1.md): Agents, providers, voice tokens, MCP servers and sessions.
-- [Providers](docs/providers.md): The environment variables per provider, the catalog format and the overlay directory for extra models and voices.
-- [Architecture Overview](docs/architecture.md): Core runtime model, 7-stage pipeline, generations, interruption barriers, and memory bounds.
-- [Wire Protocol & RTVI](docs/wire_protocol.md): Protobuf framing, RTVI 2.1.0 event dictionary, audio formats, resampling, and media-clock pacing.
-- [Providers & Lifecycle](docs/providers.md): Google Cloud STT/LLM/TTS, xAI Grok LLM, stream rotation, retries, and circuit breakers.
-- [Security & Admission](docs/security.md): Single-use JWT tokens, replay prevention, query token redaction, origin allowlists, and admin port isolation.
-- [Observability & Telemetry](docs/observability.md): Configuration profiles, `/health` vs `/ready`, Prometheus metrics (Spec §35), timelines, and incident troubleshooting.
-- [Pipecat Compatibility Record](docs/pipecat-compatibility.md): Pinned coordinates, preserved behaviors, intentional differences, and non-goals.
-- [Operations Runbook](docs/operations_runbook.md): Production container & systemd deployment, Nginx TLS reverse proxy, graceful drain shutdown, and failure recovery.
-- [Capacity & SLO Report](docs/benchmarks/capacity_slo_report.md): Host capacity derivation (250 calls/host), release SLO verification table, and synthetic VAD disclaimer.
-- [Release Criteria Evidence Matrix](docs/release_evidence.md): Audit table mapping every Spec §46 release criterion to passing test evidence.
+**Getting started**
+- [Quick Start Guide](docs/quickstart.md): start the server, set the provider variables, create an agent, issue a voice token, connect with the Pipecat JS client.
+- [Providers](docs/providers.md): environment variables per provider, the catalog format, and the overlay directory for extra models and voices.
+
+**API and security**
+- [Management API v1](docs/api/v1.md): agents, providers, voice tokens, MCP servers and sessions.
+- [MCP management API](docs/api/mcp.md) and [MCP transport and security policy](docs/security/mcp.md).
+- [Provider credential security](docs/security/credentials.md): secrets live only in the server's environment.
+- [Privacy policy](docs/privacy.md): what is traced, stored and recorded.
+
+**Operations**
+- [Operations Runbook](docs/operations_runbook.md): container and systemd deployment, TLS reverse proxy, graceful drain, failure recovery.
+- [Observability](docs/observability.md): `/health` vs `/ready`, Prometheus metrics, timelines, alerts.
+- [Production hardening](docs/operations/hardening.md), [storage](docs/operations/storage.md) and [retention](docs/operations/retention.md).
+- [Performance gates and benchmarks](docs/benchmarks/README.md): the baselines CI compares against, and the measured capacity and latency reports.
+
+**Behaviour and compatibility**
+- [Pipecat compatibility record](docs/pipecat-compatibility.md) and [parity matrix](docs/pipecat-parity-matrix.md): pinned versions, preserved behaviours, intentional differences, non-goals.
+- [Inbound audio filters](docs/audio-filters.md) and [output pacing and flush](docs/output-pacing-and-flush.md).
+
+**Design**
+- [Design specs](docs/superpowers/specs): the reasoning behind agent graphs, the credentials catalog, streaming TTS, turn latency and the Switchboard console.
 
 ---
 
 ## Programmatic Examples
 
-Voice Framework V1 provides standalone, executable examples independent of the HTTP/WebSocket server:
+Switchboard provides standalone, executable examples independent of the HTTP/WebSocket server:
 
 - [`examples/google_pipeline`](examples/google_pipeline/main.go): Complete Google Cloud pipeline (Silero VAD + Google STT + Gemini LLM + Cloud TTS).
 - [`examples/xai_pipeline`](examples/xai_pipeline/main.go): Scenario C interchangeable LLM pipeline (Google STT + xAI Grok LLM + Cloud TTS).
@@ -138,4 +148,4 @@ Voice Framework V1 provides standalone, executable examples independent of the H
 
 ## License
 
-Voice Framework V1 is released under the Apache 2.0 License.
+Switchboard is released under the Apache 2.0 License.

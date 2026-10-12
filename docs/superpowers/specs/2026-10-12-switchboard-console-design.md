@@ -91,7 +91,7 @@ Until each lands, the UI omits the dependent control rather than faking it.
 
 ## 6. Plans
 
-1. `docs/superpowers/plans/2026-10-12-flow-editor.md` — the unified flow editor (Section 2). **First.**
+1. The unified flow editor (Section 2). **Done:** merged; its step-by-step plan is in git history.
 2. Flows list, New flow dialog, `/flows` routes, retire `AgentForm`, live banner (boards 3–5, 12).
 3. Calls list and call detail (boards 13–14).
 4. Providers and MCP tools (boards 15–16).

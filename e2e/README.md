@@ -1,4 +1,4 @@
-# go-voice e2e (Playwright)
+# Switchboard e2e (Playwright)
 
 Full-stack browser tests against real providers. Global setup builds and starts
 the whole stack; global teardown stops it (also when setup fails).

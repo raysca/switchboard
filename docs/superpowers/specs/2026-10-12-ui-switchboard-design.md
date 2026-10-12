@@ -4,7 +4,7 @@ Status: draft for review. Date: 2026-10-12.
 
 ## Goal
 
-An internal demo of go-voice where the memorable moment is a **live call moving between agents on the graph**. The admin UI today is a grey-teal console of identical cards; the call test and live graph are buried at the bottom of the agent detail page. This work gives the UI one visual identity ("Switchboard") and rebuilds the demo path around a **call stage**.
+An internal demo of Switchboard where the memorable moment is a **live call moving between agents on the graph**. The admin UI today is a grey-teal console of identical cards; the call test and live graph are buried at the bottom of the agent detail page. This work gives the UI one visual identity ("Switchboard") and rebuilds the demo path around a **call stage**.
 
 Decisions already made with the requester: hero moment = live call + agent graph; scope = demo path only; direction = A, Switchboard, light.
 

@@ -21,5 +21,5 @@ No official Whisker package or protocol version is pinned in this repo.
 
 ## Revisit when
 A Whisker version is pinned, or someone asks to attach Whisker to a running
-`go-voice` instance. The observer API is the integration seam: a WebSocket
+Switchboard instance. The observer API is the integration seam: a WebSocket
 bridge subscribing to `DebugEvent` would be the whole implementation.

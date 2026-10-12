@@ -1,6 +1,6 @@
-# Production Hardening and Security Operations Guide (Task 26)
+# Production Hardening and Security Operations Guide
 
-This document describes the production security controls, runtime operational contracts, backup/restore procedures, and packaging standards for Voice Platform V2 per specifications §12 and §39.
+This document describes the production security controls, runtime operational contracts, backup/restore procedures, and packaging standards for Switchboard per specifications §12 and §39.
 
 ---
 

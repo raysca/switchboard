@@ -1,4 +1,4 @@
-# Inbound audio filters (P4-2)
+# Inbound audio filters
 
 Package `core/audio/filter`. Off by default: with `audio.input_filters` empty no processor is inserted and the pipeline is identical to before.
 
@@ -55,7 +55,7 @@ RNNoise, Krisp and AIC are not implemented. Each would be another `Filter` regis
 
 `voice_audio_filter_frames_total{filter}` and `voice_audio_filter_latency_seconds{filter}` (histogram). Labels come from a fixed set (`denoise`, `other`). `make bench-latency` does not send audio and is unaffected.
 
-# Output gain and background ambience (P4-3)
+# Output gain and background ambience
 
 Package `core/audio/mixer`; mixing hook in `transport/ws/pacing.go`. Both are off by default (no stage, no extra traffic).
 
