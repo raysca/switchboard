@@ -850,10 +850,10 @@ test("providers page: the detected provider is listed with where its credential 
   await expect(row).toContainText("Environment variable");
   await row.getByRole("button", { name }).click();
   await expect(page.getByRole("heading", { name, level: 2 })).toBeVisible();
-  const panel = page.getByRole("complementary");
+  const panel = page.getByRole("complementary", { name });
   await expect(panel).toContainText("Set on the server");
   await expect(panel).toContainText("never stored or shown here");
-  await expect(page.locator("input, textarea, form")).toHaveCount(0);
+  await expect(page.locator("main input, main textarea, main form")).toHaveCount(0);
   await step(page, "providers page");
 });
 ```

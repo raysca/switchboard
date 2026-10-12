@@ -47,7 +47,7 @@ test("admin UI: Google is detected from the server environment and a ready agent
   // they never pass through the API or the browser. The providers page shows only status.
   const secrets = [process.env.E2E_GOOGLE_SECRET!, process.env.E2E_GOOGLE_LLM_SECRET].filter((s): s is string => !!s);
   await page.getByRole("link", { name: "Providers", exact: true }).first().click();
-  await expect(page.getByRole("row").filter({ hasText: "Google" })).toContainText("Detected");
+  await expect(page.getByRole("row").filter({ hasText: "Google" })).toContainText("Environment variable");
   const html = await page.content();
   const echoed = secrets.some((secret) => html.includes(secret.trim().slice(0, 24)));
   expect(echoed, "a provider secret is echoed in the page").toBe(false);

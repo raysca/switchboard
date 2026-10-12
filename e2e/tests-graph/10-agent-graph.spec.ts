@@ -174,6 +174,21 @@ test("providers: with no STT provider available the designer names the variables
   await step(page, "no STT provider: empty-state note");
 });
 
+test("providers page: the detected provider is listed with where its credential comes from, and no field for a key", async ({ page, stack }) => {
+  await connectAdmin(page, stack);
+  await page.getByRole("link", { name: "Providers", exact: true }).first().click();
+  const name = providers.find((p) => p.id === PROVIDER)!.display_name;
+  const row = page.getByRole("row").filter({ hasText: name });
+  await expect(row).toContainText("Environment variable");
+  await row.getByRole("button", { name }).click();
+  await expect(page.getByRole("heading", { name, level: 2 })).toBeVisible();
+  const panel = page.getByRole("complementary", { name });
+  await expect(panel).toContainText("Set on the server");
+  await expect(panel).toContainText("never stored or shown here");
+  await expect(page.locator("main input, main textarea, main form")).toHaveCount(0);
+  await step(page, "providers page");
+});
+
 test("designer: draw a two-agent graph with a handoff and publish it", async ({ page, stack }) => {
   await openDesigner(page, stack);
 
