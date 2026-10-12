@@ -194,11 +194,11 @@ textarea:focus-visible {
   content: "";
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--ink-2);
 }
 .status--good::before {
-  background: var(--caller);
+  background: var(--ok);
 }
 .status--bad::before {
   background: var(--bad);
@@ -208,33 +208,34 @@ main {
   padding: clamp(36px, 6vw, 76px) clamp(24px, 5vw, 72px) 60px;
 }
 .section-heading {
-  padding-bottom: 36px;
+  padding-bottom: 28px;
   border-bottom: 1px solid var(--rule);
 }
 .section-heading h1 {
-  font-size: clamp(2.4rem, 5vw, 4.1rem);
-  letter-spacing: -0.055em;
-  line-height: 1.08;
-  margin: 0 0 14px;
-  font-weight: 450;
+  font-size: clamp(2rem, 4vw, 2.667rem);
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin: 0 0 12px;
+  font-weight: 800;
 }
 .section-heading p {
-  font-size: 1.07rem;
+  font-size: 1.2rem;
   color: var(--ink-2);
   margin: 0;
   max-width: 62ch;
   line-height: 1.6;
 }
 .message-panel {
-  margin-top: 48px;
+  margin-top: 36px;
   border-left: 3px solid var(--caller);
   padding: 3px 0 4px 27px;
   max-width: 62ch;
 }
 .message-panel h2 {
-  font-size: 1.35rem;
-  letter-spacing: -0.025em;
-  font-weight: 450;
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  font-weight: 600;
   margin: 0 0 10px;
 }
 .message-panel p {
@@ -296,22 +297,23 @@ main {
   border: 1px solid var(--ink-2);
   background: var(--surface);
   color: var(--ink);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: 9px 11px;
   min-width: 220px;
 }
 .action-button,
 .message-panel button {
   background: var(--caller);
-  color: white;
+  color: var(--surface);
   border: 1px solid var(--caller);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: 9px 15px;
+  font-weight: 600;
   white-space: nowrap;
 }
 .action-button:hover,
 .message-panel button:hover {
-  background: var(--caller);
+  background: color-mix(in srgb, var(--caller) 85%, var(--ink));
 }
 .capability-line {
   display: flex;
@@ -334,7 +336,6 @@ table {
   border-collapse: collapse;
   text-align: left;
   width: 100%;
-  max-width: 700px;
 }
 caption {
   text-align: left;
@@ -347,13 +348,9 @@ td {
   padding: 14px 18px 14px 0;
 }
 th {
-  font-size: 0.85rem;
+  font-size: 0.87rem;
   color: var(--ink-2);
-  font-weight: 450;
-}
-td:last-child {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.9rem;
+  font-weight: 600;
 }
 @media (max-width: 760px) {
   .app-layout {
@@ -448,24 +445,22 @@ td:last-child {
   border: 1px solid var(--ink-2);
   background: var(--surface);
   color: var(--ink);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: 9px 11px;
   font: inherit;
 }
 .form-card {
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  padding: 24px;
+  padding: 8px 0 0;
   margin-top: 16px;
   max-width: 640px;
   display: grid;
   gap: 16px;
 }
 .action-button-small {
-  background: var(--caller);
-  color: white;
+  background: transparent;
+  color: var(--caller);
   border: 1px solid var(--caller);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: 6px 12px;
   font-size: 0.82rem;
   font-weight: 450;
@@ -475,14 +470,14 @@ td:last-child {
   white-space: nowrap;
 }
 .action-button-small:hover {
-  background: var(--caller);
+  background: color-mix(in srgb, var(--caller) 10%, transparent);
 }
 .action-button-danger {
-  background: var(--bad);
+  color: var(--bad);
   border-color: var(--bad);
 }
 .action-button-danger:hover {
-  background: var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
 }
 .action-buttons-cell {
   display: flex;
@@ -493,10 +488,9 @@ td:last-child {
 .masked-value {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.85rem;
-  letter-spacing: 0.05em;
   background: var(--paper);
   padding: 2px 6px;
-  border-radius: 2px;
+  border-radius: var(--radius);
 }
 .subtext {
   font-size: 0.8rem;
@@ -512,13 +506,13 @@ td:last-child {
   font-size: 0.78rem;
   font-weight: 450;
   padding: 3px 8px;
-  border-radius: 3px;
+  border-radius: var(--radius);
   background: var(--paper);
   color: var(--ink);
 }
 .badge--good {
-  background: var(--paper);
-  color: var(--caller);
+  background: color-mix(in srgb, var(--ok) 14%, var(--surface));
+  color: var(--ok);
 }
 .badge--bad {
   background: color-mix(in srgb, var(--bad) 12%, var(--surface));
@@ -540,7 +534,7 @@ td:last-child {
   padding: 16px 20px;
   margin-top: 16px;
   margin-bottom: 16px;
-  border-radius: 2px;
+  border-radius: var(--radius);
 }
 .alert-box h3 {
   margin: 0 0 6px;
@@ -564,7 +558,7 @@ td:last-child {
   padding: 16px;
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 2px;
+  border-radius: var(--radius);
 }
 .pagination-bar {
   display: flex;
@@ -593,13 +587,11 @@ td:last-child {
 .meta-card {
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: 16px;
 }
 .meta-card .label {
   font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-2);
   margin-bottom: 4px;
 }
@@ -619,7 +611,7 @@ td:last-child {
 .turn-card {
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: 20px;
 }
 .turn-header {
@@ -645,7 +637,7 @@ td:last-child {
 }
 .turn-bubble {
   padding: 12px 16px;
-  border-radius: 4px;
+  border-radius: var(--radius);
   line-height: 1.5;
   font-size: 0.95rem;
 }
@@ -660,8 +652,6 @@ td:last-child {
 .bubble-speaker {
   font-size: 0.75rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   color: var(--ink-2);
   margin-bottom: 4px;
 }
@@ -686,7 +676,7 @@ td:last-child {
   background: var(--paper);
   border: 1px solid var(--rule);
   padding: 2px 8px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--ink-2);
 }
 
@@ -706,7 +696,7 @@ td:last-child {
 .trace-item {
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: 10px 14px;
   font-size: 0.85rem;
 }
@@ -723,7 +713,7 @@ td:last-child {
 .console-box {
   background: var(--ink);
   color: var(--paper);
-  border-radius: 3px;
+  border-radius: var(--radius);
   padding: 16px;
   margin-top: 12px;
   font-family: "IBM Plex Mono", monospace;
@@ -739,7 +729,7 @@ td:last-child {
   color: var(--ink);
   border: 1px solid var(--ink-2);
   padding: 8px;
-  border-radius: 2px;
+  border-radius: var(--radius);
 }
 
 /* Operational Dashboard & Health Banner */
@@ -751,7 +741,7 @@ td:last-child {
   background: var(--surface);
   border: 1px solid var(--rule);
   border-left: 5px solid var(--caller);
-  border-radius: 2px;
+  border-radius: var(--radius);
   margin-top: 16px;
   margin-bottom: 24px;
 }
@@ -784,7 +774,7 @@ td:last-child {
   font-size: 0.82rem;
   background: var(--paper);
   padding: 3px 8px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--ink);
 }
 .summary-grid {
@@ -797,7 +787,7 @@ td:last-child {
 .summary-card {
   background: var(--surface);
   border: 1px solid var(--rule);
-  border-radius: 2px;
+  border-radius: var(--radius);
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -842,7 +832,7 @@ td:last-child {
   min-width: 170px;
   padding: 10px 12px;
   border: 2px solid var(--rule);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--surface);
   font-size: 0.85rem;
 }
@@ -871,7 +861,7 @@ td:last-child {
   font-size: 0.7rem;
   font-weight: 450;
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: var(--paper);
   color: var(--ink);
 }
