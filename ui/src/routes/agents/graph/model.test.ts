@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_NODES,
+  addDraftRoute,
   addNode,
   connect,
   connectError,
+  emptyFlow,
+  flowIssues,
   fromAgentConfig,
+  isUnreachable,
   removeNode,
   setEntry,
   slug,
+  stepIssues,
   toPayload,
+  uniqueName,
   validate,
 } from "./model";
 
@@ -137,5 +143,77 @@ describe("graph model", () => {
     expect(validate({ ...base, handoff_cue: { name: "Bad Name" } }).join(" ")).toMatch(/sound name/);
     expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 20000 } }).join(" ")).toMatch(/after/);
     expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 300 } })).toEqual([]);
+  });
+});
+
+describe("flow authoring", () => {
+  const ready = { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "v" } };
+  const two = () =>
+    fromAgentConfig({
+      entry: "a",
+      nodes: [
+        { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
+        { id: "b", name: "Billing", config: ready },
+      ],
+      edges: [],
+    });
+
+  it("starts a blank flow with no steps, and the first step added becomes the start step", () => {
+    const g = addNode(emptyFlow(), "New step");
+    expect(g.nodes).toHaveLength(1);
+    expect(g.entry).toBe(g.nodes[0].id);
+    expect(g.nodes[0].config).toEqual({});
+  });
+
+  it("names new steps uniquely", () => {
+    const g = addNode(addNode(emptyFlow(), "New step"), "New step 2");
+    expect(uniqueName(emptyFlow(), "New step")).toBe("New step");
+    expect(uniqueName(g, "New step")).toBe("New step 3");
+  });
+
+  it("adds a draft route with an empty condition and refuses self, duplicate and unknown routes", () => {
+    const g = addDraftRoute(two(), "a", "b");
+    expect(g.edges).toEqual([expect.objectContaining({ from: "a", to: "b", condition: "" })]);
+    expect(addDraftRoute(g, "a", "b")).toBe(g);
+    expect(addDraftRoute(g, "a", "a")).toBe(g);
+    expect(addDraftRoute(g, "a", "zzz")).toBe(g);
+  });
+
+  it("reports what a step still needs, by the tab that fixes it", () => {
+    const blank = addNode(emptyFlow(), "New step");
+    expect(stepIssues(blank, blank.entry)).toEqual([
+      { tab: "basics", message: "Choose a model." },
+      { tab: "basics", message: "Choose a voice." },
+    ]);
+    const routed = addDraftRoute(two(), "a", "b");
+    expect(stepIssues(routed, "a")).toEqual([{ tab: "routes", message: "Give the route to Billing a condition." }]);
+    expect(stepIssues(two(), "b")).toEqual([]);
+  });
+
+  it("flags duplicate and empty step names on the basics tab", () => {
+    const g = { ...two(), nodes: two().nodes.map((n) => ({ ...n, name: n.id === "b" ? "reception" : n.name })) };
+    expect(stepIssues(g, "b")).toContainEqual({ tab: "basics", message: "Another step has this name." });
+    const unnamed = { ...two(), nodes: two().nodes.map((n) => ({ ...n, name: n.id === "b" ? "  " : n.name })) };
+    expect(stepIssues(unnamed, "b")).toContainEqual({ tab: "basics", message: "Give the step a name." });
+  });
+
+  it("reports flow-level problems: speech-to-text and recording disclosure", () => {
+    const noStt = addNode(emptyFlow(), "New step");
+    expect(flowIssues(noStt)).toEqual(["Choose speech-to-text in Flow settings."]);
+    const g = two();
+    const rec = { ...g, nodes: g.nodes.map((n) => (n.id === "a" ? { ...n, config: { ...n.config, recording: { enabled: true, disclosure_confirmed: false } } } : n)) };
+    expect(flowIssues(rec)).toEqual(["Confirm that callers are told the call is recorded."]);
+    expect(flowIssues(g)).toEqual([]);
+    expect(flowIssues(emptyFlow())).toEqual([]);
+  });
+
+  it("knows which steps no route leads to", () => {
+    expect(isUnreachable(two(), "b")).toBe(true);
+    expect(isUnreachable(two(), "a")).toBe(false);
+    expect(isUnreachable(addDraftRoute(two(), "a", "b"), "b")).toBe(false);
+  });
+
+  it("blocks publishing while a route has no condition", () => {
+    expect(validate(addDraftRoute(two(), "a", "b"))).toContain("The route from Reception to Billing needs a condition.");
   });
 });

@@ -40,6 +40,64 @@ function newId(): string {
 const asRecord = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
+export type StepTab = "basics" | "routes" | "tools" | "advanced";
+export type StepIssue = { tab: StepTab; message: string };
+
+/** A flow with no steps yet: the editor shows "Start with one step." */
+export function emptyFlow(): GraphDraft {
+  return { entry: "", nodes: [], edges: [] };
+}
+
+/** "New step", then "New step 2", "New step 3"… so step names stay unique. */
+export function uniqueName(g: GraphDraft, base: string): string {
+  const taken = new Set(g.nodes.map((n) => slug(n.name)));
+  if (!taken.has(slug(base))) return base;
+  for (let i = 2; ; i++) if (!taken.has(slug(`${base} ${i}`))) return `${base} ${i}`;
+}
+
+const blank = (v: unknown) => !String(v ?? "").trim();
+const nameIn = (g: GraphDraft, id: string) => g.nodes.find((n) => n.id === id)?.name.trim() || "Untitled step";
+
+/** What one step still needs before it can take calls, by the panel tab that fixes it. */
+export function stepIssues(g: GraphDraft, id: string): StepIssue[] {
+  const n = g.nodes.find((x) => x.id === id);
+  if (!n) return [];
+  const issues: StepIssue[] = [];
+  if (!slug(n.name)) issues.push({ tab: "basics", message: "Give the step a name." });
+  else if (g.nodes.some((o) => o.id !== id && slug(o.name) === slug(n.name))) issues.push({ tab: "basics", message: "Another step has this name." });
+  const llm = asRecord(n.config.llm);
+  if (blank(llm.provider) || blank(llm.model)) issues.push({ tab: "basics", message: "Choose a model." });
+  if (blank(asRecord(n.config.tts).provider)) issues.push({ tab: "basics", message: "Choose a voice." });
+  for (const e of g.edges)
+    if (e.from === id && blank(e.condition)) issues.push({ tab: "routes", message: `Give the route to ${nameIn(g, e.to)} a condition.` });
+  return issues;
+}
+
+/** Problems that belong to the whole flow (header state line and Flow settings). */
+export function flowIssues(g: GraphDraft): string[] {
+  if (g.nodes.length === 0) return [];
+  const start = g.nodes.find((n) => n.id === g.entry);
+  if (!start) return ["Choose a start step."];
+  const out: string[] = [];
+  if (blank(asRecord(start.config.stt).provider)) out.push("Choose speech-to-text in Flow settings.");
+  const rec = asRecord(start.config.recording);
+  if (rec.enabled === true && rec.disclosure_confirmed !== true) out.push("Confirm that callers are told the call is recorded.");
+  return out;
+}
+
+/** A step no route leads to; callers can never reach it. The start step is always reachable. */
+export function isUnreachable(g: GraphDraft, id: string): boolean {
+  return id !== g.entry && !g.edges.some((e) => e.to === id);
+}
+
+/** A route drawn on the graph: no condition yet, the step panel asks for one. */
+export function addDraftRoute(g: GraphDraft, from: string, to: string): GraphDraft {
+  const known = (id: string) => g.nodes.some((n) => n.id === id);
+  if (from === to || !known(from) || !known(to) || g.edges.length >= MAX_EDGES) return g;
+  if (g.edges.some((e) => e.from === from && e.to === to)) return g;
+  return { ...g, edges: [...g.edges, { id: newId(), from, to, condition: "" }] };
+}
+
 /**
  * Reads a stored agent config, flat or graph, as a draft. A flat agent exposes
  * every MCP tool selected on its version; as a graph's entry node it must list
@@ -99,6 +157,10 @@ export function toPayload(g: GraphDraft): unknown {
 /** A new node starts from the entry's model and voice (without its prompt) so it is valid at once. */
 export function addNode(g: GraphDraft, name: string): GraphDraft {
   if (g.nodes.length >= MAX_NODES) return g;
+  if (g.nodes.length === 0) {
+    const id = newId();
+    return { ...g, entry: id, nodes: [{ id, name, config: {}, tools: [], position: { x: 0, y: 0 } }] };
+  }
   const entry = g.nodes.find((n) => n.id === g.entry);
   const llm = { ...asRecord(entry?.config.llm) };
   delete llm.system_prompt;
@@ -192,5 +254,8 @@ export function validate(g: GraphDraft): string[] {
       need(stt.provider, "STT provider");
     }
   }
+  for (const e of g.edges)
+    if (blank(e.condition)) errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} needs a condition.`);
+  errors.push(...flowIssues(g).filter((m) => !m.startsWith("Choose speech-to-text")));
   return errors;
 }
