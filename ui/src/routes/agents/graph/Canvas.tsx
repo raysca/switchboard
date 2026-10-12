@@ -143,6 +143,8 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
   return (
     <div className="agent-canvas" style={{ height }} data-testid="agent-canvas">
       <ReactFlow
+        // Re-fit when a step is added or removed, so a new step is never left off-screen.
+        key={graph.nodes.length}
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
@@ -156,6 +158,7 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
         nodesConnectable={!readOnly}
         elementsSelectable
         fitView
+        fitViewOptions={{ maxZoom: 1 }}
         proOptions={{ hideAttribution: true }}
       >
         <Background />

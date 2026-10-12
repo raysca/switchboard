@@ -67,7 +67,7 @@ async function connectAdmin(page: Page, stack: Stack) {
 }
 
 async function openAgentsList(page: Page) {
-  await page.getByRole("link", { name: "Agents", exact: true }).first().click();
+  await page.getByRole("link", { name: "Flows", exact: true }).first().click();
 }
 
 async function openAgentDetail(page: Page, name: string) {
@@ -117,9 +117,15 @@ const stage = (extra: object = {}) => ({ provider: PROVIDER, ...extra });
 async function openDesigner(page: Page, stack: Stack) {
   await connectAdmin(page, stack);
   await openAgentsList(page);
-  await page.getByRole("button", { name: "+ Create graph agent" }).click();
-  await expect(page.getByRole("heading", { name: "Design a graph agent" })).toBeVisible();
+  await page.getByRole("button", { name: "New flow" }).click();
+  await expect(page.getByRole("heading", { name: "New flow" })).toBeVisible();
+  await page.getByRole("button", { name: "Add first step" }).click();
+  await page.getByLabel("Step name").fill("Main agent");
 }
+
+// A step on the React Flow canvas: clicking it opens its panel.
+const stepCard = (page: Page, name: string) => page.locator(".react-flow__node").filter({ hasText: name });
+const openFlowSettings = (page: Page) => page.getByRole("button", { name: "Flow settings" }).click();
 
 test.beforeAll(async () => {
   if (LIVE && !process.env.E2E_XAI_SECRET) return; // skipped run: no stack
@@ -130,7 +136,9 @@ test("providers: the suite's provider is detected and only detected providers ar
   // The server reads provider secrets from its environment (global setup); none goes through the API.
   expect(providers.find((p) => p.id === PROVIDER)?.detected).toBe(true);
   await openDesigner(page, stack);
-  for (const kind of ["stt", "llm", "tts"] as const) {
+  // Model and voice are on the step panel; speech-to-text is in Flow settings.
+  for (const kind of ["llm", "tts", "stt"] as const) {
+    if (kind === "stt") await openFlowSettings(page);
     const offered = await page.getByLabel(`${kind.toUpperCase()} provider`).locator("option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
     const available = providers.filter((p) => p.services[kind]?.available).map((p) => p.id);
     expect(offered, `${kind} provider options`).toEqual(["", ...available]);
@@ -150,6 +158,7 @@ test("providers: with no STT provider available the designer names the variables
     await route.fulfill({ response: res, json: body });
   });
   await openDesigner(page, stack);
+  await openFlowSettings(page);
   const note = page.getByRole("note").filter({ hasText: "No STT provider is available" });
   await expect(note).toContainText("E2E_MISSING_STT_KEY");
   await expect(page.getByLabel("STT provider").locator("option")).toHaveCount(1);
@@ -158,36 +167,43 @@ test("providers: with no STT provider available the designer names the variables
 
 test("designer: draw a two-agent graph with a handoff and publish it", async ({ page, stack }) => {
   await openDesigner(page, stack);
-  await page.getByLabel("Agent name").fill(AGENT);
 
-  // The entry node answers first and owns speech-to-text.
-  await page.getByLabel("STT provider").selectOption(PROVIDER);
-  await pick(page, "STT model", catalogDefault("stt"));
+  // The start step: model, voice and instructions on its Basics tab.
   await page.getByLabel("LLM provider").selectOption(PROVIDER);
   await pick(page, "LLM model", LLM_MODEL());
-  await page.getByLabel("System prompt").fill(FRONT_PROMPT);
+  await page.getByLabel("Instructions").fill(FRONT_PROMPT);
   await page.getByLabel("TTS provider").selectOption(PROVIDER);
   await pick(page, "Voice", LIVE ? catalogDefault("tts") : "frontvoice");
 
-  // A second agent: it starts from the entry's model and voice; give it its own prompt.
-  await page.getByLabel("New agent node").fill("Sales");
-  await page.getByRole("button", { name: "Add agent" }).click();
-  await expect(page.getByLabel("Node name")).toHaveValue("Sales");
-  await page.getByLabel("System prompt").fill(SALES_PROMPT);
+  // A second step: it starts from the start step's model and voice; give it its own instructions.
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByLabel("Step name").fill("Sales");
+  await page.getByLabel("Instructions").fill(SALES_PROMPT);
   if (!LIVE) await pick(page, "Voice", "salesvoice");
+  await page.getByRole("button", { name: "Done" }).click();
+  // A step added later is brought into view, not left off the edge of the canvas.
+  await expect(stepCard(page, "Sales")).toBeInViewport();
+  await expect(stepCard(page, "Main agent")).toBeInViewport();
 
-  // The handoff between them.
-  await page.locator("#handoff-from").selectOption({ label: "Main agent" });
-  await page.locator("#handoff-to").selectOption({ label: "Sales" });
-  await page.getByLabel("Hand off when").fill("The caller wants to buy a car or asks about prices.");
-  await page.getByRole("button", { name: "Add handoff" }).click();
-  await expect(page.getByRole("button", { name: "Main agent → Sales" })).toBeVisible();
-  // The sound that fills the gap while the call is between agents (the server has "chime").
+  // The route between them, from the keyboard path on the Routes tab.
+  await stepCard(page, "Main agent").click();
+  await page.getByRole("tab", { name: /Routes/ }).click();
+  // By role: a label wrapping a select includes its option texts, so getByLabel cannot match exactly.
+  await page.getByRole("combobox", { name: "Route to", exact: true }).selectOption({ label: "Sales" });
+  await page.getByRole("button", { name: "Add route" }).click();
+  await page.getByLabel("Condition for the route to Sales").fill("The caller wants to buy a car or asks about prices.");
+
+  // Flow settings: the name, speech-to-text, and the sound that fills the gap between steps (the server has "chime").
+  await openFlowSettings(page);
+  await page.getByLabel("Flow name").fill(AGENT);
+  await page.getByLabel("STT provider").selectOption(PROVIDER);
+  await pick(page, "STT model", catalogDefault("stt"));
   await page.getByLabel("Sound name").fill("chime");
   await page.getByLabel("Start after (ms)").fill("50");
-  await step(page, "graph designed");
+  await step(page, "flow designed");
 
-  await page.getByRole("button", { name: "Publish" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v1" }).click();
   await openAgentDetail(page, AGENT);
   await expect(page.getByTestId("agent-readiness")).toHaveText(/^ready/);
   await expect(pathTaken(page)).toContainText("Main agent");
@@ -260,23 +276,26 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   await connectAdmin(page, stack);
   await openAgentsList(page);
   await page.getByRole("row").filter({ hasText: AGENT }).getByRole("button", { name: "Edit" }).click();
-  await expect(page.getByRole("heading", { name: `Design ${AGENT}` })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Main agent → Sales" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: AGENT, level: 2 })).toBeVisible();
+  await expect(stepCard(page, "Sales")).toBeVisible();
 
-  // A third node can be added and removed again; then edit the handoff condition.
-  await page.getByLabel("New agent node").fill("Support");
-  await page.getByRole("button", { name: "Add agent" }).click();
-  await page.getByRole("button", { name: "Remove node" }).click();
-  await page.getByRole("button", { name: "Main agent → Sales" }).click();
-  await page.getByLabel("When should it hand off?").fill("The caller wants to buy a car, asks about prices, or wants a quote.");
-  await step(page, "handoff condition edited");
-  // The test panel is in the designer and runs the published version: it says the edit is not in it yet.
-  await expect(page.getByText(/unpublished edits are not in this test/i)).toBeVisible();
-  await page.getByRole("button", { name: "Publish" }).click();
-  // Publishing leaves the designer open on the new version, so it can be tested at once.
+  // A third step can be added and deleted again; then edit the route's condition.
+  await page.getByRole("button", { name: "Add step" }).click();
+  await page.getByLabel("Step name").fill("Support");
+  await page.getByRole("button", { name: "Delete step" }).click();
+  await stepCard(page, "Main agent").click();
+  await page.getByRole("tab", { name: /Routes/ }).click();
+  await page.getByLabel("Condition for the route to Sales").fill("The caller wants to buy a car, asks about prices, or wants a quote.");
+  await step(page, "route condition edited");
+  // The test call runs the published version: the panel says the edit is not in it yet.
+  await page.getByRole("button", { name: "Test call" }).click();
+  await expect(page.getByText(/This call runs v1, the published version/)).toBeVisible();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v2" }).click();
+  // Publishing leaves the editor open on the new version, so it can be tested at once.
   await expect(page.getByText(/Published v2/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: `Design ${AGENT}` })).toBeVisible();
-  await expect(page.getByText(/unpublished edits/i)).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: AGENT, level: 2 })).toBeVisible();
+  await expect(page.getByText(/This call runs v/)).toHaveCount(0);
 
   const agents = await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/agents");
   const v = agents.data.find((a) => a.name === AGENT)!.current_version;
@@ -284,11 +303,11 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   expect(v.config.nodes).toHaveLength(2);
   expect(v.config.edges[0].condition).toBe("The caller wants to buy a car, asks about prices, or wants a quote.");
 
-  // Call from inside the designer: the live graph shows the handoff to Sales.
+  // Call from inside the editor: the editor's own graph shows the call moving to Sales.
   await startCall(page);
   await sendText(page, BUY);
   await expect(botReply(page, SALES)).toBeVisible({ timeout: LIVE ? 90_000 : 20_000 });
-  await expect(liveStatus(page)).toContainText("Sales is answering", { timeout: LIVE ? 90_000 : 15_000 });
+  await expect(stepCard(page, "Sales").locator(".agent-node")).toHaveAttribute("data-state", "active", { timeout: LIVE ? 90_000 : 15_000 });
   await page.getByTestId("disconnect-btn").click();
 });
 
@@ -366,7 +385,7 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
   await expect(page.getByRole("heading", { name: "Providers", level: 1 })).toBeVisible();
   await noSideways("providers");
   await go("/agents");
-  await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Flows", level: 1 })).toBeVisible();
   await noSideways("agents");
   await openAgentDetail(page, AGENT);
   await noSideways("agent detail");
