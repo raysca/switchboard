@@ -819,23 +819,6 @@ th {
   }
 }
 
-/* Live graph under the stage: the state in display type, the path as a quiet trail */
-.live-graph__status {
-  margin: 16px 0 0;
-  font-size: 1.6rem;
-  font-weight: 800;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-}
-.live-graph__trail {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  color: var(--ink-2);
-}
 .agent-canvas .react-flow__edge-textbg {
   fill: var(--surface);
 }
@@ -869,9 +852,6 @@ th {
   flex-wrap: wrap;
   color: var(--ink-2);
   font-size: 0.87rem;
-}
-.stage__graph {
-  margin-top: 16px;
 }
 .stage__state {
   margin-top: 20px;
@@ -1014,42 +994,6 @@ th {
   margin: 16px 0 0;
 }
 
-/* Agent detail */
-.detail-head {
-  margin-top: 28px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.detail-head h2 {
-  margin: 0;
-  font-size: 2rem;
-  font-weight: 800;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-}
-.detail-head__meta {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin: 6px 0 0;
-}
-.fold {
-  margin-top: 24px;
-  border-top: 1px solid var(--rule);
-  padding-top: 12px;
-}
-.fold > summary {
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 1.2rem;
-}
-.fold h4 {
-  margin: 20px 0 8px;
-  font-size: 1rem;
-}
 .code-block {
   margin: 0;
   padding: 12px 0;

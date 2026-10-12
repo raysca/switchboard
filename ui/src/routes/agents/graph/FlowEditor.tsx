@@ -265,7 +265,7 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
                 This call runs v{version}, the published version. Publish to hear your changes.
               </p>
             )}
-            <AgentVoiceTest agent={agent} client={client} keyValue={keyValue} hideGraph onCall={setCall} />
+            <AgentVoiceTest agent={agent} client={client} keyValue={keyValue} onCall={setCall} />
           </SidePanel>
         )}
       </div>

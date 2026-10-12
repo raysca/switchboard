@@ -40,12 +40,7 @@ function renderTest(a: AgentDTO, extra: Partial<AgentVoiceTestProps> = {}) {
   );
 }
 
-describe("AgentVoiceTest graph view", () => {
-  it("leaves the graph to the page when asked", () => {
-    renderTest(graphAgent, { hideGraph: true });
-    expect(screen.queryByRole("list", { name: /path taken/i })).toBeNull();
-  });
-
+describe("AgentVoiceTest call reporting", () => {
   it("reports the idle call to the page, and NO_CALL when it goes away", () => {
     const onCall = vi.fn();
     const { unmount } = renderTest(graphAgent, { onCall });
@@ -53,21 +48,5 @@ describe("AgentVoiceTest graph view", () => {
     onCall.mockClear();
     unmount();
     expect(onCall).toHaveBeenLastCalledWith({ sessionId: null, userSpeaking: false, botSpeaking: false, live: false });
-  });
-
-  it("shows the path through the graph for a multi-node agent", () => {
-    renderTest(
-      agent({
-        entry: "front",
-        nodes: [node("front", "Front"), node("sales", "Sales")],
-        edges: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
-      }),
-    );
-    expect(screen.getByRole("list", { name: /path taken/i })).toHaveTextContent("Front");
-  });
-
-  it("shows no graph for a plain agent", () => {
-    renderTest(agent({ stt: stage, llm: { ...stage, model: "m" }, tts: stage }));
-    expect(screen.queryByRole("list", { name: /path taken/i })).toBeNull();
   });
 });

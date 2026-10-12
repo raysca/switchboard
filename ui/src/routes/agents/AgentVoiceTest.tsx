@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import type { ApiClient, AgentDTO } from "../../api/client";
 import {
@@ -8,9 +8,7 @@ import {
 import type { BrowserAudioController } from "../../voice/audio";
 import { PipecatDebugPanel } from "../../components/debug/PipecatDebugPanel";
 import { ActionButton, Status } from "../../components/primitives";
-import { LiveGraph } from "./graph/LiveGraph";
 import { NO_CALL, type CallInfo } from "./graph/useCallView";
-import { fromAgentConfig } from "./graph/model";
 
 export interface AgentVoiceTestProps {
   agent: AgentDTO;
@@ -18,8 +16,6 @@ export interface AgentVoiceTestProps {
   keyValue: string | null;
   wsBaseUrl?: string;
   audioController?: BrowserAudioController;
-  /** The page shows the call on its own graph (the flow editor): skip the embedded one. */
-  hideGraph?: boolean;
   /** Told whenever the call changes; must be stable (a state setter). */
   onCall?: (call: CallInfo) => void;
 }
@@ -30,7 +26,6 @@ export function AgentVoiceTest({
   keyValue,
   wsBaseUrl,
   audioController,
-  hideGraph,
   onCall,
 }: AgentVoiceTestProps) {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
@@ -74,13 +69,7 @@ export function AgentVoiceTest({
     onCall?.({ sessionId: state.sessionId, userSpeaking: state.isUserSpeaking, botSpeaking: state.isBotSpeaking, live: inCall });
   }, [onCall, state.sessionId, state.isUserSpeaking, state.isBotSpeaking, inCall]);
   useEffect(() => () => onCall?.(NO_CALL), [onCall]);
-  const shown = inCall && callVersion ? callVersion : { number: agent.current_version?.number, config: agent.current_version?.config };
   const callIsStale = inCall && callVersion !== null && callVersion.number !== agent.current_version?.number;
-  // A graph agent shows the call moving between its nodes while you test it.
-  const graph = useMemo(() => {
-    const g = fromAgentConfig(shown.config);
-    return g.nodes.length > 1 ? g : null;
-  }, [shown.config]);
 
   // Alt-tab while holding: pointerup never arrives, so release on window blur.
   useEffect(() => {
@@ -181,19 +170,6 @@ export function AgentVoiceTest({
         <p role="status" className="note">
           This call is on v{callVersion?.number}. Disconnect and reconnect to test v{agent.current_version?.number}.
         </p>
-      )}
-
-      {graph && !hideGraph && (
-        <div className="stage__graph">
-          <LiveGraph
-            graph={graph}
-            sessionId={state.sessionId}
-            client={client}
-            userSpeaking={state.isUserSpeaking}
-            botSpeaking={state.isBotSpeaking}
-            live={isConnectedOrReady || isConnecting}
-          />
-        </div>
       )}
 
       {isConnectedOrReady && (
