@@ -117,6 +117,36 @@ describe("AgentsView", () => {
     expect(screen.getByText("missing_tts")).toBeVisible();
   });
 
+  it("shows how many agents each stored agent has, and a reason chip per readiness problem", async () => {
+    const node = (id: string) => ({ id, name: id, config: v2Config });
+    const graph = createMockAgent({
+      id: "agent-g",
+      name: "Three Node Bot",
+      current_version: {
+        id: "ver-g",
+        number: 2,
+        schema_version: 1,
+        config: { entry: "a", nodes: [node("a"), node("b"), node("c")], edges: [] },
+        config_hash: "h",
+        created_at: "2026-10-05T12:00:00Z",
+        mcp_tools: [],
+      },
+    });
+    const client = createMockClient({
+      getAgents: vi.fn().mockResolvedValue([
+        createMockAgent({ id: "agent-1", name: "Flat Bot", readiness: { state: "not_ready", reasons: ["missing_tts"] } }),
+        graph,
+      ]),
+    });
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+
+    const flatRow = (await screen.findByText("Flat Bot")).closest("tr") as HTMLElement;
+    const graphRow = screen.getByText("Three Node Bot").closest("tr") as HTMLElement;
+    expect(within(flatRow).getByRole("cell", { name: "1" })).toBeVisible();
+    expect(within(graphRow).getByRole("cell", { name: "3" })).toBeVisible();
+    expect(within(flatRow).getByText("missing_tts")).toHaveClass("reason");
+  });
+
   it("creates a new agent with STT, LLM, and TTS settings", async () => {
     let agents = [createMockAgent()];
     const client = createMockClient({

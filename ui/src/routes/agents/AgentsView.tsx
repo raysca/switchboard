@@ -36,6 +36,11 @@ function isGraphAgent(agent: AgentDTO): boolean {
   return Array.isArray(agent.current_version?.config?.nodes);
 }
 
+function nodeCount(agent: AgentDTO): number {
+  const nodes = agent.current_version?.config?.nodes;
+  return Array.isArray(nodes) ? nodes.length : 1;
+}
+
 function getReadinessTone(state: string): "good" | "bad" | "neutral" {
   switch (state) {
     case "ready":
@@ -487,7 +492,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
           }}
         />
       ) : (
-        <div className="agents-view" style={{ marginTop: "24px" }}>
+        <div className="agents-view">
           {actionError && (
             <div className="section-banner" style={{ marginBottom: "20px" }}>
               <ErrorState
@@ -513,16 +518,9 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
           {missingAgent && <p role="status">That agent was not found.</p>}
           {(mode === "list" || missingAgent) && (
             <section aria-labelledby="agents-list-heading">
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: "20px",
-                }}
-              >
+              <div className="section-row">
                 <h2 id="agents-list-heading">Configured agents ({agents.length})</h2>
-                <div style={{ display: "flex", gap: "8px" }}>
+                <div className="action-buttons-cell">
                   <ActionButton onClick={startCreate}>+ Create agent</ActionButton>
                   <ActionButton onClick={() => startDesign(null)}>+ Create graph agent</ActionButton>
                 </div>
@@ -540,6 +538,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                       <tr>
                         <th scope="col">Name</th>
                         <th scope="col">Readiness</th>
+                        <th scope="col">Agents</th>
                         <th scope="col">Version</th>
                         <th scope="col">Status</th>
                         <th scope="col">Actions</th>
@@ -564,34 +563,17 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                               {!agentConfigV2(agent) && (
                                 <div className="subtext">Needs reconfiguration</div>
                               )}
-                              {agent.readiness.reasons &&
-                                agent.readiness.reasons.length > 0 && (
-                                  <div
-                                    className="reasons-list"
-                                    style={{
-                                      display: "flex",
-                                      flexWrap: "wrap",
-                                      gap: "4px",
-                                      marginTop: "4px",
-                                    }}
-                                  >
-                                    {agent.readiness.reasons.map((r) => (
-                                      <span
-                                        key={r}
-                                        style={{
-                                          fontSize: "0.75rem",
-                                          color: "#a43e30",
-                                          background: "#fbebe8",
-                                          padding: "2px 6px",
-                                          borderRadius: "2px",
-                                        }}
-                                      >
-                                        {r}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
+                              {agent.readiness.reasons && agent.readiness.reasons.length > 0 && (
+                                <div className="reasons-list">
+                                  {agent.readiness.reasons.map((r) => (
+                                    <span key={r} className="reason">
+                                      {r}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </td>
+                            <td>{nodeCount(agent)}</td>
                             <td>
                               <code>v{versionNum}</code>
                             </td>

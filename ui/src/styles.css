@@ -920,3 +920,40 @@ th {
   font-weight: 600;
   line-height: 1.3;
 }
+
+/* Service pills: what a provider can do now, or what it still needs */
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pill {
+  font-size: 0.87rem;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  color: var(--ink-2);
+}
+.pill[data-state="ok"] {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.pill[data-state="missing"] {
+  border-color: var(--ink-2);
+  color: var(--ink);
+}
+
+/* Readiness reasons under an agent's status */
+.reasons-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.reason {
+  font-size: 0.87rem;
+  color: var(--bad);
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  padding: 0 6px;
+}

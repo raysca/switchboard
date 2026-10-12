@@ -9,18 +9,16 @@ export type ProvidersViewProps = {
 
 const SERVICES = ["stt", "llm", "tts"] as const;
 
-// Services the provider can run now, and what is missing for the rest.
-function describeServices(p: ProviderStatus) {
-  const unlocked = SERVICES.filter((s) => p.services[s]?.available);
-  const missing = new Set<string>();
-  const notInBuild: string[] = [];
-  for (const s of SERVICES) {
+// One pill per service the catalog lists for the provider: what it can do now, or what is missing.
+function servicePills(p: ProviderStatus) {
+  return SERVICES.flatMap((s) => {
     const svc = p.services[s];
-    if (!svc || svc.available) continue;
-    if (svc.reason === "missing_env") svc.missing_env?.forEach((v) => missing.add(v));
-    else notInBuild.push(s);
-  }
-  return { unlocked, missing: [...missing], notInBuild };
+    if (!svc) return [];
+    const name = s.toUpperCase();
+    if (svc.available) return [{ key: s, state: "ok", text: `${name} available` }];
+    if (svc.reason === "missing_env") return [{ key: s, state: "missing", text: `${name} needs ${(svc.missing_env ?? []).join(", ")}` }];
+    return [{ key: s, state: "absent", text: `${name} not in this build` }];
+  });
 }
 
 export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
@@ -54,7 +52,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
           }}
         />
       ) : (
-        <div className="provider-views" style={{ marginTop: "32px" }}>
+        <div className="provider-views">
           {!providers.some((p) => p.detected) && (
             <EmptyState title="No providers detected">
               Set at least one of these environment variables on the server and restart it:{" "}
@@ -69,36 +67,29 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
                   <th scope="col">Provider</th>
                   <th scope="col">Status</th>
                   <th scope="col">Services</th>
-                  <th scope="col">To enable</th>
                 </tr>
               </thead>
               <tbody>
-                {providers.map((p) => {
-                  const { unlocked, missing, notInBuild } = describeServices(p);
-                  return (
-                    <tr key={p.id}>
-                      <td>
-                        <strong>{p.display_name}</strong>
-                        <div className="subtext">{p.id}</div>
-                      </td>
-                      <td>
-                        <Status tone={p.detected ? "good" : "neutral"}>
-                          {p.detected ? "Detected" : "Not detected"}
-                        </Status>
-                      </td>
-                      <td>{unlocked.length > 0 ? unlocked.join(", ") : "—"}</td>
-                      <td>
-                        {missing.length > 0 && (
-                          <>
-                            Set <code>{missing.join(", ")}</code>
-                          </>
-                        )}
-                        {notInBuild.length > 0 && <div className="subtext">{notInBuild.join(", ")} not in this build</div>}
-                        {missing.length === 0 && notInBuild.length === 0 && "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {providers.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.display_name}</strong>
+                      <div className="subtext">{p.id}</div>
+                    </td>
+                    <td>
+                      <Status tone={p.detected ? "good" : "neutral"}>{p.detected ? "Detected" : "Not detected"}</Status>
+                    </td>
+                    <td>
+                      <div className="pills">
+                        {servicePills(p).map((pill) => (
+                          <span key={pill.key} className="pill" data-state={pill.state}>
+                            {pill.text}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

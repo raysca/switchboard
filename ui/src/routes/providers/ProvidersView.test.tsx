@@ -38,15 +38,18 @@ describe("ProvidersView", () => {
     expect(screen.getByText(/enter a management key/i)).toBeVisible();
   });
 
-  it("renders a row per provider with detection, unlocked services and missing variables", async () => {
+  it("renders a row per provider with detection and one pill per service", async () => {
     renderView(clientWith([google, xai]));
     const gRow = (await screen.findByRole("cell", { name: /Google/ })).closest("tr")!;
     expect(within(gRow).getByText("Detected")).toBeVisible();
-    expect(within(gRow).getByText(/stt, llm/i)).toBeVisible();
-    expect(within(gRow).getByText(/tts not in this build/i)).toBeVisible();
+    expect(within(gRow).getByText("STT available")).toBeVisible();
+    expect(within(gRow).getByText("LLM available")).toBeVisible();
+    expect(within(gRow).getByText("TTS not in this build")).toBeVisible();
     const xRow = screen.getByRole("cell", { name: /xAI/ }).closest("tr")!;
     expect(within(xRow).getByText("Not detected")).toBeVisible();
-    expect(within(xRow).getByText(/XAI_API_KEY/)).toBeVisible();
+    // The pill names the variable that unlocks the service.
+    expect(within(xRow).getByText("LLM needs XAI_API_KEY")).toBeVisible();
+    expect(within(xRow).queryByText(/STT/)).toBeNull();
   });
 
   it("is read-only: no inputs and no buttons", async () => {
