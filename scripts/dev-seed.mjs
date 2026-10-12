@@ -3,7 +3,7 @@
 // "Dealership desk" graph for demos, built from the providers the server detected in its
 // environment (GET /api/v1/providers): the first provider that can run each stage, on its
 // catalog defaults. Idempotent: existing agents of those names are reused. Prints only the
-// Dev Assistant id on stdout.
+// Dev Assistant id on stdout. With MCPTEST_URL set it also registers the test MCP servers.
 //
 // Needs GOVOICE_ADMIN_URL and GOVOICE_MANAGEMENT_API_KEY.
 const AGENT = "Dev Assistant";
@@ -94,6 +94,25 @@ if (find(DESK)) {
       log(`created agent "${DESK}"`);
     } catch (err) {
       log(`could not create "${DESK}": ${err.message}`);
+    }
+  }
+}
+// Test MCP servers (cmd/mcptest, started by make dev): one per state the MCP page shows.
+const mcpURL = process.env.MCPTEST_URL;
+if (mcpURL) {
+  const servers = await api("GET", "/mcp-servers");
+  for (const [name, path, authEnv] of [
+    ["Test MCP: ok", "/ok", "MCP_TOKEN_TEST"],
+    ["Test MCP: failing", "/fail/tools", ""],
+    ["Test MCP: slow", "/slow", ""],
+  ]) {
+    if (servers.some((s) => s.name === name)) continue;
+    try {
+      const created = await api("POST", "/mcp-servers", { name, endpoint: mcpURL + path, auth_env: authEnv, enabled: true });
+      const checked = await api("POST", `/mcp-servers/${created.id}/validate`);
+      log(`created MCP server "${name}" (${checked.validation_state})`);
+    } catch (err) {
+      log(`could not create MCP server "${name}": ${err.message}`);
     }
   }
 }
