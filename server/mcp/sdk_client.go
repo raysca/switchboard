@@ -61,11 +61,20 @@ func dialEgress(ctx context.Context, network, address string, allowLoopback bool
 		return nil, errors.New("invalid MCP destination")
 	}
 	var ips []net.IPAddr
-	if allowLoopback && loopbackOnly(ctx, host, lookup) {
+	if allowLoopback {
+		// Resolve once and judge those answers: the addresses dialed are exactly the
+		// ones checked, so a rebinding resolver cannot swap in another address.
+		var answers []net.IPAddr
 		if ip := net.ParseIP(host); ip != nil {
-			ips = []net.IPAddr{{IP: ip}}
-		} else if ips, err = lookup(ctx, host); err != nil {
+			answers = []net.IPAddr{{IP: ip}}
+		} else if answers, err = lookup(ctx, host); err != nil || len(answers) == 0 {
 			return nil, errors.New("MCP destination resolution failed")
+		}
+		fixed := func(context.Context, string) ([]net.IPAddr, error) { return answers, nil }
+		if loopbackOnly(ctx, host, fixed) {
+			ips = answers
+		} else if ips, err = publicEgressIPs(ctx, host, fixed); err != nil {
+			return nil, err
 		}
 	} else if ips, err = publicEgressIPs(ctx, host, lookup); err != nil {
 		return nil, err

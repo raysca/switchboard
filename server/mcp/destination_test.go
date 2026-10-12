@@ -78,3 +78,30 @@ func TestDialEgressLoopbackAgreesWithValidation(t *testing.T) {
 		t.Fatalf("loopback dialed with the flag off: err=%v dialed=%v", err, dialed)
 	}
 }
+
+// DNS rebinding: the dialer must dial the very answers it checked. A resolver that
+// answers loopback first and a metadata address second must not be dialed.
+func TestDialEgressResolvesOnceAgainstRebinding(t *testing.T) {
+	lookups := 0
+	alternating := func(context.Context, string) ([]net.IPAddr, error) {
+		lookups++
+		if lookups%2 == 1 {
+			return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
+		}
+		return []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}}, nil
+	}
+	var dialed []string
+	dial := func(_ context.Context, _, addr string) (net.Conn, error) {
+		dialed = append(dialed, addr)
+		return nil, errors.New("stub dial")
+	}
+	_, _ = dialEgress(context.Background(), "tcp", "rebind.example:80", true, alternating, dial)
+	for _, a := range dialed {
+		if a != "127.0.0.1:80" {
+			t.Fatalf("dialed %s after a rebinding answer (lookups=%d)", a, lookups)
+		}
+	}
+	if lookups != 1 {
+		t.Fatalf("resolved %d times; the checked answers must be the dialed ones", lookups)
+	}
+}
