@@ -129,6 +129,31 @@ export function transcript(session: SessionDTO, turns: TurnDTO[], traces: Sessio
   return out;
 }
 
+export type TurnRow = { id: string; at: string; text: string; notes: string[] };
+
+/** One row per turn: when, what the assistant said, and what happened in it (tool calls, being cut off). */
+export function turnRows(session: SessionDTO, turns: TurnDTO[], traces: SessionTracesDTO | null | undefined): TurnRow[] {
+  const start = Date.parse(session.started_at);
+  const ordered = [...turns].sort((a, b) => a.ordinal - b.ordinal || Date.parse(a.started_at) - Date.parse(b.started_at));
+  return ordered.map((t) => {
+    const spoken = t.transcript.trim();
+    const notes: string[] = [];
+    if (t.interrupted) notes.push("Interrupted by the caller");
+    for (const c of traces?.tool_calls ?? []) {
+      if (c.turn_id !== t.id) continue;
+      if (c.status === "failed" || c.status === "error") notes.push(`Tool ${c.remote_name} failed`);
+      else if (c.ended_at) notes.push(`Tool ${c.remote_name} · ${Math.max(0, Date.parse(c.ended_at) - Date.parse(c.started_at))} ms`);
+      else notes.push(`Tool ${c.remote_name} running`);
+    }
+    return {
+      id: t.id,
+      at: mmss((Date.parse(t.started_at) - start) / 1000),
+      text: t.assistant_text.trim() || (SYSTEM_TURN.test(spoken) ? "" : spoken) || "No words recorded",
+      notes,
+    };
+  });
+}
+
 export function interruptedCount(turns: TurnDTO[]): number {
   return turns.filter((t) => t.interrupted).length;
 }

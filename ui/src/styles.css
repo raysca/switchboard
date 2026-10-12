@@ -1782,15 +1782,17 @@ legend {
   flex-direction: column;
   gap: 20px;
 }
-.call-head {
+.call-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 20px;
 }
-.call-head h1 {
+.call-id {
   margin: 0;
-  font-size: 1.6rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1.1rem;
+  font-weight: 450;
   line-height: 1.15;
 }
 .call-state {
@@ -1801,9 +1803,9 @@ legend {
 }
 .call-figures {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   margin: 0;
-  border-top: 1px solid var(--ink);
+  border-top: 2px solid var(--ink);
   border-bottom: 1px solid var(--rule);
 }
 .call-figures > div {
@@ -1811,11 +1813,63 @@ legend {
 }
 .call-figures dt {
   color: var(--ink-2);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 .call-figures dd {
   margin: 4px 0 0;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+.call-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px 32px;
+}
+.call-columns__main {
+  flex: 999 1 520px;
+  min-width: 0;
+}
+.call-columns__side {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.call-turns {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.call-turns li {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.call-turns li:last-child {
+  border-bottom: 0;
+}
+.call-turns__at {
+  color: var(--ink-2);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.call-turns__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.call-turns__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.call-turns__note {
+  color: var(--ink-2);
+  font-size: 0.8rem;
 }
 .call-note {
   margin: 0;
@@ -1840,7 +1894,7 @@ legend {
 }
 .call-transcript__who {
   color: var(--ink-2);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
 .call-transcript__who--caller {

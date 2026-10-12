@@ -5,7 +5,7 @@ import type { ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
-import { clock, failedRoutes, interruptedCount, outcome, path, stepsFor, transcript, versionLabel } from "./callStats";
+import { clock, failedRoutes, interruptedCount, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
 export type CallViewProps = { client: ApiClient; keyValue: string | null };
@@ -47,8 +47,8 @@ export function CallView({ client, keyValue }: CallViewProps) {
       <nav aria-label="Breadcrumb" className="flow-page__crumb">
         <Link to="/sessions">Calls</Link>
       </nav>
-      <header className="call-head">
-        <h1 tabIndex={-1}>Call {sessionId.slice(0, 8)}</h1>
+      <header className="call-bar">
+        <h1 tabIndex={-1} className="call-id">call_{sessionId.slice(0, 8)}</h1>
         {status}
       </header>
       {state}
@@ -88,6 +88,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
       {o.label} · {clock(s.started_at, s.ended_at, now)}
     </span>
   );
+  const started = <span className="subtext">Started {new Date(s.started_at).toLocaleString()}</span>;
 
   return top(
     <>
@@ -100,8 +101,8 @@ export function CallView({ client, keyValue }: CallViewProps) {
           </dd>
         </div>
         <div>
-          <dt>Started</dt>
-          <dd>{new Date(s.started_at).toLocaleString()}</dd>
+          <dt>Path</dt>
+          <dd>{path(traces, st, fallback).join(" → ")}</dd>
         </div>
         <div>
           <dt>Duration</dt>
@@ -115,10 +116,6 @@ export function CallView({ client, keyValue }: CallViewProps) {
           <dt>Interrupted replies</dt>
           <dd>{interruptedCount(turns)}</dd>
         </div>
-        <div>
-          <dt>Path</dt>
-          <dd>{path(traces, st, fallback).join(" → ")}</dd>
-        </div>
       </dl>
 
       {failed.map((f, i) => (
@@ -128,16 +125,42 @@ export function CallView({ client, keyValue }: CallViewProps) {
       ))}
       {tracesQuery.isError && <p role="note" className="call-note">Steps and routes could not be loaded, so the transcript is not labelled by step.</p>}
 
-      <section aria-labelledby="call-transcript-title" className="call-section">
-        <h2 id="call-transcript-title">Transcript</h2>
-        {turnsQuery.isError ? (
-          <ErrorState title="Could not load the transcript" error={turnsQuery.error as ApiError} onRetry={() => void turnsQuery.refetch()} />
-        ) : turnsQuery.isPending ? (
-          <LoadingState label="Loading transcript" />
-        ) : (
-          <CallTranscript lines={transcript(s, turns, traces, st, fallback)} />
-        )}
-      </section>
+      <div className="call-columns">
+        <section aria-labelledby="call-turns-title" className="call-section call-columns__main">
+          <h2 id="call-turns-title">Turns</h2>
+          <p className="subtext">What each turn did. Per-turn timing is not recorded yet.</p>
+          {turnsQuery.isPending ? (
+            <LoadingState label="Loading turns" />
+          ) : (
+            <ol className="call-turns">
+              {turnRows(s, turns, traces).map((r) => (
+                <li key={r.id}>
+                  <span className="call-turns__at">{r.at}</span>
+                  <span className="call-turns__body">
+                    <span className="call-turns__text">{r.text}</span>
+                    {r.notes.map((n) => (
+                      <span key={n} className="call-turns__note">
+                        {n}
+                      </span>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+
+        <aside aria-labelledby="call-transcript-title" className="call-section call-columns__side">
+          <h2 id="call-transcript-title">Transcript</h2>
+          {turnsQuery.isError ? (
+            <ErrorState title="Could not load the transcript" error={turnsQuery.error as ApiError} onRetry={() => void turnsQuery.refetch()} />
+          ) : turnsQuery.isPending ? (
+            <LoadingState label="Loading transcript" />
+          ) : (
+            <CallTranscript lines={transcript(s, turns, traces, st, fallback)} />
+          )}
+        </aside>
+      </div>
 
       <details className="call-technical">
         <summary>Technical trace</summary>
@@ -176,6 +199,6 @@ export function CallView({ client, keyValue }: CallViewProps) {
         <TurnTimeline turns={turns} traces={traces} loading={turnsQuery.isPending} />
       </details>
     </>,
-    status,
+    <>{status}{started}</>,
   );
 }

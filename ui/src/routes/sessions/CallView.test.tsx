@@ -82,7 +82,7 @@ describe("CallView", () => {
   it("shows who the call was with, which flow and version, and how it went", async () => {
     setup({});
     expect(await screen.findByText("Ended · 04:12")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Call 0192aaaa", level: 1 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "call_0192aaaa", level: 1 })).toBeVisible();
     expect(screen.getByRole("link", { name: "Calls" })).toHaveAttribute("href", "/sessions");
     expect(within(figure("Flow")).getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/flows/a1");
     expect(within(figure("Flow")).getByText("v7")).toBeVisible();
@@ -168,13 +168,13 @@ describe("CallView", () => {
 
   it("has its heading from the first moment, and in every state, so focus has somewhere to go", async () => {
     setup({ getSession: vi.fn().mockReturnValue(new Promise(() => {})) });
-    expect(screen.getByRole("heading", { name: "Call 0192aaaa", level: 1 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "call_0192aaaa", level: 1 })).toBeVisible();
   });
 
   it("keeps the heading when the call is not found, and when there is no key", async () => {
     setup({ getSession: vi.fn().mockRejectedValue(new ApiError("session not found", "not_found", 404, "r")) }, "/sessions/nope");
     expect(await screen.findByText("That call was not found.")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Call nope", level: 1 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "call_nope", level: 1 })).toBeVisible();
   });
 
   it("keeps the clock of a live call counting while nothing else changes", async () => {
@@ -190,5 +190,28 @@ describe("CallView", () => {
     expect(list).toHaveTextContent("Front desk · 00:01");
     expect(list).not.toHaveTextContent("Reception ·");
     expect(within(figure("Path")).getByText("Front desk")).toBeVisible();
+  });
+
+  it("lays the page out like the canvas: a figures row, then the turns beside the transcript", async () => {
+    setup({});
+    await screen.findByRole("list", { name: "Transcript" });
+    expect(screen.getByText(/^Started /)).toBeVisible();
+    const terms = screen.getAllByRole("term").slice(0, 5).map((t) => t.textContent);
+    expect(terms).toEqual(["Flow", "Path", "Duration", "Turns", "Interrupted replies"]);
+    expect(screen.getByRole("region", { name: "Turns" })).toBeVisible();
+    expect(screen.getByRole("complementary", { name: "Transcript" })).toBeVisible();
+  });
+
+  it("lists the turns with what happened in them, and says timing is not recorded yet", async () => {
+    const tool = { id: "c1", session_id: ID, turn_id: "t2", remote_name: "crm.verify_identity", schema_hash: "x", started_at: "2026-10-12T14:00:07.000Z", ended_at: "2026-10-12T14:00:07.160Z", status: "completed", arguments_summary: "", result_summary: "" };
+    setup({ getSessionTraces: vi.fn().mockResolvedValue({ ...traces(toBilling), tool_calls: [tool] }) });
+    const region = await screen.findByRole("region", { name: "Turns" });
+    const items = within(region).getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toEqual([
+      "00:01Hi, you're through. How can I help?",
+      "00:06I can look into that.Tool crm.verify_identity · 160 ms",
+      "00:43Let me checkInterrupted by the caller",
+    ]);
+    expect(within(region).getByText(/Per-turn timing is not recorded yet\./)).toBeVisible();
   });
 });
