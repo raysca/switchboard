@@ -103,6 +103,13 @@ describe("flowsUsing", () => {
     expect(flowsUsing([flat, graph], "google").map((f) => f.id)).toEqual(["flat", "graph"]);
     expect(flowsUsing([flat, graph], "xai").map((f) => f.id)).toEqual(["graph"]);
   });
+  it("counts a provider a stage names only as a fallback", () => {
+    const f = flow("fb", { llm: { provider: "google" }, tts: { provider: "google", fallbacks: [{ provider: "cartesia" }, {}, "x"] } });
+    expect(flowsUsing([f], "cartesia").map((x) => x.id)).toEqual(["fb"]);
+  });
+  it("survives a step that is not an object", () => {
+    expect(flowsUsing([flow("n", { nodes: [null, { config: { llm: { provider: "google" } } }] })], "google").map((x) => x.id)).toEqual(["n"]);
+  });
   it("never counts an archived flow, a flow with no version, or a malformed config", () => {
     const gone = flow("gone", flat.current_version!.config, true);
     const bare = { ...flow("bare", {}), current_version: undefined } as AgentDTO;

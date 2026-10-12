@@ -41,7 +41,8 @@ function Panel({ p, flows, flowsCapped }: { p: ProviderStatus; flows: AgentDTO[]
           {p.env.map((name) => (
             <li key={name}>
               <code>{name}</code>
-              <span className="subtext">{missing.has(name) ? "Not set" : "Set on the server"}</span>
+              {/* The API names the variables still missing; it cannot say that another one is set. */}
+              {missing.has(name) && <span className="subtext">Not set</span>}
             </li>
           ))}
         </ul>
@@ -75,7 +76,7 @@ function Panel({ p, flows, flowsCapped }: { p: ProviderStatus; flows: AgentDTO[]
         {using === undefined ? (
           <p className="subtext">The flows could not be loaded, so which flows use this provider is unknown.</p>
         ) : using.length === 0 ? (
-          <p className="subtext">No flow uses this provider yet.</p>
+          <p className="subtext">{flowsCapped ? `No flow among the first ${FLOW_CAP} uses this provider; later flows were not checked.` : "No flow uses this provider yet."}</p>
         ) : (
           <>
             <ul className="provider-flows">

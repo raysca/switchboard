@@ -47,15 +47,16 @@ export function catalogLines(p: ProviderStatus): { service: Service; text: strin
   });
 }
 
-type Stage = { provider?: unknown };
+type Stage = { provider?: unknown; fallbacks?: unknown };
 type Block = Partial<Record<Service, Stage>>;
 
-/** The provider each stage names: in a flat config, or in every step of a graph. */
+/** The provider each stage names, and its fallbacks: in a flat config, or in every step of a graph. */
 function stageProviders(config: unknown): string[] {
   const root = (config ?? {}) as { nodes?: { config?: Block }[] } & Block;
-  const blocks: Block[] = Array.isArray(root.nodes) ? root.nodes.map((n) => n.config ?? {}) : [root];
+  const blocks: Block[] = Array.isArray(root.nodes) ? root.nodes.map((n) => n?.config ?? {}) : [root];
   return blocks
-    .flatMap((b) => SERVICES.map((s) => (b[s] as Stage | undefined)?.provider))
+    .flatMap((b) => SERVICES.map((s) => b[s] as Stage | undefined))
+    .flatMap((stage) => [stage?.provider, ...(Array.isArray(stage?.fallbacks) ? stage.fallbacks.map((f: Stage | null) => f?.provider) : [])])
     .filter((p): p is string => typeof p === "string" && p !== "");
 }
 

@@ -66,7 +66,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | 6–10 | Flow editor | `/flows/:id`, `/flows/new` | Section 2. |
 | 11–12 | Publish, v8 is live | — | Section 2. |
 | 13–14 | Calls, Call detail | `/sessions`, `/sessions/:id` | **Done (plan 3).** The list filters by flow and Live/Ended (kept in the URL), pages with Newer/Older, and shows flow, version, duration, turns and outcome. The detail shows the figures, the path, and a transcript labelled by step with routes marked; the raw trace is behind "Technical trace". The API's statuses are only active, draining and ended. Caller, waterfall, totals, Path column and call control wait on S9–S13. |
-| 15 | Providers | `/providers` | **Done (plan 4).** A list filtered by service (kept in the URL) beside a panel with the credential source (which variables are set on the server), the catalog, and the flows using the provider. Read-only: no key field until S3; p50, Last hour and Test connection wait on S15, S16. |
+| 15 | Providers | `/providers` | **Done (plan 4).** A list filtered by service (kept in the URL) beside a panel with the credential source (the variables the server reads, and which are still missing), the catalog, and the flows using the provider. Read-only: no key field until S3; p50, Last hour and Test connection wait on S15, S16. |
 | 16 | MCP tools | `/mcp-servers` | MCP schema-change review. Plan 5. |
 
 ## 4. Deviations from the canvas (the Switchboard spec wins)

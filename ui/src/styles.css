@@ -1100,11 +1100,6 @@ th {
 }
 
 /* Service pills: what a provider can do now, or what it still needs */
-.pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .pill {
   font-size: 0.87rem;
   padding: 2px 8px;

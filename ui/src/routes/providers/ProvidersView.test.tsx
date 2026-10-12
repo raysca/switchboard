@@ -108,7 +108,10 @@ describe("ProvidersView", () => {
     const { user } = setup({});
     const panel = await screen.findByRole("complementary");
     expect(within(panel).getByText("GOOGLE_API_KEY")).toBeVisible();
-    expect(within(panel).getByText("Set on the server")).toBeVisible();
+    // The API names only the variables still missing; it cannot say a variable is set, so the page does not.
+    expect(within(panel).queryByText("Set on the server")).toBeNull();
+    expect(within(panel).queryByText("Not set")).toBeNull();
+    expect(within(panel).getByText("Credential found in the server environment.")).toBeVisible();
     expect(within(panel).getByText(/never stored or shown here/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "xAI" }));
     expect(within(screen.getByRole("complementary")).getByText("Not set")).toBeVisible();
@@ -198,5 +201,24 @@ describe("ProvidersView", () => {
     setup({ getProviders: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     expect(await screen.findByRole("alert")).toHaveTextContent("down");
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  });
+
+  it("says a provider with no match is unchecked beyond the first 100 flows, instead of 'none use it'", async () => {
+    const many = Array.from({ length: 100 }, (_, i) => flow(`f${i}`, `Flow ${i}`, { llm: { provider: "google" } }));
+    const { user } = setup({ getAgents: vi.fn().mockResolvedValue(many) });
+    await screen.findByRole("table");
+    await user.click(screen.getByRole("button", { name: "xAI" }));
+    expect(screen.getByText("No flow among the first 100 uses this provider; later flows were not checked.")).toBeVisible();
+    expect(screen.queryByText("No flow uses this provider yet.")).toBeNull();
+  });
+
+  it("counts a provider that a flow names only as a fallback", async () => {
+    const withFallback = flow("fb", "Failover", { llm: { provider: "google" }, tts: { provider: "google", fallbacks: [{ provider: "cartesia" }] } });
+    const cartesia: ProviderStatus = { id: "cartesia", display_name: "Cartesia", capabilities: [], detected: false, env: ["CARTESIA_API_KEY"], services: { tts: { available: false, reason: "missing_env", missing_env: ["CARTESIA_API_KEY"], custom: true } } };
+    const { user } = setup({ getProviders: vi.fn().mockResolvedValue([google, cartesia]), getAgents: vi.fn().mockResolvedValue([withFallback]) });
+    await screen.findByRole("table");
+    expect(within(rowOf("Cartesia")).getByText("1")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cartesia" }));
+    expect(within(screen.getByRole("region", { name: "Used by" })).getByRole("link", { name: "Failover" })).toBeVisible();
   });
 });
