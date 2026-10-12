@@ -57,7 +57,7 @@ type flowResp struct {
 func TestFlowsAPIAcceptsFlowAndStillAcceptsFlat(t *testing.T) {
 	s := flowAPIServer(t)
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/agents", flowMgmtKey, flowBody("two node", "sales"))
+	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flowBody("two node", "sales"))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("graph create: %d %s", w.Code, w.Body)
 	}
@@ -68,7 +68,7 @@ func TestFlowsAPIAcceptsFlowAndStillAcceptsFlat(t *testing.T) {
 	}
 
 	flat := `{"name":"flat","config":{` + flowStages(true) + `}}`
-	w = apiRequest(s, http.MethodPost, "/api/v1/agents", flowMgmtKey, flat)
+	w = apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flat)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("flat create: %d %s", w.Code, w.Body)
 	}
@@ -81,7 +81,7 @@ func TestFlowsAPIAcceptsFlowAndStillAcceptsFlat(t *testing.T) {
 
 func TestFlowsAPIRejectsInvalidFlow(t *testing.T) {
 	s := flowAPIServer(t)
-	w := apiRequest(s, http.MethodPost, "/api/v1/agents", flowMgmtKey, flowBody("bad", "nowhere"))
+	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flowBody("bad", "nowhere"))
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("edge to a missing node: %d %s", w.Code, w.Body)
 	}
@@ -89,11 +89,11 @@ func TestFlowsAPIRejectsInvalidFlow(t *testing.T) {
 
 func TestFlowsAPIFlowUpdatePublishesNewVersion(t *testing.T) {
 	s := flowAPIServer(t)
-	w := apiRequest(s, http.MethodPost, "/api/v1/agents", flowMgmtKey, `{"name":"a","config":{`+flowStages(true)+`}}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, `{"name":"a","config":{`+flowStages(true)+`}}`)
 	var created flowResp
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
 	body := strings.TrimSuffix(strings.TrimPrefix(flowBody("a", "sales"), `{"name":"a",`), `}`)
-	w = apiRequest(s, http.MethodPatch, "/api/v1/agents/"+created.Data.ID, flowMgmtKey, "{"+body+"}")
+	w = apiRequest(s, http.MethodPatch, "/api/v1/flows/"+created.Data.ID, flowMgmtKey, "{"+body+"}")
 	if w.Code != http.StatusOK {
 		t.Fatalf("graph update: %d %s", w.Code, w.Body)
 	}

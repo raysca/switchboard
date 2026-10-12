@@ -110,7 +110,7 @@ func (e *sessionExecutor) close(ctx context.Context) error {
 // wrapper. The MCP package holds the credential lease only in memory.
 func StartSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Service, flowID, sessionID string) (*Session, error) {
 	if flows == nil || mcpService == nil {
-		return nil, errors.New("agent and MCP services are required")
+		return nil, errors.New("flow and MCP services are required")
 	}
 	snapshot, err := flows.ResolveCurrent(ctx, flowID)
 	if err != nil {

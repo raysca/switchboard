@@ -487,11 +487,11 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		s.metrics.SessionsFailedTotal.Add(1)
 		timeline.Record(TimelineEvent{Type: EventError, Details: s.redactor.Redact(err.Error())})
 		s.logSetupFailure(sessionID, flowID, "resolve", err)
-		return nil, fmt.Errorf("resolve agent: %w", err)
+		return nil, fmt.Errorf("resolve flow: %w", err)
 	}
 	call.PushToTalk = conn.PushToTalk()
 	call.OnRoute = s.onRoute(timeline, call.StoredSessionID)
-	cue := s.newCallCue(call.Graph, conn.Cue(), timeline)
+	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
 	if cue != nil {
 		base := call.OnRoute
 		call.OnRoute = func(e core.HandoffEvent) { base(e); cue.onRoute(e) }
@@ -710,13 +710,13 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 	if s.flows == nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "agent storage is not enabled"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "flow storage is not enabled"})
 		return
 	}
 
 	if !s.storeHealthy(r.Context()) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "agent store unreachable"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "unready", "reason": "flow store unreachable"})
 		return
 	}
 
@@ -1263,7 +1263,7 @@ func (s *Server) logSetupFailure(session uint64, flowID, phase string, err error
 	case errors.Is(err, context.DeadlineExceeded):
 		category = "timeout"
 	}
-	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("agent", flowID),
+	s.logger.Warn("call setup failed", slog.Uint64("session", session), slog.String("flow", flowID),
 		slog.String("category", category), slog.String("stage", setupStage(err.Error())))
 }
 

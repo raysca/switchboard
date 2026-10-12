@@ -810,12 +810,12 @@ func s14(x *sctx, r *Result) {
 	c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
 	routes := 0
 	for _, e := range x.srv.timelineEvents(c.n) {
-		if e.Type == "handoff" {
+		if e.Type == "route" {
 			routes++
 			r.m("handoff", e.Details)
 		}
 	}
-	r.check("server recorded the handoff", routes == 1, fmt.Sprint(routes))
+	r.check("server recorded the route", routes == 1, fmt.Sprint(routes))
 
 	c.quiet(600 * time.Millisecond)
 	mark = time.Now()

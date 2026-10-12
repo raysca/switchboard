@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// ponytail: flows live in the pre-rename tables (agents, agent_versions,
+// agent_mcp_tools, sessions.agent_id). Renaming them means rewriting the
+// Postgres trigger functions too; do it only if the SQL names start to hurt.
 type Flow struct {
 	ID, Name, Description, CurrentVersionID string
 	Enabled, Archived                       bool

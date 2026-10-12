@@ -123,7 +123,7 @@ func TestManagement_Authenticate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/flows", nil)
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
@@ -141,7 +141,7 @@ func TestManagement_DisabledRejectsAll(t *testing.T) {
 		t.Fatalf("NewManagement: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/flows", nil)
 	req.Header.Set("Authorization", "Bearer "+strings.Repeat("a", 32))
 	if m.Authenticate(req) {
 		t.Fatal("expected disabled management to reject authentication")

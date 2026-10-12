@@ -880,7 +880,7 @@ func TestAgentID_ComesOnlyFromToken(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	wsURL := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=other&agent_id=other", ts.Listener.Addr().String(), tokStr)
+	wsURL := fmt.Sprintf("ws://%s/ws?token=%s&pipeline=other&flow_id=other", ts.Listener.Addr().String(), tokStr)
 	c, _, err := websocket.Dial(ctx, wsURL, nil)
 	if err != nil {
 		t.Fatal(err)

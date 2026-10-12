@@ -29,7 +29,7 @@ func (r FlowRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.C
 	v := FlowVersion{ID: NewID(), FlowID: a.ID, Version: 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: now, MCPReviewRequired: mcpReviewRequired}
 	a.Name = strings.TrimSpace(a.Name)
 	if a.Name == "" {
-		return FlowVersion{}, errors.New("agent name required")
+		return FlowVersion{}, errors.New("flow name required")
 	}
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = now
@@ -79,7 +79,7 @@ func (r FlowRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.C
 			return err
 		}
 		if n != 1 {
-			return errors.New("agent unavailable")
+			return errors.New("flow unavailable")
 		}
 		return nil
 	})
@@ -116,7 +116,7 @@ func (r FlowRepository) MutateAndPublish(ctx context.Context, id string, mutatio
 			return err
 		}
 		if archived {
-			return errors.New("agent unavailable")
+			return errors.New("flow unavailable")
 		}
 		if mutation.Name != nil {
 			name = strings.TrimSpace(*mutation.Name)
@@ -128,7 +128,7 @@ func (r FlowRepository) MutateAndPublish(ctx context.Context, id string, mutatio
 			enabled = *mutation.Enabled
 		}
 		if name == "" || len(name) > 128 || len(description) > 1024 {
-			return errors.New("invalid agent details")
+			return errors.New("invalid flow details")
 		}
 		updatedAt := utc(time.Now())
 		if publish {
@@ -160,7 +160,7 @@ func (r FlowRepository) MutateAndPublish(ctx context.Context, id string, mutatio
 				return err
 			}
 			if n != 1 {
-				return errors.New("agent unavailable")
+				return errors.New("flow unavailable")
 			}
 			return nil
 		}

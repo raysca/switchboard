@@ -29,7 +29,7 @@ limits:
   max_pending_handshakes: 50
   max_sessions: 100
   max_sessions_per_principal: 5
-  # max_sessions_per_agent: 0         # 0 = unlimited
+  # max_sessions_per_flow: 0         # 0 = unlimited
   # start_rate_per_principal: 0       # starts/sec per principal; 0 = unlimited
   # handshake_rate_per_ip: 20         # WebSocket upgrades/sec per source IP (burst max(5, 2x)); 0 = default 20
   # start_burst_per_principal: 1      # required >= 1 when rate > 0
@@ -52,7 +52,7 @@ vad:
   queue_cap: 8192
   stop_ms: 200         # silence that ends a VAD speech segment (200..2000, 32 ms steps); the turn manager's speech timeout guards mid-sentence cuts
 
-# Provider infrastructure only. Models, voices and prompts belong to stored agents;
+# Provider infrastructure only. Models, voices and prompts belong to stored flows;
 # provider secrets come from the environment (variables listed by GET /api/v1/providers).
 providers:
   google_stt:
@@ -74,7 +74,7 @@ observability:
   timeline_max_events: 500
   timeline_ttl: 10m
 
-# Agent store (required): calls run stored agents. The server requires:
+# Flow store (required): calls run stored flows. The server requires:
 #   GOVOICE_DATABASE_DSN     storage DSN (file path for sqlite, URL for postgres)
 # In this development profile it is optional: when unset the server creates
 # .govoice-dev/govoice.db (override the directory with GOVOICE_DEV_DIR).

@@ -59,24 +59,24 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if input.Principal == "" || len(input.Principal) > 128 || input.FlowID == "" || len(input.FlowID) > 128 {
-			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and agent_id must be 1 to 128 characters", requestID)
+			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and flow_id must be 1 to 128 characters", requestID)
 			return
 		}
 		if s.flows == nil {
-			api.WriteError(w, http.StatusServiceUnavailable, "agent_management_unavailable", "agent storage is unavailable", requestID)
+			api.WriteError(w, http.StatusServiceUnavailable, "flow_management_unavailable", "flow storage is unavailable", requestID)
 			return
 		}
 		target, err := s.flows.Get(r.Context(), input.FlowID)
 		if errors.Is(err, sql.ErrNoRows) {
-			api.WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
+			api.WriteError(w, http.StatusNotFound, "not_found", "flow not found", requestID)
 			return
 		}
 		if err != nil {
-			api.WriteError(w, http.StatusInternalServerError, "internal_error", "agent could not be loaded", requestID)
+			api.WriteError(w, http.StatusInternalServerError, "internal_error", "flow could not be loaded", requestID)
 			return
 		}
 		if !flowCallable(target.Readiness.State) {
-			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "agent_not_ready", Message: "agent is not ready to take calls", RequestID: requestID, Details: target.Readiness}})
+			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "flow_not_ready", Message: "flow is not ready to take calls", RequestID: requestID, Details: target.Readiness}})
 			return
 		}
 		now := time.Now()
@@ -99,9 +99,9 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Token: signed, ExpiresAt: claims.ExpiresAt.Time, Scope: "voice:connect",
 		}})
 	default:
-		if r.URL.Path == "/api/v1/agents" || strings.HasPrefix(r.URL.Path, "/api/v1/agents/") {
+		if r.URL.Path == "/api/v1/flows" || strings.HasPrefix(r.URL.Path, "/api/v1/flows/") {
 			if s.flowManagementAPI == nil {
-				api.WriteError(w, http.StatusServiceUnavailable, "agent_management_unavailable", "agent management storage is unavailable", requestID)
+				api.WriteError(w, http.StatusServiceUnavailable, "flow_management_unavailable", "flow management storage is unavailable", requestID)
 				return
 			}
 			r = r.WithContext(api.WithRequestID(r.Context(), requestID))

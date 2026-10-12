@@ -33,7 +33,7 @@ type management struct {
 // configured. Call it before Start.
 func (s *Server) EnableManagement(ctx context.Context) error {
 	if s.cfg.Storage.Dialect == "" {
-		return errors.New("storage.dialect is required: calls run stored agents")
+		return errors.New("storage.dialect is required: calls run stored flows")
 	}
 	dsnEnv := envOr(s.cfg.Storage.DSNEnv, "GOVOICE_DATABASE_DSN")
 	dsn := os.Getenv(dsnEnv)
@@ -100,10 +100,10 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	}
 	if bad := s.unavailableFlowProviders(ctx); len(bad) > 0 {
 		for _, b := range bad {
-			s.logger.Error("agent references a provider this build cannot run", slog.String("problem", b))
+			s.logger.Error("flow references a provider this build cannot run", slog.String("problem", b))
 		}
 		if s.cfg.Profile == ProfileProduction {
-			return fail(fmt.Errorf("%d stored agent stage(s) use providers missing from this build (xAI STT/TTS need -tags xaispeech): %s", len(bad), strings.Join(bad, "; ")))
+			return fail(fmt.Errorf("%d stored flow stage(s) use providers missing from this build (xAI STT/TTS need -tags xaispeech): %s", len(bad), strings.Join(bad, "; ")))
 		}
 	}
 	s.mgmt = m
@@ -119,7 +119,7 @@ func (s *Server) unavailableFlowProviders(ctx context.Context) []string {
 	for offset := 0; ; offset += 100 {
 		page, err := s.flows.List(ctx, 100, offset)
 		if err != nil {
-			s.logger.Warn("agent provider check skipped", slog.String("err", s.redactor.Redact(err.Error())))
+			s.logger.Warn("flow provider check skipped", slog.String("err", s.redactor.Redact(err.Error())))
 			return bad
 		}
 		for _, a := range page {
@@ -134,7 +134,7 @@ func (s *Server) unavailableFlowProviders(ctx context.Context) []string {
 				for _, stage := range []string{"stt", "llm", "tts"} {
 					for _, c := range n.Config.Chain(stage) {
 						if c.Provider != "" && !s.registry.Supports(c.Provider, stage) {
-							bad = append(bad, fmt.Sprintf("agent %s %s=%s", a.ID, stage, c.Provider))
+							bad = append(bad, fmt.Sprintf("flow %s %s=%s", a.ID, stage, c.Provider))
 						}
 					}
 				}
@@ -189,7 +189,7 @@ func (s *Server) developmentStore() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("development store: %w", err)
 	}
-	s.logger.Warn("development profile: using a local agent store; never use it in production", slog.String("dir", dir))
+	s.logger.Warn("development profile: using a local flow store; never use it in production", slog.String("dir", dir))
 	return filepath.Join(dir, "govoice.db"), nil
 }
 

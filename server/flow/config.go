@@ -138,7 +138,7 @@ func (l ContextLimits) Limits() (maxMessages, maxTokens int) {
 
 const maxSystemPromptBytes = 32 << 10
 
-var ErrInvalidConfig = errors.New("invalid agent config")
+var ErrInvalidConfig = errors.New("invalid flow config")
 
 // DecodeConfig strictly decodes a flow config: unknown fields and wrong
 // types are rejected. Completeness is checked by AttachmentProblems.

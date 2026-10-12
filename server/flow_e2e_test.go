@@ -189,7 +189,7 @@ type audioArrival struct {
 
 func (r *flowRigE2E) dial(flowID string) *e2eCall {
 	r.t.Helper()
-	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","agent_id":"`+flowID+`"}`)
+	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","flow_id":"`+flowID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -313,8 +313,8 @@ func (r *flowRigE2E) spanNames(sessionID string) map[string]bool {
 		names[sp.Name] = true
 		// The designer replays the path from these attributes; the trace allowlists
 		// drop unknown keys, so they must really be persisted.
-		if sp.Name == "handoff.active" && (!strings.Contains(sp.AttributesJSON, `"from_node":"front"`) || !strings.Contains(sp.AttributesJSON, `"to_node":"sales"`)) {
-			r.t.Fatalf("handoff.active attributes = %s", sp.AttributesJSON)
+		if sp.Name == "route.active" && (!strings.Contains(sp.AttributesJSON, `"from_step":"front"`) || !strings.Contains(sp.AttributesJSON, `"to_step":"sales"`)) {
+			r.t.Fatalf("route.active attributes = %s", sp.AttributesJSON)
 		}
 	}
 	return names
@@ -367,7 +367,7 @@ func TestFlowE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	}
 	eventually(t, "handoff trace spans", func() bool {
 		n := r.spanNames(c.sessionID)
-		return n["handoff.preparing"] && n["handoff.active"]
+		return n["route.preparing"] && n["route.active"]
 	})
 
 	_ = c.conn.Close(websocket.StatusNormalClosure, "bye")
@@ -384,7 +384,7 @@ func TestFlowE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 
 	c.say("transfer to sales")
 	c.waitReplies("Connecting you.", 1)
-	eventually(t, "handoff_failed", func() bool { return r.has(EventRouteFailed, "sales") })
+	eventually(t, "route_failed", func() bool { return r.has(EventRouteFailed, "sales") })
 	if r.s.metrics.handoff.failures.Load() != 1 || r.s.metrics.handoff.total.Load() != 0 {
 		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
 	}

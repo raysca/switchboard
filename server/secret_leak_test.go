@@ -101,12 +101,12 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 		}
 		out.WriteString(path + "\n" + w.Body.String() + "\n")
 	}
-	for _, p := range []string{"/api/v1/providers", "/api/v1/agents", "/api/v1/agents/" + plain.ID, "/api/v1/agents/" + routedID,
+	for _, p := range []string{"/api/v1/providers", "/api/v1/flows", "/api/v1/flows/" + plain.ID, "/api/v1/flows/" + routedID,
 		"/api/v1/mcp-servers", "/api/v1/sessions", "/api/v1/sessions/" + c.sessionID, "/api/v1/sessions/" + c.sessionID + "/traces",
 		"/api/v1/server-config", "/api/v1/operations/status", "/debug/timeline?session=1", "/metrics", "/ready"} {
 		get(p)
 	}
-	if !strings.Contains(out.String(), "handoff") {
+	if !strings.Contains(out.String(), "route.active") {
 		t.Fatal("the captured surface is missing the call (timeline/traces empty?)")
 	}
 	if logs.String() == "" {

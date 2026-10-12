@@ -15,7 +15,7 @@ import (
 	"govoice/server/storage"
 )
 
-var errFlowsUnavailable = errors.New("agent storage is not enabled")
+var errFlowsUnavailable = errors.New("flow storage is not enabled")
 
 // releaseTimeout bounds ending a call's flow session (MCP drain + DB write).
 const releaseTimeout = 5 * time.Second
@@ -33,7 +33,7 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 		return CallSpec{}, nil, errFlowsUnavailable
 	}
 	if flowID == "" {
-		return CallSpec{}, nil, errors.New("token does not name an agent")
+		return CallSpec{}, nil, errors.New("token does not name a flow")
 	}
 	sessionID := tokenID
 	if !storage.IsID(sessionID) { // legacy tokens carry a random UUIDv4 or no jti
@@ -41,7 +41,7 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 	}
 	rs, err := runtime.StartSession(ctx, s.flows, s.mcpService, flowID, sessionID)
 	if err != nil {
-		return CallSpec{}, nil, fmt.Errorf("start agent session: %w", err)
+		return CallSpec{}, nil, fmt.Errorf("start flow session: %w", err)
 	}
 	history := newTurnRecorder(func(ctx context.Context, row storage.TurnRecord) error {
 		s.metrics.TurnsTotal.Add(1)
@@ -59,7 +59,7 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 		history.close(historyCtx)
 		cancelHistory()
 		if err := rs.Close(ctx); err != nil {
-			s.logger.Warn("agent session did not end cleanly", "session", rs.Pin.ID, "err", s.redactor.Redact(err.Error()))
+			s.logger.Warn("flow session did not end cleanly", "session", rs.Pin.ID, "err", s.redactor.Redact(err.Error()))
 		}
 	}
 	call, err := s.callSpec(ctx, rs)
@@ -145,7 +145,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	entry := g.StartStep()
 	cfg := entry.Config
 	if missing := cfg.Missing(); len(missing) > 0 {
-		return CallSpec{}, fmt.Errorf("agent config incomplete: %v", missing)
+		return CallSpec{}, fmt.Errorf("flow config incomplete: %v", missing)
 	}
 	secrets, err := s.resolveStageSecrets(ctx, cfg, "stt", "llm", "tts")
 	if err != nil {
@@ -157,7 +157,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	tools, exec := rs.Definitions, rs.Executor
 	var graph *CallFlow
 	if len(g.Steps) > 1 {
-		graph = &CallFlow{Entry: g.Start, Cue: g.RouteCue}
+		graph = &CallFlow{Start: g.Start, Cue: g.RouteCue}
 		graph.Resolve = func(ctx context.Context, id string) (StepSpec, error) { return s.stepSpec(ctx, rs, g, graph, id) }
 		tools, exec = s.stepToolset(rs, g, entry, graph)
 	}
@@ -187,7 +187,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		Recording:           cfg.Recording.Active(),
 		VADStopMS:           cfg.VADStopMS,
 		STTP99MS:            cfg.STTP99MS,
-		Graph:               graph,
+		Flow:                graph,
 	}, nil
 }
 
@@ -219,7 +219,7 @@ func (s *Server) resolveStageSecrets(ctx context.Context, cfg flow.Config, names
 		}
 		secret, err := s.resolver.Secret(stage.Provider, stage.Name)
 		if err != nil {
-			return nil, fmt.Errorf("agent not callable: %s credential: %w", stage.Name, err)
+			return nil, fmt.Errorf("flow not callable: %s credential: %w", stage.Name, err)
 		}
 		secrets[stage.Name] = secret
 	}
@@ -238,7 +238,7 @@ func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step
 	defs := append(mcp[:len(mcp):len(mcp)], transferTools(g, n.ID)...)
 	return defs, stepExecutor(rs.Executor, allowed, transferTargets(g, n.ID), func(target string) error {
 		if cg.Commit == nil {
-			return errors.New("handoff not ready")
+			return errors.New("route not ready")
 		}
 		return cg.Commit(target)
 	})
@@ -249,7 +249,7 @@ func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step
 func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Definition, cg *CallFlow, id string) (StepSpec, error) {
 	n, ok := g.Step(id)
 	if !ok {
-		return StepSpec{}, fmt.Errorf("unknown node %q", id)
+		return StepSpec{}, fmt.Errorf("unknown step %q", id)
 	}
 	cfg := n.Config
 	secrets, err := s.resolveStageSecrets(ctx, cfg, "llm", "tts")

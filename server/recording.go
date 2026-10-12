@@ -22,7 +22,7 @@ func (s *Server) attachRecording(call CallSpec, flowID string, sessionID uint64,
 	started := time.Now()
 	safeFlow := flowID
 	if !record.ValidID(safeFlow) || len(safeFlow) > 64 || !storage.IsID(safeFlow) {
-		safeFlow = "agent"
+		safeFlow = "flow"
 	}
 	sid := fmt.Sprint(sessionID)
 	rec := record.New(s.recSink, record.Meta{

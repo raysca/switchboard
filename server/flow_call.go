@@ -37,7 +37,7 @@ func (n *StepSpec) wipe() {
 // CallFlow is what a call needs to move between steps. Commit is set by the
 // pipeline builder once the handoff exists; transfer tools call it.
 type CallFlow struct {
-	Entry   string
+	Start   string
 	Resolve func(ctx context.Context, stepID string) (StepSpec, error)
 	Commit  func(target string) error
 	Cue     *flow.RouteCue

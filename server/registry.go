@@ -77,7 +77,7 @@ type CallSpec struct {
 	StoredSessionID string
 	// Flow is set for flows with more than one step: the call starts on the
 	// start step and moves between steps by handoff.
-	Graph *CallFlow
+	Flow *CallFlow
 	// OnRoute, if set, receives the handoff lifecycle (timeline, traces, metrics).
 	OnRoute   func(core.HandoffEvent)
 	MaxTokens int
@@ -519,7 +519,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	// call always has one: handoffs flip when the call is idle.
 	var asyncTrigger *core.AsyncTrigger
 	var asstActive func() bool
-	if call.Graph != nil || slices.ContainsFunc(call.LLM.Tools, func(d core.ToolDefinition) bool { return d.Policy.Async }) {
+	if call.Flow != nil || slices.ContainsFunc(call.LLM.Tools, func(d core.ToolDefinition) bool { return d.Policy.Async }) {
 		asyncTrigger = core.NewAsyncTrigger(core.AsyncTriggerConfig{Busy: func() bool { return asstActive != nil && asstActive() },
 			OnTriggered: r.onAsyncTurn, OnDropped: r.onAsyncDrop})
 	}
@@ -560,14 +560,14 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		return fail(fmt.Errorf("create tts processor: %w", err))
 	}
 	built = append(built, ttsProc)
-	if call.Graph != nil {
+	if call.Flow != nil {
 		// The start step is live; every other step is built when the call moves
 		// to it and closed when it leaves. The swaps are the pipeline stages.
 		var lastStep atomic.Pointer[string]
 		buildStep := func(ctx context.Context, id string) (core.NodeStages, error) {
-			ns, err := call.Graph.Resolve(ctx, id)
+			ns, err := call.Flow.Resolve(ctx, id)
 			if err != nil {
-				return core.NodeStages{}, fmt.Errorf("resolve node %q: %w", id, err)
+				return core.NodeStages{}, fmt.Errorf("resolve step %q: %w", id, err)
 			}
 			defer ns.wipe()
 			spec, fallbacks := prepLLM(ns.LLM, ns.LLMFallbacks)
@@ -576,21 +576,21 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			stepCall.TTS, stepCall.TTSFallbacks = ns.TTS, ns.TTSFallbacks
 			llm, err := r.buildLLM(cfg, stepCall, spec, build)
 			if err != nil {
-				return core.NodeStages{}, fmt.Errorf("node %q llm: %w", id, err)
+				return core.NodeStages{}, fmt.Errorf("step %q llm: %w", id, err)
 			}
 			tts, err := r.buildTTS(cfg, stepCall, build)
 			if err != nil {
 				if c, ok := llm.(interface{ Close() error }); ok {
 					_ = c.Close()
 				}
-				return core.NodeStages{}, fmt.Errorf("node %q tts: %w", id, err)
+				return core.NodeStages{}, fmt.Errorf("step %q tts: %w", id, err)
 			}
 			lastStep.Store(&ns.Name)
 			return core.NodeStages{LLM: llm, TTS: tts}, nil
 		}
 		llmSwap, ttsSwap := core.NewStageSwap(llmProc), core.NewStageSwap(ttsProc)
 		h, err := core.NewHandoff(core.HandoffConfig{
-			Entry: call.Graph.Entry, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
+			Entry: call.Flow.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
 			Build:   buildStep,
 			OnEvent: call.OnRoute,
 			Greet: func(string) error {
@@ -605,7 +605,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		if err != nil {
 			return fail(fmt.Errorf("create handoff: %w", err))
 		}
-		call.Graph.Commit = h.Commit
+		call.Flow.Commit = h.Commit
 		llmProc, ttsProc = llmSwap, ttsSwap
 	}
 

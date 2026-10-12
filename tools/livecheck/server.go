@@ -318,7 +318,7 @@ func (s *server) id(path string, body any) (string, error) {
 }
 
 func (s *server) token(fl string) (string, error) {
-	d, err := s.api("voice-tokens", map[string]string{"principal": "livecheck", "agent_id": fl})
+	d, err := s.api("voice-tokens", map[string]string{"principal": "livecheck", "flow_id": fl})
 	if err != nil {
 		return "", err
 	}

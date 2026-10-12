@@ -174,7 +174,7 @@ func (e *Exporter) Shutdown(ctx context.Context) error {
 // Session.SetTracer(t, e.Policy()) and feed latency via t.Latency.
 func (e *Exporter) Session(flowID, flowVersion string) *SessionTracer {
 	return &SessionTracer{e: e, tr: e.tp.Tracer("govoice"), fl: []attribute.KeyValue{
-		attribute.String("govoice.agent.id", flowID), attribute.String("govoice.agent.version", flowVersion),
+		attribute.String("govoice.flow.id", flowID), attribute.String("govoice.flow.version", flowVersion),
 	}, turns: map[core.TurnID]trace.Span{}, open: map[*span]struct{}{}}
 }
 

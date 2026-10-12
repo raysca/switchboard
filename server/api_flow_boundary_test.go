@@ -22,7 +22,7 @@ func TestFlowRoutesUseManagementBoundaryAndTrustedRequestID(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	s.SetFlowManagementAPI(api.NewFlowsHandler(flow.NewService(store, s.availability)))
 	key := "management-test-key-32-bytes-long-and-separate"
-	path := "/api/v1/agents"
+	path := "/api/v1/flows"
 
 	unauthorized := apiRequest(s, http.MethodGet, path, "", "")
 	if unauthorized.Code != http.StatusUnauthorized {

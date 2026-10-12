@@ -36,16 +36,16 @@ func (m *routeMetrics) observe(e core.HandoffEvent) {
 }
 
 func (m *routeMetrics) write(w io.Writer) {
-	fmt.Fprintf(w, "# HELP voice_handoffs_total Completed agent handoffs.\n# TYPE voice_handoffs_total counter\nvoice_handoffs_total %d\n", m.total.Load())
-	fmt.Fprintf(w, "# HELP voice_handoff_failures_total Handoffs that could not complete (the caller stayed with the old agent).\n# TYPE voice_handoff_failures_total counter\nvoice_handoff_failures_total %d\n", m.failures.Load())
-	fmt.Fprint(w, "# HELP voice_handoff_seconds Time from the transfer to the new agent being active.\n# TYPE voice_handoff_seconds histogram\n")
+	fmt.Fprintf(w, "# HELP voice_routes_total Completed routes between steps.\n# TYPE voice_routes_total counter\nvoice_routes_total %d\n", m.total.Load())
+	fmt.Fprintf(w, "# HELP voice_route_failures_total Routes that could not complete (the caller stayed on the old step).\n# TYPE voice_route_failures_total counter\nvoice_route_failures_total %d\n", m.failures.Load())
+	fmt.Fprint(w, "# HELP voice_route_seconds Time from the transfer to the new step being active.\n# TYPE voice_route_seconds histogram\n")
 	var cum uint64
 	for i, le := range routeBuckets {
 		cum += m.buckets[i].Load()
-		fmt.Fprintf(w, "voice_handoff_seconds_bucket{le=\"%g\"} %d\n", le, cum)
+		fmt.Fprintf(w, "voice_route_seconds_bucket{le=\"%g\"} %d\n", le, cum)
 	}
 	cum += m.buckets[len(routeBuckets)].Load()
-	fmt.Fprintf(w, "voice_handoff_seconds_bucket{le=\"+Inf\"} %d\nvoice_handoff_seconds_sum %g\nvoice_handoff_seconds_count %d\n", cum, float64(m.sumNs.Load())/1e9, cum)
+	fmt.Fprintf(w, "voice_route_seconds_bucket{le=\"+Inf\"} %d\nvoice_route_seconds_sum %g\nvoice_route_seconds_count %d\n", cum, float64(m.sumNs.Load())/1e9, cum)
 }
 
 // onRoute is one call's handoff observer: timeline events, metrics, and
@@ -72,8 +72,8 @@ func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.
 			return // committed: preparing carries the same information
 		}
 		if s.mgmt != nil && s.mgmt.traces != nil && storedSessionID != "" {
-			ev := core.NewTraceEvent("handoff."+string(e.Kind), time.Now(), core.SessionID(storedSessionID), "", 0, core.TracePolicy{},
-				map[string]any{"from_node": e.From, "to_node": e.To})
+			ev := core.NewTraceEvent("route."+string(e.Kind), time.Now(), core.SessionID(storedSessionID), "", 0, core.TracePolicy{},
+				map[string]any{"from_step": e.From, "to_step": e.To})
 			core.StartSpanSafe(context.Background(), s.mgmt.traces, ev).End(e.Err)
 		}
 	}

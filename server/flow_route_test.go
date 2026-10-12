@@ -118,7 +118,7 @@ func newFlowRig(t *testing.T) *flowRig {
 		ttsClose:  map[string]*atomic.Int32{"front-voice": {}, "sales-voice": {}},
 	}
 	g := twoStepFlow(t)
-	graph := &CallFlow{Entry: "front"}
+	graph := &CallFlow{Start: "front"}
 	graph.Resolve = func(_ context.Context, id string) (StepSpec, error) {
 		return StepSpec{Name: "Sales",
 			LLM: StageSpec{Provider: "google", SystemPrompt: "SALES"},
@@ -142,7 +142,7 @@ func newFlowRig(t *testing.T) *flowRig {
 	call := CallSpec{
 		STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google", Voice: "front-voice"},
 		LLM:         StageSpec{Provider: "google", SystemPrompt: "FRONT", Tools: transferTools(g, "front"), ToolExecutor: exec},
-		MaxMessages: 20, MaxTokens: 4000, Graph: graph,
+		MaxMessages: 20, MaxTokens: 4000, Flow: graph,
 		OnRoute: func(e core.HandoffEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())

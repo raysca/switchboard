@@ -65,7 +65,7 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 	defer ts.Close()
 	lastTokenID := ""
 	call := func(flowID string) (*websocket.Conn, error) {
-		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+flowID+`"}`)
+		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("token: %d %s", w.Code, w.Body)
 		}
@@ -137,7 +137,7 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 
 	// A flow that is no longer ready cannot take calls, even with a token
 	// minted while it was ready.
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+created.ID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+created.ID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -218,7 +218,7 @@ func TestTextTurnReachesFlowLLM(t *testing.T) {
 
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+flowID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -311,7 +311,7 @@ func TestShutdownEndsActiveSessionRows(t *testing.T) {
 	}
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+flowID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -415,7 +415,7 @@ func TestStoredFlow_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+created.ID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+created.ID+`"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("token creation: %d %s", w.Code, w.Body)
 	}
@@ -617,7 +617,7 @@ func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
 	for _, stage := range []string{"stt", "llm", "tts"} {
 		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
 	}
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+flowID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}

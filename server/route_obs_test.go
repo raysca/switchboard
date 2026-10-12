@@ -30,7 +30,7 @@ func TestRouteMetricsCountAndTime(t *testing.T) {
 	var b bytes.Buffer
 	m.write(&b)
 	out := b.String()
-	for _, want := range []string{"voice_handoffs_total 1", "voice_handoff_failures_total 1", `voice_handoff_seconds_bucket{le="0.5"} 1`, "voice_handoff_seconds_count 1"} {
+	for _, want := range []string{"voice_routes_total 1", "voice_route_failures_total 1", `voice_route_seconds_bucket{le="0.5"} 1`, "voice_route_seconds_count 1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
@@ -75,10 +75,10 @@ func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 	}
 	// The designer replays the path from these two attributes: the trace adapter
 	// drops any key outside its allowlist, so assert they actually persisted.
-	if a := attrs["handoff.active"]; !strings.Contains(a, `"from_node":"front"`) || !strings.Contains(a, `"to_node":"sales"`) {
-		t.Fatalf("handoff.active attributes = %s, want from_node and to_node", attrs["handoff.active"])
+	if a := attrs["route.active"]; !strings.Contains(a, `"from_step":"front"`) || !strings.Contains(a, `"to_step":"sales"`) {
+		t.Fatalf("route.active attributes = %s, want from_step and to_step", attrs["route.active"])
 	}
-	for _, want := range []string{"handoff.preparing", "handoff.active", "handoff.failed"} {
+	for _, want := range []string{"route.preparing", "route.active", "route.failed"} {
 		if !names[want] {
 			t.Fatalf("missing span %q, have %v", want, names)
 		}

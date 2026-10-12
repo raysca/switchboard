@@ -35,7 +35,7 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+flowID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}

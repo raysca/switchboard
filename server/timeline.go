@@ -35,11 +35,11 @@ const (
 	EventDisconnect      TimelineEventType = "disconnect"
 
 	// Routed flows: the call moving between steps.
-	EventStepPreparing TimelineEventType = "node_preparing" // Details = target step being built
-	EventRoute         TimelineEventType = "handoff"        // Details = "from->to", DurationMs = commit to active
-	EventStepActive    TimelineEventType = "node_active"    // Details = step now answering
-	EventStepClosed    TimelineEventType = "node_closed"    // Details = step left and closed
-	EventRouteFailed   TimelineEventType = "handoff_failed" // Details = target step, Error = cause
+	EventStepPreparing TimelineEventType = "step_preparing" // Details = target step being built
+	EventRoute         TimelineEventType = "route"          // Details = "from->to", DurationMs = commit to active
+	EventStepActive    TimelineEventType = "step_active"    // Details = step now answering
+	EventStepClosed    TimelineEventType = "step_closed"    // Details = step left and closed
+	EventRouteFailed   TimelineEventType = "route_failed"   // Details = target step, Error = cause
 	EventCueStart      TimelineEventType = "cue_start"      // the route cue began playing
 	EventCueStop       TimelineEventType = "cue_stop"       // Details = why (first_audio, barge_in, failed, cap)
 )
@@ -52,7 +52,7 @@ type TimelineEvent struct {
 	Gen        uint64            `json:"gen,omitempty"`
 	Type       TimelineEventType `json:"type"`
 	Provider   string            `json:"provider,omitempty"`
-	Step       string            `json:"node,omitempty"` // flow step that produced the event
+	Step       string            `json:"step,omitempty"` // flow step that produced the event
 	Details    string            `json:"details,omitempty"`
 	DurationMs int64             `json:"duration_ms,omitempty"`
 	Error      string            `json:"error,omitempty"`

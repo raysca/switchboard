@@ -174,7 +174,7 @@ func (s *Server) newCallCue(g *CallFlow, player cuePlayer, tl *SessionTimeline) 
 	}
 	sound, ok := s.cues[g.Cue.Name]
 	if !ok {
-		s.logger.Warn("handoff cue is not configured; the call runs without it", "cue", g.Cue.Name)
+		s.logger.Warn("route cue is not configured; the call runs without it", "cue", g.Cue.Name)
 		return nil
 	}
 	return newCueController(player, sound, time.Duration(g.Cue.AfterMS)*time.Millisecond, func(t TimelineEventType, d string) {

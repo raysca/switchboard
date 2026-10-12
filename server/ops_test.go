@@ -129,7 +129,7 @@ func TestProbeMuxIsReadOnlySubset(t *testing.T) {
 	s := apiTestServer(t)
 	for path, want := range map[string]int{
 		"/health": 200, "/metrics": 200, "/ready": 503, // not started: unready
-		"/debug/timeline?session=1": 404, "/api/v1/agents": 404,
+		"/debug/timeline?session=1": 404, "/api/v1/flows": 404,
 	} {
 		w := httptest.NewRecorder()
 		s.probeMux.ServeHTTP(w, httptest.NewRequest("GET", path, nil))

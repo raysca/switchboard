@@ -73,7 +73,7 @@ type Config struct {
 		MaxSessions             int           `yaml:"max_sessions"`
 		MaxSessionsPerPrincipal int           `yaml:"max_sessions_per_principal"`
 		MaxSessionsPerIP        int           `yaml:"max_sessions_per_ip"`
-		MaxSessionsPerFlow      int           `yaml:"max_sessions_per_agent"`    // 0 = unlimited
+		MaxSessionsPerFlow      int           `yaml:"max_sessions_per_flow"`     // 0 = unlimited
 		StartRatePerPrincipal   float64       `yaml:"start_rate_per_principal"`  // session starts/sec per principal; 0 = unlimited
 		StartBurstPerPrincipal  int           `yaml:"start_burst_per_principal"` // bucket size; required >= 1 when rate > 0
 		HandshakeRatePerIP      float64       `yaml:"handshake_rate_per_ip"`     // WebSocket upgrades/sec per source IP (burst = max(5, 2x)); default 20

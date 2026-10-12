@@ -36,8 +36,8 @@ func (h flowsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		requestID = uuid.NewString()
 	}
 	w.Header().Set("X-Request-ID", requestID)
-	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/agents"), "/")
-	if r.URL.Path != "/api/v1/agents" && !strings.HasPrefix(r.URL.Path, "/api/v1/agents/") {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/flows"), "/")
+	if r.URL.Path != "/api/v1/flows" && !strings.HasPrefix(r.URL.Path, "/api/v1/flows/") {
 		WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 		return
 	}
@@ -184,20 +184,20 @@ func (h flowsHandler) writeServiceError(w http.ResponseWriter, err error, reques
 		return
 	}
 	if errors.Is(err, storage.ErrVersionConflict) {
-		WriteError(w, http.StatusConflict, "version_conflict", "the agent changed concurrently; retry", requestID)
+		WriteError(w, http.StatusConflict, "version_conflict", "the flow changed concurrently; retry", requestID)
 		return
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
+		WriteError(w, http.StatusNotFound, "not_found", "flow not found", requestID)
 		return
 	}
 	if errors.Is(err, flow.ErrNotAttached) {
-		WriteError(w, http.StatusBadRequest, "agent_not_attached", err.Error(), requestID)
+		WriteError(w, http.StatusBadRequest, "flow_not_attached", err.Error(), requestID)
 		return
 	}
 	if errors.Is(err, flow.ErrInvalidConfig) || strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "must be") {
 		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 		return
 	}
-	WriteError(w, http.StatusInternalServerError, "internal_error", "agent operation failed", requestID)
+	WriteError(w, http.StatusInternalServerError, "internal_error", "flow operation failed", requestID)
 }

@@ -57,10 +57,10 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 			return err
 		}
 		if !enabled || archived {
-			return errors.New("agent unavailable for new sessions")
+			return errors.New("flow unavailable for new sessions")
 		}
 		if !current.Valid || current.String != v.FlowVersionID {
-			return errors.New("agent version is no longer current")
+			return errors.New("flow version is no longer current")
 		}
 		runtimeTools := append([]SelectedTool(nil), v.RuntimeTools...)
 		selectedRows, err := tx.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=?"), v.FlowVersionID)
@@ -91,7 +91,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 			key := tool.ServerID + "\x00" + tool.RemoteName
 			pinned, exists := selected[key]
 			if !exists || pinned.SchemaHash != tool.SchemaHash || pinned.Required != tool.Required {
-				return errors.New("runtime MCP tool does not match agent version selection")
+				return errors.New("runtime MCP tool does not match flow version selection")
 			}
 			included[key] = true
 			query := "SELECT s.enabled,s.pending_delete,mt.schema_hash FROM mcp_servers s LEFT JOIN mcp_tools mt ON mt.discovery_id=s.latest_discovery_id AND mt.remote_name=? WHERE s.id=?"

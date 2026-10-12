@@ -102,7 +102,7 @@ type Flow struct {
 }
 
 type Snapshot struct {
-	FlowID     string            `json:"agent_id"`
+	FlowID     string            `json:"flow_id"`
 	Version    Version           `json:"version"`
 	ConfigHash string            `json:"config_hash"`
 	MCPTools   []MCPToolSnapshot `json:"mcp_tools"`
@@ -226,7 +226,7 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Flow, error) 
 		return Flow{}, err
 	}
 	if source.Version == nil {
-		return Flow{}, errors.New("agent has no current version")
+		return Flow{}, errors.New("flow has no current version")
 	}
 	if strings.TrimSpace(name) == "" {
 		name = source.Name + " copy"
@@ -240,7 +240,7 @@ func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, erro
 		return Snapshot{}, err
 	}
 	if row.Archived || !row.Enabled || row.CurrentVersionID == "" {
-		return Snapshot{}, errors.New("agent unavailable")
+		return Snapshot{}, errors.New("flow unavailable")
 	}
 	v, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
 	if err != nil {
@@ -249,7 +249,7 @@ func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, erro
 	version := toVersion(v)
 	readiness, tools := s.flowReadiness(ctx, v, row.Enabled, row.Archived)
 	if readiness.State == ReadinessNotReady || readiness.State == ReadinessNeedsToolReview || readiness.State == ReadinessToolUnavailable {
-		return Snapshot{}, errors.New("agent not ready")
+		return Snapshot{}, errors.New("flow not ready")
 	}
 	return Snapshot{FlowID: row.ID, Version: version, ConfigHash: v.ConfigHash, MCPTools: tools}, nil
 }
@@ -265,7 +265,7 @@ func (s *Service) StartSession(ctx context.Context, id, sessionID string) (Sessi
 		sessionID = storage.NewID()
 	}
 	if len(snapshot.Version.MCPTools) > 0 {
-		return SessionPin{}, errors.New("agent MCP tools require runtime session capture")
+		return SessionPin{}, errors.New("flow MCP tools require runtime session capture")
 	}
 	return s.StartCapturedSession(ctx, snapshot, sessionID, "", nil)
 }
@@ -305,7 +305,7 @@ func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapsho
 		return Snapshot{}, err
 	}
 	if v.FlowID != session.FlowID || v.ConfigHash != session.ConfigHash {
-		return Snapshot{}, errors.New("session agent snapshot is inconsistent")
+		return Snapshot{}, errors.New("session flow snapshot is inconsistent")
 	}
 	version := toVersion(v)
 	var runtimeTools []MCPToolSnapshot
@@ -329,7 +329,7 @@ func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelect
 		return Version{}, err
 	}
 	if row.Archived || row.CurrentVersionID == "" {
-		return Version{}, errors.New("agent unavailable")
+		return Version{}, errors.New("flow unavailable")
 	}
 	current, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
 	if err != nil {
@@ -474,14 +474,14 @@ func (s *Service) flowReadiness(ctx context.Context, version storage.FlowVersion
 
 func validateDetails(name, description string) error {
 	if name == "" || len(name) > 128 || len(description) > 1024 {
-		return errors.New("agent name must be 1 to 128 characters and description at most 1024 characters")
+		return errors.New("flow name must be 1 to 128 characters and description at most 1024 characters")
 	}
 	return nil
 }
 
 // ErrNotAttached is returned when a flow config is not attached to a usable
 // set of providers.
-var ErrNotAttached = errors.New("agent must be attached to providers")
+var ErrNotAttached = errors.New("flow must be attached to providers")
 
 // attachedConfig validates that raw names a provider and an available
 // available provider for every stage, then returns its canonical form.
@@ -503,18 +503,18 @@ func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json
 
 func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
-		return nil, errors.New("agent config is required")
+		return nil, errors.New("flow config is required")
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
-		return nil, errors.New("agent config must be a JSON object")
+		return nil, errors.New("flow config must be a JSON object")
 	}
 	if _, err := Decode(raw); err != nil {
 		return nil, err
 	}
 	canonical, err := storage.CanonicalJSON(raw)
 	if err != nil {
-		return nil, fmt.Errorf("normalize agent config: %w", err)
+		return nil, fmt.Errorf("normalize flow config: %w", err)
 	}
 	return canonical, nil
 }

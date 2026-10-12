@@ -99,7 +99,7 @@ func TestFlowStepActivationRereadsTheEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.set("XAI_API_KEY", "rotated-xai-key")
-	spec, err := call.Graph.Resolve(t.Context(), "sales")
+	spec, err := call.Flow.Resolve(t.Context(), "sales")
 	if err != nil {
 		t.Fatal(err)
 	}

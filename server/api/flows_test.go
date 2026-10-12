@@ -28,7 +28,7 @@ func TestFlowManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 		handler.ServeHTTP(w, r)
 		return w
 	}
-	created := request(http.MethodPost, "/api/v1/agents", `{"name":"Voice","config":{"stt":{"provider":"google","model":"g.stt"},"llm":{"provider":"google","model":"g.llm"},"tts":{"provider":"google","voice":"g.tts"}}}`)
+	created := request(http.MethodPost, "/api/v1/flows", `{"name":"Voice","config":{"stt":{"provider":"google","model":"g.stt"},"llm":{"provider":"google","model":"g.llm"},"tts":{"provider":"google","voice":"g.tts"}}}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
 	}
@@ -39,19 +39,19 @@ func TestFlowManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 		t.Fatalf("create response=%s err=%v", created.Body, err)
 	}
 	id := envelope.Data.ID
-	updated := request(http.MethodPut, "/api/v1/agents/"+id, `{"name":"Revised","config":{"stt":{"provider":"google","model":"g.stt"},"llm":{"provider":"google","model":"g.llm"},"tts":{"provider":"google","voice":"g.tts"}}}`)
+	updated := request(http.MethodPut, "/api/v1/flows/"+id, `{"name":"Revised","config":{"stt":{"provider":"google","model":"g.stt"},"llm":{"provider":"google","model":"g.llm"},"tts":{"provider":"google","voice":"g.tts"}}}`)
 	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"number":2`) {
 		t.Fatalf("update status=%d body=%s", updated.Code, updated.Body)
 	}
-	listed := request(http.MethodGet, "/api/v1/agents?limit=10", "")
+	listed := request(http.MethodGet, "/api/v1/flows?limit=10", "")
 	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"Revised"`) {
 		t.Fatalf("list status=%d body=%s", listed.Code, listed.Body)
 	}
-	duplicated := request(http.MethodPost, "/api/v1/agents/"+id+"/duplicate", `{"name":"Clone"}`)
+	duplicated := request(http.MethodPost, "/api/v1/flows/"+id+"/duplicate", `{"name":"Clone"}`)
 	if duplicated.Code != http.StatusCreated || !strings.Contains(duplicated.Body.String(), `"Clone"`) {
 		t.Fatalf("duplicate status=%d body=%s", duplicated.Code, duplicated.Body)
 	}
-	archived := request(http.MethodPost, "/api/v1/agents/"+id+"/archive", "")
+	archived := request(http.MethodPost, "/api/v1/flows/"+id+"/archive", "")
 	if archived.Code != http.StatusOK {
 		t.Fatalf("archive status=%d body=%s", archived.Code, archived.Body)
 	}
@@ -78,7 +78,7 @@ func TestFlowMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"tools":[{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `","required":true}]}`
-	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID+"/mcp-tools", strings.NewReader(body))
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/flows/"+created.ID+"/mcp-tools", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	NewFlowsHandler(service).ServeHTTP(w, r)
@@ -96,7 +96,7 @@ func TestFlowMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 		"unknown tool":   `{"mcp_server_id":"` + server.ID + `","remote_name":"nope","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
 		"stale schema":   `{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"stale"}`,
 	} {
-		r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID+"/mcp-tools", strings.NewReader(`{"tools":[`+sel+`]}`))
+		r := httptest.NewRequest(http.MethodPut, "/api/v1/flows/"+created.ID+"/mcp-tools", strings.NewReader(`{"tools":[`+sel+`]}`))
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		NewFlowsHandler(service).ServeHTTP(w, r)
@@ -118,11 +118,11 @@ func TestFlowManagementRejectsUnknownInputAndMissingFlow(t *testing.T) {
 		body string
 		want int
 	}{
-		{"/api/v1/agents", `{"name":"X","config":{},"secret":"no"}`, http.StatusBadRequest},
-		{"/api/v1/agents/not-a-real-id", "", http.StatusNotFound},
+		{"/api/v1/flows", `{"name":"X","config":{},"secret":"no"}`, http.StatusBadRequest},
+		{"/api/v1/flows/not-a-real-id", "", http.StatusNotFound},
 	} {
 		method := http.MethodPost
-		if tc.path == "/api/v1/agents/not-a-real-id" {
+		if tc.path == "/api/v1/flows/not-a-real-id" {
 			method = http.MethodGet
 		}
 		r := httptest.NewRequest(method, tc.path, strings.NewReader(tc.body))
@@ -153,7 +153,7 @@ func TestFlowFallbackChainRoundTrip(t *testing.T) {
 		return `{"name":"Chain","config":{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"m"` + fallbacks + `},"tts":{"provider":"google","voice":"v"},"failover":{"on":["timeout","server_error"]}}}`
 	}
 	post := func(b string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodPost, "/api/v1/agents", strings.NewReader(b))
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/flows", strings.NewReader(b))
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
@@ -172,7 +172,7 @@ func TestFlowFallbackChainRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &env); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+env.Data.ID, nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/flows/"+env.Data.ID, nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"model":"backup"`) || !strings.Contains(w.Body.String(), `"server_error"`) {
