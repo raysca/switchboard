@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import type { AgentDTO, CreateAgentInput, ProviderStatus } from "../../../api/client";
 import { Canvas, type Selection } from "./Canvas";
 import { EdgeInspector, NodeInspector } from "./Inspector";
@@ -17,6 +17,10 @@ import {
   validate,
   type GraphDraft,
 } from "./model";
+
+const sortKeys = (_k: string, v: unknown) =>
+  v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1))) : v;
+const canonical = (v: unknown) => JSON.stringify(v, sortKeys);
 
 type GraphDesignerProps = {
   agent: AgentDTO | null;
@@ -84,10 +88,12 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
   }
 
   // The test runs the last published version: tell the user when the canvas has moved on from it.
-  const saved = agent?.current_version
-    ? JSON.stringify(toPayload(fromAgentConfig(agent.current_version.config, savedTools)))
-    : null;
-  const unpublished = saved !== null && saved !== JSON.stringify(toPayload(graph));
+  // Compared with sorted keys: the server stores the config key-sorted, the draft keeps its own order.
+  const saved = useMemo(
+    () => (agent?.current_version ? canonical(toPayload(fromAgentConfig(agent.current_version.config, savedTools))) : null),
+    [agent?.current_version],
+  );
+  const unpublished = saved !== null && saved !== canonical(toPayload(graph));
 
   return (
     <>
@@ -271,15 +277,13 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
     </form>
     {agent ? (
       <>
-        {unpublished && (
-          <p role="status" className="message-panel" style={{ marginTop: "16px" }}>
-            Unpublished edits are not in this test. Publish to include them.
-          </p>
-        )}
+        <div role="status" className={unpublished ? "message-panel" : undefined} style={{ marginTop: "16px" }}>
+          {unpublished && "Unpublished edits are not in this test. Publish to include them."}
+        </div>
         {testPanel}
       </>
     ) : (
-      <p role="status" style={{ color: "#53666b", marginTop: "16px" }}>Publish once to test this agent.</p>
+      <p style={{ color: "#53666b", marginTop: "16px" }}>Publish once to test this agent.</p>
     )}
     </>
   );

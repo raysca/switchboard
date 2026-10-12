@@ -595,4 +595,24 @@ describe("AgentVoiceTest", () => {
     await user.click(toggleBtn);
     expect(screen.queryByLabelText(/Pipecat RTVI Debug Panel/i)).toBeNull();
   });
+  it("tells the user a call is on the version it started on after a newer one is published", async () => {
+    const client = createMockClient();
+    const v1 = createMockAgent();
+    const v2 = createMockAgent();
+    v2.current_version = { ...v1.current_version!, number: (v1.current_version!.number ?? 1) + 1 };
+    const audio = new BrowserAudioController();
+    vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
+    const ui = (a: AgentDTO) => (
+      <MemoryRouter>
+        <AgentVoiceTest agent={a} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+      </MemoryRouter>
+    );
+    const { rerender } = render(ui(v1));
+    await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    expect(screen.queryByText(/this call is on v/i)).toBeNull();
+
+    rerender(ui(v2));
+    expect(screen.getByText(/this call is on v1\. disconnect and reconnect to test v2/i)).toBeVisible();
+  });
 });

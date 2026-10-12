@@ -63,6 +63,22 @@ describe("GraphDesigner test panel", () => {
     await user.click(screen.getByRole("button", { name: "Remove node" }));
     expect(screen.queryByText(/unpublished edits/i)).toBeNull();
   });
+
+  it("does not call a published edit unpublished when the server stores the keys sorted", async () => {
+    const bare = { stt: flat.stt, llm: { provider: "google", model: "gemini" }, tts: flat.tts };
+    const user = userEvent.setup();
+    const ui = (a: AgentDTO) => (
+      <MemoryRouter>
+        <GraphDesigner agent={a} providers={providers} pending={false} submitLabel="Publish" onSubmit={vi.fn()} onCancel={vi.fn()} testPanel={panel} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(ui(agent(bare)));
+    await user.type(screen.getByLabelText("System prompt"), "Hi.");
+    expect(screen.getByText(/unpublished edits are not in this test/i)).toBeVisible();
+    // After Publish the refetched config has the same content with sorted keys.
+    rerender(ui(agent({ llm: { model: "gemini", provider: "google", system_prompt: "Hi." }, stt: flat.stt, tts: flat.tts })));
+    expect(screen.queryByText(/unpublished edits/i)).toBeNull();
+  });
 });
 
 describe("GraphDesigner", () => {

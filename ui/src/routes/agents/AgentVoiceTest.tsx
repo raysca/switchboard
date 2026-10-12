@@ -39,11 +39,9 @@ export function AgentVoiceTest({
   // Mirrors the server: only these readiness states may take calls.
   const callable = agent.readiness.state === "ready" || agent.readiness.state === "ready_with_tool_warning";
   const voiceClient = voiceClientRef.current;
-  // A graph agent shows the call moving between its nodes while you test it.
-  const graph = useMemo(() => {
-    const g = fromAgentConfig(agent.current_version?.config);
-    return g.nodes.length > 1 ? g : null;
-  }, [agent.current_version?.config]);
+  // A call keeps the version it started on: remember it, so a publish during the call neither
+  // changes the graph being shown nor passes for a test of the new version.
+  const [callVersion, setCallVersion] = useState<{ number: number; config: unknown } | null>(null);
   const [state, setState] = useState<VoiceClientState>(() =>
     voiceClient.getState(),
   );
@@ -64,6 +62,14 @@ export function AgentVoiceTest({
   const isConnecting =
     state.sessionState === "requesting_token" ||
     state.sessionState === "connecting";
+  const inCall = isConnectedOrReady || isConnecting;
+  const shown = inCall && callVersion ? callVersion : { number: agent.current_version?.number, config: agent.current_version?.config };
+  const callIsStale = inCall && callVersion !== null && callVersion.number !== agent.current_version?.number;
+  // A graph agent shows the call moving between its nodes while you test it.
+  const graph = useMemo(() => {
+    const g = fromAgentConfig(shown.config);
+    return g.nodes.length > 1 ? g : null;
+  }, [shown.config]);
 
   // Alt-tab while holding: pointerup never arrives, so release on window blur.
   useEffect(() => {
@@ -74,6 +80,7 @@ export function AgentVoiceTest({
   }, [state.isTalking, voiceClient]);
 
   const handleConnect = async () => {
+    setCallVersion({ number: agent.current_version?.number ?? 0, config: agent.current_version?.config });
     await voiceClient.connect({
       agentId: agent.id,
       principal: `agent-test-${agent.id}`,
@@ -576,6 +583,12 @@ export function AgentVoiceTest({
             </Link>
           </div>
         </div>
+      )}
+
+      {callIsStale && (
+        <p role="status">
+          This call is on v{callVersion?.number}. Disconnect and reconnect to test v{agent.current_version?.number}.
+        </p>
       )}
 
       {graph && (
