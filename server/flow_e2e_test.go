@@ -362,8 +362,8 @@ func TestFlowE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 			steps[e.Step] = true
 		}
 	}
-	if r.s.metrics.handoff.total.Load() != 1 || r.s.metrics.handoff.failures.Load() != 0 {
-		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
+	if r.s.metrics.route.total.Load() != 1 || r.s.metrics.route.failures.Load() != 0 {
+		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
 	}
 	eventually(t, "handoff trace spans", func() bool {
 		n := r.spanNames(c.sessionID)
@@ -385,8 +385,8 @@ func TestFlowE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 	c.say("transfer to sales")
 	c.waitReplies("Connecting you.", 1)
 	eventually(t, "route_failed", func() bool { return r.has(EventRouteFailed, "sales") })
-	if r.s.metrics.handoff.failures.Load() != 1 || r.s.metrics.handoff.total.Load() != 0 {
-		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
+	if r.s.metrics.route.failures.Load() != 1 || r.s.metrics.route.total.Load() != 0 {
+		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
 	}
 	for _, e := range r.timeline() {
 		if e.Type == EventRouteFailed && e.Error == "" {
@@ -431,7 +431,7 @@ func TestFlowE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
 	close(probe.gate)
 	c.waitReplies("[SALES", 1)
 	eventually(t, "front closed after the flip", func() bool { return probe.closes("FRONT") == 1 })
-	if r.s.metrics.handoff.total.Load() != 1 {
+	if r.s.metrics.route.total.Load() != 1 {
 		t.Fatal("exactly one handoff")
 	}
 }
@@ -506,7 +506,7 @@ func TestFlowE2EFlatFlowHasNoRoutes(t *testing.T) {
 			t.Fatalf("a flat agent produced a handoff event: %+v", e)
 		}
 	}
-	if r.s.metrics.handoff.total.Load() != 0 {
+	if r.s.metrics.route.total.Load() != 0 {
 		t.Fatal("no handoff metrics for a flat agent")
 	}
 }
