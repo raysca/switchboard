@@ -37,7 +37,8 @@ local SQLite store in `.govoice-dev/` (git-ignored; delete it to start over).
 Provider keys come from `examples/.env` (template: `examples/.env.example`), which
 the dev server reads as its environment; nothing is stored. If any provider is set,
 `make dev` creates a ready "Dev Assistant" agent from the detected providers that
-the examples call. The management key
+the examples call, and a two-agent "Dealership desk" graph (front desk hands buyers
+to sales) for trying handoffs on the agent's call stage. The management key
 for the admin UI is in `.govoice-dev/dev.env`. Ports default to 8080 (public),
 9090 (admin), 5173 (UI) and 3000 (web client); if one is taken, run e.g.
 `PUBLIC_PORT=18080 ADMIN_PORT=19090 make dev` (the examples follow).

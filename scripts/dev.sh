@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local development stack and examples. Run through make:
-#   make dev                                   server + admin UI, seeded with a "Dev Assistant" agent
+#   make dev                                   server + admin UI, seeded with "Dev Assistant" and a "Dealership desk" graph
 #   make example-web                           custom web client (needs `make dev` running)
 #   make example-cli [TEXT="..."]              CLI call to the dev agent (voice clip, or a text turn)
 #   make example-go NAME=google_pipeline       standalone Go example (reads examples/.env)
