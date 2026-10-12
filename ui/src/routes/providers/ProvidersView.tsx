@@ -41,7 +41,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
 
       {!keyValue ? (
         <EmptyState title="Connect to view providers">
-          Enter the management key above to see which providers the server detected.
+          Enter a management key above to see which providers the server detected.
         </EmptyState>
       ) : providersQuery.isPending ? (
         <LoadingState label="Loading providers" />
