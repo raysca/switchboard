@@ -47,10 +47,12 @@ export type FlowEditorProps = {
   pending: boolean;
   onSubmit: (input: CreateAgentInput) => void;
   onCancel: () => void;
+  /** Calls running on the published version right now (for the Publish dialog). */
+  callsInProgress?: number;
 };
 
 /** One page for a flow: the graph stays put; steps, settings and test calls slide in from the right. */
-export function FlowEditor({ agent, providers, client, keyValue, pending, onSubmit, onCancel, initialName, initialPanel }: FlowEditorProps) {
+export function FlowEditor({ agent, providers, client, keyValue, pending, onSubmit, onCancel, initialName, initialPanel, callsInProgress }: FlowEditorProps) {
   const flowTools = useMemo(() => (agent?.current_version?.mcp_tools ?? []).map((t) => `${t.mcp_server_id}/${t.remote_name}`), [agent]);
   const published = useMemo(() => (agent?.current_version ? fromAgentConfig(agent.current_version.config, flowTools) : null), [agent, flowTools]);
   const [name, setName] = useState(agent?.name ?? initialName ?? "");
@@ -287,6 +289,8 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
         <PublishDialog
           flowName={name}
           version={version + 1}
+          currentVersion={agent ? version : undefined}
+          callsInProgress={callsInProgress}
           firstVersion={!published}
           changes={[
             ...(renamed ? [`Renamed the flow to ${name.trim()}`] : []),

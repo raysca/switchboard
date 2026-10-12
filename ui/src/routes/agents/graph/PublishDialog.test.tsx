@@ -63,4 +63,25 @@ describe("PublishDialog", () => {
     render(<PublishDialog {...props} version={1} firstVersion changes={[]} />);
     expect(screen.getByText("This is the first version of this flow.")).toBeVisible();
   });
+
+  it("says how many calls are in progress on the current version, and only when there are some", () => {
+    const { unmount } = render(<PublishDialog {...props} currentVersion={7} callsInProgress={9} />);
+    expect(screen.getByText(/The 9 calls on v7 right now/)).toBeVisible();
+    expect(screen.getByRole("dialog")).toHaveTextContent("finish on v7: publishing never changes a call in progress.");
+    unmount();
+    render(<PublishDialog {...props} currentVersion={7} callsInProgress={0} />);
+    expect(screen.queryByText(/right now/)).toBeNull();
+  });
+
+  it("counts the changes in the heading, and lists the checks when nothing blocks publishing", () => {
+    render(<PublishDialog {...props} changes={["Renamed the flow to X", "Description changed"]} />);
+    expect(screen.getByRole("heading", { name: "What changes · 2", level: 3 })).toBeVisible();
+    expect(screen.getByText("Every step is set up")).toBeVisible();
+    expect(screen.getByText("Every step is reachable from the start step")).toBeVisible();
+  });
+
+  it("shows no checks when something blocks publishing", () => {
+    render(<PublishDialog {...props} problems={["Fix this."]} />);
+    expect(screen.queryByText("Every step is set up")).toBeNull();
+  });
 });

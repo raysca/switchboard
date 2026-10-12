@@ -78,6 +78,7 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
     <div className="flow-page flow-page--editor">
       {flow && publishedVersion !== null && dismissedAt !== location.key && (
         <PublishedBanner
+          flowId={flow.id}
           flowName={flow.name}
           version={publishedVersion}
           olderCalls={liveCalls(active.data ?? [], flow).onOlderVersion}
@@ -99,6 +100,7 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
         pending={createMutation.isPending || updateMutation.isPending}
         onSubmit={(input) => (flow ? updateMutation.mutate({ id: flow.id, payload: input }) : createMutation.mutate(input))}
         onCancel={() => navigate("/flows")}
+        callsInProgress={flow ? liveCalls(active.data ?? [], flow).live : 0}
       />
     </div>
   );
