@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // Files already moved to tokens. Each task appends the files it converted.
-export const CONVERTED: string[] = ["app/App.tsx", "routes/sections.tsx", "components/primitives.tsx"];
+export const CONVERTED: string[] = ["app/App.tsx", "routes/sections.tsx", "components/primitives.tsx", "routes/dashboard/DashboardView.tsx"];
 
 const colour = /#[0-9a-fA-F]{3,8}\b|rgba?\(/;
 
