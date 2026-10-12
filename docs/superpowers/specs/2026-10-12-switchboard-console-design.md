@@ -65,7 +65,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | 3–5, 12 | Flows list, empty state, New flow dialog, published banner | `/flows`, `/flows/new`, `/flows/:id` | **Done (plan 2).** Rows show status, version, steps/routes/tools and live calls; Enabled, Test, Duplicate, Archive. New flow asks for a name, then Blank or Copy (the canvas's voice-stack choice is left to First run). The banner appears in the editor after a publish. Draft badges, rollback, calls-today and Restore wait on S1, S2, S7, S8. |
 | 6–10 | Flow editor | `/flows/:id`, `/flows/new` | Section 2. |
 | 11–12 | Publish, v8 is live | — | Section 2. |
-| 13–14 | Calls, Call detail | `/sessions`, `/sessions/:id` | Filters, path column, turn latency waterfall, transcript labelled by step. |
+| 13–14 | Calls, Call detail | `/sessions`, `/sessions/:id` | **Done (plan 3).** The list filters by flow and Live/Ended (kept in the URL), pages with Newer/Older, and shows flow, version, duration, turns and outcome. The detail shows the figures, the path, and a transcript labelled by step with routes marked; the raw trace is behind "Technical trace". The API's statuses are only active, draining and ended. Caller, waterfall, totals, Path column and call control wait on S9–S13. |
 | 15–16 | Providers, MCP tools | `/providers`, `/mcp-servers` | Provider detail panel; MCP schema-change review. |
 
 ## 4. Deviations from the canvas (the Switchboard spec wins)
@@ -75,6 +75,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 - Colours only from tokens; no hard-coded hex in TSX (guarded by `noHardcodedColors.test.ts`).
 - Lamp amber stays reserved for the live call (active step, route just taken). "Needs setup" is a status: a dashed `--ink-2` border on the step card and the status text and tab marker in `--bad`. The empty-condition route is dashed `--ink-2` with the label `Set a condition`.
 - The old agent detail screen's raw config JSON and MCP tools table are gone; the version and hash are in Flow settings and the tools are chosen per step.
+- The Calls list drops the canvas's Search, When, Caller, Path and median-turn columns and the Export CSV, Listen in and End call buttons: the server records none of what they need (S9–S13). Outcome is a pressed-button group, not a select plus chips.
 - Placeholder sample data on the canvas (latency numbers, provider names in mock rows) is illustrative only.
 
 ## 5. Server prerequisites (not UI work)
@@ -89,6 +90,11 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | S6 | Code rename agent/node/handoff → flow/step/route | Route paths and API names (`/flows`) |
 | S7 | Per-flow call statistics (calls today, median reply time) | Those two figures on the Flows list rows |
 | S8 | Unarchive a flow (`POST /agents/{id}/restore`) | The canvas's "Archived · 1 / Restore" section |
+| S9 | Per-turn latency breakdown stored on turns (`latencies_json` is never written today) | The turn-latency waterfall and "median turn" (canvas boards 13, 14) |
+| S10 | Caller identity and transport, and an end reason (hung up, failed, transferred), on sessions | The Caller column and a richer Outcome |
+| S11 | Calls list totals and filters (`total`, `started_after`, text search) and CSV export | "of 1,284", When, Search, Export CSV |
+| S12 | Version number and path on the session row (or the step id on each turn) | "v7" for old versions, the list's Path column, exact step labels |
+| S13 | Live call control: listen in, end a call | The Listen in and End call buttons |
 
 Until each lands, the UI omits the dependent control rather than faking it.
 
@@ -96,6 +102,6 @@ Until each lands, the UI omits the dependent control rather than faking it.
 
 1. The unified flow editor (Section 2). **Done:** merged; its step-by-step plan is in git history.
 2. **Done:** Flows list, New flow dialog, `/flows` routes, retire the agent screens, published banner.
-3. Calls list and call detail (boards 13–14).
+3. **Done:** Calls list and call detail (boards 13–14).
 4. Providers and MCP tools (boards 15–16).
 5. First run and empty/error states (boards 0–1), after S3/S5 decisions.
