@@ -62,7 +62,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | 0 | Connect, empty and error states | all | Not connected keeps "Enter a management key". Each empty/error state: what happened, what it means for live calls, one next step. |
 | 1 | First run | `/onboarding` | 4 steps: voice stack (from detected providers) → flow basics → test call → connect (voice token + client snippet). Key paste (S3) shown only when the server supports it. |
 | 2 | Dashboard | `/dashboard` | State line, figures, live calls, latency, providers, flows. Already largely built (commit `065cd69`). |
-| 3–5 | Flows list, empty, New flow dialog | `/flows` | New flow: Blank or Copy an existing flow (`duplicateAgent`). Replaces the old flat `AgentForm` create/edit path. |
+| 3–5, 12 | Flows list, empty state, New flow dialog, published banner | `/flows`, `/flows/new`, `/flows/:id` | **Done (plan 2).** Rows show status, version, steps/routes/tools and live calls; Enabled, Test, Duplicate, Archive. New flow asks for a name, then Blank or Copy (the canvas's voice-stack choice is left to First run). The banner appears in the editor after a publish. Draft badges, rollback, calls-today and Restore wait on S1, S2, S7, S8. |
 | 6–10 | Flow editor | `/flows/:id`, `/flows/new` | Section 2. |
 | 11–12 | Publish, v8 is live | — | Section 2. |
 | 13–14 | Calls, Call detail | `/sessions`, `/sessions/:id` | Filters, path column, turn latency waterfall, transcript labelled by step. |
@@ -74,6 +74,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 - No drop shadows or card boxes: the side panel is separated by a `--rule` border, not a shadow.
 - Colours only from tokens; no hard-coded hex in TSX (guarded by `noHardcodedColors.test.ts`).
 - Lamp amber stays reserved for the live call (active step, route just taken). "Needs setup" is a status: a dashed `--ink-2` border on the step card and the status text and tab marker in `--bad`. The empty-condition route is dashed `--ink-2` with the label `Set a condition`.
+- The old agent detail screen's raw config JSON and MCP tools table are gone; the version and hash are in Flow settings and the tools are chosen per step.
 - Placeholder sample data on the canvas (latency numbers, provider names in mock rows) is illustrative only.
 
 ## 5. Server prerequisites (not UI work)
@@ -86,13 +87,15 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | S4 | Live call count per flow/version (operations status) | "9 calls finishing on v7" copy |
 | S5 | Greeting / first line in config | First run step 2 "First thing it says" |
 | S6 | Code rename agent/node/handoff → flow/step/route | Route paths and API names (`/flows`) |
+| S7 | Per-flow call statistics (calls today, median reply time) | Those two figures on the Flows list rows |
+| S8 | Unarchive a flow (`POST /agents/{id}/restore`) | The canvas's "Archived · 1 / Restore" section |
 
 Until each lands, the UI omits the dependent control rather than faking it.
 
 ## 6. Plans
 
 1. The unified flow editor (Section 2). **Done:** merged; its step-by-step plan is in git history.
-2. Flows list, New flow dialog, `/flows` routes, retire `AgentForm`, live banner (boards 3–5, 12).
+2. **Done:** Flows list, New flow dialog, `/flows` routes, retire the agent screens, published banner.
 3. Calls list and call detail (boards 13–14).
 4. Providers and MCP tools (boards 15–16).
 5. First run and empty/error states (boards 0–1), after S3/S5 decisions.
