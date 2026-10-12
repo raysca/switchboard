@@ -3,7 +3,7 @@ export const sections = [
   { path: "/dashboard", name: "Dashboard", icon: "Db" },
   { path: "/flows", name: "Flows", icon: "Fl" },
   { path: "/providers", name: "Providers", icon: "Pr" },
-  { path: "/mcp-servers", name: "MCP Servers", icon: "Mc" },
+  { path: "/mcp-servers", name: "MCP tools", icon: "Mc" },
   { path: "/sessions", name: "Calls", icon: "Ca" },
   { path: "/server", name: "Server", icon: "Sv" },
 ];

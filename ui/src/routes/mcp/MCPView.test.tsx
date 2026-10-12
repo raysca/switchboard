@@ -1,409 +1,268 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { MCPView } from "./MCPView";
-import { ApiError, type ApiClient, type MCPServerDTO, type MCPServerDetailDTO } from "../../api/client";
+import { ApiError, type AgentDTO, type ApiClient, type MCPServerDTO, type MCPServerDetailDTO } from "../../api/client";
 
-function renderWithProviders(ui: React.ReactElement, path = "/mcp-servers") {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return render(
-    <QueryClientProvider client={queryClient}>
+const server = (over: Partial<MCPServerDTO> = {}): MCPServerDTO => ({
+  id: "billing",
+  name: "billing",
+  description: "Invoices and payment links",
+  endpoint: "https://mcp.example.com/billing",
+  transport: "streamable-http",
+  validation_state: "healthy",
+  latest_discovery_id: "d1",
+  auth_env: "MCP_TOKEN_BILLING",
+  auth_env_set: true,
+  enabled: true,
+  last_connected_at: "2026-10-12T14:56:00Z",
+  last_discovered_at: "2026-10-12T14:56:00Z",
+  ...over,
+});
+const tool = (name: string, hash: string, description = `${name} description`) => ({ remote_name: name, description, input_schema: { type: "object", properties: { id: { type: "string" } } }, schema_hash: hash });
+const detail = (over: Partial<MCPServerDetailDTO> = {}): MCPServerDetailDTO => ({
+  ...server(),
+  discovery: { id: "d1", discovery_hash: "dh", created_at: "", tools: [tool("latest_invoice", "31f0aaaa11"), tool("send_pay_link", "c9d00000bb")] },
+  ...over,
+});
+const crm = server({ id: "crm", name: "crm", auth_env: "", auth_env_set: false, last_discovered_at: "2026-10-12T14:00:00Z" });
+const flow = (id: string, name: string, tools: { server: string; name: string; hash: string; required: boolean }[], deps: object[] = [], archived = false): AgentDTO => ({
+  id,
+  name,
+  description: "",
+  enabled: true,
+  archived,
+  current_version: { id: `${id}-v`, number: 3, schema_version: 1, config: {}, config_hash: "h", created_at: "", mcp_tools: tools.map((t) => ({ mcp_server_id: t.server, remote_name: t.name, schema_hash: t.hash, required: t.required })) },
+  readiness: { state: "ready", reasons: [], tool_dependencies: deps as never },
+  created_at: "",
+  updated_at: "",
+});
+const drifted = flow("f1", "Front desk", [{ server: "billing", name: "send_pay_link", hash: "7a3e0000aa", required: true }], [{ mcp_server_id: "billing", remote_name: "send_pay_link", required: true, state: "schema_drift", selected_schema_hash: "7a3e0000aa", current_schema_hash: "c9d00000bb" }]);
+const steady = flow("f2", "Support triage", [{ server: "billing", name: "latest_invoice", hash: "31f0aaaa11", required: false }], [{ mcp_server_id: "billing", remote_name: "latest_invoice", required: false, state: "ready", selected_schema_hash: "31f0aaaa11", current_schema_hash: "31f0aaaa11" }]);
+
+function Where() {
+  const l = useLocation();
+  return <p data-testid="where">{l.pathname}</p>;
+}
+function setup(client: Partial<ApiClient> = {}, path = "/mcp-servers", key: string | null = "k") {
+  const full = {
+    getMCPServers: vi.fn().mockResolvedValue([server(), crm]),
+    getMCPServer: vi.fn().mockImplementation(async (id: string) => (id === "crm" ? detail({ ...crm, discovery: { id: "d2", discovery_hash: "x", created_at: "", tools: [tool("notes", "n1")] } }) : detail())),
+    getAgents: vi.fn().mockResolvedValue([drifted, steady]),
+    createMCPServer: vi.fn().mockResolvedValue(server({ id: "new", name: "new" })),
+    deleteMCPServer: vi.fn().mockResolvedValue({ deleted: true }),
+    enableMCPServer: vi.fn().mockResolvedValue(server()),
+    disableMCPServer: vi.fn().mockResolvedValue(server({ enabled: false })),
+    discoverMCPServer: vi.fn().mockResolvedValue(server()),
+    testMCPTool: vi.fn().mockResolvedValue({ execution_id: "exec-9999", mcp_server_id: "billing", tool_name: "latest_invoice", status: "completed", duration_ms: 12, result: { ok: true } }),
+    setAgentMCPTools: vi.fn().mockResolvedValue({}),
+    ...client,
+  } as unknown as ApiClient;
+  render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/mcp-servers/:serverId?" element={ui} />
+          <Route
+            path="/mcp-servers/:serverId?"
+            element={
+              <>
+                <MCPView client={full} keyValue={key} />
+                <Where />
+              </>
+            }
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { client: full, user: userEvent.setup() };
 }
-
-function createMockServer(overrides: Partial<MCPServerDTO> = {}): MCPServerDTO {
-  return {
-    id: "mcp-server-1",
-    name: "Customer Data MCP",
-    description: "Customer lookup tools",
-    endpoint: "https://mcp.example.com/rpc",
-    transport: "streamable-http",
-    validation_state: "valid",
-    latest_discovery_id: "disc-hash-123456",
-    auth_env: "",
-    auth_env_set: false,
-    enabled: true,
-    ...overrides,
-  };
-}
-
-function createMockServerDetail(overrides: Partial<MCPServerDetailDTO> = {}): MCPServerDetailDTO {
-  return {
-    ...createMockServer(),
-    discovery: {
-      id: "disc-1",
-      discovery_hash: "disc-hash-123456",
-      created_at: "2026-10-05T12:00:00Z",
-      tools: [
-        {
-          remote_name: "get_customer",
-          description: "Get customer by ID",
-          input_schema: {
-            type: "object",
-            properties: { id: { type: "string" } },
-            required: ["id"],
-          },
-          schema_hash: "hash-tool-v1",
-        },
-      ],
-    },
-    ...overrides,
-  };
-}
-
-function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
-  return {
-    getMCPServers: vi.fn().mockResolvedValue([createMockServer()]),
-    getMCPServer: vi.fn().mockResolvedValue(createMockServerDetail()),
-    createMCPServer: vi.fn().mockResolvedValue(createMockServer()),
-    deleteMCPServer: vi.fn().mockResolvedValue({ deleted: true }),
-    disableMCPServer: vi.fn().mockResolvedValue(createMockServer({ enabled: false })),
-    enableMCPServer: vi.fn().mockResolvedValue(createMockServer({ enabled: true })),
-    discoverMCPServer: vi.fn().mockResolvedValue(createMockServer()),
-    testMCPTool: vi.fn().mockResolvedValue({
-      execution_id: "exec-999",
-      mcp_server_id: "mcp-server-1",
-      tool_name: "get_customer",
-      status: "completed",
-      duration_ms: 42,
-      result: { name: "Alice", id: "cust-1" },
-    }),
-    getAgents: vi.fn().mockResolvedValue([]),
-    ...overrides,
-  } as ApiClient;
-}
+const serverLink = (name: string) => screen.getByRole("link", { name: new RegExp(`^${name}`) });
 
 describe("MCPView", () => {
-  it("renders prompt when key is absent", () => {
-    const client = createMockClient();
-    renderWithProviders(<MCPView client={client} keyValue={null} />);
-    expect(screen.getByText("Connect to inspect MCP servers")).toBeVisible();
+  it("asks for a management key first", () => {
+    setup({}, "/mcp-servers", null);
+    expect(screen.getByText(/Enter a management key/)).toBeVisible();
   });
 
-  it("renders empty state when no servers exist", async () => {
-    const client = createMockClient({
-      getMCPServers: vi.fn().mockResolvedValue([]),
+  it("says how to connect a first server, and opens the dialog", async () => {
+    const { user } = setup({ getMCPServers: vi.fn().mockResolvedValue([]) });
+    expect(await screen.findByRole("heading", { name: "No MCP servers yet." })).toBeVisible();
+    await user.click(screen.getAllByRole("button", { name: "Connect server" })[0]);
+    expect(screen.getByRole("dialog", { name: "Connect server" })).toBeVisible();
+  });
+
+  it("lists servers with the server's own states in words, tool counts, and when they last synced", async () => {
+    setup({
+      getMCPServers: vi.fn().mockResolvedValue([server(), crm, server({ id: "net", name: "network", validation_state: "connection_failed", last_connected_at: "2026-10-12T12:00:00Z", last_discovered_at: null }), server({ id: "off", name: "legacy", enabled: false })]),
+      getMCPServer: vi.fn().mockImplementation(async (id: string) => detail({ id, name: id })),
     });
-    renderWithProviders(<MCPView client={client} keyValue="test-key" />);
-    expect(await screen.findByText("No MCP servers configured")).toBeVisible();
+    await screen.findByRole("heading", { name: "billing", level: 2 });
+    expect(within(serverLink("billing")).getByText("2 tools")).toBeVisible();
+    expect(within(serverLink("crm")).getByText(/^Synced /)).toBeVisible();
+    const net = within(serverLink("network"));
+    expect(net.getByText(/^Unreachable · last ok /)).toBeVisible();
+    expect(net.getByText(/^Unreachable/).closest("a")!.querySelector('.lamp[data-tone="bad"]')).not.toBeNull();
+    expect(within(serverLink("legacy")).getByText("Disabled")).toBeVisible();
   });
 
-  it("renders list of servers with status badges for connected, error, and disabled", async () => {
-    const servers: MCPServerDTO[] = [
-      createMockServer({ id: "s-1", name: "Valid Server", validation_state: "valid", enabled: true }),
-      createMockServer({ id: "s-2", name: "Error Server", validation_state: "schema_invalid", enabled: true }),
-      createMockServer({ id: "s-3", name: "Disabled Server", validation_state: "disabled", enabled: false }),
-    ];
-    const client = createMockClient({
-      getMCPServers: vi.fn().mockResolvedValue(servers),
-    });
-
-    renderWithProviders(<MCPView client={client} keyValue="test-key" />);
-
-    expect(await screen.findByText("Valid Server")).toBeVisible();
-    expect(screen.getByText("Error Server")).toBeVisible();
-    expect(screen.getByText("Disabled Server")).toBeVisible();
-
-    expect(screen.getByText("connected")).toBeVisible();
-    expect(screen.getByText("error")).toBeVisible();
-    expect(screen.getByText("disabled")).toBeVisible();
+  it("opens the first server by default, another from the URL, and says so for an unknown one", async () => {
+    setup({}, "/mcp-servers/crm");
+    expect(await screen.findByRole("heading", { name: "crm", level: 2 })).toBeVisible();
+    expect(serverLink("crm")).toHaveAttribute("aria-current", "page");
   });
 
-  it("supports creating a new MCP server with transport and a token variable", async () => {
-    const user = userEvent.setup();
-    const createMCPServer = vi.fn().mockResolvedValue(createMockServer({ id: "s-new", name: "New Server" }));
-    const client = createMockClient({ createMCPServer });
+  it("opens the first server when no server is in the URL", async () => {
+    setup({});
+    expect(await screen.findByRole("heading", { name: "billing", level: 2 })).toBeVisible();
+  });
 
-    renderWithProviders(<MCPView client={client} keyValue="test-key" />);
+  it("says a server is not found, with a way back", async () => {
+    setup({}, "/mcp-servers/nope");
+    expect(await screen.findByText("That MCP server was not found.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Back to MCP tools" })).toHaveAttribute("href", "/mcp-servers");
+  });
 
-    await user.click(await screen.findByRole("button", { name: "Add MCP Server" }));
+  it("shows the endpoint, the token variable and whether it is set, and which flows use the server", async () => {
+    setup({});
+    const panel = (await screen.findByRole("heading", { name: "billing", level: 2 })).closest("section") as HTMLElement;
+    expect(within(panel).getByText("https://mcp.example.com/billing")).toBeVisible();
+    expect(within(panel).getByText("MCP_TOKEN_BILLING")).toBeVisible();
+    expect(within(panel).getByText(/set on the server/)).toBeVisible();
+    const used = within(panel).getByText("Used by", { selector: "dt" }).closest("div") as HTMLElement;
+    expect(within(used).getAllByRole("link").map((a) => a.textContent)).toEqual(["Front desk", "Support triage"]);
+  });
 
-    await user.type(screen.getByLabelText("Server Name"), "New Server");
+  it("names a token variable that is not set", async () => {
+    setup({ getMCPServer: vi.fn().mockResolvedValue(detail({ auth_env_set: false })) });
+    expect(await screen.findByText(/not set on the server/)).toBeVisible();
+  });
+
+  it("lists the tools with what the model sees, the schema and how many flows use each", async () => {
+    setup({});
+    const table = await screen.findByRole("table");
+    const row = within(table).getByText("latest_invoice").closest("tr") as HTMLElement;
+    expect(within(row).getByText("latest_invoice description")).toBeVisible();
+    expect(within(row).getByText("31f0aaaa")).toBeVisible();
+    expect(within(row).getByText("1")).toBeVisible();
+  });
+
+  it("shows a changed schema in the list, the table and a review panel", async () => {
+    setup({});
+    await screen.findByRole("heading", { name: "billing", level: 2 });
+    expect(within(serverLink("billing")).getByText("1 schema changed")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "send_pay_link changed its input schema", level: 3 })).toBeVisible();
+    const row = within(screen.getByRole("table")).getByText("send_pay_link").closest("tr") as HTMLElement;
+    expect(within(row).getByText("changed")).toBeVisible();
+  });
+
+  it("accepts a changed schema for one flow through the dialog", async () => {
+    const { client, user } = setup({});
+    await user.click(await screen.findByRole("button", { name: "Accept new schema for Front desk" }));
+    await user.click(screen.getByRole("button", { name: "Publish new version" }));
+    expect(client.setAgentMCPTools).toHaveBeenCalledWith("f1", [{ mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "c9d00000bb", required: true }]);
+  });
+
+  it("toggles a tool's schema, and opens the test console", async () => {
+    const { client, user } = setup({});
+    await user.click(await screen.findByRole("button", { name: "View schema for latest_invoice" }));
+    // The review panel for the changed tool also shows a schema: look inside the tools table.
+    const table = screen.getByRole("table");
+    expect(within(table).getByText(/"properties"/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Hide schema for latest_invoice" }));
+    expect(within(table).queryByText(/"properties"/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Try latest_invoice" }));
+    await user.click(screen.getByRole("button", { name: "Run tool" }));
+    expect(client.testMCPTool).toHaveBeenCalledWith("billing", "latest_invoice", {});
+  });
+
+  it("says when a server has no tools yet", async () => {
+    setup({ getMCPServer: vi.fn().mockResolvedValue(detail({ discovery: null })) });
+    expect(await screen.findByText("No tools discovered")).toBeVisible();
+  });
+
+  it("syncs, disables and enables with the right calls", async () => {
+    const { client, user } = setup({});
+    await user.click(await screen.findByRole("button", { name: "Sync tools" }));
+    expect(client.discoverMCPServer).toHaveBeenCalledWith("billing");
+    await user.click(screen.getByRole("button", { name: "Disable" }));
+    expect(client.disableMCPServer).toHaveBeenCalledWith("billing");
+  });
+
+  it("offers Enable for a disabled server", async () => {
+    const { client, user } = setup({ getMCPServer: vi.fn().mockResolvedValue(detail({ enabled: false })) });
+    await user.click(await screen.findByRole("button", { name: "Enable" }));
+    expect(client.enableMCPServer).toHaveBeenCalledWith("billing");
+  });
+
+  it("shows a failed action with its request id", async () => {
+    const { user } = setup({ discoverMCPServer: vi.fn().mockRejectedValue(new ApiError("not found", "not_found", 404, "req-1")) });
+    await user.click(await screen.findByRole("button", { name: "Sync tools" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("not found (Request ID: req-1)");
+  });
+
+  it("connects a server and opens it", async () => {
+    const { client, user } = setup({});
+    await screen.findByRole("heading", { name: "billing", level: 2 });
+    await user.click(screen.getAllByRole("button", { name: "Connect server" })[0]);
+    await user.type(screen.getByLabelText("Name"), "new");
     await user.type(screen.getByLabelText("Endpoint URL"), "https://mcp.example.com/new");
-
-    await user.type(screen.getByLabelText(/token variable/i), "MCP_TOKEN_CRM");
-
-    await user.click(screen.getByRole("button", { name: "Create Server" }));
-
-    expect(createMCPServer).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "New Server",
-        endpoint: "https://mcp.example.com/new",
-        transport: "streamable-http",
-        auth_env: "MCP_TOKEN_CRM",
-      }),
-    );
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(client.createMCPServer).toHaveBeenCalledWith(expect.objectContaining({ name: "new", endpoint: "https://mcp.example.com/new", transport: "streamable-http" })));
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/mcp-servers/new"));
   });
 
-  it("blocks a token variable without the MCP_TOKEN_ prefix", async () => {
-    const user = userEvent.setup();
-    const createMCPServer = vi.fn();
-    renderWithProviders(<MCPView client={createMockClient({ createMCPServer })} keyValue="test-key" />);
-
-    await user.click(await screen.findByRole("button", { name: "Add MCP Server" }));
-    await user.type(screen.getByLabelText("Server Name"), "Bad");
-    await user.type(screen.getByLabelText("Endpoint URL"), "https://mcp.example.com/bad");
-    await user.type(screen.getByLabelText(/token variable/i), "TOKEN_SECRET");
-    await user.click(screen.getByRole("button", { name: "Create Server" }));
-
-    expect(screen.getByText(/must match MCP_TOKEN_ followed by A-Z, 0-9 or _ \(max 48\)/)).toBeVisible();
-    expect(createMCPServer).not.toHaveBeenCalled();
+  it("shows the server's refusal inside the connect dialog", async () => {
+    const { user } = setup({ createMCPServer: vi.fn().mockRejectedValue(new ApiError("MCP server configuration is invalid", "invalid_mcp_server", 400, "req-2")) });
+    await screen.findByRole("heading", { name: "billing", level: 2 });
+    await user.click(screen.getAllByRole("button", { name: "Connect server" })[0]);
+    await user.type(screen.getByLabelText("Name"), "x");
+    await user.type(screen.getByLabelText("Endpoint URL"), "http://10.0.0.1");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("MCP server configuration is invalid (Request ID: req-2)");
   });
 
-  it("shows whether the server's token variable is set", async () => {
-    const server = createMockServer({ auth_env: "MCP_TOKEN_CRM", auth_env_set: true });
-    const client = createMockClient({
-      getMCPServers: vi.fn().mockResolvedValue([server]),
-      getMCPServer: vi.fn().mockResolvedValue(createMockServerDetail({ ...server })),
-    });
-    renderWithProviders(<MCPView client={client} keyValue="test-key" />, "/mcp-servers/mcp-server-1");
-
-    expect(await screen.findByText("MCP_TOKEN_CRM")).toBeVisible();
-    expect(screen.getByText("variable is set")).toBeVisible();
+  it("deletes only after asking, then returns to the list", async () => {
+    const { client, user } = setup({});
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    expect(client.deleteMCPServer).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete server" }));
+    await waitFor(() => expect(client.deleteMCPServer).toHaveBeenCalledWith("billing"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("displays server detail view, discovered tools, and JSON schema viewer", async () => {
-    const user = userEvent.setup();
-    const client = createMockClient();
-
-    renderWithProviders(<MCPView client={client} keyValue="test-key" />);
-
-    const inspectBtn = await screen.findByRole("button", { name: "Inspect" });
-    await user.click(inspectBtn);
-
-    expect(await screen.findByText(/get_customer/)).toBeVisible();
-    expect(screen.getByText("Get customer by ID")).toBeVisible();
-
-    const viewSchemaBtn = screen.getByRole("button", { name: "View Schema" });
-    await user.click(viewSchemaBtn);
-
-    expect(screen.getByTestId("tool-schema-viewer")).toBeVisible();
-    expect(screen.getByText(/"required": \[/)).toBeVisible();
+  it("when delete is refused because the server is in use, names the flows and detaches only on a second confirmation", async () => {
+    const inUse = new ApiError("MCP server is referenced by agents or active sessions", "mcp_server_in_use", 409, "req-3");
+    const deleteMCPServer = vi.fn().mockRejectedValueOnce(inUse).mockResolvedValue({ deleted: true });
+    const { user } = setup({ deleteMCPServer });
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete server" }));
+    const dialog = await screen.findByRole("dialog", { name: "billing is still in use" });
+    expect(within(dialog).getByRole("link", { name: "Front desk" })).toBeVisible();
+    expect(deleteMCPServer).toHaveBeenCalledTimes(1);
+    await user.click(within(dialog).getByRole("button", { name: "Detach and delete" }));
+    await waitFor(() => expect(deleteMCPServer).toHaveBeenLastCalledWith("billing", true));
   });
 
-  it("displays schema drift badge when tool hash does not match agent selection", async () => {
-    const client = createMockClient({
-      getAgents: vi.fn().mockResolvedValue([
-        {
-          id: "agent-1",
-          name: "Agent with Drifted Tool",
-          current_version: {
-            mcp_tools: [
-              {
-                mcp_server_id: "mcp-server-1",
-                remote_name: "get_customer",
-                schema_hash: "different-old-hash",
-                required: true,
-              },
-            ],
-          },
-          readiness: { state: "needs_tool_review", reasons: ["needs_tool_review"] },
-        },
-      ]),
-    });
-
-    renderWithProviders(
-      <MCPView client={client} keyValue="test-key" />,
-      "/mcp-servers/mcp-server-1",
-    );
-
-    expect(await screen.findByTestId("schema-drift-badge")).toBeVisible();
-    expect(screen.getByText("Schema drift")).toBeVisible();
+  it("still lists and opens servers when the flow list fails, saying usage is unknown", async () => {
+    setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    const panel = (await screen.findByRole("heading", { name: "billing", level: 2 })).closest("section") as HTMLElement;
+    expect(within(panel).getByText("The flows could not be loaded, so which flows use this server, and whether any schema changed, is unknown.")).toBeVisible();
+    expect(within(within(panel).getByRole("table")).getAllByText("—").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("heading", { name: /changed its input schema/ })).toBeNull();
   });
 
-  it("executes interactive tool test and displays results and execution time", async () => {
-    const user = userEvent.setup();
-    const testMCPTool = vi.fn().mockResolvedValue({
-      execution_id: "exec-1234",
-      mcp_server_id: "mcp-server-1",
-      tool_name: "get_customer",
-      status: "completed",
-      duration_ms: 55,
-      result: { customer_id: "cust-1", name: "Alice Doe" },
-    });
-    const client = createMockClient({ testMCPTool });
-
-    renderWithProviders(
-      <MCPView client={client} keyValue="test-key" />,
-      "/mcp-servers/mcp-server-1",
-    );
-
-    const testConsoleBtn = await screen.findByRole("button", { name: "Test Console" });
-    await user.click(testConsoleBtn);
-
-    expect(screen.getByTestId("test-console")).toBeVisible();
-
-    const input = screen.getByTestId("test-arguments-input");
-    fireEvent.change(input, { target: { value: '{"id":"cust-1"}' } });
-
-    const executeBtn = screen.getByTestId("execute-tool-button");
-    await user.click(executeBtn);
-
-    expect(testMCPTool).toHaveBeenCalledWith("mcp-server-1", "get_customer", { id: "cust-1" });
-
-    expect(await screen.findByTestId("execution-result")).toBeVisible();
-    expect(screen.getByText(/55\s*ms/)).toBeVisible();
-    expect(screen.getByText(/"name": "Alice Doe"/)).toBeVisible();
+  it("keeps the list when one server's detail fails to load", async () => {
+    setup({ getMCPServer: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    expect(await screen.findByRole("alert")).toHaveTextContent("down");
+    expect(serverLink("billing")).toBeVisible();
   });
 
-  it("handles tool test error when arguments are invalid JSON or execution fails", async () => {
-    const user = userEvent.setup();
-    const testMCPTool = vi.fn().mockRejectedValue(
-      new ApiError("Remote tool returned status 502", "mcp_tool_failed", 502, "req-fail"),
-    );
-    const client = createMockClient({ testMCPTool });
-
-    renderWithProviders(
-      <MCPView client={client} keyValue="test-key" />,
-      "/mcp-servers/mcp-server-1",
-    );
-
-    await user.click(await screen.findByRole("button", { name: "Test Console" }));
-
-    const input = screen.getByTestId("test-arguments-input");
-
-    // Case 1: Invalid JSON syntax error handled safely
-    fireEvent.change(input, { target: { value: "{bad_json" } });
-    await user.click(screen.getByTestId("execute-tool-button"));
-    expect(screen.getByText("Arguments must be valid JSON")).toBeVisible();
-
-    // Case 2: API execution error handled safely
-    fireEvent.change(input, { target: { value: '{"valid":"json"}' } });
-    await user.click(screen.getByTestId("execute-tool-button"));
-    expect(await screen.findByText("Remote tool returned status 502 (Request ID: req-fail)")).toBeVisible();
-  });
-
-  it("handles enable, disable, and discover server actions", async () => {
-    const user = userEvent.setup();
-    const disableMCPServer = vi.fn().mockResolvedValue(createMockServer({ enabled: false }));
-    const discoverMCPServer = vi.fn().mockResolvedValue(createMockServer());
-    const client = createMockClient({ disableMCPServer, discoverMCPServer });
-
-    renderWithProviders(<MCPView client={client} keyValue="test-key" />);
-
-    const disableBtn = await screen.findByRole("button", { name: "Disable" });
-    await user.click(disableBtn);
-    expect(disableMCPServer).toHaveBeenCalledWith("mcp-server-1");
-
-    const discoverBtn = screen.getByRole("button", { name: "Discover" });
-    await user.click(discoverBtn);
-    expect(discoverMCPServer).toHaveBeenCalledWith("mcp-server-1");
-  });
-
-  it("displays conflict warning alert when delete is blocked and supports confirm detach-and-delete", async () => {
-    const user = userEvent.setup();
-    const conflictError = new ApiError(
-      "MCP server is referenced by agents or active sessions",
-      "mcp_server_in_use",
-      409,
-      "req-conflict",
-    );
-    const deleteMCPServer = vi.fn()
-      .mockRejectedValueOnce(conflictError)
-      .mockResolvedValueOnce({ deleted: true });
-    const client = createMockClient({ deleteMCPServer });
-
-    renderWithProviders(<MCPView client={client} keyValue="test-key" />);
-
-    const deleteBtn = await screen.findByRole("button", { name: "Delete" });
-    await user.click(deleteBtn);
-
-    // Conflict alert must appear
-    expect(await screen.findByTestId("delete-conflict-alert")).toBeVisible();
-    expect(screen.getByText("Server in Use: Deletion Blocked")).toBeVisible();
-
-    // Click confirm detach & delete
-    const detachBtn = screen.getByRole("button", { name: "Confirm Detach & Delete" });
-    await user.click(detachBtn);
-
-    expect(deleteMCPServer).toHaveBeenCalledWith("mcp-server-1", true);
-  });
-
-  it("triggers an error indicating arguments must be a JSON object when given array or primitive", async () => {
-    const user = userEvent.setup();
-    const testMCPTool = vi.fn();
-    const client = createMockClient({ testMCPTool });
-
-    renderWithProviders(
-      <MCPView client={client} keyValue="test-key" />,
-      "/mcp-servers/mcp-server-1",
-    );
-
-    await user.click(await screen.findByRole("button", { name: "Test Console" }));
-
-    const input = screen.getByTestId("test-arguments-input");
-    const executeBtn = screen.getByTestId("execute-tool-button");
-
-    // Case 1: JSON array
-    fireEvent.change(input, { target: { value: '["foo", "bar"]' } });
-    await user.click(executeBtn);
-    expect(screen.getByText("Arguments must be a valid JSON object")).toBeVisible();
-    expect(testMCPTool).not.toHaveBeenCalled();
-
-    // Case 2: Primitive number
-    fireEvent.change(input, { target: { value: "12345" } });
-    await user.click(executeBtn);
-    expect(screen.getByText("Arguments must be a valid JSON object")).toBeVisible();
-    expect(testMCPTool).not.toHaveBeenCalled();
-
-    // Case 3: Primitive string
-    fireEvent.change(input, { target: { value: '"a string"' } });
-    await user.click(executeBtn);
-    expect(screen.getByText("Arguments must be a valid JSON object")).toBeVisible();
-    expect(testMCPTool).not.toHaveBeenCalled();
-
-    // Case 4: null
-    fireEvent.change(input, { target: { value: "null" } });
-    await user.click(executeBtn);
-    expect(screen.getByText("Arguments must be a valid JSON object")).toBeVisible();
-    expect(testMCPTool).not.toHaveBeenCalled();
-  });
-
-  it("displays X-Request-ID in error alert when ApiError occurs during create or test", async () => {
-    const user = userEvent.setup();
-    const createMCPServer = vi.fn().mockRejectedValue(
-      new ApiError("Invalid schema payload", "invalid_payload", 400, "req-create-999"),
-    );
-    const testMCPTool = vi.fn().mockRejectedValue(
-      new ApiError("Remote tool timeout", "tool_timeout", 504, "req-tool-888"),
-    );
-    const client = createMockClient({ createMCPServer, testMCPTool });
-
-    // Test during create
-    renderWithProviders(<MCPView client={client} keyValue="test-key" />);
-
-    await user.click(await screen.findByRole("button", { name: "Add MCP Server" }));
-    await user.type(screen.getByLabelText("Server Name"), "Test Server");
-    await user.type(screen.getByLabelText("Endpoint URL"), "https://mcp.example.com");
-    await user.click(screen.getByRole("button", { name: "Create Server" }));
-
-    expect(
-      await screen.findByText("Invalid schema payload (Request ID: req-create-999)"),
-    ).toBeVisible();
-
-    // Test during tool test
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
-
-    const inspectBtn = await screen.findByRole("button", { name: "Inspect" });
-    await user.click(inspectBtn);
-
-    await user.click(await screen.findByRole("button", { name: "Test Console" }));
-    const input = screen.getByTestId("test-arguments-input");
-    fireEvent.change(input, { target: { value: '{"key": "val"}' } });
-    await user.click(screen.getByTestId("execute-tool-button"));
-
-    expect(
-      await screen.findByText("Remote tool timeout (Request ID: req-tool-888)"),
-    ).toBeVisible();
+  it("shows a load failure of the server list, with a retry", async () => {
+    setup({ getMCPServers: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    expect(await screen.findByRole("alert")).toHaveTextContent("down");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   });
 });

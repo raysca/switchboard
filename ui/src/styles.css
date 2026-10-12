@@ -2170,3 +2170,123 @@ main:has(.providers-layout) {
   background: var(--paper);
   font-size: 0.8125rem;
 }
+
+.mcp-layout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px 32px;
+  align-items: flex-start;
+}
+.mcp-side {
+  flex: 1 1 280px;
+  max-width: 340px;
+  min-width: 0;
+}
+.mcp-main {
+  flex: 999 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.mcp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--ink);
+}
+.mcp-list li {
+  border-bottom: 1px solid var(--rule);
+}
+.mcp-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 2px 10px;
+  align-items: center;
+  min-height: 44px;
+  padding: 12px 10px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.mcp-item[aria-current="page"] {
+  background: var(--surface);
+  outline: 1px solid var(--rule);
+  outline-offset: -1px;
+}
+.mcp-item__count {
+  color: var(--ink-2);
+  font-size: 0.8125rem;
+}
+.mcp-item__note {
+  grid-column: 2 / 4;
+  color: var(--ink-2);
+  font-size: 0.8125rem;
+}
+.mcp-item__note[data-tone="bad"] {
+  color: var(--bad);
+}
+.mcp-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.mcp-detail__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.mcp-detail__title {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.mcp-detail__title h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.mcp-detail__title p {
+  margin: 4px 0 0;
+}
+.mcp-detail__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+}
+.mcp-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mcp-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  margin: 12px 0 0;
+}
+.mcp-facts > div {
+  display: contents;
+}
+.mcp-facts dt {
+  color: var(--ink-2);
+}
+.mcp-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.mcp-tool__description {
+  max-width: 44ch;
+  white-space: normal;
+  color: var(--ink-2);
+}
+.mcp-tool__changed {
+  color: var(--bad);
+  font-weight: 600;
+}
+.mcp-tool__actions {
+  display: flex;
+  gap: 8px;
+}
