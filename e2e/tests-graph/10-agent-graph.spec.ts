@@ -346,3 +346,34 @@ test("a plain agent still works unchanged", async ({ page, stack }) => {
   await expect(botReplies(page).filter({ hasText: /Connecting you/ })).toHaveCount(0);
   await page.getByTestId("disconnect-btn").click();
 });
+
+test("layout: demo-path screens do not scroll sideways at 390px", async ({ page, stack }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await connectAdmin(page, stack);
+  const noSideways = async (where: string) => {
+    const { sw, iw } = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth }));
+    expect(sw, `${where} scrolls sideways (${sw} > ${iw})`).toBeLessThanOrEqual(iw);
+  };
+  // Client-side navigation keeps the management key (a reload would clear it).
+  const go = async (path: string) => {
+    await page.evaluate((p) => {
+      history.pushState({}, "", p);
+      dispatchEvent(new PopStateEvent("popstate"));
+    }, path);
+  };
+  await noSideways("dashboard");
+  await go("/providers");
+  await expect(page.getByRole("heading", { name: "Providers", level: 1 })).toBeVisible();
+  await noSideways("providers");
+  await go("/agents");
+  await expect(page.getByRole("heading", { name: "Agents", level: 1 })).toBeVisible();
+  await noSideways("agents");
+  await openAgentDetail(page, AGENT);
+  await noSideways("agent detail");
+  const sessions = await api<{ data: { id: string }[] }>(stack, "/sessions?limit=1");
+  if (sessions.data.length > 0) {
+    await go(`/sessions/${sessions.data[0].id}`);
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    await noSideways("session detail");
+  }
+});

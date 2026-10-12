@@ -1017,6 +1017,7 @@ th {
 
 /* Agent detail */
 .detail-head {
+  margin-top: 28px;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -1151,8 +1152,13 @@ th {
 .section-row {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 16px;
+  margin-top: 28px;
+}
+.section-block .section-row {
+  margin-top: 0;
 }
 .section-row h2 {
   margin: 0;
