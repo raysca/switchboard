@@ -13,8 +13,9 @@ describe("Switchboard system rules", () => {
     expect(good?.body).toContain("var(--ok)");
     expect(bad?.body).toContain("var(--bad)");
   });
-  it("uses one radius: the token, or 50% for dots", () => {
-    const off = decls(/border-radius:\s*([^;]+);/g).filter((d) => d.value !== "var(--radius)" && d.value !== "50%");
+  // 999px is the filter pills of the Calls list (canvas board 13); everything else is the token or a dot.
+  it("uses one radius: the token, 50% for dots, 999px for pills", () => {
+    const off = decls(/border-radius:\s*([^;]+);/g).filter((d) => d.value !== "var(--radius)" && d.value !== "50%" && d.value !== "999px");
     expect(off).toEqual([]);
   });
   it("has no all-caps labels", () => {

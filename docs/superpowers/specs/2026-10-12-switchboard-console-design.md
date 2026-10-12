@@ -72,6 +72,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 
 - No all-caps eyebrow labels and no monospace labels: section labels are sentence case (`ui-switchboard-design.md`).
 - No drop shadows or card boxes: the side panel is separated by a `--rule` border, not a shadow.
+- The Calls list's filter pills keep the canvas's fully rounded shape (`border-radius: 999px`, the one exception to the single-radius rule); their touch target is still 44px.
 - Colours only from tokens; no hard-coded hex in TSX (guarded by `noHardcodedColors.test.ts`).
 - Lamp amber stays reserved for the live call (active step, route just taken). "Needs setup" is a status: a dashed `--ink-2` border on the step card and the status text and tab marker in `--bad`. The empty-condition route is dashed `--ink-2` with the label `Set a condition`.
 - The old agent detail screen's raw config JSON and MCP tools table are gone; the version and hash are in Flow settings and the tools are chosen per step.

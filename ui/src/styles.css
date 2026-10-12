@@ -1789,21 +1789,24 @@ legend {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.calls-table tbody tr:last-child td {
-  border-bottom: 0;
-}
 .calls-table .num {
   text-align: right;
 }
 .chip-button {
-  min-height: 44px;
-  padding: 6px 14px;
+  position: relative;
+  padding: 6px 12px;
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border-radius: 999px;
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: 0.8125rem;
+}
+/* The pill is small, like the canvas; the touch target around it is still 44px. */
+.chip-button::after {
+  content: "";
+  position: absolute;
+  inset: -8px -2px;
 }
 .chip-button[aria-pressed="true"] {
   border-color: var(--ink);
@@ -1814,10 +1817,25 @@ legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 12px;
+  margin-top: 20px;
   color: var(--ink-2);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
+}
+.pager-button {
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.875rem;
+}
+.pager-button:disabled {
+  background: transparent;
+  color: var(--ink-2);
+  opacity: 0.6;
 }
 
 .call-page {

@@ -195,10 +195,10 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
               Calls {page * PAGE + 1}–{page * PAGE + rows.length}
             </span>
             <span className="grow" />
-            <button type="button" className="action-button-small" disabled={page === 0} onClick={() => goToPage(page - 1)}>
+            <button type="button" className="pager-button" disabled={page === 0} onClick={() => goToPage(page - 1)}>
               Newer
             </button>
-            <button type="button" className="action-button-small" disabled={!hasOlder} onClick={() => goToPage(page + 1)}>
+            <button type="button" className="pager-button" disabled={!hasOlder} onClick={() => goToPage(page + 1)}>
               Older
             </button>
           </nav>
