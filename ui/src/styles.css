@@ -1621,3 +1621,57 @@ legend {
 .dialog h2 {
   margin: 0;
 }
+.flow-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.flow-editor__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.flow-editor__head h2 {
+  margin: 0;
+}
+.flow-editor__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.flow-editor__stage {
+  position: relative;
+  min-height: 600px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.flow-editor__stage--panel .agent-canvas {
+  margin-right: min(440px, 100%);
+}
+.flow-editor__stage--wide .agent-canvas {
+  margin-right: min(720px, 100%);
+}
+.flow-editor__blank {
+  min-height: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+.flow-editor__blank p {
+  max-width: 44ch;
+  margin: 0;
+  color: var(--ink-2);
+}
+.chip {
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
