@@ -16,7 +16,10 @@
 #   public listener on purpose; UI = the vite dev server (it proxies /api and /ws); CLIENT = only
 #   `make example-web`. dev.env remembers the last public and admin ports.
 # A second `make dev` from the same checkout stops the first one (and its server and vite) before it
-# starts. A port held by anything else is never killed: the error names the process instead.
+# starts. A default port held by anything else is skipped: the next free port is used and printed. A
+# port you name (PUBLIC_PORT=... make dev) is exact: if held, the error names the process. Nothing
+# outside this checkout's own stack is ever killed. If this script is killed without running its
+# trap, a small guard stops the server and vite within a second, so no stack is left orphaned.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,22 +31,51 @@ die() { echo "dev: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required ($2)"; }
 port_free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 port_holder() { lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {printf "%s (pid %s)", $1, $2}'; }
+# A free port: <wanted> if nothing listens there, else (unless the user asked for exactly that port)
+# the next free one above it, skipping the ports in <taken...>. Notes go to stderr: stdout is the port.
+pick_port() { # <label> <wanted> <explicit 1|0> [taken...]
+  local label="$1" want="$2" explicit="$3" p t busy; shift 3
+  p="$want"
+  while :; do
+    busy=0
+    for t in "$@"; do [[ "$t" == "$p" ]] && busy=1; done
+    (( busy )) || port_free "$p" || busy=1
+    if (( ! busy )); then
+      [[ "$p" == "$want" ]] || echo "dev: $label port $want is in use by $(port_holder "$want"); using $p" >&2
+      echo "$p"; return 0
+    fi
+    (( ! explicit )) || die "$label port $p is in use by $(port_holder "$p"); stop it or pick another (e.g. $(echo "$label" | tr a-z A-Z)_PORT=$((p + 10000)) make dev)"
+    p=$((p + 1))
+    (( p - want <= 100 )) || die "no free $label port within 100 of $want"
+  done
+}
 any_alive() { local p; for p in "$@"; do kill -0 "$p" 2>/dev/null && return 0; done; return 1; }
 
 # Pids of a dev stack started from this checkout: the dev.sh that owns it, its server and its
 # vite. Matched by command line AND working directory, so another checkout's stack is left alone.
-# This script, its subshells and the make that started it are never matched.
+# This script, the make that started it and their descendants are never matched.
 own_stack_pids() {
-  local pid ppid cmd cwd
-  while read -r pid ppid cmd; do
-    [[ "$pid" != "$$" && "$ppid" != "$$" && "$pid" != "$PPID" ]] || continue
-    case "$cmd" in
-      *"scripts/dev.sh up"*|*"bin/server -config $DEV_DIR/server.yaml"*|*"vite/bin/vite.js ui --host"*) ;;
-      *) continue ;;
-    esac
+  local pid cwd
+  # awk picks the candidates and drops this script, the make that started it and every process
+  # descended from either (its own subshells match the same command line).
+  for pid in $(ps -axo pid=,ppid=,command= | awk -v me="$$" -v mom="$PPID" -v dd="$DEV_DIR" '
+      { par[$1] = $2; pid[NR] = $1; cmd[NR] = $0; sub(/^ *[0-9]+ +[0-9]+ +/, "", cmd[NR]) }
+      function mine(p,  n) { while (p > 1 && n++ < 64) { if (p == me || p == mom) return 1; p = par[p] } return 0 }
+      END {
+        for (i = 1; i <= NR; i++) {
+          c = cmd[i]
+          # Whole-command-line matches only: a shell whose long -c text merely mentions these names
+          # (an editor, a grep) is not a dev stack.
+          srv = "/server.yaml"; want = dd srv
+          if (c ~ /^(\/[^ ]*\/)?(bash|sh)( -c)? [^ ]*scripts\/dev\.sh up$/ \
+              || (c ~ /^[^ ]*bin\/server -config / && substr(c, length(c) - length(want) + 1) == want) \
+              || c ~ /^([^ ]*\/)?node [^ ]*vite\/bin\/vite\.js ui --host [^ ]+ --port [0-9]+ --strictPort$/)
+            if (!mine(pid[i])) print pid[i]
+        }
+      }'); do
     cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
     [[ "$cwd" == "$ROOT" ]] && echo "$pid"
-  done < <(ps -axo pid=,ppid=,command=)
+  done
   return 0
 }
 
@@ -88,6 +120,9 @@ load_env() {
   ADMIN_PORT="${ADMIN_PORT_OVERRIDE:-${ADMIN_PORT:-9090}}"
   UI_PORT="${UI_PORT:-5173}"
   CLIENT_PORT="${CLIENT_PORT:-3000}"
+  export_urls
+}
+export_urls() {
   export GOVOICE_ADMIN_URL="http://127.0.0.1:$ADMIN_PORT"
   export GOVOICE_PUBLIC_URL="http://127.0.0.1:$PUBLIC_PORT"
   export GOVOICE_WS_URL="ws://127.0.0.1:$PUBLIC_PORT/ws"
@@ -104,7 +139,23 @@ spawn() { # <label> <cmd...>
   "$@" > >(while IFS= read -r line; do echo "[$label] $line"; done) 2>&1 &
   PIDS+=("$!")
 }
+GUARD=""
+# If this script dies without running its trap (kill -9, a vanished terminal), the server and vite
+# would live on holding the ports. The guard outlives it just long enough to stop them, then exits;
+# cleanup kills the guard first, so a normal stop leaves nothing behind.
+start_guard() {
+  local parent=$$
+  local -a pids=("${PIDS[@]}")
+  (
+    while kill -0 "$parent" 2>/dev/null; do any_alive "${pids[@]}" || exit 0; sleep 1; done
+    kill "${pids[@]}" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do any_alive "${pids[@]}" || exit 0; sleep 1; done
+    kill -9 "${pids[@]}" 2>/dev/null || true
+  ) </dev/null >/dev/null 2>&1 &
+  GUARD=$!
+}
 cleanup() {
+  [[ -z "$GUARD" ]] || { kill "$GUARD" 2>/dev/null || true; GUARD=""; }
   ((${#PIDS[@]})) || return 0
   echo; echo "dev: stopping"
   kill "${PIDS[@]}" 2>/dev/null || true
@@ -114,11 +165,15 @@ cleanup() {
 
 cmd_up() {
   need go "https://go.dev/dl"; need node "Node 20+"; need curl "health checks"
-  PUBLIC_PORT_OVERRIDE="${PUBLIC_PORT:-}" ADMIN_PORT_OVERRIDE="${ADMIN_PORT:-}" load_env
+  # Ports named on the command line are exact; otherwise 8080 / 9090 / 5173, moved up to the next
+  # free port when something else holds them (dev.env's remembered ports are not preferences).
+  local want_public="${PUBLIC_PORT:-}" want_admin="${ADMIN_PORT:-}" want_ui="${UI_PORT:-}"
+  PUBLIC_PORT_OVERRIDE="$want_public" ADMIN_PORT_OVERRIDE="$want_admin" load_env
   stop_previous_stack
-  for p in "$PUBLIC_PORT" "$ADMIN_PORT" "$UI_PORT"; do
-    port_free "$p" || die "port $p is in use by $(port_holder "$p"), which is not a dev stack from this checkout; stop it or pick others, e.g. PUBLIC_PORT=18080 ADMIN_PORT=19090 UI_PORT=15173 make dev"
-  done
+  PUBLIC_PORT="$(pick_port public "${want_public:-8080}" "$([[ -n "$want_public" ]] && echo 1 || echo 0)")"
+  ADMIN_PORT="$(pick_port admin "${want_admin:-9090}" "$([[ -n "$want_admin" ]] && echo 1 || echo 0)" "$PUBLIC_PORT")"
+  UI_PORT="$(pick_port ui "${want_ui:-5173}" "$([[ -n "$want_ui" ]] && echo 1 || echo 0)" "$PUBLIC_PORT" "$ADMIN_PORT")"
+  export_urls
   set_env PUBLIC_PORT "$PUBLIC_PORT"; set_env ADMIN_PORT "$ADMIN_PORT"
 
   make build >/dev/null || die "build failed (run 'make build' to see why)"
@@ -140,6 +195,7 @@ cmd_up() {
   fi
 
   spawn ui node ui/node_modules/vite/bin/vite.js ui --host 127.0.0.1 --port "$UI_PORT" --strictPort
+  start_guard
 
   cat <<EOF
 
@@ -158,8 +214,9 @@ EOF
 }
 
 cmd_web() {
+  local want_client="${CLIENT_PORT:-}"
   load_env; require_server; need node "Node 20+"
-  port_free "$CLIENT_PORT" || die "port $CLIENT_PORT is in use; set CLIENT_PORT"
+  CLIENT_PORT="$(pick_port client "${want_client:-3000}" "$([[ -n "$want_client" ]] && echo 1 || echo 0)")"
   npm_ready "$ROOT/examples/rtvi_client"
   echo "dev: custom web client at http://127.0.0.1:$CLIENT_PORT (agent and keys prefilled by the server)"
   cd examples/rtvi_client

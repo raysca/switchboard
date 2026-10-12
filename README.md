@@ -41,9 +41,9 @@ the examples call, and a two-agent "Dealership desk" graph (front desk hands buy
 to sales) for trying handoffs on the agent's call stage. The management key
 for the admin UI is in `.govoice-dev/dev.env`. Ports default to 8080 (public),
 9090 (admin), 5173 (UI) and 3000 (web client). Running `make dev` again stops the
-previous dev stack from the same checkout first. If another program holds a port,
-the error names it; pick others with e.g. `PUBLIC_PORT=18080 ADMIN_PORT=19090 make dev`
-(the examples follow).
+previous dev stack from the same checkout first. If another program holds a default
+port, the next free one is used and printed (the examples follow it). A port you name,
+e.g. `PUBLIC_PORT=18080 make dev`, is used exactly or the run fails naming the holder.
 
 The steps below do the same by hand.
 
