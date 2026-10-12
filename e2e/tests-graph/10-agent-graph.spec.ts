@@ -450,6 +450,21 @@ test("calls: the finished call is listed, with its path and a transcript labelle
   await step(page, "call detail, labelled by step");
 });
 
+test("mcp tools page: with no server connected it says how to connect one, and the dialog opens and closes", async ({ page, stack }) => {
+  await connectAdmin(page, stack);
+  await page.getByRole("link", { name: "MCP tools", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "MCP tools", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No MCP servers yet." })).toBeVisible();
+  await page.getByRole("button", { name: "Connect server" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Connect server" });
+  await expect(dialog).toBeVisible();
+  // The cursor is already in the name field.
+  await expect(dialog.getByLabel("Name")).toBeFocused();
+  await step(page, "connect server dialog");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
 test("layout: demo-path screens do not scroll sideways at 390px", async ({ page, stack }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await connectAdmin(page, stack);
@@ -468,6 +483,9 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
   await go("/providers");
   await expect(page.getByRole("heading", { name: "Providers", level: 1 })).toBeVisible();
   await noSideways("providers");
+  await go("/mcp-servers");
+  await expect(page.getByRole("heading", { name: "MCP tools", level: 1 })).toBeVisible();
+  await noSideways("mcp tools");
   await go("/sessions");
   await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
   await noSideways("calls");
