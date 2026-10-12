@@ -417,6 +417,23 @@ test("flows list: status, enable toggle without a new version, copy and archive"
   await expect(page.getByRole("link", { name: copyName, exact: true })).toHaveCount(0);
 });
 
+test("calls: the finished call is listed, with its path and a transcript labelled by step", async ({ page, stack }) => {
+  await connectAdmin(page, stack);
+  await page.getByRole("link", { name: "Calls", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
+  await page.getByRole("combobox", { name: "Flow", exact: true }).selectOption({ label: AGENT });
+  // The call that just ended may still read Ending; the list refreshes every 10 seconds.
+  const row = page.getByRole("row").filter({ hasText: AGENT }).first();
+  await expect(row).toContainText("Ended", { timeout: 20_000 });
+  await row.getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("Call ");
+  await expect(page.getByText("Main agent → Sales", { exact: true })).toBeVisible();
+  const transcript = page.getByRole("list", { name: "Transcript" });
+  await expect(transcript).toContainText("Routed Main agent → Sales");
+  await expect(transcript.getByText(/^Sales · /).first()).toBeVisible();
+  await step(page, "call detail, labelled by step");
+});
+
 test("layout: demo-path screens do not scroll sideways at 390px", async ({ page, stack }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await connectAdmin(page, stack);
@@ -435,6 +452,9 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
   await go("/providers");
   await expect(page.getByRole("heading", { name: "Providers", level: 1 })).toBeVisible();
   await noSideways("providers");
+  await go("/sessions");
+  await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
+  await noSideways("calls");
   await go("/flows");
   await expect(page.getByRole("heading", { name: "Flows", level: 1 })).toBeVisible();
   await noSideways("flows");
@@ -444,6 +464,6 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
   if (sessions.data.length > 0) {
     await go(`/sessions/${sessions.data[0].id}`);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await noSideways("session detail");
+    await noSideways("call detail");
   }
 });

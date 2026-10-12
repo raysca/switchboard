@@ -554,34 +554,6 @@ th {
   color: var(--ink-2);
 }
 
-/* Filter bar & Pagination */
-.filter-bar {
-  display: flex;
-  gap: 16px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  margin-top: 24px;
-  margin-bottom: 24px;
-  padding: 16px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-}
-.pagination-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 20px;
-  padding: 12px 0;
-  font-size: 0.9rem;
-  color: var(--ink-2);
-}
-.pagination-controls {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
 
 /* Detail & Metadata cards */
 
