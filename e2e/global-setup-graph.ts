@@ -14,7 +14,7 @@ import { stopStack } from "./global-teardown";
 // xaispeech) reading XAI_API_KEY from its environment: real STT/LLM/TTS calls.
 // Ports differ from the paid suite's, so both can run on one machine.
 const LIVE = process.env.E2E_PROVIDER === "xai";
-const PORTS = { public: 18581, admin: 19591, ui: 15174 };
+const PORTS = { public: 18581, admin: 19591, ui: 15174, mcp: 18595, mcpHole: 18596 };
 const repo = path.resolve(__dirname, "..");
 const logDir = path.join(__dirname, "test-results-graph", "logs");
 
@@ -85,6 +85,10 @@ export default async function globalSetup() {
     cwd: repo,
     stdio: ["ignore", fs.openSync(path.join(logDir, "build.log"), "w"), "inherit"],
   });
+  execFileSync("go", ["build", "-o", "bin/mcptest", "./cmd/mcptest"], {
+    cwd: repo,
+    stdio: ["ignore", fs.openSync(path.join(logDir, "build-mcptest.log"), "w"), "inherit"],
+  });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "govoice-e2e-graph-"));
   const origins = [`http://127.0.0.1:${PORTS.ui}`, `http://localhost:${PORTS.ui}`];
@@ -92,7 +96,9 @@ export default async function globalSetup() {
     .readFileSync(path.join(repo, "config/development.yaml"), "utf8")
     .replace(/^public_listen_addr:.*$/m, `public_listen_addr: "127.0.0.1:${PORTS.public}"`)
     .replace(/^admin_listen_addr:.*$/m, `admin_listen_addr: "127.0.0.1:${PORTS.admin}"`)
-    .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n${origins.map((o) => `  - "${o}"\n`).join("")}`);
+    .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n${origins.map((o) => `  - "${o}"\n`).join("")}`)
+    // Local test MCP servers; a short MCP timeout keeps the failure cases quick.
+    .replace(/^  allow_local_http: true$/m, "  allow_local_http: true\n  timeout: 2s");
   // A handoff cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the agents can name as "chime".
   const chime = path.join(tmpDir, "chime.wav");
   fs.writeFileSync(chime, toneWav(24000, 0.4, 440, 12000));
@@ -111,6 +117,7 @@ export default async function globalSetup() {
     tmpDir,
     logDir,
     pids: {},
+    mcpUrl: `http://127.0.0.1:${PORTS.mcp}`,
   };
   // The server reads provider secrets from its environment only. Fake: placeholders, so the
   // catalog detects google (the fake build never uses them). Live: the xAI key and nothing else.
@@ -131,8 +138,11 @@ export default async function globalSetup() {
       GOVOICE_DEV_DIR: stack.devDir,
       TOKEN_SECRET: stack.tokenSecret,
       GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
+      MCP_TOKEN_TEST: "e2e-mcp-token",
       ...providerEnv,
     });
+    save();
+    stack.pids.mcptest = start("mcptest", path.join(repo, "bin/mcptest"), ["-addr", `127.0.0.1:${PORTS.mcp}`, "-blackhole-addr", `127.0.0.1:${PORTS.mcpHole}`, "-token", "e2e-mcp-token"], repo, {});
     save();
     stack.pids.ui = start("ui", process.execPath, [path.join(repo, "ui/node_modules/vite/bin/vite.js"), "--config", path.join(__dirname, "vite.e2e.config.mjs")], path.join(repo, "ui"), {
       E2E_UI_PORT: String(PORTS.ui),
@@ -143,6 +153,7 @@ export default async function globalSetup() {
 
     await waitFor("server /ready", async () => (await fetch(`${stack.adminUrl}/ready`)).status === 200);
     await waitFor("admin UI", async () => (await fetch(stack.uiUrl)).ok);
+    await waitFor("mcptest", async () => (await fetch(`${stack.mcpUrl}/_record`)).ok);
   } catch (err) {
     stopStack(graphStackFile);
     throw err;

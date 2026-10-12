@@ -529,3 +529,67 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
     await noSideways("call detail");
   }
 });
+
+// MCP integration against the local test MCP servers (cmd/mcptest, started by the global setup).
+async function connectMCPServer(page: Page, name: string, endpoint: string, tokenVariable = "") {
+  await page.getByRole("link", { name: "MCP tools", exact: true }).first().click();
+  await page.getByRole("button", { name: "Connect server" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Name").fill(name);
+  await dialog.getByLabel("Endpoint URL").fill(endpoint);
+  if (tokenVariable) await dialog.getByLabel("Token variable (optional)").fill(tokenVariable);
+  await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByRole("heading", { name, level: 2 })).toBeVisible();
+  await page.getByRole("button", { name: "Sync tools" }).click();
+}
+
+test("mcp: healthy, failing and unreachable servers show their state", async ({ page, stack }) => {
+  test.skip(LIVE, "the MCP cases run against the fake stack only");
+  await connectAdmin(page, stack);
+  const status = page.locator(".mcp-detail__status");
+
+  await connectMCPServer(page, "Orders", `${stack.mcpUrl}/ok`, "MCP_TOKEN_TEST");
+  await expect(status).toContainText("Connected");
+  await expect(page.getByText("set on the server", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("lookup_order").first()).toBeVisible();
+
+  await connectMCPServer(page, "Locked", `${stack.mcpUrl}/fail/auth`);
+  await expect(status).toContainText("Authentication failed");
+
+  await connectMCPServer(page, "Gone", "http://127.0.0.1:1/mcp");
+  await expect(status).toContainText("Unreachable");
+  await step(page, "mcp server states");
+});
+
+test("mcp: a flow calls an MCP tool during a test call", async ({ page, stack }) => {
+  test.skip(LIVE, "the MCP cases run against the fake stack only");
+  const server = await api<{ data: { id: string } }>(stack, "/mcp-servers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Order lookup", endpoint: `${stack.mcpUrl}/ok`, auth_env: "MCP_TOKEN_TEST", enabled: true }),
+  });
+  const id = server.data.id;
+  await api(stack, `/mcp-servers/${id}/validate`, { method: "POST" });
+  const detail = await api<{ data: { discovery: { tools: { remote_name: string; schema_hash: string }[] } } }>(stack, `/mcp-servers/${id}`);
+  const hash = detail.data.discovery.tools.find((t) => t.remote_name === "lookup_order")!.schema_hash;
+  await api(stack, "/agents", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E Orders",
+      config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You look up orders." }), tts: stage({ voice: "v" }) },
+      mcp_tools: [{ mcp_server_id: id, remote_name: "lookup_order", schema_hash: hash, required: true }],
+    }),
+  });
+
+  await connectAdmin(page, stack);
+  await openFlowTest(page, "E2E Orders");
+  await startCall(page);
+  await sendText(page, 'call tool lookup_order {"order_id":"42"}');
+  await expect(botReply(page, /shipped/)).toBeVisible();
+  await step(page, "mcp tool answered during a call");
+
+  const record = await (await fetch(`${stack.mcpUrl}/_record`)).json();
+  const call = record.filter((r: { tool: string }) => r.tool === "lookup_order").pop();
+  expect(call.auth).toBe("match");
+  expect(call.arguments).toEqual({ order_id: "42" });
+  await page.getByTestId("disconnect-btn").click();
+});
