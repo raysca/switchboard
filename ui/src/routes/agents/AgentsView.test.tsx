@@ -145,6 +145,27 @@ describe("AgentsView", () => {
     expect(within(flatRow).getByRole("cell", { name: "1" })).toBeVisible();
     expect(within(graphRow).getByRole("cell", { name: "3" })).toBeVisible();
     expect(within(flatRow).getByText("missing_tts")).toHaveClass("reason");
+    // A graph config has no top-level stages; that is not "needs reconfiguration".
+    expect(within(graphRow).queryByText("Needs reconfiguration")).toBeNull();
+  });
+
+  it("opens an agent on the call stage: the call comes first and the configuration is collapsed", async () => {
+    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([createMockAgent({ name: "Desk" })]) });
+    const user = userEvent.setup();
+    renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
+    const row = (await screen.findByText("Desk")).closest("tr") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: /view detail/i }));
+
+    const start = await screen.findByTestId("start-voice-test-btn");
+    const config = screen.getByText("Configuration", { selector: "summary" });
+    // The call is the first thing on the page; the version, hash and JSON sit below it.
+    expect(start.compareDocumentPosition(config) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(config.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText(/Needs reconfiguration/)).toBeNull();
+    expect(screen.getByTestId("agent-readiness")).toBeVisible();
+    // The version is stated beside the name.
+    expect(screen.getByRole("heading", { name: /Desk/ })).toBeVisible();
+    expect(screen.getAllByText("v1")[0]).toBeVisible();
   });
 
   it("creates a new agent with STT, LLM, and TTS settings", async () => {
@@ -310,10 +331,13 @@ describe("AgentsView", () => {
     await user.click(screen.getByRole("button", { name: /view detail|view/i }));
 
     expect(await screen.findByRole("heading", { name: /detailed agent/i })).toBeVisible();
+    // The version snapshot sits behind a collapsed section below the call.
+    await user.click(screen.getByText("Configuration", { selector: "summary" }));
     expect(screen.getByText("ver-snap-99")).toBeVisible();
     expect(screen.getByText("sha256-abcdef012345")).toBeVisible();
     expect(screen.getByText("weather_lookup")).toBeVisible();
-    expect(screen.getByRole("heading", { name: /immutable snapshot architecture/i })).toBeVisible();
+    await user.click(screen.getByText("How versions work", { selector: "summary" }));
+    expect(screen.getByText(/Every configuration change writes an immutable snapshot/)).toBeVisible();
   });
 
   it("opens the agent named in /agents/:agentId", async () => {

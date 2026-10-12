@@ -97,6 +97,11 @@ function agentConfigV2(agent: AgentDTO): AgentConfigV2 | null {
   return parsed.success ? parsed.data : null;
 }
 
+/** A flat config the typed form cannot read. A graph config has no top-level stages by design. */
+function needsReconfiguration(agent: AgentDTO): boolean {
+  return !isGraphAgent(agent) && !agentConfigV2(agent);
+}
+
 function draftFromAgent(agent: AgentDTO | null): AgentDraft {
   const cfg = agent ? agentConfigV2(agent) : null;
   return {
@@ -560,7 +565,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                             </td>
                             <td>
                               <Status tone={tone}>{label}</Status>
-                              {!agentConfigV2(agent) && (
+                              {needsReconfiguration(agent) && (
                                 <div className="subtext">Needs reconfiguration</div>
                               )}
                               {agent.readiness.reasons && agent.readiness.reasons.length > 0 && (
@@ -732,51 +737,37 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
             </section>
           )}
 
-          {/* Detail View */}
+          {/* Detail View: the call stage first, the configuration below it and collapsed. */}
           {mode === "detail" && selectedAgent && (
             <section aria-labelledby="agent-detail-heading">
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: "24px",
-                }}
-              >
+              <div className="detail-head">
                 <div>
                   <h2 id="agent-detail-heading">{selectedAgent.name}</h2>
-                  {selectedAgent.description && (
-                    <p style={{ color: "#53666b", margin: "4px 0 0" }}>
-                      {selectedAgent.description}
-                    </p>
-                  )}
+                  <p className="detail-head__meta">
+                    <code>v{selectedAgent.current_version?.number ?? 1}</code>
+                    {selectedAgent.archived ? (
+                      <Status tone="bad">Archived</Status>
+                    ) : selectedAgent.enabled ? (
+                      <Status tone="good">Enabled</Status>
+                    ) : (
+                      <Status tone="neutral">Disabled</Status>
+                    )}
+                  </p>
+                  {selectedAgent.description && <p className="subtext">{selectedAgent.description}</p>}
                 </div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <button
-                    className="action-button-small"
-                    onClick={() => startEdit(selectedAgent)}
-                  >
+                <div className="action-buttons-cell">
+                  <button className="action-button-small" onClick={() => startEdit(selectedAgent)}>
                     Edit
                   </button>
                   {!isGraphAgent(selectedAgent) && (
-                    <button
-                      className="action-button-small"
-                      onClick={() => startDesign(selectedAgent)}
-                    >
+                    <button className="action-button-small" onClick={() => startDesign(selectedAgent)}>
                       Open designer
                     </button>
                   )}
-                  <button
-                    className="action-button-small"
-                    onClick={() => duplicateMutation.mutate(selectedAgent.id)}
-                  >
+                  <button className="action-button-small" onClick={() => duplicateMutation.mutate(selectedAgent.id)}>
                     Duplicate
                   </button>
-                  <button
-                    className="action-button-small action-button-danger"
-                    onClick={() => setConfirmDelete(true)}
-                    disabled={confirmDelete}
-                  >
+                  <button className="action-button-small action-button-danger" onClick={() => setConfirmDelete(true)} disabled={confirmDelete}>
                     Delete agent
                   </button>
                   <button
@@ -792,185 +783,73 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
               </div>
 
               {confirmDelete && (
-                <div
-                  role="alertdialog"
-                  aria-labelledby="delete-agent-title"
-                  aria-describedby="delete-agent-desc"
-                  className="message-panel"
-                  style={{ marginBottom: "24px", borderColor: "#a43e30" }}
-                >
-                  <h3 id="delete-agent-title" style={{ marginTop: 0 }}>
-                    Delete {selectedAgent.name}?
-                  </h3>
+                <div role="alertdialog" aria-labelledby="delete-agent-title" aria-describedby="delete-agent-desc" className="note note--bad">
+                  <h3 id="delete-agent-title">Delete {selectedAgent.name}?</h3>
                   <p id="delete-agent-desc">
                     The agent is removed from the list and can no longer take calls.
                     Its version history and past session history are kept.
                   </p>
-                  <div style={{ display: "flex", gap: "8px" }}>
-                    <button
-                      className="action-button-small action-button-danger"
-                      onClick={() => archiveMutation.mutate(selectedAgent.id)}
-                      disabled={archiveMutation.isPending}
-                    >
+                  <div className="action-buttons-cell">
+                    <button className="action-button-small action-button-danger" onClick={() => archiveMutation.mutate(selectedAgent.id)} disabled={archiveMutation.isPending}>
                       {archiveMutation.isPending ? "Deleting…" : "Confirm delete"}
                     </button>
-                    <button
-                      className="action-button-small"
-                      onClick={() => setConfirmDelete(false)}
-                    >
+                    <button className="action-button-small" onClick={() => setConfirmDelete(false)}>
                       Cancel
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Status and Readiness overview */}
-              <div
-                className="detail-grid"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                  gap: "16px",
-                  marginBottom: "24px",
-                }}
-              >
-                <div
-                  style={{
-                    background: "#ffffff",
-                    border: "1px solid #c9d3d2",
-                    padding: "16px",
-                  }}
-                >
-                  <span style={{ fontSize: "0.8rem", color: "#53666b" }}>Readiness State</span>
-                  <div style={{ marginTop: "6px" }}>
-                    <Status tone={getReadinessTone(selectedAgent.readiness.state)}>
-                      {getReadinessLabel(selectedAgent.readiness.state)}
-                    </Status>
-                  </div>
-                  {!agentConfigV2(selectedAgent) && (
-                    <div style={{ marginTop: "8px", fontSize: "0.8rem" }}>
-                      Needs reconfiguration: this configuration predates typed agent configs or
-                      lacks a stage provider. Edit the agent to choose a provider for each stage.
-                    </div>
-                  )}
-                  {selectedAgent.readiness.reasons &&
-                    selectedAgent.readiness.reasons.length > 0 && (
-                      <div style={{ marginTop: "8px", fontSize: "0.8rem", color: "#a43e30" }}>
-                        Reasons: {selectedAgent.readiness.reasons.join(", ")}
+              {needsReconfiguration(selectedAgent) && (
+                <p className="note">
+                  Needs reconfiguration: this configuration predates typed agent configs or
+                  lacks a stage provider. Edit the agent to choose a provider for each stage.
+                </p>
+              )}
+              {selectedAgent.readiness.reasons && selectedAgent.readiness.reasons.length > 0 && (
+                <p className="note note--bad">Reasons: {selectedAgent.readiness.reasons.join(", ")}</p>
+              )}
+
+              <AgentVoiceTest agent={selectedAgent} client={client} keyValue={keyValue} />
+
+              <details className="fold">
+                <summary>Configuration</summary>
+                {selectedAgent.current_version && (
+                  <>
+                    <dl className="meta-grid">
+                      <div className="meta-card">
+                        <dt className="label">Current Immutable Version</dt>
+                        <dd className="value">v{selectedAgent.current_version.number}</dd>
                       </div>
-                    )}
-                </div>
-
-                <div
-                  style={{
-                    background: "#ffffff",
-                    border: "1px solid #c9d3d2",
-                    padding: "16px",
-                  }}
-                >
-                  <span style={{ fontSize: "0.8rem", color: "#53666b" }}>Lifecycle</span>
-                  <div style={{ marginTop: "6px" }}>
-                    {selectedAgent.archived ? (
-                      <Status tone="bad">Archived</Status>
-                    ) : selectedAgent.enabled ? (
-                      <Status tone="good">Enabled</Status>
-                    ) : (
-                      <Status tone="neutral">Disabled</Status>
-                    )}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    background: "#ffffff",
-                    border: "1px solid #c9d3d2",
-                    padding: "16px",
-                  }}
-                >
-                  <span style={{ fontSize: "0.8rem", color: "#53666b" }}>Agent ID</span>
-                  <div style={{ marginTop: "6px" }}>
-                    <code style={{ fontSize: "0.85rem" }}>{selectedAgent.id}</code>
-                  </div>
-                </div>
-              </div>
-
-              {/* Current Immutable Version Details */}
-              {selectedAgent.current_version && (
-                <div
-                  className="version-card"
-                  style={{
-                    background: "#ffffff",
-                    border: "1px solid #c9d3d2",
-                    padding: "20px",
-                    marginBottom: "24px",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      borderBottom: "1px solid #c9d3d2",
-                      paddingBottom: "12px",
-                      marginBottom: "16px",
-                    }}
-                  >
-                    <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
-                      Current Immutable Version: v{selectedAgent.current_version.number}
-                    </h3>
-                    <span style={{ fontSize: "0.8rem", color: "#53666b" }}>
-                      Published:{" "}
-                      {new Date(selectedAgent.current_version.created_at).toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "12px",
-                      marginBottom: "16px",
-                    }}
-                  >
-                    <div>
-                      <span style={{ fontSize: "0.8rem", color: "#53666b" }}>Version ID:</span>
-                      <div>
-                        <code>{selectedAgent.current_version.id}</code>
+                      <div className="meta-card">
+                        <dt className="label">Published</dt>
+                        <dd className="value">{new Date(selectedAgent.current_version.created_at).toLocaleString()}</dd>
                       </div>
-                    </div>
-                    <div>
-                      <span style={{ fontSize: "0.8rem", color: "#53666b" }}>Config Hash:</span>
-                      <div>
-                        <code>{selectedAgent.current_version.config_hash}</code>
+                      <div className="meta-card">
+                        <dt className="label">Version ID</dt>
+                        <dd className="value">
+                          <code>{selectedAgent.current_version.id}</code>
+                        </dd>
                       </div>
-                    </div>
-                  </div>
+                      <div className="meta-card">
+                        <dt className="label">Config Hash</dt>
+                        <dd className="value">
+                          <code>{selectedAgent.current_version.config_hash}</code>
+                        </dd>
+                      </div>
+                      <div className="meta-card">
+                        <dt className="label">Agent ID</dt>
+                        <dd className="value">
+                          <code>{selectedAgent.id}</code>
+                        </dd>
+                      </div>
+                    </dl>
 
-                  <div style={{ marginTop: "16px" }}>
-                    <h4 style={{ margin: "0 0 8px", fontSize: "0.95rem" }}>
-                      Active Voice Configuration
-                    </h4>
-                    <pre
-                      style={{
-                        background: "#f3f5f4",
-                        padding: "12px",
-                        fontSize: "0.85rem",
-                        overflowX: "auto",
-                        border: "1px solid #c9d3d2",
-                      }}
-                    >
-                      {JSON.stringify(selectedAgent.current_version.config, null, 2)}
-                    </pre>
-                  </div>
+                    <h4>Active Voice Configuration</h4>
+                    <pre className="code-block">{JSON.stringify(selectedAgent.current_version.config, null, 2)}</pre>
 
-                  {/* Bound MCP Tools */}
-                  <div style={{ marginTop: "16px" }}>
-                    <h4 style={{ margin: "0 0 8px", fontSize: "0.95rem" }}>
-                      Bound MCP Tools (
-                      {selectedAgent.current_version.mcp_tools?.length ?? 0})
-                    </h4>
-                    {selectedAgent.current_version.mcp_tools &&
-                    selectedAgent.current_version.mcp_tools.length > 0 ? (
+                    <h4>Bound MCP Tools ({selectedAgent.current_version.mcp_tools?.length ?? 0})</h4>
+                    {selectedAgent.current_version.mcp_tools && selectedAgent.current_version.mcp_tools.length > 0 ? (
                       <DataTable
                         caption="Tools attached to immutable version snapshot"
                         columns={["Remote Name", "Server ID", "Schema Hash", "Required"]}
@@ -982,34 +861,21 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                         ])}
                       />
                     ) : (
-                      <p style={{ color: "#53666b", fontSize: "0.85rem" }}>
-                        No external MCP tools bound.
-                      </p>
+                      <p className="subtext">No external MCP tools bound.</p>
                     )}
-                  </div>
-                </div>
-              )}
+                  </>
+                )}
+              </details>
 
-              {/* Live Voice Test Panel */}
-              <AgentVoiceTest
-                agent={selectedAgent}
-                client={client}
-                keyValue={keyValue}
-              />
-
-              {/* Immutable Snapshot Explanation */}
-              <div
-                className="message-panel"
-                style={{ borderColor: "#007e82", marginTop: "24px" }}
-              >
-                <h2>Immutable snapshot architecture</h2>
+              <details className="fold">
+                <summary>How versions work</summary>
                 <p>
                   Every configuration change writes an immutable snapshot with a cryptographic
                   content hash. Historical and live voice sessions pin to a specific version ID and
                   hash, ensuring past interactions can always be precisely audited and cannot be
                   altered by ongoing edits.
                 </p>
-              </div>
+              </details>
             </section>
           )}
         </div>

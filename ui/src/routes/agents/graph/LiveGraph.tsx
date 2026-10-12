@@ -17,6 +17,7 @@ type LiveGraphProps = {
   pollMs?: number;
 };
 
+const HANDOFF_MS = 450;
 const ACTIVITY_TEXT = { listening: "listening", thinking: "thinking", speaking: "speaking" } as const;
 
 /**
@@ -52,15 +53,29 @@ export function LiveGraph({ graph, sessionId, client, userSpeaking, botSpeaking,
   const activity = view.nodes[view.active]?.activity;
   const traversedEdges = view.traversed.flatMap((t) => (t.edgeId ? [t.edgeId] : []));
 
+  // The handoff moment: the edge just taken is marked for a beat so the canvas can draw the cable.
+  const [justHanded, setJustHanded] = useState<string | undefined>();
+  const seen = useRef<number | null>(null);
+  useEffect(() => {
+    const count = traversedEdges.length;
+    const grew = seen.current !== null && count > seen.current;
+    seen.current = count;
+    if (!live || !grew) return;
+    setJustHanded(traversedEdges[count - 1]);
+    const t = setTimeout(() => setJustHanded(undefined), HANDOFF_MS);
+    return () => clearTimeout(t);
+    // traversedEdges is rebuilt every render; its length is what matters.
+  }, [traversedEdges.length, live]);
+
   return (
     <div className="live-graph">
-      <Canvas graph={graph} visual={view.nodes} traversedEdges={traversedEdges} readOnly height={300} />
-      <p role="status" aria-live="polite">
+      <Canvas graph={graph} visual={view.nodes} traversedEdges={traversedEdges} justHandedEdge={justHanded} readOnly height={360} />
+      <p role="status" aria-live="polite" className="live-graph__status">
         {nameOf(view.active)} {view.trail.length > 1 ? "is answering" : "is answering the call"}
         {activity ? ` (${ACTIVITY_TEXT[activity as keyof typeof ACTIVITY_TEXT] ?? activity})` : ""}
         {preparing ? ` — preparing ${nameOf(preparing)}` : ""}
       </p>
-      <ol aria-label="Path taken" style={{ display: "flex", gap: "8px", listStyle: "none", padding: 0, flexWrap: "wrap" }}>
+      <ol aria-label="Path taken" className="live-graph__trail">
         {view.trail.map((t, i) => (
           <li key={`${t.node}-${i}`}>
             {i > 0 && "→ "}

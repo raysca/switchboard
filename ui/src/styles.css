@@ -720,10 +720,25 @@ th {
 
 
 
-/* Agent designer */
+/* Agent graph: nodes are agents, edges are the cables a handoff runs along */
 .agent-canvas {
-  border: 1px solid var(--rule);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
   background: var(--surface);
+}
+.agent-canvas .react-flow__edge-path {
+  stroke: var(--ink-2);
+  stroke-width: 2;
+}
+.agent-canvas .react-flow__edge-text {
+  fill: var(--ink-2);
+  font-size: 12px;
+}
+.agent-canvas .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--ink);
+  border: 0;
 }
 .agent-node {
   min-width: 170px;
@@ -731,22 +746,24 @@ th {
   border: 2px solid var(--rule);
   border-radius: var(--radius);
   background: var(--surface);
-  font-size: 0.85rem;
+  color: var(--ink);
+  font-size: 0.87rem;
 }
 .agent-node--selected {
   border-color: var(--caller);
 }
 .agent-node--active {
-  border-color: var(--caller);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lamp) 45%, transparent);
+  background: var(--lamp);
+  border-color: var(--ink);
+  color: var(--ink);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--lamp) 35%, transparent);
 }
 .agent-node--preparing {
   border-style: dashed;
-  border-color: var(--lamp);
-  animation: agent-node-pulse 1.2s ease-in-out infinite;
+  border-color: var(--ink);
 }
 .agent-node--visited {
-  opacity: 0.55;
+  color: var(--ink-2);
 }
 .agent-node__title {
   font-weight: 600;
@@ -755,35 +772,31 @@ th {
   align-items: center;
 }
 .agent-node__badge {
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   font-weight: 450;
-  padding: 1px 6px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
   border-radius: var(--radius);
-  background: var(--paper);
-  color: var(--ink);
 }
 .agent-node__meta,
 .agent-node__status {
-  color: var(--ink-2);
+  color: inherit;
+  opacity: 0.8;
   margin-top: 2px;
 }
-.agent-node__status {
-  font-style: italic;
-}
-.agent-edge--traversed path {
-  stroke: var(--caller);
+.agent-edge--traversed .react-flow__edge-path {
+  stroke: var(--ink);
   stroke-width: 3;
 }
 .stage-box {
-  border: 1px solid var(--rule);
-  padding: 12px 16px;
+  border-top: 1px solid var(--rule);
+  padding: 12px 0;
   margin-top: 12px;
-  background: var(--surface);
 }
 .designer-layout {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
-  gap: 16px;
+  gap: 24px;
   align-items: start;
 }
 @media (max-width: 800px) {
@@ -791,15 +804,271 @@ th {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* The handoff moment: the cable draws in and the new lamp lights. Motion only when allowed. */
+@keyframes cable-draw {
+  from {
+    stroke-dasharray: 800;
+    stroke-dashoffset: 800;
+  }
+  to {
+    stroke-dasharray: 800;
+    stroke-dashoffset: 0;
+  }
+}
 @keyframes agent-node-pulse {
   50% {
     opacity: 0.6;
   }
 }
-@media (prefers-reduced-motion: reduce) {
-  .agent-node--preparing {
-    animation: none;
+@media (prefers-reduced-motion: no-preference) {
+  .agent-edge--just .react-flow__edge-path {
+    animation: cable-draw 400ms ease-out;
   }
+  .agent-node--active {
+    transition: background-color 400ms ease-out;
+  }
+  .agent-node--preparing {
+    animation: agent-node-pulse 1.2s ease-in-out infinite;
+  }
+}
+
+/* Live graph under the stage: the state in display type, the path as a quiet trail */
+.live-graph__status {
+  margin: 16px 0 0;
+  font-size: 1.6rem;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.live-graph__trail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  color: var(--ink-2);
+}
+.agent-canvas .react-flow__edge-textbg {
+  fill: var(--surface);
+}
+
+/* Call stage */
+.stage {
+  margin-top: 28px;
+}
+.stage__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--rule);
+}
+.stage__head h3 {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 600;
+  line-height: 1.15;
+}
+.stage__head .subtext {
+  margin-top: 4px;
+}
+.stage__meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: var(--ink-2);
+  font-size: 0.87rem;
+}
+.stage__graph {
+  margin-top: 16px;
+}
+.stage__state {
+  margin-top: 20px;
+}
+.stage__status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.stage__flags {
+  display: flex;
+  gap: 16px;
+  margin: 4px 0 0 22px;
+  min-height: 1.4em;
+}
+.flag {
+  font-size: 0.87rem;
+  color: var(--ink-2);
+}
+.flag--bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+.stage__controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 20px 0;
+}
+.stage__ptt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.87rem;
+}
+.action-button-small[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--caller) 14%, transparent);
+}
+.action-button-small:disabled,
+.action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.note {
+  margin: 16px 0;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid var(--lamp);
+  max-width: 72ch;
+}
+.note p {
+  margin: 4px 0 8px;
+}
+.note h3 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+.note--bad {
+  border-left-color: var(--bad);
+}
+
+/* Transcript: two lanes, told apart by a rule and the speaker's name, not by bubbles */
+.transcript {
+  min-height: 160px;
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 4px 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.transcript__empty {
+  margin: 28px 0;
+  color: var(--ink-2);
+}
+.transcript__lines {
+  display: grid;
+  gap: 14px;
+  padding: 12px 0;
+}
+.line {
+  padding-left: 14px;
+  border-left: 3px solid var(--ink);
+  max-width: 72ch;
+}
+.line--caller {
+  border-left-color: var(--caller);
+}
+.line--live {
+  border-left-style: dashed;
+  color: var(--ink-2);
+  font-style: italic;
+}
+.line__who {
+  font-size: 0.87rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.line--caller .line__who {
+  color: var(--caller);
+}
+.stage__send {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+.stage__send label {
+  font-size: 0.87rem;
+  font-weight: 600;
+}
+.stage__send input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--ink-2);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 7px 10px;
+}
+.session-summary-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.session-summary-card__id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.stage__debug {
+  margin: 16px 0 0;
+}
+
+/* Agent detail */
+.detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.detail-head h2 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.detail-head__meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 6px 0 0;
+}
+.fold {
+  margin-top: 24px;
+  border-top: 1px solid var(--rule);
+  padding-top: 12px;
+}
+.fold > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1.2rem;
+}
+.fold h4 {
+  margin: 20px 0 8px;
+  font-size: 1rem;
+}
+.code-block {
+  margin: 0;
+  padding: 12px 0;
+  font-size: 0.87rem;
+  overflow-x: auto;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
 }
 
 /* Lamp: a status dot. Amber is for the active agent and degraded states only. */

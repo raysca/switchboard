@@ -67,11 +67,13 @@ export type CanvasProps = {
   /** Live view: per-node state and the handoffs the call has taken. */
   visual?: Record<string, NodeVisual>;
   traversedEdges?: string[];
+  /** The handoff taken a moment ago: its edge draws in. */
+  justHandedEdge?: string;
   readOnly?: boolean;
   height?: number;
 };
 
-export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, traversedEdges, readOnly, height = 420 }: CanvasProps) {
+export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, traversedEdges, justHandedEdge, readOnly, height = 420 }: CanvasProps) {
   const derived = useMemo<Node<AgentNodeData>[]>(
     () =>
       graph.nodes.map((n) => ({
@@ -103,9 +105,9 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
         animated: traversedEdges?.includes(e.id) ?? false,
         selected: selected?.kind === "edge" && selected.id === e.id,
         markerEnd: { type: MarkerType.ArrowClosed },
-        className: traversedEdges?.includes(e.id) ? "agent-edge--traversed" : undefined,
+        className: traversedEdges?.includes(e.id) ? `agent-edge--traversed${e.id === justHandedEdge ? " agent-edge--just" : ""}` : undefined,
       })),
-    [graph.edges, selected, traversedEdges],
+    [graph.edges, selected, traversedEdges, justHandedEdge],
   );
 
   return (
