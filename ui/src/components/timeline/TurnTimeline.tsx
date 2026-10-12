@@ -81,7 +81,7 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
           >
             <header className="turn-header">
               <div className="turn-header-left">
-                <h3 id={`turn-heading-${turn.id}`} className="turn-number" style={{ margin: 0, fontSize: "1rem" }}>
+                <h3 id={`turn-heading-${turn.id}`} className="turn-number">
                   Turn #{turn.ordinal}
                 </h3>
                 {turn.interrupted && (
@@ -168,7 +168,7 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                     {/* Tool Calls */}
                     {turnToolCalls.length > 0 && (
                       <div className="trace-group">
-                        <h4 className="subtext" style={{ margin: "8px 0 4px", fontWeight: 600 }}>
+                        <h4 className="trace-heading">
                           Tool Calls ({turnToolCalls.length})
                         </h4>
                         {turnToolCalls.map((tc) => (
@@ -178,7 +178,7 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                                 🔧 <strong>{tc.remote_name}</strong>
                                 {tc.mcp_server_id && ` (${tc.mcp_server_id})`}
                               </span>
-                              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                              <div className="row">
                                 <Status tone={tc.status === "completed" || tc.status === "success" ? "good" : "bad"}>
                                   {tc.status}
                                 </Status>
@@ -186,12 +186,12 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                               </div>
                             </div>
                             {tc.arguments_summary && (
-                              <div className="subtext" style={{ marginTop: 4 }}>
+                              <div className="subtext">
                                 <strong>Args:</strong> <code>{tc.arguments_summary}</code>
                               </div>
                             )}
                             {tc.result_summary && (
-                              <div className="subtext" style={{ marginTop: 2 }}>
+                              <div className="subtext">
                                 <strong>Result:</strong> <code>{tc.result_summary}</code>
                               </div>
                             )}
@@ -203,29 +203,34 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                     {/* Spans */}
                     {turnSpans.length > 0 && (
                       <div className="trace-group">
-                        <h4 className="subtext" style={{ margin: "8px 0 4px", fontWeight: 600 }}>
+                        <h4 className="trace-heading">
                           Trace Spans ({turnSpans.length})
                         </h4>
-                        {turnSpans.map((span) => (
-                          <div key={span.id} className="trace-item" data-testid="span-item">
-                            <div className="trace-item-header">
-                              <span>{span.name}</span>
-                              <span>{formatDuration(span.started_at, span.ended_at)}</span>
+                        {turnSpans.map((span) => {
+                          const toNode = (span.attributes as { to_node?: unknown } | undefined)?.to_node;
+                          const handoff = span.name === "handoff.active" && typeof toNode === "string";
+                          return (
+                            <div key={span.id} className="trace-item" data-testid="span-item" data-handoff={handoff ? "true" : undefined}>
+                              <div className="trace-item-header">
+                                <span className="row">
+                                  {handoff && <span className="lamp" data-tone="warn" aria-hidden="true" />}
+                                  {handoff ? `Handed off to ${toNode}` : span.name}
+                                </span>
+                                <span>{formatDuration(span.started_at, span.ended_at)}</span>
+                              </div>
+                              {Boolean(span.attributes) && Object.keys(span.attributes as object).length > 0 && (
+                                <pre className="subtext trace-attrs">{JSON.stringify(span.attributes, null, 2)}</pre>
+                              )}
                             </div>
-                            {Boolean(span.attributes) && Object.keys(span.attributes as object).length > 0 && (
-                              <pre className="subtext" style={{ margin: "4px 0 0", fontFamily: "IBM Plex Mono, monospace" }}>
-                                {JSON.stringify(span.attributes, null, 2)}
-                              </pre>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
 
                     {/* Events */}
                     {turnEvents.length > 0 && (
                       <div className="trace-group">
-                        <h4 className="subtext" style={{ margin: "8px 0 4px", fontWeight: 600 }}>
+                        <h4 className="trace-heading">
                           Trace Events ({turnEvents.length})
                         </h4>
                         {turnEvents.map((event) => (
