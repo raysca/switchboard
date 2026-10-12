@@ -117,7 +117,7 @@ describe("DashboardView", () => {
     expect(screen.getByText("120")).toBeVisible();
 
     // Readiness Summary
-    expect(screen.getByRole("link", { name: "View agents" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "View flows" })).toBeVisible();
     expect(await screen.findByText("1 of 2 ready")).toBeVisible();
     expect(screen.getByRole("link", { name: "View providers" })).toBeVisible();
     expect(await screen.findByText("1 of 2 detected")).toBeVisible();

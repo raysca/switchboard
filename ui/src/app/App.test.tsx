@@ -22,8 +22,14 @@ const operationsStatus = {
 };
 
 describe("admin shell", () => {
+  it("keeps old /agents bookmarks working", async () => {
+    render(<App initialPath="/agents/abc" />);
+    expect(await screen.findByRole("link", { name: "Flows" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByText("Area not found")).toBeNull();
+  });
+
   it("shows all six routes and keeps keyboard navigation visible", async () => {
-    render(<App initialPath="/agents" />);
+    render(<App initialPath="/flows" />);
     for (const name of [
       "Dashboard",
       "Flows",

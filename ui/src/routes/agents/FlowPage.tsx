@@ -1,0 +1,98 @@
+import { useState } from "react";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { asApiError, type AgentDTO, type ApiClient, type ApiError, type CreateAgentInput } from "../../api/client";
+import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
+import { FlowEditor } from "./graph/FlowEditor";
+import { PublishedBanner } from "./PublishedBanner";
+import { liveCalls } from "./flowStats";
+import { useActiveSessions } from "./useActiveSessions";
+
+export type FlowPageProps = { client: ApiClient; keyValue: string | null };
+
+/** /flows/new and /flows/:flowId: the flow editor as a page of its own. */
+export function FlowPage({ client, keyValue }: FlowPageProps) {
+  const { flowId } = useParams();
+  const [search] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [formError, setFormError] = useState<ApiError | null>(null);
+  const [dismissedAt, setDismissedAt] = useState<string | null>(null);
+
+  const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
+  const providersQuery = useQuery({ queryKey: ["providers"], queryFn: () => client.getProviders(), enabled: !!keyValue, retry: false });
+  const active = useActiveSessions(client, keyValue);
+
+  const flow: AgentDTO | undefined = flowId ? (flowsQuery.data ?? []).find((a) => a.id === flowId && !a.archived) : undefined;
+
+  const published = (saved: AgentDTO) => {
+    setFormError(null);
+    // Put the saved flow in the cache before moving to its address: a refetch is still in flight, and
+    // without this the new address would flash "That flow was not found." and remount the editor.
+    queryClient.setQueryData<AgentDTO[]>(["agents"], (old) => [...(old ?? []).filter((a) => a.id !== saved.id), saved]);
+    void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    // Same address for an update: the state change is what raises the banner.
+    navigate(`/flows/${encodeURIComponent(saved.id)}`, { replace: true, state: { published: saved.current_version?.number ?? 1 } });
+  };
+  const createMutation = useMutation({
+    mutationFn: (payload: CreateAgentInput) => client.createAgent(payload),
+    onSuccess: published,
+    onError: (err) => setFormError(asApiError(err, "Publishing failed")),
+  });
+  const updateMutation = useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: CreateAgentInput }) => client.updateAgent(id, payload),
+    onSuccess: published,
+    onError: (err) => setFormError(asApiError(err, "Publishing failed")),
+  });
+
+  if (!keyValue) return <EmptyState title="Connect to edit flows">Enter a management key above to configure voice flows.</EmptyState>;
+  if (flowsQuery.isPending) return <LoadingState label="Loading flow" />;
+  if (flowsQuery.isError) return <ErrorState title="Failed to load the flow" error={flowsQuery.error as ApiError} onRetry={() => void flowsQuery.refetch()} />;
+  if (flowId && !flow) {
+    return (
+      <section className="flow-missing">
+        <p role="status">That flow was not found.</p>
+        <Link to="/flows" className="action-button-small">
+          Back to flows
+        </Link>
+      </section>
+    );
+  }
+
+  const state = location.state as { published?: number } | null;
+  const publishedVersion = typeof state?.published === "number" ? state.published : null;
+  const providers = providersQuery.data ?? [];
+
+  return (
+    <div className="flow-page">
+      <nav aria-label="Breadcrumb" className="flow-page__crumb">
+        <Link to="/flows">Flows</Link>
+      </nav>
+      {flow && publishedVersion !== null && dismissedAt !== location.key && (
+        <PublishedBanner
+          flowName={flow.name}
+          version={publishedVersion}
+          olderCalls={liveCalls(active.data ?? [], flow).onOlderVersion}
+          onDismiss={() => setDismissedAt(location.key)}
+        />
+      )}
+      {formError && <ErrorState title="Publishing failed" error={formError} onRetry={() => setFormError(null)} />}
+      {providersQuery.isError && (
+        <ErrorState title="Failed to load providers" error={providersQuery.error as ApiError} onRetry={() => void providersQuery.refetch()} />
+      )}
+      <FlowEditor
+        key={flow?.id ?? "new"}
+        agent={flow ?? null}
+        initialName={search.get("name") ?? undefined}
+        initialPanel={search.get("panel") === "test" ? "call" : undefined}
+        providers={providers}
+        client={client}
+        keyValue={keyValue}
+        pending={createMutation.isPending || updateMutation.isPending}
+        onSubmit={(input) => (flow ? updateMutation.mutate({ id: flow.id, payload: input }) : createMutation.mutate(input))}
+        onCancel={() => navigate("/flows")}
+      />
+    </div>
+  );
+}

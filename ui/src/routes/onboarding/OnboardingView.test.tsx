@@ -89,7 +89,7 @@ describe("OnboardingView", () => {
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
     expect(await screen.findByText(/system configured and ready/i)).toBeVisible();
     expect(screen.getByText("Front Desk")).toBeVisible();
-    expect(screen.getByRole("link", { name: /manage agents/i })).toBeVisible();
+    expect(screen.getByRole("link", { name: /manage flows/i })).toBeVisible();
     expect(screen.getByRole("link", { name: /view providers/i })).toBeVisible();
   });
 

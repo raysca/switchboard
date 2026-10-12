@@ -198,8 +198,8 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                   </li>
                 ))}
               </ul>
-              <Link to="/agents" className="action-button-small">
-                Manage agents
+              <Link to="/flows" className="action-button-small">
+                Manage flows
               </Link>
             </div>
           </div>

@@ -7,6 +7,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useParams,
 } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, createApiClient } from "../api/client";
@@ -19,7 +20,8 @@ import {
 import { getBrowserCapabilities } from "./capabilities";
 import { OnboardingView } from "../routes/onboarding/OnboardingView";
 import { ProvidersView } from "../routes/providers/ProvidersView";
-import { AgentsView } from "../routes/agents/AgentsView";
+import { FlowsView } from "../routes/agents/FlowsView";
+import { FlowPage } from "../routes/agents/FlowPage";
 import { MCPView } from "../routes/mcp/MCPView";
 import { SessionsView } from "../routes/sessions/SessionsView";
 import { SessionDetailView } from "../routes/sessions/SessionDetailView";
@@ -37,6 +39,12 @@ function RouteFocus() {
     }
   }, [location.pathname]);
   return null;
+}
+
+/** An old /agents/:id bookmark opens the same flow. */
+function LegacyAgentRedirect() {
+  const { agentId = "" } = useParams();
+  return <Navigate to={`/flows/${encodeURIComponent(agentId)}`} replace />;
 }
 
 export function App({ initialPath }: { initialPath?: string }) {
@@ -182,14 +190,11 @@ export function App({ initialPath }: { initialPath?: string }) {
                     <ProvidersView client={client} keyValue={keyValue} />
                   }
                 />
-                <Route
-                  path="/agents"
-                  element={<AgentsView client={client} keyValue={keyValue} />}
-                />
-                <Route
-                  path="/agents/:agentId"
-                  element={<AgentsView client={client} keyValue={keyValue} />}
-                />
+                <Route path="/flows" element={<FlowsView client={client} keyValue={keyValue} />} />
+                <Route path="/flows/new" element={<FlowPage client={client} keyValue={keyValue} />} />
+                <Route path="/flows/:flowId" element={<FlowPage client={client} keyValue={keyValue} />} />
+                <Route path="/agents" element={<Navigate to="/flows" replace />} />
+                <Route path="/agents/:agentId" element={<LegacyAgentRedirect />} />
                 <Route
                   path="/mcp-servers"
                   element={<MCPView client={client} keyValue={keyValue} />}

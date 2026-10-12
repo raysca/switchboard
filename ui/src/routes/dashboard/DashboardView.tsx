@@ -188,13 +188,13 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <ul className="ledger" aria-label="Service readiness">
         <li className="ledger__row">
           <span className="lamp" data-tone={readyAgentsCount > 0 ? "ok" : "idle"} aria-hidden="true" />
-          <span className="ledger__name">Agents</span>
+          <span className="ledger__name">Flows</span>
           <span className="ledger__value">
             {readyAgentsCount} of {totalAgents} ready
           </span>
-          {totalAgents === 0 && <span className="subtext">No agents created yet.</span>}
-          <Link to="/agents" className="ledger__link">
-            View agents
+          {totalAgents === 0 && <span className="subtext">No flows created yet.</span>}
+          <Link to="/flows" className="ledger__link">
+            View flows
           </Link>
         </li>
         <li className="ledger__row">
