@@ -143,6 +143,7 @@ export type AgentDTO = z.infer<typeof agentSchema>;
 const agentsEnvelope = z.object({
   data: z.array(agentSchema),
 });
+const agentVersionEnvelope = z.object({ data: agentVersionSchema });
 const agentEnvelope = z.object({
   data: agentSchema,
 });
@@ -509,6 +510,14 @@ export function createApiClient(
         await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope, {
           method: "PUT",
           body: input,
+        })
+      ).data,
+    // Replaces the tool selection and publishes a new version with the same config.
+    setAgentMCPTools: async (id: string, tools: ToolSelection[]) =>
+      (
+        await request(`/agents/${encodeURIComponent(id)}/mcp-tools`, agentVersionEnvelope, {
+          method: "PUT",
+          body: { tools },
         })
       ).data,
     archiveAgent: async (id: string) =>

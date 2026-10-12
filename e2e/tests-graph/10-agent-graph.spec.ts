@@ -450,6 +450,49 @@ test("calls: the finished call is listed, with its path and a transcript labelle
   await step(page, "call detail, labelled by step");
 });
 
+test("mcp tools page: with no server connected it says how to connect one, and the dialog opens and closes", async ({ page, stack }) => {
+  await connectAdmin(page, stack);
+  await page.getByRole("link", { name: "MCP tools", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "MCP tools", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No MCP servers yet." })).toBeVisible();
+  await page.getByRole("button", { name: "Connect server" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Connect server" });
+  await expect(dialog).toBeVisible();
+  // The cursor is already in the name field.
+  await expect(dialog.getByLabel("Name")).toBeFocused();
+  await step(page, "connect server dialog");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
+test("mcp tools page: servers, their tools and a changed schema, with the API faked (the stack cannot reach a public MCP host)", async ({ page, stack }) => {
+  const server = (id: string, over: object = {}) => ({ id, name: id, description: "", endpoint: `https://mcp.example.com/${id}`, transport: "streamable-http", validation_state: "healthy", latest_discovery_id: "d", auth_env: "MCP_TOKEN_BILLING", auth_env_set: true, enabled: true, last_connected_at: new Date(Date.now() - 4 * 60_000).toISOString(), last_discovered_at: new Date(Date.now() - 4 * 60_000).toISOString(), ...over });
+  const schema = { type: "object", properties: { account_id: { type: "string" }, amount_pence: { type: "integer" } } };
+  const tools = [
+    { remote_name: "latest_invoice", description: "Return the caller's most recent invoice.", input_schema: schema, schema_hash: "31f0aaaa11" },
+    { remote_name: "send_pay_link", description: "Send a one-time payment link by SMS or email.", input_schema: schema, schema_hash: "c9d00000bb" },
+  ];
+  const flow = {
+    id: "f1", name: "Front desk", description: "", enabled: true, archived: false, created_at: "", updated_at: "",
+    current_version: { id: "v", number: 3, schema_version: 1, config: {}, config_hash: "h", created_at: "", mcp_tools: [{ mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "7a3e0000aa", required: true }] },
+    readiness: { state: "needs_tool_review", reasons: ["required_tool_unavailable"], tool_dependencies: [{ mcp_server_id: "billing", remote_name: "send_pay_link", required: true, state: "schema_drift", selected_schema_hash: "7a3e0000aa", current_schema_hash: "c9d00000bb" }] },
+  };
+  await page.route("**/api/v1/mcp-servers", (r) => r.fulfill({ json: { data: [server("billing"), server("crm", { auth_env: "", auth_env_set: false }), server("network", { validation_state: "connection_failed", last_discovered_at: null })] } }));
+  await page.route("**/api/v1/mcp-servers/*", (r) => {
+    const id = r.request().url().split("/").pop()!;
+    return r.fulfill({ json: { data: { ...server(id), discovery: { id: "d", discovery_hash: "x", created_at: "", tools: id === "billing" ? tools : [] } } } });
+  });
+  await page.route("**/api/v1/agents?*", (r) => r.fulfill({ json: { data: [flow] } }));
+  await connectAdmin(page, stack);
+  await page.getByRole("link", { name: "MCP tools", exact: true }).first().click();
+  await expect(page.getByRole("heading", { name: "billing", level: 2 })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^billing/ })).toContainText("1 schema changed");
+  await expect(page.getByRole("link", { name: /^network/ })).toContainText("Unreachable");
+  await expect(page.getByRole("heading", { name: "send_pay_link changed its input schema" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Accept new schema for Front desk" })).toBeVisible();
+  await step(page, "mcp tools page");
+});
+
 test("layout: demo-path screens do not scroll sideways at 390px", async ({ page, stack }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await connectAdmin(page, stack);
@@ -468,6 +511,9 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
   await go("/providers");
   await expect(page.getByRole("heading", { name: "Providers", level: 1 })).toBeVisible();
   await noSideways("providers");
+  await go("/mcp-servers");
+  await expect(page.getByRole("heading", { name: "MCP tools", level: 1 })).toBeVisible();
+  await noSideways("mcp tools");
   await go("/sessions");
   await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
   await noSideways("calls");
