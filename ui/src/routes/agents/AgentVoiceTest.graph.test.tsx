@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import type { AgentDTO, ApiClient } from "../../api/client";
-import { AgentVoiceTest } from "./AgentVoiceTest";
+import { AgentVoiceTest, type AgentVoiceTestProps } from "./AgentVoiceTest";
 
 const stage = { provider: "google" };
 const node = (id: string, name: string, extra = {}) => ({
@@ -23,18 +23,38 @@ const agent = (config: Record<string, unknown>): AgentDTO => ({
   updated_at: "",
 });
 
-function renderTest(a: AgentDTO) {
+const graphAgent = agent({
+  entry: "front",
+  nodes: [node("front", "Front"), node("sales", "Sales")],
+  edges: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
+});
+
+function renderTest(a: AgentDTO, extra: Partial<AgentVoiceTestProps> = {}) {
   const client = { issueVoiceToken: vi.fn(), getSessionTraces: vi.fn() } as unknown as ApiClient;
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter>
-        <AgentVoiceTest agent={a} client={client} keyValue="k" />
+        <AgentVoiceTest agent={a} client={client} keyValue="k" {...extra} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 describe("AgentVoiceTest graph view", () => {
+  it("leaves the graph to the page when asked", () => {
+    renderTest(graphAgent, { hideGraph: true });
+    expect(screen.queryByRole("list", { name: /path taken/i })).toBeNull();
+  });
+
+  it("reports the idle call to the page, and NO_CALL when it goes away", () => {
+    const onCall = vi.fn();
+    const { unmount } = renderTest(graphAgent, { onCall });
+    expect(onCall).toHaveBeenLastCalledWith({ sessionId: null, userSpeaking: false, botSpeaking: false, live: false });
+    onCall.mockClear();
+    unmount();
+    expect(onCall).toHaveBeenLastCalledWith({ sessionId: null, userSpeaking: false, botSpeaking: false, live: false });
+  });
+
   it("shows the path through the graph for a multi-node agent", () => {
     renderTest(
       agent({

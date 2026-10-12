@@ -9,6 +9,7 @@ import type { BrowserAudioController } from "../../voice/audio";
 import { PipecatDebugPanel } from "../../components/debug/PipecatDebugPanel";
 import { ActionButton, Status } from "../../components/primitives";
 import { LiveGraph } from "./graph/LiveGraph";
+import { NO_CALL, type CallInfo } from "./graph/useCallView";
 import { fromAgentConfig } from "./graph/model";
 
 export interface AgentVoiceTestProps {
@@ -17,6 +18,10 @@ export interface AgentVoiceTestProps {
   keyValue: string | null;
   wsBaseUrl?: string;
   audioController?: BrowserAudioController;
+  /** The page shows the call on its own graph (the flow editor): skip the embedded one. */
+  hideGraph?: boolean;
+  /** Told whenever the call changes; must be stable (a state setter). */
+  onCall?: (call: CallInfo) => void;
 }
 
 export function AgentVoiceTest({
@@ -25,6 +30,8 @@ export function AgentVoiceTest({
   keyValue,
   wsBaseUrl,
   audioController,
+  hideGraph,
+  onCall,
 }: AgentVoiceTestProps) {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [textMessage, setTextMessage] = useState("");
@@ -63,6 +70,10 @@ export function AgentVoiceTest({
     state.sessionState === "requesting_token" ||
     state.sessionState === "connecting";
   const inCall = isConnectedOrReady || isConnecting;
+  useEffect(() => {
+    onCall?.({ sessionId: state.sessionId, userSpeaking: state.isUserSpeaking, botSpeaking: state.isBotSpeaking, live: inCall });
+  }, [onCall, state.sessionId, state.isUserSpeaking, state.isBotSpeaking, inCall]);
+  useEffect(() => () => onCall?.(NO_CALL), [onCall]);
   const shown = inCall && callVersion ? callVersion : { number: agent.current_version?.number, config: agent.current_version?.config };
   const callIsStale = inCall && callVersion !== null && callVersion.number !== agent.current_version?.number;
   // A graph agent shows the call moving between its nodes while you test it.
@@ -172,7 +183,7 @@ export function AgentVoiceTest({
         </p>
       )}
 
-      {graph && (
+      {graph && !hideGraph && (
         <div className="stage__graph">
           <LiveGraph
             graph={graph}

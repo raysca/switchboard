@@ -1,9 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import type { ApiClient } from "../../../api/client";
-import { deriveView } from "./activity";
 import { Canvas } from "./Canvas";
 import type { GraphDraft } from "./model";
+import { useCallView } from "./useCallView";
 
 type LiveGraphProps = {
   graph: GraphDraft;
@@ -17,7 +15,6 @@ type LiveGraphProps = {
   pollMs?: number;
 };
 
-const HANDOFF_MS = 450;
 const ACTIVITY_TEXT = { listening: "listening", thinking: "thinking", speaking: "speaking" } as const;
 
 /**
@@ -27,45 +24,10 @@ const ACTIVITY_TEXT = { listening: "listening", thinking: "thinking", speaking: 
  * what the active agent is doing comes from the voice client.
  */
 export function LiveGraph({ graph, sessionId, client, userSpeaking, botSpeaking, live, pollMs = 500 }: LiveGraphProps) {
-  const traces = useQuery({
-    queryKey: ["session-traces", sessionId],
-    queryFn: () => client.getSessionTraces(sessionId as string),
-    enabled: !!sessionId,
-    refetchInterval: live ? pollMs : false,
-    retry: false,
-  });
-
-  // "Thinking" = the caller finished speaking and the agent has not started yet.
-  const [thinking, setThinking] = useState(false);
-  const wasSpeaking = useRef(false);
-  useEffect(() => {
-    if (botSpeaking || userSpeaking) setThinking(false);
-    else if (wasSpeaking.current) setThinking(true);
-    wasSpeaking.current = userSpeaking;
-  }, [userSpeaking, botSpeaking]);
-
-  const view = useMemo(
-    () => deriveView(graph.entry, traces.data?.spans ?? [], graph.edges, { userSpeaking, botSpeaking, thinking }),
-    [graph.entry, graph.edges, traces.data, userSpeaking, botSpeaking, thinking],
-  );
+  const { view, traversedEdges, justHanded } = useCallView(graph, { sessionId, userSpeaking, botSpeaking, live }, client, pollMs);
   const nameOf = (id: string) => graph.nodes.find((n) => n.id === id)?.name ?? id;
   const preparing = Object.entries(view.nodes).find(([, v]) => v.state === "preparing")?.[0];
   const activity = view.nodes[view.active]?.activity;
-  const traversedEdges = view.traversed.flatMap((t) => (t.edgeId ? [t.edgeId] : []));
-
-  // The handoff moment: the edge just taken is marked for a beat so the canvas can draw the cable.
-  const [justHanded, setJustHanded] = useState<string | undefined>();
-  const seen = useRef<number | null>(null);
-  useEffect(() => {
-    const count = traversedEdges.length;
-    const grew = seen.current !== null && count > seen.current;
-    seen.current = count;
-    if (!live || !grew) return;
-    setJustHanded(traversedEdges[count - 1]);
-    const t = setTimeout(() => setJustHanded(undefined), HANDOFF_MS);
-    return () => clearTimeout(t);
-    // traversedEdges is rebuilt every render; its length is what matters.
-  }, [traversedEdges.length, live]);
 
   return (
     <div className="live-graph">
