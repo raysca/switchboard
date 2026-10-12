@@ -14,15 +14,6 @@ export type GraphView = {
   active: string;
 };
 
-const attr = (span: TraceSpanDTO, key: string): string | null => {
-  const a = span.attributes;
-  if (a && typeof a === "object" && key in a) {
-    const v = (a as Record<string, unknown>)[key];
-    return typeof v === "string" ? v : null;
-  }
-  return null;
-};
-
 function activityOf(v: VoiceActivity): Activity {
   if (v.botSpeaking) return "speaking";
   if (v.userSpeaking) return "listening";

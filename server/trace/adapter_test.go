@@ -352,15 +352,15 @@ func TestAdapterFilterAttributesPrivacyPolicy(t *testing.T) {
 	span.SetAttribute("custom.deep_map", deepMap)
 
 	// Step budget exceeded (> 1024 steps)
-	var manySteps []any
+	var manyNodes []any
 	for i := 0; i < 20; i++ {
 		sub := make(map[string]any)
 		for j := 0; j < 60; j++ {
 			sub[fmt.Sprintf("f%d", j)] = j
 		}
-		manySteps = append(manySteps, sub)
+		manyNodes = append(manyNodes, sub)
 	}
-	span.SetAttribute("custom.many_nodes", manySteps)
+	span.SetAttribute("custom.many_nodes", manyNodes)
 
 	// Oversized string in whitelisted metadata label (> 256 bytes)
 	span.SetAttribute("model", strings.Repeat("m", 300))

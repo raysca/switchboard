@@ -19,7 +19,7 @@ import (
 const (
 	queueSize                  = 2048
 	maxLabelLength             = 256
-	maxStructuredMetadataSteps = 1024
+	maxStructuredMetadataNodes = 1024
 )
 
 type traceOpKind uint8
@@ -234,7 +234,7 @@ func (a *Adapter) filterAttributes(input map[string]any) map[string]any {
 			}
 		default:
 			if strings.HasPrefix(k, "custom.") && safeKey(k) {
-				if len(customKeys) == maxStructuredMetadataSteps {
+				if len(customKeys) == maxStructuredMetadataNodes {
 					tooManyCustom = true
 				} else {
 					customKeys = append(customKeys, k)
@@ -248,7 +248,7 @@ func (a *Adapter) filterAttributes(input map[string]any) map[string]any {
 	}
 
 	sort.Strings(customKeys)
-	remaining := maxStructuredMetadataSteps
+	remaining := maxStructuredMetadataNodes
 	for _, key := range customKeys {
 		if copied, ok := copyStructuredMetadata(input[key], 0, &remaining); ok {
 			out[key] = copied

@@ -194,7 +194,7 @@ func newIdleE2E(t *testing.T, mod func(*Config)) *idleE2E {
 			}
 			r.mu.Unlock()
 		case *core.ErrorFrame:
-			r.mu.Lock() // the frame is seen again at the route past the transport
+			r.mu.Lock() // the frame is seen again at the edge past the transport
 			if !r.seenErr[v] {
 				r.seenErr[v] = true
 				r.errs++

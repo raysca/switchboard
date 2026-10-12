@@ -23,7 +23,7 @@ export type FlowDraft = {
   route_cue?: RouteCue;
 };
 
-// Settings that belong to the call, not to one flow: only the start step has them.
+// Settings that belong to the call, not to one step: only the start step has them.
 const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools"] as const;
 
 export function slug(name: string): string {

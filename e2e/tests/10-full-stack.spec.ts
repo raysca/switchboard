@@ -79,9 +79,9 @@ test("admin UI: Google is detected from the server environment and a ready flow 
   expect(flowId).not.toBe("");
   const saved = await api<{ data: { current_version: { config: Record<string, unknown> } } }>(stack, `/flows/${flowId}`);
   // A named step is published as a flow.
-  const step = (saved.data.current_version.config as unknown as { steps: { config: Record<string, Record<string, unknown>> }[] }).steps[0].config;
-  expect([step.stt.provider, step.stt.model, step.llm.model, step.tts.voice]).toEqual(["google", "chirp_2", "gemini-2.5-flash", "en-US-Chirp3-HD-Aoede"]);
-  expect(JSON.stringify(step)).not.toContain("credential");
+  const cfg = (saved.data.current_version.config as unknown as { steps: { config: Record<string, Record<string, unknown>> }[] }).steps[0].config;
+  expect([cfg.stt.provider, cfg.stt.model, cfg.llm.model, cfg.tts.voice]).toEqual(["google", "chirp_2", "gemini-2.5-flash", "en-US-Chirp3-HD-Aoede"]);
+  expect(JSON.stringify(cfg)).not.toContain("credential");
   await step(page, "flow ready");
 });
 

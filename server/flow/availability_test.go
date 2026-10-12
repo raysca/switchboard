@@ -77,7 +77,7 @@ func TestFlowProblemsPrefixNonEntrySteps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The sales step borrows the entry's STT, so a missing STT is reported for both.
+	// The sales step borrows the start step's STT, so a missing STT is reported for both.
 	av := fakeAvail{"google/stt": {Reason: "missing_credential", MissingEnv: []string{"GOOGLE_APPLICATION_CREDENTIALS"}}}
 	r, e := g.Problems(av)
 	if !reflect.DeepEqual(r, []string{"missing_credential_stt", "sales:missing_credential_stt"}) || len(e) != 1 {

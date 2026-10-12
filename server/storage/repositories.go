@@ -55,7 +55,7 @@ func (r FlowRepository) SelectedTools(ctx context.Context, versionID string) ([]
 // writer published the version first.
 var (
 	ErrInvalidToolSelection = errors.New("invalid MCP tool selection")
-	ErrVersionConflict      = errors.New("agent version conflict")
+	ErrVersionConflict      = errors.New("flow version conflict")
 )
 
 func (s *Store) Flows() FlowRepository { return FlowRepository{s} }
@@ -92,7 +92,7 @@ func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, versi
 			return err
 		}
 		if archived {
-			return errors.New("agent unavailable")
+			return errors.New("flow unavailable")
 		}
 		var latest int
 		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM agent_versions WHERE agent_id=?"), flowID).Scan(&latest); err != nil {
@@ -148,7 +148,7 @@ func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, versi
 			return err
 		}
 		if n != 1 {
-			return errors.New("agent unavailable")
+			return errors.New("flow unavailable")
 		}
 		return nil
 	})
@@ -175,7 +175,7 @@ func (r FlowRepository) Current(ctx context.Context, id string) (Flow, error) {
 // List returns a stable ID-ordered page of flows, including archived ones.
 func (r FlowRepository) List(ctx context.Context, limit, offset int) ([]Flow, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
-		return nil, errors.New("invalid agent pagination")
+		return nil, errors.New("invalid flow pagination")
 	}
 	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id,name,description,enabled,archived,current_version_id,created_at,updated_at FROM agents ORDER BY id LIMIT ? OFFSET ?"), limit, offset)
 	if err != nil {
@@ -354,7 +354,7 @@ func (r MCPRepository) SetValidation(ctx context.Context, id, state string, conn
 	return nil
 }
 
-var ErrMCPReferenced = errors.New("MCP server is referenced by a current agent or active session")
+var ErrMCPReferenced = errors.New("MCP server is referenced by a current flow or active session")
 
 type MCPFlowReference struct {
 	FlowID, FlowName, FlowVersionID, RemoteName string

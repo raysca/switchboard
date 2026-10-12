@@ -82,3 +82,18 @@ func TestUpdateFlowPublishesNewVersionKeepingOldPinned(t *testing.T) {
 		t.Fatalf("version 1 must stay flat: err=%v", err)
 	}
 }
+
+// A pre-rename config sent on write (or copied from an old version by Duplicate)
+// is stored with the new keys.
+func TestCreateWritesLegacyKeysAsNew(t *testing.T) {
+	svc := testService(t)
+	legacy := strings.NewReplacer(`"start"`, `"entry"`, `"steps"`, `"nodes"`, `"routes"`, `"edges"`).Replace(string(twoStepFlow("google")))
+	f, err := svc.Create(context.Background(), CreateRequest{Name: "old keys", Config: json.RawMessage(legacy)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := string(f.Version.Config)
+	if !strings.Contains(cfg, `"steps"`) || !strings.Contains(cfg, `"routes"`) || strings.Contains(cfg, `"nodes"`) || strings.Contains(cfg, `"entry"`) {
+		t.Fatalf("stored config = %s", cfg)
+	}
+}

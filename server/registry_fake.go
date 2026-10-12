@@ -39,7 +39,7 @@ func init() {
 			delay, _ := time.ParseDuration(os.Getenv("GOVOICE_FAKE_LLM_DELAY"))
 			cfg := core.FakeLLMConfig{ResponseChunks: []string{"You said: "}, EchoUser: true, ChunkDelay: delay, Executor: spec.ToolExecutor,
 				ToolOnPhrase: map[string]string{}, AfterTool: "Connecting you."}
-			// Flow flows: GOVOICE_FAKE_LLM_LABEL=1 prefixes each reply with the step's
+			// Routed flows: GOVOICE_FAKE_LLM_LABEL=1 prefixes each reply with the step's
 			// system prompt in brackets, so a test can tell which step answered; a user
 			// message "transfer to <step name>" makes the fake call that step's transfer tool.
 			if os.Getenv("GOVOICE_FAKE_LLM_LABEL") != "" {

@@ -92,8 +92,26 @@ func invalid(format string, a ...any) error {
 }
 
 // legacyKeys are the pre-rename config keys. Stored versions are immutable and
-// hashed, so they are read as written.
+// hashed, so they are read as written; new versions are written with the new keys.
 var legacyKeys = map[string]string{"entry": "start", "nodes": "steps", "edges": "routes", "handoff_cue": "route_cue"}
+
+// upgradeKeys renames a pre-rename config's keys in place; a config that mixes
+// old and new keys is invalid.
+func upgradeKeys(cfg map[string]json.RawMessage) error {
+	if _, ok := cfg["nodes"]; !ok {
+		return nil
+	}
+	for old, key := range legacyKeys {
+		if v, ok := cfg[old]; ok {
+			if _, dup := cfg[key]; dup {
+				return invalid("config mixes %q and %q", old, key)
+			}
+			cfg[key] = v
+			delete(cfg, old)
+		}
+	}
+	return nil
+}
 
 // Decode strictly decodes a stored config. A flat Config (no "steps")
 // becomes a one-step flow named "main".
@@ -103,14 +121,8 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		return Definition{}, invalid("config must be a JSON object")
 	}
 	if _, ok := probe["nodes"]; ok {
-		for old, key := range legacyKeys {
-			if v, ok := probe[old]; ok {
-				if _, dup := probe[key]; dup {
-					return Definition{}, invalid("config mixes %q and %q", old, key)
-				}
-				probe[key] = v
-				delete(probe, old)
-			}
+		if err := upgradeKeys(probe); err != nil {
+			return Definition{}, err
 		}
 		raw, _ = json.Marshal(probe) // ponytail: re-encoding a map that just decoded cannot fail
 	}
@@ -218,7 +230,7 @@ func (g Definition) RoutesFrom(id string) []Route {
 	return out
 }
 
-// StartConfig is the call-level config of a stored flow, flat or flow.
+// StartConfig is the call-level config of a stored flow, flat or with steps.
 func StartConfig(raw json.RawMessage) (Config, error) {
 	g, err := Decode(raw)
 	if err != nil {
@@ -228,7 +240,7 @@ func StartConfig(raw json.RawMessage) (Config, error) {
 }
 
 // Problems lists attachment problems for every step. Non-start steps have no
-// STT of their own, so they are checked with the entry's STT borrowed; their
+// STT of their own, so they are checked with the start step's STT borrowed; their
 // problems are prefixed with the step id.
 func (g Definition) Problems(av Availability) (reasons, missingEnv []string) {
 	entry := g.StartStep().Config

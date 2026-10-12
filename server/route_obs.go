@@ -52,7 +52,7 @@ func (m *routeMetrics) write(w io.Writer) {
 // trace spans (persisted for session replay when management is enabled).
 func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.HandoffEvent) {
 	return func(e core.HandoffEvent) {
-		s.metrics.handoff.observe(e)
+		s.metrics.route.observe(e)
 		switch e.Kind {
 		case core.HandoffPreparing:
 			tl.Record(TimelineEvent{Type: EventStepPreparing, Details: e.To})
