@@ -19,7 +19,7 @@ const two = fromAgentConfig({
   edges: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
 });
 
-function Harness({ initial = two, onChange = vi.fn() }: { initial?: GraphDraft; onChange?: (g: GraphDraft) => void }) {
+function Harness({ initial = two, onChange = vi.fn(), onClose = vi.fn() }: { initial?: GraphDraft; onChange?: (g: GraphDraft) => void; onClose?: () => void }) {
   const [g, setG] = useState(initial);
   const [name, setName] = useState("Front desk");
   return (
@@ -31,7 +31,7 @@ function Harness({ initial = two, onChange = vi.fn() }: { initial?: GraphDraft; 
         description=""
         onName={setName}
         onDescription={vi.fn()}
-        onClose={vi.fn()}
+        onClose={onClose}
         onChange={(n) => {
           setG(n);
           onChange(n);
@@ -120,5 +120,15 @@ describe("FlowSettingsPanel published version", () => {
     const section = screen.getByRole("group", { name: "Published version" });
     expect(section).toHaveTextContent("v3");
     expect(section).toHaveTextContent("abc123");
+  });
+});
+
+describe("FlowSettingsPanel footer", () => {
+  it("ends with a footer: the changes are part of the draft, and Done closes the panel", async () => {
+    const onClose = vi.fn();
+    render(<Harness onClose={onClose} />);
+    expect(screen.getByText("Part of the draft until you publish.")).toBeVisible();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Done" }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

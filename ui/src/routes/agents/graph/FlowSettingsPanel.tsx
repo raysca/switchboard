@@ -44,7 +44,20 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
   const cue = graph.handoff_cue;
 
   return (
-    <SidePanel title="Flow settings" onClose={onClose} returnFocusTo={returnFocusTo} fallbackFocusId={fallbackFocusId}>
+    <SidePanel
+      title="Flow settings"
+      onClose={onClose}
+      returnFocusTo={returnFocusTo}
+      fallbackFocusId={fallbackFocusId}
+      footer={
+        <>
+          <span className="subtext grow">Part of the draft until you publish.</span>
+          <button type="button" className="action-button" onClick={onClose}>
+            Done
+          </button>
+        </>
+      }
+    >
       {problems.length > 0 && (
         <div role="note" className="note note--bad">
           <ul className="plain-list">
