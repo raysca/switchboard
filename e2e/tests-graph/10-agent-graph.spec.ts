@@ -270,8 +270,13 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   await page.getByRole("button", { name: "Main agent → Sales" }).click();
   await page.getByLabel("When should it hand off?").fill("The caller wants to buy a car, asks about prices, or wants a quote.");
   await step(page, "handoff condition edited");
+  // The test panel is in the designer and runs the published version: it says the edit is not in it yet.
+  await expect(page.getByText(/unpublished edits are not in this test/i)).toBeVisible();
   await page.getByRole("button", { name: "Publish" }).click();
-  await openAgentDetail(page, AGENT);
+  // Publishing leaves the designer open on the new version, so it can be tested at once.
+  await expect(page.getByText(/published immutable version v2/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: `Design ${AGENT}` })).toBeVisible();
+  await expect(page.getByText(/unpublished edits/i)).toHaveCount(0);
 
   const agents = await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/agents");
   const v = agents.data.find((a) => a.name === AGENT)!.current_version;
@@ -279,9 +284,11 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   expect(v.config.nodes).toHaveLength(2);
   expect(v.config.edges[0].condition).toBe("The caller wants to buy a car, asks about prices, or wants a quote.");
 
+  // Call from inside the designer: the live graph shows the handoff to Sales.
   await startCall(page);
   await sendText(page, BUY);
   await expect(botReply(page, SALES)).toBeVisible({ timeout: LIVE ? 90_000 : 20_000 });
+  await expect(liveStatus(page)).toContainText("Sales is answering", { timeout: LIVE ? 90_000 : 15_000 });
   await page.getByTestId("disconnect-btn").click();
 });
 

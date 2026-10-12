@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import type { AgentDTO, ProviderStatus } from "../../../api/client";
 import { GraphDesigner } from "./GraphDesigner";
@@ -26,15 +27,43 @@ const agent = (config: unknown): AgentDTO => ({
   updated_at: "",
 });
 
-function setup(a: AgentDTO | null) {
+function setup(a: AgentDTO | null, testPanel?: ReactNode) {
   const onSubmit = vi.fn();
   render(
     <MemoryRouter>
-      <GraphDesigner agent={a} providers={providers} pending={false} submitLabel="Publish" onSubmit={onSubmit} onCancel={vi.fn()} />
+      <GraphDesigner agent={a} providers={providers} pending={false} submitLabel="Publish" onSubmit={onSubmit} onCancel={vi.fn()} testPanel={testPanel} />
     </MemoryRouter>,
   );
   return { onSubmit, user: userEvent.setup() };
 }
+
+describe("GraphDesigner test panel", () => {
+  const panel = <div data-testid="test-panel">voice test</div>;
+
+  it("shows the test panel for a stored agent, outside the designer form", () => {
+    setup(agent(flat), panel);
+    const p = screen.getByTestId("test-panel");
+    expect(p).toBeVisible();
+    // The panel holds forms of its own: nested in the designer's form, a text send would publish.
+    expect(p.closest("form")).toBeNull();
+    expect(screen.queryByText(/unpublished edits/i)).toBeNull();
+  });
+
+  it("says a new agent must be published before it can be tested", () => {
+    setup(null, panel);
+    expect(screen.queryByTestId("test-panel")).toBeNull();
+    expect(screen.getByText(/publish once to test/i)).toBeVisible();
+  });
+
+  it("warns while the canvas differs from the published version, and clears when it matches again", async () => {
+    const { user } = setup(agent(flat), panel);
+    await user.type(screen.getByLabelText("New agent node"), "Sales");
+    await user.click(screen.getByRole("button", { name: "Add agent" }));
+    expect(screen.getByText(/unpublished edits are not in this test/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove node" }));
+    expect(screen.queryByText(/unpublished edits/i)).toBeNull();
+  });
+});
 
 describe("GraphDesigner", () => {
   it("publishes a plain agent unchanged, as the flat config", async () => {

@@ -25,17 +25,17 @@ type GraphDesignerProps = {
   submitLabel: string;
   onSubmit: (input: CreateAgentInput) => void;
   onCancel: () => void;
-  /** Rendered under the canvas: the voice test with the live graph view. */
+  /** Rendered after the form (it has forms of its own): the voice test with the live graph view. */
   testPanel?: ReactNode;
 };
 
 /** Draws an agent as a graph: nodes are agents, edges are handoffs. */
 export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit, onCancel, testPanel }: GraphDesignerProps) {
+  const savedTools = (agent?.current_version?.mcp_tools ?? []).map((t) => `${t.mcp_server_id}/${t.remote_name}`);
   const [name, setName] = useState(agent?.name ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
   const [graph, setGraph] = useState<GraphDraft>(() => {
-    const tools = (agent?.current_version?.mcp_tools ?? []).map((t) => `${t.mcp_server_id}/${t.remote_name}`);
-    const g = fromAgentConfig(agent?.current_version?.config ?? {}, tools);
+    const g = fromAgentConfig(agent?.current_version?.config ?? {}, savedTools);
     return agent ? g : { ...g, nodes: g.nodes.map((n) => ({ ...n, name: "Main agent" })) };
   });
   const [selected, setSelected] = useState<Selection>(() => ({ kind: "node", id: graph.entry }));
@@ -83,7 +83,14 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
     setCondition("");
   }
 
+  // The test runs the last published version: tell the user when the canvas has moved on from it.
+  const saved = agent?.current_version
+    ? JSON.stringify(toPayload(fromAgentConfig(agent.current_version.config, savedTools)))
+    : null;
+  const unpublished = saved !== null && saved !== JSON.stringify(toPayload(graph));
+
   return (
+    <>
     <form onSubmit={submit} className="designer" noValidate>
       {showErrors && problems.length > 0 && (
         <div role="alert" className="message-panel" style={{ borderColor: "#a43e30" }}>
@@ -131,7 +138,6 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
               }
             }}
           />
-          {testPanel}
         </div>
         <div>
           {node && (
@@ -263,5 +269,18 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
         </button>
       </div>
     </form>
+    {agent ? (
+      <>
+        {unpublished && (
+          <p role="status" className="message-panel" style={{ marginTop: "16px" }}>
+            Unpublished edits are not in this test. Publish to include them.
+          </p>
+        )}
+        {testPanel}
+      </>
+    ) : (
+      <p role="status" style={{ color: "#53666b", marginTop: "16px" }}>Publish once to test this agent.</p>
+    )}
+    </>
   );
 }

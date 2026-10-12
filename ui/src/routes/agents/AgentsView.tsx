@@ -387,7 +387,8 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
         `Agent updated. Published immutable version v${versionNum} with hash ${hash}.`,
       );
       setSelectedAgentId(updatedAgent.id);
-      setMode("detail");
+      // The designer stays open so the new version can be tested at once.
+      if (mode !== "design") setMode("detail");
     },
     onError: (err) => {
       setFormError(asApiError(err, "Failed to update agent"));
@@ -744,6 +745,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                     : createMutation.mutate(input)
                 }
                 onCancel={() => setMode(selectedAgent ? "detail" : "list")}
+                testPanel={selectedAgent && <AgentVoiceTest agent={selectedAgent} client={client} keyValue={keyValue} />}
               />
             </section>
           )}
