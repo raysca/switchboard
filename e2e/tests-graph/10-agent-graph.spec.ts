@@ -561,25 +561,38 @@ test("mcp: healthy, failing and unreachable servers show their state", async ({ 
   await step(page, "mcp server states");
 });
 
-test("mcp: a flow calls an MCP tool during a test call", async ({ page, stack }) => {
-  test.skip(LIVE, "the MCP cases run against the fake stack only");
+// Registers an MCP server on the test servers, syncs it, and creates a flow with the named
+// tools attached (each tool's schema hash comes from the discovery).
+async function mcpFlow(stack: Stack, flow: string, path: string, tools: string[], authEnv = "") {
   const server = await api<{ data: { id: string } }>(stack, "/mcp-servers", {
     method: "POST",
-    body: JSON.stringify({ name: "Order lookup", endpoint: `${stack.mcpUrl}/ok`, auth_env: "MCP_TOKEN_TEST", enabled: true }),
+    body: JSON.stringify({ name: `${flow} server`, endpoint: `${stack.mcpUrl}${path}`, auth_env: authEnv, enabled: true }),
   });
   const id = server.data.id;
   await api(stack, `/mcp-servers/${id}/validate`, { method: "POST" });
   const detail = await api<{ data: { discovery: { tools: { remote_name: string; schema_hash: string }[] } } }>(stack, `/mcp-servers/${id}`);
-  const hash = detail.data.discovery.tools.find((t) => t.remote_name === "lookup_order")!.schema_hash;
+  const hash = (name: string) => detail.data.discovery.tools.find((t) => t.remote_name === name)!.schema_hash;
   await api(stack, "/agents", {
     method: "POST",
     body: JSON.stringify({
-      name: "E2E Orders",
-      config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You look up orders." }), tts: stage({ voice: "v" }) },
-      mcp_tools: [{ mcp_server_id: id, remote_name: "lookup_order", schema_hash: hash, required: true }],
+      name: flow,
+      config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You use tools." }), tts: stage({ voice: "v" }) },
+      mcp_tools: tools.map((t) => ({ mcp_server_id: id, remote_name: t, schema_hash: hash(t), required: false })),
     }),
   });
+}
 
+type MCPRecord = { tool?: string; auth: string; arguments?: unknown; cancelled: boolean };
+const mcpRecord = async (stack: Stack): Promise<MCPRecord[]> => (await fetch(`${stack.mcpUrl}/_record`)).json();
+const lastMCPCall = async (stack: Stack, tool: string) => (await mcpRecord(stack)).filter((r) => r.tool === tool).pop();
+
+// A text turn sent the instant a reply arrives can be lost (a tool-independent issue tracked
+// separately); the MCP tests pace their turns so they test MCP, not that.
+const pace = (page: Page) => page.waitForTimeout(1000);
+
+test("mcp: a flow calls an MCP tool during a test call", async ({ page, stack }) => {
+  test.skip(LIVE, "the MCP cases run against the fake stack only");
+  await mcpFlow(stack, "E2E Orders", "/ok", ["lookup_order"], "MCP_TOKEN_TEST");
   await connectAdmin(page, stack);
   await openFlowTest(page, "E2E Orders");
   await startCall(page);
@@ -587,9 +600,67 @@ test("mcp: a flow calls an MCP tool during a test call", async ({ page, stack })
   await expect(botReply(page, /shipped/)).toBeVisible();
   await step(page, "mcp tool answered during a call");
 
-  const record = await (await fetch(`${stack.mcpUrl}/_record`)).json();
-  const call = record.filter((r: { tool: string }) => r.tool === "lookup_order").pop();
-  expect(call.auth).toBe("match");
-  expect(call.arguments).toEqual({ order_id: "42" });
+  const call = await lastMCPCall(stack, "lookup_order");
+  expect(call?.auth).toBe("match");
+  expect(call?.arguments).toEqual({ order_id: "42" });
   await page.getByTestId("disconnect-btn").click();
 });
+
+test("mcp: each kind of tool failure is answered and the call goes on", async ({ page, stack }) => {
+  test.skip(LIVE, "the MCP cases run against the fake stack only");
+  const tools = ["tool_error", "protocol_error", "drop", "too_big"];
+  await mcpFlow(stack, "E2E Failing Tools", "/fail/tools", tools);
+  await connectAdmin(page, stack);
+  await openFlowTest(page, "E2E Failing Tools");
+  await startCall(page);
+  for (const tool of tools) {
+    await sendText(page, `call tool ${tool}`);
+    await expect(botReply(page, new RegExp(`Tool ${tool} failed`))).toBeVisible();
+    await pace(page);
+    await sendText(page, `hello after ${tool}`);
+    await expect(botReply(page, new RegExp(`hello after ${tool}`))).toBeVisible();
+    await pace(page);
+  }
+  await step(page, "mcp tool failures answered");
+  // Each failure reached the test server (none was refused before calling it).
+  const seen = new Set((await mcpRecord(stack)).map((r) => r.tool));
+  for (const tool of tools) expect(seen.has(tool)).toBe(true);
+
+  const sessionId = (await page.getByTestId("session-summary").locator("code").innerText()).trim();
+  await expect
+    .poll(async () => {
+      const t = await api<{ data: { spans: { name: string }[] } }>(stack, `/sessions/${sessionId}/traces`);
+      return t.data.spans.filter((sp) => sp.name === "mcp.tool.execute").length;
+    })
+    .toBeGreaterThanOrEqual(tools.length);
+  await page.getByTestId("disconnect-btn").click();
+});
+
+test("mcp: a slow tool answers under the timeout and is abandoned over it", async ({ page, stack }) => {
+  test.skip(LIVE, "the MCP cases run against the fake stack only");
+  await mcpFlow(stack, "E2E Slow Tool", "/slow", ["slow_lookup"]);
+  await connectAdmin(page, stack);
+  await openFlowTest(page, "E2E Slow Tool");
+  await startCall(page);
+
+  await sendText(page, 'call tool slow_lookup {"delay_ms":300}');
+  await expect(botReply(page, /Tool slow_lookup returned/)).toBeVisible();
+  await pace(page);
+
+  // The stack's mcp.timeout is 2 s: a 6 s tool is abandoned and the caller hears so.
+  const began = Date.now();
+  await sendText(page, 'call tool slow_lookup {"delay_ms":6000}');
+  await expect(botReply(page, /Tool slow_lookup failed/)).toBeVisible({ timeout: 5_000 });
+  expect(Date.now() - began).toBeLessThan(4_500);
+  await expect.poll(async () => (await lastMCPCall(stack, "slow_lookup"))?.cancelled).toBe(true);
+  await step(page, "slow tool abandoned at the timeout");
+
+  await pace(page);
+  await sendText(page, "still there");
+  await expect(botReply(page, /still there/)).toBeVisible();
+  await page.getByTestId("disconnect-btn").click();
+});
+
+// Barge-in during a slow MCP tool is tested in Go (server/mcp_call_e2e_test.go
+// TestMCPCallBargeInCancelsSlowTool): in this fake stack the microphone's speech is heard by the
+// VAD but the fake STT produces no words, so no user turn starts and nothing interrupts.

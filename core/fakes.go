@@ -311,8 +311,14 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 				if say {
 					args = toolArguments(um.Content)
 				}
-				res, err := p.cfg.Executor.Execute(c, ToolCall{ID: "fake-" + um.Turn, Name: tool, Arguments: args,
+				// The tool runs on the turn: an interruption (taskCtx) cancels it, as the
+				// production tool loop's per-call context does.
+				callCtx, stopCall := context.WithCancel(c)
+				unlink := context.AfterFunc(taskCtx, stopCall)
+				res, err := p.cfg.Executor.Execute(callCtx, ToolCall{ID: "fake-" + um.Turn, Name: tool, Arguments: args,
 					TurnID: TurnID(um.Turn), Generation: Generation(gen)})
+				unlink()
+				stopCall()
 				after := p.cfg.AfterTool
 				if after == "" {
 					after = "OK."

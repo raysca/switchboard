@@ -4,6 +4,8 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"sync/atomic"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"govoice/core"
+	"govoice/core/turn"
 	"govoice/server/agent"
 	"govoice/server/mcp/mcptest"
+	"govoice/transport/ws"
 )
 
 // mcpCallRig is the graph rig (fake providers, real WebSocket calls) plus local test
@@ -25,12 +30,12 @@ type mcpCallRig struct {
 	refuse string
 }
 
-func newMCPCallRig(t *testing.T) *mcpCallRig {
+func newMCPCallRig(t *testing.T, mods ...func(*Config)) *mcpCallRig {
 	t.Helper()
-	g := newGraphRigE2E(t, newProbe(), func(c *Config) {
+	g := newGraphRigE2E(t, newProbe(), append([]func(*Config){func(c *Config) {
 		c.MCP.AllowLocalHTTP = true
 		c.MCP.Timeout = 800 * time.Millisecond
-	})
+	}}, mods...)...)
 	vars := testProviderVars(t)
 	vars["MCP_TOKEN_TEST"] = "tok-1"
 	g.s.env = mapEnv(vars)
@@ -166,20 +171,46 @@ func TestMCPCallSlow(t *testing.T) {
 	c.waitReplies("still there", 1)
 }
 
+// Barge-in is the caller speaking: VAD start plus transcribed words reach the turn
+// processor, a user turn starts, and the assistant's turn (with its tool call) is
+// interrupted. The MCP timeout is long here, so only the interruption can end the call.
 func TestMCPCallBargeInCancelsSlowTool(t *testing.T) {
-	r := newMCPCallRig(t)
+	r := newMCPCallRig(t, func(c *Config) { c.MCP.Timeout = 10 * time.Second })
+	var live atomic.Pointer[ws.Connection]
+	onText := r.s.wsServer.OnText
+	r.s.wsServer.OnText = func(conn *ws.Connection, text string) error {
+		live.Store(conn)
+		return onText(conn, text)
+	}
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
 	c := r.dial(r.agentWith(id, hashes, false, nil, "slow_lookup").ID)
-	c.say(`call tool slow_lookup {"delay_ms":2000}`)
+	c.say(`call tool slow_lookup {"delay_ms":4000}`)
 	eventually(t, "the tool call to start", func() bool { return r.lastCall("slow_lookup").Tool != "" })
-	began := time.Now()
-	c.say("never mind")
-	c.waitReplies("never mind", 1)
-	eventually(t, "the slow call to be abandoned", func() bool { return r.lastCall("slow_lookup").Cancelled })
-	if took := time.Since(began); took > 1200*time.Millisecond {
-		t.Fatalf("barge-in took %v to cancel the tool", took)
+
+	sess := live.Load().Session()
+	at := -1
+	for i, p := range sess.Processors() {
+		if _, ok := p.(*turn.Processor); ok {
+			at = i
+		}
 	}
-	time.Sleep(2200 * time.Millisecond) // past the tool's own delay
+	if at < 0 {
+		t.Fatal("no turn processor in the call pipeline")
+	}
+	gen := sess.CurrentGeneration()
+	began := time.Now()
+	// What the VAD and the STT send when the caller says "wait, never mind".
+	if err := sess.Reenter(&core.UserStartedSpeakingFrame{Seq: 99, Gen: gen, Timestamp: time.Now()}, core.Downstream, at, gen); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Reenter(&core.TranscriptCandidateFrame{Text: "wait never mind", Turn: core.TurnID(fmt.Sprintf("turn-%d-99", gen)), Gen: core.Generation(gen), Final: true, EndOfUtterance: true, Timestamp: time.Now()}, core.Downstream, at, gen); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the slow call to be abandoned", func() bool { return r.lastCall("slow_lookup").Cancelled })
+	if took := time.Since(began); took > 1500*time.Millisecond {
+		t.Fatalf("barge-in took %v to cancel the tool (the MCP timeout is 10s)", took)
+	}
+	time.Sleep(4200*time.Millisecond - time.Since(began)) // past the tool's own delay
 	if c.replies("Tool slow_lookup returned") != 0 {
 		t.Fatal("a late tool result was spoken after the barge-in")
 	}

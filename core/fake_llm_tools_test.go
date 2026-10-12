@@ -153,3 +153,45 @@ func TestFakeLLMArgumentsFallBackToAnEmptyObject(t *testing.T) {
 		t.Fatalf("arguments = %v", args.Load())
 	}
 }
+
+// An interruption cancels the turn, and with it the tool the turn is waiting on, as the
+// production tool loop does.
+func TestFakeLLMInterruptionCancelsTheRunningTool(t *testing.T) {
+	cancelled := make(chan struct{})
+	started := make(chan struct{})
+	cfg := FakeLLMConfig{
+		ToolOnPhrase: map[string]string{"call tool slow": "slow"},
+		SayResult:    map[string]string{"slow": "slow"},
+		Executor: ToolExecutorFunc(func(ctx context.Context, c ToolCall) (ToolResult, error) {
+			close(started)
+			<-ctx.Done()
+			close(cancelled)
+			return ToolResult{}, ctx.Err()
+		}),
+	}
+	p := NewFakeLLMProcessor(cfg)
+	pipe, err := NewPipeline(p, &captureTTS{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := NewSession(1, pipe, DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sess.Close() })
+	if err := sess.Reenter(&UserMessageFrame{Turn: "t1", Content: "call tool slow", Timestamp: time.Now()}, Downstream, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if err := sess.Reenter(&InterruptionFrame{Turn: "t1"}, Downstream, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the interruption did not cancel the running tool")
+	}
+}
