@@ -187,6 +187,53 @@ type FakeLLMConfig struct {
 	ToolOnPhrase map[string]string
 	Executor     ToolExecutor
 	AfterTool    string
+	// SayResult maps a tool name to the name the reply uses for it. For those tools
+	// the call takes its arguments from the first JSON object in the message ({} if
+	// none), and the reply says what came back ("Tool <name> returned <json>" or
+	// "Tool <name> failed: <why>") instead of AfterTool, so a test can see the
+	// result or failure reach the model.
+	SayResult map[string]string
+}
+
+// toolArguments is the first balanced {...} in msg if it is a JSON object, else {}.
+func toolArguments(msg string) json.RawMessage {
+	start := strings.IndexByte(msg, '{')
+	if start < 0 {
+		return json.RawMessage(`{}`)
+	}
+	depth := 0
+	for i := start; i < len(msg); i++ {
+		switch msg[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				var obj map[string]any
+				if json.Unmarshal([]byte(msg[start:i+1]), &obj) == nil {
+					return json.RawMessage(msg[start : i+1])
+				}
+				return json.RawMessage(`{}`)
+			}
+		}
+	}
+	return json.RawMessage(`{}`)
+}
+
+// toolReply is what the fake model says after a SayResult tool call.
+func toolReply(name string, res ToolResult, err error) string {
+	switch {
+	case err != nil:
+		return "Tool " + name + " failed: " + err.Error()
+	case res.Status != "" && res.Status != ToolSucceeded:
+		why := res.ErrorCategory
+		if why == "" {
+			why = string(res.Status)
+		}
+		return "Tool " + name + " failed: " + why
+	default:
+		return "Tool " + name + " returned " + string(res.Result)
+	}
 }
 
 // toolFor is the tool the message asks the fake model to call (the first
@@ -259,11 +306,19 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 				chunks = append(chunks[:len(chunks):len(chunks)], um.Content)
 			}
 			if tool := p.cfg.toolFor(um.Content); tool != "" {
-				_, _ = p.cfg.Executor.Execute(c, ToolCall{ID: "fake-" + um.Turn, Name: tool, Arguments: json.RawMessage(`{}`),
+				spoken, say := p.cfg.SayResult[tool]
+				args := json.RawMessage(`{}`)
+				if say {
+					args = toolArguments(um.Content)
+				}
+				res, err := p.cfg.Executor.Execute(c, ToolCall{ID: "fake-" + um.Turn, Name: tool, Arguments: args,
 					TurnID: TurnID(um.Turn), Generation: Generation(gen)})
 				after := p.cfg.AfterTool
 				if after == "" {
 					after = "OK."
+				}
+				if say {
+					after = toolReply(spoken, res, err)
 				}
 				chunks = []string{after}
 			}

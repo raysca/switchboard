@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,5 +91,65 @@ func TestFakeLLMWithoutLabelOrToolsIsUnchanged(t *testing.T) {
 	got := runFakeLLM(t, FakeLLMConfig{ResponseChunks: []string{"You said: "}, EchoUser: true}, "hi").replies()
 	if len(got) != 1 || got[0] != "You said: hi" {
 		t.Fatalf("replies = %q", got)
+	}
+}
+
+func TestFakeLLMPassesArgumentsAndSaysTheToolResult(t *testing.T) {
+	var args atomic.Value
+	cfg := FakeLLMConfig{
+		ResponseChunks: []string{"You said: "}, EchoUser: true,
+		ToolOnPhrase: map[string]string{"call tool lookup_order": "mcp__abcd1234_lookup_order0a1b2c3d"},
+		SayResult:    map[string]string{"mcp__abcd1234_lookup_order0a1b2c3d": "lookup_order"},
+		Executor: ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+			args.Store(string(c.Arguments))
+			return ToolResult{CallID: c.ID, Status: ToolSucceeded, Result: json.RawMessage(`{"status":"shipped"}`)}, nil
+		}),
+	}
+	got := runFakeLLM(t, cfg, `please call tool lookup_order {"order_id":"42"} thanks`).replies()
+	if args.Load() != `{"order_id":"42"}` {
+		t.Fatalf("arguments = %v", args.Load())
+	}
+	if len(got) != 1 || got[0] != `Tool lookup_order returned {"status":"shipped"}` {
+		t.Fatalf("replies = %q", got)
+	}
+}
+
+func TestFakeLLMSaysWhyTheToolFailed(t *testing.T) {
+	for name, exec := range map[string]ToolExecutorFunc{
+		"error": func(context.Context, ToolCall) (ToolResult, error) {
+			return ToolResult{}, errors.New("connection failed")
+		},
+		"category": func(context.Context, ToolCall) (ToolResult, error) {
+			return ToolResult{Status: ToolFailed, ErrorCategory: "timeout"}, nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := FakeLLMConfig{
+				ToolOnPhrase: map[string]string{"call tool slow_lookup": "mcp__x_slow_lookup00000000"},
+				SayResult:    map[string]string{"mcp__x_slow_lookup00000000": "slow_lookup"},
+				Executor:     exec,
+			}
+			got := runFakeLLM(t, cfg, "call tool slow_lookup").replies()
+			want := map[string]string{"error": "Tool slow_lookup failed: connection failed", "category": "Tool slow_lookup failed: timeout"}[name]
+			if len(got) != 1 || got[0] != want {
+				t.Fatalf("replies = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestFakeLLMArgumentsFallBackToAnEmptyObject(t *testing.T) {
+	var args atomic.Value
+	cfg := FakeLLMConfig{
+		ToolOnPhrase: map[string]string{"call tool echo": "echo"},
+		SayResult:    map[string]string{"echo": "echo"},
+		Executor: ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+			args.Store(string(c.Arguments))
+			return ToolResult{Status: ToolSucceeded}, nil
+		}),
+	}
+	runFakeLLM(t, cfg, "call tool echo {not json}")
+	if args.Load() != `{}` {
+		t.Fatalf("arguments = %v", args.Load())
 	}
 }
