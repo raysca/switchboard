@@ -28,7 +28,7 @@ Concept: a handoff is a patch cable on a telephone exchange; the active agent is
 | `--rule` | `#C5CFD4` | the single hairline |
 | `--caller` | `#2F3FE0` | the caller: transcript lane, speaking indicator, primary actions |
 | `--lamp` | `#F0A400` | the active agent and the handoff moment (only this) |
-| `--ok` / `--bad` | `#1F8A5B` / `#C2412D` | status only |
+| `--ok` / `--bad` | `#17704A` / `#B8381F` | status only |
 
 - **Type:** Schibsted Grotesk (variable, via `@fontsource-variable`), weights 450 / 600 / 800. Scale 13 / 15 / 18 / 24 / 40 with 1.55 body line height, 1.15 headings. Display-size 800 weight is used for call state words ("Sales is answering"). Numbers use `font-variant-numeric: tabular-nums`. Monospace (IBM Plex Mono, already installed) stays only for ids, hashes and code; no mono labels, no all-caps eyebrows.
 - **Structure:** no card boxes. Sections are separated by spacing and a single `--rule` hairline; borders only where they carry meaning (an input, a selected node, a status). One radius (4px) for controls, none elsewhere.

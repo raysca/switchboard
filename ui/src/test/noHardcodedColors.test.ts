@@ -1,0 +1,24 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+// Files already moved to tokens. Each task appends the files it converted.
+export const CONVERTED: string[] = [];
+
+const colour = /#[0-9a-fA-F]{3,8}\b|rgba?\(/;
+
+describe("no hard-coded colours outside the token block", () => {
+  for (const f of CONVERTED) {
+    it(f, () => {
+      const lines = readFileSync(resolve(__dirname, "..", f), "utf8").split("\n");
+      const bad = lines.map((l, i) => [i + 1, l] as const).filter(([, l]) => colour.test(l));
+      expect(bad).toEqual([]);
+    });
+  }
+  it("styles.css defines colours only in the :root token block", () => {
+    const css = readFileSync(resolve(__dirname, "../styles.css"), "utf8");
+    const after = css.split("/* end tokens */")[1] ?? css;
+    const leaks = after.split("\n").filter((l) => colour.test(l) && !l.trim().startsWith("/*"));
+    expect(leaks).toEqual([]);
+  });
+});
