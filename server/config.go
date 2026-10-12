@@ -220,7 +220,7 @@ type Config struct {
 			Loop   *bool    `yaml:"loop"`    // default true
 		} `yaml:"background"`
 		// Cues are named sounds a routed flow plays while the call is between
-		// flows (handoff_cue). See docs/audio-filters.md.
+		// steps (route_cue). See docs/audio-filters.md.
 		Cues map[string]CueConfig `yaml:"cues"`
 	} `yaml:"audio"`
 

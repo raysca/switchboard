@@ -512,7 +512,7 @@ func TestFlowE2EFlatFlowHasNoRoutes(t *testing.T) {
 }
 
 // ---- Handoff cue, end to end -------------------------------------------------
-// A real server with audio.cues configured, a routed flow with a handoff_cue and a
+// A real server with audio.cues configured, a routed flow with a route_cue and a
 // WebSocket client that decodes the bot's audio frames: the cue is a tone on the
 // wire (the fake TTS sends silence), so its start, its length and its stop are
 // observable bytes, not just timeline events.
