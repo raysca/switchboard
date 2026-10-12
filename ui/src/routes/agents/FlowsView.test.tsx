@@ -38,7 +38,7 @@ function Where() {
 }
 function setup(client: Partial<ApiClient>, key: string | null = "k") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const full = { getAgents: vi.fn().mockResolvedValue([flow({}, graph)]), getSessions: vi.fn().mockResolvedValue([]), ...client } as unknown as ApiClient;
+  const full = { getAgents: vi.fn().mockResolvedValue([flow({}, graph)]), getSessions: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockResolvedValue([]), ...client } as unknown as ApiClient;
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/flows"]}>
@@ -215,5 +215,31 @@ describe("FlowsView", () => {
     const row = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
     expect(within(row).getByText("Disabled")).toBeVisible();
     expect(within(row).queryByText("disabled")).toBeNull();
+  });
+
+  it("puts the summary beside the heading, with the filter and New flow in the same header", async () => {
+    setup({});
+    const head = (await screen.findByRole("heading", { name: "Flows", level: 1 })).closest("header") as HTMLElement;
+    expect(await within(head).findByText("1 enabled · 0 not ready")).toBeVisible();
+    expect(within(head).getByLabelText("Filter flows")).toBeVisible();
+    expect(within(head).getByRole("button", { name: "New flow" })).toBeVisible();
+  });
+
+  it("names the providers that are ready in the empty state", async () => {
+    const p = (id: string, name: string, detected: boolean) => ({ id, display_name: name, capabilities: [], detected, env: [], services: {} });
+    setup({ getAgents: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockResolvedValue([p("google", "Google", true), p("xai", "xAI", false), p("cartesia", "Cartesia", true)]) });
+    expect(await screen.findByText("Google and Cartesia are ready to use.")).toBeVisible();
+  });
+
+  it("says when no provider is set up, with a way to see them", async () => {
+    setup({ getAgents: vi.fn().mockResolvedValue([]) });
+    expect(await screen.findByText(/No provider is set up yet\./)).toBeVisible();
+    expect(screen.getByRole("link", { name: "See providers" })).toHaveAttribute("href", "/providers");
+  });
+
+  it("leaves the provider line out when providers cannot be loaded", async () => {
+    setup({ getAgents: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    await screen.findByRole("heading", { name: "No flows yet." });
+    expect(screen.queryByText(/ready to use|No provider is set up/)).toBeNull();
   });
 });

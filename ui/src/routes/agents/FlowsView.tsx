@@ -24,6 +24,7 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
 
   const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
+  const providersQuery = useQuery({ queryKey: ["providers"], queryFn: client.getProviders, enabled: !!keyValue, retry: false });
   const sessions = active.data ?? [];
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["agents"] });
@@ -65,6 +66,11 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
   const enabledCount = flows.filter((f) => f.enabled).length;
   const notReady = flows.filter((f) => f.enabled && readiness(f).tone === "bad").length;
   const onCalls = flows.reduce((n, f) => n + liveCalls(sessions, f).live, 0);
+  const ready = (providersQuery.data ?? []).filter((p) => p.detected).map((p) => p.display_name);
+  const readyLine =
+    ready.length === 0
+      ? null
+      : `${ready.length === 1 ? ready[0] : `${ready.slice(0, -1).join(", ")} and ${ready[ready.length - 1]}`} ${ready.length === 1 ? "is" : "are"} ready to use.`;
   const openDialog = (d: Dialog) => {
     setActionError(null);
     setDialog(d);
@@ -72,9 +78,25 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
 
   return (
     <>
-      <header className="section-heading">
+      <header className="page-head">
         <h1 tabIndex={-1}>Flows</h1>
-        <p>What callers reach: a flow is a set of steps, with routes between them.</p>
+        {flows.length > 0 && (
+          <span className="subtext" role="status">
+            {enabledCount} enabled · {notReady} not ready{onCalls > 0 ? ` · ${plural(onCalls, "call", "calls")} in progress` : ""}
+          </span>
+        )}
+        <span className="grow" />
+        {flows.length > 0 && (
+          <>
+            <label className="form-field flows-filter" htmlFor="flows-filter">
+              <span className="visually-hidden">Filter flows</span>
+              <input id="flows-filter" type="search" placeholder="Filter by name" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            </label>
+            <button type="button" className="action-button" onClick={() => openDialog({ kind: "new" })}>
+              New flow
+            </button>
+          </>
+        )}
       </header>
 
       {!keyValue ? (
@@ -88,6 +110,16 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
           <div className="flows-empty__lead">
             <h2 id="no-flows">No flows yet.</h2>
             <p>A flow is one voice line. Start with a single step that answers the phone; add more steps and routes when you need them.</p>
+            {providersQuery.isSuccess &&
+              (readyLine ? (
+                <p className="subtext flows-empty__ready">
+                  <span className="lamp" data-tone="ok" aria-hidden="true" /> {readyLine}
+                </p>
+              ) : (
+                <p className="subtext">
+                  No provider is set up yet. <Link to="/providers">See providers</Link>
+                </p>
+              ))}
             <div className="row">
               <button type="button" className="action-button" onClick={() => openDialog({ kind: "new" })}>
                 New flow
@@ -106,20 +138,6 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
         </section>
       ) : (
         <div className="flows-view">
-          <div className="flows-toolbar">
-            <p className="subtext" role="status">
-              {enabledCount} enabled · {notReady} not ready{onCalls > 0 ? ` · ${plural(onCalls, "call", "calls")} in progress` : ""}
-            </p>
-            <span className="grow" />
-            <label className="form-field flows-filter" htmlFor="flows-filter">
-              <span className="visually-hidden">Filter flows</span>
-              <input id="flows-filter" type="search" placeholder="Filter by name" value={filter} onChange={(e) => setFilter(e.target.value)} />
-            </label>
-            <button type="button" className="action-button" onClick={() => openDialog({ kind: "new" })}>
-              New flow
-            </button>
-          </div>
-
           {actionError && !dialog && <ErrorState title="Flow action failed" error={actionError} onRetry={() => setActionError(null)} />}
           {all.length >= LIST_LIMIT && <p className="subtext" role="note">Showing the first {LIST_LIMIT} flows.</p>}
           {shown.length === 0 && <p className="subtext">No flow matches “{filter.trim()}”.</p>}

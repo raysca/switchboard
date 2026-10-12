@@ -61,4 +61,13 @@ describe("NewFlowDialog", () => {
     fireEvent(screen.getByRole("dialog"), new Event("cancel", { cancelable: true }));
     expect(props.onCancel).toHaveBeenCalledTimes(2);
   });
+
+  it("shows Blank and Copy as option cards that are real radios, with the chosen one marked", async () => {
+    const { user } = setup();
+    const blank = screen.getByRole("radio", { name: /Blank/ });
+    expect(blank.closest(".option-card")).toHaveAttribute("data-selected", "true");
+    await user.click(screen.getByRole("radio", { name: /Copy an existing flow/ }));
+    expect(screen.getByRole("radio", { name: /Copy an existing flow/ }).closest(".option-card")).toHaveAttribute("data-selected", "true");
+    expect(blank.closest(".option-card")).not.toHaveAttribute("data-selected");
+  });
 });

@@ -37,16 +37,18 @@ export function NewFlowDialog({ flows, pending, error, onBlank, onCopy, onCancel
         </label>
         <fieldset className="stage-box">
           <legend>Start from</legend>
-          <label className="check-row" htmlFor={`${uid}-blank`}>
+          <label className="option-card" htmlFor={`${uid}-blank`} data-selected={mode === "blank" ? "true" : undefined}>
             <input id={`${uid}-blank`} type="radio" name={`${uid}-mode`} checked={mode === "blank"} onChange={() => setMode("blank")} />
             <span>
-              <b>Blank</b> An empty canvas: add the first step yourself.
+              <b>Blank</b>
+              <span className="subtext">An empty canvas: add the first step yourself.</span>
             </span>
           </label>
-          <label className="check-row" htmlFor={`${uid}-copy`}>
+          <label className="option-card" htmlFor={`${uid}-copy`} data-selected={mode === "copy" ? "true" : undefined}>
             <input id={`${uid}-copy`} type="radio" name={`${uid}-mode`} checked={mode === "copy"} disabled={flows.length === 0} onChange={() => setMode("copy")} />
             <span>
-              <b>Copy an existing flow</b> Its steps, routes and settings. Call history is not copied.
+              <b>Copy an existing flow</b>
+              <span className="subtext">Its steps, routes and settings. Call history is not copied.</span>
             </span>
           </label>
           {mode === "copy" && flows.length > 0 && (

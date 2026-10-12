@@ -2423,3 +2423,28 @@ main:has(.providers-layout) {
 .call-panel__top .stage__ptt {
   color: var(--paper);
 }
+
+.option-card {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: transparent;
+  cursor: pointer;
+}
+.option-card[data-selected="true"] {
+  border-color: var(--caller);
+  background: var(--surface);
+  outline: 1px solid var(--caller);
+}
+.option-card b {
+  display: block;
+  font-weight: 600;
+}
+.flows-empty__ready {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
