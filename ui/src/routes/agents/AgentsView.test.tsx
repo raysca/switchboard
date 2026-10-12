@@ -87,7 +87,7 @@ describe("AgentsView", () => {
   it("renders prompt when management key is missing", () => {
     const client = createMockClient();
     renderWithProviders(<AgentsView client={client} keyValue={null} />);
-    expect(screen.getByRole("heading", { level: 1, name: /agents/i })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1, name: /flows/i })).toBeVisible();
     expect(screen.getByText(/enter a management key/i)).toBeVisible();
   });
 
@@ -533,7 +533,7 @@ describe("AgentsView", () => {
     expect(screen.getByText("Needs reconfiguration")).toBeVisible();
   });
 
-  it("opens the designer to create a graph agent and to edit a stored graph", async () => {
+  it("opens the flow editor to create a flow and to edit a stored one", async () => {
     const graph = createMockAgent({
       id: "agent-graph",
       name: "Two Node Bot",
@@ -559,13 +559,17 @@ describe("AgentsView", () => {
     renderWithProviders(<AgentsView client={client} keyValue="key-1" />);
 
     await screen.findByText("Two Node Bot");
-    await user.click(screen.getByRole("button", { name: /create graph agent/i }));
-    expect(await screen.findByRole("heading", { name: /design a graph agent/i })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("heading", { name: "Flows", level: 1 })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "New flow" }));
+    expect(await screen.findByRole("heading", { name: "New flow", level: 2 })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add first step" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Close" }));
 
     const row = screen.getByText("Two Node Bot").closest("tr") as HTMLElement;
     await user.click(within(row).getByRole("button", { name: /edit/i }));
-    expect(await screen.findByRole("heading", { name: /design two node bot/i })).toBeVisible();
-    expect(screen.getByRole("button", { name: /front → sales/i })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Two Node Bot", level: 2 })).toBeVisible();
+    // React Flow hides nodes it has not measured; jsdom measures nothing.
+    expect(screen.getByText("Front")).toBeInTheDocument();
+    expect(screen.getByText("Sales")).toBeInTheDocument();
   });
 });

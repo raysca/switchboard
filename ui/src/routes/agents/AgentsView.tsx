@@ -22,7 +22,7 @@ import {
 } from "../../components/primitives";
 import { AgentVoiceTest } from "./AgentVoiceTest";
 import { StageFields } from "./StageFields";
-import { GraphDesigner } from "./graph/GraphDesigner";
+import { FlowEditor } from "./graph/FlowEditor";
 
 export type AgentsViewProps = {
   client: ApiClient;
@@ -467,7 +467,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
   return (
     <>
       <header className="section-heading">
-        <h1 tabIndex={-1}>Agents</h1>
+        <h1 tabIndex={-1}>Flows</h1>
         <p>Configure the agents people speak with.</p>
       </header>
 
@@ -514,7 +514,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
                 <h2 id="agents-list-heading">Configured agents ({agents.length})</h2>
                 <div className="action-buttons-cell">
                   <ActionButton onClick={startCreate}>+ Create agent</ActionButton>
-                  <ActionButton onClick={() => startDesign(null)}>+ Create graph agent</ActionButton>
+                  <ActionButton onClick={() => startDesign(null)}>New flow</ActionButton>
                 </div>
               </div>
 
@@ -686,39 +686,20 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
             </section>
           )}
 
-          {/* Designer View: agents as a graph of nodes and handoffs */}
+          {/* Flow editor: steps, routes, flow settings, test calls and publishing on one page. */}
           {mode === "design" && (
-            <section aria-labelledby="design-agent-heading">
-              <h2 id="design-agent-heading">
-                {selectedAgent ? `Design ${selectedAgent.name}` : "Design a graph agent"}
-              </h2>
-              <p className="lede">
-                Each node is an agent with its own model and voice; a handoff lets one agent pass
-                the call to another. Publishing creates a new immutable version
-                {selectedAgent ? ` (v${(selectedAgent.current_version?.number ?? 1) + 1})` : ""};
-                calls already in progress keep the version they started on.
-              </p>
-              {formError && (
-                <ErrorState
-                  title="Failed to save agent"
-                  error={formError}
-                  onRetry={() => setFormError(null)}
-                />
-              )}
+            <section aria-labelledby="flow-editor-title">
+              {formError && <ErrorState title="Publishing failed" error={formError} onRetry={() => setFormError(null)} />}
               {optionsError}
-              <GraphDesigner
+              <FlowEditor
                 key={selectedAgent?.id ?? "new"}
                 agent={selectedAgent ?? null}
                 providers={providers}
+                client={client}
+                keyValue={keyValue}
                 pending={createMutation.isPending || updateMutation.isPending}
-                submitLabel="Publish"
-                onSubmit={(input) =>
-                  selectedAgent
-                    ? updateMutation.mutate({ id: selectedAgent.id, payload: input })
-                    : createMutation.mutate(input)
-                }
+                onSubmit={(input) => (selectedAgent ? updateMutation.mutate({ id: selectedAgent.id, payload: input }) : createMutation.mutate(input))}
                 onCancel={() => setMode(selectedAgent ? "detail" : "list")}
-                testPanel={selectedAgent && <AgentVoiceTest agent={selectedAgent} client={client} keyValue={keyValue} />}
               />
             </section>
           )}

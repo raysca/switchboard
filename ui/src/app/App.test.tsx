@@ -26,7 +26,7 @@ describe("admin shell", () => {
     render(<App initialPath="/agents" />);
     for (const name of [
       "Dashboard",
-      "Agents",
+      "Flows",
       "Providers",
       "MCP Servers",
       "Sessions",
@@ -34,7 +34,7 @@ describe("admin shell", () => {
     ]) {
       expect(screen.getByRole("link", { name })).toBeVisible();
     }
-    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute(
       "aria-current",
       "page",
     );

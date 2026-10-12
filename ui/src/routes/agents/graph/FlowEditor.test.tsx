@@ -105,3 +105,25 @@ describe("FlowEditor", () => {
     expect(screen.getByRole("dialog", { name: "Publish Front desk v2?" })).toHaveTextContent("Added step New step");
   });
 });
+
+describe("FlowEditor payloads", () => {
+  it("keeps the flow's tools on the start step when a step is added", async () => {
+    const withTools: AgentDTO = {
+      ...agent,
+      current_version: { ...agent.current_version!, mcp_tools: [{ mcp_server_id: "crm", remote_name: "lookup", schema_hash: "h", required: false }] },
+    };
+    const { user, onSubmit } = setup({ agent: withTools });
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    await user.click(screen.getByRole("button", { name: "Publish v2" }));
+    const config = onSubmit.mock.calls[0][0].config as { entry: string; nodes: { id: string; tools?: string[] }[] };
+    expect(config.nodes.find((n) => n.id === config.entry)!.tools).toEqual(["crm/lookup"]);
+  });
+
+  it("sends a plain one-step flow as a flat config", async () => {
+    const { user, onSubmit } = setup({ agent });
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    await user.click(screen.getByRole("button", { name: "Publish v2" }));
+    expect(onSubmit.mock.calls[0][0].config).toEqual(flat);
+  });
+});
