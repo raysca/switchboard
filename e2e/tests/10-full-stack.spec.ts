@@ -28,15 +28,15 @@ async function connectAdmin(page: Page, stack: Stack) {
   await expect(page.getByText("Key in memory")).toBeVisible();
 }
 
-// Opens the agent's detail view from wherever the Agents page is (saving an
-// agent already lands on its detail view).
-async function openAgentDetail(page: Page) {
-  const heading = page.getByRole("heading", { name: AGENT });
-  if (await heading.isVisible()) return;
-  // The sidebar link always returns the Agents page to its list.
-  await page.getByRole("link", { name: "Agents", exact: true }).first().click();
-  await page.getByRole("row").filter({ hasText: AGENT }).getByRole("button", { name: "View detail" }).click();
-  await expect(heading).toBeVisible();
+// Opens the flow's Test call panel from wherever the editor is (publishing already lands in the editor).
+async function openFlowTest(page: Page) {
+  const heading = page.getByRole("heading", { name: AGENT, level: 1 });
+  if (!(await heading.isVisible())) {
+    await page.getByRole("link", { name: "Flows", exact: true }).first().click();
+    await page.getByRole("link", { name: AGENT, exact: true }).click();
+    await expect(heading).toBeVisible();
+  }
+  if (!(await page.getByTestId("agent-readiness").isVisible())) await page.getByRole("button", { name: "Test call" }).click();
 }
 
 test("admin UI: Google is detected from the server environment and a ready agent is created", async ({ page, stack }) => {
@@ -53,36 +53,41 @@ test("admin UI: Google is detected from the server environment and a ready agent
   expect(echoed, "a provider secret is echoed in the page").toBe(false);
   await step(page, "google detected (no secret shown)");
 
-  await page.getByRole("link", { name: "Agents", exact: true }).first().click();
-  await page.getByRole("button", { name: "+ Create agent" }).click();
-  await page.getByLabel("Agent name").fill(AGENT);
-  await page.getByLabel("Description").fill("Created by the full-stack e2e test");
-  // Picking the provider fills its catalog defaults; select them explicitly anyway.
-  for (const stage of ["STT", "LLM", "TTS"]) await page.getByLabel(`${stage} provider`).selectOption("google");
+  await page.getByRole("link", { name: "Flows", exact: true }).first().click();
+  await page.getByRole("button", { name: "New flow" }).click();
+  await page.getByLabel("Name").fill(AGENT);
+  await page.getByRole("button", { name: "Create and open editor" }).click();
+  await page.getByRole("button", { name: "Add first step" }).click();
+  await page.getByLabel("Step name").fill("Assistant");
+  await page.getByLabel("Instructions").fill("You are a concise voice assistant. Answer in one short sentence.");
+  await page.getByLabel("LLM provider").selectOption("google");
+  await page.getByRole("combobox", { name: "LLM model", exact: true }).selectOption("gemini-2.5-flash");
+  await page.getByLabel("TTS provider").selectOption("google");
+  await page.getByRole("combobox", { name: "Voice", exact: true }).selectOption("en-US-Chirp3-HD-Aoede");
+  await page.getByRole("button", { name: "Flow settings" }).click();
+  await page.getByLabel("STT provider").selectOption("google");
   await page.getByRole("combobox", { name: "STT model", exact: true }).selectOption("chirp_2");
   await page.getByLabel("STT language").selectOption("en-US");
-  await page.getByRole("combobox", { name: "LLM model", exact: true }).selectOption("gemini-2.5-flash");
-  await page
-    .getByLabel("System prompt")
-    .fill("You are a concise voice assistant. Answer in one short sentence.");
-  await page.getByRole("combobox", { name: "Voice", exact: true }).selectOption("en-US-Chirp3-HD-Aoede");
-  await step(page, "agent form filled");
-  await page.getByRole("button", { name: "Save agent" }).click();
+  await step(page, "flow filled");
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v1" }).click();
+  await expect(page.getByText(/Published v1/)).toBeVisible();
 
-  await openAgentDetail(page);
+  await openFlowTest(page);
   await expect(page.getByTestId("agent-readiness")).toHaveText(/^ready/);
   agentId = await agentIdFromApi(stack);
   expect(agentId).not.toBe("");
-  const saved = await api<{ data: { current_version: { config: Record<string, Record<string, unknown>> } } }>(stack, `/agents/${agentId}`);
-  const cfg = saved.data.current_version.config;
-  expect([cfg.stt.provider, cfg.stt.model, cfg.llm.model, cfg.tts.voice]).toEqual(["google", "chirp_2", "gemini-2.5-flash", "en-US-Chirp3-HD-Aoede"]);
-  expect(JSON.stringify(cfg)).not.toContain("credential");
+  const saved = await api<{ data: { current_version: { config: Record<string, unknown> } } }>(stack, `/agents/${agentId}`);
+  // A named step is published as a graph.
+  const node = (saved.data.current_version.config as unknown as { nodes: { config: Record<string, Record<string, unknown>> }[] }).nodes[0].config;
+  expect([node.stt.provider, node.stt.model, node.llm.model, node.tts.voice]).toEqual(["google", "chirp_2", "gemini-2.5-flash", "en-US-Chirp3-HD-Aoede"]);
+  expect(JSON.stringify(node)).not.toContain("credential");
   await step(page, "agent ready");
 });
 
 test("admin debug client: voice call and text call", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openAgentDetail(page);
+  await openFlowTest(page);
 
   // Voice: the fake microphone plays "What is two plus two?".
   await page.getByTestId("start-voice-test-btn").click();
@@ -126,14 +131,14 @@ test("custom client: calls the agent by agent_id", async ({ page, stack }) => {
   await page.getByRole("button", { name: "Disconnect" }).click();
 });
 
-test("admin UI: delete the agent", async ({ page, request, stack }) => {
+test("admin UI: archive the flow", async ({ page, request, stack }) => {
   await connectAdmin(page, stack);
-  await openAgentDetail(page);
-  await page.getByRole("button", { name: "Delete agent" }).click();
-  await step(page, "delete confirmation");
-  await page.getByRole("button", { name: "Confirm delete" }).click();
-  await expect(page.getByRole("row").filter({ hasText: AGENT })).toHaveCount(0);
-  await step(page, "agent deleted");
+  await page.getByRole("link", { name: "Flows", exact: true }).first().click();
+  await page.getByRole("button", { name: `Archive ${AGENT}` }).click();
+  await step(page, "archive confirmation");
+  await page.getByRole("button", { name: "Archive flow" }).click();
+  await expect(page.getByRole("link", { name: AGENT, exact: true })).toHaveCount(0);
+  await step(page, "flow archived");
 
   // A deleted agent can no longer take calls.
   const token = await request.post(`${stack.adminUrl}/api/v1/voice-tokens`, {
