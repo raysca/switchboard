@@ -38,8 +38,8 @@ Provider keys come from `examples/.env` (template: `examples/.env.example`), whi
 the dev server reads as its environment; nothing is stored. If any provider is set,
 `make dev` creates a ready "Dev Assistant" agent from the detected providers that
 the examples call, and a two-agent "Dealership desk" graph (front desk hands buyers
-to sales) for trying handoffs on the agent's call stage. The management key
-for the admin UI is in `.govoice-dev/dev.env`. Ports default to 8080 (public),
+to sales) for trying handoffs on the agent's call stage. `make dev` prints the management key
+for the admin UI (a local development secret, also kept in `.govoice-dev/dev.env`). Ports default to 8080 (public),
 9090 (admin), 5173 (UI) and 3000 (web client). Running `make dev` again stops the
 previous dev stack from the same checkout first. If another program holds a default
 port, the next free one is used and printed (the examples follow it). A port you name,

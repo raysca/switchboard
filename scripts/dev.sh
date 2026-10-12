@@ -200,11 +200,12 @@ cmd_up() {
   cat <<EOF
 
   Switchboard dev stack
-    Admin UI        http://127.0.0.1:$UI_PORT   (management key: grep MANAGEMENT ${DEV_ENV#"$ROOT"/})
+    Admin UI        http://127.0.0.1:$UI_PORT
+    Management key  $GOVOICE_MANAGEMENT_API_KEY   (paste it into the admin UI's "Management key" field)
     Admin API       $GOVOICE_ADMIN_URL
     Voice WebSocket $GOVOICE_WS_URL
     Dev agent       ${GOVOICE_DEV_AGENT_ID:-none (see [seed] above)}
-    Data            ${DEV_DIR#"$ROOT"/}/  (SQLite store, dev.env)
+    Data            ${DEV_DIR#"$ROOT"/}/  (SQLite store; the key is in dev.env)
 
   In another terminal: make example-web | make example-cli TEXT="Hello" | make example-go NAME=google_pipeline
   Ctrl-C stops everything.
