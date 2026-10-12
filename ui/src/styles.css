@@ -1760,3 +1760,47 @@ legend {
   font-size: 24px;
   line-height: 1.15;
 }
+
+.calls-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  margin: 24px 0 12px;
+}
+.calls-toolbar p {
+  margin: 0;
+}
+.calls-flow {
+  min-width: 220px;
+}
+.calls-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.chip-button {
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+}
+.chip-button[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--surface);
+}
+.calls-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
