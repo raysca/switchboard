@@ -1547,3 +1547,55 @@ legend {
   stroke: var(--ink-2);
   stroke-dasharray: 5 4;
 }
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--rule);
+  margin: -16px -16px 0;
+  padding: 0 10px;
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+}
+.tab--current {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--caller);
+}
+.tab__count {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.tab__warn {
+  width: 8px;
+  height: 8px;
+  background: var(--bad);
+}
+.step-panel__tab,
+.step-panel__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.route-list__item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
