@@ -52,8 +52,8 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 
 # Agent graphs end to end with the fake providers: a real server, a stored graph agent and a WebSocket
 # client (handoff, failed node build, caller speaking mid-handoff, hang-up mid-handoff, republish).
-test-graph-e2e: ## free|Graph handoff end-to-end tests against the fake providers (about 30 s)
-	cd server && go test -race -count=1 -tags "$(GOTAGS) fakeproviders" -run 'GraphE2E|NoSecretLeavesTheServer' .
+test-graph-e2e: ## free|Graph handoff and MCP call end-to-end tests against the fake providers (about 45 s)
+	cd server && go test -race -count=1 -tags "$(GOTAGS) fakeproviders" -run 'GraphE2E|NoSecretLeavesTheServer|MCPCall' .
 
 # Black-box pipecat.evals run against the Go server with fake providers (docs/decisions/pipecat-evals.md).
 eval-pipecat: ## free|pipecat.evals black-box run against the server (fake providers)

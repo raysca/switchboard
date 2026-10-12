@@ -833,3 +833,27 @@ func TestStoredUnprefixedAuthEnvRefusedAtUse(t *testing.T) {
 		t.Fatalf("view reports an unprefixed variable as set: %+v", v)
 	}
 }
+
+// Numbers are validated by value: a tool with integer or number parameters is
+// callable (arguments are decoded with UseNumber elsewhere to keep big integers).
+func TestExecuteAcceptsIntegerAndNumberArguments(t *testing.T) {
+	remote := &testRemote{tools: []RemoteTool{{Name: "slow", InputSchema: json.RawMessage(`{"type":"object","required":["delay_ms"],"properties":{"delay_ms":{"type":"integer"},"ratio":{"type":"number"}},"additionalProperties":false}`)}}}
+	svc, _ := newTestService(t, remote, testTokens{})
+	server := createTestServer(t, svc, "https://mcp.example/rpc", "")
+	if _, err := svc.Refresh(context.Background(), server.ID); err != nil {
+		t.Fatal(err)
+	}
+	for args, ok := range map[string]bool{
+		`{"delay_ms":200}`:              true,
+		`{"delay_ms":200,"ratio":0.5}`:  true,
+		`{"delay_ms":9007199254740993}`: true, // beyond float64's exact range, still an integer
+		`{"delay_ms":1.5}`:              false,
+		`{"delay_ms":"200"}`:            false,
+		`{}`:                            false,
+	} {
+		_, err := svc.Execute(context.Background(), server.ID, "slow", json.RawMessage(args))
+		if (err == nil) != ok {
+			t.Errorf("%s: err=%v, want ok=%v", args, err, ok)
+		}
+	}
+}

@@ -615,7 +615,7 @@ func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, a
 		return ToolResult{}, ErrInvalidArguments
 	}
 	resolved, err := validateSchemaContext(ctx, captured.schema, s.maxSchema)
-	if err != nil || resolved.Validate(instance) != nil {
+	if err != nil || resolved.Validate(schemaInstance(instance)) != nil {
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
 	}
@@ -972,6 +972,35 @@ func schemaGraphWithinBounds(graph map[string][]string) bool {
 	// unused definitions and annotations, intentionally overestimating work.
 	return visit("")
 }
+
+// schemaInstance turns the json.Number values decodeJSON keeps (so big integers
+// reach the server exactly) into Go numbers the schema validator understands:
+// int64 when the value is an integer that fits, float64 otherwise. Only the
+// validation copy is converted; the arguments sent are the original bytes.
+func schemaInstance(v any) any {
+	switch t := v.(type) {
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return i
+		}
+		f, _ := t.Float64()
+		return f
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = schemaInstance(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = schemaInstance(e)
+		}
+		return out
+	}
+	return v
+}
+
 func decodeJSON(raw []byte) (any, error) {
 	if len(raw) == 0 {
 		raw = []byte(`{}`)
