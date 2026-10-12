@@ -66,7 +66,7 @@ export function ConnectServerDialog({ pending, error, onSubmit, onCancel }: Conn
           <label htmlFor={`${uid}-auth`}>Token variable (optional)</label>
           <input id={`${uid}-auth`} type="text" value={authEnv} placeholder={`${AUTH_ENV_PREFIX}CRM`} autoComplete="off" onChange={(e) => setAuthEnv(e.target.value)} />
           <small>
-            The name of a server environment variable starting with <code>{AUTH_ENV_PREFIX}</code>. Its value is sent as the bearer token to this server only. Public hosts only.
+            The name of a server environment variable starting with <code>{AUTH_ENV_PREFIX}</code>. Its value is sent as the bearer token to this server only. Public HTTPS hosts only (development servers also reach local test servers).
           </small>
         </div>
         <label className="check-row" htmlFor={`${uid}-enabled`}>
