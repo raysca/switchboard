@@ -769,7 +769,6 @@ th {
 .agent-node__meta,
 .agent-node__status {
   color: inherit;
-  opacity: 0.8;
   margin-top: 2px;
 }
 .agent-edge--traversed .react-flow__edge-path {

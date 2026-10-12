@@ -77,19 +77,24 @@ if (find(DESK)) {
       llm: { ...base.llm, system_prompt: "You are the sales agent of a car dealership. We sell a compact hatchback, a family SUV and an electric saloon. Help the caller choose in one or two short sentences." },
       tts: base.tts,
     };
-    await api("POST", "/agents", {
-      name: DESK,
-      description: "Front desk hands buyers to sales",
-      config: {
-        entry: "front",
-        nodes: [
-          { id: "front", name: "Front desk", config: front, position: { x: 0, y: 80 } },
-          { id: "sales", name: "Sales", config: sales, position: { x: 420, y: 80 } },
-        ],
-        edges: [{ id: "front-sales", from: "front", to: "sales", condition: "The caller wants to buy a car or asks about prices." }],
-      },
-    });
-    log(`created agent "${DESK}"`);
+    // A desk that cannot be created must not cost the examples their Dev Assistant id.
+    try {
+      await api("POST", "/agents", {
+        name: DESK,
+        description: "Front desk hands buyers to sales",
+        config: {
+          entry: "front",
+          nodes: [
+            { id: "front", name: "Front desk", config: front, position: { x: 0, y: 80 } },
+            { id: "sales", name: "Sales", config: sales, position: { x: 420, y: 80 } },
+          ],
+          edges: [{ id: "front-sales", from: "front", to: "sales", condition: "The caller wants to buy a car or asks about prices." }],
+        },
+      });
+      log(`created agent "${DESK}"`);
+    } catch (err) {
+      log(`could not create "${DESK}": ${err.message}`);
+    }
   }
 }
 console.log(assistant.id);

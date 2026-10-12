@@ -24,6 +24,10 @@ describe("Switchboard system rules", () => {
     const off = decls(/font-weight:\s*([^;]+);/g).filter((d) => !["450", "600", "800"].includes(d.value));
     expect(off).toEqual([]);
   });
+  it("never fades text with opacity (it silently breaks the contrast the tokens guarantee)", () => {
+    const faded = rules.filter((r) => /agent-node__(meta|status)/.test(r.sel) && /opacity\s*:/.test(r.body));
+    expect(faded).toEqual([]);
+  });
   it("has no drop shadows except the active-node ring", () => {
     const sh = decls(/box-shadow:\s*([^;]+);/g).filter((d) => d.sel !== ".agent-node--active");
     expect(sh).toEqual([]);
