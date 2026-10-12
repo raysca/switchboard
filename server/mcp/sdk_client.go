@@ -139,16 +139,38 @@ func (t classifiedStatusTransport) RoundTrip(req *http.Request) (*http.Response,
 type closeBudgetTransport struct{ next http.RoundTripper }
 
 func (t closeBudgetTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.Method != http.MethodDelete {
-		return t.next.RoundTrip(req)
+	switch {
+	case req.Method == http.MethodDelete:
+		// Detached from the call: when a call times out or is cancelled, its context is
+		// already done, and the DELETE must still reach the server so the session closes
+		// and the tool running there stops. The small budget keeps teardown bounded.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), sdkCloseBudget)
+		defer cancel()
+		return t.next.RoundTrip(req.Clone(ctx))
+	case isCancelNotification(req):
+		// The SDK sends this after a timeout on a context of its own (seconds long);
+		// against a server that never answers it would hold teardown that long.
+		ctx, cancel := context.WithTimeout(req.Context(), sdkCloseBudget)
+		defer cancel()
+		return t.next.RoundTrip(req.Clone(ctx))
 	}
-	// Detached from the call: when a call times out or is cancelled, its context is
-	// already done, and the DELETE must still reach the server so the session closes
-	// and the tool running there stops. The small budget keeps teardown bounded.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), sdkCloseBudget)
-	defer cancel()
-	clone := req.Clone(ctx)
-	return t.next.RoundTrip(clone)
+	return t.next.RoundTrip(req)
+}
+
+// isCancelNotification reports whether req posts a notifications/cancelled message.
+func isCancelNotification(req *http.Request) bool {
+	if req.Method != http.MethodPost || req.GetBody == nil || req.ContentLength > 4096 {
+		return false
+	}
+	body, err := req.GetBody()
+	if err != nil {
+		return false
+	}
+	defer body.Close()
+	var msg struct {
+		Method string `json:"method"`
+	}
+	return json.NewDecoder(io.LimitReader(body, 4096)).Decode(&msg) == nil && msg.Method == "notifications/cancelled"
 }
 
 type limitedReadCloser struct {
