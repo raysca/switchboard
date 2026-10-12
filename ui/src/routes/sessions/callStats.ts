@@ -1,0 +1,120 @@
+import type { AgentDTO, SessionDTO, SessionTracesDTO, TurnDTO } from "../../api/client";
+
+/** The call's state in words. The server writes only active, draining and ended; anything else is shown as it is. */
+export function outcome(s: SessionDTO): { label: string; live: boolean } {
+  switch (s.status) {
+    case "active":
+      return { label: "Live", live: true };
+    case "draining":
+      return { label: "Ending", live: false };
+    case "ended":
+      return { label: "Ended", live: false };
+    default:
+      return { label: s.status, live: false };
+  }
+}
+
+/** The API has no version list (spec S2): a version's number is known only while it is the flow's current one. */
+export function versionLabel(s: SessionDTO, flow: AgentDTO | undefined): string {
+  const current = flow?.current_version;
+  return current && current.id === s.agent_version_id ? `v${current.number}` : "earlier version";
+}
+
+export function mmss(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const h = Math.floor(total / 3600);
+  const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const s = String(total % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${m}:${s}` : `${m}:${s}`;
+}
+
+/** Elapsed call time. `now` only matters while the call has not ended. */
+export function clock(startedAt: string, endedAt: string | null | undefined, now: number): string {
+  const end = endedAt ? Date.parse(endedAt) : now;
+  return mmss((end - Date.parse(startedAt)) / 1000);
+}
+
+export type Steps = { names: Map<string, string>; entry: string | undefined };
+
+/** Step names and the start step, from the flow's current version. Older calls may name steps that are gone. */
+export function steps(flow: AgentDTO | undefined): Steps {
+  const cfg = flow?.current_version?.config as { entry?: string; nodes?: { id: string; name?: string }[] } | undefined;
+  const names = new Map<string, string>();
+  for (const n of cfg?.nodes ?? []) names.set(n.id, n.name?.trim() || n.id);
+  return { names, entry: cfg?.entry };
+}
+
+type Route = { at: number; from: string; to: string };
+
+function spansNamed(traces: SessionTracesDTO | null | undefined, name: string): Route[] {
+  return (traces?.spans ?? [])
+    .filter((s) => s.name === name)
+    .map((s) => {
+      const a = (s.attributes ?? {}) as { from_node?: unknown; to_node?: unknown };
+      return { at: Date.parse(s.started_at), from: String(a.from_node ?? ""), to: String(a.to_node ?? "") };
+    })
+    .filter((r) => r.to !== "")
+    .sort((a, b) => a.at - b.at);
+}
+
+export function failedRoutes(traces: SessionTracesDTO | null | undefined): { from: string; to: string }[] {
+  return spansNamed(traces, "handoff.failed").map(({ from, to }) => ({ from, to }));
+}
+
+export function path(traces: SessionTracesDTO | null | undefined, st: Steps, fallback: string): string[] {
+  const label = (id: string) => st.names.get(id) ?? id;
+  const routes = spansNamed(traces, "handoff.active");
+  if (routes.length === 0) return [st.entry ? label(st.entry) : fallback];
+  return [label(routes[0].from), ...routes.map((r) => label(r.to))];
+}
+
+export type CallLine =
+  | { kind: "say"; who: "caller" | "step"; label: string; at: string; text: string; interrupted: boolean }
+  | { kind: "route"; at: string; from: string; to: string };
+
+/**
+ * The words of a call, in order, each reply labelled with the step that was active when it was said.
+ * A turn row does not name its step, so this uses the times of the route (handoff) spans.
+ */
+export function transcript(session: SessionDTO, turns: TurnDTO[], traces: SessionTracesDTO | null | undefined, st: Steps, fallback: string): CallLine[] {
+  const start = Date.parse(session.started_at);
+  const at = (t: number) => mmss((t - start) / 1000);
+  const label = (id: string) => st.names.get(id) ?? id;
+  const routes = spansNamed(traces, "handoff.active");
+  const activeAt = (t: number) => {
+    let id = routes.length > 0 ? routes[0].from : (st.entry ?? "");
+    for (const r of routes) if (r.at <= t) id = r.to;
+    return id ? label(id) : fallback;
+  };
+
+  const out: CallLine[] = [];
+  let next = 0;
+  const flush = (until: number) => {
+    while (next < routes.length && routes[next].at <= until) {
+      const r = routes[next++];
+      out.push({ kind: "route", at: at(r.at), from: label(r.from), to: label(r.to) });
+    }
+  };
+
+  const ordered = [...turns].sort((a, b) => a.ordinal - b.ordinal || Date.parse(a.started_at) - Date.parse(b.started_at));
+  for (const t of ordered) {
+    const said = t.transcript.trim();
+    const reply = t.assistant_text.trim();
+    const began = Date.parse(t.started_at);
+    const ended = t.ended_at ? Date.parse(t.ended_at) : began;
+    if (said) {
+      flush(began);
+      out.push({ kind: "say", who: "caller", label: "Caller", at: at(began), text: said, interrupted: false });
+    }
+    if (reply) {
+      flush(ended);
+      out.push({ kind: "say", who: "step", label: activeAt(ended), at: at(ended), text: reply, interrupted: t.interrupted });
+    }
+  }
+  flush(Infinity);
+  return out;
+}
+
+export function interruptedCount(turns: TurnDTO[]): number {
+  return turns.filter((t) => t.interrupted).length;
+}
