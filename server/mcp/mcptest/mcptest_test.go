@@ -108,7 +108,7 @@ func TestSlowHonoursCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if _, err := c.CallTool(ctx, base+"/slow", "", "slow_lookup", json.RawMessage(`{"delay_ms":5000}`)); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := c.CallTool(ctx, base+"/slow", "", "slow_lookup", json.RawMessage(`{"delay_ms":1500}`)); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want deadline, got %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
