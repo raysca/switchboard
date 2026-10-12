@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -61,7 +61,8 @@ describe("FlowPage", () => {
   it("opens a stored flow in the editor under a breadcrumb back to the list", async () => {
     setup({}, "/flows/a1");
     expect(await screen.findByRole("heading", { name: "Front desk", level: 1 })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute("href", "/flows");
+    const head = screen.getByRole("heading", { name: "Front desk", level: 1 }).closest("header") as HTMLElement;
+    expect(within(head).getByRole("link", { name: "Flows" })).toHaveAttribute("href", "/flows");
   });
 
   it("opens a new flow under the name it was given, exactly", async () => {

@@ -111,10 +111,12 @@ export type CanvasProps = {
   /** The handoff taken a moment ago: its edge draws in. */
   justHandedEdge?: string;
   readOnly?: boolean;
-  height?: number;
+  height?: number | string;
+  /** The graph refits when this changes (a panel opened, closed or widened) as well as when a step is added or removed. */
+  fitKey?: string;
 };
 
-export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, traversedEdges, justHandedEdge, readOnly, height = 420 }: CanvasProps) {
+export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, traversedEdges, justHandedEdge, readOnly, height = 420, fitKey = "" }: CanvasProps) {
   const derived = useMemo<Node<AgentNodeData>[]>(
     () =>
       graph.nodes.map((n) => ({
@@ -141,10 +143,10 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
 
 
   return (
-    <div className="agent-canvas" style={{ height }} data-testid="agent-canvas">
+    <div className="agent-canvas" style={{ height }} data-testid="agent-canvas" data-fit={`${graph.nodes.length}:${fitKey}`}>
       <ReactFlow
-        // Re-fit when a step is added or removed, so a new step is never left off-screen.
-        key={graph.nodes.length}
+        // Re-fit when a step is added or removed, or the room for the graph changes, so no step is left off-screen or tiny.
+        key={`${graph.nodes.length}:${fitKey}`}
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}

@@ -1492,49 +1492,120 @@ legend {
 .dialog h2 {
   margin: 0;
 }
+/* The editor uses the whole workspace, like the canvas: a compact bar, a toolbar row, and the graph filling the rest. */
+main:has(.flow-editor) {
+  max-width: none;
+  padding: 0;
+}
+.flow-page--editor > .published-banner,
+.flow-page--editor > .message-panel {
+  margin: 12px 24px 0;
+}
 .flow-editor {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  min-height: calc(100vh - 56px);
 }
 .flow-editor__head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 14px;
+  gap: 10px 16px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--rule);
+}
+.flow-editor__crumb {
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+.flow-editor__crumb a {
+  color: var(--ink-2);
+}
+.flow-editor__head h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.flow-editor__head .chip {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  background: var(--surface);
 }
 .flow-editor__toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--rule);
+}
+.flow-editor__add {
+  border-style: dashed;
+  border-color: var(--ink-2);
+  background: transparent;
+  color: var(--ink);
 }
 .flow-editor__stage {
   position: relative;
-  min-height: 600px;
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  flex: 1;
+  display: flex;
+  min-height: 560px;
   overflow: hidden;
 }
-.flow-editor__stage--panel .agent-canvas {
+.flow-editor__stage > .agent-canvas {
+  flex: 1;
+  min-width: 0;
+}
+.flow-editor__stage--panel > .agent-canvas {
   margin-right: min(440px, 100%);
 }
-.flow-editor__stage--wide .agent-canvas {
+.flow-editor__stage--wide > .agent-canvas {
   margin-right: min(720px, 100%);
 }
 .flow-editor__blank {
-  min-height: 600px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background-image: radial-gradient(var(--rule) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+.flow-editor__blank-card {
+  max-width: 440px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 24px;
+  gap: 14px;
+  padding: 36px 32px;
+  border: 1.5px dashed var(--ink-2);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 85%, transparent);
   text-align: center;
 }
-.flow-editor__blank p {
-  max-width: 44ch;
+.flow-editor__blank-card h3,
+.flow-editor__blank-card p {
   margin: 0;
+}
+.flow-editor__blank-card h3 {
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+.flow-editor__blank-card p {
   color: var(--ink-2);
+  font-size: 0.875rem;
+}
+.flow-editor__plus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius);
+  font-size: 1.375rem;
 }
 .chip {
   padding: 2px 8px;
@@ -1674,11 +1745,6 @@ legend {
 .published-banner p {
   flex: 1 1 280px;
   margin: 0;
-}
-.flow-editor__head h1 {
-  margin: 0;
-  font-size: 24px;
-  line-height: 1.15;
 }
 
 .page-head {

@@ -75,10 +75,7 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
   const providers = providersQuery.data ?? [];
 
   return (
-    <div className="flow-page">
-      <nav aria-label="Breadcrumb" className="flow-page__crumb">
-        <Link to="/flows">Flows</Link>
-      </nav>
+    <div className="flow-page flow-page--editor">
       {flow && publishedVersion !== null && dismissedAt !== location.key && (
         <PublishedBanner
           flowName={flow.name}

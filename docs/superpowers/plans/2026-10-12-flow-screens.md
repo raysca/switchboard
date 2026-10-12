@@ -164,7 +164,7 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
           </div>
 ```
 
-4. Canvas: `height={600}` → `height="100%"` and add `fitKey={panel ? `${panel.kind}${wide ? "-wide" : ""}` : "none"}`.
+4. Canvas: `height={600}` → `height="auto"` and add `fitKey={panel ? `${panel.kind}${wide ? "-wide" : ""}` : "none"}`.
 
 `FlowPage.tsx`: delete the `<nav aria-label="Breadcrumb" className="flow-page__crumb"> … </nav>` block, and wrap the banner and error states so they take the page padding: replace the `<div className="flow-page">` opening tag with `<div className="flow-page flow-page--editor">` (the banner and errors keep their place above the editor). Remove the now-unused `.flow-page__crumb` rule if nothing else uses it (`CallView` uses it: keep it).
 
@@ -1342,7 +1342,7 @@ Expected: all green; the tree is clean apart from the spec file.
 
 - [ ] **Step 3: Look at it, next to the canvas.** Open the numbered screenshots from `e2e/evidence/` (boards 3–12) beside the canvas boards in the artifact. Fix any difference that does not need data the server lacks, each as a commit naming the difference.
 
-- [ ] **Step 4: Independent review (AGENTS.md "Mandatory Code Review Workflow").** Dispatch a fresh reviewer on `main..HEAD` with this brief: YAGNI and bloat (CSS no longer used, props no longer read); correctness (the refit key and what it does to selection and dragging, `Canvas` `height="100%"` inside a flex stage and at 390px, the Test call panel's clock and its ref-based step labels under StrictMode and re-renders, `activeStep` flicker when the call hands off, the readiness test id kept, push-to-talk and mute unchanged, the Publish dialog's claims, the banner link); the five Review Focus items; accessibility (dark header contrast, headings, the new option cards, `Escape`); token-only colours and no shadows; tests that pass for the wrong reason. Fix confirmed findings, each with a test that fails first.
+- [ ] **Step 4: Independent review (AGENTS.md "Mandatory Code Review Workflow").** Dispatch a fresh reviewer on `main..HEAD` with this brief: YAGNI and bloat (CSS no longer used, props no longer read); correctness (the refit key and what it does to selection and dragging, `Canvas` `height="auto"` inside a flex stage and at 390px, the Test call panel's clock and its ref-based step labels under StrictMode and re-renders, `activeStep` flicker when the call hands off, the readiness test id kept, push-to-talk and mute unchanged, the Publish dialog's claims, the banner link); the five Review Focus items; accessibility (dark header contrast, headings, the new option cards, `Escape`); token-only colours and no shadows; tests that pass for the wrong reason. Fix confirmed findings, each with a test that fails first.
 
 - [ ] **Step 5: Commit**
 

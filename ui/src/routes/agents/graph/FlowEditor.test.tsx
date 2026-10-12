@@ -188,3 +188,30 @@ describe("FlowEditor start state", () => {
     expect(screen.getByRole("group", { name: "Published version" })).toHaveTextContent("v1");
   });
 });
+
+describe("FlowEditor chrome", () => {
+  it("has the breadcrumb in its header bar, the step count and the route hint in the toolbar", () => {
+    setup({ agent });
+    const head = screen.getByRole("heading", { name: "Front desk", level: 1 }).closest("header") as HTMLElement;
+    expect(within(head).getByRole("link", { name: "Flows" })).toHaveAttribute("href", "/flows");
+    expect(screen.getByText("1 of 8 steps")).toBeVisible();
+    expect(screen.getByText(/Drag from the dot on a step's edge to add a route/)).toBeVisible();
+  });
+
+  it("explains the blank state with the canvas's words", () => {
+    setup({ initialName: "After hours" });
+    expect(screen.getByText(/that's enough to make a test call/)).toBeVisible();
+    expect(screen.queryByText(/Drag from the dot/)).toBeNull();
+  });
+
+  it("refits the graph when a panel opens or closes, so the steps stay in view", async () => {
+    const { user } = setup({ agent });
+    const canvas = screen.getByTestId("agent-canvas");
+    const before = canvas.getAttribute("data-fit");
+    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    expect(canvas.getAttribute("data-fit")).not.toBe(before);
+    const open = canvas.getAttribute("data-fit");
+    await user.click(screen.getByRole("button", { name: "Close Flow settings" }));
+    expect(canvas.getAttribute("data-fit")).not.toBe(open);
+  });
+});

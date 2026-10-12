@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect } from "react";
 import type { AgentDTO, ApiClient } from "../../../api/client";
@@ -29,9 +30,9 @@ describe("FlowEditor during a test call", () => {
     const user = userEvent.setup();
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <ReactFlowProvider>
+        <MemoryRouter><ReactFlowProvider>
           <FlowEditor agent={agent} providers={[]} client={client} keyValue="k" pending={false} onSubmit={vi.fn()} onCancel={vi.fn()} />
-        </ReactFlowProvider>
+        </ReactFlowProvider></MemoryRouter>
       </QueryClientProvider>,
     );
     await user.click(screen.getByRole("button", { name: "Test call" }));

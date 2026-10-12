@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { Link } from "react-router";
 import type { AgentDTO, ApiClient, CreateAgentInput, ProviderStatus } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { Status } from "../../../components/primitives";
@@ -146,6 +147,9 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
   return (
     <div className="flow-editor">
       <header className="flow-editor__head">
+        <nav aria-label="Breadcrumb" className="flow-editor__crumb">
+          <Link to="/flows">Flows</Link> /
+        </nav>
         <h1 id="flow-editor-title" tabIndex={-1}>
           {name.trim() || "New flow"}
         </h1>
@@ -183,7 +187,7 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
         {graph.nodes.length > 0 && (
           <button
             type="button"
-            className="action-button-small"
+            className="action-button-small flow-editor__add"
             disabled={graph.nodes.length >= MAX_NODES || call.live}
             title={graph.nodes.length >= MAX_NODES ? `A flow has at most ${MAX_NODES} steps` : undefined}
             onClick={addStep}
@@ -194,21 +198,29 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
         <span className="subtext">
           {graph.nodes.length} of {MAX_NODES} steps
         </span>
+        <span className="grow" />
+        {graph.nodes.length > 0 && !call.live && <span className="subtext">Drag from the dot on a step's edge to add a route</span>}
       </div>
 
       <div className={stageClass}>
         {graph.nodes.length === 0 ? (
           <div className="flow-editor__blank">
-            <h3>Start with one step.</h3>
-            <p>A step answers the caller. Give it instructions, a model and a voice, then add more steps and routes when you need them.</p>
-            <button type="button" className="action-button" onClick={addStep}>
-              Add first step
-            </button>
+            <div className="flow-editor__blank-card">
+              <span className="flow-editor__plus" aria-hidden="true">
+                +
+              </span>
+              <h3>Start with one step.</h3>
+              <p>A step answers the caller. Give it instructions, a model and a voice: that's enough to make a test call. Add more steps and routes when you need them.</p>
+              <button type="button" className="action-button" onClick={addStep}>
+                Add first step
+              </button>
+            </div>
           </div>
         ) : (
           <Canvas
             graph={graph}
-            height={600}
+            height="auto"
+            fitKey={panel ? `${panel.kind}${wide ? "-wide" : ""}` : "none"}
             selected={panel?.kind === "step" ? { kind: "node", id: panel.id } : null}
             onSelect={select}
             onMove={(id, position) => setGraph((g) => updateNode(g, id, { position }))}

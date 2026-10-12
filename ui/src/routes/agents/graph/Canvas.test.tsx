@@ -41,3 +41,11 @@ describe("Canvas step cards", () => {
   });
 });
 
+describe("Canvas fitting", () => {
+  it("refits when the room for the graph changes", () => {
+    const { rerender } = render(<ReactFlowProvider><Canvas graph={graph} fitKey="a" /></ReactFlowProvider>);
+    expect(screen.getByTestId("agent-canvas")).toHaveAttribute("data-fit", "3:a");
+    rerender(<ReactFlowProvider><Canvas graph={graph} fitKey="b" /></ReactFlowProvider>);
+    expect(screen.getByTestId("agent-canvas")).toHaveAttribute("data-fit", "3:b");
+  });
+});
