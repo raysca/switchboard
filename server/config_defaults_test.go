@@ -184,3 +184,18 @@ func TestManagerOffStillLoads(t *testing.T) {
 		t.Fatal("800ms VAD stop with the manager off must not warn")
 	}
 }
+
+func TestMCPAllowLocalHTTPIsForDevelopmentOnly(t *testing.T) {
+	t.Setenv("TOKEN_SECRET", "production-test-secret-not-the-dev-key-123456")
+	base := "profile: production\ntls: {trusted_proxy_mode: true, trusted_proxies: [\"127.0.0.1/32\"]}\nstorage: {dialect: postgres}\n"
+	if _, err := loadYAML(t, base+"mcp: {allow_local_http: true}\n"); err == nil || !strings.Contains(err.Error(), "mcp.allow_local_http is for development and tests") {
+		t.Fatalf("production must refuse mcp.allow_local_http, got %v", err)
+	}
+	c, err := loadYAML(t, "profile: development\nmcp: {allow_local_http: true}\n")
+	if err != nil || !c.MCP.AllowLocalHTTP {
+		t.Fatalf("development: err=%v cfg=%+v", err, c.MCP)
+	}
+	if c.MCP.Timeout != 15*time.Second {
+		t.Fatalf("mcp.timeout default = %v, want 15s", c.MCP.Timeout)
+	}
+}

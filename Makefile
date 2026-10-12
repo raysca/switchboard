@@ -52,8 +52,8 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 
 # Routed flows end to end with the fake providers: a real server, a stored routed flow and a WebSocket
 # client (route, failed step build, caller speaking mid-route, hang-up mid-route, republish).
-test-graph-e2e: ## free|Flow route end-to-end tests against the fake providers (about 30 s)
-	cd server && go test -race -count=1 -tags "$(GOTAGS) fakeproviders" -run 'FlowE2E|NoSecretLeavesTheServer' .
+test-graph-e2e: ## free|Flow route and MCP call end-to-end tests against the fake providers (about 45 s)
+	cd server && go test -race -count=1 -tags "$(GOTAGS) fakeproviders" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall' .
 
 # Black-box pipecat.evals run against the Go server with fake providers (docs/decisions/pipecat-evals.md).
 eval-pipecat: ## free|pipecat.evals black-box run against the server (fake providers)
@@ -162,6 +162,11 @@ e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOI
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a
 # "Dev Assistant" flow from examples/.env. Examples call that flow.
+mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* /slow) and a black hole on :18766
+	go run ./cmd/mcptest -addr 127.0.0.1:18765 -blackhole-addr 127.0.0.1:18766
+
+.PHONY: mcp-test
+
 dev: ## dev|Run the server and admin UI with generated secrets and a seeded Dev Assistant
 	@./scripts/dev.sh up
 

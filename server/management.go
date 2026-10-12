@@ -54,7 +54,13 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	fail := func(err error) error { m.close(); return err }
 
 	m.traces = trace.NewAdapter(store.Traces())
-	mcpService, err := mcp.NewService(mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcp.EnvTokens(func(k string) string { return s.env(k) }), Tracer: m.traces})
+	mcpCfg := mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcp.EnvTokens(func(k string) string { return s.env(k) }), Tracer: m.traces, Timeout: s.cfg.MCP.Timeout}
+	if s.cfg.MCP.AllowLocalHTTP {
+		s.logger.Warn("MCP allows plain HTTP to loopback (development and tests)")
+		mcpCfg.Remote = mcp.NewSDKClient(mcp.AllowLoopbackHTTP())
+		mcpCfg.Destinations = mcp.LoopbackHTTPDestinationPolicy{}
+	}
+	mcpService, err := mcp.NewService(mcpCfg)
 	if err != nil {
 		return fail(fmt.Errorf("mcp service: %w", err))
 	}

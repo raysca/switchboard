@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local development stack and examples. Run through make:
-#   make dev                                   server + admin UI, seeded with "Dev Assistant" and a "Dealership desk" graph
+#   make dev                                   server + admin UI, seeded with "Dev Assistant", a "Dealership desk" graph and test MCP servers
 #   make example-web                           custom web client (needs `make dev` running)
 #   make example-cli [TEXT="..."]              CLI call to the dev flow (voice clip, or a text turn)
 #   make example-go NAME=google_pipeline       standalone Go example (reads examples/.env)
@@ -177,6 +177,12 @@ cmd_up() {
   set_env PUBLIC_PORT "$PUBLIC_PORT"; set_env ADMIN_PORT "$ADMIN_PORT"
 
   make build >/dev/null || die "build failed (run 'make build' to see why)"
+  go build -o bin/mcptest ./cmd/mcptest || die "mcptest build failed"
+  MCPTEST_PORT="$(pick_port mcptest "${MCPTEST_PORT:-18765}" 0 "$PUBLIC_PORT" "$ADMIN_PORT" "$UI_PORT")"
+  MCPTEST_HOLE_PORT="$(pick_port mcptest-blackhole "$((MCPTEST_PORT + 1))" 0 "$PUBLIC_PORT" "$ADMIN_PORT" "$UI_PORT" "$MCPTEST_PORT")"
+  export MCPTEST_URL="http://127.0.0.1:$MCPTEST_PORT"
+  # The test MCP servers' token; the dev server reads it like any MCP_TOKEN_* variable.
+  export MCPTEST_TOKEN="${MCPTEST_TOKEN:-test-token}" MCP_TOKEN_TEST="${MCP_TOKEN_TEST:-test-token}"
   npm_ready "$ROOT/ui"
   sed -e "s|^public_listen_addr:.*|public_listen_addr: \"127.0.0.1:$PUBLIC_PORT\"|" \
       -e "s|^admin_listen_addr:.*|admin_listen_addr: \"127.0.0.1:$ADMIN_PORT\"|" \
@@ -187,6 +193,8 @@ cmd_up() {
   GOVOICE_DEV_DIR="$DEV_DIR" spawn server ./bin/server -config "$DEV_DIR/server.yaml"
   for _ in $(seq 1 100); do server_up && break; kill -0 "${PIDS[0]}" 2>/dev/null || die "server exited (see [server] output)"; sleep 0.2; done
   server_up || die "server did not become ready"
+  spawn mcptest ./bin/mcptest -addr "127.0.0.1:$MCPTEST_PORT" -blackhole-addr "127.0.0.1:$MCPTEST_HOLE_PORT"
+  for _ in $(seq 1 50); do curl -fsS "$MCPTEST_URL/_record" >/dev/null 2>&1 && break; sleep 0.1; done
 
   if flow_id="$(node scripts/dev-seed.mjs)"; then
     [[ -n "$flow_id" ]] && set_env GOVOICE_DEV_FLOW_ID "$flow_id" && GOVOICE_DEV_FLOW_ID="$flow_id"
@@ -206,6 +214,7 @@ cmd_up() {
     Voice WebSocket $GOVOICE_WS_URL
     Dev flow        ${GOVOICE_DEV_FLOW_ID:-none (see [seed] above)}
     Data            ${DEV_DIR#"$ROOT"/}/  (SQLite store; the key is in dev.env)
+    Test MCP        $MCPTEST_URL (/ok /open /fail/tools /fail/auth /fail/list /slow; black hole :$MCPTEST_HOLE_PORT)
 
   In another terminal: make example-web | make example-cli TEXT="Hello" | make example-go NAME=google_pipeline
   Ctrl-C stops everything.

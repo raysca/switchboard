@@ -17,6 +17,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/server/flow"
+	"govoice/server/mcp/mcptest"
 )
 
 // lockedBuffer is a log sink safe for the server's concurrent writers.
@@ -57,6 +58,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", e2eMgmtKey)
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
+	cfg.MCP.AllowLocalHTTP = true
 	s, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -93,6 +95,21 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	_ = c.conn.Close(websocket.StatusNormalClosure, "bye")
 	eventually(t, "session ended", func() bool { return r.activeSessions() == 0 })
 
+	// An MCP tool call that sends the token to a real (local) MCP server.
+	mcpSrv := httptest.NewServer(mcptest.New(mcptest.Options{Token: "SENTINEL-mcp"}).Handler())
+	t.Cleanup(mcpSrv.Close)
+	w = apiRequest(s, http.MethodPost, "/api/v1/mcp-servers", e2eMgmtKey, `{"name":"orders","endpoint":"`+mcpSrv.URL+`/ok","auth_env":"MCP_TOKEN_CRM","enabled":true}`)
+	var created struct{ Data struct{ ID string } }
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	apiRequest(s, http.MethodPost, "/api/v1/mcp-servers/"+created.Data.ID+"/validate", e2eMgmtKey, "")
+	mr := &mcpCallRig{flowRigE2E: r}
+	_, hashes := mr.discovered(created.Data.ID)
+	toolAgent := mr.agentWith(created.Data.ID, hashes, true, nil, "lookup_order")
+	mc := r.dial(toolAgent.ID)
+	mc.say(`call tool lookup_order {"order_id":"7"}`)
+	mc.waitReplies("shipped", 1)
+	_ = mc.conn.Close(websocket.StatusNormalClosure, "bye")
+
 	var out strings.Builder
 	get := func(path string) {
 		w := apiRequest(s, http.MethodGet, path, e2eMgmtKey, "")
@@ -102,7 +119,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 		out.WriteString(path + "\n" + w.Body.String() + "\n")
 	}
 	for _, p := range []string{"/api/v1/providers", "/api/v1/flows", "/api/v1/flows/" + plain.ID, "/api/v1/flows/" + routedID,
-		"/api/v1/mcp-servers", "/api/v1/sessions", "/api/v1/sessions/" + c.sessionID, "/api/v1/sessions/" + c.sessionID + "/traces",
+		"/api/v1/mcp-servers", "/api/v1/sessions", "/api/v1/sessions/" + c.sessionID, "/api/v1/sessions/" + c.sessionID + "/traces", "/api/v1/sessions/" + mc.sessionID + "/traces", "/api/v1/flows/" + toolAgent.ID,
 		"/api/v1/server-config", "/api/v1/operations/status", "/debug/timeline?session=1", "/metrics", "/ready"} {
 		get(p)
 	}

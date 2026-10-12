@@ -265,6 +265,13 @@ func (c *e2eCall) say(text string) {
 	c.send(fmt.Sprintf(`{"id":"t%d","label":"rtvi-ai","type":"send-text","data":{"content":%q}}`, c.seq, text))
 }
 
+// replyCount is the number of bot reply fragments so far.
+func (c *e2eCall) replyCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.texts)
+}
+
 // replies counts the bot reply fragments that contain want.
 func (c *e2eCall) replies(want string) int {
 	c.mu.Lock()

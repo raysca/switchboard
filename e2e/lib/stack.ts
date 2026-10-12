@@ -14,6 +14,8 @@ export type Stack = {
   tmpDir: string;
   logDir: string;
   pids: Record<string, number>;
+  /** The graph suite's MCP test servers (cmd/mcptest), e.g. http://127.0.0.1:18595. */
+  mcpUrl?: string;
 };
 
 export const stackFile = path.resolve(__dirname, "../.stack.json");
