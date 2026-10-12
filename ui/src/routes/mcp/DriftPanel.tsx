@@ -18,12 +18,12 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
     mutationFn: (d: Drift) => {
       const { selection } = repin(d.flow);
       if (!selection) throw new Error("The server's current schema is unknown, so there is nothing to accept.");
-      return client.setAgentMCPTools(d.flow.id, selection);
+      return client.setFlowMCPTools(d.flow.id, selection);
     },
     onSuccess: () => {
       setAccepting(null);
       setError(null);
-      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["flows"] });
     },
     onError: (err) => setError(formatApiError(err, "Could not publish the new version")),
   });

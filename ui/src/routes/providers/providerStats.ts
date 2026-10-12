@@ -1,4 +1,4 @@
-import type { AgentDTO, ProviderStatus } from "../../api/client";
+import type { FlowDTO, ProviderStatus } from "../../api/client";
 
 export const SERVICES = ["stt", "llm", "tts"] as const;
 export type Service = (typeof SERVICES)[number];
@@ -50,10 +50,10 @@ export function catalogLines(p: ProviderStatus): { service: Service; text: strin
 type Stage = { provider?: unknown; fallbacks?: unknown };
 type Block = Partial<Record<Service, Stage>>;
 
-/** The provider each stage names, and its fallbacks: in a flat config, or in every step of a graph. */
+/** The provider each stage names, and its fallbacks: in a flat config, or in every step of a flow. */
 function stageProviders(config: unknown): string[] {
-  const root = (config ?? {}) as { nodes?: { config?: Block }[] } & Block;
-  const blocks: Block[] = Array.isArray(root.nodes) ? root.nodes.map((n) => n?.config ?? {}) : [root];
+  const root = (config ?? {}) as { steps?: { config?: Block }[] } & Block;
+  const blocks: Block[] = Array.isArray(root.steps) ? root.steps.map((n) => n?.config ?? {}) : [root];
   return blocks
     .flatMap((b) => SERVICES.map((s) => b[s] as Stage | undefined))
     .flatMap((stage) => [stage?.provider, ...(Array.isArray(stage?.fallbacks) ? stage.fallbacks.map((f: Stage | null) => f?.provider) : [])])
@@ -61,6 +61,6 @@ function stageProviders(config: unknown): string[] {
 }
 
 /** Flows whose current version uses the provider in any stage or step. Archived flows never count. */
-export function flowsUsing(flows: AgentDTO[], providerId: string): AgentDTO[] {
+export function flowsUsing(flows: FlowDTO[], providerId: string): FlowDTO[] {
   return flows.filter((f) => !f.archived && stageProviders(f.current_version?.config).includes(providerId));
 }

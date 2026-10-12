@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { StepPanel } from "./StepPanel";
-import { addDraftRoute, fromAgentConfig, type GraphDraft, type StepTab } from "./model";
+import { addDraftRoute, fromFlowConfig, type FlowDraft, type StepTab } from "./model";
 
 const svc = { available: true, custom: true, models: [{ id: "gemini", label: "Gemini", default: true }], voices: [{ id: "aoede", label: "Aoede", default: true }] };
 const providers: ProviderStatus[] = [
@@ -12,13 +12,13 @@ const providers: ProviderStatus[] = [
 ];
 const ready = { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" } };
 const start = () =>
-  fromAgentConfig({
-    entry: "a",
-    nodes: [
+  fromFlowConfig({
+    start: "a",
+    steps: [
       { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
       { id: "b", name: "Billing", config: {} },
     ],
-    edges: [],
+    routes: [],
   });
 
 function Harness({
@@ -28,13 +28,13 @@ function Harness({
   flowTools = [] as string[],
   onChange = vi.fn(),
 }: {
-  initial?: GraphDraft;
+  initial?: FlowDraft;
   stepId?: string;
   initialTab?: StepTab;
   flowTools?: string[];
-  onChange?: (g: GraphDraft) => void;
+  onChange?: (g: FlowDraft) => void;
 }) {
-  const [graph, setGraph] = useState<GraphDraft>(initial);
+  const [graph, setGraph] = useState<FlowDraft>(initial);
   const [tab, setTab] = useState<StepTab>(initialTab);
   const [focusRoute, setFocusRoute] = useState<string | undefined>();
   return (
@@ -59,7 +59,7 @@ function Harness({
     </div>
   );
 }
-const lastGraph = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls.at(-1)![0] as GraphDraft;
+const lastGraph = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls.at(-1)![0] as FlowDraft;
 
 describe("StepPanel", () => {
   it("lists what a new step needs and marks the Basics tab", () => {
@@ -80,7 +80,7 @@ describe("StepPanel", () => {
     await user.selectOptions(screen.getByLabelText("LLM provider"), "google");
     await user.selectOptions(screen.getByLabelText("TTS provider"), "google");
     expect(screen.queryByRole("note")).toBeNull();
-    const b = lastGraph(onChange).nodes.find((n) => n.id === "b")!;
+    const b = lastGraph(onChange).steps.find((n) => n.id === "b")!;
     expect(b.name).toBe("Billing desk");
     expect(b.config).toMatchObject({ llm: { provider: "google", model: "gemini", system_prompt: "Explain invoices." }, tts: { provider: "google", voice: "aoede" } });
   });
@@ -105,8 +105,8 @@ describe("StepPanel", () => {
     render(<Harness stepId="a" initialTab="routes" onChange={onChange} />);
     await user.click(screen.getByRole("button", { name: "Route to a new step" }));
     const g = lastGraph(onChange);
-    expect(g.nodes.map((n) => n.name)).toEqual(["Reception", "Billing", "New step"]);
-    expect(g.edges).toEqual([expect.objectContaining({ from: "a", condition: "" })]);
+    expect(g.steps.map((n) => n.name)).toEqual(["Reception", "Billing", "New step"]);
+    expect(g.routes).toEqual([expect.objectContaining({ from: "a", condition: "" })]);
     expect(screen.getByLabelText("Condition for the route to New step")).toHaveFocus();
   });
 
@@ -115,7 +115,7 @@ describe("StepPanel", () => {
     const onChange = vi.fn();
     render(<Harness stepId="a" initialTab="tools" flowTools={["crm/lookup", "crm/verify"]} onChange={onChange} />);
     await user.click(screen.getByLabelText("crm/verify"));
-    expect(lastGraph(onChange).nodes[0].tools).toContain("crm/verify");
+    expect(lastGraph(onChange).steps[0].tools).toContain("crm/verify");
     expect(screen.getByRole("tab", { name: /tools/i })).toHaveTextContent("1");
   });
 
@@ -135,9 +135,9 @@ describe("StepPanel", () => {
     render(<Harness stepId="b" onChange={onChange} />);
     await user.click(screen.getByRole("button", { name: "Make start step" }));
     const g = lastGraph(onChange);
-    expect(g.entry).toBe("b");
-    expect(g.nodes.find((n) => n.id === "b")!.config.stt).toEqual({ provider: "google" });
-    expect(g.nodes.find((n) => n.id === "a")!.config.stt).toBeUndefined();
+    expect(g.start).toBe("b");
+    expect(g.steps.find((n) => n.id === "b")!.config.stt).toEqual({ provider: "google" });
+    expect(g.steps.find((n) => n.id === "a")!.config.stt).toBeUndefined();
   });
 
   it("focuses the condition of a route drawn on the graph", () => {
@@ -146,7 +146,7 @@ describe("StepPanel", () => {
       const [graph, setGraph] = useState(g);
       return (
         <div style={{ position: "relative" }}>
-          <StepPanel graph={graph} stepId="a" providers={providers} flowTools={[]} tab="routes" onTab={vi.fn()} focusRoute={graph.edges[0].id} onFocusRoute={vi.fn()} wide={false} onToggleWide={vi.fn()} onClose={vi.fn()} onChange={setGraph} />
+          <StepPanel graph={graph} stepId="a" providers={providers} flowTools={[]} tab="routes" onTab={vi.fn()} focusRoute={graph.routes[0].id} onFocusRoute={vi.fn()} wide={false} onToggleWide={vi.fn()} onClose={vi.fn()} onChange={setGraph} />
         </div>
       );
     }

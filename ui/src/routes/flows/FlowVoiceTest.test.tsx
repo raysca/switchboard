@@ -2,10 +2,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { AgentVoiceTest } from "./AgentVoiceTest";
+import { FlowVoiceTest } from "./FlowVoiceTest";
 import {
   type ApiClient,
-  type AgentDTO,
+  type FlowDTO,
 } from "../../api/client";
 import { BrowserAudioController, BrowserAudioError } from "../../voice/audio";
 import {
@@ -74,7 +74,7 @@ class MockWebSocket {
   }
 }
 
-function createMockAgent(overrides: Partial<AgentDTO> = {}): AgentDTO {
+function createMockFlow(overrides: Partial<FlowDTO> = {}): FlowDTO {
   return {
     id: "agent-alpha",
     name: "Customer Assistant",
@@ -111,16 +111,16 @@ function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
     }),
     getProviders: vi.fn(),
     getProviderDiscovery: vi.fn(),
-    getAgents: vi.fn(),
-    createAgent: vi.fn(),
-    updateAgent: vi.fn(),
-    archiveAgent: vi.fn(),
-    duplicateAgent: vi.fn(),
+    getFlows: vi.fn(),
+    createFlow: vi.fn(),
+    updateFlow: vi.fn(),
+    archiveFlow: vi.fn(),
+    duplicateFlow: vi.fn(),
     ...overrides,
   } as ApiClient;
 }
 
-describe("AgentVoiceTest", () => {
+describe("FlowVoiceTest", () => {
   let originalWebSocket: typeof WebSocket;
 
   beforeEach(() => {
@@ -143,12 +143,12 @@ describe("AgentVoiceTest", () => {
     );
 
     const client = createMockClient();
-    const agent = createMockAgent();
+    const flow = createMockFlow();
 
     render(
       <MemoryRouter>
-        <AgentVoiceTest
-          agent={agent}
+        <FlowVoiceTest
+          flow={flow}
           client={client}
           keyValue="mgmt-key-1"
           audioController={mockAudio}
@@ -183,11 +183,11 @@ describe("AgentVoiceTest", () => {
     const client = createMockClient({
       issueVoiceToken: vi.fn().mockRejectedValue(new Error("Token service unavailable")),
     });
-    const agent = createMockAgent();
+    const flow = createMockFlow();
 
     render(
       <MemoryRouter>
-        <AgentVoiceTest agent={agent} client={client} keyValue="mgmt-key-1" />
+        <FlowVoiceTest flow={flow} client={client} keyValue="mgmt-key-1" />
       </MemoryRouter>,
     );
 
@@ -206,16 +206,16 @@ describe("AgentVoiceTest", () => {
     const playChunkSpy = vi.spyOn(mockAudio, "playAudioChunk");
 
     const client = createMockClient();
-    const agent = createMockAgent();
+    const flow = createMockFlow();
 
     render(
-      <MemoryRouter initialEntries={["/agents/agent-alpha"]}>
+      <MemoryRouter initialEntries={["/flows/agent-alpha"]}>
         <Routes>
           <Route
-            path="/agents/agent-alpha"
+            path="/flows/agent-alpha"
             element={
-              <AgentVoiceTest
-                agent={agent}
+              <FlowVoiceTest
+                flow={flow}
                 client={client}
                 keyValue="mgmt-key-1"
                 audioController={mockAudio}
@@ -238,8 +238,8 @@ describe("AgentVoiceTest", () => {
 
     expect(client.issueVoiceToken).toHaveBeenCalledWith(
       expect.objectContaining({
-        principal: "agent-test-agent-alpha",
-        agent_id: "agent-alpha",
+        principal: "flow-test-agent-alpha",
+        flow_id: "agent-alpha",
       }),
     );
 
@@ -390,7 +390,7 @@ describe("AgentVoiceTest", () => {
     vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
     render(
       <MemoryRouter>
-        <AgentVoiceTest agent={createMockAgent()} client={createMockClient()} keyValue="mgmt-key-1"
+        <FlowVoiceTest flow={createMockFlow()} client={createMockClient()} keyValue="mgmt-key-1"
           audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
       </MemoryRouter>,
     );
@@ -429,7 +429,7 @@ describe("AgentVoiceTest", () => {
     vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
     render(
       <MemoryRouter>
-        <AgentVoiceTest agent={createMockAgent()} client={createMockClient()} keyValue="mgmt-key-1"
+        <FlowVoiceTest flow={createMockFlow()} client={createMockClient()} keyValue="mgmt-key-1"
           audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
       </MemoryRouter>,
     );
@@ -471,7 +471,7 @@ describe("AgentVoiceTest", () => {
     vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
     render(
       <MemoryRouter>
-        <AgentVoiceTest agent={createMockAgent()} client={createMockClient()} keyValue="mgmt-key-1"
+        <FlowVoiceTest flow={createMockFlow()} client={createMockClient()} keyValue="mgmt-key-1"
           audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
       </MemoryRouter>,
     );
@@ -490,7 +490,7 @@ describe("AgentVoiceTest", () => {
     vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
     render(
       <MemoryRouter>
-        <AgentVoiceTest agent={createMockAgent()} client={createMockClient()} keyValue="mgmt-key-1"
+        <FlowVoiceTest flow={createMockFlow()} client={createMockClient()} keyValue="mgmt-key-1"
           audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
       </MemoryRouter>,
     );
@@ -515,8 +515,8 @@ describe("AgentVoiceTest", () => {
 
     render(
       <MemoryRouter>
-        <AgentVoiceTest
-          agent={createMockAgent()}
+        <FlowVoiceTest
+          flow={createMockFlow()}
           client={client}
           keyValue="mgmt-key-1"
           audioController={mockAudio}
@@ -526,7 +526,7 @@ describe("AgentVoiceTest", () => {
     );
     const user = userEvent.setup();
 
-    expect(screen.getByTestId("agent-readiness")).toHaveTextContent("ready");
+    expect(screen.getByTestId("flow-readiness")).toHaveTextContent("ready");
     expect(screen.getByTestId("connection-state")).toHaveTextContent("DISCONNECTED");
     const input = screen.getByLabelText("Message");
     expect(input).toBeDisabled();
@@ -576,11 +576,11 @@ describe("AgentVoiceTest", () => {
 
   it("toggles Pipecat debug panel visibility", async () => {
     const client = createMockClient();
-    const agent = createMockAgent();
+    const flow = createMockFlow();
 
     render(
       <MemoryRouter>
-        <AgentVoiceTest agent={agent} client={client} keyValue="mgmt-key-1" />
+        <FlowVoiceTest flow={flow} client={client} keyValue="mgmt-key-1" />
       </MemoryRouter>,
     );
 
@@ -597,14 +597,14 @@ describe("AgentVoiceTest", () => {
   });
   it("tells the user a call is on the version it started on after a newer one is published", async () => {
     const client = createMockClient();
-    const v1 = createMockAgent();
-    const v2 = createMockAgent();
+    const v1 = createMockFlow();
+    const v2 = createMockFlow();
     v2.current_version = { ...v1.current_version!, number: (v1.current_version!.number ?? 1) + 1 };
     const audio = new BrowserAudioController();
     vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
-    const ui = (a: AgentDTO) => (
+    const ui = (a: FlowDTO) => (
       <MemoryRouter>
-        <AgentVoiceTest agent={a} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+        <FlowVoiceTest flow={a} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
       </MemoryRouter>
     );
     const { rerender } = render(ui(v1));
@@ -622,11 +622,11 @@ describe("AgentVoiceTest", () => {
     const audio = new BrowserAudioController();
     vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
     const client = createMockClient();
-    const agent = createMockAgent();
-    if (props.versionNumber) agent.current_version = { ...agent.current_version!, number: props.versionNumber };
+    const flow = createMockFlow();
+    if (props.versionNumber) flow.current_version = { ...flow.current_version!, number: props.versionNumber };
     const ui = (step?: string) => (
       <MemoryRouter>
-        <AgentVoiceTest agent={agent} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" activeStep={step} />
+        <FlowVoiceTest flow={flow} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" activeStep={step} />
       </MemoryRouter>
     );
     const view = render(ui(props.activeStep));

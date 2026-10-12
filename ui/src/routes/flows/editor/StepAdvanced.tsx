@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { StageFields, type StageValue } from "../StageFields";
-import { MAX_FALLBACKS, updateNode, type GraphDraft, type GraphNode } from "./model";
+import { MAX_FALLBACKS, updateStep, type FlowDraft, type DraftStep } from "./model";
 
 type Fallback = { provider: string; model?: string; voice?: string };
 type Stage = Record<string, unknown>;
@@ -13,13 +13,13 @@ const without = (stage: Stage, key: string): Stage => {
   return rest;
 };
 
-type Props = { graph: GraphDraft; step: GraphNode; providers: ProviderStatus[]; onChange: (g: GraphDraft) => void };
+type Props = { graph: FlowDraft; step: DraftStep; providers: ProviderStatus[]; onChange: (g: FlowDraft) => void };
 
 /** Optional depth for one step: fallbacks and tuning. Nothing here is needed to take calls. */
 export function StepAdvanced({ graph, step, providers, onChange }: Props) {
   const llm = rec(step.config.llm);
   const tts = rec(step.config.tts);
-  const setStage = (cap: "llm" | "tts", stage: Stage) => onChange(updateNode(graph, step.id, { config: { ...step.config, [cap]: stage } }));
+  const setStage = (cap: "llm" | "tts", stage: Stage) => onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: stage } }));
   const setFallbacks = (cap: "llm" | "tts", stage: Stage, items: Fallback[]) =>
     setStage(cap, items.length ? { ...stage, fallbacks: items } : without(stage, "fallbacks"));
   const parallel = Number(llm.max_parallel) || 1;

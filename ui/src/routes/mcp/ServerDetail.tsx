@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react";
 import { Link } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, type AgentDTO, type ApiClient, type MCPServerDetailDTO } from "../../api/client";
+import { ApiError, type FlowDTO, type ApiClient, type MCPServerDetailDTO } from "../../api/client";
 import { ErrorState } from "../../components/primitives";
 import { DeleteServerDialog } from "./DeleteServerDialog";
 import { DriftPanel, MissingTools } from "./DriftPanel";
@@ -12,7 +12,7 @@ export type ServerDetailProps = {
   client: ApiClient;
   server: MCPServerDetailDTO;
   /** `undefined` while the flow list loads, or when it could not be loaded (see `flowsFailed`). */
-  flows: AgentDTO[] | undefined;
+  flows: FlowDTO[] | undefined;
   flowsFailed: boolean;
   /** The flow list reached the API's page size, so some flows were not checked. */
   flowsCapped: boolean;
@@ -37,7 +37,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
     void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
     void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] });
     // A sync can change schemas: the flows' readiness (drift) must be read again too.
-    void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    void queryClient.invalidateQueries({ queryKey: ["flows"] });
   };
   const action = (mutationFn: () => Promise<unknown>, fallback: string) => ({
     mutationFn,
@@ -59,7 +59,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
       setDeleteError(null);
       void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
       void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] });
-      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      void queryClient.invalidateQueries({ queryKey: ["flows"] });
       // A detach that is waiting for calls to finish leaves the server in place, marked as being removed.
       if (result && (result as { pending?: boolean }).pending) setRemoving(true);
       else onDeleted();

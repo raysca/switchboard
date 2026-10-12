@@ -44,9 +44,9 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
     refetchInterval: 10000,
   });
 
-  const agentsQuery = useQuery({
-    queryKey: ["agents"],
-    queryFn: () => client.getAgents(),
+  const flowsQuery = useQuery({
+    queryKey: ["flows"],
+    queryFn: () => client.getFlows(),
     enabled: !!keyValue,
     retry: false,
   });
@@ -70,7 +70,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and agents.</p>
+          <p>Operational signals for voice sessions and flows.</p>
         </header>
         <EmptyState title="Connect to view operations">
           Enter a management key to inspect operational health, session telemetry, and provider readiness.
@@ -78,7 +78,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
         <div className="message-panel">
           <h2>First-run onboarding</h2>
           <p>
-            Connect your first provider and configure a voice agent with the guided setup.
+            Connect your first provider and configure a voice flow with the guided setup.
           </p>
           <Link to="/onboarding" className="action-button-small">
             Start onboarding
@@ -93,7 +93,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and agents.</p>
+          <p>Operational signals for voice sessions and flows.</p>
         </header>
         <LoadingState label="Loading operational signals" />
       </>
@@ -105,7 +105,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and agents.</p>
+          <p>Operational signals for voice sessions and flows.</p>
         </header>
         <ErrorState
           error={operationsQuery.error as ApiError}
@@ -118,13 +118,13 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
   }
 
   const op = operationsQuery.data;
-  const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
+  const flows = (flowsQuery.data ?? []).filter((a) => !a.archived);
   const providers = providersQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];
 
   // Readiness calculations
-  const readyAgentsCount = agents.filter((a) => a.readiness?.state === "ready").length;
-  const totalAgents = agents.length;
+  const readyFlowsCount = flows.filter((a) => a.readiness?.state === "ready").length;
+  const totalFlows = flows.length;
 
   const detectedProviders = providers.filter((p) => p.detected).length;
 
@@ -142,7 +142,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
     <>
       <header className="section-heading">
         <h1 tabIndex={-1}>Dashboard</h1>
-        <p>Operational signals for voice sessions and agents.</p>
+        <p>Operational signals for voice sessions and flows.</p>
       </header>
 
       <section className="state-line" role="status" aria-label="System health status">
@@ -187,12 +187,12 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
 
       <ul className="ledger" aria-label="Service readiness">
         <li className="ledger__row">
-          <span className="lamp" data-tone={readyAgentsCount > 0 ? "ok" : "idle"} aria-hidden="true" />
+          <span className="lamp" data-tone={readyFlowsCount > 0 ? "ok" : "idle"} aria-hidden="true" />
           <span className="ledger__name">Flows</span>
           <span className="ledger__value">
-            {readyAgentsCount} of {totalAgents} ready
+            {readyFlowsCount} of {totalFlows} ready
           </span>
-          {totalAgents === 0 && <span className="subtext">No flows created yet.</span>}
+          {totalFlows === 0 && <span className="subtext">No flows created yet.</span>}
           <Link to="/flows" className="ledger__link">
             View flows
           </Link>

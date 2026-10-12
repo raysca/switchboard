@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentDTO, ProviderStatus } from "../../api/client";
+import type { FlowDTO, ProviderStatus } from "../../api/client";
 import { catalogLines, credential, flowsUsing, hasService, missingEnv, serviceList, serviceState } from "./providerStats";
 
 const google: ProviderStatus = {
@@ -26,7 +26,7 @@ const xai: ProviderStatus = {
   },
 };
 
-const flow = (id: string, config: Record<string, unknown>, archived = false): AgentDTO => ({
+const flow = (id: string, config: Record<string, unknown>, archived = false): FlowDTO => ({
   id,
   name: id,
   description: "",
@@ -92,12 +92,12 @@ describe("catalogLines", () => {
 describe("flowsUsing", () => {
   const flat = flow("flat", { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } });
   const graph = flow("graph", {
-    entry: "a",
-    nodes: [
+    start: "a",
+    steps: [
       { id: "a", config: { stt: { provider: "google" }, llm: { provider: "google" }, tts: { provider: "google" } } },
       { id: "b", config: { llm: { provider: "xai" }, tts: { provider: "google" } } },
     ],
-    edges: [],
+    routes: [],
   });
   it("counts a flow once, whichever stage or step uses the provider", () => {
     expect(flowsUsing([flat, graph], "google").map((f) => f.id)).toEqual(["flat", "graph"]);
@@ -108,12 +108,12 @@ describe("flowsUsing", () => {
     expect(flowsUsing([f], "cartesia").map((x) => x.id)).toEqual(["fb"]);
   });
   it("survives a step that is not an object", () => {
-    expect(flowsUsing([flow("n", { nodes: [null, { config: { llm: { provider: "google" } } }] })], "google").map((x) => x.id)).toEqual(["n"]);
+    expect(flowsUsing([flow("n", { steps: [null, { config: { llm: { provider: "google" } } }] })], "google").map((x) => x.id)).toEqual(["n"]);
   });
   it("never counts an archived flow, a flow with no version, or a malformed config", () => {
     const gone = flow("gone", flat.current_version!.config, true);
-    const bare = { ...flow("bare", {}), current_version: undefined } as AgentDTO;
-    const odd = flow("odd", { nodes: "nope", llm: "google" });
+    const bare = { ...flow("bare", {}), current_version: undefined } as FlowDTO;
+    const odd = flow("odd", { steps: "nope", llm: "google" });
     expect(flowsUsing([gone, bare, odd], "google")).toEqual([]);
   });
 });

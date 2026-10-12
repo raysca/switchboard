@@ -3,11 +3,11 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
-import type { AgentDTO, ApiClient, SessionDTO } from "../../api/client";
+import type { FlowDTO, ApiClient, SessionDTO } from "../../api/client";
 import { ApiError } from "../../api/client";
 import { FlowsView } from "./FlowsView";
 
-const flow = (over: Partial<AgentDTO> = {}, config: Record<string, unknown> = {}): AgentDTO => ({
+const flow = (over: Partial<FlowDTO> = {}, config: Record<string, unknown> = {}): FlowDTO => ({
   id: "a1",
   name: "Front desk",
   description: "Answers the main line.",
@@ -19,11 +19,11 @@ const flow = (over: Partial<AgentDTO> = {}, config: Record<string, unknown> = {}
   updated_at: "",
   ...over,
 });
-const graph = { entry: "a", nodes: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }], edges: [{ id: "e1" }, { id: "e2" }, { id: "e3" }] };
+const graph = { start: "a", steps: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }], routes: [{ id: "e1" }, { id: "e2" }, { id: "e3" }] };
 const session = (over: Partial<SessionDTO>): SessionDTO => ({
   id: "s",
-  agent_id: "a1",
-  agent_version_id: "v2",
+  flow_id: "a1",
+  flow_version_id: "v2",
   config_hash: "h",
   started_at: "",
   status: "active",
@@ -38,7 +38,7 @@ function Where() {
 }
 function setup(client: Partial<ApiClient>, key: string | null = "k") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const full = { getAgents: vi.fn().mockResolvedValue([flow({}, graph)]), getSessions: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockResolvedValue([]), ...client } as unknown as ApiClient;
+  const full = { getFlows: vi.fn().mockResolvedValue([flow({}, graph)]), getSessions: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockResolvedValue([]), ...client } as unknown as ApiClient;
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/flows"]}>
@@ -60,8 +60,8 @@ describe("FlowsView", () => {
 
   it("lists flows with status, version, figures and live calls", async () => {
     setup({
-      getSessions: vi.fn().mockResolvedValue([session({ id: "1" }), session({ id: "2", agent_version_id: "v1" })]),
-      getAgents: vi.fn().mockResolvedValue([
+      getSessions: vi.fn().mockResolvedValue([session({ id: "1" }), session({ id: "2", flow_version_id: "v1" })]),
+      getFlows: vi.fn().mockResolvedValue([
         flow({}, graph),
         flow({ id: "a2", name: "Appointments", enabled: false, readiness: { state: "not_ready", reasons: ["no_provider"] } }),
       ]),
@@ -90,7 +90,7 @@ describe("FlowsView", () => {
 
   it("shows why a flow is not ready, and offers Test only to a ready one", async () => {
     setup({
-      getAgents: vi.fn().mockResolvedValue([
+      getFlows: vi.fn().mockResolvedValue([
         flow(),
         flow({ id: "a2", name: "Broken", readiness: { state: "not_ready", reasons: ["missing_configuration"] } }),
       ]),
@@ -104,21 +104,21 @@ describe("FlowsView", () => {
   });
 
   it("toggles Enabled by sending only enabled, never a config", async () => {
-    const updateAgent = vi.fn().mockResolvedValue(flow({ enabled: false }));
-    const { user } = setup({ updateAgent });
+    const updateFlow = vi.fn().mockResolvedValue(flow({ enabled: false }));
+    const { user } = setup({ updateFlow });
     await user.click(await screen.findByRole("checkbox", { name: "Front desk enabled" }));
-    expect(updateAgent).toHaveBeenCalledWith("a1", { enabled: false });
-    expect(Object.keys(updateAgent.mock.calls[0][1])).toEqual(["enabled"]);
+    expect(updateFlow).toHaveBeenCalledWith("a1", { enabled: false });
+    expect(Object.keys(updateFlow.mock.calls[0][1])).toEqual(["enabled"]);
   });
 
   it("shows a failed toggle instead of swallowing it", async () => {
-    const { user } = setup({ updateAgent: vi.fn().mockRejectedValue(new ApiError("nope", "conflict", 409, "r")) });
+    const { user } = setup({ updateFlow: vi.fn().mockRejectedValue(new ApiError("nope", "conflict", 409, "r")) });
     await user.click(await screen.findByRole("checkbox", { name: "Front desk enabled" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("nope");
   });
 
   it("filters by name", async () => {
-    const { user } = setup({ getAgents: vi.fn().mockResolvedValue([flow(), flow({ id: "a2", name: "Appointments" })]) });
+    const { user } = setup({ getFlows: vi.fn().mockResolvedValue([flow(), flow({ id: "a2", name: "Appointments" })]) });
     await screen.findByRole("link", { name: "Front desk" });
     await user.type(screen.getByLabelText("Filter flows"), "appoint");
     expect(screen.queryByRole("link", { name: "Front desk" })).toBeNull();
@@ -129,22 +129,22 @@ describe("FlowsView", () => {
   });
 
   it("copies a flow from its row and stays on the list", async () => {
-    const duplicateAgent = vi.fn().mockResolvedValue(flow({ id: "a9", name: "Front desk copy" }));
-    const { user } = setup({ duplicateAgent });
+    const duplicateFlow = vi.fn().mockResolvedValue(flow({ id: "a9", name: "Front desk copy" }));
+    const { user } = setup({ duplicateFlow });
     await user.click(await screen.findByRole("button", { name: "Duplicate Front desk" }));
-    expect(duplicateAgent).toHaveBeenCalledWith("a1", undefined);
+    expect(duplicateFlow).toHaveBeenCalledWith("a1", undefined);
     expect(screen.queryByTestId("where")).toBeNull();
   });
 
   it("archives only after confirmation, and a failure stays in the dialog", async () => {
-    const archiveAgent = vi.fn().mockRejectedValueOnce(new ApiError("busy", "conflict", 409, "r")).mockResolvedValue({ archived: true });
-    const { user } = setup({ archiveAgent });
+    const archiveFlow = vi.fn().mockRejectedValueOnce(new ApiError("busy", "conflict", 409, "r")).mockResolvedValue({ archived: true });
+    const { user } = setup({ archiveFlow });
     await user.click(await screen.findByRole("button", { name: "Archive Front desk" }));
-    expect(archiveAgent).not.toHaveBeenCalled();
+    expect(archiveFlow).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Archive flow" }));
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("busy");
     await user.click(screen.getByRole("button", { name: "Archive flow" }));
-    await waitFor(() => expect(archiveAgent).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(archiveFlow).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
@@ -157,18 +157,18 @@ describe("FlowsView", () => {
   });
 
   it("copies from the dialog and opens the copy", async () => {
-    const duplicateAgent = vi.fn().mockResolvedValue(flow({ id: "a9", name: "Night line" }));
-    const { user } = setup({ duplicateAgent });
+    const duplicateFlow = vi.fn().mockResolvedValue(flow({ id: "a9", name: "Night line" }));
+    const { user } = setup({ duplicateFlow });
     await user.click(await screen.findByRole("button", { name: "New flow" }));
     await user.click(screen.getByRole("radio", { name: /Copy an existing flow/ }));
     await user.type(screen.getByLabelText("Name"), "Night line");
     await user.click(screen.getByRole("button", { name: "Copy and open editor" }));
-    expect(duplicateAgent).toHaveBeenCalledWith("a1", { name: "Night line" });
+    expect(duplicateFlow).toHaveBeenCalledWith("a1", { name: "Night line" });
     expect(await screen.findByTestId("where")).toHaveTextContent("/flows/a9");
   });
 
   it("teaches the vocabulary when there are no flows yet", async () => {
-    setup({ getAgents: vi.fn().mockResolvedValue([]) });
+    setup({ getFlows: vi.fn().mockResolvedValue([]) });
     expect(await screen.findByRole("heading", { name: "No flows yet." })).toBeVisible();
     for (const term of ["Flow", "Steps", "Routes", "Flow settings"]) expect(screen.getByText(term, { selector: "dt" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Use guided setup" })).toHaveAttribute("href", "/onboarding");
@@ -179,39 +179,39 @@ describe("FlowsView", () => {
   it("hides archived flows, and says when the list was cut at the API's page size", async () => {
     const many = Array.from({ length: 100 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }));
     many[0] = flow({ id: "f0", name: "Gone", archived: true });
-    setup({ getAgents: vi.fn().mockResolvedValue(many) });
+    setup({ getFlows: vi.fn().mockResolvedValue(many) });
     expect(await screen.findByText("Showing the first 100 flows.")).toBeVisible();
     expect(screen.queryByRole("link", { name: "Gone" })).toBeNull();
   });
 
   it("shows a load failure with a retry", async () => {
-    setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    setup({ getFlows: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     expect(await screen.findByRole("alert")).toHaveTextContent("down");
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   });
 
   it("hands the copy to the editor's cache before opening it, so it never flashes as missing", async () => {
     const copy = flow({ id: "a9", name: "Night line" });
-    const { user, queryClient } = setup({ duplicateAgent: vi.fn().mockResolvedValue(copy) });
+    const { user, queryClient } = setup({ duplicateFlow: vi.fn().mockResolvedValue(copy) });
     await user.click(await screen.findByRole("button", { name: "New flow" }));
     await user.click(screen.getByRole("radio", { name: /Copy an existing flow/ }));
     await user.type(screen.getByLabelText("Name"), "Night line");
     await user.click(screen.getByRole("button", { name: "Copy and open editor" }));
     await screen.findByTestId("where");
-    expect(queryClient.getQueryData(["agents", "a9"])).toEqual(copy);
+    expect(queryClient.getQueryData(["flows", "a9"])).toEqual(copy);
   });
 
   it("keeps the list when a background refresh fails", async () => {
-    const getAgents = vi.fn().mockResolvedValueOnce([flow({}, graph)]).mockRejectedValue(new ApiError("down", "internal", 500, "r"));
-    const { user } = setup({ getAgents, updateAgent: vi.fn().mockResolvedValue(flow({ enabled: false })) });
+    const getFlows = vi.fn().mockResolvedValueOnce([flow({}, graph)]).mockRejectedValue(new ApiError("down", "internal", 500, "r"));
+    const { user } = setup({ getFlows, updateFlow: vi.fn().mockResolvedValue(flow({ enabled: false })) });
     await user.click(await screen.findByRole("checkbox", { name: "Front desk enabled" }));
-    await waitFor(() => expect(getAgents).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getFlows).toHaveBeenCalledTimes(2));
     expect(screen.getByRole("link", { name: "Front desk" })).toBeVisible();
     expect(screen.queryByText("Failed to load flows")).toBeNull();
   });
 
   it("does not repeat 'disabled' as a reason chip for a flow that is switched off", async () => {
-    setup({ getAgents: vi.fn().mockResolvedValue([flow({ enabled: false, readiness: { state: "not_ready", reasons: ["disabled"] } })]) });
+    setup({ getFlows: vi.fn().mockResolvedValue([flow({ enabled: false, readiness: { state: "not_ready", reasons: ["disabled"] } })]) });
     const row = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
     expect(within(row).getByText("Disabled")).toBeVisible();
     expect(within(row).queryByText("disabled")).toBeNull();
@@ -227,18 +227,18 @@ describe("FlowsView", () => {
 
   it("names the providers that are ready in the empty state", async () => {
     const p = (id: string, name: string, detected: boolean) => ({ id, display_name: name, capabilities: [], detected, env: [], services: {} });
-    setup({ getAgents: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockResolvedValue([p("google", "Google", true), p("xai", "xAI", false), p("cartesia", "Cartesia", true)]) });
+    setup({ getFlows: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockResolvedValue([p("google", "Google", true), p("xai", "xAI", false), p("cartesia", "Cartesia", true)]) });
     expect(await screen.findByText("Google and Cartesia are ready to use.")).toBeVisible();
   });
 
   it("says when no provider is set up, with a way to see them", async () => {
-    setup({ getAgents: vi.fn().mockResolvedValue([]) });
+    setup({ getFlows: vi.fn().mockResolvedValue([]) });
     expect(await screen.findByText(/No provider is set up yet\./)).toBeVisible();
     expect(screen.getByRole("link", { name: "See providers" })).toHaveAttribute("href", "/providers");
   });
 
   it("leaves the provider line out when providers cannot be loaded", async () => {
-    setup({ getAgents: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    setup({ getFlows: vi.fn().mockResolvedValue([]), getProviders: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     await screen.findByRole("heading", { name: "No flows yet." });
     expect(screen.queryByText(/ready to use|No provider is set up/)).toBeNull();
   });

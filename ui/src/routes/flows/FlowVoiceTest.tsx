@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router";
-import type { ApiClient, AgentDTO } from "../../api/client";
+import type { ApiClient, FlowDTO } from "../../api/client";
 import {
   VoiceClient,
   type VoiceClientState,
@@ -8,12 +8,12 @@ import {
 import type { BrowserAudioController } from "../../voice/audio";
 import { PipecatDebugPanel } from "../../components/debug/PipecatDebugPanel";
 import { ActionButton, Status } from "../../components/primitives";
-import { NO_CALL, type CallInfo } from "./graph/useCallView";
+import { NO_CALL, type CallInfo } from "./editor/useCallView";
 import { mmss } from "../sessions/callStats";
 import { useNow } from "../sessions/useNow";
 
-export interface AgentVoiceTestProps {
-  agent: AgentDTO;
+export interface FlowVoiceTestProps {
+  flow: FlowDTO;
   client: ApiClient;
   keyValue: string | null;
   wsBaseUrl?: string;
@@ -24,15 +24,15 @@ export interface AgentVoiceTestProps {
   activeStep?: string;
 }
 
-export function AgentVoiceTest({
-  agent,
+export function FlowVoiceTest({
+  flow,
   client,
   keyValue,
   wsBaseUrl,
   audioController,
   onCall,
   activeStep,
-}: AgentVoiceTestProps) {
+}: FlowVoiceTestProps) {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [textMessage, setTextMessage] = useState("");
   const [pushToTalk, setPushToTalk] = useState(false);
@@ -48,10 +48,10 @@ export function AgentVoiceTest({
   }
 
   // Mirrors the server: only these readiness states may take calls.
-  const callable = agent.readiness.state === "ready" || agent.readiness.state === "ready_with_tool_warning";
+  const callable = flow.readiness.state === "ready" || flow.readiness.state === "ready_with_tool_warning";
   const voiceClient = voiceClientRef.current;
   // A call keeps the version it started on: remember it, so a publish during the call neither
-  // changes the graph being shown nor passes for a test of the new version.
+  // changes the flow being shown nor passes for a test of the new version.
   const [callVersion, setCallVersion] = useState<{ number: number; config: unknown } | null>(null);
   const [state, setState] = useState<VoiceClientState>(() =>
     voiceClient.getState(),
@@ -78,12 +78,12 @@ export function AgentVoiceTest({
   if (inCall && startedAt.current === null) startedAt.current = Date.now();
   if (!inCall) startedAt.current = null;
   const clock = mmss(inCall && startedAt.current !== null ? (now - startedAt.current) / 1000 : 0);
-  for (const item of state.transcripts) if (item.speaker !== "user" && !stepOf.current.has(item.id)) stepOf.current.set(item.id, activeStep || agent.name);
+  for (const item of state.transcripts) if (item.speaker !== "user" && !stepOf.current.has(item.id)) stepOf.current.set(item.id, activeStep || flow.name);
   useEffect(() => {
     onCall?.({ sessionId: state.sessionId, userSpeaking: state.isUserSpeaking, botSpeaking: state.isBotSpeaking, live: inCall });
   }, [onCall, state.sessionId, state.isUserSpeaking, state.isBotSpeaking, inCall]);
   useEffect(() => () => onCall?.(NO_CALL), [onCall]);
-  const callIsStale = inCall && callVersion !== null && callVersion.number !== agent.current_version?.number;
+  const callIsStale = inCall && callVersion !== null && callVersion.number !== flow.current_version?.number;
 
   // Alt-tab while holding: pointerup never arrives, so release on window blur.
   useEffect(() => {
@@ -94,10 +94,10 @@ export function AgentVoiceTest({
   }, [state.isTalking, voiceClient]);
 
   const handleConnect = async () => {
-    setCallVersion({ number: agent.current_version?.number ?? 0, config: agent.current_version?.config });
+    setCallVersion({ number: flow.current_version?.number ?? 0, config: flow.current_version?.config });
     await voiceClient.connect({
-      agentId: agent.id,
-      principal: `agent-test-${agent.id}`,
+      flowId: flow.id,
+      principal: `flow-test-${flow.id}`,
       wsBaseUrl,
       pushToTalk,
     });
@@ -138,10 +138,10 @@ export function AgentVoiceTest({
       <div className="call-panel__top">
         <div className="call-panel__title">
           <span id="voice-test-heading">
-            Testing v{(inCall && callVersion ? callVersion.number : agent.current_version?.number) ?? 0}
+            Testing v{(inCall && callVersion ? callVersion.number : flow.current_version?.number) ?? 0}
           </span>
-          <code data-testid="agent-readiness" className="call-panel__ready">
-            {agent.readiness.state}
+          <code data-testid="flow-readiness" className="call-panel__ready">
+            {flow.readiness.state}
           </code>
           <span className="grow" />
           <span className="call-panel__clock" data-testid="call-clock">
@@ -218,7 +218,7 @@ export function AgentVoiceTest({
 
       {!callable && !isConnectedOrReady && (
         <div role="note" className="note">
-          <strong>Notice:</strong> This agent is marked as <code>{agent.readiness.state}</code> ({agent.readiness.reasons.join(", ") || "configuration incomplete"}). Fix these before starting a voice test; the server will not accept calls to this agent.
+          <strong>Notice:</strong> This flow is marked as <code>{flow.readiness.state}</code> ({flow.readiness.reasons.join(", ") || "configuration incomplete"}). Fix these before starting a voice test; the server will not accept calls to this flow.
         </div>
       )}
 
@@ -236,20 +236,20 @@ export function AgentVoiceTest({
 
       {callIsStale && (
         <p role="status" className="note">
-          This call is on v{callVersion?.number}. Disconnect and reconnect to test v{agent.current_version?.number}.
+          This call is on v{callVersion?.number}. Disconnect and reconnect to test v{flow.current_version?.number}.
         </p>
       )}
 
       <div className="transcript" tabIndex={0} aria-label="Conversation transcripts">
         {state.transcripts.length === 0 && !state.currentInterimTranscript && !state.currentBotStreamingText ? (
           <p className="transcript__empty">
-            {isConnectedOrReady ? "Listening… Speak to the agent to start the transcript." : "No voice session active. Click \"Start voice test\" to test audio."}
+            {isConnectedOrReady ? "Listening… Speak to start the transcript." : "No voice session active. Click \"Start voice test\" to test audio."}
           </p>
         ) : (
           <div className="transcript__lines">
             {state.transcripts.map((item) => (
-              <div key={item.id} data-testid={item.speaker === "user" ? "transcript-user" : "transcript-bot"} className={`line line--${item.speaker === "user" ? "caller" : "agent"}`}>
-                <div className="line__who">{item.speaker === "user" ? "You" : (stepOf.current.get(item.id) ?? agent.name)}</div>
+              <div key={item.id} data-testid={item.speaker === "user" ? "transcript-user" : "transcript-bot"} className={`line line--${item.speaker === "user" ? "caller" : "bot"}`}>
+                <div className="line__who">{item.speaker === "user" ? "You" : (stepOf.current.get(item.id) ?? flow.name)}</div>
                 <div>{item.text}</div>
               </div>
             ))}
@@ -260,8 +260,8 @@ export function AgentVoiceTest({
               </div>
             )}
             {state.currentBotStreamingText && (
-              <div className="line line--agent line--live" data-testid="bot-streaming-text">
-                <div className="line__who">{activeStep || agent.name}</div>
+              <div className="line line--bot line--live" data-testid="bot-streaming-text">
+                <div className="line__who">{activeStep || flow.name}</div>
                 <div>{state.currentBotStreamingText}</div>
               </div>
             )}
@@ -278,7 +278,7 @@ export function AgentVoiceTest({
           value={textMessage}
           onChange={(e) => setTextMessage(e.target.value)}
           disabled={!isConnectedOrReady}
-          placeholder={isConnectedOrReady ? "Type a message to the agent" : "Connect to send text"}
+          placeholder={isConnectedOrReady ? "Type a message" : "Connect to send text"}
         />
         <button type="submit" className="action-button-small" disabled={!isConnectedOrReady || !textMessage.trim()} data-testid="send-text-btn">
           Send text

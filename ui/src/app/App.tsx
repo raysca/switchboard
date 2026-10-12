@@ -20,8 +20,8 @@ import {
 import { getBrowserCapabilities } from "./capabilities";
 import { OnboardingView } from "../routes/onboarding/OnboardingView";
 import { ProvidersView } from "../routes/providers/ProvidersView";
-import { FlowsView } from "../routes/agents/FlowsView";
-import { FlowPage } from "../routes/agents/FlowPage";
+import { FlowsView } from "../routes/flows/FlowsView";
+import { FlowPage } from "../routes/flows/FlowPage";
 import { MCPView } from "../routes/mcp/MCPView";
 import { CallsView } from "../routes/sessions/CallsView";
 import { CallView } from "../routes/sessions/CallView";
@@ -43,8 +43,8 @@ function RouteFocus() {
 
 /** An old /agents/:id bookmark opens the same flow. */
 function LegacyAgentRedirect() {
-  const { agentId = "" } = useParams();
-  return <Navigate to={`/flows/${encodeURIComponent(agentId)}`} replace />;
+  const { flowId = "" } = useParams();
+  return <Navigate to={`/flows/${encodeURIComponent(flowId)}`} replace />;
 }
 
 export function App({ initialPath }: { initialPath?: string }) {
@@ -194,7 +194,7 @@ export function App({ initialPath }: { initialPath?: string }) {
                 <Route path="/flows/new" element={<FlowPage client={client} keyValue={keyValue} />} />
                 <Route path="/flows/:flowId" element={<FlowPage client={client} keyValue={keyValue} />} />
                 <Route path="/agents" element={<Navigate to="/flows" replace />} />
-                <Route path="/agents/:agentId" element={<LegacyAgentRedirect />} />
+                <Route path="/agents/:flowId" element={<LegacyAgentRedirect />} />
                 <Route
                   path="/mcp-servers"
                   element={<MCPView client={client} keyValue={keyValue} />}

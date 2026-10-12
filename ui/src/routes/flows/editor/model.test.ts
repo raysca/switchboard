@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  MAX_NODES,
+  MAX_STEPS,
   addDraftRoute,
-  addNode,
+  insertStep,
   emptyFlow,
   flowIssues,
-  fromAgentConfig,
+  fromFlowConfig,
   isUnreachable,
-  removeNode,
-  setEntry,
+  removeStep,
+  setStart,
   slug,
   stepIssues,
   toPayload,
@@ -27,15 +27,15 @@ const flat = {
 
 describe("unreachableSteps", () => {
   it("finds the steps no path from the start step leads to, including steps reached only from those", () => {
-    const g = fromAgentConfig({
-      entry: "a",
-      nodes: [
+    const g = fromFlowConfig({
+      start: "a",
+      steps: [
         { id: "a", name: "Reception", config: {} },
         { id: "b", name: "Billing", config: {} },
         { id: "c", name: "Support", config: {} },
         { id: "d", name: "Escalation", config: {} },
       ],
-      edges: [
+      routes: [
         { id: "e1", from: "a", to: "b", condition: "x" },
         { id: "e2", from: "d", to: "c", condition: "y" },
       ],
@@ -43,156 +43,156 @@ describe("unreachableSteps", () => {
     expect(unreachableSteps(g)).toEqual(["Support", "Escalation"]);
   });
   it("is empty when every step can be reached", () => {
-    const g = fromAgentConfig({ entry: "a", nodes: [{ id: "a", name: "A", config: {} }, { id: "b", name: "B", config: {} }], edges: [{ id: "e", from: "a", to: "b", condition: "x" }] });
+    const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "A", config: {} }, { id: "b", name: "B", config: {} }], routes: [{ id: "e", from: "a", to: "b", condition: "x" }] });
     expect(unreachableSteps(g)).toEqual([]);
   });
 });
 
 describe("graph model", () => {
-  it("reads a flat config as one entry node", () => {
-    const g = fromAgentConfig(flat);
-    expect(g.nodes).toHaveLength(1);
-    expect(g.entry).toBe(g.nodes[0].id);
-    expect(g.nodes[0].config).toEqual(flat);
+  it("reads a flat config as one start step", () => {
+    const g = fromFlowConfig(flat);
+    expect(g.steps).toHaveLength(1);
+    expect(g.start).toBe(g.steps[0].id);
+    expect(g.steps[0].config).toEqual(flat);
     expect(validate(g)).toEqual([]);
   });
 
-  it("round-trips a one-node draft back to the flat config", () => {
-    expect(toPayload(fromAgentConfig(flat))).toEqual(flat);
+  it("round-trips a one-step draft back to the flat config", () => {
+    expect(toPayload(fromFlowConfig(flat))).toEqual(flat);
   });
 
   it("reads a stored graph", () => {
     const stored = {
-      entry: "front",
-      nodes: [
+      start: "front",
+      steps: [
         { id: "front", name: "Front", config: flat, position: { x: 1, y: 2 } },
         { id: "sales", name: "Sales", config: { llm: flat.llm, tts: flat.tts }, tools: ["srv/lookup"] },
       ],
-      edges: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
-      handoff_cue: { name: "chime", after_ms: 200 },
+      routes: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
+      route_cue: { name: "chime", after_ms: 200 },
     };
-    const g = fromAgentConfig(stored);
-    expect(g.nodes[0].position).toEqual({ x: 1, y: 2 });
-    expect(g.nodes[1].tools).toEqual(["srv/lookup"]);
-    expect(g.handoff_cue).toEqual({ name: "chime", after_ms: 200 });
-    expect(toPayload(g)).toMatchObject({ entry: "front", edges: stored.edges, handoff_cue: stored.handoff_cue });
+    const g = fromFlowConfig(stored);
+    expect(g.steps[0].position).toEqual({ x: 1, y: 2 });
+    expect(g.steps[1].tools).toEqual(["srv/lookup"]);
+    expect(g.route_cue).toEqual({ name: "chime", after_ms: 200 });
+    expect(toPayload(g)).toMatchObject({ start: "front", routes: stored.routes, route_cue: stored.route_cue });
   });
 
   it("addNode copies the entry's llm and tts and stops at the maximum", () => {
-    let g = fromAgentConfig(flat);
-    g = addNode(g, "Sales");
-    expect(g.nodes[1].name).toBe("Sales");
-    expect((g.nodes[1].config.llm as { provider: string }).provider).toBe("google");
-    expect((g.nodes[1].config.llm as { system_prompt?: string }).system_prompt).toBeUndefined();
-    expect(g.nodes[1].config.stt).toBeUndefined();
-    for (let i = 0; i < MAX_NODES + 2; i++) g = addNode(g, `Node ${i}`);
-    expect(g.nodes).toHaveLength(MAX_NODES);
+    let g = fromFlowConfig(flat);
+    g = insertStep(g, "Sales");
+    expect(g.steps[1].name).toBe("Sales");
+    expect((g.steps[1].config.llm as { provider: string }).provider).toBe("google");
+    expect((g.steps[1].config.llm as { system_prompt?: string }).system_prompt).toBeUndefined();
+    expect(g.steps[1].config.stt).toBeUndefined();
+    for (let i = 0; i < MAX_STEPS + 2; i++) g = insertStep(g, `Node ${i}`);
+    expect(g.steps).toHaveLength(MAX_STEPS);
   });
 
-  it("removeNode drops incident edges and refuses the entry", () => {
-    let g = addNode(fromAgentConfig(flat), "Sales");
-    const sales = g.nodes[1].id;
-    g = addDraftRoute(g, g.entry, sales);
-    expect(g.edges).toHaveLength(1);
-    expect(removeNode(g, g.entry)).toBe(g);
-    const after = removeNode(g, sales);
-    expect(after.nodes).toHaveLength(1);
-    expect(after.edges).toHaveLength(0);
+  it("removeStep drops incident routes and refuses the start step", () => {
+    let g = insertStep(fromFlowConfig(flat), "Sales");
+    const sales = g.steps[1].id;
+    g = addDraftRoute(g, g.start, sales);
+    expect(g.routes).toHaveLength(1);
+    expect(removeStep(g, g.start)).toBe(g);
+    const after = removeStep(g, sales);
+    expect(after.steps).toHaveLength(1);
+    expect(after.routes).toHaveLength(0);
   });
 
   it("validate reports duplicate slugs and missing stage fields", () => {
-    let g = addNode(addNode(fromAgentConfig(flat), "Sales Team"), "sales team");
+    let g = insertStep(insertStep(fromFlowConfig(flat), "Sales Team"), "sales team");
     expect(validate(g).join(" ")).toMatch(/unique/);
-    g = fromAgentConfig({ ...flat, llm: { provider: "google", model: "" } });
+    g = fromFlowConfig({ ...flat, llm: { provider: "google", model: "" } });
     expect(validate(g).join(" ")).toMatch(/LLM model/);
   });
 
   it("setEntry moves the call-level settings to the new entry", () => {
-    let g = addNode(fromAgentConfig(flat), "Sales");
-    const sales = g.nodes[1].id;
-    g = setEntry(g, sales);
-    expect(g.entry).toBe(sales);
-    expect(g.nodes[1].config.stt).toEqual(flat.stt);
-    expect(g.nodes[1].config.vad_stop_ms).toBe(400);
-    expect(g.nodes[0].config.stt).toBeUndefined();
-    expect(g.nodes[0].config.vad_stop_ms).toBeUndefined();
+    let g = insertStep(fromFlowConfig(flat), "Sales");
+    const sales = g.steps[1].id;
+    g = setStart(g, sales);
+    expect(g.start).toBe(sales);
+    expect(g.steps[1].config.stt).toEqual(flat.stt);
+    expect(g.steps[1].config.vad_stop_ms).toBe(400);
+    expect(g.steps[0].config.stt).toBeUndefined();
+    expect(g.steps[0].config.vad_stop_ms).toBeUndefined();
     expect(validate(g)).toEqual([]);
   });
 
-  it("toPayload keeps call-level settings off non-entry nodes", () => {
-    let g = addNode(fromAgentConfig(flat), "Sales");
-    g = { ...g, nodes: g.nodes.map((n, i) => (i === 1 ? { ...n, config: { ...n.config, stt: flat.stt, vad_stop_ms: 300 } } : n)) };
-    const payload = toPayload(g) as { nodes: { config: Record<string, unknown> }[] };
-    expect(payload.nodes[1].config.stt).toBeUndefined();
-    expect(payload.nodes[1].config.vad_stop_ms).toBeUndefined();
+  it("toPayload keeps call-level settings off non-start steps", () => {
+    let g = insertStep(fromFlowConfig(flat), "Sales");
+    g = { ...g, steps: g.steps.map((n, i) => (i === 1 ? { ...n, config: { ...n.config, stt: flat.stt, vad_stop_ms: 300 } } : n)) };
+    const payload = toPayload(g) as { steps: { config: Record<string, unknown> }[] };
+    expect(payload.steps[1].config.stt).toBeUndefined();
+    expect(payload.steps[1].config.vad_stop_ms).toBeUndefined();
   });
 
   it("needs only providers and a model, and never emits credential_id", () => {
-    const g = addNode(fromAgentConfig(flat), "Sales");
+    const g = insertStep(fromFlowConfig(flat), "Sales");
     expect(validate(g)).toEqual([]);
     expect(JSON.stringify(toPayload(g))).not.toContain("credential");
-    expect(validate(fromAgentConfig({ ...flat, stt: {} })).join(" ")).toMatch(/STT provider/);
+    expect(validate(fromFlowConfig({ ...flat, stt: {} })).join(" ")).toMatch(/STT provider/);
   });
 
   it("slug matches the server's tool-name rule", () => {
     expect(slug("Sales Team!")).toBe("sales_team");
   });
 
-  it("seeds a flat agent's entry node with the agent's selected MCP tools", () => {
-    const g = fromAgentConfig(flat, ["srv/lookup"]);
-    expect(g.nodes[0].tools).toEqual(["srv/lookup"]);
-    // a one-node agent still publishes as the flat config: it exposes every selected tool anyway
+  it("seeds a flat flow's start step with the flow's selected MCP tools", () => {
+    const g = fromFlowConfig(flat, ["srv/lookup"]);
+    expect(g.steps[0].tools).toEqual(["srv/lookup"]);
+    // a one-step flow still publishes as the flat config: it exposes every selected tool anyway
     expect(toPayload(g)).toEqual(flat);
-    const two = addNode(g, "Sales");
-    const payload = toPayload(two) as { nodes: { tools?: string[] }[] };
-    expect(payload.nodes[0].tools).toEqual(["srv/lookup"]);
-    expect(payload.nodes[1].tools).toBeUndefined();
+    const two = insertStep(g, "Sales");
+    const payload = toPayload(two) as { steps: { tools?: string[] }[] };
+    expect(payload.steps[0].tools).toEqual(["srv/lookup"]);
+    expect(payload.steps[1].tools).toBeUndefined();
   });
 
-  it("validate rejects a handoff sound name the server would reject", () => {
-    const base = addNode(fromAgentConfig(flat), "Sales");
-    expect(validate({ ...base, handoff_cue: { name: "Bad Name" } }).join(" ")).toMatch(/sound name/);
-    expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 20000 } }).join(" ")).toMatch(/after/);
-    expect(validate({ ...base, handoff_cue: { name: "chime", after_ms: 300 } })).toEqual([]);
+  it("validate rejects a route sound name the server would reject", () => {
+    const base = insertStep(fromFlowConfig(flat), "Sales");
+    expect(validate({ ...base, route_cue: { name: "Bad Name" } }).join(" ")).toMatch(/sound name/);
+    expect(validate({ ...base, route_cue: { name: "chime", after_ms: 20000 } }).join(" ")).toMatch(/after/);
+    expect(validate({ ...base, route_cue: { name: "chime", after_ms: 300 } })).toEqual([]);
   });
 });
 
 describe("flow authoring", () => {
   const ready = { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "v" } };
   const two = () =>
-    fromAgentConfig({
-      entry: "a",
-      nodes: [
+    fromFlowConfig({
+      start: "a",
+      steps: [
         { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
         { id: "b", name: "Billing", config: ready },
       ],
-      edges: [],
+      routes: [],
     });
 
   it("starts a blank flow with no steps, and the first step added becomes the start step", () => {
-    const g = addNode(emptyFlow(), "New step");
-    expect(g.nodes).toHaveLength(1);
-    expect(g.entry).toBe(g.nodes[0].id);
-    expect(g.nodes[0].config).toEqual({});
+    const g = insertStep(emptyFlow(), "New step");
+    expect(g.steps).toHaveLength(1);
+    expect(g.start).toBe(g.steps[0].id);
+    expect(g.steps[0].config).toEqual({});
   });
 
   it("names new steps uniquely", () => {
-    const g = addNode(addNode(emptyFlow(), "New step"), "New step 2");
+    const g = insertStep(insertStep(emptyFlow(), "New step"), "New step 2");
     expect(uniqueName(emptyFlow(), "New step")).toBe("New step");
     expect(uniqueName(g, "New step")).toBe("New step 3");
   });
 
   it("adds a draft route with an empty condition and refuses self, duplicate and unknown routes", () => {
     const g = addDraftRoute(two(), "a", "b");
-    expect(g.edges).toEqual([expect.objectContaining({ from: "a", to: "b", condition: "" })]);
+    expect(g.routes).toEqual([expect.objectContaining({ from: "a", to: "b", condition: "" })]);
     expect(addDraftRoute(g, "a", "b")).toBe(g);
     expect(addDraftRoute(g, "a", "a")).toBe(g);
     expect(addDraftRoute(g, "a", "zzz")).toBe(g);
   });
 
   it("reports what a step still needs, by the tab that fixes it", () => {
-    const blank = addNode(emptyFlow(), "New step");
-    expect(stepIssues(blank, blank.entry)).toEqual([
+    const blank = insertStep(emptyFlow(), "New step");
+    expect(stepIssues(blank, blank.start)).toEqual([
       { tab: "basics", message: "Choose a model." },
       { tab: "basics", message: "Choose a voice." },
     ]);
@@ -202,17 +202,17 @@ describe("flow authoring", () => {
   });
 
   it("flags duplicate and empty step names on the basics tab", () => {
-    const g = { ...two(), nodes: two().nodes.map((n) => ({ ...n, name: n.id === "b" ? "reception" : n.name })) };
+    const g = { ...two(), steps: two().steps.map((n) => ({ ...n, name: n.id === "b" ? "reception" : n.name })) };
     expect(stepIssues(g, "b")).toContainEqual({ tab: "basics", message: "Another step has this name." });
-    const unnamed = { ...two(), nodes: two().nodes.map((n) => ({ ...n, name: n.id === "b" ? "  " : n.name })) };
+    const unnamed = { ...two(), steps: two().steps.map((n) => ({ ...n, name: n.id === "b" ? "  " : n.name })) };
     expect(stepIssues(unnamed, "b")).toContainEqual({ tab: "basics", message: "Give the step a name." });
   });
 
   it("reports flow-level problems: speech-to-text and recording disclosure", () => {
-    const noStt = addNode(emptyFlow(), "New step");
+    const noStt = insertStep(emptyFlow(), "New step");
     expect(flowIssues(noStt)).toEqual(["Choose speech-to-text in Flow settings."]);
     const g = two();
-    const rec = { ...g, nodes: g.nodes.map((n) => (n.id === "a" ? { ...n, config: { ...n.config, recording: { enabled: true, disclosure_confirmed: false } } } : n)) };
+    const rec = { ...g, steps: g.steps.map((n) => (n.id === "a" ? { ...n, config: { ...n.config, recording: { enabled: true, disclosure_confirmed: false } } } : n)) };
     expect(flowIssues(rec)).toEqual(["Confirm that callers are told the call is recorded."]);
     expect(flowIssues(g)).toEqual([]);
     expect(flowIssues(emptyFlow())).toEqual([]);
@@ -232,13 +232,13 @@ describe("flow authoring", () => {
 describe("server limits", () => {
   it("counts a route condition in bytes, as the server does", () => {
     const ready = { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "v" } };
-    const g = fromAgentConfig({
-      entry: "a",
-      nodes: [
+    const g = fromFlowConfig({
+      start: "a",
+      steps: [
         { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
         { id: "b", name: "Billing", config: ready },
       ],
-      edges: [{ id: "e1", from: "a", to: "b", condition: "é".repeat(300) }],
+      routes: [{ id: "e1", from: "a", to: "b", condition: "é".repeat(300) }],
     });
     expect("é".repeat(300).length).toBeLessThan(512);
     expect(validate(g)).toContain("The route from Reception to Billing has a condition longer than 512 bytes.");
@@ -248,19 +248,19 @@ describe("server limits", () => {
 describe("what the server will accept", () => {
   const ready = { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "v" } };
   const one = (start: Record<string, unknown> = {}, step: Record<string, unknown> = {}) =>
-    fromAgentConfig({
-      entry: "a",
-      nodes: [
+    fromFlowConfig({
+      start: "a",
+      steps: [
         { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready, ...start } },
         { id: "b", name: "Billing", config: { ...ready, ...step } },
       ],
-      edges: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
+      routes: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
     });
 
   it("keeps a named single step as a graph so its name survives publishing", () => {
-    const g = addNode(emptyFlow(), "Reception");
-    const payload = toPayload(g) as { nodes: { name: string }[] };
-    expect(payload.nodes.map((n) => n.name)).toEqual(["Reception"]);
+    const g = insertStep(emptyFlow(), "Reception");
+    const payload = toPayload(g) as { steps: { name: string }[] };
+    expect(payload.steps.map((n) => n.name)).toEqual(["Reception"]);
   });
 
   it("flags turn-taking and memory values outside the server's ranges", () => {

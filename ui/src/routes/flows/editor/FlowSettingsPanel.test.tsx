@@ -4,22 +4,22 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { FlowSettingsPanel } from "./FlowSettingsPanel";
-import { emptyFlow, fromAgentConfig, type GraphDraft } from "./model";
+import { emptyFlow, fromFlowConfig, type FlowDraft } from "./model";
 
 const svc = { available: true, custom: true, models: [{ id: "nova-3", label: "Nova 3", default: true }], languages: [{ id: "en", label: "English", default: true }] };
 const providers: ProviderStatus[] = [
   { id: "deepgram", display_name: "Deepgram", capabilities: ["stt"], detected: true, env: [], services: { stt: svc } },
 ];
-const two = fromAgentConfig({
-  entry: "a",
-  nodes: [
+const two = fromFlowConfig({
+  start: "a",
+  steps: [
     { id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" } } },
     { id: "b", name: "Billing", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" } } },
   ],
-  edges: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
+  routes: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
 });
 
-function Harness({ initial = two, onChange = vi.fn(), onClose = vi.fn() }: { initial?: GraphDraft; onChange?: (g: GraphDraft) => void; onClose?: () => void }) {
+function Harness({ initial = two, onChange = vi.fn(), onClose = vi.fn() }: { initial?: FlowDraft; onChange?: (g: FlowDraft) => void; onClose?: () => void }) {
   const [g, setG] = useState(initial);
   const [name, setName] = useState("Front desk");
   return (
@@ -41,8 +41,8 @@ function Harness({ initial = two, onChange = vi.fn(), onClose = vi.fn() }: { ini
   );
 }
 const startCfg = (fn: ReturnType<typeof vi.fn>) => {
-  const g = fn.mock.calls.at(-1)![0] as GraphDraft;
-  return g.nodes.find((n) => n.id === g.entry)!.config;
+  const g = fn.mock.calls.at(-1)![0] as FlowDraft;
+  return g.steps.find((n) => n.id === g.start)!.config;
 };
 
 describe("FlowSettingsPanel", () => {
@@ -86,7 +86,7 @@ describe("FlowSettingsPanel", () => {
     render(<Harness onChange={onChange} />);
     await user.type(screen.getByLabelText("Sound name"), "chime");
     await user.type(screen.getByLabelText("Start after (ms)"), "50");
-    expect((onChange.mock.calls.at(-1)![0] as GraphDraft).handoff_cue).toEqual({ name: "chime", after_ms: 50 });
+    expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toEqual({ name: "chime", after_ms: 50 });
   });
 
   it("asks for a step first on an empty flow, and renames the flow", async () => {

@@ -4,14 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactFlowProvider } from "@xyflow/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import type { AgentDTO, ApiClient, ProviderStatus } from "../../api/client";
+import type { FlowDTO, ApiClient, ProviderStatus } from "../../api/client";
 import { ApiError } from "../../api/client";
 import { FlowPage } from "./FlowPage";
 
 const svc = { available: true, custom: true, models: [{ id: "gemini", label: "Gemini", default: true }], voices: [{ id: "aoede", label: "Aoede", default: true }], languages: [{ id: "en", label: "English", default: true }] };
 const providers: ProviderStatus[] = [{ id: "google", display_name: "Google", capabilities: ["llm", "stt", "tts"], detected: true, env: [], services: { stt: svc, llm: svc, tts: svc } }];
 const flat = { stt: { provider: "google" }, llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" } };
-const flow = (over: Partial<AgentDTO> = {}): AgentDTO => ({
+const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
   id: "a1",
   name: "Front desk",
   description: "",
@@ -26,7 +26,7 @@ const flow = (over: Partial<AgentDTO> = {}): AgentDTO => ({
 
 function setup(client: Partial<ApiClient>, path: string, key: string | null = "k") {
   const full = {
-    getAgent: vi.fn(async (id: string) => {
+    getFlow: vi.fn(async (id: string) => {
       if (id === "a1") return flow();
       throw new ApiError("agent not found", "not_found", 404, "r");
     }),
@@ -79,7 +79,7 @@ describe("FlowPage", () => {
   });
 
   it("treats an archived flow as not found", async () => {
-    setup({ getAgent: vi.fn().mockResolvedValue(flow({ archived: true })) }, "/flows/a1");
+    setup({ getFlow: vi.fn().mockResolvedValue(flow({ archived: true })) }, "/flows/a1");
     expect(await screen.findByText("That flow was not found.")).toBeVisible();
   });
 
@@ -90,14 +90,14 @@ describe("FlowPage", () => {
 
   it("publishes an edit, stays in the editor, and confirms the version with calls still on the old one", async () => {
     const updated = flow({ current_version: { id: "v2", number: 2, schema_version: 1, config: flat, config_hash: "h2", created_at: "", mcp_tools: [] } });
-    const updateAgent = vi.fn().mockResolvedValue(updated);
+    const updateFlow = vi.fn().mockResolvedValue(updated);
     const { user } = setup(
       {
-        updateAgent,
+        updateFlow,
         // After publishing, the server's list shows the new version, as a real refetch would.
-        getAgent: vi.fn().mockResolvedValueOnce(flow()).mockResolvedValue(updated),
+        getFlow: vi.fn().mockResolvedValueOnce(flow()).mockResolvedValue(updated),
         getSessions: vi.fn().mockResolvedValue([
-          { id: "s1", agent_id: "a1", agent_version_id: "v1", config_hash: "h1", started_at: "", status: "active", turn_count: 0, safe_summary: "" },
+          { id: "s1", flow_id: "a1", flow_version_id: "v1", config_hash: "h1", started_at: "", status: "active", turn_count: 0, safe_summary: "" },
         ]),
       },
       "/flows/a1",
@@ -108,7 +108,7 @@ describe("FlowPage", () => {
     await user.type(screen.getByLabelText("Flow name"), " line");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v2" }));
-    expect(updateAgent).toHaveBeenCalledWith("a1", expect.objectContaining({ name: "Front desk line" }));
+    expect(updateFlow).toHaveBeenCalledWith("a1", expect.objectContaining({ name: "Front desk line" }));
     const banner = await screen.findByRole("status", { name: "Publish confirmation" });
     expect(banner).toHaveTextContent("Published v2.");
     await waitFor(() => expect(banner).toHaveTextContent("1 call is finishing on an earlier version"));
@@ -119,10 +119,10 @@ describe("FlowPage", () => {
 
   it("creates a new flow on first publish and moves to its own address without losing the editor", async () => {
     const created = flow({ id: "n1", name: "After hours" });
-    const createAgent = vi.fn().mockResolvedValue(created);
+    const createFlow = vi.fn().mockResolvedValue(created);
     // The refetch after publishing never answers: the page must already know the new flow.
-    const getAgent = vi.fn().mockImplementation(() => new Promise(() => {}));
-    const { user } = setup({ createAgent, getAgent }, "/flows/new?name=After%20hours");
+    const getFlow = vi.fn().mockImplementation(() => new Promise(() => {}));
+    const { user } = setup({ createFlow, getFlow }, "/flows/new?name=After%20hours");
     await user.click(await screen.findByRole("button", { name: "Add first step" }));
     await user.selectOptions(screen.getByLabelText("LLM provider"), "google");
     await user.selectOptions(screen.getByLabelText("TTS provider"), "google");
@@ -130,14 +130,14 @@ describe("FlowPage", () => {
     await user.selectOptions(screen.getByLabelText("STT provider"), "google");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v1" }));
-    await waitFor(() => expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ name: "After hours" })));
+    await waitFor(() => expect(createFlow).toHaveBeenCalledWith(expect.objectContaining({ name: "After hours" })));
     expect(await screen.findByRole("status", { name: "Publish confirmation" })).toHaveTextContent("Published v1.");
     expect(screen.queryByText("That flow was not found.")).toBeNull();
     expect(screen.getByRole("heading", { name: "After hours", level: 1 })).toBeVisible();
   });
 
   it("shows a failed publish with a way to dismiss it", async () => {
-    const { user } = setup({ updateAgent: vi.fn().mockRejectedValue(new ApiError("version conflict", "version_conflict", 409, "r")) }, "/flows/a1");
+    const { user } = setup({ updateFlow: vi.fn().mockRejectedValue(new ApiError("version conflict", "version_conflict", 409, "r")) }, "/flows/a1");
     await screen.findByRole("heading", { name: "Front desk", level: 1 });
     await user.click(screen.getByRole("button", { name: "Flow settings" }));
     await user.type(screen.getByLabelText("Flow name"), "!");
@@ -153,35 +153,35 @@ describe("FlowPage", () => {
   });
 
   it("opens a flow the 100-flow list would not contain, by asking for that flow", async () => {
-    const getAgent = vi.fn().mockResolvedValue(flow({ id: "far", name: "Far down" }));
-    setup({ getAgent, getAgents: vi.fn().mockResolvedValue([]) }, "/flows/far");
+    const getFlow = vi.fn().mockResolvedValue(flow({ id: "far", name: "Far down" }));
+    setup({ getFlow, getFlows: vi.fn().mockResolvedValue([]) }, "/flows/far");
     expect(await screen.findByRole("heading", { name: "Far down", level: 1 })).toBeVisible();
-    expect(getAgent).toHaveBeenCalledWith("far");
+    expect(getFlow).toHaveBeenCalledWith("far");
   });
 
   it("says not found only when the server says so; any other failure is a load error", async () => {
-    setup({ getAgent: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) }, "/flows/a1");
+    setup({ getFlow: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) }, "/flows/a1");
     expect(await screen.findByRole("alert")).toHaveTextContent("down");
     expect(screen.queryByText("That flow was not found.")).toBeNull();
   });
 
   it("keeps the editor, and the unsaved edit, when a background refresh fails", async () => {
     const updated = flow({ current_version: { id: "v2", number: 2, schema_version: 1, config: flat, config_hash: "h2", created_at: "", mcp_tools: [] } });
-    const getAgent = vi.fn().mockResolvedValueOnce(flow()).mockRejectedValue(new ApiError("down", "internal", 500, "r"));
-    const { user } = setup({ getAgent, updateAgent: vi.fn().mockResolvedValue(updated) }, "/flows/a1");
+    const getFlow = vi.fn().mockResolvedValueOnce(flow()).mockRejectedValue(new ApiError("down", "internal", 500, "r"));
+    const { user } = setup({ getFlow, updateFlow: vi.fn().mockResolvedValue(updated) }, "/flows/a1");
     await screen.findByRole("heading", { name: "Front desk", level: 1 });
     await user.click(screen.getByRole("button", { name: "Flow settings" }));
     await user.type(screen.getByLabelText("Flow name"), " line");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v2" }));
     await screen.findByRole("status", { name: "Publish confirmation" });
-    await waitFor(() => expect(getAgent).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getFlow).toHaveBeenCalledTimes(2));
     expect(screen.queryByText("Failed to load the flow")).toBeNull();
     expect(screen.getByRole("heading", { level: 1 })).toBeVisible();
   });
 
   it("counts, in the Publish dialog, only the calls on the current version", async () => {
-    const session = (id: string, version: string) => ({ id, agent_id: "a1", agent_version_id: version, config_hash: "h", started_at: "", status: "active", turn_count: 0, safe_summary: "" });
+    const session = (id: string, version: string) => ({ id, flow_id: "a1", flow_version_id: version, config_hash: "h", started_at: "", status: "active", turn_count: 0, safe_summary: "" });
     const getSessions = vi.fn().mockResolvedValue([session("1", "v1"), session("2", "v1"), session("3", "old"), session("4", "old"), session("5", "old")]);
     const { user } = setup({ getSessions }, "/flows/a1");
     await screen.findByRole("heading", { name: "Front desk", level: 1 });

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { AgentDTO, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
+import type { FlowDTO, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
 import { clock, failedRoutes, interruptedCount, mmss, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 
-const flow = (config: Record<string, unknown> = {}): AgentDTO => ({
+const flow = (config: Record<string, unknown> = {}): FlowDTO => ({
   id: "a1",
   name: "Front desk",
   description: "",
@@ -13,11 +13,11 @@ const flow = (config: Record<string, unknown> = {}): AgentDTO => ({
   created_at: "",
   updated_at: "",
 });
-const graph = { entry: "r", nodes: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], edges: [] };
+const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], routes: [] };
 const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   id: "s1",
-  agent_id: "a1",
-  agent_version_id: "v7",
+  flow_id: "a1",
+  flow_version_id: "v7",
   config_hash: "abcdef123456",
   started_at: "2026-10-12T14:00:00Z",
   ended_at: "2026-10-12T14:04:12Z",
@@ -38,7 +38,7 @@ const turn = (n: number, started: string, ended: string, said: string, reply: st
   assistant_text: reply,
   interrupted,
 });
-const toBilling = span("handoff.active", "2026-10-12T14:00:41Z", { from_node: "r", to_node: "b" });
+const toBilling = span("route.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "b" });
 
 describe("outcome", () => {
   it("says Live only for an active call, and shows an unknown status as it is", () => {
@@ -52,7 +52,7 @@ describe("outcome", () => {
 describe("versionLabel", () => {
   it("names the version only when it is the flow's current one", () => {
     expect(versionLabel(session(), flow())).toBe("v7");
-    expect(versionLabel(session({ agent_version_id: "v6" }), flow())).toBe("earlier version");
+    expect(versionLabel(session({ flow_version_id: "v6" }), flow())).toBe("earlier version");
     expect(versionLabel(session(), undefined)).toBe("earlier version");
   });
 });
@@ -74,7 +74,7 @@ describe("steps", () => {
   it("reads names and the start step from the current version", () => {
     const st = steps(flow(graph));
     expect(st.names.get("b")).toBe("Billing");
-    expect(st.entry).toBe("r");
+    expect(st.start).toBe("r");
   });
   it("is empty for a flat flow or an unknown one", () => {
     expect(steps(flow({ llm: {} })).names.size).toBe(0);
@@ -92,14 +92,14 @@ describe("path", () => {
     expect(path(null, steps(undefined), "Front desk")).toEqual(["Front desk"]);
   });
   it("shows a step id that the current version no longer has, never blank", () => {
-    const gone = span("handoff.active", "2026-10-12T14:00:41Z", { from_node: "r", to_node: "zz-deleted" });
+    const gone = span("route.active", "2026-10-12T14:00:41Z", { from_step: "r", to_step: "zz-deleted" });
     expect(path(traces(gone), st, "Front desk")).toEqual(["Reception", "zz-deleted"]);
   });
 });
 
 describe("failedRoutes", () => {
   it("returns the step ids of routes that failed", () => {
-    const failed = span("handoff.failed", "2026-10-12T14:00:30Z", { from_node: "r", to_node: "b" });
+    const failed = span("route.failed", "2026-10-12T14:00:30Z", { from_step: "r", to_step: "b" });
     expect(failedRoutes(traces(failed, toBilling))).toEqual([{ from: "r", to: "b" }]);
     expect(failedRoutes(null)).toEqual([]);
   });
@@ -136,7 +136,7 @@ describe("transcript", () => {
   });
 
   it("keeps a route that happened after the last turn", () => {
-    const late = span("handoff.active", "2026-10-12T14:03:00Z", { from_node: "b", to_node: "r" });
+    const late = span("route.active", "2026-10-12T14:03:00Z", { from_step: "b", to_step: "r" });
     const lines = transcript(session(), turns, traces(toBilling, late), st, "Front desk");
     expect(lines.at(-1)).toEqual({ kind: "route", at: "03:00", from: "Billing", to: "Reception" });
   });
@@ -171,9 +171,9 @@ describe("transcript: words the system put in the caller's mouth", () => {
 describe("stepsFor", () => {
   it("does not claim the current start step for a call on an earlier version, but keeps the names", () => {
     const f = flow(graph);
-    expect(stepsFor(session(), f).entry).toBe("r");
-    const old = stepsFor(session({ agent_version_id: "v6" }), f);
-    expect(old.entry).toBeUndefined();
+    expect(stepsFor(session(), f).start).toBe("r");
+    const old = stepsFor(session({ flow_version_id: "v6" }), f);
+    expect(old.start).toBeUndefined();
     expect(old.names.get("b")).toBe("Billing");
     expect(path(traces(), old, "Front desk")).toEqual(["Front desk"]);
   });

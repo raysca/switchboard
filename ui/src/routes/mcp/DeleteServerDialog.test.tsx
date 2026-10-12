@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import type { AgentDTO } from "../../api/client";
+import type { FlowDTO } from "../../api/client";
 import { DeleteServerDialog } from "./DeleteServerDialog";
 
-const flow = (id: string, name: string): AgentDTO => ({
+const flow = (id: string, name: string): FlowDTO => ({
   id,
   name,
   description: "",
@@ -17,7 +17,7 @@ const flow = (id: string, name: string): AgentDTO => ({
   updated_at: "",
 });
 
-function setup(over: Partial<{ inUse: boolean; flows: AgentDTO[] | undefined; pending: boolean; error: string | null }> = {}) {
+function setup(over: Partial<{ inUse: boolean; flows: FlowDTO[] | undefined; pending: boolean; error: string | null }> = {}) {
   const fns = { onDelete: vi.fn(), onDetach: vi.fn(), onCancel: vi.fn() };
   render(
     <MemoryRouter>

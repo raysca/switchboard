@@ -29,7 +29,7 @@ describe("VoiceClient connect cancelled by disconnect", () => {
 
   it("does not open the mic or socket when disconnected while fetching the token", async () => {
     const { client, token, audio, sockets } = setup();
-    const done = client.connect({ agentId: "a1" });
+    const done = client.connect({ flowId: "a1" });
     await client.disconnect();
     token.resolve({ token: "x.e30.y", expires_at: "", scope: "" });
     await done;
@@ -40,7 +40,7 @@ describe("VoiceClient connect cancelled by disconnect", () => {
 
   it("releases the mic and opens no socket when disconnected while the mic opens", async () => {
     const { client, token, capture, audio, sockets } = setup();
-    const done = client.connect({ agentId: "a1" });
+    const done = client.connect({ flowId: "a1" });
     token.resolve({ token: "x.e30.y", expires_at: "", scope: "" });
     await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
     await client.disconnect();
@@ -76,10 +76,10 @@ describe("VoiceClient connect cancelled by disconnect", () => {
     const audio = new BrowserAudioController();
     const client = new VoiceClient(api, audio);
 
-    const first = client.connect({ agentId: "a", wsBaseUrl: "ws://h" });
+    const first = client.connect({ flowId: "a", wsBaseUrl: "ws://h" });
     await vi.waitFor(() => expect(calls).toBe(1));
     await client.disconnect();
-    const second = client.connect({ agentId: "a", wsBaseUrl: "ws://h" });
+    const second = client.connect({ flowId: "a", wsBaseUrl: "ws://h" });
     await vi.waitFor(() => expect(calls).toBe(2));
     gum[0].resolve(stream());
     await new Promise((r) => setTimeout(r, 0));

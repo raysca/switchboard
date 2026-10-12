@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import type { AgentDTO, ApiClient, ApiError, ProviderStatus } from "../../api/client";
+import type { FlowDTO, ApiClient, ApiError, ProviderStatus } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import {
   SERVICES,
@@ -18,10 +18,10 @@ import {
 
 export type ProvidersViewProps = { client: ApiClient; keyValue: string | null };
 
-// GET /agents returns at most this many flows; a count that reaches it is a floor.
+// GET /flows returns at most this many flows; a count that reaches it is a floor.
 const FLOW_CAP = 100;
 
-function Panel({ p, flows, flowsCapped }: { p: ProviderStatus; flows: AgentDTO[] | undefined; flowsCapped: boolean }) {
+function Panel({ p, flows, flowsCapped }: { p: ProviderStatus; flows: FlowDTO[] | undefined; flowsCapped: boolean }) {
   const cred = credential(p);
   const missing = new Set(missingEnv(p));
   const using = flows ? flowsUsing(flows, p.id) : undefined;
@@ -99,7 +99,7 @@ function Panel({ p, flows, flowsCapped }: { p: ProviderStatus; flows: AgentDTO[]
 export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
   const [params, setParams] = useSearchParams();
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: client.getProviders, enabled: !!keyValue, retry: false });
-  const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
+  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: !!keyValue, retry: false });
 
   const rawService = params.get("service");
   const service: Service | "" = SERVICES.find((s) => s === rawService) ?? "";

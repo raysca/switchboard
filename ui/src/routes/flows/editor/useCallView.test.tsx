@@ -3,23 +3,23 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { ApiClient, SessionTracesDTO } from "../../../api/client";
-import { fromAgentConfig } from "./model";
+import { fromFlowConfig } from "./model";
 import { useCallView, type CallInfo } from "./useCallView";
 
 const stage = { provider: "google" };
-const graph = fromAgentConfig({
-  entry: "front",
-  nodes: [
+const graph = fromFlowConfig({
+  start: "front",
+  steps: [
     { id: "front", name: "Front", config: { stt: stage, llm: { ...stage, model: "m" }, tts: stage } },
     { id: "sales", name: "Sales", config: { llm: { ...stage, model: "m" }, tts: stage } },
   ],
-  edges: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
+  routes: [{ id: "e1", from: "front", to: "sales", condition: "buy" }],
 });
 const handedOff: SessionTracesDTO = {
   session_id: "s1",
   events: [],
   tool_calls: [],
-  spans: [{ id: "1", name: "handoff.active", started_at: "2026-10-11T10:00:02Z", attributes: { from_node: "front", to_node: "sales" } }],
+  spans: [{ id: "1", name: "route.active", started_at: "2026-10-11T10:00:02Z", attributes: { from_step: "front", to_step: "sales" } }],
 };
 
 describe("useCallView", () => {

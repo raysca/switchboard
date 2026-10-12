@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
-import { ApiError, type AgentDTO, type ApiClient, type ToolDependencyDTO } from "../../api/client";
+import { ApiError, type FlowDTO, type ApiClient, type ToolDependencyDTO } from "../../api/client";
 import type { Drift } from "./mcpStats";
 import { DriftPanel, MissingTools } from "./DriftPanel";
 
@@ -16,7 +16,7 @@ const dep = (over: Partial<ToolDependencyDTO> = {}): ToolDependencyDTO => ({
   current_schema_hash: "c9d00000bb",
   ...over,
 });
-const flow = (id: string, name: string, deps: ToolDependencyDTO[]): AgentDTO => ({
+const flow = (id: string, name: string, deps: ToolDependencyDTO[]): FlowDTO => ({
   id,
   name,
   description: "",
@@ -46,9 +46,9 @@ const items: Drift[] = [
 ];
 const schema = { type: "object", properties: { amount_pence: { type: "integer" } } };
 
-function setupWith(one: AgentDTO, setAgentMCPTools = vi.fn().mockResolvedValue({})) {
+function setupWith(one: FlowDTO, setFlowMCPTools = vi.fn().mockResolvedValue({})) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const client = { setAgentMCPTools } as unknown as ApiClient;
+  const client = { setFlowMCPTools } as unknown as ApiClient;
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
@@ -56,13 +56,13 @@ function setupWith(one: AgentDTO, setAgentMCPTools = vi.fn().mockResolvedValue({
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { setAgentMCPTools, user: userEvent.setup() };
+  return { setFlowMCPTools, user: userEvent.setup() };
 }
 
-function setup(setAgentMCPTools = vi.fn().mockResolvedValue({})) {
+function setup(setFlowMCPTools = vi.fn().mockResolvedValue({})) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-  const client = { setAgentMCPTools } as unknown as ApiClient;
+  const client = { setFlowMCPTools } as unknown as ApiClient;
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
@@ -70,7 +70,7 @@ function setup(setAgentMCPTools = vi.fn().mockResolvedValue({})) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { setAgentMCPTools, invalidate, user: userEvent.setup() };
+  return { setFlowMCPTools, invalidate, user: userEvent.setup() };
 }
 
 describe("DriftPanel", () => {
@@ -91,25 +91,25 @@ describe("DriftPanel", () => {
   });
 
   it("accepts for one flow only after confirmation, sending the full list with just that hash replaced", async () => {
-    const { setAgentMCPTools, invalidate, user } = setup();
+    const { setFlowMCPTools, invalidate, user } = setup();
     await user.click(screen.getByRole("button", { name: "Accept new schema for Front desk" }));
     expect(screen.getByRole("dialog", { name: "Accept the new schema for Front desk?" })).toBeVisible();
-    expect(setAgentMCPTools).not.toHaveBeenCalled();
+    expect(setFlowMCPTools).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Publish new version" }));
-    expect(setAgentMCPTools).toHaveBeenCalledWith("f1", [
+    expect(setFlowMCPTools).toHaveBeenCalledWith("f1", [
       { mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "c9d00000bb", required: true },
       { mcp_server_id: "crm", remote_name: "lookup", schema_hash: "keep", required: false },
     ]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["agents"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["flows"] });
   });
 
   it("does nothing when the dialog is cancelled", async () => {
-    const { setAgentMCPTools, user } = setup();
+    const { setFlowMCPTools, user } = setup();
     await user.click(screen.getByRole("button", { name: "Accept new schema for Front desk" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(setAgentMCPTools).not.toHaveBeenCalled();
+    expect(setFlowMCPTools).not.toHaveBeenCalled();
   });
 
   it("keeps the dialog open and shows the server's refusal", async () => {
@@ -129,11 +129,11 @@ describe("DriftPanel", () => {
       { mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "7a3e0000aa", required: true },
       { mcp_server_id: "billing", remote_name: "latest_invoice", schema_hash: "11110000aa", required: true },
     ];
-    const { setAgentMCPTools, user } = setupWith(both);
+    const { setFlowMCPTools, user } = setupWith(both);
     await user.click(screen.getByRole("button", { name: "Accept new schema for Both tools" }));
     expect(screen.getByText(/send_pay_link, latest_invoice/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Publish new version" }));
-    expect(setAgentMCPTools).toHaveBeenCalledWith("f9", [
+    expect(setFlowMCPTools).toHaveBeenCalledWith("f9", [
       { mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "c9d00000bb", required: true },
       { mcp_server_id: "billing", remote_name: "latest_invoice", schema_hash: "22220000bb", required: true },
     ]);
@@ -141,11 +141,11 @@ describe("DriftPanel", () => {
 
   it("says what would still make the server refuse, and does not offer to publish", async () => {
     const stuck = flow("f8", "Stuck", [dep(), dep({ remote_name: "gone", state: "tool_missing", current_schema_hash: undefined })]);
-    const { setAgentMCPTools, user } = setupWith(stuck);
+    const { setFlowMCPTools, user } = setupWith(stuck);
     await user.click(screen.getByRole("button", { name: "Accept new schema for Stuck" }));
     expect(screen.getByText(/The server will refuse until gone is fixed/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Publish new version" })).toBeDisabled();
-    expect(setAgentMCPTools).not.toHaveBeenCalled();
+    expect(setFlowMCPTools).not.toHaveBeenCalled();
   });
 
   it("offers no accept when the server's current hash is unknown", () => {

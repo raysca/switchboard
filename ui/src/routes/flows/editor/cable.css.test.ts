@@ -34,10 +34,10 @@ const outsideMedia = (() => {
   return rest;
 })();
 
-describe("the handoff cable and lamp motion", () => {
+describe("the route cable and lamp motion", () => {
   it("only moves inside prefers-reduced-motion: no-preference", () => {
-    expect(mediaBodies("no-preference").join("\n")).toContain(".agent-edge--just");
-    const moving = /\.(agent-edge--just|agent-node--active)[^{}]*\{[^{}]*(animation|transition)\s*:/;
+    expect(mediaBodies("no-preference").join("\n")).toContain(".route-edge--just");
+    const moving = /\.(route-edge--just|step-node--active)[^{}]*\{[^{}]*(animation|transition)\s*:/;
     expect(outsideMedia).not.toMatch(moving);
   });
   it("is switched off under reduce", () => {

@@ -38,7 +38,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
     retry: false,
     refetchInterval: running ? LIVE_POLL_MS : false,
   });
-  const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: on, retry: false });
+  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: on, retry: false });
 
   const now = useNow(running);
   // The heading and the way back are always there, so focus and the page's outline never depend on loading.
@@ -73,7 +73,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
   }
 
   const s = sessionQuery.data;
-  const flow = (flowsQuery.data ?? []).find((f) => f.id === s.agent_id);
+  const flow = (flowsQuery.data ?? []).find((f) => f.id === s.flow_id);
   const fallback = flow?.name ?? "Assistant";
   const st = stepsFor(s, flow);
   const turns = turnsQuery.data ?? [];

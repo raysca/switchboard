@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, type AgentDTO, type MCPServerDTO, type ToolDependencyDTO } from "../../api/client";
+import { ApiError, type FlowDTO, type MCPServerDTO, type ToolDependencyDTO } from "../../api/client";
 import { ago, drifts, flowsUsingServer, flowsUsingTool, formatApiError, referencedFlows, repin, serverStatus } from "./mcpStats";
 
 const server = (over: Partial<MCPServerDTO> = {}): MCPServerDTO => ({
@@ -23,7 +23,7 @@ const dep = (over: Partial<ToolDependencyDTO> = {}): ToolDependencyDTO => ({
   selected_schema_hash: "aaaaaaaa11",
   ...over,
 });
-const flow = (id: string, tools: { server: string; name: string; hash: string; required: boolean }[], deps: ToolDependencyDTO[] = [], archived = false): AgentDTO => ({
+const flow = (id: string, tools: { server: string; name: string; hash: string; required: boolean }[], deps: ToolDependencyDTO[] = [], archived = false): FlowDTO => ({
   id,
   name: id,
   description: "",
@@ -83,7 +83,7 @@ describe("usage", () => {
   const a = flow("a", [{ server: "crm", name: "lookup", hash: "h1", required: true }, { server: "billing", name: "pay", hash: "h2", required: false }]);
   const b = flow("b", [{ server: "crm", name: "notes", hash: "h3", required: false }]);
   const gone = flow("gone", [{ server: "crm", name: "lookup", hash: "h1", required: true }], [], true);
-  const bare = { ...flow("bare", []), current_version: undefined } as AgentDTO;
+  const bare = { ...flow("bare", []), current_version: undefined } as FlowDTO;
   it("lists the flows that pin a server's tools, once each, never an archived one", () => {
     expect(flowsUsingServer([a, b, gone, bare], "crm").map((f) => f.id)).toEqual(["a", "b"]);
     expect(flowsUsingServer([a, b], "billing").map((f) => f.id)).toEqual(["a"]);
@@ -150,9 +150,9 @@ describe("repin", () => {
 describe("referencedFlows", () => {
   it("reads the flows the server names when it refuses a delete, once each", () => {
     const details = [
-      { AgentID: "a1", AgentName: "Front desk", RemoteName: "lookup", Required: true },
-      { AgentID: "a1", AgentName: "Front desk", RemoteName: "notes", Required: false },
-      { AgentID: "a2", AgentName: "Old line", RemoteName: "lookup", Required: false },
+      { FlowID: "a1", FlowName: "Front desk", RemoteName: "lookup", Required: true },
+      { FlowID: "a1", FlowName: "Front desk", RemoteName: "notes", Required: false },
+      { FlowID: "a2", FlowName: "Old line", RemoteName: "lookup", Required: false },
     ];
     expect(referencedFlows(details)).toEqual([{ id: "a1", name: "Front desk" }, { id: "a2", name: "Old line" }]);
   });

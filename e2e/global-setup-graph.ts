@@ -7,10 +7,10 @@ import path from "node:path";
 import { graphStackFile, type Stack } from "./lib/stack";
 import { stopStack } from "./global-teardown";
 
-// Starts the stack for the graph suite. By default with the FAKE providers (go
+// Starts the stack for the flow suite. By default with the FAKE providers (go
 // build -tags fakeproviders): no secrets, no network, no cost; the fake LLM labels
-// each reply with its node's prompt and calls a node's transfer tool on "transfer
-// to <node>". With E2E_PROVIDER=xai it is the real server (go build -tags
+// each reply with its step's prompt and calls a step's transfer tool on "transfer
+// to <step>". With E2E_PROVIDER=xai it is the real server (go build -tags
 // xaispeech) reading XAI_API_KEY from its environment: real STT/LLM/TTS calls.
 // Ports differ from the paid suite's, so both can run on one machine.
 const LIVE = process.env.E2E_PROVIDER === "xai";
@@ -93,7 +93,7 @@ export default async function globalSetup() {
     .replace(/^public_listen_addr:.*$/m, `public_listen_addr: "127.0.0.1:${PORTS.public}"`)
     .replace(/^admin_listen_addr:.*$/m, `admin_listen_addr: "127.0.0.1:${PORTS.admin}"`)
     .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n${origins.map((o) => `  - "${o}"\n`).join("")}`);
-  // A handoff cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the agents can name as "chime".
+  // A route cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the steps can name as "chime".
   const chime = path.join(tmpDir, "chime.wav");
   fs.writeFileSync(chime, toneWav(24000, 0.4, 440, 12000));
   const configPath = path.join(tmpDir, "server.yaml");

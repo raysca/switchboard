@@ -3,19 +3,19 @@ import { test, expect, LIVE, PROVIDER, type Stack } from "../lib/graph-stack";
 import { step } from "../lib/evidence";
 import { graphStackFile, readStack } from "../lib/stack";
 
-// Agent graphs end to end in a real browser against a real server. Two modes:
-//  - fake providers (default, free): the fake LLM echoes the node's system prompt as a
-//    label and calls a node's transfer tool on "transfer to <node>", so every step is
+// Flows end to end in a real browser against a real server. Two modes:
+//  - fake providers (default, free): the fake LLM echoes the step's system prompt as a
+//    label and calls a step's transfer tool on "transfer to <step>", so every step is
 //    deterministic;
 //  - live xAI (E2E_PROVIDER=xai, make e2e-xai): real STT/LLM/TTS calls, so the model
 //    itself must call the transfer tool. Assertions then use the prompts' marker
 //    words, not exact text.
-// Either way: the designer, the stored graph, the call, the handoff and the live
-// graph view are exercised together.
+// Either way: the designer, the stored flow, the call, the route and the live
+// flow view are exercised together.
 test.describe.configure({ mode: "serial" });
 
-const AGENT = "E2E Dealership";
-// The sales agent must say "catalogue" in every reply: the marker that sales is talking.
+const FLOW = "E2E Dealership";
+// The sales step must say "catalogue" in every reply: the marker that sales is talking.
 // (In the fake, the label is the whole prompt, so the marker is there too.)
 const FRONT_PROMPT =
   "You are the front desk of a car dealership. Answer in one short sentence. " +
@@ -48,13 +48,13 @@ async function api<T>(stack: Stack, route: string, init?: RequestInit): Promise<
   return (await res.json()) as T;
 }
 
-// The server-side timeline of the session that moved between agents (admin listener).
+// The server-side timeline of the session that moved between steps (admin listener).
 async function timelineEvents(stack: Stack): Promise<{ type: string; details?: string }[]> {
   for (let id = 1; id <= 10; id++) {
     const res = await fetch(`${stack.adminUrl}/debug/timeline?session=${id}`);
     if (!res.ok) continue;
     const body = (await res.json()) as { events: { type: string; details?: string }[] };
-    if (body.events.some((e) => e.type === "handoff")) return body.events;
+    if (body.events.some((e) => e.type === "route")) return body.events;
   }
   return [];
 }
@@ -84,7 +84,7 @@ async function openFlow(page: Page, name: string) {
 async function openFlowTest(page: Page, name: string) {
   await openFlow(page, name);
   await page.getByRole("button", { name: "Test call" }).click();
-  await expect(page.getByTestId("agent-readiness")).toHaveText(/^ready/);
+  await expect(page.getByTestId("flow-readiness")).toHaveText(/^ready/);
 }
 
 // The bot's reply is final in the transcript, or still streaming.
@@ -98,7 +98,7 @@ function botReply(page: Page, text: RegExp) {
 async function startCall(page: Page) {
   await page.getByTestId("start-voice-test-btn").click();
   await expect(page.getByTestId("connection-state")).toHaveText(/ready/i, { timeout: 30_000 });
-  // The fake microphone loops; mute it so only typed turns reach the agent.
+  // The fake microphone loops; mute it so only typed turns reach the flow.
   await page.getByTestId("mute-btn").click();
 }
 
@@ -189,7 +189,7 @@ test("providers page: the detected provider is listed with where its credential 
   await step(page, "providers page");
 });
 
-test("designer: draw a two-agent graph with a handoff and publish it", async ({ page, stack }) => {
+test("designer: draw a two-step flow with a route and publish it", async ({ page, stack }) => {
   await openDesigner(page, stack);
 
   // The start step: model, voice and instructions on its Basics tab.
@@ -219,7 +219,7 @@ test("designer: draw a two-agent graph with a handoff and publish it", async ({ 
 
   // Flow settings: the name, speech-to-text, and the sound that fills the gap between steps (the server has "chime").
   await openFlowSettings(page);
-  await page.getByLabel("Flow name").fill(AGENT);
+  await page.getByLabel("Flow name").fill(FLOW);
   await page.getByLabel("STT provider").selectOption(PROVIDER);
   await pick(page, "STT model", catalogDefault("stt"));
   await page.getByLabel("Sound name").fill("chime");
@@ -228,40 +228,40 @@ test("designer: draw a two-agent graph with a handoff and publish it", async ({ 
 
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish v1" }).click();
-  await openFlowTest(page, AGENT);
-  await step(page, "graph agent published and ready");
+  await openFlowTest(page, FLOW);
+  await step(page, "routed flow published and ready");
 
-  // The stored version is the graph the designer drew.
-  const agents = await api<{ data: { name: string; current_version: { config: any } }[] }>(stack, "/agents");
-  const cfg = agents.data.find((a) => a.name === AGENT)!.current_version.config;
-  expect(cfg.nodes.map((n: any) => n.name)).toEqual(["Main agent", "Sales"]);
-  expect(cfg.nodes[0].config.stt).toBeTruthy();
-  expect(cfg.nodes[1].config.stt).toBeUndefined();
-  expect(cfg.nodes[1].config.llm.system_prompt).toBe(SALES_PROMPT);
+  // The stored version is the flow the designer drew.
+  const flows = await api<{ data: { name: string; current_version: { config: any } }[] }>(stack, "/flows");
+  const cfg = flows.data.find((a) => a.name === FLOW)!.current_version.config;
+  expect(cfg.steps.map((n: any) => n.name)).toEqual(["Main agent", "Sales"]);
+  expect(cfg.steps[0].config.stt).toBeTruthy();
+  expect(cfg.steps[1].config.stt).toBeUndefined();
+  expect(cfg.steps[1].config.llm.system_prompt).toBe(SALES_PROMPT);
   // The dropdowns stored the catalog default, or the "Other…" value typed for the fake.
-  expect(cfg.nodes[0].config.llm.model).toBe(LLM_MODEL());
-  expect(cfg.nodes.map((n: any) => n.config.tts.voice)).toEqual(LIVE ? [catalogDefault("tts"), catalogDefault("tts")] : ["frontvoice", "salesvoice"]);
-  expect(cfg.edges).toHaveLength(1);
-  expect(cfg.entry).toBe(cfg.nodes[0].id);
-  expect(cfg.handoff_cue).toEqual({ name: "chime", after_ms: 50 });
+  expect(cfg.steps[0].config.llm.model).toBe(LLM_MODEL());
+  expect(cfg.steps.map((n: any) => n.config.tts.voice)).toEqual(LIVE ? [catalogDefault("tts"), catalogDefault("tts")] : ["frontvoice", "salesvoice"]);
+  expect(cfg.routes).toHaveLength(1);
+  expect(cfg.start).toBe(cfg.steps[0].id);
+  expect(cfg.route_cue).toEqual({ name: "chime", after_ms: 50 });
 });
 
-test("call: the front agent hands the call to sales and the live graph follows", async ({ page, stack }) => {
+test("call: the front step routes the call to sales and the live flow follows", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlowTest(page, AGENT);
+  await openFlowTest(page, FLOW);
   await startCall(page);
-  await expect(stepCard(page, "Main agent").locator(".agent-node")).toHaveAttribute("data-state", "active");
+  await expect(stepCard(page, "Main agent").locator(".step-node")).toHaveAttribute("data-state", "active");
 
   await sendText(page, "hello");
   await expect(botReplies(page).filter({ hasText: LIVE ? /./ : FRONT }).first()).toBeVisible();
   await expect(botReplies(page).filter({ hasText: SALES })).toHaveCount(0);
 
   await sendText(page, BUY);
-  // The new agent speaks (the transfer, the farewell and the greeting come from the models),
-  // and the graph shows the call moved over.
+  // The new step speaks (the transfer, the farewell and the greeting come from the models),
+  // and the flow shows the call moved over.
   await expect(botReply(page, SALES)).toBeVisible({ timeout: LIVE ? 90_000 : 20_000 });
-  await expect(stepCard(page, "Sales").locator(".agent-node")).toHaveAttribute("data-state", "active", { timeout: LIVE ? 90_000 : 15_000 });
-  await expect(stepCard(page, "Main agent").locator(".agent-node")).toHaveAttribute("data-state", "visited");
+  await expect(stepCard(page, "Sales").locator(".step-node")).toHaveAttribute("data-state", "active", { timeout: LIVE ? 90_000 : 15_000 });
+  await expect(stepCard(page, "Main agent").locator(".step-node")).toHaveAttribute("data-state", "visited");
   await step(page, "call moved to sales");
 
   const salesBefore = await botReplies(page).filter({ hasText: SALES }).count();
@@ -269,17 +269,17 @@ test("call: the front agent hands the call to sales and the live graph follows",
   await expect.poll(() => botReplies(page).filter({ hasText: SALES }).count(), { timeout: LIVE ? 90_000 : 15_000 }).toBeGreaterThan(salesBefore);
   if (!LIVE) await expect(botReplies(page).filter({ hasText: /front desk.*what do you sell/i })).toHaveCount(0);
 
-  // The handoff is recorded on the stored session, for replay: node ids, not just names.
+  // The route is recorded on the stored session, for replay: step ids, not just names.
   const sessionId = (await page.getByTestId("session-summary").locator("code").innerText()).trim();
   await expect
     .poll(async () => {
-      const t = await api<{ data: { spans: { name: string; attributes?: { from_node?: string; to_node?: string } }[] } }>(stack, `/sessions/${sessionId}/traces`);
-      const active = t.data.spans.find((s) => s.name === "handoff.active");
-      return [t.data.spans.some((s) => s.name === "handoff.preparing"), !!active?.attributes?.from_node, !!active?.attributes?.to_node];
+      const t = await api<{ data: { spans: { name: string; attributes?: { from_step?: string; to_step?: string } }[] } }>(stack, `/sessions/${sessionId}/traces`);
+      const active = t.data.spans.find((s) => s.name === "route.active");
+      return [t.data.spans.some((s) => s.name === "route.preparing"), !!active?.attributes?.from_step, !!active?.attributes?.to_step];
     })
     .toEqual([true, true, true]);
 
-  // The cue played over the gap between the agents and stopped when sales spoke: the
+  // The cue played over the gap between the steps and stopped when sales spoke: the
   // server's session timeline has both events (the first call of this stack is session 1).
   await expect
     .poll(async () => {
@@ -295,8 +295,8 @@ test("call: the front agent hands the call to sales and the live graph follows",
 
 test("designer: reopen the graph, edit it, republish; a new call gets the new version", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlow(page, AGENT);
-  await expect(page.getByRole("heading", { name: AGENT, level: 1 })).toBeVisible();
+  await openFlow(page, FLOW);
+  await expect(page.getByRole("heading", { name: FLOW, level: 1 })).toBeVisible();
   await expect(stepCard(page, "Sales")).toBeVisible();
   // Backspace on a selected step must not drop it from the canvas while the flow still has it.
   // (The step is selected and its panel open, focus on the panel title.)
@@ -336,39 +336,39 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   await page.getByRole("button", { name: "Publish v2" }).click();
   // Publishing leaves the editor open on the new version, so it can be tested at once.
   await expect(page.getByText(/Published v2/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: AGENT, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: FLOW, level: 1 })).toBeVisible();
   await expect(page.getByText(/This call runs v/)).toHaveCount(0);
 
-  const agents = await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/agents");
-  const v = agents.data.find((a) => a.name === AGENT)!.current_version;
+  const flows = await api<{ data: { name: string; current_version: { number: number; config: any } }[] }>(stack, "/flows");
+  const v = flows.data.find((a) => a.name === FLOW)!.current_version;
   expect(v.number).toBe(2);
-  expect(v.config.nodes).toHaveLength(2);
-  expect(v.config.edges[0].condition).toBe("The caller wants to buy a car, asks about prices, or wants a quote.");
+  expect(v.config.steps).toHaveLength(2);
+  expect(v.config.routes[0].condition).toBe("The caller wants to buy a car, asks about prices, or wants a quote.");
 
-  // Call from inside the editor: the editor's own graph shows the call moving to Sales.
+  // Call from inside the editor: the editor's own flow shows the call moving to Sales.
   await startCall(page);
   await sendText(page, BUY);
   await expect(botReply(page, SALES)).toBeVisible({ timeout: LIVE ? 90_000 : 20_000 });
-  await expect(stepCard(page, "Sales").locator(".agent-node")).toHaveAttribute("data-state", "active", { timeout: LIVE ? 90_000 : 15_000 });
+  await expect(stepCard(page, "Sales").locator(".step-node")).toHaveAttribute("data-state", "active", { timeout: LIVE ? 90_000 : 15_000 });
   await page.getByTestId("disconnect-btn").click();
 });
 
-// Fake only: a node that cannot be built needs a deliberately broken voice, which a
+// Fake only: a step that cannot be built needs a deliberately broken voice, which a
 // real provider cannot be made to have on demand.
-test("failure: a sales node that cannot be built leaves the caller with the front agent", async ({ page, stack }) => {
+test("failure: a sales step that cannot be built leaves the caller with the front step", async ({ page, stack }) => {
   test.skip(LIVE, "needs the fake provider's brokenvoice");
   const body = {
     name: "E2E Broken Sales",
     config: {
-      entry: "front",
-      nodes: [
+      start: "front",
+      steps: [
         { id: "front", name: "Front", config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: FRONT_PROMPT }), tts: stage({ voice: "frontvoice" }) } },
         { id: "sales", name: "Sales", config: { llm: stage({ model: "m", system_prompt: SALES_PROMPT }), tts: stage({ voice: "brokenvoice" }) } },
       ],
-      edges: [{ id: "e1", from: "front", to: "sales", condition: "The caller wants to buy." }],
+      routes: [{ id: "e1", from: "front", to: "sales", condition: "The caller wants to buy." }],
     },
   };
-  await api(stack, "/agents", { method: "POST", body: JSON.stringify(body) });
+  await api(stack, "/flows", { method: "POST", body: JSON.stringify(body) });
 
   await connectAdmin(page, stack);
   await openFlowTest(page, "E2E Broken Sales");
@@ -379,8 +379,8 @@ test("failure: a sales node that cannot be built leaves the caller with the fron
   await sendText(page, "are you still there");
   await expect(botReply(page, /front desk.*are you still there/i)).toBeVisible();
   await expect(botReplies(page).filter({ hasText: SALES })).toHaveCount(0);
-  await expect(stepCard(page, "Front").locator(".agent-node")).toHaveAttribute("data-state", "active");
-  await step(page, "handoff failed, caller kept by the front agent");
+  await expect(stepCard(page, "Front").locator(".step-node")).toHaveAttribute("data-state", "active");
+  await step(page, "route failed, caller kept by the front step");
 
   const sessionId = (await page.getByTestId("session-summary").locator("code").innerText()).trim();
   await expect
@@ -388,12 +388,12 @@ test("failure: a sales node that cannot be built leaves the caller with the fron
       const t = await api<{ data: { spans: { name: string }[] } }>(stack, `/sessions/${sessionId}/traces`);
       return t.data.spans.map((s) => s.name);
     })
-    .toContain("handoff.failed");
+    .toContain("route.failed");
   await page.getByTestId("disconnect-btn").click();
 });
 
-test("a plain agent still works unchanged", async ({ page, stack }) => {
-  await api(stack, "/agents", {
+test("a plain flow still works unchanged", async ({ page, stack }) => {
+  await api(stack, "/flows", {
     method: "POST",
     body: JSON.stringify({ name: "E2E Plain", config: { stt: stage(LIVE ? {} : { model: "chirp" }), llm: stage({ model: LLM_MODEL(), system_prompt: "You are PLAIN. Answer in one short sentence." }), tts: stage() } }),
   });
@@ -409,22 +409,22 @@ test("a plain agent still works unchanged", async ({ page, stack }) => {
 test("flows list: status, enable toggle without a new version, copy and archive", async ({ page, stack }) => {
   await connectAdmin(page, stack);
   await openFlowsList(page);
-  const row = page.getByRole("link", { name: AGENT, exact: true }).locator("xpath=ancestor::li[1]");
+  const row = page.getByRole("link", { name: FLOW, exact: true }).locator("xpath=ancestor::li[1]");
   await expect(row).toContainText("Ready");
   await expect(row).toContainText("2 steps · 1 route");
 
-  const current = async () => (await api<{ data: { name: string; current_version: { number: number } }[] }>(stack, "/agents")).data.find((a) => a.name === AGENT)!.current_version.number;
+  const current = async () => (await api<{ data: { name: string; current_version: { number: number } }[] }>(stack, "/flows")).data.find((a) => a.name === FLOW)!.current_version.number;
   const before = await current();
   // The box follows the server, not the click, so click and wait instead of uncheck()/check().
-  await row.getByRole("checkbox", { name: `${AGENT} enabled` }).click();
+  await row.getByRole("checkbox", { name: `${FLOW} enabled` }).click();
   await expect(row).toContainText("Disabled");
-  await row.getByRole("checkbox", { name: `${AGENT} enabled` }).click();
+  await row.getByRole("checkbox", { name: `${FLOW} enabled` }).click();
   await expect(row).toContainText("Ready");
   expect(await current(), "toggling Enabled must not publish a version").toBe(before);
 
-  await row.getByRole("button", { name: `Duplicate ${AGENT}` }).click();
-  // The server names a copy "<name> copy" (server/agent/service.go, Duplicate).
-  const copyName = `${AGENT} copy`;
+  await row.getByRole("button", { name: `Duplicate ${FLOW}` }).click();
+  // The server names a copy "<name> copy" (server/flow/service.go, Duplicate).
+  const copyName = `${FLOW} copy`;
   const copy = page.getByRole("link", { name: copyName, exact: true });
   await expect(copy).toBeVisible();
   await copy.locator("xpath=ancestor::li[1]").getByRole("button", { name: `Archive ${copyName}` }).click();
@@ -436,9 +436,9 @@ test("calls: the finished call is listed, with its path and a transcript labelle
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Calls", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
-  await page.getByRole("combobox", { name: "Flow", exact: true }).selectOption({ label: AGENT });
+  await page.getByRole("combobox", { name: "Flow", exact: true }).selectOption({ label: FLOW });
   // The call that just ended may still read Ending; the list refreshes every 10 seconds.
-  const row = page.getByRole("row").filter({ hasText: AGENT }).first();
+  const row = page.getByRole("row").filter({ hasText: FLOW }).first();
   await expect(row).toContainText("Ended", { timeout: 20_000 });
   await step(page, "calls list");
   await row.getByRole("link").click();
@@ -482,7 +482,7 @@ test("mcp tools page: servers, their tools and a changed schema, with the API fa
     const id = r.request().url().split("/").pop()!;
     return r.fulfill({ json: { data: { ...server(id), discovery: { id: "d", discovery_hash: "x", created_at: "", tools: id === "billing" ? tools : [] } } } });
   });
-  await page.route("**/api/v1/agents?*", (r) => r.fulfill({ json: { data: [flow] } }));
+  await page.route("**/api/v1/flows?*", (r) => r.fulfill({ json: { data: [flow] } }));
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "MCP tools", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "billing", level: 2 })).toBeVisible();
@@ -520,7 +520,7 @@ test("layout: demo-path screens do not scroll sideways at 390px", async ({ page,
   await go("/flows");
   await expect(page.getByRole("heading", { name: "Flows", level: 1 })).toBeVisible();
   await noSideways("flows");
-  await openFlow(page, AGENT);
+  await openFlow(page, FLOW);
   await noSideways("flow editor");
   const sessions = await api<{ data: { id: string }[] }>(stack, "/sessions?limit=1");
   if (sessions.data.length > 0) {

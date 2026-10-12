@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { TurnDTO, SessionTracesDTO, TraceSpanDTO, ToolCallDTO, TraceEventDTO } from "../../api/client";
+import { routeSpan, type TurnDTO, type SessionTracesDTO, type TraceSpanDTO, type ToolCallDTO, type TraceEventDTO } from "../../api/client";
 import { EmptyState, Status } from "../primitives";
 
 export type TurnTimelineProps = {
@@ -207,14 +207,14 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                           Trace Spans ({turnSpans.length})
                         </h4>
                         {turnSpans.map((span) => {
-                          const toNode = (span.attributes as { to_node?: unknown } | undefined)?.to_node;
-                          const handoff = span.name === "handoff.active" && typeof toNode === "string";
+                          const r = routeSpan(span);
+                          const route = r?.event === "active";
                           return (
-                            <div key={span.id} className="trace-item" data-testid="span-item" data-handoff={handoff ? "true" : undefined}>
+                            <div key={span.id} className="trace-item" data-testid="span-item" data-route={route ? "true" : undefined}>
                               <div className="trace-item-header">
                                 <span className="row">
-                                  {handoff && <span className="lamp" data-tone="warn" aria-hidden="true" />}
-                                  {handoff ? `Handed off to ${toNode}` : span.name}
+                                  {route && <span className="lamp" data-tone="warn" aria-hidden="true" />}
+                                  {route ? `Routed to ${r.to}` : span.name}
                                 </span>
                                 <span>{formatDuration(span.started_at, span.ended_at)}</span>
                               </div>

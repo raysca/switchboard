@@ -26,11 +26,11 @@ describe("Switchboard system rules", () => {
     expect(off).toEqual([]);
   });
   it("never fades text with opacity (it silently breaks the contrast the tokens guarantee)", () => {
-    const faded = rules.filter((r) => /agent-node__(meta|status)/.test(r.sel) && /opacity\s*:/.test(r.body));
+    const faded = rules.filter((r) => /step-node__(meta|status)/.test(r.sel) && /opacity\s*:/.test(r.body));
     expect(faded).toEqual([]);
   });
-  it("has no drop shadows except the active-node ring", () => {
-    const sh = decls(/box-shadow:\s*([^;]+);/g).filter((d) => d.sel !== ".agent-node--active");
+  it("has no drop shadows except the active-step ring", () => {
+    const sh = decls(/box-shadow:\s*([^;]+);/g).filter((d) => d.sel !== ".step-node--active");
     expect(sh).toEqual([]);
   });
 });

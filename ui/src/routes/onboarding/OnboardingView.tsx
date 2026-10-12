@@ -3,8 +3,8 @@ import { Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   type ApiClient,
-  type AgentDTO,
-  type CreateAgentInput,
+  type FlowDTO,
+  type CreateFlowInput,
   ApiError,
   asApiError,
 } from "../../api/client";
@@ -24,13 +24,13 @@ export type OnboardingViewProps = {
 export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const queryClient = useQueryClient();
 
-  // Step 2: Agent form state
-  const [agentNameDraft, setAgentNameDraft] = useState("");
-  const [agentDescDraft, setAgentDescDraft] = useState("");
-  const [agentSttDraft, setAgentSttDraft] = useState("chirp_2");
-  const [agentLlmDraft, setAgentLlmDraft] = useState("gemini-2.5-flash");
-  const [agentTtsDraft, setAgentTtsDraft] = useState("en-US-Chirp3-HD-Aoede");
-  const [agentError, setAgentError] = useState<ApiError | null>(null);
+  // Step 2: Flow form state
+  const [flowNameDraft, setFlowNameDraft] = useState("");
+  const [flowDescDraft, setFlowDescDraft] = useState("");
+  const [flowSttDraft, setFlowSttDraft] = useState("chirp_2");
+  const [flowLlmDraft, setFlowLlmDraft] = useState("gemini-2.5-flash");
+  const [flowTtsDraft, setFlowTtsDraft] = useState("en-US-Chirp3-HD-Aoede");
+  const [flowError, setFlowError] = useState<ApiError | null>(null);
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -39,33 +39,33 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     retry: false,
   });
 
-  const agentsQuery = useQuery({
-    queryKey: ["agents"],
-    queryFn: () => client.getAgents(),
+  const flowsQuery = useQuery({
+    queryKey: ["flows"],
+    queryFn: () => client.getFlows(),
     enabled: !!keyValue,
     retry: false,
   });
 
-  const createAgentMutation = useMutation({
-    mutationFn: (payload: CreateAgentInput) => client.createAgent(payload),
+  const createFlowMutation = useMutation({
+    mutationFn: (payload: CreateFlowInput) => client.createFlow(payload),
     onSuccess: () => {
-      setAgentError(null);
-      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+      setFlowError(null);
+      void queryClient.invalidateQueries({ queryKey: ["flows"] });
     },
     onError: (err) => {
-      setAgentError(asApiError(err, "Failed to create agent"));
+      setFlowError(asApiError(err, "Failed to create flow"));
     },
   });
 
-  function handleCreateAgent(e: FormEvent<HTMLFormElement>) {
+  function handleCreateFlow(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const name = agentNameDraft.trim();
-    const stt = agentSttDraft.trim();
-    const llm = agentLlmDraft.trim();
-    const tts = agentTtsDraft.trim();
+    const name = flowNameDraft.trim();
+    const stt = flowSttDraft.trim();
+    const llm = flowLlmDraft.trim();
+    const tts = flowTtsDraft.trim();
     if (!name || !stt || !llm || !tts) return;
-    if (!agentProvider) {
-      setAgentError(
+    if (!flowProvider) {
+      setFlowError(
         new ApiError(
           providersQuery.isSuccess
             ? "No detected provider can run speech-to-text, LLM and text-to-speech. Set the variables for one on the server (see the Providers page)."
@@ -77,11 +77,11 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
       );
       return;
     }
-    // ponytail: onboarding uses one detected provider for every stage; the Agents page edits each stage.
-    const provider = agentProvider;
-    createAgentMutation.mutate({
+    // ponytail: onboarding uses one detected provider for every stage; the Flows page edits each stage.
+    const provider = flowProvider;
+    createFlowMutation.mutate({
       name,
-      description: agentDescDraft.trim(),
+      description: flowDescDraft.trim(),
       enabled: true,
       config: {
         stt: { provider, model: stt, language: "en-US" },
@@ -94,27 +94,27 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const providers = providersQuery.data ?? [];
   const detected = providers.filter((p) => p.detected);
   // Onboarding uses one provider for every stage: a detected one that can run all three.
-  const agentProvider = detected.find((p) =>
+  const flowProvider = detected.find((p) =>
     ["stt", "llm", "tts"].every((cap) => p.capabilities.includes(cap)),
   )?.id;
-  const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
+  const flows = (flowsQuery.data ?? []).filter((a) => !a.archived);
 
   const hasProvider = detected.length > 0;
-  const hasAgents = agents.length > 0;
-  const isFullyConfigured = hasProvider && hasAgents;
+  const hasFlows = flows.length > 0;
+  const isFullyConfigured = hasProvider && hasFlows;
 
   return (
     <>
       <header className="section-heading">
         <h1 tabIndex={-1}>Onboarding setup</h1>
-        <p>First-run guided setup for providers and voice agents.</p>
+        <p>First-run guided setup for providers and voice flows.</p>
       </header>
 
       {!keyValue ? (
         <EmptyState title="Connect to start onboarding">
           Enter a management key above to begin onboarding setup.
         </EmptyState>
-      ) : providersQuery.isPending || agentsQuery.isPending ? (
+      ) : providersQuery.isPending || flowsQuery.isPending ? (
         <LoadingState label="Checking system configuration" />
       ) : providersQuery.isError ? (
         <ErrorState
@@ -124,12 +124,12 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
             void providersQuery.refetch();
           }}
         />
-      ) : agentsQuery.isError ? (
+      ) : flowsQuery.isError ? (
         <ErrorState
           title="Setup check failed"
-          error={agentsQuery.error as ApiError}
+          error={flowsQuery.error as ApiError}
           onRetry={() => {
-            void agentsQuery.refetch();
+            void flowsQuery.refetch();
           }}
         />
       ) : isFullyConfigured ? (
@@ -143,7 +143,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
             <h2>System configured and ready</h2>
             <p>
               Your setup is complete with {detected.length} detected provider(s) and{" "}
-              {agents.length} configured agent(s).
+              {flows.length} configured flow(s).
             </p>
           </div>
 
@@ -186,10 +186,10 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
               }}
             >
               <h3 style={{ margin: "0 0 12px", fontSize: "1.1rem" }}>
-                Configured Agents ({agents.length})
+                Configured Flows ({flows.length})
               </h3>
               <ul style={{ paddingLeft: "18px", margin: "0 0 16px" }}>
-                {agents.map((a: AgentDTO) => (
+                {flows.map((a: FlowDTO) => (
                   <li key={a.id} style={{ marginBottom: "6px" }}>
                     <strong>{a.name}</strong> —{" "}
                     <Status tone={a.readiness.state === "ready" ? "good" : "bad"}>
@@ -210,7 +210,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
           <section aria-labelledby="step1-heading">
             <h2 id="step1-heading">Step 1: Set a provider key</h2>
             <p style={{ color: "var(--ink-2)", marginBottom: "20px" }}>
-              Voice agents need a provider for speech recognition, LLM reasoning, and speech
+              Voice flows need a provider for speech recognition, LLM reasoning, and speech
               synthesis. Set one of these environment variables on the server and restart it:
             </p>
             <ul style={{ paddingLeft: "18px" }}>
@@ -223,44 +223,44 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
           </section>
         </div>
       ) : (
-        /* Step 2: Create First Agent */
+        /* Step 2: Create First Flow */
         <div className="onboarding-step" style={{ marginTop: "32px" }}>
           <section aria-labelledby="step2-heading">
-            <h2 id="step2-heading">Step 2: Create your first agent</h2>
+            <h2 id="step2-heading">Step 2: Create your first flow</h2>
             <p style={{ color: "var(--ink-2)", marginBottom: "16px" }}>
-              Provider detected: <strong>{agentProvider ?? detected.map((p) => p.display_name).join(", ")}</strong>.
-              Now configure your first voice agent.
+              Provider detected: <strong>{flowProvider ?? detected.map((p) => p.display_name).join(", ")}</strong>.
+              Now configure your first voice flow.
             </p>
 
-            {agentError && (
+            {flowError && (
               <ErrorState
-                title="Failed to create agent"
-                error={agentError}
-                onRetry={() => setAgentError(null)}
+                title="Failed to create flow"
+                error={flowError}
+                onRetry={() => setFlowError(null)}
               />
             )}
 
-            <form onSubmit={handleCreateAgent} className="form-card">
-              <label className="form-field" htmlFor="onboard-agent-name">
-                <span>Agent name</span>
+            <form onSubmit={handleCreateFlow} className="form-card">
+              <label className="form-field" htmlFor="onboard-flow-name">
+                <span>Flow name</span>
                 <input
-                  id="onboard-agent-name"
+                  id="onboard-flow-name"
                   type="text"
-                  value={agentNameDraft}
-                  onChange={(e) => setAgentNameDraft(e.target.value)}
+                  value={flowNameDraft}
+                  onChange={(e) => setFlowNameDraft(e.target.value)}
                   placeholder="e.g. Concierge"
                   maxLength={128}
                   required
                 />
               </label>
 
-              <label className="form-field" htmlFor="onboard-agent-desc">
+              <label className="form-field" htmlFor="onboard-flow-desc">
                 <span>Description</span>
                 <input
-                  id="onboard-agent-desc"
+                  id="onboard-flow-desc"
                   type="text"
-                  value={agentDescDraft}
-                  onChange={(e) => setAgentDescDraft(e.target.value)}
+                  value={flowDescDraft}
+                  onChange={(e) => setFlowDescDraft(e.target.value)}
                   placeholder="Primary assistant bot"
                   maxLength={1024}
                 />
@@ -280,45 +280,45 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                   Voice stack configuration
                 </h3>
                 <p style={{ margin: "0 0 12px" }}>
-                  Provider for all stages: <code>{agentProvider ?? "none detected"}</code>
+                  Provider for all stages: <code>{flowProvider ?? "none detected"}</code>
                 </p>
 
-                <label className="form-field" htmlFor="onboard-agent-stt">
+                <label className="form-field" htmlFor="onboard-flow-stt">
                   <span>STT model</span>
                   <input
-                    id="onboard-agent-stt"
+                    id="onboard-flow-stt"
                     type="text"
-                    value={agentSttDraft}
-                    onChange={(e) => setAgentSttDraft(e.target.value)}
+                    value={flowSttDraft}
+                    onChange={(e) => setFlowSttDraft(e.target.value)}
                     required
                   />
                 </label>
 
-                <label className="form-field" htmlFor="onboard-agent-llm">
+                <label className="form-field" htmlFor="onboard-flow-llm">
                   <span>LLM model</span>
                   <input
-                    id="onboard-agent-llm"
+                    id="onboard-flow-llm"
                     type="text"
-                    value={agentLlmDraft}
-                    onChange={(e) => setAgentLlmDraft(e.target.value)}
+                    value={flowLlmDraft}
+                    onChange={(e) => setFlowLlmDraft(e.target.value)}
                     required
                   />
                 </label>
 
-                <label className="form-field" htmlFor="onboard-agent-tts">
+                <label className="form-field" htmlFor="onboard-flow-tts">
                   <span>TTS voice</span>
                   <input
-                    id="onboard-agent-tts"
+                    id="onboard-flow-tts"
                     type="text"
-                    value={agentTtsDraft}
-                    onChange={(e) => setAgentTtsDraft(e.target.value)}
+                    value={flowTtsDraft}
+                    onChange={(e) => setFlowTtsDraft(e.target.value)}
                     required
                   />
                 </label>
               </div>
 
-              <ActionButton type="submit" disabled={createAgentMutation.isPending}>
-                {createAgentMutation.isPending ? "Creating…" : "Create agent"}
+              <ActionButton type="submit" disabled={createFlowMutation.isPending}>
+                {createFlowMutation.isPending ? "Creating…" : "Create flow"}
               </ActionButton>
             </form>
           </section>

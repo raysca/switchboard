@@ -2,19 +2,19 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ApiClient } from "../../../api/client";
 import { deriveView } from "./activity";
-import type { GraphDraft } from "./model";
+import type { FlowDraft } from "./model";
 
 /** What a voice test tells the page about its call. */
 export type CallInfo = { sessionId: string | null; userSpeaking: boolean; botSpeaking: boolean; live: boolean };
 export const NO_CALL: CallInfo = { sessionId: null, userSpeaking: false, botSpeaking: false, live: false };
 
-const HANDOFF_MS = 450;
+const ROUTE_MS = 450;
 
 /**
  * Which step holds the call, which it is preparing, and the routes taken,
- * from the server's handoff trace spans plus what the voice client hears.
+ * from the server's route trace spans plus what the voice client hears.
  */
-export function useCallView(graph: GraphDraft, call: CallInfo, client: ApiClient, pollMs = 500) {
+export function useCallView(graph: FlowDraft, call: CallInfo, client: ApiClient, pollMs = 500) {
   const { sessionId, userSpeaking, botSpeaking, live } = call;
   const traces = useQuery({
     queryKey: ["session-traces", sessionId],
@@ -34,24 +34,24 @@ export function useCallView(graph: GraphDraft, call: CallInfo, client: ApiClient
   }, [userSpeaking, botSpeaking]);
 
   const view = useMemo(
-    () => deriveView(graph.entry, traces.data?.spans ?? [], graph.edges, { userSpeaking, botSpeaking, thinking }),
-    [graph.entry, graph.edges, traces.data, userSpeaking, botSpeaking, thinking],
+    () => deriveView(graph.start, traces.data?.spans ?? [], graph.routes, { userSpeaking, botSpeaking, thinking }),
+    [graph.start, graph.routes, traces.data, userSpeaking, botSpeaking, thinking],
   );
-  const traversedEdges = useMemo(() => view.traversed.flatMap((t) => (t.edgeId ? [t.edgeId] : [])), [view]);
+  const traversedRoutes = useMemo(() => view.traversed.flatMap((t) => (t.routeId ? [t.routeId] : [])), [view]);
 
   // The route just taken is marked for a beat so the canvas can draw the cable.
   const [justHanded, setJustHanded] = useState<string | undefined>();
   const seen = useRef<number | null>(null);
   useEffect(() => {
-    const count = traversedEdges.length;
+    const count = traversedRoutes.length;
     const grew = seen.current !== null && count > seen.current;
     seen.current = count;
     if (!live || !grew) return;
-    setJustHanded(traversedEdges[count - 1]);
-    const t = setTimeout(() => setJustHanded(undefined), HANDOFF_MS);
+    setJustHanded(traversedRoutes[count - 1]);
+    const t = setTimeout(() => setJustHanded(undefined), ROUTE_MS);
     return () => clearTimeout(t);
     // Only a new route restarts the beat: the array is rebuilt whenever the speaker changes.
-  }, [traversedEdges.length, live]);
+  }, [traversedRoutes.length, live]);
 
-  return { view, traversedEdges, justHanded };
+  return { view, traversedRoutes, justHanded };
 }

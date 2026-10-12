@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, asApiError, type AgentDTO, type ApiClient, type CreateAgentInput } from "../../api/client";
+import { ApiError, asApiError, type FlowDTO, type ApiClient, type CreateFlowInput } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
-import { FlowEditor } from "./graph/FlowEditor";
+import { FlowEditor } from "./editor/FlowEditor";
 import { PublishedBanner } from "./PublishedBanner";
 import { liveCalls } from "./flowStats";
 import { useActiveSessions } from "./useActiveSessions";
@@ -22,33 +22,33 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
 
   // The one flow, not the list: the list is capped at 100 and a flow can sort past the cap.
   const flowQuery = useQuery({
-    queryKey: ["agents", flowId],
-    queryFn: () => client.getAgent(flowId!),
+    queryKey: ["flows", flowId],
+    queryFn: () => client.getFlow(flowId!),
     enabled: !!keyValue && !!flowId,
     retry: false,
   });
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: () => client.getProviders(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
 
-  const flow: AgentDTO | undefined = flowQuery.data && !flowQuery.data.archived ? flowQuery.data : undefined;
+  const flow: FlowDTO | undefined = flowQuery.data && !flowQuery.data.archived ? flowQuery.data : undefined;
   const notFound = flowQuery.error instanceof ApiError && flowQuery.error.status === 404;
 
-  const published = (saved: AgentDTO) => {
+  const published = (saved: FlowDTO) => {
     setFormError(null);
     // Put the saved flow in the cache before moving to its address: a refetch is still in flight, and
     // without this the new address would flash "That flow was not found." and remount the editor.
-    queryClient.setQueryData(["agents", saved.id], saved);
-    void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    queryClient.setQueryData(["flows", saved.id], saved);
+    void queryClient.invalidateQueries({ queryKey: ["flows"] });
     // Same address for an update: the state change is what raises the banner.
     navigate(`/flows/${encodeURIComponent(saved.id)}`, { replace: true, state: { published: saved.current_version?.number ?? 1 } });
   };
   const createMutation = useMutation({
-    mutationFn: (payload: CreateAgentInput) => client.createAgent(payload),
+    mutationFn: (payload: CreateFlowInput) => client.createFlow(payload),
     onSuccess: published,
     onError: (err) => setFormError(asApiError(err, "Publishing failed")),
   });
   const updateMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: CreateAgentInput }) => client.updateAgent(id, payload),
+    mutationFn: ({ id, payload }: { id: string; payload: CreateFlowInput }) => client.updateFlow(id, payload),
     onSuccess: published,
     onError: (err) => setFormError(asApiError(err, "Publishing failed")),
   });
@@ -91,7 +91,7 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
       )}
       <FlowEditor
         key={flow?.id ?? "new"}
-        agent={flow ?? null}
+        flow={flow ?? null}
         initialName={search.get("name") ?? undefined}
         initialPanel={search.get("panel") === "test" ? "call" : undefined}
         providers={providers}

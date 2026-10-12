@@ -1,16 +1,16 @@
-import type { TraceSpanDTO } from "../../../api/client";
-import type { Activity, NodeVisual } from "./Canvas";
-import type { GraphEdge } from "./model";
+import { routeSpan, type TraceSpanDTO } from "../../../api/client";
+import type { Activity, StepVisual } from "./Canvas";
+import type { DraftRoute } from "./model";
 
 /** What the voice client says the call is doing right now (it is the call's only live signal). */
 export type VoiceActivity = { userSpeaking: boolean; botSpeaking: boolean; thinking: boolean };
 
 export type GraphView = {
-  nodes: Record<string, NodeVisual>;
-  /** Handoffs the call has taken, oldest first. */
-  traversed: { edgeId: string | null; from: string; to: string; at: string }[];
-  /** Nodes the call has been in, oldest first. */
-  trail: { node: string; since: string }[];
+  steps: Record<string, StepVisual>;
+  /** Routes the call has taken, oldest first. */
+  traversed: { routeId: string | null; from: string; to: string; at: string }[];
+  /** Steps the call has been in, oldest first. */
+  trail: { step: string; since: string }[];
   active: string;
 };
 
@@ -31,49 +31,49 @@ function activityOf(v: VoiceActivity): Activity {
 }
 
 /**
- * Replays the server's handoff trace spans (handoff.preparing, .active,
- * .failed) into which node holds the call. Pure: the same spans always give
- * the same view, so a finished session replays the path it took.
+ * Replays the server's route trace spans (route.preparing, .active, .failed)
+ * into which step holds the call. Pure: the same spans always give the same
+ * view, so a finished session replays the path it took.
  */
-export function deriveView(entry: string, allSpans: TraceSpanDTO[], edges: GraphEdge[], voice: VoiceActivity): GraphView {
+export function deriveView(start: string, allSpans: TraceSpanDTO[], routes: DraftRoute[], voice: VoiceActivity): GraphView {
   const spans = allSpans
-    .filter((s) => s.name.startsWith("handoff."))
+    .filter((s) => routeSpan(s) !== null)
     .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
 
-  let active = entry;
+  let active = start;
   let preparing: string | null = null;
   const visited = new Set<string>();
   const traversed: GraphView["traversed"] = [];
-  const trail: GraphView["trail"] = [{ node: entry, since: spans[0]?.started_at ?? "" }];
+  const trail: GraphView["trail"] = [{ step: start, since: spans[0]?.started_at ?? "" }];
 
   for (const s of spans) {
-    const from = attr(s, "from_node");
-    const to = attr(s, "to_node");
-    if (!from || !to) continue;
-    switch (s.name) {
-      case "handoff.preparing":
+    const r = routeSpan(s);
+    if (!r) continue;
+    const { from, to } = r;
+    switch (r.event) {
+      case "preparing":
         preparing = to;
         break;
-      case "handoff.active":
+      case "active":
         visited.add(from);
         active = to;
         preparing = null;
-        traversed.push({ edgeId: edges.find((e) => e.from === from && e.to === to)?.id ?? null, from, to, at: s.started_at });
-        trail.push({ node: to, since: s.started_at });
+        traversed.push({ routeId: routes.find((e) => e.from === from && e.to === to)?.id ?? null, from, to, at: s.started_at });
+        trail.push({ step: to, since: s.started_at });
         break;
-      case "handoff.failed":
+      case "failed":
         if (preparing === to) preparing = null;
         break;
     }
   }
 
-  const ids = new Set<string>([entry, ...visited, active, ...edges.flatMap((e) => [e.from, e.to])]);
-  const nodes: GraphView["nodes"] = {};
+  const ids = new Set<string>([start, ...visited, active, ...routes.flatMap((e) => [e.from, e.to])]);
+  const steps: GraphView["steps"] = {};
   for (const id of ids) {
-    if (id === active) nodes[id] = { state: "active", activity: activityOf(voice) };
-    else if (id === preparing) nodes[id] = { state: "preparing", activity: null };
-    else if (visited.has(id)) nodes[id] = { state: "visited", activity: null };
-    else nodes[id] = { state: "idle", activity: null };
+    if (id === active) steps[id] = { state: "active", activity: activityOf(voice) };
+    else if (id === preparing) steps[id] = { state: "preparing", activity: null };
+    else if (visited.has(id)) steps[id] = { state: "visited", activity: null };
+    else steps[id] = { state: "idle", activity: null };
   }
-  return { nodes, traversed, trail, active };
+  return { steps, traversed, trail, active };
 }

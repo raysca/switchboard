@@ -4,20 +4,20 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { StepAdvanced } from "./StepAdvanced";
-import { fromAgentConfig, type GraphDraft } from "./model";
+import { fromFlowConfig, type FlowDraft } from "./model";
 
 const svc = { available: true, custom: true, models: [{ id: "gemini", label: "Gemini", default: true }], voices: [{ id: "aoede", label: "Aoede", default: true }] };
 const providers: ProviderStatus[] = [
   { id: "google", display_name: "Google", capabilities: ["llm", "tts"], detected: true, env: [], services: { llm: svc, tts: svc } },
 ];
-const g0 = fromAgentConfig({ llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" }, stt: { provider: "google" } });
+const g0 = fromFlowConfig({ llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" }, stt: { provider: "google" } });
 
-function Harness({ onChange }: { onChange: (g: GraphDraft) => void }) {
+function Harness({ onChange }: { onChange: (g: FlowDraft) => void }) {
   const [g, setG] = useState(g0);
   return (
     <StepAdvanced
       graph={g}
-      step={g.nodes[0]}
+      step={g.steps[0]}
       providers={providers}
       onChange={(n) => {
         setG(n);
@@ -26,7 +26,7 @@ function Harness({ onChange }: { onChange: (g: GraphDraft) => void }) {
     />
   );
 }
-const last = (fn: ReturnType<typeof vi.fn>) => (fn.mock.calls.at(-1)![0] as GraphDraft).nodes[0].config;
+const last = (fn: ReturnType<typeof vi.fn>) => (fn.mock.calls.at(-1)![0] as FlowDraft).steps[0].config;
 
 describe("StepAdvanced", () => {
   it("adds and removes a model fallback", async () => {

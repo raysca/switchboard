@@ -49,7 +49,7 @@ function createMockOperations(overrides: Partial<OperationsStatus> = {}): Operat
 function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     getOperationsStatus: vi.fn().mockResolvedValue(createMockOperations()),
-    getAgents: vi.fn().mockResolvedValue([
+    getFlows: vi.fn().mockResolvedValue([
       { id: "agent-1", name: "Support Agent", readiness: { state: "ready" } },
       { id: "agent-2", name: "Sales Agent", readiness: { state: "not_ready" } },
     ]),

@@ -5,20 +5,20 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useEffect } from "react";
-import type { AgentDTO, ApiClient } from "../../../api/client";
+import type { FlowDTO, ApiClient } from "../../../api/client";
 import type { CallInfo } from "./useCallView";
 import { FlowEditor } from "./FlowEditor";
 
 // A voice test that reports a live call at once (a real one needs a microphone and a server).
-vi.mock("../AgentVoiceTest", () => ({
-  AgentVoiceTest: ({ onCall }: { onCall?: (c: CallInfo) => void }) => {
+vi.mock("../FlowVoiceTest", () => ({
+  FlowVoiceTest: ({ onCall }: { onCall?: (c: CallInfo) => void }) => {
     useEffect(() => onCall?.({ sessionId: "s1", userSpeaking: false, botSpeaking: true, live: true }), [onCall]);
     return <p>Call in progress</p>;
   },
 }));
 
 const flat = { stt: { provider: "google" }, llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" } };
-const agent: AgentDTO = {
+const flow: FlowDTO = {
   id: "a1", name: "Front desk", description: "", enabled: true, archived: false,
   current_version: { id: "v1", number: 1, schema_version: 1, config: flat, config_hash: "h", created_at: "", mcp_tools: [] },
   readiness: { state: "ready", reasons: [] }, created_at: "", updated_at: "",
@@ -31,7 +31,7 @@ describe("FlowEditor during a test call", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <MemoryRouter><ReactFlowProvider>
-          <FlowEditor agent={agent} providers={[]} client={client} keyValue="k" pending={false} onSubmit={vi.fn()} onCancel={vi.fn()} />
+          <FlowEditor flow={flow} providers={[]} client={client} keyValue="k" pending={false} onSubmit={vi.fn()} onCancel={vi.fn()} />
         </ReactFlowProvider></MemoryRouter>
       </QueryClientProvider>,
     );

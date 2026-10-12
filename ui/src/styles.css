@@ -648,27 +648,27 @@ th {
 
 
 
-/* Agent graph: nodes are agents, edges are the cables a handoff runs along */
-.agent-canvas {
+/* Flow canvas: steps are cards, routes are the cables a call runs along */
+.flow-canvas {
   border-top: 1px solid var(--rule);
   border-bottom: 1px solid var(--rule);
   background: var(--surface);
 }
-.agent-canvas .react-flow__edge-path {
+.flow-canvas .react-flow__edge-path {
   stroke: var(--ink-2);
   stroke-width: 2;
 }
-.agent-canvas .react-flow__edge-text {
+.flow-canvas .react-flow__edge-text {
   fill: var(--ink-2);
   font-size: 12px;
 }
-.agent-canvas .react-flow__handle {
+.flow-canvas .react-flow__handle {
   width: 8px;
   height: 8px;
   background: var(--ink);
   border: 0;
 }
-.agent-node {
+.step-node {
   width: 210px;
   min-height: 104px;
   display: flex;
@@ -680,28 +680,28 @@ th {
   background: var(--surface);
   color: var(--ink);
 }
-.agent-node--selected {
+.step-node--selected {
   border-color: var(--caller);
 }
-.agent-node--active {
+.step-node--active {
   background: var(--lamp);
   border-color: var(--ink);
   color: var(--ink);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--lamp) 35%, transparent);
 }
-.agent-node--preparing {
+.step-node--preparing {
   border-style: dashed;
   border-color: var(--ink);
 }
-.agent-node--visited {
+.step-node--visited {
   color: var(--ink-2);
 }
-.agent-node__title {
+.step-node__title {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.agent-node__title b {
+.step-node__title b {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -710,12 +710,12 @@ th {
   font-size: 0.9375rem;
   font-weight: 600;
 }
-.agent-node__tag {
+.step-node__tag {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.6875rem;
   color: var(--ink-2);
 }
-.agent-node__meta {
+.step-node__meta {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -723,7 +723,7 @@ th {
   font-size: 0.6875rem;
   color: inherit;
 }
-.agent-node__status {
+.step-node__status {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -733,23 +733,23 @@ th {
   font-size: 0.75rem;
   color: inherit;
 }
-.agent-node__dot {
+.step-node__dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--ok);
 }
-.agent-node__dot[data-shape="square"] {
+.step-node__dot[data-shape="square"] {
   border-radius: var(--radius);
   background: var(--bad);
 }
-.agent-node--active .agent-node__dot {
+.step-node--active .step-node__dot {
   background: var(--ink);
 }
-.agent-node--visited .agent-node__dot {
+.step-node--visited .step-node__dot {
   background: var(--ink-2);
 }
-.agent-edge--traversed .react-flow__edge-path {
+.route-edge--traversed .react-flow__edge-path {
   stroke: var(--ink);
   stroke-width: 3;
 }
@@ -769,7 +769,7 @@ th {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-/* The handoff moment: the cable draws in and the new lamp lights. Motion only when allowed. */
+/* The route moment: the cable draws in and the new lamp lights. Motion only when allowed. */
 @keyframes cable-draw {
   from {
     stroke-dasharray: 800;
@@ -780,24 +780,24 @@ th {
     stroke-dashoffset: 0;
   }
 }
-@keyframes agent-node-pulse {
+@keyframes step-node-pulse {
   50% {
     opacity: 0.6;
   }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .agent-edge--just .react-flow__edge-path {
+  .route-edge--just .react-flow__edge-path {
     animation: cable-draw 400ms ease-out;
   }
-  .agent-node--active {
+  .step-node--active {
     transition: background-color 400ms ease-out;
   }
-  .agent-node--preparing {
-    animation: agent-node-pulse 1.2s ease-in-out infinite;
+  .step-node--preparing {
+    animation: step-node-pulse 1.2s ease-in-out infinite;
   }
 }
 
-.agent-canvas .react-flow__edge-textbg {
+.flow-canvas .react-flow__edge-textbg {
   fill: var(--surface);
 }
 
@@ -1319,7 +1319,7 @@ legend {
   margin: 4px 0 0;
   font-family: "IBM Plex Mono", monospace;
 }
-.trace-item[data-handoff="true"] {
+.trace-item[data-route="true"] {
   border-left: 3px solid var(--lamp);
 }
 /* Side panel: slides over the right of a position: relative parent. */
@@ -1387,14 +1387,14 @@ legend {
     animation: none;
   }
 }
-.agent-node--incomplete {
+.step-node--incomplete {
   border-style: dashed;
   border-color: var(--ink-2);
 }
-.agent-node--incomplete .agent-node__status {
+.step-node--incomplete .step-node__status {
   color: var(--bad);
 }
-.agent-canvas .agent-edge--draft .react-flow__edge-path {
+.flow-canvas .route-edge--draft .react-flow__edge-path {
   stroke: var(--ink-2);
   stroke-dasharray: 5 4;
 }
@@ -1541,14 +1541,14 @@ main:has(.flow-editor) {
   min-height: 560px;
   overflow: hidden;
 }
-.flow-editor__stage > .agent-canvas {
+.flow-editor__stage > .flow-canvas {
   flex: 1;
   min-width: 0;
 }
-.flow-editor__stage--panel > .agent-canvas {
+.flow-editor__stage--panel > .flow-canvas {
   margin-right: min(440px, 100%);
 }
-.flow-editor__stage--wide > .agent-canvas {
+.flow-editor__stage--wide > .flow-canvas {
   margin-right: min(720px, 100%);
 }
 .flow-editor__blank {

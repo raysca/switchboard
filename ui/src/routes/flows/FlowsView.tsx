@@ -1,19 +1,19 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { asApiError, type AgentDTO, type ApiClient, type ApiError } from "../../api/client";
+import { asApiError, type FlowDTO, type ApiClient, type ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { ArchiveFlowDialog } from "./ArchiveFlowDialog";
 import { NewFlowDialog } from "./NewFlowDialog";
 import { canTest, liveCalls, readiness, routeCount, stepCount, toolCount } from "./flowStats";
 import { useActiveSessions } from "./useActiveSessions";
 
-/** The management API returns at most this many flows (GET /agents?limit=100). */
+/** The management API returns at most this many flows (GET /flows?limit=100). */
 const LIST_LIMIT = 100;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 export type FlowsViewProps = { client: ApiClient; keyValue: string | null };
-type Dialog = { kind: "new" } | { kind: "archive"; flow: AgentDTO } | null;
+type Dialog = { kind: "new" } | { kind: "archive"; flow: FlowDTO } | null;
 
 export function FlowsView({ client, keyValue }: FlowsViewProps) {
   const queryClient = useQueryClient();
@@ -22,15 +22,15 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [actionError, setActionError] = useState<ApiError | null>(null);
 
-  const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
+  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: client.getProviders, enabled: !!keyValue, retry: false });
   const sessions = active.data ?? [];
 
-  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["agents"] });
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["flows"] });
   const toggleMutation = useMutation({
     // Only `enabled`, never a config: the server publishes a version only when a config is sent.
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => client.updateAgent(id, { enabled }),
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => client.updateFlow(id, { enabled }),
     onSuccess: () => {
       setActionError(null);
       refresh();
@@ -38,19 +38,19 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
     onError: (err) => setActionError(asApiError(err, "Could not change whether the flow is enabled")),
   });
   const copyMutation = useMutation({
-    mutationFn: ({ id, name }: { id: string; name?: string; open?: boolean }) => client.duplicateAgent(id, name ? { name } : undefined),
+    mutationFn: ({ id, name }: { id: string; name?: string; open?: boolean }) => client.duplicateFlow(id, name ? { name } : undefined),
     onSuccess: (copy, vars) => {
       setActionError(null);
       setDialog(null);
       refresh();
       // Hand the copy to the editor's cache first, or it would look for a flow the list has not got yet.
-      if (vars.open) queryClient.setQueryData(["agents", copy.id], copy);
+      if (vars.open) queryClient.setQueryData(["flows", copy.id], copy);
       if (vars.open) navigate(`/flows/${encodeURIComponent(copy.id)}`);
     },
     onError: (err) => setActionError(asApiError(err, "Copy failed")),
   });
   const archiveMutation = useMutation({
-    mutationFn: (id: string) => client.archiveAgent(id),
+    mutationFn: (id: string) => client.archiveFlow(id),
     onSuccess: () => {
       setActionError(null);
       setDialog(null);

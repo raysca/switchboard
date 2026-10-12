@@ -1,7 +1,7 @@
 import type { ProviderStatus } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
-import { flowIssues, updateNode, type GraphDraft, type NodeConfig } from "./model";
+import { flowIssues, updateStep, type FlowDraft, type StepConfig } from "./model";
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (v && typeof v === "object" && !Array.isArray(v) ? (v as Rec) : {});
@@ -16,13 +16,13 @@ const numberOrNothing = (raw: string): number | null => (raw.trim() === "" ? nul
 export type FlowSettingsPanelProps = {
   /** The published version, shown read-only: what is live, and its content hash. */
   published?: { number: number; createdAt: string; hash: string };
-  graph: GraphDraft;
+  graph: FlowDraft;
   providers: ProviderStatus[];
   name: string;
   description: string;
   onName: (v: string) => void;
   onDescription: (v: string) => void;
-  onChange: (g: GraphDraft) => void;
+  onChange: (g: FlowDraft) => void;
   onClose: () => void;
   returnFocusTo?: HTMLElement | null;
   fallbackFocusId?: string;
@@ -30,18 +30,18 @@ export type FlowSettingsPanelProps = {
 
 /** What the whole call shares. Stored on the start step (server: call-level config). */
 export function FlowSettingsPanel({ graph, providers, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId, published }: FlowSettingsPanelProps) {
-  const start = graph.nodes.find((n) => n.id === graph.entry);
-  const cfg: NodeConfig = start?.config ?? {};
+  const start = graph.steps.find((n) => n.id === graph.start);
+  const cfg: StepConfig = start?.config ?? {};
   const stt = rec(cfg.stt);
   const context = rec(cfg.context);
   const recording = rec(cfg.recording);
   const problems = flowIssues(graph);
   const setKey = (key: string, value: unknown) => {
     if (!start) return;
-    onChange(updateNode(graph, start.id, { config: value === null || value === undefined ? without(cfg, key) : { ...cfg, [key]: value } }));
+    onChange(updateStep(graph, start.id, { config: value === null || value === undefined ? without(cfg, key) : { ...cfg, [key]: value } }));
   };
   const setContext = (next: Rec) => setKey("context", Object.keys(next).length ? next : null);
-  const cue = graph.handoff_cue;
+  const cue = graph.route_cue;
 
   return (
     <SidePanel
@@ -177,7 +177,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
         </>
       )}
 
-      {graph.edges.length > 0 && (
+      {graph.routes.length > 0 && (
         <fieldset className="stage-box">
           <legend>Route sound</legend>
           <p className="subtext">Plays while the caller moves between steps. Sounds are set up on the server (audio.cues).</p>
@@ -191,8 +191,8 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
                 value={cue?.name ?? ""}
                 onChange={(e) => {
                   const v = e.target.value.trim();
-                  const { handoff_cue: _drop, ...rest } = graph;
-                  onChange(v ? { ...rest, handoff_cue: { ...(cue ?? {}), name: v } } : rest);
+                  const { route_cue: _drop, ...rest } = graph;
+                  onChange(v ? { ...rest, route_cue: { ...(cue ?? {}), name: v } } : rest);
                 }}
               />
             </label>
@@ -208,7 +208,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
                 onChange={(e) => {
                   if (!cue) return;
                   const n = numberOrNothing(e.target.value);
-                  onChange({ ...graph, handoff_cue: { name: cue.name, ...(n && n > 0 ? { after_ms: n } : {}) } });
+                  onChange({ ...graph, route_cue: { name: cue.name, ...(n && n > 0 ? { after_ms: n } : {}) } });
                 }}
               />
             </label>

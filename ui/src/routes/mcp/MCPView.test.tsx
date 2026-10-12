@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { MCPView } from "./MCPView";
-import { ApiError, type AgentDTO, type ApiClient, type MCPServerDTO, type MCPServerDetailDTO } from "../../api/client";
+import { ApiError, type FlowDTO, type ApiClient, type MCPServerDTO, type MCPServerDetailDTO } from "../../api/client";
 
 const server = (over: Partial<MCPServerDTO> = {}): MCPServerDTO => ({
   id: "billing",
@@ -28,7 +28,7 @@ const detail = (over: Partial<MCPServerDetailDTO> = {}): MCPServerDetailDTO => (
   ...over,
 });
 const crm = server({ id: "crm", name: "crm", auth_env: "", auth_env_set: false, last_discovered_at: "2026-10-12T14:00:00Z" });
-const flow = (id: string, name: string, tools: { server: string; name: string; hash: string; required: boolean }[], deps: object[] = [], archived = false): AgentDTO => ({
+const flow = (id: string, name: string, tools: { server: string; name: string; hash: string; required: boolean }[], deps: object[] = [], archived = false): FlowDTO => ({
   id,
   name,
   description: "",
@@ -50,14 +50,14 @@ function setup(client: Partial<ApiClient> = {}, path = "/mcp-servers", key: stri
   const full = {
     getMCPServers: vi.fn().mockResolvedValue([server(), crm]),
     getMCPServer: vi.fn().mockImplementation(async (id: string) => (id === "crm" ? detail({ ...crm, discovery: { id: "d2", discovery_hash: "x", created_at: "", tools: [tool("notes", "n1")] } }) : detail())),
-    getAgents: vi.fn().mockResolvedValue([drifted, steady]),
+    getFlows: vi.fn().mockResolvedValue([drifted, steady]),
     createMCPServer: vi.fn().mockResolvedValue(server({ id: "new", name: "new" })),
     deleteMCPServer: vi.fn().mockResolvedValue({ deleted: true }),
     enableMCPServer: vi.fn().mockResolvedValue(server()),
     disableMCPServer: vi.fn().mockResolvedValue(server({ enabled: false })),
     discoverMCPServer: vi.fn().mockResolvedValue(server()),
     testMCPTool: vi.fn().mockResolvedValue({ execution_id: "exec-9999", mcp_server_id: "billing", tool_name: "latest_invoice", status: "completed", duration_ms: 12, result: { ok: true } }),
-    setAgentMCPTools: vi.fn().mockResolvedValue({}),
+    setFlowMCPTools: vi.fn().mockResolvedValue({}),
     ...client,
   } as unknown as ApiClient;
   render(
@@ -162,7 +162,7 @@ describe("MCPView", () => {
     const { client, user } = setup({});
     await user.click(await screen.findByRole("button", { name: "Accept new schema for Front desk" }));
     await user.click(screen.getByRole("button", { name: "Publish new version" }));
-    expect(client.setAgentMCPTools).toHaveBeenCalledWith("f1", [{ mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "c9d00000bb", required: true }]);
+    expect(client.setFlowMCPTools).toHaveBeenCalledWith("f1", [{ mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "c9d00000bb", required: true }]);
   });
 
   it("toggles a tool's schema, and opens the test console", async () => {
@@ -247,7 +247,7 @@ describe("MCPView", () => {
   });
 
   it("still lists and opens servers when the flow list fails, saying usage is unknown", async () => {
-    setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
+    setup({ getFlows: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     const panel = (await screen.findByRole("heading", { name: "billing", level: 2 })).closest("section") as HTMLElement;
     expect(within(panel).getByText("The flows could not be loaded, so which flows use this server, and whether any schema changed, is unknown.")).toBeVisible();
     expect(within(within(panel).getByRole("table")).getAllByText("—").length).toBeGreaterThan(0);
@@ -267,14 +267,14 @@ describe("MCPView", () => {
   });
 
   it("does not call the flow list a failure while it is still loading", async () => {
-    setup({ getAgents: vi.fn().mockReturnValue(new Promise(() => {})) });
+    setup({ getFlows: vi.fn().mockReturnValue(new Promise(() => {})) });
     const panel = (await screen.findByRole("heading", { name: "billing", level: 2 })).closest("section") as HTMLElement;
     expect(within(panel).queryByText(/could not be loaded/)).toBeNull();
   });
 
   it("says counts are a floor, and drift may be incomplete, when the flow list reached the API's page size", async () => {
     const filler = Array.from({ length: 99 }, (_, i) => flow(`x${i}`, `Flow ${i}`, []));
-    setup({ getAgents: vi.fn().mockResolvedValue([drifted, ...filler]) });
+    setup({ getFlows: vi.fn().mockResolvedValue([drifted, ...filler]) });
     const table = await screen.findByRole("table");
     const row = within(table).getByText("send_pay_link").closest("tr") as HTMLElement;
     expect(within(row).getByText("1+")).toBeVisible();
@@ -285,12 +285,12 @@ describe("MCPView", () => {
     const { client, user } = setup({});
     await screen.findByRole("heading", { name: "billing", level: 2 });
     await user.click(screen.getByRole("button", { name: "Sync tools" }));
-    await waitFor(() => expect(client.getAgents).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(client.getFlows).toHaveBeenCalledTimes(2));
   });
 
   it("names the flows the server says use the server, archived ones included", async () => {
-    const inUse = new ApiError("in use", "mcp_server_in_use", 409, "req-4", [{ AgentID: "a9", AgentName: "Archived line", RemoteName: "latest_invoice", Required: false }]);
-    const { user } = setup({ deleteMCPServer: vi.fn().mockRejectedValue(inUse), getAgents: vi.fn().mockResolvedValue([]) });
+    const inUse = new ApiError("in use", "mcp_server_in_use", 409, "req-4", [{ FlowID: "a9", FlowName: "Archived line", RemoteName: "latest_invoice", Required: false }]);
+    const { user } = setup({ deleteMCPServer: vi.fn().mockRejectedValue(inUse), getFlows: vi.fn().mockResolvedValue([]) });
     await user.click(await screen.findByRole("button", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Delete server" }));
     const dialog = await screen.findByRole("dialog", { name: "billing is still in use" });

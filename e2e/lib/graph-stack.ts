@@ -1,7 +1,7 @@
 import { test as base, expect } from "@playwright/test";
 import { graphStackFile, readStack, type Stack } from "./stack";
 
-// The graph suite runs against the fake providers (free, offline) or, with
+// The flow suite runs against the fake providers (free, offline) or, with
 // E2E_PROVIDER=xai, against live xAI (make e2e-xai; spends API credit).
 export const LIVE = process.env.E2E_PROVIDER === "xai";
 export const PROVIDER = LIVE ? "xai" : "google";

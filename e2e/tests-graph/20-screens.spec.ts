@@ -22,13 +22,13 @@ const front = {
   name: "Front desk",
   description: "Answers the main line, verifies callers and routes to billing or support.",
   config: {
-    entry: "reception",
-    nodes: [
+    start: "reception",
+    steps: [
       { id: "reception", name: "Reception", config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You are Reception. Answer in one short sentence." }), tts: stage({ voice: "frontvoice" }) } },
       { id: "billing", name: "Billing", config: { llm: stage({ model: "m", system_prompt: "You are Billing. Answer in one short sentence." }), tts: stage({ voice: "frontvoice" }) } },
       { id: "support", name: "Support", config: { llm: stage({ model: "m", system_prompt: "You are Support. Answer in one short sentence." }), tts: stage({ voice: "frontvoice" }) } },
     ],
-    edges: [
+    routes: [
       { id: "e1", from: "reception", to: "billing", condition: "asks about an invoice" },
       { id: "e2", from: "reception", to: "support", condition: "reports a fault" },
     ],
@@ -39,17 +39,17 @@ test("boards 3 to 12", async ({ page, stack }) => {
   await connect(page, stack);
   await page.getByRole("link", { name: "Flows", exact: true }).first().click();
   // Earlier specs leave flows behind: archive them all so board 3 (the empty page) can be shown.
-  const existing = (await api(stack, "/agents")).data as { id: string }[];
-  for (const a of existing) await api(stack, `/agents/${a.id}/archive`, { method: "POST" });
+  const existing = (await api(stack, "/flows")).data as { id: string }[];
+  for (const a of existing) await api(stack, `/flows/${a.id}/archive`, { method: "POST" });
   await page.reload();
   await page.getByLabel("Management key").fill(stack.managementKey);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByRole("heading", { name: "No flows yet." })).toBeVisible();
   await step(page, "board 3 flows none yet");
 
-  await api(stack, "/agents", { method: "POST", body: JSON.stringify(front) });
-  const second = await api(stack, "/agents", { method: "POST", body: JSON.stringify({ name: "Appointments", description: "Books, moves and cancels engineer visits.", config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You book visits." }), tts: stage({ voice: "frontvoice" }) } }) });
-  await api(stack, `/agents/${second.data.id}`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
+  await api(stack, "/flows", { method: "POST", body: JSON.stringify(front) });
+  const second = await api(stack, "/flows", { method: "POST", body: JSON.stringify({ name: "Appointments", description: "Books, moves and cancels engineer visits.", config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You book visits." }), tts: stage({ voice: "frontvoice" }) } }) });
+  await api(stack, `/flows/${second.data.id}`, { method: "PUT", body: JSON.stringify({ enabled: false }) });
   await page.reload();
   await page.getByLabel("Management key").fill(stack.managementKey);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -72,7 +72,7 @@ test("boards 3 to 12", async ({ page, stack }) => {
   await page.getByRole("button", { name: "Done" }).click();
   // board 8: the editor uses the width of the screen, and the steps are readable (not zoomed out to specks)
   expect((await page.locator(".flow-editor__stage").boundingBox())!.width).toBeGreaterThan(1000);
-  // The graph refits a beat after the panel closes.
+  // The flow refits a beat after the panel closes.
   await expect.poll(async () => (await page.locator(".react-flow__node").first().boundingBox())!.width, { timeout: 5000 }).toBeGreaterThan(150);
   await step(page, "board 8 editor full flow one step unfinished");
   await page.getByRole("button", { name: "Flow settings" }).click();

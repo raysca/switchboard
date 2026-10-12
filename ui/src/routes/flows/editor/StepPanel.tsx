@@ -4,17 +4,17 @@ import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
 import { StepAdvanced } from "./StepAdvanced";
 import {
-  MAX_NODES,
+  MAX_STEPS,
   addDraftRoute,
-  addNode,
-  removeEdge,
-  removeNode,
-  setEntry,
+  insertStep,
+  removeRoute,
+  removeStep,
+  setStart,
   stepIssues,
   uniqueName,
-  updateEdge,
-  updateNode,
-  type GraphDraft,
+  updateRoute,
+  updateStep,
+  type FlowDraft,
   type StepTab,
 } from "./model";
 
@@ -29,7 +29,7 @@ const rec = (v: unknown): Record<string, unknown> =>
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 export type StepPanelProps = {
-  graph: GraphDraft;
+  graph: FlowDraft;
   stepId: string;
   providers: ProviderStatus[];
   /** MCP tools selected on the flow ("<mcp_server_id>/<remote_name>"); a step may call a subset. */
@@ -38,12 +38,12 @@ export type StepPanelProps = {
   onTab: (tab: StepTab) => void;
   /** The route whose condition takes focus: one just drawn or added. */
   focusRoute?: string;
-  onFocusRoute: (edgeId: string | undefined) => void;
+  onFocusRoute: (routeId: string | undefined) => void;
   /** A step just added: its name takes focus, selected, so typing renames it. */
   focusName?: boolean;
   wide: boolean;
   onToggleWide: () => void;
-  onChange: (next: GraphDraft) => void;
+  onChange: (next: FlowDraft) => void;
   onClose: () => void;
   returnFocusTo?: HTMLElement | null | (() => HTMLElement | null);
   fallbackFocusId?: string;
@@ -53,25 +53,25 @@ export type StepPanelProps = {
 export function StepPanel(props: StepPanelProps) {
   const { graph, stepId, providers, flowTools, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo, fallbackFocusId } = props;
   const [routeTarget, setRouteTarget] = useState("");
-  const step = graph.nodes.find((n) => n.id === stepId);
+  const step = graph.steps.find((n) => n.id === stepId);
   if (!step) return null;
 
-  const isStart = step.id === graph.entry;
+  const isStart = step.id === graph.start;
   const issues = stepIssues(graph, step.id);
-  const routes = graph.edges.filter((e) => e.from === step.id);
-  const targets = graph.nodes.filter((n) => n.id !== step.id && !routes.some((r) => r.to === n.id));
-  const nameOf = (id: string) => graph.nodes.find((n) => n.id === id)?.name.trim() || "Untitled step";
+  const routes = graph.routes.filter((e) => e.from === step.id);
+  const targets = graph.steps.filter((n) => n.id !== step.id && !routes.some((r) => r.to === n.id));
+  const nameOf = (id: string) => graph.steps.find((n) => n.id === id)?.name.trim() || "Untitled step";
   const llm = rec(step.config.llm);
   const tts = rec(step.config.tts);
   const patchStage = (cap: "llm" | "tts", patch: Record<string, unknown>) =>
-    onChange(updateNode(graph, step.id, { config: { ...step.config, [cap]: { ...rec(step.config[cap]), ...patch } } }));
+    onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: { ...rec(step.config[cap]), ...patch } } }));
   const warn = (t: StepTab) => issues.some((i) => i.tab === t);
   const count = (t: StepTab) => (t === "routes" ? routes.length : t === "tools" ? step.tools.length : null);
   const basicsIssues = issues.filter((i) => i.tab === "basics");
 
-  const focusLastRoute = (next: GraphDraft) => {
+  const focusLastRoute = (next: FlowDraft) => {
     onChange(next);
-    onFocusRoute(next.edges[next.edges.length - 1].id);
+    onFocusRoute(next.routes[next.routes.length - 1].id);
   };
   const addRoute = () => {
     const next = addDraftRoute(graph, step.id, routeTarget);
@@ -80,9 +80,9 @@ export function StepPanel(props: StepPanelProps) {
     setRouteTarget("");
   };
   const routeToNewStep = () => {
-    const withStep = addNode(graph, uniqueName(graph, "New step"));
+    const withStep = insertStep(graph, uniqueName(graph, "New step"));
     if (withStep === graph) return;
-    focusLastRoute(addDraftRoute(withStep, step.id, withStep.nodes[withStep.nodes.length - 1].id));
+    focusLastRoute(addDraftRoute(withStep, step.id, withStep.steps[withStep.steps.length - 1].id));
   };
 
   return (
@@ -101,13 +101,13 @@ export function StepPanel(props: StepPanelProps) {
                 type="button"
                 className="action-button-small action-button-danger"
                 onClick={() => {
-                  onChange(removeNode(graph, step.id));
+                  onChange(removeStep(graph, step.id));
                   onClose();
                 }}
               >
                 Delete step
               </button>
-              <button type="button" className="action-button-small" onClick={() => onChange(setEntry(graph, step.id))}>
+              <button type="button" className="action-button-small" onClick={() => onChange(setStart(graph, step.id))}>
                 Make start step
               </button>
             </>
@@ -160,7 +160,7 @@ export function StepPanel(props: StepPanelProps) {
                 maxLength={64}
                 autoFocus={focusName}
                 onFocus={(e) => focusName && e.currentTarget.select()}
-                onChange={(e) => onChange(updateNode(graph, step.id, { name: e.target.value }))}
+                onChange={(e) => onChange(updateStep(graph, step.id, { name: e.target.value }))}
               />
             </label>
             <label className="form-field" htmlFor="step-instructions">
@@ -205,7 +205,7 @@ export function StepPanel(props: StepPanelProps) {
         {tab === "routes" && (
           <>
             <p className="subtext">
-              When the model decides a condition is true, the caller moves to that step. You can also drag from a step’s right edge on the graph.
+              When the model decides a condition is true, the caller moves to that step. You can also drag from a step’s right route on the graph.
             </p>
             {routes.length === 0 && <p className="subtext">No routes. The call stays on this step until it ends.</p>}
             <ul className="plain-list route-list">
@@ -221,11 +221,11 @@ export function StepPanel(props: StepPanelProps) {
                       autoFocus={r.id === focusRoute}
                       aria-invalid={!r.condition.trim()}
                       placeholder="For example: the caller asks about an invoice"
-                      onChange={(e) => onChange(updateEdge(graph, r.id, e.target.value))}
+                      onChange={(e) => onChange(updateRoute(graph, r.id, e.target.value))}
                       onBlur={() => r.id === focusRoute && onFocusRoute(undefined)}
                     />
                   </label>
-                  <button type="button" className="action-button-small action-button-danger" onClick={() => onChange(removeEdge(graph, r.id))}>
+                  <button type="button" className="action-button-small action-button-danger" onClick={() => onChange(removeRoute(graph, r.id))}>
                     Remove the route to {nameOf(r.to)}
                   </button>
                 </li>
@@ -247,7 +247,7 @@ export function StepPanel(props: StepPanelProps) {
                 Add route
               </button>
             </div>
-            <button type="button" className="action-button-small" disabled={graph.nodes.length >= MAX_NODES} onClick={routeToNewStep}>
+            <button type="button" className="action-button-small" disabled={graph.steps.length >= MAX_STEPS} onClick={routeToNewStep}>
               Route to a new step
             </button>
           </>
@@ -266,13 +266,13 @@ export function StepPanel(props: StepPanelProps) {
                     type="checkbox"
                     checked={step.tools.includes(t)}
                     onChange={(e) =>
-                      onChange(updateNode(graph, step.id, { tools: e.target.checked ? [...step.tools, t] : step.tools.filter((x) => x !== t) }))
+                      onChange(updateStep(graph, step.id, { tools: e.target.checked ? [...step.tools, t] : step.tools.filter((x) => x !== t) }))
                     }
                   />
                   <code>{t}</code>
                 </label>
               ))}
-              {graph.nodes.length === 1 && <p className="subtext">With one step, it can call every tool the flow has.</p>}
+              {graph.steps.length === 1 && <p className="subtext">With one step, it can call every tool the flow has.</p>}
             </fieldset>
           ))}
 

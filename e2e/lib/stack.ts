@@ -10,14 +10,14 @@ export type Stack = {
   customClientUrl: string; // examples/rtvi_client
   managementKey: string;
   tokenSecret: string;
-  devDir: string; // throwaway agent store
+  devDir: string; // throwaway flow store
   tmpDir: string;
   logDir: string;
   pids: Record<string, number>;
 };
 
 export const stackFile = path.resolve(__dirname, "../.stack.json");
-// The graph suite (playwright.graph.config.ts) has its own stack file, so it can coexist with the paid suite.
+// The flow suite (playwright.graph.config.ts) has its own stack file, so it can coexist with the paid suite.
 export const graphStackFile = path.resolve(__dirname, "../.stack-graph.json");
 export const readStack = (file: string = stackFile): Stack => JSON.parse(fs.readFileSync(file, "utf8"));
 
