@@ -1,7 +1,7 @@
 import { Link, useSearchParams } from "react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { AgentDTO, ApiClient, ApiError } from "../../api/client";
-import { DataTable, EmptyState, ErrorState, LoadingState } from "../../components/primitives";
+import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { useActiveSessions } from "../agents/useActiveSessions";
 import { clock, outcome, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
@@ -59,16 +59,20 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   const rows = (calls.data ?? []).slice(0, PAGE);
   const now = useNow(rows.some((s) => outcome(s).live));
 
-  const heading = (
-    <header className="section-heading">
+  const head = (summary?: string) => (
+    <header className="calls-head">
       <h1 tabIndex={-1}>Calls</h1>
-      <p>Every call, newest first. Open one to read what was said and see where it moved.</p>
+      {summary && (
+        <span className="subtext" role="status">
+          {summary}
+        </span>
+      )}
     </header>
   );
   if (!keyValue) {
     return (
       <>
-        {heading}
+        {head()}
         <EmptyState title="Connect to see calls">Enter a management key above to see calls.</EmptyState>
       </>
     );
@@ -84,12 +88,8 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
 
   return (
     <>
-      {heading}
+      {head(liveNow === undefined ? "Newest first" : `${liveText} live now`)}
       <div className="calls-toolbar">
-        <p className="subtext" role="status">
-          {liveNow === undefined ? "Most recent first" : `${liveText} live now`}
-        </p>
-        <span className="grow" />
         <label className="form-field calls-flow" htmlFor="calls-flow">
           <span>Flow</span>
           <select id="calls-flow" value={flowId} onChange={(e) => setFilter({ flow: e.target.value })}>
@@ -148,28 +148,48 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
         )
       ) : (
         <>
-          <DataTable
-            caption="Calls, newest first"
-            columns={["Started", "Flow", "Duration", "Turns", "Outcome"]}
-            rows={rows.map((s) => {
-              const o = outcome(s);
-              const f = flows.get(s.agent_id);
-              return [
-                <Link key="started" to={`/sessions/${encodeURIComponent(s.id)}`}>
-                  {new Date(s.started_at).toLocaleString()}
-                </Link>,
-                <span key="flow">
-                  {f?.name ?? "Unknown flow"} <span className="chip">{versionLabel(s, f)}</span>
-                </span>,
-                clock(s.started_at, s.ended_at, now),
-                s.turn_count,
-                <span key="outcome" className="row">
-                  <span className="lamp" data-tone={o.live ? "warn" : undefined} aria-hidden="true" />
-                  {o.label}
-                </span>,
-              ];
-            })}
-          />
+          <div className="calls-table">
+            <table>
+              <caption className="visually-hidden">Calls, newest first</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Started</th>
+                  <th scope="col">Flow</th>
+                  <th scope="col" className="num">
+                    Duration
+                  </th>
+                  <th scope="col" className="num">
+                    Turns
+                  </th>
+                  <th scope="col">Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((s) => {
+                  const o = outcome(s);
+                  const f = flows.get(s.agent_id);
+                  return (
+                    <tr key={s.id}>
+                      <td>
+                        <Link to={`/sessions/${encodeURIComponent(s.id)}`}>{new Date(s.started_at).toLocaleString()}</Link>
+                      </td>
+                      <td>
+                        {f?.name ?? "Unknown flow"} <span className="chip">{versionLabel(s, f)}</span>
+                      </td>
+                      <td className="num">{clock(s.started_at, s.ended_at, now)}</td>
+                      <td className="num">{s.turn_count}</td>
+                      <td>
+                        <span className="row">
+                          <span className="lamp" data-tone={o.live ? "warn" : undefined} aria-hidden="true" />
+                          {o.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
           <nav className="calls-pager" aria-label="Pagination">
             <span>
               Calls {page * PAGE + 1}–{page * PAGE + rows.length}

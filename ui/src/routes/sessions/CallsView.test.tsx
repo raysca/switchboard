@@ -248,4 +248,14 @@ describe("CallsView", () => {
     expect(await screen.findByText("2 live now")).toBeVisible();
     expect(screen.getByRole("button", { name: "Live · 2" })).toBeVisible();
   });
+
+  it("follows the canvas: the live count sits beside the heading, and the figures have their own right-aligned columns", async () => {
+    setup({ getSessions: listOnly([call()], [call({ status: "active" })]) });
+    await screen.findByRole("table");
+    expect(screen.getByRole("heading", { level: 1, name: "Calls" }).parentElement).toHaveTextContent("1 live now");
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Started", "Flow", "Duration", "Turns", "Outcome"]);
+    const row = screen.getAllByRole("row")[1];
+    expect(within(row).getByText("04:12").closest("td")).toHaveClass("num");
+    expect(within(row).getByText("6").closest("td")).toHaveClass("num");
+  });
 });

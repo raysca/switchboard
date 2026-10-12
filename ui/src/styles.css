@@ -1733,24 +1733,67 @@ legend {
   line-height: 1.15;
 }
 
+.calls-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  margin-bottom: 20px;
+}
+.calls-head h1 {
+  margin: 0;
+  font-size: clamp(1.8rem, 3vw, 2.2rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
 .calls-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 10px 14px;
-  margin: 24px 0 12px;
-}
-.calls-toolbar p {
-  margin: 0;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--rule);
 }
 .calls-flow {
-  min-width: 220px;
+  min-width: 240px;
 }
 .calls-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 16px;
+  margin: 16px 0;
+}
+.calls-table {
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.calls-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.calls-table th {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-2);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+.calls-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.calls-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.calls-table .num {
+  text-align: right;
 }
 .chip-button {
   min-height: 44px;
