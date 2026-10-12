@@ -21,7 +21,6 @@
 /* Tabular figures only where numbers line up: the font widens punctuation under tnum. */
 .figures dd,
 td,
-.meta-card .value,
 .badge,
 .latency-pill {
   font-variant-numeric: tabular-nums;
@@ -486,12 +485,6 @@ th {
 .action-button-danger:hover {
   background: color-mix(in srgb, var(--bad) 10%, transparent);
 }
-.action-buttons-cell {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  align-items: center;
-}
 .masked-value {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.85rem;
@@ -524,10 +517,6 @@ th {
 .badge--bad {
   background: color-mix(in srgb, var(--bad) 12%, var(--surface));
   color: var(--bad);
-}
-.badge--warning {
-  background: color-mix(in srgb, var(--lamp) 16%, var(--surface));
-  color: var(--ink);
 }
 .badge--neutral {
   background: var(--paper);
@@ -654,27 +643,6 @@ th {
 }
 
 /* Console */
-.console-box {
-  background: var(--ink);
-  color: var(--paper);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-top: 12px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.85rem;
-  overflow-x: auto;
-}
-.console-input {
-  width: 100%;
-  min-height: 80px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.85rem;
-  background: var(--surface);
-  color: var(--ink);
-  border: 1px solid var(--ink-2);
-  padding: 8px;
-  border-radius: var(--radius);
-}
 
 /* Operational Dashboard & Health Banner */
 
@@ -1083,21 +1051,6 @@ th {
 }
 
 /* Name/value pairs on detail screens (no boxes) */
-.meta-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 40px;
-  margin: 24px 0;
-}
-.meta-card .label {
-  font-size: 0.87rem;
-  color: var(--ink-2);
-}
-.meta-card .value {
-  font-size: 1.2rem;
-  font-weight: 600;
-  line-height: 1.3;
-}
 
 /* Service pills: what a provider can do now, or what it still needs */
 .pill {

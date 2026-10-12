@@ -167,13 +167,13 @@ describe("MCPView", () => {
 
   it("toggles a tool's schema, and opens the test console", async () => {
     const { client, user } = setup({});
-    await user.click(await screen.findByRole("button", { name: "View schema for latest_invoice" }));
+    await user.click(await screen.findByRole("button", { name: "Schema for latest_invoice" }));
     // The review panel for the changed tool also shows a schema: look inside the tools table.
     const table = screen.getByRole("table");
     expect(within(table).getByText(/"properties"/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Hide schema for latest_invoice" }));
     expect(within(table).queryByText(/"properties"/)).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Try latest_invoice" }));
+    await user.click(screen.getByRole("button", { name: "Try it for latest_invoice" }));
     await user.click(screen.getByRole("button", { name: "Run tool" }));
     expect(client.testMCPTool).toHaveBeenCalledWith("billing", "latest_invoice", {});
   });
@@ -264,5 +264,60 @@ describe("MCPView", () => {
     setup({ getMCPServers: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     expect(await screen.findByRole("alert")).toHaveTextContent("down");
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  });
+
+  it("does not call the flow list a failure while it is still loading", async () => {
+    setup({ getAgents: vi.fn().mockReturnValue(new Promise(() => {})) });
+    const panel = (await screen.findByRole("heading", { name: "billing", level: 2 })).closest("section") as HTMLElement;
+    expect(within(panel).queryByText(/could not be loaded/)).toBeNull();
+  });
+
+  it("says counts are a floor, and drift may be incomplete, when the flow list reached the API's page size", async () => {
+    const filler = Array.from({ length: 99 }, (_, i) => flow(`x${i}`, `Flow ${i}`, []));
+    setup({ getAgents: vi.fn().mockResolvedValue([drifted, ...filler]) });
+    const table = await screen.findByRole("table");
+    const row = within(table).getByText("send_pay_link").closest("tr") as HTMLElement;
+    expect(within(row).getByText("1+")).toBeVisible();
+    expect(screen.getByText("Only the first 100 flows were checked, so some changed schemas may not be shown.")).toBeVisible();
+  });
+
+  it("looks at the flows again after a sync, so a new schema shows up", async () => {
+    const { client, user } = setup({});
+    await screen.findByRole("heading", { name: "billing", level: 2 });
+    await user.click(screen.getByRole("button", { name: "Sync tools" }));
+    await waitFor(() => expect(client.getAgents).toHaveBeenCalledTimes(2));
+  });
+
+  it("names the flows the server says use the server, archived ones included", async () => {
+    const inUse = new ApiError("in use", "mcp_server_in_use", 409, "req-4", [{ AgentID: "a9", AgentName: "Archived line", RemoteName: "latest_invoice", Required: false }]);
+    const { user } = setup({ deleteMCPServer: vi.fn().mockRejectedValue(inUse), getAgents: vi.fn().mockResolvedValue([]) });
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete server" }));
+    const dialog = await screen.findByRole("dialog", { name: "billing is still in use" });
+    expect(within(dialog).getByRole("link", { name: "Archived line" })).toHaveAttribute("href", "/flows/a9");
+  });
+
+  it("shows a detach that is waiting on calls as Being removed, without offering more actions", async () => {
+    const inUse = new ApiError("in use", "mcp_server_in_use", 409, "req-4");
+    const pending = server({ pending_deletion: true });
+    const deleteMCPServer = vi.fn().mockRejectedValueOnce(inUse).mockResolvedValue({ pending: true, server: pending });
+    const getMCPServer = vi.fn().mockResolvedValueOnce(detail()).mockResolvedValue(detail({ pending_deletion: true }));
+    const { user } = setup({ deleteMCPServer, getMCPServer });
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Delete server" }));
+    await user.click(await screen.findByRole("button", { name: "Detach and delete" }));
+    expect(await screen.findByText("Removal is waiting for calls in progress to finish.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Enable" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("names its buttons so that the visible words are in them, and says which is open", async () => {
+    const { user } = setup({});
+    const schema = await screen.findByRole("button", { name: "Schema for latest_invoice" });
+    expect(schema).toHaveAttribute("aria-expanded", "false");
+    await user.click(schema);
+    expect(screen.getByRole("button", { name: "Hide schema for latest_invoice" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Try it for latest_invoice" })).toHaveAttribute("aria-expanded", "false");
   });
 });

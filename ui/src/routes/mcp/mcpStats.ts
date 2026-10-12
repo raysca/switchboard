@@ -55,13 +55,40 @@ export function drifts(flows: AgentDTO[], serverId: string): Drift[] {
   );
 }
 
-/** The flow's tool list with one tool re-pinned to the schema the server offers now. `null` when that cannot be done. */
-export function acceptedSelection(flow: AgentDTO, dep: ToolDependencyDTO): ToolSelection[] | null {
-  const current = dep.current_schema_hash;
+export type Repin = {
+  /** The flow's whole tool list with every changed tool re-pinned; `null` when nothing can be re-pinned. */
+  selection: ToolSelection[] | null;
+  /** The tools that get re-pinned. */
+  tools: string[];
+  /** Dependencies that would still make the server refuse the list: a tool that is gone, a server that is down. */
+  blockedBy: ToolDependencyDTO[];
+};
+
+/**
+ * What accepting the new schemas means for one flow. The server checks every tool in the list against its latest
+ * discovery, so a list that leaves any changed tool on its old hash is refused: all of them are re-pinned together.
+ */
+export function repin(flow: AgentDTO): Repin {
+  const deps = flow.readiness.tool_dependencies ?? [];
   const tools = flow.current_version?.mcp_tools ?? [];
-  const pinned = tools.some((t) => t.mcp_server_id === dep.mcp_server_id && t.remote_name === dep.remote_name);
-  if (!current || !pinned) return null;
-  return tools.map((t) => (t.mcp_server_id === dep.mcp_server_id && t.remote_name === dep.remote_name ? { ...t, schema_hash: current } : t));
+  const changed = deps.filter((d) => d.state === "schema_drift" && d.current_schema_hash && tools.some((t) => t.mcp_server_id === d.mcp_server_id && t.remote_name === d.remote_name));
+  const blockedBy = deps.filter((d) => d.state !== "ready" && d.state !== "schema_drift");
+  if (changed.length === 0) return { selection: null, tools: [], blockedBy };
+  const selection = tools.map((t) => {
+    const d = changed.find((c) => c.mcp_server_id === t.mcp_server_id && c.remote_name === t.remote_name);
+    return d ? { ...t, schema_hash: d.current_schema_hash! } : t;
+  });
+  return { selection, tools: changed.map((d) => d.remote_name), blockedBy };
+}
+
+/** The flows a refused delete names (`details` of the 409: every current flow that pins a tool of the server, archived or not). */
+export function referencedFlows(details: unknown): { id: string; name: string }[] {
+  if (!Array.isArray(details)) return [];
+  const seen = new Map<string, string>();
+  for (const r of details as { AgentID?: unknown; AgentName?: unknown }[]) {
+    if (r && typeof r.AgentID === "string" && typeof r.AgentName === "string" && !seen.has(r.AgentID)) seen.set(r.AgentID, r.AgentName);
+  }
+  return [...seen].map(([id, name]) => ({ id, name }));
 }
 
 export function formatApiError(err: unknown, fallback: string): string {

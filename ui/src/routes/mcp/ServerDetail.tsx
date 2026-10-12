@@ -6,13 +6,14 @@ import { ErrorState } from "../../components/primitives";
 import { DeleteServerDialog } from "./DeleteServerDialog";
 import { DriftPanel, MissingTools } from "./DriftPanel";
 import { ToolTestConsole } from "./ToolTestConsole";
-import { ago, drifts, flowsUsingServer, flowsUsingTool, formatApiError, serverStatus } from "./mcpStats";
+import { ago, drifts, flowsUsingServer, flowsUsingTool, formatApiError, referencedFlows, serverStatus } from "./mcpStats";
 
 export type ServerDetailProps = {
   client: ApiClient;
   server: MCPServerDetailDTO;
-  /** `undefined` when the flow list could not be loaded. */
+  /** `undefined` while the flow list loads, or when it could not be loaded (see `flowsFailed`). */
   flows: AgentDTO[] | undefined;
+  flowsFailed: boolean;
   /** The flow list reached the API's page size, so some flows were not checked. */
   flowsCapped: boolean;
   now: number;
@@ -22,17 +23,21 @@ export type ServerDetailProps = {
 type Open = { tool: string; mode: "schema" | "try" } | null;
 
 /** One server: its facts, the schema-change review, and its tools. */
-export function ServerDetail({ client, server, flows, flowsCapped, now, onDeleted }: ServerDetailProps) {
+export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, now, onDeleted }: ServerDetailProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState<Open>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [inUse, setInUse] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [refs, setRefs] = useState<{ id: string; name: string }[]>([]);
+  const [removing, setRemoving] = useState(false);
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
     void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] });
+    // A sync can change schemas: the flows' readiness (drift) must be read again too.
+    void queryClient.invalidateQueries({ queryKey: ["agents"] });
   };
   const action = (mutationFn: () => Promise<unknown>, fallback: string) => ({
     mutationFn,
@@ -48,17 +53,21 @@ export function ServerDetail({ client, server, flows, flowsCapped, now, onDelete
 
   const remove = useMutation({
     mutationFn: (detach: boolean) => (detach ? client.deleteMCPServer(server.id, true) : client.deleteMCPServer(server.id)),
-    onSuccess: () => {
+    onSuccess: (result) => {
       setDeleting(false);
       setInUse(false);
       setDeleteError(null);
       void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+      void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] });
       void queryClient.invalidateQueries({ queryKey: ["agents"] });
-      onDeleted();
+      // A detach that is waiting for calls to finish leaves the server in place, marked as being removed.
+      if (result && (result as { pending?: boolean }).pending) setRemoving(true);
+      else onDeleted();
     },
     onError: (err) => {
       if (err instanceof ApiError && (err.status === 409 || err.code === "mcp_server_in_use")) {
         setInUse(true);
+        setRefs(referencedFlows(err.details));
         setDeleteError(null);
       } else {
         setDeleteError(formatApiError(err, "Could not delete the server"));
@@ -67,6 +76,7 @@ export function ServerDetail({ client, server, flows, flowsCapped, now, onDelete
   });
 
   const st = serverStatus(server);
+  const beingRemoved = server.pending_deletion || removing;
   const users = flows ? flowsUsingServer(flows, server.id) : undefined;
   const drift = flows ? drifts(flows, server.id) : [];
   const changedTools = new Set(drift.filter((d) => d.kind === "changed").map((d) => d.dep.remote_name));
@@ -108,7 +118,7 @@ export function ServerDetail({ client, server, flows, flowsCapped, now, onDelete
               <dt>Used by</dt>
               <dd>
                 {users === undefined ? (
-                  "—"
+                  flowsFailed ? "—" : "…"
                 ) : users.length === 0 ? (
                   flowsCapped ? "No flow among the first 100" : "No flow yet"
                 ) : (
@@ -124,9 +134,12 @@ export function ServerDetail({ client, server, flows, flowsCapped, now, onDelete
           </dl>
         </div>
         <div className="mcp-detail__actions">
-          <button type="button" className="action-button" disabled={sync.isPending} onClick={() => sync.mutate()}>
-            {sync.isPending ? "Syncing…" : "Sync tools"}
-          </button>
+          {!beingRemoved && (
+            <button type="button" className="action-button" disabled={sync.isPending} onClick={() => sync.mutate()}>
+              {sync.isPending ? "Syncing…" : "Sync tools"}
+            </button>
+          )}
+          {!beingRemoved && (<>
           {server.enabled ? (
             <button type="button" className="action-button-small" disabled={disable.isPending} onClick={() => disable.mutate()}>
               Disable
@@ -147,11 +160,14 @@ export function ServerDetail({ client, server, flows, flowsCapped, now, onDelete
           >
             Delete
           </button>
+          </>)}
         </div>
       </div>
+      {beingRemoved && <p role="note" className="call-note">Removal is waiting for calls in progress to finish.</p>}
 
       {actionError && <ErrorState title="That did not work" error={new ApiError(actionError, "action_failed", 0, "")} onRetry={() => setActionError(null)} />}
-      {flows === undefined && <p className="subtext" role="note">The flows could not be loaded, so which flows use this server, and whether any schema changed, is unknown.</p>}
+      {flowsFailed && <p className="subtext" role="note">The flows could not be loaded, so which flows use this server, and whether any schema changed, is unknown.</p>}
+      {flowsCapped && <p className="subtext" role="note">Only the first 100 flows were checked, so some changed schemas may not be shown.</p>}
 
       {[...changedTools].map((name) => (
         <DriftPanel key={name} client={client} tool={name} schema={tools.find((t) => t.remote_name === name)?.input_schema} items={drift.filter((d) => d.kind === "changed" && d.dep.remote_name === name)} />
@@ -192,12 +208,12 @@ export function ServerDetail({ client, server, flows, flowsCapped, now, onDelete
                       </td>
                       <td className="mcp-tool__description">{t.description}</td>
                       <td>{changedTools.has(t.remote_name) ? <span className="mcp-tool__changed">changed</span> : <code>{t.schema_hash.slice(0, 8)}</code>}</td>
-                      <td className="num">{flows ? flowsUsingTool(flows, server.id, t.remote_name).length : "—"}</td>
+                      <td className="num">{flows ? `${flowsUsingTool(flows, server.id, t.remote_name).length}${flowsCapped ? "+" : ""}` : flowsFailed ? "—" : "…"}</td>
                       <td className="mcp-tool__actions">
-                        <button type="button" className="action-button-small" aria-label={`${schemaOpen ? "Hide" : "View"} schema for ${t.remote_name}`} onClick={() => setOpen(schemaOpen ? null : { tool: t.remote_name, mode: "schema" })}>
+                        <button type="button" className="action-button-small" aria-label={`${schemaOpen ? "Hide schema" : "Schema"} for ${t.remote_name}`} aria-expanded={schemaOpen} onClick={() => setOpen(schemaOpen ? null : { tool: t.remote_name, mode: "schema" })}>
                           {schemaOpen ? "Hide schema" : "Schema"}
                         </button>
-                        <button type="button" className="action-button-small" aria-label={`Try ${t.remote_name}`} aria-expanded={tryOpen} onClick={() => setOpen(tryOpen ? null : { tool: t.remote_name, mode: "try" })}>
+                        <button type="button" className="action-button-small" aria-label={`Try it for ${t.remote_name}`} aria-expanded={tryOpen} onClick={() => setOpen(tryOpen ? null : { tool: t.remote_name, mode: "try" })}>
                           Try it
                         </button>
                       </td>
@@ -227,7 +243,7 @@ export function ServerDetail({ client, server, flows, flowsCapped, now, onDelete
       {deleting && (
         <DeleteServerDialog
           name={server.name}
-          flows={users}
+          flows={refs.length > 0 ? refs : users?.map((f) => ({ id: f.id, name: f.name }))}
           inUse={inUse}
           pending={remove.isPending}
           error={deleteError}

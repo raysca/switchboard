@@ -46,6 +46,19 @@ const items: Drift[] = [
 ];
 const schema = { type: "object", properties: { amount_pence: { type: "integer" } } };
 
+function setupWith(one: AgentDTO, setAgentMCPTools = vi.fn().mockResolvedValue({})) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = { setAgentMCPTools } as unknown as ApiClient;
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <DriftPanel client={client} tool="send_pay_link" schema={schema} items={[{ flow: one, dep: one.readiness.tool_dependencies![0], kind: "changed" }]} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  return { setAgentMCPTools, user: userEvent.setup() };
+}
+
 function setup(setAgentMCPTools = vi.fn().mockResolvedValue({})) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidate = vi.spyOn(queryClient, "invalidateQueries");
@@ -105,6 +118,34 @@ describe("DriftPanel", () => {
     await user.click(screen.getByRole("button", { name: "Publish new version" }));
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toHaveTextContent("tool is not referenced by any step (Request ID: req-5)");
     expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("re-pins every changed tool of the flow in one publish, because the server refuses a list with a stale tool", async () => {
+    const both = flow("f9", "Both tools", [
+      dep(),
+      dep({ remote_name: "latest_invoice", selected_schema_hash: "11110000aa", current_schema_hash: "22220000bb" }),
+    ]);
+    both.current_version!.mcp_tools = [
+      { mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "7a3e0000aa", required: true },
+      { mcp_server_id: "billing", remote_name: "latest_invoice", schema_hash: "11110000aa", required: true },
+    ];
+    const { setAgentMCPTools, user } = setupWith(both);
+    await user.click(screen.getByRole("button", { name: "Accept new schema for Both tools" }));
+    expect(screen.getByText(/send_pay_link, latest_invoice/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Publish new version" }));
+    expect(setAgentMCPTools).toHaveBeenCalledWith("f9", [
+      { mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "c9d00000bb", required: true },
+      { mcp_server_id: "billing", remote_name: "latest_invoice", schema_hash: "22220000bb", required: true },
+    ]);
+  });
+
+  it("says what would still make the server refuse, and does not offer to publish", async () => {
+    const stuck = flow("f8", "Stuck", [dep(), dep({ remote_name: "gone", state: "tool_missing", current_schema_hash: undefined })]);
+    const { setAgentMCPTools, user } = setupWith(stuck);
+    await user.click(screen.getByRole("button", { name: "Accept new schema for Stuck" }));
+    expect(screen.getByText(/The server will refuse until gone is fixed/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Publish new version" })).toBeDisabled();
+    expect(setAgentMCPTools).not.toHaveBeenCalled();
   });
 
   it("offers no accept when the server's current hash is unknown", () => {

@@ -124,6 +124,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
               client={client}
               server={selectedDetail.data}
               flows={flows}
+              flowsFailed={flowsQuery.isError}
               flowsCapped={(flows?.length ?? 0) >= FLOW_CAP}
               now={now}
               onDeleted={() => navigate("/mcp-servers")}

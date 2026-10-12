@@ -1,11 +1,10 @@
 import { Link } from "react-router";
-import type { AgentDTO } from "../../api/client";
 import { Modal } from "../../components/Modal";
 
 export type DeleteServerDialogProps = {
   name: string;
   /** The flows that pin this server's tools; `undefined` when the flow list could not be loaded. */
-  flows: AgentDTO[] | undefined;
+  flows: { id: string; name: string }[] | undefined;
   /** The server refused a plain delete because flows or calls in progress use it. */
   inUse: boolean;
   pending: boolean;

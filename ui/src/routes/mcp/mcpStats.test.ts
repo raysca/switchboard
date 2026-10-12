@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, type AgentDTO, type MCPServerDTO, type ToolDependencyDTO } from "../../api/client";
-import { acceptedSelection, ago, drifts, flowsUsingServer, flowsUsingTool, formatApiError, serverStatus } from "./mcpStats";
+import { ago, drifts, flowsUsingServer, flowsUsingTool, formatApiError, referencedFlows, repin, serverStatus } from "./mcpStats";
 
 const server = (over: Partial<MCPServerDTO> = {}): MCPServerDTO => ({
   id: "crm",
@@ -108,15 +108,58 @@ describe("drifts and acceptedSelection", () => {
     ]);
     expect(drifts([f], "billing").map((d) => d.kind)).toEqual(["changed"]);
   });
-  it("accepts a changed schema by replacing only that tool's hash and keeping the rest", () => {
-    expect(acceptedSelection(f, changed)).toEqual([
+});
+
+describe("repin", () => {
+  const two = flow(
+    "two",
+    [
+      { server: "crm", name: "lookup", hash: "aaaaaaaa11", required: true },
+      { server: "crm", name: "notes", hash: "n1", required: false },
+      { server: "billing", name: "pay", hash: "p1", required: false },
+    ],
+    [
+      dep({ state: "schema_drift", current_schema_hash: "bbbbbbbb22" }),
+      dep({ remote_name: "notes", required: false, state: "schema_drift", selected_schema_hash: "n1", current_schema_hash: "n2" }),
+      dep({ mcp_server_id: "billing", remote_name: "pay", required: false, state: "ready", selected_schema_hash: "p1" }),
+    ],
+  );
+  it("re-pins every changed tool of the flow in one list, and keeps the rest as they were", () => {
+    const plan = repin(two);
+    expect(plan.tools).toEqual(["lookup", "notes"]);
+    expect(plan.blockedBy).toEqual([]);
+    expect(plan.selection).toEqual([
       { mcp_server_id: "crm", remote_name: "lookup", schema_hash: "bbbbbbbb22", required: true },
+      { mcp_server_id: "crm", remote_name: "notes", schema_hash: "n2", required: false },
       { mcp_server_id: "billing", remote_name: "pay", schema_hash: "p1", required: false },
     ]);
   });
-  it("refuses to accept when the current hash is unknown or the flow does not pin the tool", () => {
-    expect(acceptedSelection(f, dep({ state: "schema_drift" }))).toBeNull();
-    expect(acceptedSelection(f, dep({ remote_name: "other", current_schema_hash: "x" }))).toBeNull();
+  it("names what would still make the server refuse: a tool that is gone, or a server that is down", () => {
+    const f = flow("blocked", [{ server: "crm", name: "lookup", hash: "a", required: true }, { server: "crm", name: "gone", hash: "g", required: false }], [
+      dep({ state: "schema_drift", current_schema_hash: "b" }),
+      dep({ remote_name: "gone", required: false, state: "tool_missing" }),
+    ]);
+    expect(repin(f).blockedBy.map((d) => d.remote_name)).toEqual(["gone"]);
+  });
+  it("has nothing to re-pin when no tool changed, or the current hash is unknown", () => {
+    expect(repin(flow("none", [{ server: "crm", name: "lookup", hash: "a", required: true }], [dep()])).selection).toBeNull();
+    expect(repin(flow("nohash", [{ server: "crm", name: "lookup", hash: "a", required: true }], [dep({ state: "schema_drift" })])).selection).toBeNull();
+  });
+});
+
+describe("referencedFlows", () => {
+  it("reads the flows the server names when it refuses a delete, once each", () => {
+    const details = [
+      { AgentID: "a1", AgentName: "Front desk", RemoteName: "lookup", Required: true },
+      { AgentID: "a1", AgentName: "Front desk", RemoteName: "notes", Required: false },
+      { AgentID: "a2", AgentName: "Old line", RemoteName: "lookup", Required: false },
+    ];
+    expect(referencedFlows(details)).toEqual([{ id: "a1", name: "Front desk" }, { id: "a2", name: "Old line" }]);
+  });
+  it("is empty for anything else", () => {
+    expect(referencedFlows(null)).toEqual([]);
+    expect(referencedFlows("x")).toEqual([]);
+    expect(referencedFlows([{ nope: 1 }, null])).toEqual([]);
   });
 });
 

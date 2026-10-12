@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ApiClient } from "../../api/client";
 import { Modal } from "../../components/Modal";
-import { acceptedSelection, formatApiError, type Drift } from "./mcpStats";
+import { formatApiError, repin, type Drift } from "./mcpStats";
 
 const short = (hash: string | undefined) => (hash ?? "").slice(0, 8);
 
@@ -16,7 +16,7 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
 
   const accept = useMutation({
     mutationFn: (d: Drift) => {
-      const selection = acceptedSelection(d.flow, d.dep);
+      const { selection } = repin(d.flow);
       if (!selection) throw new Error("The server's current schema is unknown, so there is nothing to accept.");
       return client.setAgentMCPTools(d.flow.id, selection);
     },
@@ -40,7 +40,7 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
             <code>
               {short(d.dep.selected_schema_hash)} → {short(d.dep.current_schema_hash)}
             </code>
-            {d.dep.current_schema_hash && (
+            {repin(d.flow).selection && (
               <button
                 type="button"
                 className="action-button-small"
@@ -64,8 +64,13 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
       {accepting && (
         <Modal title={`Accept the new schema for ${accepting.flow.name}?`} onCancel={() => setAccepting(null)}>
           <p>
-            This publishes a new version of {accepting.flow.name} that pins {tool} to the schema the server offers now. Calls in progress finish on the version they started on.
+            This publishes a new version of {accepting.flow.name} that re-pins {repin(accepting.flow).tools.join(", ")} to the schemas the servers offer now. Calls in progress finish on the version they started on.
           </p>
+          {repin(accepting.flow).blockedBy.length > 0 && (
+            <p role="note" className="tool-console__error">
+              The server will refuse until {repin(accepting.flow).blockedBy.map((d) => d.remote_name).join(", ")} is fixed: it is missing, or its server is unavailable.
+            </p>
+          )}
           {error && (
             <p role="alert" className="tool-console__error">
               {error}
@@ -75,7 +80,7 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
             <button type="button" className="action-button-small" onClick={() => setAccepting(null)}>
               Cancel
             </button>
-            <button type="button" className="action-button" disabled={accept.isPending} onClick={() => accept.mutate(accepting)}>
+            <button type="button" className="action-button" disabled={accept.isPending || repin(accepting.flow).blockedBy.length > 0} onClick={() => accept.mutate(accepting)}>
               {accept.isPending ? "Publishing…" : "Publish new version"}
             </button>
           </div>
