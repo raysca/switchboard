@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Seeds a running development server with a ready "Dev Assistant" agent and a two-agent
-// "Dealership desk" graph for demos, built from the providers the server detected in its
+// Seeds a running development server with a ready "Dev Assistant" flow and a two-step
+// "Dealership desk" flow for demos, built from the providers the server detected in its
 // environment (GET /api/v1/providers): the first provider that can run each stage, on its
-// catalog defaults. Idempotent: existing agents of those names are reused. Prints only the
+// catalog defaults. Idempotent: existing flows of those names are reused. Prints only the
 // Dev Assistant id on stdout.
 //
 // Needs GOVOICE_ADMIN_URL and GOVOICE_MANAGEMENT_API_KEY.
@@ -22,9 +22,9 @@ async function api(method, route, body) {
   return json.data;
 }
 
-// Archived (deleted in the UI) agents are still listed; never reuse one.
-const agents = (await api("GET", "/agents?limit=100")).filter((a) => !a.archived);
-const find = (name) => agents.find((a) => a.name === name);
+// Archived (deleted in the UI) flows are still listed; never reuse one.
+const flows = (await api("GET", "/flows?limit=100")).filter((a) => !a.archived);
+const find = (name) => flows.find((a) => a.name === name);
 
 // The first detected provider for each stage, on its catalog defaults; null (logged) when a stage has none.
 async function stageDefaults() {
@@ -50,22 +50,22 @@ async function stageDefaults() {
 let stages;
 const defaults = async () => (stages ??= await stageDefaults());
 
-// "Dev Assistant": one agent, the target of the examples.
+// "Dev Assistant": one flow, the target of the examples.
 let assistant = find(AGENT);
 if (assistant) {
-  log(`using existing agent "${AGENT}"`);
+  log(`using existing flow "${AGENT}"`);
 } else {
   const base = await defaults();
   if (!base) process.exit(0);
   const config = { ...base, llm: { ...base.llm, system_prompt: "You are a concise, friendly voice assistant. Answer in one or two short sentences." } };
-  assistant = await api("POST", "/agents", { name: AGENT, description: "Created by make dev", config });
-  log(`created agent "${AGENT}" (${["stt", "llm", "tts"].map((k) => config[k].provider).join(" / ")})`);
+  assistant = await api("POST", "/flows", { name: AGENT, description: "Created by make dev", config });
+  log(`created flow "${AGENT}" (${["stt", "llm", "tts"].map((k) => config[k].provider).join(" / ")})`);
 }
 
-// "Dealership desk": a two-agent graph for demos. The front desk hands buyers to sales.
+// "Dealership desk": a two-step flow for demos. The front desk hands buyers to sales.
 const DESK = "Dealership desk";
 if (find(DESK)) {
-  log(`using existing agent "${DESK}"`);
+  log(`using existing flow "${DESK}"`);
 } else {
   const base = await defaults();
   if (base) {
@@ -79,19 +79,19 @@ if (find(DESK)) {
     };
     // A desk that cannot be created must not cost the examples their Dev Assistant id.
     try {
-      await api("POST", "/agents", {
+      await api("POST", "/flows", {
         name: DESK,
         description: "Front desk hands buyers to sales",
         config: {
-          entry: "front",
-          nodes: [
+          start: "front",
+          steps: [
             { id: "front", name: "Front desk", config: front, position: { x: 0, y: 80 } },
             { id: "sales", name: "Sales", config: sales, position: { x: 420, y: 80 } },
           ],
-          edges: [{ id: "front-sales", from: "front", to: "sales", condition: "The caller wants to buy a car or asks about prices." }],
+          routes: [{ id: "front-sales", from: "front", to: "sales", condition: "The caller wants to buy a car or asks about prices." }],
         },
       });
-      log(`created agent "${DESK}"`);
+      log(`created flow "${DESK}"`);
     } catch (err) {
       log(`could not create "${DESK}": ${err.message}`);
     }

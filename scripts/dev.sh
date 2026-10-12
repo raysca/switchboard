@@ -2,15 +2,15 @@
 # Local development stack and examples. Run through make:
 #   make dev                                   server + admin UI, seeded with "Dev Assistant" and a "Dealership desk" graph
 #   make example-web                           custom web client (needs `make dev` running)
-#   make example-cli [TEXT="..."]              CLI call to the dev agent (voice clip, or a text turn)
+#   make example-cli [TEXT="..."]              CLI call to the dev flow (voice clip, or a text turn)
 #   make example-go NAME=google_pipeline       standalone Go example (reads examples/.env)
 #
 # Provider keys come from examples/.env (see examples/.env.example): the development
 # server loads it itself at start (the environment wins; a relative
 # GOOGLE_APPLICATION_CREDENTIALS resolves against examples/), so nothing is stored.
-# State lives in .govoice-dev/ (git-ignored): the SQLite agent store (created by the
+# State lives in .govoice-dev/ (git-ignored): the SQLite flow store (created by the
 # server), plus dev.env with the generated management key, token secret, ports and
-# dev agent id. Delete the directory to start over.
+# dev flow id. Delete the directory to start over.
 # Ports: PUBLIC_PORT (8080), ADMIN_PORT (9090), UI_PORT (5173), CLIENT_PORT (3000).
 #   public = the voice WebSocket and /health; admin = management API, metrics and debug, kept off the
 #   public listener on purpose; UI = the vite dev server (it proxies /api and /ws); CLIENT = only
@@ -130,7 +130,7 @@ export_urls() {
 
 server_up() { curl -fsS "$GOVOICE_ADMIN_URL/ready" >/dev/null 2>&1; }
 require_server() { server_up || die "no dev server at $GOVOICE_ADMIN_URL; start it with 'make dev'"; }
-require_agent() { [[ -n "${GOVOICE_DEV_AGENT_ID:-}" ]] || die "no dev agent yet: add provider keys to examples/.env and rerun 'make dev', or create one in the admin UI and set GOVOICE_DEV_AGENT_ID in ${DEV_ENV#"$ROOT"/}"; }
+require_flow() { [[ -n "${GOVOICE_DEV_FLOW_ID:-}" ]] || die "no dev flow yet: add provider keys to examples/.env and rerun 'make dev', or create one in the admin UI and set GOVOICE_DEV_FLOW_ID in ${DEV_ENV#"$ROOT"/}"; }
 
 # Starts a background process with prefixed output; remembers its pid.
 PIDS=()
@@ -188,8 +188,8 @@ cmd_up() {
   for _ in $(seq 1 100); do server_up && break; kill -0 "${PIDS[0]}" 2>/dev/null || die "server exited (see [server] output)"; sleep 0.2; done
   server_up || die "server did not become ready"
 
-  if agent_id="$(node scripts/dev-seed.mjs)"; then
-    [[ -n "$agent_id" ]] && set_env GOVOICE_DEV_AGENT_ID "$agent_id" && GOVOICE_DEV_AGENT_ID="$agent_id"
+  if flow_id="$(node scripts/dev-seed.mjs)"; then
+    [[ -n "$flow_id" ]] && set_env GOVOICE_DEV_FLOW_ID "$flow_id" && GOVOICE_DEV_FLOW_ID="$flow_id"
   else
     echo "dev: seeding failed (see [seed] output); the stack still runs" >&2
   fi
@@ -204,7 +204,7 @@ cmd_up() {
     Management key  $GOVOICE_MANAGEMENT_API_KEY   (paste it into the admin UI's "Management key" field)
     Admin API       $GOVOICE_ADMIN_URL
     Voice WebSocket $GOVOICE_WS_URL
-    Dev agent       ${GOVOICE_DEV_AGENT_ID:-none (see [seed] above)}
+    Dev flow        ${GOVOICE_DEV_FLOW_ID:-none (see [seed] above)}
     Data            ${DEV_DIR#"$ROOT"/}/  (SQLite store; the key is in dev.env)
 
   In another terminal: make example-web | make example-cli TEXT="Hello" | make example-go NAME=google_pipeline
@@ -219,15 +219,15 @@ cmd_web() {
   load_env; require_server; need node "Node 20+"
   CLIENT_PORT="$(pick_port client "${want_client:-3000}" "$([[ -n "$want_client" ]] && echo 1 || echo 0)")"
   npm_ready "$ROOT/examples/rtvi_client"
-  echo "dev: custom web client at http://127.0.0.1:$CLIENT_PORT (agent and keys prefilled by the server)"
+  echo "dev: custom web client at http://127.0.0.1:$CLIENT_PORT (flow and keys prefilled by the server)"
   cd examples/rtvi_client
-  PORT="$CLIENT_PORT" HOST=127.0.0.1 GOVOICE_AGENT_ID="${GOVOICE_DEV_AGENT_ID:-}" exec node server.js
+  PORT="$CLIENT_PORT" HOST=127.0.0.1 GOVOICE_FLOW_ID="${GOVOICE_DEV_FLOW_ID:-}" exec node server.js
 }
 
 cmd_cli() {
-  load_env; require_server; require_agent; need node "Node 20+"
+  load_env; require_server; require_flow; need node "Node 20+"
   npm_ready "$ROOT/examples/rtvi_client"
-  local args=(--agent "$GOVOICE_DEV_AGENT_ID" --admin "$GOVOICE_ADMIN_URL" --ws "$GOVOICE_WS_URL")
+  local args=(--flow "$GOVOICE_DEV_FLOW_ID" --admin "$GOVOICE_ADMIN_URL" --ws "$GOVOICE_WS_URL")
   [[ -n "${TEXT:-}" ]] && args+=(--text "$TEXT")
   cd examples/rtvi_client && exec node cli.js "${args[@]}"
 }
