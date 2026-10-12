@@ -274,7 +274,7 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   await expect(page.getByText(/unpublished edits are not in this test/i)).toBeVisible();
   await page.getByRole("button", { name: "Publish" }).click();
   // Publishing leaves the designer open on the new version, so it can be tested at once.
-  await expect(page.getByText(/published immutable version v2/i)).toBeVisible();
+  await expect(page.getByText(/Published v2/)).toBeVisible();
   await expect(page.getByRole("heading", { name: `Design ${AGENT}` })).toBeVisible();
   await expect(page.getByText(/unpublished edits/i)).toHaveCount(0);
 

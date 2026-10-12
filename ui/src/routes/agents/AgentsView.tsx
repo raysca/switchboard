@@ -208,18 +208,11 @@ function AgentForm({
     });
   }
 
-  const stageBox = {
-    border: "1px solid #c9d3d2",
-    padding: "16px",
-    marginTop: "16px",
-    background: "#ffffff",
-  } as const;
-
   return (
     <form onSubmit={handleSubmit} className="form-card" noValidate>
       {errors.length > 0 && (
-        <div role="alert" className="message-panel" style={{ borderColor: "#a43e30" }}>
-          <ul style={{ margin: 0 }}>
+        <div role="alert" className="note note--bad">
+          <ul className="plain-list">
             {errors.map((msg) => (
               <li key={msg}>{msg}</li>
             ))}
@@ -252,11 +245,7 @@ function AgentForm({
         />
       </label>
 
-      <label
-        className="form-field"
-        htmlFor="agent-enabled-checkbox"
-        style={{ display: "flex", alignItems: "center", gap: "8px" }}
-      >
+      <label className="form-field form-field--inline" htmlFor="agent-enabled-checkbox">
         <input
           id="agent-enabled-checkbox"
           type="checkbox"
@@ -266,7 +255,7 @@ function AgentForm({
         <span>Enabled</span>
       </label>
 
-      <fieldset style={stageBox}>
+      <fieldset>
         <legend>Speech-to-text</legend>
         <StageFields
           kind="stt"
@@ -277,7 +266,7 @@ function AgentForm({
         />
       </fieldset>
 
-      <fieldset style={stageBox}>
+      <fieldset>
         <legend>Language model</legend>
         <StageFields
           kind="llm"
@@ -298,7 +287,7 @@ function AgentForm({
         </label>
       </fieldset>
 
-      <fieldset style={stageBox}>
+      <fieldset>
         <legend>Text-to-speech</legend>
         <StageFields
           kind="tts"
@@ -309,7 +298,7 @@ function AgentForm({
         />
       </fieldset>
 
-      <fieldset style={{ ...stageBox, marginBottom: "16px" }}>
+      <fieldset>
         <legend>Context limits (optional)</legend>
         <label className="form-field" htmlFor="agent-max-messages">
           <span>Max messages</span>
@@ -335,7 +324,7 @@ function AgentForm({
         </label>
       </fieldset>
 
-      <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+      <div className="row">
         <ActionButton type="submit" disabled={pending}>
           {pending ? "Saving…" : submitLabel}
         </ActionButton>
@@ -394,7 +383,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       const versionNum = updatedAgent.current_version?.number ?? 1;
       const hash = updatedAgent.current_version?.config_hash ?? "";
       setSaveSuccessMessage(
-        `Agent updated. Published immutable version v${versionNum} with hash ${hash}.`,
+        `Published v${versionNum}. Config hash ${hash}.`,
       );
       setSelectedAgentId(updatedAgent.id);
       // The designer stays open so the new version can be tested at once.
@@ -499,7 +488,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
       ) : (
         <div className="agents-view">
           {actionError && (
-            <div className="section-banner" style={{ marginBottom: "20px" }}>
+            <div className="section-banner">
               <ErrorState
                 title="Agent action failed"
                 error={actionError}
@@ -511,10 +500,8 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
           {saveSuccessMessage && (
             <div
               className="message-panel"
-              style={{ marginBottom: "20px", borderColor: "#007e82" }}
               role="status"
             >
-              <h2>Version published</h2>
               <p>{saveSuccessMessage}</p>
             </div>
           )}
@@ -631,7 +618,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
           {mode === "create" && (
             <section aria-labelledby="create-agent-heading">
               <h2 id="create-agent-heading">Create new voice agent</h2>
-              <p style={{ color: "#53666b", marginBottom: "20px" }}>
+              <p className="lede">
                 Configure the speech-to-text, language model and text-to-speech stages. Calls run
                 this stored agent directly.
               </p>
@@ -662,7 +649,6 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
               <h2 id="edit-agent-heading">Edit {selectedAgent.name}</h2>
               <div
                 className="message-panel"
-                style={{ marginBottom: "20px", borderColor: "#007e82" }}
               >
                 <p>
                   <strong>Notice:</strong> Saving changes will publish a new immutable version
@@ -706,7 +692,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
               <h2 id="design-agent-heading">
                 {selectedAgent ? `Design ${selectedAgent.name}` : "Design a graph agent"}
               </h2>
-              <p style={{ color: "#53666b", marginBottom: "20px" }}>
+              <p className="lede">
                 Each node is an agent with its own model and voice; a handoff lets one agent pass
                 the call to another. Publishing creates a new immutable version
                 {selectedAgent ? ` (v${(selectedAgent.current_version?.number ?? 1) + 1})` : ""};

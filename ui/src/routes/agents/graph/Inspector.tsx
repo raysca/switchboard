@@ -51,7 +51,7 @@ export function NodeInspector({ node, isEntry, providers, onChange, onMakeEntry,
   };
 
   return (
-    <div className="form-card" aria-label={`Agent node ${node.name}`}>
+    <div className="inspector" aria-label={`Agent node ${node.name}`}>
       <label className="form-field" htmlFor={id("name")}>
         <span>Node name</span>
         <input id={id("name")} type="text" value={node.name} maxLength={64} onChange={(e) => onChange({ name: e.target.value })} />
@@ -62,7 +62,7 @@ export function NodeInspector({ node, isEntry, providers, onChange, onMakeEntry,
       {isEntry && stageFields("stt")}
       {stageFields("llm")}
       {stageFields("tts")}
-      <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+      <div className="row">
         {!isEntry && (
           <>
             <button type="button" className="action-button-small" onClick={onMakeEntry}>
@@ -89,7 +89,7 @@ type EdgeInspectorProps = {
 /** Edits a handoff: the condition becomes the description of the transfer tool the model sees. */
 export function EdgeInspector({ edge, fromName, toName, onChange, onRemove }: EdgeInspectorProps) {
   return (
-    <div className="form-card" aria-label={`Handoff from ${fromName} to ${toName}`}>
+    <div className="inspector" aria-label={`Handoff from ${fromName} to ${toName}`}>
       <p>
         <strong>{fromName}</strong> hands off to <strong>{toName}</strong>
       </p>

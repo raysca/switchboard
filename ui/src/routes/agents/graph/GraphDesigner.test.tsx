@@ -79,6 +79,16 @@ describe("GraphDesigner test panel", () => {
     rerender(ui(agent({ llm: { model: "gemini", provider: "google", system_prompt: "Hi." }, stt: flat.stt, tts: flat.tts })));
     expect(screen.queryByText(/unpublished edits/i)).toBeNull();
   });
+
+  it("keeps the note in one persistent status region, and the inspector is a plain panel", async () => {
+    const { user } = setup(agent(flat), panel);
+    const region = screen.getAllByRole("status").find((r) => r.textContent === "");
+    expect(region).toBeDefined();
+    await user.type(screen.getByLabelText("New agent node"), "Sales");
+    await user.click(screen.getByRole("button", { name: "Add agent" }));
+    expect(region).toHaveTextContent(/unpublished edits are not in this test/i);
+    expect(document.querySelector(".inspector")).not.toBeNull();
+  });
 });
 
 describe("GraphDesigner", () => {

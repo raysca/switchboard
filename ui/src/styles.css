@@ -1226,3 +1226,70 @@ th {
   border-radius: var(--radius);
   padding: 0 6px;
 }
+
+/* Forms and the designer */
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.row--end {
+  align-items: end;
+}
+.grow {
+  flex: 1;
+}
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.grid-2-1 {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 10px;
+}
+.plain-list {
+  margin: 0;
+  padding-left: 18px;
+}
+.lede {
+  color: var(--ink-2);
+  margin: 0 0 20px;
+  max-width: 62ch;
+}
+.form-field--inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+fieldset {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 16px 0 0;
+  padding: 12px 0 0;
+}
+legend {
+  font-weight: 600;
+  padding: 0 8px 0 0;
+}
+.designer-add {
+  margin: 16px 0 8px;
+}
+.designer-actions {
+  margin-top: 16px;
+}
+.inspector {
+  display: grid;
+  gap: 12px;
+  padding-left: 20px;
+  border-left: 1px solid var(--rule);
+}
+@media (max-width: 800px) {
+  .inspector {
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+    padding-top: 16px;
+  }
+}

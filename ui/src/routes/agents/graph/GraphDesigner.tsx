@@ -99,8 +99,8 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
     <>
     <form onSubmit={submit} className="designer" noValidate>
       {showErrors && problems.length > 0 && (
-        <div role="alert" className="message-panel" style={{ borderColor: "#a43e30" }}>
-          <ul style={{ margin: 0 }}>
+        <div role="alert" className="note note--bad">
+          <ul className="plain-list">
             {problems.map((p) => (
               <li key={p}>{p}</li>
             ))}
@@ -119,8 +119,8 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
         </label>
       </div>
 
-      <div style={{ display: "flex", gap: "8px", alignItems: "end", margin: "16px 0 8px" }}>
-        <label className="form-field" htmlFor="designer-new-node" style={{ flex: 1 }}>
+      <div className="row row--end designer-add">
+        <label className="form-field grow" htmlFor="designer-new-node">
           <span>New agent node</span>
           <input id="designer-new-node" type="text" value={newName} maxLength={64} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Sales" />
         </label>
@@ -190,7 +190,7 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
             </li>
           ))}
         </ul>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+        <div className="grid-2">
           <label className="form-field" htmlFor="handoff-from">
             <span>From</span>
             <select id="handoff-from" value={from} onChange={(e) => setFrom(e.target.value)}>
@@ -228,7 +228,7 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
         <fieldset className="stage-box">
           <legend>Handoff sound</legend>
           <p className="subtext">Plays while the call is between agents. Sounds are set up by the server operator (audio.cues).</p>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "8px" }}>
+          <div className="grid-2-1">
             <label className="form-field" htmlFor="cue-name">
               <span>Sound name</span>
               <input
@@ -266,7 +266,7 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
         </fieldset>
       )}
 
-      <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
+      <div className="row designer-actions">
         <button type="submit" className="action-button" disabled={pending}>
           {pending ? "Saving…" : submitLabel}
         </button>
@@ -277,13 +277,13 @@ export function GraphDesigner({ agent, providers, pending, submitLabel, onSubmit
     </form>
     {agent ? (
       <>
-        <div role="status" className={unpublished ? "message-panel" : undefined} style={{ marginTop: "16px" }}>
+        <div role="status" className={unpublished ? "note" : undefined}>
           {unpublished && "Unpublished edits are not in this test. Publish to include them."}
         </div>
         {testPanel}
       </>
     ) : (
-      <p style={{ color: "#53666b", marginTop: "16px" }}>Publish once to test this agent.</p>
+      <p className="subtext">Publish once to test this agent.</p>
     )}
     </>
   );
