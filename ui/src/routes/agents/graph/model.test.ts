@@ -3,8 +3,6 @@ import {
   MAX_NODES,
   addDraftRoute,
   addNode,
-  connect,
-  connectError,
   emptyFlow,
   flowIssues,
   fromAgentConfig,
@@ -70,23 +68,12 @@ describe("graph model", () => {
   it("removeNode drops incident edges and refuses the entry", () => {
     let g = addNode(fromAgentConfig(flat), "Sales");
     const sales = g.nodes[1].id;
-    g = connect(g, g.entry, sales, "wants to buy");
+    g = addDraftRoute(g, g.entry, sales);
     expect(g.edges).toHaveLength(1);
     expect(removeNode(g, g.entry)).toBe(g);
     const after = removeNode(g, sales);
     expect(after.nodes).toHaveLength(1);
     expect(after.edges).toHaveLength(0);
-  });
-
-  it("connect rejects self edges, duplicates and empty conditions", () => {
-    let g = addNode(fromAgentConfig(flat), "Sales");
-    const [a, b] = [g.nodes[0].id, g.nodes[1].id];
-    expect(connectError(g, a, a, "x")).toMatch(/itself/);
-    expect(connectError(g, a, b, "  ")).toMatch(/condition/);
-    g = connect(g, a, b, "wants to buy");
-    expect(connectError(g, a, b, "again")).toMatch(/already/);
-    expect(connect(g, a, b, "again")).toBe(g);
-    expect(connectError(g, b, a, "back")).toBeNull();
   });
 
   it("validate reports duplicate slugs and missing stage fields", () => {
@@ -231,5 +218,44 @@ describe("server limits", () => {
     });
     expect("é".repeat(300).length).toBeLessThan(512);
     expect(validate(g)).toContain("The route from Reception to Billing has a condition longer than 512 bytes.");
+  });
+});
+
+describe("what the server will accept", () => {
+  const ready = { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "v" } };
+  const one = (start: Record<string, unknown> = {}, step: Record<string, unknown> = {}) =>
+    fromAgentConfig({
+      entry: "a",
+      nodes: [
+        { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready, ...start } },
+        { id: "b", name: "Billing", config: { ...ready, ...step } },
+      ],
+      edges: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
+    });
+
+  it("keeps a named single step as a graph so its name survives publishing", () => {
+    const g = addNode(emptyFlow(), "Reception");
+    const payload = toPayload(g) as { nodes: { name: string }[] };
+    expect(payload.nodes.map((n) => n.name)).toEqual(["Reception"]);
+  });
+
+  it("flags turn-taking and memory values outside the server's ranges", () => {
+    expect(flowIssues(one({ vad_stop_ms: 100 }))).toContain("Wait after the caller stops must be 200 to 2000 ms.");
+    expect(flowIssues(one({ context: { max_messages: 1 } }))).toContain("Max messages must be at least 2.");
+    expect(flowIssues(one({ context: { max_tokens: -5 } }))).toContain("Max tokens cannot be negative.");
+    expect(validate(one({ vad_stop_ms: 2500 }))).toContain("Wait after the caller stops must be 200 to 2000 ms.");
+  });
+
+  it("flags summaries when a step's model provider cannot summarise", () => {
+    const g = one({ context: { summarization: { enabled: true } } }, { llm: { provider: "groq", model: "llama" } });
+    expect(flowIssues(g)).toContain("Billing uses groq, which cannot summarise older turns. Turn summaries off or change its model.");
+  });
+
+  it("flags too many fallbacks and a fallback that repeats the model", () => {
+    const three = one({}, { llm: { ...ready.llm, fallbacks: [{ provider: "openai", model: "a" }, { provider: "openai", model: "b" }, { provider: "xai", model: "c" }] } });
+    expect(stepIssues(three, "b")).toContainEqual({ tab: "advanced", message: "Use at most 2 model fallbacks." });
+    const dup = one({}, { tts: { ...ready.tts, fallbacks: [{ provider: "google", voice: "v" }] } });
+    expect(stepIssues(dup, "b")).toContainEqual({ tab: "advanced", message: "A voice fallback repeats the voice or another fallback." });
+    expect(validate(dup)).toContain("Billing: A voice fallback repeats the voice or another fallback.");
   });
 });

@@ -154,6 +154,9 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
           for (const c of changes) if (c.type === "select" && c.selected) onSelect?.({ kind: "node", id: c.id });
         }}
         selectNodesOnDrag={false}
+        // Steps are deleted from their panel, which updates the flow; React Flow's own Backspace
+        // would only drop the step from the canvas.
+        deleteKeyCode={null}
         onNodeDragStop={(_, node) => onMove?.(node.id, node.position)}
         onConnect={(c) => c.source && c.target && onConnect?.(c.source, c.target)}
         onNodeClick={(_, node) => onSelect?.({ kind: "node", id: node.id })}

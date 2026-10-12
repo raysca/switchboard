@@ -70,8 +70,22 @@ export function stepIssues(g: GraphDraft, id: string): StepIssue[] {
   if (blank(asRecord(n.config.tts).provider)) issues.push({ tab: "basics", message: "Choose a voice." });
   for (const e of g.edges)
     if (e.from === id && blank(e.condition)) issues.push({ tab: "routes", message: `Give the route to ${nameIn(g, e.to)} a condition.` });
+  for (const [cap, what] of [["llm", "model"], ["tts", "voice"], ["stt", "listening"]] as const) {
+    const stage = asRecord(n.config[cap]);
+    const fallbacks = Array.isArray(stage.fallbacks) ? stage.fallbacks.map(asRecord) : [];
+    // The server allows a chain of 3 (the primary and 2 fallbacks) with no repeated entry (server/agent/fallback.go).
+    if (fallbacks.length > MAX_FALLBACKS) issues.push({ tab: "advanced", message: `Use at most ${MAX_FALLBACKS} ${what} fallbacks.` });
+    const key = (c: Record<string, unknown>) => ["provider", "model", "voice", "language"].map((k) => String(c[k] ?? "")).join("\u0000");
+    const keys = [stage, ...fallbacks].map(key);
+    if (fallbacks.length && new Set(keys).size < keys.length)
+      issues.push({ tab: "advanced", message: `A ${what} fallback repeats the ${what} or another fallback.` });
+  }
   return issues;
 }
+
+/** The server's chain limit, primary excluded. */
+export const MAX_FALLBACKS = 2;
+const SUMMARIZING = new Set(["google", "nvidia", "openai", "xai"]);
 
 /** Problems that belong to the whole flow (header state line and Flow settings). */
 export function flowIssues(g: GraphDraft): string[] {
@@ -82,6 +96,18 @@ export function flowIssues(g: GraphDraft): string[] {
   if (blank(asRecord(start.config.stt).provider)) out.push("Choose speech-to-text in Flow settings.");
   const rec = asRecord(start.config.recording);
   if (rec.enabled === true && rec.disclosure_confirmed !== true) out.push("Confirm that callers are told the call is recorded.");
+  // Ranges from server/agent/config.go: 0 or unset means the server default.
+  const vad = start.config.vad_stop_ms;
+  if (typeof vad === "number" && vad !== 0 && (vad < 200 || vad > 2000)) out.push("Wait after the caller stops must be 200 to 2000 ms.");
+  const ctx = asRecord(start.config.context);
+  if (typeof ctx.max_messages === "number" && (ctx.max_messages < 0 || ctx.max_messages === 1)) out.push("Max messages must be at least 2.");
+  if (typeof ctx.max_tokens === "number" && ctx.max_tokens < 0) out.push("Max tokens cannot be negative.");
+  if (asRecord(ctx.summarization).enabled === true)
+    for (const n of g.nodes) {
+      const provider = String(asRecord(n.config.llm).provider ?? "");
+      if (provider && !SUMMARIZING.has(provider))
+        out.push(`${nameIn(g, n.id)} uses ${provider}, which cannot summarise older turns. Turn summaries off or change its model.`);
+    }
   return out;
 }
 
@@ -139,8 +165,10 @@ export function fromAgentConfig(raw: unknown, selectedTools: string[] = []): Gra
 
 /** The config to send: the flat form for a plain one-node agent, else the graph. */
 export function toPayload(g: GraphDraft): unknown {
-  // A one-node agent exposes every selected tool, so its tool list needs no graph form.
-  const plain = g.nodes.length === 1 && g.edges.length === 0 && !g.handoff_cue;
+  // A stored flat agent opens as one step named "main" (fromAgentConfig) and goes back flat, exposing
+  // every selected tool. A step the user has named needs the graph form, or its name is lost.
+  const only = g.nodes[0];
+  const plain = g.nodes.length === 1 && g.edges.length === 0 && !g.handoff_cue && only.id === "main" && only.name === "main";
   if (plain) return g.nodes[0].config;
   return {
     entry: g.entry,
@@ -191,21 +219,6 @@ export function removeEdge(g: GraphDraft, id: string): GraphDraft {
   return { ...g, edges: g.edges.filter((e) => e.id !== id) };
 }
 
-export function connectError(g: GraphDraft, from: string, to: string, condition: string): string | null {
-  if (from === to) return "A node cannot hand off to itself.";
-  if (!condition.trim()) return "A handoff needs a condition.";
-  if (condition.length > MAX_CONDITION) return `The condition is limited to ${MAX_CONDITION} characters.`;
-  if (g.edges.some((e) => e.from === from && e.to === to)) return "Those nodes are already connected that way.";
-  if (g.edges.length >= MAX_EDGES) return `A graph has at most ${MAX_EDGES} handoffs.`;
-  return null;
-}
-
-/** Adds the handoff, or returns the same graph when the server would reject it. */
-export function connect(g: GraphDraft, from: string, to: string, condition: string): GraphDraft {
-  if (connectError(g, from, to, condition)) return g;
-  return { ...g, edges: [...g.edges, { id: newId(), from, to, condition: condition.trim() }] };
-}
-
 /** Makes a node the entry, moving the call-level settings with it. */
 export function setEntry(g: GraphDraft, id: string): GraphDraft {
   if (id === g.entry || !g.nodes.some((n) => n.id === id)) return g;
@@ -254,6 +267,8 @@ export function validate(g: GraphDraft): string[] {
       need(stt.provider, "STT provider");
     }
   }
+  for (const n of g.nodes)
+    for (const i of stepIssues(g, n.id)) if (i.tab === "advanced") errors.push(`${nameIn(g, n.id)}: ${i.message}`);
   for (const e of g.edges) {
     if (blank(e.condition)) errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} needs a condition.`);
     // The server counts bytes (server/agent/graph.go), not characters.

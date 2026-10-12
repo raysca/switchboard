@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { StrictMode, useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { PublishDialog } from "./PublishDialog";
 
@@ -24,13 +25,38 @@ describe("PublishDialog", () => {
     expect(screen.getByRole("button", { name: "Publish v8" })).toBeDisabled();
   });
 
-  it("cancels with Escape or Keep editing", async () => {
+  it("is a modal dialog that cancels on the browser's Escape (cancel event) or Keep editing", async () => {
     const user = userEvent.setup();
     const onCancel = vi.fn();
     render(<PublishDialog {...props} onCancel={onCancel} />);
-    await user.keyboard("{Escape}");
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.tagName).toBe("DIALOG");
+    expect(dialog).toHaveAttribute("open");
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
     expect(onCancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives focus back to what opened it", async () => {
+    const user = userEvent.setup();
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Publish</button>
+          {open && <PublishDialog {...props} onCancel={() => setOpen(false)} />}
+        </>
+      );
+    }
+    // StrictMode (as in main.tsx) runs effects twice: the opener must still be the Publish button.
+    render(
+      <StrictMode>
+        <Harness />
+      </StrictMode>,
+    );
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("button", { name: "Publish" })).toHaveFocus();
   });
 
   it("says when this is the first version", () => {

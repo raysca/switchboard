@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { StageFields, type StageValue } from "../StageFields";
-import { updateNode, type GraphDraft, type GraphNode } from "./model";
+import { MAX_FALLBACKS, updateNode, type GraphDraft, type GraphNode } from "./model";
 
 type Fallback = { provider: string; model?: string; voice?: string };
 type Stage = Record<string, unknown>;
@@ -93,7 +93,8 @@ type ListProps = {
 
 function FallbackList({ kind, title, what, hint, items, providers, idPrefix, onChange }: ListProps) {
   const [draft, setDraft] = useState<StageValue>({ provider: "" });
-  const ready = !!draft.provider && (kind === "tts" || !!(draft.model ?? "").trim());
+  const full = items.length >= MAX_FALLBACKS;
+  const ready = !full && !!draft.provider && (kind === "tts" || !!(draft.model ?? "").trim());
   const add = () => {
     onChange([
       ...items,
@@ -104,7 +105,9 @@ function FallbackList({ kind, title, what, hint, items, providers, idPrefix, onC
   return (
     <fieldset className="stage-box">
       <legend>{title}</legend>
-      <p className="subtext">{hint}</p>
+      <p className="subtext">
+        {hint} Up to {MAX_FALLBACKS}.
+      </p>
       {items.length > 0 && (
         <ol className="plain-list">
           {items.map((f, i) => (

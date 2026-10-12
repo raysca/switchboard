@@ -278,6 +278,12 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   await page.getByRole("row").filter({ hasText: AGENT }).getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("heading", { name: AGENT, level: 2 })).toBeVisible();
   await expect(stepCard(page, "Sales")).toBeVisible();
+  // Backspace on a selected step must not drop it from the canvas while the flow still has it.
+  // (The step is selected and its panel open, focus on the panel title.)
+  await stepCard(page, "Sales").click();
+  await page.keyboard.press("Backspace");
+  await expect(stepCard(page, "Sales")).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
 
   // A third step can be added and deleted again; then edit the route's condition.
   await page.getByRole("button", { name: "Add step" }).click();
@@ -290,6 +296,22 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   // The test call runs the published version: the panel says the edit is not in it yet.
   await page.getByRole("button", { name: "Test call" }).click();
   await expect(page.getByText(/This call runs v1, the published version/)).toBeVisible();
+  // The publish dialog is modal: Tab never reaches the page behind it (the browser may take focus
+  // to its own toolbar, which leaves the page's activeElement as <body>), Escape closes it and
+  // focus returns to Publish.
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press("Tab");
+    const outside = await dialog.evaluate((d) => {
+      const a = document.activeElement;
+      return !!a && a !== document.body && !d.contains(a);
+    });
+    expect(outside, "focus reached the page behind the dialog").toBe(false);
+  }
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Publish", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await page.getByRole("button", { name: "Publish v2" }).click();
   // Publishing leaves the editor open on the new version, so it can be tested at once.

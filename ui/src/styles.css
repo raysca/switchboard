@@ -1599,24 +1599,22 @@ legend {
   gap: 10px;
   min-height: 44px;
 }
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 64px 16px;
-  background: color-mix(in srgb, var(--ink) 50%, transparent);
-}
 .dialog {
-  width: min(640px, 100%);
-  display: flex;
+  width: min(640px, calc(100% - 32px));
+  margin: 64px auto auto;
+  border: 0;
   flex-direction: column;
   gap: 14px;
   padding: 24px;
+  color: var(--ink);
   background: var(--surface);
   border-radius: var(--radius);
+}
+.dialog[open] {
+  display: flex;
+}
+.dialog::backdrop {
+  background: color-mix(in srgb, var(--ink) 50%, transparent);
 }
 .dialog h2 {
   margin: 0;

@@ -40,3 +40,4 @@ describe("Canvas step cards", () => {
     expect(card("Billing")).not.toHaveTextContent("Needs setup");
   });
 });
+

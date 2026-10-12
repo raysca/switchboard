@@ -41,6 +41,19 @@ describe("StepAdvanced", () => {
     expect(last(onChange).llm).not.toHaveProperty("fallbacks");
   });
 
+  it("stops at 2 fallbacks, as the server allows", async () => {
+    const user = userEvent.setup();
+    render(<Harness onChange={vi.fn()} />);
+    const model = screen.getByRole("group", { name: "Model fallbacks" });
+    for (let i = 0; i < 2; i++) {
+      await user.selectOptions(model.querySelector("select")!, "google");
+      await user.click(screen.getByRole("button", { name: "Add model fallback" }));
+    }
+    // A third provider choice must not be addable.
+    await user.selectOptions(model.querySelector("select")!, "google");
+    expect(screen.getByRole("button", { name: "Add model fallback" })).toBeDisabled();
+  });
+
   it("sets tool calls at once within 1 to 16, omitting the default", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

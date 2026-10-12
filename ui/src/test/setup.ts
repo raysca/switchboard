@@ -17,3 +17,13 @@ if (!globalThis.DOMMatrixReadOnly) {
     constructor(_transform?: string) {}
   } as unknown as typeof DOMMatrixReadOnly;
 }
+
+// jsdom has no modal dialogs: open and close are enough for unit tests; the browser suite checks the rest.
+if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.showModal) {
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    this.open = false;
+  };
+}

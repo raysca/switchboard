@@ -82,9 +82,10 @@ describe("FlowEditor", () => {
     await user.selectOptions(screen.getByLabelText("STT provider"), "google");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v1" }));
-    expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "After hours", config: expect.objectContaining({ llm: expect.objectContaining({ provider: "google" }) }) }),
-    );
+    // A named step goes as a graph, so its name is kept.
+    const sent = onSubmit.mock.calls[0][0] as { name: string; config: { nodes: { name: string; config: { llm: { provider: string } } }[] } };
+    expect(sent.name).toBe("After hours");
+    expect(sent.config.nodes).toEqual([expect.objectContaining({ name: "New step", config: expect.objectContaining({ llm: expect.objectContaining({ provider: "google" }) }) })]);
   });
 
   it("says the test call runs the published version while the draft differs", async () => {
