@@ -2091,3 +2091,36 @@ main:has(.providers-layout) {
 .provider-catalog .pill {
   margin-left: 8px;
 }
+
+.tool-console {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 0;
+}
+.tool-console p {
+  margin: 0;
+}
+.tool-console textarea {
+  width: 100%;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8125rem;
+}
+.tool-console__error {
+  color: var(--bad);
+}
+.tool-console__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.tool-console__result {
+  margin: 8px 0 0;
+  padding: 12px;
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 0.8125rem;
+}
