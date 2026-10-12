@@ -162,6 +162,11 @@ e2e-xai: ## paid|Playwright browser e2e for agent graphs against REAL xAI (GOVOI
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a
 # "Dev Assistant" agent from examples/.env. Examples call that agent.
+mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* /slow) and a black hole on :18766
+	go run ./cmd/mcptest -addr 127.0.0.1:18765 -blackhole-addr 127.0.0.1:18766
+
+.PHONY: mcp-test
+
 dev: ## dev|Run the server and admin UI with generated secrets and a seeded Dev Assistant
 	@./scripts/dev.sh up
 

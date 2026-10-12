@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -168,5 +169,24 @@ func TestSDKClientPreservesIntegersBeyondJavaScriptExactRange(t *testing.T) {
 	}
 	if strings.Contains(joined, `9007199254740992`) {
 		t.Fatalf("outgoing MCP params rounded integer: %s", joined)
+	}
+}
+
+// A call that times out has a done context; the session DELETE must still be sent
+// (bounded by its own small budget) so the server can close the session.
+func TestSessionCloseDELETEOutlivesTheCallContext(t *testing.T) {
+	var deleteCtxErr atomic.Value
+	next := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		deleteCtxErr.Store(fmt.Sprint(r.Context().Err()))
+		return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, "http://127.0.0.1:1/mcp", nil)
+	if _, err := (closeBudgetTransport{next: next}).RoundTrip(req); err != nil {
+		t.Fatal(err)
+	}
+	if got := deleteCtxErr.Load(); got != "<nil>" {
+		t.Fatalf("DELETE sent on a done context: %v", got)
 	}
 }

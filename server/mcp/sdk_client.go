@@ -142,7 +142,10 @@ func (t closeBudgetTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	if req.Method != http.MethodDelete {
 		return t.next.RoundTrip(req)
 	}
-	ctx, cancel := context.WithTimeout(req.Context(), sdkCloseBudget)
+	// Detached from the call: when a call times out or is cancelled, its context is
+	// already done, and the DELETE must still reach the server so the session closes
+	// and the tool running there stops. The small budget keeps teardown bounded.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(req.Context()), sdkCloseBudget)
 	defer cancel()
 	clone := req.Clone(ctx)
 	return t.next.RoundTrip(clone)
