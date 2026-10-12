@@ -62,9 +62,9 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | 0 | Connect, empty and error states | all | Not connected keeps "Enter a management key". Each empty/error state: what happened, what it means for live calls, one next step. |
 | 1 | First run | `/onboarding` | 4 steps: voice stack (from detected providers) → flow basics → test call → connect (voice token + client snippet). Key paste (S3) shown only when the server supports it. |
 | 2 | Dashboard | `/dashboard` | State line, figures, live calls, latency, providers, flows. Already largely built (commit `065cd69`). |
-| 3–5, 12 | Flows list, empty state, New flow dialog, published banner | `/flows`, `/flows/new`, `/flows/:id` | **Done (plan 2).** Rows show status, version, steps/routes/tools and live calls; Enabled, Test, Duplicate, Archive. New flow asks for a name, then Blank or Copy (the canvas's voice-stack choice is left to First run). The banner appears in the editor after a publish. Draft badges, rollback, calls-today and Restore wait on S1, S2, S7, S8. |
-| 6–10 | Flow editor | `/flows/:id`, `/flows/new` | Section 2. |
-| 11–12 | Publish, v8 is live | — | Section 2. |
+| 3–5, 12 | Flows list, empty state, New flow dialog, published banner | `/flows`, `/flows/new`, `/flows/:id` | **Done (plan 2).** Rows show status, version, steps/routes/tools and live calls; Enabled, Test, Duplicate, Archive. New flow asks for a name, then Blank or Copy (the canvas's voice-stack choice is left to First run). The banner appears in the editor after a publish. Draft badges, rollback, calls-today and Restore wait on S1, S2, S7, S8. Brought to the canvas's layout in plan 6 (flow screens parity). |
+| 6–10 | Flow editor | `/flows/:id`, `/flows/new` | Section 2. Brought to the canvas's layout in plan 6 (flow screens parity). |
+| 11–12 | Publish, v8 is live | — | Section 2. Brought to the canvas's layout in plan 6 (flow screens parity). |
 | 13–14 | Calls, Call detail | `/sessions`, `/sessions/:id` | **Done (plan 3).** The list filters by flow and Live/Ended (kept in the URL), pages with Newer/Older, and shows flow, version, duration, turns and outcome. The detail shows the figures, the path, and a transcript labelled by step with routes marked; the raw trace is behind "Technical trace". The API's statuses are only active, draining and ended. Caller, waterfall, totals, Path column and call control wait on S9–S13. |
 | 15 | Providers | `/providers` | **Done (plan 4).** A list filtered by service (kept in the URL) beside a panel with the credential source (the variables the server reads, and which are still missing), the catalog, and the flows using the provider. Read-only: no key field until S3; p50, Last hour and Test connection wait on S15, S16. |
 | 16 | MCP tools | `/mcp-servers`, `/mcp-servers/:id` | **Done (plan 5).** Servers beside the selected server's facts, the flows that use it and a tools table; schema changes are reviewed per flow and accepted through `PUT /agents/{id}/mcp-tools`; connect and delete are dialogs. Server states now read in the server's own terms (the old page tested for states the server never sends). Edit connection, the diff and "Keep pinned" wait on S17, S18. |
@@ -80,6 +80,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 - The Calls list drops the canvas's Search, When, Caller, Path and median-turn columns and the Export CSV, Listen in and End call buttons: the server records none of what they need (S9–S13). Outcome is a pressed-button group, not a select plus chips.
 - The Providers panel shows the credential's source and which variables are set, not the canvas's key input, "Save to keyring" or "Test connection" (S3, S16), and no p50 or "Last hour" (S15). Selected rows are outlined in --caller, not boxed with a shadow.
 - The MCP tools screen's schema-change review says what really happens: a required tool whose schema changed stops the flow taking calls until it is re-pinned (the canvas says flows pinned to the old hash keep working, which the server does not do). It offers "Accept new schema" per flow, not "Keep pinned" (S17), and shows the current schema without a diff.
+- The Test call panel follows the canvas (dark header with version and clock, controls, step-labelled transcript) without the waveform and the "median reply" figures (S9), and without a halo or shadow. The Publish dialog follows the canvas without the history note and the "roll back to vN" line (S2), and lists only the checks the editor really makes. The Flow settings footer says the changes are part of the draft until published (S1); it does not say "saved".
 - Placeholder sample data on the canvas (latency numbers, provider names in mock rows) is illustrative only.
 
 ## 5. Server prerequisites (not UI work)
@@ -114,4 +115,5 @@ Until each lands, the UI omits the dependent control rather than faking it.
 3. **Done:** Calls list and call detail (boards 13–14).
 4. **Done:** Providers (board 15).
 5. **Done:** MCP tools (board 16).
-6. First run and empty/error states (boards 0–1), after S3/S5 decisions.
+6. **Done:** flow screens parity (boards 3–12): full-bleed editor, step cards, rebuilt Test call panel, Flows header and empty state, New flow cards, Publish checks.
+7. First run and empty/error states (boards 0–1), after S3/S5 decisions.
