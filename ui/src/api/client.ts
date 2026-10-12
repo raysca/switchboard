@@ -495,6 +495,8 @@ export function createApiClient(
     // Includes archived agents (sessions still name them); list views filter them out.
     getAgents: async () =>
       (await request("/agents?limit=100", agentsEnvelope)).data,
+    getAgent: async (id: string) =>
+      (await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope)).data,
     createAgent: async (input: CreateAgentInput) =>
       (
         await request("/agents", agentEnvelope, {

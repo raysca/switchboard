@@ -42,6 +42,8 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
       setActionError(null);
       setDialog(null);
       refresh();
+      // Hand the copy to the editor's cache first, or it would look for a flow the list has not got yet.
+      if (vars.open) queryClient.setQueryData(["agents", copy.id], copy);
       if (vars.open) navigate(`/flows/${encodeURIComponent(copy.id)}`);
     },
     onError: (err) => setActionError(asApiError(err, "Copy failed")),
@@ -79,7 +81,7 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
         <EmptyState title="Connect to manage flows">Enter a management key above to configure voice flows.</EmptyState>
       ) : flowsQuery.isPending ? (
         <LoadingState label="Loading flows" />
-      ) : flowsQuery.isError ? (
+      ) : flowsQuery.isError && !flowsQuery.data ? (
         <ErrorState title="Failed to load flows" error={flowsQuery.error as ApiError} onRetry={() => void flowsQuery.refetch()} />
       ) : flows.length === 0 ? (
         <section aria-labelledby="no-flows" className="flows-empty">

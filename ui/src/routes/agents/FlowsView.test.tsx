@@ -37,9 +37,10 @@ function Where() {
   return <p data-testid="where">{l.pathname + l.search}</p>;
 }
 function setup(client: Partial<ApiClient>, key: string | null = "k") {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const full = { getAgents: vi.fn().mockResolvedValue([flow({}, graph)]), getSessions: vi.fn().mockResolvedValue([]), ...client } as unknown as ApiClient;
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/flows"]}>
         <Routes>
           <Route path="/flows" element={<FlowsView client={full} keyValue={key} />} />
@@ -48,7 +49,7 @@ function setup(client: Partial<ApiClient>, key: string | null = "k") {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { client: full, user: userEvent.setup() };
+  return { client: full, queryClient, user: userEvent.setup() };
 }
 
 describe("FlowsView", () => {
@@ -186,5 +187,25 @@ describe("FlowsView", () => {
     setup({ getAgents: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     expect(await screen.findByRole("alert")).toHaveTextContent("down");
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  });
+
+  it("hands the copy to the editor's cache before opening it, so it never flashes as missing", async () => {
+    const copy = flow({ id: "a9", name: "Night line" });
+    const { user, queryClient } = setup({ duplicateAgent: vi.fn().mockResolvedValue(copy) });
+    await user.click(await screen.findByRole("button", { name: "New flow" }));
+    await user.click(screen.getByRole("radio", { name: /Copy an existing flow/ }));
+    await user.type(screen.getByLabelText("Name"), "Night line");
+    await user.click(screen.getByRole("button", { name: "Copy and open editor" }));
+    await screen.findByTestId("where");
+    expect(queryClient.getQueryData(["agents", "a9"])).toEqual(copy);
+  });
+
+  it("keeps the list when a background refresh fails", async () => {
+    const getAgents = vi.fn().mockResolvedValueOnce([flow({}, graph)]).mockRejectedValue(new ApiError("down", "internal", 500, "r"));
+    const { user } = setup({ getAgents, updateAgent: vi.fn().mockResolvedValue(flow({ enabled: false })) });
+    await user.click(await screen.findByRole("checkbox", { name: "Front desk enabled" }));
+    await waitFor(() => expect(getAgents).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("link", { name: "Front desk" })).toBeVisible();
+    expect(screen.queryByText("Failed to load flows")).toBeNull();
   });
 });

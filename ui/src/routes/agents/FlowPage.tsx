@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { asApiError, type AgentDTO, type ApiClient, type ApiError, type CreateAgentInput } from "../../api/client";
+import { ApiError, asApiError, type AgentDTO, type ApiClient, type CreateAgentInput } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { FlowEditor } from "./graph/FlowEditor";
 import { PublishedBanner } from "./PublishedBanner";
@@ -20,17 +20,24 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
   const [formError, setFormError] = useState<ApiError | null>(null);
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
 
-  const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
+  // The one flow, not the list: the list is capped at 100 and a flow can sort past the cap.
+  const flowQuery = useQuery({
+    queryKey: ["agents", flowId],
+    queryFn: () => client.getAgent(flowId!),
+    enabled: !!keyValue && !!flowId,
+    retry: false,
+  });
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: () => client.getProviders(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
 
-  const flow: AgentDTO | undefined = flowId ? (flowsQuery.data ?? []).find((a) => a.id === flowId && !a.archived) : undefined;
+  const flow: AgentDTO | undefined = flowQuery.data && !flowQuery.data.archived ? flowQuery.data : undefined;
+  const notFound = flowQuery.error instanceof ApiError && flowQuery.error.status === 404;
 
   const published = (saved: AgentDTO) => {
     setFormError(null);
     // Put the saved flow in the cache before moving to its address: a refetch is still in flight, and
     // without this the new address would flash "That flow was not found." and remount the editor.
-    queryClient.setQueryData<AgentDTO[]>(["agents"], (old) => [...(old ?? []).filter((a) => a.id !== saved.id), saved]);
+    queryClient.setQueryData(["agents", saved.id], saved);
     void queryClient.invalidateQueries({ queryKey: ["agents"] });
     // Same address for an update: the state change is what raises the banner.
     navigate(`/flows/${encodeURIComponent(saved.id)}`, { replace: true, state: { published: saved.current_version?.number ?? 1 } });
@@ -47,8 +54,11 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
   });
 
   if (!keyValue) return <EmptyState title="Connect to edit flows">Enter a management key above to configure voice flows.</EmptyState>;
-  if (flowsQuery.isPending) return <LoadingState label="Loading flow" />;
-  if (flowsQuery.isError) return <ErrorState title="Failed to load the flow" error={flowsQuery.error as ApiError} onRetry={() => void flowsQuery.refetch()} />;
+  if (flowId && flowQuery.isPending) return <LoadingState label="Loading flow" />;
+  // A failed refresh keeps the editor (and its unsaved edits): only a flow we never loaded is an error.
+  if (flowId && !flowQuery.data && flowQuery.isError && !notFound) {
+    return <ErrorState title="Failed to load the flow" error={flowQuery.error as ApiError} onRetry={() => void flowQuery.refetch()} />;
+  }
   if (flowId && !flow) {
     return (
       <section className="flow-missing">
