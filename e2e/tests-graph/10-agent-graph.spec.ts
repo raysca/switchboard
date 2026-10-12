@@ -425,6 +425,7 @@ test("calls: the finished call is listed, with its path and a transcript labelle
   // The call that just ended may still read Ending; the list refreshes every 10 seconds.
   const row = page.getByRole("row").filter({ hasText: AGENT }).first();
   await expect(row).toContainText("Ended", { timeout: 20_000 });
+  await step(page, "calls list");
   await row.getByRole("link").click();
   await expect(page.getByRole("heading", { level: 1 })).toContainText("Call ");
   await expect(page.getByText("Main agent → Sales", { exact: true })).toBeVisible();
