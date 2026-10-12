@@ -41,6 +41,19 @@ describe("Canvas step cards", () => {
   });
 });
 
+describe("Canvas step card shape", () => {
+  it("draws a step as a card: title and tag, the model and voice line, and a status row with a dot", () => {
+    render(<ReactFlowProvider><Canvas graph={graph} /></ReactFlowProvider>);
+    const reception = card("Reception");
+    expect(reception.querySelector(".agent-node__tag")).toHaveTextContent("Start");
+    expect(reception.querySelector(".agent-node__status .agent-node__dot")).not.toBeNull();
+    const needs = screen.getByText("Needs setup").closest(".agent-node__status") as HTMLElement;
+    expect(needs.querySelector('.agent-node__dot[data-shape="square"]')).not.toBeNull();
+    const ready = screen.getByText("Ready").closest(".agent-node__status") as HTMLElement;
+    expect(ready.querySelector('.agent-node__dot[data-shape="square"]')).toBeNull();
+  });
+});
+
 describe("Canvas fitting", () => {
   it("refits when the room for the graph changes", () => {
     const { rerender } = render(<ReactFlowProvider><Canvas graph={graph} fitKey="a" /></ReactFlowProvider>);

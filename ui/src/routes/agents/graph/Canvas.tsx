@@ -63,11 +63,16 @@ function AgentNode({ data, selected }: NodeProps<Node<AgentNodeData>>) {
     >
       <Handle type="target" position={Position.Left} />
       <div className="agent-node__title">
-        {data.name || "Untitled step"}
-        {data.entry && <span className="agent-node__badge">Start</span>}
+        <b>{data.name || "Untitled step"}</b>
+        {data.entry && <span className="agent-node__tag">Start</span>}
       </div>
       <div className="agent-node__meta">{data.model && data.voice ? `${data.model} · ${data.voice}` : data.model || "No model or voice yet"}</div>
-      {status && <div className="agent-node__status">{status}</div>}
+      {status && (
+        <div className="agent-node__status">
+          <span className="agent-node__dot" data-shape={state === "idle" && (data.setup === "incomplete" || data.setup === "unreachable") ? "square" : undefined} aria-hidden="true" />
+          {status}
+        </div>
+      )}
       <Handle type="source" position={Position.Right} />
     </div>
   );

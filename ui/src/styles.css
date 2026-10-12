@@ -669,13 +669,16 @@ th {
   border: 0;
 }
 .agent-node {
-  min-width: 170px;
-  padding: 10px 12px;
-  border: 2px solid var(--rule);
+  width: 210px;
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 14px 9px;
+  border: 1px solid var(--rule);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--ink);
-  font-size: 0.87rem;
 }
 .agent-node--selected {
   border-color: var(--caller);
@@ -694,22 +697,57 @@ th {
   color: var(--ink-2);
 }
 .agent-node__title {
-  font-weight: 600;
   display: flex;
-  gap: 6px;
   align-items: center;
+  gap: 8px;
 }
-.agent-node__badge {
-  font-size: 0.8rem;
-  font-weight: 450;
-  padding: 0 6px;
-  border: 1px solid currentColor;
-  border-radius: var(--radius);
+.agent-node__title b {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9375rem;
+  font-weight: 600;
 }
-.agent-node__meta,
-.agent-node__status {
+.agent-node__tag {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.6875rem;
+  color: var(--ink-2);
+}
+.agent-node__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.6875rem;
   color: inherit;
-  margin-top: 2px;
+}
+.agent-node__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 6px;
+  border-top: 1px solid var(--rule);
+  font-size: 0.75rem;
+  color: inherit;
+}
+.agent-node__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.agent-node__dot[data-shape="square"] {
+  border-radius: var(--radius);
+  background: var(--bad);
+}
+.agent-node--active .agent-node__dot {
+  background: var(--ink);
+}
+.agent-node--visited .agent-node__dot {
+  background: var(--ink-2);
 }
 .agent-edge--traversed .react-flow__edge-path {
   stroke: var(--ink);
