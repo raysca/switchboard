@@ -2053,10 +2053,17 @@ legend {
   margin: 0 0 8px;
   padding: 0;
 }
+.provider-env code {
+  overflow-wrap: anywhere;
+}
+.provider-env .subtext {
+  white-space: nowrap;
+}
 .provider-env li {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 12px;
+  gap: 4px 12px;
   padding: 8px 0;
   border-bottom: 1px solid var(--rule);
 }

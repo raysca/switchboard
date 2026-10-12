@@ -66,7 +66,8 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | 6–10 | Flow editor | `/flows/:id`, `/flows/new` | Section 2. |
 | 11–12 | Publish, v8 is live | — | Section 2. |
 | 13–14 | Calls, Call detail | `/sessions`, `/sessions/:id` | **Done (plan 3).** The list filters by flow and Live/Ended (kept in the URL), pages with Newer/Older, and shows flow, version, duration, turns and outcome. The detail shows the figures, the path, and a transcript labelled by step with routes marked; the raw trace is behind "Technical trace". The API's statuses are only active, draining and ended. Caller, waterfall, totals, Path column and call control wait on S9–S13. |
-| 15–16 | Providers, MCP tools | `/providers`, `/mcp-servers` | Provider detail panel; MCP schema-change review. |
+| 15 | Providers | `/providers` | **Done (plan 4).** A list filtered by service (kept in the URL) beside a panel with the credential source (which variables are set on the server), the catalog, and the flows using the provider. Read-only: no key field until S3; p50, Last hour and Test connection wait on S15, S16. |
+| 16 | MCP tools | `/mcp-servers` | MCP schema-change review. Plan 5. |
 
 ## 4. Deviations from the canvas (the Switchboard spec wins)
 
@@ -77,6 +78,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 - Lamp amber stays reserved for the live call (active step, route just taken). "Needs setup" is a status: a dashed `--ink-2` border on the step card and the status text and tab marker in `--bad`. The empty-condition route is dashed `--ink-2` with the label `Set a condition`.
 - The old agent detail screen's raw config JSON and MCP tools table are gone; the version and hash are in Flow settings and the tools are chosen per step.
 - The Calls list drops the canvas's Search, When, Caller, Path and median-turn columns and the Export CSV, Listen in and End call buttons: the server records none of what they need (S9–S13). Outcome is a pressed-button group, not a select plus chips.
+- The Providers panel shows the credential's source and which variables are set, not the canvas's key input, "Save to keyring" or "Test connection" (S3, S16), and no p50 or "Last hour" (S15). Selected rows are outlined in --caller, not boxed with a shadow.
 - Placeholder sample data on the canvas (latency numbers, provider names in mock rows) is illustrative only.
 
 ## 5. Server prerequisites (not UI work)
@@ -97,6 +99,8 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | S12 | Version number and path on the session row (or the step id on each turn) | "v7" for old versions, the list's Path column, exact step labels |
 | S13 | Live call control: listen in, end a call | The Listen in and End call buttons |
 | S14 | End orphaned sessions at startup (a crash leaves `status=active` forever; nothing reconciles them) | A trustworthy Live lamp, live counts and call clocks |
+| S15 | Provider health in the management API: requests, errors, median latency and circuit-breaker state per provider (today only in Prometheus `/metrics`) | The p50 column and the panel's "Last hour" figures (canvas board 15) |
+| S16 | Test a provider's connection (`POST /providers/{id}/test`) | The panel's "Test connection" button |
 
 Until each lands, the UI omits the dependent control rather than faking it.
 
@@ -105,5 +109,6 @@ Until each lands, the UI omits the dependent control rather than faking it.
 1. The unified flow editor (Section 2). **Done:** merged; its step-by-step plan is in git history.
 2. **Done:** Flows list, New flow dialog, `/flows` routes, retire the agent screens, published banner.
 3. **Done:** Calls list and call detail (boards 13–14).
-4. Providers and MCP tools (boards 15–16).
-5. First run and empty/error states (boards 0–1), after S3/S5 decisions.
+4. **Done:** Providers (board 15).
+5. MCP tools (board 16).
+6. First run and empty/error states (boards 0–1), after S3/S5 decisions.
