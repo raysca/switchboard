@@ -650,7 +650,7 @@ describe("AgentVoiceTest", () => {
 
   it("shows the version and a clock in a header, and counts while the call is live", async () => {
     await connected({ versionNumber: 3 });
-    expect(screen.getByText("Test call · v3")).toBeVisible();
+    expect(screen.getByText("Testing v3")).toBeVisible();
     expect(screen.getByTestId("call-clock")).toHaveTextContent(/^00:0\d$/);
     await waitFor(() => expect(screen.getByTestId("call-clock").textContent).not.toBe("00:00"), { timeout: 3000 });
   });

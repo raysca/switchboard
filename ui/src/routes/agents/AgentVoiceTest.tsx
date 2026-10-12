@@ -132,14 +132,13 @@ export function AgentVoiceTest({
     speechStatusDescription = "Live call active — speak into your microphone";
   }
 
-  const statusTone = state.isBargeInActive ? "bad" : state.isUserSpeaking || state.isBotSpeaking ? "ok" : "idle";
 
   return (
     <section aria-label="Voice test" className="call-panel">
       <div className="call-panel__top">
         <div className="call-panel__title">
           <span id="voice-test-heading">
-            Test call · v{agent.current_version?.number ?? 0}
+            Testing v{agent.current_version?.number ?? 0}
           </span>
           <code data-testid="agent-readiness" className="call-panel__ready">
             {agent.readiness.state}
@@ -150,7 +149,6 @@ export function AgentVoiceTest({
           </span>
         </div>
         <p className="call-panel__state">
-          <span className="lamp" data-tone={isConnectedOrReady ? (statusTone === "idle" ? "warn" : statusTone) : undefined} aria-hidden="true" />
           <span data-testid="connection-state">
             <Status tone={state.sessionState === "ready" ? "good" : state.sessionState === "error" ? "bad" : "neutral"}>{state.sessionState.toUpperCase()}</Status>
           </span>
