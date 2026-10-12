@@ -50,7 +50,8 @@ export function useCallView(graph: GraphDraft, call: CallInfo, client: ApiClient
     setJustHanded(traversedEdges[count - 1]);
     const t = setTimeout(() => setJustHanded(undefined), HANDOFF_MS);
     return () => clearTimeout(t);
-  }, [traversedEdges, live]);
+    // Only a new route restarts the beat: the array is rebuilt whenever the speaker changes.
+  }, [traversedEdges.length, live]);
 
   return { view, traversedEdges, justHanded };
 }

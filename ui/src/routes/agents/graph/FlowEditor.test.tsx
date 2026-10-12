@@ -127,3 +127,35 @@ describe("FlowEditor payloads", () => {
     expect(onSubmit.mock.calls[0][0].config).toEqual(flat);
   });
 });
+
+describe("FlowEditor focus and keyboard", () => {
+  const node = (name: string) => screen.getByText(name).closest(".react-flow__node") as HTMLElement;
+
+  it("opens an existing step from the keyboard, and returns focus to the title when that step is deleted", async () => {
+    const { user } = setup({ agent });
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    node("New step").focus();
+    fireEvent.keyDown(node("New step"), { key: "Enter" });
+    expect(await screen.findByRole("complementary", { name: "New step" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Delete step" }));
+    expect(screen.getByRole("heading", { name: "Front desk", level: 2 })).toHaveFocus();
+  });
+
+  it("puts focus on a new step's name even when another panel was open", async () => {
+    const { user } = setup({ agent });
+    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    expect(screen.getByLabelText("Step name")).toHaveFocus();
+  });
+
+  it("counts renaming the flow as a change to publish", async () => {
+    const { user } = setup({ agent });
+    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.clear(screen.getByLabelText("Flow name"));
+    await user.type(screen.getByLabelText("Flow name"), "Main line");
+    expect(screen.getByText("v1 · unpublished changes")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Renamed the flow to Main line");
+  });
+});

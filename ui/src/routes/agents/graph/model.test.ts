@@ -217,3 +217,19 @@ describe("flow authoring", () => {
     expect(validate(addDraftRoute(two(), "a", "b"))).toContain("The route from Reception to Billing needs a condition.");
   });
 });
+
+describe("server limits", () => {
+  it("counts a route condition in bytes, as the server does", () => {
+    const ready = { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "v" } };
+    const g = fromAgentConfig({
+      entry: "a",
+      nodes: [
+        { id: "a", name: "Reception", config: { stt: { provider: "google" }, ...ready } },
+        { id: "b", name: "Billing", config: ready },
+      ],
+      edges: [{ id: "e1", from: "a", to: "b", condition: "é".repeat(300) }],
+    });
+    expect("é".repeat(300).length).toBeLessThan(512);
+    expect(validate(g)).toContain("The route from Reception to Billing has a condition longer than 512 bytes.");
+  });
+});

@@ -59,7 +59,9 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
   const opener = useRef<HTMLElement | null>(null);
 
   const version = agent?.current_version?.number ?? 0;
-  const unpublished = !published || canonical(toPayload(published)) !== canonical(toPayload(graph));
+  const renamed = !!agent && name.trim() !== agent.name;
+  const redescribed = !!agent && description.trim() !== agent.description;
+  const unpublished = !published || renamed || redescribed || canonical(toPayload(published)) !== canonical(toPayload(graph));
   const needSetup = graph.nodes.filter((n) => stepIssues(graph, n.id).length > 0).length;
   const flowProblems = flowIssues(graph);
   const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph)];
@@ -103,6 +105,7 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
     setFreshStep(id);
   };
   const drawRoute = (from: string, to: string) => {
+    if (call.live) return;
     const next = addDraftRoute(graph, from, to);
     if (next === graph) return;
     setGraph(next);
@@ -143,7 +146,14 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
         <span className="chip">{agent ? `v${version}${unpublished ? " · unpublished changes" : ""}` : "Never published"}</span>
         <Status tone={state.tone}>{state.text}</Status>
         <span className="grow" />
-        <button type="button" className="action-button-small" aria-pressed={panel?.kind === "settings"} onClick={(e) => open({ kind: "settings" }, e.currentTarget)}>
+        <button
+          type="button"
+          className="action-button-small"
+          aria-pressed={panel?.kind === "settings"}
+          disabled={call.live}
+          title={call.live ? "End the test call first" : undefined}
+          onClick={(e) => open({ kind: "settings" }, e.currentTarget)}
+        >
           Flow settings
         </button>
         <button
@@ -220,6 +230,7 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
             onChange={setGraph}
             onClose={close}
             returnFocusTo={opener.current}
+            fallbackFocusId="flow-editor-title"
           />
         )}
         {panel?.kind === "settings" && (
@@ -233,10 +244,11 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
             onChange={setGraph}
             onClose={close}
             returnFocusTo={opener.current}
+            fallbackFocusId="flow-editor-title"
           />
         )}
         {panel?.kind === "call" && agent && (
-          <SidePanel title="Test call" onClose={close} returnFocusTo={opener.current}>
+          <SidePanel title="Test call" onClose={close} returnFocusTo={opener.current} fallbackFocusId="flow-editor-title">
             {unpublished && (
               <p role="note" className="note">
                 This call runs v{version}, the published version. Publish to hear your changes.
@@ -252,7 +264,11 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
           flowName={name}
           version={version + 1}
           firstVersion={!published}
-          changes={describeChanges(published, graph)}
+          changes={[
+            ...(renamed ? [`Renamed the flow to ${name.trim()}`] : []),
+            ...(redescribed ? ["Description changed"] : []),
+            ...describeChanges(published, graph),
+          ]}
           problems={problems}
           pending={pending}
           onConfirm={publish}

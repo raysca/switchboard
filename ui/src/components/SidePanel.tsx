@@ -9,10 +9,12 @@ export type SidePanelProps = {
   onToggleWide?: () => void;
   /** Where focus goes back to when the panel closes: the step or button that opened it. */
   returnFocusTo?: HTMLElement | null;
+  /** Id of the element to focus when returnFocusTo is gone (the step it opened from was deleted). */
+  fallbackFocusId?: string;
 };
 
 /** Slides over the right of its positioned parent; what is behind it stays visible and usable. */
-export function SidePanel({ title, onClose, children, footer, wide, onToggleWide, returnFocusTo }: SidePanelProps) {
+export function SidePanel({ title, onClose, children, footer, wide, onToggleWide, returnFocusTo, fallbackFocusId }: SidePanelProps) {
   const id = useId();
   const panel = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -21,7 +23,13 @@ export function SidePanel({ title, onClose, children, footer, wide, onToggleWide
     // An autoFocus field inside (a route just drawn) keeps focus; otherwise start at the title.
     if (!panel.current?.contains(document.activeElement)) heading.current?.focus();
     const target = back.current;
-    return () => target?.focus();
+    const fallback = fallbackFocusId;
+    return () => {
+      // Something outside already holds focus (another panel replacing this one): leave it there.
+      const active = document.activeElement;
+      if (active && active !== document.body && active.isConnected) return;
+      (target?.isConnected ? target : fallback ? document.getElementById(fallback) : null)?.focus();
+    };
   }, []);
   return (
     <aside

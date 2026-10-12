@@ -148,7 +148,12 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        onNodesChange={(changes: NodeChange<Node<AgentNodeData>>[]) => setNodes((ns) => applyNodeChanges(changes, ns))}
+        onNodesChange={(changes: NodeChange<Node<AgentNodeData>>[]) => {
+          setNodes((ns) => applyNodeChanges(changes, ns));
+          // Enter or Space on a focused step selects it; React Flow reports that as a change, not a click.
+          for (const c of changes) if (c.type === "select" && c.selected) onSelect?.({ kind: "node", id: c.id });
+        }}
+        selectNodesOnDrag={false}
         onNodeDragStop={(_, node) => onMove?.(node.id, node.position)}
         onConnect={(c) => c.source && c.target && onConnect?.(c.source, c.target)}
         onNodeClick={(_, node) => onSelect?.({ kind: "node", id: node.id })}

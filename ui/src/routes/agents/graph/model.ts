@@ -254,8 +254,12 @@ export function validate(g: GraphDraft): string[] {
       need(stt.provider, "STT provider");
     }
   }
-  for (const e of g.edges)
+  for (const e of g.edges) {
     if (blank(e.condition)) errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} needs a condition.`);
+    // The server counts bytes (server/agent/graph.go), not characters.
+    else if (new TextEncoder().encode(e.condition).length > MAX_CONDITION)
+      errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} has a condition longer than ${MAX_CONDITION} bytes.`);
+  }
   errors.push(...flowIssues(g).filter((m) => !m.startsWith("Choose speech-to-text")));
   return errors;
 }

@@ -46,11 +46,12 @@ export type StepPanelProps = {
   onChange: (next: GraphDraft) => void;
   onClose: () => void;
   returnFocusTo?: HTMLElement | null;
+  fallbackFocusId?: string;
 };
 
 /** Everything about one step, in tabs; Basics alone makes a step ready. */
 export function StepPanel(props: StepPanelProps) {
-  const { graph, stepId, providers, flowTools, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo } = props;
+  const { graph, stepId, providers, flowTools, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo, fallbackFocusId } = props;
   const [routeTarget, setRouteTarget] = useState("");
   const step = graph.nodes.find((n) => n.id === stepId);
   if (!step) return null;
@@ -91,6 +92,7 @@ export function StepPanel(props: StepPanelProps) {
       wide={wide}
       onToggleWide={onToggleWide}
       returnFocusTo={returnFocusTo}
+      fallbackFocusId={fallbackFocusId}
       footer={
         <>
           {!isStart && (

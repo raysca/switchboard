@@ -23,10 +23,11 @@ export type FlowSettingsPanelProps = {
   onChange: (g: GraphDraft) => void;
   onClose: () => void;
   returnFocusTo?: HTMLElement | null;
+  fallbackFocusId?: string;
 };
 
 /** What the whole call shares. Stored on the start step (server: call-level config). */
-export function FlowSettingsPanel({ graph, providers, name, description, onName, onDescription, onChange, onClose, returnFocusTo }: FlowSettingsPanelProps) {
+export function FlowSettingsPanel({ graph, providers, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId }: FlowSettingsPanelProps) {
   const start = graph.nodes.find((n) => n.id === graph.entry);
   const cfg: NodeConfig = start?.config ?? {};
   const stt = rec(cfg.stt);
@@ -41,7 +42,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
   const cue = graph.handoff_cue;
 
   return (
-    <SidePanel title="Flow settings" onClose={onClose} returnFocusTo={returnFocusTo}>
+    <SidePanel title="Flow settings" onClose={onClose} returnFocusTo={returnFocusTo} fallbackFocusId={fallbackFocusId}>
       {problems.length > 0 && (
         <div role="note" className="note note--bad">
           <ul className="plain-list">
