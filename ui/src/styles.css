@@ -1673,3 +1673,8 @@ legend {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
+.dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
