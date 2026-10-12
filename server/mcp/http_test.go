@@ -70,12 +70,12 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if err != nil || len(servers) != 1 {
 		t.Fatalf("servers=%+v err=%v", servers, err)
 	}
-	agentService := flow.NewService(svc.store, allAvailable{})
-	created, err := agentService.Create(context.Background(), flow.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	flowService := flow.NewService(svc.store, allAvailable{})
+	created, err := flowService.Create(context.Background(), flow.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentService.SetMCPTools(context.Background(), created.ID, []flow.ToolSelection{{ServerID: servers[0].ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+	if _, err := flowService.SetMCPTools(context.Background(), created.ID, []flow.ToolSelection{{ServerID: servers[0].ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
 	h := Handler(svc)
@@ -108,9 +108,9 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if detached.Code != 200 || !strings.Contains(detached.Body.String(), `"deleted":true`) {
 		t.Fatalf("detach=%d %s", detached.Code, detached.Body.String())
 	}
-	updated, err := agentService.Get(context.Background(), created.ID)
+	updated, err := flowService.Get(context.Background(), created.ID)
 	if err != nil || len(updated.Version.MCPTools) != 0 || updated.Version.Number != 3 {
-		t.Fatalf("detached agent=%+v err=%v", updated, err)
+		t.Fatalf("detached flow=%+v err=%v", updated, err)
 	}
 }
 

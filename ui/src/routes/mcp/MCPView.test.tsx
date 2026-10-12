@@ -234,7 +234,7 @@ describe("MCPView", () => {
   });
 
   it("when delete is refused because the server is in use, names the flows and detaches only on a second confirmation", async () => {
-    const inUse = new ApiError("MCP server is referenced by agents or active sessions", "mcp_server_in_use", 409, "req-3");
+    const inUse = new ApiError("MCP server is referenced by flows or active sessions", "mcp_server_in_use", 409, "req-3");
     const deleteMCPServer = vi.fn().mockRejectedValueOnce(inUse).mockResolvedValue({ deleted: true });
     const { user } = setup({ deleteMCPServer });
     await user.click(await screen.findByRole("button", { name: "Delete" }));
