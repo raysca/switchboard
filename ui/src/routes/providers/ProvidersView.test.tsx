@@ -221,4 +221,11 @@ describe("ProvidersView", () => {
     await user.click(screen.getByRole("button", { name: "Cartesia" }));
     expect(within(screen.getByRole("region", { name: "Used by" })).getByRole("link", { name: "Failover" })).toBeVisible();
   });
+
+  it("explains where the catalog comes from, and how one provider covers many endpoints", async () => {
+    setup({});
+    await screen.findByRole("table");
+    expect(screen.getByText(/Catalog providers are defined in YAML and can be overlaid per deployment\./)).toBeVisible();
+    expect(screen.getByText(/OPENAI_BASE_URL/, { selector: "p" })).toBeVisible();
+  });
 });

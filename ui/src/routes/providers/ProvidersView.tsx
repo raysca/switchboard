@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentDTO, ApiClient, ApiError, ProviderStatus } from "../../api/client";
@@ -119,21 +120,36 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
     </header>
   );
 
+  // The page uses the full width of the workspace, like the canvas: the list on the left, the panel as a column on the right.
+  const page = (body: ReactNode) => <div className="providers-page">{body}</div>;
   if (!keyValue) {
-    return (
+    return page(
       <>
         {head()}
-        <EmptyState title="Connect to view providers">Enter a management key above to see which providers the server detected.</EmptyState>
-      </>
+        <div className="providers-note">
+          <EmptyState title="Connect to view providers">Enter a management key above to see which providers the server detected.</EmptyState>
+        </div>
+      </>,
     );
   }
-  if (providersQuery.isPending) return <>{head()}<LoadingState label="Loading providers" /></>;
-  if (providersQuery.isError) {
-    return (
+  if (providersQuery.isPending) {
+    return page(
       <>
         {head()}
-        <ErrorState title="Failed to load providers" error={providersQuery.error as ApiError} onRetry={() => void providersQuery.refetch()} />
-      </>
+        <div className="providers-note">
+          <LoadingState label="Loading providers" />
+        </div>
+      </>,
+    );
+  }
+  if (providersQuery.isError) {
+    return page(
+      <>
+        {head()}
+        <div className="providers-note">
+          <ErrorState title="Failed to load providers" error={providersQuery.error as ApiError} onRetry={() => void providersQuery.refetch()} />
+        </div>
+      </>,
     );
   }
 
@@ -149,16 +165,18 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
     return capped ? `${n}+` : String(n);
   };
 
-  return (
+  return page(
     <>
-      {head(`${detected} of ${providers.length} providers detected. Keys come from the server's environment and are never stored or shown here.`)}
-      {detected === 0 && (
-        <EmptyState title="No providers detected">
-          Set at least one of these environment variables on the server and restart it: {[...new Set(providers.flatMap((p) => p.env))].join(", ")}.
-        </EmptyState>
-      )}
       <div className="providers-layout">
         <section aria-label="Providers" className="providers-main">
+        {head(`${detected} of ${providers.length} providers detected. Keys come from the server's environment and are never stored or shown here.`)}
+        {detected === 0 && (
+          <div className="providers-note">
+            <EmptyState title="No providers detected">
+              Set at least one of these environment variables on the server and restart it: {[...new Set(providers.flatMap((p) => p.env))].join(", ")}.
+            </EmptyState>
+          </div>
+        )}
           <div role="group" aria-label="Filter by service" className="chips">
             <button type="button" className="chip-button" aria-pressed={service === ""} onClick={() => setParam({ service: "" })}>
               All
@@ -203,9 +221,12 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
               </tbody>
             </table>
           </div>
+          <p className="subtext">
+            Catalog providers are defined in YAML and can be overlaid per deployment. An OpenAI-compatible provider with OPENAI_BASE_URL set covers Groq, Together and local servers.
+          </p>
         </section>
         {selected && <Panel p={selected} flows={flows} flowsCapped={capped} />}
       </div>
-    </>
+    </>,
   );
 }
