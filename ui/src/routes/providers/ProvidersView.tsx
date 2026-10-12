@@ -1,100 +1,210 @@
+import { Link, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import type { ApiClient, ApiError, ProviderStatus } from "../../api/client";
-import { EmptyState, ErrorState, LoadingState, Status } from "../../components/primitives";
+import type { AgentDTO, ApiClient, ApiError, ProviderStatus } from "../../api/client";
+import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
+import {
+  SERVICES,
+  SERVICE_NAMES,
+  catalogLines,
+  credential,
+  flowsUsing,
+  hasService,
+  missingEnv,
+  serviceList,
+  serviceState,
+  type Service,
+} from "./providerStats";
 
-export type ProvidersViewProps = {
-  client: ApiClient;
-  keyValue: string | null;
-};
+export type ProvidersViewProps = { client: ApiClient; keyValue: string | null };
 
-const SERVICES = ["stt", "llm", "tts"] as const;
+// GET /agents returns at most this many flows; a count that reaches it is a floor.
+const FLOW_CAP = 100;
 
-// One pill per service the catalog lists for the provider: what it can do now, or what is missing.
-function servicePills(p: ProviderStatus) {
-  return SERVICES.flatMap((s) => {
-    const svc = p.services[s];
-    if (!svc) return [];
-    const name = s.toUpperCase();
-    if (svc.available) return [{ key: s, state: "ok", text: `${name} available` }];
-    if (svc.reason === "missing_env") return [{ key: s, state: "missing", text: `${name} needs ${(svc.missing_env ?? []).join(", ")}` }];
-    return [{ key: s, state: "absent", text: `${name} not in this build` }];
-  });
+function Panel({ p, flows, flowsCapped }: { p: ProviderStatus; flows: AgentDTO[] | undefined; flowsCapped: boolean }) {
+  const cred = credential(p);
+  const missing = new Set(missingEnv(p));
+  const using = flows ? flowsUsing(flows, p.id) : undefined;
+  return (
+    <aside aria-labelledby="provider-title" className="provider-panel">
+      <div>
+        <p className="subtext">Provider</p>
+        <h2 id="provider-title">{p.display_name}</h2>
+        <p className="provider-panel__health">
+          <span className="lamp" data-tone={cred.ok ? "ok" : undefined} aria-hidden="true" />
+          {cred.ok ? "Credential found in the server environment." : "No credential. Flows cannot use it yet."}
+        </p>
+      </div>
+
+      <section aria-labelledby="provider-credential">
+        <h3 id="provider-credential">Credential</h3>
+        <ul className="provider-env">
+          {p.env.map((name) => (
+            <li key={name}>
+              <code>{name}</code>
+              <span className="subtext">{missing.has(name) ? "Not set" : "Set on the server"}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="subtext">Set it in the server's environment and restart the server. Keys are never stored or shown here.</p>
+      </section>
+
+      <section aria-labelledby="provider-catalog">
+        <h3 id="provider-catalog">Catalog</h3>
+        <dl className="provider-catalog">
+          {catalogLines(p).map((c) => {
+            const state = serviceState(p, c.service);
+            return (
+              <div key={c.service}>
+                <dt>{SERVICE_NAMES[c.service]}</dt>
+                <dd>
+                  {c.text}
+                  {state && (
+                    <span className="pill" data-state={state.state}>
+                      {state.text}
+                    </span>
+                  )}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      </section>
+
+      <section aria-labelledby="provider-used-by">
+        <h3 id="provider-used-by">Used by</h3>
+        {using === undefined ? (
+          <p className="subtext">The flows could not be loaded, so which flows use this provider is unknown.</p>
+        ) : using.length === 0 ? (
+          <p className="subtext">No flow uses this provider yet.</p>
+        ) : (
+          <>
+            <ul className="provider-flows">
+              {using.map((f) => (
+                <li key={f.id}>
+                  <Link to={`/flows/${encodeURIComponent(f.id)}`}>{f.name}</Link>
+                </li>
+              ))}
+            </ul>
+            {flowsCapped && <p className="subtext">Only the first {FLOW_CAP} flows were checked.</p>}
+          </>
+        )}
+      </section>
+    </aside>
+  );
 }
 
+/** Catalog providers, and what each one needs to be usable. Read-only: the server reads keys from its environment. */
 export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
-  const providersQuery = useQuery({
-    queryKey: ["providers"],
-    queryFn: client.getProviders,
-    enabled: !!keyValue,
-    retry: false,
-  });
-  const providers = providersQuery.data ?? [];
+  const [params, setParams] = useSearchParams();
+  const providersQuery = useQuery({ queryKey: ["providers"], queryFn: client.getProviders, enabled: !!keyValue, retry: false });
+  const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
+
+  const rawService = params.get("service");
+  const service: Service | "" = SERVICES.find((s) => s === rawService) ?? "";
+  const setParam = (next: { provider?: string; service?: Service | "" }) => {
+    const p = new URLSearchParams(params);
+    if (next.provider !== undefined) p.set("provider", next.provider);
+    if (next.service !== undefined) {
+      if (next.service) p.set("service", next.service);
+      else p.delete("service");
+    }
+    setParams(p, { replace: true });
+  };
+
+  const head = (summary?: string) => (
+    <header className="page-head">
+      <h1 tabIndex={-1}>Providers</h1>
+      {summary && <span className="subtext">{summary}</span>}
+    </header>
+  );
+
+  if (!keyValue) {
+    return (
+      <>
+        {head()}
+        <EmptyState title="Connect to view providers">Enter a management key above to see which providers the server detected.</EmptyState>
+      </>
+    );
+  }
+  if (providersQuery.isPending) return <>{head()}<LoadingState label="Loading providers" /></>;
+  if (providersQuery.isError) {
+    return (
+      <>
+        {head()}
+        <ErrorState title="Failed to load providers" error={providersQuery.error as ApiError} onRetry={() => void providersQuery.refetch()} />
+      </>
+    );
+  }
+
+  const providers = providersQuery.data;
+  const shown = service ? providers.filter((p) => hasService(p, service)) : providers;
+  const selected = providers.find((p) => p.id === params.get("provider")) ?? providers.find((p) => p.detected) ?? providers[0];
+  const flows = flowsQuery.data;
+  const capped = (flows?.length ?? 0) >= FLOW_CAP;
+  const detected = providers.filter((p) => p.detected).length;
+  const countFor = (p: ProviderStatus) => {
+    if (!flows) return "—";
+    const n = flowsUsing(flows, p.id).length;
+    return capped ? `${n}+` : String(n);
+  };
 
   return (
     <>
-      <header className="section-heading">
-        <h1 tabIndex={-1}>Providers</h1>
-        <p>Provider keys are read from the server environment. Set them there; they are never stored or shown here.</p>
-      </header>
-
-      {!keyValue ? (
-        <EmptyState title="Connect to view providers">
-          Enter a management key above to see which providers the server detected.
+      {head(`${detected} of ${providers.length} providers detected. Keys come from the server's environment and are never stored or shown here.`)}
+      {detected === 0 && (
+        <EmptyState title="No providers detected">
+          Set at least one of these environment variables on the server and restart it: {[...new Set(providers.flatMap((p) => p.env))].join(", ")}.
         </EmptyState>
-      ) : providersQuery.isPending ? (
-        <LoadingState label="Loading providers" />
-      ) : providersQuery.isError ? (
-        <ErrorState
-          title="Failed to load providers"
-          error={providersQuery.error as ApiError}
-          onRetry={() => {
-            void providersQuery.refetch();
-          }}
-        />
-      ) : (
-        <div className="provider-views">
-          {!providers.some((p) => p.detected) && (
-            <EmptyState title="No providers detected">
-              Set at least one of these environment variables on the server and restart it:{" "}
-              {[...new Set(providers.flatMap((p) => p.env))].join(", ")}.
-            </EmptyState>
-          )}
-          <div className="table-scroll">
+      )}
+      <div className="providers-layout">
+        <section aria-label="Providers" className="providers-main">
+          <div role="group" aria-label="Filter by service" className="chips">
+            <button type="button" className="chip-button" aria-pressed={service === ""} onClick={() => setParam({ service: "" })}>
+              All
+            </button>
+            {SERVICES.map((s) => (
+              <button key={s} type="button" className="chip-button" aria-pressed={service === s} onClick={() => setParam({ service: s })}>
+                {SERVICE_NAMES[s]}
+              </button>
+            ))}
+          </div>
+          <div className="calls-table">
             <table>
-              <caption>Providers and the services they unlock</caption>
+              <caption className="visually-hidden">Providers and the services they unlock</caption>
               <thead>
                 <tr>
                   <th scope="col">Provider</th>
-                  <th scope="col">Status</th>
                   <th scope="col">Services</th>
+                  <th scope="col">Credential</th>
+                  <th scope="col" className="num">
+                    Flows
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {providers.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      <strong>{p.display_name}</strong>
-                      <div className="subtext">{p.id}</div>
-                    </td>
-                    <td>
-                      <Status tone={p.detected ? "good" : "neutral"}>{p.detected ? "Detected" : "Not detected"}</Status>
-                    </td>
-                    <td>
-                      <div className="pills">
-                        {servicePills(p).map((pill) => (
-                          <span key={pill.key} className="pill" data-state={pill.state}>
-                            {pill.text}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {shown.map((p) => {
+                  const on = selected?.id === p.id;
+                  const cred = credential(p);
+                  return (
+                    <tr key={p.id} data-selected={on || undefined}>
+                      <td>
+                        <button type="button" className="provider-pick" aria-pressed={on} onClick={() => setParam({ provider: p.id })}>
+                          <span className="lamp" data-tone={cred.ok ? "ok" : undefined} aria-hidden="true" />
+                          {p.display_name}
+                        </button>
+                      </td>
+                      <td>{serviceList(p)}</td>
+                      <td>{cred.text}</td>
+                      <td className="num">{countFor(p)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        </section>
+        {selected && <Panel p={selected} flows={flows} flowsCapped={capped} />}
+      </div>
     </>
   );
 }

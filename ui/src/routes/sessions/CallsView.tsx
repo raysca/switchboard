@@ -60,7 +60,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   const now = useNow(rows.some((s) => outcome(s).live));
 
   const head = (summary?: string) => (
-    <header className="calls-head">
+    <header className="page-head">
       <h1 tabIndex={-1}>Calls</h1>
       {summary && (
         <span className="subtext" role="status">
@@ -104,7 +104,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
           </select>
         </label>
       </div>
-      <div role="group" aria-label="Outcome" className="calls-chips">
+      <div role="group" aria-label="Outcome" className="chips">
         {OUTCOMES.map((o) => (
           <button key={o.id} type="button" className="chip-button" aria-pressed={outcomeId === o.id} onClick={() => setFilter({ outcome: o.id })}>
             {o.id === "live" && liveNow !== undefined ? `Live · ${liveText}` : o.label}
