@@ -339,10 +339,10 @@ describe("AgentVoiceTest", () => {
 
     // 6. Mic mute toggle
     const muteBtn = screen.getByTestId("mute-btn");
-    expect(muteBtn).toHaveTextContent("Mute mic");
+    expect(muteBtn).toHaveTextContent("Mute");
     await user.click(muteBtn);
     expect(screen.getByText(/\[Mic Muted\]/i)).toBeVisible();
-    expect(muteBtn).toHaveTextContent("Unmute mic");
+    expect(muteBtn).toHaveTextContent("Unmute");
     const muteMessages = () =>
       ws.sentData
         .map((d) => decodeBinaryFrame(d))
@@ -614,5 +614,69 @@ describe("AgentVoiceTest", () => {
 
     rerender(ui(v2));
     expect(screen.getByText(/this call is on v1\. disconnect and reconnect to test v2/i)).toBeVisible();
+  });
+
+  async function connected(props: { versionNumber?: number; activeStep?: string } = {}) {
+    const audio = new BrowserAudioController();
+    vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
+    const client = createMockClient();
+    const agent = createMockAgent();
+    if (props.versionNumber) agent.current_version = { ...agent.current_version!, number: props.versionNumber };
+    const ui = (step?: string) => (
+      <MemoryRouter>
+        <AgentVoiceTest agent={agent} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" activeStep={step} />
+      </MemoryRouter>
+    );
+    const view = render(ui(props.activeStep));
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("start-voice-test-btn"));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    await waitFor(() => expect(ws.sentData.length).toBeGreaterThan(0));
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_READY, { version: "2.1.0" });
+    await waitFor(() => expect(screen.getByTestId("connection-state")).toHaveTextContent("READY"));
+    return {
+      user,
+      ws,
+      setActiveStep: (step: string) => view.rerender(ui(step)),
+      botSays: async (text: string) => {
+        ws.receiveRTVIMessage(RTVI_TYPE_BOT_LLM_TEXT, { text });
+        ws.receiveRTVIMessage(RTVI_TYPE_BOT_STARTED_SPEAKING);
+        ws.receiveRTVIMessage(RTVI_TYPE_BOT_STOPPED_SPEAKING);
+        await screen.findByText(text);
+      },
+    };
+  }
+
+  it("shows the version and a clock in a header, and counts while the call is live", async () => {
+    await connected({ versionNumber: 3 });
+    expect(screen.getByText("Test call · v3")).toBeVisible();
+    expect(screen.getByTestId("call-clock")).toHaveTextContent(/^00:0\d$/);
+    await waitFor(() => expect(screen.getByTestId("call-clock").textContent).not.toBe("00:00"), { timeout: 3000 });
+  });
+
+  it("offers End call and Mute with their new words, keeping the test ids", async () => {
+    const { user } = await connected();
+    expect(screen.getByTestId("disconnect-btn")).toHaveTextContent("End call");
+    expect(screen.getByTestId("mute-btn")).toHaveTextContent("Mute");
+    await user.click(screen.getByTestId("mute-btn"));
+    expect(screen.getByTestId("mute-btn")).toHaveTextContent("Unmute");
+  });
+
+  it("labels each reply with the step that held the call when it arrived, and never relabels it", async () => {
+    const h = await connected({ activeStep: "Reception" });
+    await h.botSays("Hello, you're through to reception.");
+    h.setActiveStep("Billing");
+    await h.botSays("I can see your invoice.");
+    const lines = await screen.findAllByTestId("transcript-bot");
+    expect(lines[0]).toHaveTextContent("Reception");
+    expect(lines[1]).toHaveTextContent("Billing");
+    expect(lines[0]).not.toHaveTextContent("Billing");
+  });
+
+  it("falls back to the flow's name when no step is known", async () => {
+    const h = await connected();
+    await h.botSays("Hi there.");
+    expect(await screen.findByTestId("transcript-bot")).toHaveTextContent("Customer Assistant");
   });
 });

@@ -843,13 +843,13 @@ If the existing tests read the speaker label `You (User)` or `<agent name> (stre
 }
 .call-panel__ready {
   font-size: 0.75rem;
-  font-weight: 400;
+  font-weight: 450;
   color: var(--rule);
 }
 .call-panel__clock {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.8125rem;
-  font-weight: 400;
+  font-weight: 450;
   color: var(--rule);
 }
 .call-panel__state {

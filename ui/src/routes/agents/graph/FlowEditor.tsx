@@ -75,6 +75,7 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
   const callable = canCall(agent);
   // The call runs the published version, so the live view follows that graph.
   const live = useCallView(published ?? graph, call, client);
+  const activeStep = graph.nodes.find((n) => live.view.nodes[n.id]?.state === "active")?.name;
 
   const state: { tone: "neutral" | "good" | "bad"; text: string } =
     graph.nodes.length === 0
@@ -271,13 +272,13 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
           />
         )}
         {panel?.kind === "call" && agent && (
-          <SidePanel title="Test call" onClose={close} returnFocusTo={opener.current} fallbackFocusId="flow-editor-title">
+          <SidePanel title="Test call" tone="dark" onClose={close} returnFocusTo={opener.current} fallbackFocusId="flow-editor-title">
             {unpublished && (
               <p role="note" className="note">
                 This call runs v{version}, the published version. Publish to hear your changes.
               </p>
             )}
-            <AgentVoiceTest agent={agent} client={client} keyValue={keyValue} onCall={setCall} />
+            <AgentVoiceTest agent={agent} client={client} keyValue={keyValue} onCall={setCall} activeStep={activeStep} />
           </SidePanel>
         )}
       </div>

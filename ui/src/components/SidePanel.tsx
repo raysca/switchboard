@@ -7,6 +7,8 @@ export type SidePanelProps = {
   footer?: ReactNode;
   wide?: boolean;
   onToggleWide?: () => void;
+  /** A dark head, for the live Test call. */
+  tone?: "dark";
   /** Where focus goes back to when the panel closes: the step or button that opened it. */
   returnFocusTo?: HTMLElement | null;
   /** Id of the element to focus when returnFocusTo is gone (the step it opened from was deleted). */
@@ -14,7 +16,7 @@ export type SidePanelProps = {
 };
 
 /** Slides over the right of its positioned parent; what is behind it stays visible and usable. */
-export function SidePanel({ title, onClose, children, footer, wide, onToggleWide, returnFocusTo, fallbackFocusId }: SidePanelProps) {
+export function SidePanel({ title, onClose, children, footer, wide, onToggleWide, tone, returnFocusTo, fallbackFocusId }: SidePanelProps) {
   const id = useId();
   const panel = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -43,7 +45,7 @@ export function SidePanel({ title, onClose, children, footer, wide, onToggleWide
         }
       }}
     >
-      <div className="side-panel__head">
+      <div className={`side-panel__head${tone === "dark" ? " side-panel__head--dark" : ""}`}>
         <h2 id={id} ref={heading} tabIndex={-1}>
           {title}
         </h2>

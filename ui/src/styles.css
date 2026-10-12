@@ -2350,3 +2350,76 @@ main:has(.providers-layout) {
 .mcp-tool__actions button + button {
   margin-left: 8px;
 }
+
+.side-panel__head--dark {
+  background: var(--ink);
+  color: var(--paper);
+  border-bottom-color: var(--ink);
+}
+.side-panel__head--dark .icon-button {
+  color: var(--paper);
+}
+.call-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: -16px;
+}
+.call-panel > :not(.call-panel__top) {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+.call-panel__top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--ink);
+  color: var(--paper);
+}
+.call-panel__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+.call-panel__ready {
+  font-size: 0.75rem;
+  font-weight: 450;
+  color: var(--rule);
+}
+.call-panel__clock {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8125rem;
+  font-weight: 450;
+  color: var(--rule);
+}
+.call-panel__state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin: 0;
+}
+.call-panel__state .status {
+  color: var(--paper);
+}
+.call-panel__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.call-panel__top .action-button-small {
+  border-color: var(--rule);
+  background: transparent;
+  color: var(--paper);
+}
+.call-panel__top .action-button-danger {
+  border-color: var(--bad);
+  background: var(--bad);
+  color: var(--paper);
+}
+.call-panel__top .stage__ptt {
+  color: var(--paper);
+}
