@@ -2277,7 +2277,8 @@ main:has(.providers-layout) {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.mcp-tool__description {
+.calls-table .mcp-tool__description {
+  min-width: 16ch;
   max-width: 44ch;
   white-space: normal;
   color: var(--ink-2);
@@ -2287,6 +2288,8 @@ main:has(.providers-layout) {
   font-weight: 600;
 }
 .mcp-tool__actions {
-  display: flex;
-  gap: 8px;
+  white-space: nowrap;
+}
+.mcp-tool__actions button + button {
+  margin-left: 8px;
 }

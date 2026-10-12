@@ -67,7 +67,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | 11–12 | Publish, v8 is live | — | Section 2. |
 | 13–14 | Calls, Call detail | `/sessions`, `/sessions/:id` | **Done (plan 3).** The list filters by flow and Live/Ended (kept in the URL), pages with Newer/Older, and shows flow, version, duration, turns and outcome. The detail shows the figures, the path, and a transcript labelled by step with routes marked; the raw trace is behind "Technical trace". The API's statuses are only active, draining and ended. Caller, waterfall, totals, Path column and call control wait on S9–S13. |
 | 15 | Providers | `/providers` | **Done (plan 4).** A list filtered by service (kept in the URL) beside a panel with the credential source (the variables the server reads, and which are still missing), the catalog, and the flows using the provider. Read-only: no key field until S3; p50, Last hour and Test connection wait on S15, S16. |
-| 16 | MCP tools | `/mcp-servers` | MCP schema-change review. Plan 5. |
+| 16 | MCP tools | `/mcp-servers`, `/mcp-servers/:id` | **Done (plan 5).** Servers beside the selected server's facts, the flows that use it and a tools table; schema changes are reviewed per flow and accepted through `PUT /agents/{id}/mcp-tools`; connect and delete are dialogs. Server states now read in the server's own terms (the old page tested for states the server never sends). Edit connection, the diff and "Keep pinned" wait on S17, S18. |
 
 ## 4. Deviations from the canvas (the Switchboard spec wins)
 
@@ -79,6 +79,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 - The old agent detail screen's raw config JSON and MCP tools table are gone; the version and hash are in Flow settings and the tools are chosen per step.
 - The Calls list drops the canvas's Search, When, Caller, Path and median-turn columns and the Export CSV, Listen in and End call buttons: the server records none of what they need (S9–S13). Outcome is a pressed-button group, not a select plus chips.
 - The Providers panel shows the credential's source and which variables are set, not the canvas's key input, "Save to keyring" or "Test connection" (S3, S16), and no p50 or "Last hour" (S15). Selected rows are outlined in --caller, not boxed with a shadow.
+- The MCP tools screen's schema-change review says what really happens: a required tool whose schema changed stops the flow taking calls until it is re-pinned (the canvas says flows pinned to the old hash keep working, which the server does not do). It offers "Accept new schema" per flow, not "Keep pinned" (S17), and shows the current schema without a diff.
 - Placeholder sample data on the canvas (latency numbers, provider names in mock rows) is illustrative only.
 
 ## 5. Server prerequisites (not UI work)
@@ -101,6 +102,8 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | S14 | End orphaned sessions at startup (a crash leaves `status=active` forever; nothing reconciles them) | A trustworthy Live lamp, live counts and call clocks |
 | S15 | Provider health in the management API: requests, errors, median latency and circuit-breaker state per provider (today only in Prometheus `/metrics`) | The p50 column and the panel's "Last hour" figures (canvas board 15) |
 | S16 | Test a provider's connection (`POST /providers/{id}/test`) | The panel's "Test connection" button |
+| S17 | Read a pinned tool schema by hash (`GET /mcp-servers/{id}/tools/{tool}/schemas/{hash}`); the server stores them but exposes none | The red/green schema diff and "Keep pinned" (canvas board 16) |
+| S18 | Update an MCP server's connection (endpoint, token variable) | The "Edit connection" button |
 
 Until each lands, the UI omits the dependent control rather than faking it.
 
@@ -110,5 +113,5 @@ Until each lands, the UI omits the dependent control rather than faking it.
 2. **Done:** Flows list, New flow dialog, `/flows` routes, retire the agent screens, published banner.
 3. **Done:** Calls list and call detail (boards 13–14).
 4. **Done:** Providers (board 15).
-5. MCP tools (board 16).
+5. **Done:** MCP tools (board 16).
 6. First run and empty/error states (boards 0–1), after S3/S5 decisions.
