@@ -1804,3 +1804,93 @@ legend {
   color: var(--ink-2);
   font-size: 0.9rem;
 }
+
+.call-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.call-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
+.call-head h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  line-height: 1.15;
+}
+.call-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.call-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  margin: 0;
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--rule);
+}
+.call-figures > div {
+  padding: 14px 16px 14px 0;
+}
+.call-figures dt {
+  color: var(--ink-2);
+  font-size: 0.85rem;
+}
+.call-figures dd {
+  margin: 4px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.call-note {
+  margin: 0;
+  color: var(--ink-2);
+}
+.call-section h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+}
+.call-transcript {
+  list-style: none;
+  margin: 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 70ch;
+}
+.call-transcript p {
+  margin: 2px 0 0;
+}
+.call-transcript__who {
+  color: var(--ink-2);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.call-transcript__who--caller {
+  color: var(--caller);
+}
+.call-transcript__route {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--rule);
+  border-bottom: 1px dashed var(--rule);
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+.call-technical summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+}
+.call-tools {
+  margin: 0 0 16px;
+  padding-left: 18px;
+}

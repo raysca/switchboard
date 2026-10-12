@@ -1,0 +1,167 @@
+import { useQuery } from "@tanstack/react-query";
+import { Link, useParams } from "react-router";
+import type { ApiClient, ApiError } from "../../api/client";
+import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
+import { TurnTimeline } from "../../components/timeline/TurnTimeline";
+import { CallTranscript } from "./CallTranscript";
+import { clock, failedRoutes, interruptedCount, outcome, path, steps, transcript, versionLabel } from "./callStats";
+
+export type CallViewProps = { client: ApiClient; keyValue: string | null };
+
+const LIVE_POLL_MS = 5_000;
+
+/** One call: the figures, the path through the steps, the transcript, and the raw trace one click away. */
+export function CallView({ client, keyValue }: CallViewProps) {
+  const { sessionId = "" } = useParams();
+  const on = !!keyValue && !!sessionId;
+  const sessionQuery = useQuery({
+    queryKey: ["session", sessionId],
+    queryFn: () => client.getSession(sessionId),
+    enabled: on,
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.status === "active" ? LIVE_POLL_MS : false),
+  });
+  const running = sessionQuery.data?.status === "active";
+  const turnsQuery = useQuery({
+    queryKey: ["session-turns", sessionId],
+    queryFn: () => client.getSessionTurns(sessionId),
+    enabled: on,
+    retry: false,
+    refetchInterval: running ? LIVE_POLL_MS : false,
+  });
+  const tracesQuery = useQuery({
+    queryKey: ["session-traces", sessionId],
+    queryFn: () => client.getSessionTraces(sessionId),
+    enabled: on,
+    retry: false,
+    refetchInterval: running ? LIVE_POLL_MS : false,
+  });
+  const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: on, retry: false });
+
+  if (!keyValue) return <EmptyState title="Connect to see this call">Enter a management key above to see this call.</EmptyState>;
+  if (sessionQuery.isPending) return <LoadingState label="Loading call" />;
+  if (sessionQuery.isError) {
+    const err = sessionQuery.error as ApiError;
+    if (err.status === 404) {
+      return (
+        <section className="flow-missing">
+          <p role="status">That call was not found.</p>
+          <Link to="/sessions" className="action-button-small">
+            Back to calls
+          </Link>
+        </section>
+      );
+    }
+    return <ErrorState title="Could not load the call" error={err} onRetry={() => void sessionQuery.refetch()} />;
+  }
+
+  const s = sessionQuery.data;
+  const flow = (flowsQuery.data ?? []).find((f) => f.id === s.agent_id);
+  const fallback = flow?.name ?? "Assistant";
+  const st = steps(flow);
+  const turns = turnsQuery.data ?? [];
+  const traces = tracesQuery.data ?? null;
+  const o = outcome(s);
+  const label = (id: string) => st.names.get(id) ?? id;
+  const failed = failedRoutes(traces);
+
+  return (
+    <div className="call-page">
+      <nav aria-label="Breadcrumb" className="flow-page__crumb">
+        <Link to="/sessions">Calls</Link>
+      </nav>
+      <header className="call-head">
+        <h1 tabIndex={-1}>Call {s.id.slice(0, 8)}</h1>
+        <span className="call-state">
+          <span className="lamp" data-tone={o.live ? "warn" : undefined} aria-hidden="true" />
+          {o.label} · {clock(s.started_at, s.ended_at, Date.now())}
+        </span>
+      </header>
+
+      <dl className="call-figures">
+        <div>
+          <dt>Flow</dt>
+          <dd>
+            {flow && !flow.archived ? <Link to={`/flows/${encodeURIComponent(flow.id)}`}>{flow.name}</Link> : <span>{flow ? `${flow.name} (archived)` : "Unknown flow"}</span>}{" "}
+            <span className="chip">{versionLabel(s, flow)}</span>
+          </dd>
+        </div>
+        <div>
+          <dt>Started</dt>
+          <dd>{new Date(s.started_at).toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt>Duration</dt>
+          <dd>{clock(s.started_at, s.ended_at, Date.now())}</dd>
+        </div>
+        <div>
+          <dt>Turns</dt>
+          <dd>{s.turn_count}</dd>
+        </div>
+        <div>
+          <dt>Interrupted replies</dt>
+          <dd>{interruptedCount(turns)}</dd>
+        </div>
+        <div>
+          <dt>Path</dt>
+          <dd>{path(traces, st, fallback).join(" → ")}</dd>
+        </div>
+      </dl>
+
+      {failed.map((f, i) => (
+        <p key={i} role="note" className="call-note">
+          A route to {label(f.to)} failed. The caller stayed with {label(f.from)}.
+        </p>
+      ))}
+      {tracesQuery.isError && <p role="note" className="call-note">Steps and routes could not be loaded, so the transcript is not labelled by step.</p>}
+
+      <section aria-labelledby="call-transcript-title" className="call-section">
+        <h2 id="call-transcript-title">Transcript</h2>
+        {turnsQuery.isError ? (
+          <ErrorState title="Could not load the transcript" error={turnsQuery.error as ApiError} onRetry={() => void turnsQuery.refetch()} />
+        ) : turnsQuery.isPending ? (
+          <LoadingState label="Loading transcript" />
+        ) : (
+          <CallTranscript lines={transcript(s, turns, traces, st, fallback)} />
+        )}
+      </section>
+
+      <details className="call-technical">
+        <summary>Technical trace</summary>
+        <dl className="call-figures">
+          <div>
+            <dt>Call id</dt>
+            <dd>
+              <code>{s.id}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>Config hash</dt>
+            <dd>
+              <code>{s.config_hash || "none"}</code>
+            </dd>
+          </div>
+          {s.safe_summary && (
+            <div>
+              <dt>Summary</dt>
+              <dd>{s.safe_summary}</dd>
+            </div>
+          )}
+        </dl>
+        {s.runtime_tools && s.runtime_tools.length > 0 && (
+          <section aria-label="Tools captured for this call">
+            <h3>Tools captured for this call ({s.runtime_tools.length})</h3>
+            <ul className="call-tools">
+              {s.runtime_tools.map((t) => (
+                <li key={`${t.mcp_server_id}/${t.remote_name}`}>
+                  <strong>{t.remote_name}</strong> <span className="subtext">on {t.mcp_server_id}</span> <code>{t.schema_hash.slice(0, 8)}</code> {t.required ? "Required" : "Optional"}
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        <TurnTimeline turns={turns} traces={traces} loading={turnsQuery.isPending} />
+      </details>
+    </div>
+  );
+}
