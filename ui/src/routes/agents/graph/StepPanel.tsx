@@ -45,7 +45,7 @@ export type StepPanelProps = {
   onToggleWide: () => void;
   onChange: (next: GraphDraft) => void;
   onClose: () => void;
-  returnFocusTo?: HTMLElement | null;
+  returnFocusTo?: HTMLElement | null | (() => HTMLElement | null);
   fallbackFocusId?: string;
 };
 

@@ -62,3 +62,13 @@ describe("Canvas fitting", () => {
     expect(screen.getByTestId("agent-canvas")).toHaveAttribute("data-fit", "3:b");
   });
 });
+
+describe("Canvas refit", () => {
+  it("refits in place: the graph is not remounted, so focus on a step and the viewport survive a panel opening", () => {
+    const { container, rerender } = render(<ReactFlowProvider><Canvas graph={graph} fitKey="a" /></ReactFlowProvider>);
+    const flow = container.querySelector(".react-flow");
+    expect(flow).not.toBeNull();
+    rerender(<ReactFlowProvider><Canvas graph={graph} fitKey="b" /></ReactFlowProvider>);
+    expect(container.querySelector(".react-flow")).toBe(flow);
+  });
+});

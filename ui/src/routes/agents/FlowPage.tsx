@@ -100,7 +100,7 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
         pending={createMutation.isPending || updateMutation.isPending}
         onSubmit={(input) => (flow ? updateMutation.mutate({ id: flow.id, payload: input }) : createMutation.mutate(input))}
         onCancel={() => navigate("/flows")}
-        callsInProgress={flow ? liveCalls(active.data ?? [], flow).live : 0}
+        callsInProgress={flow ? (({ live, onOlderVersion }) => live - onOlderVersion)(liveCalls(active.data ?? [], flow)) : 0}
       />
     </div>
   );

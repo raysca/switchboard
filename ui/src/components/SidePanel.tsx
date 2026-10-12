@@ -10,7 +10,7 @@ export type SidePanelProps = {
   /** A dark head, for the live Test call. */
   tone?: "dark";
   /** Where focus goes back to when the panel closes: the step or button that opened it. */
-  returnFocusTo?: HTMLElement | null;
+  returnFocusTo?: HTMLElement | null | (() => HTMLElement | null);
   /** Id of the element to focus when returnFocusTo is gone (the step it opened from was deleted). */
   fallbackFocusId?: string;
 };
@@ -24,12 +24,13 @@ export function SidePanel({ title, onClose, children, footer, wide, onToggleWide
   useEffect(() => {
     // An autoFocus field inside (a route just drawn) keeps focus; otherwise start at the title.
     if (!panel.current?.contains(document.activeElement)) heading.current?.focus();
-    const target = back.current;
+    const resolve = () => (typeof back.current === "function" ? back.current() : back.current);
     const fallback = fallbackFocusId;
     return () => {
       // Something outside already holds focus (another panel replacing this one): leave it there.
       const active = document.activeElement;
       if (active && active !== document.body && active.isConnected) return;
+      const target = resolve();
       (target?.isConnected ? target : fallback ? document.getElementById(fallback) : null)?.focus();
     };
   }, []);

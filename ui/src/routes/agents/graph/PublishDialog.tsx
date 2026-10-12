@@ -7,6 +7,8 @@ export type PublishDialogProps = {
   /** The version in use now, and how many calls are running on it. */
   currentVersion?: number;
   callsInProgress?: number;
+  /** Steps no path from the start step reaches; they are named instead of ticking the reachability check. */
+  unreachable?: string[];
   firstVersion: boolean;
   changes: string[];
   problems: string[];
@@ -16,7 +18,7 @@ export type PublishDialogProps = {
 };
 
 /** Publishing is the one irreversible step: say what changes and what happens to live calls. */
-export function PublishDialog({ flowName, version, currentVersion, callsInProgress = 0, firstVersion, changes, problems, pending, onConfirm, onCancel }: PublishDialogProps) {
+export function PublishDialog({ flowName, version, currentVersion, callsInProgress = 0, unreachable = [], firstVersion, changes, problems, pending, onConfirm, onCancel }: PublishDialogProps) {
   const changesId = useId();
   const checksId = useId();
   const blocked = problems.length > 0;
@@ -69,12 +71,21 @@ export function PublishDialog({ flowName, version, currentVersion, callsInProgre
                 </span>
                 Every step is set up
               </li>
-              <li>
-                <span aria-hidden="true" className="check-mark">
-                  ✓
-                </span>
-                Every step is reachable from the start step
-              </li>
+              {unreachable.length === 0 ? (
+                <li>
+                  <span aria-hidden="true" className="check-mark">
+                    ✓
+                  </span>
+                  Every step is reachable from the start step
+                </li>
+              ) : (
+                <li>
+                  <span aria-hidden="true" className="check-mark check-mark--warn">
+                    !
+                  </span>
+                  {unreachable.join(", ")} cannot be reached from the start step.
+                </li>
+              )}
             </ul>
           </section>
         </>

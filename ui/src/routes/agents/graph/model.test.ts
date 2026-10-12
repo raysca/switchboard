@@ -13,6 +13,7 @@ import {
   stepIssues,
   toPayload,
   uniqueName,
+  unreachableSteps,
   validate,
 } from "./model";
 
@@ -23,6 +24,29 @@ const flat = {
   tts: { ...stage, voice: "v" },
   vad_stop_ms: 400,
 };
+
+describe("unreachableSteps", () => {
+  it("finds the steps no path from the start step leads to, including steps reached only from those", () => {
+    const g = fromAgentConfig({
+      entry: "a",
+      nodes: [
+        { id: "a", name: "Reception", config: {} },
+        { id: "b", name: "Billing", config: {} },
+        { id: "c", name: "Support", config: {} },
+        { id: "d", name: "Escalation", config: {} },
+      ],
+      edges: [
+        { id: "e1", from: "a", to: "b", condition: "x" },
+        { id: "e2", from: "d", to: "c", condition: "y" },
+      ],
+    });
+    expect(unreachableSteps(g)).toEqual(["Support", "Escalation"]);
+  });
+  it("is empty when every step can be reached", () => {
+    const g = fromAgentConfig({ entry: "a", nodes: [{ id: "a", name: "A", config: {} }, { id: "b", name: "B", config: {} }], edges: [{ id: "e", from: "a", to: "b", condition: "x" }] });
+    expect(unreachableSteps(g)).toEqual([]);
+  });
+});
 
 describe("graph model", () => {
   it("reads a flat config as one entry node", () => {

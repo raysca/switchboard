@@ -72,7 +72,8 @@ test("boards 3 to 12", async ({ page, stack }) => {
   await page.getByRole("button", { name: "Done" }).click();
   // board 8: the editor uses the width of the screen, and the steps are readable (not zoomed out to specks)
   expect((await page.locator(".flow-editor__stage").boundingBox())!.width).toBeGreaterThan(1000);
-  expect((await page.locator(".react-flow__node").first().boundingBox())!.width).toBeGreaterThan(150);
+  // The graph refits a beat after the panel closes.
+  await expect.poll(async () => (await page.locator(".react-flow__node").first().boundingBox())!.width, { timeout: 5000 }).toBeGreaterThan(150);
   await step(page, "board 8 editor full flow one step unfinished");
   await page.getByRole("button", { name: "Flow settings" }).click();
   await step(page, "board 9 flow settings");

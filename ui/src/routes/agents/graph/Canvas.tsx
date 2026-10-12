@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -12,6 +12,7 @@ import {
   type NodeChange,
   type NodeProps,
   type NodeTypes,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { isUnreachable, stepIssues, type GraphDraft } from "./model";
@@ -141,17 +142,37 @@ export function Canvas({ graph, selected, onSelect, onMove, onConnect, visual, t
     [graph, selected, visual, readOnly],
   );
   // Dragging updates local node state; the graph (the source of truth) is told at drag stop.
+  // Adopted during render, not in an effect: a deleted step leaves the DOM in the same commit that closes its panel,
+  // so the panel's focus return can tell that the step it came from is gone.
   const [nodes, setNodes] = useState(derived);
-  useEffect(() => setNodes(derived), [derived]);
+  const [prevDerived, setPrevDerived] = useState(derived);
+  if (prevDerived !== derived) {
+    setPrevDerived(derived);
+    setNodes(derived);
+  }
 
   const edges = useMemo(() => flowEdges(graph, selected, traversedEdges, justHandedEdge), [graph.edges, selected, traversedEdges, justHandedEdge]);
+
+  // Re-fit in place (not by remounting, which would drop focus on a step and the viewport) when a step is added or
+  // removed, or the room for the graph changes, so no step is left off-screen or tiny.
+  const flow = useRef<ReactFlowInstance | null>(null);
+  const fitted = useRef(`${graph.nodes.length}:${fitKey}`);
+  useEffect(() => {
+    const key = `${graph.nodes.length}:${fitKey}`;
+    if (fitted.current === key) return;
+    fitted.current = key;
+    // A beat after the layout change: React Flow measures its container through a ResizeObserver.
+    const id = setTimeout(() => void flow.current?.fitView({ maxZoom: 1, duration: 0 }), 80);
+    return () => clearTimeout(id);
+  }, [graph.nodes.length, fitKey]);
 
 
   return (
     <div className="agent-canvas" style={{ height }} data-testid="agent-canvas" data-fit={`${graph.nodes.length}:${fitKey}`}>
       <ReactFlow
-        // Re-fit when a step is added or removed, or the room for the graph changes, so no step is left off-screen or tiny.
-        key={`${graph.nodes.length}:${fitKey}`}
+        onInit={(instance) => {
+          flow.current = instance as unknown as ReactFlowInstance;
+        }}
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}

@@ -179,4 +179,16 @@ describe("FlowPage", () => {
     expect(screen.queryByText("Failed to load the flow")).toBeNull();
     expect(screen.getByRole("heading", { level: 1 })).toBeVisible();
   });
+
+  it("counts, in the Publish dialog, only the calls on the current version", async () => {
+    const session = (id: string, version: string) => ({ id, agent_id: "a1", agent_version_id: version, config_hash: "h", started_at: "", status: "active", turn_count: 0, safe_summary: "" });
+    const getSessions = vi.fn().mockResolvedValue([session("1", "v1"), session("2", "v1"), session("3", "old"), session("4", "old"), session("5", "old")]);
+    const { user } = setup({ getSessions }, "/flows/a1");
+    await screen.findByRole("heading", { name: "Front desk", level: 1 });
+    await waitFor(() => expect(getSessions).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.type(screen.getByLabelText("Flow name"), "!");
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect(await screen.findByText(/The 2 calls on v1 right now/)).toBeVisible();
+  });
 });

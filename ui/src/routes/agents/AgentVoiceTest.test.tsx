@@ -614,6 +614,8 @@ describe("AgentVoiceTest", () => {
 
     rerender(ui(v2));
     expect(screen.getByText(/this call is on v1\. disconnect and reconnect to test v2/i)).toBeVisible();
+    // The header names the version the call is on, not the newest one.
+    expect(screen.getByText("Testing v1")).toBeVisible();
   });
 
   async function connected(props: { versionNumber?: number; activeStep?: string } = {}) {

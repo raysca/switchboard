@@ -138,7 +138,7 @@ export function AgentVoiceTest({
       <div className="call-panel__top">
         <div className="call-panel__title">
           <span id="voice-test-heading">
-            Testing v{agent.current_version?.number ?? 0}
+            Testing v{(inCall && callVersion ? callVersion.number : agent.current_version?.number) ?? 0}
           </span>
           <code data-testid="agent-readiness" className="call-panel__ready">
             {agent.readiness.state}

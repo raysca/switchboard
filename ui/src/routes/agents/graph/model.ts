@@ -116,6 +116,17 @@ export function isUnreachable(g: GraphDraft, id: string): boolean {
   return id !== g.entry && !g.edges.some((e) => e.to === id);
 }
 
+/** Names of the steps no path from the start step reaches (a step reached only from an unreachable step counts). */
+export function unreachableSteps(g: GraphDraft): string[] {
+  const seen = new Set<string>(g.nodes.some((n) => n.id === g.entry) ? [g.entry] : []);
+  const queue = [...seen];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const e of g.edges) if (e.from === id && !seen.has(e.to)) (seen.add(e.to), queue.push(e.to));
+  }
+  return g.nodes.filter((n) => !seen.has(n.id)).map((n) => n.name || "Untitled step");
+}
+
 /** A route drawn on the graph: no condition yet, the step panel asks for one. */
 export function addDraftRoute(g: GraphDraft, from: string, to: string): GraphDraft {
   const known = (id: string) => g.nodes.some((n) => n.id === id);

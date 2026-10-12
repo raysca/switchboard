@@ -84,4 +84,11 @@ describe("PublishDialog", () => {
     render(<PublishDialog {...props} problems={["Fix this."]} />);
     expect(screen.queryByText("Every step is set up")).toBeNull();
   });
+
+  it("says which steps cannot be reached instead of ticking the reachability check", () => {
+    render(<PublishDialog {...props} unreachable={["Billing", "Support"]} />);
+    expect(screen.getByText("Billing, Support cannot be reached from the start step.")).toBeVisible();
+    expect(screen.queryByText("Every step is reachable from the start step")).toBeNull();
+    expect(screen.getByText("Every step is set up")).toBeVisible();
+  });
 });

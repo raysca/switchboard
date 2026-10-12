@@ -41,4 +41,16 @@ describe("Switchboard tokens", () => {
     expect(ratio(token("lamp"), token("paper"))).toBeLessThan(4.5);
     expect(ratio(token("lamp"), token("ink"))).toBeGreaterThanOrEqual(4.5);
   });
+
+  it("the dark call header uses light tokens for text and focus", () => {
+    expect(ratio(token("paper"), token("ink"))).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(token("rule"), token("ink"))).toBeGreaterThanOrEqual(4.5);
+    const dark = [...css.matchAll(/([^{}]*(?:call-panel__top|side-panel__head--dark)[^{}]*)\{([^}]*)\}/g)];
+    expect(dark.length).toBeGreaterThan(0);
+    for (const [, selector, body] of dark) {
+      expect(body, selector).not.toMatch(/(?<!-)(?:^|[\s;])color:\s*var\(--(bad|ink-2|caller)\)/);
+    }
+    // The dark head needs its own focus ring: --caller on --ink is below 3:1.
+    expect(css).toMatch(/call-panel__top[^{}]*:focus-visible[^{}]*\{[^}]*outline-color:\s*var\(--paper\)/);
+  });
 });

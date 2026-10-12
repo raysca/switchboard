@@ -2407,3 +2407,21 @@ main:has(.providers-layout) {
   width: 14px;
   color: var(--ok);
 }
+
+.check-mark--warn {
+  color: var(--bad);
+  font-weight: 600;
+}
+/* The dark head: light tokens only. --bad, --ink-2 and --caller are below 3:1 on --ink, so text and the focus ring switch. */
+.call-panel__top .flag,
+.call-panel__top .flag--bad {
+  color: var(--paper);
+}
+.call-panel__top :focus-visible,
+.side-panel__head--dark :focus-visible {
+  outline-color: var(--paper);
+}
+.call-panel__top .action-button-small[aria-pressed="true"] {
+  background: var(--paper);
+  color: var(--ink);
+}

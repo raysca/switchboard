@@ -16,6 +16,7 @@ import {
   fromAgentConfig,
   stepIssues,
   toPayload,
+  unreachableSteps,
   uniqueName,
   updateNode,
   validate,
@@ -66,6 +67,9 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
   const [confirming, setConfirming] = useState(false);
   const [call, setCall] = useState<CallInfo>(NO_CALL);
   const opener = useRef<HTMLElement | null>(null);
+  // The latest graph, for a panel that closes because its step was deleted (React Flow drops the step's DOM a beat later).
+  const graphNow = useRef(graph);
+  graphNow.current = graph;
 
   const version = agent?.current_version?.number ?? 0;
   const renamed = !!agent && name.trim() !== agent.name;
@@ -250,7 +254,7 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
             onToggleWide={() => setWide((w) => !w)}
             onChange={setGraph}
             onClose={close}
-            returnFocusTo={opener.current}
+            returnFocusTo={() => (graphNow.current.nodes.some((n) => n.id === panel.id) ? opener.current : null)}
             fallbackFocusId="flow-editor-title"
           />
         )}
@@ -291,6 +295,7 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
           version={version + 1}
           currentVersion={agent ? version : undefined}
           callsInProgress={callsInProgress}
+          unreachable={unreachableSteps(graph)}
           firstVersion={!published}
           changes={[
             ...(renamed ? [`Renamed the flow to ${name.trim()}`] : []),
