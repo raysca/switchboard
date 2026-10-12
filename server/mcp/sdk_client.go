@@ -25,26 +25,49 @@ const (
 type SDKClient struct {
 	client               *http.Client
 	testOnlyAllowPrivate bool // Explicit loopback seam used only by the simulated-server tests.
+	allowLoopbackHTTP    bool // mcp.allow_local_http: development and tests only.
 }
 
-func NewSDKClient() *SDKClient {
+// SDKOption configures NewSDKClient.
+type SDKOption func(*SDKClient)
+
+// AllowLoopbackHTTP lets the client reach http or https endpoints on loopback
+// (config mcp.allow_local_http, refused in production). Other destinations keep
+// the public-HTTPS rules, checked again when dialing.
+func AllowLoopbackHTTP() SDKOption { return func(c *SDKClient) { c.allowLoopbackHTTP = true } }
+
+func NewSDKClient(opts ...SDKOption) *SDKClient {
+	c := &SDKClient{}
+	for _, o := range opts {
+		o(c)
+	}
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.Proxy = nil // Explicit remote destination policy; do not inherit ambient proxy routing.
 	base.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
-		return dialPublicEgress(ctx, network, address, net.DefaultResolver.LookupIPAddr, dialer.DialContext)
+		return dialEgress(ctx, network, address, c.allowLoopbackHTTP, net.DefaultResolver.LookupIPAddr, dialer.DialContext)
 	}
 	transport := closeBudgetTransport{next: boundedBodyTransport{next: classifiedStatusTransport{next: bearerTransport{next: base}}}}
-	return &SDKClient{client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	c.client = &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return c
 }
 
-func dialPublicEgress(ctx context.Context, network, address string, lookup func(context.Context, string) ([]net.IPAddr, error), dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+// dialEgress connects only to public addresses, or also to loopback when
+// allowLoopback is set; the name is resolved again here, so a validation-time
+// answer cannot be swapped for a private address at dial time.
+func dialEgress(ctx context.Context, network, address string, allowLoopback bool, lookup func(context.Context, string) ([]net.IPAddr, error), dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, errors.New("invalid MCP destination")
 	}
-	ips, err := publicEgressIPs(ctx, host, lookup)
-	if err != nil {
+	var ips []net.IPAddr
+	if allowLoopback && loopbackOnly(ctx, host, lookup) {
+		if ip := net.ParseIP(host); ip != nil {
+			ips = []net.IPAddr{{IP: ip}}
+		} else if ips, err = lookup(ctx, host); err != nil {
+			return nil, errors.New("MCP destination resolution failed")
+		}
+	} else if ips, err = publicEgressIPs(ctx, host, lookup); err != nil {
 		return nil, err
 	}
 	for _, entry := range ips {
@@ -132,10 +155,14 @@ type limitedReadCloser struct {
 
 func (c *SDKClient) requestContext(ctx context.Context, token string, endpoint string) (context.Context, *mcp.ClientSession, error) {
 	u, err := url.ParseRequestURI(endpoint)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, nil, errors.New("invalid remote MCP endpoint")
 	}
-	if !c.testOnlyAllowPrivate {
+	loopback := c.allowLoopbackHTTP && loopbackOnly(ctx, u.Hostname(), net.DefaultResolver.LookupIPAddr)
+	if u.Scheme != "https" && !(loopback && u.Scheme == "http") {
+		return nil, nil, errors.New("invalid remote MCP endpoint")
+	}
+	if !c.testOnlyAllowPrivate && !loopback {
 		if err = validatePublicIPs(ctx, u.Hostname()); err != nil {
 			return nil, nil, err
 		}

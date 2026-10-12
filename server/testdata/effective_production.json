@@ -22,6 +22,10 @@
  "Management": {
   "APIKeyEnv": "GOVOICE_MANAGEMENT_API_KEY"
  },
+ "MCP": {
+  "AllowLocalHTTP": false,
+  "Timeout": 15000000000
+ },
  "Storage": {
   "Dialect": "postgres",
   "DSNEnv": ""

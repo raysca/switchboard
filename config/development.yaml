@@ -79,6 +79,11 @@ observability:
 # In this development profile it is optional: when unset the server creates
 # .govoice-dev/govoice.db (override the directory with GOVOICE_DEV_DIR).
 # Production always requires it.
+# Local test MCP servers (make mcp-test, make dev) run on plain HTTP at loopback.
+# Development and tests only: the production profile refuses this setting.
+mcp:
+  allow_local_http: true
+
 storage:
   dialect: "sqlite"
 

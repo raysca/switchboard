@@ -48,6 +48,14 @@ type Config struct {
 		APIKeyEnv string `yaml:"api_key_env"`
 	} `yaml:"management"`
 
+	// MCP: remote tool servers. AllowLocalHTTP also allows http or https to loopback
+	// test servers (development and tests only; the production profile refuses it).
+	// Timeout bounds discovery and each tool call (default 15s, at most 2m).
+	MCP struct {
+		AllowLocalHTTP bool          `yaml:"allow_local_http"`
+		Timeout        time.Duration `yaml:"timeout"`
+	} `yaml:"mcp"`
+
 	// Durable management plane (agents, MCP, session
 	// history). Disabled when Storage.Dialect is empty; retention: see Retention.
 	Storage struct {

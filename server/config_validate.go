@@ -83,6 +83,9 @@ func validateProductionSecurity(cfg *Config) error {
 	if cfg.Profile != ProfileProduction {
 		return nil
 	}
+	if cfg.MCP.AllowLocalHTTP {
+		return errors.New("mcp.allow_local_http is for development and tests")
+	}
 	hasTLS := cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != ""
 	hasProxy := cfg.TLS.TrustedProxyMode && len(cfg.TLS.TrustedProxies) > 0
 	if cfg.TLS.TrustedProxyMode && len(cfg.TLS.TrustedProxies) == 0 {

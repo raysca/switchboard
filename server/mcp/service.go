@@ -289,6 +289,69 @@ func (HTTPSDestinationPolicy) Validate(ctx context.Context, u *url.URL) error {
 	return nil
 }
 
+// LoopbackHTTPDestinationPolicy is for development and tests only (config
+// mcp.allow_local_http, refused in production): it also accepts http or https to
+// loopback, so local test MCP servers are reachable. Every other destination is
+// held to the HTTPS policy; a name must resolve to loopback addresses only.
+type LoopbackHTTPDestinationPolicy struct {
+	lookup func(context.Context, string) ([]net.IPAddr, error) // nil: the system resolver
+}
+
+func (p LoopbackHTTPDestinationPolicy) Validate(ctx context.Context, u *url.URL) error {
+	if u == nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
+		return errors.New("MCP destination denied")
+	}
+	lookup := p.lookup
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupIPAddr
+	}
+	if u.Scheme == "http" || u.Scheme == "https" {
+		if loopbackOnly(ctx, u.Hostname(), lookup) {
+			return nil
+		}
+	}
+	if u.Scheme != "https" {
+		return errors.New("MCP destination denied")
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		if !isPublicEgressIP(ip) {
+			return errors.New("MCP destination denied")
+		}
+		return nil
+	}
+	if _, err := publicEgressIPs(ctx, u.Hostname(), lookup); err != nil {
+		return errors.New("MCP destination denied")
+	}
+	return nil
+}
+
+// loopbackOnly reports whether host is a loopback literal or a name whose every
+// resolved address is loopback.
+func loopbackOnly(ctx context.Context, host string, lookup func(context.Context, string) ([]net.IPAddr, error)) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return isLoopbackIP(ip)
+	}
+	ips, err := lookup(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, a := range ips {
+		if !isLoopbackIP(a.IP) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLoopbackIP(raw net.IP) bool {
+	addr, ok := netip.AddrFromSlice(raw)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	return addr.IsLoopback()
+}
+
 func (s *Service) Create(ctx context.Context, cfg ServerConfig) (storage.MCPServer, error) {
 	if cfg.Transport == "" {
 		cfg.Transport = TransportStreamableHTTP
