@@ -137,7 +137,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
         <div className="onboarding-complete" style={{ marginTop: "32px" }}>
           <div
             className="message-panel"
-            style={{ borderColor: "#007e82", marginBottom: "28px" }}
+            style={{ borderColor: "var(--caller)", marginBottom: "28px" }}
             role="status"
           >
             <h2>System configured and ready</h2>
@@ -158,8 +158,8 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
           >
             <div
               style={{
-                background: "#ffffff",
-                border: "1px solid #c9d3d2",
+                background: "var(--surface)",
+                border: "1px solid var(--rule)",
                 padding: "20px",
               }}
             >
@@ -180,8 +180,8 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
 
             <div
               style={{
-                background: "#ffffff",
-                border: "1px solid #c9d3d2",
+                background: "var(--surface)",
+                border: "1px solid var(--rule)",
                 padding: "20px",
               }}
             >
@@ -209,7 +209,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
         <div className="onboarding-step" style={{ marginTop: "32px" }}>
           <section aria-labelledby="step1-heading">
             <h2 id="step1-heading">Step 1: Set a provider key</h2>
-            <p style={{ color: "#53666b", marginBottom: "20px" }}>
+            <p style={{ color: "var(--ink-2)", marginBottom: "20px" }}>
               Voice agents need a provider for speech recognition, LLM reasoning, and speech
               synthesis. Set one of these environment variables on the server and restart it:
             </p>
@@ -227,7 +227,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
         <div className="onboarding-step" style={{ marginTop: "32px" }}>
           <section aria-labelledby="step2-heading">
             <h2 id="step2-heading">Step 2: Create your first agent</h2>
-            <p style={{ color: "#53666b", marginBottom: "16px" }}>
+            <p style={{ color: "var(--ink-2)", marginBottom: "16px" }}>
               Provider detected: <strong>{agentProvider ?? detected.map((p) => p.display_name).join(", ")}</strong>.
               Now configure your first voice agent.
             </p>
@@ -269,11 +269,11 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
               <div
                 className="voice-stack-settings"
                 style={{
-                  border: "1px solid #c9d3d2",
+                  border: "1px solid var(--rule)",
                   padding: "16px",
                   marginTop: "16px",
                   marginBottom: "16px",
-                  background: "#ffffff",
+                  background: "var(--surface)",
                 }}
               >
                 <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>

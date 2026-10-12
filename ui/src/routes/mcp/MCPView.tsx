@@ -382,9 +382,9 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
 
       {/* Action Error Alert Box */}
       {actionError && (
-        <section className="alert-box" style={{ borderColor: "#a43e30" }} role="alert" aria-label="Action error">
+        <section className="alert-box" style={{ borderColor: "var(--bad)" }} role="alert" aria-label="Action error">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <p style={{ color: "#a43e30", margin: 0 }}>{actionError}</p>
+            <p style={{ color: "var(--bad)", margin: 0 }}>{actionError}</p>
             <button
               type="button"
               className="action-button-small"
@@ -440,8 +440,8 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
           </div>
           <h2>Add MCP Server</h2>
           {formError && (
-            <div className="alert-box" style={{ borderColor: "#a43e30" }} role="alert">
-              <p style={{ color: "#a43e30", margin: 0 }}>{formError}</p>
+            <div className="alert-box" style={{ borderColor: "var(--bad)" }} role="alert">
+              <p style={{ color: "var(--bad)", margin: 0 }}>{formError}</p>
             </div>
           )}
           <form className="form-card" onSubmit={handleCreateSubmit}>
@@ -720,7 +720,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
                                   </div>
                                   <pre
                                     className="console-box"
-                                    style={{ background: "#f8faf9", color: "#15262a", border: "1px solid #c9d3d2" }}
+                                    style={{ background: "var(--surface)", color: "var(--ink)", border: "1px solid var(--rule)" }}
                                   >
                                     <code>{JSON.stringify(tool.input_schema, null, 2)}</code>
                                   </pre>
@@ -730,7 +730,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
                               {/* Interactive Test Console */}
                               {isTesting && (
                                 <section
-                                  style={{ marginTop: 16, borderTop: "1px dashed #c9d3d2", paddingTop: 16 }}
+                                  style={{ marginTop: 16, borderTop: "1px dashed var(--rule)", paddingTop: 16 }}
                                   aria-label={`Test console for ${tool.remote_name}`}
                                   data-testid="test-console"
                                 >
@@ -767,8 +767,8 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
                                   </div>
 
                                   {testError && (
-                                    <div className="alert-box" style={{ borderColor: "#a43e30", marginTop: 12 }} role="alert">
-                                      <p style={{ color: "#a43e30", margin: 0 }}>{testError}</p>
+                                    <div className="alert-box" style={{ borderColor: "var(--bad)", marginTop: 12 }} role="alert">
+                                      <p style={{ color: "var(--bad)", margin: 0 }}>{testError}</p>
                                     </div>
                                   )}
 
