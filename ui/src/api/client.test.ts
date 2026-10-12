@@ -141,6 +141,18 @@ describe("management client", () => {
     );
   });
 
+  it("re-pins a flow's tools through PUT /agents/{id}/mcp-tools and returns the new version", async () => {
+    const version = { id: "v2", number: 2, schema_version: 1, config: {}, config_hash: "h", created_at: "", mcp_tools: [{ mcp_server_id: "crm", remote_name: "lookup", schema_hash: "new", required: true }] };
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ data: version }), { status: 200 }));
+    const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+    const tools = [{ mcp_server_id: "crm", remote_name: "lookup", schema_hash: "new", required: true }];
+    await expect(client.setAgentMCPTools("a/1", tools)).resolves.toMatchObject({ number: 2, mcp_tools: tools });
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe("/api/v1/agents/a%2F1/mcp-tools");
+    expect(init?.method).toBe("PUT");
+    expect(JSON.parse(String(init?.body))).toEqual({ tools });
+  });
+
   describe("providers API", () => {
     const svc = (extra = {}) => ({ available: true, custom: true, ...extra });
     const sample = [
