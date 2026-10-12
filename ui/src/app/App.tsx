@@ -115,7 +115,10 @@ export function App({ initialPath }: { initialPath?: string }) {
                     isActive ? "nav-link nav-link--current" : "nav-link"
                   }
                 >
-                  {section.name}
+                  <span className="nav-icon" aria-hidden="true">
+                    {section.icon}
+                  </span>
+                  <span className="nav-text">{section.name}</span>
                 </NavLink>
               ))}
             </nav>
@@ -124,11 +127,44 @@ export function App({ initialPath }: { initialPath?: string }) {
           <div className="workspace">
             <div className="topbar">
               <span>Operations</span>
-              <Status tone={keyValue ? "good" : "neutral"}>
-                {keyValue ? "Key in memory" : "No management key"}
-              </Status>
+              <div className="topbar-key">
+                <Status tone={keyValue ? "good" : "neutral"}>
+                  {keyValue ? "Key in memory" : "No management key"}
+                </Status>
+                {keyValue && (
+                  <ActionButton type="button" className="action-button-small" onClick={clearKey}>
+                    Clear key
+                  </ActionButton>
+                )}
+              </div>
             </div>
             <main id="main" tabIndex={-1}>
+              {!keyValue && (
+                <section className="key-bar" aria-labelledby="access-title">
+                  <div>
+                    <h2 id="access-title">Management access</h2>
+                    <p>The key stays in memory only. Reloading clears it.</p>
+                    {authError && (
+                      <ErrorState
+                        title="Management access rejected"
+                        error={authError}
+                      />
+                    )}
+                  </div>
+                  <form onSubmit={connect}>
+                    <FormField
+                      id="management-key"
+                      label="Management key"
+                      inputRef={keyInput}
+                      type="password"
+                      autoComplete="off"
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                    />
+                    <ActionButton type="submit">Connect</ActionButton>
+                  </form>
+                </section>
+              )}
               <Routes>
                 <Route
                   path="/"
@@ -194,34 +230,6 @@ export function App({ initialPath }: { initialPath?: string }) {
                   }
                 />
               </Routes>
-              <section className="access-panel" aria-labelledby="access-title">
-                <div>
-                  <h2 id="access-title">Management access</h2>
-                  <p>The key stays in memory only. Reloading clears it.</p>
-                  {authError && (
-                    <ErrorState
-                      title="Management access rejected"
-                      error={authError}
-                    />
-                  )}
-                </div>
-                {keyValue ? (
-                  <ActionButton onClick={clearKey}>Clear key</ActionButton>
-                ) : (
-                  <form onSubmit={connect}>
-                    <FormField
-                      id="management-key"
-                      label="Management key"
-                      inputRef={keyInput}
-                      type="password"
-                      autoComplete="off"
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                    />
-                    <ActionButton type="submit">Connect</ActionButton>
-                  </form>
-                )}
-              </section>
               <section
                 className="capability-line"
                 aria-label="Browser capabilities"

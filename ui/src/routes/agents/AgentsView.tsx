@@ -474,7 +474,7 @@ export function AgentsView({ client, keyValue }: AgentsViewProps) {
 
       {!keyValue ? (
         <EmptyState title="Connect to manage agents">
-          Enter a management key below to configure voice agents.
+          Enter the management key above to configure voice agents.
         </EmptyState>
       ) : agentsQuery.isPending ? (
         <LoadingState label="Loading agents" />

@@ -1,9 +1,9 @@
-// Main navigation, in order.
+// Main navigation, in order. `icon` is the short mark shown when the rail is collapsed.
 export const sections = [
-  { path: "/dashboard", name: "Dashboard" },
-  { path: "/agents", name: "Agents" },
-  { path: "/providers", name: "Providers" },
-  { path: "/mcp-servers", name: "MCP Servers" },
-  { path: "/sessions", name: "Sessions" },
-  { path: "/server", name: "Server" },
+  { path: "/dashboard", name: "Dashboard", icon: "Db" },
+  { path: "/agents", name: "Agents", icon: "Ag" },
+  { path: "/providers", name: "Providers", icon: "Pr" },
+  { path: "/mcp-servers", name: "MCP Servers", icon: "Mc" },
+  { path: "/sessions", name: "Sessions", icon: "Se" },
+  { path: "/server", name: "Server", icon: "Sv" },
 ];

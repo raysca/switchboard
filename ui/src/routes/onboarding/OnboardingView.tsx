@@ -112,7 +112,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
 
       {!keyValue ? (
         <EmptyState title="Connect to start onboarding">
-          Enter a management key below to begin onboarding setup.
+          Enter the management key above to begin onboarding setup.
         </EmptyState>
       ) : providersQuery.isPending || agentsQuery.isPending ? (
         <LoadingState label="Checking system configuration" />

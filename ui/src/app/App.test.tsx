@@ -55,6 +55,30 @@ describe("admin shell", () => {
     expect(screen.getByText(/The key stays in memory only/i)).toBeVisible();
   });
 
+  it("puts the key entry above the page content, and names every route link by its text", () => {
+    render(<App initialPath="/dashboard" />);
+    const field = screen.getByLabelText(/management key/i);
+    const heading = screen.getByRole("heading", { name: "Dashboard" });
+    // Entry comes first in the document so a demo never starts by scrolling to find it.
+    expect(heading.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(field).toHaveAttribute("type", "password");
+    expect(screen.getByRole("link", { name: "MCP Servers" }).textContent).toContain("MCP Servers");
+  });
+
+  it("shows the key status and Clear key in the top line once connected", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: operationsStatus }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<App initialPath="/dashboard" />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/management key/i), "k");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByText("Key in memory")).toBeVisible();
+    const clear = screen.getByRole("button", { name: "Clear key" });
+    expect(clear.closest(".topbar")).not.toBeNull();
+    expect(screen.queryByLabelText(/management key/i)).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it("loads the server projection after entry and returns to key entry on 401", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

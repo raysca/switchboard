@@ -56,7 +56,7 @@ textarea:focus-visible {
 }
 .app-layout {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
   min-height: 100vh;
 }
 .sidebar {
@@ -64,30 +64,46 @@ textarea:focus-visible {
   border-right: 1px solid var(--rule);
   display: flex;
   flex-direction: column;
-  padding: 29px 17px 24px;
+  padding: 20px 0 20px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 13px;
-  font-size: 1.35rem;
-  font-weight: 600;
-  letter-spacing: -0.04em;
-  padding: 0 12px 39px;
+  justify-content: center;
+  gap: 10px;
+  font-size: 1.2rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  padding: 0 0 28px;
 }
 .brand-mark {
   color: var(--caller);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 2.2rem;
+  font-size: 1.8rem;
   line-height: 1;
+}
+.brand > span:last-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .navigation {
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 .nav-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   text-decoration: none;
-  padding: 11px 14px;
+  padding: 10px 0;
   border-left: 3px solid transparent;
   color: var(--ink-2);
   font-weight: 450;
@@ -99,19 +115,30 @@ textarea:focus-visible {
 .nav-link--current {
   border-left-color: var(--caller);
   color: var(--ink);
-  background: var(--rule);
+  font-weight: 600;
+}
+.nav-icon {
+  font-size: 0.8rem;
+  font-weight: 600;
+  width: 28px;
+  text-align: center;
+}
+.nav-text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .sidebar-foot {
-  margin-top: auto;
-  color: var(--ink-2);
-  font-size: 0.85rem;
-  padding: 0 15px;
+  display: none;
 }
 .workspace {
   min-width: 0;
 }
 .topbar {
-  height: 81px;
+  height: 56px;
   border-bottom: 1px solid var(--rule);
   display: flex;
   align-items: center;
@@ -120,7 +147,41 @@ textarea:focus-visible {
   color: var(--ink-2);
 }
 .topbar > span:first-child {
-  font-weight: 450;
+  font-weight: 600;
+  color: var(--ink);
+}
+.topbar-key {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+@media (min-width: 1024px) {
+  .app-layout {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+  .sidebar {
+    padding: 24px 0;
+  }
+  .brand {
+    justify-content: flex-start;
+    padding: 0 20px 28px;
+  }
+  .brand > span:last-child {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+  }
+  .nav-link {
+    justify-content: flex-start;
+    padding: 10px 20px 10px 17px;
+  }
+  .nav-text {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+  }
 }
 .status {
   font-size: 0.84rem;
@@ -198,29 +259,29 @@ main {
   margin-top: 50px;
   color: var(--ink-2);
 }
-.access-panel {
+.key-bar {
   display: flex;
   justify-content: space-between;
   gap: 30px;
   align-items: end;
-  margin-top: 90px;
-  padding: 26px 0;
-  border-top: 1px solid var(--rule);
+  margin-bottom: 40px;
+  padding: 0 0 24px;
+  border-bottom: 1px solid var(--rule);
 }
-.access-panel .message-panel {
+.key-bar .message-panel {
   margin-top: 18px;
 }
-.access-panel h2 {
+.key-bar h2 {
   font-size: 1.1rem;
   font-weight: 600;
   margin: 0 0 6px;
 }
-.access-panel p {
+.key-bar p {
   color: var(--ink-2);
   margin: 0;
-  line-height: 1.5;
+  max-width: 52ch;
 }
-.access-panel form {
+.key-bar form {
   display: flex;
   align-items: end;
   gap: 10px;
@@ -298,12 +359,30 @@ td:last-child {
   .app-layout {
     display: block;
   }
+  .nav-icon {
+    display: none;
+  }
+  .nav-text {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+  }
+  .brand > span:last-child {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+  }
   .sidebar {
+    position: static;
+    height: auto;
     padding: 14px 20px 0;
     border-right: 0;
     border-bottom: 1px solid var(--rule);
   }
   .brand {
+    justify-content: flex-start;
     padding: 0 0 12px;
   }
   .navigation {
@@ -333,11 +412,10 @@ td:last-child {
   main {
     padding: 38px 24px 50px;
   }
-  .access-panel {
+  .key-bar {
     display: block;
-    margin-top: 72px;
   }
-  .access-panel form {
+  .key-bar form {
     margin-top: 22px;
     align-items: stretch;
     flex-wrap: wrap;
