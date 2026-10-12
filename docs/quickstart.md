@@ -134,7 +134,7 @@ curl -fsS "$ADMIN/api/v1/agents/$AGENT_ID" -H "$AUTH" | jq -r .data.readiness.st
 # ready
 ```
 
-Each stage names only a provider: creation fails with `400 agent_not_attached` if a stage has no provider, or its provider's variables for that service are not set (`missing_credential_<stage>`). If a variable is removed later, the agent becomes not ready and `readiness.missing_env` names the variable. To use xAI for the LLM, set `XAI_API_KEY`, restart, and use `"llm": {"provider": "xai", "model": "grok-2-1212", ...}`.
+Each stage names only a provider: creation fails with `400 agent_not_attached` if a stage has no provider, or its provider's variables for that service are not set (`missing_credential_<stage>`). If a variable is removed later, the agent becomes not ready and `readiness.missing_env` names the variable. To use xAI for the LLM, set `XAI_API_KEY`, restart, and use `"llm": {"provider": "xai", "model": "grok-4.20-0309-non-reasoning", ...}`.
 
 ### 5c. Issue a voice token
 

@@ -16,7 +16,7 @@ One standard agent (same system prompt and scenario set) run across provider pro
 | xai-llm | google chirp_2 en-US | xai grok-4.20-non-reasoning | google en-US-Journey-F | none | ran, last run 2026-10-08 15:14Z d03e601123+dirty |
 | google | google chirp_2 en-US | google gemini-2.5-flash | google en-US-Journey-F | none | ran, last run 2026-10-08 15:13Z d03e601123+dirty |
 
-- **xai**: STT grok-voice-transcribe-2.0 and TTS voice eve are the adapter defaults (wss://api.x.ai/v1/stt, https://api.x.ai/v1/tts); LLM grok-2-1212 is the adapter's pinned id (XAI_MODEL overrides). XAI_ENDPOINT from examples/.env is deliberately NOT passed on: production reads providers.xai_llm.endpoint from server.yaml and defaults to the Responses API (/v1/responses), which tool calls need; examples/ points it at chat/completions.
+- **xai**: STT grok-voice-transcribe-2.0 and TTS voice eve are the adapter defaults (wss://api.x.ai/v1/stt, https://api.x.ai/v1/tts); LLM grok-4.20-0309-non-reasoning is the adapter's pinned id (XAI_MODEL overrides). XAI_ENDPOINT from examples/.env is deliberately NOT passed on: production reads providers.xai_llm.endpoint from server.yaml and defaults to the Responses API (/v1/responses), which tool calls need; examples/ points it at chat/completions.
 - **xai-llm**: XAI_ENDPOINT on chat/completions has no tool calls (S6). `xai_llm.endpoint=https://api.x.ai/v1/chat/completions`
 - **google**: chirp_2 sends no interim results, so S3 (min_words backchannel) is N/A.
 

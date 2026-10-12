@@ -24,5 +24,31 @@ services:
   tts:
     credential: [key]
     voices:
-      - {id: eve, label: Eve, default: true}
+      - {id: altair, label: Altair}
       - {id: ara, label: Ara}
+      - {id: atlas, label: Atlas}
+      - {id: aurora, label: Aurora}
+      - {id: carina, label: Carina}
+      - {id: castor, label: Castor}
+      - {id: celeste, label: Celeste}
+      - {id: cosmo, label: Cosmo}
+      - {id: eve, label: Eve, default: true}
+      - {id: helios, label: Helios}
+      - {id: helix, label: Helix}
+      - {id: iris, label: Iris}
+      - {id: kepler, label: Kepler}
+      - {id: leo, label: Leo}
+      - {id: liora, label: Liora}
+      - {id: lumen, label: Lumen}
+      - {id: luna, label: Luna}
+      - {id: lux, label: Lux}
+      - {id: naksh, label: Naksh}
+      - {id: orion, label: Orion}
+      - {id: perseus, label: Perseus}
+      - {id: rex, label: Rex}
+      - {id: rigel, label: Rigel}
+      - {id: sal, label: Sal}
+      - {id: sirius, label: Sirius}
+      - {id: ursa, label: Ursa}
+      - {id: zagan, label: Zagan}
+      - {id: zenith, label: Zenith}
