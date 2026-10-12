@@ -13,23 +13,23 @@ import (
 	"govoice/vad"
 )
 
-// nodeFakeLLM answers with its node's marker (the system prompt). "buy" makes
-// it call the node's transfer tool through the spec's executor and say a
+// stepFakeLLM answers with its step's marker (the system prompt). "buy" makes
+// it call the step's transfer tool through the spec's executor and say a
 // farewell, the way a model would.
-type nodeFakeLLM struct {
+type stepFakeLLM struct {
 	spec    StageSpec
 	session core.SessionController
 	index   int
 	closed  *atomic.Int32
 }
 
-func (p *nodeFakeLLM) Attach(s core.SessionController, i int) error {
+func (p *stepFakeLLM) Attach(s core.SessionController, i int) error {
 	p.session, p.index = s, i
 	return nil
 }
-func (p *nodeFakeLLM) Close() error { p.closed.Add(1); return nil }
+func (p *stepFakeLLM) Close() error { p.closed.Add(1); return nil }
 
-func (p *nodeFakeLLM) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+func (p *stepFakeLLM) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	um, ok := f.(*core.UserMessageFrame)
 	if !ok {
 		return e.PushDirection(f, dir)
@@ -76,7 +76,7 @@ func (c countedStage) Close() error {
 	return nil
 }
 
-type graphRig struct {
+type flowRig struct {
 	sess                *core.Session
 	spoken              func() string
 	llmBuilt, ttsBuilt  atomic.Int32
@@ -86,9 +86,9 @@ type graphRig struct {
 	events              []core.HandoffEvent
 }
 
-func (r *graphRig) closedLLM(prompt string) int32 { return r.llmClosed[prompt].Load() }
+func (r *flowRig) closedLLM(prompt string) int32 { return r.llmClosed[prompt].Load() }
 
-func (r *graphRig) say(t *testing.T, turn, text string) {
+func (r *flowRig) say(t *testing.T, turn, text string) {
 	t.Helper()
 	gen := r.sess.CurrentGeneration()
 	idx := CallUserContextIndex
@@ -102,7 +102,7 @@ func (r *graphRig) say(t *testing.T, turn, text string) {
 	}
 }
 
-func (r *graphRig) waitSpoken(t *testing.T, want string, n int) {
+func (r *flowRig) waitSpoken(t *testing.T, want string, n int) {
 	t.Helper()
 	for end := time.Now().Add(5 * time.Second); strings.Count(r.spoken(), want) < n; time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(end) {
@@ -111,26 +111,26 @@ func (r *graphRig) waitSpoken(t *testing.T, want string, n int) {
 	}
 }
 
-func newGraphRig(t *testing.T) *graphRig {
+func newFlowRig(t *testing.T) *flowRig {
 	t.Helper()
-	r := &graphRig{
+	r := &flowRig{
 		llmClosed: map[string]*atomic.Int32{"FRONT": {}, "SALES": {}},
 		ttsClose:  map[string]*atomic.Int32{"front-voice": {}, "sales-voice": {}},
 	}
-	g := twoNodeGraph(t)
-	graph := &CallGraph{Entry: "front"}
-	graph.Resolve = func(_ context.Context, id string) (NodeSpec, error) {
-		return NodeSpec{Name: "Sales",
+	g := twoStepFlow(t)
+	graph := &CallFlow{Entry: "front"}
+	graph.Resolve = func(_ context.Context, id string) (StepSpec, error) {
+		return StepSpec{Name: "Sales",
 			LLM: StageSpec{Provider: "google", SystemPrompt: "SALES"},
 			TTS: StageSpec{Provider: "google", Voice: "sales-voice"}}, nil
 	}
-	exec := nodeExecutor(nil, nil, transferTargets(g, "front"), func(target string) error { return graph.Commit(target) })
+	exec := stepExecutor(nil, nil, transferTargets(g, "front"), func(target string) error { return graph.Commit(target) })
 
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return passSTTStage{}, nil })
 	reg.Register("google.llm", func(_ *Config, s StageSpec) (core.Processor, error) {
 		r.llmBuilt.Add(1)
-		return &nodeFakeLLM{spec: s, closed: r.llmClosed[s.SystemPrompt]}, nil
+		return &stepFakeLLM{spec: s, closed: r.llmClosed[s.SystemPrompt]}, nil
 	})
 	reg.Register("google.tts", func(_ *Config, s StageSpec) (core.Processor, error) {
 		r.ttsBuilt.Add(1)
@@ -143,7 +143,7 @@ func newGraphRig(t *testing.T) *graphRig {
 		STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google", Voice: "front-voice"},
 		LLM:         StageSpec{Provider: "google", SystemPrompt: "FRONT", Tools: transferTools(g, "front"), ToolExecutor: exec},
 		MaxMessages: 20, MaxTokens: 4000, Graph: graph,
-		OnHandoff: func(e core.HandoffEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
+		OnRoute: func(e core.HandoffEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
@@ -176,8 +176,8 @@ func newGraphRig(t *testing.T) *graphRig {
 	return r
 }
 
-func TestGraphHandoffMovesTheCallToTheSalesNode(t *testing.T) {
-	r := newGraphRig(t)
+func TestFlowRouteMovesTheCallToTheSalesStep(t *testing.T) {
+	r := newFlowRig(t)
 	if r.llmBuilt.Load() != 1 || r.ttsBuilt.Load() != 1 {
 		t.Fatalf("only the entry node may be built at start: llm=%d tts=%d", r.llmBuilt.Load(), r.ttsBuilt.Load())
 	}
@@ -186,7 +186,7 @@ func TestGraphHandoffMovesTheCallToTheSalesNode(t *testing.T) {
 
 	r.say(t, "t2", "I want to buy")
 	r.waitSpoken(t, "Connecting you.", 1)
-	r.waitSpoken(t, "SALES here.", 1) // the idle flip started the sales node's turn
+	r.waitSpoken(t, "SALES here.", 1) // the idle flip started the sales step's turn
 
 	if r.llmBuilt.Load() != 2 || r.ttsBuilt.Load() != 2 {
 		t.Fatalf("sales built once: llm=%d tts=%d", r.llmBuilt.Load(), r.ttsBuilt.Load())

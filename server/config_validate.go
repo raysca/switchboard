@@ -55,7 +55,7 @@ func validateProfileAndStorage(cfg *Config) error {
 	default:
 		return fmt.Errorf("invalid storage.dialect %q: must be 'sqlite' or 'postgres'", cfg.Storage.Dialect)
 	}
-	// Calls run stored agents only: the agent store is mandatory.
+	// Calls run stored flows only: the flow store is mandatory.
 	if cfg.Storage.Dialect == "" {
 		return errors.New("storage.dialect is required: calls run stored agents (set sqlite or postgres)")
 	}
@@ -110,7 +110,7 @@ func validateLimits(cfg *Config) error {
 	if cfg.Limits.MaxSessionsPerPrincipal <= 0 {
 		return errors.New("max_sessions_per_principal must be > 0")
 	}
-	if cfg.Limits.MaxSessionsPerAgent < 0 || cfg.Limits.StartRatePerPrincipal < 0 {
+	if cfg.Limits.MaxSessionsPerFlow < 0 || cfg.Limits.StartRatePerPrincipal < 0 {
 		return errors.New("max_sessions_per_agent and start_rate_per_principal must be >= 0")
 	}
 	if cfg.Limits.StartRatePerPrincipal > 0 && cfg.Limits.StartBurstPerPrincipal < 1 {

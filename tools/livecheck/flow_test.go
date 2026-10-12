@@ -67,25 +67,25 @@ func TestBuildPlanCoversEveryScenario(t *testing.T) {
 	}
 }
 
-func TestGraphConfigHasEntryWithSTTAndASalesNodeWithout(t *testing.T) {
+func TestFlowConfigHasEntryWithSTTAndASalesStepWithout(t *testing.T) {
 	p := Profile{Name: "x"}
 	p.Stages.STT = Stage{Provider: "xai"}
 	p.Stages.LLM = Stage{Provider: "xai", Model: "grok-3-mini"}
 	p.Stages.TTS = Stage{Provider: "xai", Voice: "eve"}
-	cfg := graphConfig(p)
-	nodes := cfg["nodes"].([]map[string]any)
-	if cfg["entry"] != "front" || len(nodes) != 2 {
-		t.Fatalf("entry=%v nodes=%d", cfg["entry"], len(nodes))
+	cfg := routedFlowConfig(p)
+	steps := cfg["nodes"].([]map[string]any)
+	if cfg["entry"] != "front" || len(steps) != 2 {
+		t.Fatalf("entry=%v nodes=%d", cfg["entry"], len(steps))
 	}
-	front := nodes[0]["config"].(map[string]any)
-	sales := nodes[1]["config"].(map[string]any)
+	front := steps[0]["config"].(map[string]any)
+	sales := steps[1]["config"].(map[string]any)
 	if _, ok := front["stt"]; !ok {
 		t.Fatal("the entry node needs STT")
 	}
 	if _, ok := sales["stt"]; ok {
 		t.Fatal("only the entry node may set STT")
 	}
-	if !strings.Contains(sales["llm"].(map[string]any)["system_prompt"].(string), graphMarker) {
+	if !strings.Contains(sales["llm"].(map[string]any)["system_prompt"].(string), flowMarker) {
 		t.Fatal("the sales prompt must carry the marker word S14 looks for")
 	}
 	if front["llm"].(map[string]any)["system_prompt"] == sales["llm"].(map[string]any)["system_prompt"] {

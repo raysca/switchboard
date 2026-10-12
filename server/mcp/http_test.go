@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"context"
-	"govoice/server/agent"
+	"govoice/server/flow"
 )
 
 func TestManagementHandlerProtectsMCPAndNeverReturnsSecretEndpointQuery(t *testing.T) {
@@ -70,12 +70,12 @@ func TestMCPDisableDeleteConflictAndConfirmedDetachRoutes(t *testing.T) {
 	if err != nil || len(servers) != 1 {
 		t.Fatalf("servers=%+v err=%v", servers, err)
 	}
-	agentService := agent.NewService(svc.store, allAvailable{})
-	created, err := agentService.Create(context.Background(), agent.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	agentService := flow.NewService(svc.store, allAvailable{})
+	created, err := agentService.Create(context.Background(), flow.CreateRequest{Name: "uses mcp", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := agentService.SetMCPTools(context.Background(), created.ID, []agent.ToolSelection{{ServerID: servers[0].ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
+	if _, err := agentService.SetMCPTools(context.Background(), created.ID, []flow.ToolSelection{{ServerID: servers[0].ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
 	h := Handler(svc)
@@ -184,4 +184,4 @@ func TestAuthenticatedMCPCreateValidateDetailAndExecuteJSONContract(t *testing.T
 // allAvailable is an environment where every provider service can run.
 type allAvailable struct{}
 
-func (allAvailable) Check(string, string) agent.Unavailable { return agent.Unavailable{} }
+func (allAvailable) Check(string, string) flow.Unavailable { return flow.Unavailable{} }

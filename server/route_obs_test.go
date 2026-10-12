@@ -10,20 +10,20 @@ import (
 	"govoice/core"
 )
 
-func TestTimelineStampsActiveNode(t *testing.T) {
+func TestTimelineStampsActiveStep(t *testing.T) {
 	tl := NewSessionTimeline(1, 10, time.Minute)
 	tl.Record(TimelineEvent{Type: EventLLMStart})
-	tl.SetNode("sales")
+	tl.SetStep("sales")
 	tl.Record(TimelineEvent{Type: EventLLMStart})
-	tl.Record(TimelineEvent{Type: EventTTSAudio, Node: "explicit"})
+	tl.Record(TimelineEvent{Type: EventTTSAudio, Step: "explicit"})
 	ev := tl.Events()
-	if ev[0].Node != "" || ev[1].Node != "sales" || ev[2].Node != "explicit" {
-		t.Fatalf("nodes = %q %q %q", ev[0].Node, ev[1].Node, ev[2].Node)
+	if ev[0].Step != "" || ev[1].Step != "sales" || ev[2].Step != "explicit" {
+		t.Fatalf("nodes = %q %q %q", ev[0].Step, ev[1].Step, ev[2].Step)
 	}
 }
 
-func TestHandoffMetricsCountAndTime(t *testing.T) {
-	var m handoffMetrics
+func TestRouteMetricsCountAndTime(t *testing.T) {
+	var m routeMetrics
 	m.observe(core.HandoffEvent{Kind: core.HandoffActive, Elapsed: 400 * time.Millisecond})
 	m.observe(core.HandoffEvent{Kind: core.HandoffFailed, Err: errors.New("x")})
 	m.observe(core.HandoffEvent{Kind: core.HandoffPreparing}) // not counted
@@ -37,16 +37,16 @@ func TestHandoffMetricsCountAndTime(t *testing.T) {
 	}
 }
 
-func TestOnHandoffRecordsTimelineAndTraceSpans(t *testing.T) {
+func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 	s := apiTestServer(t)
 	enableTestManagement(t, s)
-	agentID := readyTestAgent(t, s)
-	pin, err := s.agents.StartSession(t.Context(), agentID, "")
+	flowID := readyTestFlow(t, s)
+	pin, err := s.flows.StartSession(t.Context(), flowID, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tl := NewSessionTimeline(5, 50, time.Minute)
-	on := s.onHandoff(tl, pin.ID)
+	on := s.onRoute(tl, pin.ID)
 	on(core.HandoffEvent{Kind: core.HandoffPreparing, From: "front", To: "sales"})
 	on(core.HandoffEvent{Kind: core.HandoffActive, From: "front", To: "sales", Elapsed: 300 * time.Millisecond})
 	on(core.HandoffEvent{Kind: core.HandoffFailed, From: "sales", To: "front", Err: errors.New("provider down")})
@@ -55,10 +55,10 @@ func TestOnHandoffRecordsTimelineAndTraceSpans(t *testing.T) {
 	for _, e := range tl.Events() {
 		got[e.Type] = e
 	}
-	if got[EventNodePreparing].Details != "sales" || got[EventHandoff].Details != "front->sales" || got[EventNodeActive].Node != "sales" {
+	if got[EventStepPreparing].Details != "sales" || got[EventRoute].Details != "front->sales" || got[EventStepActive].Step != "sales" {
 		t.Fatalf("timeline = %+v", got)
 	}
-	if got[EventHandoffFailed].Error == "" {
+	if got[EventRouteFailed].Error == "" {
 		t.Fatal("a failed handoff must carry its error")
 	}
 	names := map[string]bool{}

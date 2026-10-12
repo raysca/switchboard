@@ -1,4 +1,4 @@
-package agent
+package flow
 
 import (
 	"context"
@@ -133,7 +133,7 @@ type BreakerOpen func(stage, providerID string) bool
 // breaker is open moved to the back, order otherwise kept. Open entries are
 // demoted, not dropped: a breaker only leaves Open when a call reaches it
 // (resilience.Breaker grants the half-open probe inside allow), so dropping
-// them would strand a single-provider agent forever once its breaker opened.
+// them would strand a single-provider flow forever once its breaker opened.
 // An open entry tried last costs one immediate ErrCircuitOpen. open must report
 // true only while the breaker would refuse (Open and inside its cooldown). A
 // nil open keeps chain order.

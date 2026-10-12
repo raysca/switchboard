@@ -105,7 +105,7 @@ func TestScenarioA_DeployedGoogleStack(t *testing.T) {
 }
 
 // Scenario C - Interchangeability (spec §41 Scenario C)
-// Providers are chosen per stored agent; the server offers Google and xAI LLMs
+// Providers are chosen per stored flow; the server offers Google and xAI LLMs
 // interchangeably behind the same pipeline shape (see BuildCallPipeline tests).
 func TestScenarioC_InterchangeabilityDeployed(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)

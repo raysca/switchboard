@@ -8,7 +8,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/resilience"
-	"govoice/server/agent"
+	"govoice/server/flow"
 )
 
 func TestFailoverTimingConfig(t *testing.T) {
@@ -40,10 +40,10 @@ func TestFailoverTimingConfig(t *testing.T) {
 }
 
 func TestFirstTokenTimeoutClassIsTimeout(t *testing.T) {
-	if got := llmClassify(errors.Join(errors.New("x"), core.ErrFirstTokenTimeout)); got != agent.ClassTimeout {
+	if got := llmClassify(errors.Join(errors.New("x"), core.ErrFirstTokenTimeout)); got != flow.ClassTimeout {
 		t.Fatalf("class %q", got)
 	}
-	if !(agent.FailoverPolicy{}).Allows(agent.ClassTimeout) {
+	if !(flow.FailoverPolicy{}).Allows(flow.ClassTimeout) {
 		t.Fatal("timeout must fail over by default")
 	}
 }

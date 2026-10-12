@@ -43,28 +43,28 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 	}
 }
 
-func TestRepositoryAgentVersionImmutabilityAndHistorySafety(t *testing.T) {
+func TestRepositoryFlowVersionImmutabilityAndHistorySafety(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`), nil)
+	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if v.ConfigHash != "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777" {
 		t.Fatalf("hash %s", v.ConfigHash)
 	}
-	if _, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"a":2}`), nil); err == nil {
+	if _, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"a":2}`), nil); err == nil {
 		t.Fatal("duplicate version accepted")
 	}
-	got, err := s.Agents().Current(ctx, a.ID)
+	got, err := s.Flows().Current(ctx, a.ID)
 	if err != nil || got.CurrentVersionID != v.ID {
 		t.Fatalf("current=%+v err=%v", got, err)
 	}
-	session := SessionRecord{ID: NewID(), AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"}
+	session := SessionRecord{ID: NewID(), FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"}
 	if err := s.Sessions().Create(ctx, session); err != nil {
 		t.Fatal(err)
 	}
@@ -74,37 +74,37 @@ func TestRepositoryAgentVersionImmutabilityAndHistorySafety(t *testing.T) {
 	if _, err := s.DB().Exec("UPDATE agent_versions SET config_hash='changed' WHERE id=?", v.ID); err == nil {
 		t.Fatal("immutable version updated")
 	}
-	if err := s.Agents().Archive(ctx, a.ID); err != nil {
+	if err := s.Flows().Archive(ctx, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, err = s.Agents().Current(ctx, a.ID)
+	got, err = s.Flows().Current(ctx, a.ID)
 	if err != nil || !got.Archived {
 		t.Fatalf("archive=%+v err=%v", got, err)
 	}
 }
 
-func TestSessionAdmissionRejectsDisabledOrArchivedAgent(t *testing.T) {
+func TestSessionAdmissionRejectsDisabledOrArchivedFlow(t *testing.T) {
 	s := testStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	for _, mode := range []string{"disabled", "archived"} {
 		t.Run(mode, func(t *testing.T) {
-			a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
-			if err := s.Agents().Create(ctx, a); err != nil {
+			a := Flow{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
+			if err := s.Flows().Create(ctx, a); err != nil {
 				t.Fatal(err)
 			}
-			v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+			v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if mode == "archived" {
-				if err := s.Agents().Archive(ctx, a.ID); err != nil {
+				if err := s.Flows().Archive(ctx, a.ID); err != nil {
 					t.Fatal(err)
 				}
 			} else if _, err := s.DB().ExecContext(ctx, "UPDATE agents SET enabled=0 WHERE id=?", a.ID); err != nil {
 				t.Fatal(err)
 			}
-			err = s.Sessions().Create(ctx, SessionRecord{ID: NewID(), AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"})
+			err = s.Sessions().Create(ctx, SessionRecord{ID: NewID(), FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"})
 			if err == nil {
 				t.Fatal("session admitted after agent became unavailable")
 			}
@@ -116,16 +116,16 @@ func TestSessionEndRetriesPendingDeleteFinalization(t *testing.T) {
 	s := testStore(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	a := Agent{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "A", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sessionID := NewID()
-	if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"}); err != nil {
+	if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"}); err != nil {
 		t.Fatal(err)
 	}
 	s.finalizePendingDeletesHook = func(context.Context) error { return errors.New("transient injected failure") }
@@ -142,32 +142,32 @@ func TestSessionEndRetriesPendingDeleteFinalization(t *testing.T) {
 	}
 }
 
-func TestRepositoryAgentVersionsAreMonotonicAndAgentListUpdateWork(t *testing.T) {
+func TestRepositoryFlowVersionsAreMonotonicAndFlowListUpdateWork(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "before"}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "before"}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Agents().PublishVersion(ctx, a.ID, 2, []byte(`{}`), nil); err == nil {
+	if _, err := s.Flows().PublishVersion(ctx, a.ID, 2, []byte(`{}`), nil); err == nil {
 		t.Fatal("first version may not skip version 1")
 	}
-	v1, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
+	v1, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	v2, err := s.Agents().PublishVersion(ctx, a.ID, 2, []byte(`{"x":2}`), nil)
+	v2, err := s.Flows().PublishVersion(ctx, a.ID, 2, []byte(`{"x":2}`), nil)
 	if err != nil || v2.Version != v1.Version+1 {
 		t.Fatalf("second version=%+v err=%v", v2, err)
 	}
-	if _, err := s.Agents().PublishVersion(ctx, a.ID, 4, []byte(`{}`), nil); err == nil {
+	if _, err := s.Flows().PublishVersion(ctx, a.ID, 4, []byte(`{}`), nil); err == nil {
 		t.Fatal("version may not skip a number")
 	}
 	name, desc := "after", "updated"
-	if _, _, err := s.Agents().MutateAndPublish(ctx, a.ID, AgentMutation{Name: &name, Description: &desc}, nil); err != nil {
+	if _, _, err := s.Flows().MutateAndPublish(ctx, a.ID, FlowMutation{Name: &name, Description: &desc}, nil); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Agents().List(ctx, 10, 0)
+	got, err := s.Flows().List(ctx, 10, 0)
 	if err != nil || len(got) != 1 || got[0].Name != "after" || got[0].CurrentVersionID != v2.ID {
 		t.Fatalf("list=%+v err=%v", got, err)
 	}
@@ -200,7 +200,7 @@ func TestStorageConcurrentSQLiteWrites(t *testing.T) {
 	errs := make(chan error, 20)
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); errs <- s.Agents().Create(ctx, Agent{ID: NewID(), Name: "A"}) }()
+		go func() { defer wg.Done(); errs <- s.Flows().Create(ctx, Flow{ID: NewID(), Name: "A"}) }()
 	}
 	wg.Wait()
 	close(errs)
@@ -402,7 +402,7 @@ func TestStorageRejectsInvalidIDs(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	for _, id := range []string{"", "bad", "00000000-0000-4000-8000-000000000000", "00000000-0000-7000-0000-000000000000"} {
-		if err := s.Agents().Create(ctx, Agent{ID: id, Name: "bad"}); err == nil {
+		if err := s.Flows().Create(ctx, Flow{ID: id, Name: "bad"}); err == nil {
 			t.Fatalf("accepted id %q", id)
 		}
 	}
@@ -411,11 +411,11 @@ func TestStorageRejectsInvalidIDs(t *testing.T) {
 func TestRepositoryRejectsInvalidDurableIDs(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A", Enabled: true}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "A", Enabled: true}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestRepositoryRejectsInvalidDurableIDs(t *testing.T) {
 	}{
 		{"mcp", func() error { return s.MCP().CreateServer(ctx, MCPServer{ID: bad}) }},
 		{"session", func() error {
-			return s.Sessions().Create(ctx, SessionRecord{ID: bad, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash})
+			return s.Sessions().Create(ctx, SessionRecord{ID: bad, FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash})
 		}},
 		{"turn", func() error { return s.Sessions().AddTurn(ctx, TurnRecord{ID: bad, SessionID: NewID()}) }},
 		{"span", func() error { return s.Traces().AddSpan(ctx, TraceSpan{ID: bad}) }},
@@ -442,14 +442,14 @@ func TestRepositoryRejectsInvalidDurableIDs(t *testing.T) {
 	}
 }
 
-func TestRepositoryAgentCreateHonorsFlags(t *testing.T) {
+func TestRepositoryFlowCreateHonorsFlags(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "archived", Enabled: false, Archived: true}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "archived", Enabled: false, Archived: true}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Agents().Current(ctx, a.ID)
+	got, err := s.Flows().Current(ctx, a.ID)
 	if err != nil || got.Enabled || !got.Archived {
 		t.Fatalf("flags=%+v err=%v", got, err)
 	}
@@ -458,14 +458,14 @@ func TestRepositoryAgentCreateHonorsFlags(t *testing.T) {
 func TestRepositoryRejectsCorruptTimestamp(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A", Enabled: true}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "A", Enabled: true}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DB().Exec("UPDATE agents SET created_at='not-a-time' WHERE id=?", a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Agents().Current(ctx, a.ID); err == nil {
+	if _, err := s.Flows().Current(ctx, a.ID); err == nil {
 		t.Fatal("corrupt timestamp accepted")
 	}
 }
@@ -473,14 +473,14 @@ func TestRepositoryRejectsCorruptTimestamp(t *testing.T) {
 func TestRepositoryNormalizesReadTimestampUTC(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A"}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "A"}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DB().Exec("UPDATE agents SET created_at='2026-10-04T21:00:00+01:00' WHERE id=?", a.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Agents().Current(ctx, a.ID)
+	got, err := s.Flows().Current(ctx, a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,15 +492,15 @@ func TestRepositoryNormalizesReadTimestampUTC(t *testing.T) {
 func TestRepositoryConfigHashRoundTrip(t *testing.T) {
 	run := func(t *testing.T, s *Store) {
 		ctx := context.Background()
-		a := Agent{ID: NewID(), Name: "hash"}
-		if err := s.Agents().Create(ctx, a); err != nil {
+		a := Flow{ID: NewID(), Name: "hash"}
+		if err := s.Flows().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"z":1e1000,"text":"\u0000","a":1e2}`), nil)
+		v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"z":1e1000,"text":"\u0000","a":1e2}`), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := s.Agents().Version(ctx, v.ID)
+		got, err := s.Flows().Version(ctx, v.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -544,15 +544,15 @@ func TestRepositoryPostgresIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	a := Agent{ID: NewID(), Name: "contract"}
-	if err := s.Agents().Create(context.Background(), a); err != nil {
+	a := Flow{ID: NewID(), Name: "contract"}
+	if err := s.Flows().Create(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(context.Background(), a.ID, 1, []byte(`{"a":1}`), nil)
+	v, err := s.Flows().PublishVersion(context.Background(), a.ID, 1, []byte(`{"a":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Agents().Current(context.Background(), a.ID)
+	got, err := s.Flows().Current(context.Background(), a.ID)
 	if err != nil || got.CurrentVersionID != v.ID {
 		t.Fatalf("current=%+v err=%v", got, err)
 	}
@@ -707,11 +707,11 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 func TestRepositoryMCPAndHistory(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A", Enabled: true}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "A", Enabled: true}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
+	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,11 +727,11 @@ func TestRepositoryMCPAndHistory(t *testing.T) {
 	if err != nil || len(gotD.Tools) != 2 || gotD.Tools[0].RemoteName != "a" {
 		t.Fatalf("discovery=%+v err=%v", gotD, err)
 	}
-	v, err = s.Agents().PublishVersion(ctx, a.ID, 2, []byte(`{"x":2}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash, Required: true}})
+	v, err = s.Flows().PublishVersion(ctx, a.ID, 2, []byte(`{"x":2}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash, Required: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess := SessionRecord{ID: NewID(), AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}
+	sess := SessionRecord{ID: NewID(), FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}
 	if err := s.Sessions().Create(ctx, sess); err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +751,7 @@ func TestRepositoryMCPAndHistory(t *testing.T) {
 	if _, err := s.DB().Exec("DELETE FROM mcp_servers WHERE id=?", m.ID); err == nil {
 		t.Fatal("live MCP reference deleted")
 	}
-	if _, err := s.Agents().PublishVersion(ctx, a.ID, 3, []byte(`{"x":3}`), nil); err != nil {
+	if _, err := s.Flows().PublishVersion(ctx, a.ID, 3, []byte(`{"x":3}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Sessions().End(ctx, sess.ID); err != nil {
@@ -783,16 +783,16 @@ func TestMCPDisableAndDeleteRespectCurrentAndActiveVersionReferences(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := Agent{ID: NewID(), Name: "uses-mcp", Enabled: true}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "uses-mcp", Enabled: true}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}})
+	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sessionID := NewID()
-	if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"}); err != nil {
+	if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MCP().DeleteServer(ctx, m.ID); err == nil {
@@ -842,16 +842,16 @@ func TestConcurrentSessionCloseAndMCPDeleteAlwaysDrainsSafely(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		a := Agent{ID: NewID(), Name: "race", Enabled: true}
-		if err := s.Agents().Create(ctx, a); err != nil {
+		a := Flow{ID: NewID(), Name: "race", Enabled: true}
+		if err := s.Flows().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "tool", SchemaHash: d.Tools[0].SchemaHash, Required: true}})
+		v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "tool", SchemaHash: d.Tools[0].SchemaHash, Required: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		sessionID := NewID()
-		if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}); err != nil {
+		if err := s.Sessions().Create(ctx, SessionRecord{ID: sessionID, FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.MCP().DetachAndDelete(ctx, m.ID); err != nil {
@@ -897,8 +897,8 @@ func TestRepositoryDiscoveryRequiresLiveServer(t *testing.T) {
 func TestRepositoryPublishRejectsUnknownToolAtomically(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A"}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "A"}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
 	m := MCPServer{ID: NewID(), Name: "M", Transport: "streamable-http", Enabled: true}
@@ -910,11 +910,11 @@ func TestRepositoryPublishRejectsUnknownToolAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, selection := range []SelectedTool{{ServerID: m.ID, RemoteName: "missing", SchemaHash: d.Tools[0].SchemaHash}, {ServerID: m.ID, RemoteName: "known", SchemaHash: "bad"}, {ServerID: NewID(), RemoteName: "known", SchemaHash: d.Tools[0].SchemaHash}} {
-		if _, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), []SelectedTool{selection}); err == nil {
+		if _, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), []SelectedTool{selection}); err == nil {
 			t.Fatalf("accepted selection %+v", selection)
 		}
 	}
-	got, err := s.Agents().Current(ctx, a.ID)
+	got, err := s.Flows().Current(ctx, a.ID)
 	if err != nil || got.CurrentVersionID != "" {
 		t.Fatalf("pointer changed %+v err=%v", got, err)
 	}
@@ -927,19 +927,19 @@ func TestRepositoryPublishRejectsUnknownToolAtomically(t *testing.T) {
 func TestRepositoryProvenanceAndPointers(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
-	a := Agent{ID: NewID(), Name: "A"}
-	b := Agent{ID: NewID(), Name: "B"}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	a := Flow{ID: NewID(), Name: "A"}
+	b := Flow{ID: NewID(), Name: "B"}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Agents().Create(ctx, b); err != nil {
+	if err := s.Flows().Create(ctx, b); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, session := range []SessionRecord{{ID: NewID(), AgentID: b.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}, {ID: NewID(), AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: "wrong", Status: "active"}} {
+	for _, session := range []SessionRecord{{ID: NewID(), FlowID: b.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}, {ID: NewID(), FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: "wrong", Status: "active"}} {
 		if err := s.Sessions().Create(ctx, session); err == nil {
 			t.Fatalf("accepted mismatched session %+v", session)
 		}
@@ -992,8 +992,8 @@ func TestRepositoryContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := tc.open(t)
 			ctx := context.Background()
-			a := Agent{ID: NewID(), Name: "contract", Enabled: true}
-			if err := s.Agents().Create(ctx, a); err != nil {
+			a := Flow{ID: NewID(), Name: "contract", Enabled: true}
+			if err := s.Flows().Create(ctx, a); err != nil {
 				t.Fatal(err)
 			}
 			m := MCPServer{ID: NewID(), Name: "m", Enabled: true}
@@ -1008,17 +1008,17 @@ func TestRepositoryContract(t *testing.T) {
 			if err != nil || len(gotD.Tools) != 2 || gotD.Tools[0].RemoteName != "a" || string(gotD.Tools[0].SchemaJSON) != `{"n":1e2}` {
 				t.Fatalf("discovery=%+v err=%v", gotD, err)
 			}
-			v, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash}})
+			v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Agents().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil); err == nil {
+			if _, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil); err == nil {
 				t.Fatal("duplicate version")
 			}
 			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE agent_versions SET config_hash=? WHERE id=?"), "bad", v.ID); err == nil {
 				t.Fatal("immutable version changed")
 			}
-			sess := SessionRecord{ID: NewID(), AgentID: a.ID, AgentVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}
+			sess := SessionRecord{ID: NewID(), FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}
 			if err := s.Sessions().Create(ctx, sess); err != nil {
 				t.Fatal(err)
 			}
@@ -1068,7 +1068,7 @@ func TestRepositoryContract(t *testing.T) {
 			if _, err := s.DB().ExecContext(ctx, s.bind("DELETE FROM mcp_servers WHERE id=?"), m.ID); err == nil {
 				t.Fatal("current MCP deleted")
 			}
-			v2, err := s.Agents().PublishVersion(ctx, a.ID, 2, []byte(`{}`), nil)
+			v2, err := s.Flows().PublishVersion(ctx, a.ID, 2, []byte(`{}`), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1091,7 +1091,7 @@ func TestRepositoryContract(t *testing.T) {
 			writeErrors := make(chan error, 8)
 			for i := 0; i < 8; i++ {
 				wg.Add(1)
-				go func() { defer wg.Done(); writeErrors <- s.Agents().Create(ctx, Agent{ID: NewID(), Name: "concurrent"}) }()
+				go func() { defer wg.Done(); writeErrors <- s.Flows().Create(ctx, Flow{ID: NewID(), Name: "concurrent"}) }()
 			}
 			wg.Wait()
 			close(writeErrors)

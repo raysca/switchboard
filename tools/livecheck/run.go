@@ -26,7 +26,7 @@ func buildPlan(profs []Profile, ms []mode, scs []scenario, repeat int, o *opts) 
 	var plan []planItem
 	for _, p := range profs {
 		for _, m := range ms {
-			for _, class := range []serverClass{classBase, classIdle, classPing, classFailover, classGraph} {
+			for _, class := range []serverClass{classBase, classIdle, classPing, classFailover, classFlow} {
 				for _, sc := range scs {
 					if sc.class.name != class.name {
 						continue
@@ -72,7 +72,7 @@ type runCfg struct {
 	logLevel        string
 }
 
-// runPlan executes the plan: one fresh server (ephemeral ports, own agent store and provider env) per
+// runPlan executes the plan: one fresh server (ephemeral ports, own flow store and provider env) per
 // profile x mode x server class. Failures are recorded per result and never abort other profiles.
 func runPlan(ctx context.Context, cfg runCfg, rep *Report) {
 	spent := cfg.spentBase
@@ -187,13 +187,13 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 			mcp = cfg.o.mcpURL
 		}
 	}
-	var agent string
+	var fl string
 	if first.sc.class.name == classFailover.name {
-		agent, err = srv.provisionFailover(first.prof)
-	} else if first.sc.class.name == classGraph.name {
-		agent, err = srv.provisionGraph(first.prof)
+		fl, err = srv.provisionFailover(first.prof)
+	} else if first.sc.class.name == classFlow.name {
+		fl, err = srv.provisionFlow(first.prof)
 	} else {
-		agent, err = srv.provision(first.prof, mcp)
+		fl, err = srv.provision(first.prof, mcp)
 	}
 	if err != nil {
 		failAll(fmt.Errorf("provision: %w", err))
@@ -211,7 +211,7 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 			record(it, &Result{Status: stSkip, Reason: fmt.Sprintf("-max-calls %d reached (actual provider requests)", cfg.maxCalls)})
 			continue
 		}
-		record(it, runScenario(ctx, cfg, srv, agent, it, name))
+		record(it, runScenario(ctx, cfg, srv, fl, it, name))
 	}
 	for _, l := range srv.logProblems() {
 		fmt.Fprintf(stdout, "  [%s log] %s\n", name, l)
@@ -219,9 +219,9 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 	}
 }
 
-func runScenario(ctx context.Context, cfg runCfg, srv *server, agent string, it planItem, name string) *Result {
+func runScenario(ctx context.Context, cfg runCfg, srv *server, fl string, it planItem, name string) *Result {
 	r := &Result{}
-	c, err := dial(ctx, srv, agent, it.sc.pushToTalk)
+	c, err := dial(ctx, srv, fl, it.sc.pushToTalk)
 	if err != nil {
 		r.abort(redact(err))
 		return r

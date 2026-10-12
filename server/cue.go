@@ -21,13 +21,13 @@ const (
 	defaultCueAfter = 300 * time.Millisecond
 	cueFade         = 30 * time.Millisecond
 	cueHardCap      = 10 * time.Second
-	cueMaxWait      = 90 * time.Second // outer bound on one handoff's wait for the new node's audio
+	cueMaxWait      = 90 * time.Second // outer bound on one handoff's wait for the new step's audio
 )
 
-// cueController plays the handoff cue over the gap between the old agent's
-// last audio and the new agent's first audio. It starts the cue only if that
+// cueController plays the route cue over the gap between the old step's
+// last audio and the new step's first audio. It starts the cue only if that
 // gap outlasts `after`, so quick handoffs stay silent, and stops it (with a
-// short fade) on the new node's first audio, on caller speech, on failure, or
+// short fade) on the new step's first audio, on caller speech, on failure, or
 // at a hard cap. All methods are safe on a nil receiver.
 type cueController struct {
 	player cuePlayer
@@ -36,8 +36,8 @@ type cueController struct {
 	cap    time.Duration
 	record func(TimelineEventType, string)
 
-	waiting   atomic.Bool  // from preparing until the new node speaks (or the handoff fails)
-	activated atomic.Bool  // the handoff is active: the next bot audio is the new node's
+	waiting   atomic.Bool  // from preparing until the new step speaks (or the handoff fails)
+	activated atomic.Bool  // the handoff is active: the next bot audio is the new step's
 	speaking  atomic.Bool  // the caller is speaking
 	activity  atomic.Int64 // last bot audio or caller speech, monotonic offset from cueBase
 
@@ -83,7 +83,7 @@ func (c *cueController) userSpeech(speaking bool) {
 	}
 }
 
-func (c *cueController) onHandoff(e core.HandoffEvent) {
+func (c *cueController) onRoute(e core.HandoffEvent) {
 	if c == nil {
 		return
 	}
@@ -162,10 +162,10 @@ func (c *cueController) finish(reason string, end bool) {
 	}
 }
 
-// newCallCue returns the call's cue controller, or nil when the agent has no
-// handoff cue, the transport has no cue output, or the named sound is not
+// newCallCue returns the call's cue controller, or nil when the flow has no
+// route cue, the transport has no cue output, or the named sound is not
 // configured (logged; the call runs without a cue).
-func (s *Server) newCallCue(g *CallGraph, player cuePlayer, tl *SessionTimeline) *cueController {
+func (s *Server) newCallCue(g *CallFlow, player cuePlayer, tl *SessionTimeline) *cueController {
 	if g == nil || g.Cue == nil || g.Cue.Name == "" {
 		return nil
 	}

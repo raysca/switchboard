@@ -19,7 +19,7 @@ type shape struct {
 }
 
 // ttsPerReply is the TTS requests one reply can cost. Unit-based TTS (xAI unary, Google) sends one
-// request per sentence and the standard agent answers in 2-4 sentences; a streaming socket needs 1-2.
+// request per sentence and the standard flow answers in 2-4 sentences; a streaming socket needs 1-2.
 func ttsPerReply(provider string) int {
 	switch provider {
 	case "xai":

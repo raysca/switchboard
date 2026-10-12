@@ -36,8 +36,8 @@ type client struct {
 	n        int       // server session number (1-based dial order)
 }
 
-func dial(ctx context.Context, s *server, agent string, pushToTalk bool) (*client, error) {
-	tok, err := s.token(agent)
+func dial(ctx context.Context, s *server, fl string, pushToTalk bool) (*client, error) {
+	tok, err := s.token(fl)
 	if err != nil {
 		return nil, err
 	}

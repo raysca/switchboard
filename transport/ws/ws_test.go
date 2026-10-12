@@ -861,7 +861,7 @@ func TestAgentID_ComesOnlyFromToken(t *testing.T) {
 	srv := ws.NewServer(ws.DefaultServerConfig(val))
 	got := make(chan string, 1)
 	srv.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		got <- conn.AgentID()
+		got <- conn.FlowID()
 		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
 		return core.NewSession(1, pipe, core.DefaultResourceBudget())
 	}
@@ -874,7 +874,7 @@ func TestAgentID_ComesOnlyFromToken(t *testing.T) {
 			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
 		},
 		Principal: "user-1",
-		AgentID:   "agent-from-token",
+		FlowID:    "agent-from-token",
 	}
 	tokStr, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testSecret))
 

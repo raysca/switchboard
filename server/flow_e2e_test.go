@@ -25,20 +25,20 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"govoice/core"
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"govoice/transport/ws"
 )
 
 // End to end with the fake providers (go test -tags fakeproviders): a real
-// server, a stored graph agent, and a WebSocket client that sends text turns.
-// The fake LLM labels each reply with its node's prompt and calls the node's
-// transfer tool on "transfer to <node>", so the whole path runs: transfer tool,
-// on-demand node build, flip, old-node close, timeline, traces and metrics.
+// server, a stored routed flow, and a WebSocket client that sends text turns.
+// The fake LLM labels each reply with its step's prompt and calls the step's
+// transfer tool on "transfer to <step>", so the whole path runs: transfer tool,
+// on-demand step build, flip, old-step close, timeline, traces and metrics.
 
 const e2eMgmtKey = "management-test-key-32-bytes-long-and-separate"
 
 // stageProbe wraps the fake stage factories: it counts builds and closes per
-// node (LLM by prompt, TTS by voice), can fail or hold a node's build.
+// step (LLM by prompt, TTS by voice), can fail or hold a step's build.
 type stageProbe struct {
 	mu            sync.Mutex
 	built         map[string]int
@@ -116,15 +116,15 @@ func newProbe() *stageProbe {
 	return &stageProbe{built: map[string]int{}, closed: map[string]int{}, gate: make(chan struct{}), entered: make(chan struct{})}
 }
 
-type graphRigE2E struct {
-	t       *testing.T
-	s       *Server
-	ts      *httptest.Server
-	probe   *stageProbe
-	agentID string
+type flowRigE2E struct {
+	t      *testing.T
+	s      *Server
+	ts     *httptest.Server
+	probe  *stageProbe
+	flowID string
 }
 
-func graphConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessage {
+func flowConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessage {
 	tail := ""
 	if len(cue) > 0 {
 		tail = `,"handoff_cue":` + cue[0]
@@ -136,7 +136,7 @@ func graphConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMess
 		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]` + tail + `}`)
 }
 
-func newGraphRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *graphRigE2E {
+func newFlowRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *flowRigE2E {
 	t.Helper()
 	t.Setenv("GOVOICE_FAKE_LLM_LABEL", "1")
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", e2eMgmtKey)
@@ -155,15 +155,15 @@ func newGraphRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *gra
 	probe.install(s)
 	ts := httptest.NewServer(s.wsServer)
 	t.Cleanup(ts.Close)
-	return &graphRigE2E{t: t, s: s, ts: ts, probe: probe}
+	return &flowRigE2E{t: t, s: s, ts: ts, probe: probe}
 }
 
-func (r *graphRigE2E) createGraphAgent(salesVoice string, cue ...string) string {
-	a, err := r.s.agents.Create(r.t.Context(), agent.CreateRequest{Name: "Dealership", Config: graphConfigJSON("SALES", salesVoice, cue...)})
-	if err != nil || a.Readiness.State != agent.ReadinessReady {
+func (r *flowRigE2E) createRoutedFlow(salesVoice string, cue ...string) string {
+	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "Dealership", Config: flowConfigJSON("SALES", salesVoice, cue...)})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
 		r.t.Fatalf("graph agent: %+v err=%v", a.Readiness, err)
 	}
-	r.agentID = a.ID
+	r.flowID = a.ID
 	return a.ID
 }
 
@@ -180,16 +180,16 @@ type e2eCall struct {
 }
 
 // audioArrival is one bot audio frame on the wire. The fake TTS sends silence,
-// so a frame with a high peak is the handoff cue.
+// so a frame with a high peak is the route cue.
 type audioArrival struct {
 	at   time.Time
 	peak int
 	dur  time.Duration
 }
 
-func (r *graphRigE2E) dial(agentID string) *e2eCall {
+func (r *flowRigE2E) dial(flowID string) *e2eCall {
 	r.t.Helper()
-	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","agent_id":"`+agentID+`"}`)
+	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","agent_id":"`+flowID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
@@ -292,9 +292,9 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-func (r *graphRigE2E) timeline() []TimelineEvent { return r.s.timelines.GetOrCreate(1).Events() }
+func (r *flowRigE2E) timeline() []TimelineEvent { return r.s.timelines.GetOrCreate(1).Events() }
 
-func (r *graphRigE2E) has(typ TimelineEventType, details string) bool {
+func (r *flowRigE2E) has(typ TimelineEventType, details string) bool {
 	for _, e := range r.timeline() {
 		if e.Type == typ && (details == "" || e.Details == details) {
 			return true
@@ -303,7 +303,7 @@ func (r *graphRigE2E) has(typ TimelineEventType, details string) bool {
 	return false
 }
 
-func (r *graphRigE2E) spanNames(sessionID string) map[string]bool {
+func (r *flowRigE2E) spanNames(sessionID string) map[string]bool {
 	spans, err := r.s.mgmt.store.Traces().Spans(r.t.Context(), sessionID, "")
 	if err != nil {
 		r.t.Fatal(err)
@@ -320,13 +320,13 @@ func (r *graphRigE2E) spanNames(sessionID string) map[string]bool {
 	return names
 }
 
-func (r *graphRigE2E) activeSessions() int { return activeSessionCount(r.t, r.s, r.agentID) }
+func (r *flowRigE2E) activeSessions() int { return activeSessionCount(r.t, r.s, r.flowID) }
 
-// The whole path with a healthy second node.
-func TestGraphE2EHandoffMovesTheCallAndClosesTheLeftNode(t *testing.T) {
+// The whole path with a healthy second step.
+func TestFlowE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	probe := newProbe()
-	r := newGraphRigE2E(t, probe)
-	c := r.dial(r.createGraphAgent("salesvoice"))
+	r := newFlowRigE2E(t, probe)
+	c := r.dial(r.createRoutedFlow("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("hello")
@@ -337,7 +337,7 @@ func TestGraphE2EHandoffMovesTheCallAndClosesTheLeftNode(t *testing.T) {
 
 	c.say("please transfer to sales")
 	c.waitReplies("Connecting you.", 1)
-	c.waitReplies("[SALES", 1) // the new agent greets once the call is idle
+	c.waitReplies("[SALES", 1) // the new step greets once the call is idle
 	if probe.builds("SALES") != 1 || probe.builds("salesvoice") != 1 {
 		t.Fatalf("sales must be built exactly once: llm=%d tts=%d", probe.builds("SALES"), probe.builds("salesvoice"))
 	}
@@ -353,13 +353,13 @@ func TestGraphE2EHandoffMovesTheCallAndClosesTheLeftNode(t *testing.T) {
 		t.Fatal("the front node answered after the handoff")
 	}
 
-	if !r.has(EventHandoff, "front->sales") || !r.has(EventNodeActive, "sales") || !r.has(EventNodeClosed, "front") {
+	if !r.has(EventRoute, "front->sales") || !r.has(EventStepActive, "sales") || !r.has(EventStepClosed, "front") {
 		t.Fatalf("timeline = %+v", r.timeline())
 	}
-	nodes := map[string]bool{}
+	steps := map[string]bool{}
 	for _, e := range r.timeline() {
-		if e.Type == EventNodeActive || e.Type == EventHandoff {
-			nodes[e.Node] = true
+		if e.Type == EventStepActive || e.Type == EventRoute {
+			steps[e.Step] = true
 		}
 	}
 	if r.s.metrics.handoff.total.Load() != 1 || r.s.metrics.handoff.failures.Load() != 0 {
@@ -374,22 +374,22 @@ func TestGraphE2EHandoffMovesTheCallAndClosesTheLeftNode(t *testing.T) {
 	eventually(t, "sales node closed with the call", func() bool { return probe.closes("SALES") == 1 && probe.closes("salesvoice") == 1 })
 }
 
-// The second node cannot be built: the caller stays with the first.
-func TestGraphE2EFailedNodeBuildKeepsTheCallGoing(t *testing.T) {
+// The second step cannot be built: the caller stays with the first.
+func TestFlowE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 	probe := newProbe()
 	probe.failTTS = "brokenvoice"
-	r := newGraphRigE2E(t, probe)
-	c := r.dial(r.createGraphAgent("brokenvoice"))
+	r := newFlowRigE2E(t, probe)
+	c := r.dial(r.createRoutedFlow("brokenvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
 	c.waitReplies("Connecting you.", 1)
-	eventually(t, "handoff_failed", func() bool { return r.has(EventHandoffFailed, "sales") })
+	eventually(t, "handoff_failed", func() bool { return r.has(EventRouteFailed, "sales") })
 	if r.s.metrics.handoff.failures.Load() != 1 || r.s.metrics.handoff.total.Load() != 0 {
 		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.handoff.total.Load(), r.s.metrics.handoff.failures.Load())
 	}
 	for _, e := range r.timeline() {
-		if e.Type == EventHandoffFailed && e.Error == "" {
+		if e.Type == EventRouteFailed && e.Error == "" {
 			t.Fatal("the failure must say why")
 		}
 	}
@@ -407,24 +407,24 @@ func TestGraphE2EFailedNodeBuildKeepsTheCallGoing(t *testing.T) {
 	}
 }
 
-// The caller talks while the second node is still being built: the first node
-// answers, then the call moves over and the new node greets.
-func TestGraphE2ECallerSpeaksWhileTheNodeIsBeingPrepared(t *testing.T) {
+// The caller talks while the second step is still being built: the first step
+// answers, then the call moves over and the new step greets.
+func TestFlowE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS = "slowvoice"
-	r := newGraphRigE2E(t, probe)
-	c := r.dial(r.createGraphAgent("slowvoice"))
+	r := newFlowRigE2E(t, probe)
+	c := r.dial(r.createRoutedFlow("slowvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
 	c.waitReplies("Connecting you.", 1)
 	<-probe.entered // the sales build is running and held
 	c.say("one more question")
-	c.waitReplies("[FRONT", 2) // not ready yet: the first node answers
+	c.waitReplies("[FRONT", 2) // not ready yet: the first step answers
 	if c.replies("[SALES") != 0 {
 		t.Fatal("sales must not answer before it is built")
 	}
-	if !r.has(EventNodePreparing, "sales") {
+	if !r.has(EventStepPreparing, "sales") {
 		t.Fatal("the designer needs the preparing event")
 	}
 
@@ -436,14 +436,14 @@ func TestGraphE2ECallerSpeaksWhileTheNodeIsBeingPrepared(t *testing.T) {
 	}
 }
 
-// The caller hangs up while the next node is being built: when the build
+// The caller hangs up while the next step is being built: when the build
 // finishes, its stages are closed and nothing keeps running.
-func TestGraphE2EHangUpWhilePreparingClosesTheLateNode(t *testing.T) {
+func TestFlowE2EHangUpWhilePreparingClosesTheLateStep(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS = "slowvoice"
-	r := newGraphRigE2E(t, probe)
+	r := newFlowRigE2E(t, probe)
 	baseline := runtime.NumGoroutine()
-	c := r.dial(r.createGraphAgent("slowvoice"))
+	c := r.dial(r.createRoutedFlow("slowvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -458,17 +458,17 @@ func TestGraphE2EHangUpWhilePreparingClosesTheLateNode(t *testing.T) {
 	eventually(t, "goroutines back to baseline", func() bool { return runtime.NumGoroutine() <= baseline+8 })
 }
 
-// Republishing the agent mid-call does not change the call in progress.
-func TestGraphE2ERepublishMidCallKeepsTheCallsGraph(t *testing.T) {
+// Republishing the flow mid-call does not change the call in progress.
+func TestFlowE2ERepublishMidCallKeepsTheCallsFlow(t *testing.T) {
 	probe := newProbe()
-	r := newGraphRigE2E(t, probe)
-	c := r.dial(r.createGraphAgent("salesvoice"))
+	r := newFlowRigE2E(t, probe)
+	c := r.dial(r.createRoutedFlow("salesvoice"))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
 
-	v2 := graphConfigJSON("SALESV2", "salesvoice")
-	if _, err := r.s.agents.Update(t.Context(), r.agentID, agent.UpdateRequest{Config: v2}); err != nil {
+	v2 := flowConfigJSON("SALESV2", "salesvoice")
+	if _, err := r.s.flows.Update(t.Context(), r.flowID, flow.UpdateRequest{Config: v2}); err != nil {
 		t.Fatal(err)
 	}
 	c.say("transfer to sales")
@@ -478,21 +478,21 @@ func TestGraphE2ERepublishMidCallKeepsTheCallsGraph(t *testing.T) {
 	}
 
 	// A new call picks up the new version.
-	c2 := r.dial(r.agentID)
+	c2 := r.dial(r.flowID)
 	c2.say("transfer to sales")
 	c2.waitReplies("[SALESV2", 1)
 }
 
-// A plain (flat) agent goes through the same server unchanged.
-func TestGraphE2EFlatAgentHasNoHandoffs(t *testing.T) {
+// A plain (flat) flow goes through the same server unchanged.
+func TestFlowE2EFlatFlowHasNoRoutes(t *testing.T) {
 	probe := newProbe()
-	r := newGraphRigE2E(t, probe)
-	a, err := r.s.agents.Create(t.Context(), agent.CreateRequest{Name: "Flat", Config: json.RawMessage(
+	r := newFlowRigE2E(t, probe)
+	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Flat", Config: json.RawMessage(
 		`{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m","system_prompt":"FLAT"},"tts":{"provider":"google"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.agentID = a.ID
+	r.flowID = a.ID
 	c := r.dial(a.ID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("transfer to sales")
@@ -502,7 +502,7 @@ func TestGraphE2EFlatAgentHasNoHandoffs(t *testing.T) {
 	}
 	for _, e := range r.timeline() {
 		switch e.Type {
-		case EventHandoff, EventNodeActive, EventNodePreparing, EventHandoffFailed:
+		case EventRoute, EventStepActive, EventStepPreparing, EventRouteFailed:
 			t.Fatalf("a flat agent produced a handoff event: %+v", e)
 		}
 	}
@@ -512,7 +512,7 @@ func TestGraphE2EFlatAgentHasNoHandoffs(t *testing.T) {
 }
 
 // ---- Handoff cue, end to end -------------------------------------------------
-// A real server with audio.cues configured, a graph agent with a handoff_cue and a
+// A real server with audio.cues configured, a routed flow with a handoff_cue and a
 // WebSocket client that decodes the bot's audio frames: the cue is a tone on the
 // wire (the fake TTS sends silence), so its start, its length and its stop are
 // observable bytes, not just timeline events.
@@ -553,7 +553,7 @@ func withCue(t *testing.T) func(*Config) {
 	}
 }
 
-func (r *graphRigE2E) cueStopReason() string {
+func (r *flowRigE2E) cueStopReason() string {
 	for _, e := range r.timeline() {
 		if e.Type == EventCueStop {
 			return e.Details
@@ -562,13 +562,13 @@ func (r *graphRigE2E) cueStopReason() string {
 	return ""
 }
 
-// The cue fills the gap while the next agent is being built, then stops with a
-// short fade when the new agent speaks.
-func TestGraphE2ECuePlaysInTheHandoffGapAndStopsWhenSalesSpeaks(t *testing.T) {
+// The cue fills the gap while the next step is being built, then stops with a
+// short fade when the new step speaks.
+func TestFlowE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS = "slowvoice" // the sales build takes as long as the test wants
-	r := newGraphRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createGraphAgent("slowvoice", `{"name":"chime","after_ms":50}`))
+	r := newFlowRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createRoutedFlow("slowvoice", `{"name":"chime","after_ms":50}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("hello")
@@ -599,7 +599,7 @@ func TestGraphE2ECuePlaysInTheHandoffGapAndStopsWhenSalesSpeaks(t *testing.T) {
 		t.Fatal("the cue kept playing after the sales agent spoke")
 	}
 	// In the gap the cue is paced audio, not a burst: 20 ms frames about 20 ms apart. (Its 30 ms
-	// fade runs under the new agent's first speech frames, which are not 20 ms.)
+	// fade runs under the new step's first speech frames, which are not 20 ms.)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var gaps []time.Duration
@@ -622,10 +622,10 @@ func TestGraphE2ECuePlaysInTheHandoffGapAndStopsWhenSalesSpeaks(t *testing.T) {
 }
 
 // A handoff quicker than after_ms stays silent: nothing on the wire, no cue event.
-func TestGraphE2EQuickHandoffPlaysNoCue(t *testing.T) {
+func TestFlowE2EQuickRoutePlaysNoCue(t *testing.T) {
 	probe := newProbe()
-	r := newGraphRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createGraphAgent("salesvoice", `{"name":"chime","after_ms":8000}`))
+	r := newFlowRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createRoutedFlow("salesvoice", `{"name":"chime","after_ms":8000}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -636,13 +636,13 @@ func TestGraphE2EQuickHandoffPlaysNoCue(t *testing.T) {
 	}
 }
 
-// The next agent cannot be built while the cue plays: the cue ends, the caller
-// keeps the first agent, and no sound is left behind.
-func TestGraphE2ECueStopsWhenTheHandoffFails(t *testing.T) {
+// The next step cannot be built while the cue plays: the cue ends, the caller
+// keeps the first step, and no sound is left behind.
+func TestFlowE2ECueStopsWhenTheRouteFails(t *testing.T) {
 	probe := newProbe()
 	probe.holdTTS, probe.failAfterHold = "slowvoice", true
-	r := newGraphRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createGraphAgent("slowvoice", `{"name":"chime","after_ms":50}`))
+	r := newFlowRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createRoutedFlow("slowvoice", `{"name":"chime","after_ms":50}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 
 	c.say("transfer to sales")
@@ -651,7 +651,7 @@ func TestGraphE2ECueStopsWhenTheHandoffFails(t *testing.T) {
 	eventually(t, "cue on the wire", func() bool { return c.cueFrames() >= 3 })
 
 	close(probe.gate) // the build now fails
-	eventually(t, "handoff failed", func() bool { return r.has(EventHandoffFailed, "sales") })
+	eventually(t, "handoff failed", func() bool { return r.has(EventRouteFailed, "sales") })
 	eventually(t, "cue stopped because the handoff failed", func() bool { return r.cueStopReason() == "failed" })
 	time.Sleep(400 * time.Millisecond)
 	stopped := c.cueFrames()
@@ -661,14 +661,14 @@ func TestGraphE2ECueStopsWhenTheHandoffFails(t *testing.T) {
 	}
 
 	c.say("are you still there")
-	c.waitReplies("[FRONT", 2) // the caller is still with the front agent
+	c.waitReplies("[FRONT", 2) // the caller is still with the front step
 }
 
-// An agent that names a sound the server does not have still hands off, silently.
-func TestGraphE2EUnknownCueNameStillHandsOff(t *testing.T) {
+// A flow that names a sound the server does not have still hands off, silently.
+func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	probe := newProbe()
-	r := newGraphRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createGraphAgent("salesvoice", `{"name":"missing","after_ms":50}`))
+	r := newFlowRigE2E(t, probe, withCue(t))
+	c := r.dial(r.createRoutedFlow("salesvoice", `{"name":"missing","after_ms":50}`))
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("transfer to sales")
 	c.waitReplies("[SALES", 1)

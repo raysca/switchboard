@@ -16,7 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"govoice/server/agent"
+	"govoice/server/flow"
 )
 
 // lockedBuffer is a log sink safe for the server's concurrent writers.
@@ -65,16 +65,16 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	s.env = mapEnv(env)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	enableTestManagement(t, s)
-	r := &graphRigE2E{t: t, s: s, probe: newProbe()}
+	r := &flowRigE2E{t: t, s: s, probe: newProbe()}
 	r.ts = httptest.NewServer(s.wsServer)
 	t.Cleanup(r.ts.Close)
 
-	plain, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Plain", Config: json.RawMessage(
+	plain, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Plain", Config: json.RawMessage(
 		`{"stt":{"provider":"google","model":"chirp_2"},"llm":{"provider":"xai","model":"grok-4.20-0309-non-reasoning"},"tts":{"provider":"google","voice":"en-US-Chirp3-HD-Aoede"}}`)})
-	if err != nil || plain.Readiness.State != agent.ReadinessReady {
+	if err != nil || plain.Readiness.State != flow.ReadinessReady {
 		t.Fatalf("plain agent: %+v err=%v", plain.Readiness, err)
 	}
-	graphID := r.createGraphAgent("salesvoice")
+	routedID := r.createRoutedFlow("salesvoice")
 	w := apiRequest(s, http.MethodPost, "/api/v1/mcp-servers", e2eMgmtKey, `{"name":"crm","endpoint":"https://1.1.1.1/rpc","transport":"streamable-http","auth_env":"MCP_TOKEN_CRM","enabled":true}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("mcp create: %d %s", w.Code, w.Body)
@@ -84,7 +84,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	}
 
 	// A real call through the fake stack: resolve, build, speak, hand off, hang up.
-	c := r.dial(graphID)
+	c := r.dial(routedID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
@@ -101,7 +101,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 		}
 		out.WriteString(path + "\n" + w.Body.String() + "\n")
 	}
-	for _, p := range []string{"/api/v1/providers", "/api/v1/agents", "/api/v1/agents/" + plain.ID, "/api/v1/agents/" + graphID,
+	for _, p := range []string{"/api/v1/providers", "/api/v1/agents", "/api/v1/agents/" + plain.ID, "/api/v1/agents/" + routedID,
 		"/api/v1/mcp-servers", "/api/v1/sessions", "/api/v1/sessions/" + c.sessionID, "/api/v1/sessions/" + c.sessionID + "/traces",
 		"/api/v1/server-config", "/api/v1/operations/status", "/debug/timeline?session=1", "/metrics", "/ready"} {
 		get(p)

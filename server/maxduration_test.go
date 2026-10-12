@@ -28,14 +28,14 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 	}
 	s.env = testProviderEnv(t)
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
-	agentID := readyTestAgent(t, s)
+	flowID := readyTestFlow(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
 		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
 	}
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+flowID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}

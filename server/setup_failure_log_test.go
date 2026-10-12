@@ -13,7 +13,7 @@ import (
 )
 
 // M2-02: a failed call setup leaves exactly one warn line naming the cause
-// category, session and agent.
+// category, session and flow.
 func TestSetupFailureLogsOneWarnWithCategory(t *testing.T) {
 	rd, err := redact.New(redact.Config{Enabled: true})
 	if err != nil {

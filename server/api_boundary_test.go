@@ -3,7 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -101,8 +101,8 @@ func TestAPIAuthRouteSeparationAndEnvelope(t *testing.T) {
 func TestAPITokenExpiryScopeReplay(t *testing.T) {
 	s := apiTestServer(t)
 	key := "management-test-key-32-bytes-long-and-separate"
-	agentID := readyTestAgent(t, s)
-	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", key, `{"principal":"alice","agent_id":"`+agentID+`"}`)
+	flowID := readyTestFlow(t, s)
+	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", key, `{"principal":"alice","agent_id":"`+flowID+`"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("issue status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -181,8 +181,8 @@ func TestAPITokenProductionDefaultKeyID(t *testing.T) {
 	}
 	s.voiceKeyID = configured.KeyID
 	s.voiceEpoch = s.validator.ScopeEpoch()
-	agentID := readyTestAgent(t, s)
-	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
+	flowID := readyTestFlow(t, s)
+	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+flowID+`"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -254,8 +254,8 @@ func TestConfigRejectsSubsecondVoiceLifetime(t *testing.T) {
 func TestAPITokenFractionalLifetimeIsBounded(t *testing.T) {
 	s := apiTestServer(t)
 	s.cfg.Token.MaxLifetime = 2500 * time.Millisecond
-	agentID := readyTestAgent(t, s)
-	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
+	flowID := readyTestFlow(t, s)
+	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+flowID+`"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
@@ -329,8 +329,8 @@ func TestAPIConfigSecretRedactionAndJSONErrors(t *testing.T) {
 	}
 }
 
-// Voice tokens name a stored agent; unknown, unready and legacy requests are refused.
-func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
+// Voice tokens name a stored flow; unknown, unready and legacy requests are refused.
+func TestAPITokenRequiresReadyStoredFlow(t *testing.T) {
 	s := apiTestServer(t)
 	key := "management-test-key-32-bytes-long-and-separate"
 	issue := func(body string) *httptest.ResponseRecorder {
@@ -339,7 +339,7 @@ func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
 	if w := issue(`{"principal":"alice","agent_id":"x"}`); w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("without agent store: %d %s", w.Code, w.Body)
 	}
-	agentID := readyTestAgent(t, s)
+	flowID := readyTestFlow(t, s)
 	if w := issue(`{"principal":"alice","pipeline":"default"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("legacy pipeline body: %d %s", w.Code, w.Body)
 	}
@@ -347,17 +347,17 @@ func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
 		t.Fatalf("unknown agent: %d %s", w.Code, w.Body)
 	}
 	disabled := false
-	if _, err := s.agents.Update(t.Context(), agentID, agent.UpdateRequest{Enabled: &disabled}); err != nil {
+	if _, err := s.flows.Update(t.Context(), flowID, flow.UpdateRequest{Enabled: &disabled}); err != nil {
 		t.Fatal(err)
 	}
-	if w := issue(`{"principal":"alice","agent_id":"` + agentID + `"}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "agent_not_ready") {
+	if w := issue(`{"principal":"alice","agent_id":"` + flowID + `"}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "agent_not_ready") {
 		t.Fatalf("disabled agent: %d %s", w.Code, w.Body)
 	}
 	enabled := true
-	if _, err := s.agents.Update(t.Context(), agentID, agent.UpdateRequest{Enabled: &enabled}); err != nil {
+	if _, err := s.flows.Update(t.Context(), flowID, flow.UpdateRequest{Enabled: &enabled}); err != nil {
 		t.Fatal(err)
 	}
-	w := issue(`{"principal":"alice","agent_id":"` + agentID + `"}`)
+	w := issue(`{"principal":"alice","agent_id":"` + flowID + `"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("ready agent: %d %s", w.Code, w.Body)
 	}
@@ -366,7 +366,7 @@ func TestAPITokenRequiresReadyStoredAgent(t *testing.T) {
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	claims, err := s.validator.ValidateAndConsume(resp.Data.Token)
-	if err != nil || claims.AgentID != agentID {
-		t.Fatalf("token claims agent=%q err=%v", claims.AgentID, err)
+	if err != nil || claims.FlowID != flowID {
+		t.Fatalf("token claims agent=%q err=%v", claims.FlowID, err)
 	}
 }

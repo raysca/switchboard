@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -38,7 +38,7 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 	}
 }
 
-// enableTestManagement wires a throwaway SQLite agent store into s.
+// enableTestManagement wires a throwaway SQLite flow store into s.
 func enableTestManagement(t *testing.T, s *Server) {
 	t.Helper()
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
@@ -49,34 +49,34 @@ func enableTestManagement(t *testing.T, s *Server) {
 	t.Cleanup(s.closeManagement)
 }
 
-// readyTestAgent enables the agent store and creates a complete Google agent,
-// ready on the test provider environment; it returns the agent ID.
-func readyTestAgent(t *testing.T, s *Server) string {
+// readyTestFlow enables the flow store and creates a complete Google flow,
+// ready on the test provider environment; it returns the flow ID.
+func readyTestFlow(t *testing.T, s *Server) string {
 	t.Helper()
-	if s.agents == nil {
+	if s.flows == nil {
 		enableTestManagement(t, s)
 	}
-	a, err := s.agents.Create(t.Context(), agent.CreateRequest{Name: "Support", Config: json.RawMessage(
+	a, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Support", Config: json.RawMessage(
 		`{"stt":{"provider":"google","model":"chirp_2"},"llm":{"provider":"google","model":"gemini-2.0-flash"},"tts":{"provider":"google","voice":"en-US-Journey-F"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Readiness.State != agent.ReadinessReady {
+	if a.Readiness.State != flow.ReadinessReady {
 		t.Fatalf("test agent not ready: %+v", a.Readiness)
 	}
 	return a.ID
 }
 
-// An agent whose provider/stage has no factory in this build (e.g. xAI speech
+// A flow whose provider/stage has no factory in this build (e.g. xAI speech
 // without -tags xaispeech) must be reported at startup, not at call time.
-func TestUnavailableAgentProvidersReported(t *testing.T) {
+func TestUnavailableFlowProvidersReported(t *testing.T) {
 	s := apiTestServer(t)
-	id := readyTestAgent(t, s)
-	if bad := s.unavailableAgentProviders(t.Context()); len(bad) != 0 {
+	id := readyTestFlow(t, s)
+	if bad := s.unavailableFlowProviders(t.Context()); len(bad) != 0 {
 		t.Fatalf("complete build reported %v", bad)
 	}
 	delete(s.registry.factories, factoryKey("google", "tts"))
-	bad := s.unavailableAgentProviders(t.Context())
+	bad := s.unavailableFlowProviders(t.Context())
 	if len(bad) != 1 || bad[0] != "agent "+id+" tts=google" {
 		t.Fatalf("got %v", bad)
 	}

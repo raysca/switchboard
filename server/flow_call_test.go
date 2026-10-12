@@ -7,18 +7,18 @@ import (
 	"testing"
 
 	"govoice/core"
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"govoice/server/runtime"
 )
 
 func runtimeName(serverID, remote string) string { return runtime.ToolName(serverID, remote) }
 
-func twoNodeGraph(t *testing.T) agent.Graph {
+func twoStepFlow(t *testing.T) flow.Definition {
 	t.Helper()
 	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
-	node := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
-	g, err := agent.DecodeGraph(json.RawMessage(`{"entry":"front","nodes":[` +
-		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + node + `}],` +
+	step := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
+	g, err := flow.Decode(json.RawMessage(`{"entry":"front","nodes":[` +
+		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
 		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -26,8 +26,8 @@ func twoNodeGraph(t *testing.T) agent.Graph {
 	return g
 }
 
-func TestTransferToolsFromEdges(t *testing.T) {
-	g := twoNodeGraph(t)
+func TestTransferToolsFromRoutes(t *testing.T) {
+	g := twoStepFlow(t)
 	defs := transferTools(g, "front")
 	if len(defs) != 1 || defs[0].Name != "transfer_to_sales" || !strings.Contains(defs[0].Description, "wants to buy") {
 		t.Fatalf("%+v", defs)
@@ -37,13 +37,13 @@ func TestTransferToolsFromEdges(t *testing.T) {
 	}
 }
 
-func TestNodeExecutorRejectsForeignTool(t *testing.T) {
+func TestStepExecutorRejectsForeignTool(t *testing.T) {
 	var ran bool
 	inner := core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) {
 		ran = true
 		return core.ToolResult{Status: core.ToolSucceeded}, nil
 	})
-	ex := nodeExecutor(inner, map[string]bool{"mcp_ok": true}, nil, nil)
+	ex := stepExecutor(inner, map[string]bool{"mcp_ok": true}, nil, nil)
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "mcp_other"})
 	if ran || res.Status != core.ToolFailed {
 		t.Fatalf("a tool outside the node's list must not run: ran=%v status=%s", ran, res.Status)
@@ -54,46 +54,46 @@ func TestNodeExecutorRejectsForeignTool(t *testing.T) {
 	}
 }
 
-func TestNodeExecutorTransferCommits(t *testing.T) {
+func TestStepExecutorTransferCommits(t *testing.T) {
 	var got string
-	ex := nodeExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(target string) error { got = target; return nil })
+	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(target string) error { got = target; return nil })
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "transfer_to_sales"})
 	if got != "sales" || res.Status != core.ToolSucceeded || !strings.Contains(string(res.Result), "one short sentence") {
 		t.Fatalf("got=%q res=%+v", got, res)
 	}
 }
 
-func TestNodeExecutorTransferRefused(t *testing.T) {
-	ex := nodeExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(string) error { return core.ErrHandoffPending })
+func TestStepExecutorTransferRefused(t *testing.T) {
+	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(string) error { return core.ErrHandoffPending })
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "transfer_to_sales"})
 	if res.Status != core.ToolFailed {
 		t.Fatalf("a refused transfer must tell the model it failed, got %s", res.Status)
 	}
 }
 
-func TestNodeDefinitionsKeepsOnlyListedTools(t *testing.T) {
+func TestStepDefinitionsKeepsOnlyListedTools(t *testing.T) {
 	all := []core.ToolDefinition{{Name: runtimeName("srv1", "lookup")}, {Name: runtimeName("srv1", "other")}}
-	got := nodeDefinitions(all, []string{"srv1/lookup"})
+	got := stepDefinitions(all, []string{"srv1/lookup"})
 	if len(got) != 1 || got[0].Name != runtimeName("srv1", "lookup") {
 		t.Fatalf("%+v", got)
 	}
-	if len(nodeDefinitions(all, nil)) != 0 {
+	if len(stepDefinitions(all, nil)) != 0 {
 		t.Fatal("a node that lists no tools exposes none")
 	}
 }
 
-// A non-entry node's secret is read when the node is activated, not at call
-// start: a variable changed mid-call reaches the node's spec.
-func TestGraphNodeActivationRereadsTheEnvironment(t *testing.T) {
+// A non-start step's secret is read when the step is activated, not at call
+// start: a variable changed mid-call reaches the step's spec.
+func TestFlowStepActivationRereadsTheEnvironment(t *testing.T) {
 	s := apiTestServer(t)
 	env := newLiveEnv(testProviderVars(t))
 	s.env = env.get
 	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
-	node := `{"llm":{"provider":"xai","model":"grok"},"tts":{"provider":"google"}}`
+	step := `{"llm":{"provider":"xai","model":"grok"},"tts":{"provider":"google"}}`
 	raw := json.RawMessage(`{"entry":"front","nodes":[` +
-		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + node + `}],` +
+		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
 		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
-	rs := &runtime.Session{Snapshot: agent.Snapshot{Version: agent.Version{Config: raw}}}
+	rs := &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: raw}}}
 	call, err := s.callSpec(t.Context(), rs)
 	if err != nil {
 		t.Fatal(err)

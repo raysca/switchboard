@@ -1164,12 +1164,12 @@ func (c *Connection) Context() context.Context { return c.ctx }
 // PushToTalk reports whether the client opted this call into push-to-talk.
 func (c *Connection) PushToTalk() bool { return c.rtvi.PushToTalk() }
 
-// AgentID returns the stored agent the token authorizes this call to run.
-func (c *Connection) AgentID() string {
+// FlowID returns the stored flow the token authorizes this call to run.
+func (c *Connection) FlowID() string {
 	if c.claims == nil {
 		return ""
 	}
-	return c.claims.AgentID
+	return c.claims.FlowID
 }
 
 // ID returns the unique connection identifier.

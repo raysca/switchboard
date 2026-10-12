@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"govoice/server/runtime"
 )
 
-// NodeSpec is one graph node's LLM and TTS stages, resolved with secrets read
-// from the environment when the node is activated.
-type NodeSpec struct {
+// StepSpec is one flow step's LLM and TTS stages, resolved with secrets read
+// from the environment when the step is activated.
+type StepSpec struct {
 	Name         string
 	LLM          StageSpec
 	LLMFallbacks []StageSpec
@@ -22,8 +22,8 @@ type NodeSpec struct {
 	TTSFallbacks []StageSpec
 }
 
-// wipe zeroes the secrets once the node's processors are built.
-func (n *NodeSpec) wipe() {
+// wipe zeroes the secrets once the step's processors are built.
+func (n *StepSpec) wipe() {
 	clear(n.LLM.Secret)
 	clear(n.TTS.Secret)
 	for _, f := range n.LLMFallbacks {
@@ -34,24 +34,24 @@ func (n *NodeSpec) wipe() {
 	}
 }
 
-// CallGraph is what a call needs to move between nodes. Commit is set by the
+// CallFlow is what a call needs to move between steps. Commit is set by the
 // pipeline builder once the handoff exists; transfer tools call it.
-type CallGraph struct {
+type CallFlow struct {
 	Entry   string
-	Resolve func(ctx context.Context, nodeID string) (NodeSpec, error)
+	Resolve func(ctx context.Context, stepID string) (StepSpec, error)
 	Commit  func(target string) error
-	Cue     *agent.HandoffCue
+	Cue     *flow.RouteCue
 }
 
-// transferTools are the handoff tools of one node: one per outgoing edge, the
-// edge condition being the model's cue to call it.
-func transferTools(g agent.Graph, nodeID string) []core.ToolDefinition {
-	edges := g.EdgesFrom(nodeID)
-	defs := make([]core.ToolDefinition, 0, len(edges))
-	for _, e := range edges {
-		to, _ := g.Node(e.To)
+// transferTools are the transfer tools of one step: one per outgoing route, the
+// route condition being the model's cue to call it.
+func transferTools(g flow.Definition, stepID string) []core.ToolDefinition {
+	routes := g.RoutesFrom(stepID)
+	defs := make([]core.ToolDefinition, 0, len(routes))
+	for _, e := range routes {
+		to, _ := g.Step(e.To)
 		defs = append(defs, core.ToolDefinition{
-			Name:        agent.TransferToolName(to.Name),
+			Name:        flow.TransferToolName(to.Name),
 			Description: "Hand the caller to " + to.Name + ". Use when: " + e.Condition,
 			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 			Policy:      core.ToolPolicy{Timeout: 5 * time.Second},
@@ -60,19 +60,19 @@ func transferTools(g agent.Graph, nodeID string) []core.ToolDefinition {
 	return defs
 }
 
-// transferTargets maps a node's transfer tool names to the target node ids.
-func transferTargets(g agent.Graph, nodeID string) map[string]string {
+// transferTargets maps a step's transfer tool names to the target step ids.
+func transferTargets(g flow.Definition, stepID string) map[string]string {
 	out := map[string]string{}
-	for _, e := range g.EdgesFrom(nodeID) {
-		to, _ := g.Node(e.To)
-		out[agent.TransferToolName(to.Name)] = to.ID
+	for _, e := range g.RoutesFrom(stepID) {
+		to, _ := g.Step(e.To)
+		out[flow.TransferToolName(to.Name)] = to.ID
 	}
 	return out
 }
 
-// nodeDefinitions keeps the session's captured MCP tools that a node lists
-// ("<mcp_server_id>/<remote_name>"); a node that lists none exposes none.
-func nodeDefinitions(all []core.ToolDefinition, refs []string) []core.ToolDefinition {
+// stepDefinitions keeps the session's captured MCP tools that a step lists
+// ("<mcp_server_id>/<remote_name>"); a step that lists none exposes none.
+func stepDefinitions(all []core.ToolDefinition, refs []string) []core.ToolDefinition {
 	want := make(map[string]bool, len(refs))
 	for _, ref := range refs {
 		server, remote, ok := strings.Cut(ref, "/")
@@ -91,10 +91,10 @@ func nodeDefinitions(all []core.ToolDefinition, refs []string) []core.ToolDefini
 
 const transferOK = `{"status":"transferring","instruction":"Tell the caller in one short sentence that you are connecting them, then stop talking."}`
 
-// nodeExecutor serves one node: its own MCP tools (allowed) and its transfer
-// tools (transfer: tool name to target node id). Anything else is refused, so
-// a hallucinated call cannot reach another node's tools.
-func nodeExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map[string]string, commit func(target string) error) core.ToolExecutor {
+// stepExecutor serves one step: its own MCP tools (allowed) and its transfer
+// tools (transfer: tool name to target step id). Anything else is refused, so
+// a hallucinated call cannot reach another step's tools.
+func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map[string]string, commit func(target string) error) core.ToolExecutor {
 	return core.ToolExecutorFunc(func(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
 		now := time.Now()
 		res := func(status core.ToolStatus, body string) core.ToolResult {

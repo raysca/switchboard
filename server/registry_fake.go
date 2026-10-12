@@ -39,21 +39,21 @@ func init() {
 			delay, _ := time.ParseDuration(os.Getenv("GOVOICE_FAKE_LLM_DELAY"))
 			cfg := core.FakeLLMConfig{ResponseChunks: []string{"You said: "}, EchoUser: true, ChunkDelay: delay, Executor: spec.ToolExecutor,
 				ToolOnPhrase: map[string]string{}, AfterTool: "Connecting you."}
-			// Graph agents: GOVOICE_FAKE_LLM_LABEL=1 prefixes each reply with the node's
-			// system prompt in brackets, so a test can tell which agent answered; a user
-			// message "transfer to <node name>" makes the fake call that node's transfer tool.
+			// Flow flows: GOVOICE_FAKE_LLM_LABEL=1 prefixes each reply with the step's
+			// system prompt in brackets, so a test can tell which step answered; a user
+			// message "transfer to <step name>" makes the fake call that step's transfer tool.
 			if os.Getenv("GOVOICE_FAKE_LLM_LABEL") != "" {
 				cfg.Label = "[" + spec.SystemPrompt + "] "
 			}
 			for _, d := range spec.Tools {
-				if node, ok := strings.CutPrefix(d.Name, "transfer_to_"); ok {
-					cfg.ToolOnPhrase["transfer to "+strings.ReplaceAll(node, "_", " ")] = d.Name
+				if step, ok := strings.CutPrefix(d.Name, "transfer_to_"); ok {
+					cfg.ToolOnPhrase["transfer to "+strings.ReplaceAll(step, "_", " ")] = d.Name
 				}
 			}
 			return core.NewFakeLLMProcessor(cfg), nil
 		})
 		r.Register("google.tts", func(_ *Config, spec StageSpec) (core.Processor, error) {
-			// A node whose voice is "brokenvoice" cannot be built: the e2e suite uses it to
+			// A step whose voice is "brokenvoice" cannot be built: the e2e suite uses it to
 			// make a handoff fail. Exists only in this build tag.
 			if spec.Voice == "brokenvoice" {
 				return nil, errors.New("fake tts: voice brokenvoice is unavailable")

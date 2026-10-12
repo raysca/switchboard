@@ -10,13 +10,13 @@ import (
 	"time"
 )
 
-type Agent struct {
+type Flow struct {
 	ID, Name, Description, CurrentVersionID string
 	Enabled, Archived                       bool
 	CreatedAt, UpdatedAt                    time.Time
 }
-type AgentVersion struct {
-	ID, AgentID            string
+type FlowVersion struct {
+	ID, FlowID             string
 	Version, SchemaVersion int
 	ConfigJSON             []byte
 	ConfigHash             string
@@ -24,13 +24,13 @@ type AgentVersion struct {
 	MCPReviewRequired      bool
 	MCPTools               []SelectedTool
 }
-type AgentRepository struct{ s *Store }
+type FlowRepository struct{ s *Store }
 type SelectedTool struct {
 	ServerID, RemoteName, SchemaHash string
 	Required                         bool
 }
 
-func (r AgentRepository) SelectedTools(ctx context.Context, versionID string) ([]SelectedTool, error) {
+func (r FlowRepository) SelectedTools(ctx context.Context, versionID string) ([]SelectedTool, error) {
 	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=? ORDER BY mcp_server_id,remote_name"), versionID)
 	if err != nil {
 		return nil, err
@@ -55,8 +55,8 @@ var (
 	ErrVersionConflict      = errors.New("agent version conflict")
 )
 
-func (s *Store) Agents() AgentRepository { return AgentRepository{s} }
-func (r AgentRepository) Create(ctx context.Context, a Agent) error {
+func (s *Store) Flows() FlowRepository { return FlowRepository{s} }
+func (r FlowRepository) Create(ctx context.Context, a Flow) error {
 	if err := validID(a.ID); err != nil {
 		return err
 	}
@@ -64,9 +64,9 @@ func (r AgentRepository) Create(ctx context.Context, a Agent) error {
 	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO agents(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, a.Enabled), boolValue(r.s.dialect, a.Archived), now, now)
 	return err
 }
-func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, version int, config []byte, selections []SelectedTool) (AgentVersion, error) {
-	var out AgentVersion
-	if err := validID(agentID); err != nil {
+func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, version int, config []byte, selections []SelectedTool) (FlowVersion, error) {
+	var out FlowVersion
+	if err := validID(flowID); err != nil {
 		return out, err
 	}
 	if version < 1 {
@@ -76,23 +76,23 @@ func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, ver
 	if err != nil {
 		return out, err
 	}
-	out = AgentVersion{ID: NewID(), AgentID: agentID, Version: version, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC()}
+	out = FlowVersion{ID: NewID(), FlowID: flowID, Version: version, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC()}
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		// Serialize version allocation per agent. Version numbers are contiguous
+		// Serialize version allocation per flow. Version numbers are contiguous
 		// and never change once published, including under concurrent writers.
-		lockAgent := "SELECT archived FROM agents WHERE id=?"
+		lockFlow := "SELECT archived FROM agents WHERE id=?"
 		if r.s.dialect == Postgres {
-			lockAgent += " FOR UPDATE"
+			lockFlow += " FOR UPDATE"
 		}
 		var archived bool
-		if err := tx.QueryRowContext(ctx, r.s.bind(lockAgent), agentID).Scan(&archived); err != nil {
+		if err := tx.QueryRowContext(ctx, r.s.bind(lockFlow), flowID).Scan(&archived); err != nil {
 			return err
 		}
 		if archived {
 			return errors.New("agent unavailable")
 		}
 		var latest int
-		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM agent_versions WHERE agent_id=?"), agentID).Scan(&latest); err != nil {
+		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM agent_versions WHERE agent_id=?"), flowID).Scan(&latest); err != nil {
 			return err
 		}
 		if version != latest+1 {
@@ -127,7 +127,7 @@ func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, ver
 				return fmt.Errorf("%w: tool %q schema changed", ErrInvalidToolSelection, sel.RemoteName)
 			}
 		}
-		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), out.ID, agentID, version, out.SchemaVersion, string(canonical), hash, utc(out.CreatedAt))
+		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), out.ID, flowID, version, out.SchemaVersion, string(canonical), hash, utc(out.CreatedAt))
 		if err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, ver
 				return err
 			}
 		}
-		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE agents SET current_version_id=?,updated_at=? WHERE id=? AND archived=?"), out.ID, utc(time.Now()), agentID, boolValue(r.s.dialect, false))
+		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE agents SET current_version_id=?,updated_at=? WHERE id=? AND archived=?"), out.ID, utc(time.Now()), flowID, boolValue(r.s.dialect, false))
 		if err != nil {
 			return err
 		}
@@ -151,8 +151,8 @@ func (r AgentRepository) PublishVersion(ctx context.Context, agentID string, ver
 	})
 	return out, err
 }
-func (r AgentRepository) Current(ctx context.Context, id string) (Agent, error) {
-	var a Agent
+func (r FlowRepository) Current(ctx context.Context, id string) (Flow, error) {
+	var a Flow
 	var created, updated string
 	var current sql.NullString
 	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,enabled,archived,current_version_id,created_at,updated_at FROM agents WHERE id=?"), id).Scan(&a.ID, &a.Name, &a.Description, &a.Enabled, &a.Archived, &current, &created, &updated)
@@ -169,8 +169,8 @@ func (r AgentRepository) Current(ctx context.Context, id string) (Agent, error) 
 	return a, nil
 }
 
-// List returns a stable ID-ordered page of agents, including archived ones.
-func (r AgentRepository) List(ctx context.Context, limit, offset int) ([]Agent, error) {
+// List returns a stable ID-ordered page of flows, including archived ones.
+func (r FlowRepository) List(ctx context.Context, limit, offset int) ([]Flow, error) {
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, errors.New("invalid agent pagination")
 	}
@@ -179,9 +179,9 @@ func (r AgentRepository) List(ctx context.Context, limit, offset int) ([]Agent, 
 		return nil, err
 	}
 	defer rows.Close()
-	var agents []Agent
+	var flows []Flow
 	for rows.Next() {
-		var a Agent
+		var a Flow
 		var current sql.NullString
 		var created, updated string
 		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.Enabled, &a.Archived, &current, &created, &updated); err != nil {
@@ -194,15 +194,15 @@ func (r AgentRepository) List(ctx context.Context, limit, offset int) ([]Agent, 
 		if a.UpdatedAt, err = parseTime(updated); err != nil {
 			return nil, err
 		}
-		agents = append(agents, a)
+		flows = append(flows, a)
 	}
-	return agents, rows.Err()
+	return flows, rows.Err()
 }
 
-func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, error) {
-	var v AgentVersion
+func (r FlowRepository) Version(ctx context.Context, id string) (FlowVersion, error) {
+	var v FlowVersion
 	var created string
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required FROM agent_versions WHERE id=?"), id).Scan(&v.ID, &v.AgentID, &v.Version, &v.SchemaVersion, &v.ConfigJSON, &v.ConfigHash, &created, &v.MCPReviewRequired)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required FROM agent_versions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.Version, &v.SchemaVersion, &v.ConfigJSON, &v.ConfigHash, &created, &v.MCPReviewRequired)
 	if err != nil {
 		return v, err
 	}
@@ -215,7 +215,7 @@ func (r AgentRepository) Version(ctx context.Context, id string) (AgentVersion, 
 	}
 	return v, nil
 }
-func (r AgentRepository) Archive(ctx context.Context, id string) error {
+func (r FlowRepository) Archive(ctx context.Context, id string) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE agents SET archived=?,enabled=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, true), boolValue(r.s.dialect, false), utc(time.Now()), id)
 	if err != nil {
 		return err
@@ -353,21 +353,21 @@ func (r MCPRepository) SetValidation(ctx context.Context, id, state string, conn
 
 var ErrMCPReferenced = errors.New("MCP server is referenced by a current agent or active session")
 
-type MCPAgentReference struct {
-	AgentID, AgentName, AgentVersionID, RemoteName string
-	Required                                       bool
+type MCPFlowReference struct {
+	FlowID, FlowName, FlowVersionID, RemoteName string
+	Required                                    bool
 }
 
-func (r MCPRepository) CurrentReferences(ctx context.Context, id string) ([]MCPAgentReference, error) {
+func (r MCPRepository) CurrentReferences(ctx context.Context, id string) ([]MCPFlowReference, error) {
 	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT a.id,a.name,a.current_version_id,t.remote_name,t.required FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.name,a.id,t.remote_name"), id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []MCPAgentReference
+	var out []MCPFlowReference
 	for rows.Next() {
-		var ref MCPAgentReference
-		if err := rows.Scan(&ref.AgentID, &ref.AgentName, &ref.AgentVersionID, &ref.RemoteName, &ref.Required); err != nil {
+		var ref MCPFlowReference
+		if err := rows.Scan(&ref.FlowID, &ref.FlowName, &ref.FlowVersionID, &ref.RemoteName, &ref.Required); err != nil {
 			return nil, err
 		}
 		out = append(out, ref)
@@ -435,7 +435,7 @@ func (r MCPRepository) DeleteServer(ctx context.Context, id string) error {
 	})
 }
 
-// DetachAndDelete creates a new immutable version for each current agent that
+// DetachAndDelete creates a new immutable version for each current flow that
 // removes this server's selections. Historical versions and sessions are kept.
 // The live server remains disabled and pending deletion while old active
 // sessions still depend on it.
@@ -444,21 +444,21 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		return err
 	}
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		// Match publication/session-start lock order: agent rows first, then the
+		// Match publication/session-start lock order: flow rows first, then the
 		// MCP server row. This makes detach serialize with new assignments without
-		// holding the server lock while waiting on an agent.
+		// holding the server lock while waiting on a flow.
 		rows, err := tx.QueryContext(ctx, r.s.bind("SELECT DISTINCT a.id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
 		if err != nil {
 			return err
 		}
-		var agentIDs []string
+		var flowIDs []string
 		for rows.Next() {
-			var agentID string
-			if err := rows.Scan(&agentID); err != nil {
+			var flowID string
+			if err := rows.Scan(&flowID); err != nil {
 				rows.Close()
 				return err
 			}
-			agentIDs = append(agentIDs, agentID)
+			flowIDs = append(flowIDs, flowID)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
@@ -466,9 +466,9 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		}
 		rows.Close()
 		if r.s.dialect == Postgres {
-			for _, agentID := range agentIDs {
+			for _, flowID := range flowIDs {
 				var locked string
-				if err := tx.QueryRowContext(ctx, r.s.bind("SELECT id FROM agents WHERE id=? FOR UPDATE"), agentID).Scan(&locked); err != nil {
+				if err := tx.QueryRowContext(ctx, r.s.bind("SELECT id FROM agents WHERE id=? FOR UPDATE"), flowID).Scan(&locked); err != nil {
 					return err
 				}
 			}
@@ -485,22 +485,22 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		type currentAgent struct{ id, versionID string }
-		var agents []currentAgent
+		type currentFlow struct{ id, versionID string }
+		var flows []currentFlow
 		for rows.Next() {
-			var a currentAgent
+			var a currentFlow
 			if err := rows.Scan(&a.id, &a.versionID); err != nil {
 				rows.Close()
 				return err
 			}
-			agents = append(agents, a)
+			flows = append(flows, a)
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()
 			return err
 		}
 		rows.Close()
-		for _, a := range agents {
+		for _, a := range flows {
 			query := "SELECT config_json,config_hash FROM agent_versions WHERE id=?"
 			var config, hash string
 			if err := tx.QueryRowContext(ctx, r.s.bind(query), a.versionID).Scan(&config, &hash); err != nil {

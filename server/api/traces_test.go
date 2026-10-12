@@ -26,32 +26,32 @@ func newTestStore(t *testing.T) *storage.Store {
 	return s
 }
 
-func createTestAgentAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
+func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
-	agentID := storage.NewID()
-	a := storage.Agent{ID: agentID, Name: "APIAgent", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	flowID := storage.NewID()
+	a := storage.Flow{ID: flowID, Name: "APIAgent", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, agentID, 1, []byte(`{"llm":"test"}`), nil)
+	v, err := s.Flows().PublishVersion(ctx, flowID, 1, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return agentID, v.ID, v.ConfigHash
+	return flowID, v.ID, v.ConfigHash
 }
 
 func setupTracesHandler(t *testing.T) (*storage.Store, http.Handler, string, string) {
 	t.Helper()
 	s := newTestStore(t)
-	agentID, vID, hash := createTestAgentAndVersion(t, s)
+	flowID, vID, hash := createTestFlowAndVersion(t, s)
 
 	sessID := storage.NewID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		AgentID:             agentID,
-		AgentVersionID:      vID,
+		FlowID:              flowID,
+		FlowVersionID:       vID,
 		ConfigHash:          hash,
 		Status:              "active",
 		StartedAt:           now,

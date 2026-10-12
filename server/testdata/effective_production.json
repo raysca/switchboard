@@ -41,7 +41,7 @@
   "MaxSessions": 250,
   "MaxSessionsPerPrincipal": 5,
   "MaxSessionsPerIP": 5,
-  "MaxSessionsPerAgent": 0,
+  "MaxSessionsPerFlow": 0,
   "StartRatePerPrincipal": 0,
   "StartBurstPerPrincipal": 0,
   "HandshakeRatePerIP": 20,

@@ -1,4 +1,4 @@
-package agent
+package flow
 
 import (
 	"bytes"
@@ -155,7 +155,7 @@ func TestResolverSkipsOpenBreaker(t *testing.T) {
 	}
 }
 
-// A session pins the chain with its agent version: a later update moves the
+// A session pins the chain with its flow version: a later update moves the
 // current pointer but the session still resolves the old chain.
 func TestSessionPinsChain(t *testing.T) {
 	svc := testService(t)

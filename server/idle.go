@@ -11,7 +11,7 @@ import (
 // IdleConfig enables the user-idle prompt/hang-up and the bot-idle (stuck
 // model or TTS) watchdog (Pipecat UserIdleController and idle_timeout). Both
 // are off by default and add no processor when off. Server-wide for now:
-// per-agent idle settings belong in the agent config (not built yet).
+// per-flow idle settings belong in the flow config (not built yet).
 type IdleConfig struct {
 	// UserTimeout is the silence after the bot stops speaking (or the call
 	// starts) before a prompt (0 = off). Prompts are UserTimeout apart; the call ends one UserTimeout

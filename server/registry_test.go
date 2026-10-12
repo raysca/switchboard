@@ -89,7 +89,7 @@ func (p *contextSinkProc) ProcessFrame(ctx context.Context, frame core.Frame, di
 }
 func (p *contextSinkProc) SetContextProvider(fn func() []core.Message) { p.provider = fn }
 
-func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
+func TestRegistry_BuildCallPipelineFromFlowSpec(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	reg := NewRegistry()
 	mockExec := &mockVADExecutor{ready: true, available: 4, total: 4}
@@ -111,7 +111,7 @@ func TestRegistry_BuildCallPipelineFromAgentSpec(t *testing.T) {
 		t.Fatal("expected build to reject unusable secrets")
 	}
 
-	// Factories receive exactly the agent's stage settings and credential.
+	// Factories receive exactly the flow's stage settings and credential.
 	got := map[string]StageSpec{}
 	stub := func(stage string, proc core.Processor) ProcessorFactory {
 		return func(c *Config, spec StageSpec) (core.Processor, error) { got[stage] = spec; return proc, nil }

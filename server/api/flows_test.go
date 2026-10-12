@@ -9,17 +9,17 @@ import (
 	"strings"
 	"testing"
 
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"govoice/server/storage"
 )
 
-func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
+func TestFlowManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agent-api.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	handler := NewAgentsHandler(agent.NewService(store, allAvailable{}))
+	handler := NewFlowsHandler(flow.NewService(store, allAvailable{}))
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -33,7 +33,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
 	}
 	var envelope struct {
-		Data agent.Agent `json:"data"`
+		Data flow.Flow `json:"data"`
 	}
 	if err := json.Unmarshal(created.Body.Bytes(), &envelope); err != nil || envelope.Data.ID == "" || envelope.Data.Version == nil || envelope.Data.Version.Number != 1 {
 		t.Fatalf("create response=%s err=%v", created.Body, err)
@@ -58,7 +58,7 @@ func TestAgentManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 
 }
 
-func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
+func TestFlowMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/api-mcp.db"})
 	if err != nil {
 		t.Fatal(err)
@@ -72,8 +72,8 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := agent.NewService(store, allAvailable{})
-	created, err := service.Create(context.Background(), agent.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
+	service := flow.NewService(store, allAvailable{})
+	created, err := service.Create(context.Background(), flow.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID+"/mcp-tools", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-	NewAgentsHandler(service).ServeHTTP(w, r)
+	NewFlowsHandler(service).ServeHTTP(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"number":2`) || !strings.Contains(w.Body.String(), discovery.Tools[0].SchemaHash) {
 		t.Fatalf("selection response=%d %s", w.Code, w.Body.String())
 	}
@@ -90,7 +90,7 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 		t.Fatalf("current agent=%+v err=%v", current, err)
 	}
 
-	// Bad selections are the caller's mistake (400), never "agent not found" or 500.
+	// Bad selections are the caller's mistake (400), never "flow not found" or 500.
 	for name, sel := range map[string]string{
 		"unknown server": `{"mcp_server_id":"` + storage.NewID() + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
 		"unknown tool":   `{"mcp_server_id":"` + server.ID + `","remote_name":"nope","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
@@ -99,20 +99,20 @@ func TestAgentMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID+"/mcp-tools", strings.NewReader(`{"tools":[`+sel+`]}`))
 		r.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
-		NewAgentsHandler(service).ServeHTTP(w, r)
+		NewFlowsHandler(service).ServeHTTP(w, r)
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_tool_selection") {
 			t.Fatalf("%s: status=%d body=%s, want 400 invalid_tool_selection", name, w.Code, w.Body)
 		}
 	}
 }
 
-func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {
+func TestFlowManagementRejectsUnknownInputAndMissingFlow(t *testing.T) {
 	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agent-api.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	handler := NewAgentsHandler(agent.NewService(store, allAvailable{}))
+	handler := NewFlowsHandler(flow.NewService(store, allAvailable{}))
 	for _, tc := range []struct {
 		path string
 		body string
@@ -140,15 +140,15 @@ func TestAgentManagementRejectsUnknownInputAndMissingAgent(t *testing.T) {
 // allAvailable is an environment where every provider service can run.
 type allAvailable struct{}
 
-func (allAvailable) Check(string, string) agent.Unavailable { return agent.Unavailable{} }
+func (allAvailable) Check(string, string) flow.Unavailable { return flow.Unavailable{} }
 
-func TestAgentFallbackChainRoundTrip(t *testing.T) {
+func TestFlowFallbackChainRoundTrip(t *testing.T) {
 	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "chain.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	handler := NewAgentsHandler(agent.NewService(store, allAvailable{}))
+	handler := NewFlowsHandler(flow.NewService(store, allAvailable{}))
 	body := func(fallbacks string) string {
 		return `{"name":"Chain","config":{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"m"` + fallbacks + `},"tts":{"provider":"google","voice":"v"},"failover":{"on":["timeout","server_error"]}}}`
 	}
@@ -167,7 +167,7 @@ func TestAgentFallbackChainRoundTrip(t *testing.T) {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body)
 	}
 	var env struct {
-		Data agent.Agent `json:"data"`
+		Data flow.Flow `json:"data"`
 	}
 	if err := json.Unmarshal(created.Body.Bytes(), &env); err != nil {
 		t.Fatal(err)

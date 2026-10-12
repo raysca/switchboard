@@ -5,7 +5,7 @@ import (
 
 	"govoice/core"
 	"govoice/providers/nvidia"
-	"govoice/server/agent"
+	"govoice/server/flow"
 )
 
 func TestNvidiaRegistration(t *testing.T) {
@@ -94,7 +94,7 @@ func TestNvidiaTTS(t *testing.T) {
 		t.Fatal("tts_function_id falls back to function_id")
 	}
 	// ClientError rides the failover classification.
-	if got := ttsClassify(&nvidia.ProviderError{Capability: "tts", Code: "Unauthenticated", ClientError: true}); got != agent.ClassClient {
+	if got := ttsClassify(&nvidia.ProviderError{Capability: "tts", Code: "Unauthenticated", ClientError: true}); got != flow.ClassClient {
 		t.Fatalf("class=%q", got)
 	}
 }

@@ -8,29 +8,29 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"govoice/server/storage"
 )
 
-type AgentService interface {
-	Create(context.Context, agent.CreateRequest) (agent.Agent, error)
-	Get(context.Context, string) (agent.Agent, error)
-	List(context.Context, int, int) ([]agent.Agent, error)
-	Update(context.Context, string, agent.UpdateRequest) (agent.Agent, error)
+type FlowService interface {
+	Create(context.Context, flow.CreateRequest) (flow.Flow, error)
+	Get(context.Context, string) (flow.Flow, error)
+	List(context.Context, int, int) ([]flow.Flow, error)
+	Update(context.Context, string, flow.UpdateRequest) (flow.Flow, error)
 	Archive(context.Context, string) error
-	Duplicate(context.Context, string, string) (agent.Agent, error)
-	SetMCPTools(context.Context, string, []agent.ToolSelection) (agent.Version, error)
+	Duplicate(context.Context, string, string) (flow.Flow, error)
+	SetMCPTools(context.Context, string, []flow.ToolSelection) (flow.Version, error)
 }
 
-// NewAgentsHandler constructs the authenticated management route handler for
-// persistent agents. Mount it under /api/v1/ on the private admin listener.
-func NewAgentsHandler(service AgentService) http.Handler {
-	return agentsHandler{service: service}
+// NewFlowsHandler constructs the authenticated management route handler for
+// persistent flows. Mount it under /api/v1/ on the private admin listener.
+func NewFlowsHandler(service FlowService) http.Handler {
+	return flowsHandler{service: service}
 }
 
-type agentsHandler struct{ service AgentService }
+type flowsHandler struct{ service FlowService }
 
-func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (h flowsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := RequestIDFromContext(r.Context())
 	if requestID == "" {
 		requestID = uuid.NewString()
@@ -53,7 +53,7 @@ func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 2 && parts[1] == "archive" {
 		if r.Method != http.MethodPost {
-			agentMethodNotAllowed(w, requestID, "POST")
+			flowMethodNotAllowed(w, requestID, "POST")
 			return
 		}
 		if err := h.service.Archive(r.Context(), parts[0]); err != nil {
@@ -74,13 +74,13 @@ func (h agentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
 }
 
-func (h agentsHandler) mcpTools(w http.ResponseWriter, r *http.Request, id, requestID string) {
+func (h flowsHandler) mcpTools(w http.ResponseWriter, r *http.Request, id, requestID string) {
 	if r.Method != http.MethodPut {
-		agentMethodNotAllowed(w, requestID, "PUT")
+		flowMethodNotAllowed(w, requestID, "PUT")
 		return
 	}
 	var req struct {
-		Tools []agent.ToolSelection `json:"tools"`
+		Tools []flow.ToolSelection `json:"tools"`
 	}
 	if err := DecodeJSON(r, &req); err != nil {
 		WriteError(w, 400, "invalid_request", err.Error(), requestID)
@@ -91,10 +91,10 @@ func (h agentsHandler) mcpTools(w http.ResponseWriter, r *http.Request, id, requ
 		h.writeServiceError(w, err, requestID)
 		return
 	}
-	WriteJSON(w, 200, SuccessResponse[agent.Version]{Data: version})
+	WriteJSON(w, 200, SuccessResponse[flow.Version]{Data: version})
 }
 
-func (h agentsHandler) collection(w http.ResponseWriter, r *http.Request, requestID string) {
+func (h flowsHandler) collection(w http.ResponseWriter, r *http.Request, requestID string) {
 	switch r.Method {
 	case http.MethodGet:
 		page, err := ParsePagination(r)
@@ -107,9 +107,9 @@ func (h agentsHandler) collection(w http.ResponseWriter, r *http.Request, reques
 			h.writeServiceError(w, err, requestID)
 			return
 		}
-		WriteJSON(w, http.StatusOK, SuccessResponse[[]agent.Agent]{Data: items})
+		WriteJSON(w, http.StatusOK, SuccessResponse[[]flow.Flow]{Data: items})
 	case http.MethodPost:
-		var req agent.CreateRequest
+		var req flow.CreateRequest
 		if err := DecodeJSON(r, &req); err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 			return
@@ -119,13 +119,13 @@ func (h agentsHandler) collection(w http.ResponseWriter, r *http.Request, reques
 			h.writeServiceError(w, err, requestID)
 			return
 		}
-		WriteJSON(w, http.StatusCreated, SuccessResponse[agent.Agent]{Data: created})
+		WriteJSON(w, http.StatusCreated, SuccessResponse[flow.Flow]{Data: created})
 	default:
-		agentMethodNotAllowed(w, requestID, "GET, POST")
+		flowMethodNotAllowed(w, requestID, "GET, POST")
 	}
 }
 
-func (h agentsHandler) item(w http.ResponseWriter, r *http.Request, id, requestID string) {
+func (h flowsHandler) item(w http.ResponseWriter, r *http.Request, id, requestID string) {
 	switch r.Method {
 	case http.MethodGet:
 		item, err := h.service.Get(r.Context(), id)
@@ -133,9 +133,9 @@ func (h agentsHandler) item(w http.ResponseWriter, r *http.Request, id, requestI
 			h.writeServiceError(w, err, requestID)
 			return
 		}
-		WriteJSON(w, http.StatusOK, SuccessResponse[agent.Agent]{Data: item})
+		WriteJSON(w, http.StatusOK, SuccessResponse[flow.Flow]{Data: item})
 	case http.MethodPut, http.MethodPatch:
-		var req agent.UpdateRequest
+		var req flow.UpdateRequest
 		if err := DecodeJSON(r, &req); err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 			return
@@ -145,15 +145,15 @@ func (h agentsHandler) item(w http.ResponseWriter, r *http.Request, id, requestI
 			h.writeServiceError(w, err, requestID)
 			return
 		}
-		WriteJSON(w, http.StatusOK, SuccessResponse[agent.Agent]{Data: item})
+		WriteJSON(w, http.StatusOK, SuccessResponse[flow.Flow]{Data: item})
 	default:
-		agentMethodNotAllowed(w, requestID, "GET, PUT, PATCH")
+		flowMethodNotAllowed(w, requestID, "GET, PUT, PATCH")
 	}
 }
 
-func (h agentsHandler) duplicate(w http.ResponseWriter, r *http.Request, id, requestID string) {
+func (h flowsHandler) duplicate(w http.ResponseWriter, r *http.Request, id, requestID string) {
 	if r.Method != http.MethodPost {
-		agentMethodNotAllowed(w, requestID, "POST")
+		flowMethodNotAllowed(w, requestID, "POST")
 		return
 	}
 	var req struct {
@@ -170,15 +170,15 @@ func (h agentsHandler) duplicate(w http.ResponseWriter, r *http.Request, id, req
 		h.writeServiceError(w, err, requestID)
 		return
 	}
-	WriteJSON(w, http.StatusCreated, SuccessResponse[agent.Agent]{Data: item})
+	WriteJSON(w, http.StatusCreated, SuccessResponse[flow.Flow]{Data: item})
 }
 
-func agentMethodNotAllowed(w http.ResponseWriter, requestID, allow string) {
+func flowMethodNotAllowed(w http.ResponseWriter, requestID, allow string) {
 	w.Header().Set("Allow", allow)
 	WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported", requestID)
 }
 
-func (h agentsHandler) writeServiceError(w http.ResponseWriter, err error, requestID string) {
+func (h flowsHandler) writeServiceError(w http.ResponseWriter, err error, requestID string) {
 	if errors.Is(err, storage.ErrInvalidToolSelection) {
 		WriteError(w, http.StatusBadRequest, "invalid_tool_selection", err.Error(), requestID)
 		return
@@ -191,11 +191,11 @@ func (h agentsHandler) writeServiceError(w http.ResponseWriter, err error, reque
 		WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
 		return
 	}
-	if errors.Is(err, agent.ErrNotAttached) {
+	if errors.Is(err, flow.ErrNotAttached) {
 		WriteError(w, http.StatusBadRequest, "agent_not_attached", err.Error(), requestID)
 		return
 	}
-	if errors.Is(err, agent.ErrInvalidConfig) || strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "must be") {
+	if errors.Is(err, flow.ErrInvalidConfig) || strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "must be") {
 		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 		return
 	}

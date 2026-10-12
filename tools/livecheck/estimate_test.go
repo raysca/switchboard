@@ -173,7 +173,7 @@ func TestWatchSpendAgainstMetricsEndpoint(t *testing.T) {
 // Every recorded live actual must sit at or under the estimator (upper bound). Sources, with the
 // smallest scenario mapping each doc allows (fewer scenarios = lower estimate = stricter check):
 //   - xai-live.md "Live rerun": S2+S4 on xAI, about 30-35 requests (cached clips).
-//   - xai-live.md agent matrix: S1,S2,S4,S5,S7 on xAI (+ reruns, not counted here), about 41 incl. 5 clip syntheses.
+//   - xai-live.md flow matrix: S1,S2,S4,S5,S7 on xAI (+ reruns, not counted here), about 41 incl. 5 clip syntheses.
 //   - turn-manager-live.md round 2: S1 and S4 on Google, 3 variants (+ S4 reruns, not counted), 18+13+17 = 48.
 //   - docs/benchmarks/README.md smoke: Google S1 off, about 7.
 var knownActuals = []struct {

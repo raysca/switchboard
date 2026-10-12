@@ -1,4 +1,4 @@
-package agent
+package flow
 
 import (
 	"encoding/json"
@@ -66,18 +66,18 @@ func TestDecodeConfigRejectsCredentialID(t *testing.T) {
 			t.Errorf("%s: err=%v", name, err)
 		}
 	}
-	node := `{"entry":"a","nodes":[{"id":"a","name":"A","config":{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m","credential_id":"x"},"tts":{"provider":"google"}}}],"edges":[]}`
-	if _, err := DecodeGraph(json.RawMessage(node)); !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), "credential_id") {
+	step := `{"entry":"a","nodes":[{"id":"a","name":"A","config":{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m","credential_id":"x"},"tts":{"provider":"google"}}}],"edges":[]}`
+	if _, err := Decode(json.RawMessage(step)); !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), "credential_id") {
 		t.Errorf("graph node: err=%v", err)
 	}
 }
 
-func TestGraphProblemsPrefixNonEntryNodes(t *testing.T) {
-	g, err := DecodeGraph(twoNodeGraph("google"))
+func TestFlowProblemsPrefixNonEntrySteps(t *testing.T) {
+	g, err := Decode(twoStepFlow("google"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The sales node borrows the entry's STT, so a missing STT is reported for both.
+	// The sales step borrows the entry's STT, so a missing STT is reported for both.
 	av := fakeAvail{"google/stt": {Reason: "missing_credential", MissingEnv: []string{"GOOGLE_APPLICATION_CREDENTIALS"}}}
 	r, e := g.Problems(av)
 	if !reflect.DeepEqual(r, []string{"missing_credential_stt", "sales:missing_credential_stt"}) || len(e) != 1 {

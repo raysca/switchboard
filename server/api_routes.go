@@ -9,8 +9,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"govoice/server/agent"
 	"govoice/server/api"
+	"govoice/server/flow"
 	"govoice/server/storage"
 	"govoice/transport/token"
 )
@@ -58,15 +58,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			api.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
 			return
 		}
-		if input.Principal == "" || len(input.Principal) > 128 || input.AgentID == "" || len(input.AgentID) > 128 {
+		if input.Principal == "" || len(input.Principal) > 128 || input.FlowID == "" || len(input.FlowID) > 128 {
 			api.WriteError(w, http.StatusBadRequest, "invalid_request", "principal and agent_id must be 1 to 128 characters", requestID)
 			return
 		}
-		if s.agents == nil {
+		if s.flows == nil {
 			api.WriteError(w, http.StatusServiceUnavailable, "agent_management_unavailable", "agent storage is unavailable", requestID)
 			return
 		}
-		target, err := s.agents.Get(r.Context(), input.AgentID)
+		target, err := s.flows.Get(r.Context(), input.FlowID)
 		if errors.Is(err, sql.ErrNoRows) {
 			api.WriteError(w, http.StatusNotFound, "not_found", "agent not found", requestID)
 			return
@@ -75,7 +75,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			api.WriteError(w, http.StatusInternalServerError, "internal_error", "agent could not be loaded", requestID)
 			return
 		}
-		if !agentCallable(target.Readiness.State) {
+		if !flowCallable(target.Readiness.State) {
 			api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "agent_not_ready", Message: "agent is not ready to take calls", RequestID: requestID, Details: target.Readiness}})
 			return
 		}
@@ -85,7 +85,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Issuer: s.cfg.Token.Issuer, Audience: jwt.ClaimStrings{s.cfg.Token.Audience},
 			Subject: input.Principal, ID: storage.NewID(), // becomes the session id
 			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
-		}, Principal: input.Principal, AgentID: target.ID, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
+		}, Principal: input.Principal, FlowID: target.ID, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
 		jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		if s.voiceKeyID != "" {
 			jwtToken.Header["kid"] = s.voiceKeyID
@@ -100,12 +100,12 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		}})
 	default:
 		if r.URL.Path == "/api/v1/agents" || strings.HasPrefix(r.URL.Path, "/api/v1/agents/") {
-			if s.agentManagementAPI == nil {
+			if s.flowManagementAPI == nil {
 				api.WriteError(w, http.StatusServiceUnavailable, "agent_management_unavailable", "agent management storage is unavailable", requestID)
 				return
 			}
 			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
-			s.agentManagementAPI.ServeHTTP(w, r)
+			s.flowManagementAPI.ServeHTTP(w, r)
 			return
 		}
 		if r.URL.Path == "/api/v1/providers" || strings.HasPrefix(r.URL.Path, "/api/v1/providers/") {
@@ -147,7 +147,7 @@ func (s *Server) effectiveVoiceTokenLifetime() time.Duration {
 	return min(time.Minute, lifetime).Truncate(time.Second)
 }
 
-// agentCallable reports whether an agent in this readiness state may run calls.
-func agentCallable(state string) bool {
-	return state == agent.ReadinessReady || state == agent.ReadinessWithToolWarning
+// flowCallable reports whether a flow in this readiness state may run calls.
+func flowCallable(state string) bool {
+	return state == flow.ReadinessReady || state == flow.ReadinessWithToolWarning
 }

@@ -1,4 +1,4 @@
-package agent
+package flow
 
 import (
 	"context"
@@ -45,7 +45,7 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 	if updated.Version.Number != 2 || updated.Version.ConfigHash != a.Version.ConfigHash {
 		t.Fatalf("updated version=%+v, initial=%+v", updated.Version, a.Version)
 	}
-	old, err := svc.store.Agents().Version(ctx, a.Version.ID)
+	old, err := svc.store.Flows().Version(ctx, a.Version.ID)
 	if err != nil || string(old.ConfigJSON) != string(a.Version.Config) {
 		t.Fatalf("old version changed: %+v err=%v", old, err)
 	}
@@ -55,7 +55,7 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 	}
 }
 
-// Agents are attached to providers at creation; an incomplete config is
+// Flows are attached to providers at creation; an incomplete config is
 // rejected with bounded, content-free reasons.
 func TestCreateRequiresAttachedProvidersWithSafeReasons(t *testing.T) {
 	svc := testService(t)
@@ -93,7 +93,7 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinned, err := svc.ResolveSession(ctx, session.ID)
-	if err != nil || pinned.Version.ID != session.AgentVersionID || pinned.Version.ConfigHash != session.ConfigHash || string(pinned.Version.Config) != string(a.Version.Config) {
+	if err != nil || pinned.Version.ID != session.FlowVersionID || pinned.Version.ConfigHash != session.ConfigHash || string(pinned.Version.Config) != string(a.Version.Config) {
 		t.Fatalf("pinned snapshot=%+v session=%+v err=%v", pinned, session, err)
 	}
 	copy, err := svc.Duplicate(ctx, a.ID, "Copy")
@@ -112,7 +112,7 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 	}
 }
 
-func TestInvalidUpdateDoesNotChangeMutableAgentFields(t *testing.T) {
+func TestInvalidUpdateDoesNotChangeMutableFlowFields(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
 	created, err := svc.Create(ctx, CreateRequest{Name: "Before", Config: validConfig()})
@@ -256,7 +256,7 @@ func TestDetachRequiresExplicitMCPReviewAndHistoricalSelectionsRemainReadable(t 
 	if _, err := svc.ResolveCurrent(ctx, a.ID); err == nil {
 		t.Fatal("new session admitted before explicit review")
 	}
-	historicalRow, err := svc.store.Agents().Version(ctx, v1.ID)
+	historicalRow, err := svc.store.Flows().Version(ctx, v1.ID)
 	historical := toVersion(historicalRow)
 	if err != nil || len(historical.MCPTools) != 1 || historical.MCPTools[0] != selection {
 		t.Fatalf("historical selection=%+v err=%v", historical.MCPTools, err)

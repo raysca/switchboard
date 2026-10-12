@@ -8,28 +8,28 @@ import (
 	"time"
 )
 
-type AgentMutation struct {
+type FlowMutation struct {
 	Name        *string
 	Description *string
 	Enabled     *bool
 }
 
-// CreateWithVersionAndToolsAndReviewRequired creates the agent and its initial
+// CreateWithVersionAndToolsAndReviewRequired creates the flow and its initial
 // immutable version in one transaction. An initial publication failure leaves
 // neither row behind.
-func (r AgentRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.Context, a Agent, config []byte, selections []SelectedTool, mcpReviewRequired bool) (AgentVersion, error) {
+func (r FlowRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.Context, a Flow, config []byte, selections []SelectedTool, mcpReviewRequired bool) (FlowVersion, error) {
 	if err := validID(a.ID); err != nil {
-		return AgentVersion{}, err
+		return FlowVersion{}, err
 	}
 	hash, canonical, err := hashJSON(config)
 	if err != nil {
-		return AgentVersion{}, err
+		return FlowVersion{}, err
 	}
 	now := time.Now().UTC()
-	v := AgentVersion{ID: NewID(), AgentID: a.ID, Version: 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: now, MCPReviewRequired: mcpReviewRequired}
+	v := FlowVersion{ID: NewID(), FlowID: a.ID, Version: 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: now, MCPReviewRequired: mcpReviewRequired}
 	a.Name = strings.TrimSpace(a.Name)
 	if a.Name == "" {
-		return AgentVersion{}, errors.New("agent name required")
+		return FlowVersion{}, errors.New("agent name required")
 	}
 	if a.CreatedAt.IsZero() {
 		a.CreatedAt = now
@@ -88,12 +88,12 @@ func (r AgentRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.
 
 // MutateAndPublish applies optional metadata fields and an optional config
 // publication atomically. Version allocation is derived while holding the
-// agent row lock (PostgreSQL) or SQLite's immediate write transaction.
-func (r AgentRepository) MutateAndPublish(ctx context.Context, id string, mutation AgentMutation, config []byte) (AgentVersion, bool, error) {
+// flow row lock (PostgreSQL) or SQLite's immediate write transaction.
+func (r FlowRepository) MutateAndPublish(ctx context.Context, id string, mutation FlowMutation, config []byte) (FlowVersion, bool, error) {
 	if err := validID(id); err != nil {
-		return AgentVersion{}, false, err
+		return FlowVersion{}, false, err
 	}
-	var next AgentVersion
+	var next FlowVersion
 	publish := len(config) > 0
 	var hash string
 	var canonical []byte
@@ -101,7 +101,7 @@ func (r AgentRepository) MutateAndPublish(ctx context.Context, id string, mutati
 	if publish {
 		hash, canonical, err = hashJSON(config)
 		if err != nil {
-			return AgentVersion{}, false, err
+			return FlowVersion{}, false, err
 		}
 	}
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
@@ -142,8 +142,8 @@ func (r AgentRepository) MutateAndPublish(ctx context.Context, id string, mutati
 					return err
 				}
 			}
-			next = AgentVersion{ID: NewID(), AgentID: id, Version: latest + 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC(), MCPReviewRequired: reviewRequired}
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), next.ID, next.AgentID, next.Version, next.SchemaVersion, string(next.ConfigJSON), next.ConfigHash, utc(next.CreatedAt), boolValue(r.s.dialect, reviewRequired)); err != nil {
+			next = FlowVersion{ID: NewID(), FlowID: id, Version: latest + 1, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC(), MCPReviewRequired: reviewRequired}
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), next.ID, next.FlowID, next.Version, next.SchemaVersion, string(next.ConfigJSON), next.ConfigHash, utc(next.CreatedAt), boolValue(r.s.dialect, reviewRequired)); err != nil {
 				return err
 			}
 			if currentVersion.Valid {

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"govoice/server/agent"
+	"govoice/server/flow"
 )
 
 func TestRecordingConfigDefaultsOffAndValidates(t *testing.T) {
@@ -32,9 +32,9 @@ func TestRecordingConfigDefaultsOffAndValidates(t *testing.T) {
 	}
 }
 
-func TestAgentRecordingNeedsOptInAndDisclosure(t *testing.T) {
-	dec := func(s string) agent.Config {
-		c, err := agent.DecodeConfig(json.RawMessage(s))
+func TestFlowRecordingNeedsOptInAndDisclosure(t *testing.T) {
+	dec := func(s string) flow.Config {
+		c, err := flow.DecodeConfig(json.RawMessage(s))
 		if err != nil {
 			t.Fatal(err)
 		}

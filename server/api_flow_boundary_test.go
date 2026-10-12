@@ -8,19 +8,19 @@ import (
 	"strings"
 	"testing"
 
-	"govoice/server/agent"
 	"govoice/server/api"
+	"govoice/server/flow"
 	"govoice/server/storage"
 )
 
-func TestAgentRoutesUseManagementBoundaryAndTrustedRequestID(t *testing.T) {
+func TestFlowRoutesUseManagementBoundaryAndTrustedRequestID(t *testing.T) {
 	s := apiTestServer(t)
 	store, err := storage.Open(t.Context(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agents.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s.SetAgentManagementAPI(api.NewAgentsHandler(agent.NewService(store, s.availability)))
+	s.SetFlowManagementAPI(api.NewFlowsHandler(flow.NewService(store, s.availability)))
 	key := "management-test-key-32-bytes-long-and-separate"
 	path := "/api/v1/agents"
 

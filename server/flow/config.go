@@ -1,4 +1,4 @@
-package agent
+package flow
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Config is the typed agent configuration (schema v2). It is the only source
+// Config is the typed flow configuration (schema v2). It is the only source
 // of what a call runs. Every stage is attached to a provider; credentials come
 // from the catalog and environment, never from the config.
 type Config struct {
@@ -29,19 +29,19 @@ type Config struct {
 	// Failover says which error classes let a stage move to its next
 	// fallback. Fallbacks are optional; none = single provider (legacy configs).
 	Failover FailoverPolicy `json:"failover,omitempty"`
-	// Recording opts this agent's calls into audio recording. It only takes
+	// Recording opts this flow's calls into audio recording. It only takes
 	// effect when the server enables recording too.
 	Recording RecordingConfig `json:"recording,omitzero"`
 }
 
-// RecordingConfig is the per-agent recording opt-in. Recording captures caller
+// RecordingConfig is the per-flow recording opt-in. Recording captures caller
 // audio, so the operator must confirm that callers are told (disclosure).
 type RecordingConfig struct {
 	Enabled             bool `json:"enabled"`
 	DisclosureConfirmed bool `json:"disclosure_confirmed"`
 }
 
-// Active reports whether calls to this agent are recorded (when the server allows it).
+// Active reports whether calls to this flow are recorded (when the server allows it).
 func (r RecordingConfig) Active() bool { return r.Enabled && r.DisclosureConfirmed }
 
 type STTConfig struct {
@@ -117,7 +117,7 @@ func (s SummarizationConfig) validate(llmProvider string, maxTokens int) error {
 	return nil
 }
 
-// Default context limits, applied when an agent leaves them unset (0) so a
+// Default context limits, applied when a flow leaves them unset (0) so a
 // call's conversation history, prompt size and LLM cost stay bounded.
 const (
 	DefaultMaxMessages = 20
@@ -140,7 +140,7 @@ const maxSystemPromptBytes = 32 << 10
 
 var ErrInvalidConfig = errors.New("invalid agent config")
 
-// DecodeConfig strictly decodes an agent config: unknown fields and wrong
+// DecodeConfig strictly decodes a flow config: unknown fields and wrong
 // types are rejected. Completeness is checked by AttachmentProblems.
 func DecodeConfig(raw json.RawMessage) (Config, error) {
 	var c Config
@@ -224,7 +224,7 @@ type Unavailable struct {
 	MissingEnv []string
 }
 
-// Stage names one provider slot of an agent.
+// Stage names one provider slot of a flow.
 type Stage struct {
 	Name     string // "stt" | "llm" | "tts"
 	Provider string
