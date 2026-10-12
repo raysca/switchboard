@@ -111,12 +111,12 @@ func routedFlowConfig(p Profile) map[string]any {
 	delete(sales, "stt")
 	sales["llm"].(map[string]any)["system_prompt"] = "You are the sales agent of a car dealership. Answer in one short sentence and always use the word '" + flowMarker + "'."
 	return map[string]any{
-		"entry": "front",
-		"nodes": []map[string]any{
+		"start": "front",
+		"steps": []map[string]any{
 			{"id": "front", "name": "Front desk", "config": front},
 			{"id": "sales", "name": "Sales", "config": sales},
 		},
-		"edges": []map[string]any{{"id": "e1", "from": "front", "to": "sales", "condition": "The caller wants to buy a car or asks about prices."}},
+		"routes": []map[string]any{{"id": "e1", "from": "front", "to": "sales", "condition": "The caller wants to buy a car or asks about prices."}},
 	}
 }
 

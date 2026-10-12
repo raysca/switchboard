@@ -127,13 +127,13 @@ type flowRigE2E struct {
 func flowConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessage {
 	tail := ""
 	if len(cue) > 0 {
-		tail = `,"handoff_cue":` + cue[0]
+		tail = `,"route_cue":` + cue[0]
 	}
 	stage := func(extra string) string { return `"provider":"google"` + extra }
-	return json.RawMessage(`{"entry":"front","nodes":[` +
+	return json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{` + stage(`,"model":"s"`) + `},"llm":{` + stage(`,"model":"m","system_prompt":"FRONT"`) + `},"tts":{` + stage(`,"voice":"frontvoice"`) + `}}},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{` + stage(`,"model":"m","system_prompt":"`+salesPrompt+`"`) + `},"tts":{` + stage(`,"voice":"`+salesVoice+`"`) + `}}}],` +
-		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]` + tail + `}`)
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]` + tail + `}`)
 }
 
 func newFlowRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *flowRigE2E {

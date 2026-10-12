@@ -11,10 +11,10 @@ import (
 // twoStepFlow is a front-desk entry (the standard valid config) and a sales
 // step whose LLM uses salesProvider.
 func twoStepFlow(salesProvider string) json.RawMessage {
-	return json.RawMessage(`{"entry":"front","nodes":[` +
+	return json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + string(validConfig()) + `},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{"provider":"` + salesProvider + `","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}}],` +
-		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
 }
 
 func TestCreateAcceptsFlowAndReportsStepProblems(t *testing.T) {
@@ -35,7 +35,7 @@ func TestCreateAcceptsFlowAndReportsStepProblems(t *testing.T) {
 }
 
 func TestStepToolsMustBeSelected(t *testing.T) {
-	g, err := Decode(json.RawMessage(`{"entry":"a","nodes":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(validConfig()) + `}],"edges":[]}`))
+	g, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(validConfig()) + `}],"routes":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestStepToolsMustBeSelected(t *testing.T) {
 
 func TestCreateRejectsFlowStepToolNotSelected(t *testing.T) {
 	svc := testService(t)
-	raw := json.RawMessage(`{"entry":"a","nodes":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(validConfig()) + `}],"edges":[]}`)
+	raw := json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(validConfig()) + `}],"routes":[]}`)
 	if _, err := svc.Create(context.Background(), CreateRequest{Name: "t", Config: raw}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("want ErrInvalidConfig, got %v", err)
 	}
@@ -78,7 +78,7 @@ func TestUpdateFlowPublishesNewVersionKeepingOldPinned(t *testing.T) {
 		t.Fatalf("err=%v version=%+v", err, u.Version)
 	}
 	old, err := svc.store.Flows().Version(ctx, a.Version.ID)
-	if err != nil || strings.Contains(string(old.ConfigJSON), `"nodes"`) {
+	if err != nil || strings.Contains(string(old.ConfigJSON), `"steps"`) {
 		t.Fatalf("version 1 must stay flat: err=%v", err)
 	}
 }

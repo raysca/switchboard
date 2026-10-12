@@ -28,10 +28,10 @@ func TestDecodeFlowWrapsFlatConfig(t *testing.T) {
 }
 
 func TestDecodeFlowTwoSteps(t *testing.T) {
-	raw := `{"entry":"front","nodes":[` +
+	raw := `{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + flatCfg + `},` +
 		step("sales", "Sales", "") + `],` +
-		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`
 	g, err := Decode(json.RawMessage(raw))
 	if err != nil {
 		t.Fatal(err)
@@ -40,23 +40,40 @@ func TestDecodeFlowTwoSteps(t *testing.T) {
 		t.Fatalf("tool name = %q", got)
 	}
 	if len(g.RoutesFrom("front")) != 1 || len(g.RoutesFrom("sales")) != 0 {
-		t.Fatal("EdgesFrom wrong")
+		t.Fatal("RoutesFrom wrong")
+	}
+}
+
+// Versions stored before the rename keep their keys (they are immutable and
+// hashed), so they still decode; mixing old and new keys does not.
+func TestDecodeReadsLegacyKeys(t *testing.T) {
+	steps := `[{"id":"front","name":"Front desk","config":` + flatCfg + `},` + step("sales", "Sales", "") + `]`
+	legacy := `{"entry":"front","nodes":` + steps + `,"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}],"handoff_cue":{"name":"chime"}}`
+	g, err := Decode(json.RawMessage(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Start != "front" || len(g.Steps) != 2 || len(g.RoutesFrom("front")) != 1 || g.RouteCue == nil || g.RouteCue.Name != "chime" {
+		t.Fatalf("legacy decode = %+v", g)
+	}
+	if _, err := Decode(json.RawMessage(`{"entry":"front","start":"front","nodes":` + steps + `}`)); err == nil {
+		t.Fatal("mixed legacy and new keys accepted")
 	}
 }
 
 func TestDecodeFlowRejects(t *testing.T) {
 	front := `{"id":"front","name":"Front","config":` + flatCfg + `}`
 	cases := map[string]string{
-		"no entry":                `{"nodes":[` + front + `],"edges":[]}`,
-		"entry missing":           `{"entry":"x","nodes":[` + front + `],"edges":[]}`,
-		"dup node id":             `{"entry":"front","nodes":[` + front + `,` + front + `],"edges":[]}`,
-		"dup slug":                `{"entry":"front","nodes":[` + front + `,` + step("b", "front", "") + `],"edges":[]}`,
-		"edge to nowhere":         `{"entry":"front","nodes":[` + front + `],"edges":[{"id":"e","from":"front","to":"zz","condition":"c"}]}`,
-		"self edge":               `{"entry":"front","nodes":[` + front + `],"edges":[{"id":"e","from":"front","to":"front","condition":"c"}]}`,
-		"empty condition":         `{"entry":"front","nodes":[` + front + `,` + step("b", "B", "") + `],"edges":[{"id":"e","from":"front","to":"b","condition":" "}]}`,
-		"dup edge pair":           `{"entry":"front","nodes":[` + front + `,` + step("b", "B", "") + `],"edges":[{"id":"e1","from":"front","to":"b","condition":"c"},{"id":"e2","from":"front","to":"b","condition":"d"}]}`,
-		"call-level on non-entry": `{"entry":"front","nodes":[` + front + `,` + step("b", "B", `,"vad_stop_ms":300`) + `],"edges":[]}`,
-		"unknown field":           `{"entry":"front","nodes":[` + front + `],"edges":[],"bogus":1}`,
+		"no entry":                `{"steps":[` + front + `],"routes":[]}`,
+		"entry missing":           `{"start":"x","steps":[` + front + `],"routes":[]}`,
+		"dup node id":             `{"start":"front","steps":[` + front + `,` + front + `],"routes":[]}`,
+		"dup slug":                `{"start":"front","steps":[` + front + `,` + step("b", "front", "") + `],"routes":[]}`,
+		"edge to nowhere":         `{"start":"front","steps":[` + front + `],"routes":[{"id":"e","from":"front","to":"zz","condition":"c"}]}`,
+		"self edge":               `{"start":"front","steps":[` + front + `],"routes":[{"id":"e","from":"front","to":"front","condition":"c"}]}`,
+		"empty condition":         `{"start":"front","steps":[` + front + `,` + step("b", "B", "") + `],"routes":[{"id":"e","from":"front","to":"b","condition":" "}]}`,
+		"dup edge pair":           `{"start":"front","steps":[` + front + `,` + step("b", "B", "") + `],"routes":[{"id":"e1","from":"front","to":"b","condition":"c"},{"id":"e2","from":"front","to":"b","condition":"d"}]}`,
+		"call-level on non-entry": `{"start":"front","steps":[` + front + `,` + step("b", "B", `,"vad_stop_ms":300`) + `],"routes":[]}`,
+		"unknown field":           `{"start":"front","steps":[` + front + `],"routes":[],"bogus":1}`,
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -72,7 +89,7 @@ func TestDecodeFlowBounds(t *testing.T) {
 	for i := 0; i <= MaxSteps; i++ {
 		steps = append(steps, step("n"+strings.Repeat("x", i), "N"+strings.Repeat("x", i), ""))
 	}
-	raw := `{"entry":"n","nodes":[` + strings.Join(steps, ",") + `],"edges":[]}`
+	raw := `{"start":"n","steps":[` + strings.Join(steps, ",") + `],"routes":[]}`
 	if _, err := Decode(json.RawMessage(raw)); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("more than %d nodes must be rejected, got %v", MaxSteps, err)
 	}
@@ -81,7 +98,7 @@ func TestDecodeFlowBounds(t *testing.T) {
 func TestSummarizationNeedsEverySummarizingLLM(t *testing.T) {
 	entry := `{"stt":{"provider":"deepgram"},"llm":{"provider":"openai","model":"m"},"tts":{"provider":"cartesia"},"context":{"summarization":{"enabled":true}}}`
 	other := `{"id":"b","name":"B","config":{"llm":{"provider":"cartesia","model":"m"},"tts":{"provider":"cartesia"}}}`
-	raw := `{"entry":"a","nodes":[{"id":"a","name":"A","config":` + entry + `},` + other + `],"edges":[]}`
+	raw := `{"start":"a","steps":[{"id":"a","name":"A","config":` + entry + `},` + other + `],"routes":[]}`
 	if _, err := Decode(json.RawMessage(raw)); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("want ErrInvalidConfig, got %v", err)
 	}
@@ -90,16 +107,16 @@ func TestSummarizationNeedsEverySummarizingLLM(t *testing.T) {
 func TestDecodeFlowRejectsUnsafeIDsAndCue(t *testing.T) {
 	front := func(id string) string { return `{"id":"` + id + `","name":"Front","config":` + flatCfg + `}` }
 	graph := func(entry, step, extra string) string {
-		return `{"entry":"` + entry + `","nodes":[` + step + `],"edges":[]` + extra + `}`
+		return `{"start":"` + entry + `","steps":[` + step + `],"routes":[]` + extra + `}`
 	}
 	cases := map[string]string{
 		"id with spaces":     graph("a b", front("a b"), ""),
 		"id with arrow":      graph("a->b", front("a->b"), ""),
 		"id too long":        graph(strings.Repeat("x", 33), front(strings.Repeat("x", 33)), ""),
-		"cue name uppercase": graph("f", front("f"), `,"handoff_cue":{"name":"Chime"}`),
-		"cue name too long":  graph("f", front("f"), `,"handoff_cue":{"name":"`+strings.Repeat("c", 33)+`"}`),
-		"cue after negative": graph("f", front("f"), `,"handoff_cue":{"name":"chime","after_ms":-1}`),
-		"cue after huge":     graph("f", front("f"), `,"handoff_cue":{"name":"chime","after_ms":600000}`),
+		"cue name uppercase": graph("f", front("f"), `,"route_cue":{"name":"Chime"}`),
+		"cue name too long":  graph("f", front("f"), `,"route_cue":{"name":"`+strings.Repeat("c", 33)+`"}`),
+		"cue after negative": graph("f", front("f"), `,"route_cue":{"name":"chime","after_ms":-1}`),
+		"cue after huge":     graph("f", front("f"), `,"route_cue":{"name":"chime","after_ms":600000}`),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -108,7 +125,7 @@ func TestDecodeFlowRejectsUnsafeIDsAndCue(t *testing.T) {
 			}
 		})
 	}
-	ok := graph("f_1-a", front("f_1-a"), `,"handoff_cue":{"name":"chime","after_ms":300}`)
+	ok := graph("f_1-a", front("f_1-a"), `,"route_cue":{"name":"chime","after_ms":300}`)
 	if _, err := Decode(json.RawMessage(ok)); err != nil {
 		t.Fatalf("valid ids and cue rejected: %v", err)
 	}

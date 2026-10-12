@@ -73,9 +73,9 @@ func TestFlowConfigHasEntryWithSTTAndASalesStepWithout(t *testing.T) {
 	p.Stages.LLM = Stage{Provider: "xai", Model: "grok-3-mini"}
 	p.Stages.TTS = Stage{Provider: "xai", Voice: "eve"}
 	cfg := routedFlowConfig(p)
-	steps := cfg["nodes"].([]map[string]any)
-	if cfg["entry"] != "front" || len(steps) != 2 {
-		t.Fatalf("entry=%v nodes=%d", cfg["entry"], len(steps))
+	steps := cfg["steps"].([]map[string]any)
+	if cfg["start"] != "front" || len(steps) != 2 {
+		t.Fatalf("start=%v steps=%d", cfg["start"], len(steps))
 	}
 	front := steps[0]["config"].(map[string]any)
 	sales := steps[1]["config"].(map[string]any)
@@ -91,7 +91,7 @@ func TestFlowConfigHasEntryWithSTTAndASalesStepWithout(t *testing.T) {
 	if front["llm"].(map[string]any)["system_prompt"] == sales["llm"].(map[string]any)["system_prompt"] {
 		t.Fatal("each node needs its own prompt")
 	}
-	e := cfg["edges"].([]map[string]any)
+	e := cfg["routes"].([]map[string]any)
 	if len(e) != 1 || e[0]["from"] != "front" || e[0]["to"] != "sales" {
 		t.Fatalf("edges = %v", e)
 	}

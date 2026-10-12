@@ -66,7 +66,7 @@ func TestDecodeConfigRejectsCredentialID(t *testing.T) {
 			t.Errorf("%s: err=%v", name, err)
 		}
 	}
-	step := `{"entry":"a","nodes":[{"id":"a","name":"A","config":{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m","credential_id":"x"},"tts":{"provider":"google"}}}],"edges":[]}`
+	step := `{"start":"a","steps":[{"id":"a","name":"A","config":{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m","credential_id":"x"},"tts":{"provider":"google"}}}],"routes":[]}`
 	if _, err := Decode(json.RawMessage(step)); !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), "credential_id") {
 		t.Errorf("graph node: err=%v", err)
 	}

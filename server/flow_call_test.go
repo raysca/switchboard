@@ -17,9 +17,9 @@ func twoStepFlow(t *testing.T) flow.Definition {
 	t.Helper()
 	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	step := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
-	g, err := flow.Decode(json.RawMessage(`{"entry":"front","nodes":[` +
+	g, err := flow.Decode(json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
-		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`))
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,9 +90,9 @@ func TestFlowStepActivationRereadsTheEnvironment(t *testing.T) {
 	s.env = env.get
 	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
 	step := `{"llm":{"provider":"xai","model":"grok"},"tts":{"provider":"google"}}`
-	raw := json.RawMessage(`{"entry":"front","nodes":[` +
+	raw := json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
-		`"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
 	rs := &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: raw}}}
 	call, err := s.callSpec(t.Context(), rs)
 	if err != nil {

@@ -18,10 +18,10 @@ const (
 // Definition is the stored flow: steps (each a full per-step Config), handoff
 // routes, and the call-level route cue. A flat Config is a one-step Definition.
 type Definition struct {
-	Start    string    `json:"entry"`
-	Steps    []Step    `json:"nodes"`
-	Routes   []Route   `json:"edges"`
-	RouteCue *RouteCue `json:"handoff_cue,omitempty"`
+	Start    string    `json:"start"`
+	Steps    []Step    `json:"steps"`
+	Routes   []Route   `json:"routes"`
+	RouteCue *RouteCue `json:"route_cue,omitempty"`
 }
 
 type Position struct {
@@ -64,10 +64,10 @@ type rawStep struct {
 }
 
 type rawDefinition struct {
-	Start    string    `json:"entry"`
-	Steps    []rawStep `json:"nodes"`
-	Routes   []Route   `json:"edges"`
-	RouteCue *RouteCue `json:"handoff_cue"`
+	Start    string    `json:"start"`
+	Steps    []rawStep `json:"steps"`
+	Routes   []Route   `json:"routes"`
+	RouteCue *RouteCue `json:"route_cue"`
 }
 
 var (
@@ -91,6 +91,10 @@ func invalid(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidConfig, fmt.Sprintf(format, a...))
 }
 
+// legacyKeys are the pre-rename config keys. Stored versions are immutable and
+// hashed, so they are read as written.
+var legacyKeys = map[string]string{"entry": "start", "nodes": "steps", "edges": "routes", "handoff_cue": "route_cue"}
+
 // Decode strictly decodes a stored config. A flat Config (no "steps")
 // becomes a one-step flow named "main".
 func Decode(raw json.RawMessage) (Definition, error) {
@@ -98,7 +102,19 @@ func Decode(raw json.RawMessage) (Definition, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil || probe == nil {
 		return Definition{}, invalid("config must be a JSON object")
 	}
-	if _, ok := probe["nodes"]; !ok {
+	if _, ok := probe["nodes"]; ok {
+		for old, key := range legacyKeys {
+			if v, ok := probe[old]; ok {
+				if _, dup := probe[key]; dup {
+					return Definition{}, invalid("config mixes %q and %q", old, key)
+				}
+				probe[key] = v
+				delete(probe, old)
+			}
+		}
+		raw, _ = json.Marshal(probe) // ponytail: re-encoding a map that just decoded cannot fail
+	}
+	if _, ok := probe["steps"]; !ok {
 		cfg, err := DecodeConfig(raw)
 		if err != nil {
 			return Definition{}, err
@@ -112,7 +128,7 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		return Definition{}, invalid("%v", err)
 	}
 	if len(rg.Steps) == 0 || len(rg.Steps) > MaxSteps || len(rg.Routes) > MaxRoutes {
-		return Definition{}, invalid("a graph has 1 to %d nodes and at most %d edges", MaxSteps, MaxRoutes)
+		return Definition{}, invalid("a flow has 1 to %d steps and at most %d routes", MaxSteps, MaxRoutes)
 	}
 	g := Definition{Start: rg.Start, Routes: rg.Routes, RouteCue: rg.RouteCue, Steps: make([]Step, 0, len(rg.Steps))}
 	ids, slugs := map[string]bool{}, map[string]bool{}
@@ -121,35 +137,35 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		s := slug(name)
 		switch {
 		case !stepID.MatchString(rn.ID) || ids[rn.ID]:
-			return Definition{}, invalid("node ids must be unique and match %s", stepID)
+			return Definition{}, invalid("step ids must be unique and match %s", stepID)
 		case name == "" || len(name) > 64 || s == "":
-			return Definition{}, invalid("node %q needs a name of 1 to 64 characters with a letter or digit", rn.ID)
+			return Definition{}, invalid("step %q needs a name of 1 to 64 characters with a letter or digit", rn.ID)
 		case slugs[s]:
-			return Definition{}, invalid("node names must be unique (%q)", name)
+			return Definition{}, invalid("step names must be unique (%q)", name)
 		}
 		ids[rn.ID], slugs[s] = true, true
 		cfg, err := DecodeConfig(rn.Config)
 		if err != nil {
-			return Definition{}, fmt.Errorf("node %q: %w", rn.ID, err)
+			return Definition{}, fmt.Errorf("step %q: %w", rn.ID, err)
 		}
 		g.Steps = append(g.Steps, Step{ID: rn.ID, Name: name, Config: cfg, Tools: rn.Tools, Position: rn.Position})
 	}
 	if c := g.RouteCue; c != nil && (!cueName.MatchString(c.Name) || c.AfterMS < 0 || c.AfterMS > maxCueAfterMS) {
-		return Definition{}, invalid("handoff_cue needs a name matching %s and after_ms between 0 and %d", cueName, maxCueAfterMS)
+		return Definition{}, invalid("route_cue needs a name matching %s and after_ms between 0 and %d", cueName, maxCueAfterMS)
 	}
 	if !ids[g.Start] {
-		return Definition{}, invalid("entry %q is not a node", g.Start)
+		return Definition{}, invalid("start %q is not a step", g.Start)
 	}
 	pairs := map[[2]string]bool{}
 	for _, e := range g.Routes {
 		key := [2]string{e.From, e.To}
 		switch {
 		case e.ID == "" || !ids[e.From] || !ids[e.To] || e.From == e.To:
-			return Definition{}, invalid("edge %q must join two different existing nodes", e.ID)
+			return Definition{}, invalid("route %q must join two different existing steps", e.ID)
 		case strings.TrimSpace(e.Condition) == "" || len(e.Condition) > maxCondition:
-			return Definition{}, invalid("edge %q needs a condition of 1 to %d characters", e.ID, maxCondition)
+			return Definition{}, invalid("route %q needs a condition of 1 to %d characters", e.ID, maxCondition)
 		case pairs[key]:
-			return Definition{}, invalid("edge %q duplicates another edge between the same nodes", e.ID)
+			return Definition{}, invalid("route %q duplicates another route between the same steps", e.ID)
 		}
 		pairs[key] = true
 	}
@@ -168,11 +184,11 @@ func (g Definition) validateCallLevel() error {
 		if n.ID != g.Start {
 			if c.STT.Provider != "" || c.VADStopMS != 0 || c.STTP99MS != 0 || c.Recording != (RecordingConfig{}) ||
 				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Context.Summarization != (SummarizationConfig{}) {
-				return invalid("node %q sets call-level fields (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools); set them on the entry node", n.ID)
+				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools); set them on the start step", n.ID)
 			}
 		}
 		if entry.Context.Summarization.Enabled && !SummarizingProviders[c.LLM.Provider] {
-			return invalid("node %q: llm provider %q does not support the entry node's context summarization", n.ID, c.LLM.Provider)
+			return invalid("step %q: llm provider %q does not support the start step's context summarization", n.ID, c.LLM.Provider)
 		}
 	}
 	return nil
@@ -242,7 +258,7 @@ func checkStepTools(g Definition, selected []ToolSelection) error {
 	for _, n := range g.Steps {
 		for _, t := range n.Tools {
 			if !have[t] {
-				return invalid("node %q lists tool %q that the agent has not selected", n.ID, t)
+				return invalid("step %q lists tool %q that the flow has not selected", n.ID, t)
 			}
 		}
 	}

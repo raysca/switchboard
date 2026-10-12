@@ -35,10 +35,10 @@ func flowStages(stt bool) string {
 }
 
 func flowBody(name, routeTo string) string {
-	return `{"name":"` + name + `","config":{"entry":"front","nodes":[` +
+	return `{"name":"` + name + `","config":{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{` + flowStages(true) + `}},` +
 		`{"id":"sales","name":"Sales","config":{` + flowStages(false) + `}}],` +
-		`"edges":[{"id":"e1","from":"front","to":"` + routeTo + `","condition":"wants to buy"}]}}`
+		`"routes":[{"id":"e1","from":"front","to":"` + routeTo + `","condition":"wants to buy"}]}}`
 }
 
 type flowResp struct {
@@ -63,7 +63,7 @@ func TestFlowsAPIAcceptsFlowAndStillAcceptsFlat(t *testing.T) {
 	}
 	var graph flowResp
 	_ = json.Unmarshal(w.Body.Bytes(), &graph)
-	if graph.Data.Readiness.State != flow.ReadinessReady || !strings.Contains(string(graph.Data.Version.Config), `"nodes"`) {
+	if graph.Data.Readiness.State != flow.ReadinessReady || !strings.Contains(string(graph.Data.Version.Config), `"steps"`) {
 		t.Fatalf("graph agent = %+v", graph.Data)
 	}
 
@@ -74,7 +74,7 @@ func TestFlowsAPIAcceptsFlowAndStillAcceptsFlat(t *testing.T) {
 	}
 	var f flowResp
 	_ = json.Unmarshal(w.Body.Bytes(), &f)
-	if strings.Contains(string(f.Data.Version.Config), `"nodes"`) {
+	if strings.Contains(string(f.Data.Version.Config), `"steps"`) {
 		t.Fatalf("a flat config must be stored as sent: %s", f.Data.Version.Config)
 	}
 }
@@ -99,7 +99,7 @@ func TestFlowsAPIFlowUpdatePublishesNewVersion(t *testing.T) {
 	}
 	var updated flowResp
 	_ = json.Unmarshal(w.Body.Bytes(), &updated)
-	if updated.Data.Version.Number != 2 || !strings.Contains(string(updated.Data.Version.Config), `"nodes"`) {
+	if updated.Data.Version.Number != 2 || !strings.Contains(string(updated.Data.Version.Config), `"steps"`) {
 		t.Fatalf("updated = %+v", updated.Data)
 	}
 }
