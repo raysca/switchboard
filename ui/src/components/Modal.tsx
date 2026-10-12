@@ -12,7 +12,9 @@ export function Modal({ title, onCancel, children }: ModalProps) {
   const [opener] = useState(() => document.activeElement as HTMLElement | null);
   useEffect(() => {
     dialog.current?.showModal();
-    heading.current?.focus();
+    // A dialog with a field puts the cursor in it; one with only buttons starts on its title.
+    const field = dialog.current?.querySelector<HTMLElement>("input:not([disabled]), select, textarea");
+    (field ?? heading.current)?.focus();
     return () => {
       if (opener?.isConnected) opener.focus();
     };
@@ -27,9 +29,14 @@ export function Modal({ title, onCancel, children }: ModalProps) {
         onCancel();
       }}
     >
-      <h2 id={id} ref={heading} tabIndex={-1}>
-        {title}
-      </h2>
+      <div className="dialog__head">
+        <h2 id={id} ref={heading} tabIndex={-1}>
+          {title}
+        </h2>
+        <button type="button" className="icon-button" aria-label="Close dialog" onClick={onCancel}>
+          ×
+        </button>
+      </div>
       {children}
     </dialog>
   );

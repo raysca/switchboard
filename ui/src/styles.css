@@ -1560,6 +1560,15 @@ legend {
 .dialog::backdrop {
   background: color-mix(in srgb, var(--ink) 50%, transparent);
 }
+.dialog__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dialog__head .icon-button {
+  margin: -10px -12px 0 0;
+}
 .dialog h2 {
   margin: 0;
 }

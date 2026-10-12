@@ -138,7 +138,7 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
                       <span className="flow-row__state">{r.label}</span>
                     </div>
                     {f.description && <p className="subtext">{f.description}</p>}
-                    {f.readiness.reasons.length > 0 && (
+                    {f.enabled && f.readiness.reasons.length > 0 && (
                       <div className="reasons-list">
                         {f.readiness.reasons.map((reason) => (
                           <span key={reason} className="reason">

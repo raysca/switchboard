@@ -208,4 +208,11 @@ describe("FlowsView", () => {
     expect(screen.getByRole("link", { name: "Front desk" })).toBeVisible();
     expect(screen.queryByText("Failed to load flows")).toBeNull();
   });
+
+  it("does not repeat 'disabled' as a reason chip for a flow that is switched off", async () => {
+    setup({ getAgents: vi.fn().mockResolvedValue([flow({ enabled: false, readiness: { state: "not_ready", reasons: ["disabled"] } })]) });
+    const row = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
+    expect(within(row).getByText("Disabled")).toBeVisible();
+    expect(within(row).queryByText("disabled")).toBeNull();
+  });
 });

@@ -53,4 +53,26 @@ describe("Modal", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.getByRole("button", { name: "Open" })).toHaveFocus();
   });
+
+  it("puts focus in the first field when there is one, so typing goes straight in", async () => {
+    render(
+      <Modal title="T" onCancel={vi.fn()}>
+        <input aria-label="Name" />
+      </Modal>,
+    );
+    expect(screen.getByLabelText("Name")).toHaveFocus();
+    await userEvent.keyboard("abc");
+    expect(screen.getByLabelText("Name")).toHaveValue("abc");
+  });
+
+  it("has a close button that cancels", async () => {
+    const onCancel = vi.fn();
+    render(
+      <Modal title="T" onCancel={onCancel}>
+        <p>body</p>
+      </Modal>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Close dialog" }));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
 });
