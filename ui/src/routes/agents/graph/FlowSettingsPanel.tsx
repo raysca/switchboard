@@ -14,6 +14,8 @@ const without = (o: Rec, key: string): Rec => {
 const numberOrNothing = (raw: string): number | null => (raw.trim() === "" ? null : Math.round(Number(raw)));
 
 export type FlowSettingsPanelProps = {
+  /** The published version, shown read-only: what is live, and its content hash. */
+  published?: { number: number; createdAt: string; hash: string };
   graph: GraphDraft;
   providers: ProviderStatus[];
   name: string;
@@ -27,7 +29,7 @@ export type FlowSettingsPanelProps = {
 };
 
 /** What the whole call shares. Stored on the start step (server: call-level config). */
-export function FlowSettingsPanel({ graph, providers, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId }: FlowSettingsPanelProps) {
+export function FlowSettingsPanel({ graph, providers, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId, published }: FlowSettingsPanelProps) {
   const start = graph.nodes.find((n) => n.id === graph.entry);
   const cfg: NodeConfig = start?.config ?? {};
   const stt = rec(cfg.stt);
@@ -198,6 +200,18 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
               />
             </label>
           </div>
+        </fieldset>
+      )}
+      {published && (
+        <fieldset className="stage-box">
+          <legend>Published version</legend>
+          <p>
+            v{published.number}
+            {published.createdAt && <span className="subtext"> · {new Date(published.createdAt).toLocaleString()}</span>}
+          </p>
+          <p className="subtext">
+            Config hash <code>{published.hash}</code>
+          </p>
         </fieldset>
       )}
     </SidePanel>

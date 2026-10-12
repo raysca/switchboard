@@ -99,3 +99,26 @@ describe("FlowSettingsPanel", () => {
     expect(screen.getByLabelText("Flow name")).toHaveValue("After hours");
   });
 });
+
+describe("FlowSettingsPanel published version", () => {
+  it("shows the published version and its config hash, read-only", () => {
+    render(
+      <div style={{ position: "relative" }}>
+        <FlowSettingsPanel
+          graph={two}
+          providers={providers}
+          name="Front desk"
+          description=""
+          onName={vi.fn()}
+          onDescription={vi.fn()}
+          onChange={vi.fn()}
+          onClose={vi.fn()}
+          published={{ number: 3, createdAt: "2026-10-05T12:00:00Z", hash: "abc123" }}
+        />
+      </div>,
+    );
+    const section = screen.getByRole("group", { name: "Published version" });
+    expect(section).toHaveTextContent("v3");
+    expect(section).toHaveTextContent("abc123");
+  });
+});

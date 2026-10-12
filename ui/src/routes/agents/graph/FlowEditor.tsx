@@ -32,7 +32,13 @@ const sortKeys = (_k: string, v: unknown) =>
 // The server stores configs key-sorted; compare that way so key order is not a "change".
 const canonical = (v: unknown) => JSON.stringify(v, sortKeys);
 
+const canCall = (a: AgentDTO | null) => !!a && (a.readiness.state === "ready" || a.readiness.state === "ready_with_tool_warning");
+
 export type FlowEditorProps = {
+  /** The name a new flow starts with (from the New flow dialog). Ignored for a stored flow. */
+  initialName?: string;
+  /** Open the Test call panel on arrival, when the flow can take calls. */
+  initialPanel?: "call";
   agent: AgentDTO | null;
   providers: ProviderStatus[];
   client: ApiClient;
@@ -43,13 +49,13 @@ export type FlowEditorProps = {
 };
 
 /** One page for a flow: the graph stays put; steps, settings and test calls slide in from the right. */
-export function FlowEditor({ agent, providers, client, keyValue, pending, onSubmit, onCancel }: FlowEditorProps) {
+export function FlowEditor({ agent, providers, client, keyValue, pending, onSubmit, onCancel, initialName, initialPanel }: FlowEditorProps) {
   const flowTools = useMemo(() => (agent?.current_version?.mcp_tools ?? []).map((t) => `${t.mcp_server_id}/${t.remote_name}`), [agent]);
   const published = useMemo(() => (agent?.current_version ? fromAgentConfig(agent.current_version.config, flowTools) : null), [agent, flowTools]);
-  const [name, setName] = useState(agent?.name ?? "");
+  const [name, setName] = useState(agent?.name ?? initialName ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
   const [graph, setGraph] = useState<GraphDraft>(() => published ?? emptyFlow());
-  const [panel, setPanel] = useState<Panel>(null);
+  const [panel, setPanel] = useState<Panel>(initialPanel === "call" && canCall(agent) ? { kind: "call" } : null);
   const [tab, setTab] = useState<StepTab>("basics");
   const [focusRoute, setFocusRoute] = useState<string | undefined>();
   const [freshStep, setFreshStep] = useState<string | null>(null);
@@ -65,7 +71,7 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
   const needSetup = graph.nodes.filter((n) => stepIssues(graph, n.id).length > 0).length;
   const flowProblems = flowIssues(graph);
   const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph)];
-  const callable = !!agent && (agent.readiness.state === "ready" || agent.readiness.state === "ready_with_tool_warning");
+  const callable = canCall(agent);
   // The call runs the published version, so the live view follows that graph.
   const live = useCallView(published ?? graph, call, client);
 
@@ -140,9 +146,9 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
   return (
     <div className="flow-editor">
       <header className="flow-editor__head">
-        <h2 id="flow-editor-title" tabIndex={-1}>
+        <h1 id="flow-editor-title" tabIndex={-1}>
           {name.trim() || "New flow"}
-        </h2>
+        </h1>
         <span className="chip">{agent ? `v${version}${unpublished ? " · unpublished changes" : ""}` : "Never published"}</span>
         <Status tone={state.tone}>{state.text}</Status>
         <span className="grow" />
@@ -235,6 +241,11 @@ export function FlowEditor({ agent, providers, client, keyValue, pending, onSubm
         )}
         {panel?.kind === "settings" && (
           <FlowSettingsPanel
+            published={
+              agent?.current_version
+                ? { number: agent.current_version.number, createdAt: agent.current_version.created_at, hash: agent.current_version.config_hash }
+                : undefined
+            }
             graph={graph}
             providers={providers}
             name={name}

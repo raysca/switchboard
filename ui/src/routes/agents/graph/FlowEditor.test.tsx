@@ -140,7 +140,7 @@ describe("FlowEditor focus and keyboard", () => {
     fireEvent.keyDown(node("New step"), { key: "Enter" });
     expect(await screen.findByRole("complementary", { name: "New step" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Delete step" }));
-    expect(screen.getByRole("heading", { name: "Front desk", level: 2 })).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "Front desk", level: 1 })).toHaveFocus();
   });
 
   it("puts focus on a new step's name even when another panel was open", async () => {
@@ -158,5 +158,33 @@ describe("FlowEditor focus and keyboard", () => {
     expect(screen.getByText("v1 · unpublished changes")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Publish" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Renamed the flow to Main line");
+  });
+});
+
+describe("FlowEditor start state", () => {
+  it("starts a new flow with the name it was given, exactly", () => {
+    setup({ initialName: "R&D line ñ" });
+    expect(screen.getByRole("heading", { name: "R&D line ñ", level: 1 })).toBeVisible();
+  });
+
+  it("ignores the starting name for a stored flow", () => {
+    setup({ agent, initialName: "Other" });
+    expect(screen.getByRole("heading", { name: "Front desk", level: 1 })).toBeVisible();
+  });
+
+  it("opens the test call panel on arrival for a flow that can take calls", () => {
+    setup({ agent, initialPanel: "call" });
+    expect(screen.getByRole("complementary", { name: "Test call" })).toBeVisible();
+  });
+
+  it("does not open the test call panel for a flow that cannot take calls", () => {
+    setup({ agent: { ...agent, readiness: { state: "not_ready", reasons: ["missing_configuration"] } }, initialPanel: "call" });
+    expect(screen.queryByRole("complementary", { name: "Test call" })).toBeNull();
+  });
+
+  it("shows the published version in Flow settings", async () => {
+    const { user } = setup({ agent });
+    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    expect(screen.getByRole("group", { name: "Published version" })).toHaveTextContent("v1");
   });
 });

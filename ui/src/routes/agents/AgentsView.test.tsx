@@ -561,13 +561,13 @@ describe("AgentsView", () => {
     await screen.findByText("Two Node Bot");
     expect(screen.getByRole("heading", { name: "Flows", level: 1 })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "New flow" }));
-    expect(await screen.findByRole("heading", { name: "New flow", level: 2 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "New flow", level: 1 })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add first step" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Close" }));
 
     const row = screen.getByText("Two Node Bot").closest("tr") as HTMLElement;
     await user.click(within(row).getByRole("button", { name: /edit/i }));
-    expect(await screen.findByRole("heading", { name: "Two Node Bot", level: 2 })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Two Node Bot", level: 1 })).toBeVisible();
     // React Flow hides nodes it has not measured; jsdom measures nothing.
     expect(screen.getByText("Front")).toBeInTheDocument();
     expect(screen.getByText("Sales")).toBeInTheDocument();
