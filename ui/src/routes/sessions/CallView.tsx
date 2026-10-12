@@ -1,10 +1,12 @@
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import type { ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
-import { clock, failedRoutes, interruptedCount, outcome, path, steps, transcript, versionLabel } from "./callStats";
+import { clock, failedRoutes, interruptedCount, outcome, path, stepsFor, transcript, versionLabel } from "./callStats";
+import { useNow } from "./useNow";
 
 export type CallViewProps = { client: ApiClient; keyValue: string | null };
 
@@ -38,46 +40,57 @@ export function CallView({ client, keyValue }: CallViewProps) {
   });
   const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: on, retry: false });
 
-  if (!keyValue) return <EmptyState title="Connect to see this call">Enter a management key above to see this call.</EmptyState>;
-  if (sessionQuery.isPending) return <LoadingState label="Loading call" />;
+  const now = useNow(running);
+  // The heading and the way back are always there, so focus and the page's outline never depend on loading.
+  const top = (state?: ReactNode, status?: ReactNode) => (
+    <div className="call-page">
+      <nav aria-label="Breadcrumb" className="flow-page__crumb">
+        <Link to="/sessions">Calls</Link>
+      </nav>
+      <header className="call-head">
+        <h1 tabIndex={-1}>Call {sessionId.slice(0, 8)}</h1>
+        {status}
+      </header>
+      {state}
+    </div>
+  );
+
+  if (!keyValue) return top(<EmptyState title="Connect to see this call">Enter a management key above to see this call.</EmptyState>);
+  if (sessionQuery.isPending) return top(<LoadingState label="Loading call" />);
   if (sessionQuery.isError) {
     const err = sessionQuery.error as ApiError;
     if (err.status === 404) {
-      return (
+      return top(
         <section className="flow-missing">
           <p role="status">That call was not found.</p>
           <Link to="/sessions" className="action-button-small">
             Back to calls
           </Link>
-        </section>
+        </section>,
       );
     }
-    return <ErrorState title="Could not load the call" error={err} onRetry={() => void sessionQuery.refetch()} />;
+    return top(<ErrorState title="Could not load the call" error={err} onRetry={() => void sessionQuery.refetch()} />);
   }
 
   const s = sessionQuery.data;
   const flow = (flowsQuery.data ?? []).find((f) => f.id === s.agent_id);
   const fallback = flow?.name ?? "Assistant";
-  const st = steps(flow);
+  const st = stepsFor(s, flow);
   const turns = turnsQuery.data ?? [];
   const traces = tracesQuery.data ?? null;
   const o = outcome(s);
   const label = (id: string) => st.names.get(id) ?? id;
   const failed = failedRoutes(traces);
 
-  return (
-    <div className="call-page">
-      <nav aria-label="Breadcrumb" className="flow-page__crumb">
-        <Link to="/sessions">Calls</Link>
-      </nav>
-      <header className="call-head">
-        <h1 tabIndex={-1}>Call {s.id.slice(0, 8)}</h1>
-        <span className="call-state">
-          <span className="lamp" data-tone={o.live ? "warn" : undefined} aria-hidden="true" />
-          {o.label} · {clock(s.started_at, s.ended_at, Date.now())}
-        </span>
-      </header>
+  const status = (
+    <span className="call-state">
+      <span className="lamp" data-tone={o.live ? "warn" : undefined} aria-hidden="true" />
+      {o.label} · {clock(s.started_at, s.ended_at, now)}
+    </span>
+  );
 
+  return top(
+    <>
       <dl className="call-figures">
         <div>
           <dt>Flow</dt>
@@ -92,7 +105,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
         </div>
         <div>
           <dt>Duration</dt>
-          <dd>{clock(s.started_at, s.ended_at, Date.now())}</dd>
+          <dd>{clock(s.started_at, s.ended_at, now)}</dd>
         </div>
         <div>
           <dt>Turns</dt>
@@ -162,6 +175,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
         )}
         <TurnTimeline turns={turns} traces={traces} loading={turnsQuery.isPending} />
       </details>
-    </div>
+    </>,
+    status,
   );
 }

@@ -205,4 +205,47 @@ describe("CallsView", () => {
     await screen.findByRole("table");
     expect(screen.getByLabelText("Flow")).toHaveValue("gone");
   });
+
+  it("keeps the page in the URL, so Back and links land on the same page", async () => {
+    const many = Array.from({ length: 26 }, (_, i) => call({ id: `0192aaaa-0000-7000-8000-0000000003${String(i).padStart(2, "0")}` }));
+    const { client, user } = setup({ getSessions: listOnly(many) }, "/sessions?outcome=ended&page=2");
+    await waitFor(() => expect(client.getSessions).toHaveBeenCalledWith(expect.objectContaining({ offset: 25, status: "ended" })));
+    expect(await screen.findByText("Calls 26–50")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Newer" }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/sessions?outcome=ended");
+    expect(screen.getByTestId("where")).not.toHaveTextContent("page=");
+  });
+
+  it("ignores a garbage page number", async () => {
+    const { client } = setup({}, "/sessions?page=-3");
+    await screen.findByRole("table");
+    expect(client.getSessions).toHaveBeenCalledWith(expect.objectContaining({ offset: 0 }));
+  });
+
+  it("keeps Newer when a later page turns out to be empty, instead of stranding the user", async () => {
+    const { user } = setup({ getSessions: listOnly((p) => ((p.offset ?? 0) > 0 ? [] : [call()])) }, "/sessions?page=2");
+    expect(await screen.findByText("No calls on this page.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Newer" }));
+    expect(await screen.findByRole("table")).toBeVisible();
+  });
+
+  it("keeps the table and the pager while the next page loads, so keyboard focus stays", async () => {
+    const many = Array.from({ length: 26 }, (_, i) => call({ id: `0192aaaa-0000-7000-8000-0000000004${String(i).padStart(2, "0")}` }));
+    const getSessions = vi.fn().mockImplementation((p?: { limit?: number; offset?: number }) =>
+      p?.limit === 100 ? Promise.resolve([]) : (p?.offset ?? 0) > 0 ? new Promise(() => {}) : Promise.resolve(many),
+    );
+    const { user } = setup({ getSessions });
+    await screen.findByRole("table");
+    const older = screen.getByRole("button", { name: "Older" });
+    older.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("table")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Older" })).toHaveFocus();
+  });
+
+  it("counts live calls of the chosen flow only", async () => {
+    setup({ getSessions: listOnly([call()], [call({ status: "active" }), call({ id: "x", status: "active", agent_id: "a2" }), call({ id: "y", status: "active", agent_id: "a2" })]) }, "/sessions?flow=a2");
+    expect(await screen.findByText("2 live now")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Live · 2" })).toBeVisible();
+  });
 });

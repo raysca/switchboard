@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentDTO, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
-import { clock, failedRoutes, interruptedCount, mmss, outcome, path, steps, transcript, versionLabel } from "./callStats";
+import { clock, failedRoutes, interruptedCount, mmss, outcome, path, steps, stepsFor, transcript, versionLabel } from "./callStats";
 
 const flow = (config: Record<string, unknown> = {}): AgentDTO => ({
   id: "a1",
@@ -145,5 +145,36 @@ describe("transcript", () => {
 describe("interruptedCount", () => {
   it("counts replies the caller cut off", () => {
     expect(interruptedCount([turn(1, "a", "a", "", "x", true), turn(2, "a", "a", "", "y"), turn(3, "a", "a", "", "z", true)])).toBe(2);
+  });
+});
+
+describe("transcript: words the system put in the caller's mouth", () => {
+  const st = steps(flow(graph));
+  it("leaves out the internal prompts the server records as caller turns", () => {
+    const lines = transcript(
+      session(),
+      [
+        turn(1, "2026-10-12T14:00:42Z", "2026-10-12T14:00:43Z", "[async tool result: transfer_to_billing]", "Hello, this is billing."),
+        turn(2, "2026-10-12T14:01:30Z", "2026-10-12T14:01:31Z", "[idle notice; system notice, not spoken by the user] The user has been silent.", "Are you still there?"),
+        turn(3, "2026-10-12T14:01:40Z", "2026-10-12T14:01:41Z", "[inaudible] hello", "Yes."),
+      ],
+      traces(toBilling),
+      st,
+      "Front desk",
+    );
+    const callers = lines.filter((l) => l.kind === "say" && l.who === "caller").map((l) => (l as { text: string }).text);
+    expect(callers).toEqual(["[inaudible] hello"]);
+    expect(lines.filter((l) => l.kind === "say" && l.who === "step")).toHaveLength(3);
+  });
+});
+
+describe("stepsFor", () => {
+  it("does not claim the current start step for a call on an earlier version, but keeps the names", () => {
+    const f = flow(graph);
+    expect(stepsFor(session(), f).entry).toBe("r");
+    const old = stepsFor(session({ agent_version_id: "v6" }), f);
+    expect(old.entry).toBeUndefined();
+    expect(old.names.get("b")).toBe("Billing");
+    expect(path(traces(), old, "Front desk")).toEqual(["Front desk"]);
   });
 });

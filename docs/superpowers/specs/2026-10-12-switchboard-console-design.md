@@ -95,6 +95,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | S11 | Calls list totals and filters (`total`, `started_after`, text search) and CSV export | "of 1,284", When, Search, Export CSV |
 | S12 | Version number and path on the session row (or the step id on each turn) | "v7" for old versions, the list's Path column, exact step labels |
 | S13 | Live call control: listen in, end a call | The Listen in and End call buttons |
+| S14 | End orphaned sessions at startup (a crash leaves `status=active` forever; nothing reconciles them) | A trustworthy Live lamp, live counts and call clocks |
 
 Until each lands, the UI omits the dependent control rather than faking it.
 

@@ -36,6 +36,19 @@ export function clock(startedAt: string, endedAt: string | null | undefined, now
 
 export type Steps = { names: Map<string, string>; entry: string | undefined };
 
+/**
+ * Like `steps`, but a call on an earlier version does not inherit the current start step: it may have
+ * been a different step then, so such a call without routes is labelled with the flow's name instead.
+ */
+export function stepsFor(s: SessionDTO, flow: AgentDTO | undefined): Steps {
+  const st = steps(flow);
+  return flow?.current_version?.id === s.agent_version_id ? st : { names: st.names, entry: undefined };
+}
+
+// The server records its own prompts as turns: after a route that happens while the call is idle, and
+// when the caller has been silent. They are not the caller's words.
+const SYSTEM_TURN = /^\[(async tool result|idle notice)/;
+
 /** Step names and the start step, from the flow's current version. Older calls may name steps that are gone. */
 export function steps(flow: AgentDTO | undefined): Steps {
   const cfg = flow?.current_version?.config as { entry?: string; nodes?: { id: string; name?: string }[] } | undefined;
@@ -98,7 +111,8 @@ export function transcript(session: SessionDTO, turns: TurnDTO[], traces: Sessio
 
   const ordered = [...turns].sort((a, b) => a.ordinal - b.ordinal || Date.parse(a.started_at) - Date.parse(b.started_at));
   for (const t of ordered) {
-    const said = t.transcript.trim();
+    const spoken = t.transcript.trim();
+    const said = SYSTEM_TURN.test(spoken) ? "" : spoken;
     const reply = t.assistant_text.trim();
     const began = Date.parse(t.started_at);
     const ended = t.ended_at ? Date.parse(t.ended_at) : began;

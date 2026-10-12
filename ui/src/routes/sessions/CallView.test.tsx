@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -81,9 +81,9 @@ describe("CallView", () => {
 
   it("shows who the call was with, which flow and version, and how it went", async () => {
     setup({});
-    expect(await screen.findByRole("heading", { name: "Call 0192aaaa", level: 1 })).toBeVisible();
+    expect(await screen.findByText("Ended · 04:12")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Call 0192aaaa", level: 1 })).toBeVisible();
     expect(screen.getByRole("link", { name: "Calls" })).toHaveAttribute("href", "/sessions");
-    expect(screen.getByText("Ended · 04:12")).toBeVisible();
     expect(within(figure("Flow")).getByRole("link", { name: "Front desk" })).toHaveAttribute("href", "/flows/a1");
     expect(within(figure("Flow")).getByText("v7")).toBeVisible();
     expect(within(figure("Duration")).getByText("04:12")).toBeVisible();
@@ -164,5 +164,31 @@ describe("CallView", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("down");
     expect(screen.queryByText("That call was not found.")).toBeNull();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  });
+
+  it("has its heading from the first moment, and in every state, so focus has somewhere to go", async () => {
+    setup({ getSession: vi.fn().mockReturnValue(new Promise(() => {})) });
+    expect(screen.getByRole("heading", { name: "Call 0192aaaa", level: 1 })).toBeVisible();
+  });
+
+  it("keeps the heading when the call is not found, and when there is no key", async () => {
+    setup({ getSession: vi.fn().mockRejectedValue(new ApiError("session not found", "not_found", 404, "r")) }, "/sessions/nope");
+    expect(await screen.findByText("That call was not found.")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Call nope", level: 1 })).toBeVisible();
+  });
+
+  it("keeps the clock of a live call counting while nothing else changes", async () => {
+    const started = new Date(Date.now() - 65_000).toISOString();
+    setup({ getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null, started_at: started })) });
+    const first = (await screen.findByText(/^Live · /)).textContent;
+    await waitFor(() => expect(screen.getByText(/^Live · /).textContent).not.toBe(first), { timeout: 3000 });
+  });
+
+  it("labels a call on an earlier version with the flow's name, not the current start step", async () => {
+    setup({ getSession: vi.fn().mockResolvedValue(session({ agent_version_id: "v6" })), getSessionTraces: vi.fn().mockResolvedValue(traces()) });
+    const list = await screen.findByRole("list", { name: "Transcript" });
+    expect(list).toHaveTextContent("Front desk · 00:01");
+    expect(list).not.toHaveTextContent("Reception ·");
+    expect(within(figure("Path")).getByText("Front desk")).toBeVisible();
   });
 });

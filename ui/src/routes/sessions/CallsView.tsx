@@ -1,10 +1,10 @@
-import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { AgentDTO, ApiClient, ApiError } from "../../api/client";
 import { DataTable, EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { useActiveSessions } from "../agents/useActiveSessions";
 import { clock, outcome, versionLabel } from "./callStats";
+import { useNow } from "./useNow";
 
 export type CallsViewProps = { client: ApiClient; keyValue: string | null };
 
@@ -20,7 +20,9 @@ const OUTCOMES: { id: OutcomeFilter; label: string }[] = [
 /** Every call, newest first. Filters live in the URL so a link (from the Flows list) can open one. */
 export function CallsView({ client, keyValue }: CallsViewProps) {
   const [params, setParams] = useSearchParams();
-  const [page, setPage] = useState(0);
+  const pageNumber = Number(params.get("page"));
+  // Shown to people as 1, 2, 3…; kept in the URL only from page 2, so Back and links land on the same page.
+  const page = Number.isInteger(pageNumber) && pageNumber >= 2 ? pageNumber - 1 : 0;
   const flowId = params.get("flow") ?? "";
   const raw = params.get("outcome");
   const outcomeId: OutcomeFilter = raw === "live" || raw === "ended" ? raw : "";
@@ -33,6 +35,8 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
     enabled: !!keyValue,
     retry: false,
     refetchInterval: 10_000,
+    // Keep the table (and the focused pager button) on screen while the next page loads.
+    placeholderData: keepPreviousData,
   });
   const flowsQuery = useQuery({ queryKey: ["agents"], queryFn: () => client.getAgents(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
@@ -44,8 +48,16 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
     if (flow) p.set("flow", flow);
     if (out) p.set("outcome", out);
     setParams(p, { replace: true });
-    setPage(0);
   };
+  const goToPage = (index: number) => {
+    const p = new URLSearchParams(params);
+    if (index > 0) p.set("page", String(index + 1));
+    else p.delete("page");
+    setParams(p);
+  };
+
+  const rows = (calls.data ?? []).slice(0, PAGE);
+  const now = useNow(rows.some((s) => outcome(s).live));
 
   const heading = (
     <header className="section-heading">
@@ -63,12 +75,12 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
   }
 
   const flows = new Map<string, AgentDTO>((flowsQuery.data ?? []).map((f) => [f.id, f]));
-  const liveNow = active.data?.length;
-  const liveText = liveNow === undefined ? "" : liveNow >= LIVE_CAP ? `${LIVE_CAP}+` : String(liveNow);
-  const rows = (calls.data ?? []).slice(0, PAGE);
+  // The live count follows the flow filter, like the table does.
+  const liveNow = active.data?.filter((s) => !flowId || s.agent_id === flowId).length;
+  // The API returns at most LIVE_CAP live calls: at the cap the count is a floor, with or without a flow filter.
+  const liveText = liveNow === undefined ? "" : (active.data?.length ?? 0) >= LIVE_CAP ? `${liveNow}+` : String(liveNow);
   const hasOlder = (calls.data?.length ?? 0) > PAGE;
   const filtered = flowId !== "" || outcomeId !== "";
-  const now = Date.now();
 
   return (
     <>
@@ -104,6 +116,15 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
         <LoadingState label="Loading calls" />
       ) : calls.isError ? (
         <ErrorState title="Could not load calls" error={calls.error as ApiError} onRetry={() => void calls.refetch()} />
+      ) : rows.length === 0 && page > 0 ? (
+        <section className="message-panel">
+          <h2>No calls on this page.</h2>
+          <p>
+            <button type="button" className="action-button-small" onClick={() => goToPage(page - 1)}>
+              Newer
+            </button>
+          </p>
+        </section>
       ) : rows.length === 0 ? (
         filtered ? (
           <section className="message-panel">
@@ -154,10 +175,10 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
               Calls {page * PAGE + 1}–{page * PAGE + rows.length}
             </span>
             <span className="grow" />
-            <button type="button" className="action-button-small" disabled={page === 0} onClick={() => setPage(page - 1)}>
+            <button type="button" className="action-button-small" disabled={page === 0} onClick={() => goToPage(page - 1)}>
               Newer
             </button>
-            <button type="button" className="action-button-small" disabled={!hasOlder} onClick={() => setPage(page + 1)}>
+            <button type="button" className="action-button-small" disabled={!hasOlder} onClick={() => goToPage(page + 1)}>
               Older
             </button>
           </nav>
