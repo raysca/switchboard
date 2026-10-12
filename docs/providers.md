@@ -22,7 +22,7 @@ Provider secrets live in the server's environment and nowhere else. The server n
 
 A value must be a single token: surrounding whitespace is trimmed, and a value with inner whitespace or control characters, or one that starts with `$` (an unexpanded shell reference), counts as missing. This applies to optional variables too: a set but unusable `OPENAI_BASE_URL` makes OpenAI undetected (naming the variable) rather than sending the key to the default endpoint. `GOOGLE_APPLICATION_CREDENTIALS` must name a regular file holding a JSON object with `"type": "service_account"`; a user ADC file or any other JSON counts as missing.
 
-Self-hosted NVIDIA NIM and Riva endpoints are not supported in this release: `nvidia` always uses the hosted NIM (`integrate.api.nvidia.com`) and NVCF Riva endpoints, and `providers.nvidia.allow_private` is removed (a config that still sets it fails to load). They come back as catalog environment fields when needed. Variables are read when they are needed (agent readiness, `GET /providers`, and the start of each call), never cached; in practice you change them by editing the environment file and restarting.
+Self-hosted NVIDIA NIM and Riva endpoints are not supported in this release: `nvidia` always uses the hosted NIM (`integrate.api.nvidia.com`) and NVCF Riva endpoints, and `providers.nvidia.allow_private` is removed (a config that still sets it fails to load). They come back as catalog environment fields when needed. Variables are read when they are needed (flow readiness, `GET /providers`, and the start of each call), never cached; in practice you change them by editing the environment file and restarting.
 
 ## How the variables relate to the data files
 
@@ -37,7 +37,7 @@ environment variable ──▶ credentials[].fields ──▶ credentials[] kind
 2. **`assemble`** turns the fields into the one secret the adapter receives: `token` (a single value), `json` (an object of the fields) or `file_json` (the contents of the file the variable points at). The environment is read here, at use time.
 3. **A service's `credential` list** names the kinds that can serve it, in preference order. The service is `available` when any listed kind is usable (and `needs` fields are set, and the build has the adapter); the first usable kind wins. Google shows this: with only `GOOGLE_API_KEY` set, the LLM works and STT/TTS report `missing_env: [GOOGLE_APPLICATION_CREDENTIALS]`; with both set, the LLM uses the API key.
 4. **`models`, `voices`, `languages`** are what the dropdowns offer for that service once it is available. They never gate anything.
-5. **What is returned:** `GET /api/v1/providers` lists, per provider, `env` (every variable in its `fields`), `detected` (some kind is usable) and per service `available`, `missing_env` and the entries. Agents never name a variable or a kind; they name a provider.
+5. **What is returned:** `GET /api/v1/providers` lists, per provider, `env` (every variable in its `fields`), `detected` (some kind is usable) and per service `available`, `missing_env` and the entries. Flows never name a variable or a kind; they name a provider.
 
 Where to set the variables: `examples/.env` for `make dev` and the examples (see `examples/.env.example`, which lists them), the `EnvironmentFile` of `deploy/govoice.service` or the `env_file` of `deploy/docker-compose.yaml` in production. Nothing else reads a file of secrets.
 
@@ -68,7 +68,7 @@ services:
     custom: true            # default true: the UI also offers "Other..." free text
 ```
 
-A service may list `needs: [field]`: the service is available only when that optional field is set (NVIDIA STT needs `function_id`). `models`, `voices` and `languages` are guidance for the UI, not a gate: an agent that names a model or voice the catalog does not list still works.
+A service may list `needs: [field]`: the service is available only when that optional field is set (NVIDIA STT needs `function_id`). `models`, `voices` and `languages` are guidance for the UI, not a gate: a flow that names a model or voice the catalog does not list still works.
 
 ## Adding models, voices and languages: the overlay directory
 

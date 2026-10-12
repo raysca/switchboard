@@ -9,14 +9,14 @@ The MCP API is mounted under `/api/v1` behind the existing management bearer aut
 | `GET /api/v1/mcp-servers/{id}` | Read a server and its latest immutable discovery snapshot, if present. |
 | `POST /api/v1/mcp-servers/{id}/disable` | Reversibly disable assignment to new sessions while preserving the catalog and active captured sessions. |
 | `POST /api/v1/mcp-servers/{id}/enable` | Re-enable assignment; the server returns to `not_validated` and must be validated before required-tool readiness recovers. |
-| `DELETE /api/v1/mcp-servers/{id}` | Delete only when no current agent version or active captured session refers to the server; otherwise returns 409 with current agent/tool dependencies. |
-| `POST /api/v1/mcp-servers/{id}/detach-delete` | Requires `{"confirm":true}`. Publishes new agent versions without this server's selections and drains active sessions before deleting the live server row. |
+| `DELETE /api/v1/mcp-servers/{id}` | Delete only when no current flow version or active captured session refers to the server; otherwise returns 409 with current flow/tool dependencies. |
+| `POST /api/v1/mcp-servers/{id}/detach-delete` | Requires `{"confirm":true}`. Publishes new flow versions without this server's selections and drains active sessions before deleting the live server row. |
 | `POST /api/v1/mcp-servers/{id}/validate` | Connect, discover, validate schemas, and persist a new snapshot on success. |
 | `POST /api/v1/mcp-servers/{id}/tools/{tool}/test` | Execute a discovered tool outside a conversation. Body: `{"arguments":{...}}`. |
 
 The server DTO contains the `auth_env` variable name and `auth_env_set`, never the token. The `MCP_TOKEN_` prefix is checked again every time the token is read, so a row written outside the API with any other variable name never sends that variable's value. Endpoint query values are masked in responses. Validation and tool execution errors are bounded safe category messages and omit remote response details. Discovery results are sorted by remote tool name and include the canonical schema hash per tool plus the snapshot hash.
 
-Detach-and-delete preserves prior agent versions, discovery snapshots, session runtime metadata, and historical tool-call evidence. If no session is active the live server row is removed immediately; otherwise the response is `202` with `pending_deletion:true`, and the last session close completes deletion. Existing in-memory wrappers hold the bearer token captured at session start until the session ends. Rotating the token (change the `MCP_TOKEN_*` variable and restart) applies to new sessions; end active sessions when the old token must stop immediately.
+Detach-and-delete preserves prior flow versions, discovery snapshots, session runtime metadata, and historical tool-call evidence. If no session is active the live server row is removed immediately; otherwise the response is `202` with `pending_deletion:true`, and the last session close completes deletion. Existing in-memory wrappers hold the bearer token captured at session start until the session ends. Rotating the token (change the `MCP_TOKEN_*` variable and restart) applies to new sessions; end active sessions when the old token must stop immediately.
 
 Management body parsing is bounded by the shared 64 KiB API decoder. Tool arguments, schema, and result limits are independently enforced by the MCP service. A successful test returns `execution_id`, `mcp_server_id`, `tool_name`, `status`, `duration_ms` (integer milliseconds), and sanitized JSON in `result`.
 

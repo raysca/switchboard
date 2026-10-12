@@ -62,7 +62,7 @@ distinguish operational metadata from conversational content:
   metadata for operational debugging.
 - **Deletion invariants:**
   Active and draining sessions (`status IN ('active', 'draining')`), current
-  and historical agent versions, and MCP discoveries are never deleted by
+  and historical flow versions, and MCP discoveries are never deleted by
   retention jobs.
 - **Batch bounded execution:**
   Purges execute in bounded batches (e.g. 500 records) to avoid database
@@ -72,15 +72,15 @@ distinguish operational metadata from conversational content:
 
 Off by default. A call is recorded only when **both** the server enables it
 (`recording.enabled`, with `recording.dir` and `recording.retention_days > 0`)
-**and** the agent opts in (`recording: {enabled, disclosure_confirmed}` in its
-config). `enabled` without `disclosure_confirmed` makes the agent report
+**and** the flow opts in (`recording: {enabled, disclosure_confirmed}` in its
+config). `enabled` without `disclosure_confirmed` makes the flow report
 `recording_disclosure_unconfirmed` and refuse calls: the operator must confirm
 callers are told they are recorded. The decision is made once at call start
-from the agent version the call pins; turning recording off affects new calls,
+from the flow version the call pins; turning recording off affects new calls,
 not calls already in progress.
 
-- **What is stored:** `<agentid>-<sessionid>-<unix>.wav` (stereo 16-bit PCM,
-  L = caller, R = bot) and a `.json` sidecar (session/agent/call ids, start/end,
+- **What is stored:** `<flowid>-<sessionid>-<unix>.wav` (stereo 16-bit PCM,
+  L = caller, R = bot) and a `.json` sidecar (session, flow (field `agent_id`) and call ids, start/end,
   format, and the user/assistant transcript turns, each capped at 4 KiB; an
   assistant turn cut off by barge-in holds only the heard prefix and is marked
   `interrupted`). File names contain ids only, never names or phone numbers. The caller audio and
@@ -115,13 +115,13 @@ is masked at the sinks by default (see Sink redaction): stored turn history,
 recording sidecar and OTel content become `DTMF: [REDACTED:dtmf 4]`. The
 client's `user-transcription` still carries the digits. A recording's caller
 track contains the tones themselves, which are decodable: disable recording
-or do not enable DTMF for agents that collect payment data. `send_dtmf` digits
+or do not enable DTMF for flows that collect payment data. `send_dtmf` digits
 are tool arguments (content). The `dtmf.detected` debug event and logs never
 carry digits.
 
 ## Context summarization
 
-Agents may set `context.summarization.enabled` (default off). When the call history passes `trigger_tokens` (or three quarters of `max_messages`), the older turns (caller speech, assistant replies, tool results) are sent to the agent's primary LLM provider, with the agent's own credential and model, to be replaced by one short summary in the call's in-memory history. Fallback providers are never asked to summarize (on failover they receive the history, including any summary, like any turn). The summary is stored as a user-role message labelled as background context, never shown or recorded as caller speech, and the transcript is sent as delimited, untrusted data. The summary is derived content: it exists only in the call's history, is covered by the same content retention rules as the turns it replaces, is never added to traces or debug events (only outcome counts, a bounded failure reason and token estimates are exported), and a failed or cancelled summary leaves the history untouched.
+Flows may set `context.summarization.enabled` (default off). When the call history passes `trigger_tokens` (or three quarters of `max_messages`), the older turns (caller speech, assistant replies, tool results) are sent to the flow's primary LLM provider, with the flow's own credential and model, to be replaced by one short summary in the call's in-memory history. Fallback providers are never asked to summarize (on failover they receive the history, including any summary, like any turn). The summary is stored as a user-role message labelled as background context, never shown or recorded as caller speech, and the transcript is sent as delimited, untrusted data. The summary is derived content: it exists only in the call's history, is covered by the same content retention rules as the turns it replaces, is never added to traces or debug events (only outcome counts, a bounded failure reason and token estimates are exported), and a failed or cancelled summary leaves the history untouched.
 
 ## Sink redaction
 
@@ -162,7 +162,7 @@ privacy:
   tones remain); the summarizer input; content already stored before the
   policy was enabled. With only the default DTMF masking, an assistant reply
   that reads the keyed digits back ("you entered 1234") is stored as-is:
-  enable the text rules (`pin`) or instruct the agent not to repeat them.
+  enable the text rules (`pin`) or instruct the flow not to repeat them.
 - **Limits (precision over recall):** rules are regular expressions, not
   understanding. Not caught: numbers spoken as tens/hundreds ("forty one
   eleven"), numbers broken up by other words, digits spoken in other

@@ -8,7 +8,7 @@ audio:
   denoise_strength: 0.5      # 0..1, 0 = default (0.5)
 ```
 
-Server-wide only. Per-agent filter settings are left for later.
+Server-wide only. Per-flow filter settings are left for later.
 
 ## Pipeline order
 
@@ -96,9 +96,9 @@ Cost and limits:
 - A one-shot also starts with that 5 ms blend. A one-shot (`loop: false`) ends in silence and the writer stops emitting.
 - An ambience write failure ends the connection like any slow-client error.
 
-## Handoff cues (graph agents)
+## Route cues
 
-A graph agent can play a sound while the call is between agents, so the caller never hears dead air. Sounds are operator files named under `audio.cues` (PCM16 mono WAV, resampled once at startup):
+A flow with steps can play a sound while the call is between steps, so the caller never hears dead air. Sounds are operator files named under `audio.cues` (PCM16 mono WAV, resampled once at startup):
 
 ```yaml
 audio:
@@ -106,7 +106,7 @@ audio:
     chime:
       file: /etc/govoice/chime.wav
       gain_db: -20   # -60..0, default -20
-      loop: false    # default true; a one-shot chime vs a bed that loops until the new agent speaks
+      loop: false    # default true; a one-shot chime vs a bed that loops until the new step speaks
 ```
 
-The agent picks one with `handoff_cue: {name: chime, after_ms: 300}` in its graph config. The cue starts only if the gap after the old agent's last audio outlasts `after_ms` (default 300), so quick handoffs stay silent. It fades out (30 ms) on the new agent's first audio, when the caller speaks, if the handoff fails, or after 10 s. Cue frames are non-speech, uninterruptible output like the background: recordings and heard-text ignore them. The timeline records `cue_start` and `cue_stop` (with the reason). An unknown cue name logs a warning and the call runs without a cue. At most 8 cues; names match `[a-z0-9_-]{1,32}`.
+The flow picks one with `route_cue: {name: chime, after_ms: 300}` in its config. The cue starts only if the gap after the old step's last audio outlasts `after_ms` (default 300), so quick routes stay silent. It fades out (30 ms) on the new step's first audio, when the caller speaks, if the route fails, or after 10 s. Cue frames are non-speech, uninterruptible output like the background: recordings and heard-text ignore them. The timeline records `cue_start` and `cue_stop` (with the reason). An unknown cue name logs a warning and the call runs without a cue. At most 8 cues; names match `[a-z0-9_-]{1,32}`.
