@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
+import { StepAdvanced } from "./StepAdvanced";
 import {
   MAX_NODES,
   addDraftRoute,
@@ -273,7 +274,7 @@ export function StepPanel(props: StepPanelProps) {
             </fieldset>
           ))}
 
-        {tab === "advanced" && <p className="subtext">Fallbacks and tuning.</p>}
+        {tab === "advanced" && <StepAdvanced graph={graph} step={step} providers={providers} onChange={onChange} />}
       </div>
     </SidePanel>
   );
