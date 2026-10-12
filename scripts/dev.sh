@@ -12,6 +12,11 @@
 # server), plus dev.env with the generated management key, token secret, ports and
 # dev agent id. Delete the directory to start over.
 # Ports: PUBLIC_PORT (8080), ADMIN_PORT (9090), UI_PORT (5173), CLIENT_PORT (3000).
+#   public = the voice WebSocket and /health; admin = management API, metrics and debug, kept off the
+#   public listener on purpose; UI = the vite dev server (it proxies /api and /ws); CLIENT = only
+#   `make example-web`. dev.env remembers the last public and admin ports.
+# A second `make dev` from the same checkout stops the first one (and its server and vite) before it
+# starts. A port held by anything else is never killed: the error names the process instead.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,6 +27,45 @@ cd "$ROOT"
 die() { echo "dev: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required ($2)"; }
 port_free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+port_holder() { lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {printf "%s (pid %s)", $1, $2}'; }
+any_alive() { local p; for p in "$@"; do kill -0 "$p" 2>/dev/null && return 0; done; return 1; }
+
+# Pids of a dev stack started from this checkout: the dev.sh that owns it, its server and its
+# vite. Matched by command line AND working directory, so another checkout's stack is left alone.
+# This script, its subshells and the make that started it are never matched.
+own_stack_pids() {
+  local pid ppid cmd cwd
+  while read -r pid ppid cmd; do
+    [[ "$pid" != "$$" && "$ppid" != "$$" && "$pid" != "$PPID" ]] || continue
+    case "$cmd" in
+      *"scripts/dev.sh up"*|*"bin/server -config $DEV_DIR/server.yaml"*|*"vite/bin/vite.js ui --host"*) ;;
+      *) continue ;;
+    esac
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
+    [[ "$cwd" == "$ROOT" ]] && echo "$pid"
+  done < <(ps -axo pid=,ppid=,command=)
+  return 0
+}
+
+# A second `make dev` replaces the first instead of failing on its ports. dev.sh traps TERM and
+# stops its own server and vite; anything still alive after a few seconds is killed.
+stop_previous_stack() {
+  local pids
+  pids="$(own_stack_pids | sort -un | tr '\n' ' ')"
+  [[ -n "${pids// }" ]] || return 0
+  echo "dev: stopping the previous dev stack (pids ${pids% })"
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null || true
+  local _
+  for _ in $(seq 1 30); do
+    # shellcheck disable=SC2086
+    any_alive $pids || return 0
+    sleep 0.2
+  done
+  # shellcheck disable=SC2086
+  kill -9 $pids 2>/dev/null || true
+  sleep 0.3
+}
 set_env() { # <name> <value>: write or replace one line in dev.env (kept 0600)
   (umask 077
    grep -v "^$1=" "$DEV_ENV" > "$DEV_ENV.tmp" 2>/dev/null || true
@@ -71,8 +115,9 @@ cleanup() {
 cmd_up() {
   need go "https://go.dev/dl"; need node "Node 20+"; need curl "health checks"
   PUBLIC_PORT_OVERRIDE="${PUBLIC_PORT:-}" ADMIN_PORT_OVERRIDE="${ADMIN_PORT:-}" load_env
+  stop_previous_stack
   for p in "$PUBLIC_PORT" "$ADMIN_PORT" "$UI_PORT"; do
-    port_free "$p" || die "port $p is in use; pick others, e.g. PUBLIC_PORT=18080 ADMIN_PORT=19090 UI_PORT=15173 make dev"
+    port_free "$p" || die "port $p is in use by $(port_holder "$p"), which is not a dev stack from this checkout; stop it or pick others, e.g. PUBLIC_PORT=18080 ADMIN_PORT=19090 UI_PORT=15173 make dev"
   done
   set_env PUBLIC_PORT "$PUBLIC_PORT"; set_env ADMIN_PORT "$ADMIN_PORT"
 
@@ -83,7 +128,7 @@ cmd_up() {
       config/development.yaml > "$DEV_DIR/server.yaml"
 
   trap cleanup EXIT
-  trap 'cleanup; exit 0' INT TERM # Ctrl-C is the normal way to stop
+  trap 'cleanup; exit 0' INT TERM HUP # Ctrl-C is the normal way to stop; HUP is a closed terminal
   GOVOICE_DEV_DIR="$DEV_DIR" spawn server ./bin/server -config "$DEV_DIR/server.yaml"
   for _ in $(seq 1 100); do server_up && break; kill -0 "${PIDS[0]}" 2>/dev/null || die "server exited (see [server] output)"; sleep 0.2; done
   server_up || die "server did not become ready"

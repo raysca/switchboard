@@ -40,8 +40,10 @@ the dev server reads as its environment; nothing is stored. If any provider is s
 the examples call, and a two-agent "Dealership desk" graph (front desk hands buyers
 to sales) for trying handoffs on the agent's call stage. The management key
 for the admin UI is in `.govoice-dev/dev.env`. Ports default to 8080 (public),
-9090 (admin), 5173 (UI) and 3000 (web client); if one is taken, run e.g.
-`PUBLIC_PORT=18080 ADMIN_PORT=19090 make dev` (the examples follow).
+9090 (admin), 5173 (UI) and 3000 (web client). Running `make dev` again stops the
+previous dev stack from the same checkout first. If another program holds a port,
+the error names it; pick others with e.g. `PUBLIC_PORT=18080 ADMIN_PORT=19090 make dev`
+(the examples follow).
 
 The steps below do the same by hand.
 
