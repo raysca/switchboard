@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func publicAdminServer(t *testing.T, mods ...func(*Config)) *Server {
@@ -88,5 +89,41 @@ func TestServerConfigReportsTheClientAddressTheServerSees(t *testing.T) {
 	s.publicMux.ServeHTTP(w, r)
 	if !strings.Contains(w.Body.String(), `"client_ip":"203.0.113.50"`) || !strings.Contains(w.Body.String(), `"secure":true`) {
 		t.Fatalf("%s", w.Body.String())
+	}
+}
+func TestUIIsMountedWithoutShadowingTheAPIOrTheSocket(t *testing.T) {
+	s := publicAdminServer(t)
+	// This test binary embeds only the placeholder: "/" says so, and the real routes still win.
+	if w := publicRequest(s, http.MethodGet, "/", ""); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "not built") {
+		t.Fatalf("/: %d %q", w.Code, w.Body.String())
+	}
+	if w := publicRequest(s, http.MethodGet, "/api/v1/server-config", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("/api/v1 must reach the management handler, got %d", w.Code)
+	}
+	if w := publicRequest(s, http.MethodGet, "/ws", ""); w.Code == http.StatusNotFound {
+		t.Fatalf("/ws must reach the socket handler, got %d", w.Code)
+	}
+	if w := publicRequest(s, http.MethodGet, "/health", ""); w.Code != http.StatusOK {
+		t.Fatalf("/health: %d", w.Code)
+	}
+}
+func TestAFallingBackUIDoesNotAnswerForServerPaths(t *testing.T) {
+	prev := adminUIFS
+	adminUIFS = fstest.MapFS{"index.html": {Data: []byte(`<div id="root"></div>`)}}
+	t.Cleanup(func() { adminUIFS = prev })
+	s := publicAdminServer(t)
+	for _, p := range []string{"/metrics", "/ready", "/debug/timeline", "/api/other"} {
+		if w := publicRequest(s, http.MethodGet, p, testMgmtKey); w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), `id="root"`) {
+			t.Errorf("%s: %d %q (must be a plain 404, not the UI)", p, w.Code, w.Body.String())
+		}
+	}
+	if w := publicRequest(s, http.MethodGet, "/flows/abc", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `id="root"`) {
+		t.Fatalf("a client route must get the UI: %d", w.Code)
+	}
+	if w := publicRequest(s, http.MethodGet, "/assets/gone.js", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("a missing asset must 404: %d", w.Code)
+	}
+	if w := publicRequest(s, http.MethodGet, "/api/v1/server-config", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("/api/v1 must still reach the management handler: %d", w.Code)
 	}
 }
