@@ -1,6 +1,7 @@
 package server
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -15,7 +16,7 @@ func TestCloudRunConfigLoadsInProduction(t *testing.T) {
 	if cfg.Profile != ProfileProduction || cfg.Storage.Dialect != "sqlite" {
 		t.Fatalf("profile=%s dialect=%s", cfg.Profile, cfg.Storage.Dialect)
 	}
-	if !cfg.PublicAdmin.Enabled || !cfg.OriginAllowSameHost || !cfg.TLS.TrustedProxyMode || len(cfg.TLS.TrustedProxies) == 0 {
+	if !cfg.PublicAdmin.Enabled || !cfg.OriginAllowSameHost || !cfg.TLS.TrustedProxyMode || !slices.Equal(cfg.TLS.TrustedProxies, []string{"169.254.0.0/16"}) {
 		t.Fatalf("one-port settings missing: %+v", cfg.PublicAdmin)
 	}
 	if cfg.PublicListenAddr != "0.0.0.0:8080" || cfg.ProbeListenAddr != "" || cfg.AdminListenAddr != "127.0.0.1:9090" {

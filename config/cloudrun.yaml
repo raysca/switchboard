@@ -1,6 +1,6 @@
 # Cloud Run: ONE service, ONE public port (8080). The management API and the admin UI are served
 # on it behind the management key (public_admin). One instance, SQLite on the instance's memory
-# disk: the demo is rebuilt by demo.auto_install on every start. See docs/deploy/cloudrun.md.
+# disk: the demo is rebuilt by demo.auto_install on every start.
 profile: production
 
 public_listen_addr: "0.0.0.0:8080"
@@ -14,16 +14,11 @@ tls:
   cert_file: ""
   key_file: ""
   trusted_proxy_mode: true
-  # Cloud Run's front end is the only peer the container ever sees. Its addresses are not documented;
-  # 169.254.0.0/16 is what the first deploy shows, and the docker bridge (172.16.0.0/12) lets the
-  # local rehearsal (deploy/rehearsal) use the same file. The deploy smoke check
-  # (deploy/smoke-cloudrun.sh) compares client_ip from GET /api/v1/server-config on every deploy.
-  # Do not attach VPC/direct-VPC ingress while 172.16.0.0/12 is trusted.
+  # Cloud Run's front end is the only peer the container sees. Verify the real peer against
+  # GET /api/v1/server-config client_ip after the first deploy, and do not attach VPC ingress
+  # without re-checking trusted_proxies.
   trusted_proxies:
     - "169.254.0.0/16"
-    - "172.16.0.0/12"
-    - "127.0.0.1/32"
-    - "::1/128"
 
 # The page is served by this service, so the browser's own origin is allowed without listing it.
 # origin_allowlist is empty on purpose: an empty allowlist keeps AllowMissingOrigin true so
