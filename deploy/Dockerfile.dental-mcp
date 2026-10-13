@@ -5,6 +5,7 @@ COPY go.work go.work.sum go.mod go.sum ./
 COPY core/go.mod ./core/
 COPY providers/cartesia/go.mod providers/cartesia/go.sum* ./providers/cartesia/
 COPY providers/deepgram/go.mod providers/deepgram/go.sum* ./providers/deepgram/
+COPY providers/echo/go.mod providers/echo/go.sum* ./providers/echo/
 COPY providers/elevenlabs/go.mod providers/elevenlabs/go.sum* ./providers/elevenlabs/
 COPY providers/google/go.mod providers/google/go.sum* ./providers/google/
 COPY providers/nvidia/go.mod providers/nvidia/go.sum* ./providers/nvidia/

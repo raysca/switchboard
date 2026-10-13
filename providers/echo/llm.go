@@ -96,7 +96,9 @@ func (c *LLMClient) pieces(history []core.Message) []string {
 	var out []string
 	for _, p := range parts {
 		if c.o.Figures.WordChunks {
-			out = append(out, splitWords(p)...)
+			for _, w := range splitWords(p) {
+				out = append(out, capPiece(w)...) // a long unbroken word is still cut
+			}
 		} else {
 			out = append(out, capPiece(p)...)
 		}

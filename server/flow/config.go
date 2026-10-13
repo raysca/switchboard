@@ -94,7 +94,7 @@ const maxSummaryPromptBytes = 2 << 10
 
 // SummarizingProviders are the LLM providers whose adapters implement text
 // completion for summaries.
-var SummarizingProviders = map[string]bool{"google": true, "nvidia": true, "openai": true, "xai": true}
+var SummarizingProviders = map[string]bool{"google": true, "echo": true, "nvidia": true, "openai": true, "xai": true}
 
 // DefaultSummaryTrigger is the trigger when none is set: three quarters of maxTokens.
 func DefaultSummaryTrigger(maxTokens int) int { return maxTokens * 3 / 4 }

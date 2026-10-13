@@ -38,6 +38,8 @@ func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
 	switch provider {
 	case "google":
 		return r.googleTTSBreaker
+	case "echo":
+		return r.echoTTSBreaker
 	case "xai":
 		return r.xaiTTSBreaker
 	case "cartesia":

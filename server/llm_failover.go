@@ -71,6 +71,8 @@ func (r *Registry) llmBreaker(spec StageSpec) *resilience.Breaker {
 	switch spec.Provider {
 	case "google":
 		return r.googleLLMBreaker
+	case "echo":
+		return r.echoLLMBreaker
 	case "xai":
 		return r.xaiLLMBreaker
 	case "nvidia":

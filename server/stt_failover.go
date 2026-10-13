@@ -57,6 +57,8 @@ func (r *Registry) sttBreaker(provider string) *resilience.Breaker {
 	switch provider {
 	case "google":
 		return r.googleSTTBreaker
+	case "echo":
+		return r.echoSTTBreaker
 	case "xai":
 		return r.xaiSTTBreaker
 	case "deepgram":

@@ -45,7 +45,7 @@ ort: ## build|Download the pinned ONNX Runtime for this OS/arch into third_party
 	@scripts/fetch-ort.sh fetch
 
 # Every module in go.work (root also covers vad, smartturn, transport, tools/*, cmd, examples).
-MODULES := . core providers/cartesia providers/deepgram providers/elevenlabs providers/google providers/nvidia providers/openai providers/xai server
+MODULES := . core providers/cartesia providers/deepgram providers/echo providers/elevenlabs providers/google providers/nvidia providers/openai providers/xai server
 
 test: build ## build|Vet (with and without xaispeech) + race-test every module with -tags xaispeech (about 3 min)
 	@failed=""; for m in $(MODULES); do \

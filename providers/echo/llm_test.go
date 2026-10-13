@@ -275,3 +275,18 @@ func TestEchoCallIDsAreUniqueAcrossClients(t *testing.T) {
 		t.Fatalf("call ids %q and %q must differ across clients", a, b)
 	}
 }
+
+func TestEchoNeverStreamsOneHugeWord(t *testing.T) {
+	long := strings.Repeat("x", 5000) // typed text with no spaces, in the word-streaming mimic
+	c := NewLLMClient(LLMOptions{Figures: LLMFigures{WordChunks: true}})
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(long))
+	deltas, joined := text(collect(t, ch, errs))
+	if joined != "You said: "+long {
+		t.Fatal("pieces must concatenate back to the reply")
+	}
+	for _, d := range deltas {
+		if len([]rune(d)) > maxPiece {
+			t.Fatalf("a piece of %d runes", len([]rune(d)))
+		}
+	}
+}

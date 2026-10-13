@@ -1,6 +1,7 @@
 package server
 
 import (
+	"slices"
 	"os"
 	"reflect"
 	"regexp"
@@ -268,5 +269,44 @@ func TestRehearsalConfigOnlyDiffersWhereItMust(t *testing.T) {
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", strings.Repeat("m", 40))
 	if _, err := LoadConfig("../deploy/rehearsal/server.yaml"); err != nil {
 		t.Fatalf("rehearsal config does not load: %v", err)
+	}
+}
+
+// A module added to go.work must be copied into both images before `go work sync`, or the image
+// does not build; and it must be in the Makefile's MODULES, or `make verify` never tests it.
+func TestEveryWorkspaceModuleIsInTheImagesAndTheGate(t *testing.T) {
+	work, err := os.ReadFile("../go.work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var modules []string
+	for _, m := range regexp.MustCompile(`(?m)^\s+\./(\S+)\s*$`).FindAllStringSubmatch(string(work), -1) {
+		modules = append(modules, m[1])
+	}
+	if len(modules) < 5 {
+		t.Fatalf("parsed go.work modules %v", modules)
+	}
+	read := func(path string) string {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	mk := read("../Makefile")
+	line := regexp.MustCompile(`(?m)^MODULES\s*:=\s*(.*)$`).FindStringSubmatch(mk)
+	if line == nil {
+		t.Fatal("Makefile has no MODULES line")
+	}
+	gate := strings.Fields(line[1])
+	for _, m := range modules {
+		if !slices.Contains(gate, m) {
+			t.Errorf("go.work module %s is missing from Makefile MODULES (make verify would not test it)", m)
+		}
+		for _, df := range []string{"../deploy/Dockerfile", "../deploy/Dockerfile.dental-mcp"} {
+			if !strings.Contains(read(df), "COPY "+m+"/go.mod") {
+				t.Errorf("%s does not COPY %s/go.mod before go work sync", df, m)
+			}
+		}
 	}
 }

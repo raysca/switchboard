@@ -100,7 +100,7 @@ An entry with an existing `id` replaces it, a new one is appended, and an overla
 | `stt` | `text` | `audio` turns voiced audio into placeholder words |
 | `audible` | `false` | speak a quiet 220 Hz tone instead of silence |
 | `label_replies` | `false` | prefix each reply with the step's prompt, so a test can tell which step answered |
-| `llm_extra_delay` | `0` | added to every reply piece (the perf-gate self-test uses it) |
+| `llm_extra_delay` | `0` | added between reply pieces, after the first (the perf-gate self-test uses it) |
 
 - **Failure injection.** A step whose TTS voice is `brokenvoice` cannot be built, which the end-to-end suites use to fail a handoff. Stage-level failure injection for core tests lives in `core/testdoubles.go`, not here.
 
