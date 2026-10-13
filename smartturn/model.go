@@ -82,6 +82,15 @@ func NewRunner(modelPath string, intraOp int) (*Runner, error) {
 	opts.SetIntraOpNumThreads(max(intraOp, 1))
 	opts.SetInterOpNumThreads(1)
 	opts.SetExecutionMode(ort.ExecutionModeSequential)
+	// The model is u8s8 QDQ. On x64 CPUs whose int8 kernel is AVX2 VPMADDUBSW
+	// (no VNNI: e.g. AMD EPYC Zen 2/3, Haswell..Skylake) the int16 pair sums
+	// saturate and the output is garbage: noise scored 0.90 and the golden clip
+	// 0.97 against the reference 0.37 and 0.20. ORT's x64 precision mode turns
+	// the s8 weights into u8 and runs exact u8u8 kernels instead; other
+	// architectures ignore it.
+	if err := opts.AddSessionConfigEntry("session.x64quantprecision", "1"); err != nil {
+		return nil, fmt.Errorf("smartturn: set x64 quant precision: %w", err)
+	}
 	in, err := ort.NewEmptyTensor[float32](ort.NewShape(1, nMels, NumFrames))
 	if err != nil {
 		return nil, err
