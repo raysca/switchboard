@@ -8,6 +8,8 @@
 
 **Tech Stack:** Go (new module `providers/echo`; core, providers/google, server, tools, transport), YAML catalog, Playwright e2e (TypeScript), shell harnesses.
 
+**Base:** reconciled with `main` at c6e858a (one-port server, end_call tool, transfer notes, dentistry demo, Cloud Run deploy). Echo must carry the new `end_call` phrase, and the new one-port and dentistry e2e stacks move to echo with the rest.
+
 **Spec:** Decisions taken with the user in this session (no separate spec file): echo is **always built and always detected** (no env gate, no tag); knobs live in **server config plus catalog presets**; the build tag is **replaced everywhere**; echo **mimics Google with all its settings, as realistically as possible**; it is **its own provider module that behaves identically to the real ones**, so tests and the UI cannot tell the difference; the core fake doubles are **retired in the same plan**. `tools/provtest` (fault-injection fakes for resilience tests) is out of scope and stays. Measured Google behaviour comes from `docs/benchmarks/first-audio-latency.md` and `docs/benchmarks/agent-matrix.md`. Project rules: `AGENTS.md` (core agnostic of server concerns, every feature consumed by the server, bounded queues, supervised goroutines, `go test -race`).
 
 ## What echo imitates (from the repo's own measurements)
@@ -401,7 +403,7 @@ func TestGoogleFactoriesAreUntouched(t *testing.T)             // google.* still
 func TestEchoTTSChoosesStreamingLikeGoogle(t *testing.T)       // Chirp3-HD voice -> *google.StreamingTTSProcessor; other voice -> *google.TTSProcessor; providers.google_tts.disable_streaming -> unary
 func TestEchoTTSUsesTheGoogleSampleRate(t *testing.T)          // providers.google_tts.sample_rate 16000 -> frames at 16000
 func TestEchoBrokenVoiceFailsToBuild(t *testing.T)             // "brokenvoice" -> error, as the old fake
-func TestEchoLLMWiresTransferAndMCPPhrases(t *testing.T)       // spec.Tools with transfer_to_sales and an mcp__ tool: phrases "transfer to sales", "call tool lookup_order" (the old TestFakeLLMPhrasesForMCPTools, untagged)
+func TestEchoLLMWiresTransferAndMCPPhrases(t *testing.T)       // spec.Tools with transfer_to_sales, end_call and an mcp__ tool: phrases "transfer to sales", "end the call" (-> endCallName), "call tool lookup_order" (the old TestFakeLLMPhrasesForMCPTools, untagged)
 func TestEchoFactoriesLabelEverythingEcho(t *testing.T)        // a built processor's frames report Provider "echo"
 func TestEchoMimicSelectsFigures(t *testing.T)                 // mimic instant: figures all zero; google: chirp_2 final delay 1200ms
 func TestEchoConfigDefaultsAndValidation(t *testing.T)         // defaults google/text; mimic "x", stt "y", negative extra delay are errors naming the field
@@ -451,6 +453,8 @@ func registerEcho(r *Registry) {
 		for _, d := range spec.Tools {
 			if step, ok := strings.CutPrefix(d.Name, "transfer_to_"); ok {
 				o.Phrases["transfer to "+strings.ReplaceAll(step, "_", " ")] = d.Name
+			} else if d.Name == endCallName {
+				o.Phrases["end the call"] = endCallName // a step with the end_call tool hangs up after its goodbye
 			}
 		}
 		phrases, spoken := mcpToolPhrases(spec.Tools)
@@ -532,13 +536,14 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ### Task 8: Every harness uses echo
 
 **Files:**
-- Modify: `tools/loadtest/server.go`, `tools/loadtest/main.go`, `tools/loadtest/loadtest_test.go`, `tools/livecheck/server.go`, `tools/livecheck/main.go`, `tools/livecheck/profiles.yaml`, `tools/livecheck/profiles.go`, `tools/livecheck/profiles_test.go`, `tools/eval/pipecat/run.sh`, `scripts/perf-gate.sh`, `deploy/docker-compose.perf.yaml`, `config/perf.yaml`, `e2e/global-setup-flows.ts`, `e2e/lib/flows-stack.ts`, `e2e/lib/flows-helpers.ts`, `e2e/tests-flows/*.spec.ts` (comments and the broken-voice name only), `docs/benchmarks/capacity.md`
+- Modify: `tools/loadtest/server.go`, `tools/loadtest/main.go`, `tools/loadtest/loadtest_test.go`, `tools/livecheck/server.go`, `tools/livecheck/main.go`, `tools/livecheck/profiles.yaml`, `tools/livecheck/profiles.go`, `tools/livecheck/profiles_test.go`, `tools/eval/pipecat/run.sh`, `scripts/perf-gate.sh`, `deploy/docker-compose.perf.yaml`, `config/perf.yaml`, `e2e/global-setup-flows.ts`, `e2e/global-setup-oneport.ts`, `e2e/lib/flows-stack.ts`, `e2e/lib/flows-helpers.ts`, `e2e/lib/dental-helpers.ts`, `e2e/tests-flows/*.spec.ts` (comments, the broken-voice name, and `60-dental.spec.ts` where it names the provider), `scripts/run-container-perf.sh`, `deploy/docker-compose.perf.yaml`, `e2e/README.md`, `docs/benchmarks/capacity.md`, `docs/benchmarks/README.md`, `docs/decisions/pipecat-evals.md`, `docs/pipecat-parity-matrix.md`, `reports/README.md`
 
 - [ ] **Step 1: loadtest.** The server child is built without `-tags` (`./cmd/server`); its generated config gains `providers: {echo: {mimic: instant, stt: audio}}`; delete the placeholder `GOOGLE_*` variables, `GOVOICE_FAKE_STT` and `sa.json`; the flows it creates use `"provider": "echo"`. Add `-llm-delay` (duration, default 0) that writes `providers.echo.llm_extra_delay`. Check the synthetic audio is "voiced" for the instant profile (`VoicedThreshold 0` counts every frame): it must still yield transcripts. Update `loadtest_test.go` and its comments.
 - [ ] **Step 2: perf gate.** `scripts/perf-gate.sh` self-test: `( export GOVOICE_FAKE_LLM_DELAY=100ms; expect 1 load-injected load -compare "$LB" )` becomes `expect 1 load-injected load -llm-delay 100ms -compare "$LB"`. `deploy/docker-compose.perf.yaml`: delete `GOVOICE_FAKE_STT=audio`; `config/perf.yaml`: add `providers.echo: {mimic: instant, stt: audio}` (merge with any existing `providers:` block) and use `echo` in whatever creates its flows.
 - [ ] **Step 3: livecheck.** The `fake` profile becomes the `echo` profile: stages `stt {provider: echo, model: chirp_2, language: en-US}`, `llm {provider: echo, model: gemini-2.5-flash}`, `tts {provider: echo, voice: en-US-Chirp3-HD-Aoede}`, no `build_tags`; remove the `profiles.go` rule that a fake profile must list the tag; the `sp.fake` branch of `server.go` writes the echo config (instant, audio) instead of placeholders and environment; drop `GOVOICE_FAKE_LLM_DELAY` from its pass-through list; update `profiles_test.go` (`tagUnion`) and the strings that mention the tag.
 - [ ] **Step 4: pipecat eval.** `run.sh`: `go build -o "$OUT/server-fake" ./cmd/server`, delete the `GOOGLE_*` placeholders and `sa.json`, write the server config with `providers.echo` (instant, audio), create the flow with `"provider":"echo"`.
 - [ ] **Step 5: browser e2e.** `global-setup-flows.ts`: build with `xaispeech` only for both modes; in fake mode `providerEnv = {}` and the server config string gains `providers: { echo: { mimic: instant, label_replies: true } }`; delete the `GOOGLE_*`, `sa.json` and `GOVOICE_FAKE_LLM_LABEL` lines. `flows-stack.ts`: `PROVIDER = LIVE ? "xai" : "echo"`. `10-providers.spec.ts` ("only the suite's provider is available") now sees `echo` and needs no change. Reword the "fake provider" comments.
+- [ ] **Step 5b: The one-port and dentistry stacks (new on main).** `e2e/global-setup-oneport.ts`: build with `xaispeech` only (no `fakeproviders`), delete the `GOOGLE_*`, `sa.json` and `GOVOICE_FAKE_LLM_LABEL` lines, add `providers: { echo: { mimic: instant, label_replies: true } }` to the config it templates, keep the placeholder `XAI_API_KEY` and `ELEVENLABS_API_KEY` (the dentistry demo installer needs xai and elevenlabs detected to create its flow; nothing builds them because the helper below rewrites every stage). `e2e/lib/dental-helpers.ts`: every stage `provider: "echo"` (model `gemini-2.5-flash`-style ids are free text; keep `fake-llm`/`v` or use the catalog defaults). `e2e/lib/stack-proc.ts` has no provider logic; `10-providers.spec.ts` keeps its `demoOnly = ["xai","elevenlabs"]` tolerance, and `available` minus those must now equal `["echo"]`. `deploy/docker-compose.perf.yaml` loses `BUILD_TAGS: fakeproviders` and the header text; `scripts/run-container-perf.sh` loses the "-tags fakeproviders" wording (the image builds the normal binary and the compose config sets `providers.echo`). Cloud Run and rehearsal configs (`config/cloudrun.yaml`, `deploy/rehearsal/server.yaml`) are real-provider configs: leave them, and confirm with `rg` that they carry no echo setting.
 - [ ] **Step 6: Run every gate.**
 
 ```bash
@@ -548,6 +553,7 @@ make e2e-fake
 make live-check-selftest
 make perf-gate-selftest
 make eval-pipecat
+make e2e-oneport
 ```
 
 Expected: each passes. If `make perf-gate` is also run and a latency row moves, find out why (the real processors add per-unit work: `splitUnit`, retry wrappers, tracing) before touching a baseline; a deliberate re-baseline (`make perf-baseline`) is allowed only with the old and new numbers written into `docs/benchmarks/baseline.md` and the reason.
