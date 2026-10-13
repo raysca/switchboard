@@ -3,9 +3,10 @@
 # enforced by the harness (-max-calls per step; the step caps sum to 56 of the 60).
 name: live-critical-paths
 
+# The nightly schedule (cron "17 3 * * *") is switched off: the repository had no remote or live-providers
+# secrets, and a scheduled run spends real credit. Run it by hand (Actions -> live-critical-paths -> Run workflow),
+# or restore the `schedule:` trigger once the secrets exist and a nightly spend is wanted.
 on:
-  schedule:
-    - cron: "17 3 * * *"
   workflow_dispatch:
 
 concurrency:

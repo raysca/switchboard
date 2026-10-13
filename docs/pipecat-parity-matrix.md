@@ -171,7 +171,7 @@ Collected from the goalpulse record and re-checked against the code (G5 re-verif
 
 Core library and server, transports aside. Re-ranked on 2026-10-10: live tests first, then the Pipecat gaps a caller notices, then library parity. Live-provider evidence comes from automated tests on critical paths, not manual runs or a long soak.
 
-1. **Automated live tests on critical paths.** `.github/workflows/live.yml` runs nightly and on dispatch: `google` and `xai`, each S1, S11 push-to-talk, S12 server-side mute and S13 LLM failover, capped at 60 provider calls per run (`docs/benchmarks/README.md`). The repository needs a GitHub remote and the `live-providers` secrets before it can run. Still open:
+1. **Automated live tests on critical paths.** `.github/workflows/live.yml` runs on dispatch (the nightly schedule is switched off): `google` and `xai`, each S1, S11 push-to-talk, S12 server-side mute and S13 LLM failover, capped at 60 provider calls per run (`docs/benchmarks/README.md`). The repository needs a GitHub remote and the `live-providers` secrets before it can run. Still open:
    - S2 barge-in nightly: it does not fit the 60 cap and is manual-only;
    - first live runs for the never-run profiles (`deepgram-openai-cartesia`, `elevenlabs-google-elevenlabs`, `cartesia-nvidia`);
    - STT and TTS failover scenarios.

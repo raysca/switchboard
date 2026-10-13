@@ -105,7 +105,7 @@ Limits: timings are small-n samples on one machine and network; S1's WER and "fo
 
 ## Nightly critical-path job
 
-`.github/workflows/live.yml` runs every night at 03:17 UTC and on manual dispatch. It runs
+`.github/workflows/live.yml` runs on manual dispatch (its nightly 03:17 UTC schedule is switched off until the live-providers secrets exist; see the comment in the workflow). It runs
 `make live-critical` for three profiles in mode `off`, with the call cap split per step (56 of 60 per run):
 
 | Profile | Scenarios | Cap |
