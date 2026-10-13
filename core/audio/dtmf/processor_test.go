@@ -89,6 +89,16 @@ func TestPipelineDetectsAggregatesAndCommitsUserMessage(t *testing.T) {
 		}
 		return false
 	})
+	// The context commit happens before UserMessageFrame is pushed on to the
+	// sink's stage, so wait for the frame too (CI once read the sink too early).
+	eventually(t, "user message reaches the sink", func() bool {
+		for _, f := range sink.GetFrames() {
+			if _, ok := f.(*core.UserMessageFrame); ok {
+				return true
+			}
+		}
+		return false
+	})
 	var digits string
 	var msgs int
 	for _, f := range sink.GetFrames() {

@@ -154,6 +154,21 @@ func TestClosedByServerSpareIsDiscarded(t *testing.T) {
 	get(t, p, s.URL) // must dial fresh, not fail on the dead spare
 }
 
+// Deterministic form of the case above that only Linux hit by timing: the
+// server finished its handshake and sent its ticket and h2 SETTINGS before a
+// clean close, so the spare holds unread bytes followed by EOF.
+func TestSpareClosedAfterServerSpokeIsDiscarded(t *testing.T) {
+	s := newSrv(t)
+	p := testPool(t, s, nil)
+	if err := p.Warm(context.Background(), s.URL); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // loopback handshake + h2 SETTINGS (h2 conns skip ConnState hooks)
+	s.CloseClientConnections()
+	time.Sleep(50 * time.Millisecond)
+	get(t, p, s.URL)
+}
+
 func TestWarmErrorIsReturnedAndGuardApplies(t *testing.T) {
 	s := newSrv(t)
 	blocked := errors.New("blocked")
