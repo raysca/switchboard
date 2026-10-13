@@ -2,404 +2,350 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the `-tags fakeproviders` hack (fakes that silently take over `google.*`) with a real, always-built **`echo`** provider: listed in the catalog, always detected, selectable in the UI and in any flow, free to run, and able to **imitate Google's real behaviour** (settings, models, voices, languages, and the measured timing) so performance and UX tests exercise the system the way a real provider would, at no cost.
+**Goal:** Replace the `-tags fakeproviders` hack (fakes that silently take over `google.*`) and the `core.Fake*` doubles with a real, always-built **`echo`** provider in its own module, `providers/echo`, that behaves like a real provider to the pipeline, the server, the UI and the tests: same processors, same frames, same retries, breaker, usage, tracing, tool loop and settings, with the network replaced by an echo backend that imitates Google's measured timing, at no cost.
 
-**Architecture:** The engine lives in `core` (`core/echo.go`, built on the existing `Fake*` processors, which stay as the core test doubles and gain the realism knobs). A keyless catalog provider `echo` mirrors Google's models, voices and languages. `server/registry_echo.go` registers `echo.stt/llm/tts` on every build; a `providers.echo` config block picks the **mimic profile** (`google` for realism, `instant` for framework-overhead measurements) and the test knobs. The build tag, `registry_fake.go` and every `GOVOICE_FAKE_*` variable go away; every harness (Go e2e, browser e2e, loadtest, livecheck, pipecat eval, perf gate, compose) uses `echo` on the normal binary.
+**Architecture:** The real Google processors already take injectable backends (`TTSConfig.Client`, `LLMConfig.Client`, `STTConfig.StreamOpener`); the registry today builds real clients and passes them in. `providers/echo` ships echo **backends** that implement those same interfaces (TTS unary and streaming client, LLM stream client with native tool calls, STT stream opener). The `echo.*` factories build the **real** Google processors around them, so everything between the pipeline and the wire is the real code. The processors get a `Provider` label so frames, traces and usage say `echo`, never `google`. A keyless catalog provider `echo` mirrors Google's models, voices and languages; a `providers.echo` config block picks the mimic profile and test knobs. The build tag, `registry_fake.go`, every `GOVOICE_FAKE_*` variable and the public `core.Fake{LLM,TTS,STT}` doubles go away; every harness uses `echo` on the normal binary.
 
-**Tech Stack:** Go (core, server, tools), YAML catalog, Playwright e2e (TypeScript), shell harnesses.
+**Tech Stack:** Go (new module `providers/echo`; core, providers/google, server, tools, transport), YAML catalog, Playwright e2e (TypeScript), shell harnesses.
 
-**Spec:** Decisions taken with the user in this session (no separate spec file): echo is **always built and always detected** (no env gate, no tag); knobs live in **server config plus catalog presets**; the build tag is **replaced everywhere**; echo must **mimic Google with all its settings**, as realistically as possible. `tools/provtest` (fault-injection fakes for the resilience tests) is out of scope and stays. Measured Google behaviour comes from `docs/benchmarks/first-audio-latency.md` and `docs/benchmarks/agent-matrix.md`. Project rules: `AGENTS.md` (core agnostic of server concerns, every core feature consumed by the server, bounded queues, supervised goroutines, `go test -race`).
+**Spec:** Decisions taken with the user in this session (no separate spec file): echo is **always built and always detected** (no env gate, no tag); knobs live in **server config plus catalog presets**; the build tag is **replaced everywhere**; echo **mimics Google with all its settings, as realistically as possible**; it is **its own provider module that behaves identically to the real ones**, so tests and the UI cannot tell the difference; the core fake doubles are **retired in the same plan**. `tools/provtest` (fault-injection fakes for resilience tests) is out of scope and stays. Measured Google behaviour comes from `docs/benchmarks/first-audio-latency.md` and `docs/benchmarks/agent-matrix.md`. Project rules: `AGENTS.md` (core agnostic of server concerns, every feature consumed by the server, bounded queues, supervised goroutines, `go test -race`).
 
 ## What echo imitates (from the repo's own measurements)
 
-- **STT, `chirp_2`:** no interim results; the final arrives about 1.2 s after the VAD stop. **STT, `latest_long`:** interim results, final about 0.5 s after the stop. Language, model ids as in `server/catalog/data/google.yaml`.
-- **LLM:** first token about 0.7 s after the user turn; then a stream of word-sized deltas.
-- **TTS:** the default voice `en-US-Chirp3-HD-Aoede` (any `Chirp3-HD` voice) **streams**: first audio about 0.4 s; every other voice is **unary**: nothing plays until the whole unit is synthesized (about 0.6 s plus about 50 ms per character; the benchmark has 1.13 s for 11 characters). Output rate follows `providers.google_tts.sample_rate` (24 kHz default); audio length follows the text (about 15 characters per second).
-- **Transcripts of real microphone audio:** echo cannot recognise speech, so in `audio` mode it emits placeholder words ("hello") at a speech-like rate (one per 20 frames, 0.4 s) while the caller is speaking. It is a stand-in, not recognition; text turns pass through untouched.
-- **`instant` profile:** every delay zero and one word per frame, the old fake behaviour: the baseline of `docs/benchmarks/baseline.md` (framework overhead) must not move.
+- **STT `chirp_2`:** no interim results; the final arrives about 1.2 s after the caller stops (the processor half-closes the stream at `UserStopped`; echo answers after that delay). **STT `latest_long`:** interim results, final about 0.5 s after the stop.
+- **LLM:** first word about 0.7 s after the user turn, then word-sized deltas; usage token counts on the closing chunk; tool calls through the real tool loop.
+- **TTS:** `Chirp3-HD` voices stream (`StreamSynthesize`, first audio about 0.4 s); every other voice is unary (`SynthesizeSpeech`: nothing plays until the whole unit is synthesized, about 0.6 s plus 50 ms per character). The server picks streaming or unary exactly as for Google (`IsChirp3HD` and `providers.google_tts.disable_streaming`). Audio is as long as the text takes to say (15 characters per second) at the configured `providers.google_tts.sample_rate`.
+- **Transcripts of real microphone audio:** echo cannot recognise speech. In `audio` mode it counts voiced frames and emits placeholder words ("hello") at a speech-like rate (one per 20 frames, 0.4 s); typed turns bypass STT as always. It is a stand-in, not recognition.
+- **`instant` profile:** every delay zero, one placeholder word per audio frame: the old fake behaviour, so the framework-overhead baselines stay comparable.
 
 ## Global Constraints
 
-- `core/` imports nothing from `server/`; nothing in `core` reads the environment or a config file; knobs arrive as plain struct fields.
-- Every new core field and function is consumed by the server's echo registration (YAGNI): no profile, mode or helper without a caller on the call path.
-- Bounded everything: the echo STT must not record audio (`FakeSTTConfig.DiscardAudio`); delayed finals use the supervised worker and honour `ctx.Done()`; no unbounded channel.
-- `go test -race ./core/... ./server/...` clean; `gofmt`; conventional commits ending with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
-- The echo provider id is `echo`, display name `Echo (simulated)`, so no screen can mistake it for a real provider. Echo never sends or reads a secret; it has no credential kinds.
-- After the migration no file mentions `fakeproviders` or `GOVOICE_FAKE_`; `make verify`, `make test-e2e-go`, `make e2e-fake`, `make live-check-selftest`, `make perf-gate-selftest` and `make eval-pipecat` still pass.
+- `core/` imports nothing from `server/` or any provider; `providers/echo` imports `core` and `providers/google` only. Nothing in `core` knows about echo.
+- Echo implements the **same interfaces** as the real backends and never bypasses the real processors: no echo-specific processor, no special-casing in the pipeline, the server or the UI beyond the registry factories and the catalog entry.
+- Every echo option is consumed by the server's echo factories (YAGNI). Bounded everything: backend channels are bounded and closed only by their producer goroutine; every goroutine selects on `ctx.Done()`; no audio retained.
+- The provider id is `echo`, display name `Echo (simulated)`; it has no credential kinds, sends and reads no secret, and no frame, trace or metric ever labels it `google`.
+- `go test -race ./...` clean for every touched module (`core`, `providers/google`, `providers/echo`, `server`, root); `gofmt`; conventional commits ending with `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
+- After the migration no file outside `docs/superpowers/` mentions `fakeproviders` or `GOVOICE_FAKE_`; `make verify`, `make test-e2e-go`, `make e2e-fake`, `make live-check-selftest`, `make perf-gate-selftest` and `make eval-pipecat` pass.
 - Defaults: `providers.echo.mimic: google`, `stt: text`, `audible: false`, `label_replies: false`. Harness configs say `mimic: instant` explicitly.
 
 ## Review Focus
 
-1. **A real provider that is not echo.** With `GOOGLE_API_KEY` set and no echo config, google flows must behave exactly as before, and the provider list must show both. Nothing in `google.*` may be replaced by echo; a flow naming `echo` on a server whose build lacks it (cannot happen now) is gone with the tag.
-2. **Unbounded growth and leaks.** The echo STT in `audio` mode over a long call (no audio retained, no queue growth); a delayed final or a first-token delay when the call hangs up or the caller interrupts (no goroutine outlives the session, no frame from an old generation reaches the pipeline).
-3. **The mimic is honest.** `chirp_2` has no interims, `latest_long` has; Chirp3-HD voices stream and others are unary; first-byte delay grows with the unit's text; an unknown or custom model or voice falls back to the Google defaults rather than erroring; `brokenvoice` still fails to build (failed-handoff tests).
-4. **Config validation and defaults.** An unknown `mimic` or `stt` value is a startup error naming the field and the allowed values; an absent block means the documented defaults; durations must be non-negative.
-5. **Harness regressions.** The perf baseline (framework overhead) must not change; the self-test's injected delay must still fail the gate; the cue test must still see silence for speech (`audible: false`); the browser suite's "only the suite's provider is available" assertion must now see `echo`.
+1. **Google must be unchanged.** With real keys and no echo config, every google flow behaves exactly as before; the new `Provider` label defaults to `"google"`; the provider list shows both providers; no `google.*` factory is replaced or wrapped.
+2. **No leaks, no unbounded growth.** Echo backends under interruption, hang-up and stream rotation: producer goroutines end, channels are closed once by the producer, audio is not buffered beyond a unit, `go test -race` clean; a long `audio`-mode call grows no memory.
+3. **Identical behaviour.** Echo calls pass through the same retry, breaker, error classification, usage frames and tracing as Google (contract tests run the real processors against the echo backends); `chirp_2` has no interims and `latest_long` has; Chirp3-HD streams and other voices are unary; the first-byte delay grows with the unit's text for unary voices; an unknown or custom model or voice falls back to Google's figures; `brokenvoice` still fails to build.
+4. **Config validation and defaults.** An unknown `mimic` or `stt` value is a startup error naming the field and the allowed values; an absent block means the documented defaults; `llm_extra_delay` must not be negative.
+5. **Harness regressions.** The perf baselines (framework overhead) must not move beyond the gate's tolerances (if the benchmark's process changes because it now runs real processors, say so and re-baseline deliberately, never silently); the self-test's injected delay must still fail the gate; the cue test must still see silence for speech; the browser suite's "only the suite's provider is available" assertion now sees `echo`.
 
 ---
 
-### Task 1: Realism knobs on the fake STT
+### Task 1: A `Provider` label on the Google processors
 
 **Files:**
-- Modify: `core/fake_stt.go`
-- Test: `core/fake_stt_echo_test.go` (create)
+- Modify: `providers/google/stt.go` (`STTConfig`, lines using `"google"` at about 283 and 883), `providers/google/llm.go` (`LLMConfig`, about 410 and 640), `providers/google/tts.go` (`TTSConfig`, `normalizeTTSConfig`, about 358 and 539), `providers/google/tts_streaming.go` (about 46)
+- Test: `providers/google/provider_label_test.go` (create)
 
 **Interfaces:**
-- Produces on `FakeSTTConfig`: `DiscardAudio bool` (do not retain audio in `Received()`), `NoInterims bool` (candidates only at the final), `FinalDelay time.Duration` (the final is emitted this long after `UserStoppedSpeaking`), `FramesPerWord int` (one word per N voiced frames; 0 or 1 = every frame).
-- Changes `work chan func()` to `work chan func(context.Context)` (internal).
+- Produces: `Provider string` on `STTConfig`, `LLMConfig` and `TTSConfig`; empty means `"google"`. Used for the transcript frame's `Provider`, the usage record's `Provider`, the `ttsunit.Config.Provider` and the `"provider"` trace attribute. The `netpool` counters in the real clients keep `"google"` (they only run for the real clients).
 
-- [ ] **Step 1: Write the failing tests** — `core/fake_stt_echo_test.go`. Read `core/fake_stt_test.go` (or the existing STT failover test that drives `FakeSTTProcessor`) first and reuse its session harness; the cases to write, each against a `FakeSTTProcessor` attached to a real `Session` as the existing tests do:
+- [ ] **Step 1: Write the failing test** — `provider_label_test.go`. Reuse the harness of `tts_streaming_test.go` (streaming TTS usage), `llm_usage_test.go` and `stt_test.go`; for each stage build the processor with `Provider: "echo"` and a mock client and assert the label on what the stage emits:
 
 ```go
-// helpers: feed(n) pushes n InputAudioFrames with Samples[0]=0 between a UserStartedSpeakingFrame
-// and (when stop) a UserStoppedSpeakingFrame; collect(...) returns the TranscriptCandidateFrames seen.
-
-func TestFakeSTTDiscardAudioKeepsNothing(t *testing.T) // 500 frames, Received() is empty
-func TestFakeSTTNoInterimsOnlyFinal(t *testing.T)      // 10 frames then stop: exactly one candidate, Final=true, text "hello hello …" (10 words)
-func TestFakeSTTFinalDelay(t *testing.T)               // FinalDelay=80ms: the final arrives >=80ms after the stop frame, not before
-func TestFakeSTTFinalDelayRespectsTeardown(t *testing.T) // close the session during the delay: no candidate, the worker exits (goleak or a done channel)
-func TestFakeSTTFramesPerWord(t *testing.T)            // FramesPerWord=4, 20 frames: 5 words
+func TestProviderLabelDefaultsToGoogle(t *testing.T)   // no Provider set: TranscriptCandidateFrame.Provider == "google", LLM and TTS usage Provider == "google"
+func TestProviderLabelFollowsConfigSTT(t *testing.T)    // Provider "echo": every TranscriptCandidateFrame.Provider == "echo"
+func TestProviderLabelFollowsConfigLLM(t *testing.T)    // the usage record the LLM reports carries Provider "echo"
+func TestProviderLabelFollowsConfigTTSUnary(t *testing.T)
+func TestProviderLabelFollowsConfigTTSStreaming(t *testing.T) // ttsunit usage Provider "echo"
 ```
-
-(Write each with the assertions in the comments; the exact harness calls follow the neighbouring tests.)
 
 - [ ] **Step 2: Run to see them fail**
 
-Run: `cd core && go test -race -run 'TestFakeSTT(DiscardAudio|NoInterims|FinalDelay|FramesPerWord)' .`
-Expected: FAIL — the fields do not exist.
+Run: `cd providers/google && go test -race -run 'TestProviderLabel' .`
+Expected: FAIL (no field).
 
-- [ ] **Step 3: Implement** in `core/fake_stt.go`:
+- [ ] **Step 3: Implement.** Add `Provider string // label on frames, usage and traces; default "google"` to the three configs. In each constructor (`NewSTTProcessor`, `NewLLMProcessor`, `normalizeTTSConfig`) set `if cfg.Provider == "" { cfg.Provider = "google" }`, and replace the seven literals with `p.cfg.Provider` / `cfg.Provider`.
 
-Add the four fields to `FakeSTTConfig` (documented as above). Change the worker and `emit`:
+- [ ] **Step 4: Run to see them pass, then the module**
 
-```go
-	work     chan func(context.Context)
-
-// in NewFakeSTTProcessor
-	return &FakeSTTProcessor{cfg: cfg, work: make(chan func(context.Context), 256)}
-
-// in Attach
-			case fn := <-p.work:
-				fn(ctx)
-
-func (p *FakeSTTProcessor) emit(fr Frame, gen uint64) { p.emitAfter(fr, gen, 0) }
-
-// emitAfter delivers fr after delay, on the worker (so order is kept) and only while the session lives.
-func (p *FakeSTTProcessor) emitAfter(fr Frame, gen uint64, delay time.Duration) {
-	select {
-	case p.work <- func(ctx context.Context) {
-		if delay > 0 {
-			t := time.NewTimer(delay)
-			defer t.Stop()
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-			}
-		}
-		_ = p.session.Reenter(fr, Downstream, p.index+1, gen)
-	}:
-	default:
-	}
-}
-```
-
-In `ProcessFrame`:
-- `UserStoppedSpeakingFrame`: `p.emitAfter(p.candidateLocked(true), p.gen, p.cfg.FinalDelay)` instead of `p.emit(...)`.
-- `InputAudioFrame`: `if !p.cfg.DiscardAudio { p.received = append(p.received, fr.Samples...) }`; replace the word-append block with:
-
-```go
-		if len(fr.Samples) > 0 && int(fr.Samples[0]) < len(p.cfg.Words) {
-			p.voiced++
-			if every := max(p.cfg.FramesPerWord, 1); p.voiced%every == 0 {
-				// Audio before the turn binds (VAD reports onset late) still counts, as in providers.
-				p.words = append(p.words, p.cfg.Words[fr.Samples[0]])
-				if p.turn != "" && !p.cfg.NoInterims {
-					p.emit(p.candidateLocked(false), p.gen)
-					if p.cfg.FinalEvery > 0 && p.frames%p.cfg.FinalEvery == 0 {
-						p.emit(p.candidateLocked(true), p.gen)
-					}
-				}
-			}
-		}
-```
-
-with a new field `voiced int` reset together with `words, frames` at the stop (`p.words, p.frames, p.voiced = nil, 0, 0`). Add `"time"` to the imports.
-
-- [ ] **Step 4: Run to see them pass, then the package**
-
-Run: `cd core && go test -race . 2>&1 | tail -5`
+Run: `cd providers/google && go test -race ./... 2>&1 | tail -5`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/fake_stt.go core/fake_stt_echo_test.go
-git commit -m "feat(core): fake STT can model a final delay, no interims, one word per N frames, and not retain audio
+git add providers/google
+git commit -m "feat(google): a Provider label on the STT, LLM and TTS processors, so another provider can reuse them honestly
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 2: Realism knobs on the fake LLM and TTS
+### Task 2: The `providers/echo` module — figures and the TTS backend
 
 **Files:**
-- Modify: `core/fakes.go`
-- Test: `core/fake_echo_realism_test.go` (create)
+- Create: `providers/echo/go.mod`, `providers/echo/figures.go`, `providers/echo/tts.go`, `providers/echo/tts_test.go`
+- Modify: `go.work` (add `./providers/echo`), root `go.mod` is unchanged until Task 5 wires the server
 
 **Interfaces:**
-- Produces on `FakeLLMConfig`: `FirstDelay time.Duration` (before the first delta), `WordChunks bool` (split every chunk into word-sized deltas, spaces kept; `ChunkDelay` then applies per word).
-- Produces on `FakeTTSConfig`: `FirstDelay time.Duration`, `FirstDelayPerChar time.Duration` (the delay before a unit's first audio is `FirstDelay + FirstDelayPerChar × runes(text)`), `CharsPerSecond int` (when > 0 the unit's frame count is `ceil(runes / CharsPerSecond / 20 ms)`, at least 1, instead of `FramesPerUnit`), `Audible bool` (frames carry a quiet 220 Hz tone, phase-continuous, sized `SampleRate/50` samples; false keeps the 640 silent bytes).
-- Produces: `func splitWords(s string) []string` (unexported; `strings.SplitAfter(s, " ")` without empty tail).
-
-- [ ] **Step 1: Write the failing tests** — `core/fake_echo_realism_test.go`, using the harness of `core/fake_tts_budget_test.go` and `core/fake_llm_tools_test.go`:
+- Produces:
 
 ```go
-func TestSplitWords(t *testing.T) // "You said: hi there" -> ["You ", "said: ", "hi ", "there"]; "" -> nil
-func TestFakeLLMWordChunksDeltaPerWord(t *testing.T)   // reply deltas concatenate to the full text, one delta per word
-func TestFakeLLMFirstDelay(t *testing.T)               // FirstDelay=60ms: first delta >=60ms after the user message; later deltas not delayed again when ChunkDelay=0
-func TestFakeLLMFirstDelayCanceledByInterruption(t *testing.T) // interruption during the delay: no delta arrives
-func TestFakeTTSFramesFollowTextLength(t *testing.T)   // CharsPerSecond=15: 30 runes -> 100 frames; 1 rune -> 4 frames (ceil(1/15/0.02)=4); empty text -> 1 frame
-func TestFakeTTSFirstDelayGrowsWithText(t *testing.T)  // FirstDelay=20ms, PerChar=2ms: 40 runes first audio >=100ms, 1 rune >=22ms
-func TestFakeTTSAudibleToneHasSoundAndRightSize(t *testing.T) // Audible, 24000 Hz: each frame 960 bytes, at least one sample != 0, peak below 4000 (quiet); silent by default (all 640 bytes zero)
-func TestFakeTTSFirstDelayCanceledByInterruption(t *testing.T)
+type Mimic string
+const (MimicGoogle Mimic = "google"; MimicInstant Mimic = "instant")
+func (m Mimic) Valid() bool
+type STTFigures struct{ Interims bool; FinalDelay time.Duration; FramesPerWord, VoicedThreshold int }
+type LLMFigures struct{ FirstToken, TokenDelay time.Duration }
+type TTSFigures struct{ FirstByte, FirstBytePerChar time.Duration; CharsPerSecond int }
+func (m Mimic) STT(model string) STTFigures
+func (m Mimic) LLM() LLMFigures
+func (m Mimic) TTS(voice string) TTSFigures
+
+type TTSClient struct{ /* unexported */ }
+func NewTTSClient(f TTSFigures, audible bool) *TTSClient
+// implements google.StreamingTTSClient:
+func (c *TTSClient) SynthesizeSpeech(ctx context.Context, text, voice string, sampleRate int) ([]byte, error)
+func (c *TTSClient) StreamSynthesize(ctx context.Context, pieces []string, voice string, sampleRate int, onAudio func([]byte) error) error
 ```
 
-- [ ] **Step 2: Run to see them fail**
+- Figures (the numbers are the repo's measurements; tune only with a benchmark in hand). `MimicGoogle`: STT `chirp_2` (also the fallback for any other model): `FinalDelay 1200ms, FramesPerWord 20, VoicedThreshold 500`; `latest_long`: `Interims true, FinalDelay 500ms`, same rest; LLM `FirstToken 700ms, TokenDelay 30ms`; TTS: voice containing `chirp3-hd` (case-insensitive) or empty: `FirstByte 400ms`; any other voice `FirstByte 600ms, FirstBytePerChar 50ms`; `CharsPerSecond 15` for both. `MimicInstant`: STT `FramesPerWord 1, VoicedThreshold 0`, everything else zero, TTS `CharsPerSecond 0` (a unit is two 20 ms frames).
+- PCM: `pcm(text, rate, cps, audible)` returns PCM16LE mono: `samples = ceil(runes / cps × rate)` (`2 × rate/50` when `cps` is 0), silent, or a quiet (amplitude 3000) 220 Hz tone when `audible`. The streaming client delivers it in 20 ms chunks (`rate/50` samples), the unary client in one slice.
 
-Run: `cd core && go test -race -run 'TestSplitWords|TestFakeLLM(WordChunks|FirstDelay)|TestFakeTTS(Frames|FirstDelay|Audible)' .`
-Expected: FAIL — fields and `splitWords` missing.
+- [ ] **Step 1: Module skeleton.** `providers/echo/go.mod`: `module govoice/providers/echo`, `go 1.27.1`, `require govoice/core v0.0.0`, `require govoice/providers/google v0.0.0-00010101000000-000000000000`, `replace govoice/core => ../../core`, `replace govoice/providers/google => ../google` (copy the exact version stamps and the indirect requirements from `providers/google/go.mod` by running `go mod tidy` inside the workspace); add `./providers/echo` to `go.work`.
 
-- [ ] **Step 3: Implement** in `core/fakes.go`:
+- [ ] **Step 2: Write the failing tests** — `figures_test.go` and `tts_test.go`:
 
 ```go
-// splitWords splits s after each space so the pieces concatenate back to s.
-func splitWords(s string) []string {
-	parts := strings.SplitAfter(s, " ")
-	if len(parts) > 0 && parts[len(parts)-1] == "" {
-		parts = parts[:len(parts)-1]
+func TestGoogleFiguresFollowTheMeasurements(t *testing.T)   // chirp_2/unknown: 1200ms, no interims; latest_long: interims, 500ms; Chirp3-HD voice: 400ms first byte, no per-char; Journey voice: 600ms + 50ms/char; instant: all zero
+func TestMimicValid(t *testing.T)                           // google, instant true; "", "x" false
+func TestPCMLengthFollowsText(t *testing.T)                 // 15 cps, 24000 Hz, 30 runes -> 2 s = 48000 samples; instant: 2 frames; empty text -> at least one frame
+func TestPCMToneIsQuietAndAudible(t *testing.T)             // audible: some sample != 0, peak <= 3000; silent: all zero
+func TestUnaryTTSWaitsThenReturnsAllAudio(t *testing.T)     // FirstByte 40ms + 1ms/char: returns after >=40ms+len; honours ctx cancel (returns ctx.Err())
+func TestStreamingTTSDeliversTwentyMillisecondChunks(t *testing.T) // onAudio sees chunks of rate/50 samples; stops and returns onAudio's error unchanged; ctx cancel stops it
+func TestRealStreamingProcessorSpeaksThroughEchoClient(t *testing.T)  // google.NewStreamingTTSProcessor(cfg{Client: echoClient, Voice: Chirp3-HD...}) in a core.Session: a SynthesisUnitFrame yields OutputAudioFrames ending in IsFinal, Provider "echo" in the usage; copy the session harness of providers/google/tts_streaming_test.go
+func TestRealUnaryProcessorSpeaksThroughEchoClient(t *testing.T)      // same with google.NewTTSProcessor and a non-Chirp voice; units over 250 runes are split by the real processor into several client calls
+```
+
+- [ ] **Step 3: Run to see them fail**
+
+Run: `cd providers/echo && go test -race ./... 2>&1 | tail`
+Expected: FAIL (nothing implemented).
+
+- [ ] **Step 4: Implement** `figures.go` (the types and methods above, plus `Valid`) and `tts.go`:
+
+```go
+package echo
+
+import (
+	"context"
+	"math"
+	"time"
+)
+
+// TTSClient is a simulated Google Text-to-Speech backend: the real google TTS processors run
+// against it (google.StreamingTTSClient), so splitting, retries, pacing, usage and tracing are the real ones.
+type TTSClient struct {
+	f       TTSFigures
+	audible bool
+}
+
+func NewTTSClient(f TTSFigures, audible bool) *TTSClient { return &TTSClient{f: f, audible: audible} }
+
+func (c *TTSClient) delay(text string) time.Duration {
+	return c.f.FirstByte + time.Duration(len([]rune(text)))*c.f.FirstBytePerChar
+}
+
+// wait sleeps d unless ctx ends first.
+func wait(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
 	}
-	return parts
-}
-```
-
-LLM: in `ProcessFrame`'s generation goroutine, after the label is prepended and before the loop:
-
-```go
-			if p.cfg.WordChunks {
-				words := make([]string, 0, len(chunks)*4)
-				for _, c := range chunks {
-					words = append(words, splitWords(c)...)
-				}
-				chunks = words
-			}
-			if d := p.cfg.FirstDelay; d > 0 {
-				timer := time.NewTimer(d)
-				select {
-				case <-taskCtx.Done():
-					timer.Stop()
-					if !p.cfg.IgnoreCancel {
-						return
-					}
-				case <-timer.C:
-				}
-			}
-```
-
-(Place the label prepend before this block as now; with `WordChunks` the label is split too, harmless.)
-
-TTS: add `unitFrames` and `unitDelay` helpers and use them in the unit goroutine:
-
-```go
-func (c FakeTTSConfig) unitFrames(text string) int {
-	if c.CharsPerSecond <= 0 {
-		return c.FramesPerUnit
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
 	}
-	n := len([]rune(text))
-	frames := (n*1000 + c.CharsPerSecond*20 - 1) / (c.CharsPerSecond * 20) // ceil(runes / cps / 20 ms)
-	return max(frames, 1)
 }
 
-func (c FakeTTSConfig) firstDelay(text string) time.Duration {
-	return c.FirstDelay + time.Duration(len([]rune(text)))*c.FirstDelayPerChar
+func (c *TTSClient) SynthesizeSpeech(ctx context.Context, text, _ string, sampleRate int) ([]byte, error) {
+	if err := wait(ctx, c.delay(text)); err != nil {
+		return nil, err
+	}
+	return pcm(text, sampleRate, c.f.CharsPerSecond, c.audible), nil
 }
-```
 
-In the unit goroutine, before the frame loop (after the `FailWith ... FailAfterAudio == 0` early failure), wait `firstDelay` the same way as `FrameDelay` is waited (reuse the existing timer select blocks: factor the three-way wait into a closure `wait := func(d time.Duration) bool` returning false when canceled, and call it for `firstDelay(su.Text)` and for `FrameDelay`). Replace `p.cfg.FramesPerUnit` in the loop bounds and `isFinal` with `frames := p.cfg.unitFrames(su.Text)`. For the sample buffer:
+func (c *TTSClient) StreamSynthesize(ctx context.Context, pieces []string, _ string, sampleRate int, onAudio func([]byte) error) error {
+	chunk := sampleRate / 50 * 2 // 20 ms of PCM16 mono
+	for i, piece := range pieces {
+		if i == 0 {
+			if err := wait(ctx, c.delay(piece)); err != nil {
+				return err
+			}
+		}
+		audio := pcm(piece, sampleRate, c.f.CharsPerSecond, c.audible)
+		for len(audio) > 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			n := min(chunk, len(audio))
+			if err := onAudio(audio[:n]); err != nil {
+				return err
+			}
+			audio = audio[n:]
+		}
+	}
+	return nil
+}
 
-```go
-				samples := make([]byte, 640)
-				if p.cfg.Audible {
-					samples = tone(rate, p.Synthesized.Load())
-				}
-```
-
-and `tone` (phase-continuous by frame sequence, 220 Hz, amplitude 3000):
-
-```go
-func tone(rate int, seq uint64) []byte {
-	n := rate / 50
-	out := make([]byte, n*2)
-	base := int(seq) * n
-	for i := 0; i < n; i++ {
-		v := int16(3000 * math.Sin(2*math.Pi*220*float64(base+i)/float64(rate)))
-		out[2*i], out[2*i+1] = byte(v), byte(v>>8)
+// pcm is PCM16LE mono as long as the text takes to say: silence, or a quiet 220 Hz tone.
+func pcm(text string, rate, charsPerSecond int, audible bool) []byte {
+	samples := rate / 50 * 2
+	if charsPerSecond > 0 {
+		samples = max((len([]rune(text))*rate+charsPerSecond-1)/charsPerSecond, rate/50)
+	}
+	out := make([]byte, samples*2)
+	if audible {
+		for i := 0; i < samples; i++ {
+			v := int16(3000 * math.Sin(2*math.Pi*220*float64(i)/float64(rate)))
+			out[2*i], out[2*i+1] = byte(v), byte(v>>8)
+		}
 	}
 	return out
 }
 ```
 
-(import `math`). The audio frame's `Seq: p.Synthesized.Add(1)` stays; `tone` reads `Synthesized.Load()` just before, which is one behind: fine for phase continuity.
+(Round the sample count up to a whole 20 ms frame if the real processor requires frame multiples: check `providers/google/tts.go` where it slices audio into `ChunkDuration` pieces and keep the helper consistent with it.)
 
-- [ ] **Step 4: Run to see them pass, then the package**
+- [ ] **Step 5: Run to see them pass**
 
-Run: `cd core && go test -race . 2>&1 | tail -5`
+Run: `cd providers/echo && go test -race ./... 2>&1 | tail -5`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add core/fakes.go core/fake_echo_realism_test.go
-git commit -m "feat(core): fake LLM and TTS can model first-token and first-byte delay, word-sized deltas, text-length audio and an audible tone
+git add providers/echo go.work
+git commit -m "feat(echo): the providers/echo module — Google-shaped timing figures and a simulated TTS backend the real Google processors run against
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 3: The echo engine in core
+### Task 3: The echo LLM backend
 
 **Files:**
-- Create: `core/echo.go`
-- Test: `core/echo_test.go`
+- Create: `providers/echo/llm.go`, `providers/echo/llm_test.go`
 
 **Interfaces:**
-- Consumes: Task 1 and 2 fields; `NewFakeSTTProcessor`, `NewFakeLLMProcessor`, `NewFakeTTSProcessor`.
+- Consumes: `google.LLMStreamClient`, `google.LLMNativeToolStreamClient`, `google.LLMStreamChunk`, `core.Message`, `core.ToolCall`, `core.ToolDefinition`.
 - Produces:
-  - `type EchoSTT struct { Interims bool; FinalDelay time.Duration; FramesPerWord int; AudioMode bool }`, `func NewEchoSTT(o EchoSTT) Processor`. In text mode (`AudioMode` false) it returns a pass-through that forwards every frame unchanged and records nothing; in audio mode a `FakeSTTProcessor` with `Words` = 256 × "hello", `Provider: "echo"`, `DiscardAudio: true`, `NoInterims: !Interims`, `FinalDelay`, `FramesPerWord`.
-  - `type EchoLLM struct { FirstToken, TokenDelay time.Duration; Label string; Executor ToolExecutor; ToolOnPhrase, SayResult map[string]string }`, `func NewEchoLLM(o EchoLLM) Processor`: replies `"You said: " + user text`, word by word, `AfterTool` "Connecting you.", exactly what the old google fake did.
-  - `type EchoTTS struct { FirstByte, FirstBytePerChar time.Duration; CharsPerSecond, SampleRate int; Audible bool }`, `func NewEchoTTS(o EchoTTS) Processor` (`FramesPerUnit: 2` when `CharsPerSecond` is 0).
-  - Zero values of all three are the **instant** behaviour of the old fakes.
-
-- [ ] **Step 1: Write the failing tests** — `core/echo_test.go`:
 
 ```go
-func TestEchoSTTTextModePassesFramesThroughAndKeepsNothing(t *testing.T)
-func TestEchoSTTAudioModeSaysHelloAtSpeechRate(t *testing.T)     // FramesPerWord=20, 100 frames -> 5 words, final after stop
-func TestEchoSTTWithoutInterimsSendsOnlyAFinal(t *testing.T)
-func TestEchoLLMEchoesTheUserWordByWord(t *testing.T)            // "hi there" -> "You said: hi there", >=4 deltas
-func TestEchoLLMLabelAndTransferTool(t *testing.T)               // Label prefixes; ToolOnPhrase calls the executor and answers "Connecting you."
-func TestEchoTTSInstantIsTwoSilentFramesPerUnit(t *testing.T)
-func TestEchoTTSImitatesSpeechLength(t *testing.T)               // CharsPerSecond=15, 30 runes -> 100 frames at the configured rate
+type LLMOptions struct {
+	Figures    LLMFigures
+	ExtraDelay time.Duration     // added to every word (the perf-gate self-test)
+	Label      string            // prefixes every reply, e.g. "[front desk] "
+	Phrases    map[string]string // lower-case phrase -> tool name ("transfer to sales" -> transfer_to_sales)
+	Spoken     map[string]string // tool name -> the name its reply uses; these tools take {json} args from the message and say what came back
+}
+func NewLLMClient(o LLMOptions) *LLMClient
+func (c *LLMClient) GenerateStream(ctx, model, systemPrompt string, history []core.Message) (<-chan google.LLMStreamChunk, <-chan error, error)
+func (c *LLMClient) GenerateStreamWithNativeTools(ctx, model, systemPrompt string, history []core.Message, native []google.GoogleNativeExchange, defs []core.ToolDefinition, identity core.ToolCall) (<-chan google.LLMStreamChunk, <-chan error, error)
 ```
 
-- [ ] **Step 2: Run to see them fail**
+Behaviour (the old fake's, now as a model behind the real processor): the last user message decides. If its lower-cased text contains a phrase of `Phrases` (first in sorted order) and `defs` is non-empty, the response is one chunk with `ToolCalls: [{ID: "echo-call-<n>", Name: tool, Arguments: args}]` where `args` is the first balanced JSON object in the message for `Spoken` tools and `{}` otherwise; the processor's tool loop then runs the tool and calls the client again. When the last history message is a tool result (`Kind == core.MessageToolResult`), the reply is `"Connecting you."` (or `"Tool <name> returned <content>"` / `"Tool <name> failed: <status or category>"` for tools in `Spoken`). Otherwise the reply is `Label + "You said: " + user text`, one chunk per word (spaces kept), `FirstToken` before the first and `TokenDelay + ExtraDelay` between words. The closing chunk has `IsDone`, `FinishReason: "STOP"` and token counts (`PromptTokens` = words in the history, `OutputTokens` = words in the reply).
 
-Run: `cd core && go test -race -run 'TestEcho' .`
-Expected: FAIL — `NewEchoSTT` undefined.
-
-- [ ] **Step 3: Implement** — `core/echo.go`:
+- [ ] **Step 1: Write the failing tests** — `llm_test.go`:
 
 ```go
-package core
+func TestEchoReplyRepeatsTheCallerWordByWord(t *testing.T)     // "hi there" -> deltas "You ", "said: ", "hi ", "there"; concatenation "You said: hi there"; last chunk IsDone with OutputTokens 4
+func TestEchoLabelPrefixesTheReply(t *testing.T)
+func TestEchoFirstTokenAndWordDelays(t *testing.T)             // FirstToken 50ms, TokenDelay 10ms, ExtraDelay 5ms: first chunk >=50ms, next gaps >=15ms
+func TestEchoStopsOnContextCancel(t *testing.T)                // cancel mid-reply: chunk channel closes, no goroutine left, error channel closed
+func TestEchoCallsTheToolNamedByAPhrase(t *testing.T)          // "please transfer to sales" with defs -> one ToolCalls chunk, Name transfer_to_sales, Arguments {}
+func TestEchoPassesJSONArgumentsToSpokenTools(t *testing.T)    // `call tool lookup_order {"id":"7"}` -> Arguments {"id":"7"}; malformed JSON -> {}
+func TestEchoAnswersAfterToolResults(t *testing.T)             // history ending in a tool_result message -> "Connecting you."; spoken tool success -> "Tool lookup_order returned {…}"; failed status -> "Tool lookup_order failed: <category>"
+func TestEchoIgnoresPhrasesWithoutToolDefinitions(t *testing.T) // GenerateStream (no defs) never emits ToolCalls
+func TestRealLLMProcessorRunsTheToolLoopAgainstEcho(t *testing.T) // google.NewLLMProcessor with the echo client, ToolDefinitions + a fake core.ToolExecutor + ToolHistory: "transfer to sales" executes the tool once and the turn ends with "Connecting you."; usage Provider "echo"; copy the harness of providers/google/llm_test.go
+```
 
-import (
-	"context"
-	"time"
-)
+- [ ] **Step 2: Run to see them fail.** `cd providers/echo && go test -race -run 'Echo|RealLLM' .` — Expected: FAIL.
 
-// The echo stages are simulated STT, LLM and TTS that cost nothing and need no network. They
-// imitate a real provider's timing and shape so performance and UX tests behave like the real
-// thing: the LLM repeats the caller, word by word; the TTS makes audio as long as the text;
-// the STT stands in for speech recognition (it cannot recognise speech: placeholder words).
-// Zero values are the "instant" behaviour (no delays), used to measure the framework itself.
+- [ ] **Step 3: Implement** `llm.go`. Port `toolArguments` (first balanced `{...}` that is a JSON object, else `{}`) and `toolFor` (sorted phrases) unchanged from `core/fakes.go`; port `toolReply`'s wording using `core.Message.ToolStatus`/`ToolErrorCategory`/`Content` from the tool-result message. Structure:
 
-// EchoSTT configures the simulated speech-to-text.
-type EchoSTT struct {
-	// AudioMode turns audio into placeholder words ("hello"). Off, typed turns pass through and
-	// audio is ignored, so a looping test microphone cannot start turns.
-	AudioMode     bool
-	Interims      bool          // emit cumulative interim results while the caller speaks
-	FinalDelay    time.Duration // the final arrives this long after the caller stops
-	FramesPerWord int           // one placeholder word per this many audio frames (20 ms each)
-}
-
-// NewEchoSTT builds the simulated STT stage.
-func NewEchoSTT(o EchoSTT) Processor {
-	if !o.AudioMode {
-		return passSTT{}
-	}
-	words := make([]string, 256) // Samples[0] indexes Words: any byte value counts as a word
-	for i := range words {
-		words[i] = "hello"
-	}
-	return NewFakeSTTProcessor(FakeSTTConfig{Provider: "echo", Words: words, DiscardAudio: true,
-		NoInterims: !o.Interims, FinalDelay: o.FinalDelay, FramesPerWord: o.FramesPerWord})
-}
-
-// passSTT forwards frames untouched. (PassthroughProcessor records every frame, which grows
-// without bound on a live audio stream.)
-type passSTT struct{}
-
-func (passSTT) ProcessFrame(_ context.Context, f Frame, d Direction, e Emitter) error {
-	return e.PushDirection(f, d)
-}
-
-// EchoLLM configures the simulated language model.
-type EchoLLM struct {
-	FirstToken time.Duration // before the first word
-	TokenDelay time.Duration // between words
-	// Label prefixes every reply (a routed flow's step prompt) so a test can tell which step answered.
-	Label string
-	// Executor and the phrase maps let a message such as "transfer to sales" call that tool, as
-	// the e2e suites do. SayResult maps a tool to the name the reply uses for what came back.
-	Executor     ToolExecutor
-	ToolOnPhrase map[string]string
-	SayResult    map[string]string
-}
-
-// NewEchoLLM builds the simulated LLM stage: "You said: <the caller's words>".
-func NewEchoLLM(o EchoLLM) Processor {
-	return NewFakeLLMProcessor(FakeLLMConfig{
-		ResponseChunks: []string{"You said: "}, EchoUser: true, WordChunks: true,
-		FirstDelay: o.FirstToken, ChunkDelay: o.TokenDelay, Label: o.Label,
-		Executor: o.Executor, ToolOnPhrase: o.ToolOnPhrase, SayResult: o.SayResult, AfterTool: "Connecting you.",
-	})
-}
-
-// EchoTTS configures the simulated text-to-speech.
-type EchoTTS struct {
-	FirstByte, FirstBytePerChar time.Duration // before a unit's first audio, plus per character
-	CharsPerSecond              int           // speech rate: audio is as long as the text takes to say; 0 = two frames
-	SampleRate                  int           // output rate (24000 when 0)
-	Audible                     bool          // a quiet tone instead of silence
-}
-
-// NewEchoTTS builds the simulated TTS stage.
-func NewEchoTTS(o EchoTTS) Processor {
-	return NewFakeTTSProcessor(FakeTTSConfig{FramesPerUnit: 2, FirstDelay: o.FirstByte, FirstDelayPerChar: o.FirstBytePerChar,
-		CharsPerSecond: o.CharsPerSecond, SampleRate: o.SampleRate, Audible: o.Audible})
+```go
+func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools bool) (<-chan google.LLMStreamChunk, <-chan error, error) {
+	chunks := make(chan google.LLMStreamChunk, 8)
+	errs := make(chan error, 1)
+	go func() {
+		defer close(chunks)
+		defer close(errs)
+		// decide: tool call / tool answer / echo; send each chunk with a select on ctx.Done()
+	}()
+	return chunks, errs, nil
 }
 ```
 
-- [ ] **Step 4: Run to see them pass, then the package**
+`send := func(ch google.LLMStreamChunk) bool { select { case chunks <- ch: return true; case <-ctx.Done(): return false } }`; delays use the `wait` helper of Task 2. Call IDs come from an `atomic.Uint64` counter on the client.
 
-Run: `cd core && go test -race . 2>&1 | tail -5; gofmt -l .`
-Expected: PASS, nothing from gofmt.
+- [ ] **Step 4: Run to see them pass.** `cd providers/echo && go test -race ./... 2>&1 | tail -5` — Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add core/echo.go core/echo_test.go
-git commit -m "feat(core): echo stages — simulated STT, LLM and TTS that imitate a real provider's timing and shape
+git add providers/echo
+git commit -m "feat(echo): a simulated LLM backend with native tool calls, run by the real Google LLM processor and its tool loop
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 4: The `echo` catalog provider (keyless)
+### Task 4: The echo STT backend
+
+**Files:**
+- Create: `providers/echo/stt.go`, `providers/echo/stt_test.go`
+
+**Interfaces:**
+- Consumes: `google.STTStreamOpener`, `google.STTStream`, `google.STTResult`, `google.STTConfig`.
+- Produces: `func NewSTTOpener(f STTFigures, audioMode bool) *STTOpener` implementing `OpenStream(ctx, cfg google.STTConfig) (google.STTStream, error)`.
+
+Behaviour: one stream per utterance (as the real processor opens them). `Send(audio)` counts voiced 20 ms frames: a frame is voiced when its peak sample magnitude is at least `VoicedThreshold` (0 = every frame is voiced); one placeholder word `"hello"` is added per `FramesPerWord` voiced frames, and with `Interims` each new word queues a non-final cumulative result (`Transcript`, `Stability 0.9`, `ResultEndOffset = frames × 20 ms`). `CloseSend()` ends the audio: `Recv()` then waits `FinalDelay` and returns one final result with all the words (`IsFinal true`, `Stability 1`) if there are any, then `io.EOF`. In text mode (`audioMode` false) the stream discards audio and `Recv()` returns `io.EOF` after `CloseSend()`: typed turns never produce transcripts. `Close()` and ctx cancel make `Recv()` return `ctx.Err()`/`io.EOF` promptly. The result queue is bounded (capacity 64; interims beyond it are dropped, finals never); no audio is retained.
+
+- [ ] **Step 1: Write the failing tests** — `stt_test.go`:
+
+```go
+func TestSTTCountsVoicedFramesIntoWords(t *testing.T)        // FramesPerWord 4, threshold 500: 8 loud + 8 silent frames -> 2 words
+func TestSTTInstantCountsEveryFrame(t *testing.T)            // threshold 0, FramesPerWord 1
+func TestSTTInterimsAreCumulativeWithMediaOffsets(t *testing.T)
+func TestSTTNoInterimsOnlyAFinalAfterCloseSend(t *testing.T) // FinalDelay 60ms: the final arrives >=60ms after CloseSend, then io.EOF
+func TestSTTTextModeNeverTranscribes(t *testing.T)
+func TestSTTRecvReturnsOnCancelAndClose(t *testing.T)
+func TestSTTQueueStaysBounded(t *testing.T)                   // 10,000 voiced frames with Interims: Send never blocks, the queue never exceeds capacity
+func TestRealSTTProcessorTranscribesThroughEcho(t *testing.T) // google.NewSTTProcessor with the opener: UserStarted, audio frames, UserStopped -> a final TranscriptCandidateFrame with Provider "echo" and "hello hello" text after FinalDelay; copy the harness of providers/google/stt_test.go
+```
+
+- [ ] **Step 2: Run to see them fail.** `cd providers/echo && go test -race -run 'STT' .` — Expected: FAIL.
+
+- [ ] **Step 3: Implement** `stt.go` with a mutex-guarded stream struct, a bounded `results chan *google.STTResult` (cap 64) and a `done chan struct{}` closed once (`sync.Once`) by `CloseSend` (to start the final countdown inside `Recv`, not in a goroutine: `Recv` blocks on `select { case r := <-results; case <-done...; case <-ctx.Done() }`, so no goroutine exists to leak). `Send` computes frames as `len(audio) / (2*rate/50)` using `cfg.SampleRate` if present on `STTConfig`, else 16000 (read the real struct); peak detection loops over the PCM16 samples.
+
+- [ ] **Step 4: Run to see them pass.** `cd providers/echo && go test -race ./... 2>&1 | tail -5` — Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add providers/echo
+git commit -m "feat(echo): a simulated STT stream, run by the real Google STT processor
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 5: The `echo` catalog provider (keyless)
 
 **Files:**
 - Modify: `server/catalog/catalog.go`, `server/catalog/resolver.go`
@@ -407,87 +353,12 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 - Test: `server/catalog/catalog_test.go`, `server/catalog/resolver_test.go`, `server/api/providers_test.go`
 
 **Interfaces:**
-- Produces: a service may declare `keyless: true` (no `credential` list required): `Service.Keyless bool` (`yaml:"keyless"`). `Resolver.Status` returns `Declared && Detected` for it; `Resolver.Secret` returns `(nil, nil)`; `Resolver.Env("echo")` is `[]` (no variables to set).
-- `echo.yaml` lists the same models, voices and languages as `google.yaml`.
+- Produces: a service may declare `keyless: true` (`Service.Keyless bool`, `yaml:"keyless"`) instead of a `credential` list. `Resolver.Status` returns `Declared && Detected` for it; `Resolver.Secret` returns `(nil, nil)`; `Resolver.Env("echo")` is empty. `echo.yaml` lists the same models, voices and languages as `google.yaml`.
 
-- [ ] **Step 1: Write the failing tests.**
-
-`catalog_test.go`:
-
-```go
-func TestEchoMirrorsGoogleCatalog(t *testing.T) {
-	c, err := Load()
-	if err != nil { t.Fatal(err) }
-	g, e := mustProvider(t, c, "google"), mustProvider(t, c, "echo")
-	for _, name := range []string{ServiceSTT, ServiceLLM, ServiceTTS} {
-		gs, es := g.Services[name], e.Services[name]
-		if es == nil { t.Fatalf("echo has no %s", name) }
-		if !reflect.DeepEqual(gs.Models, es.Models) || !reflect.DeepEqual(gs.Voices, es.Voices) || !reflect.DeepEqual(gs.Languages, es.Languages) {
-			t.Errorf("echo %s differs from google: update server/catalog/data/echo.yaml", name)
-		}
-	}
-}
-func TestKeylessServiceNeedsNoCredential(t *testing.T) // Parse of a provider whose service has keyless: true and no credential: ok; with neither keyless nor credential: error "needs at least one credential kind"
-func mustProvider(...)
-```
-
-`resolver_test.go`:
-
-```go
-func TestKeylessProviderIsAlwaysDetected(t *testing.T) // empty environment: Detected("echo") true; Status("echo","tts") Declared+Detected; Secret returns nil,nil; Env("echo") empty
-```
-
-`api/providers_test.go`: with the real catalog and a registry that supports `echo.*`, `GET /providers` lists `echo` with `detected: true`, `env: []`, all three services `available`, `display_name` "Echo (simulated)".
-
-- [ ] **Step 2: Run to see them fail**
-
-Run: `cd server && go test -race ./catalog/ ./api/ -run 'Echo|Keyless' 2>&1 | tail`
-Expected: FAIL.
-
-- [ ] **Step 3: Implement.** `catalog.go`: add `Keyless bool \`yaml:"keyless"\`` to `Service`; in `validate`, the credential-count check becomes `if len(svc.Credential) == 0 && !svc.Keyless && !overlay`; a keyless service with credentials is an error ("keyless service %q cannot name credentials"). `resolver.go`:
-
-```go
-func (r *Resolver) Status(provider, service string) Status {
-	p, svc, ok := r.service(provider, service)
-	if !ok { return Status{} }
-	if svc.Keyless { return Status{Declared: true, Detected: true} }
-	...
-func (r *Resolver) Secret(provider, service string) ([]byte, error) {
-	p, svc, ok := r.service(provider, service)
-	if !ok { return nil, ErrUnknown }
-	if svc.Keyless { return nil, nil }
-```
-
-`data/echo.yaml` (copy google's entries exactly; the test guards drift):
-
-```yaml
-id: echo
-name: Echo (simulated)
-services:
-  llm:
-    keyless: true
-    models:
-      - {id: gemini-2.5-flash, label: Gemini 2.5 Flash, default: true}
-  stt:
-    keyless: true
-    models:
-      - {id: chirp_2, label: Chirp 2, default: true}
-      - {id: latest_long, label: Latest long}
-    languages:
-      - {id: en-US, label: English (US), default: true}
-  tts:
-    keyless: true
-    voices:
-      - {id: en-US-Chirp3-HD-Aoede, label: Chirp 3 HD Aoede (en-US), default: true}
-```
-
-(Use the full current `google.yaml` lists; the snippet shows the first entries.) `echo` has no `credentials:` block; confirm `validate` accepts a provider with none.
-
-- [ ] **Step 4: Run to see them pass, then the module**
-
-Run: `cd server && go test -race ./catalog/ ./api/ 2>&1 | tail -5`
-Expected: PASS (other registry-dependent API tests may need `echo.*` registered: they pass after Task 5; if one fails only for that reason, note it and continue).
-
+- [ ] **Step 1: Write the failing tests.** `catalog_test.go`: `TestEchoMirrorsGoogleCatalog` (every service of google exists on echo with `reflect.DeepEqual` models, voices, languages: "update server/catalog/data/echo.yaml"); `TestKeylessServiceNeedsNoCredential` (a keyless service without credentials parses; neither keyless nor credential is the existing error; keyless plus credentials is an error "keyless service %q cannot name credentials"). `resolver_test.go`: `TestKeylessProviderIsAlwaysDetected` (empty environment: `Detected("echo")`, `Status("echo","tts")` Declared+Detected, `Secret` nil/nil, `Env("echo")` empty). `api/providers_test.go`: with the real catalog and a registry that supports `echo.*`, `GET /providers` lists `echo` with `detected: true`, `env: []`, `display_name: "Echo (simulated)"` and all three services `available`.
+- [ ] **Step 2: Run to see them fail.** `cd server && go test -race ./catalog/ ./api/ -run 'Echo|Keyless' 2>&1 | tail` — Expected: FAIL.
+- [ ] **Step 3: Implement.** `catalog.go`: add `Keyless bool \`yaml:"keyless"\`` to `Service`; in `validate`, `if len(svc.Credential) == 0 && !svc.Keyless && !overlay` is the credential error, and `if svc.Keyless && len(svc.Credential) > 0` the new one. `resolver.go`: at the top of `Status` and `Secret`, after the service lookup, `if svc.Keyless { return Status{Declared: true, Detected: true} }` and `{ return nil, nil }`. `data/echo.yaml`: `id: echo`, `name: Echo (simulated)`, no `credentials`, and for `llm`, `stt`, `tts` a `keyless: true` service with the **full** entry lists copied from `google.yaml`.
+- [ ] **Step 4: Run to see them pass.** `cd server && go test -race ./catalog/ ./api/ 2>&1 | tail -5` — Expected: PASS (an API test that needs the `echo.*` factories passes after Task 6; note it and continue).
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -499,11 +370,11 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Register echo on every build; delete the build tag
+### Task 6: Register echo on every build; delete the build tag
 
 **Files:**
 - Create: `server/registry_echo.go`, `server/registry_echo_test.go`
-- Modify: `server/config.go` (`Providers.Echo`), `server/config_defaults.go`, `server/config_validate.go`, `server/registry.go` (drop the hook), `server/config_test.go`
+- Modify: `server/config.go` (`Providers.Echo`), `server/config_defaults.go`, `server/config_validate.go`, `server/registry.go` (breakers, drop the hook), `server/config_test.go`, `server/go.mod` (require `govoice/providers/echo` with a replace), `go.mod` (root; whatever `go work` needs)
 - Delete: `server/registry_fake.go`, `server/registry_fake_test.go`
 
 **Interfaces:**
@@ -511,35 +382,32 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 
 ```go
 		Echo struct {
-			Mimic        string        `yaml:"mimic"`         // google | instant
-			STT          string        `yaml:"stt"`           // text | audio
-			Audible      bool          `yaml:"audible"`       // a quiet tone instead of silence
-			LabelReplies bool          `yaml:"label_replies"` // prefix replies with the step's prompt
-			LLMExtraDelay time.Duration `yaml:"llm_extra_delay"` // added to every word (perf-gate self-test)
+			Mimic         string        `yaml:"mimic"`           // google | instant
+			STT           string        `yaml:"stt"`             // text | audio
+			Audible       bool          `yaml:"audible"`         // a quiet tone instead of silence
+			LabelReplies  bool          `yaml:"label_replies"`   // prefix replies with the step's prompt
+			LLMExtraDelay time.Duration `yaml:"llm_extra_delay"` // added to every reply word (perf-gate self-test)
 		} `yaml:"echo"`
 ```
 
-- Defaults: `Mimic "google"`, `STT "text"`. Validation errors name the field, e.g. `providers.echo.mimic: "x" must be one of google, instant`; `llm_extra_delay` must be ≥ 0.
-- `registerEcho(r *Registry)` is called from `NewRegistry` and registers `echo.stt`, `echo.llm`, `echo.tts`.
-- `echoGoogle(spec StageSpec)` returns the per-stage figures for the google mimic.
+- Defaults `mimic: google`, `stt: text`. Validation errors name the field: `providers.echo.mimic: "x" must be one of google, instant`; `providers.echo.stt: "y" must be one of text, audio`; `providers.echo.llm_extra_delay must not be negative`.
+- `registerEcho(r *Registry)` registers `echo.stt`, `echo.llm`, `echo.tts`, built from the same pieces as the Google factories with the echo backends; `NewRegistry` calls it unconditionally; the registry gets `echoSTTBreaker`, `echoLLMBreaker`, `echoTTSBreaker`.
 
 - [ ] **Step 1: Write the failing tests** — `server/registry_echo_test.go`:
 
 ```go
-func TestEchoIsRegisteredOnEveryBuild(t *testing.T)             // NewRegistry().Supports("echo", stage) for stt/llm/tts
-func TestEchoDoesNotReplaceGoogle(t *testing.T)                 // the "google.tts" factory is the real one (compare the pointer/behaviour: with a bad secret it still errors as before) — reuse the existing google factory test fixtures
-func TestEchoGoogleMimicSTTByModel(t *testing.T)                // chirp_2: no interims, FinalDelay 1200ms; latest_long: interims, 500ms; unknown model: chirp_2 figures (checked through the exported figures func, not by timing)
-func TestEchoGoogleMimicTTSStreamingVersusUnary(t *testing.T)   // en-US-Chirp3-HD-Aoede: first byte 400ms, no per-char; "en-US-Journey-F": 600ms + 50ms/char; both 15 chars/s, rate = providers.google_tts.sample_rate
-func TestEchoInstantMimicHasNoDelays(t *testing.T)
-func TestEchoBrokenVoiceFailsToBuild(t *testing.T)              // spec.Voice "brokenvoice" -> error, as the old fake
-func TestEchoLLMPhrasesForTransferAndMCPTools(t *testing.T)     // the old TestFakeLLMPhrasesForMCPTools, untagged, plus transfer_to_sales -> "transfer to sales"
-func TestEchoConfigDefaultsAndValidation(t *testing.T)          // defaults google/text; mimic "x", stt "y", negative extra delay are errors naming the field
+func TestEchoIsRegisteredOnEveryBuild(t *testing.T)            // NewRegistry().Supports("echo", stage) for stt/llm/tts
+func TestGoogleFactoriesAreUntouched(t *testing.T)             // google.* still need credentials: building google.tts with an empty secret errors as before
+func TestEchoTTSChoosesStreamingLikeGoogle(t *testing.T)       // Chirp3-HD voice -> *google.StreamingTTSProcessor; other voice -> *google.TTSProcessor; providers.google_tts.disable_streaming -> unary
+func TestEchoTTSUsesTheGoogleSampleRate(t *testing.T)          // providers.google_tts.sample_rate 16000 -> frames at 16000
+func TestEchoBrokenVoiceFailsToBuild(t *testing.T)             // "brokenvoice" -> error, as the old fake
+func TestEchoLLMWiresTransferAndMCPPhrases(t *testing.T)       // spec.Tools with transfer_to_sales and an mcp__ tool: phrases "transfer to sales", "call tool lookup_order" (the old TestFakeLLMPhrasesForMCPTools, untagged)
+func TestEchoFactoriesLabelEverythingEcho(t *testing.T)        // a built processor's frames report Provider "echo"
+func TestEchoMimicSelectsFigures(t *testing.T)                 // mimic instant: figures all zero; google: chirp_2 final delay 1200ms
+func TestEchoConfigDefaultsAndValidation(t *testing.T)         // defaults google/text; mimic "x", stt "y", negative extra delay are errors naming the field
 ```
 
-- [ ] **Step 2: Run to see them fail**
-
-Run: `cd server && go test -race -run 'TestEcho' . 2>&1 | tail`
-Expected: FAIL.
+- [ ] **Step 2: Run to see them fail.** `cd server && go test -race -run 'TestEcho|TestGoogleFactories' . 2>&1 | tail` — Expected: FAIL.
 
 - [ ] **Step 3: Implement.** `registry_echo.go` (no build tag):
 
@@ -549,144 +417,107 @@ package server
 import (
 	"errors"
 	"strings"
-	"time"
 
 	"govoice/core"
+	"govoice/providers/echo"
+	"govoice/providers/google"
 )
 
-// echoFigures are the timings the echo stages imitate. The google figures come from the
-// repo's own live measurements (docs/benchmarks/first-audio-latency.md, agent-matrix.md).
-type echoFigures struct {
-	stt core.EchoSTT
-	llm core.EchoLLM
-	tts core.EchoTTS
-}
-
-// echoGoogle imitates Google: chirp_2 has no interim results and finalizes about 1.2 s after the
-// caller stops, latest_long streams interims and finalizes in about 0.5 s; the LLM answers its
-// first word in about 0.7 s; Chirp3-HD voices stream (first audio about 0.4 s) while every other
-// voice is unary (about 0.6 s plus 50 ms per character before any audio). Speech is 15 chars/s.
-func echoGoogle(spec StageSpec, sampleRate int) echoFigures {
-	f := echoFigures{
-		llm: core.EchoLLM{FirstToken: 700 * time.Millisecond, TokenDelay: 30 * time.Millisecond},
-		tts: core.EchoTTS{CharsPerSecond: 15, SampleRate: sampleRate},
-	}
-	if spec.Model == "latest_long" {
-		f.stt = core.EchoSTT{Interims: true, FinalDelay: 500 * time.Millisecond, FramesPerWord: 20}
-	} else {
-		f.stt = core.EchoSTT{FinalDelay: 1200 * time.Millisecond, FramesPerWord: 20}
-	}
-	if strings.Contains(spec.Voice, "Chirp3-HD") || spec.Voice == "" {
-		f.tts.FirstByte = 400 * time.Millisecond
-	} else {
-		f.tts.FirstByte, f.tts.FirstBytePerChar = 600*time.Millisecond, 50*time.Millisecond
-	}
-	return f
-}
-
-// echoInstant has no delays and one word per audio frame: the framework alone is measured.
-func echoInstant(int) echoFigures { return echoFigures{stt: core.EchoSTT{FramesPerWord: 1}} }
-
 func registerEcho(r *Registry) {
-	figures := func(cfg *Config, spec StageSpec) echoFigures {
-		var f echoFigures
-		if cfg.Providers.Echo.Mimic == "instant" {
-			f = echoInstant(0)
-		} else {
-			f = echoGoogle(spec, cfg.Providers.GoogleTTS.SampleRate)
-		}
-		f.stt.AudioMode = cfg.Providers.Echo.STT == "audio"
-		f.llm.TokenDelay += cfg.Providers.Echo.LLMExtraDelay
-		f.tts.Audible = cfg.Providers.Echo.Audible
-		return f
-	}
 	r.Register("echo.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		return core.NewEchoSTT(figures(cfg, spec).stt), nil
+		m := echo.Mimic(cfg.Providers.Echo.Mimic)
+		sttCfg := google.DefaultSTTConfig()
+		sttCfg.Provider = "echo"
+		if spec.Model != "" {
+			sttCfg.Model = spec.Model
+		}
+		if spec.Language != "" {
+			sttCfg.LanguageCode = spec.Language
+		}
+		sttCfg.CircuitBreaker = r.echoSTTBreaker
+		if spec.Failover {
+			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
+		}
+		sttCfg.StreamOpener = echo.NewSTTOpener(m.STT(sttCfg.Model), cfg.Providers.Echo.STT == "audio")
+		return google.NewSTTProcessor(sttCfg)
 	})
+
 	r.Register("echo.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		l := figures(cfg, spec).llm
-		l.Executor, l.ToolOnPhrase = spec.ToolExecutor, map[string]string{}
+		o := echo.LLMOptions{Figures: echo.Mimic(cfg.Providers.Echo.Mimic).LLM(), ExtraDelay: cfg.Providers.Echo.LLMExtraDelay,
+			Phrases: map[string]string{}}
 		if cfg.Providers.Echo.LabelReplies {
-			l.Label = "[" + spec.SystemPrompt + "] "
+			o.Label = "[" + spec.SystemPrompt + "] "
 		}
 		for _, d := range spec.Tools {
 			if step, ok := strings.CutPrefix(d.Name, "transfer_to_"); ok {
-				l.ToolOnPhrase["transfer to "+strings.ReplaceAll(step, "_", " ")] = d.Name
+				o.Phrases["transfer to "+strings.ReplaceAll(step, "_", " ")] = d.Name
 			}
 		}
 		phrases, spoken := mcpToolPhrases(spec.Tools)
 		for p, name := range phrases {
-			l.ToolOnPhrase[p] = name
+			o.Phrases[p] = name
 		}
-		l.SayResult = spoken
-		return core.NewEchoLLM(l), nil
+		o.Spoken = spoken
+		llmCfg := google.DefaultLLMConfig()
+		llmCfg.Provider, llmCfg.Model, llmCfg.SystemPrompt = "echo", spec.Model, spec.SystemPrompt
+		if len(spec.Tools) > 0 {
+			llmCfg.ToolDefinitions, llmCfg.ToolExecutor, llmCfg.ToolHistory = spec.Tools, spec.ToolExecutor, spec.History
+			llmCfg.ToolLoopConfig = spec.toolLoopConfig()
+		}
+		llmCfg.Client = echo.NewLLMClient(o)
+		llmCfg.CircuitBreaker = r.echoLLMBreaker
+		return google.NewLLMProcessor(llmCfg)
 	})
+
 	r.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
 		// A step whose voice is "brokenvoice" cannot be built: the e2e suites use it to make a handoff fail.
 		if spec.Voice == "brokenvoice" {
 			return nil, errors.New("echo tts: voice brokenvoice is unavailable")
 		}
-		return core.NewEchoTTS(figures(cfg, spec).tts), nil
+		ttsCfg := google.DefaultTTSConfig()
+		ttsCfg.Provider = "echo"
+		if spec.Voice != "" {
+			ttsCfg.Voice = spec.Voice
+		}
+		if cfg.Providers.GoogleTTS.SampleRate > 0 {
+			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
+		}
+		ttsCfg.Client = echo.NewTTSClient(echo.Mimic(cfg.Providers.Echo.Mimic).TTS(ttsCfg.Voice), cfg.Providers.Echo.Audible)
+		ttsCfg.CircuitBreaker = r.echoTTSBreaker
+		if spec.Failover {
+			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
+		}
+		if google.IsChirp3HD(ttsCfg.Voice) && !cfg.Providers.GoogleTTS.DisableStreaming {
+			return google.NewStreamingTTSProcessor(ttsCfg)
+		}
+		return google.NewTTSProcessor(ttsCfg)
 	})
 }
 ```
 
-Move `mcpToolPhrases` (unchanged) from `registry_fake.go` to the bottom of this file. In `registry.go` replace
+Move `mcpToolPhrases` (unchanged) from `registry_fake.go` to the bottom of this file. In `registry.go` add the three breakers next to the others (`resilience.NewBreaker(resilience.DefaultConfig())`) and replace the `registerFakeProviders` hook with `registerEcho(r)`; delete the `registerFakeProviders` var. Delete `registry_fake.go` and `registry_fake_test.go` (its test moves into `registry_echo_test.go` as the phrases test above). Add the `Echo` struct to `config.go` (after `OpenAILLM`), defaults to `config_defaults.go`, validation to `config_validate.go` using the file's existing error idiom. Wire the module: `server/go.mod` requires `govoice/providers/echo` with `replace govoice/providers/echo => ../providers/echo` (mirror how it requires `providers/google`), then `go mod tidy` for server and root.
 
-```go
-	if registerFakeProviders != nil {
-		registerFakeProviders(r) // -tags fakeproviders only (registry_fake.go)
-	}
-```
-
-with `registerEcho(r)` and delete the `registerFakeProviders` var and its comment. Delete `registry_fake.go`; move `TestFakeLLMPhrasesForMCPTools` into `registry_echo_test.go` as the phrases test above (no tag). Add the `Echo` struct to `config.go` (next to `OpenAILLM`), defaults in `config_defaults.go` (`cfg.Providers.Echo.Mimic, cfg.Providers.Echo.STT = "google", "text"`) and validation in `config_validate.go` next to the sample-rate check:
-
-```go
-	if m := cfg.Providers.Echo.Mimic; !slices.Contains([]string{"google", "instant"}, m) {
-		errs = append(errs, fmt.Errorf("providers.echo.mimic: %q must be one of google, instant", m))
-	}
-	if m := cfg.Providers.Echo.STT; !slices.Contains([]string{"text", "audio"}, m) {
-		errs = append(errs, fmt.Errorf("providers.echo.stt: %q must be one of text, audio", m))
-	}
-	if cfg.Providers.Echo.LLMExtraDelay < 0 {
-		errs = append(errs, errors.New("providers.echo.llm_extra_delay must not be negative"))
-	}
-```
-
-(match the file's existing error-collection idiom).
-
-- [ ] **Step 4: Run to see them pass, then the module**
-
-Run: `cd server && go test -race ./... 2>&1 | tail -15; gofmt -l .`
-Expected: PASS. Tests that used `-tags fakeproviders` still carry their tag until Task 6 and are skipped here.
-
+- [ ] **Step 4: Run to see them pass, then the module.** `cd server && go test -race ./... 2>&1 | tail -15; gofmt -l .` — Expected: PASS (tests still carrying `fakeproviders` are skipped until Task 7).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server core
-git commit -m "feat(server): the echo provider is registered on every build and imitates Google; the fakeproviders tag and registry_fake.go go away
+git add server providers go.work go.mod go.sum
+git commit -m "feat(server): the echo provider is registered on every build and runs the real Google processors; the fakeproviders tag and registry_fake.go go away
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 6: The Go end-to-end tests run on the normal binary against `echo`
+### Task 7: The Go end-to-end tests run on the normal build against `echo`
 
 **Files:**
 - Modify: `server/flow_e2e_test.go`, `server/mcp_call_e2e_test.go`, `server/secret_leak_test.go`, `server/context_injection_e2e_test.go`, `Makefile` (`test-e2e-go` and any `-tags ... fakeproviders` use)
 
-**Interfaces:**
-- Consumes: Task 5's `providers.echo` config and the `echo.*` factories.
-
-- [ ] **Step 1: Migrate one file and watch it fail for the right reason.** In `flow_e2e_test.go`: delete the `//go:build fakeproviders` line; set the echo config on the test's `Config` (`cfg.Providers.Echo.Mimic = "instant"`, `cfg.Providers.Echo.LabelReplies = true`) in place of `t.Setenv("GOVOICE_FAKE_LLM_LABEL", "1")`; change every `"google."+stage` probe key and every `"provider":"google"` stage to `echo`; drop the placeholder `GOOGLE_*` environment (echo needs none); update the comments ("the fake providers" → "the echo provider"). Run `cd server && go test -race -count=1 -run 'FlowE2E' .` — it must pass; if a step fails because a model such as `"m"` or voice `"v"` is rejected, echo's catalog allows custom entries (`custom` defaults true), so the failure is real: investigate before continuing.
-- [ ] **Step 2: Migrate the other three** the same way (`mcp_call_e2e_test.go`: the `agentWith` configs and rig comments; `secret_leak_test.go`: keep the XAI and Google sentinel secrets in the environment and a mixed flow (`llm` on `xai` is not buildable without the network: keep the existing structure and only swap the google stages for echo; the test asserts no sentinel reaches a log or response, so keeping `GOOGLE_API_KEY` sentinels set while no stage uses google still proves the point; read the test and keep its intent); `context_injection_e2e_test.go`: drop the tag and use echo).
-- [ ] **Step 3: Makefile.** `test-e2e-go` becomes `go test -race -count=1 -tags "$(GOTAGS)" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection' .` (add `ContextInjection` only if that file's tests match; check their names), with the comment "against the echo provider". Replace every remaining `fakeproviders` mention in the Makefile (lines about `bin/server-fake`, `eval-pipecat`, the loadtest comment) with the new wording; the targets themselves change in Task 7.
-- [ ] **Step 4: Run**
-
-Run: `make test-e2e-go`
-Expected: PASS, identical test names to before.
-
+- [ ] **Step 1: Migrate `flow_e2e_test.go` and watch it fail for the right reason.** Delete its `//go:build fakeproviders` line; replace `t.Setenv("GOVOICE_FAKE_LLM_LABEL", "1")` with `cfg.Providers.Echo.Mimic = "instant"` and `cfg.Providers.Echo.LabelReplies = true` on the test's `Config`; change every `"google."+stage` probe key and every `"provider":"google"` stage to `echo`; drop the placeholder `GOOGLE_*` environment; update the comments. Run `cd server && go test -race -count=1 -run FlowE2E .`. A failure that is not about naming is a real fidelity difference between echo and the old fake (the real processors are stricter: units, retries, stage fencing): investigate and fix echo, never loosen the test.
+- [ ] **Step 2: Migrate the other three** the same way. `secret_leak_test.go` keeps its XAI and Google sentinel secrets in the environment and its intent (no sentinel reaches a log or response); only the stages that were google fakes become echo. `context_injection_e2e_test.go`: drop the tag, use echo.
+- [ ] **Step 3: Makefile.** `test-e2e-go` becomes `go test -race -count=1 -tags "$(GOTAGS)" -run '<the same names, plus the context-injection e2e test names>' .` with the comment "against the echo provider"; reword the other `fakeproviders` comments (the targets change in Task 8).
+- [ ] **Step 4: Run.** `make test-e2e-go` — Expected: PASS with the same test names as before.
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -698,20 +529,17 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 7: Every harness uses echo
+### Task 8: Every harness uses echo
 
 **Files:**
-- Modify: `tools/loadtest/server.go`, `tools/loadtest/main.go`, `tools/loadtest/loadtest_test.go`, `tools/livecheck/server.go`, `tools/livecheck/main.go`, `tools/livecheck/profiles.yaml`, `tools/livecheck/profiles.go`, `tools/livecheck/profiles_test.go`, `tools/eval/pipecat/run.sh`, `tools/eval/cmd/govoice-bench/main.go` (only if it names the tag), `scripts/perf-gate.sh`, `deploy/docker-compose.perf.yaml`, `config/perf.yaml`, `e2e/global-setup-flows.ts`, `e2e/lib/flows-stack.ts`, `e2e/lib/flows-helpers.ts`, `e2e/tests-flows/*.spec.ts`, `transport/ws/*_test.go` (only where they name the tag), `docs/benchmarks/capacity.md`, `docs/providers.md`
+- Modify: `tools/loadtest/server.go`, `tools/loadtest/main.go`, `tools/loadtest/loadtest_test.go`, `tools/livecheck/server.go`, `tools/livecheck/main.go`, `tools/livecheck/profiles.yaml`, `tools/livecheck/profiles.go`, `tools/livecheck/profiles_test.go`, `tools/eval/pipecat/run.sh`, `scripts/perf-gate.sh`, `deploy/docker-compose.perf.yaml`, `config/perf.yaml`, `e2e/global-setup-flows.ts`, `e2e/lib/flows-stack.ts`, `e2e/lib/flows-helpers.ts`, `e2e/tests-flows/*.spec.ts` (comments and the broken-voice name only), `docs/benchmarks/capacity.md`
 
-**Interfaces:**
-- Consumes: the `providers.echo` config. Harness configs set `mimic: instant` unless the harness is about UX realism.
-
-- [ ] **Step 1: loadtest.** The server child is built without `-tags` (`./cmd/server`); the generated server config gains `providers: {echo: {mimic: instant, stt: audio}}`; the placeholder `GOOGLE_*` variables, `GOVOICE_FAKE_STT` and the `sa.json` file are removed; the flows it creates use `"provider": "echo"` (`model`/`voice` any string, as now). Add `-llm-delay` (duration, default 0) that writes `providers.echo.llm_extra_delay` into that config. Update `loadtest_test.go` accordingly and its comments.
-- [ ] **Step 2: perf gate.** `scripts/perf-gate.sh` self-test: replace `( export GOVOICE_FAKE_LLM_DELAY=100ms; expect 1 load-injected load -compare "$LB" )` with `expect 1 load-injected load -llm-delay 100ms -compare "$LB"`. `deploy/docker-compose.perf.yaml`: delete `GOVOICE_FAKE_STT=audio`; `config/perf.yaml`: add `providers:` → `echo: {mimic: instant, stt: audio}` (merge with an existing `providers:` block if present) and make its flows use `echo` (check how the compose perf run creates flows).
-- [ ] **Step 3: livecheck.** The `fake` profile becomes `echo` profile: `stages: stt {provider: echo, model: chirp_2, language: en-US}`, `llm {provider: echo, model: gemini-2.5-flash}`, `tts {provider: echo, voice: en-US-Chirp3-HD-Aoede}`; remove `build_tags: [fakeproviders]` and the rule in `profiles.go` that a fake profile must list it (a fake profile now needs no tag); `server.go`: the `sp.fake` branch writes the echo config (`mimic: instant, stt: audio`) into the server config instead of placeholders and env; drop `GOVOICE_FAKE_LLM_DELAY` from its pass-through list (the self-test's delay variable is gone: if the self-test needs an injected delay, the livecheck config template sets `llm_extra_delay`); update `profiles_test.go` (`tagUnion` expectations) and the docs strings that mention the tag.
-- [ ] **Step 4: pipecat eval.** `run.sh`: `go build -o "$OUT/server-fake" ./cmd/server` (no tag), delete the `GOOGLE_*` placeholders and `sa.json`, write the server config with `providers.echo` (instant, audio) and create the flow with `"provider":"echo"`.
-- [ ] **Step 5: browser e2e.** `global-setup-flows.ts`: build without `fakeproviders` (`xaispeech` only for both modes); in fake mode the provider environment is empty (`providerEnv = {}`), and the server config (the string it already templates) gains `providers: { echo: { mimic: instant, label_replies: true } }`; delete the `GOOGLE_*`/`sa.json`/`GOVOICE_FAKE_LLM_LABEL` lines. `flows-stack.ts`: `PROVIDER = LIVE ? "xai" : "echo"`. In the specs, voice `brokenvoice` is unchanged; `10-providers.spec.ts` asserts "only the suite's provider is available": with echo detected and nothing else it holds as written. Update comments that say "fake provider".
-- [ ] **Step 6: Run every gate**
+- [ ] **Step 1: loadtest.** The server child is built without `-tags` (`./cmd/server`); its generated config gains `providers: {echo: {mimic: instant, stt: audio}}`; delete the placeholder `GOOGLE_*` variables, `GOVOICE_FAKE_STT` and `sa.json`; the flows it creates use `"provider": "echo"`. Add `-llm-delay` (duration, default 0) that writes `providers.echo.llm_extra_delay`. Check the synthetic audio is "voiced" for the instant profile (`VoicedThreshold 0` counts every frame): it must still yield transcripts. Update `loadtest_test.go` and its comments.
+- [ ] **Step 2: perf gate.** `scripts/perf-gate.sh` self-test: `( export GOVOICE_FAKE_LLM_DELAY=100ms; expect 1 load-injected load -compare "$LB" )` becomes `expect 1 load-injected load -llm-delay 100ms -compare "$LB"`. `deploy/docker-compose.perf.yaml`: delete `GOVOICE_FAKE_STT=audio`; `config/perf.yaml`: add `providers.echo: {mimic: instant, stt: audio}` (merge with any existing `providers:` block) and use `echo` in whatever creates its flows.
+- [ ] **Step 3: livecheck.** The `fake` profile becomes the `echo` profile: stages `stt {provider: echo, model: chirp_2, language: en-US}`, `llm {provider: echo, model: gemini-2.5-flash}`, `tts {provider: echo, voice: en-US-Chirp3-HD-Aoede}`, no `build_tags`; remove the `profiles.go` rule that a fake profile must list the tag; the `sp.fake` branch of `server.go` writes the echo config (instant, audio) instead of placeholders and environment; drop `GOVOICE_FAKE_LLM_DELAY` from its pass-through list; update `profiles_test.go` (`tagUnion`) and the strings that mention the tag.
+- [ ] **Step 4: pipecat eval.** `run.sh`: `go build -o "$OUT/server-fake" ./cmd/server`, delete the `GOOGLE_*` placeholders and `sa.json`, write the server config with `providers.echo` (instant, audio), create the flow with `"provider":"echo"`.
+- [ ] **Step 5: browser e2e.** `global-setup-flows.ts`: build with `xaispeech` only for both modes; in fake mode `providerEnv = {}` and the server config string gains `providers: { echo: { mimic: instant, label_replies: true } }`; delete the `GOOGLE_*`, `sa.json` and `GOVOICE_FAKE_LLM_LABEL` lines. `flows-stack.ts`: `PROVIDER = LIVE ? "xai" : "echo"`. `10-providers.spec.ts` ("only the suite's provider is available") now sees `echo` and needs no change. Reword the "fake provider" comments.
+- [ ] **Step 6: Run every gate.**
 
 ```bash
 make verify
@@ -722,10 +550,8 @@ make perf-gate-selftest
 make eval-pipecat
 ```
 
-Expected: each passes. `make perf-baseline` must NOT be needed: if `perf-gate` fails on a latency row against the stored baseline, the `instant` figures differ from the old fake (word-sized chunks, first-delay plumbing); fix the figures, never the baseline.
-
-- [ ] **Step 7: Prove the realism by hand and by a test.** Add `TestEchoGoogleLatencyAgainstBenchmarks` in `server/registry_echo_test.go`: a real `core.Session` with the three echo stages (google mimic, scaled by a `timeScale` of 0.1 so it runs in a second) — assert that for the default config the order and rough ratios match `docs/benchmarks/first-audio-latency.md`: STT final after stop is the largest fixed cost, LLM first delta follows its delay, first TTS audio of an 11-character unary unit is later than a Chirp3-HD unit. Then start the server with the default config, open the browser UI, call a flow on `echo` and listen: with `audible: true` and the default google mimic the call should feel like a slow-ish real provider.
-
+Expected: each passes. If `make perf-gate` is also run and a latency row moves, find out why (the real processors add per-unit work: `splitUnit`, retry wrappers, tracing) before touching a baseline; a deliberate re-baseline (`make perf-baseline`) is allowed only with the old and new numbers written into `docs/benchmarks/baseline.md` and the reason.
+- [ ] **Step 7: Prove the realism.** Add `TestEchoGoogleLatencyAgainstBenchmarks` in `providers/echo` (a real `core.Session` with the three echo-backed processors, google mimic, time scaled by dividing every figure by 10 so it runs in about a second): the STT final after the stop is the largest fixed cost, the LLM's first delta follows its delay, the first audio of an 11-character unary unit comes later than that of a Chirp3-HD unit, in the ratios of `docs/benchmarks/first-audio-latency.md`. Then start the server with the default config, open the browser UI, call a flow on `echo` with `audible: true`, and listen: it should feel like a slow-ish real provider.
 - [ ] **Step 8: Commit**
 
 ```bash
@@ -737,30 +563,55 @@ Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: Docs, the last sweep, and independent review
+### Task 9: Retire the `core.Fake*` doubles
 
 **Files:**
-- Modify: `docs/providers.md`, `docs/benchmarks/capacity.md`, `docs/benchmarks/baseline.md` (wording only), `README`/`docs/quickstart.md` where they mention fakes
+- Modify: `providers/echo/processors.go` (create), `tools/eval/eval.go`, `tools/eval/cmd/govoice-bench/main.go`, `tools/eval/turnquality/turnquality.go`, `tools/compat/whisker/conformance.go`, `tools/compat/client_compat_test.go`, `tools/compat/parity_fixtures_test.go`, `transport/ws/*_test.go` that use `core.NewFake*`, `core/fakes.go`, `core/fake_stt.go`
+- Move: the LLM, TTS and STT doubles and the failure-injection processors out of the exported API into `_test.go` files in `core`
 
 **Interfaces:**
-- Consumes: everything above.
+- Produces in `providers/echo` (so other modules build the **real** echo-backed processors without the server):
 
-- [ ] **Step 1: Docs.** In `docs/providers.md` add an "Echo (simulated)" section: what it is, the four config keys with defaults, the profiles and the measured figures it imitates (with the benchmark doc links), the text-versus-audio STT modes and the placeholder-words caveat, `brokenvoice`, and "never use for real callers; it is labelled simulated in the UI". Quickstart: "Try it without a key": start the server, pick `Echo (simulated)` in First run, call it. Replace the "fake providers" wording in `docs/benchmarks/capacity.md` and the README targets.
-- [ ] **Step 2: Sweep**
-
-```bash
-rg -n "fakeproviders|GOVOICE_FAKE_" --glob '!docs/superpowers/**' --glob '!.git' . ; echo "exit $?"
+```go
+func NewSTTProcessor(m Mimic, model string, audioMode bool) (core.Processor, error)
+func NewLLMProcessor(m Mimic, o LLMOptions, cfg google.LLMConfig) (core.Processor, error)
+func NewTTSProcessor(m Mimic, voice string, sampleRate int, audible bool) (core.Processor, error)
 ```
 
-Expected: no matches (exit 1). Fix every hit that is not an old plan or spec under `docs/superpowers/`.
-- [ ] **Step 3: Full gate**
+(each builds the Google processor with `Provider: "echo"` and the echo backend; the `echo.*` factories of Task 6 call these instead of repeating the wiring: change them in this task and keep their tests green.)
+
+- [ ] **Step 1: Inventory.** Run `rg -n "core\.(NewFake|Fake[A-Z]|Latency|Error|Panic|Flood|Stall|LateCompletion|IgnoredCancellation|ChildPanic)" --glob '*.go' . | rg -v '^core/'`. The expected users are the files listed above. `core.PassthroughProcessor`, `core.FakeTransportOutput` and `core.FakeTransportConfig` are generic pipeline sinks used by `tools` and `transport` tests, not fake providers: they stay exported in `core/fakes.go` (renamed `core/testsinks.go`) with a header saying they are test utilities.
+- [ ] **Step 2: Add the three constructors** to `providers/echo/processors.go` with a test each (`TestNewTTSProcessorSpeaks`, `TestNewLLMProcessorEchoes`, `TestNewSTTProcessorTranscribes`, each driving a `core.Session` as in Tasks 2 to 4), and make the Task 6 factories call them.
+- [ ] **Step 3: Migrate each external user to echo, one commit-sized file at a time.** In `tools/eval/*`, `tools/compat/*` and `transport/ws/*_test.go` replace `core.NewFakeLLMProcessor(core.FakeLLMConfig{…})` with `echo.NewLLMProcessor(echo.MimicInstant, …)` (`EchoUser` behaviour is the default reply; a scripted reply text the test relied on becomes an assertion on the echo reply "You said: …"), and `core.NewFakeTTSProcessor(…)` with `echo.NewTTSProcessor(echo.MimicInstant, "", rate, false)` (a test that counted exactly N frames per unit now derives N from the echo length: two 20 ms frames in instant mode). Each module's `go.mod` gains `govoice/providers/echo` (workspace `replace`, as `server` has). Run the module's tests after each file. A test that depended on a failure-injection knob (`FailWith`, `IgnoreCancel`) is a core test, not a transport/tools test: if one exists outside `core`, move it into `core` with its double.
+- [ ] **Step 4: Benchmarks.** `govoice-bench` measures framework overhead with the instant doubles; it now runs the real echo-backed processors. Run `make perf-gate`; the framework-overhead rows must stay inside their tolerances (`docs/benchmarks/README.md`). If they move, follow the re-baseline rule of Task 8 Step 6.
+- [ ] **Step 5: Move the doubles into core's tests.** `git mv core/fake_stt.go core/fake_stt_test.go`; move the `FakeLLMConfig`/`FakeLLMProcessor`, `FakeTTSConfig`/`FakeTTSProcessor` and the failure-injection processors (`LatencyProcessor`, `ErrorProcessor`, `PanicProcessor`, `ChildPanicProcessor`, `FloodProcessor`, `StallProcessor`, `LateCompletionProcessor`, `IgnoredCancellationProcessor`) from `core/fakes.go` into `core/fakes_test.go`; keep the sinks (Step 1) in `core/testsinks.go`. Drop any field no core test uses. Run `cd core && go test -race ./... && go vet ./...`; nothing outside `core` may reference the moved names (`go build ./... && go vet ./...` at the root and in each module).
+- [ ] **Step 6: Gate.** `gofmt -w . && make verify && make test-e2e-go && make e2e-fake` — Expected: PASS.
+- [ ] **Step 7: Commit**
 
 ```bash
-gofmt -w . && make verify && make test-e2e-go && make e2e-fake
+git add -A
+git commit -m "refactor: the fake LLM, TTS and STT leave core's public API; tools and transport tests use the echo-backed real processors
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 ```
 
-Expected: all green, clean `git status`.
-- [ ] **Step 4: Independent review (AGENTS.md).** Dispatch a fresh reviewer on `main..HEAD` with: the YAGNI and bloat audit (is every `Fake*` field added consumed by echo? any leftover `fakeproviders` code; duplicate catalog data and the drift test), the correctness and concurrency audit (delayed finals and first-token delays under interruption and teardown, no goroutine leak, generation fencing, no audio retained, `-race`), the five Review Focus items above, and the honesty check that echo cannot be mistaken for a real provider in the UI or API. Fix confirmed findings, each with a test that fails first.
+---
+
+### Task 10: Docs, the last sweep, and independent review
+
+**Files:**
+- Modify: `docs/providers.md`, `docs/benchmarks/capacity.md`, `docs/quickstart.md`, `README` where they mention fakes
+
+- [ ] **Step 1: Docs.** `docs/providers.md`: an "Echo (simulated)" section: what it is, the module layout (`providers/echo`, real Google processors with echo backends), the four config keys with defaults, the profiles and the measured figures it imitates (link the benchmark docs), text versus audio STT and the placeholder-words caveat, `brokenvoice`, and "never use for real callers; labelled simulated in the UI". Quickstart: "Try it without a key": start the server, pick `Echo (simulated)` in First run, call it. Reword the "fake providers" wording in `docs/benchmarks/capacity.md` and the README targets.
+- [ ] **Step 2: Sweep.**
+
+```bash
+rg -n "fakeproviders|GOVOICE_FAKE_|NewFakeLLM|NewFakeTTS|NewFakeSTT" --glob '!docs/superpowers/**' --glob '!.git' . ; echo "exit $?"
+```
+
+Expected: no matches (exit 1) except `core`'s own test files; fix every other hit.
+- [ ] **Step 3: Full gate.** `gofmt -w . && make verify && make test-e2e-go && make e2e-fake && make perf-gate-selftest` — Expected: all green, clean `git status`.
+- [ ] **Step 4: Independent review (AGENTS.md).** Dispatch a fresh reviewer on `main..HEAD`: YAGNI and bloat (any echo option or helper without a server caller; catalog duplication and its drift test; leftover fakes), the correctness and concurrency audit (backend goroutines under interruption, rotation and hang-up, channel closing by producers only, bounded queues, no audio retained, generation fencing through the real processors, `-race`), the five Review Focus items, the honesty check that no frame, trace, metric, log or UI string labels echo as `google` or a real provider, and that Google behaves exactly as before. Fix confirmed findings, each with a test that fails first.
 - [ ] **Step 5: Commit**
 
 ```bash
