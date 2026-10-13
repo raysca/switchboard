@@ -17,7 +17,7 @@ const maxReadAhead = 16 << 10
 // spare and keeps it for replay. An EOF or error behind those bytes means the
 // peer closed the spare. A MSG_PEEK cannot see this: once a TLS 1.3 server has
 // sent its session ticket, a peek returns that data and hides the FIN behind it
-// (Linux keeps the queue; macOS drops it on RST, so only Linux exposed the bug).
+// (Linux keeps the queue behind a RST/FIN more often than macOS, which is why CI on Linux exposed it first; the regression test fails on both).
 func alive(c net.Conn) bool {
 	if tc, ok := c.(*tls.Conn); ok {
 		c = tc.NetConn()

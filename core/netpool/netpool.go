@@ -239,7 +239,9 @@ type replayConn struct {
 func (c *replayConn) Read(b []byte) (int, error) {
 	if len(c.pending) > 0 {
 		n := copy(b, c.pending)
-		c.pending = c.pending[n:]
+		if c.pending = c.pending[n:]; len(c.pending) == 0 {
+			c.pending = nil // release the read-ahead buffer for the life of the pooled connection
+		}
 		return n, nil
 	}
 	return c.Conn.Read(b)
