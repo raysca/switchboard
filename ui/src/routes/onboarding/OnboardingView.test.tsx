@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { OnboardingView } from "./OnboardingView";
 import { ApiError, type ApiClient, type FlowDTO, type ProviderStatus } from "../../api/client";
@@ -112,7 +112,6 @@ describe("OnboardingView", () => {
     const deepgram: ProviderStatus = { id: "deepgram", display_name: "Deepgram", capabilities: ["stt"], detected: true, env: ["DEEPGRAM_API_KEY"], services: { stt: svc({ models: [{ id: "nova-3", label: "Nova 3" }] }) } };
     setup({ getProviders: vi.fn().mockResolvedValue([deepgram]) });
     expect(await screen.findByText(/No provider on this server covers speech-to-text, a language model and text-to-speech yet/)).toBeVisible();
-    expect(screen.getByText(/DEEPGRAM_API_KEY/)).toBeVisible();
     expect(screen.getByRole("link", { name: "See providers" })).toHaveAttribute("href", "/providers");
   });
 
@@ -260,5 +259,58 @@ describe("OnboardingView steps 3 and 4", () => {
     await user.type(screen.getByLabelText("Name"), "Front Desk");
     await user.click(screen.getByRole("button", { name: "Create and call it" }));
     expect(await screen.findByTestId("voice-test")).toHaveTextContent("Front Desk");
+  });
+});
+
+describe("OnboardingView review fixes", () => {
+  it("keeps the test call up when a background refetch fails", async () => {
+    const getFlows = vi.fn().mockResolvedValueOnce([flow]).mockRejectedValue(new ApiError("blip", "internal", 500, "r"));
+    setup({ getFlows }, "/onboarding?step=3&flow=flow-1");
+    expect(await screen.findByTestId("voice-test")).toBeVisible();
+    await act(async () => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(getFlows.mock.calls.length).toBeGreaterThan(1));
+    expect(screen.getByTestId("voice-test")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("says a stack is not in this build instead of naming no variables", async () => {
+    const noBuild: ProviderStatus = {
+      ...xai,
+      services: { ...xai.services, tts: svc({ available: false, reason: "not_in_build", voices: [{ id: "ara", label: "Ara" }] }) },
+    } as ProviderStatus;
+    setup({ getProviders: vi.fn().mockResolvedValue([{ ...noBuild, detected: true, services: { ...noBuild.services, stt: svc({ models: [{ id: "s", label: "S" }] }), llm: svc({ models: [{ id: "l", label: "L" }] }) } }]) });
+    expect(await screen.findByText("Not in this build")).toBeVisible();
+    expect(screen.queryByText(/Set\s+on the server/)).toBeNull();
+  });
+
+  it("does not tell the user to set variables when no provider covers every stage", async () => {
+    const deepgram: ProviderStatus = { id: "deepgram", display_name: "Deepgram", capabilities: ["stt"], detected: true, env: ["DEEPGRAM_API_KEY"], services: { stt: svc({ models: [{ id: "nova-3", label: "Nova 3" }] }) } };
+    setup({ getProviders: vi.fn().mockResolvedValue([deepgram]) });
+    await screen.findByText(/No provider on this server covers/);
+    expect(screen.queryByText(/DEEPGRAM_API_KEY/)).toBeNull();
+  });
+
+  it("puts the voice token in the web client snippet", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1");
+    expect(await screen.findByLabelText("Web client")).toHaveTextContent("wss://[YOUR SERVER]/ws?token=[VOICE TOKEN]");
+  });
+
+  it("submits the voice the select shows after a stack change", async () => {
+    const other: ProviderStatus = { ...google, id: "alt", display_name: "Alt", services: { ...google.services, tts: svc({ voices: [{ id: "zed", label: "Zed", default: true }] }) } } as ProviderStatus;
+    const { client, user } = setup({ getProviders: vi.fn().mockResolvedValue([google, other]) });
+    await user.click(await screen.findByRole("radio", { name: /Google/ }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.selectOptions(screen.getByLabelText("Voice"), "puck");
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(screen.getByRole("radio", { name: /Alt/ }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByLabelText("Voice")).toHaveValue("zed");
+    await user.type(screen.getByLabelText("Name"), "x");
+    await user.click(screen.getByRole("button", { name: "Create and call it" }));
+    await waitFor(() => expect(client.createFlow).toHaveBeenCalled());
+    expect((client.createFlow as ReturnType<typeof vi.fn>).mock.calls[0][0].config.tts.voice).toBe("zed");
   });
 });

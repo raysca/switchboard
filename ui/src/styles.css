@@ -2714,3 +2714,8 @@ main:has(.providers-layout) {
   background: var(--ok);
   color: var(--surface);
 }
+
+.key-bar .error-details,
+.key-bar .subtext {
+  color: var(--paper);
+}

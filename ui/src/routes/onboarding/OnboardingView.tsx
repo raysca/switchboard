@@ -83,7 +83,8 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   }
   if (providersQuery.isPending || flowsQuery.isPending) return <>{head}<LoadingState label="Checking system configuration" skeleton={4} /></>;
   for (const q of [providersQuery, flowsQuery]) {
-    if (q.isError) {
+    // A failed background refetch must not unmount a live test call: only fail when there is no data yet.
+    if (q.isError && !q.data) {
       return (
         <>
           {head}
@@ -202,8 +203,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
               <h2 id="fr-title">Choose how your flow hears, thinks and speaks.</h2>
               {stacks.length === 0 ? (
                 <p>
-                  No provider on this server covers speech-to-text, a language model and text-to-speech yet. Set one of these variables on the server and restart it:{" "}
-                  {[...new Set(providers.flatMap((p) => p.env))].join(", ")}. <Link to="/providers">See providers</Link>
+                  No provider on this server covers speech-to-text, a language model and text-to-speech yet. Setting a key will not change that: this build has no full stack. <Link to="/providers">See providers</Link>
                 </p>
               ) : (
                 <>
@@ -218,7 +218,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                             {s.stt.label} → {s.llm.label} → {s.tts.label}
                           </span>
                         </span>
-                        <span className="subtext">{s.ready ? "Ready on this server" : `Set ${s.missing.join(", ")} on the server and restart it`}</span>
+                        <span className="subtext">{s.ready ? "Ready on this server" : s.missing.length > 0 ? `Set ${s.missing.join(", ")} on the server and restart it` : "Not in this build"}</span>
                       </label>
                     ))}
                   </div>
@@ -247,7 +247,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                 </label>
                 <label className="form-field" htmlFor="fr-voice">
                   <span>Voice</span>
-                  <select id="fr-voice" value={voice || stack.tts.voice} onChange={(e) => setVoice(e.target.value)}>
+                  <select id="fr-voice" value={stack.tts.voices.some((v) => v.id === voice) ? voice : stack.tts.voice} onChange={(e) => setVoice(e.target.value)}>
                     {stack.tts.voices.map((v) => (
                       <option key={v.id} value={v.id}>
                         {v.label}
@@ -306,7 +306,7 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
               <Snippet
                 label="Web client"
                 title="2 · the browser connects with @pipecat-ai/client-js"
-                text={`const client = new PipecatClient({\n  transport: new WebSocketTransport(),\n});\nawait client.connect({ wsUrl: "wss://[YOUR SERVER]/ws" });\n// authenticated with the voice token from step 1`}
+                text={`const client = new PipecatClient({\n  transport: new WebSocketTransport(),\n});\nawait client.connect({ wsUrl: "wss://[YOUR SERVER]/ws?token=[VOICE TOKEN]" });\n// [VOICE TOKEN] is the token from step 1`}
               />
               <section aria-labelledby="fr-more" className="first-run__more">
                 <h3 id="fr-more">When you're ready for more</h3>

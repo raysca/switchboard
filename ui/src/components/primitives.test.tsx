@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -72,5 +73,12 @@ describe("LoadingState skeleton", () => {
   it("is the plain text line without a skeleton", () => {
     const { container } = render(<LoadingState label="Loading" />);
     expect(container.querySelector(".skeleton__row")).toBeNull();
+  });
+});
+
+describe("key strip contrast", () => {
+  it("styles error details and hints readable on the dark strip", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toMatch(/\.key-bar \.error-details[^{]*\{[^}]*color: var\(--paper\)/);
   });
 });
