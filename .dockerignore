@@ -28,3 +28,4 @@ third_party/onnxruntime-*
 e2e
 progress.md
 **/*.log
+deploy/*.env

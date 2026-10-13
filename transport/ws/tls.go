@@ -36,7 +36,8 @@ func (cfg *SecurityConfig) CheckOrigin(r *http.Request) error {
 	if cfg.AllowSameHost {
 		// The page and the socket share an origin (the server serves the page): browsers send the
 		// page's origin and the socket's own host, so no per-deployment allow-list entry is needed.
-		// Scheme and port are part of Host/Origin: a different port is a different origin.
+		// Only host and port are compared, not the scheme. This is not a DNS-rebinding defence: a
+		// rebound page presents its own matching Host, so the voice token is the gate.
 		if u, err := url.Parse(origin); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && strings.EqualFold(u.Host, r.Host) {
 			return nil
 		}
