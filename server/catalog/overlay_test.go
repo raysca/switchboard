@@ -88,6 +88,7 @@ func TestOverlayHostileFilesAreSkipped(t *testing.T) {
 		"unknown_key.yaml": "id: xai\nbogus: 1\n",
 		"big.yaml":         "id: xai\n# " + strings.Repeat("x", MaxFileBytes) + "\n",
 		"creds.yaml":       "id: xai\ncredentials:\n  - id: key\n    label: x\n    fields:\n      api_key: {env: EVIL}\n    assemble: token\n",
+		"keyless.yaml":     "id: xai\nservices:\n  tts:\n    keyless: true\n",
 		"unknown.yaml":     "id: nope\nname: Nope\nservices:\n  tts:\n    voices:\n      - {id: a, label: A}\n",
 		"notyaml.yaml":     "\x00: [unterminated",
 	}

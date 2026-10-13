@@ -325,7 +325,7 @@ func (r *Report) Markdown() string {
 	var b strings.Builder
 	c, res := r.Config, r.Results
 	fmt.Fprintf(&b, "# govoice load report (%s)\n\n", c.Mode)
-	fmt.Fprintf(&b, "%s, %s/%s, %d CPUs, %s, %s. Machine-specific numbers. Fake providers, localhost, one speech clip.\n\n",
+	fmt.Fprintf(&b, "%s, %s/%s, %d CPUs, %s, %s. Machine-specific numbers. Echo provider (instant), localhost, one speech clip.\n\n",
 		r.StartedAt.Format("2006-01-02 15:04 MST"), r.Machine.OS, r.Machine.Arch, r.Machine.CPUs, r.Machine.Go, r.Machine.CPUModel)
 	fmt.Fprintf(&b, "Config: sessions %d, duration %.0f s (ramp %.0f s), turns/call %d, think %.0f ms, clip `%s` (%.0f ms speech), vad %s, turn manager %v.\n\n",
 		c.Sessions, c.DurationS, c.RampS, c.TurnsPerSession, c.ThinkTimeMS, c.Clip, c.ClipSpeechMS, c.VADMode, c.TurnManager)

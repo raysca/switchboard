@@ -477,7 +477,7 @@ func truncate(s string, n int) string {
 
 // benignLog matches the WARN lines every harness server prints at start.
 func benignLog(ln string) bool {
-	for _, b := range []string{"FAKE PROVIDERS", "development profile: using a local agent store", "retention disabled"} {
+	for _, b := range []string{"development profile: using a local agent store", "retention disabled"} {
 		if strings.Contains(ln, b) {
 			return true
 		}

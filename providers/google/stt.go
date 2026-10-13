@@ -488,7 +488,7 @@ func (p *STTProcessor) halfClose(st *activeStream) {
 		st.cancel()
 		if p.session != nil {
 			_ = p.session.Reenter(&core.ErrorFrame{
-				Err:  MapError("stt", err),
+				Err:  mapError(p.cfg.Provider, "stt", err),
 				Turn: core.TurnID(st.turnID),
 				Gen:  core.Generation(st.gen),
 			}, core.Downstream, p.index+1, st.gen)
@@ -824,7 +824,7 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				traceFailure = errors.New("provider_failure")
 				if p.session != nil {
 					_ = p.session.Reenter(&core.ErrorFrame{
-						Err: MapError("stt", err),
+						Err: mapError(p.cfg.Provider, "stt", err),
 					}, core.Downstream, p.index+1, turnGen)
 				}
 				return

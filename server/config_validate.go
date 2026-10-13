@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"govoice/providers/echo"
+
 	coreturn "govoice/core/turn"
 )
 
@@ -202,7 +204,7 @@ func validateAudioAndTTS(cfg *Config) error {
 	if r := cfg.Providers.GoogleTTS.SampleRate; r != 0 && !slices.Contains([]int{8000, 16000, 22050, 24000, 44100, 48000}, r) {
 		return fmt.Errorf("providers.google_tts.sample_rate %d must be one of 8000, 16000, 22050, 24000, 44100, 48000 (the rates every TTS provider can output)", r)
 	}
-	if m := cfg.Providers.Echo.Mimic; !slices.Contains([]string{"google", "instant"}, m) {
+	if m := cfg.Providers.Echo.Mimic; !echo.Mimic(m).Valid() {
 		return fmt.Errorf("providers.echo.mimic: %q must be one of google, instant", m)
 	}
 	if m := cfg.Providers.Echo.STT; !slices.Contains([]string{"text", "audio"}, m) {

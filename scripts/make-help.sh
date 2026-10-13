@@ -10,7 +10,7 @@ awk '
 BEGIN {
 	n = split("build free preview paid dev", order, " ")
 	title["build"]   = "Build and test (free)"
-	title["free"]    = "Free checks (fake providers, no keys, no cost)"
+	title["free"]    = "Free checks (simulated providers, no keys, no cost)"
 	title["preview"] = "Previews (read-only: show what a paid run would do, spend nothing)"
 	title["paid"]    = "PAID live checks (real providers: need GOVOICE_LIVE=1 and examples/.env)"
 	title["dev"]     = "Local development"

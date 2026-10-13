@@ -558,7 +558,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			}
 			p.Errors.Add(1)
 			// Emit safe error frame
-			provErr := MapError("llm", err)
+			provErr := mapError(p.cfg.Provider, "llm", err)
 			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false}, core.Downstream, p.index+1, gen)
 			return
 		}
@@ -589,7 +589,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 					return
 				}
 				p.Errors.Add(1)
-				_ = p.session.Reenter(&core.ErrorFrame{Err: errors.New("google: tool execution failed"), Fatal: false}, core.Downstream, p.index+1, gen)
+				_ = p.session.Reenter(&core.ErrorFrame{Err: errors.New(p.cfg.Provider + ": tool execution failed"), Fatal: false}, core.Downstream, p.index+1, gen)
 				return
 			}
 		}

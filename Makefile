@@ -62,8 +62,8 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 test-e2e-go: ## free|Go end-to-end tests (real server + WebSocket) against the echo provider (about 45 s)
 	cd server && go test -race -count=1 -tags "$(GOTAGS)" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection' .
 
-# Black-box pipecat.evals run against the Go server with fake providers (docs/decisions/pipecat-evals.md).
-eval-pipecat: ## free|pipecat.evals black-box run against the server (fake providers)
+# Black-box pipecat.evals run against the Go server on the echo provider (docs/decisions/pipecat-evals.md).
+eval-pipecat: ## free|pipecat.evals black-box run against the server (echo provider)
 	@./tools/eval/pipecat/run.sh
 
 # Turn-quality gate (docs/benchmarks/turn-quality.md): fake oracles, no cost; fails on threshold regression.
@@ -150,14 +150,14 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e drives real Google providers and spends API credit: run GOVOICE_LIVE=1 make e2e"; exit 1; }
 	cd e2e && npm install --no-audit --no-fund && npx playwright install chromium && npx playwright test
 
-# Routed flows in a real browser against the FAKE providers: free and offline (about 1 min). Builds
+# Routed flows in a real browser against the echo provider: free and offline (about 1 min). Builds
 # bin/server-echo (the echo provider), starts it with the admin UI, then drives the flow designer, a
 # live call with a route, republish, a failed route and a plain flow (e2e/tests-flows).
 E2E_SETUP = cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium
-e2e-fake: ui-embed ## free|Playwright browser e2e for routed flows and the one-port server against the fake providers (about 2 min)
+e2e-fake: ui-embed ## free|Playwright browser e2e for routed flows and the one-port server against the echo provider (about 2 min)
 	$(E2E_SETUP) && npx playwright test -c playwright.flows.config.ts && npx playwright test -c playwright.oneport.config.ts
 
-# Every free end-to-end test: the Go suite, then the browser suite (fake providers, offline, about 2 min).
+# Every free end-to-end test: the Go suite, then the browser suite (echo provider, offline, about 2 min).
 e2e-free: test-e2e-go e2e-fake ## free|All free end-to-end tests: Go (test-e2e-go) then browser (e2e-fake)
 
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
@@ -167,7 +167,7 @@ e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOI
 	cd ui && npm ci --no-audit --no-fund
 	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.flows.config.ts
 
-e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on fake providers
+e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on the echo provider
 	$(E2E_SETUP) && npx playwright test -c playwright.oneport.config.ts
 
 .PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-free test-e2e-go
@@ -225,7 +225,7 @@ live-critical: ## paid|Critical-path live subset (GOVOICE_LIVE=1 PROFILES=... SC
 
 # Offline engine self-test: the same scenario engine against a server child on the echo provider.
 # No network, no keys, no cost (about 2 min: builds the server, S5/S8 wait on real timers).
-live-check-selftest: ## free|The scenario engine against fake providers (about 2 min)
+live-check-selftest: ## free|The scenario engine against the echo provider (about 2 min)
 	@go run ./tools/livecheck -selftest $(LIVE_ARGS)
 
 # Previews: read-only, no provider calls, no keys needed beyond reading which env names are set.
@@ -265,7 +265,7 @@ bench-latency: ## free|Framework overhead benchmark (fake providers)
 	@go run ./tools/eval/cmd/govoice-bench $(BENCH_ARGS)
 
 # Load/soak harness: real WebSocket calls against a server child on the echo provider
-# (docs/benchmarks/capacity.md). Fake providers, no network, no cost.
+# (docs/benchmarks/capacity.md). The echo provider, no network, no cost.
 # loadtest-smoke: ~1 min, CI-friendly. Skips when the Silero model is missing.
 loadtest-smoke: ## free|Real WebSocket calls against the echo provider (about 1 min)
 	@test -f third_party/silero_vad.onnx || { echo "loadtest-smoke: SKIPPED: third_party/silero_vad.onnx missing"; exit 0; }

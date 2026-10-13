@@ -128,6 +128,18 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 		t.Fatal("no server log captured")
 	}
 	out.WriteString(logs.String())
+	// The real Google factories receive the real secrets (echo needs none, so no call above builds
+	// one): whatever they return or log on a credential they cannot use must not carry a secret.
+	for _, stage := range []string{"stt", "llm", "tts"} {
+		secret, err := s.resolver.Secret("google", stage)
+		if err != nil {
+			t.Fatalf("google %s secret: %v", stage, err)
+		}
+		_, ferr := s.registry.factories["google."+stage](cfg, StageSpec{Model: "m", Voice: "v", Secret: secret})
+		if ferr != nil {
+			out.WriteString("google." + stage + " factory error: " + ferr.Error() + "\n")
+		}
+	}
 	for _, sentinel := range sentinels {
 		if i := strings.Index(out.String(), sentinel); i >= 0 {
 			lo := max(0, i-200)

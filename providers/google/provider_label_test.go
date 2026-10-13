@@ -2,6 +2,8 @@ package google
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,4 +124,38 @@ func TestProviderLabelFollowsConfigTTSUnary(t *testing.T) {
 }
 func TestProviderLabelFollowsConfigTTSStreaming(t *testing.T) {
 	wantLabel(t, ttsLabels(t, "echo", true), "echo")
+}
+
+// The errors a stage reports through the pipeline (they reach the call timeline) name the provider
+// the call is on, so a call on another provider built from these processors never says "google".
+func TestStageErrorsNameTheConfiguredProvider(t *testing.T) {
+	failing := func(provider string) string {
+		cfg := DefaultLLMConfig()
+		cfg.Provider = provider
+		cfg.RetryPolicy.MaxAttempts = 1
+		cfg.Client = &mockLLMClient{generateFn: func(context.Context, string, string, []core.Message) (<-chan LLMStreamChunk, <-chan error, error) {
+			return nil, nil, errors.New("backend down")
+		}}
+		proc, err := NewLLMProcessor(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range labelRun(t, proc, func(s *core.Session) {
+			_ = proc.Attach(s, 0)
+			_ = s.Post(&core.UserMessageFrame{Turn: "t1", Gen: 1, Content: "hi"})
+		}) {
+			if e, ok := f.(*core.ErrorFrame); ok && e.Err != nil {
+				return e.Err.Error()
+			}
+		}
+		t.Fatalf("provider %q: no error frame", provider)
+		return ""
+	}
+	if got := failing(""); !strings.Contains(got, "google provider:") {
+		t.Fatalf("default provider error %q must keep saying google", got)
+	}
+	got := failing("echo")
+	if strings.Contains(got, "google") || !strings.Contains(got, "echo provider:") {
+		t.Fatalf("echo error %q must name echo, not google", got)
+	}
 }

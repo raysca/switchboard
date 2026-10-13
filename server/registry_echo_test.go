@@ -22,8 +22,13 @@ func TestEchoIsRegisteredOnEveryBuild(t *testing.T) {
 
 func TestGoogleFactoriesAreUntouched(t *testing.T) {
 	reg := NewRegistry()
-	if _, err := reg.factories["google.tts"](DefaultConfig(ProfileDevelopment), StageSpec{Voice: "x"}); err == nil {
-		t.Fatal("google.tts must still need credentials")
+	// The google factories are the real ones: they still read a credential from the secret, and say
+	// so under their own name. (Echo's factories need none and never say "google".)
+	for _, stage := range []string{"stt", "llm", "tts"} {
+		_, err := reg.factories["google."+stage](DefaultConfig(ProfileDevelopment), StageSpec{Voice: "x"})
+		if err == nil || !strings.HasPrefix(err.Error(), "google."+stage+":") {
+			t.Errorf("google.%s with no secret: %v, want an error naming google.%s", stage, err, stage)
+		}
 	}
 }
 
@@ -138,5 +143,14 @@ func TestEchoStagesShareTheirBreakersWithFailover(t *testing.T) {
 	}
 	if r.echoSTTBreaker == r.googleSTTBreaker || r.echoTTSBreaker == r.googleTTSBreaker || r.echoLLMBreaker == r.googleLLMBreaker {
 		t.Fatal("echo must not share Google's breakers")
+	}
+}
+
+func TestEchoSTTHonoursGoogleSTTRotationAndSpec(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Providers.GoogleSTT.RotationThreshold = 90 * time.Second
+	got := echoSTTConfig(cfg, StageSpec{Model: "latest_long", Language: "en-GB"})
+	if got.StreamRotationThreshold != 90*time.Second || got.Model != "latest_long" || got.LanguageCode != "en-GB" || got.Provider != "echo" {
+		t.Fatalf("config %+v", got)
 	}
 }

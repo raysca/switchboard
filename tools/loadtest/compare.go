@@ -18,7 +18,7 @@ type Tolerance struct {
 // Values come from docs/benchmarks/README.md "Tolerances": run-to-run
 // spread of 5-11 runs on the baseline machine, widened for CI noise (PERF_SCALE), and kept
 // well below the 100 ms regression the self-test injects. v2v rows are absolute
-// because client v2v is ~940 ms of mostly fixed VAD hangover (0.7 s) + clip margin
+// because client v2v is ~980 ms of mostly fixed VAD hangover (0.7 s) + clip margin
 // (0.1 s): 25% of that would let ~235 ms of real regression through.
 var Tolerances = map[string]Tolerance{
 	"v2v_p50_ms":             {0, 25, "client v2v includes the VAD hangover; absolute, not relative. 11 runs spread 1.5 ms"},

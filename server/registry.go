@@ -807,6 +807,11 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	r.xaiTTSBreaker.SetObserver(func(st resilience.State) {
 		m.TTSCircuitStateXAI.Store(circuitCode(string(st)))
 	})
+	// The simulated provider's breakers join the dynamic gauges (endpoint "simulated").
+	for stage, br := range map[string]*resilience.Breaker{"stt": r.echoSTTBreaker, "llm": r.echoLLMBreaker, "tts": r.echoTTSBreaker} {
+		m.circuits.set(stage, "echo", "simulated", 0)
+		br.SetObserver(func(st resilience.State) { m.circuits.set(stage, "echo", "simulated", circuitCode(string(st))) })
+	}
 }
 
 func circuitCode(state string) int64 {

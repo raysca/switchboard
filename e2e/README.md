@@ -85,7 +85,7 @@ lets the bot answer before the question repeats (a repeat is a barge-in).
 - `test-results/`: per-test screenshots, plus video and trace on failure, and
   `logs/*.log` (build, server, ui, custom-client).
 
-## Flow suite: fake providers or live xAI
+## Flow suite: the echo provider or live xAI
 
 `playwright.flows.config.ts` runs `tests-flows/` against a stack it starts itself, on its
 own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid Google suite.
@@ -95,7 +95,7 @@ own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid
 | Server | `bin/server-echo` (`-tags xaispeech`, config `providers.echo`) | `bin/server-live` (`-tags xaispeech`) |
 | Providers | the simulated `echo` provider (real Google processors, simulated backends) | real xAI STT, Grok, TTS |
 | Cost | none, about 20 s | about 20 provider requests |
-| Route | the fake LLM calls the transfer tool on "transfer to `<step>`" | the model calls it from the front prompt |
+| Route | the echo LLM calls the transfer tool on "transfer to `<step>`" | the model calls it from the front prompt |
 | Assertions | exact (the fake labels each reply with its step's prompt) | marker words (the sales prompt demands "catalogue") |
 
 The xAI key is `XAI_API_KEY` from the environment or `examples/.env`; global setup passes it to
@@ -124,7 +124,7 @@ runs the fake suite as the `graph-e2e` job (the name is a required status check,
 
 ## One-port suite
 
-`playwright.oneport.config.ts` (`make e2e-oneport`, also run by `make e2e-fake`) starts only the fake-provider
+`playwright.oneport.config.ts` (`make e2e-oneport`, also run by `make e2e-fake`) starts only the echo-provider
 server with the UI embedded (`make ui-embed`) and `public_admin` on, on public 18582 and admin 19592 (stack file
 `.stack-oneport.json`). `origin_allowlist` holds one unrelated origin, so only `origin_allow_same_host` admits
 the browser. No Vite.

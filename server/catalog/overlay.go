@@ -82,6 +82,9 @@ func (c *Catalog) merge(o *Provider) error {
 		if len(os.Credential) != 0 && !slices.Equal(os.Credential, bs.Credential) || len(os.Needs) != 0 && !slices.Equal(os.Needs, bs.Needs) {
 			return errors.New("an overlay cannot change a service's credential or needs")
 		}
+		if os.Keyless && !bs.Keyless {
+			return errors.New("an overlay cannot make a service keyless")
+		}
 		bs.Models, bs.Voices, bs.Languages = mergeEntries(bs.Models, os.Models), mergeEntries(bs.Voices, os.Voices), mergeEntries(bs.Languages, os.Languages)
 		if os.Custom != nil {
 			bs.Custom = os.Custom

@@ -138,3 +138,25 @@ func TestProbeMuxIsReadOnlySubset(t *testing.T) {
 		}
 	}
 }
+
+// Echo's breakers are exported like every other provider's: /metrics and /ready.
+func TestEchoBreakerStateIsObservable(t *testing.T) {
+	s := apiTestServer(t)
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	enableTestManagement(t, s)
+	s.ready.Store(true)
+	if out := scrape(t, s); !strings.Contains(out, `voice_llm_circuit_state{provider="echo",endpoint="simulated"} 0`) {
+		t.Fatalf("closed echo breaker not exported:\n%s", out)
+	}
+	for i := 0; i < 5; i++ {
+		s.registry.echoLLMBreaker.RecordFailure()
+	}
+	if out := scrape(t, s); !strings.Contains(out, `voice_llm_circuit_state{provider="echo",endpoint="simulated"} 1`) {
+		t.Fatalf("open echo breaker not exported:\n%s", out)
+	}
+	_, body := readyBody(s)
+	circuits, _ := body["circuits"].(map[string]any)
+	if circuits["echo_llm:simulated"] != "open" {
+		t.Fatalf("ready circuits %v", circuits)
+	}
+}

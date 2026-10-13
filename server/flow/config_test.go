@@ -66,7 +66,7 @@ func TestDecodeConfigSummarization(t *testing.T) {
 	}
 	ok(`{"llm":{"provider":"google"}}`) // off by default
 	ok(`{"llm":{"provider":"openai"},"context":{"max_tokens":2000,"summarization":{"enabled":true,"trigger_tokens":1500,"keep_turns":3}}}`)
-	ok(`{"llm":{"provider":"xai"},"context":{"summarization":{"enabled":true}}}`) // trigger defaults to 3/4 of max
+	ok(`{"llm":{"provider":"xai"},"context":{"summarization":{"enabled":true}}}`)  // trigger defaults to 3/4 of max
 	ok(`{"llm":{"provider":"echo"},"context":{"summarization":{"enabled":true}}}`) // echo runs the real Google LLM processor, which summarizes
 	bad(`{"llm":{"provider":"google"},"context":{"max_tokens":2000,"summarization":{"enabled":true,"trigger_tokens":2000}}}`)
 	bad(`{"llm":{"provider":"google"},"context":{"summarization":{"enabled":true,"trigger_tokens":4000}}}`) // default max is 4000

@@ -25,7 +25,7 @@ The following table is planning guidance for a host that runs the image:
 
 ### Sizing VAD workers and CPU headroom
 
-Measured with `tools/loadtest` (see `docs/benchmarks/capacity.md`; Apple M4 Pro, fake providers, so these are framework-only figures):
+Measured with `tools/loadtest` (see `docs/benchmarks/capacity.md`; Apple M4 Pro, echo provider, so these are framework-only figures):
 
 - **`vad.workers`**: Silero needs about 76 µs of one core per 32 ms window per call when unbatched, and about 52 µs at batch 8. That is about 2.4 ms of CPU per call-second in the worst case, so one worker (single-threaded) saturates near 400 calls. Size for 50% worker utilisation: `vad.workers = max(2, ceil(peak_concurrent_calls / 200))`. The default of 4 covers about 800 calls. More workers do not help latency below that. Re-measure on slower x86 cores, which can be 2 to 3 times slower per window.
 - **CPU headroom matters more than worker count.** A VAD worker that has not answered a batch in about 150 ms is killed and respawned. When the host or container is CPU-starved (oversubscribed nodes, or a CPU limit that throttles in 100 ms periods), healthy workers can be killed. You then see `voice_vad_worker_restarts_total` increase, `vad_unavailable` admission rejects while every worker is down, and growth in `voice_vad_stale_chunks_total`, all with normal latency. Keep the steady state below about 70% of the CPU allotment. Prefer CPU requests without a tight CPU limit. Do not co-locate a load generator with the server when measuring capacity.
@@ -284,4 +284,4 @@ By default the management API (`/api/v1`) lives on the loopback admin listener a
 - Production requires `tls.trusted_proxy_mode` for both keys: the `Host` header and the client address must come from your proxy, not the caller. See `config/cloudrun.yaml`.
 - Failed management-key attempts share ONE global allowance (burst 10, one more every 6 s). A correct key is checked first and is never throttled, so no flood of bad keys, from any address, can lock the admin out. Once the allowance is spent, a wrong or missing key gets 429 `too_many_attempts` ("too many failed attempts; try again shortly", with `Retry-After`) instead of 401, and the UI shows that message. A missing key counts as a failure. `voice_management_auth_failures_total` counts every failed attempt and `voice_management_auth_throttled_total` those answered 429.
 - `GET /api/v1/server-config` (key required, never cached) reports `client_ip` and `secure`; check it after each deploy. If `client_ip` is a Google front-end/load-balancer address or `secure` is false, add the proxy's CIDR to `tls.trusted_proxies`, otherwise every caller shares one bucket in the per-IP rate limits and the handshake limiter (the auth throttle is global and unaffected).
-- End-to-end check: `make e2e-oneport` (fake providers, no secrets).
+- End-to-end check: `make e2e-oneport` (echo provider, no secrets).

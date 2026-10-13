@@ -31,14 +31,16 @@ func NewSTTOpener(f STTFigures, audioMode bool) *STTOpener {
 
 func (o *STTOpener) OpenStream(ctx context.Context, _ google.STTConfig) (google.STTStream, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	return &sttStream{f: o.f, audio: o.audioMode, ctx: ctx, cancel: cancel,
+	return &sttStream{f: o.f, audio: o.audioMode, done: ctx.Done(), cancel: cancel,
 		results: make(chan *google.STTResult, queueCap), sent: make(chan struct{})}, nil
 }
 
 type sttStream struct {
-	f      STTFigures
-	audio  bool
-	ctx    context.Context
+	f     STTFigures
+	audio bool
+	// done closes when the stream's context ends or Close is called. The context itself is not
+	// kept (AGENTS.md): cancellation is all the stream needs, and it reports context.Canceled.
+	done   <-chan struct{}
 	cancel context.CancelFunc
 
 	results  chan *google.STTResult
@@ -101,8 +103,8 @@ func (s *sttStream) Recv() ([]*google.STTResult, error) {
 		select {
 		case r := <-s.results:
 			return []*google.STTResult{r}, nil
-		case <-s.ctx.Done():
-			return nil, s.ctx.Err()
+		case <-s.done:
+			return nil, context.Canceled
 		case <-s.sent:
 			select { // interims queued before the audio ended come first
 			case r := <-s.results:
@@ -125,8 +127,14 @@ func (s *sttStream) final() ([]*google.STTResult, error) {
 	s.finalDone = true
 	text, offset := strings.Join(s.words, " "), time.Duration(s.media)*frameDuration
 	s.mu.Unlock()
-	if err := wait(s.ctx, s.f.FinalDelay); err != nil {
-		return nil, err
+	if s.f.FinalDelay > 0 {
+		t := time.NewTimer(s.f.FinalDelay)
+		defer t.Stop()
+		select {
+		case <-s.done:
+			return nil, context.Canceled
+		case <-t.C:
+		}
 	}
 	return []*google.STTResult{{Transcript: text, IsFinal: true, Stability: 1, ResultEndOffset: offset}}, nil
 }

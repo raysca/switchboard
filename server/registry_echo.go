@@ -15,14 +15,7 @@ import (
 // at no cost. It needs no secret, so spec.Secret is never read.
 func registerEcho(r *Registry) {
 	r.Register("echo.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		sttCfg := google.DefaultSTTConfig()
-		sttCfg.Provider = "echo"
-		if spec.Model != "" {
-			sttCfg.Model = spec.Model
-		}
-		if spec.Language != "" {
-			sttCfg.LanguageCode = spec.Language
-		}
+		sttCfg := echoSTTConfig(cfg, spec)
 		sttCfg.CircuitBreaker = r.echoSTTBreaker
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
@@ -66,6 +59,24 @@ func registerEcho(r *Registry) {
 		}
 		return google.NewTTSProcessor(ttsCfg)
 	})
+}
+
+// echoSTTConfig is the STT config an echo stage runs with: the spec's model and language and the
+// stream rotation the operator set for Google's STT (providers.google_stt.rotation_threshold), so
+// rotation can be exercised on echo. Location and project are Google Cloud addressing: not used.
+func echoSTTConfig(cfg *Config, spec StageSpec) google.STTConfig {
+	sttCfg := google.DefaultSTTConfig()
+	sttCfg.Provider = "echo"
+	if spec.Model != "" {
+		sttCfg.Model = spec.Model
+	}
+	if spec.Language != "" {
+		sttCfg.LanguageCode = spec.Language
+	}
+	if t := cfg.Providers.GoogleSTT.RotationThreshold; t > 0 {
+		sttCfg.StreamRotationThreshold = t
+	}
+	return sttCfg
 }
 
 // echoLLMOptions turns the config and the stage into the simulated model's options: its timing, the

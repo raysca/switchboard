@@ -1,4 +1,4 @@
-# Load, soak and capacity (P5-4): fake providers, real transport and VAD
+# Load, soak and capacity (P5-4): the echo provider, real transport and VAD
 
 Captured 2026-10-07 on an Apple M4 Pro (12 cores), darwin/arm64, go1.27.1. **Machine-specific**: other processes were running on this host, and the load generator shares the CPUs with the server. Re-run on the target hardware before using any number for sizing.
 
@@ -6,7 +6,7 @@ Captured 2026-10-07 on an Apple M4 Pro (12 cores), darwin/arm64, go1.27.1. **Mac
 
 `tools/loadtest` starts a real server child (`go build ./cmd/server`, plus `vadworker`), provisions an echo-provider flow through the management API with a generated key, and drives N concurrent calls over the real protocol: single-use voice token, WebSocket upgrade, binary protobuf frames (`transport/ws` encoders), RTVI `client-ready`/`bot-ready`, then a real-time 20 ms microphone stream. Each caller plays a real speech clip ("What is two plus two?", `e2e/fixtures/voice-debug.wav`, 1.6 s after silence trim), waits for the bot reply, thinks, and repeats.
 
-Exercised: transport and pacing, input handling, Silero VAD in the `vadworker` child (onnxruntime), the VAD stop hangover, STT/LLM/TTS stages (fakes), output pacer, admission, metrics.
+Exercised: transport and pacing, input handling, Silero VAD in the `vadworker` child (onnxruntime), the VAD stop hangover, STT/LLM/TTS stages (echo provider), output pacer, admission, metrics.
 
 Not exercised, so numbers are a lower bound on cost and latency in production:
 
@@ -48,7 +48,7 @@ Re-run 2026-10-07 after the two server fixes below (`-cap-steps 8,128,256,384 -s
 | 256 | 962 | 0 | 1.83 | 5 | pass |
 | 384 | 963 | 0 | 2.50 | 5 | pass |
 
-**Max sessions measured clean on this machine: 384** (the largest step tried; 512 was not run). CPU is 0.39 CPU-seconds per session-minute at 384 (2.5 cores), which extrapolates to about **154 sessions per core** (`sessions / cores at full load`). That is framework CPU only, with fake providers. Real deployments add TLS, provider clients and audio codecs; the runbook's planning figure (250 calls on 8 vCPUs) is not contradicted by it. CPU per session-minute is about 0.4 at 128 to 384 sessions but 1.3 to 1.9 at 4 to 8 sessions, because fixed server cost and call setup/teardown (a new call every 3 to 5 turns) are spread over more sessions.
+**Max sessions measured clean on this machine: 384** (the largest step tried; 512 was not run). CPU is 0.39 CPU-seconds per session-minute at 384 (2.5 cores), which extrapolates to about **154 sessions per core** (`sessions / cores at full load`). That is framework CPU only, measured on 2026-10-07 with the instant fakes the `echo` provider replaced; the loadtest now runs the real Google processors against echo backends, which cost about 45% more CPU per session-minute at 4 sessions (see the re-baseline note in `docs/benchmarks/README.md`), and this 384-session sweep has not been re-run. Real deployments add TLS, provider clients and audio codecs; the runbook's planning figure (250 calls on 8 vCPUs) is not contradicted by it. CPU per session-minute is about 0.4 at 128 to 384 sessions but 1.3 to 1.9 at 4 to 8 sessions, because fixed server cost and call setup/teardown (a new call every 3 to 5 turns) are spread over more sessions.
 
 At the 384 step: RSS 274 MB idle, 793 MB steady (about 1.4 MB per session above idle; a fresh process tree with four Silero workers already costs 274 MB), goroutines 18 idle, 4630 peak (about 12 per session), 18 after drain, open fds 97 idle, 481 peak, 97 after drain. At 4 to 16 sessions RSS above idle looks like 6 to 18 MB per session because the idle process has not grown its heap yet; use the large-step figure for sizing.
 

@@ -74,7 +74,7 @@ To start gating CI: run the `perf-gate` workflow on a PR once (first runs upload
 go run ./tools/livecheck -list                       # profiles and whether this environment can run them (free)
 GOVOICE_LIVE=1 make agent-matrix PROFILES=google,nvidia SCENARIOS=S1 MODES=off,on
 go run ./tools/livecheck -dry-run -profiles all      # the provider-request estimate only (free)
-make live-check-selftest                             # same engine, fake providers, no network (about 2 min)
+make live-check-selftest                             # same engine, echo provider, no network (about 2 min)
 GOVOICE_LIVE=1 make live-check                       # old entry point: google profile, all modes (LIVE_ARGS for flags)
 ```
 
@@ -142,7 +142,7 @@ Run the same thing locally: `GOVOICE_LIVE=1 make live-critical PROFILES=google S
 
 | Tier | Targets | Cost |
 |---|---|---|
-| Free | `make verify`, `eval-pipecat`, `eval-turn`, `bench-latency`, `loadtest-smoke`, `perf-gate`, `live-check-selftest`, `provider-matrix-dry` | none (fake providers, no keys) |
+| Free | `make verify`, `eval-pipecat`, `eval-turn`, `bench-latency`, `loadtest-smoke`, `perf-gate`, `live-check-selftest`, `provider-matrix-dry` | none (simulated providers, no keys) |
 | Preview | `make live-list`, `provider-env`, `agent-matrix-plan PROFILES=... SCENARIOS=... MODES=...` | none (shows runnable profiles, env names, request estimate) |
 | Paid | `make provider-matrix`, `agent-matrix`, `live-check`, `e2e` | real provider requests; each needs `GOVOICE_LIVE=1` and `examples/.env` |
 

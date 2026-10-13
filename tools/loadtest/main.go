@@ -1,8 +1,8 @@
 // loadtest drives N concurrent real calls over the actual WebSocket/RTVI
 // protocol (binary protobuf frames, single-use voice tokens) against a locally
 // started server on the echo provider, so transport, resampling,
-// Silero VAD (vadworker), the STT/turn/LLM/TTS stages (fakes), the pacer and
-// metrics all run, with no paid calls. Fake providers isolate framework cost
+// Silero VAD (vadworker), the STT/turn/LLM/TTS stages (the echo provider: real Google processors, simulated backends), the pacer and
+// metrics all run, with no paid calls. The echo provider's instant mimic isolates framework cost
 // only; everything is localhost with one speech clip. See docs/benchmarks/capacity.md.
 package main
 
@@ -330,7 +330,7 @@ func sumRejects(m map[string]uint64) (n uint64) {
 }
 
 func findCapacity(ctx context.Context, f *flags, cp CallParams, steps []int) (*Results, []Sample, *Capacity, error) {
-	capc := &Capacity{BudgetMS: f.capBudgetMS, Note: "Fake providers, localhost, load generator on the same machine as the server, one real speech clip: framework cost only, an upper bound for real deployments."}
+	capc := &Capacity{BudgetMS: f.capBudgetMS, Note: "Echo provider (instant), localhost, load generator on the same machine as the server, one real speech clip: framework cost only, an upper bound for real deployments."}
 	var best *Results
 	var bestSamples []Sample
 	for i, n := range steps {
