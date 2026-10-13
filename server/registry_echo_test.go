@@ -77,13 +77,13 @@ func TestEchoStagesBuildWithoutAnySecret(t *testing.T) {
 
 func TestEchoLLMWiresTransferEndCallAndMCPPhrases(t *testing.T) {
 	name := runtime.ToolName("01a12f27-7f90-792f-85e5-6fd6c949fe6b", "lookup_order")
-	phrases, spoken := mcpToolPhrases([]core.ToolDefinition{{Name: name}, {Name: "transfer_to_sales"}})
+	phrases, spoken := mcpToolPhrases([]core.ToolDefinition{{Name: name, RemoteName: "lookup_order"}, {Name: "transfer_to_sales"}})
 	if phrases["call tool lookup_order"] != name || spoken[name] != "lookup_order" || len(phrases) != 1 {
 		t.Fatalf("phrases=%v spoken=%v", phrases, spoken)
 	}
 	opts := echoLLMOptions(DefaultConfig(ProfileDevelopment), StageSpec{
 		SystemPrompt: "front desk",
-		Tools:        []core.ToolDefinition{{Name: name}, {Name: "transfer_to_sales"}, {Name: endCallName}},
+		Tools:        []core.ToolDefinition{{Name: name, RemoteName: "lookup_order"}, {Name: "transfer_to_sales"}, {Name: endCallName}},
 	})
 	for phrase, tool := range map[string]string{"transfer to sales": "transfer_to_sales", "end the call": endCallName, "call tool lookup_order": name} {
 		if opts.Phrases[phrase] != tool {
@@ -152,5 +152,17 @@ func TestSTTConfigHonoursRotationAndSpec(t *testing.T) {
 	got := googleSTTConfig(cfg, StageSpec{Model: "latest_long", Language: "en-GB"}, nil)
 	if got.StreamRotationThreshold != 90*time.Second || got.Model != "latest_long" || got.LanguageCode != "en-GB" {
 		t.Fatalf("config %+v", got)
+	}
+}
+
+// The phrase comes from the tool's own remote name, wherever it was bound, not from parsing the
+// model-facing name (whose format is the runtime's business).
+func TestMCPToolPhrasesUseTheRemoteNameNotTheToolNameFormat(t *testing.T) {
+	phrases, spoken := mcpToolPhrases([]core.ToolDefinition{
+		{Name: "anything_at_all", RemoteName: "Find_Slots"},
+		{Name: "mcp__abcd1234_looks_like_one00000000"}, // no RemoteName: not an MCP tool, whatever it looks like
+	})
+	if phrases["call tool find_slots"] != "anything_at_all" || spoken["anything_at_all"] != "Find_Slots" || len(phrases) != 1 || len(spoken) != 1 {
+		t.Fatalf("phrases=%v spoken=%v", phrases, spoken)
 	}
 }

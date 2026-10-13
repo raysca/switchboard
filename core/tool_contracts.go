@@ -10,7 +10,10 @@ import (
 // them without translation. The core/tools package preserves the original V2
 // public import path through type aliases.
 type ToolDefinition struct {
-	Name        string
+	Name string
+	// RemoteName is the tool's own name where it runs, when that differs from Name (an MCP tool's
+	// name on its server; Name is the model-facing one). Empty for built-in tools.
+	RemoteName  string
 	Description string
 	InputSchema json.RawMessage
 	Policy      ToolPolicy

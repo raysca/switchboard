@@ -133,7 +133,7 @@ func StartSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Serv
 			}
 			continue
 		}
-		definition := core.ToolDefinition{Name: name, Description: capturedTool.Description(), InputSchema: capturedTool.Schema(), Policy: core.ToolPolicy{Required: tool.Required, Async: flowCfg.IsAsyncTool(tool.ServerID, tool.RemoteName)}}
+		definition := core.ToolDefinition{Name: name, RemoteName: tool.RemoteName, Description: capturedTool.Description(), InputSchema: capturedTool.Schema(), Policy: core.ToolPolicy{Required: tool.Required, Async: flowCfg.IsAsyncTool(tool.ServerID, tool.RemoteName)}}
 		items = append(items, captured{definition: definition, handler: capturedTool})
 	}
 	definitions := make([]core.ToolDefinition, 0, len(items))

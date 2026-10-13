@@ -113,6 +113,9 @@ func TestSessionUsesCapturedMCPWrapperAfterDisableAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	definition := session.Definitions[0]
+	if definition.RemoteName != session.Snapshot.MCPTools[0].RemoteName || definition.RemoteName == "" {
+		t.Fatalf("definition %q must carry the tool's remote name %q", definition.Name, session.Snapshot.MCPTools[0].RemoteName)
+	}
 	call := core.ToolCall{ID: "call-1", Name: definition.Name, SessionID: core.SessionID(session.Pin.ID), TurnID: core.TurnID("turn-1"), Generation: 1, Arguments: json.RawMessage(`{"id":"old-schema"}`)}
 	result, err := session.Executor.Execute(ctx, call)
 	if err != nil || result.Status != core.ToolSucceeded || string(result.Result) != `{"ok":true}` {

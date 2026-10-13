@@ -63,22 +63,17 @@ func echoLLMOptions(cfg *Config, spec StageSpec) echo.LLMOptions {
 	return o
 }
 
-// mcpToolPhrases maps "call tool <remote name>" to each MCP tool's model-facing name
-// (runtime.ToolName: "mcp__" + server prefix + "_" + remote name + 8 hex), and that
-// name to the remote name the reply uses. Two attached tools with the same remote
-// name: the phrase goes to the first in the order given.
+// mcpToolPhrases maps "call tool <remote name>" to each MCP tool's model-facing name, and that name
+// to the remote name the reply uses. A tool is an MCP tool when its definition carries a RemoteName
+// (set where the runtime binds it). Two attached tools with the same remote name: the phrase goes
+// to the first in the order given.
 func mcpToolPhrases(defs []core.ToolDefinition) (map[string]string, map[string]string) {
 	phrases, spoken := map[string]string{}, map[string]string{}
 	for _, d := range defs {
-		rest, ok := strings.CutPrefix(d.Name, "mcp__")
-		if !ok {
+		remote := d.RemoteName
+		if remote == "" {
 			continue
 		}
-		_, remote, ok := strings.Cut(rest, "_")
-		if !ok || len(remote) <= 8 {
-			continue
-		}
-		remote = remote[:len(remote)-8]
 		phrase := "call tool " + strings.ToLower(remote)
 		if _, taken := phrases[phrase]; !taken {
 			phrases[phrase] = d.Name
