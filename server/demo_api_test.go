@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -116,21 +117,39 @@ func TestDemoAutoInstallAtStart(t *testing.T) {
 	t.Fatal("dental demo was not auto-installed")
 }
 
-func TestDemoAutoInstallWithoutManagementDoesNotPanic(t *testing.T) {
+func TestDemoAutoInstallWithoutManagementLogsAndReturns(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
 	cfg.Demo.AutoInstall = "dental"
-	cfg.PublicListenAddr, cfg.AdminListenAddr = "127.0.0.1:0", "127.0.0.1:0"
 	s, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var logs strings.Builder
+	s.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	s.env = mapEnv(map[string]string{"DENTAL_MCP_URL": "http://127.0.0.1:1/mcp"})
-	if err := s.Start(); err != nil {
-		t.Fatal(err)
+	s.autoInstallDemo() // returns before spawning anything: there is nothing to install into
+	if !strings.Contains(logs.String(), "management storage is disabled") || s.stopDemo != nil {
+		t.Fatalf("logs = %q, stopDemo set = %v", logs.String(), s.stopDemo != nil)
 	}
-	t.Cleanup(func() { s.adminServer.Close(); s.publicServer.Close() })
-	time.Sleep(200 * time.Millisecond) // a panic in a background goroutine would kill the test binary
+}
+
+// Shutdown must wait for the startup install before the store closes under it, but only as
+// long as its own context allows.
+func TestWaitDemoBlocksUntilTheInstallEndsOrTheContextExpires(t *testing.T) {
+	s := &Server{}
+	release := make(chan struct{})
+	s.demoWG.Add(1)
+	go func() { defer s.demoWG.Done(); <-release }()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if s.waitDemo(ctx) {
+		t.Fatal("returned before the install finished")
+	}
+	close(release)
+	if !s.waitDemo(context.Background()) {
+		t.Fatal("did not return after the install finished")
+	}
 }
 
 type racyServers struct {

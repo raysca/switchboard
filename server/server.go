@@ -101,6 +101,7 @@ type Server struct {
 	pruneStop   chan struct{}
 	demoMu      sync.Mutex         // serialises demo installs
 	stopDemo    context.CancelFunc // cancels the startup demo install; guarded by mu
+	demoWG      sync.WaitGroup     // the startup demo install goroutine
 	recSink     *record.LocalSink  // nil unless recording.enabled
 }
 
@@ -1044,6 +1045,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.probeServer != nil {
 		_ = s.probeServer.Close()
+	}
+	if !s.waitDemo(ctx) { // the install must not run against a closed store
+		s.logger.Warn("demo install still running at shutdown")
 	}
 	s.closeManagement()
 	if s.otel != nil { // after calls drained so their final spans are flushed

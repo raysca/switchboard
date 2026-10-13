@@ -94,6 +94,18 @@ func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID st
 	}
 }
 
+// waitDemo waits for the startup install to end; false means ctx expired first.
+func (s *Server) waitDemo(ctx context.Context) bool {
+	done := make(chan struct{})
+	go func() { s.demoWG.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // autoInstallDemo installs the dental demo in the background. A failure is logged loudly and
 // never stops the server: the admin UI button can retry.
 func (s *Server) autoInstallDemo() {
@@ -113,7 +125,9 @@ func (s *Server) autoInstallDemo() {
 	s.mu.Lock()
 	s.stopDemo = cancel
 	s.mu.Unlock()
+	s.demoWG.Add(1)
 	go func() {
+		defer s.demoWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				s.logger.Error("demo auto-install panicked", "panic", fmt.Sprint(r))
