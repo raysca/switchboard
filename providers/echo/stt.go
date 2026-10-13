@@ -12,6 +12,7 @@ import (
 
 const (
 	frameDuration = 20 * time.Millisecond
+	frameBytes    = 640 // 20 ms of 16 kHz PCM16 mono, the format the real Google STT stream takes
 	queueCap      = 64  // interim results held for the reader; beyond it interims are dropped, finals never
 	maxWords      = 512 // an utterance stops gaining words here, so a stuck-open stream cannot grow without bound
 )
@@ -60,7 +61,7 @@ func (s *sttStream) Send(audio []byte) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.media += max(len(audio)/640, 1) // 20 ms of 16 kHz PCM16 mono is 640 bytes
+	s.media += max(len(audio)/frameBytes, 1)
 	if s.f.VoicedThreshold > 0 && peakMagnitude(audio) < s.f.VoicedThreshold {
 		return nil
 	}
@@ -118,6 +119,11 @@ func (s *sttStream) Recv() ([]*google.STTResult, error) {
 
 // final answers once, FinalDelay after the audio ended, with every word heard; then io.EOF.
 func (s *sttStream) final() ([]*google.STTResult, error) {
+	select { // a closed stream answers nothing, even if the audio had ended too
+	case <-s.done:
+		return nil, context.Canceled
+	default:
+	}
 	s.mu.Lock()
 	if s.finalDone || len(s.words) == 0 {
 		s.finalDone = true

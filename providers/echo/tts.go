@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"time"
+	"unicode/utf8"
 )
 
 // TTSClient is a simulated Google Text-to-Speech backend: the real google TTS processors run
@@ -16,7 +17,7 @@ type TTSClient struct {
 func NewTTSClient(f TTSFigures, audible bool) *TTSClient { return &TTSClient{f: f, audible: audible} }
 
 func (c *TTSClient) delay(text string) time.Duration {
-	return c.f.FirstByte + time.Duration(len([]rune(text)))*c.f.FirstBytePerChar
+	return c.f.FirstByte + time.Duration(utf8.RuneCountInString(text))*c.f.FirstBytePerChar
 }
 
 // wait sleeps d unless ctx ends first.
@@ -42,7 +43,7 @@ func (c *TTSClient) SynthesizeSpeech(ctx context.Context, text, _ string, sample
 }
 
 func (c *TTSClient) StreamSynthesize(ctx context.Context, pieces []string, _ string, sampleRate int, onAudio func([]byte) error) error {
-	chunk := sampleRate / 50 * 2 // 20 ms of PCM16 mono
+	chunk := frameSamples(sampleRate) * 2 // 20 ms of PCM16 mono, in bytes
 	for i, piece := range pieces {
 		if i == 0 {
 			if err := wait(ctx, c.delay(piece)); err != nil {
@@ -66,9 +67,9 @@ func (c *TTSClient) StreamSynthesize(ctx context.Context, pieces []string, _ str
 
 // pcm is PCM16LE mono as long as the text takes to say: silence, or a quiet 220 Hz tone.
 func pcm(text string, rate, charsPerSecond int, audible bool) []byte {
-	samples := rate / 50 * 2
+	samples := frameSamples(rate) * 2 // two frames
 	if charsPerSecond > 0 {
-		samples = max((len([]rune(text))*rate+charsPerSecond-1)/charsPerSecond, rate/50)
+		samples = max((utf8.RuneCountInString(text)*rate+charsPerSecond-1)/charsPerSecond, frameSamples(rate))
 	}
 	out := make([]byte, samples*2)
 	if audible {
@@ -79,3 +80,6 @@ func pcm(text string, rate, charsPerSecond int, audible bool) []byte {
 	}
 	return out
 }
+
+// frameSamples is the samples in 20 ms of mono audio at rate.
+func frameSamples(rate int) int { return rate / 50 }

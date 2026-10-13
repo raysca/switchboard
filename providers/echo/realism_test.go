@@ -64,14 +64,14 @@ func TestGoogleMimicReproducesTheBenchmarks(t *testing.T) {
 	t.Run("an 11-character unary unit takes about 1.13 s to first audio", func(t *testing.T) {
 		t.Parallel()
 		start := time.Now()
-		_, _ = NewTTSClient(MimicGoogle.TTS("en-US-Journey-F"), false).SynthesizeSpeech(context.Background(), "Hello there", "en-US-Journey-F", 24000)
-		within(t, "unary first audio", time.Since(start), 1150*time.Millisecond)
+		_, _ = NewTTSClient(MimicGoogle.TTS(false), false).SynthesizeSpeech(context.Background(), "Hello there", "en-US-Journey-F", 24000)
+		within(t, "unary first audio", time.Since(start), 1130*time.Millisecond)
 	})
 	t.Run("a Chirp 3 HD unit streams its first audio in about 0.4 s", func(t *testing.T) {
 		t.Parallel()
 		start := time.Now()
 		var first time.Duration
-		_ = NewTTSClient(MimicGoogle.TTS("en-US-Chirp3-HD-Aoede"), false).StreamSynthesize(context.Background(), []string{"Hello there"}, "en-US-Chirp3-HD-Aoede", 24000, func([]byte) error {
+		_ = NewTTSClient(MimicGoogle.TTS(true), false).StreamSynthesize(context.Background(), []string{"Hello there"}, "en-US-Chirp3-HD-Aoede", 24000, func([]byte) error {
 			if first == 0 {
 				first = time.Since(start)
 			}

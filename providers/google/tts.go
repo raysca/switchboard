@@ -415,7 +415,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			}
 			traceFailure = errors.New("provider_failure")
 			p.Errors.Add(1)
-			provErr := mapError(p.cfg.Provider, "tts", err)
+			provErr := MapError("tts", err)
 			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Fatal: false, Turn: core.TurnID(su.Turn), Gen: core.Generation(su.Gen), UnitID: su.UnitID}, core.Downstream, p.index+1, gen)
 			return
 		}

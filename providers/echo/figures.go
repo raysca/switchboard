@@ -4,10 +4,7 @@
 // figures imitate Google's measured timing (docs/benchmarks/first-audio-latency.md).
 package echo
 
-import (
-	"strings"
-	"time"
-)
+import "time"
 
 // Mimic names whose timing the echo backends imitate.
 type Mimic string
@@ -66,17 +63,20 @@ func (m Mimic) LLM() LLMFigures {
 	return LLMFigures{FirstToken: 700 * time.Millisecond, TokenDelay: 30 * time.Millisecond, WordChunks: true}
 }
 
-// TTS returns the figures for the given voice: Chirp 3 HD voices stream, every other voice is
-// unary and pays for the whole unit before any audio.
-func (m Mimic) TTS(voice string) TTSFigures {
+// TTS returns the figures for how the server synthesizes the voice: streaming (Chirp 3 HD voices)
+// delivers audio from the first bytes; unary returns the whole unit at once, so it pays before any
+// audio. Unary: about 1 s plus 12 ms per character (the benchmark's 1.13 s for 11 characters is
+// "mostly fixed overhead"), which keeps the longest unit (250 characters, 4 s) well inside the real
+// processor's 10 s attempt timeout.
+func (m Mimic) TTS(streaming bool) TTSFigures {
 	if m == MimicInstant {
 		return TTSFigures{}
 	}
 	f := TTSFigures{CharsPerSecond: 15}
-	if voice == "" || strings.Contains(strings.ToLower(voice), "chirp3-hd") {
+	if streaming {
 		f.FirstByte = 400 * time.Millisecond
 	} else {
-		f.FirstByte, f.FirstBytePerChar = 600*time.Millisecond, 50*time.Millisecond
+		f.FirstByte, f.FirstBytePerChar = 1000*time.Millisecond, 12*time.Millisecond
 	}
 	return f
 }

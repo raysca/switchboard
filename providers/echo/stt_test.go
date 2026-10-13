@@ -202,3 +202,15 @@ func TestSTTWordsStopAtTheCap(t *testing.T) {
 		t.Fatalf("%d words, want the cap %d", len(s.words), maxWords)
 	}
 }
+
+func TestSTTNeverAnswersAfterClose(t *testing.T) {
+	s := open(t, STTFigures{FramesPerWord: 1}, true)
+	_ = s.Send(loud())
+	_ = s.CloseSend()
+	_ = s.Close() // interrupted: a closed stream must not hand back the transcript it had
+	for i := 0; i < 50; i++ {
+		if rs, err := s.Recv(); len(rs) != 0 || err == nil {
+			t.Fatalf("Recv after Close returned %+v, %v", rs, err)
+		}
+	}
+}

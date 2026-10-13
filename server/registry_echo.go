@@ -49,12 +49,13 @@ func registerEcho(r *Registry) {
 		if cfg.Providers.GoogleTTS.SampleRate > 0 {
 			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
 		}
-		ttsCfg.Client = echo.NewTTSClient(echo.Mimic(cfg.Providers.Echo.Mimic).TTS(ttsCfg.Voice), cfg.Providers.Echo.Audible)
+		streaming := google.IsChirp3HD(ttsCfg.Voice) && !cfg.Providers.GoogleTTS.DisableStreaming
+		ttsCfg.Client = echo.NewTTSClient(echo.Mimic(cfg.Providers.Echo.Mimic).TTS(streaming), cfg.Providers.Echo.Audible)
 		ttsCfg.CircuitBreaker = r.echoTTSBreaker
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
-		if google.IsChirp3HD(ttsCfg.Voice) && !cfg.Providers.GoogleTTS.DisableStreaming {
+		if streaming {
 			return google.NewStreamingTTSProcessor(ttsCfg)
 		}
 		return google.NewTTSProcessor(ttsCfg)

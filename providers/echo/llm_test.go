@@ -3,6 +3,7 @@ package echo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -287,6 +288,57 @@ func TestEchoNeverStreamsOneHugeWord(t *testing.T) {
 	for _, d := range deltas {
 		if len([]rune(d)) > maxPiece {
 			t.Fatalf("a piece of %d runes", len([]rune(d)))
+		}
+	}
+}
+
+// A cancelled or timed-out request must reach the processor as an error: both channels closing is a
+// finished reply to it, which would turn a timeout into a silent empty answer.
+func TestEchoReportsACancelledRequestOnTheErrorChannel(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Figures: LLMFigures{FirstToken: 5 * time.Second}})
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, errs, _ := c.GenerateStream(ctx, "m", "", user("hi"))
+	time.AfterFunc(20*time.Millisecond, cancel)
+	var got error
+	deadline := time.After(3 * time.Second)
+	for ch != nil || errs != nil {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				ch = nil
+			}
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+			} else {
+				got = err
+			}
+		case <-deadline:
+			t.Fatal("channels not closed")
+		}
+	}
+	if !errors.Is(got, context.Canceled) {
+		t.Fatalf("error channel carried %v, want context.Canceled", got)
+	}
+}
+
+func TestEchoOnlyCallsAToolForTheUsersOwnLastMessage(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
+	history := append(user("please transfer to sales"), core.Message{Role: core.RoleAssistant, Content: "Sure."})
+	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", history, nil, tools, core.ToolCall{})
+	for _, ck := range collect(t, ch, errs) {
+		if len(ck.ToolCalls) != 0 {
+			t.Fatalf("an older user message triggered a call: %+v", ck.ToolCalls)
+		}
+	}
+}
+
+func TestEchoNeverStreamsAnEmptyPiece(t *testing.T) {
+	c := NewLLMClient(LLMOptions{})
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(""))
+	for _, ck := range collect(t, ch, errs) {
+		if ck.Text == "" && !ck.IsDone {
+			t.Fatalf("empty piece %+v", ck)
 		}
 	}
 }

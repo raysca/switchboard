@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"govoice/core"
 	"govoice/providers/google"
@@ -16,7 +17,7 @@ import (
 // LLMOptions configure the simulated model.
 type LLMOptions struct {
 	Figures    LLMFigures
-	ExtraDelay time.Duration     // added to every word (the perf-gate self-test)
+	ExtraDelay time.Duration     // added between pieces, after the first (the perf-gate self-test)
 	Label      string            // prefixes every reply, e.g. "[front desk] "
 	Phrases    map[string]string // lower-case phrase -> tool name ("transfer to sales" -> transfer_to_sales)
 	Spoken     map[string]string // tool name -> the name its reply uses; these take {json} arguments from the message and say what came back
@@ -26,14 +27,22 @@ type LLMOptions struct {
 // usage, tracing, tool loop) streams from it. It repeats the caller, word by word, and calls the
 // tool a known phrase asks for.
 type LLMClient struct {
-	o LLMOptions
+	o       LLMOptions
+	phrases []string // o.Phrases keys, sorted once: the first match wins, deterministically
 }
 
 // callSeq makes tool call IDs unique across every client of the process: each step of a call builds
 // its own client, but the steps share one tool ledger, which rejects a reused ID.
 var callSeq atomic.Uint64
 
-func NewLLMClient(o LLMOptions) *LLMClient { return &LLMClient{o: o} }
+func NewLLMClient(o LLMOptions) *LLMClient {
+	c := &LLMClient{o: o, phrases: make([]string, 0, len(o.Phrases))}
+	for p := range o.Phrases {
+		c.phrases = append(c.phrases, p)
+	}
+	sort.Strings(c.phrases)
+	return c
+}
 
 func (c *LLMClient) GenerateStream(ctx context.Context, _, _ string, history []core.Message) (<-chan google.LLMStreamChunk, <-chan error, error) {
 	return c.stream(ctx, history, false)
@@ -62,17 +71,23 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 			send(google.LLMStreamChunk{ToolCalls: []core.ToolCall{call}, PromptTokens: promptTokens, TotalTokens: promptTokens})
 			return
 		}
+		// A cancelled or timed-out request is reported, not just ended: the processor reads two closed
+		// channels as a finished reply, and a timeout would pass for a silent empty answer.
+		fail := func(err error) { errs <- err }
 		words := c.pieces(history)
 		if err := wait(ctx, c.o.Figures.FirstToken); err != nil {
+			fail(err)
 			return
 		}
 		for i, w := range words {
 			if i > 0 {
 				if err := wait(ctx, c.o.Figures.TokenDelay+c.o.ExtraDelay); err != nil {
+					fail(err)
 					return
 				}
 			}
 			if !send(google.LLMStreamChunk{Text: w}) {
+				fail(ctx.Err())
 				return
 			}
 		}
@@ -95,6 +110,9 @@ func (c *LLMClient) pieces(history []core.Message) []string {
 	}
 	var out []string
 	for _, p := range parts {
+		if p == "" {
+			continue
+		}
 		if c.o.Figures.WordChunks {
 			for _, w := range splitWords(p) {
 				out = append(out, capPiece(w)...) // a long unbroken word is still cut
@@ -113,7 +131,7 @@ const maxPiece = 120
 // capPiece splits s into pieces of at most maxPiece runes, at spaces where it can.
 func capPiece(s string) []string {
 	var out []string
-	for len([]rune(s)) > maxPiece {
+	for utf8.RuneCountInString(s) > maxPiece {
 		r := []rune(s)
 		cut := maxPiece
 		for i := maxPiece; i > maxPiece/2; i-- {
@@ -146,17 +164,16 @@ func (c *LLMClient) toolAnswer(m core.Message) string {
 // toolCall is the call the last user message asks for (first matching phrase in sorted order, so
 // the choice is deterministic), unless the model is already answering a tool result.
 func (c *LLMClient) toolCall(history []core.Message, hasTools bool) (core.ToolCall, bool) {
-	if !hasTools || len(history) == 0 || history[len(history)-1].Kind == core.MessageToolResult {
+	// Only the user's own last message asks for a tool: an older one must not call it again.
+	if !hasTools || len(history) == 0 {
+		return core.ToolCall{}, false
+	}
+	if last := history[len(history)-1]; last.Role != core.RoleUser || last.Kind != "" && last.Kind != core.MessageText {
 		return core.ToolCall{}, false
 	}
 	msg := lastUser(history)
 	lower := strings.ToLower(msg)
-	phrases := make([]string, 0, len(c.o.Phrases))
-	for p := range c.o.Phrases {
-		phrases = append(phrases, p)
-	}
-	sort.Strings(phrases)
-	for _, p := range phrases {
+	for _, p := range c.phrases {
 		if strings.Contains(lower, p) {
 			name := c.o.Phrases[p]
 			args := json.RawMessage(`{}`)

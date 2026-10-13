@@ -40,31 +40,13 @@ type ProviderError struct {
 	StatusCode  int           // HTTP or gRPC status code
 	Retryable   bool          // Whether error is eligible for retry
 	RetryAfter  time.Duration // Provider retry-after delay if specified
-	// Provider names the provider the processor runs as when it is not google (the simulated echo
-	// provider reuses these processors): Error() then says that name in place of "google".
-	Provider string
 }
 
 func (e *ProviderError) Error() string {
-	msg := fmt.Sprintf("%s (%s)", e.BaseErr.Error(), e.Capability)
 	if e.SafeMessage != "" {
-		msg = fmt.Sprintf("%s (%s: %s)", e.BaseErr.Error(), e.Capability, e.SafeMessage)
+		return fmt.Sprintf("%s (%s: %s)", e.BaseErr.Error(), e.Capability, e.SafeMessage)
 	}
-	if e.Provider != "" && e.Provider != "google" {
-		msg = strings.Replace(msg, "google", e.Provider, 1)
-	}
-	return msg
-}
-
-// mapError is MapError for a processor that may run under another provider name.
-func mapError(provider, capability string, err error) *ProviderError {
-	pe := MapError(capability, err)
-	if pe == nil || provider == "" || provider == "google" {
-		return pe
-	}
-	cp := *pe // MapError can return the caller's own error: never mutate it
-	cp.Provider = provider
-	return &cp
+	return fmt.Sprintf("%s (%s)", e.BaseErr.Error(), e.Capability)
 }
 
 // ClientError reports a caller-side failure (bad key or request), which the
