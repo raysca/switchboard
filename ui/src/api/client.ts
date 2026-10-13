@@ -54,6 +54,19 @@ export const operationsStatusSchema = z.object({
 });
 export type OperationsStatus = z.infer<typeof operationsStatusSchema>;
 
+export const demoStatusSchema = z.object({
+  dental: z.object({ available: z.boolean(), installed: z.boolean(), flow_id: z.string().optional() }),
+});
+export type DemoStatus = z.infer<typeof demoStatusSchema>;
+export const demoInstallSchema = z.object({
+  mcp_server_id: z.string(),
+  mcp_created: z.boolean(),
+  tools: z.number(),
+  flow_id: z.string(),
+  flow_created: z.boolean(),
+});
+export type DemoInstall = z.infer<typeof demoInstallSchema>;
+
 const operationsStatusEnvelope = z.object({
   data: operationsStatusSchema,
 });
@@ -670,6 +683,11 @@ export function createApiClient(
           operationsStatusEnvelope,
         )
       ).data,
+
+    // Demo content
+    getDemo: async () => (await request("/demo", z.object({ data: demoStatusSchema }))).data,
+    installDentalDemo: async () =>
+      (await request("/demo/dental", z.object({ data: demoInstallSchema }), { method: "POST" })).data,
   };
 }
 

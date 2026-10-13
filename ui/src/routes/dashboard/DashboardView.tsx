@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import type { ApiClient, ApiError } from "../../api/client";
+import { DemoCard } from "./DemoCard";
 import {
   DataTable,
   EmptyState,
@@ -209,6 +210,8 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
           </Link>
         </li>
       </ul>
+
+      <DemoCard client={client} />
 
       <section className="section-block" aria-label="Recent calls">
         <div className="section-row">

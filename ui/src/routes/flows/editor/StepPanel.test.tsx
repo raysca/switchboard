@@ -119,6 +119,15 @@ describe("StepPanel", () => {
     expect(screen.getByRole("tab", { name: /tools/i })).toHaveTextContent("1");
   });
 
+  it("lets a step be given the end_call tool", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness stepId="a" initialTab="tools" onChange={onChange} />);
+    await user.click(screen.getByRole("checkbox", { name: /can end the call/i }));
+    expect(lastGraph(onChange).steps[0].end_call).toBe(true);
+    expect(screen.getByRole("tab", { name: /tools/i })).toHaveTextContent("1");
+  });
+
   it("offers Delete step and Make start step only on other steps", () => {
     const { unmount } = render(<Harness stepId="a" />);
     expect(screen.queryByRole("button", { name: "Delete step" })).toBeNull();

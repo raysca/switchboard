@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlowDTO, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
-import { clock, failedRoutes, interruptedCount, mmss, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import { clock, endedByFlow, failedRoutes, interruptedCount, mmss, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 
 const flow = (config: Record<string, unknown> = {}): FlowDTO => ({
   id: "a1",
@@ -202,5 +202,12 @@ describe("turnRows", () => {
   it("falls back to the caller's words, then to a plain note", () => {
     const rows = turnRows(session(), [turn(1, "2026-10-12T14:00:01Z", "2026-10-12T14:00:01Z", "Hello?", ""), turn(2, "2026-10-12T14:00:05Z", "2026-10-12T14:00:05Z", " ", "")], null);
     expect(rows.map((r) => r.text)).toEqual(["Hello?", "No words recorded"]);
+  });
+
+  it("finds the step that ended the call", () => {
+    const t = traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" }));
+    expect(endedByFlow(t)).toEqual({ step: "b" });
+    expect(endedByFlow(traces())).toBeNull();
+    expect(endedByFlow(null)).toBeNull();
   });
 });

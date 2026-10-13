@@ -66,7 +66,7 @@ export function StepPanel(props: StepPanelProps) {
   const patchStage = (cap: "llm" | "tts", patch: Record<string, unknown>) =>
     onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: { ...rec(step.config[cap]), ...patch } } }));
   const warn = (t: StepTab) => issues.some((i) => i.tab === t);
-  const count = (t: StepTab) => (t === "routes" ? routes.length : t === "tools" ? step.tools.length : null);
+  const count = (t: StepTab) => (t === "routes" ? routes.length : t === "tools" ? step.tools.length + (step.end_call ? 1 : 0) : null);
   const basicsIssues = issues.filter((i) => i.tab === "basics");
 
   const focusLastRoute = (next: FlowDraft) => {
@@ -253,28 +253,44 @@ export function StepPanel(props: StepPanelProps) {
           </>
         )}
 
-        {tab === "tools" &&
-          (flowTools.length === 0 ? (
-            <p className="subtext">This flow has no tools. Choose MCP tools for the flow first.</p>
-          ) : (
+        {tab === "tools" && (
+          <>
             <fieldset className="stage-box">
-              <legend>Tools this step can call</legend>
-              {flowTools.map((t) => (
-                <label key={t} className="check-row" htmlFor={`step-tool-${t}`}>
-                  <input
-                    id={`step-tool-${t}`}
-                    type="checkbox"
-                    checked={step.tools.includes(t)}
-                    onChange={(e) =>
-                      onChange(updateStep(graph, step.id, { tools: e.target.checked ? [...step.tools, t] : step.tools.filter((x) => x !== t) }))
-                    }
-                  />
-                  <code>{t}</code>
-                </label>
-              ))}
-              {graph.steps.length === 1 && <p className="subtext">With one step, it can call every tool the flow has.</p>}
+              <legend>Call control</legend>
+              <label className="check-row" htmlFor="step-end-call">
+                <input
+                  id="step-end-call"
+                  type="checkbox"
+                  checked={!!step.end_call}
+                  onChange={(e) => onChange(updateStep(graph, step.id, { end_call: e.target.checked }))}
+                />
+                Can end the call
+              </label>
+              <p className="subtext">Gives this step an end_call tool. The model uses it after saying goodbye; the call ends when it stops speaking. Needs a flow with at least two steps.</p>
             </fieldset>
-          ))}
+            {flowTools.length === 0 ? (
+              <p className="subtext">This flow has no tools. Choose MCP tools for the flow first.</p>
+            ) : (
+              <fieldset className="stage-box">
+                <legend>Tools this step can call</legend>
+                {flowTools.map((t) => (
+                  <label key={t} className="check-row" htmlFor={`step-tool-${t}`}>
+                    <input
+                      id={`step-tool-${t}`}
+                      type="checkbox"
+                      checked={step.tools.includes(t)}
+                      onChange={(e) =>
+                        onChange(updateStep(graph, step.id, { tools: e.target.checked ? [...step.tools, t] : step.tools.filter((x) => x !== t) }))
+                      }
+                    />
+                    <code>{t}</code>
+                  </label>
+                ))}
+                {graph.steps.length === 1 && <p className="subtext">With one step, it can call every tool the flow has.</p>}
+              </fieldset>
+            )}
+          </>
+        )}
 
         {tab === "advanced" && <StepAdvanced graph={graph} step={step} providers={providers} onChange={onChange} />}
       </div>

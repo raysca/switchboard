@@ -214,4 +214,9 @@ describe("CallView", () => {
     ]);
     expect(within(region).getByText(/Per-turn timing is not recorded yet\./)).toBeVisible();
   });
+
+  it("says when the flow ended the call", async () => {
+    setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling, span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" }))) });
+    expect(await screen.findByText("By the flow (Billing)")).toBeVisible();
+  });
 });
