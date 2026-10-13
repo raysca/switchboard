@@ -92,6 +92,16 @@ func TestConfig_ValidationFailures(t *testing.T) {
 			wantErr: "production profile requires TLS cert/key or trusted_proxy_mode",
 		},
 		{
+			name: "production same-host origin without trusted proxy mode",
+			modify: func(c *Config) {
+				c.Profile = ProfileProduction
+				c.TLS.CertFile, c.TLS.KeyFile = "cert.pem", "key.pem"
+				c.TLS.TrustedProxyMode = false
+				c.OriginAllowSameHost = true
+			},
+			wantErr: "origin_allow_same_host in production needs tls.trusted_proxy_mode",
+		},
+		{
 			name: "invalid limits max sessions",
 			modify: func(c *Config) {
 				c.Limits.MaxSessions = 0
@@ -257,5 +267,21 @@ func TestConfig_ToolsMaxParallel(t *testing.T) {
 		if err := ValidateConfig(cfg); err == nil {
 			t.Fatalf("tools.max_parallel %d should be rejected", val)
 		}
+	}
+}
+
+func TestValidateProductionSecurity_SameHostOrigin(t *testing.T) {
+	cfg := DefaultConfig(ProfileProduction)
+	cfg.OriginAllowSameHost = true
+	cfg.TLS.TrustedProxyMode = true
+	cfg.TLS.TrustedProxies = []string{"10.0.0.0/8"}
+	if err := validateProductionSecurity(cfg); err != nil && strings.Contains(err.Error(), "origin_allow_same_host") {
+		t.Fatalf("proxy mode must allow origin_allow_same_host: %v", err)
+	}
+	cfg.TLS.TrustedProxyMode = false
+	cfg.TLS.CertFile, cfg.TLS.KeyFile = "cert.pem", "key.pem"
+	err := validateProductionSecurity(cfg)
+	if err == nil || !strings.Contains(err.Error(), "origin_allow_same_host") {
+		t.Fatalf("want origin_allow_same_host rejection, got %v", err)
 	}
 }

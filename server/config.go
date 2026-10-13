@@ -44,7 +44,9 @@ type Config struct {
 	} `yaml:"tls"`
 
 	OriginAllowlist []string `yaml:"origin_allowlist"`
-	Management      struct {
+	// OriginAllowSameHost also accepts an Origin equal to the request Host (the server serves the page).
+	OriginAllowSameHost bool `yaml:"origin_allow_same_host"`
+	Management          struct {
 		APIKeyEnv string `yaml:"api_key_env"`
 	} `yaml:"management"`
 

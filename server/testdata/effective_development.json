@@ -17,6 +17,7 @@
   "https://localhost:3000",
   "*"
  ],
+ "OriginAllowSameHost": false,
  "Management": {
   "APIKeyEnv": "GOVOICE_MANAGEMENT_API_KEY"
  },

@@ -382,6 +382,7 @@ func (s *Server) setupRoutes() {
 	wsCfg := ws.ServerConfig{
 		Security: ws.SecurityConfig{
 			AllowedOrigins:     s.cfg.OriginAllowlist,
+			AllowSameHost:      s.cfg.OriginAllowSameHost,
 			AllowMissingOrigin: s.cfg.Profile == ProfileDevelopment || hasOriginWildcard(s.cfg.OriginAllowlist) || len(s.cfg.OriginAllowlist) == 0,
 			RequireTLS:         s.cfg.Profile == ProfileProduction && !s.cfg.InsecureOverrides.AllowPlainWSInProduction && (directTLS || proxyTLS),
 			TrustedProxies:     s.cfg.TLS.TrustedProxies,
