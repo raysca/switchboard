@@ -1,10 +1,10 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { oneportStackFile, type Stack } from "./lib/stack";
+import { portOpen, start, waitFor } from "./lib/stack-proc";
 import { stopStack } from "./global-teardown";
 
 // Starts the one-port stack: the fake-provider server with the admin UI embedded
@@ -13,25 +13,6 @@ import { stopStack } from "./global-teardown";
 const PORTS = { public: 18582, admin: 19592 };
 const repo = path.resolve(__dirname, "..");
 const logDir = path.join(__dirname, "test-results-oneport", "logs");
-
-async function portOpen(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const s = net.connect(port, "127.0.0.1");
-    s.once("connect", () => (s.destroy(), resolve(true)));
-    s.once("error", () => resolve(false));
-  });
-}
-
-async function waitFor(what: string, ok: () => Promise<boolean>, timeoutMs = 90_000) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    if (await ok().catch(() => false)) return;
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  throw new Error(`timed out waiting for ${what} (logs: ${logDir})`);
-}
-
-const PROVIDER_VARS = /^(GOOGLE_|GEMINI_|XAI_|DEEPGRAM_|CARTESIA_|ELEVENLABS_|OPENAI_|NVIDIA_|MCP_TOKEN_|E2E_)/;
 
 export default async function globalSetup() {
   if (!fs.existsSync(path.join(repo, "server/adminui/static/index.html")))
@@ -71,35 +52,24 @@ export default async function globalSetup() {
   };
   const sa = path.join(tmpDir, "sa.json");
   fs.writeFileSync(sa, JSON.stringify({ type: "service_account" }), { mode: 0o600 });
-  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !PROVIDER_VARS.test(k)));
   const save = () => fs.writeFileSync(oneportStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
   save();
 
   try {
-    const log = fs.openSync(path.join(logDir, "server.log"), "w");
-    const child = spawn(path.join(repo, "bin/server-fake"), ["-config", configPath, "-vad-mode", "inprocess"], {
-      cwd: repo,
-      env: {
-        ...base,
-        ENV_FILE: "/dev/null",
-        GOVOICE_ROOT: repo,
-        GOVOICE_DEV_DIR: stack.devDir,
-        TOKEN_SECRET: stack.tokenSecret,
-        GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
-        GOOGLE_API_KEY: "fake-google-key",
-        GOOGLE_APPLICATION_CREDENTIALS: sa,
-        GOVOICE_FAKE_LLM_LABEL: "1",
-        XAI_API_KEY: "fake-xai-key",
-        ELEVENLABS_API_KEY: "fake-elevenlabs-key",
-      },
-      stdio: ["ignore", log, log],
-      detached: true,
+    stack.pids.server = start(logDir, "server", path.join(repo, "bin/server-fake"), ["-config", configPath, "-vad-mode", "inprocess"], repo, {
+      GOVOICE_ROOT: repo,
+      GOVOICE_DEV_DIR: stack.devDir,
+      TOKEN_SECRET: stack.tokenSecret,
+      GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
+      GOOGLE_API_KEY: "fake-google-key",
+      GOOGLE_APPLICATION_CREDENTIALS: sa,
+      GOVOICE_FAKE_LLM_LABEL: "1",
+      XAI_API_KEY: "fake-xai-key",
+      ELEVENLABS_API_KEY: "fake-elevenlabs-key",
     });
-    child.unref();
-    stack.pids.server = child.pid!;
     save();
-    await waitFor("server /ready", async () => (await fetch(`${stack.adminUrl}/ready`)).status === 200);
-    await waitFor("embedded UI", async () => (await fetch(stack.publicUrl)).ok);
+    await waitFor(logDir, "server /ready", async () => (await fetch(`${stack.adminUrl}/ready`)).status === 200);
+    await waitFor(logDir, "embedded UI", async () => (await fetch(stack.publicUrl)).ok);
   } catch (err) {
     stopStack(oneportStackFile);
     throw err;
