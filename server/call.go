@@ -246,11 +246,16 @@ func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step
 			return cg.End(n.ID)
 		}
 	}
-	return defs, stepExecutor(rs.Executor, allowed, transferTargets(g, n.ID), func(target, _ string) error {
+	return defs, stepExecutor(rs.Executor, allowed, transferTargets(g, n.ID), func(target, note string) error {
 		if cg.Commit == nil {
 			return errors.New("route not ready")
 		}
-		return cg.Commit(target)
+		cg.setNote(note) // every transfer overwrites the previous note
+		if err := cg.Commit(target); err != nil {
+			cg.setNote("")
+			return err
+		}
+		return nil
 	}, end)
 }
 

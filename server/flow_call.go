@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"govoice/core"
 	"govoice/server/flow"
@@ -45,6 +47,9 @@ type CallFlow struct {
 	CanEnd bool
 	// End is set by the pipeline builder; the end_call tool calls it.
 	End func(stepID string) error
+
+	noteMu sync.Mutex
+	note   string
 }
 
 const (
@@ -88,7 +93,7 @@ func transferTools(g flow.Definition, stepID string) []core.ToolDefinition {
 		defs = append(defs, core.ToolDefinition{
 			Name:        flow.TransferToolName(to.Name),
 			Description: "Hand the caller to " + to.Name + ". Use when: " + e.Condition,
-			InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+			InputSchema: json.RawMessage(transferSchema),
 			Policy:      core.ToolPolicy{Timeout: 5 * time.Second},
 		})
 	}
@@ -136,7 +141,7 @@ func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map
 			return core.ToolResult{CallID: call.ID, Status: status, Result: json.RawMessage(body), StartedAt: now, EndedAt: time.Now()}
 		}
 		if target, ok := transfer[call.Name]; ok {
-			if err := commit(target, ""); err != nil {
+			if err := commit(target, parseNote(call.Arguments)); err != nil {
 				if errors.Is(err, core.ErrHandoffPending) || errors.Is(err, core.ErrHandoffLimit) {
 					return res(core.ToolFailed, `{"error":"transfer_unavailable"}`), nil
 				}
@@ -155,4 +160,50 @@ func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map
 		}
 		return inner.Execute(ctx, call)
 	})
+}
+
+// maxTransferNote bounds the note a model may pass with a transfer.
+const maxTransferNote = 500
+
+const transferSchema = `{"type":"object","properties":{"note":{"type":"string","maxLength":500,` +
+	`"description":"For the next agent: the caller's name and what they need, in one sentence."}},"additionalProperties":false}`
+
+// parseNote reads the optional note argument; anything that is not a string is dropped.
+func parseNote(raw json.RawMessage) string {
+	var a struct {
+		Note string `json:"note"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &a) != nil {
+		return ""
+	}
+	note := strings.TrimSpace(a.Note)
+	if len(note) > maxTransferNote {
+		note = note[:maxTransferNote]
+		for !utf8.ValidString(note) {
+			note = note[:len(note)-1]
+		}
+	}
+	return note
+}
+
+// transferGreeting is the message that makes the new step greet the caller. The
+// note is model-written from the caller's words: untrusted, so server markers in it are neutralised.
+func transferGreeting(stepName, note string) string {
+	msg := "[The caller was just transferred to you (" + stepName + ")."
+	if note != "" {
+		msg += " Note from the previous agent: " + neutralizeNoteMarker(note) + "."
+	}
+	return msg + " Greet them briefly, by name if you know it, and continue.]"
+}
+
+// setNote keeps the note of the transfer in progress for the greeting; every transfer overwrites it.
+func (c *CallFlow) setNote(n string) { c.noteMu.Lock(); c.note = n; c.noteMu.Unlock() }
+
+// takeNote returns the note once.
+func (c *CallFlow) takeNote() string {
+	c.noteMu.Lock()
+	defer c.noteMu.Unlock()
+	n := c.note
+	c.note = ""
+	return n
 }

@@ -600,8 +600,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				if n := lastStep.Load(); n != nil {
 					name = *n
 				}
-				return ctxPool.AddMessage(core.Message{Role: core.RoleUser,
-					Content: "[The caller was just transferred to you (" + name + "). Greet them briefly and continue.]"})
+				return ctxPool.AddMessage(core.Message{Role: core.RoleUser, Content: transferGreeting(name, call.Flow.takeNote())})
 			},
 		})
 		if err != nil {
