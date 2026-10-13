@@ -1,0 +1,66 @@
+# The voice server on Cloud Run: ONE instance (SQLite and live calls are in memory), CPU always
+# allocated (a call is a long-lived request that needs CPU between requests), 60-minute request
+# timeout (a call is a WebSocket request; the server caps a call at 20 minutes itself).
+# Rendered with envsubst by .github/workflows/deploy.yml; ${...} placeholders are checked by
+# server/gcp_manifest_test.go.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: govoice
+  labels:
+    cloud.googleapis.com/location: ${REGION}
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "${MIN_INSTANCES}"
+        autoscaling.knative.dev/maxScale: "1"
+        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/startup-cpu-boost: "true"
+        run.googleapis.com/sessionAffinity: "true"
+    spec:
+      serviceAccountName: govoice-runtime@${PROJECT_ID}.iam.gserviceaccount.com
+      containerConcurrency: 20
+      timeoutSeconds: 3600
+      containers:
+        - image: ${IMAGE}
+          command: ["/usr/bin/tini"]
+          args: ["--", "/opt/govoice/bin/server", "-config", "/etc/govoice/cloudrun.yaml"]
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 20
+          env:
+            - {name: GOVOICE_DATABASE_DSN, value: /tmp/govoice.db}
+            - {name: DENTAL_MCP_URL, value: "${DENTAL_MCP_URL}"}
+            - {name: GOOGLE_APPLICATION_CREDENTIALS, value: /secrets/google/key.json}
+            - name: TOKEN_SECRET
+              valueFrom: {secretKeyRef: {name: TOKEN_SECRET, key: latest}}
+            - name: GOVOICE_MANAGEMENT_API_KEY
+              valueFrom: {secretKeyRef: {name: GOVOICE_MANAGEMENT_API_KEY, key: latest}}
+            - name: XAI_API_KEY
+              valueFrom: {secretKeyRef: {name: XAI_API_KEY, key: latest}}
+            - name: ELEVENLABS_API_KEY
+              valueFrom: {secretKeyRef: {name: ELEVENLABS_API_KEY, key: latest}}
+            - name: GOOGLE_API_KEY
+              valueFrom: {secretKeyRef: {name: GOOGLE_API_KEY, key: latest}}
+            - name: MCP_TOKEN_DENTAL
+              valueFrom: {secretKeyRef: {name: DENTAL_MCP_TOKEN, key: latest}}
+          volumeMounts:
+            - {name: google-key, mountPath: /secrets/google}
+      volumes:
+        - name: google-key
+          secret:
+            secretName: GOOGLE_SA_KEY
+            items:
+              - {key: latest, path: key.json}
