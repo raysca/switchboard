@@ -85,7 +85,7 @@ lets the bot answer before the question repeats (a repeat is a barge-in).
 - `test-results/`: per-test screenshots, plus video and trace on failure, and
   `logs/*.log` (build, server, ui, custom-client).
 
-## Flow routes suite: fake providers or live xAI
+## Flow suite: fake providers or live xAI
 
 `playwright.flows.config.ts` runs `tests-flows/` against a stack it starts itself, on its
 own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid Google suite.
@@ -106,14 +106,17 @@ Google. Models and voices are the catalog defaults, except the fake's own (`fake
 management API or the browser, and live runs keep no traces. Without a key every live test
 is skipped.
 
-Tests: (0) providers: `GET /api/v1/providers` reports the suite's provider detected, and the
-designer's provider dropdowns list only detected providers. (1) designer: draw a two-step flow with a route and publish it; the stored version is
-the flow (STT only on the start step). (2) Call: the front step answers, the call is routed to
-sales, the live flow view moves to Sales, the stored session has the `route.*` trace spans
-with `from_step` and `to_step`, and the server's session timeline shows the route cue (the `chime` sound
-the stack configures and the designer names) starting in the gap and stopping on the sales step's first audio. (3) Designer: reopen, edit the route, republish (v2), a new call
-works. (4) Fake only: a sales step whose voice cannot be built (`brokenvoice`) leaves the caller
-with the front step. (5) A plain one-step flow is unchanged.
+The specs run in file order on one stack (one worker): later files use what earlier ones left
+behind. Shared helpers are in `lib/flows-helpers.ts` (admin API, navigation, the editor, the Test
+call panel) and `lib/mcp-helpers.ts` (the MCP test servers).
+
+| Spec | What it covers |
+|---|---|
+| `10-providers.spec.ts` | `GET /api/v1/providers` reports the suite's provider detected; the designer's dropdowns list only detected providers; the Providers page shows where the credential comes from and has no field for a key |
+| `20-flow-lifecycle.spec.ts` | Draw a two-step flow with a route and publish it (STT only on the start step). A call: the front step answers, the call is routed to sales, the live flow view moves to Sales, the stored session has `route.*` spans with `from_step` and `to_step`, and the timeline shows the route cue (the `chime` sound the stack configures) starting in the gap and stopping on the sales step's first audio. Reopen, edit the route, republish (v2), a new call works. Fake only: a sales step whose voice cannot be built (`brokenvoice`) leaves the caller with the front step. A plain one-step flow is unchanged. The flows list (status, enable toggle, copy, archive) and the calls list and detail |
+| `30-mcp.spec.ts` | The MCP tools page (empty state, the connect dialog, servers and a changed schema with the API faked), then the local test MCP servers (`cmd/mcptest`): healthy, failing and unreachable servers show their state, a flow calls an MCP tool during a test call, each failure kind is answered and the call goes on, a slow tool answers under the timeout and is abandoned over it. Fake only. Barge-in during a slow tool is a Go test (`server/mcp_call_e2e_test.go`): the fake STT produces no words, so a browser cannot start a user turn |
+| `40-layout.spec.ts` | Dashboard, providers, MCP tools, calls, flows, the editor and a call detail do not scroll sideways at 390 px |
+| `50-screens.spec.ts` | Walks the canvas boards 3 to 12 with a numbered screenshot of each, on a stack that already has flows |
 
 The server-side twin of the fake suite is `server/flow_e2e_test.go` (`make test-e2e-go`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
-runs the fake suite as the `graph-e2e` job.
+runs the fake suite as the `graph-e2e` job (the name is a required status check, so it keeps its old name).

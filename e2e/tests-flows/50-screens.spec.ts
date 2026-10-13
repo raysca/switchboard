@@ -1,23 +1,11 @@
-import type { Page } from "@playwright/test";
-import { test, expect, PROVIDER, type Stack } from "../lib/flows-stack";
+import { test, expect } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
+import { api, connectAdmin, stage } from "../lib/flows-helpers";
 
 // Walks canvas boards 3 to 12: a numbered screenshot of each, and the structure that matters. Runs in its own order after the other specs, on a stack that already has flows, so the empty page is checked on a fresh list through the UI.
 test.describe.configure({ mode: "serial" });
 test.use({ viewport: { width: 1440, height: 1040 } });
 
-const stage = (extra: object = {}) => ({ provider: PROVIDER, ...extra });
-async function api(stack: Stack, route: string, init?: RequestInit) {
-  const res = await fetch(`${stack.adminUrl}/api/v1${route}`, { ...init, headers: { Authorization: `Bearer ${stack.managementKey}`, "Content-Type": "application/json" } });
-  expect(res.ok, `${route} -> ${res.status}`).toBeTruthy();
-  return res.json();
-}
-async function connect(page: Page, stack: Stack) {
-  await page.goto(`${stack.uiUrl}/dashboard`);
-  await page.getByLabel("Management key").fill(stack.managementKey);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await expect(page.getByText("Key in memory")).toBeVisible();
-}
 const front = {
   name: "Front desk",
   description: "Answers the main line, verifies callers and routes to billing or support.",
@@ -36,7 +24,7 @@ const front = {
 };
 
 test("boards 3 to 12", async ({ page, stack }) => {
-  await connect(page, stack);
+  await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Flows", exact: true }).first().click();
   // Earlier specs leave flows behind: archive them all so board 3 (the empty page) can be shown.
   const existing = (await api(stack, "/flows")).data as { id: string }[];
