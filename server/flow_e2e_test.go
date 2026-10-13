@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -325,6 +326,20 @@ func (r *flowRigE2E) spanNames(sessionID string) map[string]bool {
 		}
 	}
 	return names
+}
+
+// spanAttributes is the stored attributes JSON of the first span called name ("" when none).
+func (r *flowRigE2E) spanAttributes(sessionID, name string) string {
+	spans, err := r.s.mgmt.store.Traces().Spans(r.t.Context(), sessionID, "")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	for _, sp := range spans {
+		if sp.Name == name {
+			return sp.AttributesJSON
+		}
+	}
+	return ""
 }
 
 func (r *flowRigE2E) activeSessions() int { return activeSessionCount(r.t, r.s, r.flowID) }
@@ -684,17 +699,18 @@ func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	}
 }
 
-func endCallFlowJSON() json.RawMessage {
+// endCallFlowJSON is a front -> sales flow; frontEnds and salesEnds give that step the end_call tool.
+func endCallFlowJSON(frontEnds, salesEnds bool) json.RawMessage {
 	stt := `"stt":{"provider":"google","model":"s"}`
 	return json.RawMessage(`{"start":"front","steps":[` +
-		`{"id":"front","name":"Front desk","end_call":true,"config":{` + stt + `,"llm":{"provider":"google","model":"m","system_prompt":"FRONT"},"tts":{"provider":"google","voice":"frontvoice"}}},` +
-		`{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"m","system_prompt":"SALES"},"tts":{"provider":"google","voice":"salesvoice"}}}],` +
+		`{"id":"front","name":"Front desk","end_call":` + strconv.FormatBool(frontEnds) + `,"config":{` + stt + `,"llm":{"provider":"google","model":"m","system_prompt":"FRONT"},"tts":{"provider":"google","voice":"frontvoice"}}},` +
+		`{"id":"sales","name":"Sales","end_call":` + strconv.FormatBool(salesEnds) + `,"config":{"llm":{"provider":"google","model":"m","system_prompt":"SALES"},"tts":{"provider":"google","voice":"salesvoice"}}}],` +
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)
 }
 
 func TestFlowE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe())
-	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Closer", Config: endCallFlowJSON()})
+	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Closer", Config: endCallFlowJSON(true, false)})
 	if err != nil || a.Readiness.State != flow.ReadinessReady {
 		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
 	}
@@ -707,20 +723,34 @@ func TestFlowE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 	if r.activeSessions() != 1 {
 		t.Fatal("the call must stay up until end_call")
 	}
+	before := c.replyCount()
 	c.say("please end the call")
+	eventually(t, "the goodbye after end_call", func() bool { return c.replies("Connecting you.") >= 1 && c.replyCount() > before })
 	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
 	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
 	eventually(t, "call.end span", func() bool { return r.spanNames(c.sessionID)["call.end"] })
+	// The trace says why and from which step, not just that the call ended.
+	attrs := r.spanAttributes(c.sessionID, "call.end")
+	if !strings.Contains(attrs, `"reason":"`+EndReasonFlow+`"`) || !strings.Contains(attrs, `"from_step":"front"`) {
+		t.Fatalf("call.end attributes = %s", attrs)
+	}
 }
 
-// A step without the flag cannot end the call: the fake only offers the phrase to steps that have the tool.
+// Only sales has end_call; the caller is on front, which lacks the tool, so the phrase is just echoed.
 func TestFlowE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe())
-	c := r.dial(r.createRoutedFlow("salesvoice"))
+	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "SalesCloses", Config: endCallFlowJSON(false, true)})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+	}
+	r.flowID = a.ID
+	c := r.dial(a.ID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("please end the call")
 	c.waitReplies("[FRONT", 1)
-	time.Sleep(300 * time.Millisecond)
+	// The call still answers a second turn, so the first did not hang it up.
+	c.say("are you there")
+	c.waitReplies("[FRONT", 2)
 	if r.activeSessions() != 1 || r.has(EventDisconnect, "terminated: "+EndReasonFlow) {
 		t.Fatal("a step without end_call must not hang up")
 	}
