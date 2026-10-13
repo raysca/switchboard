@@ -35,6 +35,7 @@ type STTConfig struct {
 	CredentialsJSON         []byte        // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                  string        // Fallback API key if supported
 	StreamOpener            STTStreamOpener
+	Provider                string            // label on frames, usage and traces; empty means "google"
 	RetryPolicy             resilience.Policy // bounds opening a stream: MaxAttempts tries of AttemptTimeout each
 	CircuitBreaker          *resilience.Breaker
 	Now                     func() time.Time // Receipt clock; policy time is carried in candidate frames.
@@ -280,7 +281,7 @@ func (p *STTProcessor) startStreamTrace(ctx context.Context, turn string, gen ui
 	if p.session == nil {
 		return nil, policy
 	}
-	return core.StartContextSpan(ctx, "stt.stream", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "google"}), policy
+	return core.StartContextSpan(ctx, "stt.stream", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": p.cfg.Provider}), policy
 }
 
 type googleSegment struct {
@@ -340,6 +341,9 @@ func (p *STTProcessor) STTCounts() (rot, rotFail, dedup, errs uint64) {
 
 // NewSTTProcessor creates a new STTProcessor with the given config.
 func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
+	if cfg.Provider == "" {
+		cfg.Provider = "google"
+	}
 	if cfg.Model == "" {
 		cfg.Model = "chirp_2"
 	}
@@ -880,7 +884,7 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 				Text: text, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
 				Timestamp: p.cfg.Now(), Final: latest.IsFinal,
 				Stability: float64(latest.Stability), HasStability: !latest.IsFinal && latest.Stability > 0,
-				Provider: "google",
+				Provider: p.cfg.Provider,
 			}
 			admitGen := turnGen
 			if detached {

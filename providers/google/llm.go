@@ -31,6 +31,7 @@ type LLMConfig struct {
 	ToolExecutor    core.ToolExecutor
 	ToolHistory     *core.ConversationContext
 	ToolLoopConfig  tools.ToolLoopConfig
+	Provider        string // label on frames, usage and traces; empty means "google"
 }
 
 // DefaultLLMConfig returns configuration matching v1-lock.json.
@@ -249,6 +250,9 @@ func (p *LLMProcessor) LLMCounts() (req, errs, retries, stale uint64) {
 
 // NewLLMProcessor creates a new LLMProcessor.
 func NewLLMProcessor(cfg LLMConfig) (*LLMProcessor, error) {
+	if cfg.Provider == "" {
+		cfg.Provider = "google"
+	}
 	if cfg.Model == "" {
 		cfg.Model = "gemini-2.5-flash"
 	}
@@ -407,7 +411,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 		// Turn usage: the sum over every model request of the tool loop.
 		var pTok, oTok, tTok, requests int64
 		requestModel := func(requestCtx context.Context) (_ []core.ToolCall, traceErr error) {
-			span := core.StartContextSpan(requestCtx, "llm.request", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "google", "model": p.cfg.Model})
+			span := core.StartContextSpan(requestCtx, "llm.request", core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), map[string]any{"provider": p.cfg.Provider, "model": p.cfg.Model})
 			defer func() {
 				if v := recover(); v != nil {
 					span.AddEvent(core.NewTraceEvent("llm.failure", time.Now(), core.SessionID(strconv.FormatUint(p.session.ID(), 10)), core.TurnID(turn), core.Generation(gen), core.TraceContextFromContext(requestCtx).Policy, nil))
@@ -637,7 +641,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				SessionID:        core.SessionID(strconv.FormatUint(p.session.ID(), 10)),
 				Turn:             turn,
 				Gen:              gen,
-				Provider:         "google",
+				Provider:         p.cfg.Provider,
 				Model:            p.cfg.Model,
 				Service:          "llm",
 				Timestamp:        time.Now(),

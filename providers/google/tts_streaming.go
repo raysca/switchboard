@@ -43,7 +43,7 @@ func NewStreamingTTSProcessor(cfg TTSConfig) (*StreamingTTSProcessor, error) {
 	policy := cfg.RetryPolicy
 	policy.AttemptTimeout = streamAttemptCap
 	p.Runner = ttsunit.New(ttsunit.Config{
-		Provider: "google", Model: cfg.Voice, SampleRate: cfg.SampleRate,
+		Provider: cfg.Provider, Model: cfg.Voice, SampleRate: cfg.SampleRate,
 		Breaker: cfg.CircuitBreaker, Policy: policy, Classify: classify,
 		Attempt: p.attempt,
 	})

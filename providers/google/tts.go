@@ -34,6 +34,7 @@ type TTSConfig struct {
 	Client                TTSClient
 	RetryPolicy           resilience.Policy
 	CircuitBreaker        *resilience.Breaker
+	Provider              string // label on frames, usage and traces; empty means "google"
 }
 
 // DefaultVoice is the voice agents get when none is set.
@@ -171,6 +172,9 @@ func (p *TTSProcessor) TTSCounts() (req, errs, retries, stale uint64) {
 
 // normalizeTTSConfig fills the defaults the unary and streaming processors share.
 func normalizeTTSConfig(cfg TTSConfig) TTSConfig {
+	if cfg.Provider == "" {
+		cfg.Provider = "google"
+	}
 	if cfg.Voice == "" {
 		cfg.Voice = DefaultVoice
 	}
@@ -355,7 +359,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		}
 		traceSession := core.SessionID(strconv.FormatUint(p.session.ID(), 10))
 		traceTurn, traceGen := core.TurnID(su.Turn), core.Generation(su.Gen)
-		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": "google"})
+		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": p.cfg.Provider})
 		tracePolicy := core.TraceContextFromContext(ctx).Policy
 		traceFailure := error(errors.New("canceled"))
 		defer func() {
@@ -536,7 +540,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			SessionID:       traceSession,
 			Turn:            su.Turn,
 			Gen:             gen,
-			Provider:        "google",
+			Provider:        p.cfg.Provider,
 			Model:           p.cfg.Voice,
 			Service:         "tts",
 			Timestamp:       time.Now(),
