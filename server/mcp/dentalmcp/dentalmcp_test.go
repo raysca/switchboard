@@ -133,3 +133,26 @@ func TestTokenIsRequiredOnMCPNotOnHealth(t *testing.T) {
 		t.Fatal("a server without a token must not start")
 	}
 }
+
+func TestNonCanonicalSlotIdsCannotDoubleBook(t *testing.T) {
+	call, _ := start(t)
+	a, _ := call("register_patient", `{"name":"Ann One","phone":"555 0200"}`)
+	b, _ := call("register_patient", `{"name":"Bob Two","phone":"555 0201"}`)
+	apid := a["patient"].(map[string]any)["id"].(string)
+	bpid := b["patient"].(map[string]any)["id"].(string)
+	_, err := call("book_appointment", `{"patient_id":"`+apid+`","slot_id":"2026-10-19T09:00","kind":"checkup"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call("book_appointment", `{"patient_id":"`+bpid+`","slot_id":"2026-10-19T9:00","kind":"checkup"}`); err == nil {
+		t.Fatal("a non-canonical id must not double-book a taken slot")
+	}
+	bk, err := call("book_appointment", `{"patient_id":"`+bpid+`","slot_id":"2026-10-19T11:00","kind":"checkup"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bid := bk["appointment"].(map[string]any)["id"].(string)
+	if _, err := call("reschedule_appointment", `{"appointment_id":"`+bid+`","slot_id":"2026-10-19T9:00"}`); err == nil {
+		t.Fatal("reschedule onto a taken slot via a non-canonical id must fail")
+	}
+}

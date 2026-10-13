@@ -152,7 +152,7 @@ func (s *Server) slotTime(id string) (time.Time, error) {
 		ok = ok || st == hhmm
 	}
 	now := s.now()
-	if err != nil || !ok || t.Weekday() == time.Saturday || t.Weekday() == time.Sunday ||
+	if err != nil || t.Format(slotLayout) != id || !ok || t.Weekday() == time.Saturday || t.Weekday() == time.Sunday ||
 		!t.After(now) || t.After(now.AddDate(0, 0, horizonDays)) {
 		return time.Time{}, fmt.Errorf("%q is not an available slot; use an id from find_slots", id)
 	}
