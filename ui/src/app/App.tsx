@@ -151,7 +151,9 @@ export function App({ initialPath }: { initialPath?: string }) {
                 <section className="key-bar" aria-labelledby="access-title">
                   <div>
                     <h2 id="access-title">Management access</h2>
-                    <p>The key stays in memory only. Reloading clears it.</p>
+                    <p>
+                      The key stays in this tab only (reloading clears it) and is sent as a bearer token to <code>/api/v1</code>.
+                    </p>
                     {authError && (
                       <ErrorState
                         title="Management access rejected"

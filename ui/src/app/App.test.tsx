@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 
@@ -22,6 +22,15 @@ const operationsStatus = {
 };
 
 describe("admin shell", () => {
+  it("explains what the management key is for and where it goes", () => {
+    render(<App initialPath="/flows" />);
+    const strip = screen.getByRole("region", { name: "Management access" });
+    expect(within(strip).getByLabelText("Management key")).toHaveAttribute("type", "password");
+    expect(within(strip).getByRole("button", { name: "Connect" })).toBeVisible();
+    expect(within(strip).getByText(/The key stays in this tab only \(reloading clears it\)/)).toBeVisible();
+    expect(within(strip).getByText("/api/v1")).toBeVisible();
+  });
+
   it("keeps old /agents bookmarks working", async () => {
     render(<App initialPath="/agents/abc" />);
     expect(await screen.findByRole("link", { name: "Flows" })).toHaveAttribute("aria-current", "page");
@@ -58,7 +67,7 @@ describe("admin shell", () => {
   it("asks for management access and never requests microphone access at boot", () => {
     render(<App initialPath="/dashboard" />);
     expect(screen.getByLabelText(/management key/i)).toBeVisible();
-    expect(screen.getByText(/The key stays in memory only/i)).toBeVisible();
+    expect(screen.getByText(/The key stays in this tab only/i)).toBeVisible();
   });
 
   it("puts the key entry above the page content, and names every route link by its text", () => {
