@@ -123,9 +123,14 @@ func (s *Server) autoInstallDemo() {
 	// Bounded by 60s and cancelled by Shutdown.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	s.mu.Lock()
+	if s.shuttingDown.Load() { // Shutdown may already have waited: do not start behind its back
+		s.mu.Unlock()
+		cancel()
+		return
+	}
 	s.stopDemo = cancel
+	s.demoWG.Add(1) // under mu with the check, so Shutdown's Wait cannot see zero first
 	s.mu.Unlock()
-	s.demoWG.Add(1)
 	go func() {
 		defer s.demoWG.Done()
 		defer func() {

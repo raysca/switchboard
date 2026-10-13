@@ -134,6 +134,19 @@ func TestDemoAutoInstallWithoutManagementLogsAndReturns(t *testing.T) {
 	}
 }
 
+// An install requested after Shutdown began must not start (Shutdown may already have waited).
+func TestAutoInstallDemoSkipsOnceShuttingDown(t *testing.T) {
+	s := dentalRig(t)
+	s.shuttingDown.Store(true)
+	s.autoInstallDemo()
+	if s.stopDemo != nil || !s.waitDemo(context.Background()) {
+		t.Fatal("an install was started while shutting down")
+	}
+	if f, err := demo.FindFlow(context.Background(), s.flows); err != nil || f.ID != "" {
+		t.Fatalf("flow installed during shutdown: %+v %v", f, err)
+	}
+}
+
 // Shutdown must wait for the startup install before the store closes under it, but only as
 // long as its own context allows.
 func TestWaitDemoBlocksUntilTheInstallEndsOrTheContextExpires(t *testing.T) {
