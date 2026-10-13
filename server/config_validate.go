@@ -97,6 +97,12 @@ func validateProductionSecurity(cfg *Config) error {
 	if !hasTLS && !hasProxy && !cfg.InsecureOverrides.AllowPlainWSInProduction {
 		return errors.New("production profile requires TLS cert/key or trusted_proxy_mode enabled (or explicit insecure override allow_plain_ws_in_production)")
 	}
+	if cfg.OriginAllowSameHost && !cfg.TLS.TrustedProxyMode {
+		return errors.New("origin_allow_same_host in production needs tls.trusted_proxy_mode (the Host header must come from your proxy)")
+	}
+	if cfg.PublicAdmin.Enabled && !cfg.TLS.TrustedProxyMode {
+		return errors.New("production public_admin needs tls.trusted_proxy_mode: the rate limits and handshake limiter key on the proxy-trusted client address")
+	}
 	if _, err := ResolveTokenSecret(cfg); err != nil {
 		return err
 	}

@@ -16,10 +16,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/time/rate"
 	"govoice/core"
 	"govoice/core/observe"
 	"govoice/core/record"
 	"govoice/core/redact"
+	"govoice/server/adminui"
 	"govoice/server/api"
 	"govoice/server/auth"
 	"govoice/server/catalog"
@@ -33,10 +35,17 @@ import (
 	"govoice/vad"
 )
 
+// adminUIFS is the admin UI served with public_admin (the embedded build; tests replace it).
+var adminUIFS = adminui.Embedded()
+
 // Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
-	otel                  *otelexport.Exporter // nil unless otel.enabled
-	redactor              *redact.Redactor     // sink redaction; never applied to the live LLM context
+	authFails             *rate.Limiter // global failed-management-auth allowance: burst 10, one more per 6 s
+	authNow               func() time.Time
+	clientIP              func(*http.Request) string // proxy-aware client address
+	secure                func(*http.Request) bool   // request arrived over TLS (directly or via a trusted proxy)
+	otel                  *otelexport.Exporter       // nil unless otel.enabled
+	redactor              *redact.Redactor           // sink redaction; never applied to the live LLM context
 	cfg                   *Config
 	catalog               *catalog.Catalog
 	metrics               *Metrics
@@ -92,6 +101,7 @@ type Server struct {
 	pruneStop   chan struct{}
 	demoMu      sync.Mutex         // serialises demo installs
 	stopDemo    context.CancelFunc // cancels the startup demo install; guarded by mu
+	demoWG      sync.WaitGroup     // the startup demo install goroutine
 	recSink     *record.LocalSink  // nil unless recording.enabled
 }
 
@@ -169,6 +179,9 @@ func NewServer(cfg *Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.PublicAdmin.Enabled && !management.Enabled() {
+		return nil, fmt.Errorf("public_admin.enabled needs the management API key in %s", managementEnv)
+	}
 	if managementKey != "" && managementKey == tokenSecret {
 		return nil, errors.New("management API key must differ from voice token signing key")
 	}
@@ -190,6 +203,8 @@ func NewServer(cfg *Config) (*Server, error) {
 		logger:       logger,
 		startedAt:    metrics.StartTime,
 		activeCalls:  make(map[uint64]*activeCall),
+		authFails:    rate.NewLimiter(rate.Every(6*time.Second), 10),
+		authNow:      time.Now,
 	}
 	s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })
 	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports}
@@ -382,6 +397,7 @@ func (s *Server) setupRoutes() {
 	wsCfg := ws.ServerConfig{
 		Security: ws.SecurityConfig{
 			AllowedOrigins:     s.cfg.OriginAllowlist,
+			AllowSameHost:      s.cfg.OriginAllowSameHost,
 			AllowMissingOrigin: s.cfg.Profile == ProfileDevelopment || hasOriginWildcard(s.cfg.OriginAllowlist) || len(s.cfg.OriginAllowlist) == 0,
 			RequireTLS:         s.cfg.Profile == ProfileProduction && !s.cfg.InsecureOverrides.AllowPlainWSInProduction && (directTLS || proxyTLS),
 			TrustedProxies:     s.cfg.TLS.TrustedProxies,
@@ -402,6 +418,15 @@ func (s *Server) setupRoutes() {
 		FixedPlayerRate:            24000,
 	}
 
+	sec := wsCfg.Security
+	s.clientIP = func(r *http.Request) string {
+		if ip := sec.ClientIP(r); ip != "" {
+			return ip
+		}
+		return "unknown" // an unparseable peer shares one bucket
+	}
+
+	s.secure = sec.IsSecure
 	wsCfg.Underlay = s.underlay
 	wsCfg.Cues = len(s.cues) > 0
 	s.wsServer = ws.NewServer(wsCfg)
@@ -412,6 +437,15 @@ func (s *Server) setupRoutes() {
 	// Public Listener: /health and /ws
 	s.publicMux = http.NewServeMux()
 	s.publicMux.HandleFunc("GET /health", s.handleHealth)
+	if s.cfg.PublicAdmin.Enabled {
+		s.logger.Warn("public_admin is on: the management API is served on the public port behind the management key")
+		s.publicMux.HandleFunc("/api/v1", s.handleAPI)
+		s.publicMux.HandleFunc("/api/v1/", s.handleAPI)
+		s.publicMux.Handle("/", adminui.Handler(adminUIFS)) // the catch-all (no method: "GET /" would conflict with the method-less /api/ patterns; the handler refuses non-reads itself). /ws, /health and /api/v1 are more specific and win
+		if !adminui.Built(adminUIFS) {
+			s.logger.Warn("public_admin is on but this binary has no admin UI (run make ui-embed before building)")
+		}
+	}
 	s.publicMux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		if s.shuttingDown.Load() { // before auth, so the token is not consumed; it is still bound to this process (issuer_epoch), so the client fetches a new one
 			http.Error(w, DrainReason, http.StatusServiceUnavailable)
@@ -1011,6 +1045,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	if s.probeServer != nil {
 		_ = s.probeServer.Close()
+	}
+	if !s.waitDemo(ctx) { // the install must not run against a closed store
+		s.logger.Warn("demo install still running at shutdown")
 	}
 	s.closeManagement()
 	if s.otel != nil { // after calls drained so their final spans are flushed

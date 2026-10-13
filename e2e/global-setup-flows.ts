@@ -1,10 +1,10 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { flowsStackFile, type Stack } from "./lib/stack";
+import { portOpen, start, waitFor } from "./lib/stack-proc";
 import { stopStack } from "./global-teardown";
 
 // Starts the stack for the flow suite. By default with the FAKE providers (go
@@ -17,37 +17,6 @@ const LIVE = process.env.E2E_PROVIDER === "xai";
 const PORTS = { public: 18581, admin: 19591, ui: 15174, mcp: 18595, mcpHole: 18596, dental: 18597 };
 const repo = path.resolve(__dirname, "..");
 const logDir = path.join(__dirname, "test-results-flows", "logs");
-
-async function portOpen(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const s = net.connect(port, "127.0.0.1");
-    s.once("connect", () => (s.destroy(), resolve(true)));
-    s.once("error", () => resolve(false));
-  });
-}
-
-async function waitFor(what: string, ok: () => Promise<boolean>, timeoutMs = 90_000) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    if (await ok().catch(() => false)) return;
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  throw new Error(`timed out waiting for ${what} (logs: ${logDir})`);
-}
-
-// Every catalog provider's variables (server/catalog/data), MCP tokens and the suite's own.
-const PROVIDER_VARS = /^(GOOGLE_|GEMINI_|XAI_|DEEPGRAM_|CARTESIA_|ELEVENLABS_|OPENAI_|NVIDIA_|MCP_TOKEN_|E2E_)/;
-
-function start(name: string, cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): number {
-  const log = fs.openSync(path.join(logDir, `${name}.log`), "w");
-  // detached => own process group, so teardown can kill children (vite, go) too.
-  // No provider variables are inherited: a child gets exactly the ones passed in env.
-  const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !PROVIDER_VARS.test(k)));
-  // ENV_FILE=/dev/null: a development server would otherwise load examples/.env itself.
-  const child = spawn(cmd, args, { cwd, env: { ...base, ENV_FILE: "/dev/null", ...env }, stdio: ["ignore", log, log], detached: true });
-  child.unref();
-  return child.pid!;
-}
 
 function toneWav(rate: number, seconds: number, hz: number, amplitude: number): Buffer {
   const n = Math.round(rate * seconds);
@@ -138,7 +107,7 @@ export default async function globalSetup() {
   save();
 
   try {
-    stack.pids.server = start("server", path.join(repo, bin), ["-config", configPath, "-vad-mode", "inprocess"], repo, {
+    stack.pids.server = start(logDir, "server", path.join(repo, bin), ["-config", configPath, "-vad-mode", "inprocess"], repo, {
       GOVOICE_ROOT: repo,
       GOVOICE_DEV_DIR: stack.devDir,
       TOKEN_SECRET: stack.tokenSecret,
@@ -149,21 +118,21 @@ export default async function globalSetup() {
       ...providerEnv,
     });
     save();
-    stack.pids.mcptest = start("mcptest", path.join(repo, "bin/mcptest"), ["-addr", `127.0.0.1:${PORTS.mcp}`, "-blackhole-addr", `127.0.0.1:${PORTS.mcpHole}`, "-token", "e2e-mcp-token"], repo, {});
+    stack.pids.mcptest = start(logDir, "mcptest", path.join(repo, "bin/mcptest"), ["-addr", `127.0.0.1:${PORTS.mcp}`, "-blackhole-addr", `127.0.0.1:${PORTS.mcpHole}`, "-token", "e2e-mcp-token"], repo, {});
     save();
-    stack.pids.dental = start("dental-mcp", path.join(repo, "bin/dental-mcp"), [], repo, { PORT: String(PORTS.dental), DENTAL_MCP_TOKEN: "e2e-dental-token" });
+    stack.pids.dental = start(logDir, "dental-mcp", path.join(repo, "bin/dental-mcp"), [], repo, { PORT: String(PORTS.dental), DENTAL_MCP_TOKEN: "e2e-dental-token" });
     save();
-    stack.pids.ui = start("ui", process.execPath, [path.join(repo, "ui/node_modules/vite/bin/vite.js"), "--config", path.join(__dirname, "vite.e2e.config.mjs")], path.join(repo, "ui"), {
+    stack.pids.ui = start(logDir, "ui", process.execPath, [path.join(repo, "ui/node_modules/vite/bin/vite.js"), "--config", path.join(__dirname, "vite.e2e.config.mjs")], path.join(repo, "ui"), {
       E2E_UI_PORT: String(PORTS.ui),
       E2E_ADMIN_URL: stack.adminUrl,
       E2E_PUBLIC_URL: stack.publicUrl,
     });
     save();
 
-    await waitFor("server /ready", async () => (await fetch(`${stack.adminUrl}/ready`)).status === 200);
-    await waitFor("admin UI", async () => (await fetch(stack.uiUrl)).ok);
-    await waitFor("dental-mcp", async () => (await fetch(`http://127.0.0.1:${PORTS.dental}/health`)).ok);
-    await waitFor("mcptest", async () => (await fetch(`${stack.mcpUrl}/_record`)).ok);
+    await waitFor(logDir, "server /ready", async () => (await fetch(`${stack.adminUrl}/ready`)).status === 200);
+    await waitFor(logDir, "admin UI", async () => (await fetch(stack.uiUrl)).ok);
+    await waitFor(logDir, "dental-mcp", async () => (await fetch(`http://127.0.0.1:${PORTS.dental}/health`)).ok);
+    await waitFor(logDir, "mcptest", async () => (await fetch(`${stack.mcpUrl}/_record`)).ok);
   } catch (err) {
     stopStack(flowsStackFile);
     throw err;

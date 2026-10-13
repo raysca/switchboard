@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -19,6 +20,7 @@ type SecurityConfig struct {
 	AllowMissingOrigin bool     // Allow clients with no Origin header (e.g. non-browser SDKs)
 	TrustedProxies     []string // CIDR blocks or IP addresses of reverse proxies
 	RequireTLS         bool     // If true, reject plain HTTP/WS upgrade
+	AllowSameHost      bool     // Also accept an Origin whose host (with port) equals the request's Host
 }
 
 // CheckOrigin verifies the request's Origin header against the configured allowlist.
@@ -29,6 +31,16 @@ func (cfg *SecurityConfig) CheckOrigin(r *http.Request) error {
 			return nil
 		}
 		return ErrMissingOrigin
+	}
+
+	if cfg.AllowSameHost {
+		// The page and the socket share an origin (the server serves the page): browsers send the
+		// page's origin and the socket's own host, so no per-deployment allow-list entry is needed.
+		// Only host and port are compared, not the scheme. This is not a DNS-rebinding defence: a
+		// rebound page presents its own matching Host, so the voice token is the gate.
+		if u, err := url.Parse(origin); err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && strings.EqualFold(u.Host, r.Host) {
+			return nil
+		}
 	}
 
 	for _, allowed := range cfg.AllowedOrigins {

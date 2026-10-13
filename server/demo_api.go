@@ -32,11 +32,6 @@ func (d demoServers) Refresh(ctx context.Context, id string) (storage.MCPDiscove
 // dentalEndpoint is where the demo's MCP server lives; empty when the deployment has none.
 func (s *Server) dentalEndpoint() string { return s.env("DENTAL_MCP_URL") }
 
-// InstallDentalDemo runs the demo installer with this server's services.
-func (s *Server) InstallDentalDemo(ctx context.Context) (demo.Result, error) {
-	return s.installDental(ctx, demoServers{svc: s.mcpService, store: s.mgmt.store}, s.flows, s.dentalEndpoint())
-}
-
 // installDental serialises installs (startup auto-install vs the API) so the
 // list-then-create inside cannot run twice; the install is bounded by ctx.
 func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows demo.Flows, endpoint string) (demo.Result, error) {
@@ -49,12 +44,12 @@ func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows 
 func demoStatus(ctx context.Context, flows demo.Flows, endpoint string) (demoStatusResp, error) {
 	var st demoStatusResp
 	st.Dental.Available = endpoint != ""
-	id, err := demo.FindFlow(ctx, flows)
+	f, err := demo.FindFlow(ctx, flows)
 	if err != nil {
 		return st, err
 	}
-	if id != "" {
-		st.Dental.Installed, st.Dental.FlowID = true, id
+	if f.ID != "" {
+		st.Dental.Installed, st.Dental.FlowID = true, f.ID
 	}
 	return st, nil
 }
@@ -86,7 +81,7 @@ func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID st
 			api.WriteError(w, http.StatusConflict, "demo_unavailable", "DENTAL_MCP_URL is not set on this server", requestID)
 			return
 		}
-		res, err := s.InstallDentalDemo(r.Context())
+		res, err := s.installDental(r.Context(), demoServers{svc: s.mcpService, store: s.mgmt.store}, s.flows, s.dentalEndpoint())
 		if err != nil {
 			s.logger.Warn("demo install failed", "err", s.redactor.Redact(err.Error()))
 			api.WriteError(w, http.StatusBadGateway, "demo_install_failed", "the demo could not be installed; check the server log", requestID)
@@ -96,6 +91,18 @@ func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID st
 	default:
 		w.Header().Set("Allow", "GET, POST")
 		api.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported", requestID)
+	}
+}
+
+// waitDemo waits for the startup install to end; false means ctx expired first.
+func (s *Server) waitDemo(ctx context.Context) bool {
+	done := make(chan struct{})
+	go func() { s.demoWG.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
@@ -116,9 +123,16 @@ func (s *Server) autoInstallDemo() {
 	// Bounded by 60s and cancelled by Shutdown.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	s.mu.Lock()
+	if s.shuttingDown.Load() { // Shutdown may already have waited: do not start behind its back
+		s.mu.Unlock()
+		cancel()
+		return
+	}
 	s.stopDemo = cancel
+	s.demoWG.Add(1) // under mu with the check, so Shutdown's Wait cannot see zero first
 	s.mu.Unlock()
 	go func() {
+		defer s.demoWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				s.logger.Error("demo auto-install panicked", "panic", fmt.Sprint(r))

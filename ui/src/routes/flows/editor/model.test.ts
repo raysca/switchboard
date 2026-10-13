@@ -299,4 +299,18 @@ describe("what the server will accept", () => {
     expect(out.steps[0].end_call).toBe(true);
     expect("end_call" in out.steps[1]).toBe(false);
   });
+
+  it("drops end_call when deleting a step leaves a one-step flow", () => {
+    const cfg = {
+      start: "a",
+      steps: [
+        { id: "a", name: "A", end_call: true, config: { llm: {}, tts: {} } },
+        { id: "b", name: "B", config: { llm: {}, tts: {} } },
+      ],
+      routes: [{ id: "r", from: "a", to: "b", condition: "x" }],
+    };
+    const out = toPayload(removeStep(fromFlowConfig(cfg), "b")) as { steps: object[] };
+    expect(out.steps).toHaveLength(1);
+    expect("end_call" in out.steps[0]).toBe(false);
+  });
 });

@@ -62,6 +62,8 @@ type ServerConfig struct {
 	MaxSessions                  int    `json:"max_sessions"`
 	MaxCallDurationSeconds       int    `json:"max_call_duration_seconds"`
 	VoiceTokenMaxLifetimeSeconds int    `json:"voice_token_max_lifetime_seconds"`
+	ClientIP                     string `json:"client_ip"`
+	Secure                       bool   `json:"secure"`
 }
 
 func ParsePagination(r *http.Request) (Pagination, error) {

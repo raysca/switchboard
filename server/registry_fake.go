@@ -48,10 +48,7 @@ func init() {
 			for _, d := range spec.Tools {
 				if step, ok := strings.CutPrefix(d.Name, "transfer_to_"); ok {
 					cfg.ToolOnPhrase["transfer to "+strings.ReplaceAll(step, "_", " ")] = d.Name
-				}
-			}
-			for _, d := range spec.Tools {
-				if d.Name == endCallName {
+				} else if d.Name == endCallName {
 					cfg.ToolOnPhrase["end the call"] = endCallName
 				}
 			}

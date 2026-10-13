@@ -315,13 +315,18 @@ export const sessionTraceSpanSchema = z.object({
 });
 export type TraceSpanDTO = z.infer<typeof sessionTraceSpanSchema>;
 
+/** A span's attributes, or an empty object when it has none. */
+export function spanAttrs(span: TraceSpanDTO): Record<string, unknown> {
+  return (span.attributes && typeof span.attributes === "object" ? span.attributes : {}) as Record<string, unknown>;
+}
+
 /**
  * A route span's event ("preparing", "active", "failed") and the steps it joins, or null for other spans.
  * Sessions stored before the flow rename name them handoff.* with from_node/to_node.
  */
 export function routeSpan(span: TraceSpanDTO): { event: string; from: string; to: string } | null {
   const event = /^(?:route|handoff)\.(\w+)$/.exec(span.name)?.[1];
-  const a = (span.attributes && typeof span.attributes === "object" ? span.attributes : {}) as Record<string, unknown>;
+  const a = spanAttrs(span);
   const from = a.from_step ?? a.from_node;
   const to = a.to_step ?? a.to_node;
   return event && typeof from === "string" && typeof to === "string" ? { event, from, to } : null;

@@ -117,7 +117,18 @@ call panel) and `lib/mcp-helpers.ts` (the MCP test servers).
 | `30-mcp.spec.ts` | The MCP tools page (empty state, the connect dialog, servers and a changed schema with the API faked), then the local test MCP servers (`cmd/mcptest`): healthy, failing and unreachable servers show their state, a flow calls an MCP tool during a test call, each failure kind is answered and the call goes on, a slow tool answers under the timeout and is abandoned over it. Fake only. Barge-in during a slow tool is a Go test (`server/mcp_call_e2e_test.go`): the fake STT produces no words, so a browser cannot start a user turn |
 | `40-layout.spec.ts` | Dashboard, providers, MCP tools, calls, flows, the editor and a call detail do not scroll sideways at 390 px |
 | `50-screens.spec.ts` | Walks the canvas boards 3 to 12 with a numbered screenshot of each, on a stack that already has flows |
-| `60-dental.spec.ts` | Load demo from the Dashboard, a new-patient call and a returning-patient call with the real dentistry MCP server (`cmd/dental-mcp`): routing, MCP tool calls, the call ended by the flow; the Calls page shows the path, the step-labelled transcript, how it ended and the captured tools. The fake LLM sends no transfer note, so the note is covered by Go unit tests, not here. Fake only |
+| `60-dental.spec.ts` | Load demo from the Dashboard, a new-patient call and a returning-patient call with the real dentistry MCP server (`cmd/dental-mcp`): routing, MCP tool calls, the call ended by the flow; the Calls page shows the path, how it ended ("By the flow (...)") and the step-labelled transcript, and the tool-call spans are counted through the traces API (the page does not list individual tool calls). The fake LLM sends no transfer note, so the note is covered by Go unit tests, not here. Fake only |
 
 The server-side twin of the fake suite is `server/flow_e2e_test.go` (`make test-e2e-go`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
 runs the fake suite as the `graph-e2e` job (the name is a required status check, so it keeps its old name).
+
+## One-port suite
+
+`playwright.oneport.config.ts` (`make e2e-oneport`, also run by `make e2e-fake`) starts only the fake-provider
+server with the UI embedded (`make ui-embed`) and `public_admin` on, on public 18582 and admin 19592 (stack file
+`.stack-oneport.json`). `origin_allowlist` holds one unrelated origin, so only `origin_allow_same_host` admits
+the browser. No Vite.
+
+| Spec | What it proves |
+|---|---|
+| `10-oneport.spec.ts` | The embedded UI loads from the public origin and a client route survives a hard load; a text call works over the same-origin API and socket with no CSP violation; a foreign browser `Origin` is refused the socket (403); `/health` is public while `/metrics`, `/ready` and `/debug/timeline` are not; `server-config` needs the key, is `no-store` and reports the client address; a missing asset is 404; repeated wrong keys end in 429 and the page shows the server's message |

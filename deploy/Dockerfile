@@ -1,6 +1,14 @@
 # Production image for Voice Framework V1.
 # The module graph requires Go 1.27.1. The runtime loads Silero and ONNX Runtime
 # from the paths the process actually searches.
+# Admin UI (embedded into the server binary): Node is a build tool only and is not in the runtime image.
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+COPY ui/ ./
+RUN npm run build
+
 FROM golang:1.27.1-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS builder
 
 WORKDIR /src
@@ -20,6 +28,7 @@ COPY server/go.mod server/go.sum ./server/
 RUN go work sync
 
 COPY . .
+COPY --from=ui /ui/dist/ /src/server/adminui/static/
 
 ENV CGO_ENABLED=1
 # xAI STT/TTS are in launch scope: the server must be built with -tags xaispeech
@@ -76,10 +85,11 @@ COPY --from=builder /src/third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/third
 COPY --from=builder /src/third_party/silero_vad.onnx /opt/govoice/third_party/silero_vad.onnx
 COPY --from=builder /src/third_party/silero_vad.onnx /opt/govoice/models/silero_vad.onnx
 COPY --from=builder /src/config/production.yaml /etc/govoice/production.yaml
+COPY --from=builder /src/config/cloudrun.yaml /etc/govoice/cloudrun.yaml
 
 RUN chown -R govoice:govoice /opt/govoice /etc/govoice && \
     chmod 755 /opt/govoice/bin/server /opt/govoice/bin/vadworker /opt/govoice/bin/turnworker && \
-    chmod 644 /opt/govoice/third_party/silero_vad.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/models/silero_vad.onnx /etc/govoice/production.yaml /opt/govoice/lib/libonnxruntime.so
+    chmod 644 /opt/govoice/third_party/silero_vad.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/models/silero_vad.onnx /etc/govoice/production.yaml /etc/govoice/cloudrun.yaml /opt/govoice/lib/libonnxruntime.so
 
 RUN mkdir -p /tmp /var/log/govoice && \
     chown -R govoice:govoice /tmp /var/log/govoice && \

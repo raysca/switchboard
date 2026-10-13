@@ -210,4 +210,8 @@ describe("turnRows", () => {
     expect(endedByFlow(traces())).toBeNull();
     expect(endedByFlow(null)).toBeNull();
   });
+  it("ignores a hangup ending and a span that is not call.end", () => {
+    expect(endedByFlow(traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "hangup", from_step: "b" })))).toBeNull();
+    expect(endedByFlow(traces(span("route.active", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" })))).toBeNull();
+  });
 });

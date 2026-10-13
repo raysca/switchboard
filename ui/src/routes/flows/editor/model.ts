@@ -189,7 +189,7 @@ export function toPayload(g: FlowDraft): unknown {
     steps: g.steps.map((n) => {
       const config = { ...n.config };
       if (n.id !== g.start) for (const k of CALL_LEVEL) delete config[k];
-      return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call ? { end_call: true } : {}), position: n.position };
+      return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call && g.steps.length > 1 ? { end_call: true } : {}), position: n.position };
     }),
     routes: g.routes,
     ...(g.route_cue ? { route_cue: g.route_cue } : {}),

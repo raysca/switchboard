@@ -92,6 +92,16 @@ func TestConfig_ValidationFailures(t *testing.T) {
 			wantErr: "production profile requires TLS cert/key or trusted_proxy_mode",
 		},
 		{
+			name: "production same-host origin without trusted proxy mode",
+			modify: func(c *Config) {
+				c.Profile = ProfileProduction
+				c.TLS.CertFile, c.TLS.KeyFile = "cert.pem", "key.pem"
+				c.TLS.TrustedProxyMode = false
+				c.OriginAllowSameHost = true
+			},
+			wantErr: "origin_allow_same_host in production needs tls.trusted_proxy_mode",
+		},
+		{
 			name: "invalid limits max sessions",
 			modify: func(c *Config) {
 				c.Limits.MaxSessions = 0
@@ -257,5 +267,39 @@ func TestConfig_ToolsMaxParallel(t *testing.T) {
 		if err := ValidateConfig(cfg); err == nil {
 			t.Fatalf("tools.max_parallel %d should be rejected", val)
 		}
+	}
+}
+
+func TestValidateProductionSecurity_SameHostOrigin(t *testing.T) {
+	cfg := DefaultConfig(ProfileProduction)
+	cfg.OriginAllowSameHost = true
+	cfg.TLS.TrustedProxyMode = true
+	cfg.TLS.TrustedProxies = []string{"10.0.0.0/8"}
+	if err := validateProductionSecurity(cfg); err != nil && strings.Contains(err.Error(), "origin_allow_same_host") {
+		t.Fatalf("proxy mode must allow origin_allow_same_host: %v", err)
+	}
+	cfg.TLS.TrustedProxyMode = false
+	cfg.TLS.CertFile, cfg.TLS.KeyFile = "cert.pem", "key.pem"
+	err := validateProductionSecurity(cfg)
+	if err == nil || !strings.Contains(err.Error(), "origin_allow_same_host") {
+		t.Fatalf("want origin_allow_same_host rejection, got %v", err)
+	}
+}
+
+func TestValidateProductionSecurity_PublicAdmin(t *testing.T) {
+	t.Setenv("TOKEN_SECRET", "cloudrun-test-token-secret-0123456789abcdef")
+	t.Setenv("GOVOICE_DATABASE_DSN", t.TempDir()+"/govoice.db")
+	cfg, err := LoadConfig("../config/cloudrun.yaml") // a known-valid production config with public_admin behind a proxy
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProductionSecurity(cfg); err != nil {
+		t.Fatalf("proxy mode must allow public_admin: %v", err)
+	}
+	cfg.TLS.TrustedProxyMode, cfg.OriginAllowSameHost = false, false // isolate the public_admin rule
+	cfg.TLS.CertFile, cfg.TLS.KeyFile = "cert.pem", "key.pem"
+	err = validateProductionSecurity(cfg)
+	if err == nil || !strings.Contains(err.Error(), "public_admin") {
+		t.Fatalf("want public_admin rejection, got %v", err)
 	}
 }

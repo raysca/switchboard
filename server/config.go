@@ -44,7 +44,16 @@ type Config struct {
 	} `yaml:"tls"`
 
 	OriginAllowlist []string `yaml:"origin_allowlist"`
-	Management      struct {
+	// OriginAllowSameHost also accepts an Origin equal to the request Host (the server serves the page).
+	OriginAllowSameHost bool `yaml:"origin_allow_same_host"`
+
+	// PublicAdmin serves the management API (/api/v1) and the admin UI on the public listener,
+	// behind the management key, for single-port deployments (Cloud Run). Off by default: the
+	// API normally lives on the loopback admin listener. /metrics, /ready and /debug never move.
+	PublicAdmin struct {
+		Enabled bool `yaml:"enabled"`
+	} `yaml:"public_admin"`
+	Management struct {
 		APIKeyEnv string `yaml:"api_key_env"`
 	} `yaml:"management"`
 

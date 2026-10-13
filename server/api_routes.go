@@ -18,11 +18,20 @@ import (
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	requestID := uuid.NewString()
 	w.Header().Set("X-Request-ID", requestID)
+	w.Header().Set("Cache-Control", "no-store")
 	if !s.management.Enabled() {
 		api.WriteError(w, http.StatusServiceUnavailable, "management_unavailable", "management API is not configured", requestID)
 		return
 	}
+	// Failed attempts share one global allowance; a correct key is never throttled.
 	if !s.management.Authenticate(r) {
+		s.metrics.ManagementAuthFailuresTotal.Add(1)
+		if !s.authFails.AllowN(s.authNow(), 1) {
+			s.metrics.ManagementAuthThrottledTotal.Add(1)
+			w.Header().Set("Retry-After", "6")
+			api.WriteError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts; try again shortly", requestID)
+			return
+		}
 		w.Header().Set("WWW-Authenticate", `Bearer realm="management"`)
 		api.WriteError(w, http.StatusUnauthorized, "unauthorized", "valid management credential required", requestID)
 		return
@@ -38,6 +47,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Profile: string(s.cfg.Profile), MaxSessions: s.cfg.Limits.MaxSessions,
 			MaxCallDurationSeconds:       int(s.cfg.Limits.MaxCallDuration.Seconds()),
 			VoiceTokenMaxLifetimeSeconds: int(s.effectiveVoiceTokenLifetime().Seconds()),
+			ClientIP:                     s.clientIP(r), Secure: s.secure(r),
 		}})
 	case "/api/v1/operations/status":
 		if r.Method != http.MethodGet {

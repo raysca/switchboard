@@ -158,6 +158,9 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		case slugs[s]:
 			return Definition{}, invalid("step names must be unique (%q)", name)
 		}
+		if rn.EndCall && len(rg.Steps) < 2 {
+			return Definition{}, invalid("end_call needs a flow with at least two steps")
+		}
 		ids[rn.ID], slugs[s] = true, true
 		cfg, err := DecodeConfig(rn.Config)
 		if err != nil {

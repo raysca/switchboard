@@ -135,6 +135,14 @@ describe("StepPanel", () => {
     expect(screen.getByText(/needs a second step/i)).toBeInTheDocument();
   });
 
+  it("shows end_call unchecked and disabled on a one-step flow that still carries the flag", () => {
+    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", end_call: true, config: {} }], routes: [] });
+    render(<Harness initial={one} stepId="a" initialTab="tools" />);
+    const box = screen.getByRole("checkbox", { name: /can end the call/i });
+    expect(box).not.toBeChecked();
+    expect(box).toBeDisabled();
+  });
+
   it("offers Delete step and Make start step only on other steps", () => {
     const { unmount } = render(<Harness stepId="a" />);
     expect(screen.queryByRole("button", { name: "Delete step" })).toBeNull();

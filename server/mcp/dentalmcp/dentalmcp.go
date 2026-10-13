@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,16 +148,24 @@ func (s *Server) slotTime(id string) (time.Time, error) {
 	if err == nil {
 		hhmm = t.Format("15:04")
 	}
-	ok := false
-	for _, st := range slotTimes {
-		ok = ok || st == hhmm
-	}
+	ok := slices.Contains(slotTimes, hhmm)
 	now := s.now()
 	if err != nil || t.Format(slotLayout) != id || !ok || t.Weekday() == time.Saturday || t.Weekday() == time.Sunday ||
 		!t.After(now) || t.After(now.AddDate(0, 0, horizonDays)) {
 		return time.Time{}, fmt.Errorf("%q is not an available slot; use an id from find_slots", id)
 	}
 	return t, nil
+}
+
+// begin takes the lock and drops appointments whose time has passed, so the schedule only
+// ever holds upcoming ones. The caller defers s.mu.Unlock.
+func (s *Server) begin() {
+	s.mu.Lock()
+	now := s.now()
+	s.appts = slices.DeleteFunc(s.appts, func(a Appointment) bool {
+		t, err := time.Parse(slotLayout, a.SlotID)
+		return err != nil || !t.After(now)
+	})
 }
 
 func (s *Server) taken(slotID, exceptAppt string) bool {
@@ -276,7 +285,7 @@ type (
 func (s *Server) addTools() {
 	mcp.AddTool(s.srv, &mcp.Tool{Name: "find_patient", Description: "Find an existing patient by full name (and optionally phone). found is false for a new patient."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in findIn) (*mcp.CallToolResult, findOut, error) {
-			s.mu.Lock()
+			s.begin()
 			defer s.mu.Unlock()
 			for _, p := range s.patients {
 				if norm(p.Name) == norm(in.Name) && (in.Phone == "" || digits(p.Phone) == digits(in.Phone)) {
@@ -291,7 +300,7 @@ func (s *Server) addTools() {
 			if name == "" || phone == "" || len(name) > maxField || len(phone) > maxField {
 				return nil, patientOut{}, errors.New("name and phone are required (at most 80 characters each)")
 			}
-			s.mu.Lock()
+			s.begin()
 			defer s.mu.Unlock()
 			for _, p := range s.patients {
 				if norm(p.Name) == norm(name) && digits(p.Phone) == digits(phone) {
@@ -305,7 +314,7 @@ func (s *Server) addTools() {
 		})
 	mcp.AddTool(s.srv, &mcp.Tool{Name: "list_appointments", Description: "List a patient's upcoming appointments."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in patientIDIn) (*mcp.CallToolResult, listOut, error) {
-			s.mu.Lock()
+			s.begin()
 			defer s.mu.Unlock()
 			out := listOut{Appointments: []Appointment{}}
 			for _, a := range s.appts {
@@ -325,13 +334,13 @@ func (s *Server) addTools() {
 				}
 				from = d
 			}
-			s.mu.Lock()
+			s.begin()
 			defer s.mu.Unlock()
 			return nil, slotsOut{Slots: s.freeSlots(from, slotsPerReply)}, nil
 		})
 	mcp.AddTool(s.srv, &mcp.Tool{Name: "book_appointment", Description: "Book a slot (id from find_slots) for a patient. kind is checkup, cleaning, filling or consultation."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in bookIn) (*mcp.CallToolResult, apptOut, error) {
-			s.mu.Lock()
+			s.begin()
 			defer s.mu.Unlock()
 			if _, ok := s.patient(in.PatientID); !ok {
 				return nil, apptOut{}, errors.New("unknown patient_id; register the patient first")
@@ -341,7 +350,7 @@ func (s *Server) addTools() {
 		})
 	mcp.AddTool(s.srv, &mcp.Tool{Name: "reschedule_appointment", Description: "Move an appointment to another free slot (id from find_slots)."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in moveIn) (*mcp.CallToolResult, apptOut, error) {
-			s.mu.Lock()
+			s.begin()
 			defer s.mu.Unlock()
 			for i, a := range s.appts {
 				if a.ID != in.AppointmentID {
@@ -361,7 +370,7 @@ func (s *Server) addTools() {
 		})
 	mcp.AddTool(s.srv, &mcp.Tool{Name: "cancel_appointment", Description: "Cancel an appointment. Confirm with the caller before calling."},
 		func(_ context.Context, _ *mcp.CallToolRequest, in cancelIn) (*mcp.CallToolResult, cancelOut, error) {
-			s.mu.Lock()
+			s.begin()
 			defer s.mu.Unlock()
 			for i, a := range s.appts {
 				if a.ID == in.AppointmentID {

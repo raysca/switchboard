@@ -21,6 +21,8 @@ export type Stack = {
 export const stackFile = path.resolve(__dirname, "../.stack.json");
 // The flow suite (playwright.flows.config.ts) has its own stack file, so it can coexist with the paid suite.
 export const flowsStackFile = path.resolve(__dirname, "../.stack-flows.json");
+// The one-port suite (playwright.oneport.config.ts): the embedded UI on the public port, no Vite.
+export const oneportStackFile = path.resolve(__dirname, "../.stack-oneport.json");
 export const readStack = (file: string = stackFile): Stack => JSON.parse(fs.readFileSync(file, "utf8"));
 
 export const SKIP_REASON = "No Google credential (GOOGLE_APPLICATION_CREDENTIALS service-account file or GOOGLE_API_KEY in examples/.env): e2e suite skipped";

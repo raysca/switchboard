@@ -66,7 +66,7 @@ export function StepPanel(props: StepPanelProps) {
   const patchStage = (cap: "llm" | "tts", patch: Record<string, unknown>) =>
     onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: { ...rec(step.config[cap]), ...patch } } }));
   const warn = (t: StepTab) => issues.some((i) => i.tab === t);
-  const count = (t: StepTab) => (t === "routes" ? routes.length : t === "tools" ? step.tools.length + (step.end_call ? 1 : 0) : null);
+  const count = (t: StepTab) => (t === "routes" ? routes.length : t === "tools" ? step.tools.length + (step.end_call && graph.steps.length > 1 ? 1 : 0) : null);
   const basicsIssues = issues.filter((i) => i.tab === "basics");
 
   const focusLastRoute = (next: FlowDraft) => {
@@ -261,13 +261,16 @@ export function StepPanel(props: StepPanelProps) {
                 <input
                   id="step-end-call"
                   type="checkbox"
-                  checked={!!step.end_call}
+                  checked={!!step.end_call && graph.steps.length > 1}
                   disabled={graph.steps.length === 1}
                   onChange={(e) => onChange(updateStep(graph, step.id, { end_call: e.target.checked }))}
                 />
                 Can end the call
               </label>
-              <p className="subtext">Gives this step an end_call tool. The model uses it after saying goodbye; the call ends when it stops speaking. {graph.steps.length === 1 ? " Add a second step first: a one-step flow needs a second step to end the call." : " Needs a flow with at least two steps."}</p>
+              <p className="subtext">
+                Gives this step an end_call tool. The model uses it after saying goodbye; the call ends when it stops speaking.
+                {graph.steps.length === 1 && " Add a second step first: a one-step flow needs a second step to end the call."}
+              </p>
             </fieldset>
             {flowTools.length === 0 ? (
               <p className="subtext">This flow has no tools. Choose MCP tools for the flow first.</p>

@@ -26,5 +26,7 @@ third_party/onnxruntime-*
 .agent-matrix-out
 .govoice-loadtest-soak.*
 e2e
+server/adminui/static
 progress.md
 **/*.log
+deploy/*.env

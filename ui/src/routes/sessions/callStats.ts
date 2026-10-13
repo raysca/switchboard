@@ -1,4 +1,4 @@
-import { routeSpan, type FlowDTO, type SessionDTO, type SessionTracesDTO, type TurnDTO } from "../../api/client";
+import { routeSpan, spanAttrs, type FlowDTO, type SessionDTO, type SessionTracesDTO, type TurnDTO } from "../../api/client";
 
 /** The call's state in words. The server writes only active, draining and ended; anything else is shown as it is. */
 export function outcome(s: SessionDTO): { label: string; live: boolean } {
@@ -159,7 +159,7 @@ export function interruptedCount(turns: TurnDTO[]): number {
 /** The step whose end_call tool ended the call, from the call.end span; null for any other ending. */
 export function endedByFlow(traces: SessionTracesDTO | null | undefined): { step: string } | null {
   for (const s of traces?.spans ?? []) {
-    const a = (s.attributes && typeof s.attributes === "object" ? s.attributes : {}) as Record<string, unknown>;
+    const a = spanAttrs(s);
     if (s.name === "call.end" && a.reason === "ended_by_flow" && typeof a.from_step === "string") return { step: a.from_step };
   }
   return null;

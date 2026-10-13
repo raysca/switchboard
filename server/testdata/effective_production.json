@@ -19,6 +19,10 @@
  "OriginAllowlist": [
   "https://app.govoice.internal"
  ],
+ "OriginAllowSameHost": false,
+ "PublicAdmin": {
+  "Enabled": false
+ },
  "Management": {
   "APIKeyEnv": "GOVOICE_MANAGEMENT_API_KEY"
  },

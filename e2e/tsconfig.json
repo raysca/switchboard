@@ -9,5 +9,5 @@
     "esModuleInterop": true,
     "types": ["node"]
   },
-  "include": ["tests", "tests-flows", "lib", "*.ts"]
+  "include": ["tests", "tests-flows", "tests-oneport", "lib", "*.ts"]
 }

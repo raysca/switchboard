@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -48,8 +49,9 @@ type CallFlow struct {
 	// End is set by the pipeline builder; the end_call tool calls it.
 	End func(stepID string) error
 
-	noteMu sync.Mutex
-	note   string
+	noteMu   sync.Mutex
+	note     string
+	commitMu sync.Mutex // serialises commitWithNote's set, commit and restore
 }
 
 const (
@@ -165,8 +167,8 @@ func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map
 // maxTransferNote bounds the note a model may pass with a transfer.
 const maxTransferNote = 500
 
-const transferSchema = `{"type":"object","properties":{"note":{"type":"string","maxLength":500,` +
-	`"description":"For the next agent: the caller's name and what they need, in one sentence."}},"additionalProperties":false}`
+var transferSchema = fmt.Sprintf(`{"type":"object","properties":{"note":{"type":"string","maxLength":%d,`+
+	`"description":"For the next agent: the caller's name and what they need, in one sentence."}},"additionalProperties":false}`, maxTransferNote)
 
 // parseNote reads the optional note argument; anything that is not a string is dropped.
 func parseNote(raw json.RawMessage) string {
@@ -205,6 +207,10 @@ func (c *CallFlow) commitWithNote(target, note string) error {
 	if c.Commit == nil {
 		return errors.New("route not ready")
 	}
+	// Commit only starts the handoff build and returns; the greeting (takeNote) runs
+	// later on the trigger path, so holding commitMu here cannot deadlock with it.
+	c.commitMu.Lock()
+	defer c.commitMu.Unlock()
 	c.noteMu.Lock()
 	prev := c.note
 	c.note = note
@@ -216,7 +222,8 @@ func (c *CallFlow) commitWithNote(target, note string) error {
 	return nil
 }
 
-// takeNote returns the note once.
+// takeNote returns the note once. In theory a greeting can read a losing commit's note for
+// microseconds before it is restored; Handoff.Commit rejects at once while a transfer is pending.
 func (c *CallFlow) takeNote() string {
 	c.noteMu.Lock()
 	defer c.noteMu.Unlock()
