@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { asApiError, type ApiClient, type ApiError, type FlowDTO } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState, Status } from "../../components/primitives";
+import { FlowVoiceTest } from "../flows/FlowVoiceTest";
 import { DEFAULT_JOB, flowFor, stacksFrom, type Stack } from "./firstRun";
 
 export type OnboardingViewProps = { client: ApiClient; keyValue: string | null };
@@ -13,6 +14,34 @@ const STEPS = [
   { name: "Test call", sub: "Talk to it in the browser" },
   { name: "Connect", sub: "Token and web client" },
 ];
+
+/** A code block with a Copy button. The clipboard may be missing or refuse: say so. */
+function Snippet({ label, title, text }: { label: string; title: string; text: string }) {
+  const [copied, setCopied] = useState<"idle" | "yes" | "no">("idle");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied("yes");
+    } catch {
+      setCopied("no");
+    }
+  };
+  return (
+    <figure className="snippet" aria-label={label}>
+      <figcaption>
+        <span>{title}</span>
+        <button type="button" className="action-button-small" onClick={() => void copy()}>
+          Copy
+        </button>
+        {copied === "yes" && <span className="subtext">Copied</span>}
+        {copied === "no" && <span className="subtext">Could not copy. Select the text and copy it yourself.</span>}
+      </figcaption>
+      <pre>
+        <code>{text}</code>
+      </pre>
+    </figure>
+  );
+}
 
 /** First run: pick a voice stack, make a flow, call it, connect a client. The step lives in the URL, so a reload resumes. */
 export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
@@ -244,8 +273,62 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
             </form>
           )}
 
-          {step === 3 && flow && <p>Step 3</p>}
-          {step === 4 && flow && <p>Step 4</p>}
+          {step === 3 && flow && (
+            <section aria-labelledby="fr-title" className="first-run__step">
+              <p className="subtext">Step 3 of 4</p>
+              <h2 id="fr-title">Say hello.</h2>
+              <p>Your browser will ask for the microphone. Try interrupting it mid-sentence.</p>
+              <div className="first-run__call">
+                <FlowVoiceTest flow={flow} client={client} keyValue={keyValue} />
+              </div>
+              <p className="subtext">
+                Doesn't sound right? <Link to={`/flows/${encodeURIComponent(flow.id)}`}>Open the flow editor</Link> to change the instructions, publish, and call again.
+              </p>
+              <div className="first-run__foot">
+                <span className="grow" />
+                <button type="button" className="action-button" onClick={() => go(4, true)}>
+                  Next: connect
+                </button>
+              </div>
+            </section>
+          )}
+
+          {step === 4 && flow && (
+            <section aria-labelledby="fr-title" className="first-run__step">
+              <p className="subtext">Step 4 of 4</p>
+              <h2 id="fr-title">Put it in front of callers.</h2>
+              <p>The browser connects with the official Pipecat web client; no changes are needed. Your backend mints a short-lived voice token with the management key and hands only the token to the browser.</p>
+              <Snippet
+                label="Token request"
+                title="1 · your backend mints a short-lived voice token"
+                text={`POST /api/v1/voice-tokens\n{ "flow_id": "${flow.id}", "principal": "[YOUR USER ID]" }`}
+              />
+              <Snippet
+                label="Web client"
+                title="2 · the browser connects with @pipecat-ai/client-js"
+                text={`const client = new PipecatClient({\n  transport: new WebSocketTransport(),\n});\nawait client.connect({ wsUrl: "wss://[YOUR SERVER]/ws" });\n// authenticated with the voice token from step 1`}
+              />
+              <section aria-labelledby="fr-more" className="first-run__more">
+                <h3 id="fr-more">When you're ready for more</h3>
+                <ul>
+                  <li>
+                    <span>Add a fallback so a provider outage doesn't drop calls, or route callers to a specialist step</span>
+                    <Link to={`/flows/${encodeURIComponent(flow.id)}`}>Open the editor</Link>
+                  </li>
+                  <li>
+                    <span>Let it look things up with an MCP tool</span>
+                    <Link to="/mcp-servers">Connect a tool</Link>
+                  </li>
+                </ul>
+              </section>
+              <div className="first-run__foot">
+                <span className="grow" />
+                <Link to="/dashboard" className="action-button">
+                  Go to dashboard
+                </Link>
+              </div>
+            </section>
+          )}
         </div>
       </div>
     </>

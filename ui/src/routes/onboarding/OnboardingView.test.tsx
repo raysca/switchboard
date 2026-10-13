@@ -196,3 +196,69 @@ describe("OnboardingView", () => {
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
   });
 });
+
+describe("OnboardingView steps 3 and 4", () => {
+  it("step 3 shows the test call for the created flow, without saying nothing is live", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=3&flow=flow-1");
+    expect(await screen.findByRole("heading", { name: "Say hello." })).toBeVisible();
+    expect(screen.getByTestId("voice-test")).toHaveTextContent("Front Desk");
+    expect(screen.getByRole("link", { name: "Open the flow editor" })).toHaveAttribute("href", "/flows/flow-1");
+    expect(screen.queryByText(/nothing is live/i)).toBeNull();
+    expect(stepNav().getByText("Test call").closest("li")).toHaveAttribute("aria-current", "step");
+    expect(stepNav().getByText("Flow").closest("li")).toHaveAttribute("data-state", "done");
+  });
+
+  it("goes on from the test call to connecting", async () => {
+    const { user } = setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=3&flow=flow-1");
+    await user.click(await screen.findByRole("button", { name: "Next: connect" }));
+    expect(screen.getByTestId("where")).toHaveTextContent("step=4&flow=flow-1");
+  });
+
+  it("step 4 prints the token request with the real flow id and the client snippet", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1");
+    expect(await screen.findByRole("heading", { name: "Put it in front of callers." })).toBeVisible();
+    const token = screen.getByLabelText("Token request");
+    expect(token).toHaveTextContent("POST /api/v1/voice-tokens");
+    expect(token).toHaveTextContent('"flow_id": "flow-1"');
+    expect(token).toHaveTextContent('"principal": "[YOUR USER ID]"');
+    const client = screen.getByLabelText("Web client");
+    expect(client).toHaveTextContent("WebSocketTransport");
+    expect(client).toHaveTextContent("wss://[YOUR SERVER]/ws");
+    expect(screen.getByRole("link", { name: "Go to dashboard" })).toHaveAttribute("href", "/dashboard");
+  });
+
+  it("never puts the management key in a snippet", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1", "super-secret-key");
+    await screen.findByRole("heading", { name: "Put it in front of callers." });
+    expect(document.body.textContent).not.toContain("super-secret-key");
+  });
+
+  it("copies a snippet, and says so", async () => {
+    const { user } = setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await user.click((await screen.findAllByRole("button", { name: "Copy" }))[0]);
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"flow_id": "flow-1"'));
+    expect(await screen.findByText("Copied")).toBeVisible();
+  });
+
+  it("says so when the clipboard refuses", async () => {
+    const { user } = setup({ getFlows: vi.fn().mockResolvedValue([flow]) }, "/onboarding?step=4&flow=flow-1");
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) }, configurable: true });
+    await user.click((await screen.findAllByRole("button", { name: "Copy" }))[1]);
+    expect(await screen.findByText("Could not copy. Select the text and copy it yourself.")).toBeVisible();
+  });
+
+  it("falls back when the flow in the link was archived meanwhile", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue([{ ...flow, archived: true }]) }, "/onboarding?step=4&flow=flow-1");
+    expect(await screen.findByRole("heading", { name: "Tell it what job it's doing." })).toBeVisible();
+  });
+
+  it("uses the flow just created even before the list has caught up", async () => {
+    const { user } = setup({ getFlows: vi.fn().mockResolvedValueOnce([]).mockResolvedValue([]) });
+    await user.click(await screen.findByRole("button", { name: "Continue" }));
+    await user.type(screen.getByLabelText("Name"), "Front Desk");
+    await user.click(screen.getByRole("button", { name: "Create and call it" }));
+    expect(await screen.findByTestId("voice-test")).toHaveTextContent("Front Desk");
+  });
+});
