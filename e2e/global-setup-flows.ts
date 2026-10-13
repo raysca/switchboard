@@ -7,8 +7,8 @@ import { flowsStackFile, type Stack } from "./lib/stack";
 import { portOpen, start, waitFor } from "./lib/stack-proc";
 import { stopStack } from "./global-teardown";
 
-// Starts the stack for the flow suite. By default with the FAKE providers (go
-// build -tags fakeproviders): no secrets, no network, no cost; the fake LLM labels
+// Starts the stack for the flow suite. By default with the simulated echo provider
+// (no secrets, no network, no cost; providers.echo in the server config); the echo LLM labels
 // each reply with its step's prompt and calls a step's transfer tool on "transfer
 // to <step>". With E2E_PROVIDER=xai it is the real server (go build -tags
 // xaispeech) reading XAI_API_KEY from its environment: real STT/LLM/TTS calls.

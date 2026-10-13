@@ -2,14 +2,14 @@
 
 ## Executive Summary
 
-To validate production readiness, resource sizing, call churn stability, and fault tolerance without incurring cloud provider charges, a comprehensive automated performance and chaos suite was executed against the **Switchboard** server running inside a resource-constrained Docker container with zero paid cloud dependencies (`-tags fakeproviders`).
+To validate production readiness, resource sizing, call churn stability, and fault tolerance without incurring cloud provider charges, a comprehensive automated performance and chaos suite was executed against the **Switchboard** server running inside a resource-constrained Docker container with zero paid cloud dependencies (the `echo` provider).
 
 ### Sizing & Budget Constraints
 - **Container Environment:** Linux container on macOS host (`arm64`), managed via Docker Compose (`deploy/docker-compose.perf.yaml`).
 - **Resource Constraints (Enforced via cgroups):**
   - **CPU Limit:** 2.0 Cores (`limits.cpus: "2.0"`, reservation 1.0)
   - **Memory Limit:** 2048 MB RAM (`limits.memory: "2048M"`, reservation 512M)
-- **Cloud Provider Spend:** **\$0.00** (100% offline fake STT, LLM, TTS providers with real audio streaming, protobuf binary wire framing, and Silero VAD running in process-isolated worker).
+- **Cloud Provider Spend:** **\$0.00** (100% offline simulated (echo) STT, LLM, TTS providers with real audio streaming, protobuf binary wire framing, and Silero VAD running in process-isolated worker).
 - **Automated Runner:** `scripts/run-container-perf.sh`
 - **Generated Test Artifacts:**
   - Capacity Report: [`reports/capacity-container.md`](../../reports/capacity-container.md) ([JSON](../../reports/capacity-container.json))

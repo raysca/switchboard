@@ -92,8 +92,8 @@ own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid
 
 | | `make e2e-fake` (default) | `GOVOICE_LIVE=1 make e2e-xai` |
 |---|---|---|
-| Server | `bin/server-fake` (`-tags "xaispeech fakeproviders"`, never ship it) | `bin/server-live` (`-tags xaispeech`) |
-| Providers | fake STT/LLM/TTS | real xAI STT, Grok, TTS |
+| Server | `bin/server-echo` (`-tags xaispeech`, config `providers.echo`) | `bin/server-live` (`-tags xaispeech`) |
+| Providers | the simulated `echo` provider (real Google processors, simulated backends) | real xAI STT, Grok, TTS |
 | Cost | none, about 20 s | about 20 provider requests |
 | Route | the fake LLM calls the transfer tool on "transfer to `<step>`" | the model calls it from the front prompt |
 | Assertions | exact (the fake labels each reply with its step's prompt) | marker words (the sales prompt demands "catalogue") |

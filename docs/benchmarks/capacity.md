@@ -4,13 +4,13 @@ Captured 2026-10-07 on an Apple M4 Pro (12 cores), darwin/arm64, go1.27.1. **Mac
 
 ## What this measures, and what it does not
 
-`tools/loadtest` starts a real server child (`go build -tags fakeproviders ./cmd/server`, plus `vadworker`), provisions a fake agent through the management API with a generated key, and drives N concurrent calls over the real protocol: single-use voice token, WebSocket upgrade, binary protobuf frames (`transport/ws` encoders), RTVI `client-ready`/`bot-ready`, then a real-time 20 ms microphone stream. Each caller plays a real speech clip ("What is two plus two?", `e2e/fixtures/voice-debug.wav`, 1.6 s after silence trim), waits for the bot reply, thinks, and repeats.
+`tools/loadtest` starts a real server child (`go build ./cmd/server`, plus `vadworker`), provisions an echo-provider flow through the management API with a generated key, and drives N concurrent calls over the real protocol: single-use voice token, WebSocket upgrade, binary protobuf frames (`transport/ws` encoders), RTVI `client-ready`/`bot-ready`, then a real-time 20 ms microphone stream. Each caller plays a real speech clip ("What is two plus two?", `e2e/fixtures/voice-debug.wav`, 1.6 s after silence trim), waits for the bot reply, thinks, and repeats.
 
 Exercised: transport and pacing, input handling, Silero VAD in the `vadworker` child (onnxruntime), the VAD stop hangover, STT/LLM/TTS stages (fakes), output pacer, admission, metrics.
 
 Not exercised, so numbers are a lower bound on cost and latency in production:
 
-- **Provider I/O.** STT, LLM and TTS are fakes that answer instantly (`GOVOICE_FAKE_STT=audio` makes the fake STT turn any detected speech into a transcript; this env var only exists in the `fakeproviders` build). No network, TLS, codecs or provider rate limits.
+- **Provider I/O.** STT, LLM and TTS are the simulated `echo` provider with `mimic: instant`: the real Google processors run against simulated backends that answer without delay (`providers.echo.stt: audio` makes the simulated STT turn any detected speech into a transcript). No network, TLS, codecs or provider rate limits.
 - **Real audio diversity.** One clip, identical for every caller, so VAD work is uniform. A deterministic synthetic clip (`-speech-clip synthetic`, harmonic source through moving formants) also triggers Silero in this setup, but it is a proxy and was only checked in short runs.
 - **Network.** Everything is on 127.0.0.1 from one source IP. The server limits upgrades to ~20/s per source IP (not configurable), so the harness spreads call starts at >= 100 ms apart.
 - **Smart-turn, tools, MCP, barge-in.** Off by default. `-turn-manager` turns the turn manager on.

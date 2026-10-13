@@ -6,10 +6,10 @@ Status: spike works for scripted, text-modality scenarios. Not adopted for audio
 
 `make eval-pipecat` (`tools/eval/pipecat/run.sh`):
 
-1. Builds `cmd/server` with `-tags fakeproviders`. `server/registry_fake.go` (compiled only with that tag)
-   re-registers `google.stt|llm|tts` as fakes at the end of `NewRegistry`: pass-through STT,
-   `core.FakeLLMProcessor` with `EchoUser` (replies "You said: <user text>"), `core.FakeTTSProcessor`.
-   The server logs a `FAKE PROVIDERS` warning at startup. Never ship a binary built with this tag.
+1. Builds `cmd/server` (no tag) and runs it with the simulated `echo` provider (`providers.echo`:
+   `mimic: instant`, `stt: audio`; see `docs/providers.md`). The flow's stages are `echo.stt|llm|tts`:
+   the real Google processors against simulated backends; the LLM replies "You said: <user text>".
+   (This was a `-tags fakeproviders` build that replaced `google.*`; the tag no longer exists.)
    Go builds need the repo's `SDKROOT`/`CGO_LDFLAGS`, so run it through make.
 2. Refuses to start if a port is taken, then runs that binary on 18680/19690 (override with
    `EVAL_PUBLIC_PORT`/`EVAL_ADMIN_PORT`) with a throwaway store in `.govoice-eval-pipecat/` (git-ignored,
@@ -41,7 +41,8 @@ the Go "e2e" (`server/e2e/scenarios_test.go`) builds `core` pipelines in-process
 `server/registry_noxaispeech.go` with `go build -overlay`; that replacement file was never compiled by
 vet/CI/gopls, duplicated an unrelated symbol, and could not combine with `-tags xaispeech`. The tagged file is
 type-checked by `go vet -tags fakeproviders ./server/...` and can be reused by a fake-provider Playwright
-or load-test (P5-4) stack.
+or load-test (P5-4) stack. (Historical: the tag was replaced by the always-built `echo` provider, which the
+Playwright and load-test stacks now use.)
 
 ## What had to be shimmed
 

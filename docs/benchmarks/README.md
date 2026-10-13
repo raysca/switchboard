@@ -7,9 +7,9 @@
 | gate | what runs | proves | does not prove |
 |---|---|---|---|
 | framework overhead (`tools/eval/cmd/govoice-bench`, 4 sessions x 200 turns, zero delay) | in-process `core.Session` with fake LLM/TTS; overhead = stop-to-first-audio minus configured delays | the frame pipeline did not get slower (p50/p95/p99 within +1/+3/+6 ms), and no goroutine leak per run | VAD, STT, transport, real providers |
-| loadtest smoke (`tools/loadtest`, 4 calls, 30 s) | real server child (`-tags fakeproviders`), real WebSocket protocol, Silero in `vadworker`, a real speech clip | client voice-to-voice, per-stage server latency, CPU per session-minute, MB per session, goroutine/fd/RSS leaks, errors | provider latency, network, TLS, codecs, other audio, more than 4 concurrent calls |
+| loadtest smoke (`tools/loadtest`, 4 calls, 30 s) | real server child (the `echo` provider, no delay), real WebSocket protocol, Silero in `vadworker`, a real speech clip | client voice-to-voice, per-stage server latency, CPU per session-minute, MB per session, goroutine/fd/RSS leaks, errors | provider latency, network, TLS, codecs, other audio, more than 4 concurrent calls |
 
-Both use fake providers on localhost with the load generator on the same host. They catch framework regressions only; they say nothing about what a user hears with real providers.
+Both use simulated providers on localhost with the load generator on the same host. They catch framework regressions only; they say nothing about what a user hears with real providers.
 
 ## Tolerances
 
@@ -27,9 +27,11 @@ One data-driven table, `Tolerances` in `tools/loadtest/compare.go` (limit = base
 | RSS / goroutine growth windows | +10 points / +10 | a 30 s smoke has 7 s windows dominated by warmup (RSS growth reads 12 to 14%); the real growth check is the soak |
 | bench overhead p50/p95/p99 | +1 / +3 / +6 ms | measured 0.008-0.009 / 0.04-0.08 / 0.20-0.24 ms; scheduler noise on a loaded host |
 
+Re-baseline note (loadtest, `darwin-arm64-12c`): when the loadtest moved from the replaced `google.*` fakes to the `echo` provider it started running the real Google STT, LLM and TTS processors, so the baseline was regenerated deliberately. Client voice-to-voice p50 941.7 -> 983.4 ms (p95 962.1 -> 998.3), server `stt_final` and `voice_to_voice` p95 295 -> 987.5 ms (their stage histograms now run to the real processors' transcript commit), CPU 1.85 -> 2.69 s per session-minute, MB per session 13.3 -> 11.5. The cause of the server-side stage shift was not isolated further; the client-measured number is the one a user hears. The framework-overhead bench is unchanged: it still measures the pipeline with the trivial `core` test doubles.
+
 Also failing, never warnings: a metric missing from the current run (stage gone, no CPU sample, no growth windows, no completed turns), the run's own verdict failing, a machine or run-shape mismatch. `PERF_SCALE=2` doubles every allowance for a noisier host.
 
-Validation: the gate passed 5 of 5 consecutive runs on the baseline machine, and again after the v2v allowance was tightened to +25 ms. `make perf-gate-selftest` (about 2 min) shows both gates PASS clean and FAIL with an injected delay: `GOVOICE_FAKE_LLM_DELAY=100ms` (read only by the `fakeproviders` server build, `server/registry_fake.go`; every fake LLM chunk waits, which added about 200 ms to v2v) and `govoice-bench -inject-delay 100ms`; each injected run must exit exactly 1 and fail a latency row (v2v_p50 / overhead_p50), not some other row. A regression under roughly 25 ms of v2v or a few ms of framework overhead is not detected.
+Validation: the gate passed 5 of 5 consecutive runs on the baseline machine, and again after the v2v allowance was tightened to +25 ms. `make perf-gate-selftest` (about 2 min) shows both gates PASS clean and FAIL with an injected delay: `loadtest -llm-delay 100ms` (sets `providers.echo.llm_extra_delay`; every echo LLM piece waits, which added about 200 ms to v2v) and `govoice-bench -inject-delay 100ms`; each injected run must exit exactly 1 and fail a latency row (v2v_p50 / overhead_p50), not some other row. A regression under roughly 25 ms of v2v or a few ms of framework overhead is not detected.
 
 ## Commands
 

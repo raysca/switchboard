@@ -90,7 +90,7 @@ Reference: `pipecat-impl/` @ `2967e1c09ad484076089bc88427d305fe8f79fa9`. Pipecat
 
 | Feature | Pipecat | Switchboard | Status | Default | Differences and rationale | Evidence |
 |---|---|---|---|---|---|---|
-| pipecat.evals via RTVI | `evals/harness.py`, `evals/script.py`, `evals/client_transport.py` | `tools/eval/pipecat` (`make eval-pipecat`) | partial | n/a | Three scripted text-modality scenarios against a `fakeproviders` server. Cannot assert internal state, audio, or messages Switchboard does not emit. Not in CI. | `docs/decisions/pipecat-evals.md` |
+| pipecat.evals via RTVI | `evals/harness.py`, `evals/script.py`, `evals/client_transport.py` | `tools/eval/pipecat` (`make eval-pipecat`) | partial | n/a | Three scripted text-modality scenarios against a server on the simulated `echo` provider. Cannot assert internal state, audio, or messages Switchboard does not emit. Not in CI. | `docs/decisions/pipecat-evals.md` |
 | Turn-completion dataset | `pipecat-impl/evals/turn-completion` dataset | `tools/eval/turnquality` (`make eval-turn`) | partial | n/a | 138 utterances, fake oracles, no audio or timing; thresholds gate regressions only; not in CI. | `docs/benchmarks/turn-quality.md` |
 | Whisker | none in the checkout (separate debugger) | `tools/compat/whisker` | intentionally different | n/a | Semantic adapter and 11 scenarios kept; wire compatibility not pursued until a version is pinned. | `docs/decisions/whisker.md` |
 | RTVI wire (pinned client) | `processors/frameworks/rtvi` | `transport/rtvi`, `transport/ws` | partial | on | Separate surface (`docs/pipecat-compatibility.md`). The unmodified client cannot clear already-buffered playback on a wire event. | `tools/compat/test_rtvi_client.js`, `tools/compat/verify_fixtures.js` |

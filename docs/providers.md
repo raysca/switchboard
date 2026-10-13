@@ -86,6 +86,24 @@ services:
 
 An entry with an existing `id` replaces it, a new one is appended, and an overlay `default: true` takes over the default. An overlay can also set `custom`. It can **not** add a provider (a provider needs an adapter in the build), add a service, or change `credentials`, a service's `credential` or `needs`: the environment variables the server reads are fixed by the release. A file that breaks a rule is skipped and logged (`catalog overlay file skipped`), and the server starts with the rest; a missing directory is a start-up error.
 
+## Echo (simulated)
+
+`echo` is a provider that costs nothing and needs no key: it is always detected and always offered, and the UI labels it "Echo (simulated)". Its STT, LLM and TTS are the **real Google processors** (retries, circuit breaker, usage, tracing, tool loop, unit splitting, streaming versus unary synthesis) running against simulated backends in `providers/echo`, so a call through echo exercises the real pipeline code. Use it to try the console, to test the UI, and to load-test or end-to-end test without spending money; never put real callers on it.
+
+- **What it says.** The LLM repeats the caller ("You said: ..."), word by word, and calls the tool a phrase asks for ("transfer to sales", "end the call", "call tool <name> {json}"). The TTS makes audio as long as the text takes to say (silence, or a quiet tone with `audible`). The STT cannot recognise speech: in `audio` mode it turns voiced audio into placeholder words ("hello"); typed turns work as always.
+- **What it imitates.** Its catalog (`server/catalog/data/echo.yaml`) mirrors Google's models, voices and languages (a test keeps them identical), so a flow built for Google runs on echo by changing the provider. With `mimic: google` the timing follows `docs/benchmarks/first-audio-latency.md`: `chirp_2` has no interim results and finalizes about 1.2 s after the caller stops, `latest_long` has interims and finalizes in about 0.5 s; the model's first word comes in about 0.7 s; Chirp 3 HD voices stream (first audio about 0.4 s) while every other voice is unary (about 0.6 s plus 50 ms per character); speech is 15 characters per second at `providers.google_tts.sample_rate`.
+- **Settings** (`providers.echo` in the server config):
+
+| key | default | meaning |
+|---|---|---|
+| `mimic` | `google` | `google` imitates Google's timing; `instant` has no delays and phrase-sized reply pieces (framework measurements, tests) |
+| `stt` | `text` | `audio` turns voiced audio into placeholder words |
+| `audible` | `false` | speak a quiet 220 Hz tone instead of silence |
+| `label_replies` | `false` | prefix each reply with the step's prompt, so a test can tell which step answered |
+| `llm_extra_delay` | `0` | added to every reply piece (the perf-gate self-test uses it) |
+
+- **Failure injection.** A step whose TTS voice is `brokenvoice` cannot be built, which the end-to-end suites use to fail a handoff. Stage-level failure injection for core tests lives in `core/testdoubles.go`, not here.
+
 ## Adding a provider
 
 A new provider needs code: an adapter under `providers/`, a factory registered in `server/registry.go`, and a packaged catalog file in `server/catalog/data/`. `server/catalog_adapters_test.go` checks that what the catalog assembles is what the adapter parses.

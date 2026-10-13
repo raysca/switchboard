@@ -151,7 +151,7 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 	cd e2e && npm install --no-audit --no-fund && npx playwright install chromium && npx playwright test
 
 # Routed flows in a real browser against the FAKE providers: free and offline (about 1 min). Builds
-# bin/server-fake (-tags fakeproviders), starts it with the admin UI, then drives the flow designer, a
+# bin/server-echo (the echo provider), starts it with the admin UI, then drives the flow designer, a
 # live call with a route, republish, a failed route and a plain flow (e2e/tests-flows).
 E2E_SETUP = cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium
 e2e-fake: ui-embed ## free|Playwright browser e2e for routed flows and the one-port server against the fake providers (about 2 min)
@@ -223,7 +223,7 @@ live-critical: ## paid|Critical-path live subset (GOVOICE_LIVE=1 PROFILES=... SC
 	@test -n "$(PROFILES)" && test -n "$(SCENARIOS)" && test -n "$(MAX_CALLS)" || { echo "live-critical needs PROFILES, SCENARIOS and MAX_CALLS"; exit 1; }
 	@go run ./tools/livecheck -profiles "$(PROFILES)" -modes off -scenarios "$(SCENARIOS)" -s1-turns 1 -s1-short -clips .livecheck-clips -max-calls $(MAX_CALLS) -yes $(LIVE_ARGS)
 
-# Offline engine self-test: the same scenario engine against a -tags fakeproviders server child.
+# Offline engine self-test: the same scenario engine against a server child on the echo provider.
 # No network, no keys, no cost (about 2 min: builds the server, S5/S8 wait on real timers).
 live-check-selftest: ## free|The scenario engine against fake providers (about 2 min)
 	@go run ./tools/livecheck -selftest $(LIVE_ARGS)
@@ -264,7 +264,7 @@ provider-matrix: ## paid|Stage-level STT/TTS/LLM conformance per provider (GOVOI
 bench-latency: ## free|Framework overhead benchmark (fake providers)
 	@go run ./tools/eval/cmd/govoice-bench $(BENCH_ARGS)
 
-# Load/soak harness: real WebSocket calls against a -tags fakeproviders server child
+# Load/soak harness: real WebSocket calls against a server child on the echo provider
 # (docs/benchmarks/capacity.md). Fake providers, no network, no cost.
 # loadtest-smoke: ~1 min, CI-friendly. Skips when the Silero model is missing.
 loadtest-smoke: ## free|Real WebSocket calls against the echo provider (about 1 min)
