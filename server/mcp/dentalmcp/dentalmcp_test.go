@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -154,5 +155,37 @@ func TestNonCanonicalSlotIdsCannotDoubleBook(t *testing.T) {
 	bid := bk["appointment"].(map[string]any)["id"].(string)
 	if _, err := call("reschedule_appointment", `{"appointment_id":"`+bid+`","slot_id":"2026-10-19T9:00"}`); err == nil {
 		t.Fatal("reschedule onto a taken slot via a non-canonical id must fail")
+	}
+}
+
+// Past appointments are pruned, so list_appointments means upcoming and history never fills the schedule.
+func TestPastAppointmentsDisappear(t *testing.T) {
+	var clock atomic.Pointer[time.Time]
+	clock.Store(&monday)
+	srv, err := dentalmcp.New(dentalmcp.Options{Token: "tok", Now: func() time.Time { return *clock.Load() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	c := mcp.NewSDKClient(mcp.AllowLoopbackHTTP())
+	call := func(tool, args string) map[string]any {
+		t.Helper()
+		res, err := c.CallTool(context.Background(), ts.URL+"/mcp", "tok", tool, json.RawMessage(args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]any
+		_ = json.Unmarshal(res.JSON, &out)
+		return out
+	}
+	pid := call("find_patient", `{"name":"Maria Lopez"}`)["patient"].(map[string]any)["id"].(string)
+	if n := len(call("list_appointments", `{"patient_id":"`+pid+`"}`)["appointments"].([]any)); n != 1 {
+		t.Fatalf("seeded appointments = %d, want 1", n)
+	}
+	later := monday.AddDate(0, 0, 9) // past every seeded slot
+	clock.Store(&later)
+	if n := len(call("list_appointments", `{"patient_id":"`+pid+`"}`)["appointments"].([]any)); n != 0 {
+		t.Fatalf("a past appointment is still listed: %d", n)
 	}
 }
