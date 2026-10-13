@@ -179,6 +179,29 @@ func (c *IdleController) SpeakIndex() int { return c.speak }
 // SetOnEnd installs the hang-up (before the session starts); see IdleConfig.OnEnd.
 func (c *IdleController) SetOnEnd(fn func(reason string)) { c.cfg.OnEnd = fn }
 
+// RequestEnd ends the call once the bot has finished the speech now playing, or
+// the next speech if it is silent right now, or after wait if it never speaks
+// (wait <= 0 uses GoodbyeWait). Unlike an idle hang-up it needs no timeout
+// configuration: a tool-driven goodbye. It reports false when the call is
+// already ending or ended, so a repeated request is a no-op.
+func (c *IdleController) RequestEnd(reason string, wait time.Duration) bool {
+	if wait <= 0 {
+		wait = c.cfg.GoodbyeWait
+	}
+	now := c.clk.Now()
+	c.mu.Lock()
+	if c.done || c.ending {
+		c.mu.Unlock()
+		return false
+	}
+	c.ending, c.endReason = true, reason
+	c.userAt, c.botAt = time.Time{}, time.Time{}
+	c.endAt, c.sawStart = now.Add(wait), c.botSpeaking
+	c.mu.Unlock()
+	c.poke()
+	return true
+}
+
 // Attach starts the clock: the user clock runs from the start of the call, so
 // a caller who connects and never speaks is prompted and hung up too.
 func (c *IdleController) Attach(s SessionController, index int) error {

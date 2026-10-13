@@ -601,3 +601,52 @@ func TestIdleSilentReplyIsNotStuck(t *testing.T) {
 	r.clk.Advance(15 * time.Second)
 	r.wait("say:are you still there?", r.tts)
 }
+
+// RequestEnd with the controller otherwise idle (no user or bot timers): the call
+// ends when the bot's next speech finishes, and not before.
+func TestIdleRequestEndWaitsForTheSpeech(t *testing.T) {
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
+	if !r.ctl.RequestEnd("ended_by_flow", 0) {
+		t.Fatal("first RequestEnd must be accepted")
+	}
+	r.noEnd()
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
+	r.noEnd()
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
+	r.endedWith("ended_by_flow")
+}
+
+// Speech already in progress when end is requested: its stop ends the call.
+func TestIdleRequestEndDuringSpeech(t *testing.T) {
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
+	r.ctl.RequestEnd("ended_by_flow", 0)
+	r.noEnd()
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopFlushed})
+	r.endedWith("ended_by_flow") // an interrupted goodbye still ends the call
+}
+
+// The bot never speaks: the wait is the cap.
+func TestIdleRequestEndWaitIsBounded(t *testing.T) {
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
+	r.ctl.RequestEnd("ended_by_flow", 4*time.Second)
+	r.clk.parkedAt(t, r.at(4*time.Second))
+	r.clk.Advance(4*time.Second - time.Nanosecond)
+	r.noEnd()
+	r.clk.Advance(time.Nanosecond)
+	r.endedWith("ended_by_flow")
+}
+
+// A second request (a model calling end_call twice) neither re-arms nor ends twice.
+func TestIdleRequestEndOnce(t *testing.T) {
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
+	if !r.ctl.RequestEnd("ended_by_flow", 0) || r.ctl.RequestEnd("ended_by_flow", 0) {
+		t.Fatal("only the first RequestEnd is accepted")
+	}
+	r.botSpoke()
+	r.endedWith("ended_by_flow")
+	r.noEnd() // exactly one hang-up
+	if r.ctl.RequestEnd("x", 0) {
+		t.Fatal("no request after the call ended")
+	}
+}
