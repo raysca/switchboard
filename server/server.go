@@ -35,8 +35,10 @@ import (
 
 // Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
-	otel                  *otelexport.Exporter // nil unless otel.enabled
-	redactor              *redact.Redactor     // sink redaction; never applied to the live LLM context
+	authThrottle          *auth.Throttle
+	clientIP              func(*http.Request) string // proxy-aware client address
+	otel                  *otelexport.Exporter       // nil unless otel.enabled
+	redactor              *redact.Redactor           // sink redaction; never applied to the live LLM context
 	cfg                   *Config
 	catalog               *catalog.Catalog
 	metrics               *Metrics
@@ -190,6 +192,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		logger:       logger,
 		startedAt:    metrics.StartTime,
 		activeCalls:  make(map[uint64]*activeCall),
+		authThrottle: auth.NewThrottle(10, 6*time.Second),
 	}
 	s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })
 	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports}
@@ -401,6 +404,14 @@ func (s *Server) setupRoutes() {
 		MaxPendingHandshakes:       s.cfg.Limits.MaxPendingHandshakes,
 		HandshakeRateLimit:         s.cfg.Limits.HandshakeRatePerIP, // 0 -> ws default (20)
 		FixedPlayerRate:            24000,
+	}
+
+	sec := wsCfg.Security
+	s.clientIP = func(r *http.Request) string {
+		if ip := sec.ClientIP(r); ip != "" {
+			return ip
+		}
+		return "unknown" // an unparseable peer shares one bucket instead of skipping the throttle
 	}
 
 	wsCfg.Underlay = s.underlay

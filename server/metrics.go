@@ -28,21 +28,23 @@ type Metrics struct {
 	SmartTurnWorkers func() (up, total int)
 
 	// Runtime Metrics
-	ActiveSessions            atomic.Int64
-	Draining                  atomic.Int64 // 1 once SIGTERM drain began
-	DrainRemaining            atomic.Int64 // sessions still live during drain
-	SessionsStartedTotal      atomic.Uint64
-	SessionsStoppedTotal      atomic.Uint64
-	SessionsFailedTotal       atomic.Uint64
-	ContextEvictionsTotal     atomic.Uint64
-	MaxDurationTermTotal      atomic.Uint64
-	LeakedWorkTotal           atomic.Uint64
-	LeakedSessionsTotal       atomic.Uint64
-	AdmissionRejectsLimit     atomic.Uint64
-	AdmissionRejectsPrincipal atomic.Uint64
-	AdmissionRejectsVAD       atomic.Uint64
-	AdmissionRejectsFlow      atomic.Uint64
-	AdmissionRejectsRate      atomic.Uint64
+	ActiveSessions        atomic.Int64
+	Draining              atomic.Int64 // 1 once SIGTERM drain began
+	DrainRemaining        atomic.Int64 // sessions still live during drain
+	SessionsStartedTotal  atomic.Uint64
+	SessionsStoppedTotal  atomic.Uint64
+	SessionsFailedTotal   atomic.Uint64
+	ContextEvictionsTotal atomic.Uint64
+	MaxDurationTermTotal  atomic.Uint64
+
+	ManagementAuthFailuresTotal, ManagementAuthThrottledTotal atomic.Uint64
+	LeakedWorkTotal                                           atomic.Uint64
+	LeakedSessionsTotal                                       atomic.Uint64
+	AdmissionRejectsLimit                                     atomic.Uint64
+	AdmissionRejectsPrincipal                                 atomic.Uint64
+	AdmissionRejectsVAD                                       atomic.Uint64
+	AdmissionRejectsFlow                                      atomic.Uint64
+	AdmissionRejectsRate                                      atomic.Uint64
 
 	// VAD Metrics
 	VADStaleChunksTotal    atomic.Uint64
@@ -202,6 +204,12 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_max_duration_terminations_total Total calls terminated due to max duration guard.\n")
 	fmt.Fprintf(w, "# TYPE voice_max_duration_terminations_total counter\n")
 	fmt.Fprintf(w, "voice_max_duration_terminations_total %d\n", m.MaxDurationTermTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_management_auth_failures_total Failed management API authentications.\n")
+	fmt.Fprintf(w, "# TYPE voice_management_auth_failures_total counter\n")
+	fmt.Fprintf(w, "voice_management_auth_failures_total %d\n", m.ManagementAuthFailuresTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_management_auth_throttled_total Management API requests refused for too many failed authentications.\n")
+	fmt.Fprintf(w, "# TYPE voice_management_auth_throttled_total counter\n")
+	fmt.Fprintf(w, "voice_management_auth_throttled_total %d\n", m.ManagementAuthThrottledTotal.Load())
 
 	fmt.Fprintf(w, "# HELP voice_leaked_work_total Total number of tasks that ignored cancellation.\n")
 	fmt.Fprintf(w, "# TYPE voice_leaked_work_total counter\n")

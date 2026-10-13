@@ -18,11 +18,21 @@ import (
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	requestID := uuid.NewString()
 	w.Header().Set("X-Request-ID", requestID)
+	w.Header().Set("Cache-Control", "no-store")
 	if !s.management.Enabled() {
 		api.WriteError(w, http.StatusServiceUnavailable, "management_unavailable", "management API is not configured", requestID)
 		return
 	}
+	ip := s.clientIP(r)
+	if s.authThrottle.Blocked(ip) {
+		s.metrics.ManagementAuthThrottledTotal.Add(1)
+		w.Header().Set("Retry-After", "10")
+		api.WriteError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts; try again shortly", requestID)
+		return
+	}
 	if !s.management.Authenticate(r) {
+		s.authThrottle.Fail(ip)
+		s.metrics.ManagementAuthFailuresTotal.Add(1)
 		w.Header().Set("WWW-Authenticate", `Bearer realm="management"`)
 		api.WriteError(w, http.StatusUnauthorized, "unauthorized", "valid management credential required", requestID)
 		return
