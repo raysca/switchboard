@@ -29,18 +29,26 @@ type TraceRepository interface {
 
 // SessionDTO represents a persisted voice session for the management API.
 type SessionDTO struct {
-	ID              string                 `json:"id"`
-	FlowID          string                 `json:"flow_id"`
-	FlowVersionID   string                 `json:"flow_version_id"`
-	ConfigHash      string                 `json:"config_hash"`
-	StartedAt       time.Time              `json:"started_at"`
-	EndedAt         *time.Time             `json:"ended_at,omitempty"`
-	Status          string                 `json:"status"`
-	TurnCount       int                    `json:"turn_count"`
-	SafeSummary     string                 `json:"safe_summary"`
-	ProviderStack   json.RawMessage        `json:"provider_stack,omitempty"`
-	RuntimeSnapshot json.RawMessage        `json:"runtime_snapshot,omitempty"`
-	RuntimeTools    []storage.SelectedTool `json:"runtime_tools,omitempty"`
+	ID              string           `json:"id"`
+	FlowID          string           `json:"flow_id"`
+	FlowVersionID   string           `json:"flow_version_id"`
+	ConfigHash      string           `json:"config_hash"`
+	StartedAt       time.Time        `json:"started_at"`
+	EndedAt         *time.Time       `json:"ended_at,omitempty"`
+	Status          string           `json:"status"`
+	TurnCount       int              `json:"turn_count"`
+	SafeSummary     string           `json:"safe_summary"`
+	ProviderStack   json.RawMessage  `json:"provider_stack,omitempty"`
+	RuntimeSnapshot json.RawMessage  `json:"runtime_snapshot,omitempty"`
+	RuntimeTools    []RuntimeToolDTO `json:"runtime_tools,omitempty"`
+}
+
+// RuntimeToolDTO is an MCP tool captured for a session, in the API's shape.
+type RuntimeToolDTO struct {
+	MCPServerID string `json:"mcp_server_id"`
+	RemoteName  string `json:"remote_name"`
+	SchemaHash  string `json:"schema_hash"`
+	Required    bool   `json:"required"`
 }
 
 // TurnDTO represents a session turn.
@@ -302,7 +310,9 @@ func toSessionDTO(r storage.SessionRecord) SessionDTO {
 		Status:        r.Status,
 		TurnCount:     r.TurnCount,
 		SafeSummary:   r.SafeSummary,
-		RuntimeTools:  r.RuntimeTools,
+	}
+	for _, t := range r.RuntimeTools {
+		dto.RuntimeTools = append(dto.RuntimeTools, RuntimeToolDTO{MCPServerID: t.ServerID, RemoteName: t.RemoteName, SchemaHash: t.SchemaHash, Required: t.Required})
 	}
 	if !r.EndedAt.IsZero() {
 		dto.EndedAt = &r.EndedAt
