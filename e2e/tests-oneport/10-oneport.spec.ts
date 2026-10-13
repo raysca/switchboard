@@ -62,7 +62,11 @@ test("repeated wrong keys are throttled and the page says so", async ({ page, re
   // (b) the CORRECT key is never throttled, so the admin still gets in.
   await key.fill(stack.managementKey);
   await connect.click();
-  await expect(page.getByText("Key in memory")).toBeVisible(); // only a connected page shows this
+  // "Uptime" renders only from an authenticated /api/v1/operations/status response (the key badge
+  // shows for any non-empty key), and a refused key would show the rejection message instead.
+  await expect(page.getByText("Uptime", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Management key was rejected/)).toHaveCount(0);
+  await expect(page.getByText(/too many failed attempts/i)).toHaveCount(0);
 });
 
 test("a foreign browser origin is refused the voice socket", async ({ stack }) => {
