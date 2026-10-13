@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	goruntime "runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -228,5 +231,31 @@ func TestCommitWithNoteRestoresOnFailure(t *testing.T) {
 	}
 	if got := cg.takeNote(); got != "N1" {
 		t.Fatalf("pending greeting note = %q, want N1", got)
+	}
+}
+
+// Two transfers racing: the loser's failed commit must not restore a stale note over the winner's.
+func TestCommitWithNoteKeepsTheWinnersNote(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		var calls atomic.Int32
+		var winner atomic.Value
+		cf := &CallFlow{}
+		cf.Commit = func(target string) error {
+			if calls.Add(1) == 1 {
+				winner.Store(target)
+				return nil
+			}
+			goruntime.Gosched()
+			return errors.New("pending")
+		}
+		var wg sync.WaitGroup
+		for _, n := range []string{"a", "b"} {
+			wg.Add(1)
+			go func() { defer wg.Done(); _ = cf.commitWithNote(n, n) }()
+		}
+		wg.Wait()
+		if got, want := cf.takeNote(), winner.Load().(string); got != want {
+			t.Fatalf("iteration %d: note %q, want the committed transfer's %q", i, got, want)
+		}
 	}
 }

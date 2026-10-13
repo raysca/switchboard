@@ -48,8 +48,9 @@ type CallFlow struct {
 	// End is set by the pipeline builder; the end_call tool calls it.
 	End func(stepID string) error
 
-	noteMu sync.Mutex
-	note   string
+	noteMu   sync.Mutex
+	note     string
+	commitMu sync.Mutex // serialises commitWithNote's set, commit and restore
 }
 
 const (
@@ -205,6 +206,10 @@ func (c *CallFlow) commitWithNote(target, note string) error {
 	if c.Commit == nil {
 		return errors.New("route not ready")
 	}
+	// Commit only starts the handoff build and returns; the greeting (takeNote) runs
+	// later on the trigger path, so holding commitMu here cannot deadlock with it.
+	c.commitMu.Lock()
+	defer c.commitMu.Unlock()
 	c.noteMu.Lock()
 	prev := c.note
 	c.note = note
