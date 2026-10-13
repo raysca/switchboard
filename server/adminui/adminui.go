@@ -18,8 +18,8 @@ var embedded embed.FS
 // Embedded is the build output directory.
 func Embedded() fs.FS {
 	sub, err := fs.Sub(embedded, "static")
-	if err != nil { // unreachable: "static" is embedded above
-		return embedded
+	if err != nil {
+		panic(err) // "static" is embedded above; a bad path is a build bug
 	}
 	return sub
 }

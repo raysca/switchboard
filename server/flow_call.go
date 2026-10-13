@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -166,8 +167,8 @@ func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map
 // maxTransferNote bounds the note a model may pass with a transfer.
 const maxTransferNote = 500
 
-const transferSchema = `{"type":"object","properties":{"note":{"type":"string","maxLength":500,` +
-	`"description":"For the next agent: the caller's name and what they need, in one sentence."}},"additionalProperties":false}`
+var transferSchema = fmt.Sprintf(`{"type":"object","properties":{"note":{"type":"string","maxLength":%d,`+
+	`"description":"For the next agent: the caller's name and what they need, in one sentence."}},"additionalProperties":false}`, maxTransferNote)
 
 // parseNote reads the optional note argument; anything that is not a string is dropped.
 func parseNote(raw json.RawMessage) string {
