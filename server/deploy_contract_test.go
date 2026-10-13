@@ -201,3 +201,15 @@ func TestProductionImageBuildsWithXAISpeechAndKeylessSmoke(t *testing.T) {
 		t.Fatal("deploy/smoke.sh must stay keyless")
 	}
 }
+
+func TestImageShipsTheCloudRunConfigAndBuildsTheUI(t *testing.T) {
+	body, err := os.ReadFile("../deploy/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{"AS ui", "npm ci", "npm run build", "server/adminui/static", "/etc/govoice/cloudrun.yaml"} {
+		if !strings.Contains(string(body), needle) {
+			t.Fatalf("Dockerfile missing %q", needle)
+		}
+	}
+}

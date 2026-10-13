@@ -23,6 +23,12 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS_VERSION := -X govoice/server.Version=$(VERSION) -X govoice/server.Commit=$(COMMIT)
 
+ui-embed: ## build|Build the admin UI into server/adminui/static (so bin/server serves it with public_admin)
+	cd ui && npm ci --no-audit --no-fund && npm run build
+	find server/adminui/static -mindepth 1 ! -name .gitkeep -delete
+	cp -R ui/dist/. server/adminui/static/
+.PHONY: ui-embed
+
 build: ort-check ## build|Build bin/server, bin/vadworker, bin/turnworker and the examples
 	@mkdir -p bin
 	go build -tags "$(GOTAGS)" -o bin/vadworker ./cmd/vadworker
