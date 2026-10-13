@@ -203,3 +203,5 @@ func TestDemoStatusFlowLookupError(t *testing.T) {
 		t.Fatalf("%+v %v", st, err)
 	}
 }
+
+func (f *racyFlows) Archive(context.Context, string) error { return nil }

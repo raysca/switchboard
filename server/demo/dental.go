@@ -1,6 +1,6 @@
 // Package demo installs the Smile Dental front-desk demo: the scheduling MCP server and a
 // three-step flow (front desk -> new patient | returning patient) on three provider stacks.
-// Installing is idempotent and only ever adds what is missing.
+// Installing is idempotent: it adds what is missing and replaces a flow left pointing at a gone MCP server.
 package demo
 
 import (
@@ -32,6 +32,7 @@ type Servers interface {
 type Flows interface {
 	List(ctx context.Context, limit, offset int) ([]flow.Flow, error)
 	Create(ctx context.Context, req flow.CreateRequest) (flow.Flow, error)
+	Archive(ctx context.Context, id string) error
 }
 
 type Result struct {
@@ -52,6 +53,9 @@ func InstallDental(ctx context.Context, servers Servers, flows Flows, endpoint s
 	var enabled bool
 	for _, s := range existing {
 		if s.Name == ServerName && !s.PendingDelete {
+			if s.Endpoint != endpoint {
+				return res, fmt.Errorf("MCP server %q exists with endpoint %s; delete it or set DENTAL_MCP_URL to match", ServerName, s.Endpoint)
+			}
 			res.MCPServerID = s.ID
 			enabled = s.Enabled
 		}
@@ -87,43 +91,66 @@ func InstallDental(ctx context.Context, servers Servers, flows Flows, endpoint s
 	}
 	res.Tools = len(selections)
 
-	id, err := FindFlow(ctx, flows)
+	f, err := FindFlow(ctx, flows)
 	if err != nil {
 		return res, err
 	}
-	if id != "" {
-		res.FlowID = id
+	if f.ID != "" && !pointsAt(f, res.MCPServerID) {
+		if err := flows.Archive(ctx, f.ID); err != nil { // a stale flow could never run its tools
+			return res, fmt.Errorf("archive stale flow: %w", err)
+		}
+		f = flow.Flow{}
+	}
+	if f.ID != "" {
+		res.FlowID = f.ID
 		return res, nil
 	}
 	cfg, err := dentalConfig(res.MCPServerID)
 	if err != nil {
 		return res, err
 	}
-	f, err := flows.Create(ctx, flow.CreateRequest{Name: FlowName, Description: "Front desk takes the name, then hands new and returning patients to the right agent.", Config: cfg, MCPTools: selections})
+	created, err := flows.Create(ctx, flow.CreateRequest{Name: FlowName, Description: "Front desk takes the name, then hands new and returning patients to the right agent.", Config: cfg, MCPTools: selections})
 	if err != nil {
 		return res, fmt.Errorf("create flow: %w", err)
 	}
-	res.FlowID, res.FlowCreated = f.ID, true
+	res.FlowID, res.FlowCreated = created.ID, true
 	return res, nil
 }
 
-// FindFlow returns the id of the live dental flow, or "" when it is not installed.
-func FindFlow(ctx context.Context, flows Flows) (string, error) {
+// FindFlow returns the live dental flow, or the zero Flow when it is not installed.
+func FindFlow(ctx context.Context, flows Flows) (flow.Flow, error) {
 	const page = 100 // the store's maximum page size
 	for offset := 0; ; offset += page {
 		batch, err := flows.List(ctx, page, offset)
 		if err != nil {
-			return "", fmt.Errorf("list flows: %w", err)
+			return flow.Flow{}, fmt.Errorf("list flows: %w", err)
 		}
 		for _, f := range batch {
 			if f.Name == FlowName && !f.Archived {
-				return f.ID, nil
+				return f, nil
 			}
 		}
 		if len(batch) < page {
-			return "", nil
+			return flow.Flow{}, nil
 		}
 	}
+}
+
+// pointsAt reports whether every tool the flow's current version selects lives on serverID.
+// A flow without version detail cannot be judged and is left alone.
+func pointsAt(f flow.Flow, serverID string) bool {
+	if f.Version == nil {
+		return true
+	}
+	if len(f.Version.MCPTools) == 0 {
+		return false
+	}
+	for _, t := range f.Version.MCPTools {
+		if t.ServerID != serverID {
+			return false
+		}
+	}
+	return true
 }
 
 type stage = map[string]any

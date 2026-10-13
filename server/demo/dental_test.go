@@ -43,8 +43,19 @@ func (f *fakeServers) Refresh(context.Context, string) (storage.MCPDiscovery, er
 }
 
 type fakeFlows struct {
-	list    []flow.Flow
-	creates []flow.CreateRequest
+	list     []flow.Flow
+	creates  []flow.CreateRequest
+	archived []string
+}
+
+func (f *fakeFlows) Archive(_ context.Context, id string) error {
+	f.archived = append(f.archived, id)
+	for i := range f.list {
+		if f.list[i].ID == id {
+			f.list[i].Archived = true
+		}
+	}
+	return nil
 }
 
 func (f *fakeFlows) List(context.Context, int, int) ([]flow.Flow, error) { return f.list, nil }
@@ -120,7 +131,7 @@ func TestInstallDentalFinishesAHalfDoneInstall(t *testing.T) {
 
 func TestInstallDentalRefusesAServerMissingATool(t *testing.T) {
 	srv := &fakeServers{}
-	srv.list = []storage.MCPServer{{ID: "srv1", Name: ServerName}}
+	srv.list = []storage.MCPServer{{ID: "srv1", Name: ServerName, Endpoint: "https://d/mcp"}}
 	short := &shortServers{fakeServers: srv}
 	if _, err := InstallDental(context.Background(), short, &fakeFlows{}, "https://d/mcp"); err == nil {
 		t.Fatal("a server that does not offer every dental tool must not get a flow")
@@ -134,9 +145,33 @@ func (s *shortServers) Refresh(context.Context, string) (storage.MCPDiscovery, e
 }
 
 func TestInstallDentalReenablesADisabledServer(t *testing.T) {
-	srv := &fakeServers{list: []storage.MCPServer{{ID: "srv1", Name: ServerName, Enabled: false}}}
+	srv := &fakeServers{list: []storage.MCPServer{{ID: "srv1", Name: ServerName, Endpoint: "https://d/mcp", Enabled: false}}}
 	res, err := InstallDental(context.Background(), srv, &fakeFlows{}, "https://d/mcp")
 	if err != nil || res.MCPCreated || !res.FlowCreated || srv.creates != 0 || srv.enables != 1 {
 		t.Fatalf("res=%+v err=%v creates=%d enables=%d", res, err, srv.creates, srv.enables)
+	}
+}
+
+func TestInstallDentalReplacesAFlowPointingAtAnotherServer(t *testing.T) {
+	srv := &fakeServers{list: []storage.MCPServer{{ID: "srv1", Name: ServerName, Endpoint: "https://d/mcp", Enabled: true}}}
+	stale := flow.Flow{ID: "old", Name: FlowName, Version: &flow.Version{MCPTools: []flow.ToolSelection{{ServerID: "gone", RemoteName: "find_patient"}}}}
+	fl := &fakeFlows{list: []flow.Flow{stale}}
+	res, err := InstallDental(context.Background(), srv, fl, "https://d/mcp")
+	if err != nil || !res.FlowCreated || res.FlowID != "flow1" || len(fl.archived) != 1 || fl.archived[0] != "old" {
+		t.Fatalf("res=%+v err=%v archived=%v", res, err, fl.archived)
+	}
+	// A flow that points at the current server is left alone.
+	fresh := &fakeFlows{list: []flow.Flow{{ID: "ok", Name: FlowName, Version: &flow.Version{MCPTools: []flow.ToolSelection{{ServerID: "srv1"}}}}}}
+	res, err = InstallDental(context.Background(), srv, fresh, "https://d/mcp")
+	if err != nil || res.FlowCreated || res.FlowID != "ok" || len(fresh.archived) != 0 {
+		t.Fatalf("res=%+v err=%v archived=%v", res, err, fresh.archived)
+	}
+}
+
+func TestInstallDentalRefusesAServerWithAnotherEndpoint(t *testing.T) {
+	srv := &fakeServers{list: []storage.MCPServer{{ID: "srv1", Name: ServerName, Endpoint: "https://old/mcp", Enabled: true}}}
+	_, err := InstallDental(context.Background(), srv, &fakeFlows{}, "https://new/mcp")
+	if err == nil || !strings.Contains(err.Error(), "https://old/mcp") || !strings.Contains(err.Error(), "DENTAL_MCP_URL") {
+		t.Fatalf("err = %v", err)
 	}
 }
