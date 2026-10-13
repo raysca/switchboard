@@ -17,8 +17,10 @@ api() { curl -fsS --max-time 20 -H "Authorization: Bearer ${GOVOICE_MANAGEMENT_A
 # 1. alive, and the UI is the embedded one
 for _ in $(seq 1 30); do curl -fsS --max-time 5 "${base}/health" >/dev/null 2>&1 && break || sleep 2; done
 curl -fsS "${base}/health" | jq -e '.status == "live"' >/dev/null || fail "/health is not live"
-curl -fsS "${base}/" | grep -q '<div id="root"' || fail "the admin UI is not served at /"
-curl -fsS "${base}/flows" | grep -q '<div id="root"' || fail "a client route does not fall back to the UI"
+page="$(curl -fsS "${base}/")" || fail "GET / failed"
+[[ "$page" == *'<div id="root"'* ]] || fail "the admin UI is not served at /"
+page="$(curl -fsS "${base}/flows")" || fail "GET /flows failed"
+[[ "$page" == *'<div id="root"'* ]] || fail "a client route does not fall back to the UI"
 
 # 2. the operational surfaces are not on the public port
 for p in /metrics /ready /debug/timeline; do
@@ -42,12 +44,7 @@ for id in google xai elevenlabs; do
   echo "$prov" | jq -e --arg id "$id" '.data[] | select(.id == $id and .detected == true)' >/dev/null || fail "provider ${id} is not detected (missing secret?)"
 done
 
-# 5. the dentistry MCP server is registered, has its token, and its tools were discovered
-mcp="$(api /api/v1/mcp-servers)"
-echo "$mcp" | jq -e '.data[] | select(.name == "Smile Dental scheduling" and .auth_env_set == true and ((.latest_discovery_id // "") != ""))' >/dev/null ||
-  fail "the dental MCP server is not registered with its token and discovered tools (demo.auto_install, DENTAL_MCP_URL, MCP_TOKEN_DENTAL)"
-
-# 6. the demo flow was installed by the server and is ready (the install runs in the background after start)
+# 5. the demo flow was installed by the server and is ready (the install runs in the background after start)
 ready=""
 for _ in $(seq 1 30); do
   ready="$(api /api/v1/flows | jq -r '.data[] | select(.name == "Smile Dental front desk") | .readiness.state' || true)"
@@ -55,6 +52,11 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 [[ "$ready" == "ready" ]] || fail "the flow 'Smile Dental front desk' is not ready (state: ${ready:-missing})"
+
+# 6b. (after the wait: the same background install discovers the tools) the dentistry MCP server is registered, has its token, and its tools were discovered
+mcp="$(api /api/v1/mcp-servers)"
+echo "$mcp" | jq -e '.data[] | select(.name == "Smile Dental scheduling" and .auth_env_set == true and ((.latest_discovery_id // "") != ""))' >/dev/null ||
+  fail "the dental MCP server is not registered with its token and discovered tools (demo.auto_install, DENTAL_MCP_URL, MCP_TOKEN_DENTAL)"
 
 # 7. wrong keys are refused, then throttled (a correct key never is)
 for _ in $(seq 1 10); do curl -s -o /dev/null -H "Authorization: Bearer wrong" "${base}/api/v1/server-config"; done

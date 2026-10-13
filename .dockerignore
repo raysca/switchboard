@@ -30,3 +30,5 @@ server/adminui/static
 progress.md
 **/*.log
 deploy/*.env
+deploy/rehearsal/google.json
+deploy/rehearsal/.env

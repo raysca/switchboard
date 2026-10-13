@@ -170,7 +170,8 @@ func TestDentalMCPServiceManifest(t *testing.T) {
 	if c.Ports[0].ContainerPort != 8081 || c.StartupProbe.HTTPGet.Path != "/health" || c.StartupProbe.HTTPGet.Port != 8081 {
 		t.Errorf("port/probe: %+v %+v", c.Ports, c.StartupProbe)
 	}
-	if spec.ServiceAccountName != "govoice-runtime@demo-proj.iam.gserviceaccount.com" {
+	// The public MCP service must not run as the account that can read every provider key.
+	if spec.ServiceAccountName != "dental-mcp-runtime@demo-proj.iam.gserviceaccount.com" {
 		t.Errorf("service account = %q", spec.ServiceAccountName)
 	}
 }

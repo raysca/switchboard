@@ -51,6 +51,18 @@ func TestBootstrapDryRunPrintsThePlanAndNoSecret(t *testing.T) {
 			t.Errorf("plan does not create secret %s", name)
 		}
 	}
+	// The public MCP service gets its own account, which may read exactly one secret.
+	for _, want := range []string{"dental-mcp-runtime", "secrets add-iam-policy-binding DENTAL_MCP_TOKEN --member=serviceAccount:dental-mcp-runtime@demo-proj", "billingbudgets.googleapis.com"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %q", want)
+		}
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "add-iam-policy-binding") && strings.Contains(line, "dental-mcp-runtime@") &&
+			strings.Contains(line, "secrets") && !strings.Contains(line, "DENTAL_MCP_TOKEN") {
+			t.Errorf("dental-mcp-runtime may read only DENTAL_MCP_TOKEN: %s", line)
+		}
+	}
 	// The deployer may read exactly one secret (the management key, for the smoke test), never a provider key.
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "add-iam-policy-binding") && strings.Contains(line, "govoice-deployer") &&

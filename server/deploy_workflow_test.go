@@ -44,6 +44,9 @@ func TestDeployWorkflowShape(t *testing.T) {
 		"google-github-actions/auth@", "workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}",
 		"github.event.workflow_run.conclusion == 'success'", "github.event.workflow_run.head_sha",
 		"envsubst", "gcloud run services replace", "candidate", "update-traffic", "smoke-cloudrun.sh",
+		// A fork PR whose branch is also called main must never deploy: only our own pushes to main, or a dispatch from main.
+		"github.event.workflow_run.event == 'push'", "github.event.workflow_run.head_repository.full_name == github.repository",
+		"github.ref == 'refs/heads/main'", `^[0-9]+$`,
 	} {
 		if !strings.Contains(text, needle) {
 			t.Errorf("deploy.yml lacks %q", needle)
@@ -57,6 +60,17 @@ func TestDeployWorkflowShape(t *testing.T) {
 	// The smoke test runs before the candidate is promoted.
 	if strings.Index(text, "smoke-cloudrun.sh") > strings.Index(text, "update-traffic") {
 		t.Error("the candidate must be smoke-tested before it is promoted")
+	}
+}
+
+func TestSmokeScriptWaitsForTheInstallBeforeCheckingItsMCPServer(t *testing.T) {
+	raw, _ := os.ReadFile("../deploy/smoke-cloudrun.sh")
+	text := string(raw)
+	if strings.Index(text, "auth_env_set") < strings.Index(text, `"Smile Dental front desk"`) {
+		t.Error("the MCP server check must come after the wait for the background install (it is discovered by the same install)")
+	}
+	if strings.Contains(text, "| grep -q") && strings.Contains(text, "curl -fsS \"${base}/\" |") {
+		t.Error("curl | grep -q can SIGPIPE under pipefail: capture the body first")
 	}
 }
 

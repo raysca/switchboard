@@ -20,7 +20,13 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Only our own code deploys: a push to main that passed CI, or a dispatch from main. A fork PR from a
+    # branch that is also called main matches `branches: [main]` above, so its run must be refused here.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -30,6 +36,9 @@ jobs:
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
       REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/govoice
     steps:
+      - name: Validate inputs
+        run: |
+          [[ "${MIN_INSTANCES}" =~ ^[0-9]+$ ]] || { echo "min_instances must be a number, got '${MIN_INSTANCES}'" >&2; exit 1; }
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -59,7 +68,14 @@ jobs:
         run: |
           export IMAGE="${REGISTRY}/govoice:${SHA}"
           envsubst '${REGION} ${PROJECT_ID} ${IMAGE} ${MIN_INSTANCES} ${DENTAL_MCP_URL}' < deploy/gcp/govoice.service.yaml > /tmp/govoice.yaml
-          PREV="$(gcloud run services describe govoice --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.traffic[0].revisionName)' 2>/dev/null || true)"
+          # The serving revision (100% traffic). "Not found" is the first deploy; any other failure stops the deploy.
+          if gcloud run services describe govoice --region "${REGION}" --project "${PROJECT_ID}" --format=json > /tmp/svc.json 2> /tmp/svc.err; then
+            PREV="$(jq -r '[.status.traffic[]? | select(.percent == 100) | .revisionName // empty][0] // empty' /tmp/svc.json)"
+          elif grep -qiE 'not found|NOT_FOUND|could not be found' /tmp/svc.err; then
+            PREV=""
+          else
+            cat /tmp/svc.err >&2; echo "could not read the serving revision" >&2; exit 1
+          fi
           if [ -n "${PREV}" ]; then
             # spec.traffic is a sibling of spec.template: keep 100% on the serving revision; the new one gets 0% and a tag.
             printf '  traffic:\n    - revisionName: %s\n      percent: 100\n    - latestRevision: true\n      percent: 0\n      tag: candidate\n' "${PREV}" >> /tmp/govoice.yaml
@@ -75,9 +91,14 @@ jobs:
       - name: Smoke test the candidate
         run: |
           set +x
-          export GOVOICE_MANAGEMENT_API_KEY="$(gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project "${PROJECT_ID}")"
+          GOVOICE_MANAGEMENT_API_KEY="$(gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project "${PROJECT_ID}")"
+          export GOVOICE_MANAGEMENT_API_KEY
           echo "::add-mask::${GOVOICE_MANAGEMENT_API_KEY}"
           deploy/smoke-cloudrun.sh "${SMOKE_URL}"
+
+      - name: Take the tag off a failed candidate
+        if: failure() && env.PREV_REVISION != ''
+        run: gcloud run services update-traffic govoice --remove-tags candidate --region "${REGION}" --project "${PROJECT_ID}" || true
 
       - name: Promote the candidate
         run: |
