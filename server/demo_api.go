@@ -34,10 +34,32 @@ func (s *Server) dentalEndpoint() string { return s.env("DENTAL_MCP_URL") }
 
 // InstallDentalDemo runs the demo installer with this server's services.
 func (s *Server) InstallDentalDemo(ctx context.Context) (demo.Result, error) {
-	return demo.InstallDental(ctx, demoServers{svc: s.mcpService, store: s.mgmt.store}, s.flows, s.dentalEndpoint())
+	return s.installDental(ctx, demoServers{svc: s.mcpService, store: s.mgmt.store}, s.flows, s.dentalEndpoint())
 }
 
-type demoStatus struct {
+// installDental serialises installs (startup auto-install vs the API) so the
+// list-then-create inside cannot run twice; the install is bounded by ctx.
+func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows demo.Flows, endpoint string) (demo.Result, error) {
+	s.demoMu.Lock()
+	defer s.demoMu.Unlock()
+	return demo.InstallDental(ctx, servers, flows, endpoint)
+}
+
+// demoStatus reports the demo's state; a failed lookup is an error, not "not installed".
+func demoStatus(ctx context.Context, flows demo.Flows, endpoint string) (demoStatusResp, error) {
+	var st demoStatusResp
+	st.Dental.Available = endpoint != ""
+	id, err := demo.FindFlow(ctx, flows)
+	if err != nil {
+		return st, err
+	}
+	if id != "" {
+		st.Dental.Installed, st.Dental.FlowID = true, id
+	}
+	return st, nil
+}
+
+type demoStatusResp struct {
 	Dental struct {
 		Available bool   `json:"available"`
 		Installed bool   `json:"installed"`
@@ -52,12 +74,13 @@ func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID st
 	}
 	switch {
 	case r.URL.Path == "/api/v1/demo" && r.Method == http.MethodGet:
-		var st demoStatus
-		st.Dental.Available = s.dentalEndpoint() != ""
-		if id, err := demo.FindFlow(r.Context(), s.flows); err == nil && id != "" {
-			st.Dental.Installed, st.Dental.FlowID = true, id
+		st, err := demoStatus(r.Context(), s.flows, s.dentalEndpoint())
+		if err != nil {
+			s.logger.Warn("demo status failed", "err", s.redactor.Redact(err.Error()))
+			api.WriteError(w, http.StatusInternalServerError, "internal_error", "the demo status could not be read", requestID)
+			return
 		}
-		api.WriteJSON(w, http.StatusOK, api.SuccessResponse[demoStatus]{Data: st})
+		api.WriteJSON(w, http.StatusOK, api.SuccessResponse[demoStatusResp]{Data: st})
 	case r.URL.Path == "/api/v1/demo/dental" && r.Method == http.MethodPost:
 		if s.dentalEndpoint() == "" {
 			api.WriteError(w, http.StatusConflict, "demo_unavailable", "DENTAL_MCP_URL is not set on this server", requestID)
@@ -90,15 +113,19 @@ func (s *Server) autoInstallDemo() {
 		s.logger.Error("demo.auto_install is dental but DENTAL_MCP_URL is empty")
 		return
 	}
+	// Bounded by 60s and cancelled by Shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	s.mu.Lock()
+	s.stopDemo = cancel
+	s.mu.Unlock()
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				s.logger.Error("demo auto-install panicked", "panic", fmt.Sprint(r))
 			}
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		res, err := demo.InstallDental(ctx, demoServers{svc: svc, store: m.store}, flows, endpoint)
+		res, err := s.installDental(ctx, demoServers{svc: svc, store: m.store}, flows, endpoint)
 		if err != nil {
 			s.logger.Error("demo auto-install failed", "err", s.redactor.Redact(err.Error()))
 			return

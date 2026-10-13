@@ -90,7 +90,9 @@ type Server struct {
 	nextCallID  atomic.Uint64
 	textTurns   atomic.Uint64
 	pruneStop   chan struct{}
-	recSink     *record.LocalSink // nil unless recording.enabled
+	demoMu      sync.Mutex         // serialises demo installs
+	stopDemo    context.CancelFunc // cancels the startup demo install; guarded by mu
+	recSink     *record.LocalSink  // nil unless recording.enabled
 }
 
 type activeCall struct {
@@ -887,6 +889,9 @@ func (s *Server) AdminAddr() string  { return s.adminAddr }
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.shuttingDown.Store(true)
+	if s.stopDemo != nil {
+		s.stopDemo()
+	}
 	s.mu.Unlock()
 	s.ready.Store(false)
 	s.metrics.Draining.Store(1)

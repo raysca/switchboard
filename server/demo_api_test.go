@@ -1,14 +1,21 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"govoice/server/demo"
+	"govoice/server/flow"
+	"govoice/server/mcp"
 	"govoice/server/mcp/dentalmcp"
+	"govoice/server/storage"
 )
 
 // dentalRig is a managed development server whose environment points at a live dentalmcp.
@@ -124,4 +131,75 @@ func TestDemoAutoInstallWithoutManagementDoesNotPanic(t *testing.T) {
 	}
 	t.Cleanup(func() { s.adminServer.Close(); s.publicServer.Close() })
 	time.Sleep(200 * time.Millisecond) // a panic in a background goroutine would kill the test binary
+}
+
+type racyServers struct {
+	list    []storage.MCPServer
+	creates int
+}
+
+func (f *racyServers) List(context.Context) ([]storage.MCPServer, error) {
+	time.Sleep(20 * time.Millisecond) // widen the list-then-create window
+	return append([]storage.MCPServer(nil), f.list...), nil
+}
+func (f *racyServers) Create(_ context.Context, c mcp.ServerConfig) (storage.MCPServer, error) {
+	f.creates++
+	m := storage.MCPServer{ID: "srv1", Name: c.Name, Endpoint: c.Endpoint, AuthEnv: c.AuthEnv, Enabled: c.Enabled}
+	f.list = append(f.list, m)
+	return m, nil
+}
+func (f *racyServers) Enable(context.Context, string) error { return nil }
+func (f *racyServers) Refresh(context.Context, string) (storage.MCPDiscovery, error) {
+	var d storage.MCPDiscovery
+	for _, n := range dentalmcp.ToolNames {
+		d.Tools = append(d.Tools, storage.MCPTool{RemoteName: n, SchemaHash: "h-" + n})
+	}
+	return d, nil
+}
+
+type racyFlows struct {
+	list    []flow.Flow
+	creates int
+	err     error
+}
+
+func (f *racyFlows) List(context.Context, int, int) ([]flow.Flow, error) {
+	time.Sleep(20 * time.Millisecond)
+	return append([]flow.Flow(nil), f.list...), f.err
+}
+func (f *racyFlows) Create(_ context.Context, r flow.CreateRequest) (flow.Flow, error) {
+	f.creates++
+	fl := flow.Flow{ID: "flow1", Name: r.Name}
+	f.list = append(f.list, fl)
+	return fl, nil
+}
+
+// The startup auto-install and a "Load demo" click must not both create the demo.
+func TestInstallDentalIsSerialised(t *testing.T) {
+	s, srv, fl := &Server{}, &racyServers{}, &racyFlows{}
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := s.installDental(context.Background(), srv, fl, "https://d/mcp"); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if srv.creates != 1 || fl.creates != 1 {
+		t.Fatalf("server creates %d, flow creates %d, want 1 and 1", srv.creates, fl.creates)
+	}
+}
+
+// A failed flow lookup is an error, never "not installed" (which would offer a duplicate).
+func TestDemoStatusFlowLookupError(t *testing.T) {
+	if _, err := demoStatus(context.Background(), &racyFlows{err: errors.New("db down")}, "https://d/mcp"); err == nil {
+		t.Fatal("lookup error must surface")
+	}
+	st, err := demoStatus(context.Background(), &racyFlows{list: []flow.Flow{{ID: "f1", Name: demo.FlowName}}}, "https://d/mcp")
+	if err != nil || !st.Dental.Installed || st.Dental.FlowID != "f1" || !st.Dental.Available {
+		t.Fatalf("%+v %v", st, err)
+	}
 }
