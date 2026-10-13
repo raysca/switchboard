@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -40,7 +41,7 @@ func TestThrottleBlocksAfterTheAllowanceAndRefills(t *testing.T) {
 func TestThrottleTableIsBounded(t *testing.T) {
 	th, _ := newTestThrottle(t)
 	for i := 0; i < maxThrottleEntries+500; i++ {
-		th.Fail("10." + itoa(i>>16&255) + "." + itoa(i>>8&255) + "." + itoa(i&255))
+		th.Fail("10." + strconv.Itoa(i>>16&255) + "." + strconv.Itoa(i>>8&255) + "." + strconv.Itoa(i&255))
 	}
 	th.mu.Lock()
 	n := len(th.limits)
@@ -53,7 +54,7 @@ func TestThrottleTableIsBounded(t *testing.T) {
 func TestThrottleIdleEntriesAreSwept(t *testing.T) {
 	th, now := newTestThrottle(t)
 	for i := 0; i < maxThrottleEntries; i++ {
-		th.Fail("a" + itoa(i))
+		th.Fail("a" + strconv.Itoa(i))
 	}
 	*now = now.Add(2 * time.Minute) // every bucket is full again
 	th.Fail("fresh")
@@ -68,13 +69,13 @@ func TestThrottleIdleEntriesAreSwept(t *testing.T) {
 func TestThrottleOverflowFailsClosed(t *testing.T) {
 	th, _ := newTestThrottle(t)
 	for i := 0; i < maxThrottleEntries; i++ {
-		th.Fail("a" + itoa(i)) // one failure each: not idle, so never swept
+		th.Fail("a" + strconv.Itoa(i)) // one failure each: not idle, so never swept
 	}
 	for i := 0; i < 10; i++ {
 		th.Fail("hot")
 	}
 	for i := 0; i < 10; i++ {
-		th.Fail("fresh" + itoa(i)) // diverted to the shared overflow bucket
+		th.Fail("fresh" + strconv.Itoa(i)) // diverted to the shared overflow bucket
 	}
 	if !th.Blocked("fresh-new") {
 		t.Fatal("a new address must be refused once the overflow bucket is spent")
@@ -87,14 +88,28 @@ func TestThrottleOverflowFailsClosed(t *testing.T) {
 	}
 }
 
-func itoa(i int) string {
-	const digits = "0123456789"
-	if i == 0 {
-		return "0"
+func TestThrottleOverflowKeepsAnEarlyHotKeyBlockedAndRecovers(t *testing.T) {
+	th, now := newTestThrottle(t)
+	for i := 0; i < 10; i++ {
+		th.Fail("hot") // in the table early: it owns a limiter and is not diverted
 	}
-	var b []byte
-	for ; i > 0; i /= 10 {
-		b = append([]byte{digits[i%10]}, b...)
+	for i := 0; i < maxThrottleEntries; i++ {
+		th.Fail("a" + strconv.Itoa(i)) // fills the table with still-throttled (not idle) keys
 	}
-	return string(b)
+	for i := 0; i < 10; i++ {
+		th.Fail("fresh" + strconv.Itoa(i)) // spends the shared overflow allowance
+	}
+	if !th.Blocked("hot") {
+		t.Fatal("the early hot key stays blocked")
+	}
+	if th.Blocked("a5") {
+		t.Fatal("a known quiet key is unaffected")
+	}
+	if !th.Blocked("fresh-new") {
+		t.Fatal("fresh keys fail closed after the shared allowance")
+	}
+	*now = now.Add(6 * time.Second)
+	if th.Blocked("fresh-new") {
+		t.Fatal("the shared allowance refills one token per interval")
+	}
 }
