@@ -606,7 +606,7 @@ func TestIdleSilentReplyIsNotStuck(t *testing.T) {
 // ends when the bot's next speech finishes, and not before.
 func TestIdleRequestEndWaitsForTheSpeech(t *testing.T) {
 	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
-	if !r.ctl.RequestEnd("ended_by_flow", 0) {
+	if !r.ctl.RequestEnd("ended_by_flow", 10*time.Second) {
 		t.Fatal("first RequestEnd must be accepted")
 	}
 	r.noEnd()
@@ -620,7 +620,7 @@ func TestIdleRequestEndWaitsForTheSpeech(t *testing.T) {
 func TestIdleRequestEndDuringSpeech(t *testing.T) {
 	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
-	r.ctl.RequestEnd("ended_by_flow", 0)
+	r.ctl.RequestEnd("ended_by_flow", 10*time.Second)
 	r.noEnd()
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopFlushed})
 	r.endedWith("ended_by_flow") // an interrupted goodbye still ends the call
@@ -640,13 +640,13 @@ func TestIdleRequestEndWaitIsBounded(t *testing.T) {
 // A second request (a model calling end_call twice) neither re-arms nor ends twice.
 func TestIdleRequestEndOnce(t *testing.T) {
 	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
-	if !r.ctl.RequestEnd("ended_by_flow", 0) || r.ctl.RequestEnd("ended_by_flow", 0) {
+	if !r.ctl.RequestEnd("ended_by_flow", 10*time.Second) || r.ctl.RequestEnd("ended_by_flow", 0) {
 		t.Fatal("only the first RequestEnd is accepted")
 	}
 	r.botSpoke()
 	r.endedWith("ended_by_flow")
 	r.noEnd() // exactly one hang-up
-	if r.ctl.RequestEnd("x", 0) {
+	if r.ctl.RequestEnd("x", 10*time.Second) {
 		t.Fatal("no request after the call ended")
 	}
 }
@@ -658,7 +658,7 @@ func TestIdleRequestEndWaitsForTheReplyAfterTheFirstSpan(t *testing.T) {
 	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0; c.Answering = answering.Load })
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
 	answering.Store(true)
-	r.ctl.RequestEnd("ended_by_flow", 0)
+	r.ctl.RequestEnd("ended_by_flow", 10*time.Second)
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
 	r.noEnd()
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
@@ -675,7 +675,7 @@ func TestIdleRequestEndSilentReplyDoesNotWaitForTheCap(t *testing.T) {
 	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0; c.Answering = answering.Load })
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
 	answering.Store(true)
-	r.ctl.RequestEnd("ended_by_flow", 0)
+	r.ctl.RequestEnd("ended_by_flow", 10*time.Second)
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
 	r.noEnd()
 	answering.Store(false)
@@ -694,5 +694,44 @@ func TestIdleRequestEndStuckReplyHitsTheCap(t *testing.T) {
 	r.ctl.RequestEnd("ended_by_flow", 2*time.Second)
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
 	r.clk.Advance(2 * time.Second)
+	r.endedWith("ended_by_flow")
+}
+
+// Pre-tool speech already finished and the reply after the tool is silent: nothing
+// ever starts speaking, so the call must end on the second quiet poll, not the cap.
+func TestIdleRequestEndSilentReplyAfterFinishedSpeechEndsWithinTwoPolls(t *testing.T) {
+	var answering atomic.Bool
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0; c.Answering = answering.Load })
+	answering.Store(true) // the model is still finishing the turn that called the tool
+	r.ctl.RequestEnd("ended_by_flow", 15*time.Second)
+	r.clk.parkedAt(t, r.at(100*time.Millisecond))
+	r.clk.Advance(100 * time.Millisecond)
+	r.noEnd() // still answering
+	answering.Store(false)
+	r.clk.parkedAt(t, r.at(200*time.Millisecond))
+	r.clk.Advance(100 * time.Millisecond)
+	r.noEnd() // one quiet poll is not enough: the follow-up reply may be about to start
+	r.clk.parkedAt(t, r.at(300*time.Millisecond))
+	r.clk.Advance(100 * time.Millisecond)
+	r.endedWith("ended_by_flow")
+}
+
+// A reply that begins speaking after the poll window opened is not cut: the goodbye
+// plays and the call ends after it.
+func TestIdleRequestEndDoesNotCutAReplyThatStartsLater(t *testing.T) {
+	var answering atomic.Bool
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0; c.Answering = answering.Load })
+	r.ctl.RequestEnd("ended_by_flow", 15*time.Second)
+	r.clk.parkedAt(t, r.at(100*time.Millisecond))
+	r.clk.Advance(100 * time.Millisecond) // quiet once
+	answering.Store(true)                 // the follow-up reply starts generating
+	r.clk.parkedAt(t, r.at(200*time.Millisecond))
+	r.clk.Advance(100 * time.Millisecond)
+	r.noEnd()
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
+	r.clk.Advance(time.Second)
+	r.noEnd()
+	answering.Store(false)
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
 	r.endedWith("ended_by_flow")
 }
