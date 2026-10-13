@@ -1,4 +1,5 @@
 import { test, expect, LIVE } from "../lib/flows-stack";
+import type { Stack } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
 import { api, botReplies, connectAdmin, openFlowTest, startCall, stepCard } from "../lib/flows-helpers";
 import { createFakeDentalVariant, toolTurn, turn } from "../lib/dental-helpers";
@@ -41,9 +42,11 @@ test("a new patient call: handed off by route, MCP tools called, hung up by end_
   await turn(page, "transfer to new patient");
   await expect(stepCard(page, "New patient").locator(".step-node")).toHaveAttribute("data-state", "active", { timeout: 15_000 });
   await toolTurn(page, "register_patient", { name: "Sam Taylor", phone: "555 0100" }, /Tool register_patient returned.*Sam Taylor/);
-  const patient = (await botReplies(page).last().innerText()).match(/"id":\s*"(p\d+)"/)![1];
+  const patient = (await botReplies(page).last().innerText()).match(/"id":\s*"(p\d+)"/)?.[1];
+  expect(patient, "register_patient reply carries a patient id").toBeTruthy();
   await toolTurn(page, "find_slots", {});
-  const slot = (await botReplies(page).last().innerText()).match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)![0];
+  const slot = (await botReplies(page).last().innerText()).match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)?.[0];
+  expect(slot, "find_slots reply carries a slot").toBeTruthy();
   await toolTurn(page, "book_appointment", { patient_id: patient, slot_id: slot, kind: "checkup" });
   await step(page, "new patient booked");
 
@@ -51,7 +54,7 @@ test("a new patient call: handed off by route, MCP tools called, hung up by end_
   await expect(page.getByTestId("connection-state")).toHaveText(/disconnected/i, { timeout: 20_000 });
 });
 
-async function openLatestCall(page: import("@playwright/test").Page, stack: any, nth: number) {
+async function openLatestCall(page: import("@playwright/test").Page, stack: Stack, nth: number) {
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Calls", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
@@ -66,7 +69,7 @@ async function openLatestCall(page: import("@playwright/test").Page, stack: any,
 // The tool calls themselves are mcp.tool.execute spans with no turn id and no tool name (only a
 // status), so the page's per-turn timeline cannot show them: count them from the traces API, as
 // 30-mcp does.
-async function expectToolSpans(page: import("@playwright/test").Page, stack: any, count: number) {
+async function expectToolSpans(page: import("@playwright/test").Page, stack: Stack, count: number) {
   await page.getByText("Technical trace", { exact: true }).click();
   const id = (await page.locator(".call-figures code").first().innerText()).trim();
   const traces = await api<{ data: { spans: { name: string; attributes?: Record<string, unknown> }[] } }>(stack, `/sessions/${id}/traces`);

@@ -76,6 +76,5 @@ test("a foreign browser origin is refused the voice socket", async ({ stack }) =
     req.on("error", reject);
     req.end();
   });
-  expect(status).not.toBe(101);
   expect(status).toBe(403);
 });
