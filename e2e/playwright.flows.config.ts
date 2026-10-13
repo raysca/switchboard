@@ -24,16 +24,16 @@ if (live && !process.env.E2E_XAI_SECRET) {
 export const fixture = (name: string) => path.resolve(__dirname, "fixtures", name);
 
 export default defineConfig({
-  testDir: "tests-graph",
-  outputDir: "test-results-graph",
-  globalSetup: "./global-setup-graph.ts",
-  globalTeardown: "./global-teardown-graph.ts",
+  testDir: "tests-flows",
+  outputDir: "test-results-flows",
+  globalSetup: "./global-setup-flows.ts",
+  globalTeardown: "./global-teardown-flows.ts",
   workers: 1,
   fullyParallel: false,
   retries: 0,
   timeout: live ? 240_000 : 90_000,
   expect: { timeout: live ? 60_000 : 15_000 },
-  reporter: [["list"], ["html", { outputFolder: "playwright-report-graph", open: "never" }]],
+  reporter: [["list"], ["html", { outputFolder: "playwright-report-flows", open: "never" }]],
   use: {
     ...devices["Desktop Chrome"],
     headless: true,

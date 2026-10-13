@@ -1,5 +1,5 @@
 import { test as base, expect } from "@playwright/test";
-import { graphStackFile, readStack, type Stack } from "./stack";
+import { flowsStackFile, readStack, type Stack } from "./stack";
 
 // The flow suite runs against the fake providers (free, offline) or, with
 // E2E_PROVIDER=xai, against live xAI (make e2e-xai; spends API credit).
@@ -12,7 +12,7 @@ export const test = base.extend<{ stack: Stack; _requireKey: void }>({
     info.skip(LIVE && !process.env.E2E_XAI_SECRET, SKIP_LIVE_REASON);
     await use();
   }, { auto: true }],
-  stack: async ({}, use) => use(readStack(graphStackFile)),
+  stack: async ({}, use) => use(readStack(flowsStackFile)),
 });
 export { expect };
 export type { Stack };

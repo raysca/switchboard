@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { test, expect, PROVIDER, type Stack } from "../lib/graph-stack";
+import { test, expect, PROVIDER, type Stack } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
 
 // Walks canvas boards 3 to 12: a numbered screenshot of each, and the structure that matters. Runs in its own order after the other specs, on a stack that already has flows, so the empty page is checked on a fresh list through the UI.

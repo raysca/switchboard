@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
-import { test, expect, LIVE, PROVIDER, type Stack } from "../lib/graph-stack";
+import { test, expect, LIVE, PROVIDER, type Stack } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
-import { graphStackFile, readStack } from "../lib/stack";
+import { flowsStackFile, readStack } from "../lib/stack";
 
 // Flows end to end in a real browser against a real server. Two modes:
 //  - fake providers (default, free): the fake LLM echoes the step's system prompt as a
@@ -138,7 +138,7 @@ const openFlowSettings = (page: Page) => page.getByRole("button", { name: "Flow 
 
 test.beforeAll(async () => {
   if (LIVE && !process.env.E2E_XAI_SECRET) return; // skipped run: no stack
-  providers = (await api<{ data: ProviderStatus[] }>(readStack(graphStackFile), "/providers")).data;
+  providers = (await api<{ data: ProviderStatus[] }>(readStack(flowsStackFile), "/providers")).data;
 });
 
 test("providers: the suite's provider is detected and only detected providers are offered", async ({ page, stack }) => {

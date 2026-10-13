@@ -87,7 +87,7 @@ lets the bot answer before the question repeats (a repeat is a barge-in).
 
 ## Flow routes suite: fake providers or live xAI
 
-`playwright.graph.config.ts` runs `tests-graph/` against a stack it starts itself, on its
+`playwright.flows.config.ts` runs `tests-flows/` against a stack it starts itself, on its
 own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid Google suite.
 
 | | `make e2e-fake` (default) | `GOVOICE_LIVE=1 make e2e-xai` |

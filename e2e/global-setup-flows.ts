@@ -4,7 +4,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { graphStackFile, type Stack } from "./lib/stack";
+import { flowsStackFile, type Stack } from "./lib/stack";
 import { stopStack } from "./global-teardown";
 
 // Starts the stack for the flow suite. By default with the FAKE providers (go
@@ -16,7 +16,7 @@ import { stopStack } from "./global-teardown";
 const LIVE = process.env.E2E_PROVIDER === "xai";
 const PORTS = { public: 18581, admin: 19591, ui: 15174, mcp: 18595, mcpHole: 18596 };
 const repo = path.resolve(__dirname, "..");
-const logDir = path.join(__dirname, "test-results-graph", "logs");
+const logDir = path.join(__dirname, "test-results-flows", "logs");
 
 async function portOpen(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -129,7 +129,7 @@ export default async function globalSetup() {
     providerEnv = { GOOGLE_API_KEY: "fake-google-key", GOOGLE_APPLICATION_CREDENTIALS: sa, GOVOICE_FAKE_LLM_LABEL: "1" };
   }
 
-  const save = () => fs.writeFileSync(graphStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
+  const save = () => fs.writeFileSync(flowsStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
   save();
 
   try {
@@ -155,7 +155,7 @@ export default async function globalSetup() {
     await waitFor("admin UI", async () => (await fetch(stack.uiUrl)).ok);
     await waitFor("mcptest", async () => (await fetch(`${stack.mcpUrl}/_record`)).ok);
   } catch (err) {
-    stopStack(graphStackFile);
+    stopStack(flowsStackFile);
     throw err;
   }
 }

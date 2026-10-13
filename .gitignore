@@ -39,9 +39,9 @@ e2e/evidence/
 e2e/test-results/
 e2e/playwright-report/
 e2e/.stack.json
-e2e/.stack-graph.json
-e2e/test-results-graph/
-e2e/playwright-report-graph/
+e2e/.stack-flows.json
+e2e/test-results-flows/
+e2e/playwright-report-flows/
 
 # Agent worktrees
 .claude/worktrees/
