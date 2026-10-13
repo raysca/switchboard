@@ -262,11 +262,12 @@ export function StepPanel(props: StepPanelProps) {
                   id="step-end-call"
                   type="checkbox"
                   checked={!!step.end_call}
+                  disabled={graph.steps.length === 1}
                   onChange={(e) => onChange(updateStep(graph, step.id, { end_call: e.target.checked }))}
                 />
                 Can end the call
               </label>
-              <p className="subtext">Gives this step an end_call tool. The model uses it after saying goodbye; the call ends when it stops speaking. Needs a flow with at least two steps.</p>
+              <p className="subtext">Gives this step an end_call tool. The model uses it after saying goodbye; the call ends when it stops speaking. {graph.steps.length === 1 ? " Add a second step first: a one-step flow needs a second step to end the call." : " Needs a flow with at least two steps."}</p>
             </fieldset>
             {flowTools.length === 0 ? (
               <p className="subtext">This flow has no tools. Choose MCP tools for the flow first.</p>
