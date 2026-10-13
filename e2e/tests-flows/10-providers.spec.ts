@@ -1,4 +1,4 @@
-import { test, expect, PROVIDER } from "../lib/flows-stack";
+import { test, expect, LIVE, PROVIDER } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
 import { api, connectAdmin, loadProviders, openDesigner, openFlowSettings, providers, type ProviderStatus } from "../lib/flows-helpers";
 
@@ -18,7 +18,9 @@ test("providers: the suite's provider is detected and only detected providers ar
     const offered = await page.getByLabel(`${kind.toUpperCase()} provider`).locator("option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
     const available = providers.filter((p) => p.services[kind]?.available).map((p) => p.id);
     expect(offered, `${kind} provider options`).toEqual(["", ...available]);
-    expect(available, "the child gets only the suite's provider variables").toEqual([PROVIDER]);
+    // The fake stack also gets placeholder xai and elevenlabs keys (global setup) so the dentistry demo's flow can be created (60-dental); only those two are tolerated.
+    const demoOnly = LIVE ? [] : ["xai", "elevenlabs"];
+    expect(available.filter((id) => !demoOnly.includes(id)), "the child gets only the suite's provider variables").toEqual([PROVIDER]);
   }
 });
 
