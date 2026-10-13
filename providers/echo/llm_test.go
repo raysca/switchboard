@@ -1,0 +1,235 @@
+package echo
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"govoice/core"
+	"govoice/providers/google"
+)
+
+var (
+	_ google.LLMStreamClient           = (*LLMClient)(nil)
+	_ google.LLMNativeToolStreamClient = (*LLMClient)(nil)
+)
+
+func user(text string) []core.Message {
+	return []core.Message{{Role: core.RoleUser, Content: text}}
+}
+
+func collect(t *testing.T, chunks <-chan google.LLMStreamChunk, errs <-chan error) []google.LLMStreamChunk {
+	t.Helper()
+	var out []google.LLMStreamChunk
+	timeout := time.After(5 * time.Second)
+	for chunks != nil || errs != nil {
+		select {
+		case c, ok := <-chunks:
+			if !ok {
+				chunks = nil
+				continue
+			}
+			out = append(out, c)
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			if err != nil {
+				t.Fatalf("stream error: %v", err)
+			}
+		case <-timeout:
+			t.Fatal("stream did not finish")
+		}
+	}
+	return out
+}
+
+func text(chunks []google.LLMStreamChunk) (deltas []string, joined string) {
+	for _, c := range chunks {
+		if c.Text != "" {
+			deltas = append(deltas, c.Text)
+			joined += c.Text
+		}
+	}
+	return
+}
+
+func TestEchoReplyRepeatsTheCallerWordByWord(t *testing.T) {
+	c := NewLLMClient(LLMOptions{})
+	ch, errs, err := c.GenerateStream(context.Background(), "m", "sys", user("hi there"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks := collect(t, ch, errs)
+	deltas, joined := text(chunks)
+	if joined != "You said: hi there" || len(deltas) != 4 || deltas[1] != "said: " {
+		t.Fatalf("deltas=%q joined=%q", deltas, joined)
+	}
+	last := chunks[len(chunks)-1]
+	if !last.IsDone || last.FinishReason != "STOP" || last.OutputTokens != 4 || last.PromptTokens == 0 || last.TotalTokens != last.PromptTokens+last.OutputTokens {
+		t.Fatalf("closing chunk %+v", last)
+	}
+}
+
+func TestEchoLabelPrefixesTheReply(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Label: "[front] "})
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("hi"))
+	if _, joined := text(collect(t, ch, errs)); joined != "[front] You said: hi" {
+		t.Fatalf("reply %q", joined)
+	}
+}
+
+func TestEchoFirstTokenAndWordDelays(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Figures: LLMFigures{FirstToken: 50 * time.Millisecond, TokenDelay: 10 * time.Millisecond}, ExtraDelay: 5 * time.Millisecond})
+	start := time.Now()
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("a b"))
+	first := <-ch
+	if first.Text == "" || time.Since(start) < 50*time.Millisecond {
+		t.Fatalf("first word after %v: %+v", time.Since(start), first)
+	}
+	mark := time.Now()
+	second := <-ch
+	if second.Text == "" || time.Since(mark) < 15*time.Millisecond {
+		t.Fatalf("second word after %v, want >= TokenDelay+ExtraDelay", time.Since(mark))
+	}
+	collect(t, ch, errs)
+}
+
+func TestEchoStopsOnContextCancel(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Figures: LLMFigures{TokenDelay: 200 * time.Millisecond}})
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, errs, _ := c.GenerateStream(ctx, "m", "", user("a b c d e f"))
+	<-ch
+	cancel()
+	deadline := time.After(2 * time.Second)
+	for ch != nil || errs != nil {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				ch = nil
+			}
+		case _, ok := <-errs:
+			if !ok {
+				errs = nil
+			}
+		case <-deadline:
+			t.Fatal("channels not closed after cancel")
+		}
+	}
+}
+
+var tools = []core.ToolDefinition{{Name: "transfer_to_sales", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+
+func TestEchoCallsTheToolNamedByAPhrase(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
+	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user("Please TRANSFER to sales now"), nil, tools, core.ToolCall{})
+	var calls []core.ToolCall
+	for _, ck := range collect(t, ch, errs) {
+		calls = append(calls, ck.ToolCalls...)
+	}
+	if len(calls) != 1 || calls[0].Name != "transfer_to_sales" || calls[0].ID == "" || string(calls[0].Arguments) != "{}" {
+		t.Fatalf("calls %+v", calls)
+	}
+}
+
+func TestEchoPassesJSONArgumentsToSpokenTools(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"call tool lookup_order": "mcp__x_lookup_order"}, Spoken: map[string]string{"mcp__x_lookup_order": "lookup_order"}})
+	defs := []core.ToolDefinition{{Name: "mcp__x_lookup_order", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	args := func(msg string) string {
+		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(msg), nil, defs, core.ToolCall{})
+		for _, ck := range collect(t, ch, errs) {
+			if len(ck.ToolCalls) > 0 {
+				return string(ck.ToolCalls[0].Arguments)
+			}
+		}
+		return "no call"
+	}
+	if got := args(`call tool lookup_order {"id":"7"}`); got != `{"id":"7"}` {
+		t.Fatalf("args %s", got)
+	}
+	if got := args(`call tool lookup_order {not json}`); got != `{}` {
+		t.Fatalf("malformed args %s", got)
+	}
+}
+
+func TestEchoAnswersAfterToolResults(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Spoken: map[string]string{"mcp__x_lookup_order": "lookup_order"}})
+	reply := func(m core.Message) string {
+		h := append(user("go"), m)
+		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", h, nil, tools, core.ToolCall{})
+		_, joined := text(collect(t, ch, errs))
+		return joined
+	}
+	if got := reply(core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolName: "transfer_to_sales", ToolStatus: core.ToolSucceeded, Content: "{}"}); got != "Connecting you." {
+		t.Fatalf("transfer answer %q", got)
+	}
+	if got := reply(core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolName: "mcp__x_lookup_order", ToolStatus: core.ToolSucceeded, Content: `{"ok":true}`}); got != `Tool lookup_order returned {"ok":true}` {
+		t.Fatalf("spoken success %q", got)
+	}
+	if got := reply(core.Message{Role: core.RoleTool, Kind: core.MessageToolResult, ToolName: "mcp__x_lookup_order", ToolStatus: core.ToolFailed, ToolErrorCategory: "timeout"}); got != "Tool lookup_order failed: timeout" {
+		t.Fatalf("spoken failure %q", got)
+	}
+}
+
+func TestEchoIgnoresPhrasesWithoutToolDefinitions(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("transfer to sales"))
+	for _, ck := range collect(t, ch, errs) {
+		if len(ck.ToolCalls) != 0 {
+			t.Fatalf("tool call without definitions: %+v", ck)
+		}
+	}
+}
+
+func TestRealLLMProcessorRunsTheToolLoopAgainstEcho(t *testing.T) {
+	history := core.NewConversationContext(core.ContextConfig{})
+	var ran atomic.Int32
+	cfg := google.DefaultLLMConfig()
+	cfg.Provider = "echo"
+	cfg.Client = NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
+	cfg.ToolDefinitions = tools
+	cfg.ToolExecutor = core.ToolExecutorFunc(func(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
+		ran.Add(1)
+		return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{}`)}, nil
+	})
+	cfg.ToolHistory = history
+	cfg.ContextProvider = history.Messages
+	proc, err := google.NewLLMProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &core.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	sess, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	_ = proc.Attach(sess, 0)
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	if err := history.AddMessage(core.Message{Role: core.RoleUser, Content: "please transfer to sales", TurnID: "turn-1"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = sess.Post(&core.UserMessageFrame{Turn: "turn-1", Gen: 1, Content: "please transfer to sales"})
+	var said, usage string
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		said, usage = "", ""
+		for _, f := range sink.GetFrames() {
+			switch v := f.(type) {
+			case *core.LLMTextDeltaFrame:
+				said += v.Delta
+			case *core.UsageMetricsFrame:
+				usage = v.Provider
+			}
+		}
+		if strings.Contains(said, "Connecting you.") && usage != "" {
+			break
+		}
+	}
+	if ran.Load() != 1 || said != "Connecting you." || usage != "echo" {
+		t.Fatalf("tool ran %d times, said %q, usage provider %q", ran.Load(), said, usage)
+	}
+}
