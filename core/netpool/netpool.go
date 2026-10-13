@@ -200,14 +200,19 @@ func (p *Pool) dial(ctx context.Context, addr string, useTLS bool) (net.Conn, er
 		return c, nil
 	}
 	p.st.miss.Add(1)
-	return p.connect(ctx, addr, useTLS)
+	return p.connect(ctx, addr, useTLS, false)
 }
 
-func (p *Pool) connect(ctx context.Context, addr string, useTLS bool) (net.Conn, error) {
+// connect dials TCP(+TLS). A spare's socket is wrapped in a replayConn so take
+// can read ahead of TLS to find a peer close (see alive).
+func (p *Pool) connect(ctx context.Context, addr string, useTLS, spare bool) (net.Conn, error) {
 	start := time.Now()
 	raw, err := p.dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
+	}
+	if spare {
+		raw = &replayConn{Conn: raw}
 	}
 	var c net.Conn = raw
 	if useTLS {
@@ -221,6 +226,23 @@ func (p *Pool) connect(ctx context.Context, addr string, useTLS bool) (net.Conn,
 	}
 	p.st.observe(time.Since(start))
 	return c, nil
+}
+
+// replayConn hands bytes alive read ahead (TLS 1.3 session tickets, the h2
+// server's SETTINGS) back to the first Reads, so the read-ahead is invisible to
+// TLS and HTTP/2.
+type replayConn struct {
+	net.Conn
+	pending []byte
+}
+
+func (c *replayConn) Read(b []byte) (int, error) {
+	if len(c.pending) > 0 {
+		n := copy(b, c.pending)
+		c.pending = c.pending[n:]
+		return n, nil
+	}
+	return c.Conn.Read(b)
 }
 
 func spareKey(addr string, useTLS bool) string {
@@ -286,7 +308,7 @@ func (p *Pool) Warm(ctx context.Context, rawURL string) error {
 	p.spares[key] = ph
 	p.mu.Unlock()
 
-	c, err := p.connect(ctx, addr, useTLS)
+	c, err := p.connect(ctx, addr, useTLS, true)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err != nil || p.closed || p.spares[key] != ph {
