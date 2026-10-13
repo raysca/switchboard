@@ -153,10 +153,9 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 # Routed flows in a real browser against the FAKE providers: free and offline (about 1 min). Builds
 # bin/server-fake (-tags fakeproviders), starts it with the admin UI, then drives the flow designer, a
 # live call with a route, republish, a failed route and a plain flow (e2e/tests-flows).
-e2e-fake: ## free|Playwright browser e2e for routed flows against the fake providers (about 1 min)
-	cd ui && npm ci --no-audit --no-fund
-	cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium && npx playwright test -c playwright.flows.config.ts
-	$(MAKE) e2e-oneport
+E2E_SETUP = cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium
+e2e-fake: ui-embed ## free|Playwright browser e2e for routed flows and the one-port server against the fake providers (about 2 min)
+	$(E2E_SETUP) && npx playwright test -c playwright.flows.config.ts && npx playwright test -c playwright.oneport.config.ts
 
 # Every free end-to-end test: the Go suite, then the browser suite (fake providers, offline, about 2 min).
 e2e-free: test-e2e-go e2e-fake ## free|All free end-to-end tests: Go (test-e2e-go) then browser (e2e-fake)
@@ -169,7 +168,7 @@ e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOI
 	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.flows.config.ts
 
 e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on fake providers
-	cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium && npx playwright test -c playwright.oneport.config.ts
+	$(E2E_SETUP) && npx playwright test -c playwright.oneport.config.ts
 
 .PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-free test-e2e-go
 
