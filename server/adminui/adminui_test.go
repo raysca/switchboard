@@ -84,3 +84,17 @@ func TestAnUnbuiltUIsaysSo(t *testing.T) {
 		t.Fatalf("%d %q", w.Code, w.Body.String())
 	}
 }
+
+func TestServerPathsNeverGetTheUI(t *testing.T) {
+	h := Handler(site)
+	for _, p := range []string{"/metrics/x", "/ready/x", "/health/x", "/ws/x", "/api/other", "/debug/timeline", "/api", "/debug", "/metrics/", "/assets/foo"} {
+		if w := get(h, "GET", p); w.Code != 404 || strings.Contains(w.Body.String(), "Switchboard") {
+			t.Errorf("%s: %d %q", p, w.Code, w.Body.String())
+		}
+	}
+	for _, p := range []string{"/flows/api", "/metricsx"} {
+		if w := get(h, "GET", p); w.Code != 200 {
+			t.Errorf("%s must get the SPA: %d", p, w.Code)
+		}
+	}
+}

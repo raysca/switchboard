@@ -34,10 +34,10 @@ import (
 	"govoice/vad"
 )
 
-// Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 // adminUIFS is the admin UI served with public_admin (the embedded build; tests replace it).
 var adminUIFS = adminui.Embedded()
 
+// Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
 	authThrottle          *auth.Throttle
 	clientIP              func(*http.Request) string // proxy-aware client address
@@ -437,11 +437,6 @@ func (s *Server) setupRoutes() {
 		s.logger.Warn("public_admin is on: the management API is served on the public port behind the management key")
 		s.publicMux.HandleFunc("/api/v1", s.handleAPI)
 		s.publicMux.HandleFunc("/api/v1/", s.handleAPI)
-		// The operational surfaces and unknown API paths are explicit 404s: otherwise the UI's
-		// client-route fallback would answer them with index.html and a 200.
-		for _, p := range []string{"/metrics", "/ready", "/debug/", "/api/"} {
-			s.publicMux.HandleFunc(p, http.NotFound)
-		}
 		s.publicMux.Handle("/", adminui.Handler(adminUIFS)) // the catch-all (no method: "GET /" would conflict with the method-less /api/ patterns; the handler refuses non-reads itself). /ws, /health and /api/v1 are more specific and win
 		if !adminui.Built(adminUIFS) {
 			s.logger.Warn("public_admin is on but this binary has no admin UI (run make ui-embed before building)")

@@ -43,6 +43,14 @@ func csp(host string) string {
 		"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 }
 
+// reserved are the server's own first path segments; the UI never answers them.
+var reserved = map[string]bool{"api": true, "ws": true, "health": true, "metrics": true, "ready": true, "debug": true}
+
+func isFile(fsys fs.FS, name string) bool {
+	info, err := fs.Stat(fsys, name)
+	return err == nil && !info.IsDir()
+}
+
 // Handler serves fsys: files as they are, an unknown path without a file extension as index.html
 // (client-side routes), and an unknown path with an extension as 404 (a stale deploy must show).
 func Handler(fsys fs.FS) http.Handler {
@@ -53,6 +61,12 @@ func Handler(fsys fs.FS) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		first, _, _ := strings.Cut(name, "/")
+		if reserved[first] || (first == "assets" && !isFile(fsys, name)) { // server paths and stale hashed assets are real 404s
+			http.NotFound(w, r)
+			return
+		}
 		if !Built(fsys) {
 			http.Error(w, "the admin UI is not built into this binary (make ui-embed)", http.StatusNotFound)
 			return
@@ -61,14 +75,13 @@ func Handler(fsys fs.FS) http.Handler {
 		h.Set("Content-Security-Policy", csp(r.Host))
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
-		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 		if name == "" || name == "index.html" {
 			h.Set("Cache-Control", "no-cache")
 			r.URL.Path = "/"
 			files.ServeHTTP(w, r)
 			return
 		}
-		if info, err := fs.Stat(fsys, name); err == nil && !info.IsDir() {
+		if isFile(fsys, name) {
 			if strings.HasPrefix(name, "assets/") { // content-hashed by the build
 				h.Set("Cache-Control", "public, max-age=31536000, immutable")
 			} else {

@@ -112,7 +112,7 @@ func TestAFallingBackUIDoesNotAnswerForServerPaths(t *testing.T) {
 	adminUIFS = fstest.MapFS{"index.html": {Data: []byte(`<div id="root"></div>`)}}
 	t.Cleanup(func() { adminUIFS = prev })
 	s := publicAdminServer(t)
-	for _, p := range []string{"/metrics", "/ready", "/debug/timeline", "/api/other"} {
+	for _, p := range []string{"/metrics", "/ready", "/debug/timeline", "/api/other", "/metrics/x", "/ready/x"} {
 		if w := publicRequest(s, http.MethodGet, p, testMgmtKey); w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), `id="root"`) {
 			t.Errorf("%s: %d %q (must be a plain 404, not the UI)", p, w.Code, w.Body.String())
 		}
