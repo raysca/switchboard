@@ -56,6 +56,9 @@ type Config struct {
 		Timeout        time.Duration `yaml:"timeout"`
 	} `yaml:"mcp"`
 
+	// Demo installs at start-up (the admin UI button works without it).
+	Demo DemoConfig `yaml:"demo"`
+
 	// Durable management plane (flows, MCP, session
 	// history). Disabled when Storage.Dialect is empty; retention: see Retention.
 	Storage struct {
@@ -396,4 +399,10 @@ type CueConfig struct {
 	File   string   `yaml:"file"`
 	GainDB *float64 `yaml:"gain_db"`
 	Loop   *bool    `yaml:"loop"` // default true
+}
+
+// DemoConfig turns on demo installs at start-up (the admin UI button works without it).
+type DemoConfig struct {
+	// AutoInstall installs a demo when the server starts: "" (off) or "dental".
+	AutoInstall string `yaml:"auto_install"`
 }

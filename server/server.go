@@ -861,6 +861,9 @@ func (s *Server) Start() error {
 	s.pruneStop = make(chan struct{})
 	go s.pruneTimelines()
 
+	if s.cfg.Demo.AutoInstall == "dental" {
+		s.autoInstallDemo()
+	}
 	s.ready.Store(true)
 	s.logger.Info("server started",
 		slog.String("public_addr", s.cfg.PublicListenAddr),

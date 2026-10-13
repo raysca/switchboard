@@ -24,6 +24,9 @@
   "AllowLocalHTTP": true,
   "Timeout": 15000000000
  },
+ "Demo": {
+  "AutoInstall": ""
+ },
  "Storage": {
   "Dialect": "sqlite",
   "DSNEnv": ""

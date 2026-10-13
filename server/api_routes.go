@@ -126,6 +126,10 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			s.mcpManagementAPI.ServeHTTP(w, r)
 			return
 		}
+		if r.URL.Path == "/api/v1/demo" || strings.HasPrefix(r.URL.Path, "/api/v1/demo/") {
+			s.handleDemo(w, r, requestID)
+			return
+		}
 		if id, action, ok := liveCallRoute(r.URL.Path); ok {
 			s.handleLiveCall(w, r, requestID, id, action)
 			return
