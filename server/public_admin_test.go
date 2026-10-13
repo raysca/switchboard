@@ -147,17 +147,3 @@ func TestForwardedHeadersFromAnUntrustedPeerAreIgnored(t *testing.T) {
 		t.Fatalf("%s", w.Body.String())
 	}
 }
-
-func TestThrottleKeyMasksIPv6ToItsSlash64(t *testing.T) {
-	for in, want := range map[string]string{
-		"203.0.113.5":               "203.0.113.5",
-		"unknown":                   "unknown",
-		"2001:db8:1:2:aaaa::1":      "2001:db8:1:2::/64",
-		"2001:db8:1:2:bbbb:cccc::9": "2001:db8:1:2::/64",
-		"2001:db8:1:3::1":           "2001:db8:1:3::/64",
-	} {
-		if got := throttleKey(in); got != want {
-			t.Errorf("throttleKey(%q) = %q, want %q", in, got, want)
-		}
-	}
-}

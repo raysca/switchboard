@@ -101,7 +101,7 @@ func validateProductionSecurity(cfg *Config) error {
 		return errors.New("origin_allow_same_host in production needs tls.trusted_proxy_mode (the Host header must come from your proxy)")
 	}
 	if cfg.PublicAdmin.Enabled && !cfg.TLS.TrustedProxyMode {
-		return errors.New("production public_admin needs tls.trusted_proxy_mode: the failed-login throttle and the rate limits key on the proxy-trusted client address")
+		return errors.New("production public_admin needs tls.trusted_proxy_mode: the rate limits and handshake limiter key on the proxy-trusted client address")
 	}
 	if _, err := ResolveTokenSecret(cfg); err != nil {
 		return err

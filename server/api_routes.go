@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -16,21 +15,6 @@ import (
 	"govoice/transport/token"
 )
 
-// throttleKey is the failed-auth throttle key for a client address: IPv4 as is, IPv6 masked to its
-// /64 (one customer holds a whole /64, so per-address keys would be free to mint). Anything that
-// is not an IP (e.g. "unknown") is kept. The address reported by server-config stays the real one.
-func throttleKey(ip string) string {
-	a, err := netip.ParseAddr(ip)
-	if err != nil {
-		return ip
-	}
-	if a = a.Unmap(); a.Is4() {
-		return a.String()
-	}
-	p, _ := a.WithZone("").Prefix(64)
-	return p.String()
-}
-
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	requestID := uuid.NewString()
 	w.Header().Set("X-Request-ID", requestID)
@@ -39,16 +23,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusServiceUnavailable, "management_unavailable", "management API is not configured", requestID)
 		return
 	}
-	key := throttleKey(s.clientIP(r))
-	if s.authThrottle.Blocked(key) {
-		s.metrics.ManagementAuthThrottledTotal.Add(1)
-		w.Header().Set("Retry-After", "10")
-		api.WriteError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts; try again shortly", requestID)
-		return
-	}
+	// Failed attempts share one global allowance; a correct key is never throttled.
 	if !s.management.Authenticate(r) {
-		s.authThrottle.Fail(key)
 		s.metrics.ManagementAuthFailuresTotal.Add(1)
+		if !s.authFails.AllowN(s.authNow(), 1) {
+			s.metrics.ManagementAuthThrottledTotal.Add(1)
+			w.Header().Set("Retry-After", "6")
+			api.WriteError(w, http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts; try again shortly", requestID)
+			return
+		}
 		w.Header().Set("WWW-Authenticate", `Bearer realm="management"`)
 		api.WriteError(w, http.StatusUnauthorized, "unauthorized", "valid management credential required", requestID)
 		return

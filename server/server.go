@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/time/rate"
 	"govoice/core"
 	"govoice/core/observe"
 	"govoice/core/record"
@@ -39,7 +40,8 @@ var adminUIFS = adminui.Embedded()
 
 // Server represents the config-driven Voice Framework V1 server matching spec §27-37.
 type Server struct {
-	authThrottle          *auth.Throttle
+	authFails             *rate.Limiter // global failed-management-auth allowance: burst 10, one more per 6 s
+	authNow               func() time.Time
 	clientIP              func(*http.Request) string // proxy-aware client address
 	secure                func(*http.Request) bool   // request arrived over TLS (directly or via a trusted proxy)
 	otel                  *otelexport.Exporter       // nil unless otel.enabled
@@ -200,7 +202,8 @@ func NewServer(cfg *Config) (*Server, error) {
 		logger:       logger,
 		startedAt:    metrics.StartTime,
 		activeCalls:  make(map[uint64]*activeCall),
-		authThrottle: auth.NewThrottle(10, 6*time.Second),
+		authFails:    rate.NewLimiter(rate.Every(6*time.Second), 10),
+		authNow:      time.Now,
 	}
 	s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })
 	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports}
@@ -419,7 +422,7 @@ func (s *Server) setupRoutes() {
 		if ip := sec.ClientIP(r); ip != "" {
 			return ip
 		}
-		return "unknown" // an unparseable peer shares one bucket instead of skipping the throttle
+		return "unknown" // an unparseable peer shares one bucket
 	}
 
 	s.secure = sec.IsSecure

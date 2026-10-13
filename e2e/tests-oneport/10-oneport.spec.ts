@@ -53,10 +53,16 @@ test("repeated wrong keys are throttled and the page says so", async ({ page, re
   expect(seen.at(-1), `statuses ${seen}`).toBe(429);
   expect(seen.slice(0, -1).every((s) => s === 401)).toBe(true);
   await page.goto(stack.publicUrl);
-  await page.getByLabel("Management key").fill(stack.managementKey);
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
-  // While blocked the server's message reaches the page, not an empty screen or a raw error.
+  const key = page.getByLabel("Management key");
+  const connect = page.getByRole("button", { name: "Connect", exact: true });
+  // (a) a WRONG key while the allowance is spent shows the server's message, not an empty screen or a raw error.
+  await key.fill("wrong");
+  await connect.click();
   await expect(page.getByText(/too many failed attempts; try again shortly/i).first()).toBeVisible();
+  // (b) the CORRECT key is never throttled, so the admin still gets in.
+  await key.fill(stack.managementKey);
+  await connect.click();
+  await expect(page.getByText(/too many failed attempts/i)).toHaveCount(0);
 });
 
 test("a foreign browser origin is refused the voice socket", async ({ stack }) => {
