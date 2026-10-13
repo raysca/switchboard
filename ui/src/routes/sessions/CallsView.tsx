@@ -113,9 +113,9 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
       </div>
 
       {calls.isPending ? (
-        <LoadingState label="Loading calls" />
+        <LoadingState label="Loading calls" skeleton={6} />
       ) : calls.isError ? (
-        <ErrorState title="Could not load calls" error={calls.error as ApiError} onRetry={() => void calls.refetch()} />
+        <ErrorState title="Could not load calls" error={calls.error as ApiError} onRetry={() => void calls.refetch()} reassure />
       ) : rows.length === 0 && page > 0 ? (
         <section className="message-panel">
           <h2>No calls on this page.</h2>

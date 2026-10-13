@@ -84,7 +84,7 @@ describe("ServerView", () => {
 
     renderWithProviders(<ServerView client={client} keyValue="test-key" />);
     expect(await screen.findByText("Server diagnostics unavailable")).toBeVisible();
-    expect(screen.getByText("Request ID: req-diag-1")).toBeVisible();
+    expect(screen.getByText("req-diag-1")).toBeVisible();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Try again" }));

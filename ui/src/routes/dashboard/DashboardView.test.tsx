@@ -96,7 +96,7 @@ describe("DashboardView", () => {
 
     renderWithProviders(<DashboardView client={client} keyValue="test-key" />);
     expect(await screen.findByText("Failed to fetch operations")).toBeVisible();
-    expect(screen.getByText("Request ID: req-err-1")).toBeVisible();
+    expect(screen.getByText("req-err-1")).toBeVisible();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Try again" }));

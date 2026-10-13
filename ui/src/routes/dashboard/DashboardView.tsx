@@ -108,6 +108,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
           <p>Operational signals for voice sessions and flows.</p>
         </header>
         <ErrorState
+          reassure
           error={operationsQuery.error as ApiError}
           onRetry={() => {
             void operationsQuery.refetch();

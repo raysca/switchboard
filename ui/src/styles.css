@@ -2425,3 +2425,42 @@ main:has(.providers-layout) {
   background: var(--paper);
   color: var(--ink);
 }
+
+.skeleton {
+  margin-top: 24px;
+  padding: 20px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.skeleton__row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1.4fr;
+  gap: 20px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.skeleton__row:last-child {
+  border-bottom: 0;
+}
+.skeleton__row span {
+  height: 10px;
+  border-radius: var(--radius);
+  background: var(--rule);
+}
+.error-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 14px;
+  margin: 4px 0 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+  color: var(--ink-2);
+}
+.error-details dd {
+  margin: 0;
+}
+.message-panel .row {
+  flex-wrap: wrap;
+  margin-top: 6px;
+}

@@ -125,7 +125,7 @@ describe("admin shell", () => {
           "Management key was rejected. Enter a key to reconnect.",
         ),
       ).toBeVisible();
-      expect(screen.getByText("Request ID: req-3")).toBeVisible();
+      expect(screen.getByText("req-3")).toBeVisible();
       expect(screen.getByLabelText(/management key/i)).toHaveFocus();
     } finally {
       vi.unstubAllGlobals();
@@ -173,7 +173,7 @@ describe("admin shell", () => {
       });
       expect(screen.getByRole("button", { name: "Clear key" })).toBeVisible();
       expect(screen.getByText("production")).toBeVisible();
-      expect(screen.queryByText("Request ID: req-A")).not.toBeInTheDocument();
+      expect(screen.queryByText("req-A")).not.toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }
