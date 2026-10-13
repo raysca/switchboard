@@ -274,3 +274,14 @@ failover:
   llm_first_token: 6s   # default 8s
   llm_budget: 45s       # default 60s
 ```
+
+## Public admin mode (single port)
+
+By default the management API (`/api/v1`) lives on the loopback admin listener and the admin UI runs separately. With `public_admin: {enabled: true}` the public listener also serves the management API and the embedded admin UI (build it in with `make ui-embed`), so one port carries the UI, the API and the voice socket. It is off by default.
+
+- Every management route still needs the management key. `/metrics`, `/ready` and `/debug/*` are not mounted on the public port (they answer non-200 there): metrics expose internals and stay on the admin listener. `/health` stays public.
+- `origin_allow_same_host: true` admits a browser whose `Origin` host equals the request `Host`, so the page can open the voice socket without listing its own origin in `origin_allowlist`. A foreign browser origin is still rejected.
+- Production requires `tls.trusted_proxy_mode` for both keys: the `Host` header and the client address must come from your proxy, not the caller. See `config/cloudrun.yaml`.
+- Failed management-key attempts are throttled per client address: after 10 failures the server answers 429 `too_many_attempts` ("too many failed attempts; try again shortly") until the window passes, and the UI shows that message. A missing key counts as a failure.
+- `GET /api/v1/server-config` (key required, never cached) reports `client_ip` and `secure`; check it after each deploy to confirm the proxy-trusted address is the real caller.
+- End-to-end check: `make e2e-oneport` (fake providers, no secrets).

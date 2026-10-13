@@ -110,6 +110,17 @@ The specs run in file order on one stack (one worker): later files use what earl
 behind. Shared helpers are in `lib/flows-helpers.ts` (admin API, navigation, the editor, the Test
 call panel) and `lib/mcp-helpers.ts` (the MCP test servers).
 
+## One-port suite
+
+`playwright.oneport.config.ts` (`make e2e-oneport`, also run by `make e2e-fake`) starts only the fake-provider
+server with the UI embedded (`make ui-embed`) and `public_admin` on, on public 18582 and admin 19592 (stack file
+`.stack-oneport.json`). `origin_allowlist` holds one unrelated origin, so only `origin_allow_same_host` admits
+the browser. No Vite.
+
+| Spec | What it proves |
+|---|---|
+| `10-oneport.spec.ts` | The embedded UI loads from the public origin and a client route survives a hard load; a text call works over the same-origin API and socket with no CSP violation; `/health` is public while `/metrics`, `/ready` and `/debug/timeline` are not; `server-config` needs the key, is `no-store` and reports the client address; a missing asset is 404; repeated wrong keys end in 429 and the page shows the server's message |
+
 | Spec | What it covers |
 |---|---|
 | `10-providers.spec.ts` | `GET /api/v1/providers` reports the suite's provider detected; the designer's dropdowns list only detected providers; the Providers page shows where the credential comes from and has no field for a key |

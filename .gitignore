@@ -42,6 +42,9 @@ e2e/.stack.json
 e2e/.stack-flows.json
 e2e/test-results-flows/
 e2e/playwright-report-flows/
+e2e/.stack-oneport.json
+e2e/test-results-oneport/
+e2e/playwright-report-oneport/
 
 # Agent worktrees
 .claude/worktrees/

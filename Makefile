@@ -156,6 +156,7 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 e2e-fake: ## free|Playwright browser e2e for routed flows against the fake providers (about 1 min)
 	cd ui && npm ci --no-audit --no-fund
 	cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium && npx playwright test -c playwright.flows.config.ts
+	$(MAKE) e2e-oneport
 
 # Every free end-to-end test: the Go suite, then the browser suite (fake providers, offline, about 2 min).
 e2e-free: test-e2e-go e2e-fake ## free|All free end-to-end tests: Go (test-e2e-go) then browser (e2e-fake)
@@ -167,7 +168,10 @@ e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOI
 	cd ui && npm ci --no-audit --no-fund
 	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.flows.config.ts
 
-.PHONY: e2e e2e-fake e2e-xai e2e-free test-e2e-go
+e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on fake providers
+	cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium && npx playwright test -c playwright.oneport.config.ts
+
+.PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-free test-e2e-go
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a
