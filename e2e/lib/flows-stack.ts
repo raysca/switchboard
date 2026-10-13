@@ -1,10 +1,10 @@
 import { test as base, expect } from "@playwright/test";
 import { flowsStackFile, readStack, type Stack } from "./stack";
 
-// The flow suite runs against the fake providers (free, offline) or, with
+// The flow suite runs against the echo provider (free, offline) or, with
 // E2E_PROVIDER=xai, against live xAI (make e2e-xai; spends API credit).
 export const LIVE = process.env.E2E_PROVIDER === "xai";
-export const PROVIDER = LIVE ? "xai" : "google";
+export const PROVIDER = LIVE ? "xai" : "echo";
 export const SKIP_LIVE_REASON = "No XAI_API_KEY (env or examples/.env): the live xAI run is skipped";
 
 export const test = base.extend<{ stack: Stack; _requireKey: void }>({

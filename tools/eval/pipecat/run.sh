@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Black-box eval: pipecat.evals (Python) drives the Go server over RTVI/WebSocket.
-# Providers are fakes (go build -tags fakeproviders, no network, no cost). See
+# Providers are the simulated echo provider (no keys, no network, no cost). See
 # docs/decisions/pipecat-evals.md. Skips (exit 0) when prerequisites are missing.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"; cd "$ROOT"
@@ -19,17 +19,15 @@ pc() { (cd "$PIPECAT" && uv run --quiet --extra cli python "$ROOT/tools/eval/pip
 OUT="$ROOT/.govoice-eval-pipecat"; rm -rf "$OUT"; mkdir -p "$OUT"; chmod 700 "$OUT"
 PUB="${EVAL_PUBLIC_PORT:-18680}"; ADM="${EVAL_ADMIN_PORT:-19690}"
 for p in "$PUB" "$ADM"; do curl -s -o /dev/null "http://127.0.0.1:$p/" && { echo "eval-pipecat: port $p in use (set EVAL_PUBLIC_PORT/EVAL_ADMIN_PORT)" >&2; exit 1; }; done
-go build -tags fakeproviders -o "$OUT/server-fake" ./cmd/server
+go build -o "$OUT/server-fake" ./cmd/server
 go build -o "$OUT/vadworker" ./cmd/vadworker   # server looks for vadworker next to itself
 sed -e "s|^public_listen_addr:.*|public_listen_addr: \"127.0.0.1:$PUB\"|" \
     -e "s|^admin_listen_addr:.*|admin_listen_addr: \"127.0.0.1:$ADM\"|" \
-    config/development.yaml > "$OUT/server.yaml"
+    config/development.yaml | awk '{print} /^providers:$/ {print "  echo: {mimic: instant, stt: audio}"}' > "$OUT/server.yaml"
 
 export GOVOICE_DEV_DIR="$OUT/data" GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)" TOKEN_SECRET="$(openssl rand -hex 32)"
-# Placeholder google keys so the catalog detects google (the fake build never uses them);
-# ENV_FILE=/dev/null stops the development server loading examples/.env itself.
-(umask 077; echo '{"type":"service_account"}' > "$OUT/sa.json")
-export GOOGLE_API_KEY=fake-eval-key GOOGLE_APPLICATION_CREDENTIALS="$OUT/sa.json" ENV_FILE=/dev/null
+# The flow uses the echo provider (no keys). ENV_FILE=/dev/null stops the development server loading examples/.env itself.
+export ENV_FILE=/dev/null
 mkdir -p "$GOVOICE_DEV_DIR"; chmod 700 "$GOVOICE_DEV_DIR"
 "$OUT/server-fake" -config "$OUT/server.yaml" -vad-mode inprocess >"$OUT/server.log" 2>&1 &
 SRV=$!; trap 'kill $SRV 2>/dev/null; wait $SRV 2>/dev/null || true' EXIT
@@ -39,7 +37,7 @@ for _ in $(seq 1 100); do curl -fsS "http://127.0.0.1:$ADM/ready" >/dev/null 2>&
 
 api() { curl -fsS -X POST "http://127.0.0.1:$ADM/api/v1/$1" -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" -H 'Content-Type: application/json' -d "$2"; }
 jid() { python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["id"])'; }
-FLOW=$(api flows '{"name":"Eval Fake","description":"fake providers","config":{"stt":{"provider":"google","model":"chirp_2","language":"en-US"},"llm":{"provider":"google","model":"fake","system_prompt":"fake"},"tts":{"provider":"google","voice":"fake"}}}' | jid)
+FLOW=$(api flows '{"name":"Eval Echo","description":"echo provider","config":{"stt":{"provider":"echo","model":"chirp_2","language":"en-US"},"llm":{"provider":"echo","model":"fake","system_prompt":"fake"},"tts":{"provider":"echo","voice":"fake"}}}' | jid)
 
 fail=0
 for f in tools/eval/pipecat/scenarios/*.yaml; do

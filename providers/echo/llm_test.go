@@ -257,3 +257,21 @@ func TestEchoNeverStreamsOneHugePiece(t *testing.T) {
 		}
 	}
 }
+
+func TestEchoCallIDsAreUniqueAcrossClients(t *testing.T) {
+	// Every step of a call builds its own client but shares one tool ledger: a repeated ID with a
+	// different call is a "conflicting tool call correlation" in the real tool loop.
+	id := func() string {
+		c := NewLLMClient(LLMOptions{Phrases: map[string]string{"go": "t"}})
+		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user("go"), nil, tools, core.ToolCall{})
+		for _, ck := range collect(t, ch, errs) {
+			if len(ck.ToolCalls) > 0 {
+				return ck.ToolCalls[0].ID
+			}
+		}
+		return ""
+	}
+	if a, b := id(), id(); a == "" || a == b {
+		t.Fatalf("call ids %q and %q must differ across clients", a, b)
+	}
+}

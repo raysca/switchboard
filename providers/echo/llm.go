@@ -26,9 +26,12 @@ type LLMOptions struct {
 // usage, tracing, tool loop) streams from it. It repeats the caller, word by word, and calls the
 // tool a known phrase asks for.
 type LLMClient struct {
-	o      LLMOptions
-	nextID atomic.Uint64
+	o LLMOptions
 }
+
+// callSeq makes tool call IDs unique across every client of the process: each step of a call builds
+// its own client, but the steps share one tool ledger, which rejects a reused ID.
+var callSeq atomic.Uint64
 
 func NewLLMClient(o LLMOptions) *LLMClient { return &LLMClient{o: o} }
 
@@ -158,7 +161,7 @@ func (c *LLMClient) toolCall(history []core.Message, hasTools bool) (core.ToolCa
 			if _, say := c.o.Spoken[name]; say {
 				args = toolArguments(msg)
 			}
-			return core.ToolCall{ID: "echo-call-" + strconv.FormatUint(c.nextID.Add(1), 10), Name: name, Arguments: args}, true
+			return core.ToolCall{ID: "echo-call-" + strconv.FormatUint(callSeq.Add(1), 10), Name: name, Arguments: args}, true
 		}
 	}
 	return core.ToolCall{}, false

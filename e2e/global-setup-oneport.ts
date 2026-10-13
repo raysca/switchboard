@@ -22,7 +22,7 @@ export default async function globalSetup() {
     if (await portOpen(port)) throw new Error(`port ${port} (${name}) already in use; stop the old stack first`);
 
   // Built after the UI is embedded, so the binary carries it.
-  execFileSync("go", ["build", "-tags", "xaispeech fakeproviders", "-o", "bin/server-fake", "./cmd/server"], {
+  execFileSync("go", ["build", "-tags", "xaispeech", "-o", "bin/server-echo", "./cmd/server"], {
     cwd: repo,
     stdio: ["ignore", fs.openSync(path.join(logDir, "build.log"), "w"), "inherit"],
   });
@@ -33,7 +33,9 @@ export default async function globalSetup() {
     .replace(/^public_listen_addr:.*$/m, `public_listen_addr: "127.0.0.1:${PORTS.public}"`)
     .replace(/^admin_listen_addr:.*$/m, `admin_listen_addr: "127.0.0.1:${PORTS.admin}"`)
     // An unrelated origin: only origin_allow_same_host can admit the browser.
-    .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n  - "https://not-this-site.example"\n`);
+    .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n  - "https://not-this-site.example"\n`)
+    // The echo provider needs no keys; instant = no provider latency, label_replies = each reply names its step.
+    .replace(/^providers:$/m, "providers:\n  echo:\n    mimic: instant\n    label_replies: true");
   const configPath = path.join(tmpDir, "server.yaml");
   fs.writeFileSync(configPath, `${config}\npublic_admin:\n  enabled: true\norigin_allow_same_host: true\n`);
 
@@ -50,20 +52,20 @@ export default async function globalSetup() {
     logDir,
     pids: {},
   };
+  // Placeholders so the dentistry demo's google, xai and elevenlabs stages are creatable; nothing builds them.
   const sa = path.join(tmpDir, "sa.json");
   fs.writeFileSync(sa, JSON.stringify({ type: "service_account" }), { mode: 0o600 });
   const save = () => fs.writeFileSync(oneportStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
   save();
 
   try {
-    stack.pids.server = start(logDir, "server", path.join(repo, "bin/server-fake"), ["-config", configPath, "-vad-mode", "inprocess"], repo, {
+    stack.pids.server = start(logDir, "server", path.join(repo, "bin/server-echo"), ["-config", configPath, "-vad-mode", "inprocess"], repo, {
       GOVOICE_ROOT: repo,
       GOVOICE_DEV_DIR: stack.devDir,
       TOKEN_SECRET: stack.tokenSecret,
       GOVOICE_MANAGEMENT_API_KEY: stack.managementKey,
       GOOGLE_API_KEY: "fake-google-key",
       GOOGLE_APPLICATION_CREDENTIALS: sa,
-      GOVOICE_FAKE_LLM_LABEL: "1",
       XAI_API_KEY: "fake-xai-key",
       ELEVENLABS_API_KEY: "fake-elevenlabs-key",
     });

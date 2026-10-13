@@ -23,7 +23,7 @@ test("first run: stack, flow, test call, connect", async ({ page, stack }) => {
 
   const name = providers.find((p) => p.id === PROVIDER)!.display_name;
   await expect(page.getByRole("heading", { name: "Choose how your flow hears, thinks and speaks." })).toBeVisible();
-  await expect(page.getByRole("radio", { name: new RegExp(name) })).toBeChecked();
+  await expect(page.getByRole("radio", { name })).toBeChecked();
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
   await step(page, "first run step 1 voice stack");
   await page.getByRole("button", { name: "Continue" }).click();

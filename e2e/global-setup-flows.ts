@@ -48,9 +48,9 @@ export default async function globalSetup() {
   for (const [name, port] of Object.entries(PORTS))
     if (await portOpen(port)) throw new Error(`port ${port} (${name}) already in use; stop the old stack first`);
 
-  // The tags match `make build` (xaispeech); the fake build adds fakeproviders. Never ship the fake binary.
-  const bin = LIVE ? "bin/server-live" : "bin/server-fake";
-  execFileSync("go", ["build", "-tags", LIVE ? "xaispeech" : "xaispeech fakeproviders", "-o", bin, "./cmd/server"], {
+  // The tags match `make build` (xaispeech); the echo provider is in every build.
+  const bin = LIVE ? "bin/server-live" : "bin/server-echo";
+  execFileSync("go", ["build", "-tags", "xaispeech", "-o", bin, "./cmd/server"], {
     cwd: repo,
     stdio: ["ignore", fs.openSync(path.join(logDir, "build.log"), "w"), "inherit"],
   });
@@ -72,7 +72,9 @@ export default async function globalSetup() {
     .replace(/^admin_listen_addr:.*$/m, `admin_listen_addr: "127.0.0.1:${PORTS.admin}"`)
     .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n${origins.map((o) => `  - "${o}"\n`).join("")}`)
     // Local test MCP servers; a short MCP timeout keeps the failure cases quick.
-    .replace(/^  allow_local_http: true$/m, "  allow_local_http: true\n  timeout: 2s");
+    .replace(/^  allow_local_http: true$/m, "  allow_local_http: true\n  timeout: 2s")
+    // The echo provider needs no keys; instant = no provider latency, label_replies = each reply names its step.
+    .replace(/^providers:$/m, "providers:\n  echo:\n    mimic: instant\n    label_replies: true");
   // A route cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the steps can name as "chime".
   const chime = path.join(tmpDir, "chime.wav");
   fs.writeFileSync(chime, toneWav(24000, 0.4, 440, 12000));
@@ -93,14 +95,16 @@ export default async function globalSetup() {
     pids: {},
     mcpUrl: `http://127.0.0.1:${PORTS.mcp}`,
   };
-  // The server reads provider secrets from its environment only. Fake: placeholders, so the
-  // catalog detects google (the fake build never uses them). Live: the xAI key and nothing else.
+  // The server reads provider secrets from its environment only. Echo needs none for the suite's own
+  // provider. The dentistry demo's flow names google, xai and elevenlabs stages, so placeholder keys
+  // for those make it creatable; nothing builds them (dental-helpers rewrites every stage to echo).
+  // Live: the xAI key and nothing else.
   let providerEnv: Record<string, string>;
   if (LIVE) providerEnv = { XAI_API_KEY: process.env.E2E_XAI_SECRET! };
   else {
     const sa = path.join(tmpDir, "sa.json");
     fs.writeFileSync(sa, JSON.stringify({ type: "service_account" }), { mode: 0o600 });
-    providerEnv = { GOOGLE_API_KEY: "fake-google-key", GOOGLE_APPLICATION_CREDENTIALS: sa, GOVOICE_FAKE_LLM_LABEL: "1", XAI_API_KEY: "fake-xai-key", ELEVENLABS_API_KEY: "fake-elevenlabs-key" };
+    providerEnv = { GOOGLE_API_KEY: "fake-google-key", GOOGLE_APPLICATION_CREDENTIALS: sa, XAI_API_KEY: "fake-xai-key", ELEVENLABS_API_KEY: "fake-elevenlabs-key" };
   }
 
   const save = () => fs.writeFileSync(flowsStackFile, JSON.stringify(stack, null, 2), { mode: 0o600 });
