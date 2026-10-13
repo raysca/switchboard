@@ -11,6 +11,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/audio/dtmf"
+	"govoice/core/coretest"
 )
 
 type gain struct {
@@ -112,7 +113,7 @@ func startSession(t *testing.T, procs ...core.Processor) *core.Session {
 	return s
 }
 
-func waitFrames(t *testing.T, sink *core.PassthroughProcessor, n int) []*core.InputAudioFrame {
+func waitFrames(t *testing.T, sink *coretest.PassthroughProcessor, n int) []*core.InputAudioFrame {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -133,7 +134,7 @@ func waitFrames(t *testing.T, sink *core.PassthroughProcessor, n int) []*core.In
 }
 
 func TestProcessorCopyOnWriteAndPassThrough(t *testing.T) {
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	p := NewProcessor(NewChain(&gain{name: "g", k: 2}), sr)
 	s := startSession(t, p, sink)
 
@@ -173,7 +174,7 @@ func TestProcessorCopyOnWriteAndPassThrough(t *testing.T) {
 }
 
 func TestProcessorFailsOpen(t *testing.T) {
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	p := NewProcessor(NewChain(&gain{name: "g", fail: errors.New("boom")}), sr)
 	s := startSession(t, p, sink)
 	f := inFrame(pcmBytes([]int16{1, 2}), sr, 1)
@@ -199,7 +200,7 @@ func detectedDigits(t *testing.T, filterFirst bool) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	fp := NewProcessor(NewChain(zero{}), sr)
 	procs := []core.Processor{det, fp, sink}
 	if filterFirst {
@@ -235,7 +236,7 @@ func TestDTMFSeesUnfilteredAudio(t *testing.T) {
 
 func TestPipelineWithDenoiser(t *testing.T) {
 	d, _ := NewDenoiser(0.5)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	s := startSession(t, NewProcessor(NewChain(d), sr), sink)
 	clean := speechLike(1, 3)
 	b := pcmBytes(mix(clean, whiteNoise(2, len(clean)), 5))

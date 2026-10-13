@@ -18,6 +18,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 )
 
@@ -89,7 +90,7 @@ func readUtterance(ctx context.Context, c *websocket.Conn) (string, error) {
 type wsHarness struct {
 	proc *StreamingTTSProcessor
 	sess *core.Session
-	sink *core.PassthroughProcessor
+	sink *coretest.PassthroughProcessor
 }
 
 func wsStart(t *testing.T, cfg TTSConfig) *wsHarness {
@@ -98,7 +99,7 @@ func wsStart(t *testing.T, cfg TTSConfig) *wsHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

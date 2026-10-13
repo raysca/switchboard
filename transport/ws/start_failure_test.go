@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 )
@@ -39,7 +40,7 @@ func TestSessionStartFailureReleasesSlot(t *testing.T) {
 
 	var calls atomic.Int32
 	server.OnSessionReady = func(*ws.Connection) (*core.Session, error) {
-		var proc core.Processor = &core.PassthroughProcessor{}
+		var proc core.Processor = &coretest.PassthroughProcessor{}
 		if calls.Add(1) == 1 {
 			proc = attachFails{}
 		}

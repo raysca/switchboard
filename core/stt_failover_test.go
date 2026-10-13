@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/transcript"
 )
 
@@ -21,7 +22,7 @@ type sttRig struct {
 	t        *testing.T
 	sess     *core.Session
 	w        *core.STTFailover
-	rec      *core.PassthroughProcessor
+	rec      *coretest.PassthroughProcessor
 	events   chan core.DebugEvent
 	mu       sync.Mutex
 	switches []string
@@ -30,15 +31,15 @@ type sttRig struct {
 	sent     []byte
 }
 
-func fakeSTT(name string, cfg core.FakeSTTConfig) *core.FakeSTTProcessor {
+func fakeSTT(name string, cfg coretest.STTConfig) *coretest.STTProcessor {
 	cfg.Provider, cfg.Words = name, words
-	return core.NewFakeSTTProcessor(cfg)
+	return coretest.NewSTTProcessor(cfg)
 }
 
 // newSTTRig builds [failover, (transcript finalizer), recorder].
 func newSTTRig(t *testing.T, cfg core.STTFailoverConfig, finalizer bool) *sttRig {
 	t.Helper()
-	r := &sttRig{t: t, rec: &core.PassthroughProcessor{}, events: make(chan core.DebugEvent, 16)}
+	r := &sttRig{t: t, rec: &coretest.PassthroughProcessor{}, events: make(chan core.DebugEvent, 16)}
 	cfg.OnFailover = func(from, to, class string) {
 		r.mu.Lock()
 		r.switches = append(r.switches, from+">"+to+":"+class)
@@ -174,8 +175,8 @@ func cands(a, b core.STTCandidate) []core.STTCandidate { return []core.STTCandid
 const allWords = "w0 w1 w2 w3 w4"
 
 func TestSTTFailoverMidUtteranceReplaysAndTranscribesOnce(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{FailAfter: 3})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{FailAfter: 3})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 	r.audio(0) // pre-speech padding: VAD reports the start late
 	r.start()
@@ -211,8 +212,8 @@ func TestSTTFailoverMidUtteranceReplaysAndTranscribesOnce(t *testing.T) {
 }
 
 func TestSTTFailoverStreamOpenFailureReplaysFromBuffer(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 	r.audio(0)
 	r.audio(1)
@@ -234,8 +235,8 @@ func TestSTTFailoverStreamOpenFailureReplaysFromBuffer(t *testing.T) {
 
 func TestSTTFailoverDropsAbandonedCandidateOutputAndInvalidation(t *testing.T) {
 	for _, invalidate := range []bool{false, true} {
-		primary := fakeSTT("a", core.FakeSTTConfig{FailAfter: 2, ZombieOnFail: true, InvalidateOnFail: invalidate})
-		fallback := fakeSTT("b", core.FakeSTTConfig{})
+		primary := fakeSTT("a", coretest.STTConfig{FailAfter: 2, ZombieOnFail: true, InvalidateOnFail: invalidate})
+		fallback := fakeSTT("b", coretest.STTConfig{})
 		r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 		r.start()
 		r.audio(0)
@@ -263,8 +264,8 @@ func TestSTTFailoverDropsAbandonedCandidateOutputAndInvalidation(t *testing.T) {
 }
 
 func TestSTTFailoverCommittedFinalOnce(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{FailAfter: 3})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{FailAfter: 3})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, true)
 	r.start()
 	for _, w := range []int{0, 1, 2} {
@@ -298,8 +299,8 @@ func TestSTTFailoverCommittedFinalOnce(t *testing.T) {
 }
 
 func TestSTTFailoverBufferIsBoundedAndOldestDropped(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{BufferBytes: 5 * 64, Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 	for i := 0; i < 30; i++ {
 		r.audio(i % 10)
@@ -322,8 +323,8 @@ func TestSTTFailoverBufferIsBoundedAndOldestDropped(t *testing.T) {
 }
 
 func TestSTTFailoverLongUtteranceKeepsFinalizedPrefix(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{FinalEvery: 4, FailAfter: 6})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{FinalEvery: 4, FailAfter: 6})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{BufferBytes: 3 * 64, Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 	r.start()
 	for w := 0; w < 6; w++ {
@@ -345,8 +346,8 @@ func TestSTTFailoverLongUtteranceKeepsFinalizedPrefix(t *testing.T) {
 
 func TestSTTFailoverReturnsToPrimaryPerUtterance(t *testing.T) {
 	var primaryOpen atomic.Bool
-	primary := fakeSTT("a", core.FakeSTTConfig{})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(
 		core.STTCandidate{Provider: "a", Proc: primary, Open: primaryOpen.Load},
 		core.STTCandidate{Provider: "b", Proc: fallback})}, false)
@@ -379,8 +380,8 @@ func TestSTTFailoverReturnsToPrimaryPerUtterance(t *testing.T) {
 }
 
 func TestSTTFailoverFailureBetweenUtterancesMovesLazily(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 	primary.Break(errors.New("503"))
 	r.audio(0) // idle: fails, the next candidate takes over and gets this frame
@@ -397,8 +398,8 @@ func TestSTTFailoverFailureBetweenUtterancesMovesLazily(t *testing.T) {
 }
 
 func TestSTTFailoverBargeInRebindsAndSurvivesFailover(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{FailAfter: 3})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{FailAfter: 3})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 	g1 := r.sess.CurrentGeneration()
 	r.start()
@@ -421,8 +422,8 @@ func TestSTTFailoverBargeInRebindsAndSurvivesFailover(t *testing.T) {
 }
 
 func TestSTTFailoverEveryCandidateFailingSurfacesOneError(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{FailAfter: 1})
-	fallback := fakeSTT("b", core.FakeSTTConfig{FailAfter: 1})
+	primary := fakeSTT("a", coretest.STTConfig{FailAfter: 1})
+	fallback := fakeSTT("b", coretest.STTConfig{FailAfter: 1})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 	r.start()
 	r.audio(0)
@@ -434,8 +435,8 @@ func TestSTTFailoverEveryCandidateFailingSurfacesOneError(t *testing.T) {
 }
 
 func TestSTTFailoverDisallowedClassPassesThrough(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{FailAfter: 1})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{FailAfter: 1})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{
 		Classify: func(error) string { return "client_error" }, Allow: func(c string) bool { return c != "client_error" },
 		Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
@@ -481,8 +482,8 @@ func BenchmarkSTTFailoverAudioFrame(b *testing.B) {
 // The failed candidate already emitted a provider final for part of the
 // utterance: the real finalizer must still commit the whole utterance, once.
 func TestSTTFailoverEarlierProviderFinalCommitsWholeUtteranceOnce(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{FinalEvery: 2, FailAfter: 3})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{FinalEvery: 2, FailAfter: 3})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, true)
 	r.start()
 	r.audio(0)
@@ -512,8 +513,8 @@ func TestSTTFailoverEarlierProviderFinalCommitsWholeUtteranceOnce(t *testing.T) 
 // utterance; the next audio cannot reopen it. The fallback takes over on that
 // frame and the next utterance keeps its first words.
 func TestSTTFailoverIdleCloseThenSpeechKeepsFirstWords(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
 	r.start()
 	r.audio(0)
@@ -539,8 +540,8 @@ func TestSTTFailoverIdleCloseThenSpeechKeepsFirstWords(t *testing.T) {
 // delivered a speech-final for part of the turn, while the turn is still running. The merge must
 // commit the whole utterance exactly once, from the fallback, with no error downstream.
 func TestSTTFailoverInvalidatingDropAfterSpeechFinalCommitsOnce(t *testing.T) {
-	primary := fakeSTT("a", core.FakeSTTConfig{FinalEvery: 2, FailAfter: 3, InvalidateOnFail: true})
-	fallback := fakeSTT("b", core.FakeSTTConfig{})
+	primary := fakeSTT("a", coretest.STTConfig{FinalEvery: 2, FailAfter: 3, InvalidateOnFail: true})
+	fallback := fakeSTT("b", coretest.STTConfig{})
 	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, true)
 	r.start()
 	r.audio(0)

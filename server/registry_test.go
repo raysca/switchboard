@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 	coreturn "govoice/core/turn"
 	"govoice/providers/google"
@@ -51,7 +52,7 @@ func TestTranscriptDeadlinePipelineDelayedFinalInterimAndEmptyTurns(t *testing.T
 			finalizer, _ := coretranscript.NewProcessor(cfg)
 			conversation := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 			user := core.NewUserContextProcessor(conversation, core.UserContextConfig{RequireCommittedTranscript: true})
-			sink := &core.PassthroughProcessor{}
+			sink := &coretest.PassthroughProcessor{}
 			pipe, _ := core.NewPipeline(finalizer, user, sink)
 			session, _ := core.NewSession(920, pipe, core.DefaultResourceBudget())
 			var mu sync.Mutex
@@ -177,7 +178,7 @@ func TestBuildCallPipelineClosesBuiltStagesOnFailure(t *testing.T) {
 func TestCallUserContextIndexMatchesPipeline(t *testing.T) {
 	reg := NewRegistry()
 	for _, stage := range []string{"stt", "llm", "tts"} {
-		reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}}
@@ -193,7 +194,7 @@ func TestCallUserContextIndexMatchesPipeline(t *testing.T) {
 func TestTurnManagerPipelineInstallsProcessorAfterSTT(t *testing.T) {
 	reg := NewRegistry()
 	for _, stage := range []string{"stt", "llm", "tts"} {
-		reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}}
@@ -394,12 +395,12 @@ func TestTurnManagerCallPipelineEndToEnd(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return stt, nil })
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"You said: "}, EchoUser: true}), nil
+		return coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"You said: "}, EchoUser: true}), nil
 	})
 	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2}), nil
+		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2}), nil
 	})
-	out := core.NewFakeTransportOutput(core.FakeTransportConfig{WriteDelay: time.Minute}) // bot audio stays "playing"
+	out := coretest.NewTransportOutput(coretest.TransportConfig{WriteDelay: time.Minute}) // bot audio stays "playing"
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Turn.Manager, cfg.Turn.MinWords = true, 3
 	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}}
@@ -491,7 +492,7 @@ func TestTurnManagerCallPipelineEndToEnd(t *testing.T) {
 func TestPushToTalkCallInstallsTurnProcessor(t *testing.T) {
 	reg := NewRegistry()
 	for _, stage := range []string{"stt", "llm", "tts"} {
-		reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Turn.Manager = false
@@ -515,7 +516,7 @@ func TestPushToTalkCallSkipsSmartTurn(t *testing.T) {
 	for _, withModel := range []bool{true, false} {
 		reg := NewRegistry()
 		for _, stage := range []string{"stt", "llm", "tts"} {
-			reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+			reg.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 		}
 		if withModel {
 			reg.SetTurnBackend(smartBackend{p: 0.9})
@@ -531,7 +532,7 @@ func TestPushToTalkCallSkipsSmartTurn(t *testing.T) {
 			t.Fatalf("model=%t: %v", withModel, err)
 		}
 		procs := pipe.Processors()
-		if _, ok := procs[1].(*core.PassthroughProcessor); !ok {
+		if _, ok := procs[1].(*coretest.PassthroughProcessor); !ok {
 			t.Fatalf("model=%t: processor 1 is %T, want STT (no smart-turn tap)", withModel, procs[1])
 		}
 		if _, ok := procs[2].(*coreturn.Processor); !ok {
@@ -546,11 +547,11 @@ func TestPushToTalkCallSkipsLLMCompletion(t *testing.T) {
 	for _, ptt := range []bool{true, false} {
 		reg := NewRegistry()
 		var prompt string
-		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
-		reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+		reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 		reg.Register("google.llm", func(_ *Config, s StageSpec) (core.Processor, error) {
 			prompt = s.SystemPrompt
-			return &core.PassthroughProcessor{}, nil
+			return &coretest.PassthroughProcessor{}, nil
 		})
 		cfg := DefaultConfig(ProfileDevelopment)
 		cfg.Turn.Manager = true

@@ -1,6 +1,9 @@
-package core
+package core_test
 
 import (
+	"govoice/core"
+	"govoice/core/coretest"
+
 	"context"
 	"sync"
 	"testing"
@@ -11,11 +14,11 @@ import (
 // is filled with media frames, an urgent control frame (Cancel, Flush, Interruption, End)
 // is admitted and delivered ahead of the congested media frames.
 func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
-	var processed []Frame
+	var processed []core.Frame
 	var mu sync.Mutex
 
 	// Processor records processed frames
-	pipe, _ := NewPipeline(&testFnProcessor{fn: func(_ context.Context, f Frame, d Direction, e Emitter) error {
+	pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
 		mu.Lock()
 		processed = append(processed, f)
 		mu.Unlock()
@@ -23,11 +26,11 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 	}})
 
 	// Budget with large data queue but small enough to test queueing
-	budget := DefaultResourceBudget()
+	budget := core.DefaultResourceBudget()
 	budget.MaxQueuedFrames = 100
 	budget.MaxControlFrames = 50
 
-	s, err := NewSession(200, pipe, budget)
+	s, err := core.NewSession(200, pipe, budget)
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
@@ -35,9 +38,9 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 	// Do NOT start session yet so we can pre-populate queues
 	// Pre-fill data queue with 10 media frames
 	for i := 0; i < 10; i++ {
-		audioFrame := &InputAudioFrame{
+		audioFrame := &core.InputAudioFrame{
 			Samples:    []byte{byte(i)},
-			Encoding:   EncodingPCM16LE,
+			Encoding:   core.EncodingPCM16LE,
 			SampleRate: 16000,
 			Channels:   1,
 		}
@@ -47,13 +50,13 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 	}
 
 	// Post an urgent control frame: CancelFrame
-	cancelFrame := &CancelFrame{}
+	cancelFrame := &core.CancelFrame{}
 	if err := s.Post(cancelFrame); err != nil {
 		t.Fatalf("Post CancelFrame: %v", err)
 	}
 
 	// Also post an ordinary control frame: InputMuteFrame
-	muteFrame := &InputMuteFrame{}
+	muteFrame := &core.InputMuteFrame{}
 	if err := s.Post(muteFrame); err != nil {
 		t.Fatalf("Post InputMuteFrame: %v", err)
 	}
@@ -76,7 +79,7 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 
 	// The urgent frame (CancelFrame) must be processed BEFORE the ordinary data queue frames
 	firstProcessed := processed[0]
-	if firstProcessed.Type() != FrameCancel {
+	if firstProcessed.Type() != core.FrameCancel {
 		t.Fatalf("expected first processed frame to be FrameCancel, got %v", firstProcessed.Type())
 	}
 }
@@ -84,21 +87,21 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 // TestUrgentControl_PreservesControlOrder verifies that multiple urgent frames
 // posted consecutively maintain strict FIFO order among themselves.
 func TestUrgentControl_PreservesControlOrder(t *testing.T) {
-	var processedTypes []FrameType
+	var processedTypes []core.FrameType
 	var mu sync.Mutex
 
-	pipe, _ := NewPipeline(&testFnProcessor{fn: func(_ context.Context, f Frame, d Direction, e Emitter) error {
+	pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
 		mu.Lock()
 		processedTypes = append(processedTypes, f.Type())
 		mu.Unlock()
 		return e.PushDirection(f, d)
 	}})
 
-	s, _ := NewSession(201, pipe, DefaultResourceBudget())
+	s, _ := core.NewSession(201, pipe, core.DefaultResourceBudget())
 
 	// Post urgent frames in specific order: Flush -> Cancel
-	_ = s.Post(&FlushFrame{Gen: 1})
-	_ = s.Post(&CancelFrame{})
+	_ = s.Post(&core.FlushFrame{Gen: 1})
+	_ = s.Post(&core.CancelFrame{})
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -114,10 +117,10 @@ func TestUrgentControl_PreservesControlOrder(t *testing.T) {
 		t.Fatalf("expected 2 processed frames, got %d: %v", len(processedTypes), processedTypes)
 	}
 
-	if processedTypes[0] != FrameFlush {
+	if processedTypes[0] != core.FrameFlush {
 		t.Fatalf("expected first frame FrameFlush, got %v", processedTypes[0])
 	}
-	if processedTypes[1] != FrameCancel {
+	if processedTypes[1] != core.FrameCancel {
 		t.Fatalf("expected second frame FrameCancel, got %v", processedTypes[1])
 	}
 }
@@ -129,9 +132,9 @@ func TestUrgentControl_StarvationPrevention(t *testing.T) {
 	var controlCount int
 	var mu sync.Mutex
 
-	pipe, _ := NewPipeline(&testFnProcessor{fn: func(_ context.Context, f Frame, d Direction, e Emitter) error {
+	pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
 		mu.Lock()
-		if f.Type() == FrameInputAudio {
+		if f.Type() == core.FrameInputAudio {
 			dataCount++
 		} else {
 			controlCount++
@@ -140,7 +143,7 @@ func TestUrgentControl_StarvationPrevention(t *testing.T) {
 		return e.PushDirection(f, d)
 	}})
 
-	s, _ := NewSession(202, pipe, DefaultResourceBudget())
+	s, _ := core.NewSession(202, pipe, core.DefaultResourceBudget())
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -154,7 +157,7 @@ func TestUrgentControl_StarvationPrevention(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 20; i++ {
-			_ = s.Post(&InputAudioFrame{Samples: []byte{byte(i)}, Encoding: EncodingPCM16LE})
+			_ = s.Post(&core.InputAudioFrame{Samples: []byte{byte(i)}, Encoding: core.EncodingPCM16LE})
 			time.Sleep(2 * time.Millisecond)
 		}
 	}()
@@ -163,7 +166,7 @@ func TestUrgentControl_StarvationPrevention(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 20; i++ {
-			_ = s.Post(&CancelFrame{})
+			_ = s.Post(&core.CancelFrame{})
 			time.Sleep(2 * time.Millisecond)
 		}
 	}()
@@ -185,16 +188,16 @@ func TestUrgentControl_StarvationPrevention(t *testing.T) {
 // TestUrgentControl_ShutdownGrace verifies that an urgent EndFrame immediately
 // begins orderly teardown even when media frames are queued.
 func TestUrgentControl_ShutdownGrace(t *testing.T) {
-	pipe, _ := NewPipeline(&PassthroughProcessor{})
-	s, _ := NewSession(203, pipe, DefaultResourceBudget())
+	pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
+	s, _ := core.NewSession(203, pipe, core.DefaultResourceBudget())
 
 	// Enqueue media frames
 	for i := 0; i < 5; i++ {
-		_ = s.Post(&InputAudioFrame{Samples: []byte{1, 2}, Encoding: EncodingPCM16LE})
+		_ = s.Post(&core.InputAudioFrame{Samples: []byte{1, 2}, Encoding: core.EncodingPCM16LE})
 	}
 
 	// Post EndFrame
-	if err := s.Post(&EndFrame{}); err != nil {
+	if err := s.Post(&core.EndFrame{}); err != nil {
 		t.Fatalf("Post EndFrame: %v", err)
 	}
 

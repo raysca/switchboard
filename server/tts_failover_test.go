@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 	"govoice/providers/cartesia"
 	"govoice/providers/elevenlabs"
@@ -53,15 +54,15 @@ func ttsFailoverRegistry(primaryFails, fallbackFails bool) *Registry {
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return passSTTStage{}, nil })
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"First sentence. ", "Second sentence. ", "Third one."}}), nil
+		return coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"First sentence. ", "Second sentence. ", "Third one."}}), nil
 	})
 	tts := func(fail bool) ProcessorFactory {
 		return func(*Config, StageSpec) (core.Processor, error) {
-			cfg := core.FakeTTSConfig{FramesPerUnit: 2}
+			cfg := coretest.TTSConfig{FramesPerUnit: 2}
 			if fail {
 				cfg.FailWith = errors.New("503 upstream")
 			}
-			return core.NewFakeTTSProcessor(cfg), nil
+			return coretest.NewTTSProcessor(cfg), nil
 		}
 	}
 	reg.Register("google.tts", tts(primaryFails))
@@ -110,7 +111,7 @@ func TestCallPipelineTTSFailoverSpeaksEachUnitOnce(t *testing.T) {
 	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"},
 		TTSFallbacks: []StageSpec{{Provider: "xai", Voice: "eve"}}, MaxMessages: 10, MaxTokens: 1000}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
-	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		t.Fatal(err)
 	}

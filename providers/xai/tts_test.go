@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type mockTTSClient struct {
@@ -45,7 +46,7 @@ func TestXAITTS_Success(t *testing.T) {
 		t.Fatalf("new tts processor: %v", err)
 	}
 
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
@@ -120,7 +121,7 @@ func TestXAITTS_MultiUnitAudibleThenEmptyFinal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(11, pipe, core.DefaultResourceBudget())
 	if err := session.Start(); err != nil {
@@ -165,7 +166,7 @@ func TestXAITTS_StaleGenerationDrop(t *testing.T) {
 		t.Fatalf("new tts processor: %v", err)
 	}
 
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
@@ -214,7 +215,7 @@ func TestXAITTS_ErrorHandling(t *testing.T) {
 		t.Fatalf("new tts processor: %v", err)
 	}
 
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
@@ -271,7 +272,7 @@ func TestXAITTS_MultiSentenceQueue_FIFO(t *testing.T) {
 		t.Fatalf("new tts processor: %v", err)
 	}
 
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // ProfanityMaskProcessor is a custom application-level core.Processor that inspects
@@ -95,8 +96,8 @@ func main() {
 	customFilter := NewProfanityMaskProcessor([]string{"secret", "classified", "forbidden"})
 
 	// 2. Build pipeline with custom processor inserted between upstream and sink
-	sourceProc := &core.PassthroughProcessor{}
-	sinkProc := &core.PassthroughProcessor{}
+	sourceProc := &coretest.PassthroughProcessor{}
+	sinkProc := &coretest.PassthroughProcessor{}
 
 	pipeline, err := core.NewPipeline(
 		sourceProc,

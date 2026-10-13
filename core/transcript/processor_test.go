@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type manualPolicyClock struct {
@@ -132,7 +133,7 @@ func TestProcessorDeadlineDriverCommitsWithoutExplicitAdvance(t *testing.T) {
 	cfg := testConfig()
 	cfg.GracePeriod = 5 * time.Millisecond
 	p, _ := NewProcessor(cfg)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(p, sink)
 	session, _ := core.NewSession(991, pipe, core.DefaultResourceBudget())
 	if err := session.Start(); err != nil {

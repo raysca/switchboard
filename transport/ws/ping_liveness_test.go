@@ -16,6 +16,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 )
@@ -53,7 +54,7 @@ func newPingEnv(t *testing.T, tweak func(*ws.ServerConfig)) *pingEnv {
 	srv := ws.NewServer(cfg)
 	srv.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
 		time.Sleep(time.Duration(e.setup.Load()))
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		sess, err := core.NewSession(conn.Pacer().FramesWritten.Load()+1, pipe, core.DefaultResourceBudget())
 		e.conn.Store(conn)
 		e.sess.Store(sess)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 	"govoice/providers/cartesia"
 	"govoice/providers/deepgram"
@@ -61,26 +62,26 @@ func TestSTTClassifyPerProvider(t *testing.T) {
 
 var sttWords = []string{"book", "a", "table", "for", "two"}
 
-func sttRegistry(primary core.FakeSTTConfig) *Registry {
+func sttRegistry(primary coretest.STTConfig) *Registry {
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) {
 		primary.Provider, primary.Words = "google", sttWords
-		return core.NewFakeSTTProcessor(primary), nil
+		return coretest.NewSTTProcessor(primary), nil
 	})
 	reg.Register("deepgram.stt", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeSTTProcessor(core.FakeSTTConfig{Provider: "deepgram", Words: sttWords}), nil
+		return coretest.NewSTTProcessor(coretest.STTConfig{Provider: "deepgram", Words: sttWords}), nil
 	})
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"Heard: "}, EchoUser: true}), nil
+		return coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"Heard: "}, EchoUser: true}), nil
 	})
 	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 1}), nil
+		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 1}), nil
 	})
 	return reg
 }
 
 func TestBuildSTTWrapsOnlyWithFallbacksAndCountsSkips(t *testing.T) {
-	reg := sttRegistry(core.FakeSTTConfig{})
+	reg := sttRegistry(coretest.STTConfig{})
 	m := NewMetrics()
 	reg.BindMetrics(m)
 	build := func(stage string, sp StageSpec) (core.Processor, error) {
@@ -120,13 +121,13 @@ func TestBuildSTTWrapsOnlyWithFallbacksAndCountsSkips(t *testing.T) {
 // middle of the utterance, the fallback gets the buffered audio, and the LLM is
 // asked exactly once with the whole utterance.
 func TestCallPipelineSTTFailoverLLMGetsWholeUtteranceOnce(t *testing.T) {
-	reg := sttRegistry(core.FakeSTTConfig{FailAfter: 3})
+	reg := sttRegistry(coretest.STTConfig{FailAfter: 3})
 	m := NewMetrics()
 	reg.BindMetrics(m)
 	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"},
 		STTFallbacks: []StageSpec{{Provider: "deepgram"}}, MaxMessages: 10, MaxTokens: 1000}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
-	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type muteHarness struct {
@@ -21,7 +22,7 @@ type muteHarness struct {
 func newMuteHarness(t *testing.T, cfg Config, strategies []UserMuteStrategy, max time.Duration) *muteHarness {
 	t.Helper()
 	m := &muteHarness{debugs: make(chan core.DebugEvent, 32)}
-	m.harness = &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &core.PassthroughProcessor{}}
+	m.harness = &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &coretest.PassthroughProcessor{}}
 	proc, err := NewProcessor(cfg, ProcessorOptions{Clock: m.clk, Mute: strategies, MaxMute: max, OnMuteDrop: func() { m.drops.Add(1) }})
 	if err != nil {
 		t.Fatal(err)

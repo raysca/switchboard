@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type eofSendStream struct {
@@ -41,7 +42,7 @@ func TestGoogleSTTSendEOFIsNotSessionFailure(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	proc, _ := NewSTTProcessor(cfg)
-	pipe, _ := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
 	session, _ := core.NewSession(36, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
 	defer session.Close()

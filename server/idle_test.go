@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/ws"
 	"govoice/vad"
 )
@@ -20,7 +21,7 @@ import (
 // pacerTransport feeds the fake transport's output through the real ws pacer,
 // so unit-id rules the fake ignores (session-monotonic ids) fail the session.
 type pacerTransport struct {
-	*core.FakeTransportOutput
+	*coretest.TransportOutput
 	w *ws.PacedWriter
 }
 
@@ -30,7 +31,7 @@ func (p *pacerTransport) ProcessFrame(ctx context.Context, f core.Frame, dir cor
 			return err
 		}
 	}
-	return p.FakeTransportOutput.ProcessFrame(ctx, f, dir, e)
+	return p.TransportOutput.ProcessFrame(ctx, f, dir, e)
 }
 
 func TestIdleConfigValidation(t *testing.T) {
@@ -65,7 +66,7 @@ func idleTestPipeline(t *testing.T, cfg *Config) *core.Pipeline {
 	t.Helper()
 	reg := NewRegistry()
 	for _, k := range []string{"google.stt", "google.llm", "google.tts"} {
-		reg.Register(k, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register(k, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}}
@@ -161,14 +162,14 @@ func newIdleE2E(t *testing.T, mod func(*Config)) *idleE2E {
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return passSTTStage{}, nil })
 	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2}), nil
+		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2}), nil
 	})
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return r.llm, nil })
 	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, MaxMessages: 20, MaxTokens: 4000}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	w := ws.NewPacedWriter(ws.PacerConfig{EnablePacing: false}, func(context.Context, []byte) error { return nil })
 	t.Cleanup(func() { w.Close() })
-	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, &pacerTransport{core.NewFakeTransportOutput(core.FakeTransportConfig{}), w})
+	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, &pacerTransport{coretest.NewTransportOutput(coretest.TransportConfig{}), w})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,9 +349,9 @@ func TestIdleSpeakIndexFollowsFrontInsertions(t *testing.T) {
 		cfg.Idle.UserTimeout = 15 * time.Second
 		mod(cfg)
 		reg := NewRegistry()
-		tts := &core.PassthroughProcessor{}
-		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
-		reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		tts := &coretest.PassthroughProcessor{}
+		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+		reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 		reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return tts, nil })
 		vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 		call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}}

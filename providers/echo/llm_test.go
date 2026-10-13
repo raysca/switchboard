@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/providers/google"
 )
 
@@ -203,7 +204,7 @@ func TestRealLLMProcessorRunsTheToolLoopAgainstEcho(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	sess, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = proc.Attach(sess, 0)

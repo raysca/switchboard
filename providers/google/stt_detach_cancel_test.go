@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type ctxRecordingOpener struct {
@@ -30,7 +31,7 @@ func TestGoogleSTTDetachedStreamContextIsCancelledWhenItEnds(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	proc, _ := NewSTTProcessor(cfg)
-	pipe, _ := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
 	session, _ := core.NewSession(35, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
 	defer session.Close()
@@ -75,7 +76,7 @@ func TestGoogleSTTHalfCloseErrorCancelsAndReports(t *testing.T) {
 		t.Fatal(err)
 	}
 	var errs atomic.Int64
-	pipe, err := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func TestGoogleSTTDetachedFinalSurvivesLaterGeneration(t *testing.T) {
 	}
 	var mu sync.Mutex
 	var got string
-	pipe, err := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +190,7 @@ func TestGoogleSTTActiveStreamDropsStaleGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got int
-	pipe, err := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}

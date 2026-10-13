@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type frameRec struct{ frames []core.Frame }
@@ -86,7 +87,7 @@ func TestFailedMiddleUnitIsSkippedInCommit(t *testing.T) {
 func TestUnitFailureReporterClosesReply(t *testing.T) {
 	ctx := core.NewConversationContext(core.ContextConfig{})
 	asst := core.NewAssistantContextProcessor(ctx, core.DefaultAssistantContextConfig())
-	tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{FailWith: errors.New("tts down")})
+	tts := coretest.NewTTSProcessor(coretest.TTSConfig{FailWith: errors.New("tts down")})
 	pipe, err := core.NewPipeline(asst, tts, &core.UnitFailureReporter{})
 	if err != nil {
 		t.Fatal(err)
@@ -136,14 +137,14 @@ func (g *gateStage) ProcessFrame(_ context.Context, f core.Frame, dir core.Direc
 func TestUnitFailureReporterIgnoresUnitWithQueuedAudio(t *testing.T) {
 	ctx := core.NewConversationContext(core.ContextConfig{})
 	asst := core.NewAssistantContextProcessor(ctx, core.DefaultAssistantContextConfig())
-	tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 3, FailWith: errors.New("tts dropped"), FailAfterAudio: 1})
+	tts := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 3, FailWith: errors.New("tts dropped"), FailAfterAudio: 1})
 	gate := &gateStage{hold: func() {
 		for end := time.Now().Add(2 * time.Second); tts.Units.Load() < 1 && time.Now().Before(end); {
 			time.Sleep(time.Millisecond)
 		}
 		time.Sleep(50 * time.Millisecond) // audio (data) and error (control) are both queued now
 	}}
-	pipe, err := core.NewPipeline(gate, asst, tts, &core.UnitFailureReporter{}, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	pipe, err := core.NewPipeline(gate, asst, tts, &core.UnitFailureReporter{}, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		t.Fatal(err)
 	}

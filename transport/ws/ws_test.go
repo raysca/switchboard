@@ -21,6 +21,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	framespb "govoice/core/transport/v1/framespb"
 	"govoice/transport/token"
 	"govoice/transport/ws"
@@ -342,7 +343,7 @@ func TestPhase3_BlockedWriter_DoesNotBlockInputReads(t *testing.T) {
 
 	server := ws.NewServer(serverCfg)
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		budget := core.DefaultResourceBudget()
 		sess, err := core.NewSession(1, pipe, budget)
 		if err != nil {
@@ -468,7 +469,7 @@ func TestPhase3_DroppedConnection_Isolation(t *testing.T) {
 
 	server := ws.NewServer(serverCfg)
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		sess, err := core.NewSession(conn.Pacer().FramesWritten.Load()+1, pipe, core.DefaultResourceBudget())
 		if err != nil {
 			return nil, err
@@ -543,7 +544,7 @@ func TestPhase3_WSS_And_PlainWS(t *testing.T) {
 
 	server := ws.NewServer(serverCfg)
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		return core.NewSession(1, pipe, core.DefaultResourceBudget())
 	}
 
@@ -590,7 +591,7 @@ func TestPhase3_InputRates_ResampleCorrectlyAtChunkBoundaries(t *testing.T) {
 
 	server := ws.NewServer(serverCfg)
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		sess, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 		sess.OnOutput = func(f core.Frame) {
 			if af, ok := f.(*core.InputAudioFrame); ok {
@@ -862,7 +863,7 @@ func TestAgentID_ComesOnlyFromToken(t *testing.T) {
 	got := make(chan string, 1)
 	srv.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
 		got <- conn.FlowID()
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		return core.NewSession(1, pipe, core.DefaultResourceBudget())
 	}
 	ts := httptest.NewServer(srv)

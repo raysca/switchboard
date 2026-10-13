@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretools "govoice/core/tools"
 	"govoice/core/transcript"
 	"govoice/core/turn"
@@ -494,7 +495,7 @@ func checkBargeIn() error {
 func checkRuntimeBargeIn() error {
 	contextPool := core.NewConversationContext(core.ContextConfig{})
 	assistant := core.NewAssistantContextProcessor(contextPool, core.DefaultAssistantContextConfig())
-	transport := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+	transport := coretest.NewTransportOutput(coretest.TransportConfig{})
 	pipe, err := core.NewPipeline(assistant, transport)
 	if err != nil {
 		return err
@@ -569,7 +570,7 @@ func checkRuntimeBargeIn() error {
 
 func checkToolCancellation() error {
 	assistant := core.NewAssistantContextProcessor(core.NewConversationContext(core.ContextConfig{}), core.DefaultAssistantContextConfig())
-	transport := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+	transport := coretest.NewTransportOutput(coretest.TransportConfig{})
 	pipe, err := core.NewPipeline(assistant, transport)
 	if err != nil {
 		return err
@@ -746,7 +747,7 @@ func checkPacingSpeaking() error {
 }
 
 func checkSessionTeardown() error {
-	pipe, err := core.NewPipeline(core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"eval"}}))
+	pipe, err := core.NewPipeline(coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"eval"}}))
 	if err != nil {
 		return err
 	}

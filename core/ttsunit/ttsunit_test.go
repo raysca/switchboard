@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 )
 
@@ -20,7 +21,7 @@ func classify(err error) resilience.Verdict {
 type harness struct {
 	r    *Runner
 	sess *core.Session
-	sink *core.PassthroughProcessor
+	sink *coretest.PassthroughProcessor
 }
 
 func start(t *testing.T, attempt func(ctx context.Context, u *Unit, n int) error) *harness {
@@ -28,7 +29,7 @@ func start(t *testing.T, attempt func(ctx context.Context, u *Unit, n int) error
 	r := New(Config{Provider: "fake", Model: "m", SampleRate: 24000, Classify: classify,
 		Policy:  resilience.Policy{MaxAttempts: 3, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond},
 		Attempt: attempt})
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(r, sink)
 	if err != nil {
 		t.Fatal(err)

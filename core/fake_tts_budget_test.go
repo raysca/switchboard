@@ -5,13 +5,14 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // A long reply (more sentences than the session's task budget) must not fail
 // the session: the fake TTS queues its units like the real TTS stages do.
 func TestFakeTTSLongReplyStaysWithinTaskBudget(t *testing.T) {
-	tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 1, FrameDelay: 5 * time.Millisecond})
-	pipe, err := core.NewPipeline(tts, &core.PassthroughProcessor{})
+	tts := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 1, FrameDelay: 5 * time.Millisecond})
+	pipe, err := core.NewPipeline(tts, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}

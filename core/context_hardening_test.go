@@ -235,7 +235,7 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 }
 
 func TestNewPipelineRejectsNilProcessor(t *testing.T) {
-	if _, err := NewPipeline(&PassthroughProcessor{}, nil); err == nil {
+	if _, err := NewPipeline(&testFnProcessor{}, nil); err == nil {
 		t.Fatal("nil processor accepted")
 	}
 }

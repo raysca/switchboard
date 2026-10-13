@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type recvItem struct {
@@ -77,7 +78,7 @@ func newSTTHarness(t *testing.T) *sttHarness {
 		t.Fatal(err)
 	}
 	h.p = p
-	pipe, _ := core.NewPipeline(p, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(p, &coretest.PassthroughProcessor{})
 	session, _ := core.NewSession(4, pipe, core.DefaultResourceBudget())
 	h.session = session
 	session.OnOutput = func(f core.Frame) {

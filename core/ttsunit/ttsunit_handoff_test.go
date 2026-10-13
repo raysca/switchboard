@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // holdOnlySlot fills a one-task budget with a foreign task so the next unit's
@@ -27,7 +28,7 @@ func TestRefusedHandoffDoesNotWedgeLaterUnits(t *testing.T) {
 			u.Write(make([]byte, 960))
 			return u.Finish()
 		}})
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(r, sink)
 	b := core.DefaultResourceBudget()
 	b.MaxAsyncTasks = 1
@@ -76,7 +77,7 @@ func TestRefusedHandoffUnderFailover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(fo, sink)
 	b := core.DefaultResourceBudget()
 	b.MaxAsyncTasks = 1

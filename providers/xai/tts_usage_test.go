@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // Live finding: xAI TTS emitted no usage frame (the provider-matrix usage_chars check). It must
@@ -18,7 +19,7 @@ func TestXAITTS_UsageFrameAndOddByte(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(21, pipe, core.DefaultResourceBudget())
 	if err := session.Start(); err != nil {

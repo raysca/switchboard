@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // VAD reports speech start after the onset audio was already sent; from the
@@ -15,7 +16,7 @@ func TestGoogleSTTNextUtteranceStreamGetsItsOnsetAudio(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	proc, _ := NewSTTProcessor(cfg)
-	pipe, _ := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
 	session, _ := core.NewSession(34, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
 	defer session.Close()
@@ -63,7 +64,7 @@ func TestGoogleSTTSameTurnNewerGenerationAdoptsStream(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	proc, _ := NewSTTProcessor(cfg)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(35, pipe, core.DefaultResourceBudget())
 	_ = session.Start()

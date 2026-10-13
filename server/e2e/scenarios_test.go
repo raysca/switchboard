@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretools "govoice/core/tools"
 	"govoice/server/api"
 	"govoice/server/flow"
@@ -378,13 +379,13 @@ func TestScenario2_MixedProviders(t *testing.T) {
 	contextPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 2000})
 	userCtx := core.NewUserContextProcessor(contextPool, core.UserContextConfig{TurnPrefix: "turn"})
 	asstCtx := core.NewAssistantContextProcessor(contextPool, core.DefaultAssistantContextConfig())
-	llm := core.NewFakeLLMProcessor(core.FakeLLMConfig{
+	llm := coretest.NewLLMProcessor(coretest.LLMConfig{
 		ResponseChunks: []string{"Shipment 99 has arrived at the local depot."},
 	})
-	tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{
+	tts := coretest.NewTTSProcessor(coretest.TTSConfig{
 		FramesPerUnit: 2,
 	})
-	transportOutput := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+	transportOutput := coretest.NewTransportOutput(coretest.TransportConfig{})
 
 	pipe, err := core.NewPipeline(stt, userCtx, asstCtx, llm, tts, transportOutput)
 	if err != nil {
@@ -1021,13 +1022,13 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 		contextPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 2000})
 		userCtx := core.NewUserContextProcessor(contextPool, core.UserContextConfig{TurnPrefix: "turn"})
 		asstCtx := core.NewAssistantContextProcessor(contextPool, core.DefaultAssistantContextConfig())
-		llm := core.NewFakeLLMProcessor(core.FakeLLMConfig{
+		llm := coretest.NewLLMProcessor(coretest.LLMConfig{
 			ResponseChunks: []string{"Trace failure did not stop me."},
 		})
-		tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{
+		tts := coretest.NewTTSProcessor(coretest.TTSConfig{
 			FramesPerUnit: 2,
 		})
-		transportOutput := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+		transportOutput := coretest.NewTransportOutput(coretest.TransportConfig{})
 
 		pipe, err := core.NewPipeline(userCtx, asstCtx, llm, tts, transportOutput)
 		if err != nil {
@@ -1152,8 +1153,8 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 		asstCtx := core.NewAssistantContextProcessor(contextPool, core.DefaultAssistantContextConfig())
 		llm := &mockXAILLM{response: "Recovered reply"}
 		llm.timeout.Store(true) // Inject timeout
-		tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2})
-		transportOutput := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+		tts := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2})
+		transportOutput := coretest.NewTransportOutput(coretest.TransportConfig{})
 
 		pipe, err := core.NewPipeline(userCtx, asstCtx, llm, tts, transportOutput)
 		if err != nil {

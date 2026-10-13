@@ -7,6 +7,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/audio/dtmf"
+	"govoice/core/coretest"
 	"govoice/vad"
 )
 
@@ -14,11 +15,11 @@ func dtmfTestPipeline(t *testing.T, cfg *Config) (*core.Pipeline, []StageSpec) {
 	t.Helper()
 	reg := NewRegistry()
 	var llmSpecs []StageSpec
-	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
-	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	reg.Register("google.llm", func(_ *Config, s StageSpec) (core.Processor, error) {
 		llmSpecs = append(llmSpecs, s)
-		return &core.PassthroughProcessor{}, nil
+		return &coretest.PassthroughProcessor{}, nil
 	})
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"},
@@ -95,9 +96,9 @@ func TestDTMFCommitsTurnWithTurnManager(t *testing.T) {
 	cfg.Turn.Manager = true
 	cfg.DTMF.Detect, cfg.DTMF.Aggregate = true, true
 	reg := NewRegistry()
-	llm := &core.PassthroughProcessor{}
-	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
-	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	llm := &coretest.PassthroughProcessor{}
+	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	pipe, err := reg.BuildCallPipeline(cfg, CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}}, vadProc, &fakeTransportSink{})

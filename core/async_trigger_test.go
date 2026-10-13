@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // llmSink records the user turns that reach the LLM position.
@@ -47,7 +48,7 @@ func newTriggerRig(t *testing.T, mod func(*core.AsyncTriggerConfig)) *triggerRig
 		mod(&cfg)
 	}
 	r.trig = core.NewAsyncTrigger(cfg)
-	pipe, err := core.NewPipeline(r.trig, r.llm, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(r.trig, r.llm, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +178,7 @@ func TestAsyncTriggerSessionCloseDropsQueueWithoutLeak(t *testing.T) {
 // or async results would wait for MaxWait.
 func TestAssistantEmptyReplyClearsActive(t *testing.T) {
 	asst := core.NewAssistantContextProcessor(core.NewConversationContext(core.ContextConfig{}), core.DefaultAssistantContextConfig())
-	pipe, err := core.NewPipeline(asst, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(asst, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}

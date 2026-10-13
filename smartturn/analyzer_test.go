@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/turn"
 )
 
@@ -283,8 +284,8 @@ func TestSessionVerdictStream(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sink := &core.PassthroughProcessor{}
-		pipe, err := core.NewPipeline(a.Tap(), &core.PassthroughProcessor{}, proc, sink)
+		sink := &coretest.PassthroughProcessor{}
+		pipe, err := core.NewPipeline(a.Tap(), &coretest.PassthroughProcessor{}, proc, sink)
 		if err != nil {
 			t.Fatal(err)
 		}

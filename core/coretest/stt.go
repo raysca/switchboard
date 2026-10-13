@@ -1,15 +1,17 @@
-package core
+package coretest
 
 import (
 	"context"
 	"fmt"
 	"strings"
 	"sync"
+
+	"govoice/core"
 )
 
 // FakeSTTConfig scripts a FakeSTTProcessor. Each audio frame carries one word:
 // Samples[0] indexes Words, so any replay of the same audio yields the same text.
-type FakeSTTConfig struct {
+type STTConfig struct {
 	Provider string
 	Words    []string
 	// FinalEvery emits a provider final (cumulative text) after every N frames. 0 = only at UserStopped.
@@ -29,11 +31,11 @@ type FakeSTTConfig struct {
 // FakeSTTProcessor is a scriptable streaming STT: cumulative interim candidates
 // per audio frame, a final at UserStopped, candidates emitted from its own
 // goroutine like a provider's receiver.
-type FakeSTTProcessor struct {
-	cfg FakeSTTConfig
+type STTProcessor struct {
+	cfg STTConfig
 
 	mu       sync.Mutex
-	session  SessionController
+	session  core.SessionController
 	index    int
 	turn     string
 	gen      uint64
@@ -44,14 +46,14 @@ type FakeSTTProcessor struct {
 	work     chan func()
 }
 
-func NewFakeSTTProcessor(cfg FakeSTTConfig) *FakeSTTProcessor {
+func NewSTTProcessor(cfg STTConfig) *STTProcessor {
 	if cfg.FailErr == nil {
 		cfg.FailErr = fmt.Errorf("fake stt %s: stream dropped", cfg.Provider)
 	}
-	return &FakeSTTProcessor{cfg: cfg, work: make(chan func(), 256)}
+	return &STTProcessor{cfg: cfg, work: make(chan func(), 256)}
 }
 
-func (p *FakeSTTProcessor) Attach(s SessionController, index int) error {
+func (p *STTProcessor) Attach(s core.SessionController, index int) error {
 	p.mu.Lock()
 	p.session, p.index = s, index
 	p.mu.Unlock()
@@ -68,47 +70,47 @@ func (p *FakeSTTProcessor) Attach(s SessionController, index int) error {
 }
 
 // Break makes every audio frame fail with err from now on (stream open failure).
-func (p *FakeSTTProcessor) Break(err error) {
+func (p *STTProcessor) Break(err error) {
 	p.mu.Lock()
 	p.broken = err
 	p.mu.Unlock()
 }
 
 // Received is every audio byte accepted, in order.
-func (p *FakeSTTProcessor) Received() []byte {
+func (p *STTProcessor) Received() []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]byte(nil), p.received...)
 }
 
-func (p *FakeSTTProcessor) emit(fr Frame, gen uint64) {
+func (p *STTProcessor) emit(fr core.Frame, gen uint64) {
 	select {
-	case p.work <- func() { _ = p.session.Reenter(fr, Downstream, p.index+1, gen) }:
+	case p.work <- func() { _ = p.session.Reenter(fr, core.Downstream, p.index+1, gen) }:
 	default:
 	}
 }
 
-func (p *FakeSTTProcessor) candidateLocked(final bool) *TranscriptCandidateFrame {
-	return &TranscriptCandidateFrame{Text: strings.Join(p.words, " "), Turn: TurnID(p.turn), Gen: Generation(p.gen),
+func (p *STTProcessor) candidateLocked(final bool) *core.TranscriptCandidateFrame {
+	return &core.TranscriptCandidateFrame{Text: strings.Join(p.words, " "), Turn: core.TurnID(p.turn), Gen: core.Generation(p.gen),
 		Final: final, EndOfUtterance: final && p.cfg.FinalEvery == 0, Provider: p.cfg.Provider}
 }
 
-func (p *FakeSTTProcessor) ProcessFrame(_ context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *STTProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	p.mu.Lock()
 	switch fr := f.(type) {
-	case *UserStartedSpeakingFrame:
+	case *core.UserStartedSpeakingFrame:
 		p.turn, p.gen = fmt.Sprintf("turn-%d-%d", fr.Gen, fr.Seq), fr.Gen
-	case *TurnEventFrame:
-		if fr.Kind == TurnEventStarted {
+	case *core.TurnEventFrame:
+		if fr.Kind == core.TurnEventStarted {
 			p.turn, p.gen = string(fr.Turn), uint64(fr.Gen)
 		}
-	case *UserStoppedSpeakingFrame:
+	case *core.UserStoppedSpeakingFrame:
 		if p.turn != "" && len(p.words) > 0 && p.broken == nil {
 			p.emit(p.candidateLocked(true), p.gen)
 		}
 		p.words, p.frames = nil, 0
 		p.turn = ""
-	case *InputAudioFrame:
+	case *core.InputAudioFrame:
 		if p.broken != nil {
 			err := p.broken
 			p.mu.Unlock()
@@ -120,10 +122,10 @@ func (p *FakeSTTProcessor) ProcessFrame(_ context.Context, f Frame, dir Directio
 			p.broken = p.cfg.FailErr
 			gen := p.gen
 			if p.cfg.InvalidateOnFail {
-				p.emit(&TranscriptInvalidationFrame{Turn: TurnID(p.turn), Gen: Generation(gen), Err: ErrTranscriptInvalidated}, gen)
-				p.emit(&ErrorFrame{Err: fmt.Errorf("%w: %v", ErrTranscriptInvalidated, p.cfg.FailErr), Turn: TurnID(p.turn), Gen: Generation(gen)}, gen)
+				p.emit(&core.TranscriptInvalidationFrame{Turn: core.TurnID(p.turn), Gen: core.Generation(gen), Err: core.ErrTranscriptInvalidated}, gen)
+				p.emit(&core.ErrorFrame{Err: fmt.Errorf("%w: %v", core.ErrTranscriptInvalidated, p.cfg.FailErr), Turn: core.TurnID(p.turn), Gen: core.Generation(gen)}, gen)
 			} else {
-				p.emit(&ErrorFrame{Err: p.cfg.FailErr}, gen)
+				p.emit(&core.ErrorFrame{Err: p.cfg.FailErr}, gen)
 			}
 			if p.cfg.ZombieOnFail {
 				p.words = append(p.words, "ZOMBIE")

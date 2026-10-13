@@ -16,6 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 )
 
@@ -107,7 +108,7 @@ var final = map[string]any{"isFinal": true}
 type harness struct {
 	proc *TTSProcessor
 	sess *core.Session
-	sink *core.PassthroughProcessor
+	sink *coretest.PassthroughProcessor
 }
 
 func start(t *testing.T, cfg TTSConfig, tracer ...core.Tracer) *harness {
@@ -116,7 +117,7 @@ func start(t *testing.T, cfg TTSConfig, tracer ...core.Tracer) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

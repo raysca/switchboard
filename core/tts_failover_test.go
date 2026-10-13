@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 var errTTS = errors.New("tts 503")
 
 type ttsRig struct {
 	sess     *core.Session
-	rec      *core.PassthroughProcessor
+	rec      *coretest.PassthroughProcessor
 	mu       sync.Mutex
 	switches []string
 	events   chan core.DebugEvent
@@ -25,7 +26,7 @@ type ttsRig struct {
 
 func newTTSRig(t *testing.T, cfg core.TTSFailoverConfig) *ttsRig {
 	t.Helper()
-	r := &ttsRig{rec: &core.PassthroughProcessor{}, events: make(chan core.DebugEvent, 16)}
+	r := &ttsRig{rec: &coretest.PassthroughProcessor{}, events: make(chan core.DebugEvent, 16)}
 	cfg.OnFailover = func(from, to, class string) {
 		r.mu.Lock()
 		r.switches = append(r.switches, from+">"+to+":"+class)
@@ -110,8 +111,8 @@ func (r *ttsRig) waitFor(t *testing.T, cond func() bool) {
 	}
 }
 
-func fakeTTS(failAfter int, err error) *core.FakeTTSProcessor {
-	return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2, FailWith: err, FailAfterAudio: failAfter})
+func fakeTTS(failAfter int, err error) *coretest.TTSProcessor {
+	return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2, FailWith: err, FailAfterAudio: failAfter})
 }
 
 func TestTTSFailoverBeforeAudioReplaysUnitOnce(t *testing.T) {
@@ -167,7 +168,7 @@ func TestTTSFailAfterAudioDoesNotReplayAndNextUnitUsesFallback(t *testing.T) {
 }
 
 func TestTTSNewTurnReevaluatesFromThePrimary(t *testing.T) {
-	a := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 1, FailWith: errTTS})
+	a := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 1, FailWith: errTTS})
 	b := fakeTTS(0, nil)
 	r := newTTSRig(t, core.TTSFailoverConfig{Candidates: []core.TTSCandidate{{Provider: "a", Proc: a}, {Provider: "b", Proc: b}}})
 	r.unit(t, "t1", 1, false)
@@ -282,8 +283,8 @@ func TestTTSOrderingAcrossSwitch(t *testing.T) {
 }
 
 func TestTTSBargeInCancelsEveryCandidate(t *testing.T) {
-	a := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 50, FrameDelay: 10 * time.Millisecond})
-	b := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 50, FrameDelay: 10 * time.Millisecond})
+	a := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 50, FrameDelay: 10 * time.Millisecond})
+	b := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 50, FrameDelay: 10 * time.Millisecond})
 	r := newTTSRig(t, core.TTSFailoverConfig{Candidates: []core.TTSCandidate{{Provider: "a", Proc: a}, {Provider: "b", Proc: b}}})
 	r.unit(t, "t1", 1, false)
 	r.unit(t, "t1", 2, true)

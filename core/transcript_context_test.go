@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 func TestUserContextV2AcceptsOnlyCommittedTranscript(t *testing.T) {
@@ -14,7 +15,7 @@ func TestUserContextV2AcceptsOnlyCommittedTranscript(t *testing.T) {
 		TurnPrefix:                 "turn",
 		RequireCommittedTranscript: true,
 	})
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(user, sink)
 	session, _ := core.NewSession(901, pipe, core.DefaultResourceBudget())
 	if err := session.Start(); err != nil {
@@ -34,7 +35,7 @@ func TestUserContextV2AcceptsOnlyCommittedTranscript(t *testing.T) {
 func TestUserContextV2RejectsCommittedTranscriptWithoutPolicyTime(t *testing.T) {
 	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	user := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{RequireCommittedTranscript: true})
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(user, sink)
 	session, _ := core.NewSession(902, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
@@ -56,7 +57,7 @@ func TestUserContextV2RejectsCommittedTranscriptWithoutPolicyTime(t *testing.T) 
 func TestUserContextCommittedIdempotenceIsTurnGenerationScopedAndWindowed(t *testing.T) {
 	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	user := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{RequireCommittedTranscript: true, MaxCommittedTurns: 2})
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(user, sink)
 	session, _ := core.NewSession(903, pipe, core.DefaultResourceBudget())
 	_ = session.Start()

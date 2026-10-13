@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 )
@@ -53,7 +54,7 @@ func TestWebSocketRTVITraceConnectDisconnectClose(t *testing.T) {
 	r := &boundaryRecorder{}
 	server := ws.NewServer(ws.DefaultServerConfig(validator))
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		s, err := core.NewSession(601, pipe, core.DefaultResourceBudget())
 		if err != nil {
 			return nil, err

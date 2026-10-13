@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 )
 
@@ -22,7 +23,7 @@ func TestRound3GoogleBargeInTranscriptActuallyCommits(t *testing.T) {
 	pool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	user := core.NewUserContextProcessor(pool, core.UserContextConfig{RequireCommittedTranscript: true})
 	assistant := core.NewAssistantContextProcessor(pool, core.DefaultAssistantContextConfig())
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(p, finalizer, user, assistant, sink)
 	s, _ := core.NewSession(998, pipe, core.DefaultResourceBudget())
 	s.Start()
@@ -94,7 +95,7 @@ func TestRound3GoogleAssemblyErrorCannotLaterCommitPartial(t *testing.T) {
 	fc := coretranscript.DefaultConfig()
 	fc.GracePeriod = 0
 	fp, _ := coretranscript.NewProcessor(fc)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(fp, sink)
 	s, _ := core.NewSession(996, pipe, core.DefaultResourceBudget())
 	s.Start()

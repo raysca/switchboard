@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 	"govoice/providers/nvidia/rivapb"
 )
@@ -77,7 +78,7 @@ func result(text string, final bool, stab float32) *rivapb.StreamingRecognizeRes
 type harness struct {
 	proc *STTProcessor
 	sess *core.Session
-	sink *core.PassthroughProcessor
+	sink *coretest.PassthroughProcessor
 }
 
 func start(t *testing.T, cfg STTConfig) *harness {
@@ -86,7 +87,7 @@ func start(t *testing.T, cfg STTConfig) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

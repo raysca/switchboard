@@ -324,29 +324,3 @@ func TestSummarizerOnResult(t *testing.T) {
 		t.Fatalf("failed result = %+v", f)
 	}
 }
-
-type summarizingFake struct {
-	*FakeLLMProcessor
-	calls int
-}
-
-func (f *summarizingFake) SummarizeText(_ context.Context, system, user string) (string, error) {
-	f.calls++
-	return system + "|" + user, nil
-}
-
-func TestLLMFailoverSummarizeTextForwardsToPrimaryOnly(t *testing.T) {
-	primary, fallback := &summarizingFake{FakeLLMProcessor: NewFakeLLMProcessor(FakeLLMConfig{})}, &summarizingFake{FakeLLMProcessor: NewFakeLLMProcessor(FakeLLMConfig{})}
-	w, err := NewLLMFailover(LLMFailoverConfig{Candidates: []LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: fallback}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, err := w.SummarizeText(context.Background(), "s", "u"); err != nil || got != "s|u" || primary.calls != 1 || fallback.calls != 0 {
-		t.Fatalf("got %q err %v calls %d/%d", got, err, primary.calls, fallback.calls)
-	}
-	// A primary without the capability errors; the fallback is never asked.
-	w, _ = NewLLMFailover(LLMFailoverConfig{Candidates: []LLMCandidate{{Provider: "a", Proc: NewFakeLLMProcessor(FakeLLMConfig{})}, {Provider: "b", Proc: fallback}}})
-	if _, err := w.SummarizeText(context.Background(), "s", "u"); err == nil || fallback.calls != 0 {
-		t.Fatalf("err %v fallback calls %d", err, fallback.calls)
-	}
-}

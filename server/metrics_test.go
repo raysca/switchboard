@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/observe"
 	"govoice/providers/google"
 	"govoice/providers/openai"
@@ -136,7 +137,7 @@ func TestRecordProcessorMetrics_LLMAndSTTCountersIncludingFailoverCandidates(t *
 	gs1.Errors.Store(4)
 	gs2.RotationsCount.Store(10)
 	gs2.Errors.Store(40)
-	stt, err := core.NewSTTFailover(core.STTFailoverConfig{Candidates: []core.STTCandidate{{Provider: "google", Proc: gs2}, {Provider: "other", Proc: &core.PassthroughProcessor{}}}})
+	stt, err := core.NewSTTFailover(core.STTFailoverConfig{Candidates: []core.STTCandidate{{Provider: "google", Proc: gs2}, {Provider: "other", Proc: &coretest.PassthroughProcessor{}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

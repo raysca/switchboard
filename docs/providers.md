@@ -102,7 +102,7 @@ An entry with an existing `id` replaces it, a new one is appended, and an overla
 | `label_replies` | `false` | prefix each reply with the step's prompt, so a test can tell which step answered |
 | `llm_extra_delay` | `0` | added between reply pieces, after the first (the perf-gate self-test uses it) |
 
-- **Failure injection.** A step whose TTS voice is `brokenvoice` cannot be built, which the end-to-end suites use to fail a handoff. Stage-level failure injection for core tests lives in `core/testdoubles.go`, not here.
+- **Failure injection.** A step whose TTS voice is `brokenvoice` cannot be built, which the end-to-end suites use to fail a handoff. Stage-level failure injection for core tests lives in `core/coretest`, not here.
 
 ## Adding a provider
 

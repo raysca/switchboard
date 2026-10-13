@@ -1,11 +1,14 @@
-package core
-
-// Test doubles for pipelines: scripted processors with failure injection (FailWith, FailAfter,
-// IgnoreCancel), pipeline sinks and a recording transport output. They are not providers. A call
-// that should behave like a real provider, in the UI, the harnesses or an end-to-end test, uses the
-// simulated provider in providers/echo, which runs the real Google processors against simulated
-// backends. These stay here for the tests that need to break a stage on purpose, and for the
-// framework-overhead benchmark, which must measure the pipeline and nothing else.
+// Package coretest holds test doubles for pipelines: scripted LLM, TTS and STT processors with
+// failure injection (FailWith, FailAfter, IgnoreCancel), pipeline sinks, failure-injecting
+// processors and a recording transport output. They are not providers. A call that should behave
+// like a real provider, in the UI, the harnesses or an end-to-end test, uses the simulated provider
+// in providers/echo, which runs the real Google processors against simulated backends. These stay
+// for the tests that need to break a stage on purpose, and for the framework-overhead benchmark,
+// which must measure the pipeline and nothing else.
+//
+// core's own in-package tests cannot import this package (it imports core); they use package
+// core_test, or small local helpers (core/helpers_test.go).
+package coretest
 
 import (
 	"context"
@@ -14,6 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"govoice/core"
 )
 
 var (
@@ -23,10 +28,10 @@ var (
 // PassthroughProcessor records frames received and forwards them.
 type PassthroughProcessor struct {
 	mu     sync.Mutex
-	Frames []Frame
+	Frames []core.Frame
 }
 
-func (p *PassthroughProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *PassthroughProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	p.mu.Lock()
 	p.Frames = append(p.Frames, f)
 	p.mu.Unlock()
@@ -39,10 +44,10 @@ func (p *PassthroughProcessor) Count() int {
 	return len(p.Frames)
 }
 
-func (p *PassthroughProcessor) GetFrames() []Frame {
+func (p *PassthroughProcessor) GetFrames() []core.Frame {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	cp := make([]Frame, len(p.Frames))
+	cp := make([]core.Frame, len(p.Frames))
 	copy(cp, p.Frames)
 	return cp
 }
@@ -52,7 +57,7 @@ type LatencyProcessor struct {
 	Delay time.Duration
 }
 
-func (p *LatencyProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *LatencyProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	select {
 	case <-time.After(p.Delay):
 		return e.PushDirection(f, dir)
@@ -63,10 +68,10 @@ func (p *LatencyProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 
 // ErrorProcessor returns an error when it encounters the configured frame type.
 type ErrorProcessor struct {
-	FailOn FrameType
+	FailOn core.FrameType
 }
 
-func (p *ErrorProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *ErrorProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	if f.Type() == p.FailOn {
 		return ErrFakeProcessor
 	}
@@ -75,10 +80,10 @@ func (p *ErrorProcessor) ProcessFrame(ctx context.Context, f Frame, dir Directio
 
 // PanicProcessor panics when it encounters the configured frame type.
 type PanicProcessor struct {
-	PanicOn FrameType
+	PanicOn core.FrameType
 }
 
-func (p *PanicProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *PanicProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	if f.Type() == p.PanicOn {
 		panic("deliberate inline processor panic")
 	}
@@ -87,15 +92,15 @@ func (p *PanicProcessor) ProcessFrame(ctx context.Context, f Frame, dir Directio
 
 // ChildPanicProcessor initiates an async task via session.Go that panics.
 type ChildPanicProcessor struct {
-	session SessionController
+	session core.SessionController
 }
 
-func (p *ChildPanicProcessor) Attach(s SessionController, index int) error {
+func (p *ChildPanicProcessor) Attach(s core.SessionController, index int) error {
 	p.session = s
 	return nil
 }
 
-func (p *ChildPanicProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *ChildPanicProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	return p.session.Go(func(ctx context.Context) {
 		time.Sleep(10 * time.Millisecond)
 		panic("deliberate child task panic in session.Go")
@@ -107,9 +112,9 @@ type FloodProcessor struct {
 	EmitCount int
 }
 
-func (p *FloodProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *FloodProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	for i := 0; i < p.EmitCount; i++ {
-		if err := e.Push(&UserStartedSpeakingFrame{Seq: uint64(i)}); err != nil {
+		if err := e.Push(&core.UserStartedSpeakingFrame{Seq: uint64(i)}); err != nil {
 			return err
 		}
 	}
@@ -121,47 +126,47 @@ type StallProcessor struct {
 	Duration time.Duration
 }
 
-func (p *StallProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *StallProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	time.Sleep(p.Duration)
 	return e.Push(f)
 }
 
 // LateCompletionProcessor starts an async task that finishes with an old generation.
 type LateCompletionProcessor struct {
-	session SessionController
+	session core.SessionController
 	index   int
 	Delay   time.Duration
 }
 
-func (p *LateCompletionProcessor) Attach(s SessionController, index int) error {
+func (p *LateCompletionProcessor) Attach(s core.SessionController, index int) error {
 	p.session = s
 	p.index = index
 	return nil
 }
 
-func (p *LateCompletionProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *LateCompletionProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	gen := p.session.CurrentGeneration()
 	return p.session.Go(func(ctx context.Context) {
 		time.Sleep(p.Delay)
 		// Reenter with the captured old generation
-		_ = p.session.Reenter(&FinalTranscriptionFrame{
+		_ = p.session.Reenter(&core.FinalTranscriptionFrame{
 			Text: "late transcript",
 			Gen:  gen,
-		}, Downstream, p.index+1, gen)
+		}, core.Downstream, p.index+1, gen)
 	})
 }
 
 // IgnoredCancellationProcessor ignores context cancellation in session.Go to test leaked task detection.
 type IgnoredCancellationProcessor struct {
-	session SessionController
+	session core.SessionController
 }
 
-func (p *IgnoredCancellationProcessor) Attach(s SessionController, index int) error {
+func (p *IgnoredCancellationProcessor) Attach(s core.SessionController, index int) error {
 	p.session = s
 	return nil
 }
 
-func (p *IgnoredCancellationProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *IgnoredCancellationProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	return p.session.Go(func(ctx context.Context) {
 		// Deliberately ignore ctx.Done() and sleep through teardown
 		time.Sleep(10 * time.Second)
@@ -173,7 +178,7 @@ func (p *IgnoredCancellationProcessor) ProcessFrame(ctx context.Context, f Frame
 // -------------------------------------------------------------------------
 
 // FakeLLMConfig defines behavior for FakeLLMProcessor.
-type FakeLLMConfig struct {
+type LLMConfig struct {
 	ResponseChunks []string
 	ChunkDelay     time.Duration
 	IgnoreCancel   bool // If true, keep emitting after cancellation to test fencing
@@ -185,10 +190,10 @@ type FakeLLMConfig struct {
 }
 
 // FakeLLMProcessor simulates streamed or non-streamed LLM responses.
-type FakeLLMProcessor struct {
-	session SessionController
+type LLMProcessor struct {
+	session core.SessionController
 	index   int
-	cfg     FakeLLMConfig
+	cfg     LLMConfig
 
 	mu            sync.Mutex
 	activeCancel  context.CancelFunc
@@ -196,20 +201,20 @@ type FakeLLMProcessor struct {
 	Started       atomic.Uint64 // generations begun
 }
 
-func NewFakeLLMProcessor(cfg FakeLLMConfig) *FakeLLMProcessor {
-	return &FakeLLMProcessor{cfg: cfg}
+func NewLLMProcessor(cfg LLMConfig) *LLMProcessor {
+	return &LLMProcessor{cfg: cfg}
 }
 
-func (p *FakeLLMProcessor) Attach(s SessionController, index int) error {
+func (p *LLMProcessor) Attach(s core.SessionController, index int) error {
 	p.session = s
 	p.index = index
 	return nil
 }
 
-func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *LLMProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch f.Type() {
-	case FrameUserMessage:
-		um := f.(*UserMessageFrame)
+	case core.FrameUserMessage:
+		um := f.(*core.UserMessageFrame)
 		// Preserve the same provider contract as production LLM processors: the
 		// assistant context must observe the valid user-turn boundary before any
 		// asynchronous model output can re-enter.
@@ -252,24 +257,24 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 				}
 				complete.WriteString(chunk)
 
-				_ = p.session.Reenter(&LLMTextDeltaFrame{
+				_ = p.session.Reenter(&core.LLMTextDeltaFrame{
 					Delta: chunk,
 					Turn:  um.Turn,
 					Gen:   gen,
-				}, Downstream, 0, gen)
+				}, core.Downstream, 0, gen)
 			}
 			if p.cfg.FailWith != nil {
-				_ = p.session.Reenter(&ErrorFrame{Err: p.cfg.FailWith}, Downstream, p.index, gen)
+				_ = p.session.Reenter(&core.ErrorFrame{Err: p.cfg.FailWith}, core.Downstream, p.index, gen)
 				return
 			}
-			_ = p.session.Reenter(&LLMTextFrame{
+			_ = p.session.Reenter(&core.LLMTextFrame{
 				Text: complete.String(),
 				Turn: um.Turn,
 				Gen:  gen,
-			}, Downstream, 0, gen)
+			}, core.Downstream, 0, gen)
 		})
 
-	case FrameInterruption:
+	case core.FrameInterruption:
 		p.mu.Lock()
 		if p.activeCancel != nil {
 			p.activeCancel()
@@ -284,7 +289,7 @@ func (p *FakeLLMProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 }
 
 // FakeTTSConfig defines behavior for FakeTTSProcessor.
-type FakeTTSConfig struct {
+type TTSConfig struct {
 	FramesPerUnit int           // Output audio frames per unit (default: 2)
 	FrameDelay    time.Duration // Delay between audio frame emissions
 	IgnoreCancel  bool          // If true, keep emitting after cancellation to test fencing
@@ -297,11 +302,11 @@ type FakeTTSConfig struct {
 }
 
 // FakeTTSProcessor simulates TTS synthesis from explicit synthesis units.
-type FakeTTSProcessor struct {
-	session SessionController
+type TTSProcessor struct {
+	session core.SessionController
 	index   int
-	cfg     FakeTTSConfig
-	queue   SerialQueue // one task for all units, like the real TTS stages (ttsunit)
+	cfg     TTSConfig
+	queue   core.SerialQueue // one task for all units, like the real TTS stages (ttsunit)
 
 	mu            sync.Mutex
 	tail          chan struct{}
@@ -312,25 +317,25 @@ type FakeTTSProcessor struct {
 	Units         atomic.Uint64 // units this processor started synthesizing
 }
 
-func NewFakeTTSProcessor(cfg FakeTTSConfig) *FakeTTSProcessor {
+func NewTTSProcessor(cfg TTSConfig) *TTSProcessor {
 	if cfg.FramesPerUnit <= 0 {
 		cfg.FramesPerUnit = 2
 	}
 	ready := make(chan struct{})
 	close(ready)
-	return &FakeTTSProcessor{cfg: cfg, tail: ready, cancels: make(map[uint64]context.CancelFunc)}
+	return &TTSProcessor{cfg: cfg, tail: ready, cancels: make(map[uint64]context.CancelFunc)}
 }
 
-func (p *FakeTTSProcessor) Attach(s SessionController, index int) error {
+func (p *TTSProcessor) Attach(s core.SessionController, index int) error {
 	p.session = s
 	p.index = index
 	return nil
 }
 
-func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch f.Type() {
-	case FrameSynthesisUnit:
-		su := f.(*SynthesisUnitFrame)
+	case core.FrameSynthesisUnit:
+		su := f.(*core.SynthesisUnitFrame)
 		p.mu.Lock()
 		taskCtx, cancel := context.WithCancel(ctx)
 		previous := p.tail
@@ -370,7 +375,7 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 				rate = 24000
 			}
 			fail := func() {
-				_ = p.session.Reenter(&ErrorFrame{Err: p.cfg.FailWith, Turn: TurnID(su.Turn), Gen: Generation(su.Gen), UnitID: su.UnitID}, Downstream, p.index+1, su.Gen)
+				_ = p.session.Reenter(&core.ErrorFrame{Err: p.cfg.FailWith, Turn: core.TurnID(su.Turn), Gen: core.Generation(su.Gen), UnitID: su.UnitID}, core.Downstream, p.index+1, su.Gen)
 			}
 			if p.cfg.FailWith != nil && p.cfg.FailAfterAudio == 0 {
 				fail()
@@ -379,8 +384,8 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 			for i := 1; i <= p.cfg.FramesPerUnit; i++ {
 				if p.cfg.FailWith != nil && i > p.cfg.FailAfterAudio {
 					fail() // error first, then the closing frame (see the cartesia/elevenlabs providers)
-					_ = p.session.Reenter(&OutputAudioFrame{Encoding: EncodingPCM16LE, SampleRate: rate, Channels: 1, Gen: su.Gen,
-						Turn: su.Turn, UnitID: su.UnitID, IsFinal: true, TurnFinal: su.IsFinal}, Downstream, p.index+1, su.Gen)
+					_ = p.session.Reenter(&core.OutputAudioFrame{Encoding: core.EncodingPCM16LE, SampleRate: rate, Channels: 1, Gen: su.Gen,
+						Turn: su.Turn, UnitID: su.UnitID, IsFinal: true, TurnFinal: su.IsFinal}, core.Downstream, p.index+1, su.Gen)
 					return
 				}
 				if p.cfg.FrameDelay > 0 {
@@ -422,9 +427,9 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 				}
 
 				isFinal := (i == p.cfg.FramesPerUnit)
-				audioFrame := &OutputAudioFrame{
+				audioFrame := &core.OutputAudioFrame{
 					Samples:    make([]byte, 640),
-					Encoding:   EncodingPCM16LE,
+					Encoding:   core.EncodingPCM16LE,
 					SampleRate: rate,
 					Channels:   1,
 					Duration:   20 * time.Millisecond,
@@ -437,11 +442,11 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 					TurnFinal:  su.IsFinal && isFinal,
 				}
 
-				_ = p.session.Reenter(audioFrame, Downstream, p.index+1, su.Gen)
+				_ = p.session.Reenter(audioFrame, core.Downstream, p.index+1, su.Gen)
 			}
 		})
 
-	case FrameInterruption:
+	case core.FrameInterruption:
 		p.mu.Lock()
 		if len(p.cancels) > 0 {
 			for _, cancel := range p.cancels {
@@ -458,47 +463,47 @@ func (p *FakeTTSProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direct
 }
 
 // FakeTransportConfig defines behavior for FakeTransportOutput.
-type FakeTransportConfig struct {
+type TransportConfig struct {
 	WriteDelay        time.Duration // Simulated write latency
 	SimulateFlushHang bool          // If true, withhold FlushProcessedFrame to test flush timeout
 }
 
 // FakeTransportOutput simulates the client audio edge, paced writing, and write completions.
-type FakeTransportOutput struct {
-	session SessionController
+type TransportOutput struct {
+	session core.SessionController
 	index   int
-	cfg     FakeTransportConfig
+	cfg     TransportConfig
 
 	mu              sync.Mutex
-	ReceivedFrames  []*OutputAudioFrame
-	WrittenFrames   []*OutputAudioFrame
-	DiscardedFrames []*OutputAudioFrame
+	ReceivedFrames  []*core.OutputAudioFrame
+	WrittenFrames   []*core.OutputAudioFrame
+	DiscardedFrames []*core.OutputAudioFrame
 	FlushCount      atomic.Uint64
 	FlushAcksSent   atomic.Uint64
 }
 
-func NewFakeTransportOutput(cfg FakeTransportConfig) *FakeTransportOutput {
-	return &FakeTransportOutput{
+func NewTransportOutput(cfg TransportConfig) *TransportOutput {
+	return &TransportOutput{
 		cfg:             cfg,
-		ReceivedFrames:  make([]*OutputAudioFrame, 0),
-		WrittenFrames:   make([]*OutputAudioFrame, 0),
-		DiscardedFrames: make([]*OutputAudioFrame, 0),
+		ReceivedFrames:  make([]*core.OutputAudioFrame, 0),
+		WrittenFrames:   make([]*core.OutputAudioFrame, 0),
+		DiscardedFrames: make([]*core.OutputAudioFrame, 0),
 	}
 }
 
-func (p *FakeTransportOutput) Attach(s SessionController, index int) error {
+func (p *TransportOutput) Attach(s core.SessionController, index int) error {
 	p.session = s
 	p.index = index
 	return nil
 }
 
-func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+func (p *TransportOutput) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch f.Type() {
-	case FrameOutputAudio:
-		oaf := f.(*OutputAudioFrame)
+	case core.FrameOutputAudio:
+		oaf := f.(*core.OutputAudioFrame)
 		p.mu.Lock()
 		// Stale generation discard
-		if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() && oaf.Disposition != OutputUninterruptible {
+		if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() && oaf.Disposition != core.OutputUninterruptible {
 			p.DiscardedFrames = append(p.DiscardedFrames, oaf)
 			p.mu.Unlock()
 			return nil
@@ -512,7 +517,7 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 			p.mu.Unlock()
 
 			// Report write completion immediately back to session
-			return p.session.Reenter(&WriteCompletionFrame{
+			return p.session.Reenter(&core.WriteCompletionFrame{
 				Turn:        oaf.Turn,
 				Gen:         oaf.Gen,
 				UnitID:      oaf.UnitID,
@@ -521,7 +526,7 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 				TurnFinal:   oaf.TurnFinal,
 				Media:       oaf.MediaDuration(),
 				WordTimings: oaf.WordTimings,
-			}, Downstream, 0, oaf.Gen)
+			}, core.Downstream, 0, oaf.Gen)
 		}
 
 		// Asynchronous write simulation
@@ -534,24 +539,24 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 
 			p.mu.Lock()
 			// Check if generation changed during write
-			if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() && oaf.Disposition != OutputUninterruptible {
+			if p.session != nil && oaf.Gen != 0 && oaf.Gen < p.session.CurrentGeneration() && oaf.Disposition != core.OutputUninterruptible {
 				p.DiscardedFrames = append(p.DiscardedFrames, oaf)
 				p.mu.Unlock()
 				// Send write completion with old Gen to verify session rejects it
-				_ = p.session.Reenter(&WriteCompletionFrame{
+				_ = p.session.Reenter(&core.WriteCompletionFrame{
 					Turn:      oaf.Turn,
 					Gen:       oaf.Gen,
 					UnitID:    oaf.UnitID,
 					Seq:       oaf.Seq,
 					IsFinal:   oaf.IsFinal,
 					TurnFinal: oaf.TurnFinal,
-				}, Downstream, 0, oaf.Gen)
+				}, core.Downstream, 0, oaf.Gen)
 				return
 			}
 			p.WrittenFrames = append(p.WrittenFrames, oaf)
 			p.mu.Unlock()
 
-			_ = p.session.Reenter(&WriteCompletionFrame{
+			_ = p.session.Reenter(&core.WriteCompletionFrame{
 				Turn:        oaf.Turn,
 				Gen:         oaf.Gen,
 				UnitID:      oaf.UnitID,
@@ -560,16 +565,16 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 				TurnFinal:   oaf.TurnFinal,
 				Media:       oaf.MediaDuration(),
 				WordTimings: oaf.WordTimings,
-			}, Downstream, 0, oaf.Gen)
+			}, core.Downstream, 0, oaf.Gen)
 		})
 
-	case FrameInterruption:
-		intr := f.(*InterruptionFrame)
+	case core.FrameInterruption:
+		intr := f.(*core.InterruptionFrame)
 		p.mu.Lock()
 		// Discard pending frames belonging to interrupted generation
-		active := make([]*OutputAudioFrame, 0, len(p.ReceivedFrames))
+		active := make([]*core.OutputAudioFrame, 0, len(p.ReceivedFrames))
 		for _, frame := range p.ReceivedFrames {
-			if frame.Gen == intr.Gen && frame.Disposition != OutputUninterruptible {
+			if frame.Gen == intr.Gen && frame.Disposition != core.OutputUninterruptible {
 				p.DiscardedFrames = append(p.DiscardedFrames, frame)
 			} else {
 				active = append(active, frame)
@@ -579,14 +584,14 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 		p.mu.Unlock()
 		return e.PushDirection(f, dir)
 
-	case FrameFlush:
-		ff := f.(*FlushFrame)
+	case core.FrameFlush:
+		ff := f.(*core.FlushFrame)
 		p.mu.Lock()
 		p.FlushCount.Add(1)
 		// Discard all queued audio frames for the flushed generation
-		remaining := make([]*OutputAudioFrame, 0, len(p.ReceivedFrames))
+		remaining := make([]*core.OutputAudioFrame, 0, len(p.ReceivedFrames))
 		for _, frame := range p.ReceivedFrames {
-			if frame.Gen == ff.Gen && frame.Disposition != OutputUninterruptible {
+			if frame.Gen == ff.Gen && frame.Disposition != core.OutputUninterruptible {
 				p.DiscardedFrames = append(p.DiscardedFrames, frame)
 			} else {
 				remaining = append(remaining, frame)
@@ -597,7 +602,7 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 
 		if !p.cfg.SimulateFlushHang {
 			p.FlushAcksSent.Add(1)
-			return e.PushDirection(&FlushProcessedFrame{Gen: ff.Gen}, Upstream)
+			return e.PushDirection(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream)
 		}
 		return nil
 
@@ -606,18 +611,18 @@ func (p *FakeTransportOutput) ProcessFrame(ctx context.Context, f Frame, dir Dir
 	}
 }
 
-func (p *FakeTransportOutput) GetWrittenFrames() []*OutputAudioFrame {
+func (p *TransportOutput) GetWrittenFrames() []*core.OutputAudioFrame {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	res := make([]*OutputAudioFrame, len(p.WrittenFrames))
+	res := make([]*core.OutputAudioFrame, len(p.WrittenFrames))
 	copy(res, p.WrittenFrames)
 	return res
 }
 
-func (p *FakeTransportOutput) GetDiscardedFrames() []*OutputAudioFrame {
+func (p *TransportOutput) GetDiscardedFrames() []*core.OutputAudioFrame {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	res := make([]*OutputAudioFrame, len(p.DiscardedFrames))
+	res := make([]*core.OutputAudioFrame, len(p.DiscardedFrames))
 	copy(res, p.DiscardedFrames)
 	return res
 }

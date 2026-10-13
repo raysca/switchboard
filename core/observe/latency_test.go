@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 var t0 = time.Unix(1000, 0)
@@ -69,9 +70,9 @@ func TestTrackerNoUserStopNoVoiceToVoice(t *testing.T) {
 // End to end through a live session with the core fakes: measurements must
 // arrive in pipeline order and be consistent (stt+...<=voice_to_voice).
 func TestEndToEndOrdering(t *testing.T) {
-	llm := core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"hi ", "there"}, ChunkDelay: 5 * time.Millisecond})
-	tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2, FrameDelay: 5 * time.Millisecond})
-	out := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+	llm := coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"hi ", "there"}, ChunkDelay: 5 * time.Millisecond})
+	tts := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2, FrameDelay: 5 * time.Millisecond})
+	out := coretest.NewTransportOutput(coretest.TransportConfig{})
 	cx := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	pipe, err := core.NewPipeline(core.NewUserContextProcessor(cx, core.UserContextConfig{TurnPrefix: "turn"}), core.NewAssistantContextProcessor(cx, core.DefaultAssistantContextConfig()), llm, tts, out)
 	if err != nil {

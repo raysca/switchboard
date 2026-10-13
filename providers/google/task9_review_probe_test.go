@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 func TestReviewGooglePreservesNonoverlappingRepeatedWords(t *testing.T) {
@@ -28,7 +29,7 @@ func TestReviewGoogleBargeInUsesNewGeneration(t *testing.T) {
 	p, _ := NewSTTProcessor(cfg)
 	pool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	assistant := core.NewAssistantContextProcessor(pool, core.DefaultAssistantContextConfig())
-	pipe, _ := core.NewPipeline(p, assistant, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(p, assistant, &coretest.PassthroughProcessor{})
 	s, _ := core.NewSession(999, pipe, core.DefaultResourceBudget())
 	s.Start()
 	defer s.Close()

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 	"govoice/server/flow"
 	"govoice/vad"
@@ -39,17 +40,17 @@ func TestLLMClassify(t *testing.T) {
 func failoverRegistry(primaryErr error, order *[]string) *Registry {
 	reg := NewRegistry()
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"x"}, FailWith: primaryErr}), nil
+		return coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"x"}, FailWith: primaryErr}), nil
 	})
 	reg.Register("xai.llm", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"from ", "xai"}}), nil
+		return coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"from ", "xai"}}), nil
 	})
 	return reg
 }
 
 func runGeneration(t *testing.T, llm core.Processor) (text string, errs int) {
 	t.Helper()
-	rec := &core.PassthroughProcessor{}
+	rec := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(llm, rec)
 	if err != nil {
 		t.Fatal(err)
@@ -180,18 +181,18 @@ func TestCallPipelineFailoverSpeaksOneAnswer(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return passSTTStage{}, nil })
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"never"}, FailWith: errors.New("503 upstream")}), nil
+		return coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"never"}, FailWith: errors.New("503 upstream")}), nil
 	})
 	reg.Register("xai.llm", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"Fallback says: "}, EchoUser: true}), nil
+		return coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"Fallback says: "}, EchoUser: true}), nil
 	})
 	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2}), nil
+		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2}), nil
 	})
 	call := CallSpec{STT: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"},
 		LLMFallbacks: []StageSpec{{Provider: "xai"}}, MaxMessages: 10, MaxTokens: 1000}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
-	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		t.Fatal(err)
 	}

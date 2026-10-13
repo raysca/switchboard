@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 )
 
@@ -83,7 +84,7 @@ func TestGooglePipeline_MultiTurnRoundTripWithDeterministicVAD(t *testing.T) {
 	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
 	asstCtxProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 	vadProc := &deterministicVAD{}
-	fakeTransport := core.NewFakeTransportOutput(core.FakeTransportConfig{WriteDelay: 0})
+	fakeTransport := coretest.NewTransportOutput(coretest.TransportConfig{WriteDelay: 0})
 
 	pipe, err := core.NewPipeline(
 		vadProc,

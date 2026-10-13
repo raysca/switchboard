@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/observe"
 )
 
@@ -76,13 +77,13 @@ type cfg struct {
 
 // runSession drives n sequential turns and appends its measurements to out.
 func runSession(id uint64, c cfg, mu *sync.Mutex, out map[observe.Stage][]float64, over *[]float64) (err error) {
-	llm := core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"Hello there."}, ChunkDelay: c.llm + c.inject})
-	tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2, FrameDelay: c.tts})
+	llm := coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"Hello there."}, ChunkDelay: c.llm + c.inject})
+	tts := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2, FrameDelay: c.tts})
 	cx := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	pipe, err := core.NewPipeline(
 		core.NewUserContextProcessor(cx, core.UserContextConfig{TurnPrefix: "turn"}),
 		core.NewAssistantContextProcessor(cx, core.DefaultAssistantContextConfig()),
-		llm, tts, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+		llm, tts, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		return err
 	}

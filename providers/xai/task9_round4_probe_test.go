@@ -5,6 +5,7 @@ package xai
 import (
 	"context"
 	"govoice/core"
+	"govoice/core/coretest"
 	tr "govoice/core/transcript"
 	"sync"
 	"sync/atomic"
@@ -24,7 +25,7 @@ func TestRound4XAIBargeInTranscriptActuallyCommits(t *testing.T) {
 	pool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	user := core.NewUserContextProcessor(pool, core.UserContextConfig{RequireCommittedTranscript: true})
 	assistant := core.NewAssistantContextProcessor(pool, core.DefaultAssistantContextConfig())
-	pipe, _ := core.NewPipeline(p, fp, user, assistant, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(p, fp, user, assistant, &coretest.PassthroughProcessor{})
 	s, _ := core.NewSession(990, pipe, core.DefaultResourceBudget())
 	s.Start()
 	defer s.Close()
@@ -184,7 +185,7 @@ func TestRound4XAIClosesEveryDrainingStreamAfterSessionCancel(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	p, _ := NewSTTProcessor(cfg)
-	pipe, _ := core.NewPipeline(p, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(p, &coretest.PassthroughProcessor{})
 	s, _ := core.NewSession(991, pipe, core.DefaultResourceBudget())
 	if err := s.Start(); err != nil {
 		t.Fatal(err)

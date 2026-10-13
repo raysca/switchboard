@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	tr "govoice/core/transcript"
 )
 
@@ -56,7 +57,7 @@ func TestRound5XAIBufferedWriteFailureCannotCommitPartial(t *testing.T) {
 	fc.GracePeriod = 0
 	fc.InterimRepeats = 1
 	fp, _ := tr.NewProcessor(fc)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(p, fp, sink)
 	s, _ := core.NewSession(981, pipe, core.DefaultResourceBudget())
 	if err := s.Start(); err != nil {

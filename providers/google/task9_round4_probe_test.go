@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	tr "govoice/core/transcript"
 )
 
@@ -93,7 +94,7 @@ func TestRound4GoogleFullQueueInvalidationFailsClosed(t *testing.T) {
 	fc := tr.DefaultConfig()
 	fc.GracePeriod = 0
 	finalizer, _ := tr.NewProcessor(fc)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	block := &round4Blocker{entered: make(chan struct{}), release: make(chan struct{}), candidateSeen: make(chan struct{}), invalidationSeen: make(chan struct{}), errorSeen: make(chan struct{})}
 	pipe, _ := core.NewPipeline(p, block, finalizer, sink)
 	budget := core.DefaultResourceBudget()

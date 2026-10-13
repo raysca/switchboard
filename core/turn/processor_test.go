@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 )
 
@@ -50,7 +51,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 
 // stt stands in for the STT provider: it sees raw VAD/audio and forwards.
 type fakeSTT struct {
-	core.PassthroughProcessor
+	coretest.PassthroughProcessor
 }
 
 type harness struct {
@@ -58,7 +59,7 @@ type harness struct {
 	clk   *fakeClock
 	sess  *core.Session
 	stt   *fakeSTT
-	sink  *core.PassthroughProcessor
+	sink  *coretest.PassthroughProcessor
 	asst  *core.AssistantContextProcessor
 	proc  *Processor
 	turns int
@@ -66,7 +67,7 @@ type harness struct {
 
 func newHarness(t *testing.T, cfg Config) *harness {
 	t.Helper()
-	h := &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &core.PassthroughProcessor{}}
+	h := &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &coretest.PassthroughProcessor{}}
 	proc, err := NewProcessor(cfg, ProcessorOptions{Clock: h.clk})
 	if err != nil {
 		t.Fatal(err)
@@ -398,8 +399,8 @@ func TestProcessorResumedSpeechAfterEOUCommitsWholeTurn(t *testing.T) {
 	}
 	fin, _ := coretranscript.NewProcessor(coretranscript.DefaultConfig())
 	fin.ManageTurns()
-	sink := &core.PassthroughProcessor{}
-	pipe, _ := core.NewPipeline(&core.PassthroughProcessor{}, proc, fin, sink)
+	sink := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{}, proc, fin, sink)
 	sess, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	if err := sess.Start(); err != nil {
 		t.Fatal(err)

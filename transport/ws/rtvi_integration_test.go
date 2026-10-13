@@ -14,6 +14,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 )
@@ -57,7 +58,7 @@ func TestRTVI_SessionAllocationGate(t *testing.T) {
 	var sessionAllocated atomic.Bool
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
 		sessionAllocated.Store(true)
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		return core.NewSession(1, pipe, core.DefaultResourceBudget())
 	}
 
@@ -145,7 +146,7 @@ func TestRTVI_ConsumedTokenReconnectRejected(t *testing.T) {
 	val, _ := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
 	server := ws.NewServer(ws.DefaultServerConfig(val))
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		return core.NewSession(1, pipe, core.DefaultResourceBudget())
 	}
 
@@ -187,10 +188,10 @@ func TestRTVI_AudioTextRoundTrip(t *testing.T) {
 		userCtx := core.NewUserContextProcessor(ctxModel, core.UserContextConfig{TurnPrefix: "turn"})
 		asstCtx := core.NewAssistantContextProcessor(ctxModel, core.DefaultAssistantContextConfig())
 		fakeSTT := &FakeSTTProcessor{transcript: "Tell me a joke"}
-		fakeLLM := core.NewFakeLLMProcessor(core.FakeLLMConfig{
+		fakeLLM := coretest.NewLLMProcessor(coretest.LLMConfig{
 			ResponseChunks: []string{"Why did ", "the chicken cross?"},
 		})
-		fakeTTS := core.NewFakeTTSProcessor(core.FakeTTSConfig{
+		fakeTTS := coretest.NewTTSProcessor(coretest.TTSConfig{
 			FramesPerUnit: 2,
 		})
 
@@ -410,7 +411,7 @@ func TestRTVI_CleanDisconnectTeardown(t *testing.T) {
 
 	var sessClosed atomic.Bool
 	server.OnSessionReady = func(conn *ws.Connection) (*core.Session, error) {
-		pipe, _ := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{})
 		sess, err := core.NewSession(300, pipe, core.DefaultResourceBudget())
 		if err != nil {
 			return nil, err

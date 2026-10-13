@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 	coreturn "govoice/core/turn"
 )
@@ -126,7 +127,7 @@ type agentHarness struct {
 	sess   *core.Session
 	op     *cadenceOpener
 	asst   *core.AssistantContextProcessor
-	sink   *core.PassthroughProcessor
+	sink   *coretest.PassthroughProcessor
 	vadOn  bool
 	speech int // consecutive speech frames
 	quiet  int // consecutive silence frames
@@ -135,7 +136,7 @@ type agentHarness struct {
 
 func newAgentHarness(t *testing.T) *agentHarness {
 	t.Helper()
-	h := &agentHarness{t: t, op: &cadenceOpener{}, sink: &core.PassthroughProcessor{}}
+	h := &agentHarness{t: t, op: &cadenceOpener{}, sink: &coretest.PassthroughProcessor{}}
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = h.op
 	stt, _ := NewSTTProcessor(cfg)

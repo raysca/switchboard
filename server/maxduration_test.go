@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/ws"
 )
 
@@ -30,7 +31,7 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	flowID := readyTestFlow(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
-		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()

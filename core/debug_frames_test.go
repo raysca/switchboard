@@ -1,12 +1,13 @@
 package core
 
 import (
+	"context"
 	"testing"
 	"time"
 )
 
 func newDebugSession(t testing.TB) *Session {
-	pipe, err := NewPipeline(NewFakeTransportOutput(FakeTransportConfig{}))
+	pipe, err := NewPipeline(&testFnProcessor{fn: func(_ context.Context, f Frame, dir Direction, e Emitter) error { return e.PushDirection(f, dir) }})
 	if err != nil {
 		t.Fatal(err)
 	}

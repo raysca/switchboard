@@ -6,12 +6,13 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // labelRun drives one processor in a session and returns every frame that reached the sink.
 func labelRun(t *testing.T, proc core.Processor, post func(*core.Session)) []core.Frame {
 	t.Helper()
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

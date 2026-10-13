@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 
 	"google.golang.org/grpc/codes"
@@ -58,7 +59,7 @@ func (c *streamTestClient) unaryCount() int {
 type stHarness struct {
 	proc *StreamingTTSProcessor
 	sess *core.Session
-	sink *core.PassthroughProcessor
+	sink *coretest.PassthroughProcessor
 }
 
 func stStart(t *testing.T, client *streamTestClient, maxAttempts int) *stHarness {
@@ -75,7 +76,7 @@ func stStartIdle(t *testing.T, client *streamTestClient, maxAttempts int, idle t
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

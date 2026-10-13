@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 const testMgmtKey = "management-test-key-32-bytes-long-and-separate"
@@ -152,7 +153,7 @@ func TestLiveCallRoutesReportAnEndingCallAsGone(t *testing.T) {
 
 func TestSessionInjectorEndsWithItsSession(t *testing.T) {
 	trig := core.NewAsyncTrigger(core.AsyncTriggerConfig{})
-	pipe, err := core.NewPipeline(trig, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(trig, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}

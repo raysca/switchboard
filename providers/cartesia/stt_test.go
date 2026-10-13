@@ -14,6 +14,7 @@ import (
 
 	"github.com/coder/websocket"
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 )
 
@@ -61,7 +62,7 @@ func transcript(text string, final bool) []byte {
 type sharness struct {
 	proc *STTProcessor
 	sess *core.Session
-	sink *core.PassthroughProcessor
+	sink *coretest.PassthroughProcessor
 }
 
 func sstart(t *testing.T, cfg STTConfig, tracer core.Tracer) *sharness {
@@ -70,7 +71,7 @@ func sstart(t *testing.T, cfg STTConfig, tracer core.Tracer) *sharness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

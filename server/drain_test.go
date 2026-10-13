@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/ws"
 )
 
@@ -26,7 +27,7 @@ func drainFixture(t *testing.T, drain time.Duration) (*Server, *httptest.Server,
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	flowID := readyTestFlow(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
-		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	s.ready.Store(true)
 	ts := httptest.NewServer(s.publicMux)
@@ -177,7 +178,7 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	if err := s.admission.AcquireSession(principal, flowID, true); err != nil {
 		t.Fatal(err)
 	}
-	pipe, err := core.NewPipeline(&core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(&coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +238,7 @@ func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
 	if err := s.admission.AcquireSession(principal, flowID, true); err != nil {
 		t.Fatal(err)
 	}
-	pipe, err := core.NewPipeline(&core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(&coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}

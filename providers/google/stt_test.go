@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 )
 
@@ -204,7 +205,7 @@ func TestGoogleSTTEmitsRawCandidatesWithProviderSemantics(t *testing.T) {
 	cfg.StreamOpener = &mockSTTOpener{onOpenStream: func(STTConfig) *mockSTTStream { return st }}
 	cfg.Now = func() time.Time { return time.Unix(30, 0) }
 	proc, _ := NewSTTProcessor(cfg)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(30, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
@@ -231,7 +232,7 @@ func TestGoogleSTTAssemblesSequentialFinalsAndInterimFromWholeResponse(t *testin
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = &mockSTTOpener{onOpenStream: func(STTConfig) *mockSTTStream { return st }}
 	proc, _ := NewSTTProcessor(cfg)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(32, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
@@ -280,7 +281,7 @@ func TestGoogleSTTStreamOwnershipIsImmutableAcrossTurns(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	proc, _ := NewSTTProcessor(cfg)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(33, pipe, core.DefaultResourceBudget())
 	_ = session.Start()

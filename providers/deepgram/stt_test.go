@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 )
 
@@ -67,7 +68,7 @@ func boolStr(b bool) string {
 type harness struct {
 	proc *STTProcessor
 	sess *core.Session
-	sink *core.PassthroughProcessor
+	sink *coretest.PassthroughProcessor
 }
 
 func start(t *testing.T, cfg STTConfig, tracer core.Tracer) *harness {
@@ -76,7 +77,7 @@ func start(t *testing.T, cfg STTConfig, tracer core.Tracer) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

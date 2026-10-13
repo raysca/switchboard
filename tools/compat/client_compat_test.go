@@ -14,6 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/token"
 	"govoice/transport/ws"
 )
@@ -87,10 +88,10 @@ func TestCompat_UnmodifiedClientPackage_RegressionGate(t *testing.T) {
 		userCtx := core.NewUserContextProcessor(ctxModel, core.UserContextConfig{TurnPrefix: "turn"})
 		asstCtx := core.NewAssistantContextProcessor(ctxModel, core.DefaultAssistantContextConfig())
 		fakeSTT := &FakeSTTForCompat{}
-		fakeLLM := core.NewFakeLLMProcessor(core.FakeLLMConfig{
+		fakeLLM := coretest.NewLLMProcessor(coretest.LLMConfig{
 			ResponseChunks: []string{"Hello ", "client-js!"},
 		})
-		fakeTTS := core.NewFakeTTSProcessor(core.FakeTTSConfig{
+		fakeTTS := coretest.NewTTSProcessor(coretest.TTSConfig{
 			FramesPerUnit: 2,
 		})
 

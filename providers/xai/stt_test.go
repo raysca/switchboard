@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type mockSTTStream struct {
@@ -90,7 +91,7 @@ func TestXAISTT_Success(t *testing.T) {
 		t.Fatalf("new stt processor: %v", err)
 	}
 
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
@@ -155,7 +156,7 @@ func TestXAISTT_InterruptionFencing(t *testing.T) {
 		t.Fatalf("new stt processor: %v", err)
 	}
 
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
@@ -207,7 +208,7 @@ func TestXAISTT_TurnSemantics_IntermediateFinalVsSpeechFinal(t *testing.T) {
 		t.Fatalf("new stt processor: %v", err)
 	}
 
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
@@ -282,7 +283,7 @@ func TestXAISTT_AudioBufferingBeforeReady(t *testing.T) {
 		t.Fatalf("new stt processor: %v", err)
 	}
 
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatalf("new pipeline: %v", err)
@@ -348,7 +349,7 @@ func TestXAISTTEmitsRawCandidatesAndDoneIsUtteranceFinal(t *testing.T) {
 	cfg.StreamOpener = &mockSTTOpener{stream: mockStream}
 	cfg.Now = func() time.Time { return time.Unix(31, 0) }
 	proc, _ := NewSTTProcessor(cfg)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(31, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
@@ -384,7 +385,7 @@ func TestXAISTTDoneUsesMessageTextAndFallsBackToLastText(t *testing.T) {
 			cfg := DefaultSTTConfig()
 			cfg.StreamOpener = &mockSTTOpener{stream: stream}
 			proc, _ := NewSTTProcessor(cfg)
-			sink := &core.PassthroughProcessor{}
+			sink := &coretest.PassthroughProcessor{}
 			pipe, _ := core.NewPipeline(proc, sink)
 			session, _ := core.NewSession(40, pipe, core.DefaultResourceBudget())
 			_ = session.Start()
@@ -436,7 +437,7 @@ func TestXAISTTStreamOwnershipIsImmutableAcrossTurns(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	proc, _ := NewSTTProcessor(cfg)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(41, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
@@ -505,7 +506,7 @@ func TestXAISTTKeepsReplayBurstBeforeReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pipe, _ := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
 	session, _ := core.NewSession(4, pipe, core.DefaultResourceBudget())
 	if err := session.Start(); err != nil {
 		t.Fatal(err)

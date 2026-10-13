@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 	"govoice/examples/envload"
 	"govoice/providers/google"
@@ -91,7 +92,7 @@ func main() {
 	}
 
 	// 6. Sink Processor
-	sinkProc := &core.PassthroughProcessor{}
+	sinkProc := &coretest.PassthroughProcessor{}
 
 	// 7. Assemble Mixed Pipeline (Google STT -> UserCtx -> xAI LLM -> AsstCtx -> Google TTS)
 	pipeline, err := core.NewPipeline(

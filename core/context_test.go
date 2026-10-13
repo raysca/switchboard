@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // 1. Test deterministic context eviction and provider-limit rejection
@@ -131,7 +132,7 @@ func TestPhase2_DeterministicContextEviction_AndLimitRejection(t *testing.T) {
 func TestPhase2_DuplicateAndLateFinalTranscripts(t *testing.T) {
 	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	userProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
-	passProc := &core.PassthroughProcessor{}
+	passProc := &coretest.PassthroughProcessor{}
 
 	pipe, err := core.NewPipeline(userProc, passProc)
 	if err != nil {
@@ -225,17 +226,17 @@ func TestPhase2_InterruptionBeforeFirstAudio_RecordsNoAssistantText(t *testing.T
 	asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 
 	// LLM with delay so interruption happens before audio completion
-	fakeLLM := core.NewFakeLLMProcessor(core.FakeLLMConfig{
+	fakeLLM := coretest.NewLLMProcessor(coretest.LLMConfig{
 		ResponseChunks: []string{"Hello there! ", "How can I help you today?"},
 		ChunkDelay:     100 * time.Millisecond,
 	})
 
-	fakeTTS := core.NewFakeTTSProcessor(core.FakeTTSConfig{
+	fakeTTS := coretest.NewTTSProcessor(coretest.TTSConfig{
 		FramesPerUnit: 2,
 		FrameDelay:    50 * time.Millisecond,
 	})
 
-	fakeTransport := core.NewFakeTransportOutput(core.FakeTransportConfig{
+	fakeTransport := coretest.NewTransportOutput(coretest.TransportConfig{
 		WriteDelay: 50 * time.Millisecond,
 	})
 
@@ -291,7 +292,7 @@ func TestPhase2_MidUnitInterruption_ExcludesPartlyWrittenUnit(t *testing.T) {
 	userProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
 	asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 
-	pipe, err := core.NewPipeline(userProc, asstProc, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(userProc, asstProc, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatalf("NewPipeline failed: %v", err)
 	}
@@ -367,7 +368,7 @@ func TestPhase2_InterruptionBetweenUnits_RecordsOnlyFullyWrittenUnitsWithPartial
 	userProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
 	asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 
-	pipe, err := core.NewPipeline(userProc, asstProc, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(userProc, asstProc, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatalf("NewPipeline failed: %v", err)
 	}
@@ -422,7 +423,7 @@ func TestPhase2_WriteCompletionRacingBarrier_DeterministicOrdering(t *testing.T)
 	userProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
 	asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 
-	pipe, err := core.NewPipeline(userProc, asstProc, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(userProc, asstProc, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatalf("NewPipeline failed: %v", err)
 	}
@@ -476,19 +477,19 @@ func TestPhase2_LLMTTSOutputAfterCancellation_NeverReachesOutputOrContext(t *tes
 	asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 
 	// Configured with IgnoreCancel=true: simulated rogue LLM/TTS that keeps emitting after cancel
-	fakeLLM := core.NewFakeLLMProcessor(core.FakeLLMConfig{
+	fakeLLM := coretest.NewLLMProcessor(coretest.LLMConfig{
 		ResponseChunks: []string{"chunk 1. ", "rogue chunk after cancel."},
 		ChunkDelay:     80 * time.Millisecond,
 		IgnoreCancel:   true,
 	})
 
-	fakeTTS := core.NewFakeTTSProcessor(core.FakeTTSConfig{
+	fakeTTS := coretest.NewTTSProcessor(coretest.TTSConfig{
 		FramesPerUnit: 2,
 		FrameDelay:    50 * time.Millisecond,
 		IgnoreCancel:  true,
 	})
 
-	fakeTransport := core.NewFakeTransportOutput(core.FakeTransportConfig{WriteDelay: 0})
+	fakeTransport := coretest.NewTransportOutput(coretest.TransportConfig{WriteDelay: 0})
 
 	pipe, err := core.NewPipeline(userProc, asstProc, fakeLLM, fakeTTS, fakeTransport)
 	if err != nil {
@@ -538,7 +539,7 @@ func TestPhase2_FlushTimeoutFailsOrDegradesExplicitlyWithoutBlocking(t *testing.
 	asstProc := core.NewAssistantContextProcessor(ctxPool, asstCfg)
 
 	// Simulate transport hanging on flush acknowledgement (withhold FlushProcessedFrame)
-	fakeTransport := core.NewFakeTransportOutput(core.FakeTransportConfig{
+	fakeTransport := coretest.NewTransportOutput(coretest.TransportConfig{
 		SimulateFlushHang: true,
 	})
 
@@ -607,7 +608,7 @@ func TestPhase2_NextTurnSucceedsInSameSessionWithCoherentContext(t *testing.T) {
 	userProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
 	asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
 
-	fakeTransport := core.NewFakeTransportOutput(core.FakeTransportConfig{WriteDelay: 0})
+	fakeTransport := coretest.NewTransportOutput(coretest.TransportConfig{WriteDelay: 0})
 
 	pipe, err := core.NewPipeline(userProc, asstProc, fakeTransport)
 	if err != nil {
@@ -706,7 +707,7 @@ func TestAssistantContext_NoDuplicateSynthesisOnFinalLLMTextFrame(t *testing.T) 
 	asstProc := core.NewAssistantContextProcessor(ctxPool, cfg)
 
 	var emittedUnits []string
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 
 	pipe, err := core.NewPipeline(asstProc, sink)
 	if err != nil {
@@ -829,7 +830,7 @@ func TestWriteCompletionErrorDoesNotCommitAssistantText(t *testing.T) {
 	ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	userProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
 	asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
-	pipe, err := core.NewPipeline(userProc, asstProc, &core.PassthroughProcessor{})
+	pipe, err := core.NewPipeline(userProc, asstProc, &coretest.PassthroughProcessor{})
 	if err != nil {
 		t.Fatal(err)
 	}

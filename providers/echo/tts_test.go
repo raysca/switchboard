@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/providers/google"
 )
 
@@ -91,7 +92,7 @@ func TestStreamingTTSDeliversTwentyMillisecondChunks(t *testing.T) {
 // ttsRun drives a real Google TTS processor built around the echo client.
 func ttsRun(t *testing.T, proc core.Processor, text string) (audio int) {
 	t.Helper()
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

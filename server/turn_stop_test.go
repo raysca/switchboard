@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coreturn "govoice/core/turn"
 	"govoice/smartturn"
 	"govoice/vad"
@@ -130,9 +131,9 @@ func TestTurnAnalyzerThroughCallPipeline(t *testing.T) {
 		cfg.Turn.Analyzer.StopSecs = stopSecs
 		cfg.Turn.Analyzer.Budget = budget
 		reg := NewRegistry()
-		llm := &core.PassthroughProcessor{}
-		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
-		reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		llm := &coretest.PassthroughProcessor{}
+		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+		reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 		reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
 		reg.SetTurnBackend(be)
 		vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
@@ -141,7 +142,7 @@ func TestTurnAnalyzerThroughCallPipeline(t *testing.T) {
 			t.Fatal(err)
 		}
 		procs := pipe.Processors()
-		if _, ok := procs[1].(*core.PassthroughProcessor); ok || procs[0] != vadProc {
+		if _, ok := procs[1].(*coretest.PassthroughProcessor); ok || procs[0] != vadProc {
 			t.Fatalf("audio tap must sit between VAD and STT: %T %T", procs[0], procs[1])
 		}
 		s, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
@@ -274,10 +275,10 @@ func TestTurnCompletionEndToEnd(t *testing.T) {
 		want  string // "" = nothing spoken
 	}{{"● Hi there, friend.", "Hi there, friend."}, {"◐", ""}} {
 		var prompts []string
-		tts := &core.PassthroughProcessor{}
+		tts := &coretest.PassthroughProcessor{}
 		llm := &scriptedLLM{reply: tc.reply}
 		reg := NewRegistry()
-		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 		reg.Register("google.llm", func(_ *Config, s StageSpec) (core.Processor, error) {
 			prompts = append(prompts, s.SystemPrompt)
 			return llm, nil
@@ -349,9 +350,9 @@ func TestTurnAnalyzerWindowWithMinWords(t *testing.T) {
 	cfg.Turn.Stop = []string{"turn-analyzer", "speech-timeout"}
 	cfg.Turn.Analyzer.Budget = 500 * time.Millisecond
 	reg := NewRegistry()
-	llm := &core.PassthroughProcessor{}
-	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
-	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	llm := &coretest.PassthroughProcessor{}
+	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
 	be := &recordingBackend{p: 0.9}
 	reg.SetTurnBackend(be)
@@ -415,9 +416,9 @@ func TestTurnManager_BargeInOverSpeakingTTSAndSilenceCompletion(t *testing.T) {
 	cfg.Turn.SpeechTimeout = 200 * time.Millisecond
 
 	reg := NewRegistry()
-	llm := &core.PassthroughProcessor{}
-	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
-	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	llm := &coretest.PassthroughProcessor{}
+	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
 
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())

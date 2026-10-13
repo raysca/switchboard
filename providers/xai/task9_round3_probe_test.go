@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 )
 
@@ -73,7 +74,7 @@ func TestRound3XAILatePriorFinalSurvivesV1AndTypedNextTurn(t *testing.T) {
 			fc.GracePeriod = 5 * time.Millisecond
 			fc.FinalizationTimeout = 100 * time.Millisecond
 			finalizer, _ := coretranscript.NewProcessor(fc)
-			sink := &core.PassthroughProcessor{}
+			sink := &coretest.PassthroughProcessor{}
 			pipe, _ := core.NewPipeline(provider, finalizer, sink)
 			session, _ := core.NewSession(970, pipe, core.DefaultResourceBudget())
 			_ = session.Start()

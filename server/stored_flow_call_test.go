@@ -19,6 +19,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/server/catalog"
 	"govoice/server/flow"
 	"govoice/server/runtime"
@@ -54,7 +55,7 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 			spec.Secret = append([]byte(nil), spec.Secret...) // adapters copy what they keep
 			got[stage] = spec
 			mu.Unlock()
-			return &core.PassthroughProcessor{}, nil
+			return &coretest.PassthroughProcessor{}, nil
 		}
 	}
 	for _, stage := range []string{"stt", "llm", "tts"} {
@@ -212,9 +213,9 @@ func TestTextTurnReachesFlowLLM(t *testing.T) {
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	flowID := readyTestFlow(t, s)
 	llm := &userTurnRecorder{}
-	s.registry.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	s.registry.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	s.registry.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
-	s.registry.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+	s.registry.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
@@ -307,7 +308,7 @@ func TestShutdownEndsActiveSessionRows(t *testing.T) {
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
 	flowID := readyTestFlow(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
-		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	ts := httptest.NewServer(s.wsServer)
 	defer ts.Close()
@@ -400,16 +401,16 @@ func TestStoredFlow_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 	var mu sync.Mutex
 	var gotLLM StageSpec
 	s.registry.Register("google.stt", func(_ *Config, _ StageSpec) (core.Processor, error) {
-		return &core.PassthroughProcessor{}, nil
+		return &coretest.PassthroughProcessor{}, nil
 	})
 	s.registry.Register("google.tts", func(_ *Config, _ StageSpec) (core.Processor, error) {
-		return &core.PassthroughProcessor{}, nil
+		return &coretest.PassthroughProcessor{}, nil
 	})
 	s.registry.Register("google.llm", func(_ *Config, spec StageSpec) (core.Processor, error) {
 		mu.Lock()
 		gotLLM = spec
 		mu.Unlock()
-		return &core.PassthroughProcessor{}, nil
+		return &coretest.PassthroughProcessor{}, nil
 	})
 
 	ts := httptest.NewServer(s.wsServer)
@@ -615,7 +616,7 @@ func TestCallRefusedWhenTheVariableIsGone(t *testing.T) {
 	s.env = env.get
 	flowID := readyTestFlow(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
-		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
+		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
 	w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
 	var resp struct {

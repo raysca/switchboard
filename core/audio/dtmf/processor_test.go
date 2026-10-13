@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 func startSession(t *testing.T, procs ...core.Processor) *core.Session {
@@ -50,7 +51,7 @@ func postPCM(t *testing.T, s *core.Session, b []byte, rate int) {
 	}
 }
 
-func finals(p *core.PassthroughProcessor) (out []string) {
+func finals(p *coretest.PassthroughProcessor) (out []string) {
 	for _, f := range p.GetFrames() {
 		if ft, ok := f.(*core.FinalTranscriptionFrame); ok {
 			out = append(out, ft.Text)
@@ -67,7 +68,7 @@ func TestPipelineDetectsAggregatesAndCommitsUserMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctxPool := core.NewConversationContext(core.ContextConfig{})
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	s := startSession(t, in, NewAggregator(AggregatorConfig{Timeout: time.Minute}),
 		core.NewUserContextProcessor(ctxPool, core.UserContextConfig{RequireCommittedTranscript: true}), sink)
 	var debugs chan core.DebugEvent = make(chan core.DebugEvent, 8)
@@ -126,7 +127,7 @@ func TestPipelineDetectsAggregatesAndCommitsUserMessage(t *testing.T) {
 
 func TestInputProcessorIgnoresOtherRates(t *testing.T) {
 	in, _ := NewInputProcessor(DefaultDetectorConfig())
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	s := startSession(t, in, sink)
 	pcm, _ := Generate("5", DefaultGeneratorConfig(24000))
 	postPCM(t, s, pcm, 24000)
@@ -139,7 +140,7 @@ func TestInputProcessorIgnoresOtherRates(t *testing.T) {
 }
 
 func TestAggregatorTimeoutFlushes(t *testing.T) {
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	s := startSession(t, NewAggregator(AggregatorConfig{Timeout: 40 * time.Millisecond}), sink)
 	for _, d := range []string{"4", "2"} {
 		if err := s.Post(&core.InputDTMFFrame{Digit: d}); err != nil {
@@ -165,7 +166,7 @@ func TestAggregatorTimeoutFlushes(t *testing.T) {
 }
 
 func TestAggregatorTerminatorFlushesImmediatelyAndInvalidPassesThrough(t *testing.T) {
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	s := startSession(t, NewAggregator(AggregatorConfig{Timeout: time.Minute}), sink)
 	_ = s.Post(&core.InputDTMFFrame{Digit: "Z"}) // invalid: forwarded, never aggregated
 	_ = s.Post(&core.InputDTMFFrame{Digit: "9"})
@@ -176,17 +177,17 @@ func TestAggregatorTerminatorFlushesImmediatelyAndInvalidPassesThrough(t *testin
 	}
 }
 
-func newOut(t *testing.T) (*OutputProcessor, *core.PassthroughProcessor, *core.Session) {
+func newOut(t *testing.T) (*OutputProcessor, *coretest.PassthroughProcessor, *core.Session) {
 	t.Helper()
 	out, err := NewOutputProcessor(OutputConfig{Tones: DefaultGeneratorConfig(24000)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	return out, sink, startSession(t, out, sink)
 }
 
-func audioBytes(p *core.PassthroughProcessor) (n int, gen uint64, ok bool) {
+func audioBytes(p *coretest.PassthroughProcessor) (n int, gen uint64, ok bool) {
 	ok = true
 	for _, f := range p.GetFrames() {
 		if a, isA := f.(*core.OutputAudioFrame); isA {

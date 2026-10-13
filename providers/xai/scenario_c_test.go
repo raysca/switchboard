@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // Mock Google STT Processor for Scenario C
@@ -121,7 +122,7 @@ func TestScenarioC_MixedProviderInterchangeability(t *testing.T) {
 	tts.synthesizedWg.Add(1)
 
 	// 6. Transport Output Mock
-	transportOutput := core.NewFakeTransportOutput(core.FakeTransportConfig{WriteDelay: 0})
+	transportOutput := coretest.NewTransportOutput(coretest.TransportConfig{WriteDelay: 0})
 
 	// Assemble mixed pipeline: Google STT -> UserContext -> xAI LLM -> AsstContext -> Google TTS -> Output
 	pipe, err := core.NewPipeline(stt, userCtxProc, xaiProc, asstCtxProc, tts, transportOutput)

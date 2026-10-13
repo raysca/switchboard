@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretools "govoice/core/tools"
 	"govoice/vad"
 )
@@ -147,7 +148,7 @@ func newAsyncRig(t *testing.T, fallback bool, mods ...func(*Config)) *asyncRig {
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return passSTTStage{}, nil })
 	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2}), nil
+		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2}), nil
 	})
 	reg.Register("google.llm", func(_ *Config, s StageSpec) (core.Processor, error) {
 		var fail error
@@ -172,7 +173,7 @@ func newAsyncRig(t *testing.T, fallback bool, mods ...func(*Config)) *asyncRig {
 	for _, m := range mods {
 		m(cfg)
 	}
-	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		t.Fatal(err)
 	}

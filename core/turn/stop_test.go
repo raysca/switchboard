@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 type fakeAnalyzer struct {
@@ -279,7 +280,7 @@ func TestPushToTalkBargesIn(t *testing.T) {
 
 func newStopHarness(t *testing.T, cfg Config, det TurnDetector) *harness {
 	t.Helper()
-	h := &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &core.PassthroughProcessor{}}
+	h := &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &coretest.PassthroughProcessor{}}
 	proc, err := NewProcessor(cfg, ProcessorOptions{Clock: h.clk, Detector: det})
 	if err != nil {
 		t.Fatal(err)

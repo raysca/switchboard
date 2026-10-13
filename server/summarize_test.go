@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/server/flow"
 	"govoice/vad"
 )
@@ -78,7 +79,7 @@ func newSumRig(t *testing.T, enabled bool, summarize func(context.Context, strin
 	reg.onSummary = func(outcome string, _ time.Duration, _ int) { r.results <- outcome }
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return passSTTStage{}, nil })
 	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 1}), nil
+		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 1}), nil
 	})
 	reg.Register("google.llm", func(_ *Config, s StageSpec) (core.Processor, error) {
 		r.llm = &sumFakeLLM{spec: s, summarize: summarize}
@@ -89,7 +90,7 @@ func newSumRig(t *testing.T, enabled bool, summarize func(context.Context, strin
 		MaxMessages: 40, MaxTokens: 600,
 		Summary: flow.SummarizationConfig{Enabled: enabled, TriggerTokens: 300, KeepTurns: 2}}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
-	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		t.Fatal(err)
 	}

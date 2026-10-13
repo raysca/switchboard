@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	tr "govoice/core/transcript"
 )
 
@@ -20,7 +21,7 @@ func newCommitHarness(t *testing.T) *harness {
 // newCommitHarnessWith is the finalizer-backed harness for any start config and stop detector.
 func newCommitHarnessWith(t *testing.T, cfg Config, det TurnDetector) *harness {
 	t.Helper()
-	h := &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &core.PassthroughProcessor{}}
+	h := &harness{t: t, clk: &fakeClock{now: time.Unix(1000, 0)}, stt: &fakeSTT{}, sink: &coretest.PassthroughProcessor{}}
 	proc, err := NewProcessor(cfg, ProcessorOptions{Clock: h.clk, Detector: det})
 	if err != nil {
 		t.Fatal(err)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/record"
 	"govoice/core/redact"
 	"govoice/server/otelexport"
@@ -156,13 +157,13 @@ func TestRedactionEndToEnd(t *testing.T) {
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return passSTTStage{}, nil })
 	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
-		return core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 1}), nil
+		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 1}), nil
 	})
 	reg.Register("google.llm", func(*Config, StageSpec) (core.Processor, error) { return llm, nil })
 	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"},
 		MaxMessages: 20, MaxTokens: 4000, History: history, Recording: true}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
-	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		t.Fatal(err)
 	}

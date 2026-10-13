@@ -1,71 +1,74 @@
-package core
+package core_test
 
 import (
+	"govoice/core"
+	"govoice/core/coretest"
+
 	"testing"
 	"time"
 )
 
 func TestSpeakingTrackerStartsFromWrittenAudioAndStopsOnce(t *testing.T) {
-	tracker := NewSpeakingTracker()
+	tracker := core.NewSpeakingTracker()
 
-	started, ok := tracker.ObserveWrite("turn-1", 1, OutputInterruptible)
-	if !ok || started.State != SpeakingStarted || started.Turn != "turn-1" || started.Gen != 1 {
+	started, ok := tracker.ObserveWrite("turn-1", 1, core.OutputInterruptible)
+	if !ok || started.State != core.SpeakingStarted || started.Turn != "turn-1" || started.Gen != 1 {
 		t.Fatalf("unexpected start transition: %#v, ok=%v", started, ok)
 	}
-	if _, ok := tracker.ObserveWrite("turn-1", 1, OutputInterruptible); ok {
+	if _, ok := tracker.ObserveWrite("turn-1", 1, core.OutputInterruptible); ok {
 		t.Fatal("a second write in the same turn must not restart speaking")
 	}
 
-	stopped, ok := tracker.StopThrough(1, SpeakingStopDrained)
-	if !ok || stopped.State != SpeakingStopped || stopped.Reason != SpeakingStopDrained {
+	stopped, ok := tracker.StopThrough(1, core.SpeakingStopDrained)
+	if !ok || stopped.State != core.SpeakingStopped || stopped.Reason != core.SpeakingStopDrained {
 		t.Fatalf("unexpected stop transition: %#v, ok=%v", stopped, ok)
 	}
-	if _, ok := tracker.StopThrough(1, SpeakingStopFlushed); ok {
+	if _, ok := tracker.StopThrough(1, core.SpeakingStopFlushed); ok {
 		t.Fatal("speaking must stop exactly once")
 	}
 }
 
 func TestSpeakingTrackerFlushPreservesNewGenerationAndUninterruptibleOutput(t *testing.T) {
-	tracker := NewSpeakingTracker()
-	if ev, ok := tracker.ObserveWrite("critical", 1, OutputUninterruptible); !ok || !ev.Uninterruptible {
+	tracker := core.NewSpeakingTracker()
+	if ev, ok := tracker.ObserveWrite("critical", 1, core.OutputUninterruptible); !ok || !ev.Uninterruptible {
 		t.Fatal("expected critical output to start speaking, flagged uninterruptible")
 	}
-	if _, ok := tracker.StopThrough(1, SpeakingStopFlushed); ok {
+	if _, ok := tracker.StopThrough(1, core.SpeakingStopFlushed); ok {
 		t.Fatal("flush must not stop explicitly uninterruptible output")
 	}
-	if _, ok := tracker.Stop(SpeakingStopDrained); !ok {
+	if _, ok := tracker.Stop(core.SpeakingStopDrained); !ok {
 		t.Fatal("final drain must stop uninterruptible output")
 	}
 
-	if ev, ok := tracker.ObserveWrite("turn-2", 2, OutputInterruptible); !ok || ev.Uninterruptible {
+	if ev, ok := tracker.ObserveWrite("turn-2", 2, core.OutputInterruptible); !ok || ev.Uninterruptible {
 		t.Fatal("expected new generation to start speaking")
 	}
-	if _, ok := tracker.StopThrough(1, SpeakingStopFlushed); ok {
+	if _, ok := tracker.StopThrough(1, core.SpeakingStopFlushed); ok {
 		t.Fatal("an old flush must not stop newer-generation speaking")
 	}
 }
 
 func TestSpeakingTrackerLateDrainCannotStopDifferentOutput(t *testing.T) {
-	tracker := NewSpeakingTracker()
-	if _, ok := tracker.ObserveWrite("turn-2", 2, OutputInterruptible); !ok {
+	tracker := core.NewSpeakingTracker()
+	if _, ok := tracker.ObserveWrite("turn-2", 2, core.OutputInterruptible); !ok {
 		t.Fatal("expected start")
 	}
-	if _, ok := tracker.StopOutput("turn-1", 1, SpeakingStopDrained); ok {
+	if _, ok := tracker.StopOutput("turn-1", 1, core.SpeakingStopDrained); ok {
 		t.Fatal("late drain stopped newer output")
 	}
-	if _, ok := tracker.StopOutput("turn-2", 2, SpeakingStopDrained); !ok {
+	if _, ok := tracker.StopOutput("turn-2", 2, core.SpeakingStopDrained); !ok {
 		t.Fatal("matching drain did not stop output")
 	}
 }
 
 func TestFakeLLMEmitsWholeTurnCompletion(t *testing.T) {
-	llm := NewFakeLLMProcessor(FakeLLMConfig{ResponseChunks: []string{"hello ", "world"}})
-	sink := &PassthroughProcessor{}
-	pipe, err := NewPipeline(llm, sink)
+	llm := coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"hello ", "world"}})
+	sink := &coretest.PassthroughProcessor{}
+	pipe, err := core.NewPipeline(llm, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := NewSession(1, pipe, DefaultResourceBudget())
+	session, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,13 +76,13 @@ func TestFakeLLMEmitsWholeTurnCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if err := session.Post(&UserMessageFrame{Turn: "turn-1", Gen: 1}); err != nil {
+	if err := session.Post(&core.UserMessageFrame{Turn: "turn-1", Gen: 1}); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		for _, frame := range sink.GetFrames() {
-			if final, ok := frame.(*LLMTextFrame); ok {
+			if final, ok := frame.(*core.LLMTextFrame); ok {
 				if final.Text != "hello world" || final.Turn != "turn-1" || final.Gen != 1 {
 					t.Fatalf("unexpected completion: %#v", final)
 				}
@@ -92,14 +95,14 @@ func TestFakeLLMEmitsWholeTurnCompletion(t *testing.T) {
 }
 
 func TestAssistantContextEmitsExplicitFinalMarkerForAlreadyStreamedUnit(t *testing.T) {
-	contextStore := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
-	assistant := NewAssistantContextProcessor(contextStore, DefaultAssistantContextConfig())
-	sink := &PassthroughProcessor{}
-	pipe, err := NewPipeline(assistant, sink)
+	contextStore := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	assistant := core.NewAssistantContextProcessor(contextStore, core.DefaultAssistantContextConfig())
+	sink := &coretest.PassthroughProcessor{}
+	pipe, err := core.NewPipeline(assistant, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := NewSession(2, pipe, DefaultResourceBudget())
+	session, err := core.NewSession(2, pipe, core.DefaultResourceBudget())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,25 +110,25 @@ func TestAssistantContextEmitsExplicitFinalMarkerForAlreadyStreamedUnit(t *testi
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if err := session.Post(&UserMessageFrame{Turn: "turn-1", Gen: 1}); err != nil {
+	if err := session.Post(&core.UserMessageFrame{Turn: "turn-1", Gen: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Post(&LLMTextDeltaFrame{Delta: "Hello world.", Turn: "turn-1", Gen: 1}); err != nil {
+	if err := session.Post(&core.LLMTextDeltaFrame{Delta: "Hello world.", Turn: "turn-1", Gen: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.Post(&LLMTextFrame{Text: "Hello world.", Turn: "turn-1", Gen: 1}); err != nil {
+	if err := session.Post(&core.LLMTextFrame{Text: "Hello world.", Turn: "turn-1", Gen: 1}); err != nil {
 		t.Fatal(err)
 	}
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		var units []*SynthesisUnitFrame
-		var marker *OutputTurnFinalFrame
+		var units []*core.SynthesisUnitFrame
+		var marker *core.OutputTurnFinalFrame
 		for _, frame := range sink.GetFrames() {
-			if unit, ok := frame.(*SynthesisUnitFrame); ok {
+			if unit, ok := frame.(*core.SynthesisUnitFrame); ok {
 				units = append(units, unit)
 			}
-			if final, ok := frame.(*OutputTurnFinalFrame); ok {
+			if final, ok := frame.(*core.OutputTurnFinalFrame); ok {
 				marker = final
 			}
 		}
@@ -144,14 +147,14 @@ func TestAssistantContextEmitsExplicitFinalMarkerForAlreadyStreamedUnit(t *testi
 }
 
 func TestAssistantContextUnitIDsAreSessionMonotonicAcrossTurns(t *testing.T) {
-	contextStore := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
-	assistant := NewAssistantContextProcessor(contextStore, DefaultAssistantContextConfig())
-	sink := &PassthroughProcessor{}
-	pipe, err := NewPipeline(assistant, sink)
+	contextStore := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
+	assistant := core.NewAssistantContextProcessor(contextStore, core.DefaultAssistantContextConfig())
+	sink := &coretest.PassthroughProcessor{}
+	pipe, err := core.NewPipeline(assistant, sink)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := NewSession(12, pipe, DefaultResourceBudget())
+	session, err := core.NewSession(12, pipe, core.DefaultResourceBudget())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,11 +163,11 @@ func TestAssistantContextUnitIDsAreSessionMonotonicAcrossTurns(t *testing.T) {
 	}
 	defer session.Close()
 	for i, turn := range []string{"turn-1", "turn-2"} {
-		if err := session.Post(&UserMessageFrame{Turn: turn, Gen: 1}); err != nil {
+		if err := session.Post(&core.UserMessageFrame{Turn: turn, Gen: 1}); err != nil {
 			t.Fatal(err)
 		}
 		text := []string{"First response.", "Second response."}[i]
-		if err := session.Post(&LLMTextFrame{Text: text, Turn: turn, Gen: 1}); err != nil {
+		if err := session.Post(&core.LLMTextFrame{Text: text, Turn: turn, Gen: 1}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -172,7 +175,7 @@ func TestAssistantContextUnitIDsAreSessionMonotonicAcrossTurns(t *testing.T) {
 	for time.Now().Before(deadline) {
 		var ids []uint64
 		for _, frame := range sink.GetFrames() {
-			if unit, ok := frame.(*SynthesisUnitFrame); ok {
+			if unit, ok := frame.(*core.SynthesisUnitFrame); ok {
 				ids = append(ids, unit.UnitID)
 			}
 		}

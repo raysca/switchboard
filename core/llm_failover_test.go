@@ -10,13 +10,14 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 var errBoom = errors.New("503 upstream")
 
 type failoverRig struct {
 	sess     *core.Session
-	rec      *core.PassthroughProcessor
+	rec      *coretest.PassthroughProcessor
 	events   chan core.DebugEvent
 	mu       sync.Mutex
 	switches []string
@@ -30,7 +31,7 @@ func (r *failoverRig) switched() []string {
 
 func newFailoverRig(t *testing.T, cfg core.LLMFailoverConfig) *failoverRig {
 	t.Helper()
-	r := &failoverRig{rec: &core.PassthroughProcessor{}, events: make(chan core.DebugEvent, 16)}
+	r := &failoverRig{rec: &coretest.PassthroughProcessor{}, events: make(chan core.DebugEvent, 16)}
 	cfg.OnFailover = func(from, to, class string) {
 		r.mu.Lock()
 		r.switches = append(r.switches, from+">"+to+":"+class)
@@ -106,8 +107,8 @@ func (r *failoverRig) waitFor(t *testing.T, cond func() bool) {
 	}
 }
 
-func fake(chunks []string, failAfter int, err error) *core.FakeLLMProcessor {
-	return core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: chunks, FailWith: err, FailAfter: failAfter})
+func fake(chunks []string, failAfter int, err error) *coretest.LLMProcessor {
+	return coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: chunks, FailWith: err, FailAfter: failAfter})
 }
 
 func TestFailoverBeforeFirstTokenAnswersOnceFromFallback(t *testing.T) {
@@ -197,7 +198,7 @@ func TestOpenBreakerCandidateIsTriedLast(t *testing.T) {
 
 func TestBargeInCancelsTheRunningCandidate(t *testing.T) {
 	primary := fake(nil, 0, errBoom)
-	backup := core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"slow ", "answer"}, ChunkDelay: 300 * time.Millisecond})
+	backup := coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"slow ", "answer"}, ChunkDelay: 300 * time.Millisecond})
 	r := newFailoverRig(t, core.LLMFailoverConfig{Candidates: []core.LLMCandidate{
 		{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}}})
 	r.say(t, "hi")
@@ -331,7 +332,7 @@ func TestRecoveringPrimaryDoesNotDoubleSpeak(t *testing.T) {
 
 func TestSlowHealthyGenerationIsNotCut(t *testing.T) {
 	// first token inside the deadline, whole answer ~8x longer than it
-	slow := core.NewFakeLLMProcessor(core.FakeLLMConfig{ResponseChunks: []string{"a", "b", "c", "d", "e", "f", "g", "h"}, ChunkDelay: 40 * time.Millisecond})
+	slow := coretest.NewLLMProcessor(coretest.LLMConfig{ResponseChunks: []string{"a", "b", "c", "d", "e", "f", "g", "h"}, ChunkDelay: 40 * time.Millisecond})
 	backup := fake([]string{"BACKUP"}, 0, nil)
 	r := newFailoverRig(t, core.LLMFailoverConfig{
 		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: slow}, {Provider: "b", Proc: backup}},

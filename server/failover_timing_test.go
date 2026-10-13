@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 	"govoice/server/flow"
 )
@@ -76,7 +77,7 @@ func TestBuildMarksOnlyNonLastCandidatesForFailover(t *testing.T) {
 	var seen []bool
 	build := func(_ string, sp StageSpec) (core.Processor, error) {
 		seen = append(seen, sp.Failover)
-		return &core.PassthroughProcessor{}, nil
+		return &coretest.PassthroughProcessor{}, nil
 	}
 	if _, err := reg.buildTTS(nil, CallSpec{TTS: StageSpec{Provider: "google"}, TTSFallbacks: []StageSpec{{Provider: "xai"}}}, build); err != nil {
 		t.Fatal(err)

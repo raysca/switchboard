@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/transport/rtvi"
 	"govoice/transport/ws"
 )
@@ -1095,7 +1096,7 @@ func TestPacedWriterCloseCancelsPendingLateDrain(t *testing.T) {
 
 func TestFakeTTSToPacedWriterPreservesUnitAdmissionOrder(t *testing.T) {
 	pacer := ws.NewPacedWriter(ws.PacerConfig{MaxQueueDuration: time.Second, MaxQueueBytes: 64 * 1024, MaxQueueFrames: 16, WriteTimeout: time.Second}, func(context.Context, []byte) error { return nil })
-	tts := core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 3, FrameDelay: 5 * time.Millisecond})
+	tts := coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 3, FrameDelay: 5 * time.Millisecond})
 	pipe, err := core.NewPipeline(tts, &pacedWriterProcessor{pacer: pacer})
 	if err != nil {
 		t.Fatal(err)

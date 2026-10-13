@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 	"govoice/examples/envload"
 	"govoice/providers/google"
@@ -97,7 +98,7 @@ func main() {
 	asstCtxProc := core.NewAssistantContextProcessor(convCtx, core.DefaultAssistantContextConfig())
 
 	// 4. Sink Processor (e.g. recording or output playback)
-	sinkProc := &core.PassthroughProcessor{}
+	sinkProc := &coretest.PassthroughProcessor{}
 
 	// 5. Assemble Programmatic Pipeline
 	pipeline, err := core.NewPipeline(

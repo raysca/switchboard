@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/vad"
 )
 
@@ -137,7 +138,7 @@ func newFlowRig(t *testing.T) *flowRig {
 		r.mu.Lock()
 		r.voices = append(r.voices, s.Voice)
 		r.mu.Unlock()
-		return countedStage{core.NewFakeTTSProcessor(core.FakeTTSConfig{FramesPerUnit: 2}), r.ttsClose[s.Voice]}, nil
+		return countedStage{coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2}), r.ttsClose[s.Voice]}, nil
 	})
 	call := CallSpec{
 		STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google", Voice: "front-voice"},
@@ -146,7 +147,7 @@ func newFlowRig(t *testing.T) *flowRig {
 		OnRoute: func(e core.HandoffEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
-	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, core.NewFakeTransportOutput(core.FakeTransportConfig{}))
+	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
 	if err != nil {
 		t.Fatal(err)
 	}

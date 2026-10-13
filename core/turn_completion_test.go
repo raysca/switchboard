@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // scriptLLM answers each user message with the chunks script(turn, content)
@@ -62,7 +63,7 @@ type complRig struct {
 	llm      *scriptLLM
 	asst     *core.AssistantContextProcessor
 	ctx      *core.ConversationContext
-	tail     *core.PassthroughProcessor
+	tail     *coretest.PassthroughProcessor
 	clk      *fakeIdleClock
 	mu       sync.Mutex
 	verdicts []string
@@ -70,7 +71,7 @@ type complRig struct {
 
 func newComplRig(t *testing.T, script func(turn, content string) []string) *complRig {
 	t.Helper()
-	r := &complRig{clk: &fakeIdleClock{now: time.Unix(1000, 0)}, tail: &core.PassthroughProcessor{}}
+	r := &complRig{clk: &fakeIdleClock{now: time.Unix(1000, 0)}, tail: &coretest.PassthroughProcessor{}}
 	r.ctx = core.NewConversationContext(core.ContextConfig{MaxMessages: 50, MaxTokens: 10000})
 	r.llm = &scriptLLM{script: script}
 	cfg := core.DefaultAssistantContextConfig()
@@ -332,7 +333,7 @@ func TestCompletion_OffIsUntouched(t *testing.T) {
 	ctx := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	asst := core.NewAssistantContextProcessor(ctx, core.DefaultAssistantContextConfig())
 	llm := &scriptLLM{script: func(string, string) []string { return []string{"◐ Odd but spoken."} }}
-	tail := &core.PassthroughProcessor{}
+	tail := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(llm, asst, tail)
 	sess, _ := core.NewSession(8, pipe, core.DefaultResourceBudget())
 	if err := sess.Start(); err != nil {

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coreturn "govoice/core/turn"
 )
 
@@ -228,7 +229,7 @@ func runCompletion(u Utterance, o Oracle) (bool, error) {
 	cfg.Completion = &core.TurnCompletionConfig{OnVerdict: func(v string) { mu.Lock(); verdict = v; mu.Unlock() }}
 	ctx := core.NewConversationContext(core.ContextConfig{MaxMessages: 10, MaxTokens: 10000})
 	seen := &finalSeen{done: make(chan struct{})}
-	tail := &core.PassthroughProcessor{}
+	tail := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(&oracleLLM{reply: reply}, core.NewAssistantContextProcessor(ctx, cfg), seen, tail)
 	if err != nil {
 		return false, err

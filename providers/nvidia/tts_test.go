@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 	"govoice/providers/nvidia/rivapb"
 )
@@ -86,7 +87,7 @@ func tone(freq float64, rate, n int) []byte {
 type ttsHarness struct {
 	proc *TTSProcessor
 	sess *core.Session
-	sink *core.PassthroughProcessor
+	sink *coretest.PassthroughProcessor
 }
 
 func startTTS(t *testing.T, cfg TTSConfig) *ttsHarness {
@@ -95,7 +96,7 @@ func startTTS(t *testing.T, cfg TTSConfig) *ttsHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
 		t.Fatal(err)

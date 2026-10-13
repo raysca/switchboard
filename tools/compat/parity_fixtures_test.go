@@ -21,6 +21,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/audio/dtmf"
+	"govoice/core/coretest"
 	"govoice/core/turn"
 )
 
@@ -515,7 +516,7 @@ func TestParityDTMFAggregator(t *testing.T) {
 		if err := json.Unmarshal(sc.Params, &p); err != nil {
 			t.Fatal(err)
 		}
-		sink := &core.PassthroughProcessor{}
+		sink := &coretest.PassthroughProcessor{}
 		pipe, err := core.NewPipeline(dtmf.NewAggregator(dtmf.AggregatorConfig{Timeout: ms(p.TimeoutMs)}), sink)
 		if err != nil {
 			t.Fatal(err)

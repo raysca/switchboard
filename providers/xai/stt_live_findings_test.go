@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 )
 
@@ -31,7 +32,7 @@ func TestXAISTT_CandidatesAreCumulativeAcrossChunksAndUtterances(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = &mockSTTOpener{stream: ms}
 	proc, _ := NewSTTProcessor(cfg)
-	sink := &core.PassthroughProcessor{}
+	sink := &coretest.PassthroughProcessor{}
 	pipe, _ := core.NewPipeline(proc, sink)
 	session, _ := core.NewSession(31, pipe, core.DefaultResourceBudget())
 	if err := session.Start(); err != nil {
@@ -75,7 +76,7 @@ func TestXAISTT_BreakerGatesDialAndCancelIsNotAFailure(t *testing.T) {
 	cfg.StreamOpener = op
 	cfg.CircuitBreaker = br
 	proc, _ := NewSTTProcessor(cfg)
-	pipe, _ := core.NewPipeline(proc, &core.PassthroughProcessor{})
+	pipe, _ := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
 	session, _ := core.NewSession(32, pipe, core.DefaultResourceBudget())
 	if err := session.Start(); err != nil {
 		t.Fatal(err)
@@ -99,7 +100,7 @@ func TestXAISTT_BreakerGatesDialAndCancelIsNotAFailure(t *testing.T) {
 	br2 := resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
 	cfg.CircuitBreaker = br2
 	proc2, _ := NewSTTProcessor(cfg)
-	pipe2, _ := core.NewPipeline(proc2, &core.PassthroughProcessor{})
+	pipe2, _ := core.NewPipeline(proc2, &coretest.PassthroughProcessor{})
 	s2, _ := core.NewSession(33, pipe2, core.DefaultResourceBudget())
 	_ = s2.Start()
 	_ = s2.Close()
@@ -127,7 +128,7 @@ func TestXAISTT_DoneFinalizesOnlyAnOpenUtterance(t *testing.T) {
 		cfg := DefaultSTTConfig()
 		cfg.StreamOpener = &mockSTTOpener{stream: ms}
 		proc, _ := NewSTTProcessor(cfg)
-		sink := &core.PassthroughProcessor{}
+		sink := &coretest.PassthroughProcessor{}
 		pipe, _ := core.NewPipeline(proc, sink)
 		session, _ := core.NewSession(34, pipe, core.DefaultResourceBudget())
 		_ = session.Start()

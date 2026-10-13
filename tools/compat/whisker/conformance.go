@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 	coretools "govoice/core/tools"
 	"govoice/transport/ws"
 )
@@ -391,7 +392,7 @@ func runTeardownScenario(omitCloseObservation bool) ([]Event, error) {
 func runBargeScenario(spec scenarioSpec) ([]Event, error) {
 	assistant := core.NewAssistantContextProcessor(core.NewConversationContext(core.ContextConfig{}), core.DefaultAssistantContextConfig())
 	probe := &frameProbe{}
-	transport := core.NewFakeTransportOutput(core.FakeTransportConfig{})
+	transport := coretest.NewTransportOutput(coretest.TransportConfig{})
 	pipe, err := core.NewPipeline(assistant, probe, transport)
 	if err != nil {
 		return nil, err

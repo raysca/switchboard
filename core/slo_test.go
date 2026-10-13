@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/coretest"
 )
 
 // The caller speaks over the bot: how long until the flush reaches the transport output (where
@@ -24,7 +25,7 @@ func TestInterruptionFlushP99(t *testing.T) {
 		ctxPool := core.NewConversationContext(core.ContextConfig{MaxMessages: 20, MaxTokens: 4096})
 		userProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn"})
 		asstProc := core.NewAssistantContextProcessor(ctxPool, core.DefaultAssistantContextConfig())
-		fakeTransport := core.NewFakeTransportOutput(core.FakeTransportConfig{
+		fakeTransport := coretest.NewTransportOutput(coretest.TransportConfig{
 			WriteDelay: 50 * time.Millisecond,
 		})
 
@@ -94,7 +95,7 @@ func TestSessionTeardownP99(t *testing.T) {
 
 	samples := make([]time.Duration, n)
 	for i := 0; i < n; i++ {
-		pipe, err := core.NewPipeline(&core.PassthroughProcessor{})
+		pipe, err := core.NewPipeline(&coretest.PassthroughProcessor{})
 		if err != nil {
 			t.Fatalf("sample %d NewPipeline: %v", i, err)
 		}
