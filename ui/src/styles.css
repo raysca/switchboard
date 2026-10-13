@@ -2668,3 +2668,49 @@ main:has(.providers-layout) {
 .first-run__more li span {
   flex: 1;
 }
+
+.setup-checklist {
+  margin: 24px 0;
+  padding: 24px 28px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.setup-checklist h2 {
+  margin: 0 0 14px;
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+.setup-checklist ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--ink);
+}
+.setup-checklist li {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.setup-checklist li > span:nth-child(2) {
+  display: flex;
+  flex-direction: column;
+}
+.setup-checklist__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--ink);
+  border-radius: 50%;
+  font-size: 0.75rem;
+}
+.setup-checklist li[data-done] .setup-checklist__mark {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: var(--surface);
+}
