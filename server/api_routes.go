@@ -48,6 +48,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Profile: string(s.cfg.Profile), MaxSessions: s.cfg.Limits.MaxSessions,
 			MaxCallDurationSeconds:       int(s.cfg.Limits.MaxCallDuration.Seconds()),
 			VoiceTokenMaxLifetimeSeconds: int(s.effectiveVoiceTokenLifetime().Seconds()),
+			ClientIP:                     s.clientIP(r), Secure: s.secure(r),
 		}})
 	case "/api/v1/operations/status":
 		if r.Method != http.MethodGet {

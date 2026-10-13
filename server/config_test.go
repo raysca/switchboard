@@ -285,3 +285,18 @@ func TestValidateProductionSecurity_SameHostOrigin(t *testing.T) {
 		t.Fatalf("want origin_allow_same_host rejection, got %v", err)
 	}
 }
+
+func TestValidateProductionSecurity_PublicAdmin(t *testing.T) {
+	cfg := DefaultConfig(ProfileProduction)
+	cfg.PublicAdmin.Enabled = true
+	cfg.TLS.CertFile, cfg.TLS.KeyFile = "cert.pem", "key.pem"
+	err := validateProductionSecurity(cfg)
+	if err == nil || !strings.Contains(err.Error(), "public_admin") {
+		t.Fatalf("want public_admin rejection, got %v", err)
+	}
+	cfg.TLS.TrustedProxyMode = true
+	cfg.TLS.TrustedProxies = []string{"10.0.0.0/8"}
+	if err := validateProductionSecurity(cfg); err != nil && strings.Contains(err.Error(), "public_admin") {
+		t.Fatalf("proxy mode must allow public_admin: %v", err)
+	}
+}

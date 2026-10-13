@@ -37,6 +37,7 @@ import (
 type Server struct {
 	authThrottle          *auth.Throttle
 	clientIP              func(*http.Request) string // proxy-aware client address
+	secure                func(*http.Request) bool   // request arrived over TLS (directly or via a trusted proxy)
 	otel                  *otelexport.Exporter       // nil unless otel.enabled
 	redactor              *redact.Redactor           // sink redaction; never applied to the live LLM context
 	cfg                   *Config
@@ -170,6 +171,9 @@ func NewServer(cfg *Config) (*Server, error) {
 	management, err := auth.NewManagement(managementKey)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.PublicAdmin.Enabled && !management.Enabled() {
+		return nil, fmt.Errorf("public_admin.enabled needs the management API key in %s", managementEnv)
 	}
 	if managementKey != "" && managementKey == tokenSecret {
 		return nil, errors.New("management API key must differ from voice token signing key")
@@ -414,6 +418,7 @@ func (s *Server) setupRoutes() {
 		return "unknown" // an unparseable peer shares one bucket instead of skipping the throttle
 	}
 
+	s.secure = sec.IsSecure
 	wsCfg.Underlay = s.underlay
 	wsCfg.Cues = len(s.cues) > 0
 	s.wsServer = ws.NewServer(wsCfg)
@@ -424,6 +429,11 @@ func (s *Server) setupRoutes() {
 	// Public Listener: /health and /ws
 	s.publicMux = http.NewServeMux()
 	s.publicMux.HandleFunc("GET /health", s.handleHealth)
+	if s.cfg.PublicAdmin.Enabled {
+		s.logger.Warn("public_admin is on: the management API is served on the public port behind the management key")
+		s.publicMux.HandleFunc("/api/v1", s.handleAPI)
+		s.publicMux.HandleFunc("/api/v1/", s.handleAPI)
+	}
 	s.publicMux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		if s.shuttingDown.Load() { // before auth, so the token is not consumed; it is still bound to this process (issuer_epoch), so the client fetches a new one
 			http.Error(w, DrainReason, http.StatusServiceUnavailable)
