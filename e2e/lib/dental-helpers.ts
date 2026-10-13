@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { Stack } from "./flows-stack";
-import { api, botReply, sendText } from "./flows-helpers";
+import { expect } from "@playwright/test";
+import { api, botReplies, botReply, sendText } from "./flows-helpers";
 import { pace } from "./mcp-helpers";
 
 type Stored = {
@@ -28,10 +29,13 @@ export async function createFakeDentalVariant(stack: Stack, installedId: string)
   return { config, mcp_tools };
 }
 
-// Sends a phrase the fake LLM obeys and waits for the bot reply, pacing the next turn.
-export async function turn(page: Page, text: string, reply: RegExp) {
+// Sends a phrase the fake LLM obeys and waits for a NEW bot reply (the count of final replies
+// rises, and with `reply` one of them matches), then paces the next turn.
+export async function turn(page: Page, text: string, reply?: RegExp) {
+  const before = await botReplies(page).count();
   await sendText(page, text);
-  await botReply(page, reply).waitFor({ timeout: 20_000 });
+  await expect.poll(() => botReplies(page).count(), { timeout: 20_000 }).toBeGreaterThan(before);
+  if (reply) await botReply(page, reply).waitFor({ timeout: 20_000 });
   await pace(page);
 }
 
