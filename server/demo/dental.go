@@ -25,6 +25,7 @@ const (
 type Servers interface {
 	List(ctx context.Context) ([]storage.MCPServer, error)
 	Create(ctx context.Context, cfg mcp.ServerConfig) (storage.MCPServer, error)
+	Enable(ctx context.Context, id string) error
 	Refresh(ctx context.Context, id string) (storage.MCPDiscovery, error)
 }
 
@@ -48,9 +49,17 @@ func InstallDental(ctx context.Context, servers Servers, flows Flows, endpoint s
 	if err != nil {
 		return res, fmt.Errorf("list MCP servers: %w", err)
 	}
+	var enabled bool
 	for _, s := range existing {
 		if s.Name == ServerName && !s.PendingDelete {
 			res.MCPServerID = s.ID
+			enabled = s.Enabled
+		}
+	}
+	if res.MCPServerID != "" && !enabled {
+		// Refresh refuses disabled servers, so a previously disabled demo server is switched back on.
+		if err := servers.Enable(ctx, res.MCPServerID); err != nil {
+			return res, fmt.Errorf("enable MCP server: %w", err)
 		}
 	}
 	if res.MCPServerID == "" {

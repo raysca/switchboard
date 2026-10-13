@@ -13,6 +13,7 @@ import (
 )
 
 type fakeServers struct {
+	enables int
 	list    []storage.MCPServer
 	creates int
 }
@@ -23,6 +24,15 @@ func (f *fakeServers) Create(_ context.Context, c mcp.ServerConfig) (storage.MCP
 	m := storage.MCPServer{ID: "srv1", Name: c.Name, Endpoint: c.Endpoint, AuthEnv: c.AuthEnv, Enabled: c.Enabled}
 	f.list = append(f.list, m)
 	return m, nil
+}
+func (f *fakeServers) Enable(_ context.Context, id string) error {
+	f.enables++
+	for i := range f.list {
+		if f.list[i].ID == id {
+			f.list[i].Enabled = true
+		}
+	}
+	return nil
 }
 func (f *fakeServers) Refresh(context.Context, string) (storage.MCPDiscovery, error) {
 	var d storage.MCPDiscovery
@@ -121,4 +131,12 @@ type shortServers struct{ *fakeServers }
 
 func (s *shortServers) Refresh(context.Context, string) (storage.MCPDiscovery, error) {
 	return storage.MCPDiscovery{Tools: []storage.MCPTool{{RemoteName: "find_patient", SchemaHash: "h"}}}, nil
+}
+
+func TestInstallDentalReenablesADisabledServer(t *testing.T) {
+	srv := &fakeServers{list: []storage.MCPServer{{ID: "srv1", Name: ServerName, Enabled: false}}}
+	res, err := InstallDental(context.Background(), srv, &fakeFlows{}, "https://d/mcp")
+	if err != nil || res.MCPCreated || !res.FlowCreated || srv.creates != 0 || srv.enables != 1 {
+		t.Fatalf("res=%+v err=%v creates=%d enables=%d", res, err, srv.creates, srv.enables)
+	}
 }

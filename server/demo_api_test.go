@@ -108,3 +108,20 @@ func TestDemoAutoInstallAtStart(t *testing.T) {
 	}
 	t.Fatal("dental demo was not auto-installed")
 }
+
+func TestDemoAutoInstallWithoutManagementDoesNotPanic(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
+	cfg.Demo.AutoInstall = "dental"
+	cfg.PublicListenAddr, cfg.AdminListenAddr = "127.0.0.1:0", "127.0.0.1:0"
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.env = mapEnv(map[string]string{"DENTAL_MCP_URL": "http://127.0.0.1:1/mcp"})
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.adminServer.Close(); s.publicServer.Close() })
+	time.Sleep(200 * time.Millisecond) // a panic in a background goroutine would kill the test binary
+}

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -23,6 +24,7 @@ func (d demoServers) List(ctx context.Context) ([]storage.MCPServer, error) {
 func (d demoServers) Create(ctx context.Context, c mcp.ServerConfig) (storage.MCPServer, error) {
 	return d.svc.Create(ctx, c)
 }
+func (d demoServers) Enable(ctx context.Context, id string) error { return d.svc.Enable(ctx, id) }
 func (d demoServers) Refresh(ctx context.Context, id string) (storage.MCPDiscovery, error) {
 	return d.svc.Refresh(ctx, id)
 }
@@ -77,14 +79,26 @@ func (s *Server) handleDemo(w http.ResponseWriter, r *http.Request, requestID st
 // autoInstallDemo installs the dental demo in the background. A failure is logged loudly and
 // never stops the server: the admin UI button can retry.
 func (s *Server) autoInstallDemo() {
+	// Capture the services now: management teardown can nil s.mgmt while the goroutine runs.
+	m, flows, svc := s.mgmt, s.flows, s.mcpService
+	if m == nil || flows == nil || svc == nil {
+		s.logger.Error("demo.auto_install is dental but management storage is disabled")
+		return
+	}
+	endpoint := s.dentalEndpoint()
+	if endpoint == "" {
+		s.logger.Error("demo.auto_install is dental but DENTAL_MCP_URL is empty")
+		return
+	}
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("demo auto-install panicked", "panic", fmt.Sprint(r))
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		if s.dentalEndpoint() == "" {
-			s.logger.Error("demo.auto_install is dental but DENTAL_MCP_URL is empty")
-			return
-		}
-		res, err := s.InstallDentalDemo(ctx)
+		res, err := demo.InstallDental(ctx, demoServers{svc: svc, store: m.store}, flows, endpoint)
 		if err != nil {
 			s.logger.Error("demo auto-install failed", "err", s.redactor.Redact(err.Error()))
 			return
