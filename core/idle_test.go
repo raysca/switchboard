@@ -650,3 +650,49 @@ func TestIdleRequestEndOnce(t *testing.T) {
 		t.Fatal("no request after the call ended")
 	}
 }
+
+// The model's pre-tool sentence plays, the reply is still being generated when it
+// stops, and the post-tool goodbye is a second span: the call ends after the second.
+func TestIdleRequestEndWaitsForTheReplyAfterTheFirstSpan(t *testing.T) {
+	var answering atomic.Bool
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0; c.Answering = answering.Load })
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
+	answering.Store(true)
+	r.ctl.RequestEnd("ended_by_flow", 0)
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
+	r.noEnd()
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
+	answering.Store(false)
+	r.noEnd()
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
+	r.endedWith("ended_by_flow")
+}
+
+// The first span stopped while a reply was generating and the reply is silent: the
+// call ends once the reply is done, well before the cap.
+func TestIdleRequestEndSilentReplyDoesNotWaitForTheCap(t *testing.T) {
+	var answering atomic.Bool
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0; c.Answering = answering.Load })
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
+	answering.Store(true)
+	r.ctl.RequestEnd("ended_by_flow", 0)
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
+	r.noEnd()
+	answering.Store(false)
+	r.clk.parkedAt(t, r.at(100*time.Millisecond))
+	r.clk.Advance(100 * time.Millisecond)
+	r.endedWith("ended_by_flow")
+}
+
+// A reply that never finishes: the cap still ends the call.
+func TestIdleRequestEndStuckReplyHitsTheCap(t *testing.T) {
+	r := newIdleRig(t, func(c *core.IdleConfig) {
+		c.UserTimeout, c.MaxPrompts = 0, 0
+		c.Answering = func() bool { return true }
+	})
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStarted})
+	r.ctl.RequestEnd("ended_by_flow", 2*time.Second)
+	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
+	r.clk.Advance(2 * time.Second)
+	r.endedWith("ended_by_flow")
+}
