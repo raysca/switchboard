@@ -130,3 +130,19 @@ func TestDecodeFlowRejectsUnsafeIDsAndCue(t *testing.T) {
 		t.Fatalf("valid ids and cue rejected: %v", err)
 	}
 }
+
+func TestDecodeStepEndCall(t *testing.T) {
+	step := `"config":{"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
+	front := `"config":{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
+	g, err := Decode(json.RawMessage(`{"start":"a","steps":[` +
+		`{"id":"a","name":"A","end_call":true,` + front + `},{"id":"b","name":"B",` + step + `}],` +
+		`"routes":[{"id":"r","from":"a","to":"b","condition":"x"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := g.Step("a")
+	b, _ := g.Step("b")
+	if !a.EndCall || b.EndCall {
+		t.Fatalf("EndCall a=%v b=%v, want true,false", a.EndCall, b.EndCall)
+	}
+}
