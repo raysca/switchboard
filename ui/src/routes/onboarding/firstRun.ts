@@ -36,7 +36,10 @@ export function stacksFrom(providers: ProviderStatus[]): Stack[] {
       missing: missingEnv(provider),
     });
   }
-  return stacks.sort((a, b) => Number(b.ready) - Number(a.ready) || a.provider.display_name.localeCompare(b.provider.display_name));
+  // Ready stacks first, the simulated one after the real ones: an operator who just clicks Continue
+	// must not end up with a flow on echo when real keys are set.
+	const simulated = (s: Stack) => Number(s.provider.id === "echo");
+	return stacks.sort((a, b) => Number(b.ready) - Number(a.ready) || simulated(a) - simulated(b) || a.provider.display_name.localeCompare(b.provider.display_name));
 }
 
 export function flowFor(stack: Stack, input: { name: string; job: string; voice: string }): CreateFlowInput {

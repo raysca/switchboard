@@ -4,7 +4,7 @@
 // pass/fail assertions plus latency per profile x scenario x turn-manager mode.
 //
 // Real providers spend API credit, so a run needs GOVOICE_LIVE=1 (or -yes) after the
-// provider-request estimate is printed. `-selftest` runs the same engine offline against a
+// provider-request estimate is printed. `-selftest` runs the same engine offline against
 // the echo provider (no network, no cost). Secrets come from examples/.env into
 // the process environment only, reach each server child as exactly the variables its profile
 // names (the server reads them through its provider catalog), and every byte of output and

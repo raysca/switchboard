@@ -120,8 +120,7 @@ type serverSpec struct {
 	mode            mode
 	class           serverClass
 	infra           map[string]map[string]string // providers.<name>.<key>
-	fake            bool
-	env             []string // provider variables ("K=V") for the child: providerEnv, brokenEnv
+	env             []string                     // provider variables ("K=V") for the child: providerEnv, brokenEnv
 	logLevel        string
 }
 

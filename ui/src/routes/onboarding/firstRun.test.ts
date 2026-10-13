@@ -78,3 +78,13 @@ describe("flowFor", () => {
     expect(DEFAULT_JOB.length).toBeGreaterThan(40);
   });
 });
+
+describe("the simulated provider is never the default", () => {
+  const echo: ProviderStatus = { ...google, id: "echo", display_name: "Echo (simulated)", env: [], detected: true };
+  it("lists a real ready stack before echo, though echo sorts first by name", () => {
+    expect(stacksFrom([echo, google]).map((s) => s.provider.id)).toEqual(["google", "echo"]);
+  });
+  it("still offers echo alone when it is the only stack ready", () => {
+    expect(stacksFrom([echo, xai]).map((s) => [s.provider.id, s.ready])).toEqual([["echo", true], ["xai", false]]);
+  });
+});

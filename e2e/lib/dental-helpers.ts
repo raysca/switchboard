@@ -9,7 +9,7 @@ type Stored = {
   current_version: { config: { start: string; steps: any[]; routes: any[] }; mcp_tools: any[] };
 };
 
-// The installed dental flow uses xai/elevenlabs stages, which have no fake build. This creates
+// The installed dental flow uses xai/elevenlabs stages, which cannot take an echo call. This creates
 // "Dental (echo)": the same steps, routes, end_call flags, step tools and MCP selections, with
 // every stage on the echo provider.
 export async function createEchoDentalVariant(stack: Stack, installedId: string) {

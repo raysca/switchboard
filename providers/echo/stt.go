@@ -95,25 +95,23 @@ func (s *sttStream) Close() error {
 }
 
 func (s *sttStream) Recv() ([]*google.STTResult, error) {
-	for {
-		select {
+	select { // queued interims come first
+	case r := <-s.results:
+		return []*google.STTResult{r}, nil
+	default:
+	}
+	select {
+	case r := <-s.results:
+		return []*google.STTResult{r}, nil
+	case <-s.done:
+		return nil, context.Canceled
+	case <-s.sent:
+		select { // interims queued before the audio ended still come before the final
 		case r := <-s.results:
 			return []*google.STTResult{r}, nil
 		default:
 		}
-		select {
-		case r := <-s.results:
-			return []*google.STTResult{r}, nil
-		case <-s.done:
-			return nil, context.Canceled
-		case <-s.sent:
-			select { // interims queued before the audio ended come first
-			case r := <-s.results:
-				return []*google.STTResult{r}, nil
-			default:
-			}
-			return s.final()
-		}
+		return s.final()
 	}
 }
 

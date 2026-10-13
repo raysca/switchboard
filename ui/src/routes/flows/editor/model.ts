@@ -87,7 +87,7 @@ export function stepIssues(g: FlowDraft, id: string): StepIssue[] {
 
 /** The server's chain limit, primary excluded. */
 export const MAX_FALLBACKS = 2;
-const SUMMARIZING = new Set(["google", "nvidia", "openai", "xai"]);
+const SUMMARIZING = new Set(["google", "echo", "nvidia", "openai", "xai"]);
 
 /** Problems that belong to the whole flow (header state line and Flow settings). */
 export function flowIssues(g: FlowDraft): string[] {

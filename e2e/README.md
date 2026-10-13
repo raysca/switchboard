@@ -99,7 +99,7 @@ own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid
 | Assertions | exact (the fake labels each reply with its step's prompt) | marker words (the sales prompt demands "catalogue") |
 
 The xAI key is `XAI_API_KEY` from the environment or `examples/.env`; global setup passes it to
-the server process as `XAI_API_KEY` and nothing else. The fake stack gets placeholders
+the server process as `XAI_API_KEY` and nothing else. The echo stack gets placeholders
 (`GOOGLE_API_KEY=fake-google-key` and a stub service-account file) so the catalog detects
 Google. Models and voices are the catalog defaults, except the fake's own (`fake-llm`,
 `frontvoice`, `salesvoice`), entered through "Other…". The key never goes through the

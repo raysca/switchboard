@@ -336,3 +336,32 @@ func TestEchoNeverStreamsAnEmptyPiece(t *testing.T) {
 		}
 	}
 }
+
+func TestEchoReportsACancelledToolRequestToo(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ch, errs, _ := c.GenerateStreamWithNativeTools(ctx, "m", "", user("transfer to sales"), nil, tools, core.ToolCall{})
+	var got error
+	for ch != nil || errs != nil {
+		select {
+		case ck, ok := <-ch:
+			if !ok {
+				ch = nil
+			} else if len(ck.ToolCalls) != 0 {
+				t.Fatal("a cancelled request must not emit a tool call")
+			}
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+			} else {
+				got = err
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("channels not closed")
+		}
+	}
+	if !errors.Is(got, context.Canceled) {
+		t.Fatalf("error channel carried %v", got)
+	}
+}

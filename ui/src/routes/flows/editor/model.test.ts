@@ -275,6 +275,11 @@ describe("what the server will accept", () => {
     expect(flowIssues(g)).toContain("Billing uses groq, which cannot summarise older turns. Turn summaries off or change its model.");
   });
 
+  it("accepts summaries on the echo provider, which runs the real Google processors", () => {
+    const g = one({ context: { summarization: { enabled: true } } }, { llm: { provider: "echo", model: "gemini-2.5-flash" } });
+    expect(flowIssues(g).filter((m) => m.includes("cannot summarise"))).toEqual([]);
+  });
+
   it("flags too many fallbacks and a fallback that repeats the model", () => {
     const three = one({}, { llm: { ...ready.llm, fallbacks: [{ provider: "openai", model: "a" }, { provider: "openai", model: "b" }, { provider: "xai", model: "c" }] } });
     expect(stepIssues(three, "b")).toContainEqual({ tab: "advanced", message: "Use at most 2 model fallbacks." });

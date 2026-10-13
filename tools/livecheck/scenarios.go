@@ -178,7 +178,7 @@ var scenarios = []scenario{
 		na: func(p Profile, _ mode, o *opts) string {
 			switch {
 			case p.Fake:
-				return "fake LLM has no tools"
+				return "the echo LLM calls no public MCP tool"
 			case o.mcpURL == "":
 				return "no -mcp-url: tools come from MCP servers and the server accepts only public HTTPS endpoints"
 			}
@@ -211,7 +211,7 @@ var scenarios = []scenario{
 		shape: func(*opts) shape { return shape{turns: 1, short: true, extraLLM: 1} },
 		na: func(p Profile, _ mode, _ *opts) string {
 			if p.Fake {
-				return "fake LLM accepts any key"
+				return "the echo provider needs no key, so none can be rejected"
 			}
 			_, _, why := failoverPeer(p)
 			return why
@@ -222,7 +222,7 @@ var scenarios = []scenario{
 		shape: func(*opts) shape { return shape{turns: 3, extraLLM: 1, short: true, noSTT: true} },
 		na: func(p Profile, _ mode, _ *opts) string {
 			if p.Fake {
-				return "fake LLM has no tools, so it cannot call the transfer tool"
+				return "the echo LLM transfers only on an explicit \"transfer to <step>\" phrase, which this scenario does not send"
 			}
 			return ""
 		}, run: s14},

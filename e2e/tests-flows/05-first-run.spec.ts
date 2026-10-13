@@ -23,6 +23,9 @@ test("first run: stack, flow, test call, connect", async ({ page, stack }) => {
 
   const name = providers.find((p) => p.id === PROVIDER)!.display_name;
   await expect(page.getByRole("heading", { name: "Choose how your flow hears, thinks and speaks." })).toBeVisible();
+  // The stack also has placeholder google and xai keys (for the dentistry demo), and the simulated
+  // provider is listed after real ones: choose it, since only echo can take a test call here.
+  await page.getByRole("radio", { name }).check();
   await expect(page.getByRole("radio", { name })).toBeChecked();
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
   await step(page, "first run step 1 voice stack");

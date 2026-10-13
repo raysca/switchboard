@@ -168,7 +168,7 @@ func runGroup(ctx context.Context, cfg runCfg, rep *Report, name string, items [
 		}
 	}
 	srv, err := startServer(ctx, serverSpec{root: cfg.root, bin: cfg.bin, work: cfg.work, name: name, mode: first.mode,
-		class: first.sc.class, infra: first.prof.Infra, fake: first.prof.Fake, env: env, logLevel: cfg.logLevel})
+		class: first.sc.class, infra: first.prof.Infra, env: env, logLevel: cfg.logLevel})
 	if err != nil {
 		failAll(fmt.Errorf("start server: %w", err))
 		return

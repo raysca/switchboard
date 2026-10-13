@@ -68,7 +68,13 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 		}
 		promptTokens := wordCount(history)
 		if call, ok := c.toolCall(history, hasTools); ok {
-			send(google.LLMStreamChunk{ToolCalls: []core.ToolCall{call}, PromptTokens: promptTokens, TotalTokens: promptTokens})
+			if err := ctx.Err(); err != nil { // cancelled before the call: report it, emit nothing
+				errs <- err
+				return
+			}
+			if !send(google.LLMStreamChunk{ToolCalls: []core.ToolCall{call}, PromptTokens: promptTokens, TotalTokens: promptTokens}) {
+				errs <- ctx.Err()
+			}
 			return
 		}
 		// A cancelled or timed-out request is reported, not just ended: the processor reads two closed

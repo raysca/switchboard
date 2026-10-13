@@ -155,7 +155,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
 
   const providers = providersQuery.data;
   const shown = service ? providers.filter((p) => hasService(p, service)) : providers;
-  const selected = providers.find((p) => p.id === params.get("provider")) ?? providers.find((p) => p.detected) ?? providers[0];
+  const selected = providers.find((p) => p.id === params.get("provider")) ?? providers.find((p) => p.detected && p.id !== "echo") ?? providers.find((p) => p.detected) ?? providers[0];
   const flows = flowsQuery.data;
   const capped = (flows?.length ?? 0) >= FLOW_CAP;
   const detected = providers.filter((p) => p.detected).length;
