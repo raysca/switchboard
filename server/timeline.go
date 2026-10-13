@@ -34,13 +34,13 @@ const (
 	EventError           TimelineEventType = "error"
 	EventDisconnect      TimelineEventType = "disconnect"
 
-	// Graph calls: the call moving between agents (nodes).
-	EventNodePreparing TimelineEventType = "node_preparing" // Details = target node being built
-	EventHandoff       TimelineEventType = "handoff"        // Details = "from->to", DurationMs = commit to active
-	EventNodeActive    TimelineEventType = "node_active"    // Details = node now answering
-	EventNodeClosed    TimelineEventType = "node_closed"    // Details = node left and closed
-	EventHandoffFailed TimelineEventType = "handoff_failed" // Details = target node, Error = cause
-	EventCueStart      TimelineEventType = "cue_start"      // the handoff cue began playing
+	// Routed flows: the call moving between steps.
+	EventStepPreparing TimelineEventType = "step_preparing" // Details = target step being built
+	EventRoute         TimelineEventType = "route"          // Details = "from->to", DurationMs = commit to active
+	EventStepActive    TimelineEventType = "step_active"    // Details = step now answering
+	EventStepClosed    TimelineEventType = "step_closed"    // Details = step left and closed
+	EventRouteFailed   TimelineEventType = "route_failed"   // Details = target step, Error = cause
+	EventCueStart      TimelineEventType = "cue_start"      // the route cue began playing
 	EventCueStop       TimelineEventType = "cue_stop"       // Details = why (first_audio, barge_in, failed, cap)
 )
 
@@ -52,7 +52,7 @@ type TimelineEvent struct {
 	Gen        uint64            `json:"gen,omitempty"`
 	Type       TimelineEventType `json:"type"`
 	Provider   string            `json:"provider,omitempty"`
-	Node       string            `json:"node,omitempty"` // graph node that produced the event
+	Step       string            `json:"step,omitempty"` // flow step that produced the event
 	Details    string            `json:"details,omitempty"`
 	DurationMs int64             `json:"duration_ms,omitempty"`
 	Error      string            `json:"error,omitempty"`
@@ -64,7 +64,7 @@ type SessionTimeline struct {
 	maxEvents int
 	ttl       time.Duration
 
-	node         atomic.Pointer[string] // graph node answering the call; stamped on events
+	step         atomic.Pointer[string] // flow step answering the call; stamped on events
 	mu           sync.Mutex
 	events       []TimelineEvent
 	head         int
@@ -97,9 +97,9 @@ func (t *SessionTimeline) Record(e TimelineEvent) {
 		e.Timestamp = time.Now()
 	}
 	e.SessionID = t.sessionID
-	if e.Node == "" {
-		if n := t.node.Load(); n != nil {
-			e.Node = *n
+	if e.Step == "" {
+		if n := t.step.Load(); n != nil {
+			e.Step = *n
 		}
 	}
 
@@ -119,8 +119,8 @@ func (t *SessionTimeline) Record(e TimelineEvent) {
 	}
 }
 
-// SetNode records which graph node answers the call; later events carry it.
-func (t *SessionTimeline) SetNode(id string) { t.node.Store(&id) }
+// SetStep records which flow step answers the call; later events carry it.
+func (t *SessionTimeline) SetStep(id string) { t.step.Store(&id) }
 
 // Events returns an ordered copy of all non-expired events.
 func (t *SessionTimeline) Events() []TimelineEvent {

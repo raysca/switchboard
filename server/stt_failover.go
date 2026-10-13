@@ -16,7 +16,7 @@ import (
 	"govoice/providers/google"
 	"govoice/providers/nvidia"
 	"govoice/providers/xai"
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"govoice/server/runtime"
 )
 
@@ -47,9 +47,9 @@ func sttClassify(err error) string {
 		isEleven && ee.ClientError ||
 		isNvidia && ne.ClientError
 	if (isGoogle || isXAI || isDeepgram || isCartesia || isEleven || isNvidia) && errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		return agent.ClassTimeout
+		return flow.ClassTimeout
 	}
-	return agent.ClassOf(err, resilience.Verdict{ClientError: client})
+	return flow.ClassOf(err, resilience.Verdict{ClientError: client})
 }
 
 // sttBreaker is the breaker an STT stage of this provider uses (nil if unknown).
@@ -129,8 +129,8 @@ func closeSTT(cands []core.STTCandidate) {
 // sttFallbacks resolves the STT chain after the primary. A fallback that cannot
 // be resolved now is skipped (logged and counted), not fatal. The fallback
 // inherits the primary's language unless it sets its own; model is provider-specific.
-func (s *Server) sttFallbacks(ctx context.Context, rs *runtime.Session, cfg agent.Config) []StageSpec {
-	return s.resolveFallbacks(ctx, rs, "stt", cfg, &s.metrics.stt.FallbacksSkippedTotal, func(c agent.Candidate, secret []byte) StageSpec {
+func (s *Server) sttFallbacks(ctx context.Context, rs *runtime.Session, cfg flow.Config) []StageSpec {
+	return s.resolveFallbacks(ctx, rs, "stt", cfg, &s.metrics.stt.FallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
 		lang := c.Language
 		if lang == "" {
 			lang = cfg.STT.Language

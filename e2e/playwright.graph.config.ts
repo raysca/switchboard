@@ -2,9 +2,9 @@ import { defineConfig, devices } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
-// Browser e2e for agent graphs. Default: the FAKE providers (free, offline,
+// Browser e2e for flows. Default: the FAKE providers (free, offline,
 // deterministic; make e2e-fake). E2E_PROVIDER=xai: live xAI (make e2e-xai, spends
-// API credit). It proves the graph designer, the stored graph agent, the live call
+// API credit). It proves the flow designer, the stored routed flow, the live call
 // and the handoff work together. The paid Google suite is playwright.config.ts.
 // The xAI key comes from the environment or examples/.env and is only ever passed
 // to the server process's environment: never to the API or the browser.

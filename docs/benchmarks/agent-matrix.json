@@ -21,7 +21,7 @@
    "description": "xAI STT + Grok + xAI TTS",
    "llm": "xai grok-4.20-non-reasoning",
    "name": "xai",
-   "notes": "STT grok-voice-transcribe-2.0 and TTS voice eve are the adapter defaults (wss://api.x.ai/v1/stt, https://api.x.ai/v1/tts); LLM grok-2-1212 is the adapter's pinned id (XAI_MODEL overrides). XAI_ENDPOINT from examples/.env is deliberately NOT passed on: production reads providers.xai_llm.endpoint from server.yaml and defaults to the Responses API (/v1/responses), which tool calls need; examples/ points it at chat/completions.",
+   "notes": "STT grok-voice-transcribe-2.0 and TTS voice eve are the adapter defaults (wss://api.x.ai/v1/stt, https://api.x.ai/v1/tts); LLM grok-4.20-0309-non-reasoning is the adapter's pinned id (XAI_MODEL overrides). XAI_ENDPOINT from examples/.env is deliberately NOT passed on: production reads providers.xai_llm.endpoint from server.yaml and defaults to the Responses API (/v1/responses), which tool calls need; examples/ points it at chat/completions.",
    "stt": "xai en",
    "tts": "xai"
   },

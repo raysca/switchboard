@@ -6,7 +6,6 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
-  Status,
 } from "../../components/primitives";
 
 export type DashboardViewProps = {
@@ -45,9 +44,9 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
     refetchInterval: 10000,
   });
 
-  const agentsQuery = useQuery({
-    queryKey: ["agents"],
-    queryFn: () => client.getAgents(),
+  const flowsQuery = useQuery({
+    queryKey: ["flows"],
+    queryFn: () => client.getFlows(),
     enabled: !!keyValue,
     retry: false,
   });
@@ -71,18 +70,15 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and agents.</p>
+          <p>Operational signals for voice sessions and flows.</p>
         </header>
         <EmptyState title="Connect to view operations">
           Enter a management key to inspect operational health, session telemetry, and provider readiness.
         </EmptyState>
-        <div
-          className="message-panel"
-          style={{ marginTop: "24px", borderColor: "#007e82" }}
-        >
+        <div className="message-panel">
           <h2>First-run onboarding</h2>
-          <p style={{ marginBottom: "14px" }}>
-            Connect your first provider and configure a voice agent with the guided setup.
+          <p>
+            Connect your first provider and configure a voice flow with the guided setup.
           </p>
           <Link to="/onboarding" className="action-button-small">
             Start onboarding
@@ -97,7 +93,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and agents.</p>
+          <p>Operational signals for voice sessions and flows.</p>
         </header>
         <LoadingState label="Loading operational signals" />
       </>
@@ -109,7 +105,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
       <>
         <header className="section-heading">
           <h1 tabIndex={-1}>Dashboard</h1>
-          <p>Operational signals for voice sessions and agents.</p>
+          <p>Operational signals for voice sessions and flows.</p>
         </header>
         <ErrorState
           error={operationsQuery.error as ApiError}
@@ -122,142 +118,109 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
   }
 
   const op = operationsQuery.data;
-  const agents = (agentsQuery.data ?? []).filter((a) => !a.archived);
+  const flows = (flowsQuery.data ?? []).filter((a) => !a.archived);
   const providers = providersQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];
 
   // Readiness calculations
-  const readyAgentsCount = agents.filter((a) => a.readiness?.state === "ready").length;
-  const totalAgents = agents.length;
+  const readyFlowsCount = flows.filter((a) => a.readiness?.state === "ready").length;
+  const totalFlows = flows.length;
 
   const detectedProviders = providers.filter((p) => p.detected).length;
 
   const nearCapacity = op.capacity_utilization >= 0.9 || (op.max_sessions > 0 && op.active_sessions >= op.max_sessions);
 
+  const tone = op.health === "healthy" ? "ok" : op.health === "degraded" ? "warn" : "bad";
+  const healthText =
+    op.health === "healthy"
+      ? "All core components and voice runtime pipelines are operating normally."
+      : op.health === "degraded"
+        ? "System is operating under degraded conditions or near capacity limit."
+        : "Critical operational issues or database storage failures detected.";
+
   return (
     <>
       <header className="section-heading">
         <h1 tabIndex={-1}>Dashboard</h1>
-        <p>Operational signals for voice sessions and agents.</p>
+        <p>Operational signals for voice sessions and flows.</p>
       </header>
 
-      {/* System Health Banner */}
-      <section
-        className={`health-banner health-banner--${op.health}`}
-        role="status"
-        aria-label="System health status"
-      >
-        <div className="health-banner-header">
-          <Status tone={op.health === "healthy" ? "good" : "bad"}>
-            System {op.health.charAt(0).toUpperCase() + op.health.slice(1)}
-          </Status>
-          <span className="uptime-pill">Uptime: {formatUptime(op.uptime_seconds)}</span>
-        </div>
-        <p className="health-banner-desc">
-          {op.health === "healthy"
-            ? "All core components and voice runtime pipelines are operating normally."
-            : op.health === "degraded"
-            ? "System is operating under degraded conditions or near capacity limit."
-            : "Critical operational issues or database storage failures detected."}
+      <section className="state-line" role="status" aria-label="System health status">
+        <p className="state-line__headline">
+          <span className="lamp" data-tone={tone} aria-hidden="true" />
+          System {op.health}. {op.active_sessions} of {op.max_sessions} sessions active.
         </p>
+        <p className="state-line__desc">{healthText}</p>
       </section>
 
-      {/* Capacity Warning Alert if near capacity */}
       {nearCapacity && (
         <section className="alert-box" role="alert" aria-label="Capacity warning">
-          <h3>Capacity Warning</h3>
+          <h3>Capacity warning</h3>
           <p>
-            Active sessions are at {((op.capacity_utilization) * 100).toFixed(0)}% capacity ({op.active_sessions} of {op.max_sessions} maximum concurrent calls).
+            Active sessions are at {(op.capacity_utilization * 100).toFixed(0)}% capacity ({op.active_sessions} of {op.max_sessions} maximum concurrent calls).
           </p>
         </section>
       )}
 
-      {/* Operational Metrics Grid */}
-      <section className="meta-grid" aria-label="Operational metrics">
-        <div className="meta-card">
-          <div className="label">Active Sessions</div>
-          <div className="value">
-            {op.active_sessions} / {op.max_sessions}
-          </div>
-          <div className="subtext">
-            Utilization: {(op.capacity_utilization * 100).toFixed(1)}%
-          </div>
+      <dl className="figures" aria-label="Operational metrics">
+        <div>
+          <dt>Total sessions</dt>
+          <dd>{op.sessions_total}</dd>
         </div>
-
-        <div className="meta-card">
-          <div className="label">Total Sessions</div>
-          <div className="value">{op.sessions_total}</div>
-          <div className="subtext">
-            {op.session_rate !== undefined ? `${op.session_rate.toFixed(2)}/s rate` : "Historical total"}
-          </div>
+        <div>
+          <dt>Turns</dt>
+          <dd>{op.turns_total}</dd>
         </div>
-
-        <div className="meta-card">
-          <div className="label">Error Count</div>
-          <div className="value">{op.errors_total}</div>
-          <div className="subtext">
-            {op.turns_total > 0 ? `${op.turns_total} total turns` : "0 turns processed"}
-          </div>
+        <div>
+          <dt>Errors</dt>
+          <dd>{op.errors_total}</dd>
         </div>
-      </section>
-
-      {/* Agent & Provider Readiness Summary Cards */}
-      <section className="summary-grid" aria-label="Service readiness">
-        <div className="summary-card">
-          <div className="summary-card-header">
-            <h2>Agent Readiness</h2>
-            <Link to="/agents" className="action-button-small">
-              View agents
-            </Link>
-          </div>
-          <div className="summary-card-stats">
-            <span className="stat-value">{totalAgents}</span>
-            <span className="stat-label">total configured</span>
-          </div>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            <span className={`badge ${readyAgentsCount > 0 ? "badge--good" : "badge--neutral"}`}>
-              {readyAgentsCount} Ready
-            </span>
-            {totalAgents === 0 && (
-              <span className="subtext">No agents created yet.</span>
-            )}
-          </div>
+        <div>
+          <dt>Utilization</dt>
+          <dd>{(op.capacity_utilization * 100).toFixed(1)}%</dd>
         </div>
-
-        <div className="summary-card">
-          <div className="summary-card-header">
-            <h2>Provider Readiness</h2>
-            <Link to="/providers" className="action-button-small">
-              View providers
-            </Link>
-          </div>
-          <div className="summary-card-stats">
-            <span className="stat-value">{providers.length}</span>
-            <span className="stat-label">known providers</span>
-          </div>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-            <span className={`badge ${detectedProviders > 0 ? "badge--good" : "badge--neutral"}`}>
-              {detectedProviders} / {providers.length} providers detected
-            </span>
-            {detectedProviders === 0 && (
-              <span className="subtext">No provider keys found in the server environment.</span>
-            )}
-          </div>
+        <div>
+          <dt>Uptime</dt>
+          <dd>{formatUptime(op.uptime_seconds)}</dd>
         </div>
-      </section>
+      </dl>
 
-      {/* Recent Session History Feed */}
-      <section style={{ marginTop: "32px" }} aria-label="Recent session activity">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-          <h2 style={{ fontSize: "1.2rem", margin: 0 }}>Recent Session Activity</h2>
-          <Link to="/sessions" style={{ fontSize: "0.9rem", color: "#007e82", fontWeight: 500, textDecoration: "none" }}>
-            View all sessions →
+      <ul className="ledger" aria-label="Service readiness">
+        <li className="ledger__row">
+          <span className="lamp" data-tone={readyFlowsCount > 0 ? "ok" : "idle"} aria-hidden="true" />
+          <span className="ledger__name">Flows</span>
+          <span className="ledger__value">
+            {readyFlowsCount} of {totalFlows} ready
+          </span>
+          {totalFlows === 0 && <span className="subtext">No flows created yet.</span>}
+          <Link to="/flows" className="ledger__link">
+            View flows
+          </Link>
+        </li>
+        <li className="ledger__row">
+          <span className="lamp" data-tone={detectedProviders > 0 ? "ok" : "bad"} aria-hidden="true" />
+          <span className="ledger__name">Providers</span>
+          <span className="ledger__value">
+            {detectedProviders} of {providers.length} detected
+          </span>
+          {detectedProviders === 0 && <span className="subtext">No provider keys found in the server environment.</span>}
+          <Link to="/providers" className="ledger__link">
+            View providers
+          </Link>
+        </li>
+      </ul>
+
+      <section className="section-block" aria-label="Recent calls">
+        <div className="section-row">
+          <h2>Recent calls</h2>
+          <Link to="/sessions" className="ledger__link">
+            View all calls
           </Link>
         </div>
 
         {sessions.length === 0 ? (
-          <EmptyState title="No recent sessions">
-            No voice sessions recorded yet. Start a session or voice test to view activity traces.
+          <EmptyState title="No recent calls">
+            No calls recorded yet. Test a flow to see one here.
           </EmptyState>
         ) : (
           <DataTable
@@ -267,25 +230,12 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
               <span key="id" className="masked-value">
                 {s.id.slice(0, 8)}…
               </span>,
-              <span
-                key="status"
-                className={`badge badge--${
-                  s.status === "active"
-                    ? "good"
-                    : s.status === "failed"
-                    ? "bad"
-                    : "neutral"
-                }`}
-              >
+              <span key="status" className={`badge badge--${s.status === "active" ? "good" : s.status === "failed" ? "bad" : "neutral"}`}>
                 {s.status}
               </span>,
               s.turn_count,
               formatRelativeTime(s.started_at),
-              <Link
-                key="action"
-                to={`/sessions/${s.id}`}
-                className="action-button-small"
-              >
+              <Link key="action" to={`/sessions/${s.id}`} className="action-button-small">
                 Inspect
               </Link>,
             ])}

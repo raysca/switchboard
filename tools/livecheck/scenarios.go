@@ -216,7 +216,7 @@ var scenarios = []scenario{
 			_, _, why := failoverPeer(p)
 			return why
 		}, run: s13},
-	{id: "S14", title: "agent graph: handoff from Front to Sales, then Sales answers", class: classGraph,
+	{id: "S14", title: "agent graph: handoff from Front to Sales, then Sales answers", class: classFlow,
 		// text turns only. Reply 1: the transfer round and Front's farewell (2 LLM requests), then Sales'
 		// greeting (1); turn 2 is one Sales reply. Three short replies, four LLM requests in all.
 		shape: func(*opts) shape { return shape{turns: 3, extraLLM: 1, short: true, noSTT: true} },
@@ -801,21 +801,21 @@ func s14(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	reached := c.wait(45*time.Second, func() bool { return strings.Contains(said(mark), graphMarker) })
+	reached := c.wait(45*time.Second, func() bool { return strings.Contains(said(mark), flowMarker) })
 	r.check("handoff reached the sales agent", reached, "")
 	r.m("reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
 	if reached {
 		r.m("handoff_ms", msv(time.Since(mark)))
 	}
 	c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
-	handoffs := 0
+	routes := 0
 	for _, e := range x.srv.timelineEvents(c.n) {
-		if e.Type == "handoff" {
-			handoffs++
+		if e.Type == "route" {
+			routes++
 			r.m("handoff", e.Details)
 		}
 	}
-	r.check("server recorded the handoff", handoffs == 1, fmt.Sprint(handoffs))
+	r.check("server recorded the route", routes == 1, fmt.Sprint(routes))
 
 	c.quiet(600 * time.Millisecond)
 	mark = time.Now()
@@ -823,6 +823,6 @@ func s14(x *sctx, r *Result) {
 		r.abort(redact(err))
 		return
 	}
-	ok := c.wait(30*time.Second, func() bool { return strings.Contains(said(mark), graphMarker) })
+	ok := c.wait(30*time.Second, func() bool { return strings.Contains(said(mark), flowMarker) })
 	r.check("the next turn is answered by the sales agent", ok, "")
 }

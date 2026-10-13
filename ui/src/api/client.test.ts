@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, agentConfigV2Schema, createApiClient } from "./client";
+import { ApiError, stepConfigV2Schema, createApiClient, flowVersionSchema, routeSpan, type TraceSpanDTO } from "./client";
 
 describe("management client", () => {
   it("sends an in-memory bearer and parses the response", async () => {
@@ -83,7 +83,7 @@ describe("management client", () => {
         "Content-Type": "application/json",
       });
       expect(init?.body).toBe(
-        JSON.stringify({ principal: "operator-1", agent_id: "agent-1" }),
+        JSON.stringify({ principal: "operator-1", flow_id: "agent-1" }),
       );
       return new Response(
         JSON.stringify({
@@ -99,7 +99,7 @@ describe("management client", () => {
     const token = await createApiClient(
       () => ({ key: "management-key", generation: 1 }),
       fetcher,
-    ).issueVoiceToken({ principal: "operator-1", agent_id: "agent-1" });
+    ).issueVoiceToken({ principal: "operator-1", flow_id: "agent-1" });
     expect(token.scope).toBe("voice:connect");
     expect(fetcher).toHaveBeenCalledWith(
       "/api/v1/voice-tokens",
@@ -139,6 +139,18 @@ describe("management client", () => {
       expect.objectContaining({ requestId: "req-old" }),
       7,
     );
+  });
+
+  it("re-pins a flow's tools through PUT /flows/{id}/mcp-tools and returns the new version", async () => {
+    const version = { id: "v2", number: 2, schema_version: 1, config: {}, config_hash: "h", created_at: "", mcp_tools: [{ mcp_server_id: "crm", remote_name: "lookup", schema_hash: "new", required: true }] };
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ data: version }), { status: 200 }));
+    const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+    const tools = [{ mcp_server_id: "crm", remote_name: "lookup", schema_hash: "new", required: true }];
+    await expect(client.setFlowMCPTools("a/1", tools)).resolves.toMatchObject({ number: 2, mcp_tools: tools });
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe("/api/v1/flows/a%2F1/mcp-tools");
+    expect(init?.method).toBe("PUT");
+    expect(JSON.parse(String(init?.body))).toEqual({ tools });
   });
 
   describe("providers API", () => {
@@ -200,9 +212,9 @@ describe("management client", () => {
     });
   });
 
-  describe("agents API", () => {
-    it("handles agent CRUD, duplicate, archive, and mcp-tools", async () => {
-      const agent = {
+  describe("flows API", () => {
+    it("handles flow CRUD, duplicate, archive, and mcp-tools", async () => {
+      const flow = {
         id: "agent-1",
         name: "Customer Support",
         description: "Assists customers",
@@ -227,16 +239,16 @@ describe("management client", () => {
 
       const fetcher = vi.fn<typeof fetch>()
         .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: [agent] }), { status: 200 }),
+          new Response(JSON.stringify({ data: [flow] }), { status: 200 }),
         )
         .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: agent }), { status: 201 }),
+          new Response(JSON.stringify({ data: flow }), { status: 201 }),
         )
         .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: { ...agent, name: "Updated" } }), { status: 200 }),
+          new Response(JSON.stringify({ data: { ...flow, name: "Updated" } }), { status: 200 }),
         )
         .mockResolvedValueOnce(
-          new Response(JSON.stringify({ data: { ...agent, id: "agent-2", name: "Customer Support Copy" } }), { status: 201 }),
+          new Response(JSON.stringify({ data: { ...flow, id: "agent-2", name: "Customer Support Copy" } }), { status: 201 }),
         )
         .mockResolvedValueOnce(
           new Response(JSON.stringify({ data: { archived: true } }), { status: 200 }),
@@ -247,11 +259,11 @@ describe("management client", () => {
         fetcher,
       );
 
-      const agents = await client.getAgents();
-      expect(agents).toHaveLength(1);
-      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/agents?limit=100", expect.any(Object));
+      const flows = await client.getFlows();
+      expect(flows).toHaveLength(1);
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/flows?limit=100", expect.any(Object));
 
-      const created = await client.createAgent({
+      const created = await client.createFlow({
         name: "Customer Support",
         description: "Assists customers",
         config: {
@@ -262,13 +274,13 @@ describe("management client", () => {
       });
       expect(created.id).toBe("agent-1");
 
-      const updated = await client.updateAgent("agent-1", { name: "Updated" });
+      const updated = await client.updateFlow("agent-1", { name: "Updated" });
       expect(updated.name).toBe("Updated");
 
-      const duplicated = await client.duplicateAgent("agent-1", { name: "Customer Support Copy" });
+      const duplicated = await client.duplicateFlow("agent-1", { name: "Customer Support Copy" });
       expect(duplicated.id).toBe("agent-2");
 
-      const archived = await client.archiveAgent("agent-1");
+      const archived = await client.archiveFlow("agent-1");
       expect(archived.archived).toBe(true);
     });
 
@@ -359,8 +371,8 @@ describe("management client", () => {
     it("handles sessions and traces query operations", async () => {
       const mockSession = {
         id: "sess-1",
-        agent_id: "agent-1",
-        agent_version_id: "ver-1",
+        flow_id: "agent-1",
+        flow_version_id: "ver-1",
         config_hash: "chash123",
         started_at: "2026-10-05T12:00:00Z",
         status: "completed",
@@ -420,9 +432,9 @@ describe("management client", () => {
         fetcher,
       );
 
-      const sessions = await client.getSessions({ limit: 10, offset: 0, status: "completed", agent_id: "agent-1" });
+      const sessions = await client.getSessions({ limit: 10, offset: 0, status: "completed", flow_id: "agent-1" });
       expect(sessions).toHaveLength(1);
-      expect(fetcher).toHaveBeenCalledWith("/api/v1/sessions?limit=10&offset=0&status=completed&agent_id=agent-1", expect.any(Object));
+      expect(fetcher).toHaveBeenCalledWith("/api/v1/sessions?limit=10&offset=0&status=completed&flow_id=agent-1", expect.any(Object));
 
       const single = await client.getSession("sess-1");
       expect(single.id).toBe("sess-1");
@@ -491,7 +503,25 @@ describe("agentConfigV2Schema", () => {
   it("does not require or expose credential_id", () => {
     const stage = { provider: "google" };
     const cfg = { stt: stage, llm: { ...stage, model: "gemini-2.0-flash" }, tts: stage };
-    const parsed = agentConfigV2Schema.parse({ ...cfg, stt: { ...stage, credential_id: "x" } });
+    const parsed = stepConfigV2Schema.parse({ ...cfg, stt: { ...stage, credential_id: "x" } });
     expect(parsed.stt).not.toHaveProperty("credential_id");
+  });
+});
+
+// Versions and sessions stored before the flow rename keep their old names.
+describe("pre-rename data", () => {
+  it("reads a stored entry/nodes/edges/handoff_cue config as start/steps/routes/route_cue", () => {
+    const v = flowVersionSchema.parse({
+      id: "v1", number: 1, schema_version: 1, config_hash: "h", created_at: "2026-10-01T00:00:00Z", mcp_tools: [],
+      config: { entry: "a", nodes: [{ id: "a" }], edges: [], handoff_cue: { name: "chime" } },
+    });
+    expect(v.config).toEqual({ start: "a", steps: [{ id: "a" }], routes: [], route_cue: { name: "chime" } });
+  });
+
+  it("reads handoff.* spans with from_node/to_node as routes", () => {
+    const span = (name: string, attributes: Record<string, string>) => ({ id: "s", name, started_at: "2026-10-01T00:00:00Z", attributes }) as TraceSpanDTO;
+    expect(routeSpan(span("handoff.active", { from_node: "a", to_node: "b" }))).toEqual({ event: "active", from: "a", to: "b" });
+    expect(routeSpan(span("route.failed", { from_step: "a", to_step: "b" }))).toEqual({ event: "failed", from: "a", to: "b" });
+    expect(routeSpan(span("llm.generate", {}))).toBeNull();
   });
 });

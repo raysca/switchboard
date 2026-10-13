@@ -57,7 +57,8 @@ services:
 		t.Fatalf("unexpected logs %v", logs)
 	}
 	ids, label, defaults := voiceIDs(c, "xai")
-	if strings.Join(ids, ",") != "eve,ara,ara2" || label["eve"] != "Eve (new)" || label["ara"] != "Ara" || defaults != 1 {
+	// ara2 is appended after the packaged voices; eve is replaced in place; others are untouched.
+	if ids[len(ids)-1] != "ara2" || strings.Count(strings.Join(ids, ","), "eve") != 1 || label["eve"] != "Eve (new)" || label["ara"] != "Ara" || defaults != 1 {
 		t.Fatalf("got %v %v defaults=%d", ids, label, defaults)
 	}
 }

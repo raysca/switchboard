@@ -289,7 +289,7 @@ func (s *Server) api(path string, body any) (json.RawMessage, error) {
 
 // Provision creates the fake agent, returning its id.
 func (s *Server) Provision() (string, error) {
-	d, err := s.api("agents", map[string]any{"name": "Loadtest Fake", "description": "fake providers", "config": map[string]any{
+	d, err := s.api("flows", map[string]any{"name": "Loadtest Fake", "description": "fake providers", "config": map[string]any{
 		"stt": map[string]any{"provider": "google", "model": "chirp_2", "language": "en-US"},
 		"llm": map[string]any{"provider": "google", "model": "fake", "system_prompt": "fake"},
 		"tts": map[string]any{"provider": "google", "voice": "fake"}}})
@@ -305,7 +305,7 @@ func (s *Server) Provision() (string, error) {
 
 // Token mints a single-use voice token (one per call).
 func (s *Server) Token(principal, agentID string) (string, error) {
-	d, err := s.api("voice-tokens", map[string]string{"principal": principal, "agent_id": agentID})
+	d, err := s.api("voice-tokens", map[string]string{"principal": principal, "flow_id": agentID})
 	if err != nil {
 		return "", err
 	}

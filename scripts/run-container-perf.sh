@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run-container-perf.sh: Run capacity, churn, and chaos tests against a containerized
-# go-voice server running under fixed resource constraints (2 CPUs, 2GB RAM)
+# Switchboard server running under fixed resource constraints (2 CPUs, 2GB RAM)
 # with zero cloud provider costs (fakeproviders).
 set -euo pipefail
 
@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=========================================================="
-echo " Starting go-voice Container Performance & Chaos Suite"
+echo " Starting Switchboard Container Performance & Chaos Suite"
 echo " Resource Limits: 2.0 CPUs, 2048 MB RAM (deploy.resources)"
 echo " Provider Cost: \$0.00 (built with -tags fakeproviders)"
 echo "=========================================================="

@@ -215,7 +215,7 @@ func (a *Adapter) filterAttributes(input map[string]any) map[string]any {
 
 	for k, v := range input {
 		switch k {
-		case "count", "sample_rate", "channels", "duration_ms", "latency_ms", "sequence", "model", "provider", "format", "status", "error.category", "unit", "quantity", "reason", "component", "frame", "direction", "from_node", "to_node":
+		case "count", "sample_rate", "channels", "duration_ms", "latency_ms", "sequence", "model", "provider", "format", "status", "error.category", "unit", "quantity", "reason", "component", "frame", "direction", "from_step", "to_step":
 			switch val := v.(type) {
 			case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 				out[k] = val

@@ -9,11 +9,11 @@ import (
 )
 
 type SessionRecord struct {
-	ID, AgentID, AgentVersionID, ConfigHash, Status, ProviderStackJSON, SafeSummary string
-	RuntimeSnapshotJSON                                                             string
-	RuntimeTools                                                                    []SelectedTool
-	StartedAt, EndedAt                                                              time.Time
-	TurnCount                                                                       int
+	ID, FlowID, FlowVersionID, ConfigHash, Status, ProviderStackJSON, SafeSummary string
+	RuntimeSnapshotJSON                                                           string
+	RuntimeTools                                                                  []SelectedTool
+	StartedAt, EndedAt                                                            time.Time
+	TurnCount                                                                     int
 }
 type TurnRecord struct {
 	ID, SessionID, Transcript, AssistantText, LatenciesJSON, ToolsJSON string
@@ -25,7 +25,7 @@ type SessionRepository struct{ s *Store }
 
 func (s *Store) Sessions() SessionRepository { return SessionRepository{s} }
 func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
-	for _, id := range []string{v.ID, v.AgentID, v.AgentVersionID} {
+	for _, id := range []string{v.ID, v.FlowID, v.FlowVersionID} {
 		if err := validID(id); err != nil {
 			return err
 		}
@@ -53,17 +53,17 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 		}
 		var current sql.NullString
 		var enabled, archived bool
-		if err := tx.QueryRowContext(ctx, r.s.bind(query), v.AgentID).Scan(&current, &enabled, &archived); err != nil {
+		if err := tx.QueryRowContext(ctx, r.s.bind(query), v.FlowID).Scan(&current, &enabled, &archived); err != nil {
 			return err
 		}
 		if !enabled || archived {
-			return errors.New("agent unavailable for new sessions")
+			return errors.New("flow unavailable for new sessions")
 		}
-		if !current.Valid || current.String != v.AgentVersionID {
-			return errors.New("agent version is no longer current")
+		if !current.Valid || current.String != v.FlowVersionID {
+			return errors.New("flow version is no longer current")
 		}
 		runtimeTools := append([]SelectedTool(nil), v.RuntimeTools...)
-		selectedRows, err := tx.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=?"), v.AgentVersionID)
+		selectedRows, err := tx.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=?"), v.FlowVersionID)
 		if err != nil {
 			return err
 		}
@@ -91,7 +91,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 			key := tool.ServerID + "\x00" + tool.RemoteName
 			pinned, exists := selected[key]
 			if !exists || pinned.SchemaHash != tool.SchemaHash || pinned.Required != tool.Required {
-				return errors.New("runtime MCP tool does not match agent version selection")
+				return errors.New("runtime MCP tool does not match flow version selection")
 			}
 			included[key] = true
 			query := "SELECT s.enabled,s.pending_delete,mt.schema_hash FROM mcp_servers s LEFT JOIN mcp_tools mt ON mt.discovery_id=s.latest_discovery_id AND mt.remote_name=? WHERE s.id=?"
@@ -115,7 +115,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 				return errors.New("required MCP tool was not captured for session")
 			}
 		}
-		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.AgentID, v.AgentVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical))
+		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical))
 		if err != nil {
 			return err
 		}
@@ -189,10 +189,10 @@ func (r SessionRepository) AddTurn(ctx context.Context, v TurnRecord) error {
 }
 
 type SessionFilter struct {
-	AgentID string
-	Status  string
-	Limit   int
-	Offset  int
+	FlowID string
+	Status string
+	Limit  int
+	Offset int
 }
 
 func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]SessionRecord, error) {
@@ -211,9 +211,9 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 	query := "SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json FROM sessions"
 	var clauses []string
 	var args []any
-	if filter.AgentID != "" {
+	if filter.FlowID != "" {
 		clauses = append(clauses, "agent_id=?")
-		args = append(args, filter.AgentID)
+		args = append(args, filter.FlowID)
 	}
 	if filter.Status != "" {
 		clauses = append(clauses, "status=?")
@@ -236,7 +236,7 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 		var v SessionRecord
 		var started string
 		var ended sql.NullString
-		if err := rows.Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON); err != nil {
+		if err := rows.Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON); err != nil {
 			return nil, err
 		}
 		if v.StartedAt, err = parseTime(started); err != nil {
@@ -256,7 +256,7 @@ func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, e
 	var v SessionRecord
 	var started string
 	var ended sql.NullString
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.AgentID, &v.AgentVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON)
 	if err != nil {
 		return v, err
 	}

@@ -55,318 +55,91 @@ export function PipecatDebugPanel({
     }
   };
 
+  const bargeTone = speakingState.isBargeInActive ? "bad" : metrics.bargeInCount > 0 ? "warn" : "idle";
+  const cards: { label: string; value: string; sub?: string }[] = [
+    { label: "WS Connect Latency", value: metrics.connectLatencyMs !== null ? `${metrics.connectLatencyMs} ms` : "—" },
+    { label: "RTVI Ready Latency", value: metrics.readyLatencyMs !== null ? `${metrics.readyLatencyMs} ms` : "—" },
+    {
+      label: "Audio In (24kHz)",
+      value: `${metrics.audioFramesIn} frames`,
+      sub: `${(metrics.audioBytesIn / 1024).toFixed(1)} KB (${metrics.currentFrameRate.toFixed(1)} fps)`,
+    },
+    {
+      label: "Audio Out (16kHz)",
+      value: `${metrics.audioFramesOut} frames`,
+      sub: `${(metrics.audioBytesOut / 1024).toFixed(1)} KB`,
+    },
+    { label: "User Speaking", value: `${(metrics.totalUserSpeakingMs / 1000).toFixed(1)}s` },
+    { label: "Bot Speaking", value: `${(metrics.totalBotSpeakingMs / 1000).toFixed(1)}s` },
+  ];
+
   return (
-    <section
-      aria-label="Pipecat RTVI Debug Panel"
-      className="pipecat-debug-panel"
-      style={{
-        background: "#ffffff",
-        border: "1px solid #c9d3d2",
-        padding: "20px",
-        marginTop: "20px",
-      }}
-    >
-      {/* Top Header & Speaking State Badges */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: "12px",
-          borderBottom: "1px solid #c9d3d2",
-          paddingBottom: "16px",
-          marginBottom: "16px",
-        }}
-      >
+    <section aria-label="Pipecat RTVI Debug Panel" className="pipecat-debug-panel dbg">
+      <div className="dbg__head">
         <div>
-          <h3 style={{ margin: "0 0 4px", fontSize: "1.1rem" }}>
-            Pipecat RTVI Debug Panel
-          </h3>
-          <span style={{ fontSize: "0.82rem", color: "#53666b" }}>
-            Wire protocol inspection, speaking telemetry, and audio frame metrics
-          </span>
+          <h3>Pipecat RTVI Debug Panel</h3>
+          <span className="subtext">Wire protocol inspection, speaking telemetry, and audio frame metrics</span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-          {/* Connection Status */}
-          <Status tone={getStatusTone(connectionStatus)}>
-            {connectionStatus.toUpperCase()}
-          </Status>
+        <div className="dbg__indicators">
+          <Status tone={getStatusTone(connectionStatus)}>{connectionStatus.toUpperCase()}</Status>
 
-          {/* User Speaking Indicator */}
-          <span
-            data-testid="indicator-user-speaking"
-            style={{
-              fontSize: "0.8rem",
-              padding: "4px 8px",
-              borderRadius: "4px",
-              fontWeight: 500,
-              background: speakingState.isUserSpeaking ? "#d8efe8" : "#f0f2f2",
-              color: speakingState.isUserSpeaking ? "#006356" : "#6f8285",
-              border: `1px solid ${speakingState.isUserSpeaking ? "#007e82" : "#c9d3d2"}`,
-            }}
-          >
+          <span data-testid="indicator-user-speaking" className="dbg__chip" data-tone={speakingState.isUserSpeaking ? "ok" : "idle"}>
             ● User {speakingState.isUserSpeaking ? "Speaking" : "Silent"}
           </span>
 
-          {/* Bot Speaking Indicator */}
-          <span
-            data-testid="indicator-bot-speaking"
-            style={{
-              fontSize: "0.8rem",
-              padding: "4px 8px",
-              borderRadius: "4px",
-              fontWeight: 500,
-              background: speakingState.isBotSpeaking ? "#d8efe8" : "#f0f2f2",
-              color: speakingState.isBotSpeaking ? "#006356" : "#6f8285",
-              border: `1px solid ${speakingState.isBotSpeaking ? "#007e82" : "#c9d3d2"}`,
-            }}
-          >
+          <span data-testid="indicator-bot-speaking" className="dbg__chip" data-tone={speakingState.isBotSpeaking ? "ok" : "idle"}>
             ● Bot {speakingState.isBotSpeaking ? "Speaking" : "Silent"}
           </span>
 
-          {/* Barge-in Indicator */}
-          <span
-            data-testid="indicator-barge-in"
-            style={{
-              fontSize: "0.8rem",
-              padding: "4px 8px",
-              borderRadius: "4px",
-              fontWeight: 500,
-              background: speakingState.isBargeInActive
-                ? "#fde8e4"
-                : metrics.bargeInCount > 0
-                  ? "#fdf2d8"
-                  : "#f0f2f2",
-              color: speakingState.isBargeInActive
-                ? "#a43e30"
-                : metrics.bargeInCount > 0
-                  ? "#8f5c00"
-                  : "#6f8285",
-              border: `1px solid ${
-                speakingState.isBargeInActive
-                  ? "#a43e30"
-                  : metrics.bargeInCount > 0
-                    ? "#d4a017"
-                    : "#c9d3d2"
-              }`,
-            }}
-          >
+          <span data-testid="indicator-barge-in" className="dbg__chip" data-tone={bargeTone}>
             ⚡ Barge-ins: {metrics.bargeInCount}
             {speakingState.isBargeInActive && " (ACTIVE)"}
           </span>
         </div>
       </div>
 
-      {/* Telemetry & Metrics Cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: "12px",
-          marginBottom: "20px",
-        }}
-      >
-        <div
-          style={{
-            background: "#f7f9f8",
-            border: "1px solid #d9e3e1",
-            padding: "12px",
-          }}
-        >
-          <div style={{ fontSize: "0.75rem", color: "#53666b", textTransform: "uppercase" }}>
-            WS Connect Latency
+      <dl className="dbg__cards">
+        {cards.map((c) => (
+          <div key={c.label}>
+            <dt>{c.label}</dt>
+            <dd>{c.value}</dd>
+            {c.sub && <dd className="dbg__sub">{c.sub}</dd>}
           </div>
-          <div style={{ fontSize: "1.2rem", fontWeight: 600, marginTop: "4px" }}>
-            {metrics.connectLatencyMs !== null ? `${metrics.connectLatencyMs} ms` : "—"}
-          </div>
-        </div>
+        ))}
+      </dl>
 
-        <div
-          style={{
-            background: "#f7f9f8",
-            border: "1px solid #d9e3e1",
-            padding: "12px",
-          }}
-        >
-          <div style={{ fontSize: "0.75rem", color: "#53666b", textTransform: "uppercase" }}>
-            RTVI Ready Latency
-          </div>
-          <div style={{ fontSize: "1.2rem", fontWeight: 600, marginTop: "4px" }}>
-            {metrics.readyLatencyMs !== null ? `${metrics.readyLatencyMs} ms` : "—"}
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: "#f7f9f8",
-            border: "1px solid #d9e3e1",
-            padding: "12px",
-          }}
-        >
-          <div style={{ fontSize: "0.75rem", color: "#53666b", textTransform: "uppercase" }}>
-            Audio In (24kHz)
-          </div>
-          <div style={{ fontSize: "1.2rem", fontWeight: 600, marginTop: "4px" }}>
-            {metrics.audioFramesIn} frames
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "#53666b", marginTop: "2px" }}>
-            {(metrics.audioBytesIn / 1024).toFixed(1)} KB ({metrics.currentFrameRate.toFixed(1)} fps)
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: "#f7f9f8",
-            border: "1px solid #d9e3e1",
-            padding: "12px",
-          }}
-        >
-          <div style={{ fontSize: "0.75rem", color: "#53666b", textTransform: "uppercase" }}>
-            Audio Out (16kHz)
-          </div>
-          <div style={{ fontSize: "1.2rem", fontWeight: 600, marginTop: "4px" }}>
-            {metrics.audioFramesOut} frames
-          </div>
-          <div style={{ fontSize: "0.75rem", color: "#53666b", marginTop: "2px" }}>
-            {(metrics.audioBytesOut / 1024).toFixed(1)} KB
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: "#f7f9f8",
-            border: "1px solid #d9e3e1",
-            padding: "12px",
-          }}
-        >
-          <div style={{ fontSize: "0.75rem", color: "#53666b", textTransform: "uppercase" }}>
-            User Speaking
-          </div>
-          <div style={{ fontSize: "1.2rem", fontWeight: 600, marginTop: "4px" }}>
-            {(metrics.totalUserSpeakingMs / 1000).toFixed(1)}s
-          </div>
-        </div>
-
-        <div
-          style={{
-            background: "#f7f9f8",
-            border: "1px solid #d9e3e1",
-            padding: "12px",
-          }}
-        >
-          <div style={{ fontSize: "0.75rem", color: "#53666b", textTransform: "uppercase" }}>
-            Bot Speaking
-          </div>
-          <div style={{ fontSize: "1.2rem", fontWeight: 600, marginTop: "4px" }}>
-            {(metrics.totalBotSpeakingMs / 1000).toFixed(1)}s
-          </div>
-        </div>
-      </div>
-
-      {/* RTVI Events Header & Search */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "10px",
-          gap: "10px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <h4 style={{ margin: 0, fontSize: "0.95rem" }}>
-            RTVI Events ({filteredEvents.length})
-          </h4>
-          <input
-            type="search"
-            placeholder="Filter events…"
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-            style={{
-              padding: "4px 8px",
-              fontSize: "0.8rem",
-              border: "1px solid #c9d3d2",
-              width: "160px",
-            }}
-            aria-label="Filter events"
-          />
+      <div className="dbg__events-head">
+        <div className="row">
+          <h4>RTVI Events ({filteredEvents.length})</h4>
+          <input type="search" placeholder="Filter events…" value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} aria-label="Filter events" />
         </div>
 
         {onClearEvents && (
-          <button
-            type="button"
-            className="action-button-small"
-            onClick={onClearEvents}
-            disabled={events.length === 0}
-            style={{ fontSize: "0.8rem", padding: "4px 10px" }}
-          >
+          <button type="button" className="action-button-small" onClick={onClearEvents} disabled={events.length === 0}>
             Clear Log
           </button>
         )}
       </div>
 
-      {/* Events Stream & Message Inspector */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: selectedEvent ? "1fr 1fr" : "1fr",
-          gap: "12px",
-          minHeight: "220px",
-        }}
-      >
-        {/* Events List */}
-        <div
-          style={{
-            maxHeight: "320px",
-            overflowY: "auto",
-            border: "1px solid #c9d3d2",
-            background: "#fafbfb",
-          }}
-          tabIndex={0}
-          aria-label="RTVI event log"
-        >
+      <div className={`dbg__stream${selectedEvent ? " dbg__stream--split" : ""}`}>
+        <div className="dbg__log" tabIndex={0} aria-label="RTVI event log">
           {filteredEvents.length === 0 ? (
-            <div style={{ padding: "20px", textAlign: "center", color: "#6f8285", fontSize: "0.85rem" }}>
-              {events.length === 0 ? "No RTVI events logged yet." : "No events match the search filter."}
-            </div>
+            <p className="dbg__empty">{events.length === 0 ? "No RTVI events logged yet." : "No events match the search filter."}</p>
           ) : (
-            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            <ul>
               {filteredEvents.map((evt) => {
                 const isSelected = evt.id === selectedEventId;
                 const isOut = evt.direction === "out";
                 return (
-                  <li
-                    key={evt.id}
-                    onClick={() => setSelectedEventId(isSelected ? null : evt.id)}
-                    style={{
-                      padding: "8px 12px",
-                      borderBottom: "1px solid #e1e7e6",
-                      cursor: "pointer",
-                      background: isSelected ? "#e7f4f2" : "transparent",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      fontSize: "0.83rem",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <span
-                        style={{
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          padding: "1px 5px",
-                          borderRadius: "3px",
-                          background: isOut ? "#e0edec" : "#ede7f6",
-                          color: isOut ? "#005658" : "#4a148c",
-                        }}
-                      >
+                  <li key={evt.id} onClick={() => setSelectedEventId(isSelected ? null : evt.id)} className={isSelected ? "is-selected" : undefined}>
+                    <div className="row">
+                      <span className="dbg__dir" data-dir={isOut ? "out" : "in"}>
                         {isOut ? "OUT" : "IN"}
                       </span>
-                      <code style={{ fontWeight: 600 }}>{evt.type}</code>
+                      <code>{evt.type}</code>
                     </div>
-                    <span style={{ fontSize: "0.75rem", color: "#6f8285", fontFamily: "monospace" }}>
+                    <span className="dbg__time">
                       {new Date(evt.timestamp).toLocaleTimeString([], {
                         hour12: false,
                         hour: "2-digit",
@@ -382,50 +155,17 @@ export function PipecatDebugPanel({
           )}
         </div>
 
-        {/* Selected Event Inspector */}
         {selectedEvent && (
-          <div
-            style={{
-              maxHeight: "320px",
-              overflowY: "auto",
-              border: "1px solid #c9d3d2",
-              background: "#f3f5f4",
-              padding: "12px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: "8px",
-              }}
-            >
-              <h5 style={{ margin: 0, fontSize: "0.88rem" }}>
+          <div className="dbg__inspector">
+            <div className="dbg__inspector-head">
+              <h5>
                 Message Inspector: <code>{selectedEvent.type}</code>
               </h5>
-              <button
-                type="button"
-                className="action-button-small"
-                onClick={() => setSelectedEventId(null)}
-                style={{ fontSize: "0.75rem", padding: "2px 6px" }}
-              >
+              <button type="button" className="action-button-small" onClick={() => setSelectedEventId(null)}>
                 Close
               </button>
             </div>
-            <pre
-              style={{
-                margin: 0,
-                fontSize: "0.78rem",
-                fontFamily: "IBM Plex Mono, monospace",
-                background: "#ffffff",
-                padding: "8px",
-                border: "1px solid #c9d3d2",
-                overflowX: "auto",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-all",
-              }}
-            >
+            <pre className="code-block">
               {JSON.stringify(
                 {
                   id: selectedEvent.id,

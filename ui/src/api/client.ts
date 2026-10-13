@@ -89,7 +89,7 @@ const providersEnvelope = z.object({
   data: z.array(providerStatusSchema),
 });
 
-// Agent schemas & types
+// Flow schemas & types
 export const toolSelectionSchema = z.object({
   mcp_server_id: z.string(),
   remote_name: z.string(),
@@ -98,17 +98,22 @@ export const toolSelectionSchema = z.object({
 });
 export type ToolSelection = z.infer<typeof toolSelectionSchema>;
 
-export const agentVersionSchema = z.object({
+// Versions stored before the flow rename say entry/nodes/edges/handoff_cue (the server reads both).
+const LEGACY_KEYS: Record<string, string> = { entry: "start", nodes: "steps", edges: "routes", handoff_cue: "route_cue" };
+
+export const flowVersionSchema = z.object({
   id: z.string(),
   number: z.number(),
   schema_version: z.number(),
-  config: z.record(z.string(), z.unknown()),
+  config: z
+    .record(z.string(), z.unknown())
+    .transform((c) => (Array.isArray(c.nodes) ? Object.fromEntries(Object.entries(c).map(([k, v]) => [LEGACY_KEYS[k] ?? k, v])) : c)),
   config_hash: z.string(),
   created_at: z.string(),
   mcp_tools: z.array(toolSelectionSchema),
   mcp_review_required: z.boolean().optional(),
 });
-export type AgentVersionDTO = z.infer<typeof agentVersionSchema>;
+export type FlowVersionDTO = z.infer<typeof flowVersionSchema>;
 
 export const toolDependencySchema = z.object({
   mcp_server_id: z.string(),
@@ -127,24 +132,25 @@ export const readinessSchema = z.object({
 });
 export type ReadinessDTO = z.infer<typeof readinessSchema>;
 
-export const agentSchema = z.object({
+export const flowSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
   enabled: z.boolean(),
   archived: z.boolean(),
-  current_version: agentVersionSchema.nullish(),
+  current_version: flowVersionSchema.nullish(),
   readiness: readinessSchema,
   created_at: z.string(),
   updated_at: z.string(),
 });
-export type AgentDTO = z.infer<typeof agentSchema>;
+export type FlowDTO = z.infer<typeof flowSchema>;
 
-const agentsEnvelope = z.object({
-  data: z.array(agentSchema),
+const flowsEnvelope = z.object({
+  data: z.array(flowSchema),
 });
-const agentEnvelope = z.object({
-  data: agentSchema,
+const flowVersionEnvelope = z.object({ data: flowVersionSchema });
+const flowEnvelope = z.object({
+  data: flowSchema,
 });
 const archiveEnvelope = z.object({
   data: z.object({
@@ -152,10 +158,10 @@ const archiveEnvelope = z.object({
   }),
 });
 
-// Agent config schema v2: one typed block per stage. Every stage names its
+// Flow config schema v2: one typed block per stage. Every stage names its
 // provider; secrets come from server environment variables, never the config.
 const nonEmpty = z.string().trim().min(1);
-export const agentConfigV2Schema = z.object({
+export const stepConfigV2Schema = z.object({
   // Mirrors the server: provider is required per stage and
   // llm.model is required; stt.model and tts.voice fall back to provider defaults.
   stt: z.object({
@@ -179,27 +185,27 @@ export const agentConfigV2Schema = z.object({
     })
     .optional(),
 });
-export type AgentConfigV2 = z.infer<typeof agentConfigV2Schema>;
+export type StepConfigV2 = z.infer<typeof stepConfigV2Schema>;
 
 /**
- * What the agents API accepts as `config`: the flat stage config, or a graph
- * ({entry, nodes, edges, handoff_cue}) whose nodes carry flat stage configs.
- * The server validates graphs (server/agent/graph.go); the designer mirrors it.
+ * What the flows API accepts as `config`: the flat stage config, or a flow
+ * ({start, steps, routes, route_cue}) whose steps carry flat stage configs.
+ * The server validates flows (server/flow/definition.go); the designer mirrors it.
  */
-export type AgentConfigPayload = AgentConfigV2 | Record<string, unknown>;
+export type FlowConfigPayload = StepConfigV2 | Record<string, unknown>;
 
-export type CreateAgentInput = {
+export type CreateFlowInput = {
   name: string;
   description: string;
   enabled?: boolean;
-  config: AgentConfigPayload;
+  config: FlowConfigPayload;
 };
 
-export type UpdateAgentInput = {
+export type UpdateFlowInput = {
   name?: string;
   description?: string;
   enabled?: boolean;
-  config?: AgentConfigPayload;
+  config?: FlowConfigPayload;
 };
 
 // MCP schemas & types
@@ -296,6 +302,18 @@ export const sessionTraceSpanSchema = z.object({
 });
 export type TraceSpanDTO = z.infer<typeof sessionTraceSpanSchema>;
 
+/**
+ * A route span's event ("preparing", "active", "failed") and the steps it joins, or null for other spans.
+ * Sessions stored before the flow rename name them handoff.* with from_node/to_node.
+ */
+export function routeSpan(span: TraceSpanDTO): { event: string; from: string; to: string } | null {
+  const event = /^(?:route|handoff)\.(\w+)$/.exec(span.name)?.[1];
+  const a = (span.attributes && typeof span.attributes === "object" ? span.attributes : {}) as Record<string, unknown>;
+  const from = a.from_step ?? a.from_node;
+  const to = a.to_step ?? a.to_node;
+  return event && typeof from === "string" && typeof to === "string" ? { event, from, to } : null;
+}
+
 export const sessionTraceEventSchema = z.object({
   id: z.string(),
   span_id: z.string().optional(),
@@ -354,8 +372,8 @@ export type SessionRuntimeToolDTO = z.infer<typeof sessionRuntimeToolSchema>;
 
 export const sessionSchema = z.object({
   id: z.string(),
-  agent_id: z.string(),
-  agent_version_id: z.string(),
+  flow_id: z.string(),
+  flow_version_id: z.string(),
   config_hash: z.string(),
   started_at: z.string(),
   ended_at: z.string().nullish(),
@@ -372,7 +390,7 @@ export type SessionFilterParams = {
   limit?: number;
   offset?: number;
   status?: string;
-  agent_id?: string;
+  flow_id?: string;
 };
 
 const sessionsEnvelope = z.object({
@@ -487,41 +505,51 @@ export function createApiClient(
     return parsed.data;
   }
   return {
-    issueVoiceToken: async (input: { principal: string; agent_id: string }) =>
+    issueVoiceToken: async (input: { principal: string; flow_id: string }) =>
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
     getProviders: async () =>
       (await request("/providers", providersEnvelope)).data,
-    // ponytail: one page of the server max (100); page through when someone has more agents.
-    // Includes archived agents (sessions still name them); list views filter them out.
-    getAgents: async () =>
-      (await request("/agents?limit=100", agentsEnvelope)).data,
-    createAgent: async (input: CreateAgentInput) =>
+    // ponytail: one page of the server max (100); page through when someone has more flows.
+    // Includes archived flows (sessions still name them); list views filter them out.
+    getFlows: async () =>
+      (await request("/flows?limit=100", flowsEnvelope)).data,
+    getFlow: async (id: string) =>
+      (await request(`/flows/${encodeURIComponent(id)}`, flowEnvelope)).data,
+    createFlow: async (input: CreateFlowInput) =>
       (
-        await request("/agents", agentEnvelope, {
+        await request("/flows", flowEnvelope, {
           method: "POST",
           body: input,
         })
       ).data,
-    updateAgent: async (id: string, input: UpdateAgentInput) =>
+    updateFlow: async (id: string, input: UpdateFlowInput) =>
       (
-        await request(`/agents/${encodeURIComponent(id)}`, agentEnvelope, {
+        await request(`/flows/${encodeURIComponent(id)}`, flowEnvelope, {
           method: "PUT",
           body: input,
         })
       ).data,
-    archiveAgent: async (id: string) =>
+    // Replaces the tool selection and publishes a new version with the same config.
+    setFlowMCPTools: async (id: string, tools: ToolSelection[]) =>
+      (
+        await request(`/flows/${encodeURIComponent(id)}/mcp-tools`, flowVersionEnvelope, {
+          method: "PUT",
+          body: { tools },
+        })
+      ).data,
+    archiveFlow: async (id: string) =>
       (
         await request(
-          `/agents/${encodeURIComponent(id)}/archive`,
+          `/flows/${encodeURIComponent(id)}/archive`,
           archiveEnvelope,
           { method: "POST" },
         )
       ).data,
-    duplicateAgent: async (id: string, input?: { name?: string }) =>
+    duplicateFlow: async (id: string, input?: { name?: string }) =>
       (
         await request(
-          `/agents/${encodeURIComponent(id)}/duplicate`,
-          agentEnvelope,
+          `/flows/${encodeURIComponent(id)}/duplicate`,
+          flowEnvelope,
           {
             method: "POST",
             body: input,
@@ -604,7 +632,7 @@ export function createApiClient(
       if (params?.offset !== undefined)
         searchParams.set("offset", String(params.offset));
       if (params?.status) searchParams.set("status", params.status);
-      if (params?.agent_id) searchParams.set("agent_id", params.agent_id);
+      if (params?.flow_id) searchParams.set("flow_id", params.flow_id);
       const qs = searchParams.toString();
       return (
         await request(`/sessions${qs ? `?${qs}` : ""}`, sessionsEnvelope)

@@ -1,4 +1,4 @@
-# go-voice e2e (Playwright)
+# Switchboard e2e (Playwright)
 
 Full-stack browser tests against real providers. Global setup builds and starts
 the whole stack; global teardown stops it (also when setup fails).
@@ -30,22 +30,22 @@ secret the stack is not started and every test is skipped.
 ## Scenario (`tests/10-full-stack.spec.ts`)
 
 1. Admin UI: the Providers page shows Google detected (and no secret in the
-   page); create agent "E2E Concierge" from the catalog dropdowns (`chirp_2`,
+   page); create flow "E2E Concierge" from the catalog dropdowns (`chirp_2`,
    `gemini-2.5-flash`, `en-US-Chirp3-HD-Aoede`), check it is `ready` and the
    stored config names no credential.
 2. Admin debug client: voice call (the fake mic asks "What is two plus two?",
    bot answers "4"), then mute and a typed text turn ("capital of France" ->
    "Paris"), then disconnect.
-3. Custom client (`examples/rtvi_client`): calls the agent by `agent_id`, voice
+3. Custom client (`examples/rtvi_client`): calls the flow by `flow_id`, voice
    and text turns.
-4. Admin UI: delete the agent; it leaves the list and a new voice token for it
+4. Admin UI: delete the flow; it leaves the list and a new voice token for it
    is refused (409).
 
 ## Stack
 
 | Process | URL | Log |
 |---|---|---|
-| `bin/server -vad-mode inprocess` (development profile, throwaway agent store in a temp `GOVOICE_DEV_DIR`) | public `http://127.0.0.1:18580` (WS `/ws`), admin `http://127.0.0.1:19590` | `test-results/logs/server.log` |
+| `bin/server -vad-mode inprocess` (development profile, throwaway flow store in a temp `GOVOICE_DEV_DIR`) | public `http://127.0.0.1:18580` (WS `/ws`), admin `http://127.0.0.1:19590` | `test-results/logs/server.log` |
 | Admin UI (Vite via `vite.e2e.config.mjs`, `/api` -> admin port) | `http://127.0.0.1:15173` | `test-results/logs/ui.log` |
 | Custom client `examples/rtvi_client/server.js` | `http://127.0.0.1:13000` | `test-results/logs/custom-client.log` |
 
@@ -85,7 +85,7 @@ lets the bot answer before the question repeats (a repeat is a barge-in).
 - `test-results/`: per-test screenshots, plus video and trace on failure, and
   `logs/*.log` (build, server, ui, custom-client).
 
-## Agent graph suite: fake providers or live xAI
+## Flow routes suite: fake providers or live xAI
 
 `playwright.graph.config.ts` runs `tests-graph/` against a stack it starts itself, on its
 own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid Google suite.
@@ -95,8 +95,8 @@ own ports (public 18581, admin 19591, UI 15174), so it can coexist with the paid
 | Server | `bin/server-fake` (`-tags "xaispeech fakeproviders"`, never ship it) | `bin/server-live` (`-tags xaispeech`) |
 | Providers | fake STT/LLM/TTS | real xAI STT, Grok, TTS |
 | Cost | none, about 20 s | about 20 provider requests |
-| Handoff | the fake LLM calls the transfer tool on "transfer to `<node>`" | the model calls it from the front prompt |
-| Assertions | exact (the fake labels each reply with its node's prompt) | marker words (the sales prompt demands "catalogue") |
+| Route | the fake LLM calls the transfer tool on "transfer to `<step>`" | the model calls it from the front prompt |
+| Assertions | exact (the fake labels each reply with its step's prompt) | marker words (the sales prompt demands "catalogue") |
 
 The xAI key is `XAI_API_KEY` from the environment or `examples/.env`; global setup passes it to
 the server process as `XAI_API_KEY` and nothing else. The fake stack gets placeholders
@@ -107,13 +107,13 @@ management API or the browser, and live runs keep no traces. Without a key every
 is skipped.
 
 Tests: (0) providers: `GET /api/v1/providers` reports the suite's provider detected, and the
-designer's provider dropdowns list only detected providers. (1) designer: draw a two-agent graph with a handoff and publish it; the stored version is
-the graph (STT only on the entry node). (2) Call: the front agent answers, the call is handed to
-sales, the live graph view moves to Sales, the stored session has the `handoff.*` trace spans
-with `from_node` and `to_node`, and the server's session timeline shows the handoff cue (the `chime` sound
-the stack configures and the designer names) starting in the gap and stopping on the sales agent's first audio. (3) Designer: reopen, edit the handoff, republish (v2), a new call
-works. (4) Fake only: a sales node whose voice cannot be built (`brokenvoice`) leaves the caller
-with the front agent. (5) A plain one-node agent is unchanged.
+designer's provider dropdowns list only detected providers. (1) designer: draw a two-step flow with a route and publish it; the stored version is
+the flow (STT only on the start step). (2) Call: the front step answers, the call is routed to
+sales, the live flow view moves to Sales, the stored session has the `route.*` trace spans
+with `from_step` and `to_step`, and the server's session timeline shows the route cue (the `chime` sound
+the stack configures and the designer names) starting in the gap and stopping on the sales step's first audio. (3) Designer: reopen, edit the route, republish (v2), a new call
+works. (4) Fake only: a sales step whose voice cannot be built (`brokenvoice`) leaves the caller
+with the front step. (5) A plain one-step flow is unchanged.
 
-The server-side twin of the fake suite is `server/graph_e2e_test.go` (`make test-graph-e2e`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
+The server-side twin of the fake suite is `server/flow_e2e_test.go` (`make test-graph-e2e`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
 runs the fake suite as the `graph-e2e` job.

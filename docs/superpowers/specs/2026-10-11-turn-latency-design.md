@@ -70,7 +70,7 @@ Zero fields take these defaults:
 
 ### 2. STT p99 table (server)
 
-A `sttP99` table in `server/` maps provider id to duration, seeded from Pipecat's `stt_latency.py` for the providers go-voice ships:
+A `sttP99` table in `server/` maps provider id to duration, seeded from Pipecat's `stt_latency.py` for the providers Switchboard ships:
 
 | Provider | p99 |
 |---|---|
@@ -119,7 +119,7 @@ It reports, per clip and file:
 
 A Python script run with `pipecat-impl/.venv` runs Pipecat's own `SileroVADAnalyzer` (stop 0.2) on the same clips. That checks that our Go inference with Pipecat's file reproduces Pipecat's decisions within one 32 ms chunk.
 
-The results go to `docs/benchmarks/silero-compare.md`.
+The results were written up in a benchmark report that has since been removed (see git history).
 
 **The decision rule.** Switch `third_party/silero_vad.onnx` to Pipecat's file if, at 200 ms, it causes no more mid-utterance splits than ours and its stop times are no later on average. Otherwise keep ours and record why. The matrix VAD row is updated either way.
 
@@ -159,7 +159,7 @@ The results go to `docs/benchmarks/silero-compare.md`.
 - Lowering the manager's start debounce or minimum speech duration.
 - A runtime-measured p99.
 - Changes to the smart-turn model or eager stop.
-- Pipecat's distinction between "finalized" (STT says nothing more is coming) and "final" (a final result for the current utterance). go-voice treats `TextFinal` as finalized: our providers send a final per utterance, and the turn joins utterances. Recorded as a difference in the matrix.
+- Pipecat's distinction between "finalized" (STT says nothing more is coming) and "final" (a final result for the current utterance). Switchboard treats `TextFinal` as finalized: our providers send a final per utterance, and the turn joins utterances. Recorded as a difference in the matrix.
 
 ## Risks
 

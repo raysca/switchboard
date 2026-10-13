@@ -5,7 +5,7 @@ Provider secrets exist only in the server's process environment. There is no cre
 ## What is read, and when
 
 - The packaged provider catalog (`server/catalog`) maps each provider to the variable names it reads. The server reads only those names, plus `MCP_TOKEN_*` for MCP servers.
-- Variables are read on demand and never cached: when agent readiness is computed, when `GET /api/v1/providers` is served, and when a call starts. A call assembles the secrets for its own stages (and failover candidates) only, hands them to the provider clients, and zeroes the buffers once the clients are built or the build fails.
+- Variables are read on demand and never cached: when flow readiness is computed, when `GET /api/v1/providers` is served, and when a call starts. A call assembles the secrets for its own stages (and failover candidates) only, hands them to the provider clients, and zeroes the buffers once the clients are built or the build fails.
 - `GOOGLE_APPLICATION_CREDENTIALS` is a path. The server reads only the path an operator put in that variable, only if it is a regular file (a FIFO or device is refused before opening), at most 64 KiB, and accepts it only if it is a JSON object with `"type": "service_account"`.
 - A value with whitespace or control characters inside it, or one starting with `$`, is treated as missing rather than used, for optional variables too (a bad `OPENAI_BASE_URL` makes OpenAI undetected instead of sending the key to the default endpoint).
 - Overlay catalog files are opened only if they are regular files.
@@ -14,7 +14,7 @@ Provider secrets exist only in the server's process environment. There is no cre
 
 Nobody, through the server. Management responses, readiness (`missing_env`), errors, logs, traces, the call timeline and metrics name variables, never values. `server/secret_leak_test.go` sets sentinel values for an API key, a service-account file and an MCP token, runs a call on the fake providers, and checks that no sentinel appears in any management route, `/metrics`, `/debug/timeline` or the server log. The VAD and Smart Turn worker processes receive an allowlisted environment (`vad.WorkerEnv`) that excludes every provider variable.
 
-Environment values are server-wide: every agent on the server uses the same key for a provider. There is no per-tenant isolation.
+Environment values are server-wide: every flow on the server uses the same key for a provider. There is no per-tenant isolation.
 
 ## MCP bearer tokens
 
@@ -30,4 +30,4 @@ Rotation is a redeploy: change the variable (or the service-account file) and re
 
 ## Upgrading from stored credentials
 
-Earlier builds stored credentials encrypted in the agent store and agents carried `credential_id`. The schema changed in place and nothing is migrated: delete a development database (`.govoice-dev/`), set the provider variables, and recreate agents. A config that still sends `credential_id` is rejected with `400`.
+Earlier builds stored credentials encrypted in the flow store and flows carried `credential_id`. The schema changed in place and nothing is migrated: delete a development database (`.govoice-dev/`), set the provider variables, and recreate flows. A config that still sends `credential_id` is rejected with `400`.

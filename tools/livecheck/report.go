@@ -189,7 +189,7 @@ func groupResults(rs []*Result) map[[3]string][]*Result {
 	return g
 }
 
-// renderMarkdown is the matrix report (docs/benchmarks/agent-matrix.md).
+// renderMarkdown is the matrix report (docs/benchmarks/flow-matrix.md).
 func renderMarkdown(rep *Report) string {
 	var b strings.Builder
 	w := func(f string, a ...any) { fmt.Fprintf(&b, f, a...) }
@@ -437,7 +437,7 @@ func codeList(l []string) string {
 
 func esc(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
 
-// writeReport writes results.json and agent-matrix.md into dir (every byte redacted), and
+// writeReport writes results.json and flow-matrix.md into dir (every byte redacted), and
 // returns the markdown path.
 func writeReport(rep *Report, dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -447,8 +447,8 @@ func writeReport(rep *Report, dir string) (string, error) {
 	return md, writeFiles(rep, filepath.Join(dir, "results.json"), md)
 }
 
-// mergeDocs merges rep into the committed docs copy (docsDir/agent-matrix.json) and re-renders
-// docsDir/agent-matrix.md from the merged results.
+// mergeDocs merges rep into the committed docs copy (docsDir/flow-matrix.json) and re-renders
+// docsDir/flow-matrix.md from the merged results.
 func mergeDocs(rep *Report, docsDir string) error {
 	j := filepath.Join(docsDir, "agent-matrix.json")
 	var prev *Report

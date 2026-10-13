@@ -3,7 +3,7 @@ import { test, expect, type Stack } from "../lib/stack";
 import { step } from "../lib/evidence";
 
 // One end-to-end run with real providers: the server reads the Google secrets from
-// its environment, the admin UI creates an agent, the admin debug client calls it by voice and text,
+// its environment, the admin UI creates a flow, the admin debug client calls it by voice and text,
 // the custom client calls it, and the admin UI deletes it. Every step leaves a
 // numbered screenshot in e2e/evidence/.
 test.describe.configure({ mode: "serial" });
@@ -11,7 +11,7 @@ test.describe.configure({ mode: "serial" });
 // report must never hold anything near a secret.
 test.use({ trace: "off" });
 
-const AGENT = "E2E Concierge";
+const FLOW = "E2E Concierge";
 // No leading \b: a transcript entry's text runs its label into the reply
 // ("AssistantFour."). The lookbehind still rejects "14"; the trailing \b "fourteen".
 const FOUR = /(?<!\d)(4|four)\b/i;
@@ -19,7 +19,7 @@ const PARIS = /paris/i;
 // Google STT normalises numbers: "two plus two" arrives as "2 + 2".
 const TWO_PLUS_TWO = /(two plus two|2\s*\+\s*2)/i;
 
-let agentId = "";
+let flowId = "";
 
 async function connectAdmin(page: Page, stack: Stack) {
   await page.goto(`${stack.uiUrl}/dashboard`);
@@ -28,18 +28,18 @@ async function connectAdmin(page: Page, stack: Stack) {
   await expect(page.getByText("Key in memory")).toBeVisible();
 }
 
-// Opens the agent's detail view from wherever the Agents page is (saving an
-// agent already lands on its detail view).
-async function openAgentDetail(page: Page) {
-  const heading = page.getByRole("heading", { name: AGENT });
-  if (await heading.isVisible()) return;
-  // The sidebar link always returns the Agents page to its list.
-  await page.getByRole("link", { name: "Agents", exact: true }).first().click();
-  await page.getByRole("row").filter({ hasText: AGENT }).getByRole("button", { name: "View detail" }).click();
-  await expect(heading).toBeVisible();
+// Opens the flow's Test call panel from wherever the editor is (publishing already lands in the editor).
+async function openFlowTest(page: Page) {
+  const heading = page.getByRole("heading", { name: FLOW, level: 1 });
+  if (!(await heading.isVisible())) {
+    await page.getByRole("link", { name: "Flows", exact: true }).first().click();
+    await page.getByRole("link", { name: FLOW, exact: true }).click();
+    await expect(heading).toBeVisible();
+  }
+  if (!(await page.getByTestId("flow-readiness").isVisible())) await page.getByRole("button", { name: "Test call" }).click();
 }
 
-test("admin UI: Google is detected from the server environment and a ready agent is created", async ({ page, stack }) => {
+test("admin UI: Google is detected from the server environment and a ready flow is created", async ({ page, stack }) => {
   await connectAdmin(page, stack);
   await step(page, "admin connected");
 
@@ -47,42 +47,47 @@ test("admin UI: Google is detected from the server environment and a ready agent
   // they never pass through the API or the browser. The providers page shows only status.
   const secrets = [process.env.E2E_GOOGLE_SECRET!, process.env.E2E_GOOGLE_LLM_SECRET].filter((s): s is string => !!s);
   await page.getByRole("link", { name: "Providers", exact: true }).first().click();
-  await expect(page.getByRole("row").filter({ hasText: "Google" })).toContainText("Detected");
+  await expect(page.getByRole("row").filter({ hasText: "Google" })).toContainText("Environment variable");
   const html = await page.content();
   const echoed = secrets.some((secret) => html.includes(secret.trim().slice(0, 24)));
   expect(echoed, "a provider secret is echoed in the page").toBe(false);
   await step(page, "google detected (no secret shown)");
 
-  await page.getByRole("link", { name: "Agents", exact: true }).first().click();
-  await page.getByRole("button", { name: "+ Create agent" }).click();
-  await page.getByLabel("Agent name").fill(AGENT);
-  await page.getByLabel("Description").fill("Created by the full-stack e2e test");
-  // Picking the provider fills its catalog defaults; select them explicitly anyway.
-  for (const stage of ["STT", "LLM", "TTS"]) await page.getByLabel(`${stage} provider`).selectOption("google");
+  await page.getByRole("link", { name: "Flows", exact: true }).first().click();
+  await page.getByRole("button", { name: "New flow" }).click();
+  await page.getByLabel("Name").fill(FLOW);
+  await page.getByRole("button", { name: "Create and open editor" }).click();
+  await page.getByRole("button", { name: "Add first step" }).click();
+  await page.getByLabel("Step name").fill("Assistant");
+  await page.getByLabel("Instructions").fill("You are a concise voice assistant. Answer in one short sentence.");
+  await page.getByLabel("LLM provider").selectOption("google");
+  await page.getByRole("combobox", { name: "LLM model", exact: true }).selectOption("gemini-2.5-flash");
+  await page.getByLabel("TTS provider").selectOption("google");
+  await page.getByRole("combobox", { name: "Voice", exact: true }).selectOption("en-US-Chirp3-HD-Aoede");
+  await page.getByRole("button", { name: "Flow settings" }).click();
+  await page.getByLabel("STT provider").selectOption("google");
   await page.getByRole("combobox", { name: "STT model", exact: true }).selectOption("chirp_2");
   await page.getByLabel("STT language").selectOption("en-US");
-  await page.getByRole("combobox", { name: "LLM model", exact: true }).selectOption("gemini-2.5-flash");
-  await page
-    .getByLabel("System prompt")
-    .fill("You are a concise voice assistant. Answer in one short sentence.");
-  await page.getByRole("combobox", { name: "Voice", exact: true }).selectOption("en-US-Chirp3-HD-Aoede");
-  await step(page, "agent form filled");
-  await page.getByRole("button", { name: "Save agent" }).click();
+  await step(page, "flow filled");
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v1" }).click();
+  await expect(page.getByText(/Published v1/)).toBeVisible();
 
-  await openAgentDetail(page);
-  await expect(page.getByTestId("agent-readiness")).toHaveText(/^ready/);
-  agentId = await agentIdFromApi(stack);
-  expect(agentId).not.toBe("");
-  const saved = await api<{ data: { current_version: { config: Record<string, Record<string, unknown>> } } }>(stack, `/agents/${agentId}`);
-  const cfg = saved.data.current_version.config;
+  await openFlowTest(page);
+  await expect(page.getByTestId("flow-readiness")).toHaveText(/^ready/);
+  flowId = await flowIdFromApi(stack);
+  expect(flowId).not.toBe("");
+  const saved = await api<{ data: { current_version: { config: Record<string, unknown> } } }>(stack, `/flows/${flowId}`);
+  // A named step is published as a flow.
+  const cfg = (saved.data.current_version.config as unknown as { steps: { config: Record<string, Record<string, unknown>> }[] }).steps[0].config;
   expect([cfg.stt.provider, cfg.stt.model, cfg.llm.model, cfg.tts.voice]).toEqual(["google", "chirp_2", "gemini-2.5-flash", "en-US-Chirp3-HD-Aoede"]);
   expect(JSON.stringify(cfg)).not.toContain("credential");
-  await step(page, "agent ready");
+  await step(page, "flow ready");
 });
 
 test("admin debug client: voice call and text call", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openAgentDetail(page);
+  await openFlowTest(page);
 
   // Voice: the fake microphone plays "What is two plus two?".
   await page.getByTestId("start-voice-test-btn").click();
@@ -105,11 +110,11 @@ test("admin debug client: voice call and text call", async ({ page, stack }) => 
   await step(page, "debug client disconnected");
 });
 
-test("custom client: calls the agent by agent_id", async ({ page, stack }) => {
+test("custom client: calls the flow by flow_id", async ({ page, stack }) => {
   await page.goto(stack.customClientUrl);
   await page.getByLabel("Admin URL").fill(stack.adminUrl);
   await page.getByLabel("Management key").fill(stack.managementKey);
-  await page.getByLabel("Agent ID").fill(agentId);
+  await page.getByLabel("Flow ID").fill(flowId);
   await page.getByLabel("Server WebSocket URL").fill(stack.publicUrl.replace(/^http/, "ws") + "/ws");
   await step(page, "custom client configured");
 
@@ -126,19 +131,19 @@ test("custom client: calls the agent by agent_id", async ({ page, stack }) => {
   await page.getByRole("button", { name: "Disconnect" }).click();
 });
 
-test("admin UI: delete the agent", async ({ page, request, stack }) => {
+test("admin UI: archive the flow", async ({ page, request, stack }) => {
   await connectAdmin(page, stack);
-  await openAgentDetail(page);
-  await page.getByRole("button", { name: "Delete agent" }).click();
-  await step(page, "delete confirmation");
-  await page.getByRole("button", { name: "Confirm delete" }).click();
-  await expect(page.getByRole("row").filter({ hasText: AGENT })).toHaveCount(0);
-  await step(page, "agent deleted");
+  await page.getByRole("link", { name: "Flows", exact: true }).first().click();
+  await page.getByRole("button", { name: `Archive ${FLOW}` }).click();
+  await step(page, "archive confirmation");
+  await page.getByRole("button", { name: "Archive flow" }).click();
+  await expect(page.getByRole("link", { name: FLOW, exact: true })).toHaveCount(0);
+  await step(page, "flow archived");
 
-  // A deleted agent can no longer take calls.
+  // A deleted flow can no longer take calls.
   const token = await request.post(`${stack.adminUrl}/api/v1/voice-tokens`, {
     headers: { Authorization: `Bearer ${stack.managementKey}` },
-    data: { principal: "e2e", agent_id: agentId },
+    data: { principal: "e2e", flow_id: flowId },
   });
   expect(token.status()).toBe(409);
 });
@@ -159,7 +164,7 @@ async function api<T>(stack: Stack, route: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function agentIdFromApi(stack: Stack): Promise<string> {
-  const body = await api<{ data: { id: string; name: string }[] }>(stack, "/agents");
-  return body.data.find((a) => a.name === AGENT)?.id ?? "";
+async function flowIdFromApi(stack: Stack): Promise<string> {
+  const body = await api<{ data: { id: string; name: string }[] }>(stack, "/flows");
+  return body.data.find((a) => a.name === FLOW)?.id ?? "";
 }

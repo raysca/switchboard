@@ -53,7 +53,7 @@ func Handler(service *Service) http.Handler {
 			if err := service.Delete(r.Context(), r.PathValue("id")); err != nil {
 				if errors.Is(err, storage.ErrMCPReferenced) {
 					refs, _ := service.store.MCP().CurrentReferences(r.Context(), r.PathValue("id"))
-					api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "mcp_server_in_use", Message: "MCP server is referenced by agents or active sessions", RequestID: id, Details: refs}})
+					api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "mcp_server_in_use", Message: "MCP server is referenced by flows or active sessions", RequestID: id, Details: refs}})
 					return
 				}
 				api.WriteError(w, 404, "not_found", "MCP server not found", id)

@@ -26,19 +26,19 @@ func newTestStore(t *testing.T) *storage.Store {
 	return s
 }
 
-func createTestAgentAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
+func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, string) {
 	t.Helper()
 	ctx := context.Background()
-	agentID := storage.NewID()
-	a := storage.Agent{ID: agentID, Name: "RetentionAgent", Enabled: true, CreatedAt: time.Now().UTC()}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	flowID := storage.NewID()
+	a := storage.Flow{ID: flowID, Name: "RetentionAgent", Enabled: true, CreatedAt: time.Now().UTC()}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, agentID, 1, []byte(`{"llm":"test"}`), nil)
+	v, err := s.Flows().PublishVersion(ctx, flowID, 1, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return agentID, v.ID, v.ConfigHash
+	return flowID, v.ID, v.ConfigHash
 }
 
 type sessionData struct {
@@ -49,14 +49,14 @@ type sessionData struct {
 	eventID    string
 }
 
-func createSessionWithData(t *testing.T, s *storage.Store, agentID, versionID, configHash, status string, startedAt, endedAt time.Time) sessionData {
+func createSessionWithData(t *testing.T, s *storage.Store, flowID, versionID, configHash, status string, startedAt, endedAt time.Time) sessionData {
 	t.Helper()
 	ctx := context.Background()
 	sessID := storage.NewID()
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		AgentID:             agentID,
-		AgentVersionID:      versionID,
+		FlowID:              flowID,
+		FlowVersionID:       versionID,
 		ConfigHash:          configHash,
 		Status:              status,
 		StartedAt:           startedAt,
@@ -209,20 +209,20 @@ func TestPolicyValidation(t *testing.T) {
 
 func TestContentPurge(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
 	// Session 1: ended 10 days ago (content expired under 7-day retention)
-	sess1 := createSessionWithData(t, s, agentID, versionID, configHash, "ended",
+	sess1 := createSessionWithData(t, s, flowID, versionID, configHash, "ended",
 		now.Add(-10*24*time.Hour), now.Add(-10*24*time.Hour+time.Minute))
 
 	// Session 2: ended 2 days ago (content NOT expired)
-	sess2 := createSessionWithData(t, s, agentID, versionID, configHash, "ended",
+	sess2 := createSessionWithData(t, s, flowID, versionID, configHash, "ended",
 		now.Add(-2*24*time.Hour), now.Add(-2*24*time.Hour+time.Minute))
 
 	// Session 3: active, started 20 days ago (active sessions must NOT have content purged)
-	sess3 := createSessionWithData(t, s, agentID, versionID, configHash, "active",
+	sess3 := createSessionWithData(t, s, flowID, versionID, configHash, "active",
 		now.Add(-20*24*time.Hour), time.Time{})
 
 	policy := retention.Policy{
@@ -300,24 +300,24 @@ func TestContentPurge(t *testing.T) {
 
 func TestMetadataPurgeAndInvariants(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
 	// Session 1: ended 40 days ago (metadata expired under 30-day retention)
-	sess1 := createSessionWithData(t, s, agentID, versionID, configHash, "ended",
+	sess1 := createSessionWithData(t, s, flowID, versionID, configHash, "ended",
 		now.Add(-40*24*time.Hour), now.Add(-40*24*time.Hour+time.Minute))
 
 	// Session 2: ended 10 days ago (metadata NOT expired)
-	sess2 := createSessionWithData(t, s, agentID, versionID, configHash, "ended",
+	sess2 := createSessionWithData(t, s, flowID, versionID, configHash, "ended",
 		now.Add(-10*24*time.Hour), now.Add(-10*24*time.Hour+time.Minute))
 
 	// Session 3: active, started 50 days ago (ACTIVE SESSION MUST NEVER BE DELETED!)
-	sess3 := createSessionWithData(t, s, agentID, versionID, configHash, "active",
+	sess3 := createSessionWithData(t, s, flowID, versionID, configHash, "active",
 		now.Add(-50*24*time.Hour), time.Time{})
 
 	// Session 4: draining, started 50 days ago (DRAINING SESSION MUST NEVER BE DELETED!)
-	sess4 := createSessionWithData(t, s, agentID, versionID, configHash, "draining",
+	sess4 := createSessionWithData(t, s, flowID, versionID, configHash, "draining",
 		now.Add(-50*24*time.Hour), time.Time{})
 
 	// Standalone expired span & event (no session)
@@ -393,8 +393,8 @@ func TestMetadataPurgeAndInvariants(t *testing.T) {
 		t.Errorf("INVARIANT VIOLATION: draining session 4 was deleted! err: %v", err)
 	}
 
-	// Verify INVARIANTS: Agent versions are NEVER deleted
-	ag, err := s.Agents().Current(ctx, agentID)
+	// Verify INVARIANTS: Flow versions are NEVER deleted
+	ag, err := s.Flows().Current(ctx, flowID)
 	if err != nil {
 		t.Fatalf("agent lookup: %v", err)
 	}
@@ -405,13 +405,13 @@ func TestMetadataPurgeAndInvariants(t *testing.T) {
 
 func TestBatchPurge(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
 	// Create 5 expired ended sessions
 	for i := 0; i < 5; i++ {
-		createSessionWithData(t, s, agentID, versionID, configHash, "ended",
+		createSessionWithData(t, s, flowID, versionID, configHash, "ended",
 			now.Add(-40*24*time.Hour), now.Add(-40*24*time.Hour+time.Minute))
 	}
 
@@ -443,7 +443,7 @@ func TestBatchPurge(t *testing.T) {
 
 func TestPurgeContent_ToolResultAndTextSanitization(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -453,8 +453,8 @@ func TestPurgeContent_ToolResultAndTextSanitization(t *testing.T) {
 	sessID1 := storage.NewID()
 	if err := s.Sessions().Create(ctx, storage.SessionRecord{
 		ID:                  sessID1,
-		AgentID:             agentID,
-		AgentVersionID:      versionID,
+		FlowID:              flowID,
+		FlowVersionID:       versionID,
 		ConfigHash:          configHash,
 		Status:              "ended",
 		StartedAt:           now.Add(-10 * 24 * time.Hour),
@@ -542,7 +542,7 @@ func TestPurgeContent_ToolResultAndTextSanitization(t *testing.T) {
 
 func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -550,7 +550,7 @@ func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 
 	// Seed 60 expired ended sessions
 	for i := 0; i < 60; i++ {
-		createSessionWithData(t, s, agentID, versionID, configHash, "ended",
+		createSessionWithData(t, s, flowID, versionID, configHash, "ended",
 			now.Add(-40*24*time.Hour), now.Add(-40*24*time.Hour+time.Minute))
 	}
 
@@ -558,8 +558,8 @@ func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 	activeSessID := storage.NewID()
 	if err := s.Sessions().Create(ctx, storage.SessionRecord{
 		ID:                  activeSessID,
-		AgentID:             agentID,
-		AgentVersionID:      versionID,
+		FlowID:              flowID,
+		FlowVersionID:       versionID,
 		ConfigHash:          configHash,
 		Status:              "active",
 		StartedAt:           now,
@@ -647,14 +647,14 @@ func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 // starve the purge of newer sessions that still hold real content.
 func TestPurgeContent_LabelMentionsDoNotStarveNewerContent(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 
 	addSession := func(endedAgo time.Duration, transcript string) string {
 		id := storage.NewID()
 		ended := now.Add(-endedAgo)
-		if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: agentID, AgentVersionID: versionID, ConfigHash: configHash,
+		if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, FlowID: flowID, FlowVersionID: versionID, ConfigHash: configHash,
 			Status: "ended", StartedAt: ended.Add(-time.Minute), EndedAt: ended, ProviderStackJSON: `{}`, RuntimeSnapshotJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}
@@ -694,13 +694,13 @@ func TestPurgeContent_LabelMentionsDoNotStarveNewerContent(t *testing.T) {
 // forever ahead of newer sessions with real content.
 func TestPurgeContent_UnsanitizableRowsDoNotStall(t *testing.T) {
 	s := newTestStore(t)
-	agentID, versionID, configHash := createTestAgentAndVersion(t, s)
+	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	add := func(endedAgo time.Duration, transcript, attrs string) string {
 		id := storage.NewID()
 		ended := now.Add(-endedAgo)
-		if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, AgentID: agentID, AgentVersionID: versionID, ConfigHash: configHash,
+		if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, FlowID: flowID, FlowVersionID: versionID, ConfigHash: configHash,
 			Status: "ended", StartedAt: ended.Add(-time.Minute), EndedAt: ended, ProviderStackJSON: `{}`, RuntimeSnapshotJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}

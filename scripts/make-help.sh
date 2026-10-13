@@ -23,7 +23,7 @@ match($0, /^[a-zA-Z0-9_-]+:[^#]*## [a-z]+\|/) {
 	lines[grp] = lines[grp] sprintf("  %-24s %s\n", name, desc)
 }
 END {
-	printf "go-voice make targets  (make <target> [VAR=value])\n"
+	printf "Switchboard make targets  (make <target> [VAR=value])\n"
 	for (i = 1; i <= n; i++) {
 		g = order[i]
 		if (lines[g] != "") printf "\n%s\n%s", title[g], lines[g]

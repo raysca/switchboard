@@ -32,20 +32,20 @@ func newTestStore(t *testing.T) *storage.Store {
 func createTestSession(t *testing.T, s *storage.Store) string {
 	t.Helper()
 	ctx := context.Background()
-	agentID := storage.NewID()
-	a := storage.Agent{ID: agentID, Name: "TraceAgent", Enabled: true, CreatedAt: time.Now()}
-	if err := s.Agents().Create(ctx, a); err != nil {
+	flowID := storage.NewID()
+	a := storage.Flow{ID: flowID, Name: "TraceAgent", Enabled: true, CreatedAt: time.Now()}
+	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Agents().PublishVersion(ctx, agentID, 1, []byte(`{"llm":"test"}`), nil)
+	v, err := s.Flows().PublishVersion(ctx, flowID, 1, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sessID := storage.NewID()
 	sess := storage.SessionRecord{
 		ID:                  sessID,
-		AgentID:             agentID,
-		AgentVersionID:      v.ID,
+		FlowID:              flowID,
+		FlowVersionID:       v.ID,
 		ConfigHash:          v.ConfigHash,
 		Status:              "active",
 		StartedAt:           time.Now().UTC(),
@@ -351,7 +351,7 @@ func TestAdapterFilterAttributesPrivacyPolicy(t *testing.T) {
 	}
 	span.SetAttribute("custom.deep_map", deepMap)
 
-	// Node budget exceeded (> 1024 nodes)
+	// Step budget exceeded (> 1024 steps)
 	var manyNodes []any
 	for i := 0; i < 20; i++ {
 		sub := make(map[string]any)

@@ -11,7 +11,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/resilience"
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"govoice/vad"
 )
 
@@ -25,10 +25,10 @@ func TestLLMClassify(t *testing.T) {
 		err  error
 		want string
 	}{
-		{resilience.ErrTimeout, agent.ClassTimeout},
-		{fmt.Errorf("x: %w", resilience.ErrCircuitOpen), agent.ClassCircuit},
-		{clientErr{}, agent.ClassClient},
-		{errors.New("503"), agent.ClassServer},
+		{resilience.ErrTimeout, flow.ClassTimeout},
+		{fmt.Errorf("x: %w", resilience.ErrCircuitOpen), flow.ClassCircuit},
+		{clientErr{}, flow.ClassClient},
+		{errors.New("503"), flow.ClassServer},
 	} {
 		if got := llmClassify(tc.err); got != tc.want {
 			t.Errorf("llmClassify(%v) = %q, want %q", tc.err, got, tc.want)
@@ -130,7 +130,7 @@ func TestBuildLLMPolicyOptOutAndNoFallbacks(t *testing.T) {
 	}
 	// Only server_error may fail over; a timeout is the turn's failure.
 	call := CallSpec{LLM: StageSpec{Provider: "google"}, LLMFallbacks: []StageSpec{{Provider: "xai"}},
-		Failover: agent.FailoverPolicy{On: []string{agent.ClassServer}}}
+		Failover: flow.FailoverPolicy{On: []string{flow.ClassServer}}}
 	llm, err := reg.buildLLM(nil, call, call.LLM, build)
 	if err != nil {
 		t.Fatal(err)

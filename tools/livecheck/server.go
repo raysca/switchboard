@@ -61,8 +61,8 @@ var (
 	// classFailover runs S13 in its own server: its broken primary key must not open the
 	// process-wide breaker for the other scenarios.
 	classFailover = serverClass{"failover", ""}
-	// classGraph runs S14 in its own server: its agent is a two-node graph.
-	classGraph = serverClass{"graph", ""}
+	// classFlow runs S14 in its own server: its flow is a two-step flow.
+	classFlow = serverClass{"graph", ""}
 )
 
 const pingIdleTimeout = 3 * time.Second
@@ -72,7 +72,7 @@ type server struct {
 	public, admin string
 	key           string
 	log           string
-	data          string // agent store; removed at stop, even with -keep-work
+	data          string // flow store; removed at stop, even with -keep-work
 	done          chan struct{}
 	calls         int
 	lastReq       atomic.Int64 // last good requestTotal
@@ -259,7 +259,7 @@ func startServer(ctx context.Context, sp serverSpec) (*server, error) {
 	return nil, fmt.Errorf("server not ready in 60s (log: %s)", s.log)
 }
 
-// stop terminates the process group (server and its workers) and deletes the agent store.
+// stop terminates the process group (server and its workers) and deletes the flow store.
 func (s *server) stop() {
 	if s == nil || s.cmd == nil || s.cmd.Process == nil {
 		return
@@ -272,7 +272,7 @@ func (s *server) stop() {
 	}
 	_ = syscall.Kill(-pg, syscall.SIGKILL)
 	<-s.done
-	_ = os.RemoveAll(s.data) // the run's agent store never outlives it
+	_ = os.RemoveAll(s.data) // the run's flow store never outlives it
 }
 
 // call is one management API request. Response bodies are never echoed: they could contain secrets.
@@ -317,8 +317,8 @@ func (s *server) id(path string, body any) (string, error) {
 	return r.ID, nil
 }
 
-func (s *server) token(agent string) (string, error) {
-	d, err := s.api("voice-tokens", map[string]string{"principal": "livecheck", "agent_id": agent})
+func (s *server) token(fl string) (string, error) {
+	d, err := s.api("voice-tokens", map[string]string{"principal": "livecheck", "flow_id": fl})
 	if err != nil {
 		return "", err
 	}

@@ -50,10 +50,10 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 	echo "=== All modules passed ==="
 	@$(MAKE) --no-print-directory test-graph-e2e
 
-# Agent graphs end to end with the fake providers: a real server, a stored graph agent and a WebSocket
-# client (handoff, failed node build, caller speaking mid-handoff, hang-up mid-handoff, republish).
-test-graph-e2e: ## free|Graph handoff end-to-end tests against the fake providers (about 30 s)
-	cd server && go test -race -count=1 -tags "$(GOTAGS) fakeproviders" -run 'GraphE2E|NoSecretLeavesTheServer' .
+# Routed flows end to end with the fake providers: a real server, a stored routed flow and a WebSocket
+# client (route, failed step build, caller speaking mid-route, hang-up mid-route, republish).
+test-graph-e2e: ## free|Flow route and MCP call end-to-end tests against the fake providers (about 45 s)
+	cd server && go test -race -count=1 -tags "$(GOTAGS) fakeproviders" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall' .
 
 # Black-box pipecat.evals run against the Go server with fake providers (docs/decisions/pipecat-evals.md).
 eval-pipecat: ## free|pipecat.evals black-box run against the server (fake providers)
@@ -65,7 +65,7 @@ eval-turn: ## free|Turn-quality gate (fake oracles; fails on threshold regressio
 
 # Paired Pipecat fixtures (docs/pipecat-parity-matrix.md): re-executes the pinned pipecat-impl components
 # from its venv (`cd pipecat-impl && uv sync` once) and rewrites tools/compat/testdata/parity/*.json.
-# Offline and deterministic; `go test ./tools/compat/...` compares go-voice against the committed goldens.
+# Offline and deterministic; `go test ./tools/compat/...` compares Switchboard against the committed goldens.
 parity-regen: ## free|Regenerate the paired Pipecat goldens (needs pipecat-impl venv)
 	@test -x pipecat-impl/.venv/bin/python || { echo "pipecat-impl/.venv missing: cd pipecat-impl && uv sync"; exit 1; }
 	cd pipecat-impl && .venv/bin/python ../tools/compat/parity/gen_goldens.py
@@ -143,16 +143,16 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e drives real Google providers and spends API credit: run GOVOICE_LIVE=1 make e2e"; exit 1; }
 	cd e2e && npm install --no-audit --no-fund && npx playwright install chromium && npx playwright test
 
-# Agent graphs in a real browser against the FAKE providers: free and offline (about 1 min). Builds
-# bin/server-fake (-tags fakeproviders), starts it with the admin UI, then drives the graph designer, a
-# live call with a handoff, republish, a failed handoff and a plain agent (e2e/tests-graph).
-e2e-fake: ## free|Playwright browser e2e for agent graphs against the fake providers (about 1 min)
+# Routed flows in a real browser against the FAKE providers: free and offline (about 1 min). Builds
+# bin/server-fake (-tags fakeproviders), starts it with the admin UI, then drives the flow designer, a
+# live call with a route, republish, a failed route and a plain flow (e2e/tests-graph).
+e2e-fake: ## free|Playwright browser e2e for routed flows against the fake providers (about 1 min)
 	cd ui && npm ci --no-audit --no-fund
 	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test -c playwright.graph.config.ts
 
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
 # XAI_API_KEY (env or examples/.env; XAI_MODEL optional). Roughly 20 provider requests per run.
-e2e-xai: ## paid|Playwright browser e2e for agent graphs against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
+e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
 	@test "$$GOVOICE_LIVE" = 1 || { echo "e2e-xai drives real xAI providers and spends API credit: run GOVOICE_LIVE=1 make e2e-xai"; exit 1; }
 	cd ui && npm ci --no-audit --no-fund
 	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.graph.config.ts
@@ -161,7 +161,12 @@ e2e-xai: ## paid|Playwright browser e2e for agent graphs against REAL xAI (GOVOI
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a
-# "Dev Assistant" agent from examples/.env. Examples call that agent.
+# "Dev Assistant" flow from examples/.env. Examples call that flow.
+mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* /slow) and a black hole on :18766
+	go run ./cmd/mcptest -addr 127.0.0.1:18765 -blackhole-addr 127.0.0.1:18766
+
+.PHONY: mcp-test
+
 dev: ## dev|Run the server and admin UI with generated secrets and a seeded Dev Assistant
 	@./scripts/dev.sh up
 

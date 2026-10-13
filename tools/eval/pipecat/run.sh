@@ -39,12 +39,12 @@ for _ in $(seq 1 100); do curl -fsS "http://127.0.0.1:$ADM/ready" >/dev/null 2>&
 
 api() { curl -fsS -X POST "http://127.0.0.1:$ADM/api/v1/$1" -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" -H 'Content-Type: application/json' -d "$2"; }
 jid() { python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["id"])'; }
-AGENT=$(api agents '{"name":"Eval Fake","description":"fake providers","config":{"stt":{"provider":"google","model":"chirp_2","language":"en-US"},"llm":{"provider":"google","model":"fake","system_prompt":"fake"},"tts":{"provider":"google","voice":"fake"}}}' | jid)
+FLOW=$(api flows '{"name":"Eval Fake","description":"fake providers","config":{"stt":{"provider":"google","model":"chirp_2","language":"en-US"},"llm":{"provider":"google","model":"fake","system_prompt":"fake"},"tts":{"provider":"google","voice":"fake"}}}' | jid)
 
 fail=0
 for f in tools/eval/pipecat/scenarios/*.yaml; do
   # Voice tokens are single-use: one token (and one invocation) per scenario file.
-  TOKEN=$(api voice-tokens "{\"principal\":\"pipecat-eval\",\"agent_id\":\"$AGENT\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
+  TOKEN=$(api voice-tokens "{\"principal\":\"pipecat-eval\",\"flow_id\":\"$FLOW\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["data"]["token"])')
   # The harness echoes the bot URL; mask the (single-use, 60 s) token.
   pc run "$ROOT/$f" --bot-url "ws://127.0.0.1:$PUB/ws?token=$TOKEN" --logs-dir "$OUT" 2>&1 | sed -E 's/token=[A-Za-z0-9._-]+/token=***/g' || fail=1
 done

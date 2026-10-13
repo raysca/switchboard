@@ -18,13 +18,13 @@ import (
 	"govoice/transport/ws"
 )
 
-// drainFixture is a server with fake providers and one live agent.
+// drainFixture is a server with fake providers and one live flow.
 func drainFixture(t *testing.T, drain time.Duration) (*Server, *httptest.Server, func(clientReady bool) (*websocket.Conn, error)) {
 	t.Helper()
 	s := apiTestServer(t)
 	s.cfg.Limits.DrainTimeout = drain
 	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
-	agentID := readyTestAgent(t, s)
+	flowID := readyTestFlow(t, s)
 	for _, stage := range []string{"stt", "llm", "tts"} {
 		s.registry.Register("google."+stage, func(*Config, StageSpec) (core.Processor, error) { return &core.PassthroughProcessor{}, nil })
 	}
@@ -32,7 +32,7 @@ func drainFixture(t *testing.T, drain time.Duration) (*Server, *httptest.Server,
 	ts := httptest.NewServer(s.publicMux)
 	t.Cleanup(ts.Close)
 	dial := func(clientReady bool) (*websocket.Conn, error) {
-		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","agent_id":"`+agentID+`"}`)
+		w := apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
 		var resp struct {
 			Data struct{ Token string } `json:"data"`
 		}
@@ -173,8 +173,8 @@ func TestDrain_DeadlineSendsGoingAway(t *testing.T) {
 func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	s := apiTestServer(t)
 	sessionID := uint64(9999)
-	principal, agentID := "panic-test-principal", "panic-test-agent"
-	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+	principal, flowID := "panic-test-principal", "panic-test-agent"
+	if err := s.admission.AcquireSession(principal, flowID, true); err != nil {
 		t.Fatal(err)
 	}
 	pipe, err := core.NewPipeline(&core.PassthroughProcessor{})
@@ -197,7 +197,7 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.finishCall(sessionID, principal, agentID, sess, nil, s.timelines.GetOrCreate(sessionID), nil,
+		s.finishCall(sessionID, principal, flowID, sess, nil, s.timelines.GetOrCreate(sessionID), nil,
 			func() { panic("simulated releaseCall panic") },
 			func() {
 				close(started)
@@ -224,17 +224,17 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	if still {
 		t.Fatal("activeCalls still set after finishCall returned")
 	}
-	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+	if err := s.admission.AcquireSession(principal, flowID, true); err != nil {
 		t.Fatalf("admission not released: %v", err)
 	}
-	s.admission.ReleaseSession(principal, agentID)
+	s.admission.ReleaseSession(principal, flowID)
 }
 
 func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
 	s := apiTestServer(t)
 	sessionID := uint64(10000)
-	principal, agentID := "rec-panic-principal", "rec-panic-agent"
-	if err := s.admission.AcquireSession(principal, agentID, true); err != nil {
+	principal, flowID := "rec-panic-principal", "rec-panic-agent"
+	if err := s.admission.AcquireSession(principal, flowID, true); err != nil {
 		t.Fatal(err)
 	}
 	pipe, err := core.NewPipeline(&core.PassthroughProcessor{})
@@ -252,7 +252,7 @@ func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
 	s.activeCalls[sessionID] = &activeCall{sessionID: sessionID, principal: principal}
 	s.mu.Unlock()
 
-	s.finishCall(sessionID, principal, agentID, sess, nil, s.timelines.GetOrCreate(sessionID), nil,
+	s.finishCall(sessionID, principal, flowID, sess, nil, s.timelines.GetOrCreate(sessionID), nil,
 		func() {},
 		func() { panic("recording finalize") },
 	)

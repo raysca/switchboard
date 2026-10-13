@@ -124,7 +124,7 @@ func TestNetworkSurface_PublicAdminSeparation(t *testing.T) {
 	}
 }
 
-func TestReady_RequiresAgentStoreAndReportsCircuits(t *testing.T) {
+func TestReady_RequiresFlowStoreAndReportsCircuits(t *testing.T) {
 	srv, err := NewServer(DefaultConfig(ProfileDevelopment))
 	if err != nil {
 		t.Fatalf("new server: %v", err)
@@ -139,7 +139,7 @@ func TestReady_RequiresAgentStoreAndReportsCircuits(t *testing.T) {
 		_ = json.Unmarshal(w.Body.Bytes(), &body)
 		return w.Code, body
 	}
-	// Calls run stored agents, so a host without the agent store is not ready.
+	// Calls run stored flows, so a host without the flow store is not ready.
 	if code, body := ready(); code != http.StatusServiceUnavailable {
 		t.Fatalf("ready without agent store: %d %v", code, body)
 	}
@@ -147,7 +147,7 @@ func TestReady_RequiresAgentStoreAndReportsCircuits(t *testing.T) {
 	if code, body := ready(); code != http.StatusOK {
 		t.Fatalf("ready with agent store: %d %v", code, body)
 	}
-	// An open provider circuit is reported but only affects agents using that
+	// An open provider circuit is reported but only affects flows using that
 	// provider, so the host stays ready.
 	srv.metrics.LLMCircuitStateGoogle.Store(1)
 	code, body := ready()

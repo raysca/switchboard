@@ -26,7 +26,7 @@ type Stage struct {
 	Voice    string `yaml:"voice"`
 }
 
-// Profile is one STT + LLM + TTS combination the standard agent runs on.
+// Profile is one STT + LLM + TTS combination the standard flow runs on.
 type Profile struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`

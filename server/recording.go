@@ -12,22 +12,22 @@ import (
 )
 
 // attachRecording starts recording the call when the server enables it AND the
-// agent opted in (with disclosure confirmed). It returns a stop func that
+// flow opted in (with disclosure confirmed). It returns a stop func that
 // finalizes the file; stop is nil when the call is not recorded. Recording can
 // never fail the call: sink errors only cost the recording.
-func (s *Server) attachRecording(call CallSpec, agentID string, sessionID uint64, conn *ws.Connection, session *core.Session) (stop func()) {
+func (s *Server) attachRecording(call CallSpec, flowID string, sessionID uint64, conn *ws.Connection, session *core.Session) (stop func()) {
 	if s.recSink == nil || !s.cfg.Recording.Enabled || !call.Recording {
 		return nil
 	}
 	started := time.Now()
-	safeAgent := agentID
-	if !record.ValidID(safeAgent) || len(safeAgent) > 64 || !storage.IsID(safeAgent) {
-		safeAgent = "agent"
+	safeFlow := flowID
+	if !record.ValidID(safeFlow) || len(safeFlow) > 64 || !storage.IsID(safeFlow) {
+		safeFlow = "flow"
 	}
 	sid := fmt.Sprint(sessionID)
 	rec := record.New(s.recSink, record.Meta{
-		ID:        fmt.Sprintf("%s-%d-%d", safeAgent, sessionID, started.Unix()),
-		SessionID: sid, AgentID: agentID, CallID: sid,
+		ID:        fmt.Sprintf("%s-%d-%d", safeFlow, sessionID, started.Unix()),
+		SessionID: sid, AgentID: flowID, CallID: sid,
 	}, record.Config{MaxDuration: s.cfg.Recording.MaxDuration, MaxBytes: s.cfg.Recording.MaxBytes})
 	conn.SetAudioTap(rec)
 

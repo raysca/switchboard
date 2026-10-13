@@ -1,4 +1,4 @@
-// Package catalog describes the providers go-voice can use: which environment
+// Package catalog describes the providers Switchboard can use: which environment
 // variables carry their secrets, which services each unlocks, and the curated
 // models and voices. It holds variable NAMES only; values stay in the process
 // environment (see Resolver).

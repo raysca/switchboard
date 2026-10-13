@@ -55,9 +55,9 @@ func validateProfileAndStorage(cfg *Config) error {
 	default:
 		return fmt.Errorf("invalid storage.dialect %q: must be 'sqlite' or 'postgres'", cfg.Storage.Dialect)
 	}
-	// Calls run stored agents only: the agent store is mandatory.
+	// Calls run stored flows only: the flow store is mandatory.
 	if cfg.Storage.Dialect == "" {
-		return errors.New("storage.dialect is required: calls run stored agents (set sqlite or postgres)")
+		return errors.New("storage.dialect is required: calls run stored flows (set sqlite or postgres)")
 	}
 	return nil
 }
@@ -82,6 +82,9 @@ func validateListeners(cfg *Config) error {
 func validateProductionSecurity(cfg *Config) error {
 	if cfg.Profile != ProfileProduction {
 		return nil
+	}
+	if cfg.MCP.AllowLocalHTTP {
+		return errors.New("mcp.allow_local_http is for development and tests")
 	}
 	hasTLS := cfg.TLS.CertFile != "" && cfg.TLS.KeyFile != ""
 	hasProxy := cfg.TLS.TrustedProxyMode && len(cfg.TLS.TrustedProxies) > 0
@@ -110,8 +113,8 @@ func validateLimits(cfg *Config) error {
 	if cfg.Limits.MaxSessionsPerPrincipal <= 0 {
 		return errors.New("max_sessions_per_principal must be > 0")
 	}
-	if cfg.Limits.MaxSessionsPerAgent < 0 || cfg.Limits.StartRatePerPrincipal < 0 {
-		return errors.New("max_sessions_per_agent and start_rate_per_principal must be >= 0")
+	if cfg.Limits.MaxSessionsPerFlow < 0 || cfg.Limits.StartRatePerPrincipal < 0 {
+		return errors.New("max_sessions_per_flow and start_rate_per_principal must be >= 0")
 	}
 	if cfg.Limits.StartRatePerPrincipal > 0 && cfg.Limits.StartBurstPerPrincipal < 1 {
 		return errors.New("start_burst_per_principal must be >= 1 when start_rate_per_principal > 0")

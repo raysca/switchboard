@@ -22,37 +22,67 @@ const operationsStatus = {
 };
 
 describe("admin shell", () => {
+  it("keeps old /agents bookmarks working", async () => {
+    render(<App initialPath="/agents/abc" />);
+    expect(await screen.findByRole("link", { name: "Flows" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByText("Area not found")).toBeNull();
+  });
+
   it("shows all six routes and keeps keyboard navigation visible", async () => {
-    render(<App initialPath="/agents" />);
+    render(<App initialPath="/flows" />);
     for (const name of [
       "Dashboard",
-      "Agents",
+      "Flows",
       "Providers",
-      "MCP Servers",
-      "Sessions",
+      "MCP tools",
+      "Calls",
       "Server",
     ]) {
       expect(screen.getByRole("link", { name })).toBeVisible();
     }
-    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Flows" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("link", { name: "MCP Servers" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "MCP tools" })).toBeVisible();
     const user = userEvent.setup();
     await user.tab();
     expect(
       screen.getByRole("link", { name: /skip to content/i }),
     ).toHaveFocus();
-    await user.click(screen.getByRole("link", { name: "Sessions" }));
-    expect(screen.getByRole("heading", { name: "Sessions" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Sessions" })).toHaveFocus();
+    await user.click(screen.getByRole("link", { name: "Calls" }));
+    expect(screen.getByRole("heading", { name: "Calls" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Calls" })).toHaveFocus();
   });
 
   it("asks for management access and never requests microphone access at boot", () => {
     render(<App initialPath="/dashboard" />);
     expect(screen.getByLabelText(/management key/i)).toBeVisible();
     expect(screen.getByText(/The key stays in memory only/i)).toBeVisible();
+  });
+
+  it("puts the key entry above the page content, and names every route link by its text", () => {
+    render(<App initialPath="/dashboard" />);
+    const field = screen.getByLabelText(/management key/i);
+    const heading = screen.getByRole("heading", { name: "Dashboard" });
+    // Entry comes first in the document so a demo never starts by scrolling to find it.
+    expect(heading.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(field).toHaveAttribute("type", "password");
+    expect(screen.getByRole("link", { name: "MCP tools" }).textContent).toContain("MCP tools");
+  });
+
+  it("shows the key status and Clear key in the top line once connected", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: operationsStatus }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+    render(<App initialPath="/dashboard" />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/management key/i), "k");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByText("Key in memory")).toBeVisible();
+    const clear = screen.getByRole("button", { name: "Clear key" });
+    expect(clear.closest(".topbar")).not.toBeNull();
+    expect(screen.queryByLabelText(/management key/i)).toBeNull();
+    vi.unstubAllGlobals();
   });
 
   it("loads the server projection after entry and returns to key entry on 401", async () => {
@@ -149,8 +179,8 @@ describe("admin shell", () => {
     }
   });
 
-  it("renders sessions area for direct session link /sessions/:sessionId", () => {
+  it("renders the call page for a direct link /sessions/:sessionId", () => {
     render(<App initialPath="/sessions/test-session-123" />);
-    expect(screen.getByRole("heading", { name: "Sessions" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Connect to see this call" })).toBeVisible();
   });
 });

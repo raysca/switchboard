@@ -1,4 +1,4 @@
-# Turn quality gate (P1-7)
+# Turn quality gate
 
 `make eval-turn` (`govoice-turn-eval`) replays 138 utterances from Pipecat's
 `evals/turn-completion` dataset (`tools/eval/turnquality/data/`, provenance in
@@ -17,7 +17,7 @@ The dataset is transcripts with an expected `complete` / `incomplete` label. It 
 | Strategy | What runs | What the numbers mean |
 |---|---|---|
 | `speech-timeout` | the real `SpeechTimeout` detector, 800 ms of silence after each text | Structural: it ends every turn, so false cut is 100% and late cut 0%. A baseline, not a quality score. |
-| `turn-analyzer` (smart-turn) | skipped | Needs audio. Quality of the model is not evaluated here (see `smart-turn.md`). |
+| `turn-analyzer` (smart-turn) | skipped | Needs audio. Quality of the model is not evaluated here (its report was removed in the docs cleanup; see git history). |
 | `llm-completion-perfect` | real marker protocol (`AssistantContextProcessor`), fake oracle that reads the label | Must be 0/0. Validates plumbing: marker stripping, hold, split deltas (judged on the text that leaves the stage, so a leaked marker or a spoken held reply is an error). |
 | `llm-completion-heuristic` | same, fake keyword oracle | Exercises non-zero errors so the gate can regress. Says nothing about any real LLM. |
 | `llm-completion-real` | same, your model via `-oracle-cmd` | The only number that measures model quality. Thresholds there are `calibrated: false` placeholders until someone runs it and commits real values. |

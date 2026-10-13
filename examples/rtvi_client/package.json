@@ -1,7 +1,7 @@
 {
   "name": "govoice-rtvi-client",
   "version": "1.0.0",
-  "description": "Standalone Pipecat RTVI client for calling Go Voice stored agents end-to-end (CLI and web)",
+  "description": "Standalone Pipecat RTVI client for calling Go Voice stored flows end-to-end (CLI and web)",
   "main": "cli.js",
   "scripts": {
     "call": "node cli.js",

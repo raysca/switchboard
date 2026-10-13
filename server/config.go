@@ -48,7 +48,15 @@ type Config struct {
 		APIKeyEnv string `yaml:"api_key_env"`
 	} `yaml:"management"`
 
-	// Durable management plane (agents, MCP, session
+	// MCP: remote tool servers. AllowLocalHTTP also allows http or https to loopback
+	// test servers (development and tests only; the production profile refuses it).
+	// Timeout bounds discovery and each tool call (default 15s, at most 2m).
+	MCP struct {
+		AllowLocalHTTP bool          `yaml:"allow_local_http"`
+		Timeout        time.Duration `yaml:"timeout"`
+	} `yaml:"mcp"`
+
+	// Durable management plane (flows, MCP, session
 	// history). Disabled when Storage.Dialect is empty; retention: see Retention.
 	Storage struct {
 		Dialect string `yaml:"dialect"` // "sqlite" | "postgres"
@@ -73,7 +81,7 @@ type Config struct {
 		MaxSessions             int           `yaml:"max_sessions"`
 		MaxSessionsPerPrincipal int           `yaml:"max_sessions_per_principal"`
 		MaxSessionsPerIP        int           `yaml:"max_sessions_per_ip"`
-		MaxSessionsPerAgent     int           `yaml:"max_sessions_per_agent"`    // 0 = unlimited
+		MaxSessionsPerFlow      int           `yaml:"max_sessions_per_flow"`     // 0 = unlimited
 		StartRatePerPrincipal   float64       `yaml:"start_rate_per_principal"`  // session starts/sec per principal; 0 = unlimited
 		StartBurstPerPrincipal  int           `yaml:"start_burst_per_principal"` // bucket size; required >= 1 when rate > 0
 		HandshakeRatePerIP      float64       `yaml:"handshake_rate_per_ip"`     // WebSocket upgrades/sec per source IP (burst = max(5, 2x)); default 20
@@ -100,14 +108,14 @@ type Config struct {
 		StopMS int `yaml:"stop_ms"`
 	} `yaml:"vad"`
 
-	// STT tunes failover for agents with STT fallbacks.
+	// STT tunes failover for flows with STT fallbacks.
 	STT struct {
 		// ReplayBuffer is the audio kept so a failover can replay the utterance
 		// in progress (default 10s, max 60s; 16 kHz PCM16 mono, ~32 KB/s per call).
 		ReplayBuffer time.Duration `yaml:"replay_buffer"`
 	} `yaml:"stt"`
 
-	// Failover tunes how long an agent stage with fallbacks waits on its
+	// Failover tunes how long a flow stage with fallbacks waits on its
 	// primary (see docs/operations_runbook.md). Zero means the default.
 	Failover struct {
 		// LLMBudget: no fallback is started later than this after the
@@ -204,7 +212,7 @@ type Config struct {
 	// listed order between the DTMF detector (which hears unfiltered audio)
 	// and VAD; empty (default) leaves the pipeline unchanged. Known filters:
 	// denoise. DenoiseStrength is 0..1; 0 means the default (0.5). Recordings
-	// tap the transport and keep the raw audio. Per-agent filter settings are
+	// tap the transport and keep the raw audio. Per-flow filter settings are
 	// not supported yet: this is server-wide.
 	Audio struct {
 		InputFilters    []string `yaml:"input_filters"`
@@ -219,8 +227,8 @@ type Config struct {
 			GainDB *float64 `yaml:"gain_db"` // -60..0, default -30 when unset
 			Loop   *bool    `yaml:"loop"`    // default true
 		} `yaml:"background"`
-		// Cues are named sounds a graph agent plays while the call is between
-		// agents (handoff_cue). See docs/audio-filters.md.
+		// Cues are named sounds a routed flow plays while the call is between
+		// steps (route_cue). See docs/audio-filters.md.
 		Cues map[string]CueConfig `yaml:"cues"`
 	} `yaml:"audio"`
 
@@ -240,7 +248,7 @@ type Config struct {
 
 	// Provider Configurations
 	// Provider infrastructure only. What a call runs (models, voices, prompts)
-	// comes from the stored agent and its secrets from the environment, never from YAML.
+	// comes from the stored flow and its secrets from the environment, never from YAML.
 	Providers struct {
 		// CatalogDir is an optional directory of overlay files that add or replace
 		// models, voices and languages in the provider catalog (server/catalog).
@@ -294,7 +302,7 @@ type Config struct {
 	Retention RetentionConfig `yaml:"retention"`
 
 	// Recording is the global switch for call recording (default off); an
-	// agent must also opt in. See docs/privacy.md.
+	// flow must also opt in. See docs/privacy.md.
 	Recording RecordingConfig `yaml:"recording"`
 
 	// Privacy holds the sink redaction policy (docs/privacy.md). DTMF digits
@@ -349,17 +357,17 @@ func (c *Config) VADProcessorConfig() vad.ProcessorConfig {
 	return c.VADProcessorConfigForStopMS(0)
 }
 
-// vadStop is the call's VAD stop: the agent override (ms > 0), else vad.stop_ms, rounded up to
+// vadStop is the call's VAD stop: the flow override (ms > 0), else vad.stop_ms, rounded up to
 // whole 32 ms chunks like the VAD processor.
-func (c *Config) vadStop(agentMS int) time.Duration {
-	pc := c.VADProcessorConfigForStopMS(agentMS)
+func (c *Config) vadStop(flowMS int) time.Duration {
+	pc := c.VADProcessorConfigForStopMS(flowMS)
 	return time.Duration(pc.StopChunks*vad.ChunkSamples*1000/vad.SampleRate) * time.Millisecond
 }
 
-// sttP99 resolves the primary STT provider's p99: agent override, server map, built-in table.
-func (c *Config) sttP99(provider string, agentMS int) time.Duration {
-	if agentMS > 0 {
-		return time.Duration(agentMS) * time.Millisecond
+// sttP99 resolves the primary STT provider's p99: flow override, server map, built-in table.
+func (c *Config) sttP99(provider string, flowMS int) time.Duration {
+	if flowMS > 0 {
+		return time.Duration(flowMS) * time.Millisecond
 	}
 	if d, ok := c.Turn.STTP99[provider]; ok && d > 0 {
 		return d
@@ -368,7 +376,7 @@ func (c *Config) sttP99(provider string, agentMS int) time.Duration {
 }
 
 // VADProcessorConfigForStopMS returns the per-call VAD config applying an
-// agent-level stop_ms override if positive, or the server-level vad.stop_ms otherwise.
+// flow-level stop_ms override if positive, or the server-level vad.stop_ms otherwise.
 func (c *Config) VADProcessorConfigForStopMS(overrideMS int) vad.ProcessorConfig {
 	pc := vad.DefaultProcessorConfig()
 	ms := c.VAD.StopMS
@@ -382,8 +390,8 @@ func (c *Config) VADProcessorConfigForStopMS(overrideMS int) vad.ProcessorConfig
 	return pc
 }
 
-// CueConfig is one handoff cue sound: a PCM16 mono WAV, played once or looped
-// until the new agent speaks. GainDB is -60..0 (default -20).
+// CueConfig is one route cue sound: a PCM16 mono WAV, played once or looped
+// until the new step speaks. GainDB is -60..0 (default -20).
 type CueConfig struct {
 	File   string   `yaml:"file"`
 	GainDB *float64 `yaml:"gain_db"`

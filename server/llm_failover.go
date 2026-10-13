@@ -12,7 +12,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/resilience"
-	"govoice/server/agent"
+	"govoice/server/flow"
 )
 
 // Defaults for failover.llm_budget (how long into a generation a new candidate
@@ -61,9 +61,9 @@ func validateLLMFailoverTiming(budget, firstToken time.Duration) error {
 func llmClassify(err error) string {
 	var ce interface{ ClientError() bool }
 	if errors.Is(err, core.ErrFirstTokenTimeout) {
-		return agent.ClassTimeout
+		return flow.ClassTimeout
 	}
-	return agent.ClassOf(err, resilience.Verdict{ClientError: errors.As(err, &ce) && ce.ClientError()})
+	return flow.ClassOf(err, resilience.Verdict{ClientError: errors.As(err, &ce) && ce.ClientError()})
 }
 
 // llmBreaker is the breaker an LLM stage of this provider uses (nil if unknown).

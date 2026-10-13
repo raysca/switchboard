@@ -70,7 +70,7 @@ func rejectRemovedKeys(data []byte) error {
 		return errors.New("config: insecure_overrides.skip_credential_perms_check is no longer supported; there is no credential file check. Remove the key")
 	}
 	if _, ok := top["pipelines"]; ok {
-		return errors.New("config: `pipelines` is no longer supported; calls run stored agents. Create agents via /api/v1/agents and remove the pipelines section")
+		return errors.New("config: `pipelines` is no longer supported; calls run stored flows. Create flows via /api/v1/flows and remove the pipelines section")
 	}
 	for provider, settings := range doc.Providers {
 		for _, key := range []string{"max_streams", "rotation_headroom_multiplier"} {
@@ -80,7 +80,7 @@ func rejectRemovedKeys(data []byte) error {
 		}
 		for _, key := range []string{"model", "language_code", "language", "voice", "system_prompt", "api_key_env", "credentials_file", "auth_mode"} {
 			if _, ok := settings[key]; ok {
-				return fmt.Errorf("config: providers.%s.%s is no longer supported; models, voices and prompts belong to stored agents and provider secrets come from the environment", provider, key)
+				return fmt.Errorf("config: providers.%s.%s is no longer supported; models, voices and prompts belong to stored flows and provider secrets come from the environment", provider, key)
 			}
 		}
 	}

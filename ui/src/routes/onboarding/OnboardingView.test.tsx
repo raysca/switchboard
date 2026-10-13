@@ -27,7 +27,7 @@ const xai: ProviderStatus = {
   services: { llm: full },
 };
 const undetected: ProviderStatus = { ...google, detected: false, capabilities: [] };
-const agent = {
+const flow = {
   id: "agent-1", name: "Front Desk", description: "", enabled: true, archived: false,
   current_version: null, readiness: { state: "ready", reasons: [] },
   created_at: "2026-10-05T12:00:00Z", updated_at: "2026-10-05T12:00:00Z",
@@ -36,8 +36,8 @@ const agent = {
 function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     getProviders: vi.fn().mockResolvedValue([google]),
-    getAgents: vi.fn().mockResolvedValue([]),
-    createAgent: vi.fn().mockResolvedValue(agent),
+    getFlows: vi.fn().mockResolvedValue([]),
+    createFlow: vi.fn().mockResolvedValue(flow),
     ...overrides,
   } as unknown as ApiClient;
 }
@@ -59,43 +59,43 @@ describe("OnboardingView", () => {
     expect(screen.queryByText(/add a credential|connect provider/i)).toBeNull();
   });
 
-  it("advances to step 2 once any provider is detected and creates an agent without credential ids", async () => {
+  it("advances to step 2 once any provider is detected and creates a flow without credential ids", async () => {
     const client = createMockClient();
     const user = userEvent.setup();
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-    await screen.findByRole("heading", { name: /step 2: create your first agent/i });
-    await user.type(screen.getByLabelText(/agent name/i), "Concierge");
-    await user.click(screen.getByRole("button", { name: /create agent/i }));
-    await waitFor(() => expect(client.createAgent).toHaveBeenCalled());
-    const cfg = (client.createAgent as ReturnType<typeof vi.fn>).mock.calls[0][0].config;
+    await screen.findByRole("heading", { name: /step 2: create your first flow/i });
+    await user.type(screen.getByLabelText(/flow name/i), "Concierge");
+    await user.click(screen.getByRole("button", { name: /create flow/i }));
+    await waitFor(() => expect(client.createFlow).toHaveBeenCalled());
+    const cfg = (client.createFlow as ReturnType<typeof vi.fn>).mock.calls[0][0].config;
     expect(cfg.stt).toEqual({ provider: "google", model: "chirp_2", language: "en-US" });
     expect(cfg.llm).toEqual({ provider: "google", model: "gemini-2.5-flash" });
     expect(cfg.tts).toEqual({ provider: "google", voice: "en-US-Chirp3-HD-Aoede" });
   });
 
-  it("explains why Create agent cannot run when no detected provider covers every stage", async () => {
+  it("explains why Create flow cannot run when no detected provider covers every stage", async () => {
     const client = createMockClient({ getProviders: vi.fn().mockResolvedValue([xai]) });
     const user = userEvent.setup();
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-    await screen.findByRole("heading", { name: /step 2: create your first agent/i });
-    await user.type(screen.getByLabelText(/agent name/i), "Concierge");
-    await user.click(screen.getByRole("button", { name: /create agent/i }));
+    await screen.findByRole("heading", { name: /step 2: create your first flow/i });
+    await user.type(screen.getByLabelText(/flow name/i), "Concierge");
+    await user.click(screen.getByRole("button", { name: /create flow/i }));
     expect(await screen.findByText(/no detected provider can run/i)).toBeVisible();
-    expect(client.createAgent).not.toHaveBeenCalled();
+    expect(client.createFlow).not.toHaveBeenCalled();
   });
 
-  it("shows the configured state when a provider is detected and an agent exists", async () => {
-    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([agent]) });
+  it("shows the configured state when a provider is detected and a flow exists", async () => {
+    const client = createMockClient({ getFlows: vi.fn().mockResolvedValue([flow]) });
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
     expect(await screen.findByText(/system configured and ready/i)).toBeVisible();
     expect(screen.getByText("Front Desk")).toBeVisible();
-    expect(screen.getByRole("link", { name: /manage agents/i })).toBeVisible();
+    expect(screen.getByRole("link", { name: /manage flows/i })).toBeVisible();
     expect(screen.getByRole("link", { name: /view providers/i })).toBeVisible();
   });
 
-  it("treats an install whose only agent is archived as having no agents", async () => {
-    const client = createMockClient({ getAgents: vi.fn().mockResolvedValue([{ ...agent, archived: true }]) });
+  it("treats an install whose only flow is archived as having no flows", async () => {
+    const client = createMockClient({ getFlows: vi.fn().mockResolvedValue([{ ...flow, archived: true }]) });
     renderWithProviders(<OnboardingView client={client} keyValue="key-1" />);
-    expect(await screen.findByRole("heading", { name: /step 2: create your first agent/i })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: /step 2: create your first flow/i })).toBeVisible();
   });
 });

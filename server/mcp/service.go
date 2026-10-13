@@ -118,7 +118,7 @@ type ToolResult struct {
 	Status      string
 }
 
-// CapturedTool is an in-memory execution lease for one immutable agent/session
+// CapturedTool is an in-memory execution lease for one immutable flow/session
 // snapshot. It intentionally has no JSON representation and never exposes the
 // resolved bearer token. Server disable and discovery refresh do not change it;
 // pending deletion waits for the owning session to drain.
@@ -287,6 +287,69 @@ func (HTTPSDestinationPolicy) Validate(ctx context.Context, u *url.URL) error {
 		return errors.New("MCP destination denied")
 	}
 	return nil
+}
+
+// LoopbackHTTPDestinationPolicy is for development and tests only (config
+// mcp.allow_local_http, refused in production): it also accepts http or https to
+// loopback, so local test MCP servers are reachable. Every other destination is
+// held to the HTTPS policy; a name must resolve to loopback addresses only.
+type LoopbackHTTPDestinationPolicy struct {
+	lookup func(context.Context, string) ([]net.IPAddr, error) // nil: the system resolver
+}
+
+func (p LoopbackHTTPDestinationPolicy) Validate(ctx context.Context, u *url.URL) error {
+	if u == nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
+		return errors.New("MCP destination denied")
+	}
+	lookup := p.lookup
+	if lookup == nil {
+		lookup = net.DefaultResolver.LookupIPAddr
+	}
+	if u.Scheme == "http" || u.Scheme == "https" {
+		if loopbackOnly(ctx, u.Hostname(), lookup) {
+			return nil
+		}
+	}
+	if u.Scheme != "https" {
+		return errors.New("MCP destination denied")
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		if !isPublicEgressIP(ip) {
+			return errors.New("MCP destination denied")
+		}
+		return nil
+	}
+	if _, err := publicEgressIPs(ctx, u.Hostname(), lookup); err != nil {
+		return errors.New("MCP destination denied")
+	}
+	return nil
+}
+
+// loopbackOnly reports whether host is a loopback literal or a name whose every
+// resolved address is loopback.
+func loopbackOnly(ctx context.Context, host string, lookup func(context.Context, string) ([]net.IPAddr, error)) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return isLoopbackIP(ip)
+	}
+	ips, err := lookup(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, a := range ips {
+		if !isLoopbackIP(a.IP) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLoopbackIP(raw net.IP) bool {
+	addr, ok := netip.AddrFromSlice(raw)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	return addr.IsLoopback()
 }
 
 func (s *Service) Create(ctx context.Context, cfg ServerConfig) (storage.MCPServer, error) {
@@ -552,7 +615,7 @@ func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, a
 		return ToolResult{}, ErrInvalidArguments
 	}
 	resolved, err := validateSchemaContext(ctx, captured.schema, s.maxSchema)
-	if err != nil || resolved.Validate(instance) != nil {
+	if err != nil || resolved.Validate(schemaInstance(instance)) != nil {
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
 	}
@@ -909,6 +972,35 @@ func schemaGraphWithinBounds(graph map[string][]string) bool {
 	// unused definitions and annotations, intentionally overestimating work.
 	return visit("")
 }
+
+// schemaInstance turns the json.Number values decodeJSON keeps (so big integers
+// reach the server exactly) into Go numbers the schema validator understands:
+// int64 when the value is an integer that fits, float64 otherwise. Only the
+// validation copy is converted; the arguments sent are the original bytes.
+func schemaInstance(v any) any {
+	switch t := v.(type) {
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			return i
+		}
+		f, _ := t.Float64()
+		return f
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = schemaInstance(e)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = schemaInstance(e)
+		}
+		return out
+	}
+	return v
+}
+
 func decodeJSON(raw []byte) (any, error) {
 	if len(raw) == 0 {
 		raw = []byte(`{}`)

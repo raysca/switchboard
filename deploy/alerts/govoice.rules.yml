@@ -77,7 +77,7 @@ groups:
         labels: {severity: page}
         annotations:
           summary: "{{ $labels.provider }} circuit breaker is open on {{ $labels.instance }}"
-          description: "Agents using this provider fail or fail over. Nvidia series carry an `endpoint` label. See runbook Incident 3."
+          description: "Flows using this provider fail or fail over. Nvidia series carry an `endpoint` label. See runbook Incident 3."
       - alert: GovoiceProviderErrors
         expr: sum by (provider, stage) (increase(voice_provider_errors_total[10m])) > 10
         labels: {severity: warn}

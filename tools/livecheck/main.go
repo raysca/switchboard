@@ -1,4 +1,4 @@
-// livecheck is the agent-level provider-matrix harness. It runs ONE standard agent
+// livecheck is the flow-level provider-matrix harness. It runs ONE standard flow
 // (standard system prompt, fixed scenario set S1-S8) against a real server child for each
 // provider PROFILE in profiles.yaml, over the real WebSocket/RTVI protocol, and reports
 // pass/fail assertions plus latency per profile x scenario x turn-manager mode.
@@ -12,11 +12,11 @@
 //
 // Examples:
 //
-//	GOVOICE_LIVE=1 make agent-matrix PROFILES=google,nvidia SCENARIOS=S1 MODES=off,on
+//	GOVOICE_LIVE=1 make flow-matrix PROFILES=google,nvidia SCENARIOS=S1 MODES=off,on
 //	go run ./tools/livecheck -list
 //	make live-check-selftest
 //
-// See docs/benchmarks/README.md (how to add a profile) and docs/benchmarks/agent-matrix.md.
+// See docs/benchmarks/README.md (how to add a profile) and docs/benchmarks/flow-matrix.md.
 package main
 
 import (

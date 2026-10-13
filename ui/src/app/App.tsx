@@ -7,6 +7,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useParams,
 } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, createApiClient } from "../api/client";
@@ -19,10 +20,11 @@ import {
 import { getBrowserCapabilities } from "./capabilities";
 import { OnboardingView } from "../routes/onboarding/OnboardingView";
 import { ProvidersView } from "../routes/providers/ProvidersView";
-import { AgentsView } from "../routes/agents/AgentsView";
+import { FlowsView } from "../routes/flows/FlowsView";
+import { FlowPage } from "../routes/flows/FlowPage";
 import { MCPView } from "../routes/mcp/MCPView";
-import { SessionsView } from "../routes/sessions/SessionsView";
-import { SessionDetailView } from "../routes/sessions/SessionDetailView";
+import { CallsView } from "../routes/sessions/CallsView";
+import { CallView } from "../routes/sessions/CallView";
 import { DashboardView } from "../routes/dashboard/DashboardView";
 import { ServerView } from "../routes/server/ServerView";
 import { sections } from "../routes/sections";
@@ -37,6 +39,12 @@ function RouteFocus() {
     }
   }, [location.pathname]);
   return null;
+}
+
+/** An old /agents/:id bookmark opens the same flow. */
+function LegacyAgentRedirect() {
+  const { flowId = "" } = useParams();
+  return <Navigate to={`/flows/${encodeURIComponent(flowId)}`} replace />;
 }
 
 export function App({ initialPath }: { initialPath?: string }) {
@@ -104,7 +112,7 @@ export function App({ initialPath }: { initialPath?: string }) {
               <span className="brand-mark" aria-hidden="true">
                 ⌁
               </span>
-              <span>go-voice</span>
+              <span>Switchboard</span>
             </div>
             <nav aria-label="Main navigation" className="navigation">
               {sections.map((section) => (
@@ -115,7 +123,10 @@ export function App({ initialPath }: { initialPath?: string }) {
                     isActive ? "nav-link nav-link--current" : "nav-link"
                   }
                 >
-                  {section.name}
+                  <span className="nav-icon" aria-hidden="true">
+                    {section.icon}
+                  </span>
+                  <span className="nav-text">{section.name}</span>
                 </NavLink>
               ))}
             </nav>
@@ -124,11 +135,44 @@ export function App({ initialPath }: { initialPath?: string }) {
           <div className="workspace">
             <div className="topbar">
               <span>Operations</span>
-              <Status tone={keyValue ? "good" : "neutral"}>
-                {keyValue ? "Key in memory" : "No management key"}
-              </Status>
+              <div className="topbar-key">
+                <Status tone={keyValue ? "good" : "neutral"}>
+                  {keyValue ? "Key in memory" : "No management key"}
+                </Status>
+                {keyValue && (
+                  <ActionButton type="button" className="action-button-small" onClick={clearKey}>
+                    Clear key
+                  </ActionButton>
+                )}
+              </div>
             </div>
             <main id="main" tabIndex={-1}>
+              {!keyValue && (
+                <section className="key-bar" aria-labelledby="access-title">
+                  <div>
+                    <h2 id="access-title">Management access</h2>
+                    <p>The key stays in memory only. Reloading clears it.</p>
+                    {authError && (
+                      <ErrorState
+                        title="Management access rejected"
+                        error={authError}
+                      />
+                    )}
+                  </div>
+                  <form onSubmit={connect}>
+                    <FormField
+                      id="management-key"
+                      label="Management key"
+                      inputRef={keyInput}
+                      type="password"
+                      autoComplete="off"
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                    />
+                    <ActionButton type="submit">Connect</ActionButton>
+                  </form>
+                </section>
+              )}
               <Routes>
                 <Route
                   path="/"
@@ -146,14 +190,11 @@ export function App({ initialPath }: { initialPath?: string }) {
                     <ProvidersView client={client} keyValue={keyValue} />
                   }
                 />
-                <Route
-                  path="/agents"
-                  element={<AgentsView client={client} keyValue={keyValue} />}
-                />
-                <Route
-                  path="/agents/:agentId"
-                  element={<AgentsView client={client} keyValue={keyValue} />}
-                />
+                <Route path="/flows" element={<FlowsView client={client} keyValue={keyValue} />} />
+                <Route path="/flows/new" element={<FlowPage client={client} keyValue={keyValue} />} />
+                <Route path="/flows/:flowId" element={<FlowPage client={client} keyValue={keyValue} />} />
+                <Route path="/agents" element={<Navigate to="/flows" replace />} />
+                <Route path="/agents/:flowId" element={<LegacyAgentRedirect />} />
                 <Route
                   path="/mcp-servers"
                   element={<MCPView client={client} keyValue={keyValue} />}
@@ -164,12 +205,12 @@ export function App({ initialPath }: { initialPath?: string }) {
                 />
                 <Route
                   path="/sessions"
-                  element={<SessionsView client={client} keyValue={keyValue} />}
+                  element={<CallsView client={client} keyValue={keyValue} />}
                 />
                 <Route
                   path="/sessions/:sessionId"
                   element={
-                    <SessionDetailView client={client} keyValue={keyValue} />
+                    <CallView client={client} keyValue={keyValue} />
                   }
                 />
                 <Route
@@ -194,34 +235,6 @@ export function App({ initialPath }: { initialPath?: string }) {
                   }
                 />
               </Routes>
-              <section className="access-panel" aria-labelledby="access-title">
-                <div>
-                  <h2 id="access-title">Management access</h2>
-                  <p>The key stays in memory only. Reloading clears it.</p>
-                  {authError && (
-                    <ErrorState
-                      title="Management access rejected"
-                      error={authError}
-                    />
-                  )}
-                </div>
-                {keyValue ? (
-                  <ActionButton onClick={clearKey}>Clear key</ActionButton>
-                ) : (
-                  <form onSubmit={connect}>
-                    <FormField
-                      id="management-key"
-                      label="Management key"
-                      inputRef={keyInput}
-                      type="password"
-                      autoComplete="off"
-                      value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
-                    />
-                    <ActionButton type="submit">Connect</ActionButton>
-                  </form>
-                )}
-              </section>
               <section
                 className="capability-line"
                 aria-label="Browser capabilities"

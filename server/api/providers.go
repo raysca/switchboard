@@ -49,7 +49,7 @@ func (h ProvidersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Request-ID", requestID)
 	if r.Method != http.MethodGet {
-		agentMethodNotAllowed(w, requestID, http.MethodGet)
+		flowMethodNotAllowed(w, requestID, http.MethodGet)
 		return
 	}
 	ps := h.Catalog.Providers()

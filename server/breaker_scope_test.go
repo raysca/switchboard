@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"govoice/providers/xai"
-	"govoice/server/agent"
+	"govoice/server/flow"
 )
 
 // M3-04: one xAI stage's outage must not block the others.
@@ -21,10 +21,10 @@ func TestXAIBreakersAreSplitPerStage(t *testing.T) {
 func TestTTSClassifyXAITransportErrorFailsOver(t *testing.T) {
 	err := xai.MapHTTPError("tts", nil, "", errors.New("dial tcp: connection refused"))
 	got := ttsClassify(err)
-	if got != agent.ClassServer {
-		t.Fatalf("class = %q, want %q", got, agent.ClassServer)
+	if got != flow.ClassServer {
+		t.Fatalf("class = %q, want %q", got, flow.ClassServer)
 	}
-	var policy agent.FailoverPolicy
+	var policy flow.FailoverPolicy
 	if !policy.Allows(got) {
 		t.Fatal("default failover policy refuses an xAI TTS network failure")
 	}

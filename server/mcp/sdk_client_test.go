@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -168,5 +169,53 @@ func TestSDKClientPreservesIntegersBeyondJavaScriptExactRange(t *testing.T) {
 	}
 	if strings.Contains(joined, `9007199254740992`) {
 		t.Fatalf("outgoing MCP params rounded integer: %s", joined)
+	}
+}
+
+// A call that times out has a done context; the session DELETE must still be sent
+// (bounded by its own small budget) so the server can close the session.
+func TestSessionCloseDELETEOutlivesTheCallContext(t *testing.T) {
+	var deleteCtxErr atomic.Value
+	next := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		deleteCtxErr.Store(fmt.Sprint(r.Context().Err()))
+		return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodDelete, "http://127.0.0.1:1/mcp", nil)
+	if _, err := (closeBudgetTransport{next: next}).RoundTrip(req); err != nil {
+		t.Fatal(err)
+	}
+	if got := deleteCtxErr.Load(); got != "<nil>" {
+		t.Fatalf("DELETE sent on a done context: %v", got)
+	}
+}
+
+// After a timeout the SDK tells the server the call was cancelled, on a context of
+// its own (seconds long); against a server that never answers that notification
+// must not outlive the small teardown budget.
+func TestCancelNotificationHasTheTeardownBudget(t *testing.T) {
+	next := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	body := `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}`
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:1/mcp", strings.NewReader(body))
+	began := time.Now()
+	_, _ = (closeBudgetTransport{next: next}).RoundTrip(req)
+	if took := time.Since(began); took > sdkCloseBudget+200*time.Millisecond {
+		t.Fatalf("cancel notification took %v, budget %v", took, sdkCloseBudget)
+	}
+	// An ordinary call is not cut short by the teardown budget.
+	call, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:1/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call"}`))
+	quick, stop := context.WithTimeout(context.Background(), sdkCloseBudget+300*time.Millisecond)
+	defer stop()
+	call = call.WithContext(quick)
+	began = time.Now()
+	_, _ = (closeBudgetTransport{next: next}).RoundTrip(call)
+	if took := time.Since(began); took < sdkCloseBudget+200*time.Millisecond {
+		t.Fatalf("a tool call was cut to the teardown budget: %v", took)
 	}
 }

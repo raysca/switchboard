@@ -172,17 +172,17 @@ func (e *Exporter) Shutdown(ctx context.Context) error {
 
 // Session returns the core.Tracer for one call. Install it with
 // Session.SetTracer(t, e.Policy()) and feed latency via t.Latency.
-func (e *Exporter) Session(agentID, agentVersion string) *SessionTracer {
-	return &SessionTracer{e: e, tr: e.tp.Tracer("govoice"), agent: []attribute.KeyValue{
-		attribute.String("govoice.agent.id", agentID), attribute.String("govoice.agent.version", agentVersion),
+func (e *Exporter) Session(flowID, flowVersion string) *SessionTracer {
+	return &SessionTracer{e: e, tr: e.tp.Tracer("govoice"), fl: []attribute.KeyValue{
+		attribute.String("govoice.flow.id", flowID), attribute.String("govoice.flow.version", flowVersion),
 	}, turns: map[core.TurnID]trace.Span{}, open: map[*span]struct{}{}}
 }
 
 // SessionTracer implements core.Tracer for a single session.
 type SessionTracer struct {
-	e     *Exporter
-	tr    trace.Tracer
-	agent []attribute.KeyValue
+	e  *Exporter
+	tr trace.Tracer
+	fl []attribute.KeyValue
 
 	mu       sync.Mutex
 	root     trace.Span
@@ -231,7 +231,7 @@ func (t *SessionTracer) StartSpan(_ context.Context, ev core.TraceEvent) core.Sp
 	switch ev.Name {
 	case "session.start":
 		t.root, t.rootCtx = sp, ctx
-		sp.SetAttributes(t.agent...)
+		sp.SetAttributes(t.fl...)
 		sp.SetAttributes(attribute.String("govoice.session.id", string(ev.SessionID)))
 		onEnd = func() {
 			// Close turns/services the runtime never ended (cancel, wedged

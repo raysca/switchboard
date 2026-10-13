@@ -37,7 +37,7 @@ limits:
   max_pending_handshakes: 100
   max_sessions: 250
   max_sessions_per_principal: 5
-  # max_sessions_per_agent: 0         # 0 = unlimited
+  # max_sessions_per_flow: 0         # 0 = unlimited
   # start_rate_per_principal: 0       # starts/sec per principal; 0 = unlimited
   # handshake_rate_per_ip: 20         # WebSocket upgrades/sec per source IP (burst max(5, 2x)); 0 = default 20
   # start_burst_per_principal: 1      # required >= 1 when rate > 0
@@ -64,7 +64,7 @@ vad:
   queue_cap: 8192
   stop_ms: 200         # silence that ends a VAD speech segment (200..2000, 32 ms steps); the turn manager's speech timeout guards mid-sentence cuts
 
-# Provider infrastructure only. Models, voices and prompts belong to stored agents;
+# Provider infrastructure only. Models, voices and prompts belong to stored flows;
 # provider secrets come from the environment (variables listed by GET /api/v1/providers).
 providers:
   google_stt:
@@ -82,7 +82,7 @@ observability:
   timeline_max_events: 1000
   timeline_ttl: 15m
 
-# Agent store (required): calls run stored agents. The server requires:
+# Flow store (required): calls run stored flows. The server requires:
 #   GOVOICE_DATABASE_DSN     storage DSN (file path for sqlite, URL for postgres)
 storage:
   dialect: "postgres"
@@ -106,5 +106,5 @@ warmup:
 
 # Hang up callers who stay silent or abandon the tab (a live but abandoned tab still answers pings and
 # would hold its slot and provider streams until max_call_duration). After 2 prompts at 30 s each the
-# call ends; raise user_timeout if your agents legitimately wait on long tool calls.
+# call ends; raise user_timeout if your flows legitimately wait on long tool calls.
 idle: {user_timeout: 30s, max_prompts: 2}

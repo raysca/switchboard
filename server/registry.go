@@ -23,13 +23,13 @@ import (
 	"govoice/providers/google"
 	"govoice/providers/openai"
 	"govoice/providers/xai"
-	"govoice/server/agent"
+	"govoice/server/flow"
 	"govoice/smartturn"
 	"govoice/vad"
 )
 
 // ProcessorFactory instantiates a core.Processor for a specific provider.
-// StageSpec is one provider stage of a call, resolved from the stored agent.
+// StageSpec is one provider stage of a call, resolved from the stored flow.
 // Secret is the credential assembled from the environment for this stage's
 // provider only (server/catalog); the caller wipes it after the build.
 type StageSpec struct {
@@ -40,7 +40,7 @@ type StageSpec struct {
 	SystemPrompt string
 	Secret       []byte
 
-	// LLM stage only: the agent's captured MCP tools and the call history
+	// LLM stage only: the flow's captured MCP tools and the call history
 	// the tool loop records into.
 	Tools        []core.ToolDefinition
 	ToolExecutor core.ToolExecutor
@@ -67,34 +67,34 @@ func (s StageSpec) toolLoopConfig() coretools.ToolLoopConfig {
 	return cfg
 }
 
-// CallSpec is everything a call needs, resolved from a pinned agent version.
+// CallSpec is everything a call needs, resolved from a pinned flow version.
 type CallSpec struct {
 	STT, LLM, TTS StageSpec
 	MaxMessages   int
-	// AgentVersionID is the pinned agent version (trace attribute only).
-	AgentVersionID string
+	// FlowVersionID is the pinned flow version (trace attribute only).
+	FlowVersionID string
 	// StoredSessionID is the persisted session row (trace spans attach to it).
 	StoredSessionID string
-	// Graph is set for agents with more than one node: the call starts on the
-	// entry node and moves between nodes by handoff.
-	Graph *CallGraph
-	// OnHandoff, if set, receives the handoff lifecycle (timeline, traces, metrics).
-	OnHandoff func(core.HandoffEvent)
+	// Flow is set for flows with more than one step: the call starts on the
+	// start step and moves between steps by handoff.
+	Flow *CallFlow
+	// OnRoute, if set, receives the handoff lifecycle (timeline, traces, metrics).
+	OnRoute func(core.HandoffEvent)
 	// OnInjector, if set, receives the call's context injector once the pipeline is built.
 	OnInjector func(ContextInjector)
 	MaxTokens  int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).
-	Summary agent.SummarizationConfig
+	Summary flow.SummarizationConfig
 	// History, when set, sees every frame just before the transport (turn rows).
 	History core.Processor
-	// Recording: the agent opted in (and confirmed disclosure).
+	// Recording: the flow opted in (and confirmed disclosure).
 	Recording bool
 	// LLMFallbacks are the LLM chain after the primary (credentials resolved);
 	// Failover says which error classes may move a generation to the next one.
 	LLMFallbacks []StageSpec
 	// STTFallbacks are the STT chain after the primary (credentials resolved).
 	STTFallbacks []StageSpec
-	Failover     agent.FailoverPolicy
+	Failover     flow.FailoverPolicy
 	// TTSFallbacks are the TTS chain after the primary (credentials resolved,
 	// voice from each fallback's own spec).
 	TTSFallbacks []StageSpec
@@ -111,7 +111,7 @@ type CallSpec struct {
 
 // ProcessorFactory builds one stage processor. cfg supplies provider
 // infrastructure settings only (project, region, endpoints, quotas); models,
-// voices, prompts and credentials come from the agent via spec.
+// voices, prompts and credentials come from the flow via spec.
 type ProcessorFactory func(cfg *Config, spec StageSpec) (core.Processor, error)
 
 // Registry maps "<provider>.<stage>" to processor factories. Register only
@@ -468,7 +468,7 @@ func (r *Registry) Supports(provider, stage string) bool {
 const CallUserContextIndex = 4
 
 // BuildCallPipeline builds VAD -> STT -> transcript -> user context -> LLM ->
-// assistant context -> TTS -> transport for one call of a stored agent.
+// assistant context -> TTS -> transport for one call of a stored flow.
 func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, error) {
 	build := func(stage string, spec StageSpec) (core.Processor, error) {
 		proc, err := r.BuildStage(cfg, stage, spec)
@@ -516,7 +516,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if (cfg.Turn.Manager && slices.Contains(cfg.Turn.Mute, coreturn.MuteFunctionCall)) || cfg.Idle.enabled() { // idle also pauses while a tool runs
 		muteTools = coreturn.NewToolActivity()
 	}
-	// The trigger is on every call: finished async tools, handoff flips and operator notes
+	// The trigger is on every call: finished async tools, route flips and operator notes
 	// all wait here for the call to be idle, then inject and start one model turn.
 	var asstActive func() bool
 	asyncTrigger := core.NewAsyncTrigger(core.AsyncTriggerConfig{Busy: func() bool { return asstActive != nil && asstActive() },
@@ -524,8 +524,8 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if call.OnInjector != nil {
 		call.OnInjector(newCallInjector(asyncTrigger, ctxPool))
 	}
-	// prepLLM applies the call-wide LLM stage setup to one node's specs; the
-	// entry node uses it here and every later node when it is activated.
+	// prepLLM applies the call-wide LLM stage setup to one step's specs; the
+	// start step uses it here and every later step when it is activated.
 	prepLLM := func(spec StageSpec, fallbacks []StageSpec) (StageSpec, []StageSpec) {
 		spec.History = ctxPool
 		fallbacks = slices.Clone(fallbacks)
@@ -559,42 +559,42 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		return fail(fmt.Errorf("create tts processor: %w", err))
 	}
 	built = append(built, ttsProc)
-	if call.Graph != nil {
-		// The entry node is live; every other node is built when the call moves
+	if call.Flow != nil {
+		// The start step is live; every other step is built when the call moves
 		// to it and closed when it leaves. The swaps are the pipeline stages.
-		var lastNode atomic.Pointer[string]
-		buildNode := func(ctx context.Context, id string) (core.NodeStages, error) {
-			ns, err := call.Graph.Resolve(ctx, id)
+		var lastStep atomic.Pointer[string]
+		buildStep := func(ctx context.Context, id string) (core.NodeStages, error) {
+			ns, err := call.Flow.Resolve(ctx, id)
 			if err != nil {
-				return core.NodeStages{}, fmt.Errorf("resolve node %q: %w", id, err)
+				return core.NodeStages{}, fmt.Errorf("resolve step %q: %w", id, err)
 			}
 			defer ns.wipe()
 			spec, fallbacks := prepLLM(ns.LLM, ns.LLMFallbacks)
-			nodeCall := call
-			nodeCall.LLMFallbacks = fallbacks
-			nodeCall.TTS, nodeCall.TTSFallbacks = ns.TTS, ns.TTSFallbacks
-			llm, err := r.buildLLM(cfg, nodeCall, spec, build)
+			stepCall := call
+			stepCall.LLMFallbacks = fallbacks
+			stepCall.TTS, stepCall.TTSFallbacks = ns.TTS, ns.TTSFallbacks
+			llm, err := r.buildLLM(cfg, stepCall, spec, build)
 			if err != nil {
-				return core.NodeStages{}, fmt.Errorf("node %q llm: %w", id, err)
+				return core.NodeStages{}, fmt.Errorf("step %q llm: %w", id, err)
 			}
-			tts, err := r.buildTTS(cfg, nodeCall, build)
+			tts, err := r.buildTTS(cfg, stepCall, build)
 			if err != nil {
 				if c, ok := llm.(interface{ Close() error }); ok {
 					_ = c.Close()
 				}
-				return core.NodeStages{}, fmt.Errorf("node %q tts: %w", id, err)
+				return core.NodeStages{}, fmt.Errorf("step %q tts: %w", id, err)
 			}
-			lastNode.Store(&ns.Name)
+			lastStep.Store(&ns.Name)
 			return core.NodeStages{LLM: llm, TTS: tts}, nil
 		}
 		llmSwap, ttsSwap := core.NewStageSwap(llmProc), core.NewStageSwap(ttsProc)
 		h, err := core.NewHandoff(core.HandoffConfig{
-			Entry: call.Graph.Entry, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
-			Build:   buildNode,
-			OnEvent: call.OnHandoff,
+			Entry: call.Flow.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
+			Build:   buildStep,
+			OnEvent: call.OnRoute,
 			Greet: func(string) error {
 				name := "another agent"
-				if n := lastNode.Load(); n != nil {
+				if n := lastStep.Load(); n != nil {
 					name = *n
 				}
 				return ctxPool.AddMessage(core.Message{Role: core.RoleUser,
@@ -604,7 +604,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		if err != nil {
 			return fail(fmt.Errorf("create handoff: %w", err))
 		}
-		call.Graph.Commit = h.Commit
+		call.Flow.Commit = h.Commit
 		llmProc, ttsProc = llmSwap, ttsSwap
 	}
 

@@ -30,8 +30,8 @@ type TraceRepository interface {
 // SessionDTO represents a persisted voice session for the management API.
 type SessionDTO struct {
 	ID              string                 `json:"id"`
-	AgentID         string                 `json:"agent_id"`
-	AgentVersionID  string                 `json:"agent_version_id"`
+	FlowID          string                 `json:"flow_id"`
+	FlowVersionID   string                 `json:"flow_version_id"`
 	ConfigHash      string                 `json:"config_hash"`
 	StartedAt       time.Time              `json:"started_at"`
 	EndedAt         *time.Time             `json:"ended_at,omitempty"`
@@ -162,10 +162,10 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 	}
 
 	filter := storage.SessionFilter{
-		Limit:   page.Limit,
-		Offset:  page.Offset,
-		Status:  r.URL.Query().Get("status"),
-		AgentID: r.URL.Query().Get("agent_id"),
+		Limit:  page.Limit,
+		Offset: page.Offset,
+		Status: r.URL.Query().Get("status"),
+		FlowID: r.URL.Query().Get("flow_id"),
 	}
 
 	records, err := h.sessions.List(r.Context(), filter)
@@ -294,15 +294,15 @@ func (h tracesHandler) tracesRoute(w http.ResponseWriter, r *http.Request, id, r
 
 func toSessionDTO(r storage.SessionRecord) SessionDTO {
 	dto := SessionDTO{
-		ID:             r.ID,
-		AgentID:        r.AgentID,
-		AgentVersionID: r.AgentVersionID,
-		ConfigHash:     r.ConfigHash,
-		StartedAt:      r.StartedAt,
-		Status:         r.Status,
-		TurnCount:      r.TurnCount,
-		SafeSummary:    r.SafeSummary,
-		RuntimeTools:   r.RuntimeTools,
+		ID:            r.ID,
+		FlowID:        r.FlowID,
+		FlowVersionID: r.FlowVersionID,
+		ConfigHash:    r.ConfigHash,
+		StartedAt:     r.StartedAt,
+		Status:        r.Status,
+		TurnCount:     r.TurnCount,
+		SafeSummary:   r.SafeSummary,
+		RuntimeTools:  r.RuntimeTools,
 	}
 	if !r.EndedAt.IsZero() {
 		dto.EndedAt = &r.EndedAt

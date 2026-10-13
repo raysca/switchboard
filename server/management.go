@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"govoice/core/record"
-	"govoice/server/agent"
 	"govoice/server/api"
+	"govoice/server/flow"
 	"govoice/server/mcp"
 	"govoice/server/retention"
 	"govoice/server/storage"
@@ -28,12 +28,12 @@ type management struct {
 	recStop   context.CancelFunc // ends the recording janitor
 }
 
-// EnableManagement opens storage and installs the agent, provider, MCP and
+// EnableManagement opens storage and installs the flow, provider, MCP and
 // session APIs plus the retention job. It is a no-op when storage is not
 // configured. Call it before Start.
 func (s *Server) EnableManagement(ctx context.Context) error {
 	if s.cfg.Storage.Dialect == "" {
-		return errors.New("storage.dialect is required: calls run stored agents")
+		return errors.New("storage.dialect is required: calls run stored flows")
 	}
 	dsnEnv := envOr(s.cfg.Storage.DSNEnv, "GOVOICE_DATABASE_DSN")
 	dsn := os.Getenv(dsnEnv)
@@ -54,7 +54,13 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	fail := func(err error) error { m.close(); return err }
 
 	m.traces = trace.NewAdapter(store.Traces())
-	mcpService, err := mcp.NewService(mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcp.EnvTokens(func(k string) string { return s.env(k) }), Tracer: m.traces})
+	mcpCfg := mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcp.EnvTokens(func(k string) string { return s.env(k) }), Tracer: m.traces, Timeout: s.cfg.MCP.Timeout}
+	if s.cfg.MCP.AllowLocalHTTP {
+		s.logger.Warn("MCP allows plain HTTP to loopback (development and tests)")
+		mcpCfg.Remote = mcp.NewSDKClient(mcp.AllowLoopbackHTTP())
+		mcpCfg.Destinations = mcp.LoopbackHTTPDestinationPolicy{}
+	}
+	mcpService, err := mcp.NewService(mcpCfg)
 	if err != nil {
 		return fail(fmt.Errorf("mcp service: %w", err))
 	}
@@ -77,8 +83,8 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	s.SetStore(store)
 	s.mcpService = mcpService
 	s.SetProviderManagementAPI(s.providersRoutes())
-	s.agents = agent.NewService(store, s.availability)
-	s.SetAgentManagementAPI(api.NewAgentsHandler(s.agents))
+	s.flows = flow.NewService(store, s.availability)
+	s.SetFlowManagementAPI(api.NewFlowsHandler(s.flows))
 	s.SetMCPManagementAPI(mcp.Handler(mcpService))
 	s.SetSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
@@ -98,12 +104,12 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		m.recStop = stop
 		go sink.Janitor(jctx, time.Duration(rc.RetentionDays)*24*time.Hour, time.Hour, s.logger)
 	}
-	if bad := s.unavailableAgentProviders(ctx); len(bad) > 0 {
+	if bad := s.unavailableFlowProviders(ctx); len(bad) > 0 {
 		for _, b := range bad {
-			s.logger.Error("agent references a provider this build cannot run", slog.String("problem", b))
+			s.logger.Error("flow references a provider this build cannot run", slog.String("problem", b))
 		}
 		if s.cfg.Profile == ProfileProduction {
-			return fail(fmt.Errorf("%d stored agent stage(s) use providers missing from this build (xAI STT/TTS need -tags xaispeech): %s", len(bad), strings.Join(bad, "; ")))
+			return fail(fmt.Errorf("%d stored flow stage(s) use providers missing from this build (xAI STT/TTS need -tags xaispeech): %s", len(bad), strings.Join(bad, "; ")))
 		}
 	}
 	s.mgmt = m
@@ -111,30 +117,30 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	return nil
 }
 
-// unavailableAgentProviders lists "agent id stage provider" for every enabled,
-// non-archived stored agent whose stage (or fallback) has no factory in this
+// unavailableFlowProviders lists "flow id stage provider" for every enabled,
+// non-archived stored flow whose stage (or fallback) has no factory in this
 // build, so a tagged-vs-untagged build mismatch fails startup, not calls.
-func (s *Server) unavailableAgentProviders(ctx context.Context) []string {
+func (s *Server) unavailableFlowProviders(ctx context.Context) []string {
 	var bad []string
 	for offset := 0; ; offset += 100 {
-		page, err := s.agents.List(ctx, 100, offset)
+		page, err := s.flows.List(ctx, 100, offset)
 		if err != nil {
-			s.logger.Warn("agent provider check skipped", slog.String("err", s.redactor.Redact(err.Error())))
+			s.logger.Warn("flow provider check skipped", slog.String("err", s.redactor.Redact(err.Error())))
 			return bad
 		}
 		for _, a := range page {
 			if !a.Enabled || a.Archived || a.Version == nil {
 				continue
 			}
-			g, err := agent.DecodeGraph(a.Version.Config)
+			g, err := flow.Decode(a.Version.Config)
 			if err != nil {
 				continue
 			}
-			for _, n := range g.Nodes {
+			for _, n := range g.Steps {
 				for _, stage := range []string{"stt", "llm", "tts"} {
 					for _, c := range n.Config.Chain(stage) {
 						if c.Provider != "" && !s.registry.Supports(c.Provider, stage) {
-							bad = append(bad, fmt.Sprintf("agent %s %s=%s", a.ID, stage, c.Provider))
+							bad = append(bad, fmt.Sprintf("flow %s %s=%s", a.ID, stage, c.Provider))
 						}
 					}
 				}
@@ -189,7 +195,7 @@ func (s *Server) developmentStore() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("development store: %w", err)
 	}
-	s.logger.Warn("development profile: using a local agent store; never use it in production", slog.String("dir", dir))
+	s.logger.Warn("development profile: using a local flow store; never use it in production", slog.String("dir", dir))
 	return filepath.Join(dir, "govoice.db"), nil
 }
 

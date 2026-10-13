@@ -37,7 +37,7 @@ Remaining pin provenance: Go module paths and Go directives are in the five `go.
 - The server normalizes incoming audio to mono PCM16LE at 16 kHz and client playback to mono PCM16LE at 24 kHz. The official client quick start uses 16 kHz microphone capture and 24 kHz playback. Audio output is paced against media time; the default server-side residual queue is bounded to 100 ms / 4,800 bytes at 24 kHz PCM16 mono.
 - The server emits V1 RTVI lifecycle, user speech, transcription, assistant text, bot speaking, error, and disconnect messages at the `rtvi-ai` label and `2.1.0` protocol version. Assistant text is bracketed per reply by `bot-llm-started`/`bot-llm-stopped` (a reply cut off by an interruption gets no stop; the next reply still opens with a start), and each TTS synthesis unit by `bot-tts-started`/`bot-tts-stopped`. `bot-tts-text`, `bot-interrupted`, function-call and `vad-*` messages are not emitted.
 - V1 internally uses generation fencing and a paced output queue. This protects server-side work and queued frames from stale output, but it does not clear audio already buffered in the pinned browser player.
-- Admission rejects (go-voice extension, not Pipecat) arrive after `client-ready` as a fatal RTVI `error` whose text is a stable reason code, then close 1013 (try again later): `capacity_exceeded` (global cap or no VAD capacity), `principal_limit`, `agent_limit`, `rate_limited` (per-principal start rate). Retry later or on another instance. `session_setup_failed` + 1011 now means a genuine setup failure (provider/pipeline build). `server_draining` + 1001 is unchanged. Tests: `server/admission_reject_test.go`.
+- Admission rejects (Switchboard extension, not Pipecat) arrive after `client-ready` as a fatal RTVI `error` whose text is a stable reason code, then close 1013 (try again later): `capacity_exceeded` (global cap or no VAD capacity), `principal_limit`, `flow_limit`, `rate_limited` (per-principal start rate). Retry later or on another instance. `session_setup_failed` + 1011 now means a genuine setup failure (provider/pipeline build). `server_draining` + 1001 is unchanged. Tests: `server/admission_reject_test.go`.
 
 - The hard probe against the exact unmodified packages found that protobuf interruption field 5 is rejected as `Unknown frame kind`; the RTVI `user-started-speaking` message deserializes and calls the client callback, but neither `WebSocketTransport` nor `PipecatClient` calls the media player's interruption/clear method. The observed verdict is `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`.
 
@@ -100,7 +100,7 @@ Compatibility remains three separately verifiable suites:
 |---|---|---|
 | Pinned RTVI client | Go loopback integration runs `node tools/compat/test_rtvi_client.js`; `node tools/compat/verify_fixtures.js`; `npm test --prefix tools/compat` | The exact pinned client/transport exchange and fixture decoding pass. The client integration checks interim/final transcript payload and order, a nonfatal server error, user speech, assistant text/speaking, audio, handshake, and disconnect. Error-callback tests reject unexpected, fatal, duplicate, and late callbacks. |
 | Whisker semantic | `go test -race ./tools/compat/whisker` and eleven `whisker_*` eval results | The semantic adapter preserves observed event identity, ordering fields, correlation, and copied safe attributes. No wire protocol or general observer-delivery claim is made. |
-| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` (turn events) and `go test -race ./tools/compat -run TestParity` (56 paired scenarios, below) against `pipecat-impl/` | The fixture validators check the exact checkout HEAD and cited modules. Turn events: equivalent Go frames pass through a live session and the production turn manager; turn two ends interrupted after EndFrame. Paired scenarios: the same scripted input runs through the Pipecat component and go-voice; equal output, or a declared `intentional_difference`. Neither implies complete Pipecat parity. |
+| Pinned Pipecat paired behavior | `go test -race ./tools/compat -run TestPinnedPipecatTurnInterruptionPairedBehavior` (turn events) and `go test -race ./tools/compat -run TestParity` (56 paired scenarios, below) against `pipecat-impl/` | The fixture validators check the exact checkout HEAD and cited modules. Turn events: equivalent Go frames pass through a live session and the production turn manager; turn two ends interrupted after EndFrame. Paired scenarios: the same scripted input runs through the Pipecat component and Switchboard; equal output, or a declared `intentional_difference`. Neither implies complete Pipecat parity. |
 
 The JSON runner labels the official RTVI and Pipecat suites as `separate_suite`
 because those require their own package/reference test runs; it does not turn
@@ -123,11 +123,11 @@ debug-event privacy policy.
 
 ## Pipecat behavioral parity: matrix and paired fixtures
 
-The per-feature matrix (Pipecat module, go-voice package and config key, status, whether it is on by default, differences, evidence) is `docs/pipecat-parity-matrix.md`; it also lists known gaps and risks. This is the third surface only: nothing here is evidence for RTVI client or Whisker conformance, and those suites do not count toward it.
+The per-feature matrix (Pipecat module, Switchboard package and config key, status, whether it is on by default, differences, evidence) is `docs/pipecat-parity-matrix.md`; it also lists known gaps and risks. This is the third surface only: nothing here is evidence for RTVI client or Whisker conformance, and those suites do not count toward it.
 
-Paired fixtures live in `tools/compat/testdata/parity/*.json` (committed, about 40 KB). `tools/compat/parity/gen_goldens.py` runs the pinned `pipecat-impl` components on scripted inputs (asyncio on a virtual clock: no network, audio hardware or wall clock) and writes the goldens, including each declared `intentional_difference` with its reason and the go-voice output. `tools/compat/parity_fixtures_test.go` runs the same inputs through go-voice and needs no Python.
+Paired fixtures live in `tools/compat/testdata/parity/*.json` (committed, about 40 KB). `tools/compat/parity/gen_goldens.py` runs the pinned `pipecat-impl` components on scripted inputs (asyncio on a virtual clock: no network, audio hardware or wall clock) and writes the goldens, including each declared `intentional_difference` with its reason and the Switchboard output. `tools/compat/parity_fixtures_test.go` runs the same inputs through Switchboard and needs no Python.
 
-| Area | Scenarios | Pipecat component | go-voice |
+| Area | Scenarios | Pipecat component | Switchboard |
 |---|---|---|---|
 | `turn` | 14 | user start strategies (min words, transcription, wake phrase), speech-timeout stop, `UserTurnController` | `core/turn` Manager |
 | `idle` | 6 | `UserIdleController` | `core.IdleController` on a fake clock |
@@ -139,7 +139,7 @@ Paired fixtures live in `tools/compat/testdata/parity/*.json` (committed, about 
 | `constants` | 1 | turn-completion markers | `core` markers |
 
 ```sh
-go test -race -count=1 ./tools/compat/...   # compare go-voice with the committed goldens (also part of make test)
+go test -race -count=1 ./tools/compat/...   # compare Switchboard with the committed goldens (also part of make test)
 make parity-regen                           # re-execute Pipecat from pipecat-impl/.venv, rewrite the goldens (needs: cd pipecat-impl && uv sync)
 ```
 
@@ -147,7 +147,7 @@ Regeneration is deterministic (a second run is byte-identical). A fixture withou
 
 ## Selected V2 capability status
 
-The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status describes the V2 target as of this contract freeze; rows marked "rebuilt" were deleted then and re-added by the Pipecat parity plan (current state in `docs/pipecat-parity-matrix.md`). Acceptance evidence must be attached to the owning phase task; a planned test is not a passing result.
+The table tracks every V2 P0/P1/P2 capability from the original V2 specification (removed in the docs cleanup; see git history). Status describes the V2 target as of this contract freeze; rows marked "rebuilt" were deleted then and re-added by the Pipecat parity plan (current state in `docs/pipecat-parity-matrix.md`). Acceptance evidence must be attached to the owning phase task; a planned test is not a passing result.
 
 | Priority and capability | Status | Acceptance evidence |
 |---|---|---|
@@ -162,8 +162,8 @@ The table tracks every V2 P0/P1/P2 capability from `docs/v2-spec.md`. Status des
 | P0 — Turn-scoped audio buffer | removed | Deleted from core: it had no production users. |
 | P0 — Behavioral eval harness | P0 gate | Machine-readable scenarios pass for barge-in, turn completion, silence/no-speech timeout, flush, transcript stabilization, tool interruption, pacing, teardown, RTVI, and Whisker. |
 | P1 — Runtime service settings updates | removed | Deleted from core: it had no production users. |
-| P1 — Context summarization/compaction hook | rebuilt (P3-4) | `core/context_summary.go`, per-agent opt-in. |
-| P1 — Audio recording/capture processor | rebuilt (P4-4) | `core/record`, server and agent opt-in. |
+| P1 — Context summarization/compaction hook | rebuilt (P3-4) | `core/context_summary.go`, per-flow opt-in. |
+| P1 — Audio recording/capture processor | rebuilt (P4-4) | `core/record`, server and flow opt-in. |
 | P1 — Urgent control frames/priority lane | P1 tracked | Congestion tests prove cancel/interruption/flush/end/critical error pass queued media while preserving control ordering. |
 | P1 — Processor failure/unusable policy | removed | Deleted from core: it had no production users. |
 | P1 — Usage metrics | P1 tracked | Provider contract tests record available token/audio/character/request units, omit unavailable values, and correlate them to session/turn without billing logic. |

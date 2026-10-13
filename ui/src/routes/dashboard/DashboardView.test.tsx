@@ -49,7 +49,7 @@ function createMockOperations(overrides: Partial<OperationsStatus> = {}): Operat
 function createMockClient(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     getOperationsStatus: vi.fn().mockResolvedValue(createMockOperations()),
-    getAgents: vi.fn().mockResolvedValue([
+    getFlows: vi.fn().mockResolvedValue([
       { id: "agent-1", name: "Support Agent", readiness: { state: "ready" } },
       { id: "agent-2", name: "Sales Agent", readiness: { state: "not_ready" } },
     ]),
@@ -108,26 +108,25 @@ describe("DashboardView", () => {
     renderWithProviders(<DashboardView client={client} keyValue="test-key" />);
 
     // Health Banner
-    expect(await screen.findByText("System Healthy")).toBeVisible();
-    expect(screen.getByText("Uptime: 2h 0m")).toBeVisible();
+    expect(await screen.findByText("System healthy. 4 of 50 sessions active.")).toBeVisible();
+    expect(screen.getByText("2h 0m")).toBeVisible();
     expect(screen.getByText("All core components and voice runtime pipelines are operating normally.")).toBeVisible();
 
     // Operational Metrics Grid
-    expect(screen.getByText("4 / 50")).toBeVisible();
-    expect(screen.getByText("Utilization: 8.0%")).toBeVisible();
+    expect(screen.getByText("8.0%")).toBeVisible();
     expect(screen.getByText("120")).toBeVisible();
 
     // Readiness Summary
-    expect(screen.getByText("Agent Readiness")).toBeVisible();
-    expect(screen.getByText("1 Ready")).toBeVisible();
-    expect(screen.getByText("Provider Readiness")).toBeVisible();
-    expect(screen.getByText("1 / 2 providers detected")).toBeVisible();
+    expect(screen.getByRole("link", { name: "View flows" })).toBeVisible();
+    expect(await screen.findByText("1 of 2 ready")).toBeVisible();
+    expect(screen.getByRole("link", { name: "View providers" })).toBeVisible();
+    expect(await screen.findByText("1 of 2 detected")).toBeVisible();
 
     // Recent Sessions
-    expect(screen.getByText("Recent Session Activity")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Recent calls" })).toBeVisible();
     expect(screen.getByText("sess-abc…")).toBeVisible();
     expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute("href", "/sessions/sess-abc-1234");
-    expect(screen.getByRole("link", { name: "View all sessions →" })).toHaveAttribute("href", "/sessions");
+    expect(screen.getByRole("link", { name: "View all calls" })).toHaveAttribute("href", "/sessions");
   });
 
   it("renders capacity warning alert box and degraded status when utilization is high", async () => {
@@ -144,10 +143,10 @@ describe("DashboardView", () => {
 
     renderWithProviders(<DashboardView client={client} keyValue="test-key" />);
 
-    expect(await screen.findByText("System Degraded")).toBeVisible();
+    expect(await screen.findByText(/System degraded\./)).toBeVisible();
     expect(screen.getByRole("alert", { name: "Capacity warning" })).toBeVisible();
     expect(screen.getByText(/Active sessions are at 96% capacity/)).toBeVisible();
-    expect(screen.getByText("48 / 50")).toBeVisible();
+    expect(screen.getByText(/48 of 50 sessions active/)).toBeVisible();
   });
 
   it("renders empty sessions message when no sessions exist", async () => {
@@ -157,7 +156,7 @@ describe("DashboardView", () => {
 
     renderWithProviders(<DashboardView client={client} keyValue="test-key" />);
 
-    expect(await screen.findByText("No recent sessions")).toBeVisible();
-    expect(screen.getByText(/No voice sessions recorded yet/)).toBeVisible();
+    expect(await screen.findByText("No recent calls")).toBeVisible();
+    expect(screen.getByText(/No calls recorded yet/)).toBeVisible();
   });
 });

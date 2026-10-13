@@ -104,7 +104,7 @@ export interface VoiceClientState {
 export type VoiceClientListener = (state: VoiceClientState) => void;
 
 export interface ConnectOptions {
-  agentId: string;
+  flowId: string;
   principal?: string;
   wsBaseUrl?: string;
   /** Turns start and end on the hold-to-talk button instead of voice detection. */
@@ -204,11 +204,11 @@ export class VoiceClient {
       return;
     }
 
-    const agentId = options.agentId?.trim();
-    if (!agentId) {
+    const flowId = options.flowId?.trim();
+    if (!flowId) {
       this.updateState({
         sessionState: "error",
-        error: { category: "token", message: "An agent is required to start a call.", fatal: true },
+        error: { category: "token", message: "A flow is required to start a call.", fatal: true },
       });
       return;
     }
@@ -233,7 +233,7 @@ export class VoiceClient {
     try {
       const tokenResp = await this.apiClient.issueVoiceToken({
         principal,
-        agent_id: agentId,
+        flow_id: flowId,
       });
       if (attempt !== this.attempt) return;
       tokenStr = tokenResp.token;

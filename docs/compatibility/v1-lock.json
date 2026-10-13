@@ -98,7 +98,7 @@
     "tts_sample_rate_hz": 24000
   },
   "xai_provider": {
-    "llm_model": "grok-2-1212",
+    "llm_model": "grok-4.20-0309-non-reasoning",
     "llm_endpoint": "https://api.x.ai/v1/responses",
     "stt_endpoint": "wss://api.x.ai/v1/stt",
     "tts_endpoint": "https://api.x.ai/v1/tts",

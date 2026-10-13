@@ -1,10 +1,10 @@
 # Retention and Privacy Operations
 
-This document describes the operational management of trace retention, privacy controls, and OpenTelemetry export in Voice Platform V2.
+This document describes the operational management of trace retention, privacy controls, and OpenTelemetry export in Switchboard.
 
 ## Overview
 
-Voice Platform V2 distinguishes operational metadata from conversational content:
+Switchboard distinguishes operational metadata from conversational content:
 - **Operational metadata:** Session start/end timestamps, turn ordering, latencies, provider names, models, safe error categories, and span trees needed for reliability monitoring and diagnostic debugging.
 - **Conversational content:** User speech transcripts, assistant response text, tool call arguments, and tool results containing user inputs or private data.
 
@@ -86,7 +86,7 @@ The retention system enforces strict invariants at both the service and database
 
 1. **Active and Draining Sessions:**
    Sessions with `status = 'active'` or `status = 'draining'` are **never** deleted and their content is **never** purged, regardless of session start time or duration.
-2. **Agent Versions:**
+2. **Flow Versions:**
    `agent_versions` rows are immutable and are **never** deleted by retention jobs. Database triggers enforce immutability (`agent_versions_immutable_delete`).
 3. **MCP Discoveries and Tool Schemas:**
    `mcp_discoveries`, `mcp_tools`, and `agent_mcp_tools` are immutable and are **never** touched by retention jobs.

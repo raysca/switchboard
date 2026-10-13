@@ -1,12 +1,12 @@
-# Voice Framework V1 — Observability, Health & Telemetry
+# Switchboard — Observability, Health & Telemetry
 
-This document details the configuration profiles, health and readiness endpoints, Prometheus metrics, per-session diagnostic timelines, and incident troubleshooting runbooks for Voice Framework V1.
+This document details the configuration profiles, health and readiness endpoints, Prometheus metrics, per-session diagnostic timelines, and incident troubleshooting runbooks for Switchboard.
 
 ---
 
 ## 1. Configuration Profiles
 
-Voice Framework V1 uses validated YAML configuration files loaded via `server/config.go`. Unknown fields are rejected at startup (`KnownFields(true)`).
+Switchboard uses validated YAML configuration files loaded via `server/config.go`. Unknown fields are rejected at startup (`KnownFields(true)`).
 
 ### Profile Comparison
 
@@ -36,8 +36,8 @@ Voice Framework V1 uses validated YAML configuration files loaded via `server/co
   1. Startup/shutdown: unready until initialization finishes and while draining or shutting down.
   2. Admission: unready if admission has been globally disabled.
   3. VAD capacity: unready if no native VAD worker is online.
-  4. Agent store: unready if agent storage is not enabled, or if a ping of the store fails (the verdict is cached for 1 s). Calls run stored agents only.
-- **Provider circuits** (`google_stt`, `google_llm`, `google_tts`, `xai_llm`, `xai_stt`, `xai_tts` when built in, plus `nvidia_<stage>:<endpoint>` once an Nvidia endpoint has been used) are reported as `closed`, `open` or `half_open` for diagnosis but do not make the server unready: an open circuit only affects agents that use that provider. Per-agent call readiness is reported by `GET /api/v1/agents/{id}` (`readiness`). `/ready` no longer reports `usable_pipelines`.
+  4. Flow store: unready if flow storage is not enabled, or if a ping of the store fails (the verdict is cached for 1 s). Calls run stored flows only.
+- **Provider circuits** (`google_stt`, `google_llm`, `google_tts`, `xai_llm`, `xai_stt`, `xai_tts` when built in, plus `nvidia_<stage>:<endpoint>` once an Nvidia endpoint has been used) are reported as `closed`, `open` or `half_open` for diagnosis but do not make the server unready: an open circuit only affects flows that use that provider. Per-flow call readiness is reported by `GET /api/v1/flows/{id}` (`readiness`). `/ready` no longer reports `usable_pipelines`.
 - **Response**:
   - Ready: `HTTP 200 OK` with `{"status":"ready", "circuits":{...}}`
   - Unready: `HTTP 503 Service Unavailable` with `{"status":"unready", "reason":"..."}`
@@ -62,7 +62,7 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_sessions_started_total` | Counter | Voice sessions started |
 | `voice_sessions_stopped_total` | Counter | Voice sessions stopped |
 | `voice_sessions_failed_total` | Counter | Sessions that failed (setup or run) |
-| `voice_admission_rejects_total` | Counter | Calls refused by admission control (`reason`: `session_limit`, `principal_limit`, `vad_unavailable`, `agent_limit`, `start_rate_limit`) |
+| `voice_admission_rejects_total` | Counter | Calls refused by admission control (`reason`: `session_limit`, `principal_limit`, `vad_unavailable`, `flow_limit`, `start_rate_limit`) |
 | `voice_draining` | Gauge | 1 while draining for shutdown |
 | `voice_drain_sessions_remaining` | Gauge | Sessions still live while draining |
 | `voice_max_duration_terminations_total` | Counter | Calls hung up by the max call duration guard |
@@ -92,17 +92,17 @@ The series for smart-turn, audio filters, summaries, failover and warm-up are de
 
 ## 4. Per-Session Diagnostic Timeline
 
-Voice Framework V1 provides an in-memory, circular ring buffer for deep incident diagnostics at `GET /debug/timeline?session=<ID>` on the admin listener:
+Switchboard provides an in-memory, circular ring buffer for deep incident diagnostics at `GET /debug/timeline?session=<ID>` on the admin listener:
 - **Buffer Size**: Bounded to `observability.timeline_max_events` events per session (1000 in production.yaml).
 - **TTL**: Idle rings are evicted after `observability.timeline_ttl` (15m in production.yaml).
 - **Zero Content Leakage**: Transcripts and audio samples are **omitted by default**; only event names, state transitions, generation IDs, and latencies are recorded.
 - **Non-Blocking**: The timeline logger never blocks the session run loop. If the ring buffer fills, older events are overwritten and an `evicted_count` counter is incremented.
 
-### Graph agents (handoffs)
+### Routes between steps
 
-An agent with more than one node moves the call between nodes. Every timeline event carries a `node` field (the node that was answering). Handoffs add these event types: `node_preparing` (target being built), `handoff` (`from->to`, `duration_ms` from the transfer to the new node being active), `node_active`, `node_closed` (the left node was closed) and `handoff_failed` (the caller stays with the old node; `error` is redacted). When storage is enabled the same lifecycle is persisted as trace spans named `handoff.preparing`, `handoff.active`, `handoff.closed`, `handoff.failed` (attributes `from_node`, `to_node`) on the stored session, so the designer can replay the path.
+A flow with more than one step moves the call between steps. Every timeline event carries a `step` field (the step that was answering). Routes add these event types: `step_preparing` (target being built), `route` (`from->to`, `duration_ms` from the transfer to the new step being active), `step_active`, `step_closed` (the step the call left was closed) and `route_failed` (the caller stays on the old step; `error` is redacted). When storage is enabled the same lifecycle is persisted as trace spans named `route.preparing`, `route.active`, `route.closed`, `route.failed` (attributes `from_step`, `to_step`) on the stored session, so the designer can replay the path. Sessions stored before the rename carry `handoff.*` spans with `from_node`/`to_node`; the console reads both.
 
-Metrics (unlabelled: node ids are tenant data): `voice_handoffs_total`, `voice_handoff_failures_total`, and the `voice_handoff_seconds` histogram.
+Metrics (unlabelled: step ids are tenant data): `voice_routes_total`, `voice_route_failures_total`, and the `voice_route_seconds` histogram.
 
 ---
 
@@ -143,6 +143,6 @@ otel:
   shutdown_timeout: 5s             # bounded final flush during Shutdown
 ```
 
-Attributes (prefix `govoice.`): `agent.id`, `agent.version`, `session.id`, `turn.id`, `provider`, `model`, usage (`quantity`/`unit`), and `latency.{stt_final,llm_ttft,tts_ttfb,voice_to_voice,startup}_ms` on the turn (startup on the session span). Failed spans carry `error.class` (Go type only; the message is never exported) and provider failure/failover events are attached as span events. Transcript, prompt, tool arguments/results and audio are not attributes unless `capture_content: true`.
+Attributes (prefix `govoice.`): `flow.id`, `flow.version`, `session.id`, `turn.id`, `provider`, `model`, usage (`quantity`/`unit`), and `latency.{stt_final,llm_ttft,tts_ttfb,voice_to_voice,startup}_ms` on the turn (startup on the session span). Failed spans carry `error.class` (Go type only; the message is never exported) and provider failure/failover events are attached as span events. Transcript, prompt, tool arguments/results and audio are not attributes unless `capture_content: true`.
 
 Metrics: `voice_otel_spans_dropped_total` (queue full) and `voice_otel_spans_failed_total` (OTLP export errors). Export is best effort and cannot block or fail a call.

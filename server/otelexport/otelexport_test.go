@@ -76,7 +76,7 @@ func TestSpanTreeAndAttributes(t *testing.T) {
 		}
 		return m
 	}
-	if a := attrs(root); a["govoice.agent.id"] != "agent-1" || a["govoice.agent.version"] != "ver-9" {
+	if a := attrs(root); a["govoice.flow.id"] != "agent-1" || a["govoice.flow.version"] != "ver-9" {
 		t.Fatalf("root attrs %v", a)
 	}
 	a := attrs(llmS)

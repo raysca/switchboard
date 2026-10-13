@@ -1,6 +1,6 @@
-# Production Hardening and Security Operations Guide (Task 26)
+# Production Hardening and Security Operations Guide
 
-This document describes the production security controls, runtime operational contracts, backup/restore procedures, and packaging standards for Voice Platform V2 per specifications §12 and §39.
+This document describes the production security controls, runtime operational contracts, backup/restore procedures, and packaging standards for Switchboard per specifications §12 and §39.
 
 ---
 
@@ -14,12 +14,12 @@ This document describes the production security controls, runtime operational co
 
 ### 1.2 Secret & Credential Redaction
 - **Environment Only**: Provider keys (API keys, the service-account file path) and MCP bearer tokens live in the server's environment and are never written to the database. See [docs/security/credentials.md](../security/credentials.md).
-- **Response Redaction**: No management API accepts or returns a secret value. `GET /api/v1/providers`, agent readiness (`missing_env`) and MCP server views (`auth_env`, `auth_env_set`) name variables, never values.
+- **Response Redaction**: No management API accepts or returns a secret value. `GET /api/v1/providers`, flow readiness (`missing_env`) and MCP server views (`auth_env`, `auth_env_set`) name variables, never values.
 - **Zero Raw Audio Persistence**: No database table contains raw audio columns or audio payloads. Traces only retain structural latency, spans, events, and turn metadata.
 
 ### 1.3 Destination Controls for MCP Servers
 - **Endpoint Gating**: Remote MCP servers (`sse` transport) must point to explicitly allowed network endpoints. Arbitrary local loopback manipulation is restricted to admin control.
-- **Schema Immutability**: Discovered MCP tool definitions are sha256-hashed and frozen at the time of agent version publication.
+- **Schema Immutability**: Discovered MCP tool definitions are sha256-hashed and frozen at the time of flow version publication.
 
 ---
 

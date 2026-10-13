@@ -13,7 +13,7 @@ import (
 )
 
 // M2-02: a failed call setup leaves exactly one warn line naming the cause
-// category, session and agent.
+// category, session and flow.
 func TestSetupFailureLogsOneWarnWithCategory(t *testing.T) {
 	rd, err := redact.New(redact.Config{Enabled: true})
 	if err != nil {
@@ -31,7 +31,7 @@ func TestSetupFailureLogsOneWarnWithCategory(t *testing.T) {
 	}
 	for i, want := range []string{"category=build_pipeline", "category=timeout"} {
 		l := lines[i]
-		if !strings.Contains(l, "level=WARN") || !strings.Contains(l, "call setup failed") || !strings.Contains(l, want) || !strings.Contains(l, "agent=agent-1") {
+		if !strings.Contains(l, "level=WARN") || !strings.Contains(l, "call setup failed") || !strings.Contains(l, want) || !strings.Contains(l, "flow=agent-1") {
 			t.Errorf("line %d = %s", i, l)
 		}
 	}

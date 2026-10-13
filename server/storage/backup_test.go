@@ -30,17 +30,17 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 	}
 	defer s.Close()
 
-	// Seed initial agent and version
-	agent := Agent{
+	// Seed initial flow and version
+	fl := Flow{
 		ID:        NewID(),
 		Name:      "Backup-Agent",
 		Enabled:   true,
 		CreatedAt: time.Now(),
 	}
-	if err := s.Agents().Create(ctx, agent); err != nil {
+	if err := s.Flows().Create(ctx, fl); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	ver, err := s.Agents().PublishVersion(ctx, agent.ID, 1, []byte(`{"voice":"default","prompt":"hello"}`), nil)
+	ver, err := s.Flows().PublishVersion(ctx, fl.ID, 1, []byte(`{"voice":"default","prompt":"hello"}`), nil)
 	if err != nil {
 		t.Fatalf("add version: %v", err)
 	}
@@ -62,12 +62,12 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 				default:
 					turnCount++
 					sess := SessionRecord{
-						ID:             NewID(),
-						AgentID:        agent.ID,
-						AgentVersionID: ver.ID,
-						ConfigHash:     ver.ConfigHash,
-						StartedAt:      time.Now(),
-						Status:         "active",
+						ID:            NewID(),
+						FlowID:        fl.ID,
+						FlowVersionID: ver.ID,
+						ConfigHash:    ver.ConfigHash,
+						StartedAt:     time.Now(),
+						Status:        "active",
 					}
 					if err := s.Sessions().Create(ctx, sess); err != nil {
 						select {
@@ -135,13 +135,13 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 		t.Fatalf("expected migration version >= 5 in restored backup, got %d", diag.MigrationVersion)
 	}
 
-	// Verify agent exists
-	restoredAgent, err := backupStore.Agents().Current(ctx, agent.ID)
+	// Verify flow exists
+	restoredFlow, err := backupStore.Flows().Current(ctx, fl.ID)
 	if err != nil {
 		t.Fatalf("fetch agent in restored store: %v", err)
 	}
-	if restoredAgent.Name != agent.Name {
-		t.Fatalf("restored agent name mismatch: got %s, want %s", restoredAgent.Name, agent.Name)
+	if restoredFlow.Name != fl.Name {
+		t.Fatalf("restored agent name mismatch: got %s, want %s", restoredFlow.Name, fl.Name)
 	}
 
 	// Verify integrity check (PRAGMA foreign_key_check and quick_check)
