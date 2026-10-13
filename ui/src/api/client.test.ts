@@ -499,6 +499,22 @@ describe("management client", () => {
   });
 });
 
+describe("demo", () => {
+  it("reads the demo status and installs the dental demo", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { dental: { available: true, installed: false } } }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { mcp_server_id: "m", mcp_created: true, tools: 7, flow_id: "f", flow_created: true } }), { status: 200 }),
+      );
+    const client = createApiClient(() => ({ key: "test-key", generation: 1 }), fetcher);
+    expect((await client.getDemo()).dental.available).toBe(true);
+    expect((await client.installDentalDemo()).flow_id).toBe("f");
+    expect(fetcher.mock.calls[1][0]).toBe("/api/v1/demo/dental");
+    expect((fetcher.mock.calls[1][1] as RequestInit).method).toBe("POST");
+  });
+});
+
 describe("agentConfigV2Schema", () => {
   it("does not require or expose credential_id", () => {
     const stage = { provider: "google" };

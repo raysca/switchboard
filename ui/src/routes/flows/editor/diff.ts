@@ -33,6 +33,7 @@ export function describeChanges(before: FlowDraft | null, after: FlowDraft): str
     if (!same(ol.fallbacks, nl.fallbacks) || !same(ot.fallbacks, nt.fallbacks) || !same(ol.max_parallel, nl.max_parallel) || !same(ot.clean_text, nt.clean_text))
       out.push(`${n.name}: advanced settings changed`);
     if (!same([...o.tools].sort(), [...n.tools].sort())) out.push(`${n.name}: tools changed`);
+    if (!!o.end_call !== !!n.end_call) out.push(`${n.name}: end call ${n.end_call ? "enabled" : "disabled"}`);
   }
 
   const key = (e: DraftRoute) => `${e.from}>${e.to}`;

@@ -37,7 +37,9 @@ type Step struct {
 	Config Config `json:"-"`
 	// Tools lists the MCP tools ("<mcp_server_id>/<remote_name>") this step
 	// exposes, a subset of the flow version's selected tools.
-	Tools    []string  `json:"tools,omitempty"`
+	Tools []string `json:"tools,omitempty"`
+	// EndCall gives the step the end_call tool: the model can hang up after saying goodbye.
+	EndCall  bool      `json:"end_call,omitempty"`
 	Position *Position `json:"position,omitempty"`
 }
 
@@ -60,6 +62,7 @@ type rawStep struct {
 	Name     string          `json:"name"`
 	Config   json.RawMessage `json:"config"`
 	Tools    []string        `json:"tools"`
+	EndCall  bool            `json:"end_call"`
 	Position *Position       `json:"position"`
 }
 
@@ -160,7 +163,7 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		if err != nil {
 			return Definition{}, fmt.Errorf("step %q: %w", rn.ID, err)
 		}
-		g.Steps = append(g.Steps, Step{ID: rn.ID, Name: name, Config: cfg, Tools: rn.Tools, Position: rn.Position})
+		g.Steps = append(g.Steps, Step{ID: rn.ID, Name: name, Config: cfg, Tools: rn.Tools, EndCall: rn.EndCall, Position: rn.Position})
 	}
 	if c := g.RouteCue; c != nil && (!cueName.MatchString(c.Name) || c.AfterMS < 0 || c.AfterMS > maxCueAfterMS) {
 		return Definition{}, invalid("route_cue needs a name matching %s and after_ms between 0 and %d", cueName, maxCueAfterMS)

@@ -124,7 +124,7 @@ func newFlowRig(t *testing.T) *flowRig {
 			LLM: StageSpec{Provider: "google", SystemPrompt: "SALES"},
 			TTS: StageSpec{Provider: "google", Voice: "sales-voice"}}, nil
 	}
-	exec := stepExecutor(nil, nil, transferTargets(g, "front"), func(target string) error { return graph.Commit(target) })
+	exec := stepExecutor(nil, nil, transferTargets(g, "front"), func(target, _ string) error { return graph.Commit(target) }, nil)
 
 	reg := NewRegistry()
 	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return passSTTStage{}, nil })

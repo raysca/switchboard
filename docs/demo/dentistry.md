@@ -1,0 +1,58 @@
+# Smile Dental front-desk demo
+
+"Smile Dental" is a three-step voice flow that shows handoffs, shared context, tool use and call termination. A caller reaches the front desk, is routed to a new-patient or returning-patient agent, and the call ends when that agent says goodbye.
+
+| Step | LLM | TTS | MCP tools | Job |
+|---|---|---|---|---|
+| **Front desk** (start) | Gemini | ElevenLabs | none | Greet, take the name, ask if new or returning, route. Answers opening hours. Can end the call. |
+| **New patient** | xAI Grok | xAI | `register_patient`, `find_slots`, `book_appointment` | Greet by name, register, offer slots, book, confirm, end the call. |
+| **Returning patient** | Gemini | Google Chirp 3 HD | `find_patient`, `list_appointments`, `find_slots`, `reschedule_appointment`, `cancel_appointment` | Find the patient, move or cancel the appointment, confirm, end the call. |
+
+STT is Google (Chirp 2) for the whole call. The routes are plain-language conditions the model uses to call `transfer_to_new_patient` or `transfer_to_returning_patient`. Each transfer takes an optional `note` (at most 500 bytes) that is placed in the next step's greeting, so the name and intent survive even when the history is long.
+
+Each step's `end_call` flag gives it the `end_call` tool; the server waits for the bot to finish speaking, then closes the call. The three steps all set it.
+
+## What is installed
+
+The demo installer (`server/demo`) is idempotent. It creates or updates an MCP server named "Smile Dental scheduling" (endpoint from `DENTAL_MCP_URL`, bearer token from `MCP_TOKEN_DENTAL`, never stored), syncs its tools, and creates the flow "Smile Dental front desk" if it is missing.
+
+Three ways to trigger it, all the same code:
+
+- **Load demo** button on the Dashboard. It appears only when `DENTAL_MCP_URL` is set. The API is `GET /api/v1/demo` (status) and `POST /api/v1/demo/dental` (install).
+- **Config key `demo.auto_install: dental`** runs the installer once at startup. A failed install logs and never stops the server.
+- The `make dev` stack does not auto-install; use the button.
+
+The MCP server itself is `server/mcp/dentalmcp`, run as `cmd/dental-mcp`. It holds fake patients and appointments only.
+
+## Run it locally
+
+Provider keys for Google, xAI and ElevenLabs go in `examples/.env` (see [providers.md](../providers.md)). The xAI TTS voice needs the `xaispeech` build tag, which `make build` already uses.
+
+Terminal 1, the MCP server (port 18767, token `dev-dental-token`):
+
+```bash
+make dental-mcp
+```
+
+Terminal 2, set the two variables the server reads, then start the dev stack. `make dev` runs the server as a child process, so it inherits them from this shell; `scripts/dev.sh` does not set them itself. The development profile already allows loopback HTTP for MCP (`mcp.allow_local_http: true` in `config/development.yaml`).
+
+```bash
+export DENTAL_MCP_URL=http://127.0.0.1:18767/mcp
+export MCP_TOKEN_DENTAL=dev-dental-token
+make dev
+```
+
+Then open the Admin UI URL printed by `make dev`, enter the management key, and click **Load demo** on the Dashboard. Open the Flows page to see "Smile Dental front desk", and use **Test call** to talk to it.
+
+## Acceptance script
+
+1. New patient: say your name, say it is your first visit. The call routes to the new-patient step (the voice changes), the agent greets you by name, books a slot, says goodbye and the call ends by itself.
+2. Returning patient: say a name, ask to move an appointment. The call routes, the agent finds and moves the appointment, says goodbye, and the call ends.
+3. Calls page: both calls show the path (Front desk -> New patient / Returning patient), the transcript labelled by step, latencies, and "Ended by the flow" with the step.
+
+## Limits
+
+- The Calls page shows the path, the step-labelled transcript and how the call ended. It does **not yet list individual MCP tool calls**: the server does not write tool-call rows, so only `mcp.tool.execute` trace spans exist. Listing them is a known follow-up.
+- Speech-to-text is Google for the whole call; ElevenLabs STT is registered but unused in this flow.
+- Call history lives in the store. Cloud Run uses ephemeral SQLite, so a restarted instance needs `demo.auto_install` or the button to bring the demo back.
+- Keep recording off and retention short on any demo host: transcripts hold what callers say.

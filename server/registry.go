@@ -80,6 +80,8 @@ type CallSpec struct {
 	Flow *CallFlow
 	// OnRoute, if set, receives the handoff lifecycle (timeline, traces, metrics).
 	OnRoute func(core.HandoffEvent)
+	// OnEndCall receives the step whose end_call ended the call (trace).
+	OnEndCall func(stepID string)
 	// OnInjector, if set, receives the call's context injector as the pipeline is assembled
 	// (before any stage runs); the server registers it only after a successful build.
 	OnInjector func(ContextInjector)
@@ -598,8 +600,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				if n := lastStep.Load(); n != nil {
 					name = *n
 				}
-				return ctxPool.AddMessage(core.Message{Role: core.RoleUser,
-					Content: "[The caller was just transferred to you (" + name + "). Greet them briefly and continue.]"})
+				return ctxPool.AddMessage(core.Message{Role: core.RoleUser, Content: transferGreeting(name, call.Flow.takeNote())})
 			},
 		})
 		if err != nil {
@@ -708,12 +709,23 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 
 	procs := []core.Processor{vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc, &core.UnitFailureReporter{}}
-	idleProc, err := cfg.Idle.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, held)
+	idleProc, err := cfg.Idle.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, held, call.Flow != nil && call.Flow.CanEnd)
 	if err != nil {
 		return fail(fmt.Errorf("create idle controller: %w", err))
 	}
 	if idleProc != nil { // before the async trigger and the model; zero cost when off
 		procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(idleProc))
+	}
+	if call.Flow != nil && idleProc != nil {
+		call.Flow.End = func(stepID string) error {
+			if !idleProc.RequestEnd(EndReasonFlow, endCallWait) {
+				return errCallEnding
+			}
+			if call.OnEndCall != nil {
+				call.OnEndCall(stepID)
+			}
+			return nil
+		}
 	}
 	procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(asyncTrigger))
 	if dt.agg != nil {

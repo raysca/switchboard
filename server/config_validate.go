@@ -50,6 +50,9 @@ func validateProfileAndStorage(cfg *Config) error {
 	if cfg.Token.MaxLifetime != 0 && cfg.Token.MaxLifetime < 2*time.Second {
 		return errors.New("token.max_lifetime must be at least 2 seconds when configured")
 	}
+	if a := cfg.Demo.AutoInstall; a != "" && a != "dental" {
+		return errors.New(`demo.auto_install must be empty or "dental"`)
+	}
 	switch cfg.Storage.Dialect {
 	case "", "sqlite", "postgres": // empty is reported below as required
 	default:

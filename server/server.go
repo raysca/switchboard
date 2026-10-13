@@ -90,7 +90,9 @@ type Server struct {
 	nextCallID  atomic.Uint64
 	textTurns   atomic.Uint64
 	pruneStop   chan struct{}
-	recSink     *record.LocalSink // nil unless recording.enabled
+	demoMu      sync.Mutex         // serialises demo installs
+	stopDemo    context.CancelFunc // cancels the startup demo install; guarded by mu
+	recSink     *record.LocalSink  // nil unless recording.enabled
 }
 
 type activeCall struct {
@@ -495,6 +497,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	var injector ContextInjector
 	call.OnInjector = func(i ContextInjector) { injector = i }
 	call.OnRoute = s.onRoute(timeline, call.StoredSessionID)
+	call.OnEndCall = s.onEndCall(call.StoredSessionID)
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
 	if cue != nil {
 		base := call.OnRoute
@@ -860,6 +863,9 @@ func (s *Server) Start() error {
 	s.pruneStop = make(chan struct{})
 	go s.pruneTimelines()
 
+	if s.cfg.Demo.AutoInstall == "dental" {
+		s.autoInstallDemo()
+	}
 	s.ready.Store(true)
 	s.logger.Info("server started",
 		slog.String("public_addr", s.cfg.PublicListenAddr),
@@ -883,6 +889,9 @@ func (s *Server) AdminAddr() string  { return s.adminAddr }
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.shuttingDown.Store(true)
+	if s.stopDemo != nil {
+		s.stopDemo()
+	}
 	s.mu.Unlock()
 	s.ready.Store(false)
 	s.metrics.Draining.Store(1)

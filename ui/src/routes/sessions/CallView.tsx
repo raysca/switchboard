@@ -5,7 +5,7 @@ import type { ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
-import { clock, failedRoutes, interruptedCount, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import { clock, endedByFlow, failedRoutes, interruptedCount, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
 export type CallViewProps = { client: ApiClient; keyValue: string | null };
@@ -80,6 +80,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
   const traces = tracesQuery.data ?? null;
   const o = outcome(s);
   const label = (id: string) => st.names.get(id) ?? id;
+  const ended = endedByFlow(traces);
   const failed = failedRoutes(traces);
 
   const status = (
@@ -108,6 +109,12 @@ export function CallView({ client, keyValue }: CallViewProps) {
           <dt>Duration</dt>
           <dd>{clock(s.started_at, s.ended_at, now)}</dd>
         </div>
+        {ended && (
+          <div>
+            <dt>Ended</dt>
+            <dd>By the flow ({label(ended.step)})</dd>
+          </div>
+        )}
         <div>
           <dt>Turns</dt>
           <dd>{s.turn_count}</dd>

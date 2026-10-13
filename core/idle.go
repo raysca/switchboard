@@ -135,7 +135,7 @@ type IdleController struct {
 	mu                                  sync.Mutex
 	botSpeaking, userSpeaking, turnUser bool
 	waitingBot                          bool // a user turn is complete and the bot has not produced speech
-	userAt, botAt, endAt                time.Time
+	userAt, botAt, endAt, endPollAt     time.Time
 	prompts, strikes                    int
 	ending, sawStart, done              bool
 	sayAfterCancel, sayNow              string // fallback phrase: held until the cancel's interruption is back, then due
@@ -178,6 +178,29 @@ func (c *IdleController) SpeakIndex() int { return c.speak }
 
 // SetOnEnd installs the hang-up (before the session starts); see IdleConfig.OnEnd.
 func (c *IdleController) SetOnEnd(fn func(reason string)) { c.cfg.OnEnd = fn }
+
+// RequestEnd ends the call once the bot has finished the speech now playing, or
+// the next speech if it is silent right now, or after wait if it never speaks
+// (wait <= 0 uses GoodbyeWait). Unlike an idle hang-up it needs no timeout
+// configuration: a tool-driven goodbye. It reports false when the call is
+// already ending or ended, so a repeated request is a no-op.
+func (c *IdleController) RequestEnd(reason string, wait time.Duration) bool {
+	if wait <= 0 {
+		wait = c.cfg.GoodbyeWait
+	}
+	now := c.clk.Now()
+	c.mu.Lock()
+	if c.done || c.ending {
+		c.mu.Unlock()
+		return false
+	}
+	c.ending, c.endReason = true, reason
+	c.userAt, c.botAt = time.Time{}, time.Time{}
+	c.endAt, c.sawStart = now.Add(wait), c.botSpeaking
+	c.mu.Unlock()
+	c.poke()
+	return true
+}
 
 // Attach starts the clock: the user clock runs from the start of the call, so
 // a caller who connects and never speaks is prompted and hung up too.
@@ -237,9 +260,7 @@ func (c *IdleController) observe(f Frame) {
 		case SpeakingStopped:
 			c.botSpeaking = false
 			if c.ending {
-				if c.sawStart {
-					c.endAt = now
-				}
+				c.endSettledLocked(now)
 			} else {
 				c.arm(now)
 			}
@@ -291,7 +312,7 @@ func (c *IdleController) run(ctx context.Context) {
 			c.mu.Unlock()
 			return
 		}
-		next := earliest(c.userAt, c.botAt, c.endAt)
+		next := earliest(c.userAt, c.botAt, c.endAt, c.endPollAt)
 		c.mu.Unlock()
 		var tm IdleTimer
 		var tc <-chan time.Time
@@ -335,11 +356,33 @@ func (c *IdleController) busy() bool { return c.cfg.ToolsBusy != nil && c.cfg.To
 
 func (c *IdleController) answering() bool { return c.cfg.Answering == nil || c.cfg.Answering() }
 
+// endPoll is how often an ending call re-checks that the reply it waits for is done.
+const endPoll = 100 * time.Millisecond
+
+// endSettledLocked ends the call now if the bot has spoken and stopped and no reply
+// is still being generated; while one is, it re-checks every endPoll (the
+// goodbye the tool result asked for may be a second speech span or silent).
+// A nil Answering means no reply tracking: the stop alone ends the call.
+func (c *IdleController) endSettledLocked(now time.Time) {
+	if !c.sawStart || c.botSpeaking {
+		return
+	}
+	if c.cfg.Answering != nil && c.cfg.Answering() {
+		c.endPollAt = now.Add(endPoll)
+		return
+	}
+	c.endAt, c.endPollAt = now, time.Time{}
+}
+
 func (c *IdleController) fire() {
 	now := c.clk.Now()
 	var acts []func()
 	c.mu.Lock()
 	due := func(t time.Time) bool { return !t.IsZero() && !t.After(now) }
+	if due(c.endPollAt) {
+		c.endPollAt = time.Time{}
+		c.endSettledLocked(now)
+	}
 	switch {
 	case c.done:
 	case due(c.endAt):

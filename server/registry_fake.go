@@ -50,6 +50,11 @@ func init() {
 					cfg.ToolOnPhrase["transfer to "+strings.ReplaceAll(step, "_", " ")] = d.Name
 				}
 			}
+			for _, d := range spec.Tools {
+				if d.Name == endCallName {
+					cfg.ToolOnPhrase["end the call"] = endCallName
+				}
+			}
 			// MCP tools: "call tool <remote name> {json args}" calls it and the reply
 			// says what came back (MCP integration tests, server/mcp/mcptest).
 			phrases, spoken := mcpToolPhrases(spec.Tools)

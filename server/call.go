@@ -157,7 +157,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	tools, exec := rs.Definitions, rs.Executor
 	var graph *CallFlow
 	if len(g.Steps) > 1 {
-		graph = &CallFlow{Start: g.Start, Cue: g.RouteCue}
+		graph = &CallFlow{Start: g.Start, Cue: g.RouteCue, CanEnd: anyEndCall(g)}
 		graph.Resolve = func(ctx context.Context, id string) (StepSpec, error) { return s.stepSpec(ctx, rs, g, graph, id) }
 		tools, exec = s.stepToolset(rs, g, entry, graph)
 	}
@@ -236,12 +236,19 @@ func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step
 		allowed[d.Name] = true
 	}
 	defs := append(mcp[:len(mcp):len(mcp)], transferTools(g, n.ID)...)
-	return defs, stepExecutor(rs.Executor, allowed, transferTargets(g, n.ID), func(target string) error {
-		if cg.Commit == nil {
-			return errors.New("route not ready")
+	var end func() error
+	if n.EndCall {
+		defs = append(defs, endCallDefinition())
+		end = func() error {
+			if cg.End == nil {
+				return errors.New("end not ready")
+			}
+			return cg.End(n.ID)
 		}
-		return cg.Commit(target)
-	})
+	}
+	return defs, stepExecutor(rs.Executor, allowed, transferTargets(g, n.ID), func(target, note string) error {
+		return cg.commitWithNote(target, note)
+	}, end)
 }
 
 // stepSpec resolves a non-start step's LLM and TTS when the step is activated:

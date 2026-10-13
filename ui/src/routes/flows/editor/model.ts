@@ -12,6 +12,8 @@ export type DraftStep = {
   name: string;
   config: StepConfig;
   tools: string[];
+  /** the step may hang up */
+  end_call?: boolean;
   position: { x: number; y: number };
 };
 export type DraftRoute = { id: string; from: string; to: string; condition: string };
@@ -158,6 +160,7 @@ export function fromFlowConfig(raw: unknown, selectedTools: string[] = []): Flow
       name: String(r.name ?? ""),
       config: asRecord(r.config),
       tools: Array.isArray(r.tools) ? r.tools.map(String) : [],
+      end_call: r.end_call === true,
       position: { x: Number(pos.x ?? i * 280), y: Number(pos.y ?? 0) },
     };
   });
@@ -186,7 +189,7 @@ export function toPayload(g: FlowDraft): unknown {
     steps: g.steps.map((n) => {
       const config = { ...n.config };
       if (n.id !== g.start) for (const k of CALL_LEVEL) delete config[k];
-      return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), position: n.position };
+      return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call ? { end_call: true } : {}), position: n.position };
     }),
     routes: g.routes,
     ...(g.route_cue ? { route_cue: g.route_cue } : {}),

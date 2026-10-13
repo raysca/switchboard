@@ -683,3 +683,45 @@ func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
 		t.Fatal("an unknown cue must play nothing")
 	}
 }
+
+func endCallFlowJSON() json.RawMessage {
+	stt := `"stt":{"provider":"google","model":"s"}`
+	return json.RawMessage(`{"start":"front","steps":[` +
+		`{"id":"front","name":"Front desk","end_call":true,"config":{` + stt + `,"llm":{"provider":"google","model":"m","system_prompt":"FRONT"},"tts":{"provider":"google","voice":"frontvoice"}}},` +
+		`{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"m","system_prompt":"SALES"},"tts":{"provider":"google","voice":"salesvoice"}}}],` +
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)
+}
+
+func TestFlowE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Closer", Config: endCallFlowJSON()})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+	}
+	r.flowID = a.ID
+	c := r.dial(a.ID)
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+
+	c.say("hello")
+	c.waitReplies("[FRONT", 1)
+	if r.activeSessions() != 1 {
+		t.Fatal("the call must stay up until end_call")
+	}
+	c.say("please end the call")
+	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
+	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
+	eventually(t, "call.end span", func() bool { return r.spanNames(c.sessionID)["call.end"] })
+}
+
+// A step without the flag cannot end the call: the fake only offers the phrase to steps that have the tool.
+func TestFlowE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	c := r.dial(r.createRoutedFlow("salesvoice"))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	c.say("please end the call")
+	c.waitReplies("[FRONT", 1)
+	time.Sleep(300 * time.Millisecond)
+	if r.activeSessions() != 1 || r.has(EventDisconnect, "terminated: "+EndReasonFlow) {
+		t.Fatal("a step without end_call must not hang up")
+	}
+}

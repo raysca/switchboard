@@ -169,7 +169,10 @@ e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOI
 mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* /slow) and a black hole on :18766
 	go run ./cmd/mcptest -addr 127.0.0.1:18765 -blackhole-addr 127.0.0.1:18766
 
-.PHONY: mcp-test
+dental-mcp: ## dev|Run the Smile Dental demo MCP server on :18767 (token: dev-dental-token)
+	DENTAL_MCP_TOKEN=$${DENTAL_MCP_TOKEN:-dev-dental-token} PORT=18767 go run ./cmd/dental-mcp
+
+.PHONY: mcp-test dental-mcp
 
 dev: ## dev|Run the server and admin UI with generated secrets and a seeded Dev Assistant
 	@./scripts/dev.sh up

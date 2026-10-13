@@ -155,3 +155,12 @@ export function turnRows(session: SessionDTO, turns: TurnDTO[], traces: SessionT
 export function interruptedCount(turns: TurnDTO[]): number {
   return turns.filter((t) => t.interrupted).length;
 }
+
+/** The step whose end_call tool ended the call, from the call.end span; null for any other ending. */
+export function endedByFlow(traces: SessionTracesDTO | null | undefined): { step: string } | null {
+  for (const s of traces?.spans ?? []) {
+    const a = (s.attributes && typeof s.attributes === "object" ? s.attributes : {}) as Record<string, unknown>;
+    if (s.name === "call.end" && a.reason === "ended_by_flow" && typeof a.from_step === "string") return { step: a.from_step };
+  }
+  return null;
+}

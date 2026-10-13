@@ -282,4 +282,21 @@ describe("what the server will accept", () => {
     expect(stepIssues(dup, "b")).toContainEqual({ tab: "advanced", message: "A voice fallback repeats the voice or another fallback." });
     expect(validate(dup)).toContain("Billing: A voice fallback repeats the voice or another fallback.");
   });
+
+  it("round-trips a step's end_call flag", () => {
+    const cfg = {
+      start: "a",
+      steps: [
+        { id: "a", name: "A", end_call: true, config: { llm: {}, tts: {} } },
+        { id: "b", name: "B", config: { llm: {}, tts: {} } },
+      ],
+      routes: [{ id: "r", from: "a", to: "b", condition: "x" }],
+    };
+    const g = fromFlowConfig(cfg);
+    expect(g.steps[0].end_call).toBe(true);
+    expect(g.steps[1].end_call).toBeFalsy();
+    const out = toPayload(g) as { steps: { id: string; end_call?: boolean }[] };
+    expect(out.steps[0].end_call).toBe(true);
+    expect("end_call" in out.steps[1]).toBe(false);
+  });
 });

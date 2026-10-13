@@ -41,4 +41,8 @@ describe("describeChanges", () => {
     g = setStart(g, "b");
     expect(describeChanges(base, g)).toEqual(["Removed route Reception → Billing", "Start step is now Billing", "Flow settings: turn-taking changed"]);
   });
+
+  it("reports the end-call toggle", () => {
+    expect(describeChanges(base, updateStep(base, "b", { end_call: true }))).toEqual(["Billing: end call enabled"]);
+  });
 });

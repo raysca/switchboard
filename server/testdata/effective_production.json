@@ -26,6 +26,9 @@
   "AllowLocalHTTP": false,
   "Timeout": 15000000000
  },
+ "Demo": {
+  "AutoInstall": ""
+ },
  "Storage": {
   "Dialect": "postgres",
   "DSNEnv": ""

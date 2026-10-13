@@ -78,3 +78,15 @@ func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.
 		}
 	}
 }
+
+// onEndCall records the call.end span for a call ended by a step's end_call tool.
+func (s *Server) onEndCall(storedSessionID string) func(stepID string) {
+	return func(stepID string) {
+		if s.mgmt == nil || s.mgmt.traces == nil || storedSessionID == "" {
+			return
+		}
+		ev := core.NewTraceEvent("call.end", time.Now(), core.SessionID(storedSessionID), "", 0, core.TracePolicy{},
+			map[string]any{"reason": EndReasonFlow, "from_step": stepID})
+		core.StartSpanSafe(context.Background(), s.mgmt.traces, ev).End(nil)
+	}
+}

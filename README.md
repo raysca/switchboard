@@ -116,6 +116,7 @@ To rotate a key, change the variable and restart.
 **Getting started**
 - [Quick Start Guide](docs/quickstart.md): start the server, set the provider variables, create a flow, issue a voice token, connect with the Pipecat JS client.
 - [Providers](docs/providers.md): environment variables per provider, the catalog format, and the overlay directory for extra models and voices.
+- [Smile Dental demo](docs/demo/dentistry.md): a three-step front-desk flow with handoffs, MCP tools and call termination, and how to run it locally.
 
 **API and security**
 - [Management API v1](docs/api/v1.md): flows, providers, voice tokens, MCP servers and sessions.
