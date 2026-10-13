@@ -298,7 +298,7 @@ type Config struct {
 			STT           string        `yaml:"stt"`             // text (typed turns only) | audio (placeholder words from voiced audio)
 			Audible       bool          `yaml:"audible"`         // speak a quiet tone instead of silence
 			LabelReplies  bool          `yaml:"label_replies"`   // prefix replies with the step's prompt, so a test can tell which step answered
-			LLMExtraDelay time.Duration `yaml:"llm_extra_delay"` // added to every reply word (the perf-gate self-test)
+			LLMExtraDelay time.Duration `yaml:"llm_extra_delay"` // added between reply pieces, after the first (the perf-gate self-test)
 		} `yaml:"echo"`
 
 		XAISTT struct {

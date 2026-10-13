@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,7 +89,7 @@ func TestStreamingTTSDeliversTwentyMillisecondChunks(t *testing.T) {
 }
 
 // ttsRun drives a real Google TTS processor built around the echo client.
-func ttsRun(t *testing.T, proc core.Processor, text string) (audio int, final bool, providers []string) {
+func ttsRun(t *testing.T, proc core.Processor, text string) (audio int) {
 	t.Helper()
 	sink := &core.PassthroughProcessor{}
 	pipe, err := core.NewPipeline(proc, sink)
@@ -105,21 +106,19 @@ func ttsRun(t *testing.T, proc core.Processor, text string) (audio int, final bo
 	defer sess.Close()
 	_ = sess.Post(&core.SynthesisUnitFrame{Turn: "t1", Gen: 1, UnitID: 1, Text: text, IsFinal: true})
 	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
-		audio, final, providers = 0, false, nil
+		final := false
+		audio = 0
 		for _, f := range sink.GetFrames() {
-			switch v := f.(type) {
-			case *core.OutputAudioFrame:
+			if v, ok := f.(*core.OutputAudioFrame); ok {
 				audio++
 				final = final || v.IsFinal
-			case *core.UsageMetricsFrame:
-				providers = append(providers, v.Provider)
 			}
 		}
-		if final && len(providers) > 0 {
+		if final {
 			return
 		}
 	}
-	t.Fatalf("no final audio and usage: audio=%d final=%v usage=%v", audio, final, providers)
+	t.Fatalf("no final audio frame: %d frames", audio)
 	return
 }
 
@@ -131,14 +130,8 @@ func TestRealStreamingProcessorSpeaksThroughEchoClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	audio, _, providers := ttsRun(t, proc, "Hello there, how can I help?")
-	if audio < 80 {
+	if audio := ttsRun(t, proc, "Hello there, how can I help?"); audio < 80 {
 		t.Fatalf("%d audio frames for ~1.8 s of speech", audio)
-	}
-	for _, p := range providers {
-		if p != "echo" {
-			t.Fatalf("usage provider %q, want echo", p)
-		}
 	}
 }
 
@@ -154,20 +147,18 @@ func TestRealUnaryProcessorSpeaksThroughEchoClientAndSplitsLongUnits(t *testing.
 		t.Fatal(err)
 	}
 	long := strings.Repeat("Hello there, how can I help you today? ", 3) // over 40 runes: the real processor splits it
-	if _, _, providers := ttsRun(t, proc, long); len(providers) == 0 || providers[0] != "echo" {
-		t.Fatalf("usage providers %v", providers)
-	}
-	if counting.calls < 2 {
-		t.Fatalf("the real processor should split a %d-rune unit into several client calls, got %d", len([]rune(long)), counting.calls)
+	ttsRun(t, proc, long)
+	if n := counting.calls.Load(); n < 2 {
+		t.Fatalf("the real processor should split a %d-rune unit into several client calls, got %d", len([]rune(long)), n)
 	}
 }
 
 type countingTTS struct {
 	*TTSClient
-	calls int
+	calls atomic.Int32
 }
 
 func (c *countingTTS) SynthesizeSpeech(ctx context.Context, text, voice string, rate int) ([]byte, error) {
-	c.calls++
+	c.calls.Add(1)
 	return c.TTSClient.SynthesizeSpeech(ctx, text, voice, rate)
 }

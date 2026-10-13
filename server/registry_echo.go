@@ -15,24 +15,16 @@ import (
 // at no cost. It needs no secret, so spec.Secret is never read.
 func registerEcho(r *Registry) {
 	r.Register("echo.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		sttCfg := echoSTTConfig(cfg, spec)
-		sttCfg.CircuitBreaker = r.echoSTTBreaker
-		if spec.Failover {
-			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
-		}
+		sttCfg := googleSTTConfig(cfg, spec, r.echoSTTBreaker)
+		sttCfg.Provider = "echo"
 		sttCfg.StreamOpener = echo.NewSTTOpener(echo.Mimic(cfg.Providers.Echo.Mimic).STT(sttCfg.Model), cfg.Providers.Echo.STT == "audio")
 		return google.NewSTTProcessor(sttCfg)
 	})
 
 	r.Register("echo.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		llmCfg := google.DefaultLLMConfig()
-		llmCfg.Provider, llmCfg.Model, llmCfg.SystemPrompt = "echo", spec.Model, spec.SystemPrompt
-		if len(spec.Tools) > 0 {
-			llmCfg.ToolDefinitions, llmCfg.ToolExecutor, llmCfg.ToolHistory = spec.Tools, spec.ToolExecutor, spec.History
-			llmCfg.ToolLoopConfig = spec.toolLoopConfig()
-		}
+		llmCfg := googleLLMConfig(spec, r.echoLLMBreaker)
+		llmCfg.Provider = "echo"
 		llmCfg.Client = echo.NewLLMClient(echoLLMOptions(cfg, spec))
-		llmCfg.CircuitBreaker = r.echoLLMBreaker
 		return google.NewLLMProcessor(llmCfg)
 	})
 
@@ -41,43 +33,11 @@ func registerEcho(r *Registry) {
 		if spec.Voice == "brokenvoice" {
 			return nil, errors.New("echo tts: voice brokenvoice is unavailable")
 		}
-		ttsCfg := google.DefaultTTSConfig()
+		ttsCfg := googleTTSConfig(cfg, spec, r.echoTTSBreaker)
 		ttsCfg.Provider = "echo"
-		if spec.Voice != "" {
-			ttsCfg.Voice = spec.Voice
-		}
-		if cfg.Providers.GoogleTTS.SampleRate > 0 {
-			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
-		}
-		streaming := google.IsChirp3HD(ttsCfg.Voice) && !cfg.Providers.GoogleTTS.DisableStreaming
-		ttsCfg.Client = echo.NewTTSClient(echo.Mimic(cfg.Providers.Echo.Mimic).TTS(streaming), cfg.Providers.Echo.Audible)
-		ttsCfg.CircuitBreaker = r.echoTTSBreaker
-		if spec.Failover {
-			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
-		}
-		if streaming {
-			return google.NewStreamingTTSProcessor(ttsCfg)
-		}
-		return google.NewTTSProcessor(ttsCfg)
+		ttsCfg.Client = echo.NewTTSClient(echo.Mimic(cfg.Providers.Echo.Mimic).TTS(googleTTSStreams(cfg, ttsCfg.Voice)), cfg.Providers.Echo.Audible)
+		return googleTTSProcessor(cfg, ttsCfg)
 	})
-}
-
-// echoSTTConfig is the STT config an echo stage runs with: the spec's model and language and the
-// stream rotation the operator set for Google's STT (providers.google_stt.rotation_threshold), so
-// rotation can be exercised on echo. Location and project are Google Cloud addressing: not used.
-func echoSTTConfig(cfg *Config, spec StageSpec) google.STTConfig {
-	sttCfg := google.DefaultSTTConfig()
-	sttCfg.Provider = "echo"
-	if spec.Model != "" {
-		sttCfg.Model = spec.Model
-	}
-	if spec.Language != "" {
-		sttCfg.LanguageCode = spec.Language
-	}
-	if t := cfg.Providers.GoogleSTT.RotationThreshold; t > 0 {
-		sttCfg.StreamRotationThreshold = t
-	}
-	return sttCfg
 }
 
 // echoLLMOptions turns the config and the stage into the simulated model's options: its timing, the

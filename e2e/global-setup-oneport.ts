@@ -1,3 +1,4 @@
+import { withEchoProvider } from "./lib/echo-config";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -28,14 +29,12 @@ export default async function globalSetup() {
   });
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "govoice-e2e-oneport-"));
-  const config = fs
+  const config = withEchoProvider(fs
     .readFileSync(path.join(repo, "config/development.yaml"), "utf8")
     .replace(/^public_listen_addr:.*$/m, `public_listen_addr: "127.0.0.1:${PORTS.public}"`)
     .replace(/^admin_listen_addr:.*$/m, `admin_listen_addr: "127.0.0.1:${PORTS.admin}"`)
     // An unrelated origin: only origin_allow_same_host can admit the browser.
-    .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n  - "https://not-this-site.example"\n`)
-    // The echo provider needs no keys; instant = no provider latency, label_replies = each reply names its step.
-    .replace(/^providers:$/m, "providers:\n  echo:\n    mimic: instant\n    label_replies: true");
+    .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n  - "https://not-this-site.example"\n`));
   const configPath = path.join(tmpDir, "server.yaml");
   fs.writeFileSync(configPath, `${config}\npublic_admin:\n  enabled: true\norigin_allow_same_host: true\n`);
 

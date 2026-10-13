@@ -59,7 +59,7 @@ func parseFlags(args []string) (*flags, error) {
 	fs.StringVar(&f.vadMode, "vad-mode", "process", "server VAD mode: process (vadworker child) | inprocess")
 	fs.BoolVar(&f.turnManager, "turn-manager", false, "enable the server turn manager (turn.manager: true)")
 	fs.StringVar(&f.root, "root", ".", "repo root")
-	fs.DurationVar(&f.llmDelay, "llm-delay", 0, "extra latency per LLM word (providers.echo.llm_extra_delay); the perf-gate self-test uses it")
+	fs.DurationVar(&f.llmDelay, "llm-delay", 0, "extra latency between LLM reply pieces (providers.echo.llm_extra_delay); the perf-gate self-test uses it")
 	fs.StringVar(&f.serverBin, "server-bin", "", "prebuilt server (vadworker next to it); default builds one")
 	fs.BoolVar(&f.keepWork, "keep-work", false, "keep the temp dir (server log, config) and print its path")
 	fs.BoolVar(&f.soak, "soak", false, "label the run a soak and require valid growth windows")

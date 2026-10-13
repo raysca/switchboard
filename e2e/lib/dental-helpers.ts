@@ -10,21 +10,21 @@ type Stored = {
 };
 
 // The installed dental flow uses xai/elevenlabs stages, which have no fake build. This creates
-// "Dental (fake)": the same steps, routes, end_call flags, step tools and MCP selections, with
+// "Dental (echo)": the same steps, routes, end_call flags, step tools and MCP selections, with
 // every stage on the echo provider.
-export async function createFakeDentalVariant(stack: Stack, installedId: string) {
+export async function createEchoDentalVariant(stack: Stack, installedId: string) {
   const { data } = await api<{ data: Stored }>(stack, `/flows/${installedId}`);
   const { config, mcp_tools } = data.current_version;
   const steps = config.steps.map((s) => {
     const c: any = {};
-    if (s.config.stt) c.stt = { provider: "echo", model: "chirp" };
-    c.llm = { provider: "echo", model: "fake-llm", system_prompt: s.config.llm.system_prompt };
-    c.tts = { provider: "echo", voice: "v" };
+    if (s.config.stt) c.stt = { provider: "echo", model: "chirp_2" };
+    c.llm = { provider: "echo", model: "gemini-2.5-flash", system_prompt: s.config.llm.system_prompt };
+    c.tts = { provider: "echo", voice: "en-US-Chirp3-HD-Aoede" };
     return { ...s, config: c };
   });
   await api(stack, "/flows", {
     method: "POST",
-    body: JSON.stringify({ name: "Dental (fake)", config: { ...config, steps }, mcp_tools }),
+    body: JSON.stringify({ name: "Dental (echo)", config: { ...config, steps }, mcp_tools }),
   });
   return { config, mcp_tools };
 }

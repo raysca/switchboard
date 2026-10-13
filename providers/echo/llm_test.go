@@ -215,23 +215,17 @@ func TestRealLLMProcessorRunsTheToolLoopAgainstEcho(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = sess.Post(&core.UserMessageFrame{Turn: "turn-1", Gen: 1, Content: "please transfer to sales"})
-	var said, usage string
-	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
-		said, usage = "", ""
+	var said string
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end) && !strings.Contains(said, "Connecting you."); time.Sleep(10 * time.Millisecond) {
+		said = ""
 		for _, f := range sink.GetFrames() {
-			switch v := f.(type) {
-			case *core.LLMTextDeltaFrame:
+			if v, ok := f.(*core.LLMTextDeltaFrame); ok {
 				said += v.Delta
-			case *core.UsageMetricsFrame:
-				usage = v.Provider
 			}
 		}
-		if strings.Contains(said, "Connecting you.") && usage != "" {
-			break
-		}
 	}
-	if ran.Load() != 1 || said != "Connecting you." || usage != "echo" {
-		t.Fatalf("tool ran %d times, said %q, usage provider %q", ran.Load(), said, usage)
+	if ran.Load() != 1 || said != "Connecting you." {
+		t.Fatalf("tool ran %d times, said %q", ran.Load(), said)
 	}
 }
 

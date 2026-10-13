@@ -160,6 +160,65 @@ type Registry struct {
 	onTTSFallbackSkipped func()                                           // set by BindMetrics
 }
 
+// The Google stage configs, shared by the google and the echo factories: echo runs these same
+// processors against simulated backends, so only the client, the breaker and the label differ.
+
+func googleSTTConfig(cfg *Config, spec StageSpec, breaker *resilience.Breaker) google.STTConfig {
+	c := google.DefaultSTTConfig()
+	if spec.Model != "" {
+		c.Model = spec.Model
+	}
+	if spec.Language != "" {
+		c.LanguageCode = spec.Language
+	}
+	if t := cfg.Providers.GoogleSTT.RotationThreshold; t > 0 {
+		c.StreamRotationThreshold = t
+	}
+	c.CircuitBreaker = breaker
+	if spec.Failover {
+		c.RetryPolicy = failoverPolicy("stt", c.RetryPolicy)
+	}
+	return c
+}
+
+func googleLLMConfig(spec StageSpec, breaker *resilience.Breaker) google.LLMConfig {
+	c := google.DefaultLLMConfig()
+	c.Model, c.SystemPrompt = spec.Model, spec.SystemPrompt
+	if len(spec.Tools) > 0 {
+		c.ToolDefinitions, c.ToolExecutor, c.ToolHistory = spec.Tools, spec.ToolExecutor, spec.History
+		c.ToolLoopConfig = spec.toolLoopConfig()
+	}
+	c.CircuitBreaker = breaker
+	return c
+}
+
+func googleTTSConfig(cfg *Config, spec StageSpec, breaker *resilience.Breaker) google.TTSConfig {
+	c := google.DefaultTTSConfig()
+	if spec.Voice != "" {
+		c.Voice = spec.Voice
+	}
+	if cfg.Providers.GoogleTTS.SampleRate > 0 {
+		c.SampleRate = cfg.Providers.GoogleTTS.SampleRate
+	}
+	c.CircuitBreaker = breaker
+	if spec.Failover {
+		c.RetryPolicy = failoverPolicy("tts", c.RetryPolicy)
+	}
+	return c
+}
+
+// googleTTSStreams is whether voice is synthesized over a stream (Chirp 3 HD, unless disabled).
+func googleTTSStreams(cfg *Config, voice string) bool {
+	return google.IsChirp3HD(voice) && !cfg.Providers.GoogleTTS.DisableStreaming
+}
+
+func googleTTSProcessor(cfg *Config, c google.TTSConfig) (core.Processor, error) {
+	if googleTTSStreams(cfg, c.Voice) {
+		return google.NewStreamingTTSProcessor(c)
+	}
+	return google.NewTTSProcessor(c)
+}
+
 func factoryKey(provider, stage string) string { return provider + "." + stage }
 
 func NewRegistry() *Registry {
@@ -186,17 +245,8 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("google.stt: %w", err)
 		}
-		sttCfg := google.DefaultSTTConfig()
-		if spec.Model != "" {
-			sttCfg.Model = spec.Model
-		}
-		if spec.Language != "" {
-			sttCfg.LanguageCode = spec.Language
-		}
+		sttCfg := googleSTTConfig(cfg, spec, r.googleSTTBreaker)
 		infra := cfg.Providers.GoogleSTT
-		if infra.RotationThreshold > 0 {
-			sttCfg.StreamRotationThreshold = infra.RotationThreshold
-		}
 		if infra.Location != "" {
 			sttCfg.Location = infra.Location
 		}
@@ -205,10 +255,6 @@ func NewRegistry() *Registry {
 			sttCfg.ProjectID = material.ProjectID
 		}
 		sttCfg.CredentialsJSON, sttCfg.APIKey = material.ServiceAccountJSON, material.APIKey
-		sttCfg.CircuitBreaker = r.googleSTTBreaker
-		if spec.Failover {
-			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
-		}
 		opener, err := google.NewRealGoogleSTTOpener(context.Background(), sttCfg)
 		if err != nil {
 			return nil, fmt.Errorf("google.stt: %w", err)
@@ -234,14 +280,8 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("google.llm: %w", err)
 		}
-		llmCfg := google.DefaultLLMConfig()
-		llmCfg.Model, llmCfg.SystemPrompt = spec.Model, spec.SystemPrompt
-		if len(spec.Tools) > 0 {
-			llmCfg.ToolDefinitions, llmCfg.ToolExecutor, llmCfg.ToolHistory = spec.Tools, spec.ToolExecutor, spec.History
-			llmCfg.ToolLoopConfig = spec.toolLoopConfig()
-		}
+		llmCfg := googleLLMConfig(spec, r.googleLLMBreaker)
 		llmCfg.Client = client
-		llmCfg.CircuitBreaker = r.googleLLMBreaker
 		return google.NewLLMProcessor(llmCfg)
 	})
 
@@ -250,27 +290,14 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("google.tts: %w", err)
 		}
-		ttsCfg := google.DefaultTTSConfig()
-		if spec.Voice != "" {
-			ttsCfg.Voice = spec.Voice
-		}
-		if cfg.Providers.GoogleTTS.SampleRate > 0 {
-			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
-		}
+		ttsCfg := googleTTSConfig(cfg, spec, r.googleTTSBreaker)
 		ttsCfg.CredentialsJSON, ttsCfg.APIKey = material.ServiceAccountJSON, material.APIKey
 		client, err := google.NewRealGoogleTTSClient(context.Background(), ttsCfg)
 		if err != nil {
 			return nil, fmt.Errorf("google.tts: %w", err)
 		}
 		ttsCfg.Client = client
-		ttsCfg.CircuitBreaker = r.googleTTSBreaker
-		if spec.Failover {
-			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
-		}
-		if google.IsChirp3HD(ttsCfg.Voice) && !cfg.Providers.GoogleTTS.DisableStreaming {
-			return google.NewStreamingTTSProcessor(ttsCfg)
-		}
-		return google.NewTTSProcessor(ttsCfg)
+		return googleTTSProcessor(cfg, ttsCfg)
 	})
 
 	r.Register("xai.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {

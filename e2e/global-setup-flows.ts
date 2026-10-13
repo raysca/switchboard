@@ -1,3 +1,4 @@
+import { withEchoProvider } from "./lib/echo-config";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -66,15 +67,13 @@ export default async function globalSetup() {
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "govoice-e2e-graph-"));
   const origins = [`http://127.0.0.1:${PORTS.ui}`, `http://localhost:${PORTS.ui}`];
-  const config = fs
+  const config = withEchoProvider(fs
     .readFileSync(path.join(repo, "config/development.yaml"), "utf8")
     .replace(/^public_listen_addr:.*$/m, `public_listen_addr: "127.0.0.1:${PORTS.public}"`)
     .replace(/^admin_listen_addr:.*$/m, `admin_listen_addr: "127.0.0.1:${PORTS.admin}"`)
     .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n${origins.map((o) => `  - "${o}"\n`).join("")}`)
     // Local test MCP servers; a short MCP timeout keeps the failure cases quick.
-    .replace(/^  allow_local_http: true$/m, "  allow_local_http: true\n  timeout: 2s")
-    // The echo provider needs no keys; instant = no provider latency, label_replies = each reply names its step.
-    .replace(/^providers:$/m, "providers:\n  echo:\n    mimic: instant\n    label_replies: true");
+    .replace(/^  allow_local_http: true$/m, "  allow_local_http: true\n  timeout: 2s"));
   // A route cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the steps can name as "chime".
   const chime = path.join(tmpDir, "chime.wav");
   fs.writeFileSync(chime, toneWav(24000, 0.4, 440, 12000));

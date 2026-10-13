@@ -41,8 +41,8 @@ the Go "e2e" (`server/e2e/scenarios_test.go`) builds `core` pipelines in-process
 `server/registry_noxaispeech.go` with `go build -overlay`; that replacement file was never compiled by
 vet/CI/gopls, duplicated an unrelated symbol, and could not combine with `-tags xaispeech`. The tagged file is
 type-checked by `go vet -tags fakeproviders ./server/...` and can be reused by a fake-provider Playwright
-or load-test (P5-4) stack. (Historical: the tag was replaced by the always-built `echo` provider, which the
-Playwright and load-test stacks now use.)
+or load-test (P5-4) stack. (Historical: the tag no longer exists; the always-built `echo` provider replaced
+it and the Playwright and load-test stacks use that.)
 
 ## What had to be shimmed
 

@@ -2,7 +2,7 @@ import { test, expect, LIVE } from "../lib/flows-stack";
 import type { Stack } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
 import { api, botReplies, connectAdmin, openFlowTest, startCall, stepCard } from "../lib/flows-helpers";
-import { createFakeDentalVariant, toolTurn, turn } from "../lib/dental-helpers";
+import { createEchoDentalVariant, toolTurn, turn } from "../lib/dental-helpers";
 
 // What this verifies: the demo installs from the Dashboard; a call is handed off by route (front
 // desk -> New patient / Returning patient), the new step takes the next turn, its MCP tools run
@@ -26,7 +26,7 @@ test("load the demo from the Dashboard: three steps, two routes", async ({ page,
 
   const flows = await api<{ data: { id: string; name: string }[] }>(stack, "/flows");
   const installed = flows.data.find((f) => f.name === "Smile Dental front desk")!;
-  const { config, mcp_tools } = await createFakeDentalVariant(stack, installed.id);
+  const { config, mcp_tools } = await createEchoDentalVariant(stack, installed.id);
   expect(config.steps).toHaveLength(3);
   expect(config.routes).toHaveLength(2);
   expect(config.steps.every((s: any) => s.end_call)).toBe(true);
@@ -35,7 +35,7 @@ test("load the demo from the Dashboard: three steps, two routes", async ({ page,
 
 test("a new patient call: handed off by route, MCP tools called, hung up by end_call", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlowTest(page, "Dental (fake)");
+  await openFlowTest(page, "Dental (echo)");
   await startCall(page);
 
   await turn(page, "hello");
@@ -58,8 +58,8 @@ async function openLatestCall(page: import("@playwright/test").Page, stack: Stac
   await connectAdmin(page, stack);
   await page.getByRole("link", { name: "Calls", exact: true }).first().click();
   await expect(page.getByRole("heading", { name: "Calls", level: 1 })).toBeVisible();
-  await page.getByRole("combobox", { name: "Flow", exact: true }).selectOption({ label: "Dental (fake)" });
-  const rows = page.getByRole("row").filter({ hasText: "Dental (fake)" });
+  await page.getByRole("combobox", { name: "Flow", exact: true }).selectOption({ label: "Dental (echo)" });
+  const rows = page.getByRole("row").filter({ hasText: "Dental (echo)" });
   await expect(rows).toHaveCount(nth, { timeout: 20_000 });
   await expect(rows.first()).toContainText("Ended", { timeout: 20_000 });
   await rows.first().getByRole("link").click();
@@ -88,7 +88,7 @@ test("calls: the new patient call shows its path, step labels, how it ended and 
 
 test("a returning patient call: handed off by route, MCP tools called, hung up by end_call", async ({ page, stack }) => {
   await connectAdmin(page, stack);
-  await openFlowTest(page, "Dental (fake)");
+  await openFlowTest(page, "Dental (echo)");
   await startCall(page);
   await turn(page, "transfer to returning patient");
   await expect(stepCard(page, "Returning patient").locator(".step-node")).toHaveAttribute("data-state", "active", { timeout: 15_000 });

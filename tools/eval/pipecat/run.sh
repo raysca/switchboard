@@ -24,6 +24,7 @@ go build -o "$OUT/vadworker" ./cmd/vadworker   # server looks for vadworker next
 sed -e "s|^public_listen_addr:.*|public_listen_addr: \"127.0.0.1:$PUB\"|" \
     -e "s|^admin_listen_addr:.*|admin_listen_addr: \"127.0.0.1:$ADM\"|" \
     config/development.yaml | awk '{print} /^providers:$/ {print "  echo: {mimic: instant, stt: audio}"}' > "$OUT/server.yaml"
+grep -q 'echo: {mimic: instant' "$OUT/server.yaml" || { echo "eval-pipecat: config/development.yaml has no top-level providers: line to add providers.echo to" >&2; exit 1; }
 
 export GOVOICE_DEV_DIR="$OUT/data" GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)" TOKEN_SECRET="$(openssl rand -hex 32)"
 # The flow uses the echo provider (no keys). ENV_FILE=/dev/null stops the development server loading examples/.env itself.

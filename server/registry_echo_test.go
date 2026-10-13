@@ -146,11 +146,11 @@ func TestEchoStagesShareTheirBreakersWithFailover(t *testing.T) {
 	}
 }
 
-func TestEchoSTTHonoursGoogleSTTRotationAndSpec(t *testing.T) {
+func TestSTTConfigHonoursRotationAndSpec(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Providers.GoogleSTT.RotationThreshold = 90 * time.Second
-	got := echoSTTConfig(cfg, StageSpec{Model: "latest_long", Language: "en-GB"})
-	if got.StreamRotationThreshold != 90*time.Second || got.Model != "latest_long" || got.LanguageCode != "en-GB" || got.Provider != "echo" {
+	got := googleSTTConfig(cfg, StageSpec{Model: "latest_long", Language: "en-GB"}, nil)
+	if got.StreamRotationThreshold != 90*time.Second || got.Model != "latest_long" || got.LanguageCode != "en-GB" {
 		t.Fatalf("config %+v", got)
 	}
 }
