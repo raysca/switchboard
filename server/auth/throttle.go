@@ -22,8 +22,9 @@ type Throttle struct {
 	every time.Duration
 	now   func() time.Time // monotonic clock readings come from time.Now
 
-	mu     sync.Mutex
-	limits map[string]*rate.Limiter
+	mu        sync.Mutex
+	lastSweep time.Time // a full-table sweep runs at most once per `every`
+	limits    map[string]*rate.Limiter
 }
 
 func NewThrottle(burst int, every time.Duration) *Throttle {
@@ -35,9 +36,12 @@ func (t *Throttle) limiter(key string, now time.Time) *rate.Limiter {
 		return l
 	}
 	if len(t.limits) >= maxThrottleEntries {
-		for k, l := range t.limits { // sweep addresses whose allowance is whole again
-			if l.TokensAt(now) >= float64(t.burst) {
-				delete(t.limits, k)
+		if now.Sub(t.lastSweep) >= t.every {
+			t.lastSweep = now
+			for k, l := range t.limits { // sweep addresses whose allowance is whole again
+				if l.TokensAt(now) >= float64(t.burst) {
+					delete(t.limits, k)
+				}
 			}
 		}
 		if len(t.limits) >= maxThrottleEntries {
@@ -58,6 +62,9 @@ func (t *Throttle) Blocked(key string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	l, ok := t.limits[key]
+	if !ok && len(t.limits) >= maxThrottleEntries {
+		l, ok = t.limits[overflowKey] // a full table sends new addresses to the shared bucket
+	}
 	return ok && l.TokensAt(now) < 1
 }
 

@@ -65,6 +65,28 @@ func TestThrottleIdleEntriesAreSwept(t *testing.T) {
 	}
 }
 
+func TestThrottleOverflowFailsClosed(t *testing.T) {
+	th, _ := newTestThrottle(t)
+	for i := 0; i < maxThrottleEntries; i++ {
+		th.Fail("a" + itoa(i)) // one failure each: not idle, so never swept
+	}
+	for i := 0; i < 10; i++ {
+		th.Fail("hot")
+	}
+	for i := 0; i < 10; i++ {
+		th.Fail("fresh" + itoa(i)) // diverted to the shared overflow bucket
+	}
+	if !th.Blocked("fresh-new") {
+		t.Fatal("a new address must be refused once the overflow bucket is spent")
+	}
+	if !th.Blocked("hot") {
+		t.Fatal("an existing throttled key stays blocked")
+	}
+	if th.Blocked("a5") {
+		t.Fatal("a known quiet key is unaffected")
+	}
+}
+
 func itoa(i int) string {
 	const digits = "0123456789"
 	if i == 0 {
