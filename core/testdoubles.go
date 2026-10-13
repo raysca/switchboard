@@ -1,5 +1,12 @@
 package core
 
+// Test doubles for pipelines: scripted processors with failure injection (FailWith, FailAfter,
+// IgnoreCancel), pipeline sinks and a recording transport output. They are not providers. A call
+// that should behave like a real provider, in the UI, the harnesses or an end-to-end test, uses the
+// simulated provider in providers/echo, which runs the real Google processors against simulated
+// backends. These stay here for the tests that need to break a stage on purpose, and for the
+// framework-overhead benchmark, which must measure the pipeline and nothing else.
+
 import (
 	"context"
 	"encoding/json"

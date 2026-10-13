@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "govoice-loadtest",
-  "started_at": "2026-10-07T23:38:29.462735+01:00",
+  "started_at": "2026-10-13T15:39:27.012042+01:00",
   "machine": {
     "os": "darwin",
     "arch": "arm64",
@@ -40,11 +40,11 @@
     "error_pct": 0,
     "voice_to_voice_client_ms": {
       "n": 28,
-      "p50_ms": 941.660083,
-      "p95_ms": 962.088334,
-      "p99_ms": 962.478833,
-      "max_ms": 962.478833,
-      "mean_ms": 947.0446040714288
+      "p50_ms": 983.352208,
+      "p95_ms": 998.291875,
+      "p99_ms": 1001.564,
+      "max_ms": 1001.564,
+      "mean_ms": 983.0502023571427
     },
     "server_stage_ms": {
       "llm_ttft": {
@@ -53,7 +53,7 @@
         "p95_ms": 47.5,
         "p99_ms": 49.5,
         "max_ms": 50,
-        "mean_ms": 0.02
+        "mean_ms": 0.25
       },
       "startup": {
         "n": 12,
@@ -65,11 +65,11 @@
       },
       "stt_final": {
         "n": 28,
-        "p50_ms": 250,
-        "p95_ms": 295,
-        "p99_ms": 299,
-        "max_ms": 300,
-        "mean_ms": 200.25
+        "p50_ms": 875,
+        "p95_ms": 987.5,
+        "p99_ms": 997.5,
+        "max_ms": 1000,
+        "mean_ms": 809.71
       },
       "tts_ttfb": {
         "n": 28,
@@ -77,15 +77,15 @@
         "p95_ms": 47.5,
         "p99_ms": 49.5,
         "max_ms": 50,
-        "mean_ms": 0.08
+        "mean_ms": 0.84
       },
       "voice_to_voice": {
         "n": 28,
-        "p50_ms": 250,
-        "p95_ms": 295,
-        "p99_ms": 299,
-        "max_ms": 300,
-        "mean_ms": 200.55
+        "p50_ms": 875,
+        "p95_ms": 987.5,
+        "p99_ms": 997.5,
+        "max_ms": 1000,
+        "mean_ms": 811.39
       }
     },
     "server_counters": {
@@ -102,24 +102,24 @@
       "vad_worker_restarts": 0
     },
     "resources": {
-      "rss_idle_mb": 257.95,
-      "rss_peak_mb": 314.7,
-      "rss_steady_mb": 311.25,
-      "mb_per_session": 13.33,
-      "cpu_seconds": 3.55,
-      "cores_avg": 0.12,
+      "rss_idle_mb": 263.56,
+      "rss_peak_mb": 311.11,
+      "rss_steady_mb": 309.47,
+      "mb_per_session": 11.48,
+      "cpu_seconds": 5.17,
+      "cores_avg": 0.17,
       "session_minutes": 1.92,
-      "cpu_s_per_session_min": 1.85,
+      "cpu_s_per_session_min": 2.69,
       "goroutines_idle": 17,
-      "goroutines_peak": 66,
+      "goroutines_peak": 75,
       "goroutines_after_drain": 17,
-      "heap_peak_mb": 52.43,
+      "heap_peak_mb": 44.64,
       "fds_idle": 36,
       "fds_peak": 43,
       "fds_after_drain": 39,
       "client_pacing_lag_ms": {
         "n": 5782,
-        "p50_ms": 2,
+        "p50_ms": 1,
         "p95_ms": 5,
         "p99_ms": 5,
         "max_ms": 5,
@@ -128,8 +128,8 @@
     },
     "growth": {
       "window_s": 7,
-      "rss_pct": 5.45,
-      "heap_pct": -81.61,
+      "rss_pct": 4.49,
+      "heap_pct": -76.49,
       "goroutines": 0,
       "goroutines_residual_after_drain": 0,
       "fds": 1,
@@ -181,7 +181,7 @@
       },
       {
         "name": "v2v_p95_ms",
-        "value": 962.09,
+        "value": 998.29,
         "limit": 1500,
         "pass": true,
         "note": "client-measured"
@@ -190,138 +190,147 @@
   },
   "samples": [
     {
-      "t_s": 2.056815625,
+      "t_s": 2.060005875,
       "active_sessions": 3,
-      "goroutines": 53,
-      "heap_mb": 30.96955108642578,
-      "rss_mb": 267.125,
-      "cpu_s": 0.32999999999999996,
+      "goroutines": 59,
+      "heap_mb": 31.54199981689453,
+      "rss_mb": 273.015625,
+      "cpu_s": 0.39999999999999997,
       "fds": 39
     },
     {
-      "t_s": 4.059423917,
+      "t_s": 4.057784958,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 37.97273254394531,
-      "rss_mb": 280.109375,
-      "cpu_s": 0.5700000000000001,
+      "goroutines": 73,
+      "heap_mb": 37.998260498046875,
+      "rss_mb": 286.25,
+      "cpu_s": 0.77,
       "fds": 40
     },
     {
-      "t_s": 6.058763875,
+      "t_s": 6.061670708,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 45.001220703125,
-      "rss_mb": 289.5,
-      "cpu_s": 0.81,
+      "goroutines": 73,
+      "heap_mb": 44.63868713378906,
+      "rss_mb": 294.5,
+      "cpu_s": 1.1199999999999999,
       "fds": 40
     },
     {
-      "t_s": 8.058181167,
+      "t_s": 8.060576583,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 52.42951965332031,
-      "rss_mb": 298.203125,
-      "cpu_s": 1.0499999999999998,
+      "goroutines": 73,
+      "heap_mb": 23.061927795410156,
+      "rss_mb": 297.671875,
+      "cpu_s": 1.47,
       "fds": 40
     },
     {
-      "t_s": 10.059991417,
+      "t_s": 10.058290208,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 10.989486694335938,
-      "rss_mb": 304.015625,
-      "cpu_s": 1.29,
+      "goroutines": 72,
+      "heap_mb": 29.925582885742188,
+      "rss_mb": 304.03125,
+      "cpu_s": 1.8399999999999999,
       "fds": 40
     },
     {
-      "t_s": 12.055330417,
+      "t_s": 12.058469542,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 8.6434326171875,
-      "rss_mb": 306.859375,
-      "cpu_s": 1.53,
+      "goroutines": 73,
+      "heap_mb": 9.310798645019531,
+      "rss_mb": 306,
+      "cpu_s": 2.17,
       "fds": 40
     },
     {
-      "t_s": 14.058913709,
+      "t_s": 14.060721875,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 5.9892578125,
-      "rss_mb": 308.734375,
-      "cpu_s": 1.79,
+      "goroutines": 73,
+      "heap_mb": 7.964286804199219,
+      "rss_mb": 307.34375,
+      "cpu_s": 2.54,
+      "fds": 40
+    },
+    {
+      "t_s": 16.062420625,
+      "active_sessions": 4,
+      "goroutines": 75,
+      "heap_mb": 6.609672546386719,
+      "rss_mb": 308.84375,
+      "cpu_s": 2.91,
       "fds": 41
     },
     {
-      "t_s": 16.057224334,
+      "t_s": 18.063313625,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 8.767166137695312,
-      "rss_mb": 310.875,
-      "cpu_s": 2.04,
+      "goroutines": 73,
+      "heap_mb": 9.251968383789062,
+      "rss_mb": 309.46875,
+      "cpu_s": 3.23,
       "fds": 41
     },
     {
-      "t_s": 18.057315084,
+      "t_s": 20.062634083,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 7.248939514160156,
-      "rss_mb": 311.25,
-      "cpu_s": 2.26,
+      "goroutines": 75,
+      "heap_mb": 7.5010528564453125,
+      "rss_mb": 309.828125,
+      "cpu_s": 3.6,
       "fds": 41
     },
     {
-      "t_s": 20.05803525,
+      "t_s": 22.060502458,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 9.977073669433594,
-      "rss_mb": 311.546875,
-      "cpu_s": 2.5300000000000002,
+      "goroutines": 73,
+      "heap_mb": 6.189979553222656,
+      "rss_mb": 310.078125,
+      "cpu_s": 3.9699999999999998,
       "fds": 41
     },
     {
-      "t_s": 22.058733459,
+      "t_s": 24.062608625,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 7.649284362792969,
-      "rss_mb": 312.046875,
-      "cpu_s": 2.75,
+      "goroutines": 75,
+      "heap_mb": 8.933906555175781,
+      "rss_mb": 310.140625,
+      "cpu_s": 4.31,
       "fds": 41
     },
     {
-      "t_s": 24.058489125,
+      "t_s": 26.057972542,
       "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 9.552284240722656,
-      "rss_mb": 312.828125,
-      "cpu_s": 2.99,
-      "fds": 41
+      "goroutines": 73,
+      "heap_mb": 8.132278442382812,
+      "rss_mb": 310.640625,
+      "cpu_s": 4.65,
+      "fds": 42
     },
     {
-      "t_s": 26.05664975,
+      "t_s": 28.059890375,
       "active_sessions": 4,
-      "goroutines": 66,
-      "heap_mb": 6.8215484619140625,
-      "rss_mb": 313.6875,
-      "cpu_s": 3.2600000000000007,
-      "fds": 41
-    },
-    {
-      "t_s": 28.059792584,
-      "active_sessions": 4,
-      "goroutines": 65,
-      "heap_mb": 8.274642944335938,
-      "rss_mb": 314.453125,
-      "cpu_s": 3.4899999999999998,
+      "goroutines": 73,
+      "heap_mb": 6.172935485839844,
+      "rss_mb": 311.03125,
+      "cpu_s": 4.99,
       "fds": 43
     },
     {
-      "t_s": 30.059909,
+      "t_s": 30.060124333,
       "active_sessions": 4,
-      "goroutines": 63,
-      "heap_mb": 6.789863586425781,
-      "rss_mb": 314.703125,
-      "cpu_s": 3.74,
+      "goroutines": 73,
+      "heap_mb": 8.933341979980469,
+      "rss_mb": 311.109375,
+      "cpu_s": 5.37,
+      "fds": 39
+    },
+    {
+      "t_s": 30.096578083,
+      "active_sessions": 0,
+      "goroutines": 17,
+      "heap_mb": 8.970947265625,
+      "rss_mb": 311.109375,
+      "cpu_s": 5.37,
       "fds": 39
     }
   ]
