@@ -106,3 +106,12 @@ P1 and P2 are independent and can proceed in parallel; P3 needs both images; P4 
 ## Non-goals
 
 Postgres and multi-instance; telephony (PSTN) transports; a custom domain or IAP; real scheduling systems; Terraform (the bootstrap is a script; infrastructure-as-code can follow).
+
+## Adjustments found while writing the plans
+
+- **A fourth provider secret.** Gemini is called with `GOOGLE_API_KEY` (service accounts often lack the Vertex AI predict permission); Google speech uses the service-account file. Secrets are therefore `XAI_API_KEY`, `ELEVENLABS_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_SA_KEY` (mounted file), plus the generated `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY` and `DENTAL_MCP_TOKEN`.
+- **Throttle shape.** Failed management logins get a token bucket per client address: 10 attempts, refilled one per 6 s (10 per minute sustained), instead of a one-minute lockout. A blocked address is refused before its key is read.
+- **`GET /api/v1/server-config` reports `client_ip` and `secure`.** That is how the deploy smoke test verifies the proxy trust on Cloud Run, instead of a debug endpoint.
+- **MCP destination policy vs the local rehearsal.** The production profile requires public HTTPS for MCP servers and refuses loopback HTTP, so the local rehearsal runs the voice server in the development profile with everything else from `config/cloudrun.yaml`. The production-profile checks are proven by the first Cloud Run deploy.
+- **Candidate-then-promote deploys.** The workflow deploys the new revision at 0% traffic with a `candidate` tag, smoke-tests it, then promotes it, so a failed smoke test leaves the previous revision serving.
+- **Plans:** `docs/superpowers/plans/2026-10-13-demo-features.md` (A1-A4, item 20), `2026-10-13-one-port-server.md` (B5-B11), `2026-10-13-cloudrun-deploy.md` (C12-C16, D17-D19). Plans 1 and 2 are independent; plan 3 needs both.
