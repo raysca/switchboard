@@ -41,6 +41,41 @@ type CallFlow struct {
 	Resolve func(ctx context.Context, stepID string) (StepSpec, error)
 	Commit  func(target string) error
 	Cue     *flow.RouteCue
+	// CanEnd: some step has end_call, so the call builds the idle controller.
+	CanEnd bool
+	// End is set by the pipeline builder; the end_call tool calls it.
+	End func(stepID string) error
+}
+
+const (
+	// EndReasonFlow is the hang-up reason, trace attribute and RTVI error code when
+	// a step's end_call tool ends the call.
+	EndReasonFlow = "ended_by_flow"
+	endCallName   = "end_call"
+	// endCallWait caps the wait for the goodbye to finish before the call ends anyway.
+	endCallWait = 15 * time.Second
+	endCallOK   = `{"status":"ending","instruction":"The call ends right after your next words. Say a brief goodbye now if you have not already, then stop."}`
+)
+
+var errCallEnding = errors.New("call is already ending")
+
+// endCallDefinition is the end_call tool a step gets when its end_call flag is set.
+func endCallDefinition() core.ToolDefinition {
+	return core.ToolDefinition{
+		Name:        endCallName,
+		Description: "Hang up. Call this only after you have said goodbye and the caller needs nothing else; the call ends once you finish speaking.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		Policy:      core.ToolPolicy{Timeout: 5 * time.Second},
+	}
+}
+
+func anyEndCall(g flow.Definition) bool {
+	for _, n := range g.Steps {
+		if n.EndCall {
+			return true
+		}
+	}
+	return false
 }
 
 // transferTools are the transfer tools of one step: one per outgoing route, the
@@ -94,20 +129,26 @@ const transferOK = `{"status":"transferring","instruction":"Tell the caller in o
 // stepExecutor serves one step: its own MCP tools (allowed) and its transfer
 // tools (transfer: tool name to target step id). Anything else is refused, so
 // a hallucinated call cannot reach another step's tools.
-func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map[string]string, commit func(target string) error) core.ToolExecutor {
+func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map[string]string, commit func(target, note string) error, end func() error) core.ToolExecutor {
 	return core.ToolExecutorFunc(func(ctx context.Context, call core.ToolCall) (core.ToolResult, error) {
 		now := time.Now()
 		res := func(status core.ToolStatus, body string) core.ToolResult {
 			return core.ToolResult{CallID: call.ID, Status: status, Result: json.RawMessage(body), StartedAt: now, EndedAt: time.Now()}
 		}
 		if target, ok := transfer[call.Name]; ok {
-			if err := commit(target); err != nil {
+			if err := commit(target, ""); err != nil {
 				if errors.Is(err, core.ErrHandoffPending) || errors.Is(err, core.ErrHandoffLimit) {
 					return res(core.ToolFailed, `{"error":"transfer_unavailable"}`), nil
 				}
 				return res(core.ToolFailed, `{"error":"transfer_failed"}`), nil
 			}
 			return res(core.ToolSucceeded, transferOK), nil
+		}
+		if call.Name == endCallName && end != nil {
+			if err := end(); err != nil && !errors.Is(err, errCallEnding) {
+				return res(core.ToolFailed, `{"error":"end_unavailable"}`), nil
+			}
+			return res(core.ToolSucceeded, endCallOK), nil
 		}
 		if !allowed[call.Name] || inner == nil {
 			return res(core.ToolFailed, `{"error":"unknown_tool"}`), nil

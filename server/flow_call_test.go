@@ -43,7 +43,7 @@ func TestStepExecutorRejectsForeignTool(t *testing.T) {
 		ran = true
 		return core.ToolResult{Status: core.ToolSucceeded}, nil
 	})
-	ex := stepExecutor(inner, map[string]bool{"mcp_ok": true}, nil, nil)
+	ex := stepExecutor(inner, map[string]bool{"mcp_ok": true}, nil, nil, nil)
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "mcp_other"})
 	if ran || res.Status != core.ToolFailed {
 		t.Fatalf("a tool outside the node's list must not run: ran=%v status=%s", ran, res.Status)
@@ -56,7 +56,7 @@ func TestStepExecutorRejectsForeignTool(t *testing.T) {
 
 func TestStepExecutorTransferCommits(t *testing.T) {
 	var got string
-	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(target string) error { got = target; return nil })
+	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(target, _ string) error { got = target; return nil }, nil)
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "transfer_to_sales"})
 	if got != "sales" || res.Status != core.ToolSucceeded || !strings.Contains(string(res.Result), "one short sentence") {
 		t.Fatalf("got=%q res=%+v", got, res)
@@ -64,7 +64,7 @@ func TestStepExecutorTransferCommits(t *testing.T) {
 }
 
 func TestStepExecutorTransferRefused(t *testing.T) {
-	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(string) error { return core.ErrHandoffPending })
+	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(string, string) error { return core.ErrHandoffPending }, nil)
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "transfer_to_sales"})
 	if res.Status != core.ToolFailed {
 		t.Fatalf("a refused transfer must tell the model it failed, got %s", res.Status)
@@ -105,5 +105,35 @@ func TestFlowStepActivationRereadsTheEnvironment(t *testing.T) {
 	}
 	if spec.LLM.Provider != "xai" || string(spec.LLM.Secret) != "rotated-xai-key" {
 		t.Fatalf("sales llm = %s %q, want the rotated xai key", spec.LLM.Provider, spec.LLM.Secret)
+	}
+}
+
+func TestStepExecutorEndCall(t *testing.T) {
+	var ended int
+	ex := stepExecutor(nil, nil, nil, nil, func() error { ended++; return nil })
+	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "end_call"})
+	if ended != 1 || res.Status != core.ToolSucceeded || !strings.Contains(string(res.Result), "goodbye") {
+		t.Fatalf("ended=%d res=%+v", ended, res)
+	}
+	// A step without the tool refuses it, like any foreign tool.
+	ex = stepExecutor(nil, nil, nil, nil, nil)
+	res, _ = ex.Execute(context.Background(), core.ToolCall{ID: "2", Name: "end_call"})
+	if res.Status != core.ToolFailed {
+		t.Fatalf("end_call must be refused on a step without it, got %s", res.Status)
+	}
+}
+
+func TestStepExecutorEndCallAlreadyEnding(t *testing.T) {
+	ex := stepExecutor(nil, nil, nil, nil, func() error { return errCallEnding })
+	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "end_call"})
+	if res.Status != core.ToolSucceeded { // idempotent: a second end_call is not an error to the model
+		t.Fatalf("a repeated end_call must not fail the model's turn: %+v", res)
+	}
+}
+
+func TestEndCallDefinition(t *testing.T) {
+	d := endCallDefinition()
+	if d.Name != "end_call" || !strings.Contains(d.Description, "goodbye") || string(d.InputSchema) != `{"type":"object","properties":{},"additionalProperties":false}` {
+		t.Fatalf("%+v", d)
 	}
 }

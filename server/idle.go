@@ -60,8 +60,8 @@ func (c IdleConfig) validate(dtmfAggregate bool, dtmfTimeout time.Duration) erro
 
 // stage builds the call's idle controller, nil when idle handling is off.
 // speakIdx is filled in by the caller once the pipeline is laid out.
-func (c IdleConfig) stage(ctx *core.ConversationContext, tools *coreturn.ToolActivity, turn *coreturn.Processor, answering, held func() bool) (*core.IdleController, error) {
-	if !c.enabled() {
+func (c IdleConfig) stage(ctx *core.ConversationContext, tools *coreturn.ToolActivity, turn *coreturn.Processor, answering, held func() bool, force bool) (*core.IdleController, error) {
+	if !c.enabled() && !force {
 		return nil, nil
 	}
 	cfg := c.core()

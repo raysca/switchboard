@@ -495,6 +495,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	var injector ContextInjector
 	call.OnInjector = func(i ContextInjector) { injector = i }
 	call.OnRoute = s.onRoute(timeline, call.StoredSessionID)
+	call.OnEndCall = s.onEndCall(call.StoredSessionID)
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
 	if cue != nil {
 		base := call.OnRoute
