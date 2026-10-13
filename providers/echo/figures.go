@@ -1,0 +1,79 @@
+// Package echo is a simulated provider: STT, LLM and TTS backends that cost nothing and need no
+// network. They plug into the real Google processors (the same retries, breaker, usage, tracing,
+// tool loop and unit splitting), so a call through echo exercises the real pipeline code. The
+// figures imitate Google's measured timing (docs/benchmarks/first-audio-latency.md).
+package echo
+
+import (
+	"strings"
+	"time"
+)
+
+// Mimic names whose timing the echo backends imitate.
+type Mimic string
+
+const (
+	// MimicGoogle imitates Google's measured latencies.
+	MimicGoogle Mimic = "google"
+	// MimicInstant has no delays and one placeholder word per audio frame: the framework alone is measured.
+	MimicInstant Mimic = "instant"
+)
+
+// Valid reports whether m is a known mimic.
+func (m Mimic) Valid() bool { return m == MimicGoogle || m == MimicInstant }
+
+// STTFigures shape the simulated recognition stream.
+type STTFigures struct {
+	Interims        bool          // emit cumulative interim results while the caller speaks
+	FinalDelay      time.Duration // the final arrives this long after the caller stops
+	FramesPerWord   int           // one placeholder word per this many voiced 20 ms frames (0 or 1: every frame)
+	VoicedThreshold int           // peak PCM16 magnitude that counts as speech (0: every frame counts)
+}
+
+// LLMFigures shape the simulated model's streaming.
+type LLMFigures struct {
+	FirstToken time.Duration // before the first word
+	TokenDelay time.Duration // between words
+}
+
+// TTSFigures shape the simulated synthesis.
+type TTSFigures struct {
+	FirstByte        time.Duration // before a unit's first audio
+	FirstBytePerChar time.Duration // plus this per character (unary synthesis returns the whole unit at once)
+	CharsPerSecond   int           // speech rate: audio is as long as the text takes to say; 0 = two frames
+}
+
+// STT returns the figures for the given speech model.
+func (m Mimic) STT(model string) STTFigures {
+	if m == MimicInstant {
+		return STTFigures{FramesPerWord: 1}
+	}
+	f := STTFigures{FinalDelay: 1200 * time.Millisecond, FramesPerWord: 20, VoicedThreshold: 500} // chirp_2: no interims
+	if model == "latest_long" {
+		f.Interims, f.FinalDelay = true, 500*time.Millisecond
+	}
+	return f
+}
+
+// LLM returns the figures for the language model.
+func (m Mimic) LLM() LLMFigures {
+	if m == MimicInstant {
+		return LLMFigures{}
+	}
+	return LLMFigures{FirstToken: 700 * time.Millisecond, TokenDelay: 30 * time.Millisecond}
+}
+
+// TTS returns the figures for the given voice: Chirp 3 HD voices stream, every other voice is
+// unary and pays for the whole unit before any audio.
+func (m Mimic) TTS(voice string) TTSFigures {
+	if m == MimicInstant {
+		return TTSFigures{}
+	}
+	f := TTSFigures{CharsPerSecond: 15}
+	if voice == "" || strings.Contains(strings.ToLower(voice), "chirp3-hd") {
+		f.FirstByte = 400 * time.Millisecond
+	} else {
+		f.FirstByte, f.FirstBytePerChar = 600*time.Millisecond, 50*time.Millisecond
+	}
+	return f
+}

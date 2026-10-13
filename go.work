@@ -5,6 +5,7 @@ use (
 	./core
 	./providers/cartesia
 	./providers/deepgram
+	./providers/echo
 	./providers/elevenlabs
 	./providers/google
 	./providers/nvidia
