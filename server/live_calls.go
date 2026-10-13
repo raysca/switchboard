@@ -37,7 +37,8 @@ const (
 // notes enter the history when the call is idle, or with the caller's next turn if it comes first.
 type ContextInjector interface {
 	// Inject queues operator notes (none for a run-only request); run asks for one reply. It
-	// returns core.ErrAsyncQueueFull or core.ErrAsyncClosed when nothing was queued.
+	// returns core.ErrAsyncQueueFull, core.ErrAsyncBusy (both retryable) or core.ErrAsyncClosed
+	// when nothing was queued.
 	Inject(notes []string, run bool) error
 	Status() callStatus
 }
@@ -60,11 +61,11 @@ func (c *callInjector) Status() callStatus {
 
 func (c *callInjector) Inject(notes []string, run bool) error {
 	items := make([]core.AsyncToolResult, 0, len(notes)+1)
-	for i, n := range notes {
+	for _, n := range notes {
 		msg := core.Message{Role: core.RoleUser, Content: notePrefix + n}
 		items = append(items, core.AsyncToolResult{
 			Call:   core.ToolCall{Name: contextNoteName},
-			NoTurn: !run || i < len(notes)-1, // one reply for the whole request
+			NoTurn: !run, // a batch starts one reply however many notes ask for it
 			Inject: func() error { return c.history.AddMessage(msg) },
 		})
 	}

@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -88,4 +89,42 @@ func TestAsyncTriggerCountsItemsDroppedAtClose(t *testing.T) {
 	if err := r.trig.DeliverOperator(operatorNote(o, "late", false)); !errors.Is(err, core.ErrAsyncClosed) {
 		t.Fatalf("delivery after close: err=%v, want ErrAsyncClosed", err)
 	}
+}
+
+// A live session that briefly refuses new tasks (its task budget is full) must not close the
+// trigger: the delivery is refused as retryable, and the trigger works once tasks free up.
+func TestAsyncTriggerSurvivesATransientTaskBudget(t *testing.T) {
+	r := newTriggerRig(t, nil)
+	o := &orderLog{}
+	release := make(chan struct{})
+	held := 0
+	for {
+		err := r.sess.Go(func(ctx context.Context) {
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+		})
+		if errors.Is(err, core.ErrTooManyTasks) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		held++
+	}
+	if held == 0 {
+		t.Fatal("could not fill the task budget")
+	}
+	if err := r.trig.DeliverOperator(operatorNote(o, "busy", true)); !errors.Is(err, core.ErrAsyncBusy) {
+		t.Fatalf("delivery with the task budget full: err=%v, want ErrAsyncBusy", err)
+	}
+	r.deliverItem(o, "tool-while-busy", false) // dropped and counted, not fatal
+	close(release)
+	time.Sleep(50 * time.Millisecond)
+	if err := r.trig.DeliverOperator(operatorNote(o, "later", true)); err != nil {
+		t.Fatalf("delivery after tasks freed up: %v (the trigger must not have closed)", err)
+	}
+	waitFor(t, "the later note", func() bool { return slices.Contains(o.list(), "later") })
+	waitFor(t, "its reply", func() bool { return r.llm.count() == 1 })
 }

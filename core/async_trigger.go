@@ -61,6 +61,9 @@ var (
 	ErrAsyncQueueFull = errors.New("async trigger: too many pending operator items")
 	// ErrAsyncClosed: the call has ended; nothing was queued.
 	ErrAsyncClosed = errors.New("async trigger: the call has ended")
+	// ErrAsyncBusy: the call is live but could not start delivery right now (its task budget
+	// is full); nothing was queued, and a retry may succeed.
+	ErrAsyncBusy = errors.New("async trigger: the call is busy; retry")
 )
 
 func NewAsyncTrigger(cfg AsyncTriggerConfig) *AsyncTrigger {
@@ -181,8 +184,10 @@ func (t *AsyncTrigger) Deliver(r AsyncToolResult) {
 	if early != nil && early() != nil { // may wait for a tool round (the loop's lock)
 		t.dropped()
 	}
-	if start && t.session.Go(t.run) != nil {
-		t.close()
+	if start {
+		if err := t.session.Go(t.run); err != nil {
+			_ = t.startFailed(err, true)
+		}
 	}
 }
 
@@ -208,11 +213,33 @@ func (t *AsyncTrigger) DeliverOperator(items ...AsyncToolResult) error {
 	start := !t.running
 	t.running = true
 	t.mu.Unlock()
-	if start && t.session.Go(t.run) != nil {
+	if start {
+		if err := t.session.Go(t.run); err != nil {
+			return t.startFailed(err, false)
+		}
+	}
+	return nil
+}
+
+// startFailed handles a delivery runner that could not start. A closed session ends the
+// trigger. Anything else (a full task budget) is transient: the queue is emptied (counted
+// as dropped for tool results and flips; an operator request is refused instead, so it can be
+// retried) and the trigger stays usable for later deliveries.
+func (t *AsyncTrigger) startFailed(err error, countDrops bool) error {
+	if errors.Is(err, ErrSessionClosed) {
 		t.close()
 		return ErrAsyncClosed
 	}
-	return nil
+	t.mu.Lock()
+	n := len(t.queue)
+	t.running, t.queue = false, nil
+	t.mu.Unlock()
+	if countDrops {
+		for range n {
+			t.dropped()
+		}
+	}
+	return ErrAsyncBusy
 }
 
 // count is how many queued items are (operator true) or are not operator items.

@@ -3,7 +3,7 @@
 **Date:** 2026-10-11
 **Status:** implemented. Written before the flow rename: read graph call as routed flow, node as step, handoff as route.
 
-**Changes after review (2026-10-13):** operator notes and run requests have their own cap of 8 waiting per call and are refused with 429 `too_many_pending` when it is full (they never evict, and so never force through, a waiting route flip or tool result); notes and run requests still waiting when a caller turn reaches the model join that turn (notes enter the history first; the turn is the reply). Items dropped when a call ends are counted.
+**Changes after review (2026-10-13):** operator notes and run requests have their own cap of 8 waiting per call and are refused with 429 `too_many_pending` when it is full (they never evict, and so never force through, a waiting route flip or tool result); notes and run requests still waiting when a caller turn reaches the model join that turn (notes enter the history after the caller's message and before the model is asked; the turn is the reply). Items dropped when a call ends are counted.
 
 ## Intent
 

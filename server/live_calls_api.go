@@ -70,7 +70,7 @@ func (s *Server) handleLiveCall(w http.ResponseWriter, r *http.Request, requestI
 	}
 	accepted := max(len(notes), 1)
 	if err := inj.Inject(notes, req.Run || action == "run"); err != nil {
-		if errors.Is(err, core.ErrAsyncQueueFull) {
+		if errors.Is(err, core.ErrAsyncQueueFull) || errors.Is(err, core.ErrAsyncBusy) {
 			w.Header().Set("Retry-After", "1")
 			api.WriteError(w, http.StatusTooManyRequests, "too_many_pending", "too many notes are waiting for this call; retry shortly", requestID)
 			return

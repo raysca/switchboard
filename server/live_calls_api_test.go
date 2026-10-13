@@ -185,6 +185,10 @@ func TestLiveCallDeliveryFailures(t *testing.T) {
 	if w := apiRequest(s, http.MethodPost, "/api/v1/sessions/full/context", testMgmtKey, body); w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "too_many_pending") {
 		t.Errorf("full queue: status = %d body = %s, want 429 too_many_pending", w.Code, w.Body.String())
 	}
+	s.live.Put("busy", &recInjector{status: callReady, err: core.ErrAsyncBusy})
+	if w := apiRequest(s, http.MethodPost, "/api/v1/sessions/busy/context", testMgmtKey, body); w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
+		t.Errorf("busy call: status = %d, want a retryable 429", w.Code)
+	}
 	s.live.Put("closing", &recInjector{status: callReady, err: core.ErrAsyncClosed})
 	if w := apiRequest(s, http.MethodPost, "/api/v1/sessions/closing/run", testMgmtKey, ""); w.Code != http.StatusNotFound {
 		t.Errorf("closed during delivery: status = %d, want 404", w.Code)
