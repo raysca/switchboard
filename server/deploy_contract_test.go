@@ -213,3 +213,24 @@ func TestImageShipsTheCloudRunConfigAndBuildsTheUI(t *testing.T) {
 		}
 	}
 }
+
+func TestDentalMCPImageIsSmallAndNonRoot(t *testing.T) {
+	body, err := os.ReadFile("../deploy/Dockerfile.dental-mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, needle := range []string{"CGO_ENABLED=0", "./cmd/dental-mcp", "USER 65532", "ENTRYPOINT"} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("Dockerfile.dental-mcp missing %q", needle)
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "FROM ") && !strings.Contains(line, "@sha256:") {
+			t.Fatalf("base image must be pinned by digest: %q", line)
+		}
+	}
+	if strings.Contains(text, "DENTAL_MCP_TOKEN=") {
+		t.Fatal("the token must never be baked into the image")
+	}
+}

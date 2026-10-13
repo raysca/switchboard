@@ -116,3 +116,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: deploy/smoke.sh
+      - name: dental-mcp image builds, refuses to run without a token, answers /health
+        run: |
+          docker build -q -f deploy/Dockerfile.dental-mcp -t dental-mcp:ci .
+          ! docker run --rm dental-mcp:ci 2>/dev/null
+          docker run -d --name dmcp -p 18767:8081 -e DENTAL_MCP_TOKEN=ci-token-ci-token-ci dental-mcp:ci
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:18767/health && break || sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18767/mcp)" = 401
