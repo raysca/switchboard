@@ -125,6 +125,8 @@ type Registry struct {
 	googleLLMBreaker *resilience.Breaker
 	googleTTSBreaker *resilience.Breaker
 	googleSTTBreaker *resilience.Breaker
+	// The simulated provider keeps its own breakers, apart from Google's.
+	echoLLMBreaker, echoSTTBreaker, echoTTSBreaker *resilience.Breaker
 	// One xAI breaker per stage: an STT or TTS outage must not block the LLM.
 	xaiLLMBreaker, xaiSTTBreaker, xaiTTSBreaker *resilience.Breaker
 	deepgramBreaker                             *resilience.Breaker
@@ -166,6 +168,9 @@ func NewRegistry() *Registry {
 		googleLLMBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
 		googleTTSBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
 		googleSTTBreaker:     resilience.NewBreaker(resilience.DefaultConfig()),
+		echoLLMBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
+		echoSTTBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
+		echoTTSBreaker:       resilience.NewBreaker(resilience.DefaultConfig()),
 		xaiLLMBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 		xaiSTTBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 		xaiTTSBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
@@ -413,15 +418,10 @@ func NewRegistry() *Registry {
 
 	registerXAISpeech(r)
 	r.registerNvidia()
-	if registerFakeProviders != nil {
-		registerFakeProviders(r) // -tags fakeproviders only (registry_fake.go)
-	}
+	registerEcho(r)
 
 	return r
 }
-
-// registerFakeProviders is set only by the fakeproviders build (registry_fake.go).
-var registerFakeProviders func(*Registry)
 
 // apiKey validates an API key credential: a single non-empty token.
 func apiKey(secret []byte) (string, error) {

@@ -291,6 +291,16 @@ type Config struct {
 			AllowPrivateBaseURL bool `yaml:"allow_private_base_url"`
 		} `yaml:"openai_llm"`
 
+		// Echo is the simulated provider (providers/echo): no key, no network, no cost. It runs the
+		// real Google processors against simulated backends.
+		Echo struct {
+			Mimic         string        `yaml:"mimic"`           // google (imitate Google's timing) | instant (no delays)
+			STT           string        `yaml:"stt"`             // text (typed turns only) | audio (placeholder words from voiced audio)
+			Audible       bool          `yaml:"audible"`         // speak a quiet tone instead of silence
+			LabelReplies  bool          `yaml:"label_replies"`   // prefix replies with the step's prompt, so a test can tell which step answered
+			LLMExtraDelay time.Duration `yaml:"llm_extra_delay"` // added to every reply word (the perf-gate self-test)
+		} `yaml:"echo"`
+
 		XAISTT struct {
 			Endpoint string `yaml:"endpoint"`
 		} `yaml:"xai_stt"`

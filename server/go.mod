@@ -12,6 +12,8 @@ replace govoice/providers/elevenlabs => ../providers/elevenlabs
 
 replace govoice/providers/deepgram => ../providers/deepgram
 
+replace govoice/providers/echo => ../providers/echo
+
 replace govoice/providers/google => ../providers/google
 
 replace govoice/providers/nvidia => ../providers/nvidia
@@ -39,6 +41,7 @@ require (
 	govoice/core v0.0.0
 	govoice/providers/cartesia v0.0.0-00010101000000-000000000000
 	govoice/providers/deepgram v0.0.0-00010101000000-000000000000
+	govoice/providers/echo v0.0.0-00010101000000-000000000000
 	govoice/providers/elevenlabs v0.0.0-00010101000000-000000000000
 	govoice/providers/google v0.0.0-00010101000000-000000000000
 	govoice/providers/nvidia v0.0.0-00010101000000-000000000000

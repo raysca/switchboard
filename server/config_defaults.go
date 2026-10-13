@@ -70,6 +70,9 @@ func DefaultConfig(profile Profile) *Config {
 
 	cfg.Providers.GoogleTTS.SampleRate = 24000
 
+	cfg.Providers.Echo.Mimic = "google"
+	cfg.Providers.Echo.STT = "text"
+
 	cfg.Providers.XAILLM.Endpoint = "https://api.x.ai/v1/responses"
 
 	cfg.Providers.XAISTT.Endpoint = "wss://api.x.ai/v1/stt"

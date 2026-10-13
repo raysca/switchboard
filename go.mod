@@ -8,6 +8,7 @@ require (
 	github.com/yalue/onnxruntime_go v1.36.0
 	google.golang.org/protobuf v1.36.11
 	govoice/core v0.0.0
+	govoice/providers/echo v0.0.0-00010101000000-000000000000
 	govoice/providers/google v0.0.0-00010101000000-000000000000
 	govoice/providers/xai v0.0.0-00010101000000-000000000000
 	govoice/server v0.0.0
@@ -55,6 +56,8 @@ require (
 replace govoice/server => ./server
 
 replace govoice/core => ./core
+
+replace govoice/providers/echo => ./providers/echo
 
 replace govoice/providers/google => ./providers/google
 

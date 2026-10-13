@@ -156,6 +156,13 @@
   "OpenAILLM": {
    "AllowPrivateBaseURL": false
   },
+  "Echo": {
+   "Mimic": "google",
+   "STT": "text",
+   "Audible": false,
+   "LabelReplies": false,
+   "LLMExtraDelay": 0
+  },
   "XAISTT": {
    "Endpoint": "wss://api.x.ai/v1/stt"
   },
