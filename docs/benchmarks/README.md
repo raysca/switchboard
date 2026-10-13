@@ -31,7 +31,7 @@ Re-baseline note (loadtest, `darwin-arm64-12c`): when the loadtest moved from th
 
 Also failing, never warnings: a metric missing from the current run (stage gone, no CPU sample, no growth windows, no completed turns), the run's own verdict failing, a machine or run-shape mismatch. `PERF_SCALE=2` doubles every allowance for a noisier host.
 
-Validation: the gate passed 5 of 5 consecutive runs on the baseline machine, and again after the v2v allowance was tightened to +25 ms. `make perf-gate-selftest` (about 2 min) shows both gates PASS clean and FAIL with an injected delay: `loadtest -llm-delay 100ms` (sets `providers.echo.llm_extra_delay`; every echo LLM piece waits, which added about 200 ms to v2v) and `govoice-bench -inject-delay 100ms`; each injected run must exit exactly 1 and fail a latency row (v2v_p50 / overhead_p50), not some other row. A regression under roughly 25 ms of v2v or a few ms of framework overhead is not detected.
+Validation: the gate passed 5 of 5 consecutive runs on the baseline machine, and again after the v2v allowance was tightened to +25 ms. `make perf-gate-selftest` (about 2 min) shows both gates PASS clean and FAIL with an injected delay: `loadtest -llm-delay 100ms` (sets `providers.echo.llm_extra_delay`; the delay is added between every streamed word, so it multiplies by the reply length: several hundred ms of v2v) and `govoice-bench -inject-delay 100ms`; each injected run must exit exactly 1 and fail a latency row (v2v_p50 / overhead_p50), not some other row. A regression under roughly 25 ms of v2v or a few ms of framework overhead is not detected.
 
 ## Commands
 

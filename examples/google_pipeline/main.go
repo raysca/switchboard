@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 	"govoice/examples/envload"
 	"govoice/providers/google"
@@ -17,6 +16,14 @@ import (
 
 // main demonstrates how to assemble and run a complete Google Voice pipeline
 // programmatically using standard govoice components without the HTTP/WebSocket server.
+// forwardProcessor passes every frame through: a stand-in for the transport at either end of the
+// example pipeline.
+type forwardProcessor struct{}
+
+func (forwardProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	return e.PushDirection(f, dir)
+}
+
 func main() {
 	_ = envload.Load()
 
@@ -98,7 +105,7 @@ func main() {
 	asstCtxProc := core.NewAssistantContextProcessor(convCtx, core.DefaultAssistantContextConfig())
 
 	// 4. Sink Processor (e.g. recording or output playback)
-	sinkProc := &coretest.PassthroughProcessor{}
+	sinkProc := forwardProcessor{}
 
 	// 5. Assemble Programmatic Pipeline
 	pipeline, err := core.NewPipeline(

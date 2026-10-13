@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/core/coretest"
 	coretranscript "govoice/core/transcript"
 	"govoice/examples/envload"
 	"govoice/providers/google"
@@ -19,6 +18,14 @@ import (
 // main demonstrates Scenario C from the specification: interchangeable LLM substitution
 // using xAI Grok within an otherwise Google-based pipeline (Google STT + Google TTS)
 // with zero changes to the core runtime.
+// forwardProcessor passes every frame through: a stand-in for the transport at either end of the
+// example pipeline.
+type forwardProcessor struct{}
+
+func (forwardProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	return e.PushDirection(f, dir)
+}
+
 func main() {
 	_ = envload.Load()
 
@@ -92,7 +99,7 @@ func main() {
 	}
 
 	// 6. Sink Processor
-	sinkProc := &coretest.PassthroughProcessor{}
+	sinkProc := forwardProcessor{}
 
 	// 7. Assemble Mixed Pipeline (Google STT -> UserCtx -> xAI LLM -> AsstCtx -> Google TTS)
 	pipeline, err := core.NewPipeline(

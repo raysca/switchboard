@@ -9,7 +9,7 @@ import (
 	"govoice/core"
 )
 
-// FakeSTTConfig scripts a FakeSTTProcessor. Each audio frame carries one word:
+// STTConfig scripts an STTProcessor. Each audio frame carries one word:
 // Samples[0] indexes Words, so any replay of the same audio yields the same text.
 type STTConfig struct {
 	Provider string
@@ -28,7 +28,7 @@ type STTConfig struct {
 	ZombieOnFail bool
 }
 
-// FakeSTTProcessor is a scriptable streaming STT: cumulative interim candidates
+// STTProcessor is a scriptable streaming STT: cumulative interim candidates
 // per audio frame, a final at UserStopped, candidates emitted from its own
 // goroutine like a provider's receiver.
 type STTProcessor struct {

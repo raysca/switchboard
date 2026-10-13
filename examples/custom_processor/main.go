@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"govoice/core"
-	"govoice/core/coretest"
 )
 
 // ProfanityMaskProcessor is a custom application-level core.Processor that inspects
@@ -89,6 +88,14 @@ func (p *ProfanityMaskProcessor) MaskedCount() int {
 	return p.maskedCount
 }
 
+// forwardProcessor passes every frame through: a stand-in for the transport at either end of the
+// example pipeline.
+type forwardProcessor struct{}
+
+func (forwardProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	return e.PushDirection(f, dir)
+}
+
 func main() {
 	fmt.Println("=== Voice Framework V1: Custom Processor Example ===")
 
@@ -96,8 +103,8 @@ func main() {
 	customFilter := NewProfanityMaskProcessor([]string{"secret", "classified", "forbidden"})
 
 	// 2. Build pipeline with custom processor inserted between upstream and sink
-	sourceProc := &coretest.PassthroughProcessor{}
-	sinkProc := &coretest.PassthroughProcessor{}
+	sourceProc := forwardProcessor{}
+	sinkProc := forwardProcessor{}
 
 	pipeline, err := core.NewPipeline(
 		sourceProc,

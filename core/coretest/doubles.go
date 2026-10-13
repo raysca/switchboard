@@ -12,17 +12,12 @@ package coretest
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"govoice/core"
-)
-
-var (
-	ErrFakeProcessor = errors.New("fake: configured processor error")
 )
 
 // PassthroughProcessor records frames received and forwards them.
@@ -64,18 +59,6 @@ func (p *LatencyProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir c
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-// ErrorProcessor returns an error when it encounters the configured frame type.
-type ErrorProcessor struct {
-	FailOn core.FrameType
-}
-
-func (p *ErrorProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
-	if f.Type() == p.FailOn {
-		return ErrFakeProcessor
-	}
-	return e.PushDirection(f, dir)
 }
 
 // PanicProcessor panics when it encounters the configured frame type.
@@ -131,31 +114,6 @@ func (p *StallProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir cor
 	return e.Push(f)
 }
 
-// LateCompletionProcessor starts an async task that finishes with an old generation.
-type LateCompletionProcessor struct {
-	session core.SessionController
-	index   int
-	Delay   time.Duration
-}
-
-func (p *LateCompletionProcessor) Attach(s core.SessionController, index int) error {
-	p.session = s
-	p.index = index
-	return nil
-}
-
-func (p *LateCompletionProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
-	gen := p.session.CurrentGeneration()
-	return p.session.Go(func(ctx context.Context) {
-		time.Sleep(p.Delay)
-		// Reenter with the captured old generation
-		_ = p.session.Reenter(&core.FinalTranscriptionFrame{
-			Text: "late transcript",
-			Gen:  gen,
-		}, core.Downstream, p.index+1, gen)
-	})
-}
-
 // IgnoredCancellationProcessor ignores context cancellation in session.Go to test leaked task detection.
 type IgnoredCancellationProcessor struct {
 	session core.SessionController
@@ -174,10 +132,10 @@ func (p *IgnoredCancellationProcessor) ProcessFrame(ctx context.Context, f core.
 }
 
 // -------------------------------------------------------------------------
-// Phase 2 Deterministic Fakes: LLM, TTS, and TransportOutput
+// Scripted LLM and TTS processors and a recording transport output
 // -------------------------------------------------------------------------
 
-// FakeLLMConfig defines behavior for FakeLLMProcessor.
+// LLMConfig defines behavior for LLMProcessor.
 type LLMConfig struct {
 	ResponseChunks []string
 	ChunkDelay     time.Duration
@@ -189,7 +147,7 @@ type LLMConfig struct {
 	FailAfter int
 }
 
-// FakeLLMProcessor simulates streamed or non-streamed LLM responses.
+// LLMProcessor simulates streamed or non-streamed LLM responses.
 type LLMProcessor struct {
 	session core.SessionController
 	index   int
@@ -288,7 +246,7 @@ func (p *LLMProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 	}
 }
 
-// FakeTTSConfig defines behavior for FakeTTSProcessor.
+// TTSConfig defines behavior for TTSProcessor.
 type TTSConfig struct {
 	FramesPerUnit int           // Output audio frames per unit (default: 2)
 	FrameDelay    time.Duration // Delay between audio frame emissions
@@ -301,7 +259,7 @@ type TTSConfig struct {
 	SampleRate     int // output rate (default 24000)
 }
 
-// FakeTTSProcessor simulates TTS synthesis from explicit synthesis units.
+// TTSProcessor simulates TTS synthesis from explicit synthesis units.
 type TTSProcessor struct {
 	session core.SessionController
 	index   int
@@ -462,13 +420,13 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 	}
 }
 
-// FakeTransportConfig defines behavior for FakeTransportOutput.
+// TransportConfig defines behavior for TransportOutput.
 type TransportConfig struct {
 	WriteDelay        time.Duration // Simulated write latency
 	SimulateFlushHang bool          // If true, withhold FlushProcessedFrame to test flush timeout
 }
 
-// FakeTransportOutput simulates the client audio edge, paced writing, and write completions.
+// TransportOutput simulates the client audio edge, paced writing, and write completions.
 type TransportOutput struct {
 	session core.SessionController
 	index   int
@@ -616,13 +574,5 @@ func (p *TransportOutput) GetWrittenFrames() []*core.OutputAudioFrame {
 	defer p.mu.Unlock()
 	res := make([]*core.OutputAudioFrame, len(p.WrittenFrames))
 	copy(res, p.WrittenFrames)
-	return res
-}
-
-func (p *TransportOutput) GetDiscardedFrames() []*core.OutputAudioFrame {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	res := make([]*core.OutputAudioFrame, len(p.DiscardedFrames))
-	copy(res, p.DiscardedFrames)
 	return res
 }
