@@ -83,3 +83,42 @@ func TestProvidersRawJSONShape(t *testing.T) {
 		t.Fatalf("catalog produced no entries (%v) or defaults (%v)", sawEntry, sawDefault)
 	}
 }
+
+func TestProvidersListsEchoAsAnAlwaysAvailableSimulatedProvider(t *testing.T) {
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := catalog.NewResolver(cat, func(string) string { return "" })
+	h := ProvidersHandler{Catalog: cat, Resolver: res, Supports: func(p, _ string) bool { return p == "echo" }}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/providers", nil))
+	var body struct {
+		Data []struct {
+			ID           string
+			DisplayName  string `json:"display_name"`
+			Detected     bool
+			Env          []string
+			Capabilities []string
+			Services     map[string]struct{ Available bool }
+		}
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range body.Data {
+		if p.ID != "echo" {
+			continue
+		}
+		if !p.Detected || p.DisplayName != "Echo (simulated)" || len(p.Env) != 0 || len(p.Capabilities) != 3 {
+			t.Fatalf("echo = %+v", p)
+		}
+		for name, s := range p.Services {
+			if !s.Available {
+				t.Errorf("echo %s not available", name)
+			}
+		}
+		return
+	}
+	t.Fatal("echo missing from /providers")
+}

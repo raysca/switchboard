@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func TestPackagedCatalogLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"google", "xai", "elevenlabs", "deepgram", "cartesia", "openai", "nvidia"} {
+	for _, id := range []string{"google", "echo", "xai", "elevenlabs", "deepgram", "cartesia", "openai", "nvidia"} {
 		if _, ok := c.Provider(id); !ok {
 			t.Errorf("packaged provider %q missing", id)
 		}
@@ -92,5 +93,47 @@ func TestParseCapsEntries(t *testing.T) {
 	}
 	if _, err := Parse("x.yaml", []byte(b.String())); err == nil {
 		t.Fatalf("more than %d entries accepted", maxEntries)
+	}
+}
+
+func TestEchoMirrorsGoogleCatalog(t *testing.T) {
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, ok := c.Provider("google")
+	e, ok2 := c.Provider("echo")
+	if !ok || !ok2 {
+		t.Fatalf("google=%v echo=%v", ok, ok2)
+	}
+	for _, name := range []string{ServiceSTT, ServiceLLM, ServiceTTS} {
+		gs, es := g.Services[name], e.Services[name]
+		if es == nil {
+			t.Fatalf("echo has no %s service", name)
+		}
+		if !es.Keyless {
+			t.Errorf("echo %s must be keyless", name)
+		}
+		if !reflect.DeepEqual(gs.Models, es.Models) || !reflect.DeepEqual(gs.Voices, es.Voices) || !reflect.DeepEqual(gs.Languages, es.Languages) {
+			t.Errorf("echo %s differs from google: update server/catalog/data/echo.yaml", name)
+		}
+	}
+	if e.Name != "Echo (simulated)" || len(e.Credentials) != 0 {
+		t.Fatalf("echo name %q credentials %v", e.Name, e.Credentials)
+	}
+}
+
+func TestKeylessServiceNeedsNoCredential(t *testing.T) {
+	keyless := "id: sim\nname: Sim\nservices:\n  tts:\n    keyless: true\n    voices:\n      - {id: v, label: V}\n"
+	if _, err := Parse("sim.yaml", []byte(keyless)); err != nil {
+		t.Fatalf("keyless service rejected: %v", err)
+	}
+	neither := strings.Replace(keyless, "    keyless: true\n", "", 1)
+	if _, err := Parse("sim.yaml", []byte(neither)); err == nil {
+		t.Fatal("a service with neither credential nor keyless must be rejected")
+	}
+	both := strings.Replace(goodXAI, "credential: [key]\n    models", "credential: [key]\n    keyless: true\n    models", 1)
+	if _, err := Parse("x.yaml", []byte(both)); err == nil || !strings.Contains(err.Error(), "keyless") {
+		t.Fatalf("keyless plus credentials must be rejected, got %v", err)
 	}
 }

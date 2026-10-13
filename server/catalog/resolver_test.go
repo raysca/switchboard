@@ -271,3 +271,21 @@ func fifo(t *testing.T, dir string) string {
 	}
 	return p
 }
+
+func TestKeylessProviderIsAlwaysDetected(t *testing.T) {
+	r := newTestResolver(t, nil, nil)
+	if !r.Detected("echo") {
+		t.Fatal("echo needs no key and must always be detected")
+	}
+	for _, svc := range []string{ServiceSTT, ServiceLLM, ServiceTTS} {
+		if st := r.Status("echo", svc); !st.Declared || !st.Detected || len(st.MissingEnv) != 0 {
+			t.Errorf("echo %s status %+v", svc, st)
+		}
+		if secret, err := r.Secret("echo", svc); err != nil || secret != nil {
+			t.Errorf("echo %s secret %v err %v", svc, secret, err)
+		}
+	}
+	if env := r.Env("echo"); len(env) != 0 {
+		t.Fatalf("echo has no variables to set: %v", env)
+	}
+}

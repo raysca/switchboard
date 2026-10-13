@@ -63,11 +63,13 @@ type Field struct {
 
 type Service struct {
 	Credential []string `yaml:"credential"`
-	Needs      []string `yaml:"needs"`
-	Models     []Entry  `yaml:"models"`
-	Voices     []Entry  `yaml:"voices"`
-	Languages  []Entry  `yaml:"languages"`
-	Custom     *bool    `yaml:"custom"`
+	// Keyless marks a simulated service that needs no secret (the echo provider); it is always detected.
+	Keyless   bool     `yaml:"keyless"`
+	Needs     []string `yaml:"needs"`
+	Models    []Entry  `yaml:"models"`
+	Voices    []Entry  `yaml:"voices"`
+	Languages []Entry  `yaml:"languages"`
+	Custom    *bool    `yaml:"custom"`
 }
 
 type Entry struct {
@@ -195,7 +197,10 @@ func (p *Provider) validate(overlay bool) error {
 		if !serviceName[name] || svc == nil {
 			return fmt.Errorf("unknown service %q", name)
 		}
-		if len(svc.Credential) == 0 && !overlay {
+		if svc.Keyless && len(svc.Credential) > 0 {
+			return fmt.Errorf("keyless service %q cannot name credentials", name)
+		}
+		if len(svc.Credential) == 0 && !svc.Keyless && !overlay {
 			return fmt.Errorf("service %q needs at least one credential kind", name)
 		}
 		for _, kid := range svc.Credential {

@@ -138,6 +138,9 @@ func (r *Resolver) Status(provider, service string) Status {
 	if !ok {
 		return Status{}
 	}
+	if svc.Keyless {
+		return Status{Declared: true, Detected: true}
+	}
 	var firstMissing []string
 	for i, kid := range svc.Credential {
 		k, _ := p.Kind(kid)
@@ -157,6 +160,9 @@ func (r *Resolver) Secret(provider, service string) ([]byte, error) {
 	p, svc, ok := r.service(provider, service)
 	if !ok {
 		return nil, ErrUnknown
+	}
+	if svc.Keyless {
+		return nil, nil
 	}
 	var firstMissing []string
 	for i, kid := range svc.Credential {
