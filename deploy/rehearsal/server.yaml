@@ -1,0 +1,109 @@
+# Local rehearsal of the Cloud Run deployment (deploy/rehearsal/docker-compose.yaml).
+# This is config/cloudrun.yaml with exactly three differences, enforced by
+# server/deploy_contract_test.go (TestRehearsalConfigOnlyDiffersWhereItMust):
+#   profile: development      (so the dental MCP server may be reached over loopback http)
+#   tls.trusted_proxies       (the compose network instead of Cloud Run's front end)
+#   mcp                       (allow_local_http + a short timeout)
+# Everything else must stay identical to the real thing.
+# Cloud Run: ONE service, ONE public port (8080). The management API and the admin UI are served
+# on it behind the management key (public_admin). One instance, SQLite on the instance's memory
+# disk: the demo is rebuilt by demo.auto_install on every start.
+profile: development
+
+public_listen_addr: "0.0.0.0:8080"
+admin_listen_addr: "127.0.0.1:9090"   # unused by the demo; required by the config checks
+probe_listen_addr: ""
+
+public_admin:
+  enabled: true
+
+tls:
+  cert_file: ""
+  key_file: ""
+  trusted_proxy_mode: true
+  trusted_proxies:
+    - "10.231.77.0/24"   # the compose network (pinned in docker-compose.yaml): the nginx proxy standing in for Cloud Run's front end
+
+# The page is served by this service, so the browser's own origin is allowed without listing it.
+# origin_allowlist is empty on purpose: an empty allowlist keeps AllowMissingOrigin true so
+# non-browser clients (the CLI) work, and a foreign browser Origin is still rejected by the
+# same-host rule.
+origin_allow_same_host: true
+origin_allowlist: []
+
+# Development profile only: the dental MCP server shares the app's network namespace, so it is
+# loopback for the server (production requires public https for MCP servers).
+mcp:
+  allow_local_http: true
+  timeout: 5s
+
+token:
+  secret_env: "TOKEN_SECRET"
+  issuer: "govoice-v1"
+  audience: "govoice-v1-client"
+  max_lifetime: 5m
+  clock_skew: 30s
+  replay_cache_limit: 50000
+  key_id: "v1"
+
+limits:
+  max_pending_handshakes: 20
+  max_sessions: 10
+  max_sessions_per_principal: 5
+  max_sessions_per_ip: 5
+  upgrade_timeout: 5s
+  ready_timeout: 10s
+  max_call_duration: 20m
+  idle_timeout: 30s
+  ping_interval: 15s
+  ping_timeout: 10s
+  drain_timeout: 45s
+  immediate_cancel: false
+
+vad:
+  mode: "process"
+  workers: 2
+  batch: 8
+  model_path: "/opt/govoice/models/silero_vad.onnx"
+  ort_lib_path: "/opt/govoice/lib/libonnxruntime.so"
+  queue_cap: 2048
+  stop_ms: 200
+
+providers:
+  google_stt:
+    project_id: ""
+    location: "us-central1"
+    rotation_threshold: 240s
+  google_tts:
+    sample_rate: 24000
+  xai_llm:
+    endpoint: "https://api.x.ai/v1/responses"
+
+observability:
+  log_level: "info"
+  json_format: true
+  timeline_max_events: 1000
+  timeline_ttl: 15m
+
+# GOVOICE_DATABASE_DSN is the file path, e.g. /tmp/govoice.db (Cloud Run's writable in-memory disk).
+storage:
+  dialect: "sqlite"
+
+retention:
+  enabled: true
+  interval: 1h
+  content_retention_days: 1
+  metadata_retention_days: 7
+  batch_size: 200
+
+warmup:
+  enabled: true
+  predial: false
+  on_start: false
+
+idle: {user_timeout: 30s, max_prompts: 2}
+
+# The dentistry demo installs itself on every start (needs DENTAL_MCP_URL and MCP_TOKEN_DENTAL).
+# Delete this block to make it a button in the admin UI only.
+demo:
+  auto_install: "dental"

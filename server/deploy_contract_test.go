@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -232,5 +233,40 @@ func TestDentalMCPImageIsSmallAndNonRoot(t *testing.T) {
 	}
 	if strings.Contains(text, "DENTAL_MCP_TOKEN=") {
 		t.Fatal("the token must never be baked into the image")
+	}
+}
+
+func TestRehearsalConfigOnlyDiffersWhereItMust(t *testing.T) {
+	load := func(path string) map[string]any {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := yaml.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		return m
+	}
+	real, rehearsal := load("../config/cloudrun.yaml"), load("../deploy/rehearsal/server.yaml")
+	if rehearsal["profile"] != "development" {
+		t.Fatalf("the rehearsal runs the development profile (loopback MCP), got %v", rehearsal["profile"])
+	}
+	mcp, _ := rehearsal["mcp"].(map[string]any)
+	if mcp["allow_local_http"] != true {
+		t.Fatalf("mcp = %v", mcp)
+	}
+	for _, k := range []string{"profile", "tls", "mcp"} { // the three declared differences
+		delete(real, k)
+		delete(rehearsal, k)
+	}
+	if !reflect.DeepEqual(real, rehearsal) {
+		t.Fatalf("deploy/rehearsal/server.yaml drifted from config/cloudrun.yaml beyond profile, tls and mcp:\nreal:      %v\nrehearsal: %v", real, rehearsal)
+	}
+	// And it loads as a valid development config.
+	t.Setenv("GOVOICE_DATABASE_DSN", t.TempDir()+"/g.db")
+	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", strings.Repeat("m", 40))
+	if _, err := LoadConfig("../deploy/rehearsal/server.yaml"); err != nil {
+		t.Fatalf("rehearsal config does not load: %v", err)
 	}
 }

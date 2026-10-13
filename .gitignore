@@ -65,3 +65,7 @@ deploy/govoice.env
 # The built admin UI is embedded from here (make ui-embed); only the placeholder is committed.
 server/adminui/static/*
 !server/adminui/static/.gitkeep
+
+# Local rehearsal secrets (deploy/rehearsal)
+deploy/rehearsal/.env
+deploy/rehearsal/google.json

@@ -139,11 +139,43 @@ func (s *Server) autoInstallDemo() {
 			}
 		}()
 		defer cancel()
-		res, err := s.installDental(ctx, demoServers{svc: svc, store: m.store}, flows, endpoint)
+		// The MCP service may still be cold-starting (Cloud Run scales it to zero): retry until the 60s end.
+		var res demo.Result
+		err := retryUntil(ctx, demoRetryEvery, func(ctx context.Context) (err error) {
+			res, err = s.installDental(ctx, demoServers{svc: svc, store: m.store}, flows, endpoint)
+			return err
+		}, func(err error) { s.logger.Warn("demo auto-install will retry", "err", s.redactor.Redact(err.Error())) })
 		if err != nil {
 			s.logger.Error("demo auto-install failed", "err", s.redactor.Redact(err.Error()))
 			return
 		}
 		s.logger.Info("demo installed", "flow", res.FlowID, "flow_created", res.FlowCreated, "mcp_created", res.MCPCreated)
 	}()
+}
+
+// demoRetryEvery is the pause between auto-install attempts.
+const demoRetryEvery = 3 * time.Second
+
+// retryUntil calls fn until it succeeds or ctx ends, pausing `every` between attempts; onRetry (optional)
+// sees each failure that will be retried. It returns nil, or the last error when ctx ended first.
+func retryUntil(ctx context.Context, every time.Duration, fn func(context.Context) error, onRetry func(error)) error {
+	for {
+		err := fn(ctx)
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		if onRetry != nil {
+			onRetry(err)
+		}
+		t := time.NewTimer(every)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return err
+		case <-t.C:
+		}
+	}
 }
