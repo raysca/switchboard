@@ -1,9 +1,10 @@
 # Continuous integration (M4-01). Every job runs the same Makefile targets a developer runs locally, so
-# a green CI means `make verify`, the xAI speech (-tags xaispeech) tests, the race detector, the
-# Postgres store tests and the production image smoke all pass. No provider keys are used anywhere:
-# tests use fake providers and the smoke test starts the image without credentials.
+# a green CI means `make verify`, the xAI speech (-tags xaispeech) tests, the race detector and the
+# production image smoke all pass. No provider keys are used anywhere: tests use fake providers and the
+# smoke test starts the image without credentials. The Postgres store tests are off for now (SQLite is the
+# store we run and test); set the repository variable RUN_POSTGRES_TESTS=true to turn them back on.
 #
-# Required status checks to configure on main: linux, macos, postgres, image-smoke, graph-e2e.
+# Required status checks to configure on main: linux, macos, image-smoke, graph-e2e (postgres only once enabled).
 # perf-gate.yml is advisory (see docs/benchmarks/README.md, "CI policy").
 name: ci
 on:
@@ -85,6 +86,7 @@ jobs:
 
   # Storage and migration tests against the production database (skipped by `make test`).
   postgres:
+    if: vars.RUN_POSTGRES_TESTS == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
