@@ -187,7 +187,7 @@ func sortedKeys[V any](m map[string]V) []string {
 // and GOVOICE_DATABASE_DSN (it would point the child at a real store that outlives the run) stay out.
 var childEnvAllow = []string{"PATH", "HOME", "TMPDIR", "USER", "LOGNAME", "LANG", "LC_ALL", "TZ",
 	"DYLD_LIBRARY_PATH", "LD_LIBRARY_PATH", "ORT_DISABLE_TELEMETRY", "GOVOICE_ORT_LIB", "GOVOICE_MODEL_PATH",
-	"GOVOICE_FAKE_LLM_DELAY"} // read only by -tags fakeproviders: emulates provider latency in the self-test
+}
 
 func childEnv(environ []string) []string {
 	var env []string
@@ -227,13 +227,6 @@ func startServer(ctx context.Context, sp serverSpec) (*server, error) {
 		"GOVOICE_MANAGEMENT_API_KEY="+s.key, "TOKEN_SECRET="+randHex(32),
 		"ENV_FILE=/dev/null") // a development server would otherwise load examples/.env itself
 	s.cmd.Env = append(s.cmd.Env, sp.env...)
-	if sp.fake { // placeholders: the fake build ignores them, but the catalog must detect google
-		sa := filepath.Join(dir, "sa.json")
-		if err := os.WriteFile(sa, []byte(`{"type":"service_account"}`), 0o600); err != nil {
-			return nil, err
-		}
-		s.cmd.Env = append(s.cmd.Env, "GOVOICE_FAKE_STT=audio", "GOOGLE_API_KEY=fake-google-key", "GOOGLE_APPLICATION_CREDENTIALS="+sa)
-	}
 	if err := s.cmd.Start(); err != nil {
 		logf.Close()
 		return nil, err

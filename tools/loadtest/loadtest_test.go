@@ -238,11 +238,11 @@ func TestGrowthWindows(t *testing.T) {
 }
 
 // TestEndToEndTwoSessions runs the real harness against a freshly built
-// -tags fakeproviders server. It builds binaries (cgo, ~30 s), so it only runs
+// echo-provider server. It builds binaries (cgo, ~30 s), so it only runs
 // when GOVOICE_LOADTEST_E2E=1 (make loadtest-smoke covers the same path).
 func TestEndToEndTwoSessions(t *testing.T) {
 	if os.Getenv("GOVOICE_LOADTEST_E2E") != "1" {
-		t.Skip("set GOVOICE_LOADTEST_E2E=1 to build the fake server and run 2 real calls")
+		t.Skip("set GOVOICE_LOADTEST_E2E=1 to build the echo server and run 2 real calls")
 	}
 	f, err := parseFlags([]string{"-sessions", "2", "-duration", "20s", "-ramp", "1s", "-turns-per-session", "2", "-sample-interval", "2s", "-root", "../.."})
 	if err != nil {

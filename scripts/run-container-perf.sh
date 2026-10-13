@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run-container-perf.sh: Run capacity, churn, and chaos tests against a containerized
 # Switchboard server running under fixed resource constraints (2 CPUs, 2GB RAM)
-# with zero cloud provider costs (fakeproviders).
+# with zero cloud provider costs (the echo provider).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +21,7 @@ trap cleanup EXIT
 echo "=========================================================="
 echo " Starting Switchboard Container Performance & Chaos Suite"
 echo " Resource Limits: 2.0 CPUs, 2048 MB RAM (deploy.resources)"
-echo " Provider Cost: \$0.00 (built with -tags fakeproviders)"
+echo " Provider Cost: \$0.00 (echo provider)"
 echo "=========================================================="
 
 echo "==> Starting container..."

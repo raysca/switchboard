@@ -242,3 +242,18 @@ func TestEchoInstantRepliesInPhrasePieces(t *testing.T) {
 		t.Fatalf("pieces %q", deltas)
 	}
 }
+
+func TestEchoNeverStreamsOneHugePiece(t *testing.T) {
+	long := strings.Repeat("hello ", 500)
+	c := NewLLMClient(LLMOptions{})
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user(long))
+	deltas, joined := text(collect(t, ch, errs))
+	if joined != "You said: "+long {
+		t.Fatalf("pieces must concatenate back to the reply")
+	}
+	for _, d := range deltas {
+		if len([]rune(d)) > maxPiece {
+			t.Fatalf("a piece of %d runes", len([]rune(d)))
+		}
+	}
+}

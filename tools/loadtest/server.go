@@ -51,11 +51,12 @@ func freePorts(n int) ([]int, error) {
 // ServerOpts configures the child server.
 type ServerOpts struct {
 	Root        string // repo root (cwd of the server; model paths are relative to it)
-	ServerBin   string // prebuilt fakeproviders server; "" builds one
+	ServerBin   string // prebuilt server (vadworker next to it); "" builds one
 	WorkDir     string
 	VADMode     string // process | inprocess
 	TurnManager bool
 	MaxSessions int
+	LLMDelay    time.Duration // providers.echo.llm_extra_delay: injected provider latency (the perf-gate self-test)
 }
 
 // Server is the child process under test. Stop is idempotent and kills the
@@ -74,7 +75,7 @@ type Server struct {
 
 func buildBinaries(root, dir string) (string, error) {
 	for _, b := range [][]string{
-		{"-tags", "fakeproviders", "-o", filepath.Join(dir, "server"), "./cmd/server"},
+		{"-o", filepath.Join(dir, "server"), "./cmd/server"},
 		{"-o", filepath.Join(dir, "vadworker"), "./cmd/vadworker"},
 	} {
 		c := exec.Command("go", append([]string{"build"}, b...)...)
@@ -129,7 +130,12 @@ storage:
   dialect: "sqlite"
 retention:
   enabled: false
-%s`, pub, adm, maxS, maxS, maxS, maxS, o.VADMode, turn)
+providers:
+  echo:
+    mimic: instant
+    stt: audio
+    llm_extra_delay: %s
+%s`, pub, adm, maxS, maxS, maxS, maxS, o.VADMode, o.LLMDelay, turn)
 	return os.WriteFile(path, []byte(y), 0o600)
 }
 
@@ -167,15 +173,9 @@ func StartServer(ctx context.Context, o ServerOpts) (*Server, error) {
 	s.cmd.Dir = o.Root
 	s.cmd.Stdout, s.cmd.Stderr = logf, logf
 	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// Placeholder google keys so the catalog detects google (the fake build never uses them); they
-	// override inherited values (last wins). ENV_FILE=/dev/null: no examples/.env autoload.
-	sa := filepath.Join(o.WorkDir, "sa.json")
-	if err := os.WriteFile(sa, []byte(`{"type":"service_account"}`), 0o600); err != nil {
-		return nil, err
-	}
+	// The flows use the echo provider: no keys, no network. ENV_FILE=/dev/null: no examples/.env autoload.
 	s.cmd.Env = append(os.Environ(), "GOVOICE_ROOT="+o.Root, "GOVOICE_DEV_DIR="+dev, "GOVOICE_MANAGEMENT_API_KEY="+s.key,
-		"TOKEN_SECRET="+randHex(32), "GOVOICE_FAKE_STT=audio", "ENV_FILE=/dev/null",
-		"GOOGLE_API_KEY=fake-loadtest-key", "GOOGLE_APPLICATION_CREDENTIALS="+sa)
+		"TOKEN_SECRET="+randHex(32), "ENV_FILE=/dev/null")
 	if err := s.cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -287,12 +287,12 @@ func (s *Server) api(path string, body any) (json.RawMessage, error) {
 	return env.Data, nil
 }
 
-// Provision creates the fake agent, returning its id.
+// Provision creates the echo flow, returning its id.
 func (s *Server) Provision() (string, error) {
-	d, err := s.api("flows", map[string]any{"name": "Loadtest Fake", "description": "fake providers", "config": map[string]any{
-		"stt": map[string]any{"provider": "google", "model": "chirp_2", "language": "en-US"},
-		"llm": map[string]any{"provider": "google", "model": "fake", "system_prompt": "fake"},
-		"tts": map[string]any{"provider": "google", "voice": "fake"}}})
+	d, err := s.api("flows", map[string]any{"name": "Loadtest Echo", "description": "echo provider", "config": map[string]any{
+		"stt": map[string]any{"provider": "echo", "model": "chirp_2", "language": "en-US"},
+		"llm": map[string]any{"provider": "echo", "model": "fake", "system_prompt": "fake"},
+		"tts": map[string]any{"provider": "echo", "voice": "fake"}}})
 	if err != nil {
 		return "", err
 	}

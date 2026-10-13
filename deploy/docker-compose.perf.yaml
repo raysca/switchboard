@@ -1,13 +1,11 @@
 # Docker Compose definition for zero-cost performance, soak, and chaos testing
-# Server runs with fakeproviders in a resource-constrained container (2 CPU cores, 2GB RAM).
+# Server runs the echo provider (config/perf.yaml) in a resource-constrained container (2 CPU cores, 2GB RAM).
 
 services:
   govoice-perf:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-      args:
-        BUILD_TAGS: fakeproviders
     image: govoice:perf
     container_name: govoice-perf
     restart: unless-stopped
@@ -26,7 +24,6 @@ services:
       - GOVOICE_DEV_DIR=/tmp/govoice-dev
       - GOVOICE_MANAGEMENT_API_KEY=perf-test-mgmt-key-32-bytes-long!
       - TOKEN_SECRET=perf-test-token-secret-32-bytes-long!
-      - GOVOICE_FAKE_STT=audio
     ports:
       - "127.0.0.1:8080:8080" # Public WebSocket /ws and /health
       - "127.0.0.1:9090:9090" # Admin / Management API (/api/v1)

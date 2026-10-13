@@ -267,7 +267,7 @@ bench-latency: ## free|Framework overhead benchmark (fake providers)
 # Load/soak harness: real WebSocket calls against a -tags fakeproviders server child
 # (docs/benchmarks/capacity.md). Fake providers, no network, no cost.
 # loadtest-smoke: ~1 min, CI-friendly. Skips when the Silero model is missing.
-loadtest-smoke: ## free|Real WebSocket calls against a fake-provider server (about 1 min)
+loadtest-smoke: ## free|Real WebSocket calls against the echo provider (about 1 min)
 	@test -f third_party/silero_vad.onnx || { echo "loadtest-smoke: SKIPPED: third_party/silero_vad.onnx missing"; exit 0; }
 	@go run ./tools/loadtest -sessions 4 -duration 30s -ramp 3s -turns-per-session 3 -sample-interval 2s -max-p95-v2v 1500 $(LOADTEST_ARGS)
 

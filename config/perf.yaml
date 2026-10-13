@@ -49,3 +49,10 @@ storage:
 
 retention:
   enabled: false
+
+# The simulated provider: no keys, no cost. instant = no provider latency (framework overhead only);
+# audio = placeholder words from voiced audio, so detected speech yields a transcript.
+providers:
+  echo:
+    mimic: instant
+    stt: audio

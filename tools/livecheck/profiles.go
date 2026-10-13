@@ -106,9 +106,6 @@ func (p Profile) validate() error {
 			}
 		}
 	}
-	if p.Fake && !slices.Contains(p.BuildTags, "fakeproviders") {
-		return fmt.Errorf("profile %s: a fake profile must list build tag fakeproviders", p.Name)
-	}
 	return nil
 }
 
@@ -175,7 +172,7 @@ func selectProfiles(all []Profile, names string) ([]Profile, error) {
 		return nil, fmt.Errorf("no profiles selected")
 	}
 	if slices.ContainsFunc(out, func(p Profile) bool { return p.Fake }) && len(out) > 1 {
-		return nil, fmt.Errorf("the fake profile replaces google.* with fakes in the server binary; run it alone")
+		return nil, fmt.Errorf("the fake profile uses the simulated echo provider and no keys; run it alone")
 	}
 	return out, nil
 }

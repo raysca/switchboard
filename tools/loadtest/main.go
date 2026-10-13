@@ -1,6 +1,6 @@
 // loadtest drives N concurrent real calls over the actual WebSocket/RTVI
 // protocol (binary protobuf frames, single-use voice tokens) against a locally
-// started server built with -tags fakeproviders, so transport, resampling,
+// started server on the echo provider, so transport, resampling,
 // Silero VAD (vadworker), the STT/turn/LLM/TTS stages (fakes), the pacer and
 // metrics all run, with no paid calls. Fake providers isolate framework cost
 // only; everything is localhost with one speech clip. See docs/benchmarks/capacity.md.
@@ -26,6 +26,7 @@ type flags struct {
 	sessions, turns                  int
 	duration, ramp, think, turnLimit time.Duration
 	clip, vadMode, root, serverBin   string
+	llmDelay                         time.Duration
 	turnManager, keepWork            bool
 	soak, findCap                    bool
 	sampleEvery, stepDur             time.Duration
@@ -58,7 +59,8 @@ func parseFlags(args []string) (*flags, error) {
 	fs.StringVar(&f.vadMode, "vad-mode", "process", "server VAD mode: process (vadworker child) | inprocess")
 	fs.BoolVar(&f.turnManager, "turn-manager", false, "enable the server turn manager (turn.manager: true)")
 	fs.StringVar(&f.root, "root", ".", "repo root")
-	fs.StringVar(&f.serverBin, "server-bin", "", "prebuilt -tags fakeproviders server (vadworker next to it); default builds one")
+	fs.DurationVar(&f.llmDelay, "llm-delay", 0, "extra latency per LLM word (providers.echo.llm_extra_delay); the perf-gate self-test uses it")
+	fs.StringVar(&f.serverBin, "server-bin", "", "prebuilt server (vadworker next to it); default builds one")
 	fs.BoolVar(&f.keepWork, "keep-work", false, "keep the temp dir (server log, config) and print its path")
 	fs.BoolVar(&f.soak, "soak", false, "label the run a soak and require valid growth windows")
 	fs.DurationVar(&f.sampleEvery, "sample-interval", 0, "server sampling interval (0 = duration/60 clamped to 2s..60s)")
@@ -246,8 +248,8 @@ func run(f *flags) (*Report, error) {
 			return nil, err
 		}
 	} else {
-		fmt.Fprintln(os.Stderr, "loadtest: starting server (fakeproviders)...")
-		srv, err = StartServer(ctx, ServerOpts{Root: root, ServerBin: f.serverBin, WorkDir: work, VADMode: f.vadMode, TurnManager: f.turnManager, MaxSessions: maxSess * 2})
+		fmt.Fprintln(os.Stderr, "loadtest: starting server (echo provider)...")
+		srv, err = StartServer(ctx, ServerOpts{Root: root, ServerBin: f.serverBin, WorkDir: work, VADMode: f.vadMode, TurnManager: f.turnManager, MaxSessions: maxSess * 2, LLMDelay: f.llmDelay})
 		if err != nil {
 			return nil, err
 		}

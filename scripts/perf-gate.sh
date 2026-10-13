@@ -78,7 +78,7 @@ selftest)
 	expect 0 bench-clean bench -compare "$BB"
 	expect 1 bench-injected bench -inject-delay 100ms -compare "$BB"
 	expect 0 load-clean load -compare "$LB"
-	( export GOVOICE_FAKE_LLM_DELAY=100ms; expect 1 load-injected load -compare "$LB" ) || exit 1
+	expect 1 load-injected load -llm-delay 100ms -compare "$LB"
 	# exit 1 alone could be some other row: the injected delay must fail a latency row
 	grep -q '^| overhead_p50_ms .*FAIL' "$out/selftest-bench-injected.log" && grep -q '^| v2v_p50_ms .*FAIL' "$out/selftest-load-injected.log" ||
 		{ echo "perf-gate-selftest: FAIL: injected delay did not fail a latency row (see $out/selftest-*-injected.log)"; exit 1; }

@@ -5,7 +5,7 @@
 //
 // Real providers spend API credit, so a run needs GOVOICE_LIVE=1 (or -yes) after the
 // provider-request estimate is printed. `-selftest` runs the same engine offline against a
-// `-tags fakeproviders` server (no network, no cost). Secrets come from examples/.env into
+// the echo provider (no network, no cost). Secrets come from examples/.env into
 // the process environment only, reach each server child as exactly the variables its profile
 // names (the server reads them through its provider catalog), and every byte of output and
 // every report file is redacted.
@@ -57,7 +57,7 @@ func realMain(args []string) int {
 		yes       = fs.Bool("yes", false, "proceed after printing the estimate (GOVOICE_LIVE=1 does the same)")
 		list      = fs.Bool("list", false, "list profiles and whether this environment can run them; spends nothing")
 		dryRun    = fs.Bool("dry-run", false, "print the plan and provider-request estimate; spends nothing")
-		selftest  = fs.Bool("selftest", false, "offline engine self-test: fake profile, -tags fakeproviders, no network")
+		selftest  = fs.Bool("selftest", false, "offline engine self-test: the echo provider, no network")
 		outDir    = fs.String("out", ".agent-matrix-out", "directory for results.json and agent-matrix.md")
 		writeDocs = fs.Bool("write-docs", false, "also merge the results into docs/benchmarks/agent-matrix.{json,md} (latest run per profile x mode x scenario)")
 		jsonOut   = fs.String("json-out", "", "also write results JSON to this file")

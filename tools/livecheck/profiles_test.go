@@ -125,8 +125,8 @@ func TestTagUnion(t *testing.T) {
 	if got := tagUnion([]Profile{p}); !reflect.DeepEqual(got, []string{"xaispeech"}) {
 		t.Errorf("implied tags = %v", got)
 	}
-	if got := tagUnion([]Profile{by["fake"]}); !reflect.DeepEqual(got, []string{"fakeproviders"}) {
-		t.Errorf("fake tags = %v", got)
+	if got := tagUnion([]Profile{by["fake"]}); len(got) != 0 {
+		t.Errorf("the echo profile needs no build tag, got %v", got)
 	}
 }
 

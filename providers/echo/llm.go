@@ -90,14 +90,37 @@ func (c *LLMClient) pieces(history []core.Message) []string {
 	} else {
 		parts = append(parts, "You said: ", lastUser(history))
 	}
-	if !c.o.Figures.WordChunks {
-		return parts
-	}
-	var words []string
+	var out []string
 	for _, p := range parts {
-		words = append(words, splitWords(p)...)
+		if c.o.Figures.WordChunks {
+			out = append(out, splitWords(p)...)
+		} else {
+			out = append(out, capPiece(p)...)
+		}
 	}
-	return words
+	return out
+}
+
+// maxPiece bounds one streamed piece, as a real model's tokens are small: one huge delta would make
+// the pipeline cut dozens of speech units out of a single frame and trip its per-frame emit budget.
+const maxPiece = 120
+
+// capPiece splits s into pieces of at most maxPiece runes, at spaces where it can.
+func capPiece(s string) []string {
+	var out []string
+	for len([]rune(s)) > maxPiece {
+		r := []rune(s)
+		cut := maxPiece
+		for i := maxPiece; i > maxPiece/2; i-- {
+			if r[i-1] == ' ' {
+				cut = i
+				break
+			}
+		}
+		out = append(out, string(r[:cut]))
+		s = string(r[cut:])
+	}
+	return append(out, s)
 }
 
 func (c *LLMClient) toolAnswer(m core.Message) string {

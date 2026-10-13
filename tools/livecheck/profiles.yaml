@@ -14,7 +14,7 @@
 #               the union of the selected profiles' tags (xai STT/TTS are implied: xaispeech).
 #   infra       server.yaml provider settings (providers.<name>.<key>); empty values are dropped.
 #   interims    does the STT send interim transcripts? yes | no | auto (default: detected in S3).
-#   fake        offline self-test profile (-tags fakeproviders); never run together with real ones.
+#   fake        offline self-test profile (the echo provider, no keys); never run together with real ones.
 #   notes       free text shown in the report.
 profiles:
   # What `make dev` seeds today.
@@ -112,14 +112,15 @@ profiles:
       NVIDIA_TTS_FUNCTION_ID: 877104f7-e885-42b9-8de8-f6e4c6303969
     notes: template.
 
-  # Offline engine self-test (make live-check-selftest): fake providers, no network, no cost.
+  # Offline engine self-test (make live-check-selftest): the echo provider, no network, no cost.
   - name: fake
-    description: fake providers (-tags fakeproviders), engine self-test only
+    description: echo provider (simulated), engine self-test only
     fake: true
     stages:
-      stt: {provider: google, model: chirp_2, language: en-US}
-      llm: {provider: google, model: fake}
-      tts: {provider: google, voice: fake}
-    build_tags: [fakeproviders]
+      stt: {provider: echo, model: chirp_2, language: en-US}
+      llm: {provider: echo, model: fake}
+      tts: {provider: echo, voice: fake}
+    infra:
+      echo: {mimic: instant, stt: audio}
     interims: "no"
     notes: transcripts are placeholders and bot audio is too short to barge into; content checks, S2, S3 and S6 are N/A.
