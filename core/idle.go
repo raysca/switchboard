@@ -182,12 +182,20 @@ func (c *IdleController) SetOnEnd(fn func(reason string)) { c.cfg.OnEnd = fn }
 
 // RequestEnd ends the call once the bot has finished the speech now playing, or
 // the next speech if it is silent right now, or after wait if it never speaks
-// (wait must be positive). If the bot is silent and no reply is being generated or
+// (wait must be positive; otherwise it reports false and does nothing). If the bot is silent and no reply is being generated or
 // played for two polls in a row, the reply after the tool was silent and the call
 // ends then. Unlike an idle hang-up it needs no timeout configuration: a
 // tool-driven goodbye. It reports false when the call is already ending or
 // ended, so a repeated request is a no-op.
+//
+// A caller who talks over the goodbye is hung up about 200 ms after the barge-in: the
+// interruption resets Active, then two quiet polls follow. Known limitation: when the
+// turn has no text at all, providers that send ErrEmptyReply (google, openai, nvidia)
+// leave Active set, so such a silent end_call waits the full wait cap.
 func (c *IdleController) RequestEnd(reason string, wait time.Duration) bool {
+	if wait <= 0 {
+		return false
+	}
 	now := c.clk.Now()
 	c.mu.Lock()
 	if c.done || c.ending {

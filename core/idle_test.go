@@ -735,3 +735,13 @@ func TestIdleRequestEndDoesNotCutAReplyThatStartsLater(t *testing.T) {
 	r.up(&core.SpeakingStateFrame{State: core.SpeakingStopped, Reason: core.SpeakingStopDrained})
 	r.endedWith("ended_by_flow")
 }
+
+func TestIdleRequestEndRefusesANonPositiveWait(t *testing.T) {
+	r := newIdleRig(t, func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
+	if r.ctl.RequestEnd("ended_by_flow", 0) || r.ctl.RequestEnd("ended_by_flow", -time.Second) {
+		t.Fatal("a non-positive wait must be refused")
+	}
+	if !r.ctl.RequestEnd("ended_by_flow", time.Second) {
+		t.Fatal("a refused request must not consume the end")
+	}
+}

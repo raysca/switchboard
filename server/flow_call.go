@@ -222,7 +222,8 @@ func (c *CallFlow) commitWithNote(target, note string) error {
 	return nil
 }
 
-// takeNote returns the note once.
+// takeNote returns the note once. In theory a greeting can read a losing commit's note for
+// microseconds before it is restored; Handoff.Commit rejects at once while a transfer is pending.
 func (c *CallFlow) takeNote() string {
 	c.noteMu.Lock()
 	defer c.noteMu.Unlock()

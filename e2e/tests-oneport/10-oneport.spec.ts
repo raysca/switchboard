@@ -62,7 +62,7 @@ test("repeated wrong keys are throttled and the page says so", async ({ page, re
   // (b) the CORRECT key is never throttled, so the admin still gets in.
   await key.fill(stack.managementKey);
   await connect.click();
-  await expect(page.getByText(/too many failed attempts/i)).toHaveCount(0);
+  await expect(page.getByText("Key in memory")).toBeVisible(); // only a connected page shows this
 });
 
 test("a foreign browser origin is refused the voice socket", async ({ stack }) => {
