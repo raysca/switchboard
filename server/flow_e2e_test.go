@@ -271,17 +271,23 @@ func (c *e2eCall) replyCount() int {
 	return len(c.texts)
 }
 
-// replies counts the bot reply fragments that contain want.
+// replies counts how often want occurs in what the bot has said so far. The model streams a reply
+// word by word, so a phrase spans fragments: the fragments are joined first.
 func (c *e2eCall) replies(want string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	n := 0
+	var said strings.Builder
 	for _, t := range c.texts {
-		if strings.Contains(t, want) {
-			n++
+		var m struct {
+			Data struct {
+				Text string `json:"text"`
+			} `json:"data"`
+		}
+		if json.Unmarshal([]byte(t), &m) == nil {
+			said.WriteString(m.Data.Text)
 		}
 	}
-	return n
+	return strings.Count(said.String(), want)
 }
 
 func (c *e2eCall) waitReplies(want string, n int) {

@@ -31,9 +31,6 @@ type STTFigures struct {
 type LLMFigures struct {
 	FirstToken time.Duration // before the first piece
 	TokenDelay time.Duration // between pieces
-	// WordChunks streams one word per piece, as a real model does. Off, a reply is a few phrase-sized
-	// pieces (label, "You said: ", the caller's words): easy to assert on, and what the harnesses use.
-	WordChunks bool
 }
 
 // TTSFigures shape the simulated synthesis.
@@ -60,7 +57,7 @@ func (m Mimic) LLM() LLMFigures {
 	if m == MimicInstant {
 		return LLMFigures{}
 	}
-	return LLMFigures{FirstToken: 700 * time.Millisecond, TokenDelay: 30 * time.Millisecond, WordChunks: true}
+	return LLMFigures{FirstToken: 700 * time.Millisecond, TokenDelay: 30 * time.Millisecond}
 }
 
 // TTS returns the figures for how the server synthesizes the voice: streaming (Chirp 3 HD voices)

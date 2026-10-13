@@ -103,7 +103,7 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 }
 
 // pieces is what the model says, in streaming order: the label, then the answer to a tool result or
-// the caller's words repeated; one word each with WordChunks, else one phrase each.
+// the caller's words repeated; one word per piece, as a model streams.
 func (c *LLMClient) pieces(history []core.Message) []string {
 	var parts []string
 	if c.o.Label != "" {
@@ -116,15 +116,8 @@ func (c *LLMClient) pieces(history []core.Message) []string {
 	}
 	var out []string
 	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		if c.o.Figures.WordChunks {
-			for _, w := range splitWords(p) {
-				out = append(out, capPiece(w)...) // a long unbroken word is still cut
-			}
-		} else {
-			out = append(out, capPiece(p)...)
+		for _, w := range splitWords(p) { // none for an empty part
+			out = append(out, capPiece(w)...) // a long unbroken word is still cut
 		}
 	}
 	return out

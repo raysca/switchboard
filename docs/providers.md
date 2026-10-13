@@ -96,7 +96,7 @@ An entry with an existing `id` replaces it, a new one is appended, and an overla
 
 | key | default | meaning |
 |---|---|---|
-| `mimic` | `google` | `google` imitates Google's timing; `instant` has no delays and phrase-sized reply pieces (framework measurements, tests) |
+| `mimic` | `google` | `google` imitates Google's timing; `instant` has no delays (framework measurements, tests); both stream the reply word by word |
 | `stt` | `text` | `audio` turns voiced audio into placeholder words |
 | `audible` | `false` | speak a quiet 220 Hz tone instead of silence |
 | `label_replies` | `false` | prefix each reply with the step's prompt, so a test can tell which step answered |
