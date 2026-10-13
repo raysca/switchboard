@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -33,30 +34,85 @@ export function EmptyState({
     </section>
   );
 }
-export function LoadingState({ label = "Loading" }: { label?: string }) {
+export function LoadingState({ label = "Loading", skeleton }: { label?: string; skeleton?: number }) {
+  if (!skeleton) {
+    return (
+      <p className="loading" role="status">
+        {label}…
+      </p>
+    );
+  }
   return (
-    <p className="loading" role="status">
-      {label}…
-    </p>
+    <div className="skeleton" aria-busy="true">
+      <p className="visually-hidden" role="status">
+        {label}…
+      </p>
+      {Array.from({ length: skeleton }, (_, i) => (
+        <div key={i} className="skeleton__row" aria-hidden="true">
+          <span style={{ width: `${55 + ((i * 13) % 35)}%` }} />
+          <span style={{ width: `${45 + ((i * 17) % 40)}%` }} />
+          <span style={{ width: `${60 + ((i * 7) % 30)}%` }} />
+        </div>
+      ))}
+    </div>
   );
 }
 export function ErrorState({
   error,
   onRetry,
   title = "Request failed",
+  reassure = false,
 }: {
   error: ApiError;
   onRetry?: () => void;
   title?: string;
+  /** A read failure of the management API: say that live calls are not affected. */
+  reassure?: boolean;
 }) {
+  const [copied, setCopied] = useState<"idle" | "yes" | "no">("idle");
+  const hasDetails = error.status > 0 || !!error.code || !!error.requestId;
+  const copy = async () => {
+    const text = `status ${error.status} ${error.code}\nrequest ${error.requestId}\n${error.message}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied("yes");
+    } catch {
+      setCopied("no");
+    }
+  };
   return (
     <section className="message-panel message-panel--error" role="alert">
       <h2>{title}</h2>
       <p>{error.message}</p>
-      {error.requestId && (
-        <p className="request-id">Request ID: {error.requestId}</p>
+      {reassure && <p>Live calls are not affected. This only stops the console from reading.</p>}
+      {hasDetails && (
+        <dl className="error-details">
+          {error.status > 0 && (
+            <>
+              <dt>status</dt>
+              <dd>
+                {error.status} {error.code}
+              </dd>
+            </>
+          )}
+          {error.requestId && (
+            <>
+              <dt>request</dt>
+              <dd>{error.requestId}</dd>
+            </>
+          )}
+        </dl>
       )}
-      {onRetry && <button onClick={onRetry}>Try again</button>}
+      <div className="row">
+        {onRetry && <button onClick={onRetry}>Try again</button>}
+        {hasDetails && (
+          <button type="button" className="action-button-small" onClick={() => void copy()}>
+            Copy details
+          </button>
+        )}
+        {copied === "yes" && <span className="subtext">Copied</span>}
+        {copied === "no" && <span className="subtext">Could not copy. Select the details and copy them yourself.</span>}
+      </div>
     </section>
   );
 }

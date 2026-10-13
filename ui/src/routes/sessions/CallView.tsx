@@ -69,7 +69,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
         </section>,
       );
     }
-    return top(<ErrorState title="Could not load the call" error={err} onRetry={() => void sessionQuery.refetch()} />);
+    return top(<ErrorState title="Could not load the call" error={err} onRetry={() => void sessionQuery.refetch()} reassure />);
   }
 
   const s = sessionQuery.data;
@@ -153,7 +153,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
         <aside aria-labelledby="call-transcript-title" className="call-section call-columns__side">
           <h2 id="call-transcript-title">Transcript</h2>
           {turnsQuery.isError ? (
-            <ErrorState title="Could not load the transcript" error={turnsQuery.error as ApiError} onRetry={() => void turnsQuery.refetch()} />
+            <ErrorState title="Could not load the transcript" error={turnsQuery.error as ApiError} onRetry={() => void turnsQuery.refetch()} reassure />
           ) : turnsQuery.isPending ? (
             <LoadingState label="Loading transcript" />
           ) : (

@@ -137,7 +137,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
       <>
         {head()}
         <div className="providers-note">
-          <LoadingState label="Loading providers" />
+          <LoadingState label="Loading providers" skeleton={6} />
         </div>
       </>,
     );
@@ -147,7 +147,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
       <>
         {head()}
         <div className="providers-note">
-          <ErrorState title="Failed to load providers" error={providersQuery.error as ApiError} onRetry={() => void providersQuery.refetch()} />
+          <ErrorState title="Failed to load providers" error={providersQuery.error as ApiError} onRetry={() => void providersQuery.refetch()} reassure />
         </div>
       </>,
     );

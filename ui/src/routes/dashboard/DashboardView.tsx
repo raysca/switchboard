@@ -76,12 +76,12 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
           Enter a management key to inspect operational health, session telemetry, and provider readiness.
         </EmptyState>
         <div className="message-panel">
-          <h2>First-run onboarding</h2>
+          <h2>First run</h2>
           <p>
             Connect your first provider and configure a voice flow with the guided setup.
           </p>
           <Link to="/onboarding" className="action-button-small">
-            Start onboarding
+            Start first run
           </Link>
         </div>
       </>
@@ -108,6 +108,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
           <p>Operational signals for voice sessions and flows.</p>
         </header>
         <ErrorState
+          reassure
           error={operationsQuery.error as ApiError}
           onRetry={() => {
             void operationsQuery.refetch();
@@ -127,6 +128,9 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
   const totalFlows = flows.length;
 
   const detectedProviders = providers.filter((p) => p.detected).length;
+  const detectedList = providers.filter((p) => p.detected);
+  const known = providersQuery.isSuccess && flowsQuery.isSuccess;
+  const stepsLeft = (detectedList.length === 0 ? 1 : 0) + (flows.length === 0 ? 1 : 0);
 
   const nearCapacity = op.capacity_utilization >= 0.9 || (op.max_sessions > 0 && op.active_sessions >= op.max_sessions);
 
@@ -144,6 +148,44 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
         <h1 tabIndex={-1}>Dashboard</h1>
         <p>Operational signals for voice sessions and flows.</p>
       </header>
+
+      {known && stepsLeft > 0 && (
+        <section aria-labelledby="setup-title" className="setup-checklist">
+          <h2 id="setup-title">{stepsLeft === 2 ? "Two steps to your first call." : "One step to your first call."}</h2>
+          <ol aria-label="Setup checklist">
+            <li data-done={detectedList.length > 0 || undefined}>
+              <span className="setup-checklist__mark" aria-hidden="true">
+                {detectedList.length > 0 ? "✓" : "1"}
+              </span>
+              <span>
+                <b>Set a provider key</b>
+                <span className="subtext">
+                  {detectedList.length > 0 ? `${detectedList.map((p) => p.display_name).join(", ")} ${detectedList.length === 1 ? "is" : "are"} ready.` : "Set one of the provider variables on the server and restart it."}
+                </span>
+              </span>
+              {detectedList.length === 0 && (
+                <Link to="/providers" className="action-button-small">
+                  See providers
+                </Link>
+              )}
+            </li>
+            <li data-done={flows.length > 0 || undefined}>
+              <span className="setup-checklist__mark" aria-hidden="true">
+                {flows.length > 0 ? "✓" : "2"}
+              </span>
+              <span>
+                <b>Create your first flow</b>
+                <span className="subtext">Guided setup takes about three minutes.</span>
+              </span>
+              {flows.length === 0 && (
+                <Link to="/onboarding" className="action-button-small">
+                  Start first run
+                </Link>
+              )}
+            </li>
+          </ol>
+        </section>
+      )}
 
       <section className="state-line" role="status" aria-label="System health status">
         <p className="state-line__headline">

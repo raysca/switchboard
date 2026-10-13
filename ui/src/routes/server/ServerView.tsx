@@ -67,6 +67,7 @@ export function ServerView({ client, keyValue }: ServerViewProps) {
           <p>Inspect the safe, read-only runtime configuration.</p>
         </header>
         <ErrorState
+          reassure
           error={operationsQuery.error as ApiError}
           onRetry={() => {
             void operationsQuery.refetch();

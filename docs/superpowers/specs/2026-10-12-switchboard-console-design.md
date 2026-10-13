@@ -59,8 +59,8 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 
 | Board | Screen | Route | Notes |
 |---|---|---|---|
-| 0 | Connect, empty and error states | all | Not connected keeps "Enter a management key". Each empty/error state: what happened, what it means for live calls, one next step. |
-| 1 | First run | `/onboarding` | 4 steps: voice stack (from detected providers) → flow basics → test call → connect (voice token + client snippet). Key paste (S3) shown only when the server supports it. |
+| 0 | Connect, empty and error states | all | **Done (plan 7).** Not connected is a dark management-key strip. Read failures say what happened and that live calls are not affected, and show status, code and request id with Try again and Copy details. Tables load as skeleton rows. The Dashboard shows "Two steps to your first call" until a provider is detected and a flow exists. The provider-outage banner waits on S15. |
+| 1 | First run | `/onboarding` | **Done (plan 7).** Four steps with the step in the URL: voice stack (one-provider stacks from the catalog defaults; keys are set on the server, not pasted: S3), flow (name, voice, what it should do; no greeting field: S5), test call (the published v1; no reply-time chips: S9), connect (token request and web client with the real flow id). The flow is created as v1 and is live: there are no drafts (S1). |
 | 2 | Dashboard | `/dashboard` | State line, figures, live calls, latency, providers, flows. Already largely built (commit `065cd69`). |
 | 3–5, 12 | Flows list, empty state, New flow dialog, published banner | `/flows`, `/flows/new`, `/flows/:id` | **Done (plan 2).** Rows show status, version, steps/routes/tools and live calls; Enabled, Test, Duplicate, Archive. New flow asks for a name, then Blank or Copy (the canvas's voice-stack choice is left to First run). The banner appears in the editor after a publish. Draft badges, rollback, calls-today and Restore wait on S1, S2, S7, S8. Brought to the canvas's layout in plan 6 (flow screens parity). |
 | 6–10 | Flow editor | `/flows/:id`, `/flows/new` | Section 2. Brought to the canvas's layout in plan 6 (flow screens parity). |
@@ -71,6 +71,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 
 ## 4. Deviations from the canvas (the Switchboard spec wins)
 
+- First run offers one-provider voice stacks only (no mixed "Fastest replies"), no key paste (S3), no "first thing it says" (S5), no draft wording (S1) and no latency chips (S9). The error panel reassurance appears only on read failures of the management API.
 - No all-caps eyebrow labels and no monospace labels: section labels are sentence case (`ui-switchboard-design.md`).
 - No drop shadows or card boxes: the side panel is separated by a `--rule` border, not a shadow.
 - The Calls list's filter pills keep the canvas's fully rounded shape (`border-radius: 999px`, the one exception to the single-radius rule); their touch target is still 44px.
@@ -116,4 +117,4 @@ Until each lands, the UI omits the dependent control rather than faking it.
 4. **Done:** Providers (board 15).
 5. **Done:** MCP tools (board 16).
 6. **Done:** flow screens parity (boards 3–12): full-bleed editor, step cards, rebuilt Test call panel, Flows header and empty state, New flow cards, Publish checks.
-7. First run and empty/error states (boards 0–1), after S3/S5 decisions.
+7. **Done:** First run and the empty and error states (boards 0–1).

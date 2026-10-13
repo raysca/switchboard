@@ -1,329 +1,336 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  type ApiClient,
-  type FlowDTO,
-  type CreateFlowInput,
-  ApiError,
-  asApiError,
-} from "../../api/client";
-import {
-  ActionButton,
-  EmptyState,
-  ErrorState,
-  LoadingState,
-  Status,
-} from "../../components/primitives";
+import { Link, useSearchParams } from "react-router";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { asApiError, type ApiClient, type ApiError, type FlowDTO } from "../../api/client";
+import { EmptyState, ErrorState, LoadingState, Status } from "../../components/primitives";
+import { FlowVoiceTest } from "../flows/FlowVoiceTest";
+import { DEFAULT_JOB, flowFor, stacksFrom, type Stack } from "./firstRun";
 
-export type OnboardingViewProps = {
-  client: ApiClient;
-  keyValue: string | null;
-};
+export type OnboardingViewProps = { client: ApiClient; keyValue: string | null };
 
+const STEPS = [
+  { name: "Voice stack", sub: "Providers for each stage" },
+  { name: "Flow", sub: "Name, job, voice" },
+  { name: "Test call", sub: "Talk to it in the browser" },
+  { name: "Connect", sub: "Token and web client" },
+];
+
+/** A code block with a Copy button. The clipboard may be missing or refuse: say so. */
+function Snippet({ label, title, text }: { label: string; title: string; text: string }) {
+  const [copied, setCopied] = useState<"idle" | "yes" | "no">("idle");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied("yes");
+    } catch {
+      setCopied("no");
+    }
+  };
+  return (
+    <figure className="snippet" aria-label={label}>
+      <figcaption>
+        <span>{title}</span>
+        <button type="button" className="action-button-small" onClick={() => void copy()}>
+          Copy
+        </button>
+        {copied === "yes" && <span className="subtext">Copied</span>}
+        {copied === "no" && <span className="subtext">Could not copy. Select the text and copy it yourself.</span>}
+      </figcaption>
+      <pre>
+        <code>{text}</code>
+      </pre>
+    </figure>
+  );
+}
+
+/** First run: pick a voice stack, make a flow, call it, connect a client. The step lives in the URL, so a reload resumes. */
 export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const queryClient = useQueryClient();
+  const [params, setParams] = useSearchParams();
+  const [stackId, setStackId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [voice, setVoice] = useState("");
+  const [job, setJob] = useState(DEFAULT_JOB);
+  const [created, setCreated] = useState<FlowDTO | null>(null);
+  const [createError, setCreateError] = useState<ApiError | null>(null);
 
-  // Step 2: Flow form state
-  const [flowNameDraft, setFlowNameDraft] = useState("");
-  const [flowDescDraft, setFlowDescDraft] = useState("");
-  const [flowSttDraft, setFlowSttDraft] = useState("chirp_2");
-  const [flowLlmDraft, setFlowLlmDraft] = useState("gemini-2.5-flash");
-  const [flowTtsDraft, setFlowTtsDraft] = useState("en-US-Chirp3-HD-Aoede");
-  const [flowError, setFlowError] = useState<ApiError | null>(null);
-
-  const providersQuery = useQuery({
-    queryKey: ["providers"],
-    queryFn: client.getProviders,
-    enabled: !!keyValue,
-    retry: false,
-  });
-
-  const flowsQuery = useQuery({
-    queryKey: ["flows"],
-    queryFn: () => client.getFlows(),
-    enabled: !!keyValue,
-    retry: false,
-  });
-
-  const createFlowMutation = useMutation({
-    mutationFn: (payload: CreateFlowInput) => client.createFlow(payload),
-    onSuccess: () => {
-      setFlowError(null);
+  const providersQuery = useQuery({ queryKey: ["providers"], queryFn: client.getProviders, enabled: !!keyValue, retry: false });
+  const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: !!keyValue, retry: false });
+  const create = useMutation({
+    mutationFn: (stack: Stack) => client.createFlow(flowFor(stack, { name, job, voice })),
+    onSuccess: (flow) => {
+      setCreateError(null);
+      setCreated(flow);
       void queryClient.invalidateQueries({ queryKey: ["flows"] });
+      setParams({ step: "3", flow: flow.id });
     },
-    onError: (err) => {
-      setFlowError(asApiError(err, "Failed to create flow"));
-    },
+    onError: (err) => setCreateError(asApiError(err, "Failed to create flow")),
   });
 
-  function handleCreateFlow(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const name = flowNameDraft.trim();
-    const stt = flowSttDraft.trim();
-    const llm = flowLlmDraft.trim();
-    const tts = flowTtsDraft.trim();
-    if (!name || !stt || !llm || !tts) return;
-    if (!flowProvider) {
-      setFlowError(
-        new ApiError(
-          providersQuery.isSuccess
-            ? "No detected provider can run speech-to-text, LLM and text-to-speech. Set the variables for one on the server (see the Providers page)."
-            : "The provider list has not loaded yet. Reload the page and try again.",
-          "no_provider",
-          0,
-          "",
-        ),
+  const head = (
+    <header className="page-head">
+      <h1 tabIndex={-1}>First run</h1>
+      <span className="subtext">First call in about three minutes.</span>
+    </header>
+  );
+  if (!keyValue) {
+    return (
+      <>
+        {head}
+        <EmptyState title="Connect to start first run">Enter a management key above to begin setup.</EmptyState>
+      </>
+    );
+  }
+  if (providersQuery.isPending || flowsQuery.isPending) return <>{head}<LoadingState label="Checking system configuration" skeleton={4} /></>;
+  for (const q of [providersQuery, flowsQuery]) {
+    // A failed background refetch must not unmount a live test call: only fail when there is no data yet.
+    if (q.isError && !q.data) {
+      return (
+        <>
+          {head}
+          <ErrorState title="Setup check failed" error={q.error as ApiError} onRetry={() => void q.refetch()} reassure />
+        </>
       );
-      return;
     }
-    // ponytail: onboarding uses one detected provider for every stage; the Flows page edits each stage.
-    const provider = flowProvider;
-    createFlowMutation.mutate({
-      name,
-      description: flowDescDraft.trim(),
-      enabled: true,
-      config: {
-        stt: { provider, model: stt, language: "en-US" },
-        llm: { provider, model: llm },
-        tts: { provider, voice: tts },
-      },
-    });
   }
 
   const providers = providersQuery.data ?? [];
   const detected = providers.filter((p) => p.detected);
-  // Onboarding uses one provider for every stage: a detected one that can run all three.
-  const flowProvider = detected.find((p) =>
-    ["stt", "llm", "tts"].every((cap) => p.capabilities.includes(cap)),
-  )?.id;
-  const flows = (flowsQuery.data ?? []).filter((a) => !a.archived);
+  const flows = (flowsQuery.data ?? []).filter((f) => !f.archived);
+  const stacks = stacksFrom(providers);
+  const ready = stacks.filter((s) => s.ready);
+  const stack = stacks.find((s) => s.provider.id === stackId && s.ready) ?? ready[0];
+  const flowId = params.get("flow");
+  const flow = (created && created.id === flowId ? created : flows.find((f) => f.id === flowId)) ?? null;
 
-  const hasProvider = detected.length > 0;
-  const hasFlows = flows.length > 0;
-  const isFullyConfigured = hasProvider && hasFlows;
+  const raw = params.get("step");
+  const asked = raw === null ? null : Number(raw);
+  let step = asked !== null && Number.isInteger(asked) && asked >= 1 && asked <= 4 ? asked : asked === null ? (flows.length > 0 && detected.length > 0 ? 0 : 1) : 1;
+  if (step >= 3 && !flow) step = ready.length > 0 ? 2 : 1;
+  if (step === 2 && !stack) step = 1;
+  const go = (n: number, keep?: boolean) => setParams(keep && flow ? { step: String(n), flow: flow.id } : { step: String(n) });
+
+  const nav = (
+    <nav aria-label="Setup steps" className="setup-steps">
+      <ol>
+        {STEPS.map((s, i) => {
+          const n = i + 1;
+          const state = step === 0 ? "done" : n < step ? "done" : n === step ? "current" : "todo";
+          return (
+            <li key={s.name} aria-current={state === "current" ? "step" : undefined} data-state={state}>
+              <span className="setup-steps__mark" aria-hidden="true">
+                {state === "done" ? "✓" : n}
+              </span>
+              <span>
+                <b>{s.name}</b>
+                <span className="subtext">{s.sub}</span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+
+  if (step === 0) {
+    return (
+      <>
+        {head}
+        <div className="first-run">
+          {nav}
+          <div className="first-run__main">
+            <section className="message-panel" role="status">
+              <h2>System configured and ready</h2>
+              <p>
+                {detected.length} detected {detected.length === 1 ? "provider" : "providers"} and {flows.length} {flows.length === 1 ? "flow" : "flows"}.
+              </p>
+            </section>
+            <div className="first-run__summary">
+              <section>
+                <h3>Providers ({detected.length})</h3>
+                <ul>
+                  {detected.map((p) => (
+                    <li key={p.id}>{p.display_name}</li>
+                  ))}
+                </ul>
+                <Link to="/providers" className="action-button-small">
+                  View providers
+                </Link>
+              </section>
+              <section>
+                <h3>Flows ({flows.length})</h3>
+                <ul>
+                  {flows.map((f) => (
+                    <li key={f.id}>
+                      {f.name} <Status tone={f.readiness.state === "ready" ? "good" : "bad"}>{f.readiness.state === "ready" ? "Ready" : f.readiness.state}</Status>
+                    </li>
+                  ))}
+                </ul>
+                <div className="row">
+                  <Link to="/flows" className="action-button-small">
+                    Manage flows
+                  </Link>
+                  <Link to={`/onboarding?step=3&flow=${encodeURIComponent(flows[0].id)}`} className="action-button-small">
+                    Test a flow
+                  </Link>
+                  <Link to={`/onboarding?step=4&flow=${encodeURIComponent(flows[0].id)}`} className="action-button-small">
+                    Connect a client
+                  </Link>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  const submitFlow = (e: FormEvent) => {
+    e.preventDefault();
+    if (!stack || !name.trim() || !job.trim()) return;
+    create.mutate(stack);
+  };
 
   return (
     <>
-      <header className="section-heading">
-        <h1 tabIndex={-1}>Onboarding setup</h1>
-        <p>First-run guided setup for providers and voice flows.</p>
-      </header>
-
-      {!keyValue ? (
-        <EmptyState title="Connect to start onboarding">
-          Enter a management key above to begin onboarding setup.
-        </EmptyState>
-      ) : providersQuery.isPending || flowsQuery.isPending ? (
-        <LoadingState label="Checking system configuration" />
-      ) : providersQuery.isError ? (
-        <ErrorState
-          title="Setup check failed"
-          error={providersQuery.error as ApiError}
-          onRetry={() => {
-            void providersQuery.refetch();
-          }}
-        />
-      ) : flowsQuery.isError ? (
-        <ErrorState
-          title="Setup check failed"
-          error={flowsQuery.error as ApiError}
-          onRetry={() => {
-            void flowsQuery.refetch();
-          }}
-        />
-      ) : isFullyConfigured ? (
-        /* Completed State */
-        <div className="onboarding-complete" style={{ marginTop: "32px" }}>
-          <div
-            className="message-panel"
-            style={{ borderColor: "var(--caller)", marginBottom: "28px" }}
-            role="status"
-          >
-            <h2>System configured and ready</h2>
-            <p>
-              Your setup is complete with {detected.length} detected provider(s) and{" "}
-              {flows.length} configured flow(s).
-            </p>
-          </div>
-
-          <div
-            className="summary-cards"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: "20px",
-              marginBottom: "32px",
-            }}
-          >
-            <div
-              style={{
-                background: "var(--surface)",
-                border: "1px solid var(--rule)",
-                padding: "20px",
-              }}
-            >
-              <h3 style={{ margin: "0 0 12px", fontSize: "1.1rem" }}>
-                Detected Providers ({detected.length})
-              </h3>
-              <ul style={{ paddingLeft: "18px", margin: "0 0 16px" }}>
-                {detected.map((p) => (
-                  <li key={p.id} style={{ marginBottom: "6px" }}>
-                    <strong>{p.display_name}</strong> ({p.capabilities.join(", ") || "no services"})
-                  </li>
-                ))}
-              </ul>
-              <Link to="/providers" className="action-button-small">
-                View providers
-              </Link>
-            </div>
-
-            <div
-              style={{
-                background: "var(--surface)",
-                border: "1px solid var(--rule)",
-                padding: "20px",
-              }}
-            >
-              <h3 style={{ margin: "0 0 12px", fontSize: "1.1rem" }}>
-                Configured Flows ({flows.length})
-              </h3>
-              <ul style={{ paddingLeft: "18px", margin: "0 0 16px" }}>
-                {flows.map((a: FlowDTO) => (
-                  <li key={a.id} style={{ marginBottom: "6px" }}>
-                    <strong>{a.name}</strong> —{" "}
-                    <Status tone={a.readiness.state === "ready" ? "good" : "bad"}>
-                      {a.readiness.state === "ready" ? "Ready" : a.readiness.state}
-                    </Status>
-                  </li>
-                ))}
-              </ul>
-              <Link to="/flows" className="action-button-small">
-                Manage flows
-              </Link>
-            </div>
-          </div>
-        </div>
-      ) : !hasProvider ? (
-        /* Step 1: Set a provider key */
-        <div className="onboarding-step" style={{ marginTop: "32px" }}>
-          <section aria-labelledby="step1-heading">
-            <h2 id="step1-heading">Step 1: Set a provider key</h2>
-            <p style={{ color: "var(--ink-2)", marginBottom: "20px" }}>
-              Voice flows need a provider for speech recognition, LLM reasoning, and speech
-              synthesis. Set one of these environment variables on the server and restart it:
-            </p>
-            <ul style={{ paddingLeft: "18px" }}>
-              {providers.map((p) => (
-                <li key={p.id}>
-                  {p.display_name}: <code>{p.env.join(", ")}</code>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
-      ) : (
-        /* Step 2: Create First Flow */
-        <div className="onboarding-step" style={{ marginTop: "32px" }}>
-          <section aria-labelledby="step2-heading">
-            <h2 id="step2-heading">Step 2: Create your first flow</h2>
-            <p style={{ color: "var(--ink-2)", marginBottom: "16px" }}>
-              Provider detected: <strong>{flowProvider ?? detected.map((p) => p.display_name).join(", ")}</strong>.
-              Now configure your first voice flow.
-            </p>
-
-            {flowError && (
-              <ErrorState
-                title="Failed to create flow"
-                error={flowError}
-                onRetry={() => setFlowError(null)}
-              />
-            )}
-
-            <form onSubmit={handleCreateFlow} className="form-card">
-              <label className="form-field" htmlFor="onboard-flow-name">
-                <span>Flow name</span>
-                <input
-                  id="onboard-flow-name"
-                  type="text"
-                  value={flowNameDraft}
-                  onChange={(e) => setFlowNameDraft(e.target.value)}
-                  placeholder="e.g. Concierge"
-                  maxLength={128}
-                  required
-                />
-              </label>
-
-              <label className="form-field" htmlFor="onboard-flow-desc">
-                <span>Description</span>
-                <input
-                  id="onboard-flow-desc"
-                  type="text"
-                  value={flowDescDraft}
-                  onChange={(e) => setFlowDescDraft(e.target.value)}
-                  placeholder="Primary assistant bot"
-                  maxLength={1024}
-                />
-              </label>
-
-              <div
-                className="voice-stack-settings"
-                style={{
-                  border: "1px solid var(--rule)",
-                  padding: "16px",
-                  marginTop: "16px",
-                  marginBottom: "16px",
-                  background: "var(--surface)",
-                }}
-              >
-                <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>
-                  Voice stack configuration
-                </h3>
-                <p style={{ margin: "0 0 12px" }}>
-                  Provider for all stages: <code>{flowProvider ?? "none detected"}</code>
+      {head}
+      <div className="first-run">
+        {nav}
+        <div className="first-run__main">
+          {step === 1 && (
+            <section aria-labelledby="fr-title" className="first-run__step">
+              <p className="subtext">Step 1 of 4</p>
+              <h2 id="fr-title">Choose how your flow hears, thinks and speaks.</h2>
+              {stacks.length === 0 ? (
+                <p>
+                  No provider on this server covers speech-to-text, a language model and text-to-speech yet. Setting a key will not change that: this build has no full stack. <Link to="/providers">See providers</Link>
                 </p>
+              ) : (
+                <>
+                  <p>Provider keys are read from the server's environment, so there is nothing to paste here. Pick a stack that is ready, or set the variable it names and reload. You can change every part later.</p>
+                  <div role="radiogroup" aria-label="Voice stack" className="stack-list">
+                    {stacks.map((s) => (
+                      <label key={s.provider.id} className="option-card" data-selected={stack?.provider.id === s.provider.id ? "true" : undefined}>
+                        <input type="radio" name="voice-stack" checked={stack?.provider.id === s.provider.id} disabled={!s.ready} onChange={() => setStackId(s.provider.id)} />
+                        <span>
+                          <b>{s.provider.display_name}</b>
+                          <span className="subtext stack-list__parts">
+                            {s.stt.label} → {s.llm.label} → {s.tts.label}
+                          </span>
+                        </span>
+                        <span className="subtext">{s.ready ? "Ready on this server" : s.missing.length > 0 ? `Set ${s.missing.join(", ")} on the server and restart it` : "Not in this build"}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+              <div className="first-run__foot">
+                <span className="grow" />
+                <span className="subtext">{stack ? "Ready to go" : "Set a provider key on the server to continue"}</span>
+                <button type="button" className="action-button" disabled={!stack} onClick={() => go(2)}>
+                  Continue
+                </button>
+              </div>
+            </section>
+          )}
 
-                <label className="form-field" htmlFor="onboard-flow-stt">
-                  <span>STT model</span>
-                  <input
-                    id="onboard-flow-stt"
-                    type="text"
-                    value={flowSttDraft}
-                    onChange={(e) => setFlowSttDraft(e.target.value)}
-                    required
-                  />
+          {step === 2 && stack && (
+            <form onSubmit={submitFlow} className="first-run__step" aria-labelledby="fr-title" noValidate={false}>
+              <p className="subtext">Step 2 of 4</p>
+              <h2 id="fr-title">Tell it what job it's doing.</h2>
+              <p>Plain sentences are enough. This becomes the flow's first step, using {stack.provider.display_name}.</p>
+              {createError && <ErrorState title="Failed to create flow" error={createError} onRetry={() => setCreateError(null)} />}
+              <div className="first-run__fields">
+                <label className="form-field" htmlFor="fr-name">
+                  <span>Name</span>
+                  <input id="fr-name" type="text" required maxLength={128} value={name} autoComplete="off" onChange={(e) => setName(e.target.value)} />
                 </label>
-
-                <label className="form-field" htmlFor="onboard-flow-llm">
-                  <span>LLM model</span>
-                  <input
-                    id="onboard-flow-llm"
-                    type="text"
-                    value={flowLlmDraft}
-                    onChange={(e) => setFlowLlmDraft(e.target.value)}
-                    required
-                  />
+                <label className="form-field" htmlFor="fr-voice">
+                  <span>Voice</span>
+                  <select id="fr-voice" value={stack.tts.voices.some((v) => v.id === voice) ? voice : stack.tts.voice} onChange={(e) => setVoice(e.target.value)}>
+                    {stack.tts.voices.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.label}
+                      </option>
+                    ))}
+                  </select>
                 </label>
-
-                <label className="form-field" htmlFor="onboard-flow-tts">
-                  <span>TTS voice</span>
-                  <input
-                    id="onboard-flow-tts"
-                    type="text"
-                    value={flowTtsDraft}
-                    onChange={(e) => setFlowTtsDraft(e.target.value)}
-                    required
-                  />
+                <label className="form-field first-run__wide" htmlFor="fr-job">
+                  <span>What should it do?</span>
+                  <textarea id="fr-job" rows={5} required value={job} onChange={(e) => setJob(e.target.value)} />
                 </label>
               </div>
-
-              <ActionButton type="submit" disabled={createFlowMutation.isPending}>
-                {createFlowMutation.isPending ? "Creating…" : "Create flow"}
-              </ActionButton>
+              <div className="first-run__foot">
+                <button type="button" className="action-button-small" onClick={() => go(1)}>
+                  Back
+                </button>
+                <span className="grow" />
+                <span className="subtext">Creates the flow as v1 and opens a test call</span>
+                <button type="submit" className="action-button" disabled={create.isPending}>
+                  {create.isPending ? "Creating…" : "Create and call it"}
+                </button>
+              </div>
             </form>
-          </section>
+          )}
+
+          {step === 3 && flow && (
+            <section aria-labelledby="fr-title" className="first-run__step">
+              <p className="subtext">Step 3 of 4</p>
+              <h2 id="fr-title">Say hello.</h2>
+              <p>Your browser will ask for the microphone. Try interrupting it mid-sentence.</p>
+              <div className="first-run__call">
+                <FlowVoiceTest flow={flow} client={client} keyValue={keyValue} />
+              </div>
+              <p className="subtext">
+                Doesn't sound right? <Link to={`/flows/${encodeURIComponent(flow.id)}`}>Open the flow editor</Link> to change the instructions, publish, and call again.
+              </p>
+              <div className="first-run__foot">
+                <span className="grow" />
+                <button type="button" className="action-button" onClick={() => go(4, true)}>
+                  Next: connect
+                </button>
+              </div>
+            </section>
+          )}
+
+          {step === 4 && flow && (
+            <section aria-labelledby="fr-title" className="first-run__step">
+              <p className="subtext">Step 4 of 4</p>
+              <h2 id="fr-title">Put it in front of callers.</h2>
+              <p>The browser connects with the official Pipecat web client; no changes are needed. Your backend mints a short-lived voice token with the management key and hands only the token to the browser.</p>
+              <Snippet
+                label="Token request"
+                title="1 · your backend mints a short-lived voice token"
+                text={`POST /api/v1/voice-tokens\n{ "flow_id": "${flow.id}", "principal": "[YOUR USER ID]" }`}
+              />
+              <Snippet
+                label="Web client"
+                title="2 · the browser connects with @pipecat-ai/client-js"
+                text={`const client = new PipecatClient({\n  transport: new WebSocketTransport(),\n});\nawait client.connect({ wsUrl: "wss://[YOUR SERVER]/ws?token=[VOICE TOKEN]" });\n// [VOICE TOKEN] is the token from step 1`}
+              />
+              <section aria-labelledby="fr-more" className="first-run__more">
+                <h3 id="fr-more">When you're ready for more</h3>
+                <ul>
+                  <li>
+                    <span>Add a fallback so a provider outage doesn't drop calls, or route callers to a specialist step</span>
+                    <Link to={`/flows/${encodeURIComponent(flow.id)}`}>Open the editor</Link>
+                  </li>
+                  <li>
+                    <span>Let it look things up with an MCP tool</span>
+                    <Link to="/mcp-servers">Connect a tool</Link>
+                  </li>
+                </ul>
+              </section>
+              <div className="first-run__foot">
+                <span className="grow" />
+                <Link to="/dashboard" className="action-button">
+                  Go to dashboard
+                </Link>
+              </div>
+            </section>
+          )}
         </div>
-      )}
+      </div>
     </>
   );
 }

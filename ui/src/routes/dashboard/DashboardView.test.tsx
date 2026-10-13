@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
@@ -74,7 +74,7 @@ describe("DashboardView", () => {
     const client = createMockClient();
     renderWithProviders(<DashboardView client={client} keyValue={null} />);
     expect(screen.getByText("Connect to view operations")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Start onboarding" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Start first run" })).toBeVisible();
   });
 
   it("renders loading state when operational signals are pending", () => {
@@ -96,7 +96,7 @@ describe("DashboardView", () => {
 
     renderWithProviders(<DashboardView client={client} keyValue="test-key" />);
     expect(await screen.findByText("Failed to fetch operations")).toBeVisible();
-    expect(screen.getByText("Request ID: req-err-1")).toBeVisible();
+    expect(screen.getByText("req-err-1")).toBeVisible();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -158,5 +158,36 @@ describe("DashboardView", () => {
 
     expect(await screen.findByText("No recent calls")).toBeVisible();
     expect(screen.getByText(/No calls recorded yet/)).toBeVisible();
+  });
+});
+
+describe("DashboardView setup checklist", () => {
+  const prov = (detected: boolean) => [{ id: "google", display_name: "Google", capabilities: [], detected, env: ["GOOGLE_API_KEY"], services: {} }];
+  const show = (overrides: Partial<ApiClient>) => renderWithProviders(<DashboardView client={createMockClient(overrides)} keyValue="test-key" />);
+
+  it("shows two steps to a first call when nothing is set up", async () => {
+    show({ getProviders: vi.fn().mockResolvedValue(prov(false)), getFlows: vi.fn().mockResolvedValue([]) });
+    expect(await screen.findByRole("heading", { name: "Two steps to your first call." })).toBeVisible();
+    expect(within(screen.getByRole("list", { name: "Setup checklist" })).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "See providers" })).toHaveAttribute("href", "/providers");
+    expect(screen.getByRole("link", { name: "Start first run" })).toHaveAttribute("href", "/onboarding");
+  });
+
+  it("says one step when a provider is already detected", async () => {
+    show({ getProviders: vi.fn().mockResolvedValue(prov(true)), getFlows: vi.fn().mockResolvedValue([]) });
+    expect(await screen.findByRole("heading", { name: "One step to your first call." })).toBeVisible();
+    expect(screen.getByText("Google is ready.")).toBeVisible();
+  });
+
+  it("shows no checklist once a provider is detected and a flow exists", async () => {
+    show({});
+    await screen.findByRole("heading", { name: /Recent calls/ });
+    expect(screen.queryByRole("heading", { name: /to your first call/ })).toBeNull();
+  });
+
+  it("does not claim anything is missing when the provider list failed", async () => {
+    show({ getProviders: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")), getFlows: vi.fn().mockResolvedValue([]) });
+    await screen.findByRole("heading", { name: /Recent calls/ });
+    expect(screen.queryByRole("heading", { name: /to your first call/ })).toBeNull();
   });
 });

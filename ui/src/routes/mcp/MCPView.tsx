@@ -74,7 +74,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
     return (
       <>
         {head}
-        <ErrorState title="Could not load MCP servers" error={serversQuery.error as ApiError} onRetry={() => void serversQuery.refetch()} />
+        <ErrorState title="Could not load MCP servers" error={serversQuery.error as ApiError} onRetry={() => void serversQuery.refetch()} reassure />
       </>
     );
   }
@@ -117,7 +117,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
           ) : selectedDetail?.isPending ? (
             <LoadingState label="Loading MCP server" />
           ) : selectedDetail?.isError || !selectedDetail?.data ? (
-            <ErrorState title="Could not load the server" error={selectedDetail?.error as ApiError} onRetry={() => void selectedDetail?.refetch()} />
+            <ErrorState title="Could not load the server" error={selectedDetail?.error as ApiError} onRetry={() => void selectedDetail?.refetch()} reassure />
           ) : (
             <ServerDetail
               key={selected.id}

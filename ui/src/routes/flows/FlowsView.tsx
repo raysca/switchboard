@@ -102,9 +102,9 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
       {!keyValue ? (
         <EmptyState title="Connect to manage flows">Enter a management key above to configure voice flows.</EmptyState>
       ) : flowsQuery.isPending ? (
-        <LoadingState label="Loading flows" />
+        <LoadingState label="Loading flows" skeleton={6} />
       ) : flowsQuery.isError && !flowsQuery.data ? (
-        <ErrorState title="Failed to load flows" error={flowsQuery.error as ApiError} onRetry={() => void flowsQuery.refetch()} />
+        <ErrorState title="Failed to load flows" error={flowsQuery.error as ApiError} onRetry={() => void flowsQuery.refetch()} reassure />
       ) : flows.length === 0 ? (
         <section aria-labelledby="no-flows" className="flows-empty">
           <div className="flows-empty__lead">

@@ -57,7 +57,7 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
   if (flowId && flowQuery.isPending) return <LoadingState label="Loading flow" />;
   // A failed refresh keeps the editor (and its unsaved edits): only a flow we never loaded is an error.
   if (flowId && !flowQuery.data && flowQuery.isError && !notFound) {
-    return <ErrorState title="Failed to load the flow" error={flowQuery.error as ApiError} onRetry={() => void flowQuery.refetch()} />;
+    return <ErrorState title="Failed to load the flow" error={flowQuery.error as ApiError} onRetry={() => void flowQuery.refetch()} reassure />;
   }
   if (flowId && !flow) {
     return (
@@ -87,7 +87,7 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
       )}
       {formError && <ErrorState title="Publishing failed" error={formError} onRetry={() => setFormError(null)} />}
       {providersQuery.isError && (
-        <ErrorState title="Failed to load providers" error={providersQuery.error as ApiError} onRetry={() => void providersQuery.refetch()} />
+        <ErrorState title="Failed to load providers" error={providersQuery.error as ApiError} onRetry={() => void providersQuery.refetch()} reassure />
       )}
       <FlowEditor
         key={flow?.id ?? "new"}
