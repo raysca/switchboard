@@ -349,6 +349,7 @@ main {
 }
 .table-scroll {
   overflow-x: auto;
+  position: relative; /* the scroller clips its absolutely positioned .visually-hidden cells; without this they widen the page */
   margin-top: 25px;
 }
 table {
@@ -1773,6 +1774,7 @@ main:has(.flow-editor) {
 }
 .calls-table {
   overflow-x: auto;
+  position: relative; /* clips the absolutely positioned .visually-hidden header cells instead of widening the page */
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   background: var(--surface);
