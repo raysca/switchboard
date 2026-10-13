@@ -287,16 +287,19 @@ func TestValidateProductionSecurity_SameHostOrigin(t *testing.T) {
 }
 
 func TestValidateProductionSecurity_PublicAdmin(t *testing.T) {
-	cfg := DefaultConfig(ProfileProduction)
-	cfg.PublicAdmin.Enabled = true
+	t.Setenv("TOKEN_SECRET", "cloudrun-test-token-secret-0123456789abcdef")
+	t.Setenv("GOVOICE_DATABASE_DSN", t.TempDir()+"/govoice.db")
+	cfg, err := LoadConfig("../config/cloudrun.yaml") // a known-valid production config with public_admin behind a proxy
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateProductionSecurity(cfg); err != nil {
+		t.Fatalf("proxy mode must allow public_admin: %v", err)
+	}
+	cfg.TLS.TrustedProxyMode, cfg.OriginAllowSameHost = false, false // isolate the public_admin rule
 	cfg.TLS.CertFile, cfg.TLS.KeyFile = "cert.pem", "key.pem"
-	err := validateProductionSecurity(cfg)
+	err = validateProductionSecurity(cfg)
 	if err == nil || !strings.Contains(err.Error(), "public_admin") {
 		t.Fatalf("want public_admin rejection, got %v", err)
-	}
-	cfg.TLS.TrustedProxyMode = true
-	cfg.TLS.TrustedProxies = []string{"10.0.0.0/8"}
-	if err := validateProductionSecurity(cfg); err != nil && strings.Contains(err.Error(), "public_admin") {
-		t.Fatalf("proxy mode must allow public_admin: %v", err)
 	}
 }

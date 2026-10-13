@@ -60,7 +60,7 @@ func TestPublicAdminDoesNotExposeTheOperationalSurfaces(t *testing.T) {
 
 func TestAPIIsNotOnThePublicPortByDefault(t *testing.T) {
 	s := apiTestServer(t)
-	if w := publicRequest(s, http.MethodGet, "/api/v1/server-config", testMgmtKey); w.Code == http.StatusOK {
+	if w := publicRequest(s, http.MethodGet, "/api/v1/server-config", testMgmtKey); w.Code != http.StatusNotFound {
 		t.Fatal("the management API must stay on the admin listener unless public_admin is on")
 	}
 }
@@ -92,8 +92,11 @@ func TestServerConfigReportsTheClientAddressTheServerSees(t *testing.T) {
 	}
 }
 func TestUIIsMountedWithoutShadowingTheAPIOrTheSocket(t *testing.T) {
+	prev := adminUIFS
+	adminUIFS = fstest.MapFS{} // an unbuilt stand-in: a local `make ui-embed` must not change this test
+	t.Cleanup(func() { adminUIFS = prev })
 	s := publicAdminServer(t)
-	// This test binary embeds only the placeholder: "/" says so, and the real routes still win.
+	// The unbuilt UI: "/" says so, and the real routes still win.
 	if w := publicRequest(s, http.MethodGet, "/", ""); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "not built") {
 		t.Fatalf("/: %d %q", w.Code, w.Body.String())
 	}
@@ -125,5 +128,22 @@ func TestAFallingBackUIDoesNotAnswerForServerPaths(t *testing.T) {
 	}
 	if w := publicRequest(s, http.MethodGet, "/api/v1/server-config", ""); w.Code != http.StatusUnauthorized {
 		t.Fatalf("/api/v1 must still reach the management handler: %d", w.Code)
+	}
+}
+
+func TestForwardedHeadersFromAnUntrustedPeerAreIgnored(t *testing.T) {
+	s := publicAdminServer(t, func(c *Config) {
+		c.TLS.TrustedProxyMode = true
+		c.TLS.TrustedProxies = []string{"169.254.0.0/16"}
+	})
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/server-config", nil)
+	r.RemoteAddr = "198.51.100.7:4444"
+	r.Header.Set("X-Forwarded-For", "9.9.9.9")
+	r.Header.Set("X-Forwarded-Proto", "https")
+	r.Header.Set("Authorization", "Bearer "+testMgmtKey)
+	w := httptest.NewRecorder()
+	s.publicMux.ServeHTTP(w, r)
+	if !strings.Contains(w.Body.String(), `"client_ip":"198.51.100.7"`) || !strings.Contains(w.Body.String(), `"secure":false`) {
+		t.Fatalf("%s", w.Body.String())
 	}
 }

@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestCloudRunConfigLoadsInProduction(t *testing.T) {
 	t.Setenv("TOKEN_SECRET", "cloudrun-test-token-secret-0123456789abcdef")
@@ -21,7 +24,7 @@ func TestCloudRunConfigLoadsInProduction(t *testing.T) {
 	if cfg.MCP.AllowLocalHTTP || cfg.Recording.Enabled {
 		t.Fatal("a public demo has no loopback MCP and no recording")
 	}
-	if cfg.Limits.MaxSessions > 20 || cfg.Limits.MaxCallDuration > 30*60*1e9 {
+	if cfg.Limits.MaxSessions > 20 || cfg.Limits.MaxCallDuration > 30*time.Minute {
 		t.Fatalf("a one-instance demo is bounded: sessions=%d duration=%v", cfg.Limits.MaxSessions, cfg.Limits.MaxCallDuration)
 	}
 }
