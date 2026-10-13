@@ -24,15 +24,22 @@ const (
 	runLLMName       = "run_llm"
 )
 
-// ContextInjector steers one live call from outside its pipeline. Both methods return at once;
-// the work happens when the call is idle.
+// callStatus is where a live call is for an operator request.
+type callStatus int
+
+const (
+	callStarting callStatus = iota // the pipeline has not started: retry
+	callReady
+	callEnded // the session is closing or closed
+)
+
+// ContextInjector steers one live call from outside its pipeline. Inject returns at once; the
+// notes enter the history when the call is idle, or with the caller's next turn if it comes first.
 type ContextInjector interface {
-	// Note adds an operator note to the history; run also starts a model turn.
-	Note(content string, run bool)
-	// Run starts a model turn from the current history.
-	Run()
-	// Ready reports that the call's pipeline is running and can take work.
-	Ready() bool
+	// Inject queues operator notes (none for a run-only request); run asks for one reply. It
+	// returns core.ErrAsyncQueueFull or core.ErrAsyncClosed when nothing was queued.
+	Inject(notes []string, run bool) error
+	Status() callStatus
 }
 
 type callInjector struct {
@@ -44,24 +51,34 @@ func newCallInjector(trigger *core.AsyncTrigger, history *core.ConversationConte
 	return &callInjector{trigger: trigger, history: history}
 }
 
-func (c *callInjector) Ready() bool { return c.trigger.Ready() }
-
-func (c *callInjector) Note(content string, run bool) {
-	msg := core.Message{Role: core.RoleUser, Content: notePrefix + content}
-	c.trigger.Deliver(core.AsyncToolResult{
-		Call:   core.ToolCall{Name: contextNoteName},
-		NoTurn: !run,
-		Inject: func() error { return c.history.AddMessage(msg) },
-	})
+func (c *callInjector) Status() callStatus {
+	if c.trigger.Ready() {
+		return callReady
+	}
+	return callStarting
 }
 
-func (c *callInjector) Run() {
-	c.trigger.Deliver(core.AsyncToolResult{Call: core.ToolCall{Name: runLLMName}, Inject: func() error { return nil }})
+func (c *callInjector) Inject(notes []string, run bool) error {
+	items := make([]core.AsyncToolResult, 0, len(notes)+1)
+	for i, n := range notes {
+		msg := core.Message{Role: core.RoleUser, Content: notePrefix + n}
+		items = append(items, core.AsyncToolResult{
+			Call:   core.ToolCall{Name: contextNoteName},
+			NoTurn: !run || i < len(notes)-1, // one reply for the whole request
+			Inject: func() error { return c.history.AddMessage(msg) },
+		})
+	}
+	if run && len(notes) == 0 {
+		items = append(items, core.AsyncToolResult{Call: core.ToolCall{Name: runLLMName}, Inject: func() error { return nil }})
+	}
+	return c.trigger.DeliverOperator(items...)
 }
 
 // serverMarkers are the phrases (letters only) that introduce text the server itself places in a
-// call's history as a user-role message: operator notes and the idle / turn-completion notices.
-var serverMarkers = []string{"notefromtheoperator", "turncompletionnotice", "idlenotice", "systemnotice"}
+// call's history as a user-role message: operator notes, the idle / turn-completion notices, the
+// summary of earlier turns and the greeting after a route.
+var serverMarkers = []string{"notefromtheoperator", "turncompletionnotice", "idlenotice", "systemnotice",
+	"summaryoftheearlierconversation", "thecallerwasjusttransferredtoyou"}
 
 // bracketRepl turns every bracket form into parentheses.
 var bracketRepl = strings.NewReplacer("[", "(", "]", ")", "［", "(", "］", ")", "【", "(", "】", ")", "〔", "(", "〕", ")", "「", "(", "」", ")")
@@ -82,9 +99,10 @@ func letters(s string) string {
 }
 
 // neutralizeNoteMarker defuses text a caller supplied (spoken or typed) that tries to pass as a
-// server-authored notice: when it mentions one of serverMarkers, its brackets become parentheses.
-// This is a heuristic (look-alike letters from other scripts are not folded); the model still
-// treats caller text as untrusted.
+// server-authored notice: when it mentions one of serverMarkers, its brackets become parentheses,
+// so it no longer has the exact shape the server's own messages have. This is a heuristic, not a
+// guarantee: "(note from the operator) ..." still reads like a note to a model, and look-alike
+// letters from other scripts are not folded. Caller text stays untrusted input.
 func neutralizeNoteMarker(s string) string {
 	l := letters(s)
 	for _, m := range serverMarkers {
@@ -102,8 +120,12 @@ type sessionInjector struct {
 	sess *core.Session
 }
 
-func (s *sessionInjector) Ended() bool { return s.sess.State() > core.StateRunning }
-func (s *sessionInjector) Ready() bool { return !s.Ended() && s.ContextInjector.Ready() }
+func (s *sessionInjector) Status() callStatus {
+	if s.sess.State() > core.StateRunning {
+		return callEnded
+	}
+	return s.ContextInjector.Status()
+}
 
 type liveStatus int
 

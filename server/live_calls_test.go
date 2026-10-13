@@ -8,9 +8,8 @@ import (
 
 type nopInjector struct{}
 
-func (nopInjector) Note(string, bool) {}
-func (nopInjector) Run()              {}
-func (nopInjector) Ready() bool       { return true }
+func (nopInjector) Inject([]string, bool) error { return nil }
+func (nopInjector) Status() callStatus          { return callReady }
 
 func TestLiveCallsPutTakeDelete(t *testing.T) {
 	l := newLiveCalls()

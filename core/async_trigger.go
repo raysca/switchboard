@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,9 +15,10 @@ type AsyncTriggerConfig struct {
 	// Busy reports that an assistant reply is generating or playing
 	// (AssistantContextProcessor.Active). May be nil.
 	Busy func() bool
-	// MaxQueue bounds pending results (default 8). On overflow the oldest is
-	// injected into history at once without its own turn (the next triggered
-	// turn's model sees it), so a result is never silently lost.
+	// MaxQueue bounds pending results (default 8). On overflow the oldest tool result or
+	// route flip is injected into history at once without its own turn (the next triggered
+	// turn's model sees it), so a result is never silently lost. Operator items count
+	// against a separate cap of the same size and are refused when it is full.
 	MaxQueue int
 	// Settle is how long the call must stay idle before a turn starts (default 300ms).
 	Settle time.Duration
@@ -42,6 +45,7 @@ type AsyncTrigger struct {
 	mu      sync.Mutex
 	queue   []AsyncToolResult
 	running bool
+	closed  bool // the session ended: nothing more is accepted
 	seq     int
 
 	// monotonic offset from monoBase; 0 means off.
@@ -51,6 +55,13 @@ type AsyncTrigger struct {
 	DroppedCount   atomic.Uint64 // results whose injection failed (loop closed)
 	TriggeredCount atomic.Uint64 // model turns started
 }
+
+var (
+	// ErrAsyncQueueFull: an operator delivery would exceed the operator cap (MaxQueue).
+	ErrAsyncQueueFull = errors.New("async trigger: too many pending operator items")
+	// ErrAsyncClosed: the call has ended; nothing was queued.
+	ErrAsyncClosed = errors.New("async trigger: the call has ended")
+)
 
 func NewAsyncTrigger(cfg AsyncTriggerConfig) *AsyncTrigger {
 	if cfg.MaxQueue <= 0 {
@@ -110,23 +121,55 @@ func (t *AsyncTrigger) ProcessFrame(_ context.Context, f Frame, dir Direction, e
 	case *UserMessageFrame:
 		set(&t.turnUser, false)
 		t.reply.Store(int64(time.Since(monoBase)))
+		t.rideTurn()
 	}
 	return e.PushDirection(f, dir)
 }
 
-// Deliver queues a finished async call. It blocks only on queue overflow,
-// while the oldest result is injected (at most one tool round).
+// rideTurn hands pending operator items to a model turn that is starting anyway (a caller
+// turn reaching the model): notes go into the history now, before the model reads it, and a
+// requested reply is this turn, so it does not start another one. The trigger's own turns
+// enter after this stage and never come through here.
+func (t *AsyncTrigger) rideTurn() {
+	t.mu.Lock()
+	var ride []AsyncToolResult
+	keep := t.queue[:0]
+	for _, r := range t.queue {
+		if r.Operator {
+			ride = append(ride, r)
+		} else {
+			keep = append(keep, r)
+		}
+	}
+	t.queue = keep
+	t.mu.Unlock()
+	for _, r := range ride {
+		if r.Inject() != nil {
+			t.dropped()
+		}
+	}
+}
+
+// Deliver queues a finished async call or a route flip. It blocks only on queue overflow,
+// while the oldest such item is injected (at most one tool round). Operator items never count
+// toward that overflow and are never evicted by it.
 func (t *AsyncTrigger) Deliver(r AsyncToolResult) {
 	if t.session == nil {
 		return
 	}
 	t.mu.Lock()
+	if t.closed {
+		t.mu.Unlock()
+		t.dropped()
+		return
+	}
 	var early func() error
 	evictedWantedTurn := false
-	if len(t.queue) >= t.cfg.MaxQueue {
-		early = t.queue[0].Inject
-		evictedWantedTurn = !t.queue[0].NoTurn
-		t.queue = t.queue[1:]
+	if count(t.queue, false) >= t.cfg.MaxQueue {
+		i := slices.IndexFunc(t.queue, func(q AsyncToolResult) bool { return !q.Operator })
+		early = t.queue[i].Inject
+		evictedWantedTurn = !t.queue[i].NoTurn
+		t.queue = slices.Delete(t.queue, i, i+1)
 	}
 	t.queue = append(t.queue, r)
 	if evictedWantedTurn { // the evicted item is injected now, so its reply rides on the next one
@@ -138,10 +181,59 @@ func (t *AsyncTrigger) Deliver(r AsyncToolResult) {
 	if early != nil && early() != nil { // may wait for a tool round (the loop's lock)
 		t.dropped()
 	}
-	if start && t.session.Go(t.run) != nil { // session closed
-		t.mu.Lock()
-		t.running, t.queue = false, nil
+	if start && t.session.Go(t.run) != nil {
+		t.close()
+	}
+}
+
+// DeliverOperator queues operator notes and run requests, all or none: ErrAsyncQueueFull when
+// they would exceed the operator cap, ErrAsyncClosed when the call has ended.
+func (t *AsyncTrigger) DeliverOperator(items ...AsyncToolResult) error {
+	if t.session == nil {
+		return ErrAsyncClosed
+	}
+	t.mu.Lock()
+	if t.closed {
 		t.mu.Unlock()
+		return ErrAsyncClosed
+	}
+	if count(t.queue, true)+len(items) > t.cfg.MaxQueue {
+		t.mu.Unlock()
+		return ErrAsyncQueueFull
+	}
+	for _, r := range items {
+		r.Operator = true
+		t.queue = append(t.queue, r)
+	}
+	start := !t.running
+	t.running = true
+	t.mu.Unlock()
+	if start && t.session.Go(t.run) != nil {
+		t.close()
+		return ErrAsyncClosed
+	}
+	return nil
+}
+
+// count is how many queued items are (operator true) or are not operator items.
+func count(q []AsyncToolResult, operator bool) int {
+	n := 0
+	for _, r := range q {
+		if r.Operator == operator {
+			n++
+		}
+	}
+	return n
+}
+
+// close ends the trigger with its session: every queued item is dropped and counted.
+func (t *AsyncTrigger) close() {
+	t.mu.Lock()
+	n := len(t.queue)
+	t.running, t.queue, t.closed = false, nil, true
+	t.mu.Unlock()
+	for range n {
+		t.dropped()
 	}
 }
 
@@ -174,9 +266,7 @@ func (t *AsyncTrigger) run(ctx context.Context) {
 		t.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			t.mu.Lock()
-			t.running, t.queue = false, nil
-			t.mu.Unlock()
+			t.close()
 			return
 		case <-tick.C:
 		}

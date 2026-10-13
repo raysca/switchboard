@@ -80,7 +80,8 @@ type CallSpec struct {
 	Flow *CallFlow
 	// OnRoute, if set, receives the handoff lifecycle (timeline, traces, metrics).
 	OnRoute func(core.HandoffEvent)
-	// OnInjector, if set, receives the call's context injector once the pipeline is built.
+	// OnInjector, if set, receives the call's context injector as the pipeline is assembled
+	// (before any stage runs); the server registers it only after a successful build.
 	OnInjector func(ContextInjector)
 	MaxTokens  int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).

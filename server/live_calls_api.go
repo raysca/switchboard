@@ -1,10 +1,12 @@
 package server
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	"govoice/core"
 	"govoice/server/api"
 )
 
@@ -54,22 +56,27 @@ func (s *Server) handleLiveCall(w http.ResponseWriter, r *http.Request, requestI
 		api.WriteError(w, http.StatusTooManyRequests, "rate_limited", "too many requests for this call", requestID)
 		return
 	}
-	if e, ok := inj.(interface{ Ended() bool }); ok && e.Ended() {
+	switch inj.Status() {
+	case callEnded:
 		api.WriteError(w, http.StatusNotFound, "not_found", "the call has ended", requestID)
 		return
-	}
-	if !inj.Ready() {
+	case callStarting:
 		api.WriteError(w, http.StatusConflict, "call_not_ready", "the call is still starting; retry shortly", requestID)
 		return
 	}
-	accepted := 1
-	if action == "context" {
-		for _, n := range req.Messages {
-			inj.Note(n.Content, req.Run)
+	notes := make([]string, 0, len(req.Messages))
+	for _, n := range req.Messages {
+		notes = append(notes, n.Content)
+	}
+	accepted := max(len(notes), 1)
+	if err := inj.Inject(notes, req.Run || action == "run"); err != nil {
+		if errors.Is(err, core.ErrAsyncQueueFull) {
+			w.Header().Set("Retry-After", "1")
+			api.WriteError(w, http.StatusTooManyRequests, "too_many_pending", "too many notes are waiting for this call; retry shortly", requestID)
+			return
 		}
-		accepted = len(req.Messages)
-	} else {
-		inj.Run()
+		api.WriteError(w, http.StatusNotFound, "not_found", "the call has ended", requestID)
+		return
 	}
 	s.logger.Info("live call control", slog.String("session", id), slog.String("action", action), slog.Int("count", accepted), slog.Bool("run", req.Run || action == "run"))
 	api.WriteJSON(w, http.StatusAccepted, api.SuccessResponse[acceptedResponse]{Data: acceptedResponse{Accepted: accepted}})

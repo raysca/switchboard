@@ -648,10 +648,9 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	s.mu.Lock()
 	s.activeCalls[sessionID] = active
 	s.mu.Unlock()
+	// Registered only once the pipeline is built; the done goroutine below removes it.
 	if injector != nil && call.StoredSessionID != "" {
-		id, base := call.StoredSessionID, releaseCall
-		s.live.Put(id, &sessionInjector{ContextInjector: injector, sess: session})
-		releaseCall = func() { s.live.Delete(id); base() }
+		s.live.Put(call.StoredSessionID, &sessionInjector{ContextInjector: injector, sess: session})
 	}
 
 	// 5. Cleanup when session closes

@@ -67,4 +67,8 @@ type AsyncToolResult struct {
 	// NoTurn: inject the message when the call is idle but do not, on its own, start a model
 	// turn (an operator note without run). A batch starts one turn if any item lacks it.
 	NoTurn bool
+	// Operator marks an operator note or run request (AsyncTrigger.DeliverOperator): it has its
+	// own queue cap, is never injected early on overflow, and rides a caller turn that starts
+	// before the call is idle (a note joins that turn's history; a run is that turn).
+	Operator bool
 }
