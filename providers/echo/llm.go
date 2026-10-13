@@ -59,7 +59,7 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 			send(google.LLMStreamChunk{ToolCalls: []core.ToolCall{call}, PromptTokens: promptTokens, TotalTokens: promptTokens})
 			return
 		}
-		words := splitWords(c.o.Label + c.reply(history))
+		words := c.pieces(history)
 		if err := wait(ctx, c.o.Figures.FirstToken); err != nil {
 			return
 		}
@@ -78,12 +78,26 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 	return chunks, errs, nil
 }
 
-// reply is what the model says: the answer to a tool result, else the caller's words repeated.
-func (c *LLMClient) reply(history []core.Message) string {
-	if n := len(history); n > 0 && history[n-1].Kind == core.MessageToolResult {
-		return c.toolAnswer(history[n-1])
+// pieces is what the model says, in streaming order: the label, then the answer to a tool result or
+// the caller's words repeated; one word each with WordChunks, else one phrase each.
+func (c *LLMClient) pieces(history []core.Message) []string {
+	var parts []string
+	if c.o.Label != "" {
+		parts = append(parts, c.o.Label)
 	}
-	return "You said: " + lastUser(history)
+	if n := len(history); n > 0 && history[n-1].Kind == core.MessageToolResult {
+		parts = append(parts, c.toolAnswer(history[n-1]))
+	} else {
+		parts = append(parts, "You said: ", lastUser(history))
+	}
+	if !c.o.Figures.WordChunks {
+		return parts
+	}
+	var words []string
+	for _, p := range parts {
+		words = append(words, splitWords(p)...)
+	}
+	return words
 }
 
 func (c *LLMClient) toolAnswer(m core.Message) string {

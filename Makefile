@@ -56,11 +56,11 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 	echo "=== All modules passed ==="
 	@$(MAKE) --no-print-directory test-e2e-go
 
-# End to end in Go with the fake providers: a real server, stored flows and a WebSocket client
+# End to end in Go with the echo provider: a real server, stored flows and a WebSocket client
 # (routes, failed step build, caller speaking mid-route, hang-up mid-route, republish, MCP tool calls,
 # no secret leaving the server). `make test` runs it; `make e2e-free` runs it with the browser suite.
-test-e2e-go: ## free|Go end-to-end tests (real server + WebSocket) against the fake providers (about 45 s)
-	cd server && go test -race -count=1 -tags "$(GOTAGS) fakeproviders" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall' .
+test-e2e-go: ## free|Go end-to-end tests (real server + WebSocket) against the echo provider (about 45 s)
+	cd server && go test -race -count=1 -tags "$(GOTAGS)" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection' .
 
 # Black-box pipecat.evals run against the Go server with fake providers (docs/decisions/pipecat-evals.md).
 eval-pipecat: ## free|pipecat.evals black-box run against the server (fake providers)

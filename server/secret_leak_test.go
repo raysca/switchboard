@@ -1,5 +1,3 @@
-//go:build fakeproviders
-
 package server
 
 import (
@@ -54,9 +52,9 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	slog.SetDefault(captured)
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	t.Setenv("GOVOICE_FAKE_LLM_LABEL", "1")
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", e2eMgmtKey)
 	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Providers.Echo.Mimic, cfg.Providers.Echo.LabelReplies = "instant", true
 	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
 	cfg.MCP.AllowLocalHTTP = true
 	s, err := NewServer(cfg)
@@ -72,7 +70,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	t.Cleanup(r.ts.Close)
 
 	plain, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Plain", Config: json.RawMessage(
-		`{"stt":{"provider":"google","model":"chirp_2"},"llm":{"provider":"xai","model":"grok-4.20-0309-non-reasoning"},"tts":{"provider":"google","voice":"en-US-Chirp3-HD-Aoede"}}`)})
+		`{"stt":{"provider":"echo","model":"chirp_2"},"llm":{"provider":"xai","model":"grok-4.20-0309-non-reasoning"},"tts":{"provider":"echo","voice":"en-US-Chirp3-HD-Aoede"}}`)})
 	if err != nil || plain.Readiness.State != flow.ReadinessReady {
 		t.Fatalf("plain agent: %+v err=%v", plain.Readiness, err)
 	}
@@ -85,7 +83,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 		t.Fatalf("mcp create view: %s", w.Body)
 	}
 
-	// A real call through the fake stack: resolve, build, speak, hand off, hang up.
+	// A real call through the echo stack: resolve, build, speak, hand off, hang up.
 	c := r.dial(routedID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("hello")

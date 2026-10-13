@@ -25,7 +25,7 @@ func TestGoogleFiguresFollowTheMeasurements(t *testing.T) {
 	if f := g.TTS("en-US-Journey-F"); f.FirstByte != 600*time.Millisecond || f.FirstBytePerChar != 50*time.Millisecond {
 		t.Fatalf("other voices are unary: %+v", f)
 	}
-	if f := g.LLM(); f.FirstToken != 700*time.Millisecond {
+	if f := g.LLM(); f.FirstToken != 700*time.Millisecond || !f.WordChunks {
 		t.Fatalf("llm = %+v", f)
 	}
 	if g.TTS("x").CharsPerSecond != 15 {

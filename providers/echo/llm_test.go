@@ -59,7 +59,7 @@ func text(chunks []google.LLMStreamChunk) (deltas []string, joined string) {
 }
 
 func TestEchoReplyRepeatsTheCallerWordByWord(t *testing.T) {
-	c := NewLLMClient(LLMOptions{})
+	c := NewLLMClient(LLMOptions{Figures: LLMFigures{WordChunks: true}})
 	ch, errs, err := c.GenerateStream(context.Background(), "m", "sys", user("hi there"))
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestEchoLabelPrefixesTheReply(t *testing.T) {
 }
 
 func TestEchoFirstTokenAndWordDelays(t *testing.T) {
-	c := NewLLMClient(LLMOptions{Figures: LLMFigures{FirstToken: 50 * time.Millisecond, TokenDelay: 10 * time.Millisecond}, ExtraDelay: 5 * time.Millisecond})
+	c := NewLLMClient(LLMOptions{Figures: LLMFigures{FirstToken: 50 * time.Millisecond, TokenDelay: 10 * time.Millisecond, WordChunks: true}, ExtraDelay: 5 * time.Millisecond})
 	start := time.Now()
 	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("a b"))
 	first := <-ch
@@ -100,7 +100,7 @@ func TestEchoFirstTokenAndWordDelays(t *testing.T) {
 }
 
 func TestEchoStopsOnContextCancel(t *testing.T) {
-	c := NewLLMClient(LLMOptions{Figures: LLMFigures{TokenDelay: 200 * time.Millisecond}})
+	c := NewLLMClient(LLMOptions{Figures: LLMFigures{TokenDelay: 200 * time.Millisecond, WordChunks: true}})
 	ctx, cancel := context.WithCancel(context.Background())
 	ch, errs, _ := c.GenerateStream(ctx, "m", "", user("a b c d e f"))
 	<-ch
@@ -231,5 +231,14 @@ func TestRealLLMProcessorRunsTheToolLoopAgainstEcho(t *testing.T) {
 	}
 	if ran.Load() != 1 || said != "Connecting you." || usage != "echo" {
 		t.Fatalf("tool ran %d times, said %q, usage provider %q", ran.Load(), said, usage)
+	}
+}
+
+func TestEchoInstantRepliesInPhrasePieces(t *testing.T) {
+	c := NewLLMClient(LLMOptions{Label: "[front] "})
+	ch, errs, _ := c.GenerateStream(context.Background(), "m", "", user("hi there"))
+	deltas, joined := text(collect(t, ch, errs))
+	if len(deltas) != 3 || deltas[0] != "[front] " || deltas[1] != "You said: " || deltas[2] != "hi there" || joined != "[front] You said: hi there" {
+		t.Fatalf("pieces %q", deltas)
 	}
 }

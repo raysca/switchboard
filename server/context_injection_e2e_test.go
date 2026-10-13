@@ -1,5 +1,3 @@
-//go:build fakeproviders
-
 package server
 
 import (
@@ -27,7 +25,7 @@ func TestContextInjectionFlowE2E(t *testing.T) {
 	if code := post("/context", `{"messages":[{"content":"the caller is a VIP"}],"run":true}`); code != http.StatusAccepted {
 		t.Fatalf("note on the start step: status %d", code)
 	}
-	c.waitReplies("context_note", 1) // the requested reply, on the start step
+	c.waitReplies("the caller is a VIP", 1) // the requested reply (echo repeats the note the model saw), on the start step
 	if c.replies("[FRONT") < 2 {
 		t.Fatalf("the note's reply did not come from the start step (FRONT replies %d)", c.replies("[FRONT"))
 	}

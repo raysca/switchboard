@@ -1,5 +1,3 @@
-//go:build fakeproviders
-
 package server
 
 import (
@@ -30,9 +28,9 @@ import (
 	"govoice/transport/ws"
 )
 
-// End to end with the fake providers (go test -tags fakeproviders): a real
+// End to end with the echo provider: a real
 // server, a stored routed flow, and a WebSocket client that sends text turns.
-// The fake LLM labels each reply with its step's prompt and calls the step's
+// The echo LLM labels each reply with its step's prompt and calls the step's
 // transfer tool on "transfer to <step>", so the whole path runs: transfer tool,
 // on-demand step build, flip, old-step close, timeline, traces and metrics.
 
@@ -85,8 +83,8 @@ func (s *probedStage) Close() error {
 
 func (p *stageProbe) install(s *Server) {
 	for _, stage := range []string{"llm", "tts"} {
-		orig := s.registry.factories["google."+stage]
-		s.registry.Register("google."+stage, func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		orig := s.registry.factories["echo."+stage]
+		s.registry.Register("echo."+stage, func(cfg *Config, spec StageSpec) (core.Processor, error) {
 			key := spec.SystemPrompt
 			if stage == "tts" {
 				key = spec.Voice
@@ -130,7 +128,7 @@ func flowConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessa
 	if len(cue) > 0 {
 		tail = `,"route_cue":` + cue[0]
 	}
-	stage := func(extra string) string { return `"provider":"google"` + extra }
+	stage := func(extra string) string { return `"provider":"echo"` + extra }
 	return json.RawMessage(`{"start":"front","steps":[` +
 		`{"id":"front","name":"Front desk","config":{"stt":{` + stage(`,"model":"s"`) + `},"llm":{` + stage(`,"model":"m","system_prompt":"FRONT"`) + `},"tts":{` + stage(`,"voice":"frontvoice"`) + `}}},` +
 		`{"id":"sales","name":"Sales","config":{"llm":{` + stage(`,"model":"m","system_prompt":"`+salesPrompt+`"`) + `},"tts":{` + stage(`,"voice":"`+salesVoice+`"`) + `}}}],` +
@@ -139,9 +137,9 @@ func flowConfigJSON(salesPrompt, salesVoice string, cue ...string) json.RawMessa
 
 func newFlowRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *flowRigE2E {
 	t.Helper()
-	t.Setenv("GOVOICE_FAKE_LLM_LABEL", "1")
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", e2eMgmtKey)
 	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Providers.Echo.Mimic, cfg.Providers.Echo.LabelReplies = "instant", true
 	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
 	for _, m := range mods {
 		m(cfg)
@@ -510,7 +508,7 @@ func TestFlowE2EFlatFlowHasNoRoutes(t *testing.T) {
 	probe := newProbe()
 	r := newFlowRigE2E(t, probe)
 	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Flat", Config: json.RawMessage(
-		`{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m","system_prompt":"FLAT"},"tts":{"provider":"google"}}`)})
+		`{"stt":{"provider":"echo"},"llm":{"provider":"echo","model":"m","system_prompt":"FLAT"},"tts":{"provider":"echo"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,10 +699,10 @@ func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
 
 // endCallFlowJSON is a front -> sales flow; frontEnds and salesEnds give that step the end_call tool.
 func endCallFlowJSON(frontEnds, salesEnds bool) json.RawMessage {
-	stt := `"stt":{"provider":"google","model":"s"}`
+	stt := `"stt":{"provider":"echo","model":"s"}`
 	return json.RawMessage(`{"start":"front","steps":[` +
-		`{"id":"front","name":"Front desk","end_call":` + strconv.FormatBool(frontEnds) + `,"config":{` + stt + `,"llm":{"provider":"google","model":"m","system_prompt":"FRONT"},"tts":{"provider":"google","voice":"frontvoice"}}},` +
-		`{"id":"sales","name":"Sales","end_call":` + strconv.FormatBool(salesEnds) + `,"config":{"llm":{"provider":"google","model":"m","system_prompt":"SALES"},"tts":{"provider":"google","voice":"salesvoice"}}}],` +
+		`{"id":"front","name":"Front desk","end_call":` + strconv.FormatBool(frontEnds) + `,"config":{` + stt + `,"llm":{"provider":"echo","model":"m","system_prompt":"FRONT"},"tts":{"provider":"echo","voice":"frontvoice"}}},` +
+		`{"id":"sales","name":"Sales","end_call":` + strconv.FormatBool(salesEnds) + `,"config":{"llm":{"provider":"echo","model":"m","system_prompt":"SALES"},"tts":{"provider":"echo","voice":"salesvoice"}}}],` +
 		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."}]}`)
 }
 

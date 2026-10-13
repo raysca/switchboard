@@ -1,5 +1,3 @@
-//go:build fakeproviders
-
 package server
 
 import (
@@ -20,8 +18,8 @@ import (
 	"govoice/transport/ws"
 )
 
-// mcpCallRig is the graph rig (fake providers, real WebSocket calls) plus local test
-// MCP servers. The fake LLM calls an attached MCP tool when a user turn says
+// mcpCallRig is the graph rig (echo provider, real WebSocket calls) plus local test
+// MCP servers. The echo LLM calls an attached MCP tool when a user turn says
 // "call tool <name> {args}" and replies with what came back.
 type mcpCallRig struct {
 	*flowRigE2E
@@ -89,7 +87,7 @@ func (r *mcpCallRig) discovered(id string) (string, map[string]string) {
 	return id, hashes
 }
 
-// agentWith creates a plain fake agent with the given tools of one server attached.
+// agentWith creates a plain echo agent with the given tools of one server attached.
 func (r *mcpCallRig) agentWith(serverID string, hashes map[string]string, required bool, async []string, tools ...string) flow.Flow {
 	r.t.Helper()
 	sel := make([]flow.ToolSelection, 0, len(tools))
@@ -101,7 +99,7 @@ func (r *mcpCallRig) agentWith(serverID string, hashes map[string]string, requir
 		sel = append(sel, flow.ToolSelection{ServerID: serverID, RemoteName: name, SchemaHash: hash, Required: required})
 	}
 	asyncJSON, _ := json.Marshal(async)
-	cfg := `{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"m","system_prompt":"P"},"tts":{"provider":"google","voice":"v"},"async_tools":` + string(asyncJSON) + `}`
+	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"},"async_tools":` + string(asyncJSON) + `}`
 	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "MCP " + strings.Join(tools, "+"), Config: json.RawMessage(cfg), MCPTools: sel})
 	if err != nil {
 		r.t.Fatalf("agent: %v", err)
