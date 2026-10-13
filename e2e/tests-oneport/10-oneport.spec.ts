@@ -1,3 +1,4 @@
+import http from "node:http";
 import { test, expect } from "../lib/oneport-stack";
 import { api, botReply, connectAdmin, openFlowTest, sendText, startCall, stage } from "../lib/flows-helpers";
 
@@ -6,7 +7,7 @@ import { api, botReply, connectAdmin, openFlowTest, sendText, startCall, stage }
 // test uses up this client address's failed-key allowance.
 test.describe.configure({ mode: "serial" });
 
-test("the UI, the API and the socket all work from the one public origin", async ({ page, stack }) => {
+test("the UI, its API calls and the voice socket all work from the one public origin", async ({ page, stack }) => {
   const cspViolations: string[] = [];
   page.on("console", (m) => {
     if (/Content Security Policy|Refused to/.test(m.text())) cspViolations.push(m.text());
@@ -16,6 +17,7 @@ test("the UI, the API and the socket all work from the one public origin", async
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await page.goto(`${stack.publicUrl}/flows`); // a client route survives a hard load (SPA fallback)
   await expect(page).toHaveURL(/\/flows$/);
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 
   await api(stack, "/flows", {
     method: "POST",
@@ -55,4 +57,19 @@ test("repeated wrong keys are throttled and the page says so", async ({ page, re
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   // While blocked the server's message reaches the page, not an empty screen or a raw error.
   await expect(page.getByText(/too many failed attempts; try again shortly/i).first()).toBeVisible();
+});
+
+test("a foreign browser origin is refused the voice socket", async ({ stack }) => {
+  // Negative control: the same upgrade with an Origin that is not this host must not be admitted.
+  const status = await new Promise<number>((resolve, reject) => {
+    const req = http.request(`${stack.publicUrl}/ws`, {
+      headers: { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", Origin: "https://evil.example" },
+    });
+    req.on("upgrade", (res) => (res.socket.destroy(), resolve(res.statusCode ?? 0)));
+    req.on("response", (res) => (res.resume(), resolve(res.statusCode ?? 0)));
+    req.on("error", reject);
+    req.end();
+  });
+  expect(status).not.toBe(101);
+  expect(status).toBe(403);
 });
