@@ -1,0 +1,81 @@
+package server
+
+import (
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+func TestDeployWorkflowShape(t *testing.T) {
+	raw, err := os.ReadFile("../.github/workflows/deploy.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	var wf struct {
+		On          map[string]any    `yaml:"on"`
+		Permissions map[string]string `yaml:"permissions"`
+		Concurrency struct {
+			Group            string `yaml:"group"`
+			CancelInProgress bool   `yaml:"cancel-in-progress"`
+		} `yaml:"concurrency"`
+	}
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatal(err)
+	}
+	if wf.Permissions["id-token"] != "write" || wf.Permissions["contents"] != "read" || len(wf.Permissions) != 2 {
+		t.Errorf("permissions = %v (WIF needs id-token: write; nothing else)", wf.Permissions)
+	}
+	for _, trigger := range []string{"workflow_run", "workflow_dispatch"} {
+		if _, ok := wf.On[trigger]; !ok {
+			t.Errorf("missing trigger %s", trigger)
+		}
+	}
+	if _, ok := wf.On["push"]; ok {
+		t.Error("deploy must follow CI (workflow_run), not race it on push")
+	}
+	if wf.Concurrency.Group != "deploy" || wf.Concurrency.CancelInProgress {
+		t.Errorf("concurrency = %+v: a deploy must never be cancelled half way", wf.Concurrency)
+	}
+	for _, needle := range []string{
+		"google-github-actions/auth@", "workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}",
+		"github.event.workflow_run.conclusion == 'success'", "github.event.workflow_run.head_sha",
+		"envsubst", "gcloud run services replace", "candidate", "update-traffic", "smoke-cloudrun.sh",
+	} {
+		if !strings.Contains(text, needle) {
+			t.Errorf("deploy.yml lacks %q", needle)
+		}
+	}
+	for _, banned := range []string{"credentials_json", "GCP_SA_KEY", "secrets.XAI", "secrets.ELEVEN", "secrets.GOOGLE"} {
+		if strings.Contains(text, banned) {
+			t.Errorf("deploy.yml must not use %q: no stored GCP key, no provider key in GitHub", banned)
+		}
+	}
+	// The smoke test runs before the candidate is promoted.
+	if strings.Index(text, "smoke-cloudrun.sh") > strings.Index(text, "update-traffic") {
+		t.Error("the candidate must be smoke-tested before it is promoted")
+	}
+}
+
+func TestSmokeScript(t *testing.T) {
+	if out, err := exec.Command("bash", "-n", "../deploy/smoke-cloudrun.sh").CombinedOutput(); err != nil {
+		t.Fatalf("bash -n: %v\n%s", err, out)
+	}
+	raw, err := os.ReadFile("../deploy/smoke-cloudrun.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, needle := range []string{"/health", "client_ip", ".data.secure", "/api/v1/providers", "elevenlabs", "xai", "google",
+		"/api/v1/mcp-servers", "auth_env_set", "/api/v1/flows", "/metrics", "too_many_attempts"} {
+		if !strings.Contains(text, needle) {
+			t.Errorf("smoke script lacks a check for %q", needle)
+		}
+	}
+	if strings.Contains(text, "set -x") {
+		t.Error("set -x would print the management key")
+	}
+}

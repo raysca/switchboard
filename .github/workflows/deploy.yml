@@ -1,0 +1,88 @@
+# Deploys to Cloud Run after CI passes on main (or by hand). Authenticates with Workload Identity
+# Federation: no GCP key is stored in GitHub. The new revision takes no traffic until the smoke
+# test passes; a failed smoke test leaves the previous revision serving.
+name: deploy
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      min_instances:
+        description: "Voice server minimum instances (1 keeps it warm; 0 stops idle spend and loses nothing: the demo reinstalls on start)"
+        default: "1"
+permissions:
+  contents: read
+  id-token: write
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      MIN_INSTANCES: ${{ inputs.min_instances || '1' }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      REGISTRY: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/govoice
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push the images
+        run: |
+          docker build -q -f deploy/Dockerfile.dental-mcp -t "${REGISTRY}/dental-mcp:${SHA}" .
+          docker build -q -f deploy/Dockerfile --build-arg VERSION="${SHA::7}" --build-arg COMMIT="${SHA}" -t "${REGISTRY}/govoice:${SHA}" .
+          docker push "${REGISTRY}/dental-mcp:${SHA}"
+          docker push "${REGISTRY}/govoice:${SHA}"
+
+      - name: Deploy the dentistry MCP server
+        run: |
+          IMAGE="${REGISTRY}/dental-mcp:${SHA}" envsubst '${REGION} ${PROJECT_ID} ${IMAGE}' < deploy/gcp/dental-mcp.service.yaml > /tmp/dental-mcp.yaml
+          gcloud run services replace /tmp/dental-mcp.yaml --region "${REGION}" --project "${PROJECT_ID}"
+          gcloud run services add-iam-policy-binding dental-mcp --region "${REGION}" --project "${PROJECT_ID}" \
+            --member=allUsers --role=roles/run.invoker >/dev/null
+          echo "DENTAL_MCP_URL=$(gcloud run services describe dental-mcp --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')/mcp" >> "$GITHUB_ENV"
+
+      - name: Deploy the voice server as a candidate (existing traffic stays on the serving revision)
+        run: |
+          export IMAGE="${REGISTRY}/govoice:${SHA}"
+          envsubst '${REGION} ${PROJECT_ID} ${IMAGE} ${MIN_INSTANCES} ${DENTAL_MCP_URL}' < deploy/gcp/govoice.service.yaml > /tmp/govoice.yaml
+          PREV="$(gcloud run services describe govoice --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.traffic[0].revisionName)' 2>/dev/null || true)"
+          if [ -n "${PREV}" ]; then
+            # spec.traffic is a sibling of spec.template: keep 100% on the serving revision; the new one gets 0% and a tag.
+            printf '  traffic:\n    - revisionName: %s\n      percent: 100\n    - latestRevision: true\n      percent: 0\n      tag: candidate\n' "${PREV}" >> /tmp/govoice.yaml
+          fi
+          gcloud run services replace /tmp/govoice.yaml --region "${REGION}" --project "${PROJECT_ID}"
+          gcloud run services add-iam-policy-binding govoice --region "${REGION}" --project "${PROJECT_ID}" \
+            --member=allUsers --role=roles/run.invoker >/dev/null
+          URL="$(gcloud run services describe govoice --region "${REGION}" --project "${PROJECT_ID}" --format='value(status.url)')"
+          echo "SERVICE_URL=${URL}" >> "$GITHUB_ENV"
+          echo "PREV_REVISION=${PREV}" >> "$GITHUB_ENV"
+          if [ -n "${PREV}" ]; then echo "SMOKE_URL=https://candidate---${URL#https://}" >> "$GITHUB_ENV"; else echo "SMOKE_URL=${URL}" >> "$GITHUB_ENV"; fi
+
+      - name: Smoke test the candidate
+        run: |
+          set +x
+          export GOVOICE_MANAGEMENT_API_KEY="$(gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project "${PROJECT_ID}")"
+          echo "::add-mask::${GOVOICE_MANAGEMENT_API_KEY}"
+          deploy/smoke-cloudrun.sh "${SMOKE_URL}"
+
+      - name: Promote the candidate
+        run: |
+          if [ -n "${PREV_REVISION}" ]; then
+            gcloud run services update-traffic govoice --to-latest --region "${REGION}" --project "${PROJECT_ID}"
+            gcloud run services update-traffic govoice --remove-tags candidate --region "${REGION}" --project "${PROJECT_ID}"
+          fi
+          echo "### Deployed ${SHA::7}: ${SERVICE_URL}" >> "$GITHUB_STEP_SUMMARY"
