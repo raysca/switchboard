@@ -15,6 +15,9 @@ type UserContextConfig struct {
 	TurnPrefix                 string // Prefix for auto-generated turn IDs (default: "turn")
 	RequireCommittedTranscript bool   // V2: only finalizer-marked finals may enter context
 	MaxCommittedTurns          int    // V2 idempotence window: recent committed turns remembered (default: 128)
+	// Sanitize, if set, rewrites a transcript before it enters the history (not the frame that
+	// triggers the model), so a caller's words cannot impersonate server-authored messages.
+	Sanitize func(string) string
 }
 
 // UserContextProcessor receives final transcription frames, assigns stable turn IDs,
@@ -124,9 +127,13 @@ func (p *UserContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Di
 		// require a timestamp. V2 committed frames always carry policy time.
 		createdAt = time.Now()
 	}
+	content := ft.Text
+	if p.cfg.Sanitize != nil {
+		content = p.cfg.Sanitize(content)
+	}
 	userMsg := Message{
 		Role:      RoleUser,
-		Content:   ft.Text,
+		Content:   content,
 		TurnID:    turnID,
 		CreatedAt: createdAt,
 	}

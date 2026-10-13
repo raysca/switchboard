@@ -183,7 +183,7 @@ Core library and server, transports aside. Re-ranked on 2026-10-10: live tests f
    Still open: measure the new defaults live (nightly S1/S4 numbers and the report's "STT final vs built-in p99" table), then tune `vad.stop_ms`, `turn.speech_timeout` or the p99 table. A pause longer than about 0.8 s inside one utterance now splits the turn, as in Pipecat; the self-test's S4 shows it.
 3. **Streaming TTS (Pipecat parity).** Done 2026-10-11 for xAI and Google Chirp 3 HD. Measured live on 2026-10-11 (S9): no gaps, so no Google look-ahead is needed. Still open: live failure and fallback behaviour, and repeat runs.
 4. **Library parity gaps:**
-   - context update frames, Pipecat's `LLMMessagesAppendFrame`, `LLMMessagesUpdateFrame` and the like, for changing the LLM context mid-call;
+   - context update frames: **done 2026-10-11** for append and run, server side (management API `POST /api/v1/sessions/{id}/context` and `/run`; operator notes go through the async trigger). Not built: replace-history, transform, mid-call tool changes, a client-side RTVI message, cross-instance routing;
    - LLM-driven cancellation of async tools;
    - word timestamps beyond Cartesia and ElevenLabs;
    - flushing pending DTMF digits at end of stream.

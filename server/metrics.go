@@ -329,12 +329,12 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 
 	fmt.Fprintf(w, "# HELP voice_user_mute_dropped_total User input frames (VAD start/stop, transcripts) dropped while muted.\n# TYPE voice_user_mute_dropped_total counter\nvoice_user_mute_dropped_total %d\n", m.UserMuteDroppedTotal.Load())
 	fmt.Fprintf(w, "# HELP voice_turn_min_words_no_interims_total Calls with turn.min_words whose STT sent a final transcript before any interim (min_words cannot start turns early).\n# TYPE voice_turn_min_words_no_interims_total counter\nvoice_turn_min_words_no_interims_total %d\n", m.MinWordsNoInterimsTotal.Load())
-	fmt.Fprintf(w, "# HELP voice_async_tool_turns_total Model turns started to deliver finished async tool results.\n# TYPE voice_async_tool_turns_total counter\nvoice_async_tool_turns_total %d\n", m.AsyncToolTurnsTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_async_tool_turns_total Model turns started to deliver finished async tool results or operator context notes.\n# TYPE voice_async_tool_turns_total counter\nvoice_async_tool_turns_total %d\n", m.AsyncToolTurnsTotal.Load())
 	fmt.Fprintf(w, "# HELP voice_turn_completion_total LLM turn-completion verdicts (turn.stop llm-completion).\n# TYPE voice_turn_completion_total counter\n")
 	for i, v := range completionVerdicts {
 		fmt.Fprintf(w, "voice_turn_completion_total{verdict=%q} %d\n", v, m.completion[i].Load())
 	}
-	fmt.Fprintf(w, "# HELP voice_async_tool_results_dropped_total Finished async tool results that could not be injected (session closing).\n# TYPE voice_async_tool_results_dropped_total counter\nvoice_async_tool_results_dropped_total %d\n", m.AsyncToolResultsDroppedTotal.Load())
+	fmt.Fprintf(w, "# HELP voice_async_tool_results_dropped_total Finished async tool results or operator context notes that could not be injected (session closing, context budget).\n# TYPE voice_async_tool_results_dropped_total counter\nvoice_async_tool_results_dropped_total %d\n", m.AsyncToolResultsDroppedTotal.Load())
 
 	for _, c := range []struct {
 		name, help string

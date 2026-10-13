@@ -230,6 +230,15 @@ Metrics (labels `provider`, `stage` only): `voice_provider_warm_dials_total{resu
 
 Manual live check (not run in CI, needs real keys): `RUN_LIVE_DEEPGRAM_TEST=1 DEEPGRAM_API_KEY=... go test -tags integration -run LiveWarm -v ./providers/deepgram` alternates cold and pre-dialed first connects and logs each. For the whole pipeline set `warmup.predial: true` on one canary, place calls, and compare `voice_latency_seconds` (first-turn TTFB stages) and `voice_provider_connect_seconds` against a canary without it; flip the default only if the p50 first-turn gain is real and `warmups_total{result="error"}` stays low.
 
+## Live-call control
+
+`POST /api/v1/sessions/{id}/context` and `/run` (management key only; see `docs/api/v1.md`) let a backend add operator notes to a call and make the bot respond. Operational facts:
+- A call is reachable only on the instance that holds it. With several instances, route by session affinity or try each; a 404 means "not here or already ended".
+- Notes wait until the caller and the bot are both quiet, or join the caller's next turn if it comes first (after the caller's message in the history; that turn is then the reply), so a note can take a few seconds to land. When a caller's text (spoken or typed) mentions one of the server notice phrases (operator note, idle notice, turn-completion notice, system notice, the summary of earlier turns, the greeting after a route, in any spacing or case), its brackets are turned into parentheses so it loses the exact shape of a server message. This is a heuristic: "(note from the operator) ..." still reads like a note to a model, look-alike letters from other scripts are not folded, and caller text stays untrusted. A burst is bounded: 4 requests then 1 per second per call, 8 notes per request, at most 8 notes and run requests waiting per call (beyond that, or while the call is momentarily too busy, 429 `too_many_pending`: retry, nothing queued), and the context budget still evicts old messages. Notes still waiting when a call ends are counted in `voice_async_tool_results_dropped_total`.
+- Replies started by `run` count in `voice_async_tool_turns_total`, the same counter as async tool replies; a run that joins the caller's own turn is that turn's reply and is not counted separately.
+- Requests are logged with the session id, the count and `run`, never the note text.
+- Trust: the management key can steer any live call, the same level of trust as editing a flow.
+
 ## TTS streaming
 
 xAI TTS always streams over one WebSocket per reply. Google streams only Chirp 3 HD voices (`<locale>-Chirp3-HD-<Name>`, one `StreamingSynthesize` stream per sentence); every other Google voice uses the unary request. A stream that cannot open, or fails before any audio is sent, retries as the unary request, so the call keeps its speech. Once audio has started, a failure ends the sentence with an error (no replay).

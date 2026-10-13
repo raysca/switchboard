@@ -79,8 +79,11 @@ type CallSpec struct {
 	// start step and moves between steps by handoff.
 	Flow *CallFlow
 	// OnRoute, if set, receives the handoff lifecycle (timeline, traces, metrics).
-	OnRoute   func(core.HandoffEvent)
-	MaxTokens int
+	OnRoute func(core.HandoffEvent)
+	// OnInjector, if set, receives the call's context injector as the pipeline is assembled
+	// (before any stage runs); the server registers it only after a successful build.
+	OnInjector func(ContextInjector)
+	MaxTokens  int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).
 	Summary flow.SummarizationConfig
 	// History, when set, sees every frame just before the transport (turn rows).
@@ -514,14 +517,13 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if (cfg.Turn.Manager && slices.Contains(cfg.Turn.Mute, coreturn.MuteFunctionCall)) || cfg.Idle.enabled() { // idle also pauses while a tool runs
 		muteTools = coreturn.NewToolActivity()
 	}
-	// Async tools: finished results go through a trigger stage before the LLM
-	// that injects them and starts a model turn once the call is idle. A flow
-	// call always has one: handoffs flip when the call is idle.
-	var asyncTrigger *core.AsyncTrigger
+	// The trigger is on every call: finished async tools, route flips and operator notes
+	// all wait here for the call to be idle, then inject and start one model turn.
 	var asstActive func() bool
-	if call.Flow != nil || slices.ContainsFunc(call.LLM.Tools, func(d core.ToolDefinition) bool { return d.Policy.Async }) {
-		asyncTrigger = core.NewAsyncTrigger(core.AsyncTriggerConfig{Busy: func() bool { return asstActive != nil && asstActive() },
-			OnTriggered: r.onAsyncTurn, OnDropped: r.onAsyncDrop})
+	asyncTrigger := core.NewAsyncTrigger(core.AsyncTriggerConfig{Busy: func() bool { return asstActive != nil && asstActive() },
+		OnTriggered: r.onAsyncTurn, OnDropped: r.onAsyncDrop})
+	if call.OnInjector != nil {
+		call.OnInjector(newCallInjector(asyncTrigger, ctxPool))
 	}
 	// prepLLM applies the call-wide LLM stage setup to one step's specs; the
 	// start step uses it here and every later step when it is activated.
@@ -540,11 +542,9 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				fallbacks[i].ToolExecutor = muteTools.Wrap(fallbacks[i].ToolExecutor, fallbacks[i].Tools)
 			}
 		}
-		if asyncTrigger != nil {
-			spec.AsyncSink = asyncTrigger.Deliver
-			for i := range fallbacks {
-				fallbacks[i].AsyncSink = asyncTrigger.Deliver
-			}
+		spec.AsyncSink = asyncTrigger.Deliver
+		for i := range fallbacks {
+			fallbacks[i].AsyncSink = asyncTrigger.Deliver
 		}
 		return spec, fallbacks
 	}
@@ -613,7 +613,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if err != nil {
 		return fail(fmt.Errorf("create transcript finalizer: %w", err))
 	}
-	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true})
+	userCtxProc := core.NewUserContextProcessor(ctxPool, core.UserContextConfig{TurnPrefix: "turn", RequireCommittedTranscript: true, Sanitize: neutralizeNoteMarker})
 	asstCfg := core.DefaultAssistantContextConfig()
 	asstCfg.DisableTextCleaning = call.DisableTextCleaning
 	asstCfg.FirstClauseMinLength = cfg.FirstClauseChars
@@ -715,9 +715,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if idleProc != nil { // before the async trigger and the model; zero cost when off
 		procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(idleProc))
 	}
-	if asyncTrigger != nil {
-		procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(asyncTrigger))
-	}
+	procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(asyncTrigger))
 	if dt.agg != nil {
 		procs = slices.Insert(procs, 3, dt.agg) // directly before the user context
 	}

@@ -85,6 +85,7 @@ type Server struct {
 
 	mu          sync.Mutex
 	activeCalls map[uint64]*activeCall
+	live        *liveCalls     // stored session id -> context injector of a call running here
 	connecting  sync.WaitGroup // calls admitted but not yet in activeCalls
 	nextCallID  atomic.Uint64
 	textTurns   atomic.Uint64
@@ -175,6 +176,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		cfg:          cfg,
 		metrics:      metrics,
 		timelines:    timelines,
+		live:         newLiveCalls(),
 		admission:    admission,
 		registry:     registry,
 		env:          os.Getenv,
@@ -490,6 +492,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		return nil, fmt.Errorf("resolve flow: %w", err)
 	}
 	call.PushToTalk = conn.PushToTalk()
+	var injector ContextInjector
+	call.OnInjector = func(i ContextInjector) { injector = i }
 	call.OnRoute = s.onRoute(timeline, call.StoredSessionID)
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
 	if cue != nil {
@@ -644,10 +648,15 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	s.mu.Lock()
 	s.activeCalls[sessionID] = active
 	s.mu.Unlock()
+	// Registered only once the pipeline is built; the done goroutine below removes it.
+	if injector != nil && call.StoredSessionID != "" {
+		s.live.Put(call.StoredSessionID, &sessionInjector{ContextInjector: injector, sess: session})
+	}
 
 	// 5. Cleanup when session closes
 	go func() {
 		<-session.Done()
+		s.live.Delete(call.StoredSessionID) // gone for operators before teardown work starts
 		s.finishCall(sessionID, principal, flowID, session, conn, timeline, errProviders, releaseCall, stopRecording)
 	}()
 
