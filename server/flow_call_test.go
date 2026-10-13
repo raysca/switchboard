@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -205,5 +206,27 @@ func TestCallFlowNoteIsConsumedOnce(t *testing.T) {
 	cg.setNote("Sam")
 	if cg.takeNote() != "Sam" || cg.takeNote() != "" {
 		t.Fatal("a note greets one transfer only")
+	}
+}
+
+// A failed transfer (duplicate while one is pending) must not clobber the
+// note of the one that went through; a failed first transfer leaves no note.
+func TestCommitWithNoteRestoresOnFailure(t *testing.T) {
+	cg := &CallFlow{}
+	fail := errors.New("handoff pending")
+	cg.Commit = func(string) error { return fail }
+	if err := cg.commitWithNote("b", "N0"); !errors.Is(err, fail) || cg.takeNote() != "" {
+		t.Fatal("a failed first commit must leave no note")
+	}
+	cg.Commit = func(string) error { return nil }
+	if err := cg.commitWithNote("b", "N1"); err != nil {
+		t.Fatal(err)
+	}
+	cg.Commit = func(string) error { return fail }
+	if err := cg.commitWithNote("c", "N2"); !errors.Is(err, fail) {
+		t.Fatal("second commit must fail")
+	}
+	if got := cg.takeNote(); got != "N1" {
+		t.Fatalf("pending greeting note = %q, want N1", got)
 	}
 }

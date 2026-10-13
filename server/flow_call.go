@@ -199,6 +199,23 @@ func transferGreeting(stepName, note string) string {
 // setNote keeps the note of the transfer in progress for the greeting; every transfer overwrites it.
 func (c *CallFlow) setNote(n string) { c.noteMu.Lock(); c.note = n; c.noteMu.Unlock() }
 
+// commitWithNote records note for the greeting and commits the transfer; on any
+// failure (a duplicate while one is pending, the limit) the previous note is restored.
+func (c *CallFlow) commitWithNote(target, note string) error {
+	if c.Commit == nil {
+		return errors.New("route not ready")
+	}
+	c.noteMu.Lock()
+	prev := c.note
+	c.note = note
+	c.noteMu.Unlock()
+	if err := c.Commit(target); err != nil {
+		c.setNote(prev)
+		return err
+	}
+	return nil
+}
+
 // takeNote returns the note once.
 func (c *CallFlow) takeNote() string {
 	c.noteMu.Lock()
