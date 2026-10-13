@@ -48,11 +48,12 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 	done; \
 	if [ -n "$$failed" ]; then echo "=== FAILED modules:$$failed ==="; exit 1; fi; \
 	echo "=== All modules passed ==="
-	@$(MAKE) --no-print-directory test-graph-e2e
+	@$(MAKE) --no-print-directory test-e2e-go
 
-# Routed flows end to end with the fake providers: a real server, a stored routed flow and a WebSocket
-# client (route, failed step build, caller speaking mid-route, hang-up mid-route, republish).
-test-graph-e2e: ## free|Flow route and MCP call end-to-end tests against the fake providers (about 45 s)
+# End to end in Go with the fake providers: a real server, stored flows and a WebSocket client
+# (routes, failed step build, caller speaking mid-route, hang-up mid-route, republish, MCP tool calls,
+# no secret leaving the server). `make test` runs it; `make e2e-free` runs it with the browser suite.
+test-e2e-go: ## free|Go end-to-end tests (real server + WebSocket) against the fake providers (about 45 s)
 	cd server && go test -race -count=1 -tags "$(GOTAGS) fakeproviders" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall' .
 
 # Black-box pipecat.evals run against the Go server with fake providers (docs/decisions/pipecat-evals.md).
@@ -150,6 +151,9 @@ e2e-fake: ## free|Playwright browser e2e for routed flows against the fake provi
 	cd ui && npm ci --no-audit --no-fund
 	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test -c playwright.graph.config.ts
 
+# Every free end-to-end test: the Go suite, then the browser suite (fake providers, offline, about 2 min).
+e2e-free: test-e2e-go e2e-fake ## free|All free end-to-end tests: Go (test-e2e-go) then browser (e2e-fake)
+
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
 # XAI_API_KEY (env or examples/.env; XAI_MODEL optional). Roughly 20 provider requests per run.
 e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOICE_LIVE=1; about 20 requests)
@@ -157,7 +161,7 @@ e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOI
 	cd ui && npm ci --no-audit --no-fund
 	cd e2e && npm ci --no-audit --no-fund && npx playwright install chromium && E2E_PROVIDER=xai npx playwright test -c playwright.graph.config.ts
 
-.PHONY: e2e e2e-fake e2e-xai
+.PHONY: e2e e2e-fake e2e-xai e2e-free test-e2e-go
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a

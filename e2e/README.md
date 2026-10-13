@@ -115,5 +115,5 @@ the stack configures and the designer names) starting in the gap and stopping on
 works. (4) Fake only: a sales step whose voice cannot be built (`brokenvoice`) leaves the caller
 with the front step. (5) A plain one-step flow is unchanged.
 
-The server-side twin of the fake suite is `server/flow_e2e_test.go` (`make test-graph-e2e`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
+The server-side twin of the fake suite is `server/flow_e2e_test.go` (`make test-e2e-go`): it also decodes the audio frames on the WebSocket, so the cue is checked as bytes on the wire (it plays in the gap, is paced at 20 ms, stops when sales speaks or the handoff fails, and a quick handoff or an unknown sound plays nothing). CI
 runs the fake suite as the `graph-e2e` job.
