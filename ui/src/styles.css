@@ -2477,3 +2477,128 @@ main:has(.providers-layout) {
   flex-wrap: wrap;
   margin-top: 6px;
 }
+
+.first-run {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px 48px;
+  align-items: flex-start;
+}
+.setup-steps {
+  flex: 1 1 220px;
+  max-width: 280px;
+}
+.setup-steps ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.setup-steps li {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  color: var(--ink-2);
+}
+.setup-steps li[data-state="current"],
+.setup-steps li[data-state="done"] {
+  color: var(--ink);
+}
+.setup-steps li > span:last-child {
+  display: flex;
+  flex-direction: column;
+}
+.setup-steps li[data-state="current"] b {
+  font-weight: 600;
+}
+.setup-steps__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1.5px solid var(--ink-2);
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.setup-steps li[data-state="current"] .setup-steps__mark {
+  border-color: var(--caller);
+  background: var(--caller);
+  color: var(--surface);
+}
+.setup-steps li[data-state="done"] .setup-steps__mark {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: var(--surface);
+}
+.first-run__main {
+  flex: 999 1 520px;
+  min-width: 0;
+  max-width: 760px;
+}
+.first-run__step {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.first-run__step h2 {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+.first-run__step p {
+  margin: 0;
+}
+.first-run__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.first-run__wide {
+  grid-column: 1 / -1;
+}
+.first-run__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+}
+.stack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.stack-list .option-card {
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: start;
+}
+.stack-list__parts {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.75rem;
+}
+.first-run__summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+.first-run__summary section {
+  padding: 20px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.first-run__summary h3 {
+  margin: 0 0 12px;
+}
+.first-run__summary ul {
+  margin: 0 0 16px;
+  padding-left: 18px;
+}
