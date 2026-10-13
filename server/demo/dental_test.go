@@ -175,3 +175,23 @@ func TestInstallDentalRefusesAServerWithAnotherEndpoint(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestInstallDentalKeepsAnEditedFlowWithAForeignTool(t *testing.T) {
+	srv := &fakeServers{list: []storage.MCPServer{{ID: "srv1", Name: ServerName, Endpoint: "https://d/mcp", Enabled: true}}}
+	edited := flow.Flow{ID: "mine", Name: FlowName, Version: &flow.Version{MCPTools: []flow.ToolSelection{{ServerID: "srv1", RemoteName: "find_patient"}, {ServerID: "other", RemoteName: "x"}}}}
+	fl := &fakeFlows{list: []flow.Flow{edited}}
+	res, err := InstallDental(context.Background(), srv, fl, "https://d/mcp")
+	if err != nil || res.FlowCreated || res.FlowID != "mine" || len(fl.archived) != 0 {
+		t.Fatalf("res=%+v err=%v archived=%v", res, err, fl.archived)
+	}
+}
+
+func TestInstallDentalEndpointComparisonIsNormalised(t *testing.T) {
+	srv := &fakeServers{list: []storage.MCPServer{{ID: "srv1", Name: ServerName, Endpoint: "https://d.example.com/mcp", Enabled: true}}}
+	if _, err := InstallDental(context.Background(), srv, &fakeFlows{}, " https://d.example.com/mcp \n"); err != nil {
+		t.Fatalf("surrounding space must not matter: %v", err)
+	}
+	if _, err := InstallDental(context.Background(), srv, &fakeFlows{}, "not a url"); err == nil {
+		t.Fatal("an unparseable endpoint must be an error")
+	}
+}

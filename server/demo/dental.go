@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"govoice/server/flow"
 	"govoice/server/mcp"
@@ -46,6 +48,10 @@ type Result struct {
 // InstallDental adds the MCP server (endpoint is its /mcp URL) and the flow unless they exist.
 func InstallDental(ctx context.Context, servers Servers, flows Flows, endpoint string) (Result, error) {
 	var res Result
+	endpoint, err := normaliseEndpoint(endpoint)
+	if err != nil {
+		return res, fmt.Errorf("DENTAL_MCP_URL: %w", err)
+	}
 	existing, err := servers.List(ctx)
 	if err != nil {
 		return res, fmt.Errorf("list MCP servers: %w", err)
@@ -53,7 +59,7 @@ func InstallDental(ctx context.Context, servers Servers, flows Flows, endpoint s
 	var enabled bool
 	for _, s := range existing {
 		if s.Name == ServerName && !s.PendingDelete {
-			if s.Endpoint != endpoint {
+			if stored, err := normaliseEndpoint(s.Endpoint); err != nil || stored != endpoint {
 				return res, fmt.Errorf("MCP server %q exists with endpoint %s; delete it or set DENTAL_MCP_URL to match", ServerName, s.Endpoint)
 			}
 			res.MCPServerID = s.ID
@@ -136,21 +142,29 @@ func FindFlow(ctx context.Context, flows Flows) (flow.Flow, error) {
 	}
 }
 
-// pointsAt reports whether every tool the flow's current version selects lives on serverID.
-// A flow without version detail cannot be judged and is left alone.
+// normaliseEndpoint puts a URL in the form the MCP service stores (it parses with
+// url.ParseRequestURI), so the configured and stored endpoints compare equal.
+func normaliseEndpoint(raw string) (string, error) {
+	u, err := url.ParseRequestURI(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("invalid endpoint %q", raw)
+	}
+	return u.String(), nil
+}
+
+// pointsAt reports whether the flow selects any tool of serverID. Extra tools an admin
+// added from other servers do not make it stale. A flow without version detail cannot be
+// judged and is left alone.
 func pointsAt(f flow.Flow, serverID string) bool {
 	if f.Version == nil {
 		return true
 	}
-	if len(f.Version.MCPTools) == 0 {
-		return false
-	}
 	for _, t := range f.Version.MCPTools {
-		if t.ServerID != serverID {
-			return false
+		if t.ServerID == serverID {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 type stage = map[string]any
