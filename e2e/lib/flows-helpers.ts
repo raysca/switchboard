@@ -33,7 +33,8 @@ export const catalogDefault = (kind: "stt" | "llm" | "tts") => {
   return (kind === "tts" ? svc?.voices : svc?.models)?.find((e) => e.default)?.id ?? "";
 };
 // The fake's own model and voice names are not in the catalog: entered through "Other…".
-export const LLM_MODEL = () => (LIVE ? catalogDefault("llm") : "fake-llm");
+// The echo provider's lists are closed (no "Other…"), so both stacks pick the catalog default.
+export const LLM_MODEL = () => catalogDefault("llm");
 
 export async function api<T = any>(stack: Stack, route: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${stack.adminUrl}/api/v1${route}`, {

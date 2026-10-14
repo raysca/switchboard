@@ -114,6 +114,9 @@ func TestEchoMirrorsGoogleCatalog(t *testing.T) {
 		if !es.Keyless {
 			t.Errorf("echo %s must be keyless", name)
 		}
+		if es.AllowsCustom() { // its lists are the whole catalog: the console offers no "Other…"
+			t.Errorf("echo %s must not allow a custom model, voice or language", name)
+		}
 		if !reflect.DeepEqual(gs.Models, es.Models) || !reflect.DeepEqual(gs.Voices, es.Voices) || !reflect.DeepEqual(gs.Languages, es.Languages) {
 			t.Errorf("echo %s differs from google: update server/catalog/data/echo.yaml", name)
 		}

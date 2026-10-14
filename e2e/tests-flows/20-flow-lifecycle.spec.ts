@@ -21,13 +21,12 @@ test("designer: draw a two-step flow with a route and publish it", async ({ page
   await pick(page, "LLM model", LLM_MODEL());
   await page.getByLabel("Instructions").fill(FRONT_PROMPT);
   await page.getByLabel("TTS provider").selectOption(PROVIDER);
-  await pick(page, "Voice", LIVE ? catalogDefault("tts") : "frontvoice");
+  await pick(page, "Voice", catalogDefault("tts"));
 
   // A second step: it starts from the start step's model and voice; give it its own instructions.
   await page.getByRole("button", { name: "Add step" }).click();
   await page.getByLabel("Step name").fill("Sales");
   await page.getByLabel("Instructions").fill(SALES_PROMPT);
-  if (!LIVE) await pick(page, "Voice", "salesvoice");
   await page.getByRole("button", { name: "Done" }).click();
   // A step added later is brought into view, not left off the edge of the canvas.
   await expect(stepCard(page, "Sales")).toBeInViewport();
@@ -64,7 +63,7 @@ test("designer: draw a two-step flow with a route and publish it", async ({ page
   expect(cfg.steps[1].config.llm.system_prompt).toBe(SALES_PROMPT);
   // The dropdowns stored the catalog default, or the "Other…" value typed for the fake.
   expect(cfg.steps[0].config.llm.model).toBe(LLM_MODEL());
-  expect(cfg.steps.map((n: any) => n.config.tts.voice)).toEqual(LIVE ? [catalogDefault("tts"), catalogDefault("tts")] : ["frontvoice", "salesvoice"]);
+  expect(cfg.steps.map((n: any) => n.config.tts.voice)).toEqual([catalogDefault("tts"), catalogDefault("tts")]);
   expect(cfg.routes).toHaveLength(1);
   expect(cfg.start).toBe(cfg.steps[0].id);
   expect(cfg.route_cue).toEqual({ name: "chime", after_ms: 50 });
