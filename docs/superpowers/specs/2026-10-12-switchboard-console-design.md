@@ -49,7 +49,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 
 `Test call` opens a panel containing the existing voice test (`AgentVoiceTest`): status, meters, transcript, mute, end. While a call runs, the **main canvas** shows it: the active step pulses (lamp), visited steps are marked, the route just taken draws in (existing cable motion), using the server's handoff trace spans (`deriveView`). Ending the call keeps the transcript in the panel.
 
-**Constraint (server today):** a voice token runs the flow's *published* version. Until the server can test a draft (S1), the panel says `This call runs v7, the published version. Publish to hear your changes.` whenever the draft differs, and `Test call` is disabled for a never-published flow (`Publish once to test`).
+**Draft testing (S1, done):** a test call runs what is on the canvas. With unpublished changes the panel says `This call runs your unpublished changes. They are not saved or published.`; changes that could not be published cannot be tested (Start is disabled with the reason). `Test call` is disabled for a never-published flow (`Publish once to test`).
 
 ### Publish
 
@@ -88,7 +88,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 
 | Id | Need | Blocks |
 |---|---|---|
-| S1 | Test an unpublished draft (voice token for an inline config or a draft version) | Draft testing in the editor; until then the published-version note applies |
+| S1 | ~~Test an unpublished draft~~ **Done.** `POST /voice-tokens` takes an inline `draft.config`, validated like a publish, held in memory (32, single use); the session is recorded on the current version with `draft: true` | Nothing: the editor's Test call runs the canvas, and Calls marks draft calls |
 | S2 | Version list and rollback (`GET /agents/{id}/versions`, `POST …/rollback`) | Version history and "Roll back to v7" (canvas boards 8, 12) |
 | S3 | ~~Write provider credentials to the sealed keyring~~ **Decided against:** providers are preconfigured and their secrets are only ever read from the environment; the console never accepts a key | Nothing: Providers and First run name the variable to set, permanently |
 | S4 | Live call count per flow/version (operations status) | "9 calls finishing on v7" copy |
