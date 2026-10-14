@@ -57,16 +57,23 @@ func (p *probeSink) ProcessFrame(_ context.Context, f core.Frame, _ core.Directi
 
 // probeProcessor drives one stage processor with the smallest request that proves it works and returns the
 // time to the first token (llm) or first audio (tts). An stt probe sends 200 ms of silence and reports 0:
-// no transcript is expected, so only a failure is visible. The processor is closed before returning.
+// no transcript is expected, so only a failure is visible. The session, and with it the processor, is closed before returning.
 func probeProcessor(ctx context.Context, proc core.Processor, stage string) (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	sink := &probeSink{first: make(chan struct{}, 1), fail: make(chan error, 1)}
 	switch stage {
 	case "llm":
-		sink.want = func(f core.Frame) bool { _, ok := f.(*core.LLMTextFrame); return ok }
+		// the first streamed delta is the first token; the complete LLMTextFrame comes only at the end
+		sink.want = func(f core.Frame) bool {
+			switch f.(type) {
+			case *core.LLMTextDeltaFrame, *core.LLMTextFrame:
+				return true
+			}
+			return false
+		}
 	case "tts":
-		sink.want = func(f core.Frame) bool { _, ok := f.(*core.OutputAudioFrame); return ok }
+		sink.want = func(f core.Frame) bool { a, ok := f.(*core.OutputAudioFrame); return ok && len(a.Samples) > 0 }
 	}
 	pipe, err := core.NewPipeline(proc, sink)
 	if err != nil {
@@ -76,12 +83,8 @@ func probeProcessor(ctx context.Context, proc core.Processor, stage string) (tim
 	if err != nil {
 		return 0, fmt.Errorf("probe session: %w", err)
 	}
-	defer func() {
-		_ = sess.Close()
-		if c, ok := proc.(core.Closer); ok {
-			_ = c.Close()
-		}
-	}()
+	// Session.Close closes the processors, bounded and with recover; closing again here could block forever.
+	defer func() { _ = sess.Close() }()
 	if err := sess.Start(); err != nil {
 		return 0, fmt.Errorf("probe session: %w", err)
 	}

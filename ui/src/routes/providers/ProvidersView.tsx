@@ -47,16 +47,18 @@ function ConnectionTest({ p, client }: { p: ProviderStatus; client: ApiClient })
           {(test.error as ApiError).message}
         </p>
       )}
-      {test.data && (
-        <>
-          <ul className="provider-flows" aria-label="Connection test results" aria-live="polite">
-            {test.data.results.map((r) => (
-              <li key={r.stage}>{resultText(r)}</li>
-            ))}
-          </ul>
-          <p className="subtext">Checked {new Date(test.data.checked_at).toLocaleTimeString()}</p>
-        </>
-      )}
+      <div role="status" aria-live="polite">
+        {test.data && (
+          <>
+            <ul className="provider-flows" aria-label="Connection test results">
+              {test.data.results.map((r) => (
+                <li key={r.stage}>{resultText(r)}</li>
+              ))}
+            </ul>
+            <p className="subtext">Checked {new Date(test.data.checked_at).toLocaleTimeString()}</p>
+          </>
+        )}
+      </div>
     </section>
   );
 }

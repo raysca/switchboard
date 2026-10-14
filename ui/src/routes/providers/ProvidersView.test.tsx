@@ -257,6 +257,16 @@ describe("ProvidersView", () => {
       expect(screen.getByText(/^Checked /)).toBeVisible();
     });
 
+    it("announces results through a live region that exists before they arrive", async () => {
+      const { user } = setup({ testProvider: vi.fn().mockResolvedValue(tested) });
+      await screen.findByRole("heading", { name: "Google", level: 2 });
+      const region = screen.getByRole("status");
+      expect(region).toHaveAttribute("aria-live", "polite");
+      expect(within(region).queryByRole("list")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Test connection" }));
+      expect(await within(region).findByRole("list", { name: "Connection test results" })).toBeVisible();
+    });
+
     it("cannot be pressed for a provider with no credential, and says why", async () => {
       const { user } = setup({}, "/providers?provider=xai");
       await screen.findByRole("heading", { name: "xAI", level: 2 });

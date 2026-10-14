@@ -46,7 +46,7 @@ func isSynthesisUnit(f core.Frame) bool { _, ok := f.(*core.SynthesisUnitFrame);
 func isInputAudio(f core.Frame) bool    { _, ok := f.(*core.InputAudioFrame); return ok }
 
 func TestProbeProcessorTimesTheFirstTokenOfAnLLM(t *testing.T) {
-	p := &probeFake{trigger: isUserMessage, delay: 30 * time.Millisecond, out: func() core.Frame { return &core.LLMTextFrame{Text: "ok"} }}
+	p := &probeFake{trigger: isUserMessage, delay: 30 * time.Millisecond, out: func() core.Frame { return &core.LLMTextDeltaFrame{Delta: "ok"} }}
 	d, err := probeProcessor(t.Context(), p, "llm")
 	if err != nil || d < 30*time.Millisecond {
 		t.Fatalf("d=%v err=%v", d, err)
@@ -54,7 +54,7 @@ func TestProbeProcessorTimesTheFirstTokenOfAnLLM(t *testing.T) {
 }
 
 func TestProbeProcessorTimesTheFirstAudioOfATTS(t *testing.T) {
-	p := &probeFake{trigger: isSynthesisUnit, delay: 10 * time.Millisecond, out: func() core.Frame { return &core.OutputAudioFrame{} }}
+	p := &probeFake{trigger: isSynthesisUnit, delay: 10 * time.Millisecond, out: func() core.Frame { return &core.OutputAudioFrame{Samples: []byte{1, 2}} }}
 	if d, err := probeProcessor(t.Context(), p, "tts"); err != nil || d <= 0 {
 		t.Fatalf("d=%v err=%v", d, err)
 	}
@@ -125,5 +125,45 @@ func TestCircuitStateReadsTheGaugesAndTheWorstEndpointWins(t *testing.T) {
 	m.circuits.set("llm", "nvidia", "b:443", 1)
 	if got := m.circuitState("nvidia", "llm"); got != "open" {
 		t.Errorf("worst of two endpoints: %q", got)
+	}
+}
+
+func TestProbeProcessorTimesTheFirstStreamedDeltaNotTheCompleteText(t *testing.T) {
+	p := &probeFake{trigger: isUserMessage, delay: 10 * time.Millisecond, out: func() core.Frame { return &core.LLMTextDeltaFrame{Delta: "o"} }}
+	if d, err := probeProcessor(t.Context(), p, "llm"); err != nil || d <= 0 {
+		t.Fatalf("d=%v err=%v", d, err)
+	}
+}
+
+func TestProbeProcessorIgnoresAnEmptyAudioMarker(t *testing.T) {
+	old := probeTimeout
+	probeTimeout = 200 * time.Millisecond
+	defer func() { probeTimeout = old }()
+	p := &probeFake{trigger: isSynthesisUnit, out: func() core.Frame { return &core.OutputAudioFrame{} }}
+	if _, err := probeProcessor(t.Context(), p, "tts"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("an empty audio frame counted as first audio: err=%v", err)
+	}
+}
+
+// blockedClose never returns from Close, like a provider wedged on its own lock.
+type blockedClose struct {
+	probeFake
+	release chan struct{}
+}
+
+func (b *blockedClose) Close() error { <-b.release; return nil }
+
+func TestProbeProcessorReturnsEvenWhenTheProviderCloseHangs(t *testing.T) {
+	b := &blockedClose{probeFake: probeFake{trigger: isUserMessage, out: func() core.Frame { return &core.LLMTextDeltaFrame{Delta: "o"} }}, release: make(chan struct{})}
+	defer close(b.release)
+	done := make(chan error, 1)
+	go func() { _, err := probeProcessor(t.Context(), b, "llm"); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("probeProcessor hung on the provider's Close")
 	}
 }
