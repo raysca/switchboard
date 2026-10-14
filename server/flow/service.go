@@ -40,6 +40,9 @@ type UpdateRequest struct {
 	Description *string         `json:"description,omitempty"`
 	Config      json.RawMessage `json:"config,omitempty"`
 	Enabled     *bool           `json:"enabled,omitempty"`
+	// MCPTools replaces the flow's MCP tool selection in the same version as Config; nil keeps
+	// the current selection, an empty list clears it. Without Config, the current config is republished.
+	MCPTools *[]ToolSelection `json:"mcp_tools,omitempty"`
 }
 
 type Version struct {
@@ -185,38 +188,70 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Flo
 		if err != nil {
 			return Flow{}, err
 		}
-		if err := s.checkConfigTools(ctx, id, config); err != nil {
+	}
+	mutation := storage.FlowMutation{Name: req.Name, Description: req.Description, Enabled: req.Enabled}
+	if req.MCPTools != nil {
+		selected, err := toStorageSelections(*req.MCPTools)
+		if err != nil {
+			return Flow{}, err
+		}
+		mutation.Tools = &selected
+		if len(config) == 0 { // a selection alone republishes the current config
+			config, err = s.currentConfig(ctx, id)
+			if err != nil {
+				return Flow{}, err
+			}
+		}
+	}
+	if len(config) > 0 {
+		if err := s.checkConfigTools(ctx, id, config, req.MCPTools); err != nil {
 			return Flow{}, err
 		}
 	}
-	if _, _, err := s.store.Flows().MutateAndPublish(ctx, id, storage.FlowMutation{
-		Name: req.Name, Description: req.Description, Enabled: req.Enabled,
-	}, config); err != nil {
+	if _, _, err := s.store.Flows().MutateAndPublish(ctx, id, mutation, config); err != nil {
 		return Flow{}, err
 	}
 	return s.Get(ctx, id)
 }
 
-// checkConfigTools verifies a flow's step tools against the tools the flow's
-// current version has selected (a publish copies them forward).
-func (s *Service) checkConfigTools(ctx context.Context, id string, config json.RawMessage) error {
+func (s *Service) currentConfig(ctx context.Context, id string) (json.RawMessage, error) {
+	row, err := s.store.Flows().Current(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if row.Archived || row.CurrentVersionID == "" {
+		return nil, errors.New("flow unavailable")
+	}
+	v, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
+	if err != nil {
+		return nil, err
+	}
+	return v.ConfigJSON, nil
+}
+
+// checkConfigTools verifies a flow's step tools against the tools the publish will select (selected,
+// when given) or else the tools the flow's current version has (a publish copies them forward).
+func (s *Service) checkConfigTools(ctx context.Context, id string, config json.RawMessage, selected *[]ToolSelection) error {
 	g, err := Decode(config)
 	if err != nil {
 		return err
+	}
+	if selected != nil {
+		return checkStepTools(g, *selected)
 	}
 	row, err := s.store.Flows().Current(ctx, id)
 	if err != nil {
 		return err
 	}
-	var selected []ToolSelection
+	var current []ToolSelection
 	if row.CurrentVersionID != "" {
 		rows, err := s.store.Flows().SelectedTools(ctx, row.CurrentVersionID)
 		if err != nil {
 			return err
 		}
-		selected = fromStorageSelections(rows)
+		current = fromStorageSelections(rows)
 	}
-	return checkStepTools(g, selected)
+	return checkStepTools(g, current)
 }
 
 func (s *Service) Archive(ctx context.Context, id string) error {
@@ -255,7 +290,7 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 		}
 		return Snapshot{}, Readiness{}, err
 	}
-	if err := s.checkConfigTools(ctx, id, canonical); err != nil {
+	if err := s.checkConfigTools(ctx, id, canonical, nil); err != nil {
 		return Snapshot{}, Readiness{}, err
 	}
 	base, err := s.store.Flows().Version(ctx, row.CurrentVersionID)

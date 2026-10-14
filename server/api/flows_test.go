@@ -179,3 +179,48 @@ func TestFlowFallbackChainRoundTrip(t *testing.T) {
 		t.Fatalf("get status=%d body=%s", w.Code, w.Body)
 	}
 }
+
+func TestFlowUpdateCarriesMCPToolsAndPublishesOneVersion(t *testing.T) {
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/api-upd-mcp.db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server := storage.MCPServer{ID: storage.NewID(), Name: "orders", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := store.MCP().CreateServer(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := store.MCP().AddDiscovery(context.Background(), server.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := flow.NewService(store, allAvailable{})
+	cfg := `{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`
+	created, err := service.Create(context.Background(), flow.CreateRequest{Name: "api", Config: json.RawMessage(cfg)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPut, "/api/v1/flows/"+created.ID, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		NewFlowsHandler(service).ServeHTTP(w, r)
+		return w
+	}
+	sel := `{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `","required":true}`
+	w := put(`{"config":` + cfg + `,"mcp_tools":[` + sel + `]}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"number":2`) || !strings.Contains(w.Body.String(), `"required":true`) {
+		t.Fatalf("update: %d %s", w.Code, w.Body)
+	}
+	// Absent and null both keep the selection.
+	for _, body := range []string{`{"config":` + cfg + `}`, `{"config":` + cfg + `,"mcp_tools":null}`} {
+		if w := put(body); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), discovery.Tools[0].SchemaHash) {
+			t.Fatalf("keep %s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	// A stale hash is the caller's mistake.
+	stale := `{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"stale"}`
+	if w := put(`{"config":` + cfg + `,"mcp_tools":[` + stale + `]}`); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_tool_selection") {
+		t.Fatalf("stale: %d %s", w.Code, w.Body)
+	}
+}
