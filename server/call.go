@@ -194,6 +194,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		MaxMessages:         maxMessages,
 		MaxTokens:           maxTokens,
 		Summary:             cfg.Context.Summarization,
+		Greeting:            cfg.GreetingText(),
 		FlowVersionID:       rs.Snapshot.Version.ID,
 		StoredSessionID:     rs.Pin.ID,
 		Recording:           cfg.Recording.Active(),

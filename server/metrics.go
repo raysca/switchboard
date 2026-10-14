@@ -118,6 +118,8 @@ type Metrics struct {
 	// Idle controller (per call, added when the call ends): prompts sent, calls
 	// hung up for user idle, stuck-bot cancellations, calls hung up for repeated ones.
 	UserIdlePromptsTotal, UserIdleHangupsTotal, BotIdleStuckTotal, BotIdleHangupsTotal atomic.Uint64
+	// GreetingFailedTotal counts greetings that could not be queued (the session was closing).
+	GreetingFailedTotal atomic.Uint64
 	// AsyncToolTurnsTotal / AsyncToolResultsDroppedTotal mirror core.AsyncTrigger.
 	AsyncToolTurnsTotal          atomic.Uint64
 	AsyncToolResultsDroppedTotal atomic.Uint64
@@ -352,6 +354,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 		{"voice_user_idle_hangups_total", "Calls ended after the user stayed silent through every prompt.", &m.UserIdleHangupsTotal},
 		{"voice_bot_idle_stuck_total", "User turns the bot never answered (generation cancelled).", &m.BotIdleStuckTotal},
 		{"voice_bot_idle_hangups_total", "Calls ended after repeated unanswered turns.", &m.BotIdleHangupsTotal},
+		{"voice_greeting_failed_total", "Greetings that could not be queued (the session was closing).", &m.GreetingFailedTotal},
 	} {
 		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n%s %d\n", c.name, c.help, c.name, c.name, c.v.Load())
 	}

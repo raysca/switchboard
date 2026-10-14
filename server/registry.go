@@ -87,7 +87,12 @@ type CallSpec struct {
 	// OnInjector, if set, receives the call's context injector as the pipeline is assembled
 	// (before any stage runs); the server registers it only after a successful build.
 	OnInjector func(ContextInjector)
-	MaxTokens  int
+	// Greeting is the start step's greeting ("" = none). OnGreeter, if set, receives the function that
+	// speaks a fixed line as the assistant's turn, as the pipeline is assembled; the server calls it
+	// once the session has started.
+	Greeting  string
+	OnGreeter func(say func(string) error)
+	MaxTokens int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).
 	Summary flow.SummarizationConfig
 	// History, when set, sees every frame just before the transport (turn rows).
@@ -725,6 +730,9 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		turnTyped = tp
 	}
 	asstCtxProc := core.NewAssistantContextProcessor(ctxPool, asstCfg)
+	if call.OnGreeter != nil {
+		call.OnGreeter(asstCtxProc.Say)
+	}
 	asstActive = asstCtxProc.Active
 	// An incomplete user turn waiting for its continuation is not idle time.
 	held := func() bool { return false }

@@ -30,21 +30,22 @@ func sayRig(t *testing.T, id uint64) (*core.ConversationContext, *core.Assistant
 	return ctx, a, s, out
 }
 
-// sayUnits collects the synthesis units that reach the edge until the final one.
-func sayUnits(t *testing.T, out <-chan core.Frame) []*core.SynthesisUnitFrame {
+// sayUnits collects the synthesis units that reach the edge until the turn's final marker, and returns
+// them with the id of the final unit (a reply's last unit is announced by OutputTurnFinalFrame).
+func sayUnits(t *testing.T, out <-chan core.Frame) ([]*core.SynthesisUnitFrame, uint64) {
 	t.Helper()
 	var got []*core.SynthesisUnitFrame
 	for {
 		select {
 		case f := <-out:
-			if u, ok := f.(*core.SynthesisUnitFrame); ok {
-				got = append(got, u)
-				if u.IsFinal {
-					return got
-				}
+			switch v := f.(type) {
+			case *core.SynthesisUnitFrame:
+				got = append(got, v)
+			case *core.OutputTurnFinalFrame:
+				return got, v.UnitID
 			}
 		case <-time.After(2 * time.Second):
-			t.Fatalf("no final unit; got %d units", len(got))
+			t.Fatalf("no final marker; got %d units", len(got))
 		}
 	}
 }
@@ -74,11 +75,11 @@ func TestAssistantSaySpeaksAndRecordsTheLine(t *testing.T) {
 	if err := a.Say("Hello, thanks for calling."); err != nil {
 		t.Fatal(err)
 	}
-	us := sayUnits(t, out)
+	us, final := sayUnits(t, out)
 	var spoken strings.Builder
 	for _, u := range us {
 		spoken.WriteString(u.Text)
-		_ = s.Post(&core.WriteCompletionFrame{Turn: u.Turn, Gen: u.Gen, UnitID: u.UnitID, IsFinal: u.IsFinal, Media: 500 * time.Millisecond})
+		_ = s.Post(&core.WriteCompletionFrame{Turn: u.Turn, Gen: u.Gen, UnitID: u.UnitID, IsFinal: u.UnitID == final, Media: 500 * time.Millisecond})
 	}
 	if strings.TrimSpace(spoken.String()) != "Hello, thanks for calling." {
 		t.Fatalf("spoken %q", spoken.String())
@@ -108,7 +109,7 @@ func TestAssistantSayKeepsOnlyTheHeardPartWhenInterrupted(t *testing.T) {
 	if err := a.Say("First sentence. Second part is long and wordy."); err != nil {
 		t.Fatal(err)
 	}
-	us := sayUnits(t, out)
+	us, _ := sayUnits(t, out)
 	if len(us) < 2 {
 		t.Fatalf("want two units, got %d", len(us))
 	}
@@ -153,5 +154,35 @@ func TestAssistantSayRefusesEmptyTextAndAClosedSession(t *testing.T) {
 	_ = s.Close()
 	if err := a.Say("late"); err == nil {
 		t.Fatal("Say on a closed session was accepted")
+	}
+}
+
+// The transport streams a reply's text to the client from the delta frames and closes it on the complete
+// frame, so a spoken line must produce both, like a model reply.
+func TestAssistantSayEmitsTheTextAsADeltaThenTheCompleteFrame(t *testing.T) {
+	_, a, _, out := sayRig(t, 9105)
+	if err := a.Say("Hello there."); err != nil {
+		t.Fatal(err)
+	}
+	var sawDelta bool
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case f := <-out:
+			switch v := f.(type) {
+			case *core.LLMTextDeltaFrame:
+				if v.Delta != "Hello there." {
+					t.Fatalf("delta %q", v.Delta)
+				}
+				sawDelta = true
+			case *core.LLMTextFrame:
+				if !sawDelta || v.Text != "Hello there." {
+					t.Fatalf("complete frame %q after delta=%v", v.Text, sawDelta)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("no complete LLMTextFrame")
+		}
 	}
 }

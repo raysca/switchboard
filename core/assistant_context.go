@@ -157,6 +157,10 @@ func (p *AssistantContextProcessor) Say(text string) error {
 	if err := p.session.Reenter(&UserMessageFrame{Turn: turn, Gen: gen, Timestamp: now}, Downstream, p.index, gen); err != nil {
 		return fmt.Errorf("say: %w", err)
 	}
+	// Like a model reply: the text as a delta (the transport streams it to the client), then the complete text.
+	if err := p.session.Reenter(&LLMTextDeltaFrame{Turn: turn, Gen: gen, Delta: text}, Downstream, p.index, gen); err != nil {
+		return fmt.Errorf("say: %w", err)
+	}
 	if err := p.session.Reenter(&LLMTextFrame{Turn: turn, Gen: gen, Text: text}, Downstream, p.index, gen); err != nil {
 		return fmt.Errorf("say: %w", err)
 	}

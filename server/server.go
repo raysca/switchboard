@@ -533,6 +533,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	call.PushToTalk = conn.PushToTalk()
 	var injector ContextInjector
 	call.OnInjector = func(i ContextInjector) { injector = i }
+	var greet func(string) error
+	call.OnGreeter = func(say func(string) error) { greet = say }
 	call.OnRoute = s.onRoute(timeline, call.StoredSessionID)
 	call.OnEndCall = s.onEndCall(call.StoredSessionID)
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
@@ -686,6 +688,20 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		timeline.Record(TimelineEvent{Type: EventLatency, Timestamp: m.At, TurnID: string(m.Turn), Details: string(m.Stage), DurationMs: m.Value.Milliseconds()})
 	}); err != nil {
 		return fail(fmt.Errorf("attach latency observer: %w", err))
+	}
+
+	if call.Greeting != "" && greet != nil {
+		// The opening line: queued once, when the session starts (the transport starts it after this returns).
+		var once sync.Once
+		if _, _, err := session.Subscribe(0, func(e core.DebugEvent) {
+			if e.Name == core.DebugSessionStarted {
+				once.Do(func() {
+					queueGreeting(greet, call.Greeting, &s.metrics.GreetingFailedTotal, s.logger, call.StoredSessionID)
+				})
+			}
+		}); err != nil {
+			return fail(fmt.Errorf("attach greeting: %w", err))
+		}
 	}
 
 	s.mu.Lock()
