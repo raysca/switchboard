@@ -71,7 +71,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 
 ## 4. Deviations from the canvas (the Switchboard spec wins)
 
-- First run offers one-provider voice stacks only (no mixed "Fastest replies"), no key paste (S3), no "first thing it says" (S5), no draft wording (S1) and no latency chips (S9). The error panel reassurance appears only on read failures of the management API.
+- First run offers one-provider voice stacks only (no mixed "Fastest replies"), no key paste (S3), no draft wording (S1) and no latency chips (S9). The error panel reassurance appears only on read failures of the management API.
 - No all-caps eyebrow labels and no monospace labels: section labels are sentence case (`ui-switchboard-design.md`).
 - No drop shadows or card boxes: the side panel is separated by a `--rule` border, not a shadow.
 - The Calls list's filter pills keep the canvas's fully rounded shape (`border-radius: 999px`, the one exception to the single-radius rule); their touch target is still 44px.
@@ -92,7 +92,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | S2 | Version list and rollback (`GET /agents/{id}/versions`, `POST …/rollback`) | Version history and "Roll back to v7" (canvas boards 8, 12) |
 | S3 | ~~Write provider credentials to the sealed keyring~~ **Decided against:** providers are preconfigured and their secrets are only ever read from the environment; the console never accepts a key | Nothing: Providers and First run name the variable to set, permanently |
 | S4 | Live call count per flow/version (operations status) | "9 calls finishing on v7" copy |
-| S5 | Greeting / first line in config | First run step 2 "First thing it says" |
+| S5 | ~~Greeting / first line in config~~ **Done.** `greeting` on any step: spoken word for word when the step takes the call (start step: on connect; others: on a handoff), interruptible, recorded as a turn | Nothing: the step panel's Basics tab has Greeting and First run step 2 has "First thing it says" |
 | S6 | Code rename agent/node/handoff → flow/step/route | Route paths and API names (`/flows`) |
 | S7 | Per-flow call statistics (calls today, median reply time) | Those two figures on the Flows list rows |
 | S8 | Unarchive a flow (`POST /agents/{id}/restore`) | The canvas's "Archived · 1 / Restore" section |
