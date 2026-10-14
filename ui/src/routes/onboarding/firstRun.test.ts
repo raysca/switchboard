@@ -74,6 +74,12 @@ describe("flowFor", () => {
     const [x] = stacksFrom([xai]);
     expect((flowFor(x, { name: "x", job: "y", voice: "ara" }).config as { stt: object }).stt).toEqual({ provider: "xai", model: "scribe" });
   });
+  it("adds the greeting, trimmed, only when there is one", () => {
+    const cfg = (greeting?: string) => flowFor(g, { name: "x", job: "y", voice: "aoede", greeting }).config as { greeting?: string };
+    expect(cfg("  Hello, thanks for calling.  ").greeting).toBe("Hello, thanks for calling.");
+    expect(cfg("   ")).not.toHaveProperty("greeting");
+    expect(cfg()).not.toHaveProperty("greeting");
+  });
   it("starts the job with plain, usable text", () => {
     expect(DEFAULT_JOB.length).toBeGreaterThan(40);
   });

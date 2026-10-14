@@ -42,7 +42,7 @@ export function stacksFrom(providers: ProviderStatus[]): Stack[] {
 	return stacks.sort((a, b) => Number(b.ready) - Number(a.ready) || simulated(a) - simulated(b) || a.provider.display_name.localeCompare(b.provider.display_name));
 }
 
-export function flowFor(stack: Stack, input: { name: string; job: string; voice: string }): CreateFlowInput {
+export function flowFor(stack: Stack, input: { name: string; job: string; voice: string; greeting?: string }): CreateFlowInput {
   const provider = stack.provider.id;
   const voice = stack.tts.voices.some((v) => v.id === input.voice) ? input.voice : stack.tts.voice;
   return {
@@ -53,6 +53,7 @@ export function flowFor(stack: Stack, input: { name: string; job: string; voice:
       stt: { provider, model: stack.stt.model, ...(stack.stt.language ? { language: stack.stt.language } : {}) },
       llm: { provider, model: stack.llm.model, system_prompt: input.job.trim() },
       tts: { provider, voice },
+      ...(input.greeting?.trim() ? { greeting: input.greeting.trim() } : {}),
     },
   };
 }

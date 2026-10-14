@@ -138,6 +138,26 @@ describe("OnboardingView", () => {
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("step=3&flow=flow-1"));
   });
 
+  it("offers an optional first thing it says, which becomes the flow's greeting", async () => {
+    const { client, user } = setup({}, "/onboarding?step=2");
+    await user.type(await screen.findByLabelText("Name"), "Front desk");
+    expect(screen.getByText("The agent says this word for word when a call connects. Optional.")).toBeVisible();
+    await user.type(screen.getByLabelText("First thing it says"), "Hello, thanks for calling Northline.");
+    await user.click(screen.getByRole("button", { name: "Create and call it" }));
+    await waitFor(() => expect(client.createFlow).toHaveBeenCalledOnce());
+    expect((client.createFlow as ReturnType<typeof vi.fn>).mock.calls[0][0].config.greeting).toBe("Hello, thanks for calling Northline.");
+  });
+
+  it("does not create a flow whose greeting is over the server's limit, and says why", async () => {
+    const { client, user } = setup({}, "/onboarding?step=2");
+    await user.type(await screen.findByLabelText("Name"), "Front desk");
+    await user.click(screen.getByLabelText("First thing it says"));
+    await user.paste("é".repeat(260));
+    expect(screen.getByText("Greeting is over 500 bytes.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Create and call it" }));
+    expect(client.createFlow).not.toHaveBeenCalled();
+  });
+
   it("needs a name before it creates anything", async () => {
     const { client, user } = setup({}, "/onboarding?step=2");
     await user.click(await screen.findByRole("button", { name: "Create and call it" }));

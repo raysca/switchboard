@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { asApiError, type ApiClient, type ApiError, type FlowDTO } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState, Status } from "../../components/primitives";
 import { FlowVoiceTest } from "../flows/FlowVoiceTest";
+import { MAX_GREETING_BYTES, byteLength } from "../flows/editor/model";
 import { DEFAULT_JOB, flowFor, stacksFrom, type Stack } from "./firstRun";
 
 export type OnboardingViewProps = { client: ApiClient; keyValue: string | null };
@@ -51,13 +52,14 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
   const [name, setName] = useState("");
   const [voice, setVoice] = useState("");
   const [job, setJob] = useState(DEFAULT_JOB);
+  const [greeting, setGreeting] = useState("");
   const [created, setCreated] = useState<FlowDTO | null>(null);
   const [createError, setCreateError] = useState<ApiError | null>(null);
 
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: client.getProviders, enabled: !!keyValue, retry: false });
   const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: !!keyValue, retry: false });
   const create = useMutation({
-    mutationFn: (stack: Stack) => client.createFlow(flowFor(stack, { name, job, voice })),
+    mutationFn: (stack: Stack) => client.createFlow(flowFor(stack, { name, job, voice, greeting })),
     onSuccess: (flow) => {
       setCreateError(null);
       setCreated(flow);
@@ -185,9 +187,10 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
     );
   }
 
+  const greetingTooLong = byteLength(greeting.trim()) > MAX_GREETING_BYTES;
   const submitFlow = (e: FormEvent) => {
     e.preventDefault();
-    if (!stack || !name.trim() || !job.trim()) return;
+    if (!stack || !name.trim() || !job.trim() || greetingTooLong) return;
     create.mutate(stack);
   };
 
@@ -259,6 +262,18 @@ export function OnboardingView({ client, keyValue }: OnboardingViewProps) {
                   <span>What should it do?</span>
                   <textarea id="fr-job" rows={5} required value={job} onChange={(e) => setJob(e.target.value)} />
                 </label>
+                <label className="form-field first-run__wide" htmlFor="fr-greeting">
+                  <span>First thing it says</span>
+                  <textarea id="fr-greeting" rows={2} value={greeting} aria-describedby="fr-greeting-hint" onChange={(e) => setGreeting(e.target.value)} />
+                </label>
+                <p id="fr-greeting-hint" className="subtext first-run__wide">
+                  The agent says this word for word when a call connects. Optional.
+                </p>
+                {greetingTooLong && (
+                  <p role="alert" className="note note--bad first-run__wide">
+                    Greeting is over {MAX_GREETING_BYTES} bytes.
+                  </p>
+                )}
               </div>
               <div className="first-run__foot">
                 <button type="button" className="action-button-small" onClick={() => go(1)}>
