@@ -104,6 +104,39 @@ describe("StepPanel", () => {
     expect(screen.getByText(/Listening is set once for the whole call, on the start step \(Reception\)\./)).toBeVisible();
   });
 
+  it("has a greeting field on the start step, with its own hint, and clearing it removes the key", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness stepId="a" onChange={onChange} />);
+    const field = screen.getByLabelText("Greeting");
+    expect(screen.getByText("Said word for word as soon as the call connects. Leave empty to let the caller speak first.")).toBeVisible();
+    await user.type(field, "Hello!");
+    expect(lastGraph(onChange).steps.find((n) => n.id === "a")!.config.greeting).toBe("Hello!");
+    await user.clear(field);
+    expect(lastGraph(onChange).steps.find((n) => n.id === "a")!.config).not.toHaveProperty("greeting");
+  });
+
+  it("has a greeting field on another step, worded for a transfer", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness stepId="b" onChange={onChange} />);
+    expect(screen.getByText("Said word for word when a call is transferred here, in this step's voice. Leave empty to let the model greet the caller.")).toBeVisible();
+    await user.type(screen.getByLabelText("Greeting"), "Billing here.");
+    expect(lastGraph(onChange).steps.find((n) => n.id === "b")!.config.greeting).toBe("Billing here.");
+  });
+
+  it("counts bytes near the limit and flags a greeting that is too long", async () => {
+    const user = userEvent.setup();
+    render(<Harness stepId="a" />);
+    const field = screen.getByLabelText("Greeting");
+    await user.click(field);
+    await user.paste("é".repeat(230)); // 460 bytes
+    expect(screen.getByText("460 of 500 bytes")).toBeVisible();
+    await user.paste("é".repeat(30)); // 520 bytes
+    expect(screen.getByRole("note")).toHaveTextContent("Greeting is over 500 bytes.");
+    expect(screen.getByRole("tab", { name: /basics.*needs attention/i })).toBeInTheDocument();
+  });
+
   it("adds a route from the keyboard, focuses its condition, and flags it until filled", async () => {
     const user = userEvent.setup();
     render(<Harness stepId="a" initialTab="routes" />);

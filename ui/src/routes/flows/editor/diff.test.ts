@@ -58,3 +58,13 @@ describe("describeToolChanges", () => {
     expect(describeToolChanges([sel("a", true)], [sel("a")])).toEqual(["Tool crm/a is now optional"]);
   });
 });
+
+describe("greeting changes", () => {
+  it("says which step's greeting changed, was added or removed", () => {
+    const withGreeting = (g?: string) => updateStep(base, "a", { config: { ...base.steps[0].config, ...(g === undefined ? {} : { greeting: g }) } });
+    expect(describeChanges(base, withGreeting("Hello."))).toEqual(["Reception: greeting changed"]);
+    expect(describeChanges(withGreeting("Hello."), withGreeting("Hello there."))).toEqual(["Reception: greeting changed"]);
+    expect(describeChanges(withGreeting("Hello."), withGreeting())).toEqual(["Reception: greeting changed"]);
+    expect(describeChanges(withGreeting("Hello."), withGreeting("Hello."))).toEqual([]);
+  });
+});

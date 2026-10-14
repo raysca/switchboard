@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_GREETING_BYTES,
   MAX_STEPS,
   applySelection,
   addDraftRoute,
@@ -350,5 +351,31 @@ describe("applySelection", () => {
     expect(g.steps).toHaveLength(1);
     expect(g.steps[0].tools).toEqual(["crm/echo", "crm/lookup"]);
     expect(toPayload(g)).toEqual(flat); // still the flat config: the selection is not part of it
+  });
+});
+
+describe("greeting", () => {
+  const stepsWith = (a: unknown, b: unknown) =>
+    fromFlowConfig({
+      start: "a",
+      steps: [
+        { id: "a", name: "Reception", config: { stt: { provider: "google" }, llm: { provider: "google", model: "g" }, tts: { provider: "google", voice: "v" }, greeting: a } },
+        { id: "b", name: "Billing", config: { llm: { provider: "google", model: "g" }, tts: { provider: "google", voice: "v" }, greeting: b } },
+      ],
+      routes: [],
+    });
+  it("stays on the start step and on other steps in the payload (it is not a call-level setting)", () => {
+    const p = toPayload(stepsWith("Hello.", "Billing here.")) as { steps: { config: { greeting?: string } }[] };
+    expect(p.steps.map((s) => s.config.greeting)).toEqual(["Hello.", "Billing here."]);
+  });
+  it("stays at the top of a flat flow", () => {
+    expect((toPayload(fromFlowConfig({ ...flat, greeting: "Hi!" })) as { greeting?: string }).greeting).toBe("Hi!");
+  });
+  it("is an issue past the server's byte limit, counted in bytes, and not for a blank one", () => {
+    const over = (t: string) => stepIssues(stepsWith(t, ""), "a").some((i) => i.message === "Greeting is over 500 bytes.");
+    expect(over("a".repeat(MAX_GREETING_BYTES))).toBe(false);
+    expect(over("a".repeat(MAX_GREETING_BYTES + 1))).toBe(true);
+    expect(over("é".repeat(251))).toBe(true); // 251 characters, 502 bytes
+    expect(over("   ")).toBe(false);
   });
 });

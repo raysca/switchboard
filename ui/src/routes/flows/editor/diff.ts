@@ -31,6 +31,7 @@ export function describeChanges(before: FlowDraft | null, after: FlowDraft): str
     if (s(ot.provider) !== s(nt.provider) || s(ot.voice) !== s(nt.voice))
       out.push(`${n.name}: voice ${s(ot.voice) || s(ot.provider) || "none"} → ${s(nt.voice) || s(nt.provider) || "none"}`);
     if (s(ol.system_prompt) !== s(nl.system_prompt)) out.push(`${n.name}: instructions changed`);
+    if (s(o.config.greeting).trim() !== s(n.config.greeting).trim()) out.push(`${n.name}: greeting changed`);
     if (!same(ol.fallbacks, nl.fallbacks) || !same(ot.fallbacks, nt.fallbacks) || !same(ol.max_parallel, nl.max_parallel) || !same(ot.clean_text, nt.clean_text))
       out.push(`${n.name}: advanced settings changed`);
     if (!same([...o.tools].sort(), [...n.tools].sort())) out.push(`${n.name}: tools changed`);

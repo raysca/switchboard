@@ -6,6 +6,9 @@ import type { ToolSelection } from "../../../api/client";
 
 export const MAX_STEPS = 8;
 export const MAX_ROUTES = 32;
+/** The server counts a greeting in bytes (server/flow/config.go). */
+export const MAX_GREETING_BYTES = 500;
+export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
 
 export type StepConfig = Record<string, unknown>;
@@ -72,6 +75,7 @@ export function stepIssues(g: FlowDraft, id: string): StepIssue[] {
   const llm = asRecord(n.config.llm);
   if (blank(llm.provider) || blank(llm.model)) issues.push({ tab: "basics", message: "Choose a model." });
   if (blank(asRecord(n.config.tts).provider)) issues.push({ tab: "basics", message: "Choose a voice." });
+  if (byteLength(String(n.config.greeting ?? "").trim()) > MAX_GREETING_BYTES) issues.push({ tab: "basics", message: `Greeting is over ${MAX_GREETING_BYTES} bytes.` });
   for (const e of g.routes)
     if (e.from === id && blank(e.condition)) issues.push({ tab: "routes", message: `Give the route to ${nameIn(g, e.to)} a condition.` });
   for (const [cap, what] of [["llm", "model"], ["tts", "voice"], ["stt", "listening"]] as const) {

@@ -16,6 +16,8 @@ import {
   updateStep,
   type FlowDraft,
   type StepTab,
+  MAX_GREETING_BYTES,
+  byteLength,
 } from "./model";
 
 const TABS: { id: StepTab; label: string }[] = [
@@ -66,6 +68,7 @@ export function StepPanel(props: StepPanelProps) {
   const llm = rec(step.config.llm);
   const tts = rec(step.config.tts);
   const stt = rec(step.config.stt);
+  const greetingBytes = byteLength(str(step.config.greeting).trim());
   const patchStage = (cap: "llm" | "tts" | "stt", patch: Record<string, unknown>) =>
     onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: { ...rec(step.config[cap]), ...patch } } }));
   const warn = (t: StepTab) => issues.some((i) => i.tab === t);
@@ -180,6 +183,30 @@ export function StepPanel(props: StepPanelProps) {
             <p id="step-instructions-hint" className="subtext">
               The model only sees this while the call is on this step.
             </p>
+            <label className="form-field" htmlFor="step-greeting">
+              <span>Greeting</span>
+              <textarea
+                id="step-greeting"
+                rows={3}
+                value={str(step.config.greeting)}
+                aria-describedby="step-greeting-hint"
+                onChange={(e) => {
+                  const { greeting: _drop, ...rest } = step.config;
+                  void _drop;
+                  onChange(updateStep(graph, step.id, { config: e.target.value.trim() === "" ? rest : { ...rest, greeting: e.target.value } }));
+                }}
+              />
+            </label>
+            <p id="step-greeting-hint" className="subtext">
+              {isStart
+                ? "Said word for word as soon as the call connects. Leave empty to let the caller speak first."
+                : "Said word for word when a call is transferred here, in this step's voice. Leave empty to let the model greet the caller."}
+            </p>
+            {greetingBytes >= 450 && (
+              <p className="subtext">
+                {greetingBytes} of {MAX_GREETING_BYTES} bytes
+              </p>
+            )}
             <div className={wide ? "grid-2" : "step-panel__stack"}>
               <fieldset className="stage-box">
                 <legend>Model</legend>
