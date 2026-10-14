@@ -157,6 +157,35 @@ func (r SessionRepository) End(ctx context.Context, id string) error {
 	}
 	return r.s.MCP().FinalizePendingDeletes(ctx)
 }
+
+// orphanNote is set on a session ended by EndOrphans, unless it already has a summary.
+const orphanNote = "Ended when the server restarted."
+
+// EndOrphans ends every active or draining session that started before `before`: its process is
+// gone, so nothing will ever end it. The end time is the last finished turn, else the start (never
+// "now": that would show a phantom call that lasted until the restart). It returns how many it
+// ended, and retries the MCP deletes those sessions were holding back.
+func (r SessionRepository) EndOrphans(ctx context.Context, before time.Time) (int, error) {
+	var n int
+	err := r.s.WithTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, r.s.bind(`UPDATE sessions SET
+			status='ended',
+			ended_at=COALESCE((SELECT MAX(t.ended_at) FROM turns t WHERE t.session_id=sessions.id), started_at),
+			safe_summary=CASE WHEN safe_summary='' THEN ? ELSE safe_summary END
+			WHERE status IN ('active','draining') AND started_at < ?`), orphanNote, utc(before))
+		if err != nil {
+			return err
+		}
+		affected, err := res.RowsAffected()
+		n = int(affected)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, r.s.MCP().FinalizePendingDeletes(ctx)
+}
+
 func (r SessionRepository) AddTurn(ctx context.Context, v TurnRecord) error {
 	for _, id := range []string{v.ID, v.SessionID} {
 		if err := validID(id); err != nil {
