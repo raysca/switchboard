@@ -139,11 +139,6 @@ export function App({ initialPath }: { initialPath?: string }) {
                 <Status tone={keyValue ? "good" : "neutral"}>
                   {keyValue ? "Key in memory" : "No management key"}
                 </Status>
-                {keyValue && (
-                  <ActionButton type="button" className="action-button-small" onClick={clearKey}>
-                    Clear key
-                  </ActionButton>
-                )}
               </div>
             </div>
             <main id="main" tabIndex={-1}>

@@ -93,6 +93,14 @@ describe("ProvidersView", () => {
     expect(screen.getByText("1 of 2 providers detected.", { exact: false })).toBeVisible();
   });
 
+  it("selects a provider from anywhere in its row, not only its name", async () => {
+    const { user } = setup({});
+    await screen.findByRole("table");
+    await user.click(within(rowOf("xAI")).getByText("Not configured"));
+    expect(await screen.findByRole("heading", { name: "xAI", level: 2 })).toBeVisible();
+    expect(screen.getByRole("button", { name: "xAI" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("opens the first detected provider in the panel, and another when its row is chosen", async () => {
     const { user } = setup({});
     expect(await screen.findByRole("heading", { name: "Google", level: 2 })).toBeVisible();
