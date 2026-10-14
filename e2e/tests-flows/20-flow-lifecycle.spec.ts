@@ -137,9 +137,9 @@ test("designer: reopen the graph, edit it, republish; a new call gets the new ve
   await page.getByRole("tab", { name: /Routes/ }).click();
   await page.getByLabel("Condition for the route to Sales").fill("The caller wants to buy a car, asks about prices, or wants a quote.");
   await step(page, "route condition edited");
-  // The test call runs the published version: the panel says the edit is not in it yet.
+  // The test call runs the canvas as a draft: the panel says the edit is not published.
   await page.getByRole("button", { name: "Test call" }).click();
-  await expect(page.getByText(/This call runs v1, the published version/)).toBeVisible();
+  await expect(page.getByText(/This call runs your unpublished changes/)).toBeVisible();
   // The publish dialog is modal: Tab never reaches the page behind it (the browser may take focus
   // to its own toolbar, which leaves the page's activeElement as <body>), Escape closes it and
   // focus returns to Publish.
