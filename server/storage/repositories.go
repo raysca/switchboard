@@ -75,7 +75,7 @@ func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, versi
 	if version < 1 {
 		return out, errors.New("version must be positive")
 	}
-	hash, canonical, err := hashJSON(config)
+	hash, canonical, err := ConfigHash(config)
 	if err != nil {
 		return out, err
 	}
@@ -614,7 +614,7 @@ func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools 
 	sorted := append([]MCPTool(nil), tools...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].RemoteName < sorted[j].RemoteName })
 	for i := range sorted {
-		h, c, err := hashJSON(sorted[i].SchemaJSON)
+		h, c, err := ConfigHash(sorted[i].SchemaJSON)
 		if err != nil {
 			return out, err
 		}
@@ -633,7 +633,7 @@ func (r MCPRepository) AddDiscovery(ctx context.Context, serverID string, tools 
 	if err != nil {
 		return out, err
 	}
-	hash, _, err := hashJSON(raw)
+	hash, _, err := ConfigHash(raw)
 	if err != nil {
 		return out, err
 	}

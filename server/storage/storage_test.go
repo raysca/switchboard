@@ -36,7 +36,7 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 			t.Fatal(err)
 		}
 		var n int
-		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 5 {
+		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 6 {
 			t.Fatalf("version=%d err=%v", n, err)
 		}
 		s.Close()
@@ -582,19 +582,19 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var n int
-	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 5 {
+	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 6 {
 		t.Fatalf("upgrade version=%d err=%v", n, err)
 	}
 	// Goose runs each migration transactionally: failed DDL must not survive.
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_agent_mcp_review.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_agent_mcp_review.sql", "006_session_draft.sql"} {
 		body, err := fs.ReadFile(initial, name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["006_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["007_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectSQLite3, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -679,18 +679,18 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 5 {
+	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 6 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_agent_mcp_review.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_agent_mcp_review.sql", "006_session_draft.sql"} {
 		body, err := fs.ReadFile(migrationFS, name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["006_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["007_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectPostgres, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)

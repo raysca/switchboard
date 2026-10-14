@@ -325,7 +325,9 @@ func CanonicalJSON(raw []byte) ([]byte, error) {
 	}
 	return json.Marshal(v)
 }
-func hashJSON(raw []byte) (string, []byte, error) {
+
+// ConfigHash is the canonical form of a JSON config and its sha256: what a published version stores.
+func ConfigHash(raw []byte) (string, []byte, error) {
 	c, err := CanonicalJSON(raw)
 	if err != nil {
 		return "", nil, err

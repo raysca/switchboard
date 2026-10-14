@@ -21,7 +21,7 @@ func (r FlowRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.C
 	if err := validID(a.ID); err != nil {
 		return FlowVersion{}, err
 	}
-	hash, canonical, err := hashJSON(config)
+	hash, canonical, err := ConfigHash(config)
 	if err != nil {
 		return FlowVersion{}, err
 	}
@@ -99,7 +99,7 @@ func (r FlowRepository) MutateAndPublish(ctx context.Context, id string, mutatio
 	var canonical []byte
 	var err error
 	if publish {
-		hash, canonical, err = hashJSON(config)
+		hash, canonical, err = ConfigHash(config)
 		if err != nil {
 			return FlowVersion{}, false, err
 		}

@@ -11,9 +11,12 @@ import (
 type SessionRecord struct {
 	ID, FlowID, FlowVersionID, ConfigHash, Status, ProviderStackJSON, SafeSummary string
 	RuntimeSnapshotJSON                                                           string
-	RuntimeTools                                                                  []SelectedTool
-	StartedAt, EndedAt                                                            time.Time
-	TurnCount                                                                     int
+	// Draft marks a test call on an unpublished config: FlowVersionID is the version it was based on
+	// and ConfigHash is the draft's.
+	Draft              bool
+	RuntimeTools       []SelectedTool
+	StartedAt, EndedAt time.Time
+	TurnCount          int
 }
 type TurnRecord struct {
 	ID, SessionID, Transcript, AssistantText, LatenciesJSON, ToolsJSON string
@@ -115,7 +118,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 				return errors.New("required MCP tool was not captured for session")
 			}
 		}
-		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical))
+		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical), boolValue(r.s.dialect, v.Draft))
 		if err != nil {
 			return err
 		}
@@ -233,7 +236,7 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 		offset = 0
 	}
 
-	query := "SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json FROM sessions"
+	query := "SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft FROM sessions"
 	var clauses []string
 	var args []any
 	if filter.FlowID != "" {
@@ -261,7 +264,7 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 		var v SessionRecord
 		var started string
 		var ended sql.NullString
-		if err := rows.Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON); err != nil {
+		if err := rows.Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft); err != nil {
 			return nil, err
 		}
 		if v.StartedAt, err = parseTime(started); err != nil {
@@ -281,7 +284,7 @@ func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, e
 	var v SessionRecord
 	var started string
 	var ended sql.NullString
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft)
 	if err != nil {
 		return v, err
 	}
