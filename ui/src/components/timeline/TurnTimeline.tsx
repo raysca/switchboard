@@ -9,13 +9,18 @@ export type TurnTimelineProps = {
 };
 
 type LatencyData = {
-  vad_ms?: number;
-  stt_ms?: number;
-  llm_ms?: number;
-  tts_ms?: number;
-  e2e_ms?: number;
-  [key: string]: unknown;
+  stt_final_ms?: number;
+  llm_ttft_ms?: number;
+  tts_ttfb_ms?: number;
+  voice_to_voice_ms?: number;
 };
+
+const PILLS: [keyof LatencyData, string][] = [
+  ["stt_final_ms", "Heard"],
+  ["llm_ttft_ms", "Model"],
+  ["tts_ttfb_ms", "Voice"],
+  ["voice_to_voice_ms", "Total"],
+];
 
 function parseLatencies(raw: unknown): LatencyData | null {
   if (!raw) return null;
@@ -118,33 +123,15 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
               </div>
             </div>
 
-            {/* Latencies Breakdown */}
-            {latencies && (
+            {/* Latencies Breakdown: only the stages measured for this turn */}
+            {latencies && PILLS.some(([key]) => typeof latencies[key] === "number") && (
               <div className="latency-bar" aria-label="Latencies breakdown">
-                {(latencies.vad_ms !== undefined || latencies.vad !== undefined) && (
-                  <span className="latency-pill">
-                    VAD: {latencies.vad_ms ?? (latencies.vad as number)}ms
-                  </span>
-                )}
-                {(latencies.stt_ms !== undefined || latencies.stt !== undefined) && (
-                  <span className="latency-pill">
-                    STT: {latencies.stt_ms ?? (latencies.stt as number)}ms
-                  </span>
-                )}
-                {(latencies.llm_ms !== undefined || latencies.llm !== undefined) && (
-                  <span className="latency-pill">
-                    LLM: {latencies.llm_ms ?? (latencies.llm as number)}ms
-                  </span>
-                )}
-                {(latencies.tts_ms !== undefined || latencies.tts !== undefined) && (
-                  <span className="latency-pill">
-                    TTS: {latencies.tts_ms ?? (latencies.tts as number)}ms
-                  </span>
-                )}
-                {(latencies.e2e_ms !== undefined || latencies.total_ms !== undefined) && (
-                  <span className="latency-pill">
-                    Total: {latencies.e2e_ms ?? (latencies.total_ms as number)}ms
-                  </span>
+                {PILLS.map(([key, label]) =>
+                  typeof latencies[key] === "number" ? (
+                    <span key={key} className="latency-pill">
+                      {label}: {latencies[key]} ms
+                    </span>
+                  ) : null,
                 )}
               </div>
             )}

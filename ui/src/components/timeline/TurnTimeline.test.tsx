@@ -58,11 +58,10 @@ describe("TurnTimeline", () => {
         assistant_text: "I was just about to...",
         interrupted: true,
         latencies: {
-          vad_ms: 35,
-          stt_ms: 120,
-          llm_ms: 250,
-          tts_ms: 90,
-          total_ms: 495,
+          stt_final_ms: 120,
+          llm_ttft_ms: 250,
+          tts_ttfb_ms: 90,
+          voice_to_voice_ms: 495,
         },
       },
     ];
@@ -70,11 +69,16 @@ describe("TurnTimeline", () => {
     render(<TurnTimeline turns={turns} />);
 
     expect(screen.getByText("Interrupted")).toBeVisible();
-    expect(screen.getByText("VAD: 35ms")).toBeVisible();
-    expect(screen.getByText("STT: 120ms")).toBeVisible();
-    expect(screen.getByText("LLM: 250ms")).toBeVisible();
-    expect(screen.getByText("TTS: 90ms")).toBeVisible();
-    expect(screen.getByText("Total: 495ms")).toBeVisible();
+    expect(screen.getByText("Heard: 120 ms")).toBeVisible();
+    expect(screen.getByText("Model: 250 ms")).toBeVisible();
+    expect(screen.getByText("Voice: 90 ms")).toBeVisible();
+    expect(screen.getByText("Total: 495 ms")).toBeVisible();
+  });
+
+  it("shows no latency bar for a turn with no measurements", () => {
+    const turn: TurnDTO = { id: "t", session_id: "s", ordinal: 1, started_at: "2026-10-05T12:00:00Z", ended_at: null, transcript: "hi", assistant_text: "yo", interrupted: false, latencies: {} };
+    render(<TurnTimeline turns={[turn]} />);
+    expect(screen.queryByLabelText("Latencies breakdown")).toBeNull();
   });
 
   it("maintains privacy mode compliance with no raw audio and metadata-only placeholders", () => {

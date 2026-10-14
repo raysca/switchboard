@@ -136,6 +136,8 @@ export function turnRows(session: SessionDTO, turns: TurnDTO[], traces: SessionT
   return ordered.map((t) => {
     const spoken = t.transcript.trim();
     const notes: string[] = [];
+    const reply = replyMs(t);
+    if (reply !== null) notes.push(`Replied in ${formatMs(reply)}`);
     if (t.interrupted) notes.push("Interrupted by the caller");
     for (const c of traces?.tool_calls ?? []) {
       if (c.turn_id !== t.id) continue;
@@ -150,6 +152,34 @@ export function turnRows(session: SessionDTO, turns: TurnDTO[], traces: SessionT
       notes,
     };
   });
+}
+
+const ms = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+
+/**
+ * How long the caller waited for the reply: the end of their speech to the first sound, or for a typed turn
+ * (which has no end of speech) the model's first token plus the voice's first audio. Null when not measured.
+ */
+export function replyMs(t: TurnDTO): number | null {
+  const l = t.latencies;
+  if (!l || typeof l !== "object") return null;
+  const o = l as Record<string, unknown>;
+  const total = ms(o.voice_to_voice_ms);
+  if (total !== null) return total;
+  const llm = ms(o.llm_ttft_ms);
+  const tts = ms(o.tts_ttfb_ms);
+  return llm !== null && tts !== null ? llm + tts : null;
+}
+
+export function medianReplyMs(turns: TurnDTO[]): number | null {
+  const all = turns.map(replyMs).filter((v): v is number => v !== null).sort((a, b) => a - b);
+  if (all.length === 0) return null;
+  const mid = Math.floor(all.length / 2);
+  return all.length % 2 ? all[mid] : (all[mid - 1] + all[mid]) / 2;
+}
+
+export function formatMs(v: number): string {
+  return v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(1)} s`;
 }
 
 export function interruptedCount(turns: TurnDTO[]): number {

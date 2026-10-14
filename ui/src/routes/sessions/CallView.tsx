@@ -5,7 +5,7 @@ import type { ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
-import { clock, endedByFlow, failedRoutes, interruptedCount, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import { clock, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
 export type CallViewProps = { client: ApiClient; keyValue: string | null };
@@ -77,6 +77,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
   const fallback = flow?.name ?? "Assistant";
   const st = stepsFor(s, flow);
   const turns = turnsQuery.data ?? [];
+  const median = medianReplyMs(turns);
   const traces = tracesQuery.data ?? null;
   const o = outcome(s);
   const label = (id: string) => st.names.get(id) ?? id;
@@ -124,6 +125,12 @@ export function CallView({ client, keyValue }: CallViewProps) {
           <dt>Interrupted replies</dt>
           <dd>{interruptedCount(turns)}</dd>
         </div>
+        {median !== null && (
+          <div>
+            <dt>Median reply</dt>
+            <dd>{formatMs(median)}</dd>
+          </div>
+        )}
       </dl>
 
       {failed.map((f, i) => (
@@ -136,7 +143,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
       <div className="call-columns">
         <section aria-labelledby="call-turns-title" className="call-section call-columns__main">
           <h2 id="call-turns-title">Turns</h2>
-          <p className="subtext">What each turn did. Per-turn timing is not recorded yet.</p>
+          <p className="subtext">What each turn did, and how long the reply took.</p>
           {turnsQuery.isPending ? (
             <LoadingState label="Loading turns" />
           ) : (

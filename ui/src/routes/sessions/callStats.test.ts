@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlowDTO, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
-import { clock, endedByFlow, failedRoutes, interruptedCount, mmss, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import { clock, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, mmss, replyMs, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 
 const flow = (config: Record<string, unknown> = {}): FlowDTO => ({
   id: "a1",
@@ -214,5 +214,32 @@ describe("turnRows", () => {
   it("ignores a hangup ending and a span that is not call.end", () => {
     expect(endedByFlow(traces(span("call.end", "2026-10-12T14:04:12Z", { reason: "hangup", from_step: "b" })))).toBeNull();
     expect(endedByFlow(traces(span("route.active", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" })))).toBeNull();
+  });
+});
+
+describe("reply time", () => {
+  const withLat = (n: number, latencies?: unknown): TurnDTO => ({ ...turn(n, "2026-10-12T14:00:01Z", "2026-10-12T14:00:02Z", "hi", "yo"), latencies });
+  it("is the caller-to-first-sound time, or model plus voice for a typed turn, and unknown without either", () => {
+    expect(replyMs(withLat(1, { voice_to_voice_ms: 900, llm_ttft_ms: 1, tts_ttfb_ms: 1 }))).toBe(900);
+    expect(replyMs(withLat(2, { llm_ttft_ms: 420, tts_ttfb_ms: 300 }))).toBe(720);
+    expect(replyMs(withLat(3, { llm_ttft_ms: 420 }))).toBeNull();
+    expect(replyMs(withLat(4, {}))).toBeNull();
+    expect(replyMs(withLat(5))).toBeNull();
+    expect(replyMs(withLat(6, "not an object"))).toBeNull();
+  });
+  it("has a median over the turns that have one, null when none do", () => {
+    expect(medianReplyMs([])).toBeNull();
+    expect(medianReplyMs([withLat(1, {}), withLat(2)])).toBeNull();
+    expect(medianReplyMs([withLat(1, { voice_to_voice_ms: 900 }), withLat(2, { voice_to_voice_ms: 300 }), withLat(3, {})])).toBe(600);
+    expect(medianReplyMs([withLat(1, { voice_to_voice_ms: 100 }), withLat(2, { voice_to_voice_ms: 900 }), withLat(3, { voice_to_voice_ms: 300 })])).toBe(300);
+  });
+  it("is written in milliseconds under a second and seconds above", () => {
+    expect(formatMs(412)).toBe("412 ms");
+    expect(formatMs(1250)).toBe("1.3 s");
+  });
+  it("notes the reply time on the turn row", () => {
+    const rows = turnRows(session(), [withLat(1, { voice_to_voice_ms: 900 }), withLat(2, {})], null);
+    expect(rows[0].notes).toEqual(["Replied in 900 ms"]);
+    expect(rows[1].notes).toEqual([]);
   });
 });

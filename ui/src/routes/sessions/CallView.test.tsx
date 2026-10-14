@@ -208,7 +208,19 @@ describe("CallView", () => {
     expect(screen.getByRole("complementary", { name: "Transcript" })).toBeVisible();
   });
 
-  it("lists the turns with what happened in them, and says timing is not recorded yet", async () => {
+  it("shows the median reply when turns carry timing, and leaves it out when none do", async () => {
+    const timed = turns.map((t, i) => ({ ...t, latencies: { voice_to_voice_ms: [300, 900, 600][i] } }));
+    setup({ getSessionTurns: vi.fn().mockResolvedValue(timed) });
+    expect(within(await screen.findByText("Median reply").then((e) => e.parentElement!)).getByText("600 ms")).toBeVisible();
+  });
+
+  it("has no median reply figure without timing", async () => {
+    setup({});
+    await screen.findByRole("list", { name: "Transcript" });
+    expect(screen.queryByText("Median reply")).toBeNull();
+  });
+
+  it("lists the turns with what happened in them", async () => {
     const tool = { id: "c1", session_id: ID, turn_id: "t2", remote_name: "crm.verify_identity", schema_hash: "x", started_at: "2026-10-12T14:00:07.000Z", ended_at: "2026-10-12T14:00:07.160Z", status: "completed", arguments_summary: "", result_summary: "" };
     setup({ getSessionTraces: vi.fn().mockResolvedValue({ ...traces(toBilling), tool_calls: [tool] }) });
     const region = await screen.findByRole("region", { name: "Turns" });
@@ -218,7 +230,7 @@ describe("CallView", () => {
       "00:06I can look into that.Tool crm.verify_identity · 160 ms",
       "00:43Let me checkInterrupted by the caller",
     ]);
-    expect(within(region).getByText(/Per-turn timing is not recorded yet\./)).toBeVisible();
+    expect(within(region).queryByText(/not recorded yet/)).toBeNull();
   });
 
   it("says when the flow ended the call", async () => {
