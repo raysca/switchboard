@@ -81,6 +81,7 @@ type AssistantContextProcessor struct {
 	holdStop  chan struct{}
 	held      atomic.Bool
 	nudgeN    atomic.Uint64
+	sayN      atomic.Uint64 // fixed lines queued through Say
 
 	// Flush barrier coordination
 	pendingFlushGen   atomic.Uint64
@@ -136,6 +137,32 @@ func (p *AssistantContextProcessor) Attach(s SessionController, index int) error
 }
 
 // ProcessFrame handles text streaming, synthesis units, write completions, and interruption barriers.
+// ErrSayEmpty is returned by Say for text with nothing to speak.
+var ErrSayEmpty = errors.New("core: nothing to say")
+
+// Say speaks text as the assistant's next turn: the same units, delivery tracking, history commit and
+// interruption rules as a model reply, without a model (a greeting). It enters at this processor, so
+// the line never reaches the LLM stage. It only queues; it fails if the text is empty or the session is closing.
+func (p *AssistantContextProcessor) Say(text string) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ErrSayEmpty
+	}
+	if p.session == nil {
+		return errors.New("core: assistant context is not attached to a session")
+	}
+	turn := fmt.Sprintf("say-%d", p.sayN.Add(1))
+	gen := p.session.CurrentGeneration()
+	now := time.Now()
+	if err := p.session.Reenter(&UserMessageFrame{Turn: turn, Gen: gen, Timestamp: now}, Downstream, p.index, gen); err != nil {
+		return fmt.Errorf("say: %w", err)
+	}
+	if err := p.session.Reenter(&LLMTextFrame{Turn: turn, Gen: gen, Text: text}, Downstream, p.index, gen); err != nil {
+		return fmt.Errorf("say: %w", err)
+	}
+	return nil
+}
+
 func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
 	switch f.Type() {
 	case FrameUserMessage:
