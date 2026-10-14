@@ -140,6 +140,16 @@ describe("FlowEditor payloads", () => {
     expect(config.steps.find((n) => n.id === config.start)!.tools).toEqual(["crm/lookup"]);
   });
 
+  it("leaves the tool selection out of a publish that did not touch it, so a drifted pin cannot block an unrelated edit", async () => {
+    const tools = [{ mcp_server_id: "crm", remote_name: "lookup", schema_hash: "h", required: true }];
+    const withTools: FlowDTO = { ...flow, current_version: { ...flow.current_version!, mcp_tools: tools } };
+    const { user, onSubmit } = setup({ flow: withTools });
+    await user.click(screen.getByRole("button", { name: "Add step" }));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    await user.click(screen.getByRole("button", { name: "Publish v2" }));
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("mcp_tools");
+  });
+
   it("sends a plain one-step flow as a flat config", async () => {
     const { user, onSubmit } = setup({ flow });
     await user.click(screen.getByRole("button", { name: "Publish" }));

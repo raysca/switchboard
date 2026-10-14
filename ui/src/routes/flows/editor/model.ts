@@ -2,6 +2,8 @@
 // validation (server/flow/flow.go): the server stays the authority, this
 // keeps the canvas from offering what it would reject.
 
+import type { ToolSelection } from "../../../api/client";
+
 export const MAX_STEPS = 8;
 export const MAX_ROUTES = 32;
 const MAX_CONDITION = 512;
@@ -193,6 +195,21 @@ export function toPayload(g: FlowDraft): unknown {
     }),
     routes: g.routes,
     ...(g.route_cue ? { route_cue: g.route_cue } : {}),
+  };
+}
+
+const toolKey = (t: ToolSelection) => `${t.mcp_server_id}/${t.remote_name}`;
+
+/**
+ * The flow's tool selection changed: a tool no longer selected comes off every step that listed it
+ * (the server refuses a step tool the flow has not selected), and a lone step can call every selected tool.
+ * A flow with several steps keeps what each step chose; a new tool is not added to any of them.
+ */
+export function applySelection(g: FlowDraft, next: ToolSelection[]): FlowDraft {
+  const keys = next.map(toolKey);
+  return {
+    ...g,
+    steps: g.steps.map((n) => ({ ...n, tools: g.steps.length === 1 ? [...keys] : n.tools.filter((t) => keys.includes(t)) })),
   };
 }
 

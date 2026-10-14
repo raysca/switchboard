@@ -227,6 +227,7 @@ export type CreateFlowInput = {
   description: string;
   enabled?: boolean;
   config: FlowConfigPayload;
+  mcp_tools?: ToolSelection[];
 };
 
 export type UpdateFlowInput = {
@@ -234,6 +235,7 @@ export type UpdateFlowInput = {
   description?: string;
   enabled?: boolean;
   config?: FlowConfigPayload;
+  mcp_tools?: ToolSelection[];
 };
 
 // MCP schemas & types
@@ -539,7 +541,7 @@ export function createApiClient(
     return parsed.data;
   }
   return {
-    issueVoiceToken: async (input: { principal: string; flow_id: string; draft?: { config: unknown } }) =>
+    issueVoiceToken: async (input: { principal: string; flow_id: string; draft?: { config: unknown; mcp_tools?: ToolSelection[] } }) =>
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
     testProvider: async (id: string) =>
       (await request(`/providers/${encodeURIComponent(id)}/test`, z.object({ data: providerTestSchema }), { method: "POST" })).data,

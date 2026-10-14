@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_STEPS,
+  applySelection,
   addDraftRoute,
   insertStep,
   emptyFlow,
@@ -317,5 +318,32 @@ describe("what the server will accept", () => {
     const out = toPayload(removeStep(fromFlowConfig(cfg), "b")) as { steps: object[] };
     expect(out.steps).toHaveLength(1);
     expect("end_call" in out.steps[0]).toBe(false);
+  });
+});
+
+describe("applySelection", () => {
+  const sel = (name: string) => ({ mcp_server_id: "crm", remote_name: name, schema_hash: "h", required: false });
+  const two = () =>
+    fromFlowConfig({
+      start: "a",
+      steps: [
+        { id: "a", name: "A", tools: ["crm/echo", "crm/lookup"], config: {} },
+        { id: "b", name: "B", tools: ["crm/lookup"], config: {} },
+      ],
+      routes: [],
+    });
+  it("takes a dropped tool off every step and leaves the others", () => {
+    const g = applySelection(two(), [sel("lookup")]);
+    expect(g.steps.map((s) => s.tools)).toEqual([["crm/lookup"], ["crm/lookup"]]);
+  });
+  it("does not add a newly selected tool to a step that has several to choose from", () => {
+    const g = applySelection(two(), [sel("echo"), sel("lookup"), sel("other")]);
+    expect(g.steps.map((s) => s.tools)).toEqual([["crm/echo", "crm/lookup"], ["crm/lookup"]]);
+  });
+  it("gives a lone step every selected tool, as a one-step flow can call them all", () => {
+    const g = applySelection(fromFlowConfig(flat), [sel("echo"), sel("lookup")]);
+    expect(g.steps).toHaveLength(1);
+    expect(g.steps[0].tools).toEqual(["crm/echo", "crm/lookup"]);
+    expect(toPayload(g)).toEqual(flat); // still the flat config: the selection is not part of it
   });
 });

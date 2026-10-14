@@ -1,3 +1,4 @@
+import type { ToolSelection } from "../../../api/client";
 import type { FlowDraft, DraftRoute } from "./model";
 
 type Rec = Record<string, unknown>;
@@ -51,5 +52,20 @@ export function describeChanges(before: FlowDraft | null, after: FlowDraft): str
   const newStart = rec(now.get(after.start)?.config);
   for (const [k, label] of FLOW_SETTINGS) if (!same(oldStart[k], newStart[k])) out.push(`Flow settings: ${label} changed`);
   if (!same(before.route_cue, after.route_cue)) out.push("Flow settings: route sound changed");
+  return out;
+}
+
+/** Tools added to or removed from the flow, and tools that became required or optional. */
+export function describeToolChanges(before: ToolSelection[], after: ToolSelection[]): string[] {
+  const name = (t: ToolSelection) => `${t.mcp_server_id}/${t.remote_name}`;
+  const was = new Map(before.map((t) => [name(t), t]));
+  const is = new Map(after.map((t) => [name(t), t]));
+  const out: string[] = [];
+  for (const [k, t] of is) {
+    const o = was.get(k);
+    if (!o) out.push(`Added tool ${k}`);
+    else if (o.required !== t.required) out.push(`Tool ${k} is now ${t.required ? "required" : "optional"}`);
+  }
+  for (const k of was.keys()) if (!is.has(k)) out.push(`Removed tool ${k}`);
   return out;
 }

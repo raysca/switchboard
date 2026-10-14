@@ -1,11 +1,11 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import type { FlowDTO, ApiClient, CreateFlowInput, ProviderStatus } from "../../../api/client";
+import type { FlowDTO, ApiClient, CreateFlowInput, ProviderStatus, ToolSelection } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { Status } from "../../../components/primitives";
 import { FlowVoiceTest } from "../FlowVoiceTest";
 import { Canvas, type Selection } from "./Canvas";
-import { describeChanges } from "./diff";
+import { describeChanges, describeToolChanges } from "./diff";
 import { FlowSettingsPanel } from "./FlowSettingsPanel";
 import {
   MAX_STEPS,
@@ -52,10 +52,20 @@ export type FlowEditorProps = {
   callsInProgress?: number;
 };
 
+const toolKey = (t: ToolSelection) => `${t.mcp_server_id}/${t.remote_name}`;
+const sameTools = (a: ToolSelection[], b: ToolSelection[]) => {
+  const norm = (l: ToolSelection[]) => JSON.stringify([...l].sort((x, y) => toolKey(x).localeCompare(toolKey(y))).map((t) => [toolKey(t), t.schema_hash, t.required]));
+  return norm(a) === norm(b);
+};
+
 /** One page for a flow: the flow stays put; steps, settings and test calls slide in from the right. */
 export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmit, onCancel, initialName, initialPanel, callsInProgress }: FlowEditorProps) {
-  const flowTools = useMemo(() => (flow?.current_version?.mcp_tools ?? []).map((t) => `${t.mcp_server_id}/${t.remote_name}`), [flow]);
-  const published = useMemo(() => (flow?.current_version ? fromFlowConfig(flow.current_version.config, flowTools) : null), [flow, flowTools]);
+  const publishedTools = useMemo(() => flow?.current_version?.mcp_tools ?? [], [flow]);
+  const published = useMemo(() => (flow?.current_version ? fromFlowConfig(flow.current_version.config, publishedTools.map(toolKey)) : null), [flow, publishedTools]);
+  // The flow's MCP tool selection is part of the draft: it is published and tested with the config.
+  const [tools] = useState<ToolSelection[]>(publishedTools);
+  const flowTools = useMemo(() => tools.map(toolKey), [tools]);
+  const toolsChanged = !sameTools(tools, publishedTools);
   const [name, setName] = useState(flow?.name ?? initialName ?? "");
   const [description, setDescription] = useState(flow?.description ?? "");
   const [graph, setGraph] = useState<FlowDraft>(() => published ?? emptyFlow());
@@ -74,13 +84,13 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const version = flow?.current_version?.number ?? 0;
   const renamed = !!flow && name.trim() !== flow.name;
   const redescribed = !!flow && description.trim() !== flow.description;
-  const unpublished = !published || renamed || redescribed || canonical(toPayload(published)) !== canonical(toPayload(graph));
+  const unpublished = !published || renamed || redescribed || toolsChanged || canonical(toPayload(published)) !== canonical(toPayload(graph));
   const needSetup = graph.steps.filter((n) => stepIssues(graph, n.id).length > 0).length;
   const flowProblems = flowIssues(graph);
   const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph)];
   const callable = canCall(flow);
   // A test call runs what is on the canvas; changes that could not be published cannot be tested.
-  const draft = unpublished && problems.length === 0 ? { config: toPayload(graph) } : undefined;
+  const draft = unpublished && problems.length === 0 ? { config: toPayload(graph), mcp_tools: tools } : undefined;
   // The call runs the published version, or the canvas when it is a draft test, so the live view follows that flow.
   const live = useCallView(draft ? graph : (published ?? graph), call, client);
   const activeStep = graph.steps.find((n) => live.view.steps[n.id]?.state === "active")?.name;
@@ -145,6 +155,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
       description: description.trim(),
       enabled: flow?.enabled ?? true,
       config: toPayload(graph) as CreateFlowInput["config"],
+      ...(toolsChanged ? { mcp_tools: tools } : {}),
     });
     setConfirming(false);
   };
@@ -311,6 +322,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
             ...(renamed ? [`Renamed the flow to ${name.trim()}`] : []),
             ...(redescribed ? ["Description changed"] : []),
             ...describeChanges(published, graph),
+            ...describeToolChanges(publishedTools, tools),
           ]}
           problems={problems}
           pending={pending}

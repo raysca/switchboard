@@ -3,7 +3,7 @@
  * Manages WebSocket connection to /ws, audio capture/playback, RTVI lifecycle, and metrics.
  */
 
-import type { ApiClient } from "../api/client";
+import type { ApiClient, ToolSelection } from "../api/client";
 import { BrowserAudioController, BrowserAudioError } from "./audio";
 import {
   decodeBinaryFrame,
@@ -110,7 +110,7 @@ export interface ConnectOptions {
   /** Turns start and end on the hold-to-talk button instead of voice detection. */
   pushToTalk?: boolean;
   /** An unpublished flow config to run instead of the published version (a test call). */
-  draft?: { config: unknown };
+  draft?: { config: unknown; mcp_tools?: ToolSelection[] };
 }
 
 export class VoiceClient {

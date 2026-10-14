@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router";
-import type { ApiClient, FlowDTO } from "../../api/client";
+import type { ApiClient, FlowDTO, ToolSelection } from "../../api/client";
 import {
   VoiceClient,
   type VoiceClientState,
@@ -23,7 +23,7 @@ export interface FlowVoiceTestProps {
   /** The name of the step that holds the call now; each reply is labelled with the step it came from. */
   activeStep?: string;
   /** An unpublished config to run instead of the published version: the call is a draft test. */
-  draft?: { config: unknown };
+  draft?: { config: unknown; mcp_tools?: ToolSelection[] };
   /** Why a call cannot start right now (the draft is not valid); shown as a note. */
   blocked?: string;
 }

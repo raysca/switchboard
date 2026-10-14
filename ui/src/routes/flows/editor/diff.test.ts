@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeChanges } from "./diff";
+import { describeChanges, describeToolChanges } from "./diff";
 import { addDraftRoute, insertStep, fromFlowConfig, setStart, updateRoute, updateStep, type FlowDraft } from "./model";
 
 const ready = { llm: { provider: "google", model: "gemini", system_prompt: "Hi." }, tts: { provider: "google", voice: "aoede" } };
@@ -44,5 +44,17 @@ describe("describeChanges", () => {
 
   it("reports the end-call toggle", () => {
     expect(describeChanges(base, updateStep(base, "b", { end_call: true }))).toEqual(["Billing: end call enabled"]);
+  });
+});
+
+describe("describeToolChanges", () => {
+  const sel = (name: string, required = false, hash = "h") => ({ mcp_server_id: "crm", remote_name: name, schema_hash: hash, required });
+  it("names tools added and removed, and a tool that became required or optional", () => {
+    expect(describeToolChanges([], [])).toEqual([]);
+    expect(describeToolChanges([sel("a")], [sel("a")])).toEqual([]);
+    expect(describeToolChanges([sel("a")], [sel("a"), sel("b")])).toEqual(["Added tool crm/b"]);
+    expect(describeToolChanges([sel("a"), sel("b")], [sel("a")])).toEqual(["Removed tool crm/b"]);
+    expect(describeToolChanges([sel("a")], [sel("a", true)])).toEqual(["Tool crm/a is now required"]);
+    expect(describeToolChanges([sel("a", true)], [sel("a")])).toEqual(["Tool crm/a is now optional"]);
   });
 });

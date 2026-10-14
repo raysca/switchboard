@@ -141,6 +141,21 @@ describe("management client", () => {
     expect(out.results[1].latency_ms).toBeUndefined();
   });
 
+  it("sends a flow's MCP tool selection with a create or update, and with a draft token", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const flowBody = { data: { id: "f", name: "n", description: "", enabled: true, archived: false, current_version: null, readiness: { state: "ready", reasons: [] }, created_at: "", updated_at: "" } };
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push({ url: String(url), ...JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify(String(url).includes("voice-tokens") ? { data: { token: "t", expires_at: "2026-10-04T23:00:00Z", scope: "voice:connect" } } : flowBody), { status: 200 });
+    });
+    const api = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+    const tools = [{ mcp_server_id: "crm", remote_name: "echo", schema_hash: "h", required: false }];
+    await api.updateFlow("f", { config: { a: 1 }, mcp_tools: tools });
+    await api.createFlow({ name: "n", description: "", config: { a: 1 }, mcp_tools: tools });
+    await api.issueVoiceToken({ principal: "p", flow_id: "f", draft: { config: { a: 1 }, mcp_tools: tools } });
+    expect(bodies.map((b) => b.mcp_tools ?? (b.draft as { mcp_tools?: unknown }).mcp_tools)).toEqual([tools, tools, tools]);
+  });
+
   it("reports the generation captured when a request starts", async () => {
     let respond!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {
