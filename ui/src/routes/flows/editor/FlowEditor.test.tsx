@@ -88,15 +88,34 @@ describe("FlowEditor", () => {
     expect(sent.config.steps).toEqual([expect.objectContaining({ name: "New step", config: expect.objectContaining({ llm: expect.objectContaining({ provider: "google" }) }) })]);
   });
 
-  it("says the test call runs the published version while the draft differs", async () => {
+  it("tests the unpublished changes on the canvas, and says they are not published", async () => {
     const { user } = setup({ flow });
     // A click without a mousedown: d3-drag (React Flow's step drag) reads event.view, which jsdom leaves null.
     fireEvent.click(screen.getByText("main"));
     await user.type(screen.getByLabelText("Instructions"), " Be brief.");
     await user.click(screen.getByRole("button", { name: "Test call" }));
     const panel = screen.getByRole("complementary", { name: "Test call" });
-    expect(within(panel).getByRole("note")).toHaveTextContent("This call runs v1, the published version. Publish to hear your changes.");
-    expect(within(panel).getByTestId("start-voice-test-btn")).toBeVisible();
+    expect(within(panel).getByRole("note")).toHaveTextContent("This call runs your unpublished changes. They are not saved or published.");
+    expect(within(panel).getByText("Testing draft (based on v1)")).toBeVisible();
+    expect(within(panel).getByTestId("start-voice-test-btn")).toBeEnabled();
+  });
+
+  it("tests the published version, with no note, when nothing changed", async () => {
+    const { user } = setup({ flow });
+    await user.click(screen.getByRole("button", { name: "Test call" }));
+    const panel = screen.getByRole("complementary", { name: "Test call" });
+    expect(within(panel).queryByRole("note")).toBeNull();
+    expect(within(panel).getByText("Testing v1")).toBeVisible();
+  });
+
+  it("will not test a draft that cannot be published yet", async () => {
+    const { user } = setup({ flow });
+    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.clear(screen.getByLabelText("Flow name"));
+    await user.click(screen.getByRole("button", { name: "Test call" }));
+    const panel = screen.getByRole("complementary", { name: "Test call" });
+    expect(within(panel).getByTestId("start-voice-test-btn")).toBeDisabled();
+    expect(within(panel).getByRole("note")).toHaveTextContent(/before you can test your changes: Give the flow a name/i);
   });
 
   it("lists the changes since the published version in the publish dialog", async () => {

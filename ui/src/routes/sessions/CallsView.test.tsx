@@ -98,6 +98,13 @@ describe("CallsView", () => {
     expect(within(rows[1]).getByRole("link")).toHaveAttribute("href", "/sessions/0192aaaa-0000-7000-8000-000000000001");
   });
 
+  it("marks a draft test call with a Draft chip, and no other", async () => {
+    setup({ getSessions: listOnly([call({ draft: true }), call({ id: "0192aaaa-0000-7000-8000-000000000002" })]) });
+    const rows = await screen.findAllByRole("row");
+    expect(within(rows[1]).getByText("Draft")).toBeVisible();
+    expect(within(rows[2]).queryByText("Draft")).toBeNull();
+  });
+
   it("shows a status the server might add as it is, instead of hiding the call", async () => {
     setup({ getSessions: listOnly([call({ status: "weird" })]) });
     expect(await screen.findByText("weird")).toBeVisible();

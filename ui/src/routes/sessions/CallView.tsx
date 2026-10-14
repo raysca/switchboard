@@ -99,6 +99,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
           <dd>
             {flow && !flow.archived ? <Link to={`/flows/${encodeURIComponent(flow.id)}`}>{flow.name}</Link> : <span>{flow ? `${flow.name} (archived)` : "Unknown flow"}</span>}{" "}
             <span className="chip">{versionLabel(s, flow)}</span>
+            {s.draft && <> <span className="chip">Draft</span></>}
           </dd>
         </div>
         <div>

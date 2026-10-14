@@ -93,6 +93,11 @@ describe("CallView", () => {
     expect(within(figure("Path")).getByText("Reception → Billing")).toBeVisible();
   });
 
+  it("marks a draft test call with a Draft chip", async () => {
+    setup({ getSession: vi.fn().mockResolvedValue(session({ draft: true })) });
+    expect(await screen.findByText("Draft")).toBeVisible();
+  });
+
   it("marks a running call Live, with the amber lamp", async () => {
     setup({ getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null })) });
     const live = await screen.findByText(/^Live · /);

@@ -618,6 +618,38 @@ describe("FlowVoiceTest", () => {
     expect(screen.getByText("Testing v1")).toBeVisible();
   });
 
+  it("runs the draft it is given, names it, and never calls a draft call stale", async () => {
+    const client = createMockClient();
+    const v1 = createMockFlow();
+    const v2 = createMockFlow();
+    v2.current_version = { ...v1.current_version!, number: (v1.current_version!.number ?? 1) + 1 };
+    const audio = new BrowserAudioController();
+    vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
+    const draft = { config: { a: 1 } };
+    const ui = (f: FlowDTO) => (
+      <MemoryRouter>
+        <FlowVoiceTest flow={f} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" draft={draft} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(ui(v1));
+    expect(screen.getByText("Testing draft (based on v1)")).toBeVisible();
+    await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    expect(client.issueVoiceToken).toHaveBeenCalledWith(expect.objectContaining({ flow_id: v1.id, draft }));
+    rerender(ui(v2));
+    expect(screen.queryByText(/this call is on v/i)).toBeNull();
+  });
+
+  it("refuses to start while it is blocked, and says why", () => {
+    render(
+      <MemoryRouter>
+        <FlowVoiceTest flow={createMockFlow()} client={createMockClient()} keyValue="k" blocked="Fix the Reception step first." />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("start-voice-test-btn")).toBeDisabled();
+    expect(screen.getByText("Fix the Reception step first.")).toBeVisible();
+  });
+
   async function connected(props: { versionNumber?: number; activeStep?: string } = {}) {
     const audio = new BrowserAudioController();
     vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);

@@ -22,6 +22,10 @@ export interface FlowVoiceTestProps {
   onCall?: (call: CallInfo) => void;
   /** The name of the step that holds the call now; each reply is labelled with the step it came from. */
   activeStep?: string;
+  /** An unpublished config to run instead of the published version: the call is a draft test. */
+  draft?: { config: unknown };
+  /** Why a call cannot start right now (the draft is not valid); shown as a note. */
+  blocked?: string;
 }
 
 export function FlowVoiceTest({
@@ -32,6 +36,8 @@ export function FlowVoiceTest({
   audioController,
   onCall,
   activeStep,
+  draft,
+  blocked,
 }: FlowVoiceTestProps) {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [textMessage, setTextMessage] = useState("");
@@ -83,7 +89,7 @@ export function FlowVoiceTest({
     onCall?.({ sessionId: state.sessionId, userSpeaking: state.isUserSpeaking, botSpeaking: state.isBotSpeaking, live: inCall });
   }, [onCall, state.sessionId, state.isUserSpeaking, state.isBotSpeaking, inCall]);
   useEffect(() => () => onCall?.(NO_CALL), [onCall]);
-  const callIsStale = inCall && callVersion !== null && callVersion.number !== flow.current_version?.number;
+  const callIsStale = !draft && inCall && callVersion !== null && callVersion.number !== flow.current_version?.number;
 
   // Alt-tab while holding: pointerup never arrives, so release on window blur.
   useEffect(() => {
@@ -100,6 +106,7 @@ export function FlowVoiceTest({
       principal: `flow-test-${flow.id}`,
       wsBaseUrl,
       pushToTalk,
+      draft,
     });
   };
 
@@ -138,7 +145,7 @@ export function FlowVoiceTest({
       <div className="call-panel__top">
         <div className="call-panel__title">
           <span id="voice-test-heading">
-            Testing v{(inCall && callVersion ? callVersion.number : flow.current_version?.number) ?? 0}
+            {draft ? "Testing draft (based on " : "Testing "}v{(inCall && callVersion ? callVersion.number : flow.current_version?.number) ?? 0}{draft ? ")" : ""}
           </span>
           <code data-testid="flow-readiness" className="call-panel__ready">
             {flow.readiness.state}
@@ -162,7 +169,7 @@ export function FlowVoiceTest({
             Push to talk
           </label>
           {!isConnectedOrReady && !isConnecting && (
-            <ActionButton type="button" onClick={handleConnect} disabled={!keyValue || !callable} data-testid="start-voice-test-btn">
+            <ActionButton type="button" onClick={handleConnect} disabled={!keyValue || !callable || !!blocked} data-testid="start-voice-test-btn">
               Start voice test
             </ActionButton>
           )}
@@ -215,6 +222,12 @@ export function FlowVoiceTest({
           {!keyValue && <span className="flag flag--bad">Enter management key to run voice tests.</span>}
         </div>
       </div>
+
+      {blocked && (
+        <p role="note" className="note">
+          {blocked}
+        </p>
+      )}
 
       {!callable && !isConnectedOrReady && (
         <div role="note" className="note">

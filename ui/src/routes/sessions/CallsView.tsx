@@ -174,7 +174,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
                         <Link to={`/sessions/${encodeURIComponent(s.id)}`}>{new Date(s.started_at).toLocaleString()}</Link>
                       </td>
                       <td>
-                        {f?.name ?? "Unknown flow"} <span className="chip">{versionLabel(s, f)}</span>
+                        {f?.name ?? "Unknown flow"} <span className="chip">{versionLabel(s, f)}</span>{s.draft && <> <span className="chip">Draft</span></>}
                       </td>
                       <td className="num">{clock(s.started_at, s.ended_at, now)}</td>
                       <td className="num">{s.turn_count}</td>

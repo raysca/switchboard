@@ -79,6 +79,8 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const flowProblems = flowIssues(graph);
   const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph)];
   const callable = canCall(flow);
+  // A test call runs what is on the canvas; changes that could not be published cannot be tested.
+  const draft = unpublished && problems.length === 0 ? { config: toPayload(graph) } : undefined;
   // The call runs the published version, so the live view follows that flow.
   const live = useCallView(published ?? graph, call, client);
   const activeStep = graph.steps.find((n) => live.view.steps[n.id]?.state === "active")?.name;
@@ -279,12 +281,20 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
         )}
         {panel?.kind === "call" && flow && (
           <SidePanel title="Test call" tone="dark" onClose={close} returnFocusTo={opener.current} fallbackFocusId="flow-editor-title">
-            {unpublished && (
+            {draft && (
               <p role="note" className="note">
-                This call runs v{version}, the published version. Publish to hear your changes.
+                This call runs your unpublished changes. They are not saved or published.
               </p>
             )}
-            <FlowVoiceTest flow={flow} client={client} keyValue={keyValue} onCall={setCall} activeStep={activeStep} />
+            <FlowVoiceTest
+              flow={flow}
+              client={client}
+              keyValue={keyValue}
+              onCall={setCall}
+              activeStep={activeStep}
+              draft={draft}
+              blocked={unpublished && problems.length > 0 ? `Fix this before you can test your changes: ${problems[0]}` : undefined}
+            />
           </SidePanel>
         )}
       </div>
