@@ -115,12 +115,6 @@ func (rt *Router) Close() {
 	}
 }
 
-func (rt *Router) Active() string {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.active
-}
-
 func (rt *Router) emit(e RouteEvent) {
 	if rt.cfg.OnEvent != nil {
 		rt.cfg.OnEvent(e)

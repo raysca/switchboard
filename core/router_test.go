@@ -137,7 +137,7 @@ func TestRouterFlipsAtIdleAndClosesOldStep(t *testing.T) {
 	if err := h.Commit("sales"); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "sales active", func() bool { return h.Active() == "sales" })
+	eventually(t, "sales active", func() bool { return activeStep(h) == "sales" })
 	eventually(t, "old stages closed", func() bool { return env.oldLLM.closed.Load() == 1 && env.oldTTS.closed.Load() == 1 })
 	time.Sleep(30 * time.Millisecond)
 	if env.oldLLM.closed.Load() != 1 || env.oldTTS.closed.Load() != 1 {
@@ -156,12 +156,12 @@ func TestRouterUserTurnFlipsOnce(t *testing.T) {
 	h, env := newRouterEnv(t, func(c *RouterConfig) { c.Trigger = busy(newTrigger()) })
 	_ = h.Commit("sales")
 	env.waitReady(t, h) // built, not flipped: the trigger never goes idle
-	if h.Active() != "front" {
+	if activeStep(h) != "front" {
 		t.Fatal("must not flip while the caller is mid-speech")
 	}
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t1"}, Downstream, nopEmitter{})
-	if h.Active() != "sales" || env.newLLM.frames.Load() != 1 || env.oldLLM.frames.Load() != 0 {
-		t.Fatalf("the caller's turn must go to the new step: active=%s new=%d old=%d", h.Active(), env.newLLM.frames.Load(), env.oldLLM.frames.Load())
+	if activeStep(h) != "sales" || env.newLLM.frames.Load() != 1 || env.oldLLM.frames.Load() != 0 {
+		t.Fatalf("the caller's turn must go to the new step: active=%s new=%d old=%d", activeStep(h), env.newLLM.frames.Load(), env.oldLLM.frames.Load())
 	}
 	if env.greeted.Load() != 0 {
 		t.Fatal("no greeting when the caller spoke first")
@@ -179,7 +179,7 @@ func TestRouterAsyncMessageDoesNotFlip(t *testing.T) {
 	_ = h.Commit("sales")
 	env.waitReady(t, h)
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "async-1"}, Downstream, nopEmitter{})
-	if h.Active() != "front" {
+	if activeStep(h) != "front" {
 		t.Fatal("an async-tool trigger turn must not flip the route")
 	}
 }
@@ -190,7 +190,7 @@ func TestRouterBuildFailureKeepsOldStep(t *testing.T) {
 	})
 	_ = h.Commit("sales")
 	env.waitEvent(t, RouteFailed)
-	if h.Active() != "front" || env.oldLLM.closed.Load() != 0 || env.oldTTS.closed.Load() != 0 {
+	if activeStep(h) != "front" || env.oldLLM.closed.Load() != 0 || env.oldTTS.closed.Load() != 0 {
 		t.Fatal("a failed build must leave the old step active and open")
 	}
 	if err := h.Commit("sales"); err != nil { // pending cleared: a later transfer may try again
@@ -223,8 +223,8 @@ func TestRouterBuildTimeout(t *testing.T) {
 	_ = h.Commit("sales")
 	env.waitEvent(t, RouteFailed)
 	time.Sleep(50 * time.Millisecond)
-	if h.Active() != "front" || runtime.NumGoroutine() > before+1 {
-		t.Fatalf("active=%s goroutines before=%d after=%d", h.Active(), before, runtime.NumGoroutine())
+	if activeStep(h) != "front" || runtime.NumGoroutine() > before+1 {
+		t.Fatalf("active=%s goroutines before=%d after=%d", activeStep(h), before, runtime.NumGoroutine())
 	}
 }
 
@@ -247,8 +247,8 @@ func TestRouterPartialFlipStillClosesReplacedTTS(t *testing.T) {
 	_ = h.Commit("sales")
 	env.waitEvent(t, RouteFailed)
 	eventually(t, "replaced tts closed", func() bool { return env.oldTTS.closed.Load() == 1 })
-	if h.Active() != "front" || env.oldLLM.closed.Load() != 0 {
-		t.Fatalf("the old model stays active and open: active=%s llmClosed=%d", h.Active(), env.oldLLM.closed.Load())
+	if activeStep(h) != "front" || env.oldLLM.closed.Load() != 0 {
+		t.Fatalf("the old model stays active and open: active=%s llmClosed=%d", activeStep(h), env.oldLLM.closed.Load())
 	}
 }
 
@@ -280,7 +280,7 @@ func TestRouterBuildFinishingAfterCloseClosesItsStages(t *testing.T) {
 	eventually(t, "late stages closed", func() bool {
 		return late.LLM.(*probeStage).closed.Load() == 1 && late.TTS.(*probeStage).closed.Load() == 1
 	})
-	if h.Active() != "front" {
+	if activeStep(h) != "front" {
 		t.Fatal("a closed route must not flip")
 	}
 }
@@ -332,11 +332,18 @@ func TestRouterSpeakingStepFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T)
 		t.Fatal(err)
 	}
 	eventually(t, "Greet to run", func() bool { return env.greeted.Load() == 1 })
-	if h.Active() != "sales" {
+	if activeStep(h) != "sales" {
 		t.Fatal("sales must be active once Greet ran")
 	}
 	time.Sleep(100 * time.Millisecond)
 	if n := env.sess.reenters.Load(); n != 0 {
 		t.Fatalf("a model turn was started (%d reenters)", n)
 	}
+}
+
+// activeStep is the step holding the call; tests read it, the server learns it from the RouteActive events.
+func activeStep(r *Router) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.active
 }
