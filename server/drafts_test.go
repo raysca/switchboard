@@ -12,7 +12,7 @@ import (
 	"govoice/server/flow"
 )
 
-func TestDraftRegistryIsBoundedSingleUseAndExpires(t *testing.T) {
+func TestDraftRegistryIsBoundedSingleUseAndKeepsAGraceAfterExpiry(t *testing.T) {
 	d, now := newDraftCalls(), time.Now()
 	for i := 0; i < maxDrafts; i++ {
 		if err := d.put(string(rune('a'+i)), draftCall{expires: now.Add(time.Minute)}, now); err != nil {
@@ -22,22 +22,28 @@ func TestDraftRegistryIsBoundedSingleUseAndExpires(t *testing.T) {
 	if err := d.put("overflow", draftCall{expires: now.Add(time.Minute)}, now); err != errTooManyDrafts {
 		t.Fatalf("over the cap: %v", err)
 	}
-	if _, found, lost := d.take("a", now); !found || lost {
-		t.Fatalf("first take: found=%v lost=%v", found, lost)
+	if _, found := d.take("a"); !found {
+		t.Fatal("first take")
 	}
-	if _, found, lost := d.take("a", now); found || !lost {
-		t.Fatalf("second take: found=%v lost=%v, want lost (issued as a draft, entry gone)", found, lost)
+	if _, found := d.take("a"); found {
+		t.Fatal("a draft was taken twice")
 	}
-	if _, found, lost := d.take("never-a-draft", now); found || lost {
-		t.Fatalf("an ordinary token must be neither found nor lost: found=%v lost=%v", found, lost)
+	// The token validator already enforces the token's expiry; a token accepted in its last
+	// instant must still find its draft, so entries outlive their expiry by a grace period.
+	atExpiry := now.Add(time.Minute)
+	if err := d.put("x", draftCall{expires: atExpiry}, atExpiry); err != nil {
+		t.Fatal(err)
 	}
-	// An expired entry is dropped (and frees its slot), and its token is no longer lost either.
-	later := now.Add(2 * time.Minute)
-	if _, found, _ := d.take("b", later); found {
-		t.Fatal("an expired draft was returned")
+	if _, found := d.take("b"); !found {
+		t.Fatal("a draft was dropped at its expiry instant")
 	}
+	// Long dead entries are swept by the next put and free their slot.
+	later := now.Add(time.Minute + draftGrace + time.Second)
 	if err := d.put("fresh", draftCall{expires: later.Add(time.Minute)}, later); err != nil {
-		t.Fatalf("an expired entry must free its slot: %v", err)
+		t.Fatalf("a long-expired entry must free its slot: %v", err)
+	}
+	if _, found := d.take("c"); found {
+		t.Fatal("a long-expired draft survived the sweep")
 	}
 }
 
@@ -168,24 +174,6 @@ func TestDraftSurvivesAPublishDuringTheCall(t *testing.T) {
 	}
 }
 
-func TestALostDraftFailsInsteadOfRunningThePublishedVersion(t *testing.T) {
-	r, id := draftRig(t)
-	_, token, _ := issueDraftToken(r, id, echoFlowConfig(draftPrompt))
-	// The entry goes (swept at its expiry instant, say) while the token is still accepted.
-	r.s.drafts.mu.Lock()
-	clear(r.s.drafts.pending)
-	r.s.drafts.mu.Unlock()
-	c := r.dialToken(token)
-	c.say("hello")
-	time.Sleep(1500 * time.Millisecond)
-	if n := c.replies("[" + publishedPrompt); n != 0 {
-		t.Fatalf("the published version answered a draft token %d times", n)
-	}
-	if _, err := r.s.store.Sessions().Get(t.Context(), c.sessionID); err == nil {
-		t.Fatal("a session was recorded for a lost draft")
-	}
-}
-
 func TestADraftTokenIsSingleUse(t *testing.T) {
 	r, id := draftRig(t)
 	_, token, _ := issueDraftToken(r, id, echoFlowConfig(draftPrompt))
@@ -198,5 +186,19 @@ func TestADraftTokenIsSingleUse(t *testing.T) {
 	if conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.ts.URL, "http")+"?token="+token, nil); err == nil {
 		_ = conn.CloseNow()
 		t.Fatal("a second connection with the same draft token was accepted")
+	}
+}
+
+func TestADraftCallIsRefusedOnceItsFlowIsArchived(t *testing.T) {
+	r, id := draftRig(t)
+	_, token, _ := issueDraftToken(r, id, echoFlowConfig(draftPrompt))
+	if err := r.s.flows.Archive(t.Context(), id); err != nil {
+		t.Fatal(err)
+	}
+	c := r.dialToken(token)
+	c.say("hello")
+	time.Sleep(1500 * time.Millisecond)
+	if n := c.replies("["); n != 0 {
+		t.Fatalf("an archived flow answered a draft call %d times", n)
 	}
 }

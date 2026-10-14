@@ -81,8 +81,8 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const callable = canCall(flow);
   // A test call runs what is on the canvas; changes that could not be published cannot be tested.
   const draft = unpublished && problems.length === 0 ? { config: toPayload(graph) } : undefined;
-  // The call runs the published version, so the live view follows that flow.
-  const live = useCallView(published ?? graph, call, client);
+  // The call runs the published version, or the canvas when it is a draft test, so the live view follows that flow.
+  const live = useCallView(draft ? graph : (published ?? graph), call, client);
   const activeStep = graph.steps.find((n) => live.view.steps[n.id]?.state === "active")?.name;
 
   const state: { tone: "neutral" | "good" | "bad"; text: string } =

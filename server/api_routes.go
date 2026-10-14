@@ -102,7 +102,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 				api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "flow_not_ready", Message: "the draft is not ready to take calls", RequestID: requestID, Details: readiness}})
 				return
 			}
-			if err := s.drafts.put(tokenID, draftCall{flowID: target.ID, snapshot: snapshot, expires: now.Add(lifetime)}, now); err != nil {
+			if err := s.drafts.put(tokenID, draftCall{snapshot: snapshot, expires: now.Add(lifetime)}, now); err != nil {
 				api.WriteError(w, http.StatusTooManyRequests, "too_many_drafts", err.Error(), requestID)
 				return
 			}

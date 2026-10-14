@@ -246,7 +246,7 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 		return Snapshot{}, Readiness{}, err
 	}
 	if row.Archived || !row.Enabled || row.CurrentVersionID == "" {
-		return Snapshot{}, Readiness{}, errors.New("flow unavailable")
+		return Snapshot{}, Readiness{}, fmt.Errorf("%w: flow unavailable", sql.ErrNoRows)
 	}
 	canonical, err := s.attachedConfig(ctx, config)
 	if err != nil {

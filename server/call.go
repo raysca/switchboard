@@ -41,10 +41,11 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 	}
 	var rs *runtime.Session
 	var err error
-	if draft, found, lost := s.drafts.take(sessionID, time.Now()); found {
-		rs, err = runtime.StartSnapshotSession(ctx, s.flows, s.mcpService, draft.snapshot, sessionID)
-	} else if lost {
-		return CallSpec{}, nil, errors.New("the draft for this token is gone; request a new test call")
+	if draft, found := s.drafts.take(sessionID); found {
+		// The flow may have been archived, disabled or left unready since the token was issued.
+		if _, err = s.flows.ResolveCurrent(ctx, flowID); err == nil {
+			rs, err = runtime.StartSnapshotSession(ctx, s.flows, s.mcpService, draft.snapshot, sessionID)
+		}
 	} else {
 		rs, err = runtime.StartSession(ctx, s.flows, s.mcpService, flowID, sessionID)
 	}

@@ -13,61 +13,47 @@ const maxDrafts = 32
 
 var errTooManyDrafts = errors.New("too many draft calls are waiting to connect")
 
+// draftGrace keeps an entry past its expiry: the token validator already refused an expired
+// token, and one accepted in its last instant must still find its draft rather than fall
+// through to the published version.
+const draftGrace = time.Minute
+
 // draftCall is a validated draft held until its voice token connects. It is in
 // memory only: a draft is never stored as a flow version.
 type draftCall struct {
-	flowID   string
 	snapshot flow.Snapshot
 	expires  time.Time
 }
 
-// draftCalls holds drafts by voice-token id (which is also the session id).
+// draftCalls holds drafts by voice-token id (which is also the session id). A restart
+// drops them, and the token epoch check refuses the tokens that named them.
 type draftCalls struct {
 	mu      sync.Mutex
 	pending map[string]draftCall
-	issued  map[string]time.Time // ids ever issued as drafts, to tell a lost draft from an ordinary token
 }
 
-func newDraftCalls() *draftCalls {
-	return &draftCalls{pending: map[string]draftCall{}, issued: map[string]time.Time{}}
-}
-
-func (d *draftCalls) sweepLocked(now time.Time) {
-	for id, c := range d.pending {
-		if !now.Before(c.expires) {
-			delete(d.pending, id)
-		}
-	}
-	for id, exp := range d.issued {
-		if !now.Before(exp) {
-			delete(d.issued, id)
-		}
-	}
-}
+func newDraftCalls() *draftCalls { return &draftCalls{pending: map[string]draftCall{}} }
 
 func (d *draftCalls) put(id string, c draftCall, now time.Time) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.sweepLocked(now)
+	for k, e := range d.pending {
+		if now.After(e.expires.Add(draftGrace)) {
+			delete(d.pending, k)
+		}
+	}
 	if len(d.pending) >= maxDrafts {
 		return errTooManyDrafts
 	}
 	d.pending[id] = c
-	d.issued[id] = c.expires
 	return nil
 }
 
-// take consumes the draft for a token. lost reports a token that was issued as
-// a draft whose entry is gone (used, expired): it must fail, never fall back
-// to the published version.
-func (d *draftCalls) take(id string, now time.Time) (c draftCall, found, lost bool) {
+// take consumes the draft for a token; found is false for an ordinary token.
+func (d *draftCalls) take(id string) (draftCall, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.sweepLocked(now)
-	if c, ok := d.pending[id]; ok {
-		delete(d.pending, id)
-		return c, true, false
-	}
-	_, wasIssued := d.issued[id]
-	return draftCall{}, false, wasIssued
+	c, ok := d.pending[id]
+	delete(d.pending, id)
+	return c, ok
 }
