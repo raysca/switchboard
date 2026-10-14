@@ -93,7 +93,7 @@ describe("VoiceClient connect cancelled by disconnect", () => {
   });
 
   it("asks for a draft token only when given a draft", async () => {
-    const issue = vi.fn(async () => {
+    const issue = vi.fn(async (_input: unknown) => {
       throw new Error("stop after the token request");
     });
     const client = new VoiceClient({ issueVoiceToken: issue } as unknown as ApiClient, new BrowserAudioController());
