@@ -368,6 +368,11 @@ describe("greeting", () => {
     const p = toPayload(stepsWith("Hello.", "Billing here.")) as { steps: { config: { greeting?: string } }[] };
     expect(p.steps.map((s) => s.config.greeting)).toEqual(["Hello.", "Billing here."]);
   });
+  it("leaves a blank greeting out of the payload", () => {
+    const p = toPayload(stepsWith("   ", "")) as { steps: { config: Record<string, unknown> }[] };
+    expect(p.steps.map((s) => "greeting" in s.config)).toEqual([false, false]);
+    expect((toPayload(fromFlowConfig({ ...flat, greeting: "  " })) as Record<string, unknown>)).not.toHaveProperty("greeting");
+  });
   it("stays at the top of a flat flow", () => {
     expect((toPayload(fromFlowConfig({ ...flat, greeting: "Hi!" })) as { greeting?: string }).greeting).toBe("Hi!");
   });

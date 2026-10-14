@@ -533,8 +533,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	call.PushToTalk = conn.PushToTalk()
 	var injector ContextInjector
 	call.OnInjector = func(i ContextInjector) { injector = i }
-	var greet func(string) error
-	call.OnGreeter = func(say func(string) error) { greet = say }
+	var greet func(string)
+	call.OnGreeter = func(speak func(string)) { greet = speak }
 	call.OnGreetFail = func(err error) {
 		s.metrics.GreetingFailedTotal.Add(1)
 		s.logger.Warn("greeting not queued", "session", call.StoredSessionID, "err", s.redactor.Redact(err.Error()))
@@ -609,7 +609,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			}
 		case core.FrameUserMessage:
 			um := f.(*core.UserMessageFrame)
-			if strings.HasPrefix(um.Turn, "say-") { // a spoken greeting, not a caller turn
+			if core.IsSayTurn(um.Turn) { // a spoken greeting, not a caller turn
 				break
 			}
 			if um.Turn != lastSTTTurn {
@@ -617,7 +617,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 				timeline.Record(TimelineEvent{Type: EventSTTResult, TurnID: um.Turn, Gen: um.Gen})
 			}
 		case core.FrameLLMTextDelta:
-			if strings.HasPrefix(f.(*core.LLMTextDeltaFrame).Turn, "say-") {
+			if core.IsSayTurn(f.(*core.LLMTextDeltaFrame).Turn) {
 				break
 			}
 			if !firstTokenRecorded {
@@ -701,27 +701,15 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 
 	if call.Greeting != "" && greet != nil {
-		// The opening line: queued once, when the session starts (the transport starts it after this returns).
-		var once sync.Once
-		var stop atomic.Pointer[func()]
-		var fired atomic.Bool
-		_, cancel, err := session.Subscribe(0, func(e core.DebugEvent) {
-			if e.Name == core.DebugSessionStarted {
-				once.Do(func() {
-					queueGreeting(greet, call.Greeting, call.OnGreetFail)
-					fired.Store(true)
-					if f := stop.Load(); f != nil {
-						go (*f)() // the opening is one-shot: stop listening to the call's debug events
-					}
-				})
+		// The opening line: said once, as soon as the session is running (the transport starts it after this returns).
+		if err := session.Go(func(ctx context.Context) {
+			select {
+			case <-session.Ready():
+				greet(call.Greeting)
+			case <-ctx.Done():
 			}
-		})
-		if err != nil {
-			return fail(fmt.Errorf("attach greeting: %w", err))
-		}
-		stop.Store(&cancel)
-		if fired.Load() { // the event beat the store
-			go cancel()
+		}); err != nil {
+			return fail(fmt.Errorf("start greeting: %w", err))
 		}
 	}
 

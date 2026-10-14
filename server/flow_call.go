@@ -190,31 +190,36 @@ func parseNote(raw json.RawMessage) string {
 	return note
 }
 
-// transferGreeting is the message that makes the new step greet the caller. The
-// note is model-written from the caller's words: untrusted, so server markers in it are neutralised.
-func transferGreeting(stepName, note string) string {
+// transferPrefix opens the message that tells a step the call was just transferred to it. The note is
+// model-written from the caller's words: untrusted, so server markers in it are neutralised.
+func transferPrefix(stepName, note string) string {
 	msg := "[The caller was just transferred to you (" + stepName + ")."
 	if note != "" {
 		msg += " Note from the previous agent: " + neutralizeNoteMarker(note) + "."
 	}
-	return msg + " Greet them briefly, by name if you know it, and continue.]"
+	return msg
+}
+
+// transferGreeting is the message that makes the new step greet the caller.
+func transferGreeting(stepName, note string) string {
+	return transferPrefix(stepName, note) + " Greet them briefly, by name if you know it, and continue.]"
 }
 
 // transferNote carries the previous agent's note into the history when a fixed greeting replaces the model's
-// greeting: context only, no reply is requested. The note is model-written from the caller's words, so server
-// markers in it are neutralised.
-func transferNote(stepName, note string) string {
-	return "[The caller was just transferred to you (" + stepName + "). Note from the previous agent: " + neutralizeNoteMarker(note) + ".]"
-}
+// greeting: context only, no reply is requested.
+func transferNote(stepName, note string) string { return transferPrefix(stepName, note) + "]" }
 
-// greetStep is what Handoff.Greet does once the idle flip has swapped the new step in. A non-start step with
-// a fixed greeting speaks it (after a context-only message carrying the previous agent's note, if any) and the
-// model is not asked to greet; otherwise the model is told to greet, as before. The start step's greeting is
-// the call opening only, so a return to it gets the model's greeting. add records a history message; speak
+// saysOwnGreeting reports whether a step speaks a fixed greeting when a route lands on it. The start step's
+// greeting is the call opening only: a return to it gets the model's transfer greeting.
+func saysOwnGreeting(nodeID, start, greeting string) bool { return greeting != "" && nodeID != start }
+
+// greetStep is what Handoff.Greet does once the idle flip has swapped the new step in. A step that says its own
+// greeting speaks it (after a context-only message carrying the previous agent's note, if any) and the model is
+// not asked to greet; otherwise the model is told to greet, as before. add records a history message; speak
 // queues the greeting (it must not block).
 func (c *CallFlow) greetStep(nodeID, stepName, greeting string, add func(core.Message) error, speak func(string)) error {
 	note := c.takeNote()
-	if greeting != "" && nodeID != c.Start && speak != nil {
+	if saysOwnGreeting(nodeID, c.Start, greeting) {
 		if note != "" {
 			if err := add(core.Message{Role: core.RoleUser, Content: transferNote(stepName, note)}); err != nil {
 				return err

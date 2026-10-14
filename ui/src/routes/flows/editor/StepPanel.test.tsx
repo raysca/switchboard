@@ -116,6 +116,16 @@ describe("StepPanel", () => {
     expect(lastGraph(onChange).steps.find((n) => n.id === "a")!.config).not.toHaveProperty("greeting");
   });
 
+  it("keeps what is typed, even a leading space, while the field is otherwise empty", async () => {
+    const user = userEvent.setup();
+    render(<Harness stepId="a" />);
+    const field = screen.getByLabelText("Greeting");
+    await user.type(field, " ");
+    expect(field).toHaveValue(" ");
+    await user.type(field, "Hi");
+    expect(field).toHaveValue(" Hi");
+  });
+
   it("has a greeting field on another step, worded for a transfer", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

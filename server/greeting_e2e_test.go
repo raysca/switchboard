@@ -2,9 +2,7 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,18 +105,4 @@ func TestTheGreetingReleasesTheUntilFirstBotCompleteMute(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	c.say("hello")
 	c.waitReplies("[MUTE", 1) // the caller is heard once the greeting is done
-}
-
-func TestAGreetingThatCannotBeQueuedIsReportedAndNeverFailsTheCall(t *testing.T) {
-	var failed []error
-	queueGreeting(func(string) error { return errors.New("session closing") }, "hi", func(err error) { failed = append(failed, err) })
-	if len(failed) != 1 {
-		t.Fatalf("failures %v", failed)
-	}
-	var spoken atomic.Value
-	queueGreeting(func(s string) error { spoken.Store(s); return nil }, "hi", func(err error) { failed = append(failed, err) })
-	if spoken.Load() != "hi" || len(failed) != 1 {
-		t.Fatalf("spoken %v failures %v", spoken.Load(), failed)
-	}
-	queueGreeting(func(string) error { return errors.New("x") }, "hi", nil) // no handler: still no panic
 }

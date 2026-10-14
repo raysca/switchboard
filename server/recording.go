@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"govoice/core"
@@ -45,7 +44,7 @@ func (s *Server) attachRecording(call CallSpec, flowID string, sessionID uint64,
 		}
 		switch v := f.(type) {
 		case *core.UserMessageFrame:
-			if v != lastUser && !strings.HasPrefix(v.Turn, "say-") { // a spoken greeting is no caller turn
+			if v != lastUser && !core.IsSayTurn(v.Turn) { // a spoken greeting is no caller turn
 				lastUser = v
 				rec.AddTurn("user", s.sidecarText(v.Content), false)
 			}

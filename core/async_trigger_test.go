@@ -200,3 +200,34 @@ func TestAssistantEmptyReplyClearsActive(t *testing.T) {
 	}
 	waitFor(t, "inactive", func() bool { return !asst.Active() })
 }
+
+// A speaking item (a greeting): the other results wait until the call is idle again, or their model
+// turn would cut the line off before it is committed.
+func TestAsyncTriggerLetsASpeakingItemSpeakBeforeTheOthers(t *testing.T) {
+	r := newTriggerRig(t, nil)
+	r.busy.Store(true)
+	var order []string
+	var mu sync.Mutex
+	note := func(s string) { mu.Lock(); order = append(order, s); mu.Unlock() }
+	r.trig.Deliver(core.AsyncToolResult{
+		Call:   core.ToolCall{ID: "flip", Name: "flip"},
+		Speaks: true,
+		Inject: func() error { note("flip"); r.busy.Store(true); return nil }, // the greeting starts speaking
+	})
+	r.trig.Deliver(core.AsyncToolResult{
+		Call:   core.ToolCall{ID: "tool", Name: "tool"},
+		Inject: func() error { note("tool"); return nil },
+	})
+	r.busy.Store(false)
+	waitFor(t, "the no-turn item", func() bool { mu.Lock(); defer mu.Unlock(); return len(order) == 1 })
+	never(t, "the tool result or a model turn while the greeting speaks", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(order) != 1 || r.llm.count() != 0
+	})
+	r.busy.Store(false) // the greeting finished
+	waitFor(t, "the tool result and its turn", func() bool { mu.Lock(); defer mu.Unlock(); return len(order) == 2 && r.llm.count() == 1 })
+	if order[0] != "flip" || order[1] != "tool" {
+		t.Fatalf("order %v", order)
+	}
+}

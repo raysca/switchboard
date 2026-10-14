@@ -212,6 +212,11 @@ func GoogleContentsWithNativeExchanges(history []core.Message, exchanges []Googl
 		}
 		contents = append(contents, &genai.Content{Role: role, Parts: []*genai.Part{{Text: message.Content}}})
 	}
+	// Gemini expects the conversation to start with a user turn: a call that opens with the agent's own
+	// greeting would send the model turn first.
+	if len(contents) > 0 && contents[0].Role == "model" && googleTextOnly(contents[0]) {
+		contents = append([]*genai.Content{{Role: "user", Parts: []*genai.Part{{Text: "[The call has just connected.]"}}}}, contents...)
+	}
 	return contents
 }
 

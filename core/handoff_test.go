@@ -319,10 +319,14 @@ func TestHandoffUserTurnFlipKeepsTheCallersGeneration(t *testing.T) {
 
 // A step that says its own fixed line needs no model turn: the flip still runs Greet, but the trigger
 // starts no turn for it.
-func TestHandoffNoTurnFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T) {
-	var asked []string
+func TestHandoffSpeakingNodeFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T) {
 	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
-		c.NoTurn = func(target string) bool { asked = append(asked, target); return target == "sales" }
+		build := c.Build
+		c.Build = func(ctx context.Context, id string) (NodeStages, error) {
+			ns, err := build(ctx, id)
+			ns.Speaks = id == "sales"
+			return ns, err
+		}
 	})
 	if err := h.Commit("sales"); err != nil {
 		t.Fatal(err)
@@ -334,8 +338,5 @@ func TestHandoffNoTurnFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if n := env.sess.reenters.Load(); n != 0 {
 		t.Fatalf("a model turn was started (%d reenters)", n)
-	}
-	if len(asked) != 1 || asked[0] != "sales" {
-		t.Fatalf("NoTurn asked %v", asked)
 	}
 }

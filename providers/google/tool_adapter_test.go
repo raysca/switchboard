@@ -605,3 +605,21 @@ func TestGoogleContentsMergeConsecutiveUserText(t *testing.T) {
 		t.Fatalf("contents = %+v", contents)
 	}
 }
+
+// Gemini expects a conversation to start with a user turn; a call that opens with the agent's greeting would
+// otherwise send [model, user].
+func TestGoogleContentsNeverStartWithAModelTurn(t *testing.T) {
+	history := []core.Message{
+		{Role: core.RoleAssistant, Content: "Welcome to Smile Dental."},
+		{Role: core.RoleUser, Content: "I need an appointment."},
+	}
+	contents := GoogleContentsWithNativeExchanges(history, nil)
+	if len(contents) != 3 || contents[0].Role != "user" || contents[1].Role != "model" || contents[1].Parts[0].Text != "Welcome to Smile Dental." {
+		t.Fatalf("contents %+v", contents)
+	}
+	// An ordinary history is untouched.
+	plain := GoogleContentsWithNativeExchanges([]core.Message{{Role: core.RoleUser, Content: "hi"}}, nil)
+	if len(plain) != 1 || plain[0].Role != "user" || plain[0].Parts[0].Text != "hi" {
+		t.Fatalf("plain %+v", plain)
+	}
+}

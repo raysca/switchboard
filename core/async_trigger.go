@@ -171,7 +171,7 @@ func (t *AsyncTrigger) Deliver(r AsyncToolResult) {
 	if count(t.queue, false) >= t.cfg.MaxQueue {
 		i := slices.IndexFunc(t.queue, func(q AsyncToolResult) bool { return !q.Operator })
 		early = t.queue[i].Inject
-		evictedWantedTurn = !t.queue[i].NoTurn
+		evictedWantedTurn = !t.queue[i].NoTurn && !t.queue[i].Speaks
 		t.queue = slices.Delete(t.queue, i, i+1)
 	}
 	t.queue = append(t.queue, r)
@@ -312,27 +312,55 @@ func (t *AsyncTrigger) run(ctx context.Context) {
 	}
 }
 
+// deferBehindSpeech leaves only the speaking items in batch when it holds speaking and other items, and
+// returns the others for the next idle moment.
+func deferBehindSpeech(batch *[]AsyncToolResult) []AsyncToolResult {
+	var speaking, others []AsyncToolResult
+	for _, r := range *batch {
+		if r.Speaks {
+			speaking = append(speaking, r)
+		} else {
+			others = append(others, r)
+		}
+	}
+	if len(speaking) == 0 || len(others) == 0 {
+		return nil
+	}
+	*batch = speaking
+	return others
+}
+
 // fire injects every queued envelope, then starts one model turn at the stage after this one.
 func (t *AsyncTrigger) fire() {
 	t.mu.Lock()
 	batch := t.queue
 	t.queue = nil
+	// A model turn started in the same breath as a spoken line would cut it off before it is committed.
+	if later := deferBehindSpeech(&batch); len(later) > 0 {
+		t.queue = later
+	}
 	t.seq++
 	turn := fmt.Sprintf("async-%d", t.seq)
 	t.mu.Unlock()
 	var names string
-	turns := 0
+	turns, quiet := 0, false
 	for _, r := range batch {
 		if r.Inject() != nil {
 			t.dropped()
 			continue
 		}
-		if r.NoTurn {
+		if r.Speaks {
+			quiet = true
+		}
+		if r.NoTurn || r.Speaks {
 			continue
 		}
 		if turns++; turns <= 3 {
 			names += " " + r.Call.Name
 		}
+	}
+	if quiet { // what a speaking item says is the call's reply: others wait until the assistant is idle again
+		t.reply.Store(int64(time.Since(monoBase)))
 	}
 	if turns == 0 {
 		return

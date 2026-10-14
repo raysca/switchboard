@@ -183,6 +183,14 @@ export function fromFlowConfig(raw: unknown, selectedTools: string[] = []): Flow
   };
 }
 
+/** A greeting of only spaces says nothing: it is not sent (the field keeps what was typed while editing). */
+function withoutBlankGreeting(config: StepConfig): StepConfig {
+  if (typeof config.greeting !== "string" || config.greeting.trim() !== "") return config;
+  const { greeting: _blank, ...rest } = config;
+  void _blank;
+  return rest;
+}
+
 /** A stored flat flow opens as one step named "main" and goes back flat; a step the user has named needs the flow form. */
 function isFlat(g: FlowDraft): boolean {
   const only = g.steps[0];
@@ -193,11 +201,11 @@ function isFlat(g: FlowDraft): boolean {
 export function toPayload(g: FlowDraft): unknown {
   // A stored flat flow opens as one step named "main" (fromFlowConfig) and goes back flat, exposing
   // every selected tool. A step the user has named needs the flow form, or its name is lost.
-  if (isFlat(g)) return g.steps[0].config;
+  if (isFlat(g)) return withoutBlankGreeting(g.steps[0].config);
   return {
     start: g.start,
     steps: g.steps.map((n) => {
-      const config = { ...n.config };
+      const config = withoutBlankGreeting(n.config);
       if (n.id !== g.start) for (const k of CALL_LEVEL) delete config[k];
       return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call && g.steps.length > 1 ? { end_call: true } : {}), position: n.position };
     }),

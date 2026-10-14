@@ -193,7 +193,7 @@ export function StepPanel(props: StepPanelProps) {
                 onChange={(e) => {
                   const { greeting: _drop, ...rest } = step.config;
                   void _drop;
-                  onChange(updateStep(graph, step.id, { config: e.target.value.trim() === "" ? rest : { ...rest, greeting: e.target.value } }));
+                  onChange(updateStep(graph, step.id, { config: e.target.value === "" ? rest : { ...rest, greeting: e.target.value } }));
                 }}
               />
             </label>

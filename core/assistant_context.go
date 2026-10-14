@@ -139,6 +139,9 @@ func (p *AssistantContextProcessor) Attach(s SessionController, index int) error
 // sayTurnPrefix marks the turns Say opens: not model replies (no completion gate, no latency events).
 const sayTurnPrefix = "say-"
 
+// IsSayTurn reports whether a turn id belongs to a line spoken through Say (a greeting), not to a caller or the model.
+func IsSayTurn(turn string) bool { return strings.HasPrefix(turn, sayTurnPrefix) }
+
 // ErrSayEmpty is returned by Say for text with nothing to speak.
 var ErrSayEmpty = errors.New("core: nothing to say")
 
@@ -156,15 +159,17 @@ func (p *AssistantContextProcessor) Say(text string) error {
 	turn := fmt.Sprintf("%s%d", sayTurnPrefix, p.sayN.Add(1))
 	gen := p.session.CurrentGeneration()
 	now := time.Now()
-	if err := p.session.Reenter(&UserMessageFrame{Turn: turn, Gen: gen, Timestamp: now}, Downstream, p.index, gen); err != nil {
+	enter := func(f Frame) error { return p.session.Reenter(f, Downstream, p.index, gen) }
+	if err := enter(&UserMessageFrame{Turn: turn, Gen: gen, Timestamp: now}); err != nil {
 		return fmt.Errorf("say: %w", err)
 	}
 	// Like a model reply: the text as a delta (the transport streams it to the client), then the complete text.
-	if err := p.session.Reenter(&LLMTextDeltaFrame{Turn: turn, Gen: gen, Delta: text}, Downstream, p.index, gen); err != nil {
-		return fmt.Errorf("say: %w", err)
-	}
-	if err := p.session.Reenter(&LLMTextFrame{Turn: turn, Gen: gen, Text: text}, Downstream, p.index, gen); err != nil {
-		return fmt.Errorf("say: %w", err)
+	for _, f := range []Frame{&LLMTextDeltaFrame{Turn: turn, Gen: gen, Delta: text}, &LLMTextFrame{Turn: turn, Gen: gen, Text: text}} {
+		if err := enter(f); err != nil {
+			// The turn is open: an empty complete text closes it, or the bot would look busy until the caller speaks.
+			_ = enter(&LLMTextFrame{Turn: turn, Gen: gen})
+			return fmt.Errorf("say: %w", err)
+		}
 	}
 	return nil
 }
