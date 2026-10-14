@@ -132,6 +132,7 @@ describe("StepPanel", () => {
     await user.click(field);
     await user.paste("é".repeat(230)); // 460 bytes
     expect(screen.getByText("460 of 500 bytes")).toBeVisible();
+    expect(screen.getByText("460 of 500 bytes")).toHaveAttribute("aria-live", "polite");
     await user.paste("é".repeat(30)); // 520 bytes
     expect(screen.getByRole("note")).toHaveTextContent("Greeting is over 500 bytes.");
     expect(screen.getByRole("tab", { name: /basics.*needs attention/i })).toBeInTheDocument();

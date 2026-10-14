@@ -155,7 +155,7 @@ func validateGreeting(g string) error {
 		return fmt.Errorf("%w: greeting must be at most %d bytes", ErrInvalidConfig, maxGreetingBytes)
 	}
 	for _, r := range g {
-		if (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f {
+		if (r < 0x20 && r != '\n' && r != '\t' && r != '\r') || r == 0x7f {
 			return fmt.Errorf("%w: greeting must be plain text (no control characters)", ErrInvalidConfig)
 		}
 	}

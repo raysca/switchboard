@@ -609,11 +609,17 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			}
 		case core.FrameUserMessage:
 			um := f.(*core.UserMessageFrame)
+			if strings.HasPrefix(um.Turn, "say-") { // a spoken greeting, not a caller turn
+				break
+			}
 			if um.Turn != lastSTTTurn {
 				lastSTTTurn = um.Turn
 				timeline.Record(TimelineEvent{Type: EventSTTResult, TurnID: um.Turn, Gen: um.Gen})
 			}
 		case core.FrameLLMTextDelta:
+			if strings.HasPrefix(f.(*core.LLMTextDeltaFrame).Turn, "say-") {
+				break
+			}
 			if !firstTokenRecorded {
 				firstTokenRecorded = true
 				timeline.Record(TimelineEvent{Type: EventLLMFirstToken})
@@ -697,14 +703,25 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	if call.Greeting != "" && greet != nil {
 		// The opening line: queued once, when the session starts (the transport starts it after this returns).
 		var once sync.Once
-		if _, _, err := session.Subscribe(0, func(e core.DebugEvent) {
+		var stop atomic.Pointer[func()]
+		var fired atomic.Bool
+		_, cancel, err := session.Subscribe(0, func(e core.DebugEvent) {
 			if e.Name == core.DebugSessionStarted {
 				once.Do(func() {
 					queueGreeting(greet, call.Greeting, call.OnGreetFail)
+					fired.Store(true)
+					if f := stop.Load(); f != nil {
+						go (*f)() // the opening is one-shot: stop listening to the call's debug events
+					}
 				})
 			}
-		}); err != nil {
+		})
+		if err != nil {
 			return fail(fmt.Errorf("attach greeting: %w", err))
+		}
+		stop.Store(&cancel)
+		if fired.Load() { // the event beat the store
+			go cancel()
 		}
 	}
 

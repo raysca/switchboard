@@ -136,7 +136,9 @@ func (p *AssistantContextProcessor) Attach(s SessionController, index int) error
 	return nil
 }
 
-// ProcessFrame handles text streaming, synthesis units, write completions, and interruption barriers.
+// sayTurnPrefix marks the turns Say opens: not model replies (no completion gate, no latency events).
+const sayTurnPrefix = "say-"
+
 // ErrSayEmpty is returned by Say for text with nothing to speak.
 var ErrSayEmpty = errors.New("core: nothing to say")
 
@@ -151,7 +153,7 @@ func (p *AssistantContextProcessor) Say(text string) error {
 	if p.session == nil {
 		return errors.New("core: assistant context is not attached to a session")
 	}
-	turn := fmt.Sprintf("say-%d", p.sayN.Add(1))
+	turn := fmt.Sprintf("%s%d", sayTurnPrefix, p.sayN.Add(1))
 	gen := p.session.CurrentGeneration()
 	now := time.Now()
 	if err := p.session.Reenter(&UserMessageFrame{Turn: turn, Gen: gen, Timestamp: now}, Downstream, p.index, gen); err != nil {
@@ -167,6 +169,7 @@ func (p *AssistantContextProcessor) Say(text string) error {
 	return nil
 }
 
+// ProcessFrame handles text streaming, synthesis units, write completions, and interruption barriers.
 func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
 	switch f.Type() {
 	case FrameUserMessage:

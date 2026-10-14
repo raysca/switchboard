@@ -163,7 +163,7 @@ type completionGate struct {
 }
 
 func isSyntheticTurn(turn string) bool {
-	return strings.HasPrefix(turn, "idle-") || strings.HasPrefix(turn, "async-") || strings.HasPrefix(turn, "completion-")
+	return strings.HasPrefix(turn, "idle-") || strings.HasPrefix(turn, "async-") || strings.HasPrefix(turn, sayTurnPrefix) || strings.HasPrefix(turn, "completion-")
 }
 
 // gateFeed consumes a delta and returns the text to release (possibly empty).

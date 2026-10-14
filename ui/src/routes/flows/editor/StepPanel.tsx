@@ -203,7 +203,7 @@ export function StepPanel(props: StepPanelProps) {
                 : "Said word for word when a call is transferred here, in this step's voice. Leave empty to let the model greet the caller."}
             </p>
             {greetingBytes >= 450 && (
-              <p className="subtext">
+              <p className="subtext" aria-live="polite">
                 {greetingBytes} of {MAX_GREETING_BYTES} bytes
               </p>
             )}

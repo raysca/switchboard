@@ -186,3 +186,30 @@ func TestAssistantSayEmitsTheTextAsADeltaThenTheCompleteFrame(t *testing.T) {
 		}
 	}
 }
+
+// A spoken line is not a model reply: it must not feed the turn-completion marker gate or the latency observer.
+func TestAssistantSayIsSyntheticToTheGateAndInvisibleToTheLatencyObserver(t *testing.T) {
+	_, a, s, out := sayRig(t, 9106)
+	seen := make(chan string, 32)
+	if _, _, err := s.Subscribe(0, func(e core.DebugEvent) { seen <- e.Name }); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Say("Hello there."); err != nil {
+		t.Fatal(err)
+	}
+	us, final := sayUnits(t, out)
+	for _, u := range us {
+		_ = s.Post(&core.WriteCompletionFrame{Turn: u.Turn, Gen: u.Gen, UnitID: u.UnitID, IsFinal: u.UnitID == final, Media: 300 * time.Millisecond})
+	}
+	time.Sleep(100 * time.Millisecond)
+	for {
+		select {
+		case name := <-seen:
+			if name == core.DebugLLMRequest || name == core.DebugLLMFirstToken {
+				t.Fatalf("a greeting produced the %q latency event", name)
+			}
+		default:
+			return
+		}
+	}
+}

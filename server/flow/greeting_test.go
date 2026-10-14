@@ -61,7 +61,7 @@ func TestGreetingLimitsAreInBytesAndControlCharactersAreRefused(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	if _, err := Decode(withGreeting("Line one.\n\tLine two.")); err != nil {
+	if _, err := Decode(withGreeting("Line one.\r\n\tLine two.")); err != nil {
 		t.Fatalf("newline and tab: %v", err)
 	}
 	// A greeting that is only too long once trimmed is fine; one over the limit before trimming is not counted untrimmed.

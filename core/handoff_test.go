@@ -327,9 +327,9 @@ func TestHandoffNoTurnFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T) {
 	if err := h.Commit("sales"); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "sales active", func() bool { return h.Active() == "sales" })
-	if env.greeted.Load() != 1 {
-		t.Fatalf("Greet ran %d times", env.greeted.Load())
+	eventually(t, "Greet to run", func() bool { return env.greeted.Load() == 1 })
+	if h.Active() != "sales" {
+		t.Fatal("sales must be active once Greet ran")
 	}
 	time.Sleep(100 * time.Millisecond)
 	if n := env.sess.reenters.Load(); n != 0 {

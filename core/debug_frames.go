@@ -2,6 +2,7 @@ package core
 
 import (
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -43,8 +44,14 @@ func (s *Session) emitFrameDebug(f Frame) {
 	case *FinalTranscriptionFrame:
 		name, turn, gen = DebugSTTFinal, v.Turn, v.Gen
 	case *UserMessageFrame:
+		if strings.HasPrefix(v.Turn, sayTurnPrefix) { // a spoken greeting is not a model request
+			return
+		}
 		name, turn, gen = DebugLLMRequest, v.Turn, v.Gen
 	case *LLMTextDeltaFrame:
+		if strings.HasPrefix(v.Turn, sayTurnPrefix) {
+			return
+		}
 		name, turn, gen = DebugLLMFirstToken, v.Turn, v.Gen
 	case *SynthesisUnitFrame:
 		name, turn, gen = DebugTTSRequest, v.Turn, v.Gen
