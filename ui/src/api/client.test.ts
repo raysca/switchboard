@@ -107,6 +107,22 @@ describe("management client", () => {
     );
   });
 
+  it("sends a draft with the voice token request only when there is one", async () => {
+    const bodies: string[] = [];
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return new Response(
+        JSON.stringify({ data: { token: "t", expires_at: "2026-10-04T23:00:00Z", scope: "voice:connect" } }),
+        { status: 201 },
+      );
+    });
+    const api = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+    await api.issueVoiceToken({ principal: "p", flow_id: "f", draft: { config: { a: 1 } } });
+    await api.issueVoiceToken({ principal: "p", flow_id: "f" });
+    expect(JSON.parse(bodies[0])).toEqual({ principal: "p", flow_id: "f", draft: { config: { a: 1 } } });
+    expect(JSON.parse(bodies[1])).not.toHaveProperty("draft");
+  });
+
   it("reports the generation captured when a request starts", async () => {
     let respond!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {

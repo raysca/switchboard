@@ -109,6 +109,8 @@ export interface ConnectOptions {
   wsBaseUrl?: string;
   /** Turns start and end on the hold-to-talk button instead of voice detection. */
   pushToTalk?: boolean;
+  /** An unpublished flow config to run instead of the published version (a test call). */
+  draft?: { config: unknown };
 }
 
 export class VoiceClient {
@@ -234,6 +236,7 @@ export class VoiceClient {
       const tokenResp = await this.apiClient.issueVoiceToken({
         principal,
         flow_id: flowId,
+        ...(options.draft ? { draft: options.draft } : {}),
       });
       if (attempt !== this.attempt) return;
       tokenStr = tokenResp.token;

@@ -524,7 +524,7 @@ export function createApiClient(
     return parsed.data;
   }
   return {
-    issueVoiceToken: async (input: { principal: string; flow_id: string }) =>
+    issueVoiceToken: async (input: { principal: string; flow_id: string; draft?: { config: unknown } }) =>
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
     getProviders: async () =>
       (await request("/providers", providersEnvelope)).data,

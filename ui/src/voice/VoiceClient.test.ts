@@ -91,4 +91,16 @@ describe("VoiceClient connect cancelled by disconnect", () => {
     expect(tracks[1].stopped).toBe(false); // the live attempt keeps its mic
     expect(sockets).toHaveLength(1);
   });
+
+  it("asks for a draft token only when given a draft", async () => {
+    const issue = vi.fn(async () => {
+      throw new Error("stop after the token request");
+    });
+    const client = new VoiceClient({ issueVoiceToken: issue } as unknown as ApiClient, new BrowserAudioController());
+    await client.connect({ flowId: "f", draft: { config: { a: 1 } } });
+    await client.disconnect();
+    await client.connect({ flowId: "f" });
+    expect(issue.mock.calls[0][0]).toMatchObject({ flow_id: "f", draft: { config: { a: 1 } } });
+    expect(issue.mock.calls[1][0]).not.toHaveProperty("draft");
+  });
 });
