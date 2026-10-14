@@ -51,6 +51,9 @@ func (m *routeMetrics) write(w io.Writer) {
 // onRoute is one call's route observer: timeline events, metrics, and
 // trace spans (persisted for session replay when management is enabled).
 func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.RouteEvent) {
+	// Taken now, not at each event: a retired step reports that it closed after the call, possibly after the
+	// server has closed management and cleared the field.
+	mgmt := s.mgmt
 	return func(e core.RouteEvent) {
 		s.metrics.route.observe(e)
 		switch e.Kind {
@@ -71,22 +74,23 @@ func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.
 		default:
 			return // committed: preparing carries the same information
 		}
-		if s.mgmt != nil && s.mgmt.traces != nil && storedSessionID != "" {
+		if mgmt != nil && mgmt.traces != nil && storedSessionID != "" {
 			ev := core.NewTraceEvent("route."+string(e.Kind), time.Now(), core.SessionID(storedSessionID), "", 0, core.TracePolicy{},
 				map[string]any{"from_step": e.From, "to_step": e.To})
-			core.StartSpanSafe(context.Background(), s.mgmt.traces, ev).End(e.Err)
+			core.StartSpanSafe(context.Background(), mgmt.traces, ev).End(e.Err)
 		}
 	}
 }
 
 // onEndCall records the call.end span for a call ended by a step's end_call tool.
 func (s *Server) onEndCall(storedSessionID string) func(stepID string) {
+	mgmt := s.mgmt // taken now: management teardown clears the field
 	return func(stepID string) {
-		if s.mgmt == nil || s.mgmt.traces == nil || storedSessionID == "" {
+		if mgmt == nil || mgmt.traces == nil || storedSessionID == "" {
 			return
 		}
 		ev := core.NewTraceEvent("call.end", time.Now(), core.SessionID(storedSessionID), "", 0, core.TracePolicy{},
 			map[string]any{"reason": EndReasonFlow, "from_step": stepID})
-		core.StartSpanSafe(context.Background(), s.mgmt.traces, ev).End(nil)
+		core.StartSpanSafe(context.Background(), mgmt.traces, ev).End(nil)
 	}
 }

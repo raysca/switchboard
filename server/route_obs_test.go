@@ -3,11 +3,13 @@ package server
 import (
 	"bytes"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"govoice/core"
+	"govoice/server/storage"
 )
 
 func TestTimelineStampsActiveStep(t *testing.T) {
@@ -83,4 +85,25 @@ func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 			t.Fatalf("missing span %q, have %v", want, names)
 		}
 	}
+}
+
+// A route event can arrive after the server closes management (a retired step reports that it closed): the
+// observer must not read the server's management field then.
+func TestRouteEventsAfterManagementClosesDoNotRace(t *testing.T) {
+	s := apiTestServer(t)
+	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
+	s.cfg.Storage.Dialect = "sqlite"
+	if err := s.EnableManagement(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	observe := s.onRoute(NewSessionTimeline(1, 10, time.Minute), storage.NewID())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 300; i++ {
+			observe(core.RouteEvent{Kind: core.RouteFailed, From: "a", To: "b", Err: errors.New("x")})
+		}
+	}()
+	s.closeManagement()
+	<-done
 }
