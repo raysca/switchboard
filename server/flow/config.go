@@ -19,6 +19,9 @@ type Config struct {
 	Context ContextLimits `json:"context,omitempty"`
 	// VADStopMS overrides the server VAD stop hangover (200..2000 ms). 0 uses the server default.
 	VADStopMS int `json:"vad_stop_ms,omitempty"`
+	// Greeting is what the agent says, word for word, when this step takes the call (the start step: when
+	// the call connects). Optional; at most maxGreetingBytes bytes after trimming; any step may have one.
+	Greeting string `json:"greeting,omitempty"`
 	// STTP99MS overrides the STT p99 the speech timeout waits for (100..10000 ms). 0 uses the
 	// server's turn.stt_p99 or the built-in table.
 	STTP99MS int `json:"stt_p99_ms,omitempty"`
@@ -140,6 +143,25 @@ const maxSystemPromptBytes = 32 << 10
 
 var ErrInvalidConfig = errors.New("invalid flow config")
 
+// maxGreetingBytes bounds a step's greeting (bytes, as for route conditions).
+const maxGreetingBytes = 500
+
+// GreetingText is the greeting trimmed; "" when the step has none.
+func (c Config) GreetingText() string { return strings.TrimSpace(c.Greeting) }
+
+func validateGreeting(g string) error {
+	g = strings.TrimSpace(g)
+	if len(g) > maxGreetingBytes {
+		return fmt.Errorf("%w: greeting must be at most %d bytes", ErrInvalidConfig, maxGreetingBytes)
+	}
+	for _, r := range g {
+		if (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f {
+			return fmt.Errorf("%w: greeting must be plain text (no control characters)", ErrInvalidConfig)
+		}
+	}
+	return nil
+}
+
 // DecodeConfig strictly decodes a flow config: unknown fields and wrong
 // types are rejected. Completeness is checked by AttachmentProblems.
 func DecodeConfig(raw json.RawMessage) (Config, error) {
@@ -164,6 +186,9 @@ func DecodeConfig(raw json.RawMessage) (Config, error) {
 	}
 	if c.LLM.MaxParallel < 0 || c.LLM.MaxParallel > 16 {
 		return c, fmt.Errorf("%w: llm.max_parallel must be between 0 and 16", ErrInvalidConfig)
+	}
+	if err := validateGreeting(c.Greeting); err != nil {
+		return c, err
 	}
 	if c.VADStopMS < 0 || (c.VADStopMS > 0 && (c.VADStopMS < 200 || c.VADStopMS > 2000)) {
 		return c, fmt.Errorf("%w: vad_stop_ms must be 0 (default) or between 200 and 2000", ErrInvalidConfig)
