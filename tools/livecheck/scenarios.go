@@ -216,7 +216,7 @@ var scenarios = []scenario{
 			_, _, why := failoverPeer(p)
 			return why
 		}, run: s13},
-	{id: "S14", title: "agent graph: route from Front to Sales, then Sales answers", class: classFlow,
+	{id: "S14", title: "routed flow: route from Front to Sales, then Sales answers", class: classFlow,
 		// text turns only. Reply 1: the transfer round and Front's farewell (2 LLM requests), then Sales'
 		// greeting (1); turn 2 is one Sales reply. Three short replies, four LLM requests in all.
 		shape: func(*opts) shape { return shape{turns: 3, extraLLM: 1, short: true, noSTT: true} },

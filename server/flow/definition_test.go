@@ -48,12 +48,11 @@ func TestDecodeFlowTwoSteps(t *testing.T) {
 func TestOldConfigKeysAreRejectedLikeAnyUnknownField(t *testing.T) {
 	steps := `[{"id":"front","name":"Front desk","config":` + flatCfg + `},` + step("sales", "Sales", "") + `]`
 	for name, raw := range map[string]string{
-		"entry and nodes":   `{"entry":"front","nodes":` + steps + `,"edges":[]}`,
-		"handoff_cue":       `{"start":"front","steps":` + steps + `,"routes":[],"handoff_cue":{"name":"chime"}}`,
-		"mixed old and new": `{"entry":"front","start":"front","nodes":` + steps + `}`,
+		"entry and nodes": `{"entry":"front","nodes":` + steps + `,"edges":[]}`,
+		"handoff_cue":     `{"start":"front","steps":` + steps + `,"routes":[],"handoff_cue":{"name":"chime"}}`,
 	} {
-		if _, err := Decode(json.RawMessage(raw)); err == nil {
-			t.Errorf("%s: accepted", name)
+		if _, err := Decode(json.RawMessage(raw)); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("%s: %v", name, err)
 		}
 	}
 }

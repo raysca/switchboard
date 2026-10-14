@@ -262,7 +262,7 @@ func run(f *flags) (*Report, error) {
 	cp := CallParams{
 		IdleRSSMB:   srv.Proc().RSSMB,
 		Server:      srv,
-		FlowID:     flow,
+		FlowID:      flow,
 		Clip:        clip,
 		Turns:       f.turns,
 		MinTurns:    f.minTurns,

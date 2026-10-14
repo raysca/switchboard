@@ -108,12 +108,11 @@ type Server struct {
 }
 
 type activeCall struct {
-	sessionID  uint64
-	principal  string
-	conn       *ws.Connection
-	session    *core.Session
-	timeline   *SessionTimeline
-	cancelFunc context.CancelFunc
+	sessionID uint64
+	principal string
+	conn      *ws.Connection
+	session   *core.Session
+	timeline  *SessionTimeline
 }
 
 // NewServer initializes the server from configuration.

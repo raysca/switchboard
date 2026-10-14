@@ -629,7 +629,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			return core.StepStages{LLM: llm, TTS: tts, Speaks: saysOwnGreeting(id, call.Flow.Start, ns.Greeting)}, nil
 		}
 		llmSwap, ttsSwap := core.NewStageSwap(llmProc), core.NewStageSwap(ttsProc)
-		h, err := core.NewRouter(core.RouterConfig{
+		router, err := core.NewRouter(core.RouterConfig{
 			Entry: call.Flow.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
 			Build:   buildStep,
 			OnEvent: call.OnRoute,
@@ -647,7 +647,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		if err != nil {
 			return fail(fmt.Errorf("create router: %w", err))
 		}
-		call.Flow.Commit = h.Commit
+		call.Flow.Commit = router.Commit
 		llmProc, ttsProc = llmSwap, ttsSwap
 	}
 

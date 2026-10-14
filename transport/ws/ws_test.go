@@ -853,7 +853,7 @@ func TestSecurity_ClientIPSpoofing_RightToLeftTraversal(t *testing.T) {
 
 // The agent a call runs comes only from the signed token; query parameters
 // (including the removed `pipeline`) cannot redirect a call.
-func TestAgentID_ComesOnlyFromToken(t *testing.T) {
+func TestFlowID_ComesOnlyFromToken(t *testing.T) {
 	now := time.Now()
 	val, err := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
 	if err != nil {

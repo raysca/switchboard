@@ -571,10 +571,6 @@ func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("flow config is required")
 	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
-		return nil, errors.New("flow config must be a JSON object")
-	}
 	if _, err := Decode(raw); err != nil {
 		return nil, err
 	}

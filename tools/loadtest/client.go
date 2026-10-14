@@ -103,7 +103,7 @@ func (l *LoadState) lagStat() Stat {
 // CallParams describes the simulated caller.
 type CallParams struct {
 	Server      *Server
-	FlowID     string
+	FlowID      string
 	Clip        []byte
 	Turns       int // 0 = until ctx ends
 	MinTurns    int

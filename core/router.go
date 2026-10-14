@@ -85,10 +85,10 @@ func NewRouter(cfg RouterConfig) (*Router, error) {
 	if cfg.RetireTimeout <= 0 {
 		cfg.RetireTimeout = 2 * time.Second
 	}
-	h := &Router{cfg: cfg, active: cfg.Entry}
-	cfg.LLM.SetBefore(h.beforeLLM)
-	cfg.LLM.AddCloser(h.Close)
-	return h, nil
+	rt := &Router{cfg: cfg, active: cfg.Entry}
+	cfg.LLM.SetBefore(rt.beforeLLM)
+	cfg.LLM.AddCloser(rt.Close)
+	return rt, nil
 }
 
 func closeProc(p Processor) {
@@ -104,149 +104,142 @@ func closeStages(s StepStages) {
 
 // Close ends the route with the session: a step built but never installed
 // is closed, and a build still running closes its stages when it finishes.
-func (h *Router) Close() {
-	h.mu.Lock()
-	h.closed = true
-	parked := h.ready
-	h.pending, h.ready = "", nil
-	h.mu.Unlock()
+func (rt *Router) Close() {
+	rt.mu.Lock()
+	rt.closed = true
+	parked := rt.ready
+	rt.pending, rt.ready = "", nil
+	rt.mu.Unlock()
 	if parked != nil {
 		closeStages(*parked)
 	}
 }
 
-func (h *Router) Active() string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.active
+func (rt *Router) Active() string {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.active
 }
 
-// CanTransfer reports whether another route may be committed.
-func (h *Router) CanTransfer() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.count < h.cfg.Max
-}
-
-func (h *Router) emit(e RouteEvent) {
-	if h.cfg.OnEvent != nil {
-		h.cfg.OnEvent(e)
+func (rt *Router) emit(e RouteEvent) {
+	if rt.cfg.OnEvent != nil {
+		rt.cfg.OnEvent(e)
 	}
 }
 
 // Commit starts the route to target. It returns at once; the step is built
 // in the background while the old step finishes its farewell.
-func (h *Router) Commit(target string) error {
-	sc := h.cfg.LLM.Session()
+func (rt *Router) Commit(target string) error {
+	sc := rt.cfg.LLM.Session()
 	if sc == nil {
 		return ErrSwapNotAttached
 	}
-	h.mu.Lock()
+	rt.mu.Lock()
 	switch {
-	case h.closed:
-		h.mu.Unlock()
+	case rt.closed:
+		rt.mu.Unlock()
 		return ErrRouteClosed
-	case h.pending != "":
-		h.mu.Unlock()
+	case rt.pending != "":
+		rt.mu.Unlock()
 		return ErrRoutePending
-	case h.count >= h.cfg.Max:
-		h.mu.Unlock()
+	case rt.count >= rt.cfg.Max:
+		rt.mu.Unlock()
 		return ErrRouteLimit
 	}
-	from := h.active
-	h.pending, h.ready, h.started = target, nil, time.Now()
-	h.count++
-	h.mu.Unlock()
-	h.emit(RouteEvent{Kind: RouteCommitted, From: from, To: target})
-	h.emit(RouteEvent{Kind: RoutePreparing, From: from, To: target})
-	if err := sc.Go(func(ctx context.Context) { h.build(ctx, from, target) }); err != nil {
-		h.fail(from, target, fmt.Errorf("start build: %w", err))
+	from := rt.active
+	rt.pending, rt.ready, rt.started = target, nil, time.Now()
+	rt.count++
+	rt.mu.Unlock()
+	rt.emit(RouteEvent{Kind: RouteCommitted, From: from, To: target})
+	rt.emit(RouteEvent{Kind: RoutePreparing, From: from, To: target})
+	if err := sc.Go(func(ctx context.Context) { rt.build(ctx, from, target) }); err != nil {
+		rt.fail(from, target, fmt.Errorf("start build: %w", err))
 		return err
 	}
 	return nil
 }
 
-func (h *Router) build(ctx context.Context, from, target string) {
-	bctx, cancel := context.WithTimeout(ctx, h.cfg.BuildTimeout)
+func (rt *Router) build(ctx context.Context, from, target string) {
+	bctx, cancel := context.WithTimeout(ctx, rt.cfg.BuildTimeout)
 	defer cancel()
-	stages, err := h.cfg.Build(bctx, target)
+	stages, err := rt.cfg.Build(bctx, target)
 	if err == nil && (stages.LLM == nil || stages.TTS == nil) {
 		err = errors.New("build returned no stages")
 	}
 	if err != nil {
-		h.fail(from, target, err)
+		rt.fail(from, target, err)
 		return
 	}
-	h.mu.Lock()
-	if h.closed {
-		h.mu.Unlock()
+	rt.mu.Lock()
+	if rt.closed {
+		rt.mu.Unlock()
 		closeStages(stages) // the call ended while this step was being built
 		return
 	}
-	h.ready = &stages
-	h.mu.Unlock()
-	h.cfg.Trigger.Deliver(AsyncToolResult{
+	rt.ready = &stages
+	rt.mu.Unlock()
+	rt.cfg.Trigger.Deliver(AsyncToolResult{
 		Call:   ToolCall{Name: "transfer_to_" + target},
-		Inject: func() error { return h.flip(target, true) },
+		Inject: func() error { return rt.flip(target, true) },
 		Speaks: stages.Speaks,
 	})
 }
 
-func (h *Router) fail(from, target string, err error) {
-	h.mu.Lock()
-	elapsed := time.Since(h.started)
-	h.pending, h.ready = "", nil
-	h.mu.Unlock()
-	h.emit(RouteEvent{Kind: RouteFailed, From: from, To: target, Err: err, Elapsed: elapsed})
+func (rt *Router) fail(from, target string, err error) {
+	rt.mu.Lock()
+	elapsed := time.Since(rt.started)
+	rt.pending, rt.ready = "", nil
+	rt.mu.Unlock()
+	rt.emit(RouteEvent{Kind: RouteFailed, From: from, To: target, Err: err, Elapsed: elapsed})
 }
 
 // beforeLLM runs ahead of every frame the LLM stage sees. A caller's own turn
 // arriving while a built target waits flips first, so the new step answers.
-func (h *Router) beforeLLM(f Frame, dir Direction) {
+func (rt *Router) beforeLLM(f Frame, dir Direction) {
 	um, ok := f.(*UserMessageFrame)
 	if !ok || dir != Downstream || strings.HasPrefix(um.Turn, "async-") {
 		return
 	}
-	h.mu.Lock()
-	target, ready := h.pending, h.ready != nil
-	h.mu.Unlock()
+	rt.mu.Lock()
+	target, ready := rt.pending, rt.ready != nil
+	rt.mu.Unlock()
 	if ready {
-		_ = h.flip(target, false)
+		_ = rt.flip(target, false)
 	}
 }
 
 // flip swaps the built target in. It runs at most once per commit. TTS is
 // replaced first: if the LLM swap then fails, the call is left on the old
 // model with the new voice (degraded but working) and RouteFailed says so.
-func (h *Router) flip(target string, viaTrigger bool) error {
-	h.mu.Lock()
-	if h.pending != target || h.ready == nil {
-		h.mu.Unlock()
+func (rt *Router) flip(target string, viaTrigger bool) error {
+	rt.mu.Lock()
+	if rt.pending != target || rt.ready == nil {
+		rt.mu.Unlock()
 		return ErrRouteFlipped
 	}
-	stages, from, started := *h.ready, h.active, h.started
-	h.pending, h.ready, h.active = "", nil, target
-	h.mu.Unlock()
+	stages, from, started := *rt.ready, rt.active, rt.started
+	rt.pending, rt.ready, rt.active = "", nil, target
+	rt.mu.Unlock()
 
-	retireTTS, err := h.cfg.TTS.Replace(stages.TTS)
+	retireTTS, err := rt.cfg.TTS.Replace(stages.TTS)
 	var retireLLM func(time.Duration) error
 	if err == nil {
-		retireLLM, err = h.cfg.LLM.Replace(stages.LLM)
+		retireLLM, err = rt.cfg.LLM.Replace(stages.LLM)
 	}
 	if err != nil {
-		h.mu.Lock()
-		h.active = from
-		h.mu.Unlock()
+		rt.mu.Lock()
+		rt.active = from
+		rt.mu.Unlock()
 		if retireTTS != nil { // the TTS swap succeeded: do not leak the stage it replaced
-			h.retire(h.cfg.LLM.Session(), from, retireTTS)
+			rt.retire(rt.cfg.LLM.Session(), from, retireTTS)
 			closeProc(stages.LLM) // never installed
 		} else {
 			closeStages(stages) // neither was installed
 		}
-		h.emit(RouteEvent{Kind: RouteFailed, From: from, To: target, Err: err, Elapsed: time.Since(started)})
+		rt.emit(RouteEvent{Kind: RouteFailed, From: from, To: target, Err: err, Elapsed: time.Since(started)})
 		return err
 	}
-	sc := h.cfg.LLM.Session()
+	sc := rt.cfg.LLM.Session()
 	if viaTrigger {
 		// Idle flip: late frames of the old step are stale. A flip at the caller's
 		// turn must not bump: that turn was admitted (and its interruption fenced
@@ -254,19 +247,19 @@ func (h *Router) flip(target string, viaTrigger bool) error {
 		// carry it or the assistant context discards the reply as stale.
 		sc.IncrementGeneration()
 	}
-	h.retire(sc, from, retireLLM, retireTTS)
-	h.emit(RouteEvent{Kind: RouteActive, From: from, To: target, Elapsed: time.Since(started)})
-	if viaTrigger && h.cfg.Greet != nil {
-		return h.cfg.Greet(target)
+	rt.retire(sc, from, retireLLM, retireTTS)
+	rt.emit(RouteEvent{Kind: RouteActive, From: from, To: target, Elapsed: time.Since(started)})
+	if viaTrigger && rt.cfg.Greet != nil {
+		return rt.cfg.Greet(target)
 	}
 	return nil
 }
 
-func (h *Router) retire(sc SessionController, from string, fns ...func(time.Duration) error) {
+func (rt *Router) retire(sc SessionController, from string, fns ...func(time.Duration) error) {
 	_ = sc.Go(func(context.Context) {
 		for _, fn := range fns {
-			_ = fn(h.cfg.RetireTimeout)
+			_ = fn(rt.cfg.RetireTimeout)
 		}
-		h.emit(RouteEvent{Kind: RouteClosed, From: from})
+		rt.emit(RouteEvent{Kind: RouteClosed, From: from})
 	})
 }

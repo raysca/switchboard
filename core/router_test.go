@@ -132,7 +132,7 @@ func (e *routerEnv) waitReady(t *testing.T, h *Router) {
 	})
 }
 
-func TestRouterFlipsAtIdleAndClosesOldNode(t *testing.T) {
+func TestRouterFlipsAtIdleAndClosesOldStep(t *testing.T) {
 	h, env := newRouterEnv(t, nil)
 	if err := h.Commit("sales"); err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestRouterAsyncMessageDoesNotFlip(t *testing.T) {
 	}
 }
 
-func TestRouterBuildFailureKeepsOldNode(t *testing.T) {
+func TestRouterBuildFailureKeepsOldStep(t *testing.T) {
 	h, env := newRouterEnv(t, func(c *RouterConfig) {
 		c.Build = func(context.Context, string) (StepStages, error) { return StepStages{}, errors.New("provider down") }
 	})
@@ -206,8 +206,8 @@ func TestRouterPendingAndLimit(t *testing.T) {
 	}
 	env.waitReady(t, h)
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t1"}, Downstream, nopEmitter{})
-	if err := h.Commit("front"); !errors.Is(err, ErrRouteLimit) || h.CanTransfer() {
-		t.Fatalf("limit not enforced: %v can=%v", err, h.CanTransfer())
+	if err := h.Commit("front"); !errors.Is(err, ErrRouteLimit) {
+		t.Fatalf("limit not enforced: %v", err)
 	}
 }
 
@@ -252,7 +252,7 @@ func TestRouterPartialFlipStillClosesReplacedTTS(t *testing.T) {
 	}
 }
 
-func TestRouterCloseReleasesBuiltButUnactivatedNode(t *testing.T) {
+func TestRouterCloseReleasesBuiltButUnactivatedStep(t *testing.T) {
 	h, env := newRouterEnv(t, func(c *RouterConfig) { c.Trigger = busy(newTrigger()) })
 	_ = h.Commit("sales")
 	env.waitReady(t, h) // built, parked: the caller is mid-speech, so no flip yet
@@ -319,7 +319,7 @@ func TestRouterUserTurnFlipKeepsTheCallersGeneration(t *testing.T) {
 
 // A step that says its own fixed line needs no model turn: the flip still runs Greet, but the trigger
 // starts no turn for it.
-func TestRouterSpeakingNodeFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T) {
+func TestRouterSpeakingStepFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T) {
 	h, env := newRouterEnv(t, func(c *RouterConfig) {
 		build := c.Build
 		c.Build = func(ctx context.Context, id string) (StepStages, error) {

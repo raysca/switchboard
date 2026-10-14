@@ -122,7 +122,7 @@ func (o *cadenceOpener) report() string {
 	return b.String()
 }
 
-type flowHarness struct {
+type agentHarness struct {
 	t      *testing.T
 	sess   *core.Session
 	op     *cadenceOpener
@@ -134,9 +134,9 @@ type flowHarness struct {
 	seq    uint64
 }
 
-func newAgentHarness(t *testing.T) *flowHarness {
+func newAgentHarness(t *testing.T) *agentHarness {
 	t.Helper()
-	h := &flowHarness{t: t, op: &cadenceOpener{}, sink: &coretest.PassthroughProcessor{}}
+	h := &agentHarness{t: t, op: &cadenceOpener{}, sink: &coretest.PassthroughProcessor{}}
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = h.op
 	stt, _ := NewSTTProcessor(cfg)
@@ -167,7 +167,7 @@ func newAgentHarness(t *testing.T) *flowHarness {
 
 // frame posts 20 ms of audio (word index w, 0 = silence) and plays a VAD with a 60 ms start
 // and an 800 ms stop (silero defaults: 2 and 25 chunks of 32 ms).
-func (h *flowHarness) frame(w byte) {
+func (h *agentHarness) frame(w byte) {
 	_ = h.sess.Post(&core.InputAudioFrame{Samples: []byte{min(w, 1), w, 0, 0}, SampleRate: 16000})
 	if w != 0 {
 		h.speech, h.quiet = h.speech+1, 0
@@ -185,7 +185,7 @@ func (h *flowHarness) frame(w byte) {
 	time.Sleep(20 * time.Millisecond)
 }
 
-func (h *flowHarness) say(words ...byte) {
+func (h *agentHarness) say(words ...byte) {
 	for _, w := range words {
 		for range 10 { // 200 ms per word
 			h.frame(w)
@@ -193,14 +193,14 @@ func (h *flowHarness) say(words ...byte) {
 	}
 }
 
-func (h *flowHarness) silence(d time.Duration) {
+func (h *agentHarness) silence(d time.Duration) {
 	for range int(d / (20 * time.Millisecond)) {
 		h.frame(0)
 	}
 }
 
 // heard joins every user message the context committed.
-func (h *flowHarness) heard() (msgs []string) {
+func (h *agentHarness) heard() (msgs []string) {
 	for _, f := range h.sink.GetFrames() {
 		if m, ok := f.(*core.UserMessageFrame); ok {
 			msgs = append(msgs, m.Content)
@@ -230,7 +230,7 @@ func TestXAIAgent_MidUtterancePauseKeepsSecondHalf(t *testing.T) {
 // (the onset before the VAD start included: the stream opened on the silence after the previous
 // stop is adopted, not parked), nothing was sent after audio.done, and no stream but the
 // current one is left open.
-func (h *flowHarness) checkStreams(lastFrames int) {
+func (h *agentHarness) checkStreams(lastFrames int) {
 	h.t.Helper()
 	h.op.mu.Lock()
 	streams := h.op.streams

@@ -286,7 +286,7 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 	// 6. Onboarding creates the first ready flow
 	firstFlow, err := flowService.Create(ctx, flow.CreateRequest{
 		Name:        "Customer Care Bot",
-		Description: "Onboarded primary voice flow",
+		Description: "Onboarded primary voice agent",
 		Config:      json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 	})
 	if err != nil {
