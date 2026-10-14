@@ -38,7 +38,7 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 	if err := s.Flows().Create(ctx, fl); err != nil {
-		t.Fatalf("create agent: %v", err)
+		t.Fatalf("create flow: %v", err)
 	}
 	ver, err := s.Flows().PublishVersion(ctx, fl.ID, 1, []byte(`{"voice":"default","prompt":"hello"}`), nil)
 	if err != nil {
@@ -138,10 +138,10 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 	// Verify flow exists
 	restoredFlow, err := backupStore.Flows().Current(ctx, fl.ID)
 	if err != nil {
-		t.Fatalf("fetch agent in restored store: %v", err)
+		t.Fatalf("fetch flow in restored store: %v", err)
 	}
 	if restoredFlow.Name != fl.Name {
-		t.Fatalf("restored agent name mismatch: got %s, want %s", restoredFlow.Name, fl.Name)
+		t.Fatalf("restored flow name mismatch: got %s, want %s", restoredFlow.Name, fl.Name)
 	}
 
 	// Verify integrity check (PRAGMA foreign_key_check and quick_check)

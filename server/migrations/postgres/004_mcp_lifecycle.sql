@@ -5,9 +5,9 @@ CREATE TABLE session_mcp_tools (session_id TEXT NOT NULL REFERENCES sessions(id)
 DROP TRIGGER mcp_servers_referenced_delete ON mcp_servers;
 -- +goose StatementBegin
 CREATE FUNCTION reject_referenced_mcp_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
- IF EXISTS (SELECT 1 FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=OLD.id)
+ IF EXISTS (SELECT 1 FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=OLD.id)
  OR EXISTS (SELECT 1 FROM sessions s JOIN session_mcp_tools t ON t.session_id=s.id WHERE t.mcp_server_id=OLD.id AND s.status IN ('active','draining')) THEN
-  RAISE EXCEPTION 'MCP server referenced by current agent or active session';
+  RAISE EXCEPTION 'MCP server referenced by current flow or active session';
  END IF;
  RETURN OLD;
 END; $$;

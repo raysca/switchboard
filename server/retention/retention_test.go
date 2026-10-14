@@ -396,10 +396,10 @@ func TestMetadataPurgeAndInvariants(t *testing.T) {
 	// Verify INVARIANTS: Flow versions are NEVER deleted
 	ag, err := s.Flows().Current(ctx, flowID)
 	if err != nil {
-		t.Fatalf("agent lookup: %v", err)
+		t.Fatalf("flow lookup: %v", err)
 	}
 	if ag.CurrentVersionID != versionID {
-		t.Errorf("INVARIANT VIOLATION: agent version changed/missing")
+		t.Errorf("INVARIANT VIOLATION: flow version changed/missing")
 	}
 }
 

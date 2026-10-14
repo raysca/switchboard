@@ -46,9 +46,8 @@ func TestAStepsGreetingIsSpokenWordForWordInItsVoiceAndReplacesTheModelsGreeting
 	c.say("please transfer to sales")
 	c.waitReplies("Connecting you.", 1)
 	c.waitReplies(salesGreeting, 1)
-	if probe.spoke("salesvoice") == 0 {
-		t.Fatal("the greeting was not spoken in the new step's voice")
-	}
+	// The text reaches the client as the units are queued; the voice stage counts them a moment later.
+	eventually(t, "the greeting in the new step's voice", func() bool { return probe.spoke("salesvoice") > 0 })
 	time.Sleep(800 * time.Millisecond)
 	if n := c.replies("[SALES"); n != 0 {
 		t.Fatalf("the model greeted as well (%d replies)", n)

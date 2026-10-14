@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// ponytail: flows live in the pre-rename tables (agents, agent_versions,
-// agent_mcp_tools, sessions.agent_id). Renaming them means rewriting the
-// Postgres trigger functions too; do it only if the SQL names start to hurt.
 type Flow struct {
 	ID, Name, Description, CurrentVersionID string
 	Enabled, Archived                       bool
@@ -34,7 +31,7 @@ type SelectedTool struct {
 }
 
 func (r FlowRepository) SelectedTools(ctx context.Context, versionID string) ([]SelectedTool, error) {
-	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=? ORDER BY mcp_server_id,remote_name"), versionID)
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM flow_mcp_tools WHERE flow_version_id=? ORDER BY mcp_server_id,remote_name"), versionID)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +61,7 @@ func (r FlowRepository) Create(ctx context.Context, a Flow) error {
 		return err
 	}
 	now := utc(a.CreatedAt)
-	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO agents(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, a.Enabled), boolValue(r.s.dialect, a.Archived), now, now)
+	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO flows(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, a.Enabled), boolValue(r.s.dialect, a.Archived), now, now)
 	return err
 }
 
@@ -133,7 +130,7 @@ func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, versi
 	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
 		// Serialize version allocation per flow. Version numbers are contiguous
 		// and never change once published, including under concurrent writers.
-		lockFlow := "SELECT archived FROM agents WHERE id=?"
+		lockFlow := "SELECT archived FROM flows WHERE id=?"
 		if r.s.dialect == Postgres {
 			lockFlow += " FOR UPDATE"
 		}
@@ -145,7 +142,7 @@ func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, versi
 			return errors.New("flow unavailable")
 		}
 		var latest int
-		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM agent_versions WHERE agent_id=?"), flowID).Scan(&latest); err != nil {
+		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM flow_versions WHERE flow_id=?"), flowID).Scan(&latest); err != nil {
 			return err
 		}
 		if version != latest+1 {
@@ -156,16 +153,16 @@ func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, versi
 		if err := r.s.validateSelections(ctx, tx, selections); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), out.ID, flowID, version, out.SchemaVersion, string(canonical), hash, utc(out.CreatedAt))
+		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO flow_versions(id,flow_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), out.ID, flowID, version, out.SchemaVersion, string(canonical), hash, utc(out.CreatedAt))
 		if err != nil {
 			return err
 		}
 		for _, sel := range selections {
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) VALUES(?,?,?,?,?)"), out.ID, sel.ServerID, sel.RemoteName, sel.SchemaHash, boolValue(r.s.dialect, sel.Required)); err != nil {
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO flow_mcp_tools(flow_version_id,mcp_server_id,remote_name,schema_hash,required) VALUES(?,?,?,?,?)"), out.ID, sel.ServerID, sel.RemoteName, sel.SchemaHash, boolValue(r.s.dialect, sel.Required)); err != nil {
 				return err
 			}
 		}
-		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE agents SET current_version_id=?,updated_at=? WHERE id=? AND archived=?"), out.ID, utc(time.Now()), flowID, boolValue(r.s.dialect, false))
+		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE flows SET current_version_id=?,updated_at=? WHERE id=? AND archived=?"), out.ID, utc(time.Now()), flowID, boolValue(r.s.dialect, false))
 		if err != nil {
 			return err
 		}
@@ -184,7 +181,7 @@ func (r FlowRepository) Current(ctx context.Context, id string) (Flow, error) {
 	var a Flow
 	var created, updated string
 	var current sql.NullString
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,enabled,archived,current_version_id,created_at,updated_at FROM agents WHERE id=?"), id).Scan(&a.ID, &a.Name, &a.Description, &a.Enabled, &a.Archived, &current, &created, &updated)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,name,description,enabled,archived,current_version_id,created_at,updated_at FROM flows WHERE id=?"), id).Scan(&a.ID, &a.Name, &a.Description, &a.Enabled, &a.Archived, &current, &created, &updated)
 	if err != nil {
 		return a, err
 	}
@@ -203,7 +200,7 @@ func (r FlowRepository) List(ctx context.Context, limit, offset int) ([]Flow, er
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, errors.New("invalid flow pagination")
 	}
-	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id,name,description,enabled,archived,current_version_id,created_at,updated_at FROM agents ORDER BY id LIMIT ? OFFSET ?"), limit, offset)
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id,name,description,enabled,archived,current_version_id,created_at,updated_at FROM flows ORDER BY id LIMIT ? OFFSET ?"), limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +228,7 @@ func (r FlowRepository) List(ctx context.Context, limit, offset int) ([]Flow, er
 func (r FlowRepository) Version(ctx context.Context, id string) (FlowVersion, error) {
 	var v FlowVersion
 	var created string
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required FROM agent_versions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.Version, &v.SchemaVersion, &v.ConfigJSON, &v.ConfigHash, &created, &v.MCPReviewRequired)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,flow_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required FROM flow_versions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.Version, &v.SchemaVersion, &v.ConfigJSON, &v.ConfigHash, &created, &v.MCPReviewRequired)
 	if err != nil {
 		return v, err
 	}
@@ -245,7 +242,7 @@ func (r FlowRepository) Version(ctx context.Context, id string) (FlowVersion, er
 	return v, nil
 }
 func (r FlowRepository) Archive(ctx context.Context, id string) error {
-	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE agents SET archived=?,enabled=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, true), boolValue(r.s.dialect, false), utc(time.Now()), id)
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE flows SET archived=?,enabled=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, true), boolValue(r.s.dialect, false), utc(time.Now()), id)
 	if err != nil {
 		return err
 	}
@@ -388,7 +385,7 @@ type MCPFlowReference struct {
 }
 
 func (r MCPRepository) CurrentReferences(ctx context.Context, id string) ([]MCPFlowReference, error) {
-	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT a.id,a.name,a.current_version_id,t.remote_name,t.required FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.name,a.id,t.remote_name"), id)
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT a.id,a.name,a.current_version_id,t.remote_name,t.required FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.name,a.id,t.remote_name"), id)
 	if err != nil {
 		return nil, err
 	}
@@ -476,7 +473,7 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		// Match publication/session-start lock order: flow rows first, then the
 		// MCP server row. This makes detach serialize with new assignments without
 		// holding the server lock while waiting on a flow.
-		rows, err := tx.QueryContext(ctx, r.s.bind("SELECT DISTINCT a.id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
+		rows, err := tx.QueryContext(ctx, r.s.bind("SELECT DISTINCT a.id FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
 		if err != nil {
 			return err
 		}
@@ -497,7 +494,7 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		if r.s.dialect == Postgres {
 			for _, flowID := range flowIDs {
 				var locked string
-				if err := tx.QueryRowContext(ctx, r.s.bind("SELECT id FROM agents WHERE id=? FOR UPDATE"), flowID).Scan(&locked); err != nil {
+				if err := tx.QueryRowContext(ctx, r.s.bind("SELECT id FROM flows WHERE id=? FOR UPDATE"), flowID).Scan(&locked); err != nil {
 					return err
 				}
 			}
@@ -510,7 +507,7 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		if err := tx.QueryRowContext(ctx, r.s.bind(lock), id).Scan(&serverID); err != nil {
 			return err
 		}
-		rows, err = tx.QueryContext(ctx, r.s.bind("SELECT a.id,a.current_version_id FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
+		rows, err = tx.QueryContext(ctx, r.s.bind("SELECT a.id,a.current_version_id FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=? ORDER BY a.id"), id)
 		if err != nil {
 			return err
 		}
@@ -530,24 +527,24 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		}
 		rows.Close()
 		for _, a := range flows {
-			query := "SELECT config_json,config_hash FROM agent_versions WHERE id=?"
+			query := "SELECT config_json,config_hash FROM flow_versions WHERE id=?"
 			var config, hash string
 			if err := tx.QueryRowContext(ctx, r.s.bind(query), a.versionID).Scan(&config, &hash); err != nil {
 				return err
 			}
 			var latest int
-			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM agent_versions WHERE agent_id=?"), a.id).Scan(&latest); err != nil {
+			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM flow_versions WHERE flow_id=?"), a.id).Scan(&latest); err != nil {
 				return err
 			}
 			versionID := NewID()
 			now := utc(time.Now())
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), versionID, a.id, latest+1, 1, config, hash, now, boolValue(r.s.dialect, true)); err != nil {
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO flow_versions(id,flow_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), versionID, a.id, latest+1, 1, config, hash, now, boolValue(r.s.dialect, true)); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) SELECT ?,mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=? AND mcp_server_id<>?"), versionID, a.versionID, id); err != nil {
+			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO flow_mcp_tools(flow_version_id,mcp_server_id,remote_name,schema_hash,required) SELECT ?,mcp_server_id,remote_name,schema_hash,required FROM flow_mcp_tools WHERE flow_version_id=? AND mcp_server_id<>?"), versionID, a.versionID, id); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, r.s.bind("UPDATE agents SET current_version_id=?,updated_at=? WHERE id=? AND current_version_id=?"), versionID, now, a.id, a.versionID); err != nil {
+			if _, err := tx.ExecContext(ctx, r.s.bind("UPDATE flows SET current_version_id=?,updated_at=? WHERE id=? AND current_version_id=?"), versionID, now, a.id, a.versionID); err != nil {
 				return err
 			}
 		}
@@ -610,7 +607,7 @@ func (r MCPRepository) FinalizePendingDeletes(ctx context.Context) error {
 
 func countMCPReferences(ctx context.Context, s *Store, id string) (int, int, error) {
 	var current, active int
-	err := s.db.QueryRowContext(ctx, s.bind("SELECT count(*) FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
+	err := s.db.QueryRowContext(ctx, s.bind("SELECT count(*) FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -619,7 +616,7 @@ func countMCPReferences(ctx context.Context, s *Store, id string) (int, int, err
 }
 func mcpReferenceCounts(ctx context.Context, tx *sql.Tx, s *Store, id string) (int, int, error) {
 	var current, active int
-	err := tx.QueryRowContext(ctx, s.bind("SELECT count(*) FROM agents a JOIN agent_mcp_tools t ON t.agent_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
+	err := tx.QueryRowContext(ctx, s.bind("SELECT count(*) FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
 	if err != nil {
 		return 0, 0, err
 	}

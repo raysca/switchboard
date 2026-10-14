@@ -102,7 +102,7 @@ func TestResolveDraftWritesNothing(t *testing.T) {
 	f := publishedFlow(t, svc, "P")
 	var before, after int
 	count := func(n *int) {
-		if err := svc.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM agent_versions").Scan(n); err != nil {
+		if err := svc.store.DB().QueryRowContext(ctx, "SELECT count(*) FROM flow_versions").Scan(n); err != nil {
 			t.Fatal(err)
 		}
 	}

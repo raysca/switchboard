@@ -321,14 +321,14 @@ func TestDuplicatePreservesMCPReviewRequirementUntilExplicitReview(t *testing.T)
 func TestCreateAndUpdatePublishAtomicallyOnDatabaseFailure(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
-	if _, err := svc.store.DB().Exec(`CREATE TRIGGER reject_agent_version BEFORE INSERT ON agent_versions WHEN NEW.config_json='{"fail":true}' BEGIN SELECT RAISE(ABORT, 'injected publish failure'); END`); err != nil {
+	if _, err := svc.store.DB().Exec(`CREATE TRIGGER reject_agent_version BEFORE INSERT ON flow_versions WHEN NEW.config_json='{"fail":true}' BEGIN SELECT RAISE(ABORT, 'injected publish failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Create(ctx, CreateRequest{Name: "Rejected", Config: json.RawMessage(`{"fail":true}`)}); err == nil {
 		t.Fatal("create with rejected initial version succeeded")
 	}
 	var count int
-	if err := svc.store.DB().QueryRow("SELECT count(*) FROM agents WHERE name='Rejected'").Scan(&count); err != nil || count != 0 {
+	if err := svc.store.DB().QueryRow("SELECT count(*) FROM flows WHERE name='Rejected'").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("failed create left agent row count=%d err=%v", count, err)
 	}
 	created, err := svc.Create(ctx, CreateRequest{Name: "Before", Config: validConfig()})
@@ -370,7 +370,7 @@ func TestConcurrentConfigUpdatesAllocateContiguousVersions(t *testing.T) {
 		t.Fatalf("current version=%+v err=%v", current.Version, err)
 	}
 	var versions int
-	if err := svc.store.DB().QueryRow("SELECT count(*) FROM agent_versions WHERE agent_id=?", created.ID).Scan(&versions); err != nil || versions != updates+1 {
+	if err := svc.store.DB().QueryRow("SELECT count(*) FROM flow_versions WHERE flow_id=?", created.ID).Scan(&versions); err != nil || versions != updates+1 {
 		t.Fatalf("version rows=%d err=%v", versions, err)
 	}
 }

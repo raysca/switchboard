@@ -47,7 +47,7 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 
 	baseTime := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 
-	// Create 3 sessions for agent1 (2 active, 1 ended)
+	// Create 3 sessions for flow1 (2 active, 1 ended)
 	for i := 0; i < 3; i++ {
 		status := "active"
 		if i == 2 {
@@ -70,7 +70,7 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 		}
 	}
 
-	// Create 2 sessions for agent2 (both ended)
+	// Create 2 sessions for flow2 (both ended)
 	for i := 0; i < 2; i++ {
 		sess := storage.SessionRecord{
 			ID:                  storage.NewID(),
@@ -117,10 +117,10 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 	// Test 2: Filter by FlowID
 	flow1Sessions, err := s.Sessions().List(ctx, storage.SessionFilter{FlowID: flow1, Limit: 50})
 	if err != nil {
-		t.Fatalf("list agent1: %v", err)
+		t.Fatalf("list flow1: %v", err)
 	}
 	if len(flow1Sessions) != 3 {
-		t.Fatalf("expected 3 sessions for agent1, got %d", len(flow1Sessions))
+		t.Fatalf("expected 3 sessions for flow1, got %d", len(flow1Sessions))
 	}
 
 	// Test 3: Filter by Status
@@ -135,10 +135,10 @@ func TestSessionRepositoryPaginationAndFilters(t *testing.T) {
 	// Test 4: Filter by FlowID AND Status
 	flow1Active, err := s.Sessions().List(ctx, storage.SessionFilter{FlowID: flow1, Status: "active", Limit: 50})
 	if err != nil {
-		t.Fatalf("list agent1 active: %v", err)
+		t.Fatalf("list flow1 active: %v", err)
 	}
 	if len(flow1Active) != 2 {
-		t.Fatalf("expected 2 active sessions for agent1, got %d", len(flow1Active))
+		t.Fatalf("expected 2 active sessions for flow1, got %d", len(flow1Active))
 	}
 }
 

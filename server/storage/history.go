@@ -50,7 +50,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 		return err
 	}
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		query := "SELECT current_version_id,enabled,archived FROM agents WHERE id=?"
+		query := "SELECT current_version_id,enabled,archived FROM flows WHERE id=?"
 		if r.s.dialect == Postgres {
 			query += " FOR UPDATE"
 		}
@@ -66,7 +66,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 			return errors.New("flow version is no longer current")
 		}
 		runtimeTools := append([]SelectedTool(nil), v.RuntimeTools...)
-		selectedRows, err := tx.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=?"), v.FlowVersionID)
+		selectedRows, err := tx.QueryContext(ctx, r.s.bind("SELECT mcp_server_id,remote_name,schema_hash,required FROM flow_mcp_tools WHERE flow_version_id=?"), v.FlowVersionID)
 		if err != nil {
 			return err
 		}
@@ -118,7 +118,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 				return errors.New("required MCP tool was not captured for session")
 			}
 		}
-		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical), boolValue(r.s.dialect, v.Draft))
+		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical), boolValue(r.s.dialect, v.Draft))
 		if err != nil {
 			return err
 		}
@@ -236,11 +236,11 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 		offset = 0
 	}
 
-	query := "SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft FROM sessions"
+	query := "SELECT id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft FROM sessions"
 	var clauses []string
 	var args []any
 	if filter.FlowID != "" {
-		clauses = append(clauses, "agent_id=?")
+		clauses = append(clauses, "flow_id=?")
 		args = append(args, filter.FlowID)
 	}
 	if filter.Status != "" {
@@ -284,7 +284,7 @@ func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, e
 	var v SessionRecord
 	var started string
 	var ended sql.NullString
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,agent_id,agent_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft)
 	if err != nil {
 		return v, err
 	}

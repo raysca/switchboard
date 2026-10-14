@@ -68,10 +68,10 @@ func TestRepositoryFlowVersionImmutabilityAndHistorySafety(t *testing.T) {
 	if err := s.Sessions().Create(ctx, session); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DB().Exec("DELETE FROM agent_versions WHERE id=?", v.ID); err == nil {
+	if _, err := s.DB().Exec("DELETE FROM flow_versions WHERE id=?", v.ID); err == nil {
 		t.Fatal("historical version deleted")
 	}
-	if _, err := s.DB().Exec("UPDATE agent_versions SET config_hash='changed' WHERE id=?", v.ID); err == nil {
+	if _, err := s.DB().Exec("UPDATE flow_versions SET config_hash='changed' WHERE id=?", v.ID); err == nil {
 		t.Fatal("immutable version updated")
 	}
 	if err := s.Flows().Archive(ctx, a.ID); err != nil {
@@ -101,12 +101,12 @@ func TestSessionAdmissionRejectsDisabledOrArchivedFlow(t *testing.T) {
 				if err := s.Flows().Archive(ctx, a.ID); err != nil {
 					t.Fatal(err)
 				}
-			} else if _, err := s.DB().ExecContext(ctx, "UPDATE agents SET enabled=0 WHERE id=?", a.ID); err != nil {
+			} else if _, err := s.DB().ExecContext(ctx, "UPDATE flows SET enabled=0 WHERE id=?", a.ID); err != nil {
 				t.Fatal(err)
 			}
 			err = s.Sessions().Create(ctx, SessionRecord{ID: NewID(), FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active"})
 			if err == nil {
-				t.Fatal("session admitted after agent became unavailable")
+				t.Fatal("session admitted after flow became unavailable")
 			}
 		})
 	}
@@ -178,7 +178,7 @@ func TestRepositoryTransactionRollback(t *testing.T) {
 	ctx := context.Background()
 	id := NewID()
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO agents(id,name,created_at,updated_at) VALUES(?,?,?,?)", id, "A", time.Now(), time.Now())
+		_, err := tx.ExecContext(ctx, "INSERT INTO flows(id,name,created_at,updated_at) VALUES(?,?,?,?)", id, "A", time.Now(), time.Now())
 		if err != nil {
 			return err
 		}
@@ -188,7 +188,7 @@ func TestRepositoryTransactionRollback(t *testing.T) {
 		t.Fatalf("rollback err=%v", err)
 	}
 	var n int
-	if err := s.DB().QueryRow("SELECT count(*) FROM agents WHERE id=?", id).Scan(&n); err != nil || n != 0 {
+	if err := s.DB().QueryRow("SELECT count(*) FROM flows WHERE id=?", id).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("rows=%d err=%v", n, err)
 	}
 }
@@ -210,7 +210,7 @@ func TestStorageConcurrentSQLiteWrites(t *testing.T) {
 		}
 	}
 	var n int
-	if err := s.DB().QueryRow("SELECT count(*) FROM agents").Scan(&n); err != nil || n != 20 {
+	if err := s.DB().QueryRow("SELECT count(*) FROM flows").Scan(&n); err != nil || n != 20 {
 		t.Fatalf("rows=%d err=%v", n, err)
 	}
 }
@@ -462,7 +462,7 @@ func TestRepositoryRejectsCorruptTimestamp(t *testing.T) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DB().Exec("UPDATE agents SET created_at='not-a-time' WHERE id=?", a.ID); err != nil {
+	if _, err := s.DB().Exec("UPDATE flows SET created_at='not-a-time' WHERE id=?", a.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Flows().Current(ctx, a.ID); err == nil {
@@ -477,7 +477,7 @@ func TestRepositoryNormalizesReadTimestampUTC(t *testing.T) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DB().Exec("UPDATE agents SET created_at='2026-10-04T21:00:00+01:00' WHERE id=?", a.ID); err != nil {
+	if _, err := s.DB().Exec("UPDATE flows SET created_at='2026-10-04T21:00:00+01:00' WHERE id=?", a.ID); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Flows().Current(ctx, a.ID)
@@ -587,7 +587,7 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 	}
 	// Goose runs each migration transactionally: failed DDL must not survive.
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_agent_mcp_review.sql", "006_session_draft.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_flow_mcp_review.sql", "006_session_draft.sql"} {
 		body, err := fs.ReadFile(initial, name)
 		if err != nil {
 			t.Fatal(err)
@@ -683,7 +683,7 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_agent_mcp_review.sql", "006_session_draft.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_flow_mcp_review.sql", "006_session_draft.sql"} {
 		body, err := fs.ReadFile(migrationFS, name)
 		if err != nil {
 			t.Fatal(err)
@@ -824,7 +824,7 @@ func TestMCPDisableAndDeleteRespectCurrentAndActiveVersionReferences(t *testing.
 		t.Fatal("pending delete was not finalized after the last active session ended")
 	}
 	var count int
-	if err := s.DB().QueryRow("SELECT count(*) FROM agent_mcp_tools WHERE agent_version_id=?", v.ID).Scan(&count); err != nil || count != 1 {
+	if err := s.DB().QueryRow("SELECT count(*) FROM flow_mcp_tools WHERE flow_version_id=?", v.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("historical selection count=%d err=%v", count, err)
 	}
 }
@@ -919,7 +919,7 @@ func TestRepositoryPublishRejectsUnknownToolAtomically(t *testing.T) {
 		t.Fatalf("pointer changed %+v err=%v", got, err)
 	}
 	var n int
-	if err := s.DB().QueryRow("SELECT count(*) FROM agent_versions WHERE agent_id=?", a.ID).Scan(&n); err != nil || n != 0 {
+	if err := s.DB().QueryRow("SELECT count(*) FROM flow_versions WHERE flow_id=?", a.ID).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("versions=%d err=%v", n, err)
 	}
 }
@@ -944,10 +944,10 @@ func TestRepositoryProvenanceAndPointers(t *testing.T) {
 			t.Fatalf("accepted mismatched session %+v", session)
 		}
 	}
-	if _, err := s.DB().Exec("UPDATE agents SET current_version_id=? WHERE id=?", v.ID, b.ID); err == nil {
-		t.Fatal("cross-agent current version accepted")
+	if _, err := s.DB().Exec("UPDATE flows SET current_version_id=? WHERE id=?", v.ID, b.ID); err == nil {
+		t.Fatal("cross-flow current version accepted")
 	}
-	if _, err := s.DB().Exec("INSERT INTO agents(id,name,current_version_id,created_at,updated_at) VALUES(?,?,?,?,?)", NewID(), "bad", v.ID, utc(time.Now()), utc(time.Now())); err == nil {
+	if _, err := s.DB().Exec("INSERT INTO flows(id,name,current_version_id,created_at,updated_at) VALUES(?,?,?,?,?)", NewID(), "bad", v.ID, utc(time.Now()), utc(time.Now())); err == nil {
 		t.Fatal("invalid insert current version accepted")
 	}
 	m := MCPServer{ID: NewID(), Name: "M"}
@@ -1015,7 +1015,7 @@ func TestRepositoryContract(t *testing.T) {
 			if _, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil); err == nil {
 				t.Fatal("duplicate version")
 			}
-			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE agent_versions SET config_hash=? WHERE id=?"), "bad", v.ID); err == nil {
+			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE flow_versions SET config_hash=? WHERE id=?"), "bad", v.ID); err == nil {
 				t.Fatal("immutable version changed")
 			}
 			sess := SessionRecord{ID: NewID(), FlowID: a.ID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, Status: "active"}
@@ -1072,7 +1072,7 @@ func TestRepositoryContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE sessions SET agent_version_id=?,config_hash=? WHERE id=?"), v2.ID, v2.ConfigHash, active); err == nil {
+			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE sessions SET flow_version_id=?,config_hash=? WHERE id=?"), v2.ID, v2.ConfigHash, active); err == nil {
 				t.Fatal("session provenance mutated")
 			}
 			if err := s.Sessions().End(ctx, active); err != nil {
