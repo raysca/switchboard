@@ -88,7 +88,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 
 | Id | Need | Blocks |
 |---|---|---|
-| S1 | ~~Test an unpublished draft~~ **Done.** `POST /voice-tokens` takes an inline `draft.config`, validated like a publish, held in memory (32, single use); the session is recorded on the current version with `draft: true` | Nothing: the editor's Test call runs the canvas, and Calls marks draft calls |
+| S1 | ~~Test an unpublished draft~~ **Done** (a draft may also select MCP tools: `draft.mcp_tools`). `POST /voice-tokens` takes an inline `draft.config`, validated like a publish, held in memory (32, single use); the session is recorded on the current version with `draft: true` | Nothing: the editor's Test call runs the canvas, and Calls marks draft calls |
 | S2 | Version list and rollback (`GET /agents/{id}/versions`, `POST …/rollback`) | Version history and "Roll back to v7" (canvas boards 8, 12) |
 | S3 | ~~Write provider credentials to the sealed keyring~~ **Decided against:** providers are preconfigured and their secrets are only ever read from the environment; the console never accepts a key | Nothing: Providers and First run name the variable to set, permanently |
 | S4 | Live call count per flow/version (operations status) | "9 calls finishing on v7" copy |
@@ -118,3 +118,5 @@ Until each lands, the UI omits the dependent control rather than faking it.
 5. **Done:** MCP tools (board 16).
 6. **Done:** flow screens parity (boards 3–12): full-bleed editor, step cards, rebuilt Test call panel, Flows header and empty state, New flow cards, Publish checks.
 7. **Done:** First run and the empty and error states (boards 0–1).
+
+**MCP tools in the designer (done).** The step panel's Tools tab has a "Flow tools" section (shared by every step) above "Tools this step can call". It lists each connected server's tools from its latest discovery; ticking one adds it to the flow's selection with the schema hash offered now, and `Required` is per tool. A selected tool of a disabled server, a removed server, or a tool the server no longer offers stays visible and can only be taken off. The selection is part of the draft: it makes the flow "unpublished", is listed in the Publish dialog (`Added tool …`, `Removed tool …`), is published with the config as one version, and is used by Test call. Taking a tool off also takes it off every step.
