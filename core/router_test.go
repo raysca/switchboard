@@ -10,21 +10,21 @@ import (
 	"time"
 )
 
-type handoffSession struct {
+type routerSession struct {
 	ctx      context.Context
 	gens     atomic.Uint64
 	reenters atomic.Int64
 }
 
-func (s *handoffSession) ID() uint64                  { return 1 }
-func (s *handoffSession) Context() context.Context    { return s.ctx }
-func (s *handoffSession) CurrentGeneration() uint64   { return s.gens.Load() }
-func (s *handoffSession) IncrementGeneration() uint64 { return s.gens.Add(1) }
-func (s *handoffSession) Go(fn func(context.Context)) error {
+func (s *routerSession) ID() uint64                  { return 1 }
+func (s *routerSession) Context() context.Context    { return s.ctx }
+func (s *routerSession) CurrentGeneration() uint64   { return s.gens.Load() }
+func (s *routerSession) IncrementGeneration() uint64 { return s.gens.Add(1) }
+func (s *routerSession) Go(fn func(context.Context)) error {
 	go fn(s.ctx)
 	return nil
 }
-func (s *handoffSession) Reenter(Frame, Direction, int, uint64) error {
+func (s *routerSession) Reenter(Frame, Direction, int, uint64) error {
 	s.reenters.Add(1)
 	return nil
 }
@@ -34,15 +34,15 @@ type nopEmitter struct{}
 func (nopEmitter) Push(Frame) error                     { return nil }
 func (nopEmitter) PushDirection(Frame, Direction) error { return nil }
 
-type handoffEnv struct {
+type routerEnv struct {
 	llm, tts                       *StageSwap
 	oldLLM, oldTTS, newLLM, newTTS *probeStage
 	trig                           *AsyncTrigger
-	sess                           *handoffSession
+	sess                           *routerSession
 	greeted                        atomic.Int64
-	events                         chan HandoffEvent
+	events                         chan RouteEvent
 	mu                             sync.Mutex
-	seen                           []HandoffEvent
+	seen                           []RouteEvent
 }
 
 func newTrigger() *AsyncTrigger {
@@ -55,22 +55,22 @@ func busy(t *AsyncTrigger) *AsyncTrigger {
 	return t
 }
 
-func newHandoffEnv(t *testing.T, mod func(*HandoffConfig)) (*Handoff, *handoffEnv) {
+func newRouterEnv(t *testing.T, mod func(*RouterConfig)) (*Router, *routerEnv) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	env := &handoffEnv{
+	env := &routerEnv{
 		oldLLM: &probeStage{}, oldTTS: &probeStage{}, newLLM: &probeStage{}, newTTS: &probeStage{},
-		sess: &handoffSession{ctx: ctx}, events: make(chan HandoffEvent, 32),
+		sess: &routerSession{ctx: ctx}, events: make(chan RouteEvent, 32),
 	}
 	env.llm, env.tts = NewStageSwap(env.oldLLM), NewStageSwap(env.oldTTS)
-	cfg := HandoffConfig{
+	cfg := RouterConfig{
 		Entry: "front", LLM: env.llm, TTS: env.tts, Trigger: newTrigger(),
-		Build: func(context.Context, string) (NodeStages, error) {
-			return NodeStages{LLM: env.newLLM, TTS: env.newTTS}, nil
+		Build: func(context.Context, string) (StepStages, error) {
+			return StepStages{LLM: env.newLLM, TTS: env.newTTS}, nil
 		},
 		Greet: func(string) error { env.greeted.Add(1); return nil },
-		OnEvent: func(e HandoffEvent) {
+		OnEvent: func(e RouteEvent) {
 			env.mu.Lock()
 			env.seen = append(env.seen, e)
 			env.mu.Unlock()
@@ -91,7 +91,7 @@ func newHandoffEnv(t *testing.T, mod func(*HandoffConfig)) (*Handoff, *handoffEn
 	if err := env.tts.Attach(env.sess, 2); err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHandoff(cfg)
+	h, err := NewRouter(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-func (e *handoffEnv) waitEvent(t *testing.T, kind HandoffEventKind) {
+func (e *routerEnv) waitEvent(t *testing.T, kind RouteEventKind) {
 	t.Helper()
 	eventually(t, "event "+string(kind), func() bool {
 		e.mu.Lock()
@@ -123,7 +123,7 @@ func (e *handoffEnv) waitEvent(t *testing.T, kind HandoffEventKind) {
 	})
 }
 
-func (e *handoffEnv) waitReady(t *testing.T, h *Handoff) {
+func (e *routerEnv) waitReady(t *testing.T, h *Router) {
 	t.Helper()
 	eventually(t, "built target", func() bool {
 		h.mu.Lock()
@@ -132,8 +132,8 @@ func (e *handoffEnv) waitReady(t *testing.T, h *Handoff) {
 	})
 }
 
-func TestHandoffFlipsAtIdleAndClosesOldNode(t *testing.T) {
-	h, env := newHandoffEnv(t, nil)
+func TestRouterFlipsAtIdleAndClosesOldNode(t *testing.T) {
+	h, env := newRouterEnv(t, nil)
 	if err := h.Commit("sales"); err != nil {
 		t.Fatal(err)
 	}
@@ -147,13 +147,13 @@ func TestHandoffFlipsAtIdleAndClosesOldNode(t *testing.T) {
 		t.Fatalf("greet=%d gen=%d", env.greeted.Load(), env.sess.gens.Load())
 	}
 	if env.newLLM.closed.Load() != 0 || env.newTTS.closed.Load() != 0 {
-		t.Fatal("the active node must stay open")
+		t.Fatal("the active step must stay open")
 	}
-	eventually(t, "trigger started the new node's turn", func() bool { return env.sess.reenters.Load() == 1 })
+	eventually(t, "trigger started the new step's turn", func() bool { return env.sess.reenters.Load() == 1 })
 }
 
-func TestHandoffUserTurnFlipsOnce(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) { c.Trigger = busy(newTrigger()) })
+func TestRouterUserTurnFlipsOnce(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) { c.Trigger = busy(newTrigger()) })
 	_ = h.Commit("sales")
 	env.waitReady(t, h) // built, not flipped: the trigger never goes idle
 	if h.Active() != "front" {
@@ -161,7 +161,7 @@ func TestHandoffUserTurnFlipsOnce(t *testing.T) {
 	}
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t1"}, Downstream, nopEmitter{})
 	if h.Active() != "sales" || env.newLLM.frames.Load() != 1 || env.oldLLM.frames.Load() != 0 {
-		t.Fatalf("the caller's turn must go to the new node: active=%s new=%d old=%d", h.Active(), env.newLLM.frames.Load(), env.oldLLM.frames.Load())
+		t.Fatalf("the caller's turn must go to the new step: active=%s new=%d old=%d", h.Active(), env.newLLM.frames.Load(), env.oldLLM.frames.Load())
 	}
 	if env.greeted.Load() != 0 {
 		t.Fatal("no greeting when the caller spoke first")
@@ -170,66 +170,66 @@ func TestHandoffUserTurnFlipsOnce(t *testing.T) {
 	_ = env.trig.ProcessFrame(context.Background(), &UserStoppedSpeakingFrame{}, Downstream, nopEmitter{})
 	eventually(t, "trigger dropped the stale result", func() bool { return env.trig.DroppedCount.Load() == 1 })
 	if env.sess.reenters.Load() != 0 {
-		t.Fatal("a flipped handoff must not start an extra model turn")
+		t.Fatal("a flipped route must not start an extra model turn")
 	}
 }
 
-func TestHandoffAsyncMessageDoesNotFlip(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) { c.Trigger = busy(newTrigger()) })
+func TestRouterAsyncMessageDoesNotFlip(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) { c.Trigger = busy(newTrigger()) })
 	_ = h.Commit("sales")
 	env.waitReady(t, h)
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "async-1"}, Downstream, nopEmitter{})
 	if h.Active() != "front" {
-		t.Fatal("an async-tool trigger turn must not flip the handoff")
+		t.Fatal("an async-tool trigger turn must not flip the route")
 	}
 }
 
-func TestHandoffBuildFailureKeepsOldNode(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
-		c.Build = func(context.Context, string) (NodeStages, error) { return NodeStages{}, errors.New("provider down") }
+func TestRouterBuildFailureKeepsOldNode(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) {
+		c.Build = func(context.Context, string) (StepStages, error) { return StepStages{}, errors.New("provider down") }
 	})
 	_ = h.Commit("sales")
-	env.waitEvent(t, HandoffFailed)
+	env.waitEvent(t, RouteFailed)
 	if h.Active() != "front" || env.oldLLM.closed.Load() != 0 || env.oldTTS.closed.Load() != 0 {
-		t.Fatal("a failed build must leave the old node active and open")
+		t.Fatal("a failed build must leave the old step active and open")
 	}
 	if err := h.Commit("sales"); err != nil { // pending cleared: a later transfer may try again
 		t.Fatalf("commit after failure: %v", err)
 	}
 }
 
-func TestHandoffPendingAndLimit(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) { c.Max = 1; c.Trigger = busy(newTrigger()) })
+func TestRouterPendingAndLimit(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) { c.Max = 1; c.Trigger = busy(newTrigger()) })
 	_ = h.Commit("sales")
-	if err := h.Commit("support"); !errors.Is(err, ErrHandoffPending) {
-		t.Fatalf("want ErrHandoffPending, got %v", err)
+	if err := h.Commit("support"); !errors.Is(err, ErrRoutePending) {
+		t.Fatalf("want ErrRoutePending, got %v", err)
 	}
 	env.waitReady(t, h)
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t1"}, Downstream, nopEmitter{})
-	if err := h.Commit("front"); !errors.Is(err, ErrHandoffLimit) || h.CanTransfer() {
+	if err := h.Commit("front"); !errors.Is(err, ErrRouteLimit) || h.CanTransfer() {
 		t.Fatalf("limit not enforced: %v can=%v", err, h.CanTransfer())
 	}
 }
 
-func TestHandoffBuildTimeout(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
+func TestRouterBuildTimeout(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) {
 		c.BuildTimeout = 20 * time.Millisecond
-		c.Build = func(ctx context.Context, _ string) (NodeStages, error) {
+		c.Build = func(ctx context.Context, _ string) (StepStages, error) {
 			<-ctx.Done() // a hung provider: only the timeout ends this
-			return NodeStages{}, ctx.Err()
+			return StepStages{}, ctx.Err()
 		}
 	})
 	before := runtime.NumGoroutine()
 	_ = h.Commit("sales")
-	env.waitEvent(t, HandoffFailed)
+	env.waitEvent(t, RouteFailed)
 	time.Sleep(50 * time.Millisecond)
 	if h.Active() != "front" || runtime.NumGoroutine() > before+1 {
 		t.Fatalf("active=%s goroutines before=%d after=%d", h.Active(), before, runtime.NumGoroutine())
 	}
 }
 
-func TestNewHandoffRequiresParts(t *testing.T) {
-	if _, err := NewHandoff(HandoffConfig{}); err == nil {
+func TestNewRouterRequiresParts(t *testing.T) {
+	if _, err := NewRouter(RouterConfig{}); err == nil {
 		t.Fatal("an empty config must be rejected")
 	}
 }
@@ -238,60 +238,60 @@ type failAttach struct{ probeStage }
 
 func (*failAttach) Attach(SessionController, int) error { return errors.New("attach failed") }
 
-func TestHandoffPartialFlipStillClosesReplacedTTS(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
-		c.Build = func(context.Context, string) (NodeStages, error) {
-			return NodeStages{LLM: &failAttach{}, TTS: &probeStage{}}, nil
+func TestRouterPartialFlipStillClosesReplacedTTS(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) {
+		c.Build = func(context.Context, string) (StepStages, error) {
+			return StepStages{LLM: &failAttach{}, TTS: &probeStage{}}, nil
 		}
 	})
 	_ = h.Commit("sales")
-	env.waitEvent(t, HandoffFailed)
+	env.waitEvent(t, RouteFailed)
 	eventually(t, "replaced tts closed", func() bool { return env.oldTTS.closed.Load() == 1 })
 	if h.Active() != "front" || env.oldLLM.closed.Load() != 0 {
 		t.Fatalf("the old model stays active and open: active=%s llmClosed=%d", h.Active(), env.oldLLM.closed.Load())
 	}
 }
 
-func TestHandoffCloseReleasesBuiltButUnactivatedNode(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) { c.Trigger = busy(newTrigger()) })
+func TestRouterCloseReleasesBuiltButUnactivatedNode(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) { c.Trigger = busy(newTrigger()) })
 	_ = h.Commit("sales")
 	env.waitReady(t, h) // built, parked: the caller is mid-speech, so no flip yet
 	if err := env.llm.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if env.newLLM.closed.Load() != 1 || env.newTTS.closed.Load() != 1 {
-		t.Fatalf("a parked node must be closed with the session: llm=%d tts=%d", env.newLLM.closed.Load(), env.newTTS.closed.Load())
+		t.Fatalf("a parked step must be closed with the session: llm=%d tts=%d", env.newLLM.closed.Load(), env.newTTS.closed.Load())
 	}
 }
 
-func TestHandoffBuildFinishingAfterCloseClosesItsStages(t *testing.T) {
+func TestRouterBuildFinishingAfterCloseClosesItsStages(t *testing.T) {
 	release := make(chan struct{})
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
-		c.Build = func(context.Context, string) (NodeStages, error) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) {
+		c.Build = func(context.Context, string) (StepStages, error) {
 			<-release
-			return NodeStages{LLM: nil, TTS: nil}, nil // replaced below
+			return StepStages{LLM: nil, TTS: nil}, nil // replaced below
 		}
 	})
-	late := NodeStages{LLM: &probeStage{}, TTS: &probeStage{}}
-	h.cfg.Build = func(context.Context, string) (NodeStages, error) { <-release; return late, nil }
+	late := StepStages{LLM: &probeStage{}, TTS: &probeStage{}}
+	h.cfg.Build = func(context.Context, string) (StepStages, error) { <-release; return late, nil }
 	_ = h.Commit("sales")
-	_ = env.llm.Close() // the call ends while the node is still being built
+	_ = env.llm.Close() // the call ends while the step is still being built
 	close(release)
 	eventually(t, "late stages closed", func() bool {
 		return late.LLM.(*probeStage).closed.Load() == 1 && late.TTS.(*probeStage).closed.Load() == 1
 	})
 	if h.Active() != "front" {
-		t.Fatal("a closed handoff must not flip")
+		t.Fatal("a closed route must not flip")
 	}
 }
 
-func TestHandoffFailedFlipClosesEveryStageItDidNotInstall(t *testing.T) {
+func TestRouterFailedFlipClosesEveryStageItDidNotInstall(t *testing.T) {
 	llm, tts := &failAttach{}, &probeStage{}
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
-		c.Build = func(context.Context, string) (NodeStages, error) { return NodeStages{LLM: llm, TTS: tts}, nil }
+	h, env := newRouterEnv(t, func(c *RouterConfig) {
+		c.Build = func(context.Context, string) (StepStages, error) { return StepStages{LLM: llm, TTS: tts}, nil }
 	})
 	_ = h.Commit("sales")
-	env.waitEvent(t, HandoffFailed)
+	env.waitEvent(t, RouteFailed)
 	eventually(t, "uninstalled llm closed", func() bool { return llm.closed.Load() == 1 })
 	if tts.closed.Load() != 0 {
 		t.Fatal("the TTS that was installed is in use and must stay open")
@@ -299,30 +299,30 @@ func TestHandoffFailedFlipClosesEveryStageItDidNotInstall(t *testing.T) {
 
 	// TTS cannot be attached: neither new stage is installed, both must be closed.
 	llm2, tts2 := &probeStage{}, &failAttach{}
-	h2, env2 := newHandoffEnv(t, func(c *HandoffConfig) {
-		c.Build = func(context.Context, string) (NodeStages, error) { return NodeStages{LLM: llm2, TTS: tts2}, nil }
+	h2, env2 := newRouterEnv(t, func(c *RouterConfig) {
+		c.Build = func(context.Context, string) (StepStages, error) { return StepStages{LLM: llm2, TTS: tts2}, nil }
 	})
 	_ = h2.Commit("sales")
-	env2.waitEvent(t, HandoffFailed)
+	env2.waitEvent(t, RouteFailed)
 	eventually(t, "both uninstalled stages closed", func() bool { return llm2.closed.Load() == 1 && tts2.closed.Load() == 1 })
 }
 
-func TestHandoffUserTurnFlipKeepsTheCallersGeneration(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) { c.Trigger = busy(newTrigger()) })
+func TestRouterUserTurnFlipKeepsTheCallersGeneration(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) { c.Trigger = busy(newTrigger()) })
 	_ = h.Commit("sales")
 	env.waitReady(t, h)
 	_ = env.llm.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t1", Gen: 0}, Downstream, nopEmitter{})
 	if env.sess.gens.Load() != 0 {
-		t.Fatalf("the caller's committed turn already fenced the old node; bumping again makes the new node's reply stale (gen=%d)", env.sess.gens.Load())
+		t.Fatalf("the caller's committed turn already fenced the old step; bumping again makes the new step's reply stale (gen=%d)", env.sess.gens.Load())
 	}
 }
 
 // A step that says its own fixed line needs no model turn: the flip still runs Greet, but the trigger
 // starts no turn for it.
-func TestHandoffSpeakingNodeFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T) {
-	h, env := newHandoffEnv(t, func(c *HandoffConfig) {
+func TestRouterSpeakingNodeFlipsAndGreetsWithoutStartingAModelTurn(t *testing.T) {
+	h, env := newRouterEnv(t, func(c *RouterConfig) {
 		build := c.Build
-		c.Build = func(ctx context.Context, id string) (NodeStages, error) {
+		c.Build = func(ctx context.Context, id string) (StepStages, error) {
 			ns, err := build(ctx, id)
 			ns.Speaks = id == "sales"
 			return ns, err

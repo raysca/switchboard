@@ -216,7 +216,7 @@ var scenarios = []scenario{
 			_, _, why := failoverPeer(p)
 			return why
 		}, run: s13},
-	{id: "S14", title: "agent graph: handoff from Front to Sales, then Sales answers", class: classFlow,
+	{id: "S14", title: "agent graph: route from Front to Sales, then Sales answers", class: classFlow,
 		// text turns only. Reply 1: the transfer round and Front's farewell (2 LLM requests), then Sales'
 		// greeting (1); turn 2 is one Sales reply. Three short replies, four LLM requests in all.
 		shape: func(*opts) shape { return shape{turns: 3, extraLLM: 1, short: true, noSTT: true} },
@@ -802,17 +802,17 @@ func s14(x *sctx, r *Result) {
 		return
 	}
 	reached := c.wait(45*time.Second, func() bool { return strings.Contains(said(mark), flowMarker) })
-	r.check("handoff reached the sales agent", reached, "")
+	r.check("route reached the sales agent", reached, "")
 	r.m("reply", truncate(c.texts(mark, "bot-llm-text", false), 90))
 	if reached {
-		r.m("handoff_ms", msv(time.Since(mark)))
+		r.m("route_ms", msv(time.Since(mark)))
 	}
 	c.wait(25*time.Second, func() bool { return c.has(mark, "bot-stopped-speaking") })
 	routes := 0
 	for _, e := range x.srv.timelineEvents(c.n) {
 		if e.Type == "route" {
 			routes++
-			r.m("handoff", e.Details)
+			r.m("route", e.Details)
 		}
 	}
 	r.check("server recorded the route", routes == 1, fmt.Sprint(routes))

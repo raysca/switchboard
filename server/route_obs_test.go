@@ -18,15 +18,15 @@ func TestTimelineStampsActiveStep(t *testing.T) {
 	tl.Record(TimelineEvent{Type: EventTTSAudio, Step: "explicit"})
 	ev := tl.Events()
 	if ev[0].Step != "" || ev[1].Step != "sales" || ev[2].Step != "explicit" {
-		t.Fatalf("nodes = %q %q %q", ev[0].Step, ev[1].Step, ev[2].Step)
+		t.Fatalf("steps = %q %q %q", ev[0].Step, ev[1].Step, ev[2].Step)
 	}
 }
 
 func TestRouteMetricsCountAndTime(t *testing.T) {
 	var m routeMetrics
-	m.observe(core.HandoffEvent{Kind: core.HandoffActive, Elapsed: 400 * time.Millisecond})
-	m.observe(core.HandoffEvent{Kind: core.HandoffFailed, Err: errors.New("x")})
-	m.observe(core.HandoffEvent{Kind: core.HandoffPreparing}) // not counted
+	m.observe(core.RouteEvent{Kind: core.RouteActive, Elapsed: 400 * time.Millisecond})
+	m.observe(core.RouteEvent{Kind: core.RouteFailed, Err: errors.New("x")})
+	m.observe(core.RouteEvent{Kind: core.RoutePreparing}) // not counted
 	var b bytes.Buffer
 	m.write(&b)
 	out := b.String()
@@ -47,9 +47,9 @@ func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 	}
 	tl := NewSessionTimeline(5, 50, time.Minute)
 	on := s.onRoute(tl, pin.ID)
-	on(core.HandoffEvent{Kind: core.HandoffPreparing, From: "front", To: "sales"})
-	on(core.HandoffEvent{Kind: core.HandoffActive, From: "front", To: "sales", Elapsed: 300 * time.Millisecond})
-	on(core.HandoffEvent{Kind: core.HandoffFailed, From: "sales", To: "front", Err: errors.New("provider down")})
+	on(core.RouteEvent{Kind: core.RoutePreparing, From: "front", To: "sales"})
+	on(core.RouteEvent{Kind: core.RouteActive, From: "front", To: "sales", Elapsed: 300 * time.Millisecond})
+	on(core.RouteEvent{Kind: core.RouteFailed, From: "sales", To: "front", Err: errors.New("provider down")})
 
 	got := map[TimelineEventType]TimelineEvent{}
 	for _, e := range tl.Events() {
@@ -59,7 +59,7 @@ func TestOnRouteRecordsTimelineAndTraceSpans(t *testing.T) {
 		t.Fatalf("timeline = %+v", got)
 	}
 	if got[EventRouteFailed].Error == "" {
-		t.Fatal("a failed handoff must carry its error")
+		t.Fatal("a failed route must carry its error")
 	}
 	names := map[string]bool{}
 	attrs := map[string]string{} // span name -> attributes JSON

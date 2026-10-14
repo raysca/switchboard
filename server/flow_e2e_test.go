@@ -375,7 +375,7 @@ func TestFlowE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	c.say("hello")
 	c.waitReplies("[FRONT", 1)
 	if probe.builds("SALES") != 0 || probe.builds("salesvoice") != 0 {
-		t.Fatal("only the entry node may exist before the handoff")
+		t.Fatal("only the entry step may exist before the route")
 	}
 
 	c.say("please transfer to sales")
@@ -384,16 +384,16 @@ func TestFlowE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 	if probe.builds("SALES") != 1 || probe.builds("salesvoice") != 1 {
 		t.Fatalf("sales must be built exactly once: llm=%d tts=%d", probe.builds("SALES"), probe.builds("salesvoice"))
 	}
-	eventually(t, "front node closed", func() bool { return probe.closes("FRONT") == 1 && probe.closes("frontvoice") == 1 })
+	eventually(t, "front step closed", func() bool { return probe.closes("FRONT") == 1 && probe.closes("frontvoice") == 1 })
 	if probe.closes("SALES") != 0 || probe.closes("salesvoice") != 0 {
-		t.Fatal("the active node must stay open")
+		t.Fatal("the active step must stay open")
 	}
 
 	front := c.replies("[FRONT")
 	c.say("what do you sell")
 	c.waitReplies("[SALES", 2)
 	if c.replies("[FRONT") != front {
-		t.Fatal("the front node answered after the handoff")
+		t.Fatal("the front step answered after the route")
 	}
 
 	if !r.has(EventRoute, "front->sales") || !r.has(EventStepActive, "sales") || !r.has(EventStepClosed, "front") {
@@ -406,15 +406,15 @@ func TestFlowE2ERouteMovesTheCallAndClosesTheLeftStep(t *testing.T) {
 		}
 	}
 	if r.s.metrics.route.total.Load() != 1 || r.s.metrics.route.failures.Load() != 0 {
-		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
+		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
 	}
-	eventually(t, "handoff trace spans", func() bool {
+	eventually(t, "route trace spans", func() bool {
 		n := r.spanNames(c.sessionID)
 		return n["route.preparing"] && n["route.active"]
 	})
 
 	_ = c.conn.Close(websocket.StatusNormalClosure, "bye")
-	eventually(t, "sales node closed with the call", func() bool { return probe.closes("SALES") == 1 && probe.closes("salesvoice") == 1 })
+	eventually(t, "sales step closed with the call", func() bool { return probe.closes("SALES") == 1 && probe.closes("salesvoice") == 1 })
 }
 
 // The second step cannot be built: the caller stays with the first.
@@ -429,7 +429,7 @@ func TestFlowE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 	c.waitReplies("Connecting you.", 1)
 	eventually(t, "route_failed", func() bool { return r.has(EventRouteFailed, "sales") })
 	if r.s.metrics.route.failures.Load() != 1 || r.s.metrics.route.total.Load() != 0 {
-		t.Fatalf("metrics: handoffs=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
+		t.Fatalf("metrics: routes=%d failures=%d", r.s.metrics.route.total.Load(), r.s.metrics.route.failures.Load())
 	}
 	for _, e := range r.timeline() {
 		if e.Type == EventRouteFailed && e.Error == "" {
@@ -440,13 +440,13 @@ func TestFlowE2EFailedStepBuildKeepsTheCallGoing(t *testing.T) {
 	c.say("are you still there")
 	c.waitReplies("[FRONT", 2)
 	if c.replies("[SALES") != 0 || r.activeSessions() != 1 {
-		t.Fatal("the call must stay with the front node")
+		t.Fatal("the call must stay with the front step")
 	}
 	if probe.closes("FRONT") != 0 || probe.closes("frontvoice") != 0 {
-		t.Fatal("the front node must stay open")
+		t.Fatal("the front step must stay open")
 	}
 	if probe.closes("SALES") != probe.builds("SALES") {
-		t.Fatalf("a node whose build failed half-way must not leak its LLM: built=%d closed=%d", probe.builds("SALES"), probe.closes("SALES"))
+		t.Fatalf("a step whose build failed half-way must not leak its LLM: built=%d closed=%d", probe.builds("SALES"), probe.closes("SALES"))
 	}
 }
 
@@ -475,7 +475,7 @@ func TestFlowE2ECallerSpeaksWhileTheStepIsBeingPrepared(t *testing.T) {
 	c.waitReplies("[SALES", 1)
 	eventually(t, "front closed after the flip", func() bool { return probe.closes("FRONT") == 1 })
 	if r.s.metrics.route.total.Load() != 1 {
-		t.Fatal("exactly one handoff")
+		t.Fatal("exactly one route")
 	}
 }
 
@@ -546,15 +546,15 @@ func TestFlowE2EFlatFlowHasNoRoutes(t *testing.T) {
 	for _, e := range r.timeline() {
 		switch e.Type {
 		case EventRoute, EventStepActive, EventStepPreparing, EventRouteFailed:
-			t.Fatalf("a flat agent produced a handoff event: %+v", e)
+			t.Fatalf("a flat agent produced a route event: %+v", e)
 		}
 	}
 	if r.s.metrics.route.total.Load() != 0 {
-		t.Fatal("no handoff metrics for a flat agent")
+		t.Fatal("no route metrics for a flat agent")
 	}
 }
 
-// ---- Handoff cue, end to end -------------------------------------------------
+// ---- Router cue, end to end -------------------------------------------------
 // A real server with audio.cues configured, a routed flow with a route_cue and a
 // WebSocket client that decodes the bot's audio frames: the cue is a tone on the
 // wire (the fake TTS sends silence), so its start, its length and its stop are
@@ -618,7 +618,7 @@ func TestFlowE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
 	c.waitReplies("[FRONT", 1)
 	time.Sleep(300 * time.Millisecond)
 	if c.cueFrames() != 0 || r.has(EventCueStart, "") {
-		t.Fatal("a cue must not play outside a handoff")
+		t.Fatal("a cue must not play outside a route")
 	}
 
 	c.say("transfer to sales")
@@ -664,7 +664,7 @@ func TestFlowE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
 	}
 }
 
-// A handoff quicker than after_ms stays silent: nothing on the wire, no cue event.
+// A route quicker than after_ms stays silent: nothing on the wire, no cue event.
 func TestFlowE2EQuickRoutePlaysNoCue(t *testing.T) {
 	probe := newProbe()
 	r := newFlowRigE2E(t, probe, withCue(t))
@@ -675,7 +675,7 @@ func TestFlowE2EQuickRoutePlaysNoCue(t *testing.T) {
 	c.waitReplies("[SALES", 1)
 	time.Sleep(500 * time.Millisecond)
 	if c.cueFrames() != 0 || r.has(EventCueStart, "") {
-		t.Fatalf("a quick handoff must be silent (cue frames=%d)", c.cueFrames())
+		t.Fatalf("a quick route must be silent (cue frames=%d)", c.cueFrames())
 	}
 }
 
@@ -694,13 +694,13 @@ func TestFlowE2ECueStopsWhenTheRouteFails(t *testing.T) {
 	eventually(t, "cue on the wire", func() bool { return c.cueFrames() >= 3 })
 
 	close(probe.gate) // the build now fails
-	eventually(t, "handoff failed", func() bool { return r.has(EventRouteFailed, "sales") })
-	eventually(t, "cue stopped because the handoff failed", func() bool { return r.cueStopReason() == "failed" })
+	eventually(t, "route failed", func() bool { return r.has(EventRouteFailed, "sales") })
+	eventually(t, "cue stopped because the route failed", func() bool { return r.cueStopReason() == "failed" })
 	time.Sleep(400 * time.Millisecond)
 	stopped := c.cueFrames()
 	time.Sleep(300 * time.Millisecond)
 	if c.cueFrames() != stopped {
-		t.Fatal("the cue kept playing after the handoff failed")
+		t.Fatal("the cue kept playing after the route failed")
 	}
 
 	c.say("are you still there")

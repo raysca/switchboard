@@ -58,11 +58,11 @@ func waitCue(t *testing.T, what string, ok func() bool) {
 	}
 }
 
-func prep() core.HandoffEvent {
-	return core.HandoffEvent{Kind: core.HandoffPreparing, From: "a", To: "b"}
+func prep() core.RouteEvent {
+	return core.RouteEvent{Kind: core.RoutePreparing, From: "a", To: "b"}
 }
-func active() core.HandoffEvent {
-	return core.HandoffEvent{Kind: core.HandoffActive, From: "a", To: "b"}
+func active() core.RouteEvent {
+	return core.RouteEvent{Kind: core.RouteActive, From: "a", To: "b"}
 }
 
 func TestCueFastRoutePlaysNothing(t *testing.T) {
@@ -72,7 +72,7 @@ func TestCueFastRoutePlaysNothing(t *testing.T) {
 	c.botAudio() // the new step answers before after_ms
 	time.Sleep(60 * time.Millisecond)
 	if s, _ := p.counts(); s != 0 {
-		t.Fatal("a handoff faster than after_ms must stay silent")
+		t.Fatal("a route faster than after_ms must stay silent")
 	}
 }
 
@@ -83,7 +83,7 @@ func TestCueSlowRoutePlaysUntilFirstAudio(t *testing.T) {
 	waitCue(t, "cue start", func() bool { s, _ := p.counts(); return s == 1 })
 	c.botAudio() // farewell tail before the flip: still not the new step
 	if _, st := p.counts(); st != 0 {
-		t.Fatal("audio before the handoff is active must not stop the cue")
+		t.Fatal("audio before the route is active must not stop the cue")
 	}
 	c.onRoute(active())
 	c.botAudio()
@@ -102,7 +102,7 @@ func TestCueSlowRoutePlaysUntilFirstAudio(t *testing.T) {
 func TestCueStopsOnEveryExit(t *testing.T) {
 	cases := map[string]func(*cueController){
 		"barge_in": func(c *cueController) { c.userSpeech(true) },
-		"failed":   func(c *cueController) { c.onRoute(core.HandoffEvent{Kind: core.HandoffFailed}) },
+		"failed":   func(c *cueController) { c.onRoute(core.RouteEvent{Kind: core.RouteFailed}) },
 		"cap":      func(c *cueController) { time.Sleep(260 * time.Millisecond) },
 	}
 	for reason, trigger := range cases {
@@ -119,7 +119,7 @@ func TestCueStopsOnEveryExit(t *testing.T) {
 			if reason != "barge_in" {
 				time.Sleep(60 * time.Millisecond)
 				if s, _ := p.counts(); s != 1 {
-					t.Fatalf("a finished handoff must not restart the cue (starts=%d)", s)
+					t.Fatalf("a finished route must not restart the cue (starts=%d)", s)
 				}
 			}
 		})

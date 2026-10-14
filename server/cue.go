@@ -21,12 +21,12 @@ const (
 	defaultCueAfter = 300 * time.Millisecond
 	cueFade         = 30 * time.Millisecond
 	cueHardCap      = 10 * time.Second
-	cueMaxWait      = 90 * time.Second // outer bound on one handoff's wait for the new step's audio
+	cueMaxWait      = 90 * time.Second // outer bound on one route's wait for the new step's audio
 )
 
 // cueController plays the route cue over the gap between the old step's
 // last audio and the new step's first audio. It starts the cue only if that
-// gap outlasts `after`, so quick handoffs stay silent, and stops it (with a
+// gap outlasts `after`, so quick routes stay silent, and stops it (with a
 // short fade) on the new step's first audio, on caller speech, on failure, or
 // at a hard cap. All methods are safe on a nil receiver.
 type cueController struct {
@@ -36,8 +36,8 @@ type cueController struct {
 	cap    time.Duration
 	record func(TimelineEventType, string)
 
-	waiting   atomic.Bool  // from preparing until the new step speaks (or the handoff fails)
-	activated atomic.Bool  // the handoff is active: the next bot audio is the new step's
+	waiting   atomic.Bool  // from preparing until the new step speaks (or the route fails)
+	activated atomic.Bool  // the route is active: the next bot audio is the new step's
 	speaking  atomic.Bool  // the caller is speaking
 	activity  atomic.Int64 // last bot audio or caller speech, monotonic offset from cueBase
 
@@ -73,7 +73,7 @@ func (c *cueController) userSpeech(speaking bool) {
 	if c == nil {
 		return
 	}
-	c.speaking.Store(speaking) // tracked always: a handoff may begin mid-speech
+	c.speaking.Store(speaking) // tracked always: a route may begin mid-speech
 	if !c.waiting.Load() {
 		return
 	}
@@ -83,12 +83,12 @@ func (c *cueController) userSpeech(speaking bool) {
 	}
 }
 
-func (c *cueController) onRoute(e core.HandoffEvent) {
+func (c *cueController) onRoute(e core.RouteEvent) {
 	if c == nil {
 		return
 	}
 	switch e.Kind {
-	case core.HandoffPreparing:
+	case core.RoutePreparing:
 		c.mu.Lock()
 		c.began = time.Now()
 		c.activated.Store(false)
@@ -96,9 +96,9 @@ func (c *cueController) onRoute(e core.HandoffEvent) {
 		c.stamp()
 		c.armLocked(c.after)
 		c.mu.Unlock()
-	case core.HandoffActive:
+	case core.RouteActive:
 		c.activated.Store(true)
-	case core.HandoffFailed:
+	case core.RouteFailed:
 		c.finish("failed", true)
 	}
 }
@@ -137,7 +137,7 @@ func (c *cueController) check() {
 }
 
 // finish stops a playing cue; end also closes the waiting window so the cue
-// is not started again for this handoff.
+// is not started again for this route.
 func (c *cueController) finish(reason string, end bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -158,7 +158,7 @@ func (c *cueController) finish(reason string, end bool) {
 	c.player.Stop(cueFade)
 	c.record(EventCueStop, reason)
 	if !end && c.waiting.Load() {
-		c.armLocked(c.after) // the caller stopped talking mid-handoff: the gap may still be open
+		c.armLocked(c.after) // the caller stopped talking mid-route: the gap may still be open
 	}
 }
 

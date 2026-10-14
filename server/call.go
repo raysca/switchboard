@@ -165,7 +165,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	}
 	maxMessages, maxTokens := cfg.Context.Limits()
 	maxParallel := s.maxParallel(cfg)
-	// A one-step flow is a plain flow: every captured tool, no handoffs.
+	// A one-step flow is a plain flow: every captured tool, no routes.
 	tools, exec := rs.Definitions, rs.Executor
 	var graph *CallFlow
 	if len(g.Steps) > 1 {

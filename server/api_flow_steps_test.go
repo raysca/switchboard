@@ -57,7 +57,7 @@ type flowResp struct {
 func TestFlowsAPIAcceptsFlowAndStillAcceptsFlat(t *testing.T) {
 	s := flowAPIServer(t)
 
-	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flowBody("two node", "sales"))
+	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flowBody("two step", "sales"))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("graph create: %d %s", w.Code, w.Body)
 	}
@@ -83,7 +83,7 @@ func TestFlowsAPIRejectsInvalidFlow(t *testing.T) {
 	s := flowAPIServer(t)
 	w := apiRequest(s, http.MethodPost, "/api/v1/flows", flowMgmtKey, flowBody("bad", "nowhere"))
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("edge to a missing node: %d %s", w.Code, w.Body)
+		t.Fatalf("route to a missing step: %d %s", w.Code, w.Body)
 	}
 }
 

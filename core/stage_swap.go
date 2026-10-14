@@ -15,7 +15,7 @@ var (
 )
 
 // StageSwap is one pipeline stage whose implementation can be replaced while
-// the call runs (a handoff swaps the LLM and the TTS). Frames go to the
+// the call runs (a route swaps the LLM and the TTS). Frames go to the
 // current inner stage; a replaced stage is retired once its in-flight frames
 // finish, or after a timeout.
 type StageSwap struct {
@@ -126,7 +126,7 @@ func (s *StageSwap) Replace(next Processor) (func(time.Duration) error, error) {
 }
 
 // AddCloser registers cleanup that runs when the stage closes: whoever parks
-// a not-yet-installed replacement (Handoff) releases it with the session.
+// a not-yet-installed replacement (Router) releases it with the session.
 func (s *StageSwap) AddCloser(fn func()) {
 	s.mu.Lock()
 	s.closers = append(s.closers, fn)

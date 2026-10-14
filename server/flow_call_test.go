@@ -51,7 +51,7 @@ func TestStepExecutorRejectsForeignTool(t *testing.T) {
 	ex := stepExecutor(inner, map[string]bool{"mcp_ok": true}, nil, nil, nil)
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "mcp_other"})
 	if ran || res.Status != core.ToolFailed {
-		t.Fatalf("a tool outside the node's list must not run: ran=%v status=%s", ran, res.Status)
+		t.Fatalf("a tool outside the step's list must not run: ran=%v status=%s", ran, res.Status)
 	}
 	res, _ = ex.Execute(context.Background(), core.ToolCall{ID: "2", Name: "mcp_ok"})
 	if !ran || res.Status != core.ToolSucceeded {
@@ -69,7 +69,7 @@ func TestStepExecutorTransferCommits(t *testing.T) {
 }
 
 func TestStepExecutorTransferRefused(t *testing.T) {
-	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(string, string) error { return core.ErrHandoffPending }, nil)
+	ex := stepExecutor(nil, nil, map[string]string{"transfer_to_sales": "sales"}, func(string, string) error { return core.ErrRoutePending }, nil)
 	res, _ := ex.Execute(context.Background(), core.ToolCall{ID: "1", Name: "transfer_to_sales"})
 	if res.Status != core.ToolFailed {
 		t.Fatalf("a refused transfer must tell the model it failed, got %s", res.Status)
@@ -83,7 +83,7 @@ func TestStepDefinitionsKeepsOnlyListedTools(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 	if len(stepDefinitions(all, nil)) != 0 {
-		t.Fatal("a node that lists no tools exposes none")
+		t.Fatal("a step that lists no tools exposes none")
 	}
 }
 
@@ -216,7 +216,7 @@ func TestCallFlowNoteIsConsumedOnce(t *testing.T) {
 // note of the one that went through; a failed first transfer leaves no note.
 func TestCommitWithNoteRestoresOnFailure(t *testing.T) {
 	cg := &CallFlow{}
-	fail := errors.New("handoff pending")
+	fail := errors.New("route pending")
 	cg.Commit = func(string) error { return fail }
 	if err := cg.commitWithNote("b", "N0"); !errors.Is(err, fail) || cg.takeNote() != "" {
 		t.Fatal("a failed first commit must leave no note")

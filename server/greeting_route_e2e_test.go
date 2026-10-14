@@ -94,7 +94,7 @@ func TestAGreetingOnAStepThatCannotBeBuiltIsNeverSpokenAndTheCallGoesOn(t *testi
 	c.waitReplies("[FRONT", 1) // the caller stayed with the front step
 }
 
-func TestADraftCallPlaysTheDraftsHandoffGreeting(t *testing.T) {
+func TestADraftCallPlaysTheDraftsRouteGreeting(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe())
 	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Draft routed", Config: json.RawMessage(routedGreetingConfig("", "", "salesvoice"))})
 	if err != nil {
@@ -110,7 +110,7 @@ func TestADraftCallPlaysTheDraftsHandoffGreeting(t *testing.T) {
 	c.waitReplies(salesGreeting, 1)
 }
 
-// greetStep is the handoff greeting's decision, tested without a call.
+// greetStep is the route greeting's decision, tested without a call.
 type greetLog struct {
 	messages []string
 	spoken   []string
@@ -146,7 +146,7 @@ func TestGreetStepWithoutANoteAddsNothingToTheHistoryBeforeAFixedGreeting(t *tes
 }
 
 func TestGreetStepFallsBackToTheModelsGreetingWithoutAGreetingOrForTheStartStep(t *testing.T) {
-	for name, tc := range map[string]struct{ node, greeting string }{
+	for name, tc := range map[string]struct{ step, greeting string }{
 		"no greeting":     {"sales", ""},
 		"the start step":  {"front", "Opening line."},
 		"blank greeting?": {"sales", ""},
@@ -154,7 +154,7 @@ func TestGreetStepFallsBackToTheModelsGreetingWithoutAGreetingOrForTheStartStep(
 		cf := &CallFlow{Start: "front"}
 		cf.setNote("a note")
 		var l greetLog
-		if err := cf.greetStep(tc.node, "Sales", tc.greeting, l.add, l.speak); err != nil {
+		if err := cf.greetStep(tc.step, "Sales", tc.greeting, l.add, l.speak); err != nil {
 			t.Fatal(err)
 		}
 		if len(l.spoken) != 0 || len(l.messages) != 1 || !strings.Contains(l.messages[0], "Greet them briefly") || !strings.Contains(l.messages[0], "a note") {

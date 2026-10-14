@@ -544,7 +544,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
 	if cue != nil {
 		base := call.OnRoute
-		call.OnRoute = func(e core.HandoffEvent) { base(e); cue.onRoute(e) }
+		call.OnRoute = func(e core.RouteEvent) { base(e); cue.onRoute(e) }
 	}
 	phase := "build_pipeline"
 	var stopRecording func()

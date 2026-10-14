@@ -7,7 +7,7 @@ import (
 )
 
 // CueUnderlay mixes an optional background with a cue the server starts and
-// stops at run time (the handoff gap sound). Mix, Active and Rate run on the
+// stops at run time (the route gap sound). Mix, Active and Rate run on the
 // paced writer's goroutine; Start and Stop may be called from any goroutine.
 type CueUnderlay struct {
 	bg      Underlay

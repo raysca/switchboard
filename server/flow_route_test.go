@@ -84,7 +84,7 @@ type flowRig struct {
 	llmClosed, ttsClose map[string]*atomic.Int32 // by prompt / voice
 	mu                  sync.Mutex
 	voices              []string
-	events              []core.HandoffEvent
+	events              []core.RouteEvent
 }
 
 func (r *flowRig) closedLLM(prompt string) int32 { return r.llmClosed[prompt].Load() }
@@ -144,7 +144,7 @@ func newFlowRig(t *testing.T) *flowRig {
 		STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google", Voice: "front-voice"},
 		LLM:         StageSpec{Provider: "google", SystemPrompt: "FRONT", Tools: transferTools(g, "front"), ToolExecutor: exec},
 		MaxMessages: 20, MaxTokens: 4000, Flow: graph,
-		OnRoute: func(e core.HandoffEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
+		OnRoute: func(e core.RouteEvent) { r.mu.Lock(); r.events = append(r.events, e); r.mu.Unlock() },
 	}
 	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
 	pipe, err := reg.BuildCallPipeline(DefaultConfig(ProfileDevelopment), call, vadProc, coretest.NewTransportOutput(coretest.TransportConfig{}))
@@ -180,7 +180,7 @@ func newFlowRig(t *testing.T) *flowRig {
 func TestFlowRouteMovesTheCallToTheSalesStep(t *testing.T) {
 	r := newFlowRig(t)
 	if r.llmBuilt.Load() != 1 || r.ttsBuilt.Load() != 1 {
-		t.Fatalf("only the entry node may be built at start: llm=%d tts=%d", r.llmBuilt.Load(), r.ttsBuilt.Load())
+		t.Fatalf("only the entry step may be built at start: llm=%d tts=%d", r.llmBuilt.Load(), r.ttsBuilt.Load())
 	}
 	r.say(t, "t1", "hello")
 	r.waitSpoken(t, "FRONT here.", 1)
@@ -195,27 +195,27 @@ func TestFlowRouteMovesTheCallToTheSalesStep(t *testing.T) {
 	for end := time.Now().Add(3 * time.Second); (r.closedLLM("FRONT") != 1 || r.ttsClose["front-voice"].Load() != 1) && time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
 	}
 	if r.closedLLM("FRONT") != 1 || r.ttsClose["front-voice"].Load() != 1 {
-		t.Fatalf("the left node must be closed once: llm=%d tts=%d", r.closedLLM("FRONT"), r.ttsClose["front-voice"].Load())
+		t.Fatalf("the left step must be closed once: llm=%d tts=%d", r.closedLLM("FRONT"), r.ttsClose["front-voice"].Load())
 	}
 	if r.closedLLM("SALES") != 0 || r.ttsClose["sales-voice"].Load() != 0 {
-		t.Fatal("the active node must stay open")
+		t.Fatal("the active step must stay open")
 	}
 
 	r.say(t, "t3", "what are your prices")
 	r.waitSpoken(t, "SALES here.", 2)
 	if strings.Count(r.spoken(), "FRONT here.") != 1 {
-		t.Fatalf("the front node must not answer after the handoff: %q", r.spoken())
+		t.Fatalf("the front step must not answer after the route: %q", r.spoken())
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	kinds := map[core.HandoffEventKind]bool{}
+	kinds := map[core.RouteEventKind]bool{}
 	for _, e := range r.events {
 		kinds[e.Kind] = true
 	}
-	for _, k := range []core.HandoffEventKind{core.HandoffCommitted, core.HandoffPreparing, core.HandoffActive} {
+	for _, k := range []core.RouteEventKind{core.RouteCommitted, core.RoutePreparing, core.RouteActive} {
 		if !kinds[k] {
-			t.Fatalf("missing handoff event %q in %+v", k, r.events)
+			t.Fatalf("missing route event %q in %+v", k, r.events)
 		}
 	}
 	if len(r.voices) != 2 || r.voices[1] != "sales-voice" {

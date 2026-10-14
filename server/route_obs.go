@@ -20,11 +20,11 @@ type routeMetrics struct {
 	sumNs           atomic.Uint64
 }
 
-func (m *routeMetrics) observe(e core.HandoffEvent) {
+func (m *routeMetrics) observe(e core.RouteEvent) {
 	switch e.Kind {
-	case core.HandoffFailed:
+	case core.RouteFailed:
 		m.failures.Add(1)
-	case core.HandoffActive:
+	case core.RouteActive:
 		m.total.Add(1)
 		m.sumNs.Add(uint64(e.Elapsed))
 		b := 0
@@ -48,21 +48,21 @@ func (m *routeMetrics) write(w io.Writer) {
 	fmt.Fprintf(w, "voice_route_seconds_bucket{le=\"+Inf\"} %d\nvoice_route_seconds_sum %g\nvoice_route_seconds_count %d\n", cum, float64(m.sumNs.Load())/1e9, cum)
 }
 
-// onRoute is one call's handoff observer: timeline events, metrics, and
+// onRoute is one call's route observer: timeline events, metrics, and
 // trace spans (persisted for session replay when management is enabled).
-func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.HandoffEvent) {
-	return func(e core.HandoffEvent) {
+func (s *Server) onRoute(tl *SessionTimeline, storedSessionID string) func(core.RouteEvent) {
+	return func(e core.RouteEvent) {
 		s.metrics.route.observe(e)
 		switch e.Kind {
-		case core.HandoffPreparing:
+		case core.RoutePreparing:
 			tl.Record(TimelineEvent{Type: EventStepPreparing, Details: e.To})
-		case core.HandoffActive:
+		case core.RouteActive:
 			tl.SetStep(e.To)
 			tl.Record(TimelineEvent{Type: EventRoute, Details: e.From + "->" + e.To, DurationMs: e.Elapsed.Milliseconds()})
 			tl.Record(TimelineEvent{Type: EventStepActive, Details: e.To})
-		case core.HandoffClosed:
+		case core.RouteClosed:
 			tl.Record(TimelineEvent{Type: EventStepClosed, Details: e.From})
-		case core.HandoffFailed:
+		case core.RouteFailed:
 			msg := ""
 			if e.Err != nil {
 				msg = s.redactor.Redact(e.Err.Error())

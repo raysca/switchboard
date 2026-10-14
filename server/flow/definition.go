@@ -15,7 +15,7 @@ const (
 	maxCondition = 512
 )
 
-// Definition is the stored flow: steps (each a full per-step Config), handoff
+// Definition is the stored flow: steps (each a full per-step Config), route
 // routes, and the call-level route cue. A flat Config is a one-step Definition.
 type Definition struct {
 	Start    string    `json:"start"`

@@ -40,7 +40,7 @@ func (n *StepSpec) wipe() {
 }
 
 // CallFlow is what a call needs to move between steps. Commit is set by the
-// pipeline builder once the handoff exists; transfer tools call it.
+// pipeline builder once the route exists; transfer tools call it.
 type CallFlow struct {
 	Start   string
 	Resolve func(ctx context.Context, stepID string) (StepSpec, error)
@@ -146,7 +146,7 @@ func stepExecutor(inner core.ToolExecutor, allowed map[string]bool, transfer map
 		}
 		if target, ok := transfer[call.Name]; ok {
 			if err := commit(target, parseNote(call.Arguments)); err != nil {
-				if errors.Is(err, core.ErrHandoffPending) || errors.Is(err, core.ErrHandoffLimit) {
+				if errors.Is(err, core.ErrRoutePending) || errors.Is(err, core.ErrRouteLimit) {
 					return res(core.ToolFailed, `{"error":"transfer_unavailable"}`), nil
 				}
 				return res(core.ToolFailed, `{"error":"transfer_failed"}`), nil
@@ -211,15 +211,15 @@ func transferNote(stepName, note string) string { return transferPrefix(stepName
 
 // saysOwnGreeting reports whether a step speaks a fixed greeting when a route lands on it. The start step's
 // greeting is the call opening only: a return to it gets the model's transfer greeting.
-func saysOwnGreeting(nodeID, start, greeting string) bool { return greeting != "" && nodeID != start }
+func saysOwnGreeting(stepID, start, greeting string) bool { return greeting != "" && stepID != start }
 
-// greetStep is what Handoff.Greet does once the idle flip has swapped the new step in. A step that says its own
+// greetStep is what Router.Greet does once the idle flip has swapped the new step in. A step that says its own
 // greeting speaks it (after a context-only message carrying the previous agent's note, if any) and the model is
 // not asked to greet; otherwise the model is told to greet, as before. add records a history message; speak
 // queues the greeting (it must not block).
-func (c *CallFlow) greetStep(nodeID, stepName, greeting string, add func(core.Message) error, speak func(string)) error {
+func (c *CallFlow) greetStep(stepID, stepName, greeting string, add func(core.Message) error, speak func(string)) error {
 	note := c.takeNote()
-	if saysOwnGreeting(nodeID, c.Start, greeting) {
+	if saysOwnGreeting(stepID, c.Start, greeting) {
 		if note != "" {
 			if err := add(core.Message{Role: core.RoleUser, Content: transferNote(stepName, note)}); err != nil {
 				return err
@@ -240,7 +240,7 @@ func (c *CallFlow) commitWithNote(target, note string) error {
 	if c.Commit == nil {
 		return errors.New("route not ready")
 	}
-	// Commit only starts the handoff build and returns; the greeting (takeNote) runs
+	// Commit only starts the route build and returns; the greeting (takeNote) runs
 	// later on the trigger path, so holding commitMu here cannot deadlock with it.
 	c.commitMu.Lock()
 	defer c.commitMu.Unlock()
@@ -256,7 +256,7 @@ func (c *CallFlow) commitWithNote(target, note string) error {
 }
 
 // takeNote returns the note once. In theory a greeting can read a losing commit's note for
-// microseconds before it is restored; Handoff.Commit rejects at once while a transfer is pending.
+// microseconds before it is restored; Router.Commit rejects at once while a transfer is pending.
 func (c *CallFlow) takeNote() string {
 	c.noteMu.Lock()
 	defer c.noteMu.Unlock()

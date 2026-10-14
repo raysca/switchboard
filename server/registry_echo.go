@@ -29,7 +29,7 @@ func registerEcho(r *Registry) {
 	})
 
 	r.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
-		// A step whose voice is "brokenvoice" cannot be built: the e2e suites use it to make a handoff fail.
+		// A step whose voice is "brokenvoice" cannot be built: the e2e suites use it to make a route fail.
 		if spec.Voice == "brokenvoice" {
 			return nil, errors.New("echo tts: voice brokenvoice is unavailable")
 		}

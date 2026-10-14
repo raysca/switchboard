@@ -78,10 +78,10 @@ type CallSpec struct {
 	// TurnLatencies collects the call's per-turn stage latencies for its turn rows.
 	TurnLatencies *turnLatencies
 	// Flow is set for flows with more than one step: the call starts on the
-	// start step and moves between steps by handoff.
+	// start step and moves between steps by route.
 	Flow *CallFlow
-	// OnRoute, if set, receives the handoff lifecycle (timeline, traces, metrics).
-	OnRoute func(core.HandoffEvent)
+	// OnRoute, if set, receives the route lifecycle (timeline, traces, metrics).
+	OnRoute func(core.RouteEvent)
 	// OnEndCall receives the step whose end_call ended the call (trace).
 	OnEndCall func(stepID string)
 	// OnInjector, if set, receives the call's context injector as the pipeline is assembled
@@ -603,10 +603,10 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		// The start step is live; every other step is built when the call moves
 		// to it and closed when it leaves. The swaps are the pipeline stages.
 		var lastStep, lastGreeting atomic.Pointer[string]
-		buildStep := func(ctx context.Context, id string) (core.NodeStages, error) {
+		buildStep := func(ctx context.Context, id string) (core.StepStages, error) {
 			ns, err := call.Flow.Resolve(ctx, id)
 			if err != nil {
-				return core.NodeStages{}, fmt.Errorf("resolve step %q: %w", id, err)
+				return core.StepStages{}, fmt.Errorf("resolve step %q: %w", id, err)
 			}
 			defer ns.wipe()
 			spec, fallbacks := prepLLM(ns.LLM, ns.LLMFallbacks)
@@ -615,25 +615,25 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			stepCall.TTS, stepCall.TTSFallbacks = ns.TTS, ns.TTSFallbacks
 			llm, err := r.buildLLM(cfg, stepCall, spec, build)
 			if err != nil {
-				return core.NodeStages{}, fmt.Errorf("step %q llm: %w", id, err)
+				return core.StepStages{}, fmt.Errorf("step %q llm: %w", id, err)
 			}
 			tts, err := r.buildTTS(cfg, stepCall, build)
 			if err != nil {
 				if c, ok := llm.(interface{ Close() error }); ok {
 					_ = c.Close()
 				}
-				return core.NodeStages{}, fmt.Errorf("step %q tts: %w", id, err)
+				return core.StepStages{}, fmt.Errorf("step %q tts: %w", id, err)
 			}
 			lastStep.Store(&ns.Name)
 			lastGreeting.Store(&ns.Greeting)
-			return core.NodeStages{LLM: llm, TTS: tts, Speaks: saysOwnGreeting(id, call.Flow.Start, ns.Greeting)}, nil
+			return core.StepStages{LLM: llm, TTS: tts, Speaks: saysOwnGreeting(id, call.Flow.Start, ns.Greeting)}, nil
 		}
 		llmSwap, ttsSwap := core.NewStageSwap(llmProc), core.NewStageSwap(ttsProc)
-		h, err := core.NewHandoff(core.HandoffConfig{
+		h, err := core.NewRouter(core.RouterConfig{
 			Entry: call.Flow.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
 			Build:   buildStep,
 			OnEvent: call.OnRoute,
-			Greet: func(nodeID string) error {
+			Greet: func(stepID string) error {
 				name, greeting := "another agent", ""
 				if n := lastStep.Load(); n != nil {
 					name = *n
@@ -641,11 +641,11 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				if g := lastGreeting.Load(); g != nil {
 					greeting = *g
 				}
-				return call.Flow.greetStep(nodeID, name, greeting, ctxPool.AddMessage, func(text string) { speak(text) })
+				return call.Flow.greetStep(stepID, name, greeting, ctxPool.AddMessage, func(text string) { speak(text) })
 			},
 		})
 		if err != nil {
-			return fail(fmt.Errorf("create handoff: %w", err))
+			return fail(fmt.Errorf("create router: %w", err))
 		}
 		call.Flow.Commit = h.Commit
 		llmProc, ttsProc = llmSwap, ttsSwap
