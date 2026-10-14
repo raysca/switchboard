@@ -298,14 +298,14 @@ func (s *Server) Provision() (string, error) {
 	}
 	var ag struct{ ID string }
 	if err := json.Unmarshal(d, &ag); err != nil || ag.ID == "" {
-		return "", fmt.Errorf("agent response: %v", err)
+		return "", fmt.Errorf("flow response: %v", err)
 	}
 	return ag.ID, nil
 }
 
 // Token mints a single-use voice token (one per call).
-func (s *Server) Token(principal, agentID string) (string, error) {
-	d, err := s.api("voice-tokens", map[string]string{"principal": principal, "flow_id": agentID})
+func (s *Server) Token(principal, flowID string) (string, error) {
+	d, err := s.api("voice-tokens", map[string]string{"principal": principal, "flow_id": flowID})
 	if err != nil {
 		return "", err
 	}

@@ -44,20 +44,17 @@ func TestDecodeFlowTwoSteps(t *testing.T) {
 	}
 }
 
-// Versions stored before the rename keep their keys (they are immutable and
-// hashed), so they still decode; mixing old and new keys does not.
-func TestDecodeReadsLegacyKeys(t *testing.T) {
+// The pre-rename keys (entry/nodes/edges/handoff_cue) are read nowhere: nothing stored uses them.
+func TestOldConfigKeysAreRejectedLikeAnyUnknownField(t *testing.T) {
 	steps := `[{"id":"front","name":"Front desk","config":` + flatCfg + `},` + step("sales", "Sales", "") + `]`
-	legacy := `{"entry":"front","nodes":` + steps + `,"edges":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}],"handoff_cue":{"name":"chime"}}`
-	g, err := Decode(json.RawMessage(legacy))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if g.Start != "front" || len(g.Steps) != 2 || len(g.RoutesFrom("front")) != 1 || g.RouteCue == nil || g.RouteCue.Name != "chime" {
-		t.Fatalf("legacy decode = %+v", g)
-	}
-	if _, err := Decode(json.RawMessage(`{"entry":"front","start":"front","nodes":` + steps + `}`)); err == nil {
-		t.Fatal("mixed legacy and new keys accepted")
+	for name, raw := range map[string]string{
+		"entry and nodes":   `{"entry":"front","nodes":` + steps + `,"edges":[]}`,
+		"handoff_cue":       `{"start":"front","steps":` + steps + `,"routes":[],"handoff_cue":{"name":"chime"}}`,
+		"mixed old and new": `{"entry":"front","start":"front","nodes":` + steps + `}`,
+	} {
+		if _, err := Decode(json.RawMessage(raw)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }
 

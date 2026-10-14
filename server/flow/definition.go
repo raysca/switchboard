@@ -94,40 +94,12 @@ func invalid(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidConfig, fmt.Sprintf(format, a...))
 }
 
-// legacyKeys are the pre-rename config keys. Stored versions are immutable and
-// hashed, so they are read as written; new versions are written with the new keys.
-var legacyKeys = map[string]string{"entry": "start", "nodes": "steps", "edges": "routes", "handoff_cue": "route_cue"}
-
-// upgradeKeys renames a pre-rename config's keys in place; a config that mixes
-// old and new keys is invalid.
-func upgradeKeys(cfg map[string]json.RawMessage) error {
-	if _, ok := cfg["nodes"]; !ok {
-		return nil
-	}
-	for old, key := range legacyKeys {
-		if v, ok := cfg[old]; ok {
-			if _, dup := cfg[key]; dup {
-				return invalid("config mixes %q and %q", old, key)
-			}
-			cfg[key] = v
-			delete(cfg, old)
-		}
-	}
-	return nil
-}
-
 // Decode strictly decodes a stored config. A flat Config (no "steps")
 // becomes a one-step flow named "main".
 func Decode(raw json.RawMessage) (Definition, error) {
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &probe); err != nil || probe == nil {
 		return Definition{}, invalid("config must be a JSON object")
-	}
-	if _, ok := probe["nodes"]; ok {
-		if err := upgradeKeys(probe); err != nil {
-			return Definition{}, err
-		}
-		raw, _ = json.Marshal(probe) // ponytail: re-encoding a map that just decoded cannot fail
 	}
 	if _, ok := probe["steps"]; !ok {
 		cfg, err := DecodeConfig(raw)

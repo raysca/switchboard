@@ -126,16 +126,11 @@ export const toolSelectionSchema = z.object({
 });
 export type ToolSelection = z.infer<typeof toolSelectionSchema>;
 
-// Versions stored before the flow rename say entry/nodes/edges/handoff_cue (the server reads both).
-const LEGACY_KEYS: Record<string, string> = { entry: "start", nodes: "steps", edges: "routes", handoff_cue: "route_cue" };
-
 export const flowVersionSchema = z.object({
   id: z.string(),
   number: z.number(),
   schema_version: z.number(),
-  config: z
-    .record(z.string(), z.unknown())
-    .transform((c) => (Array.isArray(c.nodes) ? Object.fromEntries(Object.entries(c).map(([k, v]) => [LEGACY_KEYS[k] ?? k, v])) : c)),
+  config: z.record(z.string(), z.unknown()),
   config_hash: z.string(),
   created_at: z.string(),
   mcp_tools: z.array(toolSelectionSchema),
@@ -339,13 +334,12 @@ export function spanAttrs(span: TraceSpanDTO): Record<string, unknown> {
 
 /**
  * A route span's event ("preparing", "active", "failed") and the steps it joins, or null for other spans.
- * Sessions stored before the flow rename name them handoff.* with from_node/to_node.
  */
 export function routeSpan(span: TraceSpanDTO): { event: string; from: string; to: string } | null {
-  const event = /^(?:route|handoff)\.(\w+)$/.exec(span.name)?.[1];
+  const event = /^route\.(\w+)$/.exec(span.name)?.[1];
   const a = spanAttrs(span);
-  const from = a.from_step ?? a.from_node;
-  const to = a.to_step ?? a.to_node;
+  const from = a.from_step;
+  const to = a.to_step;
   return event && typeof from === "string" && typeof to === "string" ? { event, from, to } : null;
 }
 

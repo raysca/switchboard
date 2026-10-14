@@ -83,17 +83,11 @@ func TestUpdateFlowPublishesNewVersionKeepingOldPinned(t *testing.T) {
 	}
 }
 
-// A pre-rename config sent on write (or copied from an old version by Duplicate)
-// is stored with the new keys.
-func TestCreateWritesLegacyKeysAsNew(t *testing.T) {
+// A config with the pre-rename keys is refused on write like any unknown field.
+func TestCreateRefusesTheOldConfigKeys(t *testing.T) {
 	svc := testService(t)
-	legacy := strings.NewReplacer(`"start"`, `"entry"`, `"steps"`, `"nodes"`, `"routes"`, `"edges"`).Replace(string(twoStepFlow("google")))
-	f, err := svc.Create(context.Background(), CreateRequest{Name: "old keys", Config: json.RawMessage(legacy)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg := string(f.Version.Config)
-	if !strings.Contains(cfg, `"steps"`) || !strings.Contains(cfg, `"routes"`) || strings.Contains(cfg, `"nodes"`) || strings.Contains(cfg, `"entry"`) {
-		t.Fatalf("stored config = %s", cfg)
+	old := strings.NewReplacer(`"start"`, `"entry"`, `"steps"`, `"nodes"`, `"routes"`, `"edges"`).Replace(string(twoStepFlow("google")))
+	if _, err := svc.Create(context.Background(), CreateRequest{Name: "old keys", Config: json.RawMessage(old)}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("got %v", err)
 	}
 }

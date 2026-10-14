@@ -103,7 +103,7 @@ func (l *LoadState) lagStat() Stat {
 // CallParams describes the simulated caller.
 type CallParams struct {
 	Server      *Server
-	AgentID     string
+	FlowID     string
 	Clip        []byte
 	Turns       int // 0 = until ctx ends
 	MinTurns    int
@@ -215,7 +215,7 @@ func (c *call) reader(ctx context.Context) {
 // runCall runs one call: handshake, then p.Turns speech turns. It returns the
 // error that ended the call early (nil when finished or ctx ended).
 func runCall(ctx context.Context, st *LoadState, p CallParams, principal string) error {
-	tok, err := p.Server.Token(principal, p.AgentID)
+	tok, err := p.Server.Token(principal, p.FlowID)
 	if err != nil {
 		st.callFailed("token")
 		return err

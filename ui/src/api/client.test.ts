@@ -573,20 +573,20 @@ describe("agentConfigV2Schema", () => {
   });
 });
 
-// Versions and sessions stored before the flow rename keep their old names.
-describe("pre-rename data", () => {
-  it("reads a stored entry/nodes/edges/handoff_cue config as start/steps/routes/route_cue", () => {
+// The pre-rename names are not read: nothing stored uses them.
+describe("pre-rename names", () => {
+  it("leaves an entry/nodes/edges config as it is", () => {
     const v = flowVersionSchema.parse({
       id: "v1", number: 1, schema_version: 1, config_hash: "h", created_at: "2026-10-01T00:00:00Z", mcp_tools: [],
-      config: { entry: "a", nodes: [{ id: "a" }], edges: [], handoff_cue: { name: "chime" } },
+      config: { entry: "a", nodes: [{ id: "a" }], edges: [] },
     });
-    expect(v.config).toEqual({ start: "a", steps: [{ id: "a" }], routes: [], route_cue: { name: "chime" } });
+    expect(v.config).toEqual({ entry: "a", nodes: [{ id: "a" }], edges: [] });
   });
 
-  it("reads handoff.* spans with from_node/to_node as routes", () => {
+  it("reads route.* spans only", () => {
     const span = (name: string, attributes: Record<string, string>) => ({ id: "s", name, started_at: "2026-10-01T00:00:00Z", attributes }) as TraceSpanDTO;
-    expect(routeSpan(span("handoff.active", { from_node: "a", to_node: "b" }))).toEqual({ event: "active", from: "a", to: "b" });
     expect(routeSpan(span("route.failed", { from_step: "a", to_step: "b" }))).toEqual({ event: "failed", from: "a", to: "b" });
+    expect(routeSpan(span("handoff.active", { from_node: "a", to_node: "b" }))).toBeNull();
     expect(routeSpan(span("llm.generate", {}))).toBeNull();
   });
 });

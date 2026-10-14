@@ -12,7 +12,7 @@ import (
 func TestADraftCallCanUseAToolThatIsNotPublished(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	a := r.agentWith(id, hashes, false, nil) // no tools attached
+	a := r.flowWith(id, hashes, false, nil) // no tools attached
 	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"}}`
 	payload, _ := json.Marshal(map[string]any{"principal": "alice", "flow_id": a.ID, "draft": map[string]any{
 		"config":    json.RawMessage(cfg),

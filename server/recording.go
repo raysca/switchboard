@@ -27,7 +27,7 @@ func (s *Server) attachRecording(call CallSpec, flowID string, sessionID uint64,
 	sid := fmt.Sprint(sessionID)
 	rec := record.New(s.recSink, record.Meta{
 		ID:        fmt.Sprintf("%s-%d-%d", safeFlow, sessionID, started.Unix()),
-		SessionID: sid, AgentID: flowID, CallID: sid,
+		SessionID: sid, FlowID: flowID, CallID: sid,
 	}, record.Config{MaxDuration: s.cfg.Recording.MaxDuration, MaxBytes: s.cfg.Recording.MaxBytes})
 	conn.SetAudioTap(rec)
 

@@ -575,12 +575,6 @@ func normalizeConfig(raw json.RawMessage) (json.RawMessage, error) {
 	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
 		return nil, errors.New("flow config must be a JSON object")
 	}
-	if _, ok := object["nodes"]; ok { // a pre-rename config (also a duplicated old version) is written with the new keys
-		if err := upgradeKeys(object); err != nil {
-			return nil, err
-		}
-		raw, _ = json.Marshal(object)
-	}
 	if _, err := Decode(raw); err != nil {
 		return nil, err
 	}

@@ -102,7 +102,7 @@ func TestNoSecretLeavesTheServer(t *testing.T) {
 	apiRequest(s, http.MethodPost, "/api/v1/mcp-servers/"+created.Data.ID+"/validate", e2eMgmtKey, "")
 	mr := &mcpCallRig{flowRigE2E: r}
 	_, hashes := mr.discovered(created.Data.ID)
-	toolAgent := mr.agentWith(created.Data.ID, hashes, true, nil, "lookup_order")
+	toolAgent := mr.flowWith(created.Data.ID, hashes, true, nil, "lookup_order")
 	mc := r.dial(toolAgent.ID)
 	mc.say(`call tool lookup_order {"order_id":"7"}`)
 	mc.waitReplies("shipped", 1)

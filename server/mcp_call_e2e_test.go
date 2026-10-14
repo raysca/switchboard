@@ -87,8 +87,8 @@ func (r *mcpCallRig) discovered(id string) (string, map[string]string) {
 	return id, hashes
 }
 
-// agentWith creates a plain echo agent with the given tools of one server attached.
-func (r *mcpCallRig) agentWith(serverID string, hashes map[string]string, required bool, async []string, tools ...string) flow.Flow {
+// flowWith creates a plain echo agent with the given tools of one server attached.
+func (r *mcpCallRig) flowWith(serverID string, hashes map[string]string, required bool, async []string, tools ...string) flow.Flow {
 	r.t.Helper()
 	sel := make([]flow.ToolSelection, 0, len(tools))
 	for _, name := range tools {
@@ -121,7 +121,7 @@ func (r *mcpCallRig) lastCall(tool string) mcptest.Record {
 func TestMCPCallOK(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
-	a := r.agentWith(id, hashes, true, nil, "lookup_order")
+	a := r.flowWith(id, hashes, true, nil, "lookup_order")
 	if a.Readiness.State != flow.ReadinessReady {
 		t.Fatalf("readiness %+v", a.Readiness)
 	}
@@ -139,7 +139,7 @@ func TestMCPCallFailures(t *testing.T) {
 	id, hashes := r.server("fail", r.ts.URL+"/fail/tools", "")
 	for _, tool := range []string{"tool_error", "protocol_error", "drop", "too_big"} {
 		t.Run(tool, func(t *testing.T) {
-			c := r.dial(r.agentWith(id, hashes, false, nil, tool).ID)
+			c := r.dial(r.flowWith(id, hashes, false, nil, tool).ID)
 			c.say("call tool " + tool)
 			c.waitReplies("Tool "+tool+" failed", 1)
 			// The call goes on after the failure. Paced: a text turn sent the instant a
@@ -154,7 +154,7 @@ func TestMCPCallFailures(t *testing.T) {
 func TestMCPCallSlow(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.agentWith(id, hashes, false, nil, "slow_lookup").ID)
+	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":200}`)
 	c.waitReplies("Tool slow_lookup returned", 1)
 
@@ -181,7 +181,7 @@ func TestMCPCallBargeInCancelsSlowTool(t *testing.T) {
 		return onText(conn, text)
 	}
 	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
-	c := r.dial(r.agentWith(id, hashes, false, nil, "slow_lookup").ID)
+	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":4000}`)
 	eventually(t, "the tool call to start", func() bool { return r.lastCall("slow_lookup").Tool != "" })
 
@@ -219,7 +219,7 @@ func TestMCPCallUnreachable(t *testing.T) {
 	// Tools are attached while the server answers; then it goes away.
 	gone := httptest.NewServer(mcptest.New(mcptest.Options{}).Handler())
 	id, hashes := r.server("gone", gone.URL+"/open", "")
-	a := r.agentWith(id, hashes, false, nil, "lookup_order")
+	a := r.flowWith(id, hashes, false, nil, "lookup_order")
 	gone.Close()
 	c := r.dial(a.ID)
 	began := time.Now()

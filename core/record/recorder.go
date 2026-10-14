@@ -35,7 +35,7 @@ type Config struct {
 type Meta struct {
 	ID        string // recording name; must satisfy ValidID
 	SessionID string
-	AgentID   string
+	FlowID    string
 	CallID    string
 }
 
@@ -43,7 +43,7 @@ type Meta struct {
 type Sidecar struct {
 	ID        string    `json:"id"`
 	SessionID string    `json:"session_id"`
-	AgentID   string    `json:"flow_id"`
+	FlowID    string    `json:"flow_id"`
 	CallID    string    `json:"call_id"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at"`
@@ -448,7 +448,7 @@ func (w *writer) finish() {
 	r.tmu.Unlock()
 	data := w.emitted * 4
 	sc, _ := json.Marshal(Sidecar{
-		ID: r.meta.ID, SessionID: r.meta.SessionID, AgentID: r.meta.AgentID, CallID: r.meta.CallID,
+		ID: r.meta.ID, SessionID: r.meta.SessionID, FlowID: r.meta.FlowID, CallID: r.meta.CallID,
 		StartedAt: r.t0.UTC(), EndedAt: r.cfg.Now().UTC(),
 		Format:   Format{"wav", r.cfg.SampleRate, 2, 16, "L=user,R=bot"},
 		Duration: w.emitted * 1000 / int64(r.cfg.SampleRate), Bytes: data + wavHeaderLen,
