@@ -81,6 +81,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	}
 
 	s.SetStore(store)
+	s.endOrphanedSessions(ctx, store)
 	s.mcpService = mcpService
 	s.SetProviderManagementAPI(s.providersRoutes())
 	s.flows = flow.NewService(store, s.availability)
