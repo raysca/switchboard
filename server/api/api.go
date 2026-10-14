@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"govoice/server/flow"
 	"io"
 	"net/http"
 	"strconv"
@@ -59,6 +60,8 @@ type VoiceTokenRequest struct {
 // DraftRequest is an unpublished flow config to test.
 type DraftRequest struct {
 	Config json.RawMessage `json:"config"`
+	// MCPTools is the draft's own tool selection; absent, the flow's current selection applies.
+	MCPTools *[]flow.ToolSelection `json:"mcp_tools,omitempty"`
 }
 type VoiceTokenResponse struct {
 	Token     string    `json:"token"`

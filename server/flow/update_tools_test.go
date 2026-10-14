@@ -22,7 +22,7 @@ func newToolsRig(t *testing.T) *toolsRig {
 	t.Helper()
 	svc := testService(t)
 	ctx := context.Background()
-	m := storage.MCPServer{ID: storage.NewID(), Name: "crm", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true}
+	m := storage.MCPServer{ID: storage.NewID(), Name: "crm", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
 	if err := svc.store.MCP().CreateServer(ctx, m); err != nil {
 		t.Fatal(err)
 	}

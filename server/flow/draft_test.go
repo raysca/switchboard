@@ -28,7 +28,7 @@ func TestResolveDraftReturnsTheDraftOnTheCurrentVersion(t *testing.T) {
 	svc := testService(t)
 	ctx := context.Background()
 	f := publishedFlow(t, svc, "PUBLISHED")
-	snap, readiness, err := svc.ResolveDraft(ctx, f.ID, draftConfig("DRAFT"))
+	snap, readiness, err := svc.ResolveDraft(ctx, f.ID, draftConfig("DRAFT"), nil)
 	if err != nil || readiness.State != ReadinessReady {
 		t.Fatalf("readiness %+v err %v", readiness, err)
 	}
@@ -58,13 +58,13 @@ func TestResolveDraftRejectsWhatAPublishWouldReject(t *testing.T) {
 		"empty":               nil,
 		"a tool not attached": json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","tools":["srv/lookup"],"config":` + string(draftConfig("D")) + `}],"routes":[]}`),
 	} {
-		if _, _, err := svc.ResolveDraft(ctx, f.ID, cfg); err == nil {
+		if _, _, err := svc.ResolveDraft(ctx, f.ID, cfg, nil); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
 	// A provider the environment lacks is rejected like a publish rejects it.
 	strict := NewService(svc.store, fakeAvail{"google/llm": Unavailable{Reason: "missing_env"}}) // same store, an environment without the llm key
-	if _, _, err := strict.ResolveDraft(ctx, f.ID, draftConfig("D")); !errors.Is(err, ErrNotAttached) {
+	if _, _, err := strict.ResolveDraft(ctx, f.ID, draftConfig("D"), nil); !errors.Is(err, ErrNotAttached) {
 		t.Errorf("unattached provider: %v, want ErrNotAttached", err)
 	}
 }
@@ -76,7 +76,7 @@ func TestResolveDraftRefusesAnIncompleteDraftLikeAPublish(t *testing.T) {
 	svc := testService(t)
 	f := publishedFlow(t, svc, "P")
 	incomplete := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google"},"tts":{"provider":"google","voice":"google.tts"}}`)
-	if _, _, err := svc.ResolveDraft(context.Background(), f.ID, incomplete); !errors.Is(err, ErrNotAttached) {
+	if _, _, err := svc.ResolveDraft(context.Background(), f.ID, incomplete, nil); !errors.Is(err, ErrNotAttached) {
 		t.Fatalf("incomplete draft: %v, want ErrNotAttached", err)
 	}
 }
@@ -84,14 +84,14 @@ func TestResolveDraftRefusesAnIncompleteDraftLikeAPublish(t *testing.T) {
 func TestResolveDraftNeedsAUsableFlow(t *testing.T) {
 	ctx := context.Background()
 	svc := testService(t)
-	if _, _, err := svc.ResolveDraft(ctx, storage.NewID(), draftConfig("D")); !errors.Is(err, sql.ErrNoRows) {
+	if _, _, err := svc.ResolveDraft(ctx, storage.NewID(), draftConfig("D"), nil); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("unknown flow: %v", err)
 	}
 	f := publishedFlow(t, svc, "P")
 	if err := svc.Archive(ctx, f.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.ResolveDraft(ctx, f.ID, draftConfig("D")); err == nil {
+	if _, _, err := svc.ResolveDraft(ctx, f.ID, draftConfig("D"), nil); err == nil {
 		t.Fatal("an archived flow can take no draft call")
 	}
 }
@@ -107,11 +107,49 @@ func TestResolveDraftWritesNothing(t *testing.T) {
 		}
 	}
 	count(&before)
-	if _, _, err := svc.ResolveDraft(ctx, f.ID, draftConfig("D")); err != nil {
+	if _, _, err := svc.ResolveDraft(ctx, f.ID, draftConfig("D"), nil); err != nil {
 		t.Fatal(err)
 	}
 	count(&after)
 	if before != after {
 		t.Fatalf("versions %d -> %d", before, after)
+	}
+}
+
+func TestResolveDraftCanSelectToolsTheFlowHasNotPublished(t *testing.T) {
+	r := newToolsRig(t)
+	ctx := context.Background()
+	cfg := stepsConfig(r.server + "/echo")
+	// Without a selection the S1 rule stands: a step may only list tools the flow has.
+	if _, _, err := r.svc.ResolveDraft(ctx, r.flow.ID, cfg, nil); err == nil || !strings.Contains(err.Error(), "has not selected") {
+		t.Fatalf("an unselected step tool: %v", err)
+	}
+	tools := []ToolSelection{r.sel("echo")}
+	snap, readiness, err := r.svc.ResolveDraft(ctx, r.flow.ID, cfg, &tools)
+	if err != nil || readiness.State != ReadinessReady {
+		t.Fatalf("readiness %+v err %v", readiness, err)
+	}
+	if len(snap.MCPTools) != 1 || snap.MCPTools[0].RemoteName != "echo" || !snap.Draft {
+		t.Fatalf("snapshot tools %+v", snap.MCPTools)
+	}
+	again, err := r.svc.Get(ctx, r.flow.ID)
+	if err != nil || again.Version.Number != 1 || len(again.Version.MCPTools) != 0 {
+		t.Fatalf("a draft must not change the stored flow: %+v err %v", again.Version, err)
+	}
+}
+
+func TestResolveDraftRefusesAToolSelectionAPublishWouldRefuse(t *testing.T) {
+	r := newToolsRig(t)
+	ctx := context.Background()
+	stale := r.sel("echo")
+	stale.SchemaHash = "0000"
+	if _, _, err := r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(), &[]ToolSelection{stale}); !errors.Is(err, storage.ErrInvalidToolSelection) {
+		t.Fatalf("stale hash: %v", err)
+	}
+	if err := r.svc.store.MCP().DisableServer(ctx, r.server); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(), &[]ToolSelection{r.sel("echo")}); !errors.Is(err, storage.ErrInvalidToolSelection) {
+		t.Fatalf("disabled server: %v", err)
 	}
 }

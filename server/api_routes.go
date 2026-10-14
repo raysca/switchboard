@@ -93,7 +93,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		lifetime := s.effectiveVoiceTokenLifetime()
 		tokenID := storage.NewID() // becomes the session id
 		if input.Draft != nil {
-			snapshot, readiness, err := s.flows.ResolveDraft(r.Context(), target.ID, input.Draft.Config)
+			snapshot, readiness, err := s.flows.ResolveDraft(r.Context(), target.ID, input.Draft.Config, input.Draft.MCPTools)
 			if err != nil {
 				s.writeDraftError(w, err, requestID)
 				return

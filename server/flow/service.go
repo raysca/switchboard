@@ -272,10 +272,10 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Flow, error) 
 	return s.create(ctx, CreateRequest{Name: name, Description: source.Description, Config: source.Version.Config, Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools}, source.Version.MCPReviewRequired)
 }
 
-// ResolveDraft validates config exactly as a publish of flow id would and returns what a call on it
+// ResolveDraft validates config (and selection, when given) exactly as a publish of flow id would and returns what a call on it
 // runs: the flow's current version with the draft's config and hash, and the flow's attached MCP
 // tools. Nothing is written. A draft cannot change tool selections, only use the attached ones.
-func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMessage) (Snapshot, Readiness, error) {
+func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMessage, selection *[]ToolSelection) (Snapshot, Readiness, error) {
 	row, err := s.store.Flows().Current(ctx, id)
 	if err != nil {
 		return Snapshot{}, Readiness{}, err
@@ -290,7 +290,7 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 		}
 		return Snapshot{}, Readiness{}, err
 	}
-	if err := s.checkConfigTools(ctx, id, canonical, nil); err != nil {
+	if err := s.checkConfigTools(ctx, id, canonical, selection); err != nil {
 		return Snapshot{}, Readiness{}, err
 	}
 	base, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
@@ -303,6 +303,16 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 	}
 	draft := base
 	draft.ConfigJSON, draft.ConfigHash = canonical, hash
+	if selection != nil { // the draft's own selection, validated like a publish's, replaces the version's
+		selected, err := toStorageSelections(*selection)
+		if err != nil {
+			return Snapshot{}, Readiness{}, err
+		}
+		if err := s.store.Flows().ValidateSelections(ctx, selected); err != nil {
+			return Snapshot{}, Readiness{}, err
+		}
+		draft.MCPTools = selected
+	}
 	readiness, tools := s.flowReadiness(ctx, draft, row.Enabled, row.Archived)
 	return Snapshot{FlowID: row.ID, Version: toVersion(draft), ConfigHash: hash, MCPTools: tools, Draft: true}, readiness, nil
 }

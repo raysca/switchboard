@@ -92,8 +92,8 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 		included := map[string]bool{}
 		for _, tool := range runtimeTools {
 			key := tool.ServerID + "\x00" + tool.RemoteName
-			pinned, exists := selected[key]
-			if !exists || pinned.SchemaHash != tool.SchemaHash || pinned.Required != tool.Required {
+			// A draft test call runs the draft's own, already validated selection, which the version need not have.
+			if pinned, exists := selected[key]; !v.Draft && (!exists || pinned.SchemaHash != tool.SchemaHash || pinned.Required != tool.Required) {
 				return errors.New("runtime MCP tool does not match flow version selection")
 			}
 			included[key] = true
@@ -114,7 +114,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 			}
 		}
 		for key, tool := range selected {
-			if tool.Required && !included[key] {
+			if !v.Draft && tool.Required && !included[key] {
 				return errors.New("required MCP tool was not captured for session")
 			}
 		}

@@ -112,6 +112,11 @@ func (s *Store) validateSelections(ctx context.Context, q queryer, selections []
 	return nil
 }
 
+// ValidateSelections checks a selection the way a publish would, without writing anything (a draft test call).
+func (r FlowRepository) ValidateSelections(ctx context.Context, selections []SelectedTool) error {
+	return r.s.validateSelections(ctx, r.s.db, selections)
+}
+
 func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, version int, config []byte, selections []SelectedTool) (FlowVersion, error) {
 	var out FlowVersion
 	if err := validID(flowID); err != nil {

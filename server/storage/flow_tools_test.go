@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // toolRig is a flow with one published version and one MCP server offering tools "echo" and "lookup".
@@ -162,6 +163,37 @@ func TestChoosingToolsClearsTheReviewFlagAndOtherwiseItCarriesForward(t *testing
 		_, v, err = r.publish(t, FlowMutation{Tools: &one})
 		if err != nil || v.MCPReviewRequired {
 			t.Fatalf("choosing tools is the review: %+v err %v", v, err)
+		}
+	})
+}
+
+func TestOnlyDraftSessionsMayRunAToolTheVersionLacks(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		r := newToolRig(t, s)
+		ctx := context.Background()
+		cur, err := s.Flows().Current(ctx, r.flowID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, err := s.Flows().Version(ctx, cur.CurrentVersionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := func(draft bool) SessionRecord {
+			return SessionRecord{ID: NewID(), FlowID: r.flowID, FlowVersionID: v.ID, ConfigHash: v.ConfigHash, StartedAt: time.Now(), Status: "active",
+				RuntimeTools: []SelectedTool{r.sel("echo", false)}, Draft: draft}
+		}
+		if err := s.Sessions().Create(ctx, rec(false)); err == nil {
+			t.Fatal("an ordinary session ran a tool its version does not select")
+		}
+		if err := s.Sessions().Create(ctx, rec(true)); err != nil {
+			t.Fatalf("a draft session with its own tool: %v", err)
+		}
+		// A draft still needs the tool to be available now.
+		stale := rec(true)
+		stale.RuntimeTools[0].SchemaHash = "0000"
+		if err := s.Sessions().Create(ctx, stale); err == nil {
+			t.Fatal("a draft session started on a schema that changed")
 		}
 	})
 }
