@@ -84,7 +84,7 @@ func (s *Store) validateSelections(ctx context.Context, q queryer, selections []
 	}
 	for _, sel := range selections {
 		if err := validID(sel.ServerID); err != nil {
-			return err
+			return fmt.Errorf("%w: %v", ErrInvalidToolSelection, err)
 		}
 		query := "SELECT latest_discovery_id FROM mcp_servers WHERE id=? AND enabled=?"
 		if s.dialect == Postgres {

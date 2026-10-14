@@ -75,8 +75,14 @@ describe("ToolPicker", () => {
 
   it("lets a chosen tool be marked required", async () => {
     const { user, onChange } = setup(api(), [sel("echo")]);
-    await user.click(await screen.findByRole("checkbox", { name: "Require echo" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Required: echo" }));
     expect(onChange).toHaveBeenLastCalledWith([sel("echo", true)]);
+  });
+
+  it("ties a server's reason to its disabled tools", async () => {
+    setup(api({ getMCPServers: vi.fn().mockResolvedValue([server({ enabled: false })]), getMCPServer: vi.fn().mockResolvedValue(detail({ enabled: false })) }));
+    const box = await screen.findByRole("checkbox", { name: /^echo/ });
+    expect(box).toHaveAccessibleDescription("Disabled");
   });
 
   it("shows a chosen tool of a disabled server as unavailable, and still lets it be taken off", async () => {

@@ -113,11 +113,31 @@ func TestUpdateRefusesAStaleHash(t *testing.T) {
 	}
 }
 
-func TestASelectionAloneRepublishesTheCurrentConfig(t *testing.T) {
+func TestASelectionWithoutAConfigIsRefusedNotSilentlyDropped(t *testing.T) {
+	r := newToolsRig(t)
+	_, err := r.svc.Update(context.Background(), r.flow.ID, UpdateRequest{MCPTools: &[]ToolSelection{r.sel("lookup")}})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("got %v", err)
+	}
+	cur, _ := r.svc.Get(context.Background(), r.flow.ID)
+	if cur.Version.Number != 1 {
+		t.Fatalf("a refused update published version %d", cur.Version.Number)
+	}
+}
+
+func TestMalformedSelectionsAreTheCallersMistake(t *testing.T) {
 	r := newToolsRig(t)
 	ctx := context.Background()
-	got, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{MCPTools: &[]ToolSelection{r.sel("lookup")}})
-	if err != nil || got.Version.Number != 2 || len(got.Version.MCPTools) != 1 || got.Version.ConfigHash != r.flow.Version.ConfigHash {
-		t.Fatalf("got %+v err %v", got.Version, err)
+	dup := []ToolSelection{r.sel("echo"), r.sel("echo")}
+	empty := []ToolSelection{{ServerID: r.server, RemoteName: "", SchemaHash: "h"}}
+	notAnID := []ToolSelection{{ServerID: "not-an-id", RemoteName: "echo", SchemaHash: "h"}}
+	for name, sels := range map[string][]ToolSelection{"duplicate": dup, "empty name": empty, "bad server id": notAnID} {
+		sels := sels
+		if _, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(), MCPTools: &sels}); !errors.Is(err, storage.ErrInvalidToolSelection) {
+			t.Errorf("update %s: %v", name, err)
+		}
+		if _, _, err := r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(), &sels); !errors.Is(err, storage.ErrInvalidToolSelection) {
+			t.Errorf("draft %s: %v", name, err)
+		}
 	}
 }

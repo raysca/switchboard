@@ -55,7 +55,7 @@ export function ToolPicker({ client, selected, onChange }: { client: ApiClient; 
   };
   const setRequired = (t: ToolSelection, required: boolean) => onChange(selected.map((x) => (keyOf(x) === keyOf(t) ? { ...x, required } : x)));
 
-  const row = (serverId: string, name: string, description: string, e: Entry | null, blocked: boolean, label = name) => {
+  const row = (serverId: string, name: string, description: string, e: Entry | null, blocked: boolean, label = name, reasonId?: string) => {
     const k = `${serverId}/${name}`;
     const picked = chosen.get(k);
     return (
@@ -65,6 +65,7 @@ export function ToolPicker({ client, selected, onChange }: { client: ApiClient; 
             type="checkbox"
             checked={!!picked}
             disabled={!picked && (blocked || !e)}
+            aria-describedby={reasonId}
             onChange={(ev) => e && toggle(serverId, e, ev.target.checked)}
             // A tool that is no longer offered can only be taken off.
             {...(picked && !e ? { onClick: () => onChange(selected.filter((t) => keyOf(t) !== k)) } : {})}
@@ -75,7 +76,7 @@ export function ToolPicker({ client, selected, onChange }: { client: ApiClient; 
         </label>
         {picked && (
           <label className="check-row tool-pick__required">
-            <input type="checkbox" aria-label={`Require ${name}`} checked={picked.required} onChange={(ev) => setRequired(picked, ev.target.checked)} />
+            <input type="checkbox" aria-label={`Required: ${name}`} checked={picked.required} onChange={(ev) => setRequired(picked, ev.target.checked)} />
             Required
           </label>
         )}
@@ -103,10 +104,14 @@ export function ToolPicker({ client, selected, onChange }: { client: ApiClient; 
                 </button>
               </p>
             )}
-            {reason && <p className="subtext">{reason}</p>}
+            {reason && (
+              <p id={`reason-${s.id}`} className="subtext">
+                {reason}
+              </p>
+            )}
             {d && (
               <ul className="plain-list">
-                {[...offered.values()].map((e) => row(s.id, e.name, e.description, e, reason !== null))}
+                {[...offered.values()].map((e) => row(s.id, e.name, e.description, e, reason !== null, e.name, reason ? `reason-${s.id}` : undefined))}
                 {mine.map((t) => row(s.id, t.remote_name, "", null, true))}
               </ul>
             )}

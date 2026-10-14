@@ -153,3 +153,34 @@ func TestResolveDraftRefusesAToolSelectionAPublishWouldRefuse(t *testing.T) {
 		t.Fatalf("disabled server: %v", err)
 	}
 }
+
+func TestADraftThatChoosesToolsAgainIsNotHeldBackByTheReviewFlag(t *testing.T) {
+	r := newToolsRig(t)
+	ctx := context.Background()
+	if _, err := r.svc.Update(ctx, r.flow.ID, UpdateRequest{Config: stepsConfig(r.server + "/echo"), MCPTools: &[]ToolSelection{r.sel("echo")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.svc.store.MCP().DetachAndDelete(ctx, r.server); err != nil { // publishes a version that needs review
+		t.Fatal(err)
+	}
+	cur, _ := r.svc.Get(ctx, r.flow.ID)
+	if cur.Readiness.State != ReadinessNeedsToolReview {
+		t.Fatalf("setup: %+v", cur.Readiness)
+	}
+	m := storage.MCPServer{ID: storage.NewID(), Name: "crm2", Endpoint: "https://mcp.example/rpc2", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := r.svc.store.MCP().CreateServer(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	d, err := r.svc.store.MCP().AddDiscovery(ctx, m.ID, []storage.MCPTool{{RemoteName: "echo", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := []ToolSelection{{ServerID: m.ID, RemoteName: "echo", SchemaHash: d.Tools[0].SchemaHash}}
+	_, readiness, err := r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(m.ID+"/echo"), &tools)
+	if err != nil || readiness.State != ReadinessReady {
+		t.Fatalf("a draft that chooses its tools again is the review: %+v err %v", readiness, err)
+	}
+	if _, readiness, _ = r.svc.ResolveDraft(ctx, r.flow.ID, stepsConfig(), nil); readiness.State != ReadinessNeedsToolReview {
+		t.Fatalf("a draft without a selection keeps the flag: %+v", readiness)
+	}
+}

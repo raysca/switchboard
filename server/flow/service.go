@@ -41,7 +41,7 @@ type UpdateRequest struct {
 	Config      json.RawMessage `json:"config,omitempty"`
 	Enabled     *bool           `json:"enabled,omitempty"`
 	// MCPTools replaces the flow's MCP tool selection in the same version as Config; nil keeps
-	// the current selection, an empty list clears it. Without Config, the current config is republished.
+	// the current selection, an empty list clears it. It must be sent with Config.
 	MCPTools *[]ToolSelection `json:"mcp_tools,omitempty"`
 }
 
@@ -196,11 +196,8 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Flo
 			return Flow{}, err
 		}
 		mutation.Tools = &selected
-		if len(config) == 0 { // a selection alone republishes the current config
-			config, err = s.currentConfig(ctx, id)
-			if err != nil {
-				return Flow{}, err
-			}
+		if len(config) == 0 {
+			return Flow{}, fmt.Errorf("%w: mcp_tools must be sent with config", ErrInvalidConfig)
 		}
 	}
 	if len(config) > 0 {
@@ -212,21 +209,6 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Flo
 		return Flow{}, err
 	}
 	return s.Get(ctx, id)
-}
-
-func (s *Service) currentConfig(ctx context.Context, id string) (json.RawMessage, error) {
-	row, err := s.store.Flows().Current(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if row.Archived || row.CurrentVersionID == "" {
-		return nil, errors.New("flow unavailable")
-	}
-	v, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
-	if err != nil {
-		return nil, err
-	}
-	return v.ConfigJSON, nil
 }
 
 // checkConfigTools verifies a flow's step tools against the tools the publish will select (selected,
@@ -312,6 +294,7 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 			return Snapshot{}, Readiness{}, err
 		}
 		draft.MCPTools = selected
+		draft.MCPReviewRequired = false // choosing the tools again is the review, as in a publish
 	}
 	readiness, tools := s.flowReadiness(ctx, draft, row.Enabled, row.Archived)
 	return Snapshot{FlowID: row.ID, Version: toVersion(draft), ConfigHash: hash, MCPTools: tools, Draft: true}, readiness, nil
@@ -630,7 +613,7 @@ func toStorageSelections(tools []ToolSelection) ([]storage.SelectedTool, error) 
 	for _, tool := range tools {
 		key := tool.ServerID + "\x00" + tool.RemoteName
 		if tool.ServerID == "" || tool.RemoteName == "" || tool.SchemaHash == "" || seen[key] {
-			return nil, errors.New("invalid MCP tool selection")
+			return nil, fmt.Errorf("%w: invalid MCP tool selection", storage.ErrInvalidToolSelection)
 		}
 		seen[key] = true
 		selected = append(selected, storage.SelectedTool{ServerID: tool.ServerID, RemoteName: tool.RemoteName, SchemaHash: tool.SchemaHash, Required: tool.Required})

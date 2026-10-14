@@ -26,7 +26,7 @@ test("tools chosen in the Tools tab are tested as a draft, then published with t
   await page.locator(".react-flow__node").first().click();
   await page.getByRole("tab", { name: /Tools/ }).click();
   await expect(page.getByRole("group", { name: "Picker ok" })).toBeVisible();
-  await page.getByRole("checkbox", { name: /^lookup_order/ }).check();
+  await page.getByRole("group", { name: "Picker ok" }).getByRole("checkbox", { name: /^lookup_order/ }).check();
   await step(page, "tool chosen in the designer");
 
   // Test call: the draft uses the tool although nothing is published yet.
@@ -53,7 +53,7 @@ test("a chosen tool can be taken off again, and the next version has none", asyn
   await openFlow(page, NAME);
   await page.locator(".react-flow__node").first().click();
   await page.getByRole("tab", { name: /Tools/ }).click();
-  const box = page.getByRole("checkbox", { name: /^lookup_order/ });
+  const box = page.getByRole("group", { name: "Picker ok" }).getByRole("checkbox", { name: /^lookup_order/ });
   await expect(box).toBeChecked();
   await box.uncheck();
   await page.getByRole("button", { name: "Publish", exact: true }).click();

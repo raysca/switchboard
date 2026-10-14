@@ -340,6 +340,11 @@ describe("applySelection", () => {
     const g = applySelection(two(), [sel("echo"), sel("lookup"), sel("other")]);
     expect(g.steps.map((s) => s.tools)).toEqual([["crm/echo", "crm/lookup"], ["crm/lookup"]]);
   });
+  it("leaves a lone named step's own choice alone: only a flat flow can call everything", () => {
+    const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Greeter", tools: ["crm/lookup"], config: {} }], routes: [] });
+    expect(applySelection(g, [sel("echo"), sel("lookup")]).steps[0].tools).toEqual(["crm/lookup"]);
+    expect(applySelection(g, [sel("echo")]).steps[0].tools).toEqual([]);
+  });
   it("gives a lone step every selected tool, as a one-step flow can call them all", () => {
     const g = applySelection(fromFlowConfig(flat), [sel("echo"), sel("lookup")]);
     expect(g.steps).toHaveLength(1);

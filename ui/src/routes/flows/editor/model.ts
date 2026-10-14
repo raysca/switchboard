@@ -179,13 +179,17 @@ export function fromFlowConfig(raw: unknown, selectedTools: string[] = []): Flow
   };
 }
 
+/** A stored flat flow opens as one step named "main" and goes back flat; a step the user has named needs the flow form. */
+function isFlat(g: FlowDraft): boolean {
+  const only = g.steps[0];
+  return g.steps.length === 1 && g.routes.length === 0 && !g.route_cue && only.id === "main" && only.name === "main";
+}
+
 /** The config to send: the flat form for a plain one-step flow, else the flow. */
 export function toPayload(g: FlowDraft): unknown {
   // A stored flat flow opens as one step named "main" (fromFlowConfig) and goes back flat, exposing
   // every selected tool. A step the user has named needs the flow form, or its name is lost.
-  const only = g.steps[0];
-  const plain = g.steps.length === 1 && g.routes.length === 0 && !g.route_cue && only.id === "main" && only.name === "main";
-  if (plain) return g.steps[0].config;
+  if (isFlat(g)) return g.steps[0].config;
   return {
     start: g.start,
     steps: g.steps.map((n) => {
@@ -202,14 +206,14 @@ const toolKey = (t: ToolSelection) => `${t.mcp_server_id}/${t.remote_name}`;
 
 /**
  * The flow's tool selection changed: a tool no longer selected comes off every step that listed it
- * (the server refuses a step tool the flow has not selected), and a lone step can call every selected tool.
- * A flow with several steps keeps what each step chose; a new tool is not added to any of them.
+ * (the server refuses a step tool the flow has not selected), and a flat flow's only step can call every selected tool.
+ * A flow in steps form keeps what each step chose; a new tool is not added to any of them.
  */
 export function applySelection(g: FlowDraft, next: ToolSelection[]): FlowDraft {
   const keys = next.map(toolKey);
   return {
     ...g,
-    steps: g.steps.map((n) => ({ ...n, tools: g.steps.length === 1 ? [...keys] : n.tools.filter((t) => keys.includes(t)) })),
+    steps: g.steps.map((n) => ({ ...n, tools: isFlat(g) ? [...keys] : n.tools.filter((t) => keys.includes(t)) })),
   };
 }
 
