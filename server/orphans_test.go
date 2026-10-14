@@ -20,10 +20,6 @@ func TestOrphanCutoffByDialect(t *testing.T) {
 	if got, want := orphanCutoff("postgres", 4*time.Hour, now), now.Add(-4*time.Hour-orphanGrace); !got.Equal(want) {
 		t.Fatalf("postgres cutoff %v, want %v", got, want)
 	}
-	// A missing limit falls back to the server's default longest call.
-	if got, want := orphanCutoff("postgres", 0, now), now.Add(-defaultMaxCallDuration-orphanGrace); !got.Equal(want) {
-		t.Fatalf("postgres default cutoff %v, want %v", got, want)
-	}
 }
 
 // seedActiveSession leaves one active session of a fresh flow in the store, as a crash would.
@@ -68,18 +64,14 @@ func crashAndRestart(t *testing.T) (*Server, string) {
 	return s, orphan
 }
 
-// A crash leaves its calls active. The next start, on the same store, ends them; a call started
-// after the restart is not touched.
+// A crash leaves its calls active. The next start, on the same store, ends them. (That a call
+// started after the cutoff is never ended is pinned in the storage tests.)
 func TestStartupEndsTheCallsACrashLeftBehind(t *testing.T) {
 	s, orphan := crashAndRestart(t)
 	ctx := context.Background()
 	got, err := s.store.Sessions().Get(ctx, orphan)
 	if err != nil || got.Status != "ended" {
 		t.Fatalf("orphan after restart: %+v err %v", got, err)
-	}
-	fresh := seedActiveSession(t, s.store, time.Now())
-	if r, _ := s.store.Sessions().Get(ctx, fresh); r.Status != "active" {
-		t.Fatalf("a call started after the restart was ended: %+v", r)
 	}
 }
 

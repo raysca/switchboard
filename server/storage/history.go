@@ -166,24 +166,20 @@ const orphanNote = "Ended when the server restarted."
 // "now": that would show a phantom call that lasted until the restart). It returns how many it
 // ended, and retries the MCP deletes those sessions were holding back.
 func (r SessionRepository) EndOrphans(ctx context.Context, before time.Time) (int, error) {
-	var n int
-	err := r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, r.s.bind(`UPDATE sessions SET
+	res, err := r.s.db.ExecContext(ctx, r.s.bind(`UPDATE sessions SET
 			status='ended',
 			ended_at=COALESCE((SELECT MAX(t.ended_at) FROM turns t WHERE t.session_id=sessions.id), started_at),
 			safe_summary=CASE WHEN safe_summary='' THEN ? ELSE safe_summary END
 			WHERE status IN ('active','draining') AND started_at < ?`), orphanNote, utc(before))
-		if err != nil {
-			return err
-		}
-		affected, err := res.RowsAffected()
-		n = int(affected)
-		return err
-	})
 	if err != nil {
 		return 0, err
 	}
-	return n, r.s.MCP().FinalizePendingDeletes(ctx)
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	// The sessions are ended whatever happens next: report the count with a finalize failure.
+	return int(affected), r.s.MCP().FinalizePendingDeletes(ctx)
 }
 
 func (r SessionRepository) AddTurn(ctx context.Context, v TurnRecord) error {

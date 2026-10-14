@@ -8,13 +8,9 @@ import (
 	"govoice/server/storage"
 )
 
-const (
-	// defaultMaxCallDuration is the longest call when limits.max_call_duration is not set.
-	defaultMaxCallDuration = 4 * time.Hour
-	// orphanGrace is added to the longest call before a session counts as dead on a store that
-	// other replicas may share.
-	orphanGrace = 5 * time.Minute
-)
+// orphanGrace is added to the longest call before a session counts as dead on a store that other
+// replicas may share.
+const orphanGrace = 5 * time.Minute
 
 // orphanCutoff is how old a session must be to be certainly dead at startup. SQLite is a
 // single-process file: every active session is a predecessor's, so everything before now. Postgres
@@ -23,10 +19,7 @@ func orphanCutoff(dialect string, maxCall time.Duration, now time.Time) time.Tim
 	if dialect != string(storage.Postgres) {
 		return now
 	}
-	if maxCall <= 0 {
-		maxCall = defaultMaxCallDuration
-	}
-	return now.Add(-maxCall - orphanGrace)
+	return now.Add(-maxCall - orphanGrace) // config validation guarantees maxCall > 0
 }
 
 // endOrphanedSessions ends the calls a previous process left active, before this one admits any.
@@ -35,8 +28,7 @@ func (s *Server) endOrphanedSessions(ctx context.Context, store *storage.Store) 
 	cutoff := orphanCutoff(s.cfg.Storage.Dialect, s.cfg.Limits.MaxCallDuration, time.Now())
 	n, err := store.Sessions().EndOrphans(ctx, cutoff)
 	if err != nil {
-		s.logger.Warn("could not end orphaned sessions", slog.Any("error", err))
-		return
+		s.logger.Warn("orphaned sessions sweep failed", slog.Int("ended", n), slog.Any("error", err))
 	}
 	if n > 0 {
 		s.logger.Warn("ended sessions left active by a previous process", slog.Int("sessions", n))
