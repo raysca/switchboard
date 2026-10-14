@@ -98,6 +98,21 @@ export const providerStatusSchema = z.object({
 });
 export type ProviderStatus = z.infer<typeof providerStatusSchema>;
 
+export const providerTestSchema = z.object({
+  provider: z.string(),
+  checked_at: z.string(),
+  results: z.array(
+    z.object({
+      stage: z.enum(["stt", "llm", "tts"]),
+      status: z.enum(["ok", "error", "skipped"]),
+      latency_ms: z.number().optional(),
+      detail: z.string().optional(),
+      circuit: z.enum(["closed", "open", "half_open", "unknown"]),
+    }),
+  ),
+});
+export type ProviderTest = z.infer<typeof providerTestSchema>;
+
 const providersEnvelope = z.object({
   data: z.array(providerStatusSchema),
 });
@@ -526,6 +541,8 @@ export function createApiClient(
   return {
     issueVoiceToken: async (input: { principal: string; flow_id: string; draft?: { config: unknown } }) =>
       (await request("/voice-tokens", tokenEnvelope, { method: "POST", body: input })).data,
+    testProvider: async (id: string) =>
+      (await request(`/providers/${encodeURIComponent(id)}/test`, z.object({ data: providerTestSchema }), { method: "POST" })).data,
     getProviders: async () =>
       (await request("/providers", providersEnvelope)).data,
     // ponytail: one page of the server max (100); page through when someone has more flows.

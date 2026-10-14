@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
-import type { FlowDTO, ApiClient, ApiError, ProviderStatus } from "../../api/client";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import type { FlowDTO, ApiClient, ApiError, ProviderStatus, ProviderTest } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import {
   SERVICES,
@@ -21,7 +21,47 @@ export type ProvidersViewProps = { client: ApiClient; keyValue: string | null };
 // GET /flows returns at most this many flows; a count that reaches it is a floor.
 const FLOW_CAP = 100;
 
-function Panel({ p, flows, flowsCapped }: { p: ProviderStatus; flows: FlowDTO[] | undefined; flowsCapped: boolean }) {
+const CIRCUIT_TEXT: Partial<Record<ProviderTest["results"][number]["circuit"], string>> = { open: "Circuit open", half_open: "Circuit half open" };
+
+function resultText(r: ProviderTest["results"][number]): string {
+  const base =
+    r.status === "ok" ? (r.latency_ms !== undefined ? `OK, ${r.latency_ms} ms` : "OK") : r.status === "skipped" ? `Skipped: ${r.detail ?? ""}` : `Error: ${r.detail ?? ""}`;
+  const circuit = CIRCUIT_TEXT[r.circuit];
+  return `${SERVICE_NAMES[r.stage]} — ${base}${circuit ? ` · ${circuit}` : ""}`;
+}
+
+/** One click sends one tiny real request per service; nothing is asked of the provider until it is pressed. */
+function ConnectionTest({ p, client }: { p: ProviderStatus; client: ApiClient }) {
+  const test = useMutation({ mutationFn: () => client.testProvider(p.id) });
+  const cred = credential(p);
+  return (
+    <section aria-labelledby="provider-test">
+      <h3 id="provider-test">Connection</h3>
+      <button type="button" className="action-button-small" disabled={!cred.ok || test.isPending} onClick={() => test.mutate()}>
+        {test.isPending ? "Testing…" : "Test connection"}
+      </button>
+      {!cred.ok && <p className="subtext">No credential. Set the variable first.</p>}
+      {cred.ok && !test.data && !test.isError && <p className="subtext">Sends one tiny request per service, using the key in the server's environment.</p>}
+      {test.isError && (
+        <p role="alert" className="note note--bad">
+          {(test.error as ApiError).message}
+        </p>
+      )}
+      {test.data && (
+        <>
+          <ul className="provider-flows" aria-label="Connection test results" aria-live="polite">
+            {test.data.results.map((r) => (
+              <li key={r.stage}>{resultText(r)}</li>
+            ))}
+          </ul>
+          <p className="subtext">Checked {new Date(test.data.checked_at).toLocaleTimeString()}</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Panel({ p, flows, flowsCapped, client }: { p: ProviderStatus; flows: FlowDTO[] | undefined; flowsCapped: boolean; client: ApiClient }) {
   const cred = credential(p);
   const missing = new Set(missingEnv(p));
   const using = flows ? flowsUsing(flows, p.id) : undefined;
@@ -71,6 +111,8 @@ function Panel({ p, flows, flowsCapped }: { p: ProviderStatus; flows: FlowDTO[] 
           })}
         </dl>
       </section>
+
+      <ConnectionTest p={p} client={client} />
 
       <section aria-labelledby="provider-used-by">
         <h3 id="provider-used-by">Used by</h3>
@@ -225,7 +267,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
             Catalog providers are defined in YAML and can be overlaid per deployment. An OpenAI-compatible provider with OPENAI_BASE_URL set covers Groq, Together and local servers.
           </p>
         </section>
-        {selected && <Panel p={selected} flows={flows} flowsCapped={capped} />}
+        {selected && <Panel key={selected.id} p={selected} flows={flows} flowsCapped={capped} client={client} />}
       </div>
     </>,
   );

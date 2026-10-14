@@ -123,6 +123,24 @@ describe("management client", () => {
     expect(JSON.parse(bodies[1])).not.toHaveProperty("draft");
   });
 
+  it("tests a provider on demand with a body-less POST", async () => {
+    const calls: { url: string; method?: string; body?: unknown }[] = [];
+    const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body });
+      return new Response(
+        JSON.stringify({ data: { provider: "google", checked_at: "2026-10-14T10:00:00Z", results: [
+          { stage: "llm", status: "ok", latency_ms: 410, circuit: "closed" },
+          { stage: "stt", status: "ok", circuit: "unknown" },
+        ] } }),
+        { status: 200 },
+      );
+    });
+    const out = await createApiClient(() => ({ key: "k", generation: 1 }), fetcher).testProvider("google");
+    expect(calls).toEqual([{ url: "/api/v1/providers/google/test", method: "POST", body: undefined }]);
+    expect(out.results[0].latency_ms).toBe(410);
+    expect(out.results[1].latency_ms).toBeUndefined();
+  });
+
   it("reports the generation captured when a request starts", async () => {
     let respond!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => {

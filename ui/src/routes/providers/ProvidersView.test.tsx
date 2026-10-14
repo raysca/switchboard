@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { ProvidersView } from "./ProvidersView";
-import type { FlowDTO, ApiClient, ProviderStatus } from "../../api/client";
+import type { FlowDTO, ApiClient, ProviderStatus, ProviderTest } from "../../api/client";
 import { ApiError } from "../../api/client";
 
 const google: ProviderStatus = {
@@ -227,5 +227,58 @@ describe("ProvidersView", () => {
     await screen.findByRole("table");
     expect(screen.getByText(/Catalog providers are defined in YAML and can be overlaid per deployment\./)).toBeVisible();
     expect(screen.getByText(/OPENAI_BASE_URL/, { selector: "p" })).toBeVisible();
+  });
+
+  describe("Test connection", () => {
+    const tested: ProviderTest = {
+      provider: "google",
+      checked_at: "2026-10-14T10:00:00Z",
+      results: [
+        { stage: "stt", status: "ok", circuit: "closed" },
+        { stage: "llm", status: "ok", latency_ms: 410, circuit: "closed" },
+        { stage: "tts", status: "error", detail: "client_error: bad voice", circuit: "open" },
+      ],
+    };
+
+    it("asks nothing until the button is pressed, then lists each service", async () => {
+      const testProvider = vi.fn().mockResolvedValue(tested);
+      const { user } = setup({ testProvider });
+      await screen.findByRole("heading", { name: "Google", level: 2 });
+      expect(testProvider).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Test connection" }));
+      expect(testProvider).toHaveBeenCalledWith("google");
+      const list = await screen.findByRole("list", { name: "Connection test results" });
+      const items = within(list).getAllByRole("listitem").map((li) => li.textContent);
+      expect(items).toEqual([
+        "Speech-to-text — OK",
+        "Language models — OK, 410 ms",
+        "Text-to-speech — Error: client_error: bad voice · Circuit open",
+      ]);
+      expect(screen.getByText(/^Checked /)).toBeVisible();
+    });
+
+    it("cannot be pressed for a provider with no credential, and says why", async () => {
+      const { user } = setup({}, "/providers?provider=xai");
+      await screen.findByRole("heading", { name: "xAI", level: 2 });
+      expect(screen.getByRole("button", { name: "Test connection" })).toBeDisabled();
+      expect(screen.getByText("No credential. Set the variable first.")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Test connection" }));
+    });
+
+    it("shows the server's try-again message and lets the button be pressed again", async () => {
+      const testProvider = vi.fn().mockRejectedValue(new ApiError("this provider was checked a moment ago; try again in 5 s", "probe_too_soon", 429, "r1"));
+      const { user } = setup({ testProvider });
+      await user.click(await screen.findByRole("button", { name: "Test connection" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("try again in 5 s");
+      expect(screen.getByRole("button", { name: "Test connection" })).toBeEnabled();
+    });
+
+    it("forgets the results when another provider is chosen", async () => {
+      const { user } = setup({ testProvider: vi.fn().mockResolvedValue(tested) });
+      await user.click(await screen.findByRole("button", { name: "Test connection" }));
+      await screen.findByRole("list", { name: "Connection test results" });
+      await user.click(screen.getByRole("button", { name: "xAI" }));
+      expect(screen.queryByRole("list", { name: "Connection test results" })).toBeNull();
+    });
   });
 });
