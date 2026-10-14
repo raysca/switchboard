@@ -327,3 +327,29 @@ func TestTracesMethodNotAllowedAndNotFound(t *testing.T) {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
+
+func TestSessionsSayWhetherTheyWereADraft(t *testing.T) {
+	s, handler, sessID, _ := setupTracesHandler(t)
+	flowID, versionID, _ := createTestFlowAndVersion(t, s)
+	draftHash, _, err := storage.ConfigHash([]byte(`{"draft":"yes"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	draftID := storage.NewID()
+	if err := s.Sessions().Create(context.Background(), storage.SessionRecord{ID: draftID, FlowID: flowID, FlowVersionID: versionID, ConfigHash: draftHash, Status: "active", StartedAt: time.Now().UTC(), Draft: true}); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]bool{sessID: false, draftID: true} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sessions/"+id, nil))
+		var got struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if d, ok := got.Data["draft"].(bool); !ok || d != want {
+			t.Fatalf("session %s: draft = %v (present %v), want %v: %s", id, got.Data["draft"], ok, want, w.Body)
+		}
+	}
+}

@@ -20,6 +20,7 @@ const flow = (over: Partial<FlowDTO> = {}): FlowDTO => ({
   ...over,
 });
 const call = (over: Partial<SessionDTO> = {}): SessionDTO => ({
+  draft: false,
   id: "0192aaaa-0000-7000-8000-000000000001",
   flow_id: "a1",
   flow_version_id: "v7",

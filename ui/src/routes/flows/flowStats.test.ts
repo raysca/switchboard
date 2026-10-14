@@ -15,6 +15,7 @@ const flow = (over: Partial<FlowDTO> = {}, config: Record<string, unknown> = {})
   ...over,
 });
 const session = (over: Partial<SessionDTO>): SessionDTO => ({
+  draft: false,
   id: "s",
   flow_id: "a1",
   flow_version_id: "v2",

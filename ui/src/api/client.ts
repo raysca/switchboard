@@ -398,6 +398,7 @@ export const sessionSchema = z.object({
   status: z.string(),
   turn_count: z.number(),
   safe_summary: z.string().optional().default(""),
+  draft: z.boolean().optional().default(false),
   provider_stack: z.unknown().optional(),
   runtime_snapshot: z.unknown().optional(),
   runtime_tools: z.array(sessionRuntimeToolSchema).nullish(),

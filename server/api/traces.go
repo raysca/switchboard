@@ -38,6 +38,7 @@ type SessionDTO struct {
 	Status          string           `json:"status"`
 	TurnCount       int              `json:"turn_count"`
 	SafeSummary     string           `json:"safe_summary"`
+	Draft           bool             `json:"draft"` // a test call on an unpublished config
 	ProviderStack   json.RawMessage  `json:"provider_stack,omitempty"`
 	RuntimeSnapshot json.RawMessage  `json:"runtime_snapshot,omitempty"`
 	RuntimeTools    []RuntimeToolDTO `json:"runtime_tools,omitempty"`
@@ -310,6 +311,7 @@ func toSessionDTO(r storage.SessionRecord) SessionDTO {
 		Status:        r.Status,
 		TurnCount:     r.TurnCount,
 		SafeSummary:   r.SafeSummary,
+		Draft:         r.Draft,
 	}
 	for _, t := range r.RuntimeTools {
 		dto.RuntimeTools = append(dto.RuntimeTools, RuntimeToolDTO{MCPServerID: t.ServerID, RemoteName: t.RemoteName, SchemaHash: t.SchemaHash, Required: t.Required})

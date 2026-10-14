@@ -15,6 +15,7 @@ const flow = (config: Record<string, unknown> = {}): FlowDTO => ({
 });
 const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], routes: [] };
 const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
+  draft: false,
   id: "s1",
   flow_id: "a1",
   flow_version_id: "v7",

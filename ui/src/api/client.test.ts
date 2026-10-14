@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, stepConfigV2Schema, createApiClient, flowVersionSchema, routeSpan, type TraceSpanDTO } from "./client";
+import { ApiError, stepConfigV2Schema, createApiClient, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
 
 describe("management client", () => {
   it("sends an in-memory bearer and parses the response", async () => {
@@ -539,5 +539,13 @@ describe("pre-rename data", () => {
     expect(routeSpan(span("handoff.active", { from_node: "a", to_node: "b" }))).toEqual({ event: "active", from: "a", to: "b" });
     expect(routeSpan(span("route.failed", { from_step: "a", to_step: "b" }))).toEqual({ event: "failed", from: "a", to: "b" });
     expect(routeSpan(span("llm.generate", {}))).toBeNull();
+  });
+});
+
+describe("session draft flag", () => {
+  const base = { id: "s1", flow_id: "f1", flow_version_id: "v1", config_hash: "h", started_at: "2026-10-14T10:00:00Z", status: "ended", turn_count: 0 };
+  it("is false when an older server leaves it out, and true when set", () => {
+    expect(sessionSchema.parse(base).draft).toBe(false);
+    expect(sessionSchema.parse({ ...base, draft: true }).draft).toBe(true);
   });
 });
