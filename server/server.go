@@ -535,6 +535,10 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	call.OnInjector = func(i ContextInjector) { injector = i }
 	var greet func(string) error
 	call.OnGreeter = func(say func(string) error) { greet = say }
+	call.OnGreetFail = func(err error) {
+		s.metrics.GreetingFailedTotal.Add(1)
+		s.logger.Warn("greeting not queued", "session", call.StoredSessionID, "err", s.redactor.Redact(err.Error()))
+	}
 	call.OnRoute = s.onRoute(timeline, call.StoredSessionID)
 	call.OnEndCall = s.onEndCall(call.StoredSessionID)
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
@@ -696,7 +700,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		if _, _, err := session.Subscribe(0, func(e core.DebugEvent) {
 			if e.Name == core.DebugSessionStarted {
 				once.Do(func() {
-					queueGreeting(greet, call.Greeting, &s.metrics.GreetingFailedTotal, s.logger, call.StoredSessionID)
+					queueGreeting(greet, call.Greeting, call.OnGreetFail)
 				})
 			}
 		}); err != nil {

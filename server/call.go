@@ -279,7 +279,7 @@ func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Defin
 	tools, exec := s.stepToolset(rs, g, n, cg)
 	maxParallel := s.maxParallel(cfg)
 	return StepSpec{
-		Name: n.Name,
+		Name: n.Name, Greeting: cfg.GreetingText(),
 		LLM: StageSpec{Provider: cfg.LLM.Provider, Model: cfg.LLM.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secrets["llm"],
 			Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel},
 		LLMFallbacks: s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {

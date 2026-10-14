@@ -47,7 +47,10 @@ type HandoffConfig struct {
 	Build   BuildNodeFunc
 	// Greet adds the "caller handed to you" message to history; it runs only
 	// when the flip is idle-driven (the caller has not spoken yet).
-	Greet         func(nodeID string) error
+	Greet func(nodeID string) error
+	// NoTurn, if set, is asked for each target when its build finishes: true means the target says its own
+	// line from Greet, so the idle flip must not start a model turn for it.
+	NoTurn        func(target string) bool
 	OnEvent       func(HandoffEvent)
 	Max           int           // transfers per call (default 10)
 	BuildTimeout  time.Duration // default 10s
@@ -184,6 +187,7 @@ func (h *Handoff) build(ctx context.Context, from, target string) {
 	h.cfg.Trigger.Deliver(AsyncToolResult{
 		Call:   ToolCall{Name: "transfer_to_" + target},
 		Inject: func() error { return h.flip(target, true) },
+		NoTurn: h.cfg.NoTurn != nil && h.cfg.NoTurn(target),
 	})
 }
 

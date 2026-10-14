@@ -42,11 +42,12 @@ type stageProbe struct {
 	mu            sync.Mutex
 	built         map[string]int
 	closed        map[string]int
-	failTTS       string        // a TTS voice whose build fails
-	holdTTS       string        // a TTS voice whose build waits for gate
-	failAfterHold bool          // the held build fails once released (a provider that times out)
-	gate          chan struct{} // closed to let the held build finish
-	entered       chan struct{} // closed when the held build starts
+	units         map[string]int // synthesis units each TTS voice was asked to speak
+	failTTS       string         // a TTS voice whose build fails
+	holdTTS       string         // a TTS voice whose build waits for gate
+	failAfterHold bool           // the held build fails once released (a provider that times out)
+	gate          chan struct{}  // closed to let the held build finish
+	entered       chan struct{}  // closed when the held build starts
 	once          sync.Once
 }
 
@@ -57,6 +58,7 @@ func (p *stageProbe) count(m map[string]int, k string) int {
 }
 func (p *stageProbe) builds(k string) int { return p.count(p.built, k) }
 func (p *stageProbe) closes(k string) int { return p.count(p.closed, k) }
+func (p *stageProbe) spoke(k string) int  { return p.count(p.units, k) }
 
 type probedStage struct {
 	core.Processor
@@ -69,6 +71,15 @@ func (s *probedStage) Attach(sc core.SessionController, i int) error {
 		return a.Attach(sc, i)
 	}
 	return nil
+}
+
+func (s *probedStage) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	if _, ok := f.(*core.SynthesisUnitFrame); ok {
+		s.probe.mu.Lock()
+		s.probe.units[s.key]++
+		s.probe.mu.Unlock()
+	}
+	return s.Processor.ProcessFrame(ctx, f, dir, e)
 }
 
 func (s *probedStage) Close() error {
@@ -112,7 +123,7 @@ func (p *stageProbe) install(s *Server) {
 }
 
 func newProbe() *stageProbe {
-	return &stageProbe{built: map[string]int{}, closed: map[string]int{}, gate: make(chan struct{}), entered: make(chan struct{})}
+	return &stageProbe{built: map[string]int{}, closed: map[string]int{}, units: map[string]int{}, gate: make(chan struct{}), entered: make(chan struct{})}
 }
 
 type flowRigE2E struct {

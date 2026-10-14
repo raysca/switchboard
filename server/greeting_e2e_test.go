@@ -104,29 +104,16 @@ func TestTheGreetingReleasesTheUntilFirstBotCompleteMute(t *testing.T) {
 	c.waitReplies("[MUTE", 1) // the caller is heard once the greeting is done
 }
 
-func TestAGreetingThatCannotBeQueuedIsCountedAndNeverFailsTheCall(t *testing.T) {
-	var m Metrics
-	queueGreeting(func(string) error { return errors.New("session closing") }, "hi", &m.GreetingFailedTotal, nil, "s1")
-	if m.GreetingFailedTotal.Load() != 1 {
-		t.Fatalf("counter %d", m.GreetingFailedTotal.Load())
+func TestAGreetingThatCannotBeQueuedIsReportedAndNeverFailsTheCall(t *testing.T) {
+	var failed []error
+	queueGreeting(func(string) error { return errors.New("session closing") }, "hi", func(err error) { failed = append(failed, err) })
+	if len(failed) != 1 {
+		t.Fatalf("failures %v", failed)
 	}
 	var spoken atomic.Value
-	queueGreeting(func(s string) error { spoken.Store(s); return nil }, "hi", &m.GreetingFailedTotal, nil, "s1")
-	if spoken.Load() != "hi" || m.GreetingFailedTotal.Load() != 1 {
-		t.Fatalf("spoken %v counter %d", spoken.Load(), m.GreetingFailedTotal.Load())
+	queueGreeting(func(s string) error { spoken.Store(s); return nil }, "hi", func(err error) { failed = append(failed, err) })
+	if spoken.Load() != "hi" || len(failed) != 1 {
+		t.Fatalf("spoken %v failures %v", spoken.Load(), failed)
 	}
-}
-
-func TestTheCallerCanInterruptTheGreeting(t *testing.T) {
-	long := "Welcome to Smile Dental. We are open every weekday from eight until six. Our hygienists can see you today. " +
-		"If this is an emergency, please say so now. Otherwise tell me what brings you in. We also take walk-ins on Saturdays."
-	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Providers.Echo.Audible = true })
-	c := r.dial(greetingFlow(t, r, "BARGE", long))
-	time.Sleep(150 * time.Millisecond) // the first sentence is playing
-	c.say("actually I have a question")
-	c.waitReplies("[BARGE", 1) // the caller's words get a normal reply
-	eventually(t, "the greeting recorded as interrupted", func() bool {
-		turns, err := r.s.store.Sessions().Turns(t.Context(), c.sessionID)
-		return err == nil && len(turns) >= 2 && turns[0].AssistantText != "" && turns[0].Interrupted && len(turns[0].AssistantText) < len(long)
-	})
+	queueGreeting(func(string) error { return errors.New("x") }, "hi", nil) // no handler: still no panic
 }

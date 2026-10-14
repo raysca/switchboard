@@ -23,6 +23,8 @@ type StepSpec struct {
 	LLMFallbacks []StageSpec
 	TTS          StageSpec
 	TTSFallbacks []StageSpec
+	// Greeting is what the step says, word for word, when a route hands the call to it ("" = the model greets).
+	Greeting string
 }
 
 // wipe zeroes the secrets once the step's processors are built.
@@ -196,6 +198,32 @@ func transferGreeting(stepName, note string) string {
 		msg += " Note from the previous agent: " + neutralizeNoteMarker(note) + "."
 	}
 	return msg + " Greet them briefly, by name if you know it, and continue.]"
+}
+
+// transferNote carries the previous agent's note into the history when a fixed greeting replaces the model's
+// greeting: context only, no reply is requested. The note is model-written from the caller's words, so server
+// markers in it are neutralised.
+func transferNote(stepName, note string) string {
+	return "[The caller was just transferred to you (" + stepName + "). Note from the previous agent: " + neutralizeNoteMarker(note) + ".]"
+}
+
+// greetStep is what Handoff.Greet does once the idle flip has swapped the new step in. A non-start step with
+// a fixed greeting speaks it (after a context-only message carrying the previous agent's note, if any) and the
+// model is not asked to greet; otherwise the model is told to greet, as before. The start step's greeting is
+// the call opening only, so a return to it gets the model's greeting. add records a history message; speak
+// queues the greeting (it must not block).
+func (c *CallFlow) greetStep(nodeID, stepName, greeting string, add func(core.Message) error, speak func(string)) error {
+	note := c.takeNote()
+	if greeting != "" && nodeID != c.Start && speak != nil {
+		if note != "" {
+			if err := add(core.Message{Role: core.RoleUser, Content: transferNote(stepName, note)}); err != nil {
+				return err
+			}
+		}
+		speak(greeting)
+		return nil
+	}
+	return add(core.Message{Role: core.RoleUser, Content: transferGreeting(stepName, note)})
 }
 
 // setNote keeps the note of the transfer in progress for the greeting; every transfer overwrites it.

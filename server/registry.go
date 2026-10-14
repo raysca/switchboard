@@ -92,7 +92,9 @@ type CallSpec struct {
 	// once the session has started.
 	Greeting  string
 	OnGreeter func(say func(string) error)
-	MaxTokens int
+	// OnGreetFail is told when a greeting could not be queued (the server counts and logs it).
+	OnGreetFail func(error)
+	MaxTokens   int
 	// Summary: summarize older turns with the primary LLM (off unless Enabled).
 	Summary flow.SummarizationConfig
 	// History, when set, sees every frame just before the transport (turn rows).
@@ -596,10 +598,11 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		return fail(fmt.Errorf("create tts processor: %w", err))
 	}
 	built = append(built, ttsProc)
+	var asstSay func(string) error // set once the assistant processor exists, before the session starts
 	if call.Flow != nil {
 		// The start step is live; every other step is built when the call moves
 		// to it and closed when it leaves. The swaps are the pipeline stages.
-		var lastStep atomic.Pointer[string]
+		var lastStep, lastGreeting atomic.Pointer[string]
 		buildStep := func(ctx context.Context, id string) (core.NodeStages, error) {
 			ns, err := call.Flow.Resolve(ctx, id)
 			if err != nil {
@@ -622,6 +625,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 				return core.NodeStages{}, fmt.Errorf("step %q tts: %w", id, err)
 			}
 			lastStep.Store(&ns.Name)
+			lastGreeting.Store(&ns.Greeting)
 			return core.NodeStages{LLM: llm, TTS: tts}, nil
 		}
 		llmSwap, ttsSwap := core.NewStageSwap(llmProc), core.NewStageSwap(ttsProc)
@@ -629,12 +633,24 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			Entry: call.Flow.Start, LLM: llmSwap, TTS: ttsSwap, Trigger: asyncTrigger,
 			Build:   buildStep,
 			OnEvent: call.OnRoute,
-			Greet: func(string) error {
-				name := "another agent"
+			// A step with a fixed greeting says it itself: the flip starts no model turn for it.
+			NoTurn: func(target string) bool {
+				g := lastGreeting.Load()
+				return g != nil && *g != "" && target != call.Flow.Start
+			},
+			Greet: func(nodeID string) error {
+				name, greeting := "another agent", ""
 				if n := lastStep.Load(); n != nil {
 					name = *n
 				}
-				return ctxPool.AddMessage(core.Message{Role: core.RoleUser, Content: transferGreeting(name, call.Flow.takeNote())})
+				if g := lastGreeting.Load(); g != nil {
+					greeting = *g
+				}
+				return call.Flow.greetStep(nodeID, name, greeting, ctxPool.AddMessage, func(text string) {
+					if asstSay != nil {
+						queueGreeting(asstSay, text, call.OnGreetFail)
+					}
+				})
 			},
 		})
 		if err != nil {
@@ -730,6 +746,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		turnTyped = tp
 	}
 	asstCtxProc := core.NewAssistantContextProcessor(ctxPool, asstCfg)
+	asstSay = asstCtxProc.Say
 	if call.OnGreeter != nil {
 		call.OnGreeter(asstCtxProc.Say)
 	}
