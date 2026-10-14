@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -143,8 +144,8 @@ func probeDetail(class string, err error, redact func(string) string) string {
 
 // probeStage checks one stage of a provider: catalog default model or voice, the environment secret, the
 // registry's own factory, then probeProcessor. It never touches the call, admission or session machinery.
-func (s *Server) probeStage(ctx context.Context, provider, stage string) ProbeResult {
-	res := ProbeResult{Stage: stage}
+func (s *Server) probeStage(ctx context.Context, provider, stage string) (res ProbeResult) {
+	res = ProbeResult{Stage: stage}
 	defer func() { res.Circuit = s.metrics.circuitState(provider, stage) }()
 	spec := StageSpec{Provider: provider}
 	var ok bool
@@ -172,9 +173,16 @@ func (s *Server) probeStage(ctx context.Context, provider, stage string) ProbeRe
 	}
 	defer clear(secret)
 	spec.Secret = secret
+	// The redactor knows patterns; the probe also knows the exact secret it was given.
+	redact := func(m string) string {
+		if len(secret) > 0 {
+			m = strings.ReplaceAll(m, string(secret), "[redacted]")
+		}
+		return s.redactor.Redact(m)
+	}
 	proc, err := s.registry.BuildStage(s.cfg, stage, spec)
 	if err != nil {
-		res.Status, res.Detail = "error", probeDetail("build", err, s.redactor.Redact)
+		res.Status, res.Detail = "error", probeDetail("build", err, redact)
 		return res
 	}
 	d, err := probeProcessor(ctx, proc, stage)
@@ -183,7 +191,7 @@ func (s *Server) probeStage(ctx context.Context, provider, stage string) ProbeRe
 		if errors.Is(err, context.DeadlineExceeded) {
 			class = "timeout"
 		}
-		res.Status, res.Detail = "error", probeDetail(class, err, s.redactor.Redact)
+		res.Status, res.Detail = "error", probeDetail(class, err, redact)
 		return res
 	}
 	res.Status = "ok"

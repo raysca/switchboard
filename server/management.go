@@ -200,10 +200,11 @@ func (s *Server) developmentStore() (string, error) {
 	return filepath.Join(dir, "govoice.db"), nil
 }
 
-// providersRoutes serves only the read-only provider listing; every other path
-// under /api/v1/providers/ is a 404.
+// providersRoutes serves the read-only provider listing and the on-demand provider test; every other
+// path under /api/v1/providers/ is a 404.
 func (s *Server) providersRoutes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/providers", api.ProvidersHandler{Catalog: s.catalog, Resolver: s.resolver, Supports: s.registry.Supports})
+	mux.HandleFunc("/api/v1/providers/{id}/test", s.handleProviderTest)
 	return mux
 }

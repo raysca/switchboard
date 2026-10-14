@@ -67,6 +67,7 @@ type Server struct {
 	voiceKeyID            string
 	voiceEpoch            string
 	drafts                *draftCalls
+	probes                probeGate
 	vadExecutor           vad.SharedExecutor
 	turnBackend           smartturn.Backend
 	mgmt                  *management
