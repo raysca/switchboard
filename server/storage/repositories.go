@@ -67,6 +67,51 @@ func (r FlowRepository) Create(ctx context.Context, a Flow) error {
 	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO agents(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, a.Enabled), boolValue(r.s.dialect, a.Archived), now, now)
 	return err
 }
+
+// MaxSelectedTools bounds the MCP tools one flow version may select.
+const MaxSelectedTools = 64
+
+// queryer is what validateSelections reads through: a transaction (a publish) or the database (a draft).
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// validateSelections checks every selected tool against its server's latest discovery: the server is
+// enabled, has a discovery, offers the tool, and the pinned schema hash is still the offered one.
+func (s *Store) validateSelections(ctx context.Context, q queryer, selections []SelectedTool) error {
+	if len(selections) > MaxSelectedTools {
+		return fmt.Errorf("%w: at most %d tools", ErrInvalidToolSelection, MaxSelectedTools)
+	}
+	for _, sel := range selections {
+		if err := validID(sel.ServerID); err != nil {
+			return err
+		}
+		query := "SELECT latest_discovery_id FROM mcp_servers WHERE id=? AND enabled=?"
+		if s.dialect == Postgres {
+			query += " FOR SHARE"
+		}
+		var discovery sql.NullString
+		if err := q.QueryRowContext(ctx, s.bind(query), sel.ServerID, boolValue(s.dialect, true)).Scan(&discovery); errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: MCP server %s is missing or disabled", ErrInvalidToolSelection, sel.ServerID)
+		} else if err != nil {
+			return err
+		}
+		if !discovery.Valid {
+			return fmt.Errorf("%w: MCP server %s has no discovery", ErrInvalidToolSelection, sel.ServerID)
+		}
+		var actual string
+		if err := q.QueryRowContext(ctx, s.bind("SELECT schema_hash FROM mcp_tools WHERE discovery_id=? AND remote_name=?"), discovery.String, sel.RemoteName).Scan(&actual); errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: unknown tool %q", ErrInvalidToolSelection, sel.RemoteName)
+		} else if err != nil {
+			return err
+		}
+		if actual != sel.SchemaHash {
+			return fmt.Errorf("%w: tool %q schema changed", ErrInvalidToolSelection, sel.RemoteName)
+		}
+	}
+	return nil
+}
+
 func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, version int, config []byte, selections []SelectedTool) (FlowVersion, error) {
 	var out FlowVersion
 	if err := validID(flowID); err != nil {
@@ -103,32 +148,8 @@ func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, versi
 		}
 		// The same transaction validates every selected schema and publishes the version.
 		// SQLite begins IMMEDIATE; PostgreSQL row locks block refresh or delete races.
-		for _, sel := range selections {
-			if err := validID(sel.ServerID); err != nil {
-				return err
-			}
-			query := "SELECT latest_discovery_id FROM mcp_servers WHERE id=? AND enabled=?"
-			if r.s.dialect == Postgres {
-				query += " FOR SHARE"
-			}
-			var discovery sql.NullString
-			if err := tx.QueryRowContext(ctx, r.s.bind(query), sel.ServerID, boolValue(r.s.dialect, true)).Scan(&discovery); errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("%w: MCP server %s is missing or disabled", ErrInvalidToolSelection, sel.ServerID)
-			} else if err != nil {
-				return err
-			}
-			if !discovery.Valid {
-				return fmt.Errorf("%w: MCP server %s has no discovery", ErrInvalidToolSelection, sel.ServerID)
-			}
-			var actual string
-			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT schema_hash FROM mcp_tools WHERE discovery_id=? AND remote_name=?"), discovery.String, sel.RemoteName).Scan(&actual); errors.Is(err, sql.ErrNoRows) {
-				return fmt.Errorf("%w: unknown tool %q", ErrInvalidToolSelection, sel.RemoteName)
-			} else if err != nil {
-				return err
-			}
-			if actual != sel.SchemaHash {
-				return fmt.Errorf("%w: tool %q schema changed", ErrInvalidToolSelection, sel.RemoteName)
-			}
+		if err := r.s.validateSelections(ctx, tx, selections); err != nil {
+			return err
 		}
 		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), out.ID, flowID, version, out.SchemaVersion, string(canonical), hash, utc(out.CreatedAt))
 		if err != nil {

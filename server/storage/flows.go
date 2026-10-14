@@ -12,6 +12,9 @@ type FlowMutation struct {
 	Name        *string
 	Description *string
 	Enabled     *bool
+	// Tools nil keeps the current version's MCP tool selection; non-nil (even empty) replaces it,
+	// is validated like PublishVersion's, and clears mcp_review_required (choosing again is the review).
+	Tools *[]SelectedTool
 }
 
 // CreateWithVersionAndToolsAndReviewRequired creates the flow and its initial
@@ -137,7 +140,11 @@ func (r FlowRepository) MutateAndPublish(ctx context.Context, id string, mutatio
 				return err
 			}
 			reviewRequired := false
-			if currentVersion.Valid {
+			if mutation.Tools != nil {
+				if err := r.s.validateSelections(ctx, tx, *mutation.Tools); err != nil {
+					return err
+				}
+			} else if currentVersion.Valid {
 				if err := tx.QueryRowContext(ctx, r.s.bind("SELECT mcp_review_required FROM agent_versions WHERE id=?"), currentVersion.String).Scan(&reviewRequired); err != nil {
 					return err
 				}
@@ -146,7 +153,13 @@ func (r FlowRepository) MutateAndPublish(ctx context.Context, id string, mutatio
 			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_versions(id,agent_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), next.ID, next.FlowID, next.Version, next.SchemaVersion, string(next.ConfigJSON), next.ConfigHash, utc(next.CreatedAt), boolValue(r.s.dialect, reviewRequired)); err != nil {
 				return err
 			}
-			if currentVersion.Valid {
+			if mutation.Tools != nil {
+				for _, sel := range *mutation.Tools {
+					if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) VALUES(?,?,?,?,?)"), next.ID, sel.ServerID, sel.RemoteName, sel.SchemaHash, boolValue(r.s.dialect, sel.Required)); err != nil {
+						return err
+					}
+				}
+			} else if currentVersion.Valid {
 				if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO agent_mcp_tools(agent_version_id,mcp_server_id,remote_name,schema_hash,required) SELECT ?,mcp_server_id,remote_name,schema_hash,required FROM agent_mcp_tools WHERE agent_version_id=?"), next.ID, currentVersion.String); err != nil {
 					return err
 				}
