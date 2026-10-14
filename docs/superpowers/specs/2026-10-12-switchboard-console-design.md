@@ -96,14 +96,14 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | S6 | Code rename agent/node/handoff → flow/step/route | Route paths and API names (`/flows`) |
 | S7 | Per-flow call statistics (calls today, median reply time) | Those two figures on the Flows list rows |
 | S8 | Unarchive a flow (`POST /agents/{id}/restore`) | The canvas's "Archived · 1 / Restore" section |
-| S9 | Per-turn latency breakdown stored on turns (`latencies_json` is never written today) | The turn-latency waterfall and "median turn" (canvas boards 13, 14) |
+| S9 | ~~Per-turn latency breakdown stored on turns~~ **Done.** Each turn row carries `latencies` (`stt_final_ms`, `llm_ttft_ms`, `tts_ttfb_ms`, `voice_to_voice_ms`; only what was measured) | Call detail shows "Replied in …" per turn, a "Median reply" figure and per-turn pills. Still open: the waterfall, the Test call panel and First run reply-time chips, a median column in the Calls list |
 | S10 | Caller identity and transport, and an end reason (hung up, failed, transferred), on sessions | The Caller column and a richer Outcome |
 | S11 | Calls list totals and filters (`total`, `started_after`, text search) and CSV export | "of 1,284", When, Search, Export CSV |
 | S12 | Version number and path on the session row (or the step id on each turn) | "v7" for old versions, the list's Path column, exact step labels |
 | S13 | Live call control: listen in, end a call | The Listen in and End call buttons |
 | S14 | **Done.** Startup ends the calls a crashed process left active (`SessionRepository.EndOrphans`): SQLite all of them, Postgres those older than `limits.max_call_duration` + 5 min (replicas may share the store; a more recent crash stays active until a later restart). Ended at the last finished turn, with a note | A trustworthy Live lamp, live counts and call clocks |
-| S15 | Provider health in the management API: requests, errors, median latency and circuit-breaker state per provider (today only in Prometheus `/metrics`) | The p50 column and the panel's "Last hour" figures (canvas board 15) |
-| S16 | Test a provider's connection (`POST /providers/{id}/test`) | The panel's "Test connection" button |
+| S15 | ~~Provider health in the management API~~ **Replaced** (by decision) with an on-demand check, the same endpoint as S16: nothing is collected or polled; the panel shows the result of the last press | No p50 column or "Last hour" figures: the Providers panel shows each service's result, time to first token or audio, and circuit state when asked |
+| S16 | ~~Test a provider's connection~~ **Done.** `POST /providers/{id}/test` sends one tiny real request per service (see the API doc) | Nothing: the panel has Test connection |
 | S17 | Read a pinned tool schema by hash (`GET /mcp-servers/{id}/tools/{tool}/schemas/{hash}`); the server stores them but exposes none | The red/green schema diff and "Keep pinned" (canvas board 16) |
 | S18 | Update an MCP server's connection (endpoint, token variable) | The "Edit connection" button |
 
