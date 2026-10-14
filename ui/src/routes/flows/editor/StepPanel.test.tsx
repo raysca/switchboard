@@ -26,12 +26,14 @@ function Harness({
   stepId = "b",
   initialTab = "basics" as StepTab,
   flowTools = [] as string[],
+  toolPicker = undefined as React.ReactNode,
   onChange = vi.fn(),
 }: {
   initial?: FlowDraft;
   stepId?: string;
   initialTab?: StepTab;
   flowTools?: string[];
+  toolPicker?: React.ReactNode;
   onChange?: (g: FlowDraft) => void;
 }) {
   const [graph, setGraph] = useState<FlowDraft>(initial);
@@ -44,6 +46,7 @@ function Harness({
         stepId={stepId}
         providers={providers}
         flowTools={flowTools}
+        toolPicker={toolPicker}
         tab={tab}
         onTab={setTab}
         focusRoute={focusRoute}
@@ -108,6 +111,15 @@ describe("StepPanel", () => {
     expect(g.steps.map((n) => n.name)).toEqual(["Reception", "Billing", "New step"]);
     expect(g.routes).toEqual([expect.objectContaining({ from: "a", condition: "" })]);
     expect(screen.getByLabelText("Condition for the route to New step")).toHaveFocus();
+  });
+
+  it("shows the flow's tool picker above the step's own choice, and says when no tool is chosen yet", () => {
+    render(<Harness stepId="a" initialTab="tools" toolPicker={<p>PICKER</p>} />);
+    const section = screen.getByRole("group", { name: "Flow tools" });
+    expect(within(section).getByText("PICKER")).toBeVisible();
+    expect(within(section).getByText(/Shared by every step/)).toBeVisible();
+    expect(screen.getByText("No tools are chosen for this flow yet.")).toBeVisible();
+    expect(screen.queryByText(/Choose MCP tools for the flow first/)).toBeNull();
   });
 
   it("chooses which of the flow's tools a step can call", async () => {

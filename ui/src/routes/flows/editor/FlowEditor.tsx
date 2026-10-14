@@ -6,10 +6,12 @@ import { Status } from "../../../components/primitives";
 import { FlowVoiceTest } from "../FlowVoiceTest";
 import { Canvas, type Selection } from "./Canvas";
 import { describeChanges, describeToolChanges } from "./diff";
+import { ToolPicker } from "./ToolPicker";
 import { FlowSettingsPanel } from "./FlowSettingsPanel";
 import {
   MAX_STEPS,
   addDraftRoute,
+  applySelection,
   insertStep,
   emptyFlow,
   flowIssues,
@@ -63,7 +65,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const publishedTools = useMemo(() => flow?.current_version?.mcp_tools ?? [], [flow]);
   const published = useMemo(() => (flow?.current_version ? fromFlowConfig(flow.current_version.config, publishedTools.map(toolKey)) : null), [flow, publishedTools]);
   // The flow's MCP tool selection is part of the draft: it is published and tested with the config.
-  const [tools] = useState<ToolSelection[]>(publishedTools);
+  const [tools, setTools] = useState<ToolSelection[]>(publishedTools);
   const flowTools = useMemo(() => tools.map(toolKey), [tools]);
   const toolsChanged = !sameTools(tools, publishedTools);
   const [name, setName] = useState(flow?.name ?? initialName ?? "");
@@ -90,7 +92,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph)];
   const callable = canCall(flow);
   // A test call runs what is on the canvas; changes that could not be published cannot be tested.
-  const draft = unpublished && problems.length === 0 ? { config: toPayload(graph), mcp_tools: tools } : undefined;
+  const draft = unpublished && problems.length === 0 ? { config: toPayload(graph), ...(toolsChanged ? { mcp_tools: tools } : {}) } : undefined;
   // The call runs the published version, or the canvas when it is a draft test, so the live view follows that flow.
   const live = useCallView(draft ? graph : (published ?? graph), call, client);
   const activeStep = graph.steps.find((n) => live.view.steps[n.id]?.state === "active")?.name;
@@ -103,6 +105,11 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
         : flowProblems.length > 0
           ? { tone: "bad", text: flowProblems[0] }
           : { tone: "good", text: unpublished ? "Ready to publish" : "Published" };
+
+  const changeTools = (next: ToolSelection[]) => {
+    setTools(next);
+    setGraph((g) => applySelection(g, next));
+  };
 
   const open = (next: Panel, from?: HTMLElement | null) => {
     opener.current = from ?? (document.activeElement as HTMLElement | null);
@@ -258,6 +265,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
             stepId={panel.id}
             providers={providers}
             flowTools={flowTools}
+            toolPicker={<ToolPicker client={client} selected={tools} onChange={changeTools} />}
             tab={tab}
             onTab={setTab}
             focusRoute={focusRoute}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
@@ -34,6 +34,8 @@ export type StepPanelProps = {
   providers: ProviderStatus[];
   /** MCP tools selected on the flow ("<mcp_server_id>/<remote_name>"); a step may call a subset. */
   flowTools: string[];
+  /** Chooses which MCP tools the flow has: shown above the step's own choice in the Tools tab. */
+  toolPicker?: ReactNode;
   tab: StepTab;
   onTab: (tab: StepTab) => void;
   /** The route whose condition takes focus: one just drawn or added. */
@@ -51,7 +53,7 @@ export type StepPanelProps = {
 
 /** Everything about one step, in tabs; Basics alone makes a step ready. */
 export function StepPanel(props: StepPanelProps) {
-  const { graph, stepId, providers, flowTools, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo, fallbackFocusId } = props;
+  const { graph, stepId, providers, flowTools, toolPicker, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo, fallbackFocusId } = props;
   const [routeTarget, setRouteTarget] = useState("");
   const step = graph.steps.find((n) => n.id === stepId);
   if (!step) return null;
@@ -272,8 +274,15 @@ export function StepPanel(props: StepPanelProps) {
                 {graph.steps.length === 1 && " Add a second step first: a one-step flow needs a second step to end the call."}
               </p>
             </fieldset>
+            {toolPicker && (
+              <fieldset className="stage-box">
+                <legend>Flow tools</legend>
+                <p className="subtext">Shared by every step. Each step chooses which of these it can call.</p>
+                {toolPicker}
+              </fieldset>
+            )}
             {flowTools.length === 0 ? (
-              <p className="subtext">This flow has no tools. Choose MCP tools for the flow first.</p>
+              <p className="subtext">No tools are chosen for this flow yet.</p>
             ) : (
               <fieldset className="stage-box">
                 <legend>Tools this step can call</legend>

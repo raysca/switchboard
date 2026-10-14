@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { ReactFlowProvider } from "@xyflow/react";
-import type { FlowDTO, ApiClient, ProviderStatus } from "../../../api/client";
+import type { FlowDTO, ApiClient, ProviderStatus, MCPServerDTO, MCPServerDetailDTO } from "../../../api/client";
 import { FlowEditor, type FlowEditorProps } from "./FlowEditor";
 
 const svc = {
@@ -242,5 +242,53 @@ describe("FlowEditor chrome", () => {
     const open = canvas.getAttribute("data-fit");
     await user.click(screen.getByRole("button", { name: "Close Flow settings" }));
     expect(canvas.getAttribute("data-fit")).not.toBe(open);
+  });
+});
+
+describe("FlowEditor MCP tools", () => {
+  const crm: MCPServerDTO = { id: "crm", name: "CRM", description: "", endpoint: "https://mcp.example.com", transport: "streamable-http", validation_state: "healthy", latest_discovery_id: "d1", auth_env: "", auth_env_set: false, enabled: true };
+  const crmDetail: MCPServerDetailDTO = {
+    ...crm,
+    discovery: { id: "d1", discovery_hash: "dh", created_at: "", tools: [{ remote_name: "echo", description: "Echo it", input_schema: {}, schema_hash: "h-echo" }, { remote_name: "lookup", description: "Look it up", input_schema: {}, schema_hash: "h-lookup" }] },
+  };
+  const withMCP = { issueVoiceToken: vi.fn(), getSessionTraces: vi.fn(), getMCPServers: vi.fn().mockResolvedValue([crm]), getMCPServer: vi.fn().mockResolvedValue(crmDetail) } as unknown as ApiClient;
+  async function openTools(user: ReturnType<typeof userEvent.setup>) {
+    fireEvent.click(screen.getByText("main"));
+    await user.click(screen.getByRole("tab", { name: /tools/i }));
+  }
+
+  it("chooses a tool for the flow, which makes the draft unpublished and is published with it", async () => {
+    const { user, onSubmit } = setup({ flow, client: withMCP });
+    await openTools(user);
+    await user.click(await screen.findByRole("checkbox", { name: /^echo/ }));
+    expect(screen.getByText(/unpublished changes/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Added tool crm/echo");
+    await user.click(screen.getByRole("button", { name: "Publish v2" }));
+    expect(onSubmit.mock.calls[0][0].mcp_tools).toEqual([{ mcp_server_id: "crm", remote_name: "echo", schema_hash: "h-echo", required: false }]);
+  });
+
+  it("takes a removed tool off the steps that used it", async () => {
+    const tools = [
+      { mcp_server_id: "crm", remote_name: "echo", schema_hash: "h-echo", required: false },
+      { mcp_server_id: "crm", remote_name: "lookup", schema_hash: "h-lookup", required: false },
+    ];
+    const stepsFlow: FlowDTO = {
+      ...flow,
+      current_version: {
+        ...flow.current_version!,
+        mcp_tools: tools,
+        config: { start: "a", steps: [{ id: "a", name: "Reception", tools: ["crm/echo", "crm/lookup"], config: flat }, { id: "b", name: "Billing", tools: ["crm/lookup"], config: { llm: flat.llm, tts: flat.tts } }], routes: [] },
+      },
+    };
+    const { user, onSubmit } = setup({ flow: stepsFlow, client: withMCP });
+    fireEvent.click(screen.getByText("Reception"));
+    await user.click(screen.getByRole("tab", { name: /tools/i }));
+    await user.click(await screen.findByRole("checkbox", { name: /^lookup/ }));
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    await user.click(screen.getByRole("button", { name: "Publish v2" }));
+    const sent = onSubmit.mock.calls[0][0] as { mcp_tools: { remote_name: string }[]; config: { steps: { tools?: string[] }[] } };
+    expect(sent.mcp_tools.map((t) => t.remote_name)).toEqual(["echo"]);
+    expect(sent.config.steps.map((st) => st.tools)).toEqual([["crm/echo"], undefined]);
   });
 });

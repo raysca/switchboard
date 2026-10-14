@@ -625,7 +625,7 @@ describe("FlowVoiceTest", () => {
     v2.current_version = { ...v1.current_version!, number: (v1.current_version!.number ?? 1) + 1 };
     const audio = new BrowserAudioController();
     vi.spyOn(audio, "startCapture").mockResolvedValue(undefined);
-    const draft = { config: { a: 1 } };
+    const draft = { config: { a: 1 }, mcp_tools: [{ mcp_server_id: "crm", remote_name: "echo", schema_hash: "h", required: false }] };
     const ui = (f: FlowDTO) => (
       <MemoryRouter>
         <FlowVoiceTest flow={f} client={client} keyValue="k" audioController={audio} wsBaseUrl="ws://127.0.0.1:9090/ws" draft={draft} />
