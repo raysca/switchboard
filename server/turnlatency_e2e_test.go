@@ -21,10 +21,14 @@ func TestAReplyIsStoredWithItsLatencies(t *testing.T) {
 		if err != nil || len(turns) == 0 {
 			return false
 		}
+		// A typed turn has no end of speech, so no voice_to_voice; the model and voice stages are
+		// there (the echo provider is instant, so they may be 0 ms).
 		var got map[string]int64
 		if json.Unmarshal([]byte(turns[0].LatenciesJSON), &got) != nil {
 			return false
 		}
-		t.Log(turns[0].LatenciesJSON); return got["tts_ttfb_ms"] > 0 && got["llm_ttft_ms"] > 0
+		_, llm := got["llm_ttft_ms"]
+		_, tts := got["tts_ttfb_ms"]
+		return llm && tts
 	})
 }
