@@ -52,11 +52,12 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 	if err != nil {
 		return CallSpec{}, nil, fmt.Errorf("start flow session: %w", err)
 	}
+	lat := newTurnLatencies()
 	history := newTurnRecorder(func(ctx context.Context, row storage.TurnRecord) error {
 		s.metrics.TurnsTotal.Add(1)
 		row = s.redactTurn(row)
 		return s.store.Sessions().AddTurn(ctx, row)
-	}, rs.Pin.ID, s.logger)
+	}, rs.Pin.ID, s.logger, lat)
 	release := func() {
 		// In-flight MCP tool calls are waited for, but never past the session
 		// teardown budget: a stuck remote tool must not pin the call forever.
@@ -77,6 +78,7 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 		return CallSpec{}, nil, err
 	}
 	call.History = history
+	call.TurnLatencies = lat
 	return call, release, nil
 }
 
@@ -96,10 +98,11 @@ type turnRecorder struct {
 	ordinal int
 	rows    chan storage.TurnRecord
 	done    chan struct{}
+	lat     *turnLatencies
 }
 
-func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, sessionID string, logger *slog.Logger) *turnRecorder {
-	r := &turnRecorder{users: map[string]*core.UserMessageFrame{}, rows: make(chan storage.TurnRecord, 64), done: make(chan struct{})}
+func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, sessionID string, logger *slog.Logger, lat *turnLatencies) *turnRecorder {
+	r := &turnRecorder{lat: lat, users: map[string]*core.UserMessageFrame{}, rows: make(chan storage.TurnRecord, 64), done: make(chan struct{})}
 	go func() {
 		defer close(r.done)
 		for row := range r.rows {
@@ -124,7 +127,7 @@ func (r *turnRecorder) ProcessFrame(_ context.Context, f core.Frame, dir core.Di
 	case *core.AssistantMessageFrame:
 		user := r.users[m.Turn]
 		delete(r.users, m.Turn)
-		row := storage.TurnRecord{ID: storage.NewID(), Ordinal: r.ordinal + 1, StartedAt: m.Timestamp, EndedAt: m.Timestamp, AssistantText: m.Content, Interrupted: m.Partial}
+		row := storage.TurnRecord{ID: storage.NewID(), Ordinal: r.ordinal + 1, StartedAt: m.Timestamp, EndedAt: m.Timestamp, AssistantText: m.Content, Interrupted: m.Partial, LatenciesJSON: r.lat.take(m.Turn)}
 		if user != nil {
 			row.Transcript, row.StartedAt = user.Content, user.Timestamp
 		}

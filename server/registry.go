@@ -75,6 +75,8 @@ type CallSpec struct {
 	FlowVersionID string
 	// StoredSessionID is the persisted session row (trace spans attach to it).
 	StoredSessionID string
+	// TurnLatencies collects the call's per-turn stage latencies for its turn rows.
+	TurnLatencies *turnLatencies
 	// Flow is set for flows with more than one step: the call starts on the
 	// start step and moves between steps by handoff.
 	Flow *CallFlow

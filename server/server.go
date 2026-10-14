@@ -679,6 +679,9 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			otelTracer.Latency(m)
 		}
 		s.metrics.ObserveLatency(m.Stage, m.Value)
+		if call.TurnLatencies != nil {
+			call.TurnLatencies.observe(m)
+		}
 		timeline.Record(TimelineEvent{Type: EventLatency, Timestamp: m.At, TurnID: string(m.Turn), Details: string(m.Stage), DurationMs: m.Value.Milliseconds()})
 	}); err != nil {
 		return fail(fmt.Errorf("attach latency observer: %w", err))
