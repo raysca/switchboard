@@ -106,6 +106,9 @@ type Snapshot struct {
 	Version    Version           `json:"version"`
 	ConfigHash string            `json:"config_hash"`
 	MCPTools   []MCPToolSnapshot `json:"mcp_tools"`
+	// Draft marks a snapshot of an unpublished config (ResolveDraft): Version is the version it is
+	// based on, with the draft's config and hash.
+	Draft bool `json:"draft,omitempty"`
 }
 
 type SessionPin struct {
@@ -234,6 +237,38 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Flow, error) 
 	return s.create(ctx, CreateRequest{Name: name, Description: source.Description, Config: source.Version.Config, Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools}, source.Version.MCPReviewRequired)
 }
 
+// ResolveDraft validates config exactly as a publish of flow id would and returns what a call on it
+// runs: the flow's current version with the draft's config and hash, and the flow's attached MCP
+// tools. Nothing is written. A draft cannot change tool selections, only use the attached ones.
+func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMessage) (Snapshot, Readiness, error) {
+	row, err := s.store.Flows().Current(ctx, id)
+	if err != nil {
+		return Snapshot{}, Readiness{}, err
+	}
+	if row.Archived || !row.Enabled || row.CurrentVersionID == "" {
+		return Snapshot{}, Readiness{}, errors.New("flow unavailable")
+	}
+	canonical, err := s.attachedConfig(ctx, config)
+	if err != nil {
+		return Snapshot{}, Readiness{}, err
+	}
+	if err := s.checkConfigTools(ctx, id, canonical); err != nil {
+		return Snapshot{}, Readiness{}, err
+	}
+	base, err := s.store.Flows().Version(ctx, row.CurrentVersionID)
+	if err != nil {
+		return Snapshot{}, Readiness{}, err
+	}
+	hash, canonical, err := storage.ConfigHash(canonical)
+	if err != nil {
+		return Snapshot{}, Readiness{}, err
+	}
+	draft := base
+	draft.ConfigJSON, draft.ConfigHash = canonical, hash
+	readiness, tools := s.flowReadiness(ctx, draft, row.Enabled, row.Archived)
+	return Snapshot{FlowID: row.ID, Version: toVersion(draft), ConfigHash: hash, MCPTools: tools, Draft: true}, readiness, nil
+}
+
 func (s *Service) ResolveCurrent(ctx context.Context, id string) (Snapshot, error) {
 	row, err := s.store.Flows().Current(ctx, id)
 	if err != nil {
@@ -284,7 +319,7 @@ func (s *Service) StartCapturedSession(ctx context.Context, snapshot Snapshot, s
 	}
 	if err := s.store.Sessions().Create(ctx, storage.SessionRecord{
 		ID: sessionID, FlowID: snapshot.FlowID, FlowVersionID: snapshot.Version.ID,
-		ConfigHash: snapshot.ConfigHash, StartedAt: time.Now().UTC(), Status: "active", RuntimeSnapshotJSON: runtimeJSON, RuntimeTools: runtimeTools,
+		ConfigHash: snapshot.ConfigHash, StartedAt: time.Now().UTC(), Status: "active", RuntimeSnapshotJSON: runtimeJSON, RuntimeTools: runtimeTools, Draft: snapshot.Draft,
 	}); err != nil {
 		return SessionPin{}, err
 	}
