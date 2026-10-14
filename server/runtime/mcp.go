@@ -116,6 +116,15 @@ func StartSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Serv
 	if err != nil {
 		return nil, err
 	}
+	return StartSnapshotSession(ctx, flows, mcpService, snapshot, sessionID)
+}
+
+// StartSnapshotSession starts a session from an already resolved snapshot: the
+// current version, or a draft over it (flow.Service.ResolveDraft).
+func StartSnapshotSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Service, snapshot flow.Snapshot, sessionID string) (*Session, error) {
+	if flows == nil || mcpService == nil {
+		return nil, errors.New("flow and MCP services are required")
+	}
 	items := make([]captured, 0, len(snapshot.MCPTools))
 	flowCfg, _ := flow.StartConfig(snapshot.Version.Config) // already validated at publish; unusable config = no async tools
 	for _, tool := range snapshot.MCPTools {

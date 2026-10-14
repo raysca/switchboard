@@ -91,9 +91,25 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		now := time.Now()
 		lifetime := s.effectiveVoiceTokenLifetime()
+		tokenID := storage.NewID() // becomes the session id
+		if input.Draft != nil {
+			snapshot, readiness, err := s.flows.ResolveDraft(r.Context(), target.ID, input.Draft.Config)
+			if err != nil {
+				s.writeDraftError(w, err, requestID)
+				return
+			}
+			if !flowCallable(readiness.State) {
+				api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "flow_not_ready", Message: "the draft is not ready to take calls", RequestID: requestID, Details: readiness}})
+				return
+			}
+			if err := s.drafts.put(tokenID, draftCall{flowID: target.ID, snapshot: snapshot, expires: now.Add(lifetime)}, now); err != nil {
+				api.WriteError(w, http.StatusTooManyRequests, "too_many_drafts", err.Error(), requestID)
+				return
+			}
+		}
 		claims := token.Claims{RegisteredClaims: jwt.RegisteredClaims{
 			Issuer: s.cfg.Token.Issuer, Audience: jwt.ClaimStrings{s.cfg.Token.Audience},
-			Subject: input.Principal, ID: storage.NewID(), // becomes the session id
+			Subject: input.Principal, ID: tokenID,
 			IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
 		}, Principal: input.Principal, FlowID: target.ID, Scope: "voice:connect", IssuerEpoch: s.voiceEpoch}
 		jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -168,4 +184,18 @@ func (s *Server) effectiveVoiceTokenLifetime() time.Duration {
 // flowCallable reports whether a flow in this readiness state may run calls.
 func flowCallable(state string) bool {
 	return state == flow.ReadinessReady || state == flow.ReadinessWithToolWarning
+}
+
+// writeDraftError maps a draft's validation failure the way a publish maps its own.
+func (s *Server) writeDraftError(w http.ResponseWriter, err error, requestID string) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		api.WriteError(w, http.StatusNotFound, "not_found", "flow not found", requestID)
+	case errors.Is(err, flow.ErrNotAttached):
+		api.WriteError(w, http.StatusBadRequest, "flow_not_attached", err.Error(), requestID)
+	case errors.Is(err, flow.ErrInvalidConfig), errors.Is(err, storage.ErrInvalidToolSelection):
+		api.WriteError(w, http.StatusBadRequest, "invalid_request", err.Error(), requestID)
+	default:
+		api.WriteError(w, http.StatusInternalServerError, "internal_error", "the draft could not be checked", requestID)
+	}
 }

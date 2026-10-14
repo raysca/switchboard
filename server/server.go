@@ -66,6 +66,7 @@ type Server struct {
 	voiceSignKey          []byte
 	voiceKeyID            string
 	voiceEpoch            string
+	drafts                *draftCalls
 	vadExecutor           vad.SharedExecutor
 	turnBackend           smartturn.Backend
 	mgmt                  *management
@@ -200,6 +201,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		voiceSignKey: []byte(tokenSecret),
 		voiceKeyID:   tokenCfg.KeyID,
 		voiceEpoch:   validator.ScopeEpoch(),
+		drafts:       newDraftCalls(),
 		logger:       logger,
 		startedAt:    metrics.StartTime,
 		activeCalls:  make(map[uint64]*activeCall),

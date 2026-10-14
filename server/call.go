@@ -39,7 +39,15 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 	if !storage.IsID(sessionID) { // legacy tokens carry a random UUIDv4 or no jti
 		sessionID = storage.NewID()
 	}
-	rs, err := runtime.StartSession(ctx, s.flows, s.mcpService, flowID, sessionID)
+	var rs *runtime.Session
+	var err error
+	if draft, found, lost := s.drafts.take(sessionID, time.Now()); found {
+		rs, err = runtime.StartSnapshotSession(ctx, s.flows, s.mcpService, draft.snapshot, sessionID)
+	} else if lost {
+		return CallSpec{}, nil, errors.New("the draft for this token is gone; request a new test call")
+	} else {
+		rs, err = runtime.StartSession(ctx, s.flows, s.mcpService, flowID, sessionID)
+	}
 	if err != nil {
 		return CallSpec{}, nil, fmt.Errorf("start flow session: %w", err)
 	}

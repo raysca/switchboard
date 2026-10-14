@@ -250,6 +250,9 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 	}
 	canonical, err := s.attachedConfig(ctx, config)
 	if err != nil {
+		if !errors.Is(err, ErrNotAttached) {
+			err = fmt.Errorf("%w: %w", ErrInvalidConfig, err)
+		}
 		return Snapshot{}, Readiness{}, err
 	}
 	if err := s.checkConfigTools(ctx, id, canonical); err != nil {

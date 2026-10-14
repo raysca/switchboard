@@ -51,6 +51,14 @@ type Pagination struct {
 type VoiceTokenRequest struct {
 	Principal string `json:"principal"`
 	FlowID    string `json:"flow_id"`
+	// Draft, when set, makes a token for a call that runs this config instead of
+	// the flow's published version (a test call). It is validated like a publish.
+	Draft *DraftRequest `json:"draft,omitempty"`
+}
+
+// DraftRequest is an unpublished flow config to test.
+type DraftRequest struct {
+	Config json.RawMessage `json:"config"`
 }
 type VoiceTokenResponse struct {
 	Token     string    `json:"token"`

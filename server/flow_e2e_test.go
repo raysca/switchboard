@@ -193,13 +193,19 @@ func (r *flowRigE2E) dial(flowID string) *e2eCall {
 		Data struct{ Token string } `json:"data"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	return r.dialToken(resp.Data.Token)
+}
+
+// dialToken connects with an already issued voice token (a draft token, for one).
+func (r *flowRigE2E) dialToken(token string) *e2eCall {
+	r.t.Helper()
 	claims := jwt.MapClaims{}
-	if _, _, err := jwt.NewParser().ParseUnverified(resp.Data.Token, claims); err != nil {
+	if _, _, err := jwt.NewParser().ParseUnverified(token, claims); err != nil {
 		r.t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(r.t.Context(), 30*time.Second)
 	r.t.Cleanup(cancel)
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.ts.URL, "http")+"?token="+resp.Data.Token, nil)
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(r.ts.URL, "http")+"?token="+token, nil)
 	if err != nil {
 		r.t.Fatal(err)
 	}
