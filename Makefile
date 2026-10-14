@@ -58,7 +58,7 @@ test: build ## build|Vet (with and without xaispeech) + race-test every module w
 
 # End to end in Go with the echo provider: a real server, stored flows and a WebSocket client
 # (routes, failed step build, caller speaking mid-route, hang-up mid-route, republish, MCP tool calls,
-# no secret leaving the server). `make test` runs it; `make e2e-free` runs it with the browser suite.
+# no secret leaving the server). `make test` runs it; `make e2e-echo` runs it with the browser suite.
 test-e2e-go: ## free|Go end-to-end tests (real server + WebSocket) against the echo provider (about 45 s)
 	cd server && go test -race -count=1 -tags "$(GOTAGS)" -run 'FlowE2E|NoSecretLeavesTheServer|MCPCall|ContextInjection' .
 
@@ -158,7 +158,7 @@ e2e-fake: ui-embed ## free|Playwright browser e2e for routed flows and the one-p
 	$(E2E_SETUP) && npx playwright test -c playwright.flows.config.ts && npx playwright test -c playwright.oneport.config.ts
 
 # Every free end-to-end test: the Go suite, then the browser suite (echo provider, offline, about 2 min).
-e2e-free: test-e2e-go e2e-fake ## free|All free end-to-end tests: Go (test-e2e-go) then browser (e2e-fake)
+e2e-echo: test-e2e-go e2e-fake ## free|Every end-to-end test on the echo provider: Go (test-e2e-go) then browser (e2e-fake)
 
 # The same specs against LIVE xAI (STT, Grok, TTS): the model itself must call the transfer tool. Needs
 # XAI_API_KEY (env or examples/.env; XAI_MODEL optional). Roughly 20 provider requests per run.
@@ -170,7 +170,7 @@ e2e-xai: ## paid|Playwright browser e2e for routed flows against REAL xAI (GOVOI
 e2e-oneport: ui-embed ## free|Playwright e2e of the one-port server (embedded UI, same-origin API and socket) on the echo provider
 	$(E2E_SETUP) && npx playwright test -c playwright.oneport.config.ts
 
-.PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-free test-e2e-go
+.PHONY: e2e e2e-fake e2e-oneport e2e-xai e2e-echo test-e2e-go
 
 # Local development (scripts/dev.sh): `make dev` runs the server and admin UI with
 # generated secrets and a local SQLite store in .govoice-dev/, seeded with a
