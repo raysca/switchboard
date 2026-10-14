@@ -249,7 +249,7 @@ export function ProvidersView({ client, keyValue }: ProvidersViewProps) {
                   const on = selected?.id === p.id;
                   const cred = credential(p);
                   return (
-                    <tr key={p.id} data-selected={on || undefined}>
+                    <tr key={p.id} data-selected={on || undefined} className="provider-row" onClick={() => setParam({ provider: p.id })}>
                       <td>
                         <button type="button" className="provider-pick" aria-pressed={on} onClick={() => setParam({ provider: p.id })}>
                           <span className="lamp" data-tone={cred.ok ? "ok" : undefined} aria-hidden="true" />

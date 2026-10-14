@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ApiClient, ApiError, CreateMCPServerInput } from "../../api/client";
@@ -61,33 +61,30 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   );
   const dialog = connecting && <ConnectServerDialog pending={connect.isPending} error={connectError} onSubmit={(input) => connect.mutate(input)} onCancel={() => setConnecting(false)} />;
 
+  // The page uses the whole workspace, like Providers: the server list as a column, the selected server beside it.
+  const page = (body: ReactNode) => (
+    <>
+      <div className="mcp-page">
+        {head}
+        {body}
+      </div>
+      {dialog}
+    </>
+  );
+
   if (!keyValue) {
-    return (
-      <>
-        {head}
-        <EmptyState title="Connect to see MCP tools">Enter a management key above to see MCP servers and the tools they offer.</EmptyState>
-      </>
-    );
+    return page(<EmptyState title="Connect to see MCP tools">Enter a management key above to see MCP servers and the tools they offer.</EmptyState>);
   }
-  if (serversQuery.isPending) return <>{head}<LoadingState label="Loading MCP servers" /></>;
+  if (serversQuery.isPending) return page(<LoadingState label="Loading MCP servers" />);
   if (serversQuery.isError) {
-    return (
-      <>
-        {head}
-        <ErrorState title="Could not load MCP servers" error={serversQuery.error as ApiError} onRetry={() => void serversQuery.refetch()} reassure />
-      </>
-    );
+    return page(<ErrorState title="Could not load MCP servers" error={serversQuery.error as ApiError} onRetry={() => void serversQuery.refetch()} reassure />);
   }
   if (servers.length === 0) {
-    return (
-      <>
-        {head}
-        <section className="message-panel">
-          <h2>No MCP servers yet.</h2>
-          <p>Connect a remote MCP server by its endpoint to let flows call its tools. Tokens are read only from MCP_TOKEN_* environment variables.</p>
-        </section>
-        {dialog}
-      </>
+    return page(
+      <section className="message-panel">
+        <h2>No MCP servers yet.</h2>
+        <p>Connect a remote MCP server by its endpoint to let flows call its tools. Tokens are read only from MCP_TOKEN_* environment variables.</p>
+      </section>,
     );
   }
 
@@ -99,9 +96,7 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
   const toolCounts = Object.fromEntries(servers.map((s, i) => [s.id, details[i]?.data?.discovery?.tools.length ?? (details[i]?.isSuccess ? 0 : undefined)]));
   const changed = Object.fromEntries(servers.map((s) => [s.id, flows ? new Set(drifts(flows, s.id).filter((d) => d.kind === "changed").map((d) => d.dep.remote_name)).size : 0]));
 
-  return (
-    <>
-      {head}
+  return page(
       <div className="mcp-layout">
         <nav aria-label="MCP servers" className="mcp-side">
           <ServerList servers={servers} toolCounts={toolCounts} changed={changed} selectedId={selected?.id} now={now} />
@@ -131,8 +126,6 @@ export function MCPView({ client, keyValue }: MCPViewProps) {
             />
           )}
         </div>
-      </div>
-      {dialog}
-    </>
+      </div>,
   );
 }

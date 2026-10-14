@@ -80,7 +80,7 @@ describe("admin shell", () => {
     expect(screen.getByRole("link", { name: "MCP tools" }).textContent).toContain("MCP tools");
   });
 
-  it("shows the key status and Clear key in the top line once connected", async () => {
+  it("shows the key status in the top line once connected, with no way to clear it but reloading", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: operationsStatus }), { status: 200 }));
     vi.stubGlobal("fetch", fetcher);
     render(<App initialPath="/dashboard" />);
@@ -88,101 +88,30 @@ describe("admin shell", () => {
     await user.type(screen.getByLabelText(/management key/i), "k");
     await user.click(screen.getByRole("button", { name: "Connect" }));
     expect(await screen.findByText("Key in memory")).toBeVisible();
-    const clear = screen.getByRole("button", { name: "Clear key" });
-    expect(clear.closest(".topbar")).not.toBeNull();
+    expect(screen.getByText("Key in memory").closest(".topbar")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear key" })).toBeNull();
     expect(screen.queryByLabelText(/management key/i)).toBeNull();
     vi.unstubAllGlobals();
   });
 
-  it("loads the server projection after entry and returns to key entry on 401", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ data: operationsStatus }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            error: {
-              code: "unauthorized",
-              message: "Unauthorized",
-              request_id: "req-3",
-            },
-          }),
-          { status: 401, headers: { "X-Request-ID": "req-3" } },
-        ),
-      );
+  it("returns to key entry when the key is rejected", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ error: { code: "unauthorized", message: "Unauthorized", request_id: "req-3" } }),
+        { status: 401, headers: { "X-Request-ID": "req-3" } },
+      ),
+    );
     vi.stubGlobal("fetch", fetcher);
     try {
       const user = userEvent.setup();
       render(<App initialPath="/server" />);
-      await user.type(screen.getByLabelText(/management key/i), "first-key");
-      await user.click(screen.getByRole("button", { name: "Connect" }));
-      expect(await screen.findByText("production")).toBeVisible();
-      await user.click(screen.getByRole("button", { name: "Clear key" }));
       await user.type(screen.getByLabelText(/management key/i), "expired-key");
       await user.click(screen.getByRole("button", { name: "Connect" }));
-      expect(
-        await screen.findByRole("button", { name: "Connect" }),
-      ).toBeVisible();
+      expect(await screen.findByRole("button", { name: "Connect" })).toBeVisible();
       expect(screen.getByText("No management key")).toBeVisible();
-      expect(
-        screen.getByText(
-          "Management key was rejected. Enter a key to reconnect.",
-        ),
-      ).toBeVisible();
+      expect(screen.getByText("Management key was rejected. Enter a key to reconnect.")).toBeVisible();
       expect(screen.getByText("req-3")).toBeVisible();
       expect(screen.getByLabelText(/management key/i)).toHaveFocus();
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("does not let a late 401 from key A clear successfully loaded key B", async () => {
-    let respondToA!: (response: Response) => void;
-    const pendingA = new Promise<Response>((resolve) => {
-      respondToA = resolve;
-    });
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockImplementationOnce(async () => pendingA)
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ data: operationsStatus }),
-          { status: 200 },
-        ),
-      );
-    vi.stubGlobal("fetch", fetcher);
-    try {
-      const user = userEvent.setup();
-      render(<App initialPath="/server" />);
-      await user.type(screen.getByLabelText(/management key/i), "key-A");
-      await user.click(screen.getByRole("button", { name: "Connect" }));
-      await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
-      await user.click(screen.getByRole("button", { name: "Clear key" }));
-      await user.type(screen.getByLabelText(/management key/i), "key-B");
-      await user.click(screen.getByRole("button", { name: "Connect" }));
-      expect(await screen.findByText("production")).toBeVisible();
-      await act(async () => {
-        respondToA(
-          new Response(
-            JSON.stringify({
-              error: {
-                code: "unauthorized",
-                message: "Unauthorized",
-                request_id: "req-A",
-              },
-            }),
-            { status: 401, headers: { "X-Request-ID": "req-A" } },
-          ),
-        );
-      });
-      expect(screen.getByRole("button", { name: "Clear key" })).toBeVisible();
-      expect(screen.getByText("production")).toBeVisible();
-      expect(screen.queryByText("req-A")).not.toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }

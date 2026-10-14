@@ -2026,9 +2026,16 @@ main:has(.providers-layout) {
 .calls-table tr[data-selected] td {
   background: var(--paper);
 }
-.calls-table tr[data-selected] td:first-child {
+.calls-table tr[data-selected] {
   outline: 2px solid var(--caller);
   outline-offset: -2px;
+}
+/* The whole row picks the provider; the name button stays for the keyboard. */
+.provider-row {
+  cursor: pointer;
+}
+.provider-row:hover td {
+  background: var(--paper);
 }
 .provider-panel {
   flex: 1 1 380px;
@@ -2185,16 +2192,29 @@ main:has(.providers-layout) {
   font-size: 0.8125rem;
 }
 
+/* The MCP page uses the whole workspace, like Providers: a header, then the server list as a column and the selected server beside it. */
+main:has(.mcp-page) {
+  max-width: none;
+  padding: 0;
+}
+.mcp-page {
+  padding-top: 24px;
+}
+.mcp-page > :not(.mcp-layout) {
+  margin-inline: 32px;
+}
 .mcp-layout {
   display: flex;
   flex-wrap: wrap;
-  gap: 24px 32px;
-  align-items: flex-start;
+  align-items: stretch;
+  min-height: calc(100vh - 170px);
+  border-top: 1px solid var(--rule);
 }
 .mcp-side {
-  flex: 1 1 280px;
-  max-width: 340px;
+  flex: 0 0 320px;
+  max-width: 100%;
   min-width: 0;
+  border-right: 1px solid var(--rule);
 }
 .mcp-main {
   flex: 999 1 520px;
@@ -2202,12 +2222,12 @@ main:has(.providers-layout) {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  padding: 24px 32px 40px;
 }
 .mcp-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-top: 1px solid var(--ink);
 }
 .mcp-list li {
   border-bottom: 1px solid var(--rule);
@@ -2289,6 +2309,11 @@ main:has(.providers-layout) {
 }
 .mcp-facts dd {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+/* An opened schema or Try-it row spans the table and wraps, instead of stretching it past the page. */
+.calls-table td[colspan] {
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 .calls-table .mcp-tool__description {
