@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,13 +45,12 @@ func seedActiveSession(t *testing.T, store *storage.Store, started time.Time) st
 	return id
 }
 
-// A crash leaves its calls active. The next start, on the same store, ends them; a call started
-// after the restart is not touched.
-func TestStartupEndsTheCallsACrashLeftBehind(t *testing.T) {
+// crashAndRestart leaves a call active in a store, kills the "process", and starts a new server on
+// the same store. It returns the new server and the orphan's id.
+func crashAndRestart(t *testing.T) (*Server, string) {
+	t.Helper()
 	t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
 	ctx := context.Background()
-
-	// Before the crash: a call left active in the store.
 	before := apiTestServer(t)
 	before.cfg.Storage.Dialect = "sqlite"
 	if err := before.EnableManagement(ctx); err != nil {
@@ -58,13 +59,20 @@ func TestStartupEndsTheCallsACrashLeftBehind(t *testing.T) {
 	orphan := seedActiveSession(t, before.store, time.Now().Add(-time.Hour))
 	before.closeManagement() // the process dies: nothing ends the call
 
-	// After the restart.
 	s := apiTestServer(t)
 	s.cfg.Storage.Dialect = "sqlite"
 	if err := s.EnableManagement(ctx); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.closeManagement)
+	return s, orphan
+}
+
+// A crash leaves its calls active. The next start, on the same store, ends them; a call started
+// after the restart is not touched.
+func TestStartupEndsTheCallsACrashLeftBehind(t *testing.T) {
+	s, orphan := crashAndRestart(t)
+	ctx := context.Background()
 	got, err := s.store.Sessions().Get(ctx, orphan)
 	if err != nil || got.Status != "ended" {
 		t.Fatalf("orphan after restart: %+v err %v", got, err)
@@ -72,6 +80,25 @@ func TestStartupEndsTheCallsACrashLeftBehind(t *testing.T) {
 	fresh := seedActiveSession(t, s.store, time.Now())
 	if r, _ := s.store.Sessions().Get(ctx, fresh); r.Status != "active" {
 		t.Fatalf("a call started after the restart was ended: %+v", r)
+	}
+}
+
+// What the console reads: the orphan is listed as ended, with the note, and no longer as active.
+func TestTheAPIShowsTheOrphanAsEnded(t *testing.T) {
+	s, orphan := crashAndRestart(t)
+	list := func(query string) string {
+		w := apiRequest(s, http.MethodGet, "/api/v1/sessions"+query, e2eMgmtKey, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET sessions%s: %d %s", query, w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+	if body := list("?status=active"); strings.Contains(body, orphan) {
+		t.Fatalf("the orphan is still listed as active: %s", body)
+	}
+	body := list("?status=ended")
+	if !strings.Contains(body, orphan) || !strings.Contains(body, "Ended when the server restarted.") {
+		t.Fatalf("the orphan is not listed as ended with its note: %s", body)
 	}
 }
 

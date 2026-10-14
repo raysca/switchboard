@@ -101,7 +101,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 | S11 | Calls list totals and filters (`total`, `started_after`, text search) and CSV export | "of 1,284", When, Search, Export CSV |
 | S12 | Version number and path on the session row (or the step id on each turn) | "v7" for old versions, the list's Path column, exact step labels |
 | S13 | Live call control: listen in, end a call | The Listen in and End call buttons |
-| S14 | End orphaned sessions at startup (a crash leaves `status=active` forever; nothing reconciles them) | A trustworthy Live lamp, live counts and call clocks |
+| S14 | **Done.** Startup ends the calls a crashed process left active (`SessionRepository.EndOrphans`): SQLite all of them, Postgres those older than `limits.max_call_duration` + 5 min (replicas may share the store; a more recent crash stays active until a later restart). Ended at the last finished turn, with a note | A trustworthy Live lamp, live counts and call clocks |
 | S15 | Provider health in the management API: requests, errors, median latency and circuit-breaker state per provider (today only in Prometheus `/metrics`) | The p50 column and the panel's "Last hour" figures (canvas board 15) |
 | S16 | Test a provider's connection (`POST /providers/{id}/test`) | The panel's "Test connection" button |
 | S17 | Read a pinned tool schema by hash (`GET /mcp-servers/{id}/tools/{tool}/schemas/{hash}`); the server stores them but exposes none | The red/green schema diff and "Keep pinned" (canvas board 16) |
