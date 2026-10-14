@@ -90,7 +90,7 @@ Name and description; Listening (STT provider/model/language); Turn-taking (wait
 |---|---|---|
 | S1 | Test an unpublished draft (voice token for an inline config or a draft version) | Draft testing in the editor; until then the published-version note applies |
 | S2 | Version list and rollback (`GET /agents/{id}/versions`, `POST …/rollback`) | Version history and "Roll back to v7" (canvas boards 8, 12) |
-| S3 | Write provider credentials to the sealed keyring | Pasting keys on Providers and First run |
+| S3 | ~~Write provider credentials to the sealed keyring~~ **Decided against:** providers are preconfigured and their secrets are only ever read from the environment; the console never accepts a key | Nothing: Providers and First run name the variable to set, permanently |
 | S4 | Live call count per flow/version (operations status) | "9 calls finishing on v7" copy |
 | S5 | Greeting / first line in config | First run step 2 "First thing it says" |
 | S6 | Code rename agent/node/handoff → flow/step/route | Route paths and API names (`/flows`) |
