@@ -6,7 +6,7 @@
 // Dev Assistant id on stdout. With MCPTEST_URL set it also registers the test MCP servers.
 //
 // Needs GOVOICE_ADMIN_URL and GOVOICE_MANAGEMENT_API_KEY.
-const AGENT = "Dev Assistant";
+const FLOW_NAME = "Dev Assistant";
 const admin = process.env.GOVOICE_ADMIN_URL;
 const key = process.env.GOVOICE_MANAGEMENT_API_KEY;
 const log = (msg) => console.error(`[seed] ${msg}`);
@@ -51,15 +51,15 @@ let stages;
 const defaults = async () => (stages ??= await stageDefaults());
 
 // "Dev Assistant": one flow, the target of the examples.
-let assistant = find(AGENT);
+let assistant = find(FLOW_NAME);
 if (assistant) {
-  log(`using existing flow "${AGENT}"`);
+  log(`using existing flow "${FLOW_NAME}"`);
 } else {
   const base = await defaults();
   if (!base) process.exit(0);
   const config = { ...base, llm: { ...base.llm, system_prompt: "You are a concise, friendly voice assistant. Answer in one or two short sentences." } };
-  assistant = await api("POST", "/flows", { name: AGENT, description: "Created by make dev", config });
-  log(`created flow "${AGENT}" (${["stt", "llm", "tts"].map((k) => config[k].provider).join(" / ")})`);
+  assistant = await api("POST", "/flows", { name: FLOW_NAME, description: "Created by make dev", config });
+  log(`created flow "${FLOW_NAME}" (${["stt", "llm", "tts"].map((k) => config[k].provider).join(" / ")})`);
 }
 
 // "Dealership desk": a two-step flow for demos. The front desk hands buyers to sales.

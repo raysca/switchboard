@@ -42,7 +42,7 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "Billing", Config: json.RawMessage(
 		`{"stt":{"provider":"google","model":"chirp_2","language":"en-GB"},"llm":{"provider":"google","model":"gemini-test","system_prompt":"You handle billing."},"tts":{"provider":"google","voice":"en-GB-Neural2-A"},"context":{"max_messages":12,"max_tokens":900}}`)})
 	if err != nil || created.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("agent=%+v err=%v", created.Readiness, err)
+		t.Fatalf("flow=%+v err=%v", created.Readiness, err)
 	}
 
 	var mu sync.Mutex
@@ -149,7 +149,7 @@ func TestStoredFlowDrivesCall(t *testing.T) {
 	}
 	dialUntilRefused(t, ts, resp.Data.Token)
 	if n := activeSessions(""); n != 1 {
-		t.Fatalf("disabled agent started a session: %d sessions", n)
+		t.Fatalf("disabled flow started a session: %d sessions", n)
 	}
 }
 
@@ -395,7 +395,7 @@ func TestStoredFlow_ConfiguresMaxParallelAndVADStopMS(t *testing.T) {
 
 	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "ParallelAgent", Config: json.RawMessage(cfgJSON)})
 	if err != nil || created.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("agent creation failed: %v", err)
+		t.Fatalf("flow creation failed: %v", err)
 	}
 
 	var mu sync.Mutex
@@ -474,7 +474,7 @@ func TestStoredFlow_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T)
 
 	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "FallbackParallelAgent", Config: json.RawMessage(cfgJSON)})
 	if err != nil || created.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("agent creation failed: %v", err)
+		t.Fatalf("flow creation failed: %v", err)
 	}
 
 	spec, release, err := s.resolveCall(t.Context(), created.ID, "session-1")
@@ -507,7 +507,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 	}`
 	createdDefault, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "DefaultAgent", Config: json.RawMessage(cfgDefault)})
 	if err != nil {
-		t.Fatalf("agent creation failed: %v", err)
+		t.Fatalf("flow creation failed: %v", err)
 	}
 	specDefault, releaseDefault, err := s.resolveCall(t.Context(), createdDefault.ID, "session-default")
 	if err != nil {
@@ -526,7 +526,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 	}`
 	createdDisabled, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "DisabledCleanAgent", Config: json.RawMessage(cfgDisabled)})
 	if err != nil {
-		t.Fatalf("agent creation failed: %v", err)
+		t.Fatalf("flow creation failed: %v", err)
 	}
 	specDisabled, releaseDisabled, err := s.resolveCall(t.Context(), createdDisabled.ID, "session-disabled")
 	if err != nil {
@@ -545,7 +545,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 	}`
 	createdEnabled, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "ExplicitCleanAgent", Config: json.RawMessage(cfgEnabled)})
 	if err != nil {
-		t.Fatalf("agent creation failed: %v", err)
+		t.Fatalf("flow creation failed: %v", err)
 	}
 	specEnabled, releaseEnabled, err := s.resolveCall(t.Context(), createdEnabled.ID, "session-enabled")
 	if err != nil {

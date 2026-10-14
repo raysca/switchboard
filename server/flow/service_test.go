@@ -35,7 +35,7 @@ func TestCreateListGetAndUpdatePublishImmutableVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a.Version == nil || a.Version.Number != 1 || a.Readiness.State != ReadinessReady {
-		t.Fatalf("created agent=%+v", a)
+		t.Fatalf("created flow=%+v", a)
 	}
 	changed := json.RawMessage(`{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}`)
 	updated, err := svc.Update(ctx, a.ID, UpdateRequest{Name: stringPointer("Support v2"), Config: changed})
@@ -105,10 +105,10 @@ func TestDuplicateArchiveAndVersionScopedSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := svc.Get(ctx, a.ID); err != nil {
-		t.Fatalf("archived agent should remain readable: %v", err)
+		t.Fatalf("archived flow should remain readable: %v", err)
 	}
 	if _, err := svc.StartSession(ctx, a.ID, "new"); err == nil {
-		t.Fatal("archived agent accepted a new session")
+		t.Fatal("archived flow accepted a new session")
 	}
 }
 
@@ -329,7 +329,7 @@ func TestCreateAndUpdatePublishAtomicallyOnDatabaseFailure(t *testing.T) {
 	}
 	var count int
 	if err := svc.store.DB().QueryRow("SELECT count(*) FROM flows WHERE name='Rejected'").Scan(&count); err != nil || count != 0 {
-		t.Fatalf("failed create left agent row count=%d err=%v", count, err)
+		t.Fatalf("failed create left flow row count=%d err=%v", count, err)
 	}
 	created, err := svc.Create(ctx, CreateRequest{Name: "Before", Config: validConfig()})
 	if err != nil {
@@ -417,7 +417,7 @@ func TestRuntimeResolutionFollowsProviderAvailability(t *testing.T) {
 	}
 	av["google/stt"] = Unavailable{Reason: "missing_credential", MissingEnv: []string{"GOOGLE_APPLICATION_CREDENTIALS"}}
 	if _, err := svc.ResolveCurrent(ctx, a.ID); err == nil {
-		t.Fatal("runtime resolved an agent whose provider lost its credentials")
+		t.Fatal("runtime resolved an flow whose provider lost its credentials")
 	}
 	got, _ := svc.Get(ctx, a.ID)
 	if got.Readiness.State != ReadinessNotReady || !strings.Contains(strings.Join(got.Readiness.Reasons, ","), "missing_credential_stt") ||
@@ -426,7 +426,7 @@ func TestRuntimeResolutionFollowsProviderAvailability(t *testing.T) {
 	}
 	delete(av, "google/stt")
 	if _, err := svc.ResolveCurrent(ctx, a.ID); err != nil {
-		t.Fatalf("agent did not recover: %v", err)
+		t.Fatalf("flow did not recover: %v", err)
 	}
 }
 

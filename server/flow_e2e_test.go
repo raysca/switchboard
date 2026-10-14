@@ -171,7 +171,7 @@ func newFlowRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *flow
 func (r *flowRigE2E) createRoutedFlow(salesVoice string, cue ...string) string {
 	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "Dealership", Config: flowConfigJSON("SALES", salesVoice, cue...)})
 	if err != nil || a.Readiness.State != flow.ReadinessReady {
-		r.t.Fatalf("graph agent: %+v err=%v", a.Readiness, err)
+		r.t.Fatalf("graph flow: %+v err=%v", a.Readiness, err)
 	}
 	r.flowID = a.ID
 	return a.ID
@@ -541,16 +541,16 @@ func TestFlowE2EFlatFlowHasNoRoutes(t *testing.T) {
 	c.say("transfer to sales")
 	c.waitReplies("[FLAT", 1)
 	if c.replies("Connecting you.") != 0 {
-		t.Fatal("a flat agent has no transfer tool")
+		t.Fatal("a flat flow has no transfer tool")
 	}
 	for _, e := range r.timeline() {
 		switch e.Type {
 		case EventRoute, EventStepActive, EventStepPreparing, EventRouteFailed:
-			t.Fatalf("a flat agent produced a route event: %+v", e)
+			t.Fatalf("a flat flow produced a route event: %+v", e)
 		}
 	}
 	if r.s.metrics.route.total.Load() != 0 {
-		t.Fatal("no route metrics for a flat agent")
+		t.Fatal("no route metrics for a flat flow")
 	}
 }
 
@@ -628,18 +628,18 @@ func TestFlowE2ECuePlaysInTheRouteGapAndStopsWhenSalesSpeaks(t *testing.T) {
 	playing := c.cueFrames()
 	time.Sleep(200 * time.Millisecond)
 	if c.cueFrames() <= playing {
-		t.Fatal("the cue must keep playing while the next agent is being built")
+		t.Fatal("the cue must keep playing while the next step is being built")
 	}
 
 	close(probe.gate) // sales is built; it greets
 	c.waitReplies("[SALES", 1)
-	eventually(t, "cue stopped by the new agent's first audio", func() bool { return r.cueStopReason() == "first_audio" })
+	eventually(t, "cue stopped by the new step's first audio", func() bool { return r.cueStopReason() == "first_audio" })
 
 	time.Sleep(400 * time.Millisecond) // past the 30 ms fade
 	stopped := c.cueFrames()
 	time.Sleep(300 * time.Millisecond)
 	if c.cueFrames() != stopped {
-		t.Fatal("the cue kept playing after the sales agent spoke")
+		t.Fatal("the cue kept playing after the sales step spoke")
 	}
 	// In the gap the cue is paced audio, not a burst: 20 ms frames about 20 ms apart. (Its 30 ms
 	// fade runs under the new step's first speech frames, which are not 20 ms.)

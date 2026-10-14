@@ -65,21 +65,21 @@ func TestAdmission_FlowCap(t *testing.T) {
 	cfg.Limits.MaxSessionsPerFlow = 1
 	m := NewMetrics()
 	ac := NewAdmissionController(cfg, m)
-	if err := ac.AcquireSession("u1", "agent", true); err != nil {
+	if err := ac.AcquireSession("u1", "flow", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := ac.AcquireSession("u2", "agent", true); !errors.Is(err, ErrFlowLimit) {
+	if err := ac.AcquireSession("u2", "flow", true); !errors.Is(err, ErrFlowLimit) {
 		t.Fatalf("want ErrAgentLimit, got %v", err)
 	}
 	if err := ac.AcquireSession("u2", "other", true); err != nil {
-		t.Fatalf("other agent: %v", err)
+		t.Fatalf("other flow: %v", err)
 	}
-	ac.ReleaseSession("u1", "agent")
-	if err := ac.AcquireSession("u2", "agent", true); err != nil {
+	ac.ReleaseSession("u1", "flow")
+	if err := ac.AcquireSession("u2", "flow", true); err != nil {
 		t.Fatalf("after release: %v", err)
 	}
 	if m.AdmissionRejectsFlow.Load() != 1 {
-		t.Fatal("agent reject metric")
+		t.Fatal("flow reject metric")
 	}
 }
 
@@ -131,6 +131,6 @@ func TestAdmission_DisabledByDefault(t *testing.T) {
 	}
 	cfg.Limits.StartRatePerPrincipal, cfg.Limits.MaxSessionsPerFlow = 0, -1
 	if err := ValidateConfig(cfg); err == nil {
-		t.Fatal("negative agent cap must be rejected")
+		t.Fatal("negative flow cap must be rejected")
 	}
 }

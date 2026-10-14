@@ -337,21 +337,21 @@ func TestAPITokenRequiresReadyStoredFlow(t *testing.T) {
 		return apiRequest(s, http.MethodPost, "/api/v1/voice-tokens", key, body)
 	}
 	if w := issue(`{"principal":"alice","flow_id":"x"}`); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("without agent store: %d %s", w.Code, w.Body)
+		t.Fatalf("without flow store: %d %s", w.Code, w.Body)
 	}
 	flowID := readyTestFlow(t, s)
 	if w := issue(`{"principal":"alice","pipeline":"default"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("legacy pipeline body: %d %s", w.Code, w.Body)
 	}
 	if w := issue(`{"principal":"alice","flow_id":"missing"}`); w.Code != http.StatusNotFound {
-		t.Fatalf("unknown agent: %d %s", w.Code, w.Body)
+		t.Fatalf("unknown flow: %d %s", w.Code, w.Body)
 	}
 	disabled := false
 	if _, err := s.flows.Update(t.Context(), flowID, flow.UpdateRequest{Enabled: &disabled}); err != nil {
 		t.Fatal(err)
 	}
 	if w := issue(`{"principal":"alice","flow_id":"` + flowID + `"}`); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "flow_not_ready") {
-		t.Fatalf("disabled agent: %d %s", w.Code, w.Body)
+		t.Fatalf("disabled flow: %d %s", w.Code, w.Body)
 	}
 	enabled := true
 	if _, err := s.flows.Update(t.Context(), flowID, flow.UpdateRequest{Enabled: &enabled}); err != nil {
@@ -359,7 +359,7 @@ func TestAPITokenRequiresReadyStoredFlow(t *testing.T) {
 	}
 	w := issue(`{"principal":"alice","flow_id":"` + flowID + `"}`)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("ready agent: %d %s", w.Code, w.Body)
+		t.Fatalf("ready flow: %d %s", w.Code, w.Body)
 	}
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
@@ -367,6 +367,6 @@ func TestAPITokenRequiresReadyStoredFlow(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	claims, err := s.validator.ValidateAndConsume(resp.Data.Token)
 	if err != nil || claims.FlowID != flowID {
-		t.Fatalf("token claims agent=%q err=%v", claims.FlowID, err)
+		t.Fatalf("token claims flow=%q err=%v", claims.FlowID, err)
 	}
 }

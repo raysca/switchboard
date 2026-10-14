@@ -141,11 +141,11 @@ func TestReady_RequiresFlowStoreAndReportsCircuits(t *testing.T) {
 	}
 	// Calls run stored flows, so a host without the flow store is not ready.
 	if code, body := ready(); code != http.StatusServiceUnavailable {
-		t.Fatalf("ready without agent store: %d %v", code, body)
+		t.Fatalf("ready without flow store: %d %v", code, body)
 	}
 	enableTestManagement(t, srv)
 	if code, body := ready(); code != http.StatusOK {
-		t.Fatalf("ready with agent store: %d %v", code, body)
+		t.Fatalf("ready with flow store: %d %v", code, body)
 	}
 	// An open provider circuit is reported but only affects flows using that
 	// provider, so the host stays ready.

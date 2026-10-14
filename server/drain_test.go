@@ -174,7 +174,7 @@ func TestDrain_DeadlineSendsGoingAway(t *testing.T) {
 func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	s := apiTestServer(t)
 	sessionID := uint64(9999)
-	principal, flowID := "panic-test-principal", "panic-test-agent"
+	principal, flowID := "panic-test-principal", "panic-test-flow"
 	if err := s.admission.AcquireSession(principal, flowID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
 	s := apiTestServer(t)
 	sessionID := uint64(10000)
-	principal, flowID := "rec-panic-principal", "rec-panic-agent"
+	principal, flowID := "rec-panic-principal", "rec-panic-flow"
 	if err := s.admission.AcquireSession(principal, flowID, true); err != nil {
 		t.Fatal(err)
 	}

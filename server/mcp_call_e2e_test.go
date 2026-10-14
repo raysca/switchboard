@@ -87,7 +87,7 @@ func (r *mcpCallRig) discovered(id string) (string, map[string]string) {
 	return id, hashes
 }
 
-// flowWith creates a plain echo agent with the given tools of one server attached.
+// flowWith creates a plain echo flow with the given tools of one server attached.
 func (r *mcpCallRig) flowWith(serverID string, hashes map[string]string, required bool, async []string, tools ...string) flow.Flow {
 	r.t.Helper()
 	sel := make([]flow.ToolSelection, 0, len(tools))
@@ -102,7 +102,7 @@ func (r *mcpCallRig) flowWith(serverID string, hashes map[string]string, require
 	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"},"async_tools":` + string(asyncJSON) + `}`
 	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "MCP " + strings.Join(tools, "+"), Config: json.RawMessage(cfg), MCPTools: sel})
 	if err != nil {
-		r.t.Fatalf("agent: %v", err)
+		r.t.Fatalf("flow: %v", err)
 	}
 	r.flowID = a.ID
 	return a

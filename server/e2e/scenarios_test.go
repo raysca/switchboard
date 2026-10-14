@@ -259,10 +259,10 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 	// 1. Invariant: Clean database with zero flows
 	initialFlows, err := store.Flows().List(ctx, 10, 0)
 	if err != nil {
-		t.Fatalf("list agents on fresh db: %v", err)
+		t.Fatalf("list flows on fresh db: %v", err)
 	}
 	if len(initialFlows) != 0 {
-		t.Fatalf("expected 0 initial agents, got %d", len(initialFlows))
+		t.Fatalf("expected 0 initial flows, got %d", len(initialFlows))
 	}
 
 	// 2. Readiness checks provider availability itself; before onboarding no
@@ -277,7 +277,7 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 		Description: "Created before provider onboarding",
 		Config:      json.RawMessage(`{"stt":{"provider":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google"}}`),
 	}); !errors.Is(err, flow.ErrNotAttached) {
-		t.Fatalf("expected agent creation to require available providers, got %v", err)
+		t.Fatalf("expected flow creation to require available providers, got %v", err)
 	}
 
 	// 4-5. Onboarding: the operator sets the provider environment.
@@ -286,22 +286,22 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 	// 6. Onboarding creates the first ready flow
 	firstFlow, err := flowService.Create(ctx, flow.CreateRequest{
 		Name:        "Customer Care Bot",
-		Description: "Onboarded primary voice agent",
+		Description: "Onboarded primary voice flow",
 		Config:      json.RawMessage(`{"stt":{"provider":"google","model":"google"},"llm":{"provider":"xai","model":"xai"},"tts":{"provider":"google","voice":"google"}}`),
 	})
 	if err != nil {
-		t.Fatalf("create first onboarded agent: %v", err)
+		t.Fatalf("create first onboarded flow: %v", err)
 	}
 
 	// 7. Verification: Flow is ready, enabled, and exposes immutable v1 version
 	if firstFlow.ID == "" {
-		t.Fatal("expected non-empty agent ID")
+		t.Fatal("expected non-empty flow ID")
 	}
 	if !firstFlow.Enabled {
-		t.Fatal("expected agent to be enabled by default")
+		t.Fatal("expected flow to be enabled by default")
 	}
 	if firstFlow.Version == nil {
-		t.Fatal("expected agent to have current version")
+		t.Fatal("expected flow to have current version")
 	}
 	if firstFlow.Version.Number != 1 {
 		t.Fatalf("expected version number 1, got %d", firstFlow.Version.Number)
@@ -310,10 +310,10 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 		t.Fatalf("expected 64-char SHA-256 config hash, got %q", firstFlow.Version.ConfigHash)
 	}
 	if firstFlow.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("expected agent readiness %q, got %q (reasons: %v)", flow.ReadinessReady, firstFlow.Readiness.State, firstFlow.Readiness.Reasons)
+		t.Fatalf("expected flow readiness %q, got %q (reasons: %v)", flow.ReadinessReady, firstFlow.Readiness.State, firstFlow.Readiness.Reasons)
 	}
 	if len(firstFlow.Readiness.Reasons) != 0 {
-		t.Fatalf("expected 0 blocking reasons for ready agent, got %v", firstFlow.Readiness.Reasons)
+		t.Fatalf("expected 0 blocking reasons for ready flow, got %v", firstFlow.Readiness.Reasons)
 	}
 
 	// 8. Management HTTP API validation for onboarding
@@ -322,16 +322,16 @@ func TestScenario1_FreshInstallAndOnboarding(t *testing.T) {
 	w := httptest.NewRecorder()
 	apiHandler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("management GET agent status %d: %s", w.Code, w.Body.String())
+		t.Fatalf("management GET flow status %d: %s", w.Code, w.Body.String())
 	}
 	var apiResp struct {
 		Data flow.Flow `json:"data"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &apiResp); err != nil {
-		t.Fatalf("decode agent API response: %v", err)
+		t.Fatalf("decode flow API response: %v", err)
 	}
 	if apiResp.Data.ID != firstFlow.ID || apiResp.Data.Version.Number != 1 || apiResp.Data.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("mismatched agent in API response: %+v", apiResp.Data)
+		t.Fatalf("mismatched flow in API response: %+v", apiResp.Data)
 	}
 }
 
@@ -353,12 +353,12 @@ func TestScenario2_MixedProviders(t *testing.T) {
 		Config:      flowConfig,
 	})
 	if err != nil {
-		t.Fatalf("create mixed provider agent: %v", err)
+		t.Fatalf("create mixed provider flow: %v", err)
 	}
 
 	expectedHash := createdFlow.Version.ConfigHash
 	if expectedHash == "" {
-		t.Fatal("agent version missing config hash")
+		t.Fatal("flow version missing config hash")
 	}
 
 	// 2. Start session pinned to the flow version snapshot
@@ -367,10 +367,10 @@ func TestScenario2_MixedProviders(t *testing.T) {
 		t.Fatalf("start session: %v", err)
 	}
 	if pin.ConfigHash != expectedHash {
-		t.Fatalf("session pinned hash %s does not match agent version hash %s", pin.ConfigHash, expectedHash)
+		t.Fatalf("session pinned hash %s does not match flow version hash %s", pin.ConfigHash, expectedHash)
 	}
 	if pin.FlowVersionID != createdFlow.Version.ID {
-		t.Fatalf("session pinned version %s does not match agent version %s", pin.FlowVersionID, createdFlow.Version.ID)
+		t.Fatalf("session pinned version %s does not match flow version %s", pin.FlowVersionID, createdFlow.Version.ID)
 	}
 
 	// 3. Assemble composite pipeline:
@@ -521,7 +521,7 @@ func TestScenario3_MCPToolLifecycle(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("create agent with MCP tool: %v", err)
+		t.Fatalf("create flow with MCP tool: %v", err)
 	}
 
 	// 4. Start session and capture runtime tool wrapper
@@ -628,7 +628,7 @@ func TestScenario4_ImmutableFlowVersioning(t *testing.T) {
 		Config:      v1Config,
 	})
 	if err != nil {
-		t.Fatalf("create agent v1: %v", err)
+		t.Fatalf("create flow v1: %v", err)
 	}
 
 	v1VersionID := flowV1.Version.ID
@@ -656,7 +656,7 @@ func TestScenario4_ImmutableFlowVersioning(t *testing.T) {
 		Config: v2Config,
 	})
 	if err != nil {
-		t.Fatalf("update agent to v2: %v", err)
+		t.Fatalf("update flow to v2: %v", err)
 	}
 
 	if flowV2.Version.Number != 2 {
@@ -776,7 +776,7 @@ func TestScenario5_MCPDeletionSafety(t *testing.T) {
 		},
 	})
 	if err != nil {
-		t.Fatalf("create agent: %v", err)
+		t.Fatalf("create flow: %v", err)
 	}
 
 	// 1. Start active session holding captured tool wrapper
@@ -798,7 +798,7 @@ func TestScenario5_MCPDeletionSafety(t *testing.T) {
 		t.Fatalf("query current references: %v", err)
 	}
 	if len(refs) == 0 || refs[0].FlowID != flowCreated.ID {
-		t.Fatalf("expected agent reference in details: %+v", refs)
+		t.Fatalf("expected flow reference in details: %+v", refs)
 	}
 
 	// 3. Confirmed detach-and-delete:
@@ -812,10 +812,10 @@ func TestScenario5_MCPDeletionSafety(t *testing.T) {
 	// Verify Flow was atomically updated to Version 2 without MCP tool
 	flowAfterDetach, err := flowService.Get(ctx, flowCreated.ID)
 	if err != nil {
-		t.Fatalf("get agent after detach: %v", err)
+		t.Fatalf("get flow after detach: %v", err)
 	}
 	if flowAfterDetach.Version.Number != 2 {
-		t.Fatalf("expected agent version 2 after detach, got %d", flowAfterDetach.Version.Number)
+		t.Fatalf("expected flow version 2 after detach, got %d", flowAfterDetach.Version.Number)
 	}
 	if !flowAfterDetach.Version.MCPReviewRequired {
 		t.Fatal("expected MCPReviewRequired to be set on v2 version after detach")

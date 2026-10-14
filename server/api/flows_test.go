@@ -14,7 +14,7 @@ import (
 )
 
 func TestFlowManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
-	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agent-api.db")})
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "flow-api.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestFlowMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 	}
 	current, err := service.Get(context.Background(), created.ID)
 	if err != nil || len(current.Version.MCPTools) != 1 || !current.Version.MCPTools[0].Required {
-		t.Fatalf("current agent=%+v err=%v", current, err)
+		t.Fatalf("current flow=%+v err=%v", current, err)
 	}
 
 	// Bad selections are the caller's mistake (400), never "flow not found" or 500.
@@ -107,7 +107,7 @@ func TestFlowMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
 }
 
 func TestFlowManagementRejectsUnknownInputAndMissingFlow(t *testing.T) {
-	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "agent-api.db")})
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "flow-api.db")})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -109,7 +109,7 @@ func TestConfig_ValidationFailures(t *testing.T) {
 			wantErr: "max_sessions must be > 0",
 		},
 		{
-			name: "no agent store configured",
+			name: "no flow store configured",
 			modify: func(c *Config) {
 				c.Storage.Dialect = ""
 			},
@@ -164,7 +164,7 @@ func TestConfig_LoadDevelopmentYAML(t *testing.T) {
 		t.Fatalf("expected profile development, got %s", cfg.Profile)
 	}
 	if cfg.Storage.Dialect == "" {
-		t.Fatalf("development config must enable the agent store")
+		t.Fatalf("development config must enable the flow store")
 	}
 }
 

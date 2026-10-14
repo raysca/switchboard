@@ -145,7 +145,7 @@ func TestBuildLLMPolicyOptOutAndNoFallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := plain.(*core.LLMFailover); ok {
-		t.Fatal("agent without fallbacks must build the old pipeline")
+		t.Fatal("flow without fallbacks must build the old pipeline")
 	}
 }
 

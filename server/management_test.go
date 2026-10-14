@@ -62,7 +62,7 @@ func readyTestFlow(t *testing.T, s *Server) string {
 		t.Fatal(err)
 	}
 	if a.Readiness.State != flow.ReadinessReady {
-		t.Fatalf("test agent not ready: %+v", a.Readiness)
+		t.Fatalf("test flow not ready: %+v", a.Readiness)
 	}
 	return a.ID
 }

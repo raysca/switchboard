@@ -64,7 +64,7 @@ func TestFlowsAPIAcceptsFlowAndStillAcceptsFlat(t *testing.T) {
 	var graph flowResp
 	_ = json.Unmarshal(w.Body.Bytes(), &graph)
 	if graph.Data.Readiness.State != flow.ReadinessReady || !strings.Contains(string(graph.Data.Version.Config), `"steps"`) {
-		t.Fatalf("graph agent = %+v", graph.Data)
+		t.Fatalf("graph flow = %+v", graph.Data)
 	}
 
 	flat := `{"name":"flat","config":{` + flowStages(true) + `}}`

@@ -26,7 +26,7 @@ func TestFlowRoutesUseManagementBoundaryAndTrustedRequestID(t *testing.T) {
 
 	unauthorized := apiRequest(s, http.MethodGet, path, "", "")
 	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized agent request status=%d", unauthorized.Code)
+		t.Fatalf("unauthorized flow request status=%d", unauthorized.Code)
 	}
 	wrong := apiRequest(s, http.MethodGet, path, "bad-management-key", "")
 	if wrong.Code != http.StatusUnauthorized {
@@ -39,16 +39,16 @@ func TestFlowRoutesUseManagementBoundaryAndTrustedRequestID(t *testing.T) {
 	public := httptest.NewRecorder()
 	s.publicMux.ServeHTTP(public, httptest.NewRequest(http.MethodGet, path, nil))
 	if public.Code != http.StatusNotFound {
-		t.Fatalf("agent management route exposed on public listener: %d", public.Code)
+		t.Fatalf("flow management route exposed on public listener: %d", public.Code)
 	}
 
-	request := httptest.NewRequest(http.MethodGet, path+"/missing-agent", nil)
+	request := httptest.NewRequest(http.MethodGet, path+"/missing-flow", nil)
 	request.Header.Set("Authorization", "Bearer "+key)
 	request.Header.Set("X-Request-ID", "attacker-controlled-id")
 	w := httptest.NewRecorder()
 	s.adminMux.ServeHTTP(w, request)
 	if w.Code != http.StatusNotFound {
-		t.Fatalf("missing agent status=%d body=%s", w.Code, w.Body)
+		t.Fatalf("missing flow status=%d body=%s", w.Code, w.Body)
 	}
 	var response struct {
 		Error struct {

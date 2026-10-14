@@ -95,7 +95,7 @@ func TestBuildSTTWrapsOnlyWithFallbacksAndCountsSkips(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := plain.(*core.STTFailover); ok {
-		t.Fatal("agent without fallbacks must build the old pipeline")
+		t.Fatal("flow without fallbacks must build the old pipeline")
 	}
 	wrapped, err := reg.buildSTT(nil, CallSpec{STT: StageSpec{Provider: "google"}, STTFallbacks: []StageSpec{{Provider: "deepgram"}, {Provider: "nope"}}}, build)
 	if err != nil {

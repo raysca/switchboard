@@ -85,7 +85,7 @@ func TestBuildTTSWrapsOnlyWithFallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := plain.(*core.TTSFailover); ok {
-		t.Fatal("agent without fallbacks must build the old pipeline")
+		t.Fatal("flow without fallbacks must build the old pipeline")
 	}
 	wrapped, err := reg.buildTTS(nil, CallSpec{TTS: StageSpec{Provider: "google"}, TTSFallbacks: []StageSpec{{Provider: "xai"}, {Provider: "nope"}}}, build)
 	if err != nil {

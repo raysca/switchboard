@@ -62,7 +62,7 @@ func TestFlatConfigStillReadyAndReadsAsOneStep(t *testing.T) {
 		t.Fatalf("err=%v readiness=%+v", err, a.Readiness)
 	}
 	if g, err := Decode(a.Version.Config); err != nil || len(g.Steps) != 1 {
-		t.Fatalf("a flat agent must read back as a one-node graph: %v", err)
+		t.Fatalf("a flat flow must read back as a one-node graph: %v", err)
 	}
 }
 
