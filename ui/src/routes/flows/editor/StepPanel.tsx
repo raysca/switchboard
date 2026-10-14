@@ -65,7 +65,8 @@ export function StepPanel(props: StepPanelProps) {
   const nameOf = (id: string) => graph.steps.find((n) => n.id === id)?.name.trim() || "Untitled step";
   const llm = rec(step.config.llm);
   const tts = rec(step.config.tts);
-  const patchStage = (cap: "llm" | "tts", patch: Record<string, unknown>) =>
+  const stt = rec(step.config.stt);
+  const patchStage = (cap: "llm" | "tts" | "stt", patch: Record<string, unknown>) =>
     onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: { ...rec(step.config[cap]), ...patch } } }));
   const warn = (t: StepTab) => issues.some((i) => i.tab === t);
   const count = (t: StepTab) => (t === "routes" ? routes.length : t === "tools" ? step.tools.length + (step.end_call && graph.steps.length > 1 ? 1 : 0) : null);
@@ -201,6 +202,21 @@ export function StepPanel(props: StepPanelProps) {
                 />
               </fieldset>
             </div>
+            {isStart ? (
+              <fieldset className="stage-box">
+                <legend>Listening</legend>
+                <p className="subtext">Speech-to-text for the whole call: the start step decides it for every step.</p>
+                <StageFields
+                  kind="stt"
+                  providers={providers}
+                  idPrefix={`step-${step.id}-stt`}
+                  value={{ provider: str(stt.provider), model: str(stt.model), language: str(stt.language) }}
+                  onChange={(v: StageValue) => patchStage("stt", { provider: v.provider, model: v.model ?? "", language: v.language ?? "" })}
+                />
+              </fieldset>
+            ) : (
+              <p className="subtext">Listening is set once for the whole call, on the start step ({nameOf(graph.start)}).</p>
+            )}
           </>
         )}
 

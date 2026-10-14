@@ -88,6 +88,22 @@ describe("StepPanel", () => {
     expect(b.config).toMatchObject({ llm: { provider: "google", model: "gemini", system_prompt: "Explain invoices." }, tts: { provider: "google", voice: "aoede" } });
   });
 
+  it("lets the start step choose the call's speech-to-text provider, right beside its model and voice", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness stepId="a" onChange={onChange} />);
+    const listening = screen.getByRole("group", { name: "Listening" });
+    await user.selectOptions(within(listening).getByLabelText("STT provider"), "google");
+    const a = lastGraph(onChange).steps.find((n) => n.id === "a")!;
+    expect(a.config.stt).toMatchObject({ provider: "google", model: "gemini" });
+  });
+
+  it("says where listening is set on a step that is not the start step, and offers no STT choice there", () => {
+    render(<Harness stepId="b" />);
+    expect(screen.queryByLabelText("STT provider")).toBeNull();
+    expect(screen.getByText(/Listening is set once for the whole call, on the start step \(Reception\)\./)).toBeVisible();
+  });
+
   it("adds a route from the keyboard, focuses its condition, and flags it until filled", async () => {
     const user = userEvent.setup();
     render(<Harness stepId="a" initialTab="routes" />);
