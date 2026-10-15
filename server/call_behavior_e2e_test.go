@@ -67,6 +67,8 @@ func TestCallBehaviorAFlowsQuietCallerSettingsPromptThenEndTheCall(t *testing.T)
 	eventually(t, "the exact prompt", func() bool { return r.spokenBy("quietvoice", "Still there for the test?") })
 	eventually(t, "the goodbye", func() bool { return r.spokenBy("quietvoice", "Goodbye for now.") })
 	eventually(t, "the hang-up", c.ended)
+	// The counter is added in the call's finish path, after the client already sees the disconnect.
+	eventually(t, "the hang-up is counted", func() bool { return r.s.metrics.UserIdleHangupsTotal.Load() == 1 })
 	if r.s.metrics.UserIdleHangupsTotal.Load() != 1 {
 		t.Fatalf("hang-ups counted: %d", r.s.metrics.UserIdleHangupsTotal.Load())
 	}
