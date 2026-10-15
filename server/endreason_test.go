@@ -51,8 +51,6 @@ func TestEndCauses(t *testing.T) {
 		core.IdleReasonUser: storage.EndSilentCaller,
 		core.IdleReasonBot:  storage.EndAgentStuck,
 		EndReasonFlow:       storage.EndedByFlow,
-		"max_call_duration": storage.EndTimeLimit,
-		"server_draining":   storage.EndServerShutdown,
 		"something_new":     storage.EndCallerHungUp,
 		"":                  storage.EndCallerHungUp,
 	} {
@@ -61,10 +59,11 @@ func TestEndCauses(t *testing.T) {
 		}
 	}
 	for in, want := range map[string]string{
-		"peer_unresponsive":   storage.EndConnectionLost,
-		"connection_lifetime": storage.EndTimeLimit,
-		"":                    "",
-		"unknown":             "",
+		"peer_unresponsive":    storage.EndConnectionLost,
+		"connection_lifetime":  storage.EndTimeLimit,
+		"session_start_failed": storage.EndSetupFailed,
+		"":                     "",
+		"unknown":              "",
 	} {
 		if got := reasonFromTransport(in); got != want {
 			t.Errorf("reasonFromTransport(%q) = %q, want %q", in, got, want)

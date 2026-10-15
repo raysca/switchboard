@@ -187,7 +187,7 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
                       <td>
                         <span className="row">
                           <span className="lamp" data-tone={o.live ? "warn" : undefined} aria-hidden="true" />
-                          {!o.live && s.status === "ended" && s.end_reason ? `${o.label} · ${endReasonText(s.end_reason)}` : o.label}
+                          {s.status === "ended" && s.end_reason ? `${o.label} · ${endReasonText(s.end_reason)}` : o.label}
                         </span>
                       </td>
                     </tr>

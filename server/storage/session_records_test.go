@@ -84,16 +84,21 @@ func TestEveryEndReasonIsKnownAndAnythingElseIsRefused(t *testing.T) {
 	})
 }
 
-func TestACallerOverTheLimitIsRefusedAndEmptyIsAllowed(t *testing.T) {
+func TestACallerOverTheLimitIsCutNotRefusedAndEmptyIsAllowed(t *testing.T) {
 	eachStore(t, func(t *testing.T, s *Store) {
-		if _, err := seedWithCaller(t, s, strings.Repeat("a", 128)); err != nil {
-			t.Fatalf("128: %v", err)
-		}
-		if _, err := seedWithCaller(t, s, ""); err != nil {
-			t.Fatalf("empty: %v", err)
-		}
-		if _, err := seedWithCaller(t, s, strings.Repeat("a", 129)); err == nil {
-			t.Fatal("129 characters accepted")
+		for _, c := range []struct{ in, want string }{
+			{strings.Repeat("a", 128), strings.Repeat("a", 128)},
+			{"", ""},
+			{strings.Repeat("a", 200), strings.Repeat("a", 128)},
+			{strings.Repeat("é", 129), strings.Repeat("é", 128)},
+		} {
+			id, err := seedWithCaller(t, s, c.in)
+			if err != nil {
+				t.Fatalf("%d runes: %v", len([]rune(c.in)), err)
+			}
+			if got := sessionOf(t, s, id).Caller; got != c.want {
+				t.Fatalf("stored %d runes, want %d", len([]rune(got)), len([]rune(c.want)))
+			}
 		}
 	})
 }

@@ -531,6 +531,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			session.SetOutputGate(conn.awaitOutputRoom)
 			if err := session.Start(); err != nil {
+				conn.setCloseCause("session_start_failed")
 				_ = session.Close()
 				return err
 			}
@@ -1182,7 +1183,8 @@ func (c *Connection) SetBackground(u Underlay) {
 }
 
 // CloseCause says why the server itself closed the connection: "peer_unresponsive" (it stopped
-// answering pings) or "connection_lifetime" (the call reached MaxConnectionLifetime); empty when the
+// answering pings), "connection_lifetime" (the call reached MaxConnectionLifetime) or
+// "session_start_failed" (the pipeline would not start); empty when the
 // client closed it or nothing was named. It is set once, before the connection is closed.
 func (c *Connection) CloseCause() string {
 	if p := c.closeCause.Load(); p != nil {

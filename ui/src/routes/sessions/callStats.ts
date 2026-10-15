@@ -243,5 +243,5 @@ export function parseStages(latencies: unknown): { stages: Stage[]; total: numbe
   place("Voice", o.tts_start_ms, o.tts_ttfb_ms);
   if (stages.length < 2) return null; // one bar is just the pills' figure
   const total = Math.max(...stages.map((s) => s.end), ms(o.voice_to_voice_ms) ?? 0);
-  return { stages, total };
+  return total > 0 ? { stages, total } : null; // every stage instant: nothing to draw on an axis
 }

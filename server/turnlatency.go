@@ -20,6 +20,9 @@ var stageKeys = map[observe.Stage]string{
 	observe.StageVoiceToVoice: "voice_to_voice_ms",
 }
 
+// startKeys name the stages whose start offsets are stored.
+var startKeys = map[observe.Stage]string{observe.StageLLMTTFT: "llm_start_ms", observe.StageTTSTTFB: "tts_start_ms"}
+
 // turnLatencies collects a call's per-turn stage latencies from the observer
 // goroutine for the turn recorder, which takes a turn's figures when it writes
 // that turn's row.
@@ -76,7 +79,7 @@ func (t *turnLatencies) take(turn string) string {
 		}
 	}
 	if !origin.IsZero() {
-		for stage, key := range map[observe.Stage]string{observe.StageLLMTTFT: "llm_start_ms", observe.StageTTSTTFB: "tts_start_ms"} {
+		for stage, key := range startKeys {
 			if s, ok := st[stage]; ok && !s.end.IsZero() {
 				out[key] = max(s.end.Add(-s.value).Sub(origin).Milliseconds(), 0)
 			}

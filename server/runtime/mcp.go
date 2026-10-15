@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -213,8 +214,8 @@ func (s *Session) Close(ctx context.Context) error {
 // reason is why the session ended, defaulting to the caller hanging up.
 func (s *Session) reason() string {
 	if s.EndReason != nil {
-		if r := s.EndReason(); r != "" {
-			return r
+		if r := s.EndReason(); slices.Contains(storage.EndReasons, r) {
+			return r // anything else would be refused by the store and leave the row active
 		}
 	}
 	return storage.EndCallerHungUp

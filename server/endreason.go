@@ -36,8 +36,8 @@ func (e *endReason) get() string {
 	return storage.EndCallerHungUp
 }
 
-// reasonFromEnd maps what ended a call on the server's side (the idle controller's reason, the
-// max-duration timer, the drain) to the stored vocabulary.
+// reasonFromEnd maps what the idle controller says ended a call to the stored vocabulary. (The
+// max-duration timer and the drain name their reasons directly.)
 func reasonFromEnd(reason string) string {
 	switch reason {
 	case core.IdleReasonUser:
@@ -46,10 +46,6 @@ func reasonFromEnd(reason string) string {
 		return storage.EndAgentStuck
 	case EndReasonFlow:
 		return storage.EndedByFlow
-	case "max_call_duration":
-		return storage.EndTimeLimit
-	case DrainReason:
-		return storage.EndServerShutdown
 	}
 	return storage.EndCallerHungUp
 }
@@ -61,6 +57,8 @@ func reasonFromTransport(cause string) string {
 		return storage.EndConnectionLost
 	case "connection_lifetime":
 		return storage.EndTimeLimit
+	case "session_start_failed":
+		return storage.EndSetupFailed
 	}
 	return ""
 }

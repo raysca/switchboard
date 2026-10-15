@@ -40,6 +40,10 @@ describe("parseStages", () => {
     expect(parseStages({ stt_final_ms: -1, llm_start_ms: 1, llm_ttft_ms: 2, tts_start_ms: 5, tts_ttfb_ms: 2 })?.stages.map((s) => s.label)).toEqual(["Model", "Voice"]);
   });
 
+  it("draws nothing when every stage took no time", () => {
+    expect(parseStages({ llm_start_ms: 0, llm_ttft_ms: 0, tts_start_ms: 0, tts_ttfb_ms: 0 })).toBeNull();
+  });
+
   it("lets the total be the voice-to-voice time when it is later than the last stage", () => {
     expect(parseStages({ ...spoken, voice_to_voice_ms: 1300 })?.total).toBe(1300);
   });

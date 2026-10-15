@@ -228,9 +228,12 @@ func (h tracesHandler) item(w http.ResponseWriter, r *http.Request, id, requestI
 	}
 
 	dto := toSessionDTO(rec)
-	if latencies, err := h.sessions.TurnLatencies(r.Context(), []string{id}); err == nil {
-		dto.MedianReplyMS = medianReplyMS(latencies[id])
+	latencies, err := h.sessions.TurnLatencies(r.Context(), []string{id})
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get session", requestID)
+		return
 	}
+	dto.MedianReplyMS = medianReplyMS(latencies[id])
 	WriteJSON(w, http.StatusOK, SuccessResponse[SessionDTO]{Data: dto})
 }
 

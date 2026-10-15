@@ -2,11 +2,16 @@ package ws_test
 
 import (
 	"context"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"govoice/core"
+	"govoice/transport/token"
 	"govoice/transport/ws"
 )
 
@@ -71,5 +76,37 @@ func TestACallerWhoClosesTheSocketLeavesNoCause(t *testing.T) {
 	}
 	if got := e.conn.Load().CloseCause(); got != "" {
 		t.Fatalf("a client close names no cause, got %q", got)
+	}
+}
+
+func TestCloseCauseNamesASessionThatFailedToStart(t *testing.T) {
+	now := time.Now()
+	val, err := token.NewValidator(token.DefaultConfig(testIssuer, testAudience, []byte(testSecret)), now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := ws.NewServer(ws.DefaultServerConfig(val))
+	var conn atomic.Pointer[ws.Connection]
+	server.OnSessionReady = func(c *ws.Connection) (*core.Session, error) {
+		conn.Store(c)
+		pipe, _ := core.NewPipeline(attachFails{})
+		return core.NewSession(1, pipe, core.DefaultResourceBudget())
+	}
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"?token="+createTestToken(t, "jti-start-cause", now, now.Add(time.Minute)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	performHandshake(t, ctx, c)
+	for {
+		if _, _, err := c.Read(ctx); err != nil {
+			break
+		}
+	}
+	if got := conn.Load().CloseCause(); got != "session_start_failed" {
+		t.Fatalf("cause %q", got)
 	}
 }

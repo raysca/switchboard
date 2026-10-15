@@ -37,8 +37,10 @@ test("a console test call shows reply times, then Calls shows who called, how it
   await step(page, "the call in the list");
 
   await row.getByRole("link").click();
-  await expect(page.getByText("Console test", { exact: true })).toBeVisible();
-  await expect(page.getByText("Caller hung up", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
+  const figures = page.locator(".call-figures");
+  await expect(figures.getByText("Console test", { exact: true })).toBeVisible();
+  await expect(figures.getByText("Caller hung up", { exact: true })).toBeVisible();
   // A typed turn has no "Heard"; the model and the voice are drawn on one axis.
   await expect(page.getByRole("img", { name: /^Model \d+ to \d+ ms, Voice \d+ to \d+ ms$/ })).toBeVisible();
   await step(page, "the waterfall in call detail");

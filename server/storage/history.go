@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 type SessionRecord struct {
@@ -61,9 +60,10 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 			return err
 		}
 	}
-	caller := strings.TrimSpace(v.Caller)
-	if utf8.RuneCountInString(caller) > maxCallerLen {
-		return fmt.Errorf("caller must be at most %d characters", maxCallerLen)
+	// A label longer than the limit (a token signed elsewhere) is cut, not refused: a call must not fail over its name.
+	caller := []rune(strings.TrimSpace(v.Caller))
+	if len(caller) > maxCallerLen {
+		caller = caller[:maxCallerLen]
 	}
 	stack := v.ProviderStackJSON
 	if stack == "" {
@@ -150,7 +150,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 				return errors.New("required MCP tool was not captured for session")
 			}
 		}
-		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical), boolValue(r.s.dialect, v.Draft), caller)
+		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical), boolValue(r.s.dialect, v.Draft), string(caller))
 		if err != nil {
 			return err
 		}
