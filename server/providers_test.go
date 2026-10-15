@@ -72,9 +72,9 @@ func TestProvidersNoKeys(t *testing.T) {
 		t.Fatal("no providers")
 	}
 	for _, p := range ps {
-		if p.ID == "echo" { // simulated: no key to set, always detected
+		if p.ID == "echo" || p.ID == "offline" { // keyless (simulated, local): no key to set, always detected
 			if !p.Detected || len(p.Env) != 0 {
-				t.Fatalf("echo detected=%v env=%v", p.Detected, p.Env)
+				t.Fatalf("%s detected=%v env=%v", p.ID, p.Detected, p.Env)
 			}
 			continue
 		}

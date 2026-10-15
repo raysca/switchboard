@@ -302,3 +302,31 @@ tts-sim: ## free|Simulate TTS unit sizing strategies for unary providers (TTSSIM
 	@go run ./tools/ttssim $(TTSSIM_ARGS)
 
 .PHONY: tts-sim
+
+# Offline speech stack (docs/superpowers/specs/2026-10-15-offline-speech-service-design.md).
+# OFFLINE_PROFILE=container-llm runs Ollama in Docker; host-llm expects Ollama on the host (Apple Silicon).
+OFFLINE_PROFILE ?= container-llm
+OFFLINE_COMPOSE := docker compose -f offline/compose.yaml $(if $(filter container-llm,$(OFFLINE_PROFILE)),--profile container-llm)
+OFFLINE_LLM_BASE := $(shell sed -n 's/^FROM //p' offline/Modelfile)
+
+offline-up: ## dev|Start the offline speech stack (OFFLINE_PROFILE=container-llm|host-llm)
+	$(OFFLINE_COMPOSE) up -d --build --wait
+	@if [ "$(OFFLINE_PROFILE)" = host-llm ]; then curl -sf http://127.0.0.1:11434/api/tags >/dev/null || { echo "host-llm: Ollama is not answering on 127.0.0.1:11434"; exit 1; }; fi
+
+offline-models: ## dev|Download Whisper, Kokoro and the LLM into the offline stack (needs network, run once)
+	curl -sf -X POST http://127.0.0.1:8000/v1/models/Systran/faster-whisper-small.en
+	curl -sf -X POST http://127.0.0.1:8000/v1/models/speaches-ai/Kokoro-82M-v1.0-ONNX
+ifeq ($(OFFLINE_PROFILE),host-llm)
+	ollama pull $(OFFLINE_LLM_BASE) && ollama create govoice-test -f offline/Modelfile
+else
+	$(OFFLINE_COMPOSE) exec -T ollama ollama pull $(OFFLINE_LLM_BASE)
+	$(OFFLINE_COMPOSE) exec -T ollama sh -c 'cat > /tmp/Modelfile && ollama create govoice-test -f /tmp/Modelfile' < offline/Modelfile
+endif
+
+offline-down: ## dev|Stop the offline speech stack (volumes are kept)
+	$(OFFLINE_COMPOSE) down
+
+offline-test: ## dev|Round trip through the running offline stack with the real xai clients (needs offline-up and offline-models)
+	cd offline/contract && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" ./...
+
+.PHONY: offline-up offline-models offline-down offline-test

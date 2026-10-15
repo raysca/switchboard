@@ -18,6 +18,7 @@ Provider secrets live in the server's environment and nowhere else. The server n
 | `deepgram` | `DEEPGRAM_API_KEY` | STT |
 | `cartesia` | `CARTESIA_API_KEY` | STT, TTS |
 | `elevenlabs` | `ELEVENLABS_API_KEY` | STT, TTS |
+| `offline` | none | LLM; STT and TTS in builds tagged `xaispeech`. Local models behind `providers.offline.*` endpoints; see [Offline mode](#offline-mode-privacy) |
 | MCP servers | `MCP_TOKEN_<NAME>` | The bearer token of an MCP server whose `auth_env` names it (see [api/mcp.md](api/mcp.md)) |
 
 A value must be a single token: surrounding whitespace is trimmed, and a value with inner whitespace or control characters, or one that starts with `$` (an unexpanded shell reference), counts as missing. This applies to optional variables too: a set but unusable `OPENAI_BASE_URL` makes OpenAI undetected (naming the variable) rather than sending the key to the default endpoint. `GOOGLE_APPLICATION_CREDENTIALS` must name a regular file holding a JSON object with `"type": "service_account"`; a user ADC file or any other JSON counts as missing.
@@ -107,3 +108,17 @@ An entry with an existing `id` replaces it, a new one is appended, and an overla
 ## Adding a provider
 
 A new provider needs code: an adapter under `providers/`, a factory registered in `server/registry.go`, and a packaged catalog file in `server/catalog/data/`. `server/catalog_adapters_test.go` checks that what the catalog assembles is what the adapter parses.
+
+## Offline mode (privacy)
+
+The `offline` provider runs a whole call on local models: no key, no network, and audio and text never leave the host. It reuses the `xai` processors against a local stack in [`offline/`](../offline/README.md): Ollama for the LLM, and an adapter in front of Speaches (faster-whisper and Kokoro) for STT and TTS.
+
+```yaml
+providers:
+  offline:
+    llm_endpoint: http://127.0.0.1:11434/v1/responses
+    stt_endpoint: ws://127.0.0.1:8099/v1/stt
+    tts_endpoint: http://127.0.0.1:8099/v1/tts
+```
+
+These are the defaults. Start the stack with `make offline-up` (`OFFLINE_PROFILE=host-llm` on Apple Silicon), fetch the models once with `make offline-models` (the only step that needs network), then choose provider `offline` for a stage. The `offline` provider keeps its own circuit breakers, so a local outage does not affect `xai`. Traces and usage still say `provider: xai`.

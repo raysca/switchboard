@@ -177,3 +177,7 @@ privacy:
   number (order IDs, Unix timestamps, dotted version strings) and digit-word
   runs of 9+. Matching is linear time (RE2); about 0.5 s per MiB in the
   worst case, and turns are small.
+
+## Offline mode
+
+With the `offline` provider (see [providers.md](providers.md#offline-mode-privacy)) a call's audio, transcripts and replies are produced by models running on the same host: nothing is sent to a third-party provider. The only step that needs the network is `make offline-models`, which downloads the model weights once; the running stack needs none.

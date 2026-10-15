@@ -1,0 +1,38 @@
+# Offline speech stack. Profiles: container-llm adds Ollama; host-llm expects Ollama on the host.
+# Speaches is pinned by digest (the digest the spike ran on 2026-10-15); bump deliberately.
+services:
+  speaches:
+    image: ghcr.io/speaches-ai/speaches@sha256:21e3df06d842fb7802ab470dd77c25f0e8c0d22950e8d8c6ae886e851af53ef8
+    ports: ["127.0.0.1:8000:8000"] # published for `make offline-models`; the adapter reaches it by service name
+    volumes: ["hf-cache:/home/ubuntu/.cache/huggingface/hub"]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  adapter:
+    build: .
+    ports: ["8099:8099"]
+    environment:
+      OFFLINE_SPEACHES_URL: http://speaches:8000
+      OFFLINE_TOKEN: ${OFFLINE_TOKEN:-}
+    depends_on:
+      speaches: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "/offline-adapter", "-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  ollama:
+    profiles: ["container-llm"]
+    image: ollama/ollama:latest # pin to a version tag after the first successful run: `docker image inspect`
+    ports: ["127.0.0.1:11434:11434"]
+    volumes: ["ollama:/root/.ollama"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+volumes:
+  hf-cache:
+  ollama:

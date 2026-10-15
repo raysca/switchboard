@@ -11,6 +11,8 @@ COPY providers/google/go.mod providers/google/go.sum* ./providers/google/
 COPY providers/nvidia/go.mod providers/nvidia/go.sum* ./providers/nvidia/
 COPY providers/openai/go.mod providers/openai/go.sum* ./providers/openai/
 COPY providers/xai/go.mod providers/xai/go.sum* ./providers/xai/
+COPY offline/go.mod offline/go.sum* ./offline/
+COPY offline/contract/go.mod offline/contract/go.sum* ./offline/contract/
 COPY server/go.mod server/go.sum ./server/
 RUN go work sync
 COPY . .
