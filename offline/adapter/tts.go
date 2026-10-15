@@ -1,12 +1,16 @@
 package adapter
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/coder/websocket"
 )
 
 const maxTTSBody = 1 << 20 // a sentence unit is a few hundred bytes; 1 MiB is far beyond any real request
@@ -76,4 +80,105 @@ func streamPCM(r io.Reader, chunk int, send func([]byte) error) error {
 			return err
 		}
 	}
+}
+
+const maxTTSText = 60000 // xAI's documented limit for one text.delta message
+
+type ttsMsg struct {
+	Type    string `json:"type"`
+	Delta   string `json:"delta,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func writeJSON(ctx context.Context, c *websocket.Conn, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return c.Write(ctx, websocket.MessageText, b)
+}
+
+// handleTTSWS serves xAI's streaming TTS: one connection per reply, reused for its units. A unit is
+// text.delta... then text.done; the answer is audio.delta... then audio.done, and the connection
+// stays open for the next unit. Closing the socket (barge-in) cancels the running synthesis.
+func (s *Server) handleTTSWS(w http.ResponseWriter, r *http.Request) {
+	voice := s.cfg.Voice(r.URL.Query().Get("voice"))
+	rate := queryInt(r, "sample_rate", 24000)
+	c, err := websocket.Accept(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer c.CloseNow()
+	c.SetReadLimit(2 << 20)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// One reader goroutine: it is the only place a close is noticed while a unit is synthesizing.
+	// It owns msgs (producer-only close) and cancels ctx when the socket dies.
+	msgs := make(chan ttsMsg, 4)
+	go func() {
+		defer close(msgs)
+		defer cancel()
+		for {
+			_, data, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			var m ttsMsg
+			if json.Unmarshal(data, &m) != nil {
+				continue
+			}
+			select {
+			case msgs <- m:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	var text strings.Builder
+	fail := func(msg string) { _ = writeJSON(ctx, c, ttsMsg{Type: "error", Message: msg}) }
+	for m := range msgs {
+		switch m.Type {
+		case "text.delta":
+			if text.Len()+len(m.Delta) > maxTTSText {
+				fail("text exceeds the per-unit limit")
+				return
+			}
+			text.WriteString(m.Delta)
+		case "text.done":
+			unit := text.String()
+			text.Reset()
+			if err := s.speak(ctx, c, unit, voice, rate); err != nil {
+				if ctx.Err() == nil {
+					fail(err.Error())
+				}
+				return
+			}
+		}
+	}
+}
+
+func (s *Server) speak(ctx context.Context, c *websocket.Conn, text, voice string, rate int) error {
+	if strings.TrimSpace(text) == "" {
+		return writeJSON(ctx, c, ttsMsg{Type: "audio.done"})
+	}
+	release, err := s.lim.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	body, err := s.tts.Synthesize(ctx, text, voice, rate)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	// 100 ms of PCM16 mono per audio.delta.
+	err = streamPCM(body, rate*2/10, func(b []byte) error {
+		return writeJSON(ctx, c, ttsMsg{Type: "audio.delta", Delta: base64.StdEncoding.EncodeToString(b)})
+	})
+	if err != nil {
+		return err
+	}
+	return writeJSON(ctx, c, ttsMsg{Type: "audio.done"})
 }
