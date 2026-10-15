@@ -3,6 +3,7 @@
 #   make dev                                   server + admin UI, seeded with "Dev Assistant", a "Dealership desk" graph and test MCP servers
 #   make example-web                           custom web client (needs `make dev` running)
 #   make example-cli [TEXT="..."]              CLI call to the dev flow (voice clip, or a text turn)
+#   make admin-link                            a magic link that signs the admin UI in (no pasting)
 #   make example-go NAME=google_pipeline       standalone Go example (reads examples/.env)
 #
 # Provider keys come from examples/.env (see examples/.env.example): the development
@@ -208,8 +209,8 @@ cmd_up() {
   cat <<EOF
 
   Switchboard dev stack
-    Admin UI        http://127.0.0.1:$UI_PORT
-    Management key  $GOVOICE_MANAGEMENT_API_KEY   (paste it into the admin UI's "Management key" field)
+    Admin UI        http://127.0.0.1:$UI_PORT   (signed in by the dev proxy: nothing to paste)
+    Management key  $GOVOICE_MANAGEMENT_API_KEY   (for curl and the API; the admin UI does not need it)
     Admin API       $GOVOICE_ADMIN_URL
     Voice WebSocket $GOVOICE_WS_URL
     Dev flow        ${GOVOICE_DEV_FLOW_ID:-none (see [seed] above)}
@@ -252,6 +253,7 @@ case "${1:-up}" in
   up) cmd_up ;;
   web) cmd_web ;;
   cli) cmd_cli ;;
+  link) load_env; "$ROOT/scripts/admin-link.sh" "http://127.0.0.1:$UI_PORT" ;;
   go) cmd_go "${2:-}" ;;
-  *) die "unknown command '$1' (up | web | cli | go <name>)" ;;
+  *) die "unknown command '$1' (up | web | cli | link | go <name>)" ;;
 esac

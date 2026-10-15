@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, stepConfigV2Schema, createApiClient, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
+import { ApiError, PROXIED_ACCESS, probeProxiedAccess, stepConfigV2Schema, createApiClient, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
 
 describe("management client", () => {
   it("sends an in-memory bearer and parses the response", async () => {
@@ -578,5 +578,39 @@ describe("session draft flag", () => {
   it("is false when an older server leaves it out, and true when set", () => {
     expect(sessionSchema.parse(base).draft).toBe(false);
     expect(sessionSchema.parse({ ...base, draft: true }).draft).toBe(true);
+  });
+});
+
+describe("access without a pasted key", () => {
+  it("marks every request as coming from the dashboard", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      expect(init?.headers).toMatchObject({ "X-Switchboard-UI": "1" });
+      return new Response(JSON.stringify({ data: [] }));
+    });
+    const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+    await client.getProviders();
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("sends no Authorization header when the dev proxy supplies the credentials", async () => {
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      expect(init?.headers).not.toHaveProperty("Authorization");
+      expect(init?.headers).toMatchObject({ "X-Switchboard-UI": "1" });
+      return new Response(JSON.stringify({ data: [] }));
+    });
+    const client = createApiClient(() => ({ key: PROXIED_ACCESS, generation: 1 }), fetcher);
+    await expect(client.getProviders()).resolves.toEqual([]);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("detects server-provided access with a keyless request", async () => {
+    const ok = vi.fn<typeof fetch>(async (input, init) => {
+      expect(input).toBe("/api/v1/server-config");
+      expect(init?.headers).not.toHaveProperty("Authorization");
+      return new Response("{}", { status: 200 });
+    });
+    await expect(probeProxiedAccess(ok)).resolves.toBe(true);
+    await expect(probeProxiedAccess(async () => new Response("{}", { status: 401 }))).resolves.toBe(false);
+    await expect(probeProxiedAccess(async () => { throw new TypeError("offline"); })).resolves.toBe(false);
   });
 });

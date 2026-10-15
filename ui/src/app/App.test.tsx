@@ -81,7 +81,13 @@ describe("admin shell", () => {
   });
 
   it("shows the key status in the top line once connected, with no way to clear it but reloading", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: operationsStatus }), { status: 200 }));
+    // A server that requires the key: only requests carrying one are answered.
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      return headers.Authorization
+        ? new Response(JSON.stringify({ data: operationsStatus }), { status: 200 })
+        : new Response("{}", { status: 401 });
+    });
     vi.stubGlobal("fetch", fetcher);
     render(<App initialPath="/dashboard" />);
     const user = userEvent.setup();
@@ -95,11 +101,13 @@ describe("admin shell", () => {
   });
 
   it("returns to key entry when the key is rejected", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ error: { code: "unauthorized", message: "Unauthorized", request_id: "req-3" } }),
-        { status: 401, headers: { "X-Request-ID": "req-3" } },
-      ),
+    // Every request is refused, including the keyless probe at startup and the call made with the key.
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({ error: { code: "unauthorized", message: "Unauthorized", request_id: "req-3" } }),
+          { status: 401, headers: { "X-Request-ID": "req-3" } },
+        ),
     );
     vi.stubGlobal("fetch", fetcher);
     try {
@@ -120,5 +128,93 @@ describe("admin shell", () => {
   it("renders the call page for a direct link /sessions/:sessionId", () => {
     render(<App initialPath="/sessions/test-session-123" />);
     expect(screen.getByRole("heading", { name: "Connect to see this call" })).toBeVisible();
+  });
+});
+
+describe("access without pasting a key", () => {
+  const seen: { url: string; auth: string | null }[] = [];
+  // signedIn: the server accepts keyless dashboard requests (a dev proxy adds the credentials).
+  // Otherwise it requires a key: a request is answered only if it carries one.
+  const stubFetch = (signedIn: boolean) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        seen.push({ url: String(input), auth: headers.Authorization ?? null });
+        const allowed = signedIn || Boolean(headers.Authorization);
+        return new Response(JSON.stringify({ data: {} }), { status: allowed ? 200 : 401 });
+      }),
+    );
+  const cleanup = () => {
+    seen.length = 0;
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, "", "/");
+  };
+
+  it("takes the key from a magic link, uses it, and removes it from the address bar", async () => {
+    stubFetch(false);
+    window.history.replaceState(null, "", "/dashboard#key=link-key-123");
+    try {
+      render(<App />);
+      expect(screen.queryByRole("region", { name: "Management access" })).toBeNull();
+      expect(screen.getByText("Key in memory")).toBeVisible();
+      await waitFor(() => expect(seen.some((c) => c.auth === "Bearer link-key-123")).toBe(true));
+      expect(window.location.hash).toBe("");
+      expect(window.location.href).not.toContain("link-key-123");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("never probes for server sign-in in a production build (a keyless request is a failed login to a hosted server)", async () => {
+    stubFetch(true);
+    vi.stubEnv("PROD", true);
+    vi.stubEnv("DEV", false);
+    try {
+      render(<App initialPath="/dashboard" />);
+      expect(screen.getByRole("region", { name: "Management access" })).toBeVisible();
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(seen.some((c) => c.url.includes("server-config"))).toBe(false);
+      expect(screen.getByRole("region", { name: "Management access" })).toBeVisible();
+    } finally {
+      vi.unstubAllEnvs();
+      cleanup();
+    }
+  });
+
+  it("decodes a magic link key that contains URL metacharacters", async () => {
+    stubFetch(false);
+    window.history.replaceState(null, "", "/dashboard#key=a%2Bb%26c%3Dd%25e%20f");
+    try {
+      render(<App />);
+      await waitFor(() => expect(seen.some((c) => c.auth === "Bearer a+b&c=d%e f")).toBe(true));
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("skips the key form when the server signs the dashboard in", async () => {
+    stubFetch(true);
+    try {
+      render(<App initialPath="/dashboard" />);
+      expect(await screen.findByText("Signed in by the server")).toBeVisible();
+      expect(screen.queryByRole("region", { name: "Management access" })).toBeNull();
+      await waitFor(() => expect(seen.filter((c) => !c.url.includes("server-config")).length).toBeGreaterThan(0));
+      expect(seen.every((c) => c.auth === null)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("still asks for the key when the server does not sign the dashboard in", async () => {
+    stubFetch(false);
+    try {
+      render(<App initialPath="/dashboard" />);
+      await waitFor(() => expect(seen.some((c) => c.url.includes("server-config"))).toBe(true));
+      expect(screen.getByRole("region", { name: "Management access" })).toBeVisible();
+      expect(screen.getByLabelText("Management key")).toBeVisible();
+    } finally {
+      cleanup();
+    }
   });
 });

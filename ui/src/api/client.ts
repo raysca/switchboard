@@ -475,6 +475,22 @@ export function asApiError(err: unknown, message: string): ApiError {
   return err instanceof ApiError ? err : new ApiError(message, "client_error", 0, "");
 }
 
+/**
+ * Stands in for the management key when the server signs the dashboard in itself (the dev proxy adds the
+ * credentials). It is not a secret and is never sent: requests then carry no Authorization header.
+ */
+export const PROXIED_ACCESS = "server-provided";
+
+/** Whether the server already accepts keyless dashboard requests (a dev proxy or a front proxy signs them in). */
+export async function probeProxiedAccess(fetcher: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const response = await fetcher("/api/v1/server-config", { headers: { "X-Switchboard-UI": "1" }, cache: "no-store" });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function createApiClient(
   getAuth: () => AuthSnapshot,
   fetcher: typeof fetch = fetch,
@@ -503,7 +519,9 @@ export function createApiClient(
       response = await fetcher(`/api/v1${path}`, {
         method,
         headers: {
-          Authorization: `Bearer ${key}`,
+          ...(key === PROXIED_ACCESS ? {} : { Authorization: `Bearer ${key}` }),
+          // Marks the request as the dashboard's own: the dev proxy only signs in marked requests.
+          "X-Switchboard-UI": "1",
           ...(options?.body !== undefined
             ? { "Content-Type": "application/json" }
             : {}),

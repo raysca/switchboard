@@ -10,7 +10,7 @@ import {
   useParams,
 } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ApiError, createApiClient } from "../api/client";
+import { ApiError, createApiClient, PROXIED_ACCESS, probeProxiedAccess } from "../api/client";
 import {
   ActionButton,
   ErrorState,
@@ -47,11 +47,17 @@ function LegacyAgentRedirect() {
   return <Navigate to={`/flows/${encodeURIComponent(flowId)}`} replace />;
 }
 
+/** A magic link carries the key in the address fragment (#key=...): never sent to a server, never logged. */
+function keyFromAddress(): string | null {
+  return new URLSearchParams(window.location.hash.replace(/^#/, "")).get("key")?.trim() || null;
+}
+
 export function App({ initialPath }: { initialPath?: string }) {
-  const [keyValue, setKeyValue] = useState<string | null>(null);
+  const [linkKey] = useState(keyFromAddress);
+  const [keyValue, setKeyValue] = useState<string | null>(linkKey);
   const [draft, setDraft] = useState("");
   const [authError, setAuthError] = useState<ApiError | null>(null);
-  const auth = useRef({ key: null as string | null, generation: 0 });
+  const auth = useRef({ key: linkKey, generation: 0 });
   const keyInput = useRef<HTMLInputElement>(null);
   const [queryClient] = useState(
     () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -80,6 +86,27 @@ export function App({ initialPath }: { initialPath?: string }) {
   useEffect(() => {
     if (authError) keyInput.current?.focus();
   }, [authError]);
+
+  // A magic link's key is used from memory and removed from the address bar (and the history entry) at once.
+  useEffect(() => {
+    if (linkKey) window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+  }, [linkKey]);
+
+  // Without a link, ask the dev server whether its proxy signs the dashboard in. Only the dev server has
+  // such a proxy: against a hosted server a keyless request is a failed login, counted and rate limited.
+  useEffect(() => {
+    if (linkKey || !import.meta.env.DEV) return;
+    let cancelled = false;
+    void probeProxiedAccess().then((signedIn) => {
+      if (cancelled || !signedIn || auth.current.key) return; // a key pasted meanwhile wins
+      auth.current = { key: PROXIED_ACCESS, generation: auth.current.generation + 1 };
+      queryClient.clear();
+      setKeyValue(PROXIED_ACCESS);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [linkKey, queryClient]);
 
   function clearKey() {
     auth.current = { key: null, generation: auth.current.generation + 1 };
@@ -137,7 +164,7 @@ export function App({ initialPath }: { initialPath?: string }) {
               <span>Operations</span>
               <div className="topbar-key">
                 <Status tone={keyValue ? "good" : "neutral"}>
-                  {keyValue ? "Key in memory" : "No management key"}
+                  {keyValue === PROXIED_ACCESS ? "Signed in by the server" : keyValue ? "Key in memory" : "No management key"}
                 </Status>
               </div>
             </div>

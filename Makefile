@@ -181,10 +181,13 @@ mcp-test: ## dev|Run the MCP test servers on 127.0.0.1:18765 (/ok /open /fail/* 
 dental-mcp: ## dev|Run the Smile Dental demo MCP server on :18767 (token: dev-dental-token)
 	DENTAL_MCP_TOKEN=$${DENTAL_MCP_TOKEN:-dev-dental-token} PORT=18767 go run ./cmd/dental-mcp
 
-.PHONY: mcp-test dental-mcp
+.PHONY: mcp-test dental-mcp admin-link
 
 dev: ## dev|Run the server and admin UI with generated secrets and a seeded Dev Assistant
 	@./scripts/dev.sh up
+
+admin-link: ## dev|Print a magic link that signs the admin UI in (URL=https://host for a hosted server, else the local dev stack)
+	@if [ -n "$(URL)" ]; then ./scripts/admin-link.sh "$(URL)"; else ./scripts/dev.sh link; fi
 
 example-web: ## dev|Browser client example against make dev
 	@./scripts/dev.sh web

@@ -130,3 +130,5 @@ else
   echo "== budget alert skipped (set BILLING_ACCOUNT to create one) =="
 fi
 echo "done. The admin key: gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project $PROJECT_ID"
+echo "Sign in to the admin UI without pasting it (after the first deploy; treat the link like the key):"
+echo "  gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project $PROJECT_ID | scripts/admin-link.sh https://<service-url>"
