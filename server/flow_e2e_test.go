@@ -42,12 +42,13 @@ type stageProbe struct {
 	mu            sync.Mutex
 	built         map[string]int
 	closed        map[string]int
-	units         map[string]int // synthesis units each TTS voice was asked to speak
-	failTTS       string         // a TTS voice whose build fails
-	holdTTS       string         // a TTS voice whose build waits for gate
-	failAfterHold bool           // the held build fails once released (a provider that times out)
-	gate          chan struct{}  // closed to let the held build finish
-	entered       chan struct{}  // closed when the held build starts
+	units         map[string]int      // synthesis units each TTS voice was asked to speak
+	said          map[string][]string // the text of those units, by voice
+	failTTS       string              // a TTS voice whose build fails
+	holdTTS       string              // a TTS voice whose build waits for gate
+	failAfterHold bool                // the held build fails once released (a provider that times out)
+	gate          chan struct{}       // closed to let the held build finish
+	entered       chan struct{}       // closed when the held build starts
 	once          sync.Once
 }
 
@@ -59,6 +60,13 @@ func (p *stageProbe) count(m map[string]int, k string) int {
 func (p *stageProbe) builds(k string) int { return p.count(p.built, k) }
 func (p *stageProbe) closes(k string) int { return p.count(p.closed, k) }
 func (p *stageProbe) spoke(k string) int  { return p.count(p.units, k) }
+
+// sayings is everything a TTS voice was asked to speak, in order.
+func (p *stageProbe) sayings(voice string) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.said[voice]...)
+}
 
 type probedStage struct {
 	core.Processor
@@ -74,9 +82,10 @@ func (s *probedStage) Attach(sc core.SessionController, i int) error {
 }
 
 func (s *probedStage) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
-	if _, ok := f.(*core.SynthesisUnitFrame); ok {
+	if u, ok := f.(*core.SynthesisUnitFrame); ok {
 		s.probe.mu.Lock()
 		s.probe.units[s.key]++
+		s.probe.said[s.key] = append(s.probe.said[s.key], u.Text)
 		s.probe.mu.Unlock()
 	}
 	return s.Processor.ProcessFrame(ctx, f, dir, e)
@@ -123,7 +132,7 @@ func (p *stageProbe) install(s *Server) {
 }
 
 func newProbe() *stageProbe {
-	return &stageProbe{built: map[string]int{}, closed: map[string]int{}, units: map[string]int{}, gate: make(chan struct{}), entered: make(chan struct{})}
+	return &stageProbe{built: map[string]int{}, closed: map[string]int{}, units: map[string]int{}, said: map[string][]string{}, gate: make(chan struct{}), entered: make(chan struct{})}
 }
 
 type flowRigE2E struct {
@@ -187,6 +196,7 @@ type e2eCall struct {
 	texts     []string
 	audio     []audioArrival
 	seq       int
+	done      chan struct{} // closed when the server ends the connection
 }
 
 // audioArrival is one bot audio frame on the wire. The fake TTS sends silence,
@@ -221,7 +231,7 @@ func (r *flowRigE2E) dialToken(token string) *e2eCall {
 		r.t.Fatal(err)
 	}
 	r.t.Cleanup(func() { _ = conn.CloseNow() })
-	c := &e2eCall{t: r.t, conn: conn, ctx: ctx}
+	c := &e2eCall{t: r.t, conn: conn, ctx: ctx, done: make(chan struct{})}
 	c.sessionID, _ = claims["jti"].(string)
 	c.send(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`)
 	go c.read()
@@ -236,6 +246,7 @@ func (c *e2eCall) send(raw string) {
 }
 
 func (c *e2eCall) read() {
+	defer close(c.done)
 	for {
 		_, data, err := c.conn.Read(c.ctx)
 		if err != nil {
