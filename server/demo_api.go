@@ -32,12 +32,15 @@ func (d demoServers) Refresh(ctx context.Context, id string) (storage.MCPDiscove
 // dentalEndpoint is where the demo's MCP server lives; empty when the deployment has none.
 func (s *Server) dentalEndpoint() string { return s.env("DENTAL_MCP_URL") }
 
-// installDental serialises installs (startup auto-install vs the API) so the
-// list-then-create inside cannot run twice; the install is bounded by ctx.
+// installDental collapses overlapping installs (startup auto-install vs the API)
+// into one run, so the list-then-create inside cannot run twice; no lock is held
+// during discovery or DB work. Joiners share the first caller's result and ctx.
 func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows demo.Flows, endpoint string) (demo.Result, error) {
-	s.demoMu.Lock()
-	defer s.demoMu.Unlock()
-	return demo.InstallDental(ctx, servers, flows, endpoint)
+	v, err, _ := s.demoSF.Do("dental", func() (any, error) {
+		return demo.InstallDental(ctx, servers, flows, endpoint)
+	})
+	res, _ := v.(demo.Result)
+	return res, err
 }
 
 // demoStatus reports the demo's state; a failed lookup is an error, not "not installed".

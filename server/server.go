@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"golang.org/x/sync/singleflight"
 	"sync/atomic"
 	"time"
 
@@ -78,8 +80,10 @@ type Server struct {
 	ready        atomic.Bool
 	shuttingDown atomic.Bool
 
-	pingMu        sync.Mutex          // storeHealthy cache
-	sessionBudget core.ResourceBudget // test seam; DefaultResourceBudget in NewServer
+	pingMu        sync.Mutex // guards pingAt/pingOK only, never held across the ping
+	pingSF        singleflight.Group
+	pingDB        func(context.Context) error // test seam; nil pings the store
+	sessionBudget core.ResourceBudget
 	pingAt        time.Time
 	pingOK        bool
 
@@ -102,7 +106,7 @@ type Server struct {
 	nextCallID  atomic.Uint64
 	textTurns   atomic.Uint64
 	pruneStop   chan struct{}
-	demoMu      sync.Mutex         // serialises demo installs
+	demoSF      singleflight.Group // collapses overlapping demo installs
 	stopDemo    context.CancelFunc // cancels the startup demo install; guarded by mu
 	demoWG      sync.WaitGroup     // the startup demo install goroutine
 	recSink     *record.LocalSink  // nil unless recording.enabled
@@ -860,16 +864,28 @@ func (s *Server) storeHealthy(ctx context.Context) bool {
 		return true
 	}
 	s.pingMu.Lock()
-	defer s.pingMu.Unlock()
 	if time.Since(s.pingAt) < time.Second {
-		return s.pingOK
+		ok := s.pingOK
+		s.pingMu.Unlock()
+		return ok
 	}
-	// WithoutCancel: one aborted probe must not cache an "unhealthy" verdict for every other caller.
-	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
-	defer cancel()
-	s.pingOK = s.store.DB().PingContext(pctx) == nil
-	s.pingAt = time.Now()
-	return s.pingOK
+	s.pingMu.Unlock()
+	// Concurrent callers share one in-flight ping; no lock is held during it.
+	v, _, _ := s.pingSF.Do("ping", func() (any, error) {
+		// WithoutCancel: one aborted probe must not cache an "unhealthy" verdict for every other caller.
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		ping := s.pingDB
+		if ping == nil {
+			ping = s.store.DB().PingContext
+		}
+		ok := ping(pctx) == nil
+		s.pingMu.Lock()
+		s.pingOK, s.pingAt = ok, time.Now()
+		s.pingMu.Unlock()
+		return ok, nil
+	})
+	return v.(bool)
 }
 
 func circuitStateName(val int64) string {
