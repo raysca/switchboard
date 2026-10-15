@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -241,5 +243,105 @@ func TestSTTWorkerStopsOnDisconnect(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(3 * time.Second):
 		t.Fatal("decode was not cancelled after the client disconnected")
+	}
+}
+
+// Regression (review finding 1): the client hangs up while the worker is mid-decode and the job
+// queue is full. The worker used to exit on its failed write without draining jobs, leaving the
+// reader blocked on the channel send forever: the handler, the connection and the buffers leaked.
+func TestSTTHandlerReturnsAfterClientHangsUpWithFullQueue(t *testing.T) {
+	release := make(chan struct{})
+	stt := &fakeSTT{fn: func(context.Context, []byte) (string, error) { <-release; return "late", nil }}
+	cfg := fastCfg(t)
+	cfg.InterimEvery = time.Hour
+	h := New(cfg, nil, stt, okReady).Handler()
+	done := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r)
+		if r.URL.Path == "/v1/stt" {
+			done <- struct{}{}
+		}
+	}))
+	defer srv.Close()
+	c, ctx := dialWS(t, srv, "/v1/stt")
+	readSTT(t, ctx, c)
+	for i := 0; i < 20; i++ { // far more utterances than the 4-slot queue holds
+		sendAudio(t, ctx, c, append(pcmTone(500*time.Millisecond, 0.3), pcmSilence(400*time.Millisecond)...), 0)
+	}
+	time.Sleep(200 * time.Millisecond) // the reader is now blocked on a full queue
+	c.CloseNow()
+	close(release) // the stuck decode finishes; its write to the dead client fails
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the STT handler never returned after the client hung up (leaked reader)")
+	}
+}
+
+// Regression (review finding 2): pre-roll must be the audio just before the onset, not audio from
+// before the previous utterance.
+func TestSTTPreRollIsNotStaleAcrossUtterances(t *testing.T) {
+	var mu sync.Mutex
+	var decoded [][]byte
+	stt := &fakeSTT{fn: func(_ context.Context, pcm []byte) (string, error) {
+		mu.Lock()
+		decoded = append(decoded, append([]byte(nil), pcm...))
+		mu.Unlock()
+		return "ok", nil
+	}}
+	cfg := fastCfg(t)
+	cfg.InterimEvery = time.Hour
+	srv := httptest.NewServer(New(cfg, nil, stt, okReady).Handler())
+	defer srv.Close()
+	c, ctx := dialWS(t, srv, "/v1/stt")
+	readSTT(t, ctx, c)
+	marker := pcmTone(200*time.Millisecond, 0.005) // audible to a test, below the 0.01 speech threshold
+	audio := append(marker, pcmTone(time.Second, 0.3)...)
+	audio = append(audio, pcmSilence(300*time.Millisecond)...) // exactly the endpoint silence: the caller resumes at once
+	audio = append(audio, pcmTone(time.Second, 0.3)...)
+	audio = append(audio, pcmSilence(500*time.Millisecond)...)
+	sendAudio(t, ctx, c, audio, 0)
+	audioDone(t, ctx, c)
+	drainSTT(t, ctx, c)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(decoded) != 2 {
+		t.Fatalf("decoded %d utterances, want 2", len(decoded))
+	}
+	head := decoded[1][:2*testRate/10] // first 100 ms of the second utterance's audio
+	if r := rms(head, len(head)/2); r > 0.001 {
+		t.Fatalf("second utterance starts with stale pre-roll (rms %.4f): audio from before the first utterance", r)
+	}
+}
+
+// Regression (review finding 12 / AGENTS.md): a panic inside the backend call must not take the
+// adapter down; the client gets an error and the next connection still works.
+func TestSTTBackendPanicBecomesAnErrorNotACrash(t *testing.T) {
+	var n atomic.Int32
+	stt := &fakeSTT{fn: func(context.Context, []byte) (string, error) {
+		if n.Add(1) == 1 {
+			panic("backend bug")
+		}
+		return "fine", nil
+	}}
+	cfg := fastCfg(t)
+	cfg.InterimEvery = time.Hour
+	srv := httptest.NewServer(New(cfg, nil, stt, okReady).Handler())
+	defer srv.Close()
+	utterance := append(pcmTone(time.Second, 0.3), pcmSilence(500*time.Millisecond)...)
+
+	c, ctx := dialWS(t, srv, "/v1/stt")
+	readSTT(t, ctx, c)
+	sendAudioLoose(ctx, c, utterance)
+	if last := drainSTT(t, ctx, c); last[len(last)-1].Type != "error" {
+		t.Fatalf("a backend panic did not become an error: %+v", last)
+	}
+
+	c2, ctx2 := dialWS(t, srv, "/v1/stt") // the adapter is still alive
+	readSTT(t, ctx2, c2)
+	sendAudio(t, ctx2, c2, utterance, time.Millisecond)
+	audioDone(t, ctx2, c2)
+	if finals := speechFinals(drainSTT(t, ctx2, c2)); len(finals) != 1 || finals[0] != "fine" {
+		t.Fatalf("second connection: %v", finals)
 	}
 }

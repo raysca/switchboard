@@ -12,7 +12,7 @@ services:
       retries: 30
   adapter:
     build: .
-    ports: ["8099:8099"]
+    ports: ["127.0.0.1:8099:8099"] # loopback only: with OFFLINE_TOKEN empty the adapter is open, so publish wider deliberately
     environment:
       OFFLINE_SPEACHES_URL: http://speaches:8000
       OFFLINE_TOKEN: ${OFFLINE_TOKEN:-}

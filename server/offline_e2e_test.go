@@ -180,9 +180,8 @@ func TestOfflineAdapterDownFailsTheStage(t *testing.T) {
 	realVAD(t, rig.s)
 	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
 	call.sendAudioLoose(callerSpeech(t))
-	// The call must not hang on a dead adapter: the server ends it (the caller's writes may start to
-	// fail) or keeps it up; either way the bot must not invent a reply.
-	time.Sleep(2 * time.Second)
+	// A call whose STT cannot be reached must end, not hang, and the bot must not invent a reply.
+	eventually(t, "the call to end after its STT failed", call.ended)
 	if call.replies("never spoken") != 0 {
 		t.Fatal("the bot replied although its STT was unreachable")
 	}

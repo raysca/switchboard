@@ -180,4 +180,4 @@ privacy:
 
 ## Offline mode
 
-With the `offline` provider (see [providers.md](providers.md#offline-mode-privacy)) a call's audio, transcripts and replies are produced by models running on the same host: nothing is sent to a third-party provider. The only step that needs the network is `make offline-models`, which downloads the model weights once; the running stack needs none.
+With the `offline` provider (see [providers.md](providers.md#offline-mode-privacy)) a call's audio, transcripts and replies are produced by models running on the same host: no audio, transcript or reply is sent to a third-party provider. The step that needs the network is `make offline-models`, which downloads the model weights once. The running stack needs no network for calls; whether the Speaches model loader contacts the Hugging Face hub for metadata while a network exists was not verified, so for an air-gapped deployment set `HF_HUB_OFFLINE=1` on the `speaches` service after the models are downloaded (see [offline/README.md](../offline/README.md)).

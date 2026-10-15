@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -118,11 +119,12 @@ func (s *Server) sttReadLoop(ctx context.Context, c *websocket.Conn, jobs chan<-
 		}
 		if inUtt {
 			utt = append(utt, data...)
-		} else {
-			pre = append(pre, data...)
-			if len(pre) > preBytes {
-				pre = pre[len(pre)-preBytes:]
-			}
+		}
+		// Keep the pre-roll rolling on every frame, so an utterance that starts right after another
+		// gets the audio just before its onset, never audio from before the previous utterance.
+		pre = append(pre, data...)
+		if len(pre) > preBytes {
+			pre = pre[len(pre)-preBytes:]
 		}
 		if ev == EventSpeechEnd || (inUtt && len(utt) >= maxBytes) {
 			ep.Reset()
@@ -144,6 +146,12 @@ func (s *Server) sttReadLoop(ctx context.Context, c *websocket.Conn, jobs chan<-
 // sttWorker is the only caller of the backend and the only writer of transcripts. It runs jobs in
 // order and ends when jobs is closed (audio.done or a dead client) or ctx is cancelled.
 func (s *Server) sttWorker(ctx context.Context, c *websocket.Conn, jobs <-chan sttJob, cur *atomic.Uint64, rate int, lang string) {
+	// However the worker exits, keep draining: the reader is the producer and may be blocked on a full
+	// queue; it ends on its own once the connection fails its next read, and then closes jobs.
+	defer func() {
+		for range jobs {
+		}
+	}()
 	var last string
 	for j := range jobs {
 		if ctx.Err() != nil {
@@ -158,12 +166,9 @@ func (s *Server) sttWorker(ctx context.Context, c *websocket.Conn, jobs <-chan s
 				continue // an interim is best effort; a cancelled ctx means the client left
 			}
 			// Tell the client why, then close with a handshake: a cancelled context would reset the
-			// connection and could lose the error frame. Drain jobs so the reader never blocks on a
-			// worker that is gone (it ends when the closed connection fails its next read).
+			// connection and could lose the error frame.
 			_ = writeJSON(ctx, c, sttMsg{Type: "error", Message: err.Error(), Code: "BACKEND_ERROR"})
 			_ = c.Close(websocket.StatusInternalError, "backend error")
-			for range jobs {
-			}
 			return
 		}
 		if text == "" {
@@ -185,11 +190,18 @@ func (s *Server) sttWorker(ctx context.Context, c *websocket.Conn, jobs <-chan s
 	}
 }
 
-func (s *Server) transcribe(ctx context.Context, pcm []byte, rate int, lang string) (string, error) {
+// transcribe runs one backend decode. A panic inside the backend call becomes an error: it runs on a
+// goroutine net/http does not recover, and one bad call must not take the whole adapter down.
+func (s *Server) transcribe(ctx context.Context, pcm []byte, rate int, lang string) (text string, err error) {
 	release, err := s.lim.Acquire(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer release()
+	defer func() {
+		if r := recover(); r != nil {
+			text, err = "", fmt.Errorf("stt backend panic: %v", r)
+		}
+	}()
 	return s.stt.Transcribe(ctx, pcm, rate, lang)
 }

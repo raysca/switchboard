@@ -1,6 +1,6 @@
 # Offline speech stack
 
-Runs whole calls on local models: Whisper hears the caller, an Ollama model answers, Kokoro speaks. No key, no network at call time, and nothing leaves the host. Design: [`docs/superpowers/specs/2026-10-15-offline-speech-service-design.md`](../docs/superpowers/specs/2026-10-15-offline-speech-service-design.md).
+Runs whole calls on local models: Whisper hears the caller, an Ollama model answers, Kokoro speaks. No key, and audio and text never leave the host. The adapter is published on `127.0.0.1` only (it is open when `OFFLINE_TOKEN` is empty); widen the port mapping in `compose.yaml` deliberately, and set a token if you do. Air-gapped use: after `make offline-models`, set `HF_HUB_OFFLINE=1` on the `speaches` service so the model hub is never contacted (it must stay unset while downloading models); this was not tested. Design: [`docs/superpowers/specs/2026-10-15-offline-speech-service-design.md`](../docs/superpowers/specs/2026-10-15-offline-speech-service-design.md).
 
 ```
 Switchboard server (provider "offline")
