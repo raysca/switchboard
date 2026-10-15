@@ -141,7 +141,9 @@ type Registry struct {
 	echoLLMBreaker, echoSTTBreaker, echoTTSBreaker *resilience.Breaker
 	// One xAI breaker per stage: an STT or TTS outage must not block the LLM.
 	xaiLLMBreaker, xaiSTTBreaker, xaiTTSBreaker *resilience.Breaker
-	deepgramBreaker                             *resilience.Breaker
+	// The local stack keeps its own breakers too: an outage there must not open xAI's circuits.
+	offlineLLMBreaker, offlineSTTBreaker, offlineTTSBreaker *resilience.Breaker
+	deepgramBreaker                                         *resilience.Breaker
 	// One breaker per base URL: a tenant's broken vLLM must not open the
 	// breaker for every other OpenAI-compatible endpoint.
 	// ponytail: never evicted; bounded by the distinct base URLs stored.
@@ -245,6 +247,9 @@ func NewRegistry() *Registry {
 		xaiLLMBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 		xaiSTTBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 		xaiTTSBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
+		offlineLLMBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
+		offlineSTTBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
+		offlineTTSBreaker:    resilience.NewBreaker(resilience.DefaultConfig()),
 		deepgramBreaker:      resilience.NewBreaker(resilience.DefaultConfig()),
 		cartesiaBreaker:      resilience.NewBreaker(resilience.DefaultConfig()),
 		cartesiaSTTBreaker:   resilience.NewBreaker(resilience.DefaultConfig()),
@@ -317,15 +322,7 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("xai.llm: %w", err)
 		}
-		xaiCfg := xai.Config{Model: spec.Model, Endpoint: cfg.Providers.XAILLM.Endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: r.xaiLLMBreaker}
-		if len(spec.Tools) > 0 {
-			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
-			if err != nil {
-				return nil, fmt.Errorf("xai.llm tools: %w", err)
-			}
-			xaiCfg.ToolDefinitions, xaiCfg.ToolLoop = spec.Tools, loop
-		}
-		return xai.NewProcessor(xaiCfg)
+		return xaiLLMProcessor(spec, cfg.Providers.XAILLM.Endpoint, key, r.xaiLLMBreaker, "xai.llm")
 	})
 
 	// openai.llm covers OpenAI and any chat-completions server (Groq, Together,
@@ -458,11 +455,25 @@ func NewRegistry() *Registry {
 	registerXAISpeech(r)
 	r.registerNvidia()
 	registerEcho(r)
+	registerOffline(r)
 
 	return r
 }
 
 // apiKey validates an API key credential: a single non-empty token.
+// xaiLLMProcessor is the xAI Responses-API stage, shared by xai.llm and offline.llm.
+func xaiLLMProcessor(spec StageSpec, endpoint, key string, br *resilience.Breaker, who string) (core.Processor, error) {
+	xaiCfg := xai.Config{Model: spec.Model, Endpoint: endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br}
+	if len(spec.Tools) > 0 {
+		loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
+		if err != nil {
+			return nil, fmt.Errorf("%s tools: %w", who, err)
+		}
+		xaiCfg.ToolDefinitions, xaiCfg.ToolLoop = spec.Tools, loop
+	}
+	return xai.NewProcessor(xaiCfg)
+}
+
 func apiKey(secret []byte) (string, error) {
 	key := strings.TrimSpace(string(secret))
 	if key == "" || strings.ContainsAny(key, " \t\r\n") {

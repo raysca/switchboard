@@ -169,6 +169,11 @@
   "XAITTS": {
    "Endpoint": "https://api.x.ai/v1/tts",
    "DisableStreaming": false
+  },
+  "Offline": {
+   "LLMEndpoint": "http://127.0.0.1:11434/v1/responses",
+   "STTEndpoint": "ws://127.0.0.1:8099/v1/stt",
+   "TTSEndpoint": "http://127.0.0.1:8099/v1/tts"
   }
  },
  "Observability": {

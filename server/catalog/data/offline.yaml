@@ -1,0 +1,18 @@
+# The local stack in offline/: STT and TTS through the adapter, the LLM through Ollama. No key.
+id: offline
+name: Offline (local models)
+services:
+  llm:
+    keyless: true
+    models:
+      - {id: govoice-test, label: Local model (offline/Modelfile), default: true}
+  stt:
+    keyless: true
+    models:
+      - {id: Systran/faster-whisper-small.en, label: Whisper small (English), default: true}
+    languages:
+      - {id: en, label: English, default: true}
+  tts:
+    keyless: true
+    voices:
+      - {id: af_heart, label: Kokoro Heart (en-US), default: true}

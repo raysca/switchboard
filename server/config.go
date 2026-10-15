@@ -311,6 +311,14 @@ type Config struct {
 			// DisableStreaming turns the WebSocket off: every unit is one POST /v1/tts again.
 			DisableStreaming bool `yaml:"disable_streaming"`
 		} `yaml:"xai_tts"`
+
+		// Offline is the local stack in offline/: the xai processors pointed at a local adapter (STT,
+		// TTS) and Ollama (LLM). It needs no key. Defaults match offline/compose.yaml.
+		Offline struct {
+			LLMEndpoint string `yaml:"llm_endpoint"`
+			STTEndpoint string `yaml:"stt_endpoint"`
+			TTSEndpoint string `yaml:"tts_endpoint"`
+		} `yaml:"offline"`
 	} `yaml:"providers"`
 
 	// Observability

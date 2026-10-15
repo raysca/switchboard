@@ -32,7 +32,7 @@ func TestPackagedCatalogLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"google", "echo", "xai", "elevenlabs", "deepgram", "cartesia", "openai", "nvidia"} {
+	for _, id := range []string{"google", "echo", "xai", "elevenlabs", "deepgram", "cartesia", "openai", "nvidia", "offline"} {
 		if _, ok := c.Provider(id); !ok {
 			t.Errorf("packaged provider %q missing", id)
 		}
