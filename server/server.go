@@ -78,9 +78,10 @@ type Server struct {
 	ready        atomic.Bool
 	shuttingDown atomic.Bool
 
-	pingMu sync.Mutex // storeHealthy cache
-	pingAt time.Time
-	pingOK bool
+	pingMu        sync.Mutex          // storeHealthy cache
+	sessionBudget core.ResourceBudget // test seam; DefaultResourceBudget in NewServer
+	pingAt        time.Time
+	pingOK        bool
 
 	publicMux    *http.ServeMux
 	adminMux     http.Handler
@@ -190,25 +191,26 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 
 	s := &Server{
-		catalog:      cat,
-		cfg:          cfg,
-		metrics:      metrics,
-		timelines:    timelines,
-		live:         newLiveCalls(),
-		admission:    admission,
-		registry:     registry,
-		env:          os.Getenv,
-		validator:    validator,
-		management:   management,
-		voiceSignKey: []byte(tokenSecret),
-		voiceKeyID:   tokenCfg.KeyID,
-		voiceEpoch:   validator.ScopeEpoch(),
-		drafts:       newDraftCalls(),
-		logger:       logger,
-		startedAt:    metrics.StartTime,
-		activeCalls:  make(map[uint64]*activeCall),
-		authFails:    rate.NewLimiter(rate.Every(6*time.Second), 10),
-		authNow:      time.Now,
+		catalog:       cat,
+		sessionBudget: core.DefaultResourceBudget(),
+		cfg:           cfg,
+		metrics:       metrics,
+		timelines:     timelines,
+		live:          newLiveCalls(),
+		admission:     admission,
+		registry:      registry,
+		env:           os.Getenv,
+		validator:     validator,
+		management:    management,
+		voiceSignKey:  []byte(tokenSecret),
+		voiceKeyID:    tokenCfg.KeyID,
+		voiceEpoch:    validator.ScopeEpoch(),
+		drafts:        newDraftCalls(),
+		logger:        logger,
+		startedAt:     metrics.StartTime,
+		activeCalls:   make(map[uint64]*activeCall),
+		authFails:     rate.NewLimiter(rate.Every(6*time.Second), 10),
+		authNow:       time.Now,
 	}
 	s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })
 	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports, policy: policyFrom(cfg)}
@@ -550,7 +552,23 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 	phase := "build_pipeline"
 	var stopRecording func()
+	var pipe *core.Pipeline
+	var session *core.Session
 	fail := func(err error) (*core.Session, error) {
+		// Release provider clients: the session closes its processors, and
+		// before a session exists the built pipeline's processors are closed here.
+		if session != nil {
+			_ = session.Close()
+		} else if pipe != nil {
+			for _, p := range pipe.Processors() {
+				if c, ok := p.(core.Closer); ok {
+					func() {
+						defer func() { _ = recover() }()
+						_ = c.Close()
+					}()
+				}
+			}
+		}
 		ending.set(storage.EndSetupFailed)
 		recoverEach(s.logger, sessionID, "releaseCall", releaseCall)
 		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
@@ -563,16 +581,18 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 
 	// 3. Build VAD processor and the flow's pipeline
 	vadProc := vad.NewProcessor(s.vadExecutor, s.cfg.VADProcessorConfigForStopMS(call.VADStopMS))
-	pipe, err := s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
+	pipe, err = s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
 	call.wipeSecrets()
 	if err != nil {
+		pipe = nil // BuildCallPipeline already closed what it built
 		return fail(fmt.Errorf("build pipeline: %w", err))
 	}
 	errProviders := stageProviders(call)
 
 	// 4. Construct Core Session
-	session, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
+	session, err = core.NewSession(sessionID, pipe, s.sessionBudget)
 	if err != nil {
+		session = nil
 		phase = "create_session"
 		return fail(fmt.Errorf("create session: %w", err))
 	}
