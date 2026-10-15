@@ -46,9 +46,10 @@ const items: Drift[] = [
 ];
 const schema = { type: "object", properties: { amount_pence: { type: "integer" } } };
 
-function setupWith(one: FlowDTO, updateFlow = vi.fn().mockResolvedValue({})) {
+// getFlow serves the flow as the server holds it now; by default that is the cached one.
+function setupWith(one: FlowDTO, updateFlow = vi.fn().mockResolvedValue({}), getFlow = vi.fn().mockResolvedValue(one)) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const client = { updateFlow } as unknown as ApiClient;
+  const client = { updateFlow, getFlow } as unknown as ApiClient;
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
@@ -62,7 +63,8 @@ function setupWith(one: FlowDTO, updateFlow = vi.fn().mockResolvedValue({})) {
 function setup(updateFlow = vi.fn().mockResolvedValue({})) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-  const client = { updateFlow } as unknown as ApiClient;
+  const getFlow = vi.fn(async (id: string) => items.find((i) => i.flow.id === id)!.flow);
+  const client = { updateFlow, getFlow } as unknown as ApiClient;
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
@@ -102,6 +104,18 @@ describe("DriftPanel", () => {
     ] });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["flows"] });
+  });
+
+  it("publishes the flow's current config, not the cached one, so a newer prompt edit survives the re-pin", async () => {
+    const cached = flow("f7", "Edited elsewhere", [dep()]);
+    cached.current_version!.config = { prompt: "old" };
+    const fresh = structuredClone(cached);
+    fresh.current_version!.config = { prompt: "newer edit by another operator" };
+    const { updateFlow, user } = setupWith(cached, undefined, vi.fn().mockResolvedValue(fresh));
+    await user.click(screen.getByRole("button", { name: "Accept new schema for Edited elsewhere" }));
+    await user.click(screen.getByRole("button", { name: "Publish new version" }));
+    await waitFor(() => expect(updateFlow).toHaveBeenCalled());
+    expect(updateFlow.mock.calls[0][1].config).toEqual({ prompt: "newer edit by another operator" });
   });
 
   it("does nothing when the dialog is cancelled", async () => {

@@ -57,6 +57,7 @@ function setup(client: Partial<ApiClient> = {}, path = "/mcp-servers", key: stri
     disableMCPServer: vi.fn().mockResolvedValue(server({ enabled: false })),
     discoverMCPServer: vi.fn().mockResolvedValue(server()),
     testMCPTool: vi.fn().mockResolvedValue({ execution_id: "exec-9999", mcp_server_id: "billing", tool_name: "latest_invoice", status: "completed", duration_ms: 12, result: { ok: true } }),
+    getFlow: vi.fn().mockResolvedValue(drifted),
     updateFlow: vi.fn().mockResolvedValue({}),
     ...client,
   } as unknown as ApiClient;

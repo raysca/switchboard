@@ -15,11 +15,13 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
   const [error, setError] = useState<string | null>(null);
 
   const accept = useMutation({
-    mutationFn: (d: Drift) => {
+    mutationFn: async (d: Drift) => {
       const { selection } = repin(d.flow);
       if (!selection) throw new Error("The server's current schema is unknown, so there is nothing to accept.");
-      // One publish carries the unchanged config and the re-pinned tools.
-      return client.updateFlow(d.flow.id, { config: d.flow.current_version?.config ?? {}, mcp_tools: selection });
+      // Every update publishes the config it is sent, so re-read it: a cached copy could revert someone's newer edit.
+      const fresh = await client.getFlow(d.flow.id);
+      if (!fresh.current_version) throw new Error("This flow has no published version to re-pin.");
+      return client.updateFlow(d.flow.id, { config: fresh.current_version.config, mcp_tools: selection });
     },
     onSuccess: () => {
       setAccepting(null);
