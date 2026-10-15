@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -48,6 +49,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			MaxCallDurationSeconds:       int(s.cfg.Limits.MaxCallDuration.Seconds()),
 			VoiceTokenMaxLifetimeSeconds: int(s.effectiveVoiceTokenLifetime().Seconds()),
 			ClientIP:                     s.clientIP(r), Secure: s.secure(r),
+			Audio: api.ServerAudio{Backgrounds: append([]string{}, policyFrom(s.cfg).sounds...), AllowFlowBackground: s.cfg.Audio.AllowFlowBackground},
+			Idle:  api.ServerIdle{UserTimeoutMS: int(s.cfg.Idle.UserTimeout.Milliseconds()), MaxPrompts: s.cfg.Idle.MaxPrompts, PromptMode: cmp.Or(s.cfg.Idle.PromptMode, "llm")},
 		}})
 	case "/api/v1/operations/status":
 		if r.Method != http.MethodGet {

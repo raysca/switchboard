@@ -75,6 +75,22 @@ type ServerConfig struct {
 	VoiceTokenMaxLifetimeSeconds int    `json:"voice_token_max_lifetime_seconds"`
 	ClientIP                     string `json:"client_ip"`
 	Secure                       bool   `json:"secure"`
+	// Audio and Idle tell the editor what a flow can choose from and what a call does when the flow says
+	// nothing. Names and numbers only: never a file path or prompt text.
+	Audio ServerAudio `json:"audio"`
+	Idle  ServerIdle  `json:"idle"`
+}
+
+type ServerAudio struct {
+	Backgrounds         []string `json:"backgrounds"`
+	AllowFlowBackground bool     `json:"allow_flow_background"`
+}
+
+// ServerIdle is the server's quiet-caller default (0 timeout: off).
+type ServerIdle struct {
+	UserTimeoutMS int    `json:"user_timeout_ms"`
+	MaxPrompts    int    `json:"max_prompts"`
+	PromptMode    string `json:"prompt_mode"`
 }
 
 func ParsePagination(r *http.Request) (Pagination, error) {
