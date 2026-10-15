@@ -38,7 +38,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
   const context = rec(cfg.context);
   const recording = rec(cfg.recording);
   const problems = flowIssues(graph);
-  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context"] as const).filter((k) => k in cfg).length + (graph.route_cue ? 1 : 0);
+  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context"] as const).filter((k) => k in cfg).length + (graph.route_cue && graph.routes.length > 0 ? 1 : 0);
   const [open, setOpen] = useState(advancedSet > 0);
   // Everything but the essentials' own messages belongs to a field inside Advanced.
   const advancedProblem = problems.some((p) => !/^(Choose |Confirm that callers)/.test(p));

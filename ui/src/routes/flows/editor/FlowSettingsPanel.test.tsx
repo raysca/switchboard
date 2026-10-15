@@ -256,5 +256,11 @@ describe("FlowSettingsPanel footer", () => {
         expect(screen.getByRole("button", { name: `Explain ${name}` })).toBeInTheDocument();
       }
     });
+
+    it("does not count a route sound the flow has no routes to show", () => {
+      const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { stt: { provider: "deepgram" } } }], routes: [] });
+      render(<Harness initial={{ ...g, route_cue: { name: "chime" } }} />);
+      expect(screen.getByText(/^Advanced/)).toHaveTextContent(/^Advanced$/);
+    });
   });
 });

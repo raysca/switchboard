@@ -303,10 +303,15 @@ describe("what the server will accept", () => {
     expect(flowIssues(sum({ prompt: "x".repeat(2049) }))).toContain("Summary instructions are over 2048 bytes.");
     expect(flowIssues(sum({ prompt: "é".repeat(1025) }))).toContain("Summary instructions are over 2048 bytes.");
     expect(flowIssues(sum({ prompt: "x".repeat(2048) }))).toEqual([]);
-    expect(flowIssues(one({ context: { max_tokens: 100, summarization: { trigger_tokens: 5000 } } }))).toEqual([]);
+    expect(flowIssues(one({ context: { max_tokens: 100, summarization: { trigger_tokens: 5000 } } }))).toContain("Summarise-at must be below Max tokens (100).");
     for (const bad of [99, 10001]) expect(flowIssues(one({ stt_p99_ms: bad }))).toContain("Late-transcript wait must be between 100 and 10000 ms.");
     expect(flowIssues(one({ stt_p99_ms: 800 }))).toEqual([]);
     expect(flowIssues(one({ stt_p99_ms: 0 }))).toEqual([]);
+  });
+
+  it("checks the summarisation details even while summarising is off", () => {
+    const g = one({ context: { max_tokens: 800, summarization: { enabled: false, trigger_tokens: 900 } } });
+    expect(flowIssues(g)).toContain("Summarise-at must be below Max tokens (800).");
   });
 
   it("accepts summaries on the echo provider, which runs the real Google processors", () => {

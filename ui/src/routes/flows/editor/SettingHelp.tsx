@@ -44,12 +44,6 @@ export function SettingHelp({ id }: { id: SettingId }) {
           role="region"
           aria-labelledby={`${uid}-button`}
           className="setting-help__panel"
-          onKeyDown={(e) => {
-            if (e.key !== "Escape") return;
-            e.stopPropagation();
-            setOpen(false);
-            button.current?.focus();
-          }}
         >
           <dl>
             {PARTS.map(([key, title]) =>

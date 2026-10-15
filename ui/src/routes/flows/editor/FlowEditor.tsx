@@ -114,9 +114,12 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const startStep = graph.steps.find((n) => n.id === graph.start);
   const asyncKeys = Array.isArray(startStep?.config.async_tools) ? (startStep.config.async_tools as string[]) : [];
   const changeAsync = (keys: string[]) => {
-    if (!startStep) return;
-    const { async_tools: _drop, ...rest } = startStep.config;
-    setGraph((g) => updateStep(g, startStep.id, { config: keys.length ? { ...rest, async_tools: keys } : rest }));
+    setGraph((g) => {
+      const start = g.steps.find((n) => n.id === g.start);
+      if (!start) return g;
+      const { async_tools: _drop, ...rest } = start.config;
+      return updateStep(g, start.id, { config: keys.length ? { ...rest, async_tools: keys } : rest });
+    });
   };
 
   const open = (next: Panel, from?: HTMLElement | null) => {

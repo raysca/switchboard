@@ -129,7 +129,7 @@ export function flowIssues(g: FlowDraft): string[] {
   if (typeof stt99 === "number" && stt99 !== 0 && (stt99 < STT_P99_RANGE[0] || stt99 > STT_P99_RANGE[1]))
     out.push(`Late-transcript wait must be between ${STT_P99_RANGE[0]} and ${STT_P99_RANGE[1]} ms.`);
   const summary = asRecord(ctx.summarization);
-  if (summary.enabled === true) {
+  if (Object.keys(summary).length > 0) {
     const maxTokens = typeof ctx.max_tokens === "number" && ctx.max_tokens > 0 ? ctx.max_tokens : DEFAULT_MAX_TOKENS;
     const trigger = summary.trigger_tokens;
     if ((typeof trigger === "number" && trigger < 0) || (typeof summary.keep_turns === "number" && summary.keep_turns < 0))
