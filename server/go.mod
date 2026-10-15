@@ -22,6 +22,8 @@ replace govoice/providers/openai => ../providers/openai
 
 replace govoice/providers/xai => ../providers/xai
 
+replace govoice/offline => ../offline
+
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/gofrs/flock v0.13.1
@@ -39,6 +41,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	govoice v0.0.0-00010101000000-000000000000
 	govoice/core v0.0.0
+	govoice/offline v0.0.0-00010101000000-000000000000
 	govoice/providers/cartesia v0.0.0-00010101000000-000000000000
 	govoice/providers/deepgram v0.0.0-00010101000000-000000000000
 	govoice/providers/echo v0.0.0-00010101000000-000000000000

@@ -328,5 +328,6 @@ offline-down: ## dev|Stop the offline speech stack (volumes are kept)
 
 offline-test: ## dev|Round trip through the running offline stack with the real xai clients (needs offline-up and offline-models)
 	cd offline/contract && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" ./...
+	cd server && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" -run TestOfflineStackCall .
 
 .PHONY: offline-up offline-models offline-down offline-test
