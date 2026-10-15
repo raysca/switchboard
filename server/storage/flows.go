@@ -42,28 +42,8 @@ func (r FlowRepository) CreateWithVersionAndToolsAndReviewRequired(ctx context.C
 		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO flows(id,name,description,enabled,archived,created_at,updated_at) VALUES(?,?,?,?,?,?,?)"), a.ID, a.Name, a.Description, boolValue(r.s.dialect, a.Enabled), boolValue(r.s.dialect, a.Archived), created, created); err != nil {
 			return err
 		}
-		for _, sel := range selections {
-			if err := validID(sel.ServerID); err != nil {
-				return err
-			}
-			query := "SELECT latest_discovery_id FROM mcp_servers WHERE id=? AND enabled=? AND pending_delete=?"
-			if r.s.dialect == Postgres {
-				query += " FOR SHARE"
-			}
-			var discovery sql.NullString
-			if err := tx.QueryRowContext(ctx, r.s.bind(query), sel.ServerID, boolValue(r.s.dialect, true), boolValue(r.s.dialect, false)).Scan(&discovery); err != nil {
-				return err
-			}
-			if !discovery.Valid {
-				return errors.New("MCP server has no discovery")
-			}
-			var actual string
-			if err := tx.QueryRowContext(ctx, r.s.bind("SELECT schema_hash FROM mcp_tools WHERE discovery_id=? AND remote_name=?"), discovery.String, sel.RemoteName).Scan(&actual); err != nil {
-				return err
-			}
-			if actual != sel.SchemaHash {
-				return errors.New("MCP schema hash changed")
-			}
+		if err := r.s.validateSelections(ctx, tx, selections); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO flow_versions(id,flow_id,version,schema_version,config_json,config_hash,created_at,mcp_review_required) VALUES(?,?,?,?,?,?,?,?)"), v.ID, a.ID, v.Version, v.SchemaVersion, string(v.ConfigJSON), v.ConfigHash, utc(v.CreatedAt), boolValue(r.s.dialect, v.MCPReviewRequired)); err != nil {
 			return err
