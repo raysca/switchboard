@@ -879,6 +879,14 @@ func (r *Registry) BindMetrics(m *Metrics) {
 		m.circuits.set(stage, "echo", "simulated", 0)
 		br.SetObserver(func(st resilience.State) { m.circuits.set(stage, "echo", "simulated", circuitCode(string(st))) })
 	}
+	// So do the local stack's (endpoint "local"), for the stages this build has.
+	for stage, br := range map[string]*resilience.Breaker{"stt": r.offlineSTTBreaker, "llm": r.offlineLLMBreaker, "tts": r.offlineTTSBreaker} {
+		if !r.Supports("offline", stage) {
+			continue
+		}
+		m.circuits.set(stage, "offline", "local", 0)
+		br.SetObserver(func(st resilience.State) { m.circuits.set(stage, "offline", "local", circuitCode(string(st))) })
+	}
 }
 
 func circuitCode(state string) int64 {

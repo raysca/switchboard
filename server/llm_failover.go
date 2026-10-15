@@ -75,6 +75,8 @@ func (r *Registry) llmBreaker(spec StageSpec) *resilience.Breaker {
 		return r.echoLLMBreaker
 	case "xai":
 		return r.xaiLLMBreaker
+	case "offline":
+		return r.offlineLLMBreaker
 	case "nvidia":
 		return r.nvidiaBreaker("llm|" + nvidiaNIMBaseURL)
 	case "openai":
