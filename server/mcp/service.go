@@ -4,8 +4,10 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -390,8 +392,11 @@ func (s *Service) Create(ctx context.Context, cfg ServerConfig) (storage.MCPServ
 
 func (s *Service) Get(ctx context.Context, id string) (storage.MCPServer, error) {
 	m, err := s.store.MCP().Server(ctx, id)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return m, ErrNotFound
+	}
+	if err != nil {
+		return m, fmt.Errorf("get MCP server: %w", err)
 	}
 	return m, nil
 }

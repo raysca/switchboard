@@ -399,8 +399,8 @@ func (r MCPRepository) DeleteServer(ctx context.Context, id string) error {
 // The live server remains disabled and pending deletion while old active
 // sessions still depend on it.
 func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
-	if err := validID(id); err != nil {
-		return err
+	if validID(id) != nil { // a malformed id cannot name a server
+		return sql.ErrNoRows
 	}
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
 		// Match publication/session-start lock order: flow rows first, then the
