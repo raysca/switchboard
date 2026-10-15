@@ -41,6 +41,10 @@ Only what a typical flow needs is visible; everything else is under the collapse
 - **Basic:** *If the caller goes quiet*: one checkbox `End the call if the caller stays silent` (on by default) and its wait in seconds (placeholder: the server default).
 - **Advanced:** how many times to ask (1–10), what to say and how (the model words it / exactly as written), the goodbye, noise reduction (and strength), voice volume, background sound (and its volume and repeat). Each shows its default as a placeholder or hint.
 
+### Explain-this help
+
+Every new field in the quiet-caller and audio groups carries the same `?` button as the other obscure settings (spec of the mechanism: the UI plan's "Setting help"), with copy in the one `settingHelp.ts`: `idle.user_timeout_ms` (what "silence" means: the time since the agent stopped speaking, prompts every wait, the call ends one wait after the last ask; default 15 s), `idle.max_prompts`, `idle.prompt` and `idle.prompt_mode` (model-worded vs exactly as written, and that exact wording costs no model call), `idle.goodbye`, `audio.denoise` (what it removes: steady hum and hiss, not other voices; costs about 0.1% of one core per call; recordings keep the raw audio), `audio.output_gain_db` (positive values can clip), `audio.background` (named server sounds only; adds continuous audio traffic to every call), its gain and loop. The same guards apply (no unreferenced or missing entries).
+
 ### Proven without the echo provider
 
 Each option group has a browser e2e that runs against **real providers** as well as the free echo run (`GOVOICE_LIVE=1 make e2e-xai`, a few provider requests per spec; skipped with the suite's "No XAI_API_KEY" message when the key is absent, never silently green):
