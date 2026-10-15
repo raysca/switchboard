@@ -257,4 +257,14 @@ describe("CallView", () => {
     await screen.findByText("Not recorded");
     expect(screen.queryByText("Ended by the flow")).toBeNull();
   });
+
+  it("draws a waterfall for a reply that has stage offsets and keeps older replies as they were", async () => {
+    const withOffsets = { ...turns[1], latencies: { stt_final_ms: 410, llm_start_ms: 520, llm_ttft_ms: 380, tts_start_ms: 905, tts_ttfb_ms: 260, voice_to_voice_ms: 1165 } };
+    const older = { ...turns[2], latencies: { stt_final_ms: 410, llm_ttft_ms: 380, tts_ttfb_ms: 260, voice_to_voice_ms: 1165 } };
+    setup({ getSessionTurns: vi.fn().mockResolvedValue([turns[0], withOffsets, older]) });
+    const chart = await screen.findByRole("img", { name: "Heard 0 to 410 ms, Model 520 to 900 ms, Voice 905 to 1165 ms" });
+    expect(chart).toBeVisible();
+    expect(screen.getAllByRole("img", { name: /Heard/ })).toHaveLength(1);
+    expect(screen.getAllByText("Replied in 1.2 s").length).toBe(2);
+  });
 });

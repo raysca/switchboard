@@ -2780,3 +2780,39 @@ main:has(.mcp-page) {
   align-items: center;
   font-weight: 600;
 }
+
+/* A reply's time, stage by stage */
+.waterfall {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  max-width: 480px;
+}
+.waterfall__row {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.waterfall__label {
+  font-size: 0.75rem;
+  color: var(--ink-2);
+}
+.waterfall__track {
+  display: block;
+  height: 10px;
+  border-left: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.waterfall__bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: var(--caller);
+}
+.waterfall__bar[data-stage="Model"] {
+  background: var(--ink-2);
+}
+.waterfall__bar[data-stage="Voice"] {
+  background: var(--ok);
+}

@@ -5,6 +5,7 @@ import type { ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
+import { ReplyWaterfall } from "./ReplyWaterfall";
 import { callerLabel, clock, endReasonText, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
@@ -147,7 +148,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
       <div className="call-columns">
         <section aria-labelledby="call-turns-title" className="call-section call-columns__main">
           <h2 id="call-turns-title">Turns</h2>
-          <p className="subtext">What each turn did, and how long the reply took.</p>
+          <p className="subtext">What each turn did, and how long the reply took. In a bar chart, empty space is time spent waiting, for the caller to finish or for tools.</p>
           {turnsQuery.isPending ? (
             <LoadingState label="Loading turns" />
           ) : (
@@ -162,6 +163,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
                         {n}
                       </span>
                     ))}
+                    <ReplyWaterfall latencies={r.latencies} />
                   </span>
                 </li>
               ))}

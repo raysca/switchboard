@@ -127,7 +127,7 @@ export function transcript(session: SessionDTO, turns: TurnDTO[], traces: Sessio
   return out;
 }
 
-export type TurnRow = { id: string; at: string; text: string; notes: string[] };
+export type TurnRow = { id: string; at: string; text: string; notes: string[]; latencies: unknown };
 
 /** One row per turn: when, what the assistant said, and what happened in it (tool calls, being cut off). */
 export function turnRows(session: SessionDTO, turns: TurnDTO[], traces: SessionTracesDTO | null | undefined): TurnRow[] {
@@ -150,6 +150,7 @@ export function turnRows(session: SessionDTO, turns: TurnDTO[], traces: SessionT
       at: mmss((Date.parse(t.started_at) - start) / 1000),
       text: t.assistant_text.trim() || (SYSTEM_TURN.test(spoken) ? "" : spoken) || "No words recorded",
       notes,
+      latencies: t.latencies,
     };
   });
 }
@@ -218,4 +219,29 @@ const END_WORDS: Record<string, string> = {
 export function endReasonText(reason: string, step?: string): string {
   const text = END_WORDS[reason] ?? "Ended";
   return reason === "ended_by_flow" && step ? `${text} (${step})` : text;
+}
+
+export type Stage = { label: "Heard" | "Model" | "Voice"; start: number; end: number };
+
+/**
+ * Where a reply's time went, as windows from the moment the caller finished (or, for a typed turn, from the
+ * model request): Heard, Model, Voice. Needs the offsets the server stores with the stage times; null for an
+ * older row (the pills show those) and when fewer than two stages can be placed. Never a negative or reversed window.
+ */
+export function parseStages(latencies: unknown): { stages: Stage[]; total: number } | null {
+  if (!latencies || typeof latencies !== "object") return null;
+  const o = latencies as Record<string, unknown>;
+  const stages: Stage[] = [];
+  const heard = ms(o.stt_final_ms);
+  if (heard !== null) stages.push({ label: "Heard", start: 0, end: heard });
+  const place = (label: Stage["label"], start: unknown, took: unknown) => {
+    const a = ms(start);
+    const d = ms(took);
+    if (a !== null && d !== null) stages.push({ label, start: a, end: a + d });
+  };
+  place("Model", o.llm_start_ms, o.llm_ttft_ms);
+  place("Voice", o.tts_start_ms, o.tts_ttfb_ms);
+  if (stages.length < 2) return null; // one bar is just the pills' figure
+  const total = Math.max(...stages.map((s) => s.end), ms(o.voice_to_voice_ms) ?? 0);
+  return { stages, total };
 }
