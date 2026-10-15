@@ -77,8 +77,16 @@ export default async function globalSetup() {
   // A route cue sound: a 0.4 s 440 Hz tone (PCM16 mono 24 kHz) the steps can name as "chime".
   const chime = path.join(tmpDir, "chime.wav");
   fs.writeFileSync(chime, toneWav(24000, 0.4, 440, 12000));
+  // A background sound a flow can name as "office" (a quiet 1 s 220 Hz hum, looped).
+  const office = path.join(tmpDir, "office.wav");
+  fs.writeFileSync(office, toneWav(24000, 1, 220, 6000));
   const configPath = path.join(tmpDir, "server.yaml");
-  fs.writeFileSync(configPath, `${config}\naudio:\n  cues:\n    chime:\n      file: "${chime}"\n      gain_db: -20\n`);
+  // Quiet-caller handling is on by default; the suite switches it off server-wide so a spec that waits
+  // is not hung up on, and the call-behavior spec turns it on per flow.
+  fs.writeFileSync(
+    configPath,
+    `${config}\naudio:\n  cues:\n    chime:\n      file: "${chime}"\n      gain_db: -20\n  backgrounds:\n    office:\n      file: "${office}"\n      gain_db: -30\nidle:\n  user_timeout: 0s\n`,
+  );
 
   const stack: Stack = {
     repo,
