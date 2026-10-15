@@ -54,6 +54,21 @@ export const operationsStatusSchema = z.object({
 });
 export type OperationsStatus = z.infer<typeof operationsStatusSchema>;
 
+// What the server tells the editor about itself (GET /server-config). The editor reads the sound names
+// and the quiet-caller defaults from it; the rest is for other screens.
+export const serverConfigSchema = z.object({
+  profile: z.string(),
+  max_sessions: z.number(),
+  max_call_duration_seconds: z.number(),
+  voice_token_max_lifetime_seconds: z.number(),
+  client_ip: z.string(),
+  secure: z.boolean(),
+  audio: z.object({ backgrounds: z.array(z.string()), allow_flow_background: z.boolean() }),
+  idle: z.object({ user_timeout_ms: z.number(), max_prompts: z.number(), prompt_mode: z.string() }),
+});
+export type ServerConfigDTO = z.infer<typeof serverConfigSchema>;
+const serverConfigEnvelope = z.object({ data: serverConfigSchema });
+
 export const demoStatusSchema = z.object({
   dental: z.object({ available: z.boolean(), installed: z.boolean(), flow_id: z.string().optional() }),
 });
@@ -693,6 +708,8 @@ export function createApiClient(
         )
       ).data;
     },
+
+    getServerConfig: async () => (await request("/server-config", serverConfigEnvelope)).data,
 
     // Operations & telemetry
     getOperationsStatus: async () =>

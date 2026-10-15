@@ -28,6 +28,8 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
     retry: false,
   });
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: () => client.getProviders(), enabled: !!keyValue, retry: false });
+  // Placeholders and the sound list in Flow settings; the editor works without them.
+  const serverConfigQuery = useQuery({ queryKey: ["server-config"], queryFn: () => client.getServerConfig(), enabled: !!keyValue, retry: false });
   const active = useActiveSessions(client, keyValue);
 
   const flow: FlowDTO | undefined = flowQuery.data && !flowQuery.data.archived ? flowQuery.data : undefined;
@@ -95,6 +97,7 @@ export function FlowPage({ client, keyValue }: FlowPageProps) {
         initialName={search.get("name") ?? undefined}
         initialPanel={search.get("panel") === "test" ? "call" : undefined}
         providers={providers}
+        serverConfig={serverConfigQuery.data}
         client={client}
         keyValue={keyValue}
         pending={createMutation.isPending || updateMutation.isPending}

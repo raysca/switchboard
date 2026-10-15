@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import type { ProviderStatus } from "../../../api/client";
+import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { FlowSettingsPanel } from "./FlowSettingsPanel";
 import { emptyFlow, fromFlowConfig, type FlowDraft } from "./model";
 
@@ -19,7 +19,7 @@ const two = fromFlowConfig({
   routes: [{ id: "e1", from: "a", to: "b", condition: "invoice" }],
 });
 
-function Harness({ initial = two, onChange = vi.fn(), onClose = vi.fn() }: { initial?: FlowDraft; onChange?: (g: FlowDraft) => void; onClose?: () => void }) {
+function Harness({ initial = two, onChange = vi.fn(), onClose = vi.fn(), serverConfig }: { initial?: FlowDraft; onChange?: (g: FlowDraft) => void; onClose?: () => void; serverConfig?: ServerConfigDTO }) {
   const [g, setG] = useState(initial);
   const [name, setName] = useState("Front desk");
   return (
@@ -27,6 +27,7 @@ function Harness({ initial = two, onChange = vi.fn(), onClose = vi.fn() }: { ini
       <FlowSettingsPanel
         graph={g}
         providers={providers}
+        serverConfig={serverConfig}
         name={name}
         description=""
         onName={setName}
@@ -261,6 +262,190 @@ describe("FlowSettingsPanel footer", () => {
       const g = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { stt: { provider: "deepgram" } } }], routes: [] });
       render(<Harness initial={{ ...g, route_cue: { name: "chime" } }} />);
       expect(screen.getByText(/^Advanced/)).toHaveTextContent(/^Advanced$/);
+    });
+  });
+
+  describe("quiet caller and audio", () => {
+    const server: ServerConfigDTO = {
+      profile: "development",
+      max_sessions: 10,
+      max_call_duration_seconds: 1800,
+      voice_token_max_lifetime_seconds: 60,
+      client_ip: "",
+      secure: false,
+      audio: { backgrounds: ["cafe", "office"], allow_flow_background: true },
+      idle: { user_timeout_ms: 15000, max_prompts: 2, prompt_mode: "llm" },
+    };
+    const withStart = (extra: Record<string, unknown>) =>
+      fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" }, stt: { provider: "deepgram" }, ...extra } }], routes: [] });
+    const openAdvanced = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByText(/^Advanced/));
+
+    it("shows the checkbox and the wait up front, with the server's default as the placeholder", () => {
+      render(<Harness serverConfig={server} />);
+      expect(screen.getByLabelText("End the call if the caller stays silent")).toBeChecked();
+      expect(screen.getByLabelText("Wait this long (seconds)")).toHaveAttribute("placeholder", "15");
+      expect(screen.getByText("The call ends one wait after the last question.")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Explain Silent caller wait" })).toBeInTheDocument();
+    });
+
+    it("falls back to a plain placeholder while the server's answer is missing", () => {
+      render(<Harness />);
+      expect(screen.getByLabelText("Wait this long (seconds)")).toHaveAttribute("placeholder", "Server default");
+    });
+
+    it("writes the wait in milliseconds and removes the whole idle object when it is cleared", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} onChange={onChange} />);
+      await user.type(screen.getByLabelText("Wait this long (seconds)"), "8");
+      expect(startCfg(onChange).idle).toEqual({ user_timeout_ms: 8000 });
+      await user.clear(screen.getByLabelText("Wait this long (seconds)"));
+      expect(startCfg(onChange)).not.toHaveProperty("idle");
+    });
+
+    it("unticking the box turns it off for this flow with an explicit 0, and ticking it again goes back to the server's", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} onChange={onChange} />);
+      await user.click(screen.getByLabelText("End the call if the caller stays silent"));
+      expect(startCfg(onChange).idle).toEqual({ user_timeout_ms: 0 });
+      expect(screen.getByLabelText("Wait this long (seconds)")).toBeDisabled();
+      await user.click(screen.getByLabelText("End the call if the caller stays silent"));
+      expect(startCfg(onChange)).not.toHaveProperty("idle");
+    });
+
+    it("when the server has it off, ticking the box asks for the built-in 15 seconds", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={{ ...server, idle: { ...server.idle, user_timeout_ms: 0 } }} onChange={onChange} />);
+      expect(screen.getByLabelText("End the call if the caller stays silent")).not.toBeChecked();
+      await user.click(screen.getByLabelText("End the call if the caller stays silent"));
+      expect(startCfg(onChange).idle).toEqual({ user_timeout_ms: 15000 });
+    });
+
+    it("keeps the other questions' members when the box is toggled", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness initial={withStart({ idle: { user_timeout_ms: 5000, prompt: "Hello?" } })} serverConfig={server} onChange={onChange} />);
+      await user.click(screen.getByLabelText("End the call if the caller stays silent"));
+      expect(startCfg(onChange).idle).toEqual({ user_timeout_ms: 0, prompt: "Hello?" });
+    });
+
+    it("sets how many times, what to say, how, and the goodbye in Advanced", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} onChange={onChange} />);
+      await openAdvanced(user);
+      await user.type(screen.getByLabelText("Ask this many times"), "3");
+      await user.type(screen.getByLabelText("What to say"), "Hello?");
+      await user.click(screen.getByLabelText("Say it exactly"));
+      await user.type(screen.getByLabelText("Goodbye before hanging up"), "Bye.");
+      expect(startCfg(onChange).idle).toEqual({ max_prompts: 3, prompt: "Hello?", prompt_mode: "say", goodbye: "Bye." });
+      await user.click(screen.getByLabelText("Let the model word it"));
+      expect(startCfg(onChange).idle).toEqual({ max_prompts: 3, prompt: "Hello?", goodbye: "Bye." });
+      await user.clear(screen.getByLabelText("Ask this many times"));
+      await user.clear(screen.getByLabelText("What to say"));
+      await user.clear(screen.getByLabelText("Goodbye before hanging up"));
+      expect(startCfg(onChange)).not.toHaveProperty("idle");
+    });
+
+    it("shows the built-in wording as placeholders", async () => {
+      const user = userEvent.setup();
+      render(<Harness serverConfig={server} />);
+      await openAdvanced(user);
+      expect(screen.getByLabelText("What to say")).toHaveAttribute("placeholder", "Are you still there?");
+      expect(screen.getByLabelText("Goodbye before hanging up")).toHaveAttribute("placeholder", "I'll end the call now. Goodbye.");
+      expect(screen.getByLabelText("Ask this many times")).toHaveAttribute("placeholder", "2");
+    });
+
+    it("turns noise reduction on with its strength, and off again", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} onChange={onChange} />);
+      await openAdvanced(user);
+      expect(screen.queryByLabelText("Noise reduction strength (%)")).toBeNull();
+      await user.click(screen.getByLabelText("Reduce background noise"));
+      expect(startCfg(onChange).audio).toEqual({ denoise: {} });
+      await user.type(screen.getByLabelText("Noise reduction strength (%)"), "80");
+      expect(startCfg(onChange).audio).toEqual({ denoise: { strength: 0.8 } });
+      await user.click(screen.getByLabelText("Reduce background noise"));
+      expect(startCfg(onChange)).not.toHaveProperty("audio");
+    });
+
+    it("writes the voice volume, including an explicit 0, and removes it when blank", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} onChange={onChange} />);
+      await openAdvanced(user);
+      await user.type(screen.getByLabelText("Voice volume (dB)"), "-3");
+      expect(startCfg(onChange).audio).toEqual({ output_gain_db: -3 });
+      await user.clear(screen.getByLabelText("Voice volume (dB)"));
+      await user.type(screen.getByLabelText("Voice volume (dB)"), "0");
+      expect(startCfg(onChange).audio).toEqual({ output_gain_db: 0 });
+      await user.clear(screen.getByLabelText("Voice volume (dB)"));
+      expect(startCfg(onChange)).not.toHaveProperty("audio");
+    });
+
+    it("chooses a background from the server's sounds, with its volume and repeat", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} onChange={onChange} />);
+      await openAdvanced(user);
+      const select = screen.getByLabelText("Background sound");
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "cafe", "office"]);
+      expect(screen.queryByLabelText("Background volume (dB)")).toBeNull();
+      await user.selectOptions(select, "office");
+      expect(startCfg(onChange).audio).toEqual({ background: { name: "office" } });
+      await user.type(screen.getByLabelText("Background volume (dB)"), "-20");
+      await user.click(screen.getByLabelText("Repeat"));
+      expect(startCfg(onChange).audio).toEqual({ background: { name: "office", gain_db: -20, loop: false } });
+      await user.click(screen.getByLabelText("Repeat"));
+      expect(startCfg(onChange).audio).toEqual({ background: { name: "office", gain_db: -20 } });
+      await user.selectOptions(select, "");
+      expect(startCfg(onChange)).not.toHaveProperty("audio");
+    });
+
+    it("disables the sound with the reason when the server does not let flows choose one", async () => {
+      const user = userEvent.setup();
+      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], allow_flow_background: false } }} />);
+      await openAdvanced(user);
+      expect(screen.getByLabelText("Background sound")).toBeDisabled();
+      expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();
+    });
+
+    it("names a stored sound the server no longer has", () => {
+      render(<Harness initial={withStart({ audio: { background: { name: "gone" } } })} serverConfig={server} />);
+      expect(within(screen.getByLabelText("Background sound")).getByRole("option", { name: "gone (not on this server)" })).toBeInTheDocument();
+      expect(screen.getByText('"gone" is not a sound on this server.')).toBeVisible();
+    });
+
+    it("opens a stored flow showing every value, and counts the two advanced groups", () => {
+      const stored = {
+        idle: { user_timeout_ms: 8000, max_prompts: 3, prompt: "Hello?", prompt_mode: "say", goodbye: "Bye." },
+        audio: { denoise: { strength: 0.8 }, output_gain_db: -3, background: { name: "office", gain_db: -20, loop: false } },
+      };
+      render(<Harness initial={withStart(stored)} serverConfig={server} />);
+      expect(screen.getByText(/^Advanced/)).toHaveTextContent("Advanced · 2 set");
+      expect(screen.getByLabelText("Wait this long (seconds)")).toHaveValue(8);
+      expect(screen.getByLabelText("Ask this many times")).toHaveValue(3);
+      expect(screen.getByLabelText("What to say")).toHaveValue("Hello?");
+      expect(screen.getByLabelText("Say it exactly")).toBeChecked();
+      expect(screen.getByLabelText("Goodbye before hanging up")).toHaveValue("Bye.");
+      expect(screen.getByLabelText("Reduce background noise")).toBeChecked();
+      expect(screen.getByLabelText("Noise reduction strength (%)")).toHaveValue(80);
+      expect(screen.getByLabelText("Voice volume (dB)")).toHaveValue(-3);
+      expect(screen.getByLabelText("Background sound")).toHaveValue("office");
+      expect(screen.getByLabelText("Background volume (dB)")).toHaveValue(-20);
+      expect(screen.getByLabelText("Repeat")).not.toBeChecked();
+    });
+
+    it("explains each new field", async () => {
+      const user = userEvent.setup();
+      render(<Harness serverConfig={server} initial={withStart({ audio: { denoise: {}, background: { name: "office" } } })} />);
+      await openAdvanced(user);
+      for (const name of ["Silent caller wait", "Questions before hanging up", "What to say", "How to say it", "Goodbye", "Noise reduction", "Voice volume", "Background sound", "Background volume", "Repeat background"]) {
+        expect(screen.getByRole("button", { name: `Explain ${name}` })).toBeInTheDocument();
+      }
     });
   });
 });

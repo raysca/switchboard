@@ -1,7 +1,8 @@
 import { useState } from "react";
-import type { ProviderStatus } from "../../../api/client";
+import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
+import { AudioFields, QuietCallerBasics, QuietCallerDetails } from "./CallBehaviorFields";
 import { SettingHelp } from "./SettingHelp";
 import { flowIssues, MAX_SUMMARY_PROMPT_BYTES, STT_P99_RANGE, updateStep, type FlowDraft, type StepConfig } from "./model";
 
@@ -20,6 +21,8 @@ export type FlowSettingsPanelProps = {
   published?: { number: number; createdAt: string; hash: string };
   graph: FlowDraft;
   providers: ProviderStatus[];
+  /** What the server offers and defaults to; absent while it loads or if it cannot be read. */
+  serverConfig?: ServerConfigDTO;
   name: string;
   description: string;
   onName: (v: string) => void;
@@ -31,14 +34,16 @@ export type FlowSettingsPanelProps = {
 };
 
 /** What the whole call shares. Stored on the start step (server: call-level config). */
-export function FlowSettingsPanel({ graph, providers, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId, published }: FlowSettingsPanelProps) {
+export function FlowSettingsPanel({ graph, providers, serverConfig, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId, published }: FlowSettingsPanelProps) {
   const start = graph.steps.find((n) => n.id === graph.start);
   const cfg: StepConfig = start?.config ?? {};
   const stt = rec(cfg.stt);
   const context = rec(cfg.context);
   const recording = rec(cfg.recording);
   const problems = flowIssues(graph);
-  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context"] as const).filter((k) => k in cfg).length + (graph.route_cue && graph.routes.length > 0 ? 1 : 0);
+  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio"] as const).filter((k) => k in cfg).length +
+    (Object.keys(rec(cfg.idle)).some((k) => k !== "user_timeout_ms") ? 1 : 0) +
+    (graph.route_cue && graph.routes.length > 0 ? 1 : 0);
   const [open, setOpen] = useState(advancedSet > 0);
   // Everything but the essentials' own messages belongs to a field inside Advanced.
   const advancedProblem = problems.some((p) => !/^(Choose |Confirm that callers)/.test(p));
@@ -122,11 +127,14 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
             </label>
             <SettingHelp id="recording" />
           </fieldset>
+          <QuietCallerBasics cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
         </>
       )}
       {start && (
         <details className="advanced" open={open || advancedProblem} onToggle={(e) => setOpen(e.currentTarget.open)}>
           <summary>{advancedSet > 0 ? `Advanced · ${advancedSet} set` : "Advanced"}</summary>
+          <QuietCallerDetails cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
+          <AudioFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           <fieldset className="stage-box">
             <legend>Turn-taking</legend>
             <label className="form-field" htmlFor="flow-vad">

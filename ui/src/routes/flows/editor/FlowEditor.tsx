@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
-import type { FlowDTO, ApiClient, CreateFlowInput, ProviderStatus, ToolSelection } from "../../../api/client";
+import type { FlowDTO, ApiClient, CreateFlowInput, ProviderStatus, ServerConfigDTO, ToolSelection } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { Status } from "../../../components/primitives";
 import { FlowVoiceTest } from "../FlowVoiceTest";
@@ -46,6 +46,8 @@ export type FlowEditorProps = {
   flow: FlowDTO | null;
   providers: ProviderStatus[];
   client: ApiClient;
+  /** What the server offers and defaults to (sounds, quiet-caller wait); absent while it loads. */
+  serverConfig?: ServerConfigDTO;
   keyValue: string | null;
   pending: boolean;
   onSubmit: (input: CreateFlowInput) => void;
@@ -61,7 +63,7 @@ const sameTools = (a: ToolSelection[], b: ToolSelection[]) => {
 };
 
 /** One page for a flow: the flow stays put; steps, settings and test calls slide in from the right. */
-export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmit, onCancel, initialName, initialPanel, callsInProgress }: FlowEditorProps) {
+export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmit, onCancel, initialName, initialPanel, callsInProgress, serverConfig }: FlowEditorProps) {
   const publishedTools = useMemo(() => flow?.current_version?.mcp_tools ?? [], [flow]);
   const published = useMemo(() => (flow?.current_version ? fromFlowConfig(flow.current_version.config, publishedTools.map(toolKey)) : null), [flow, publishedTools]);
   // The flow's MCP tool selection is part of the draft: it is published and tested with the config.
@@ -299,6 +301,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
             }
             graph={graph}
             providers={providers}
+            serverConfig={serverConfig}
             name={name}
             description={description}
             onName={setName}
