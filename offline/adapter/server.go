@@ -41,4 +41,3 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // Stubs, removed by the task that implements each endpoint.
-func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }
