@@ -199,6 +199,42 @@ describe("FlowVoiceTest", () => {
     expect(screen.getByText(/Token service unavailable/i)).toBeVisible();
   });
 
+  it("shows the server's reply times for the call: a strip with the last and median reply, and a note under the reply it measured", async () => {
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
+    const getSessionTurns = vi.fn().mockResolvedValue([
+      {
+        id: "t1",
+        session_id: "test-session-uuid-999",
+        ordinal: 1,
+        started_at: "2026-10-12T14:00:00Z",
+        ended_at: "2026-10-12T14:00:02Z",
+        transcript: "hello",
+        assistant_text: "Hi, how can I help?",
+        interrupted: false,
+        latencies: { voice_to_voice_ms: 640 },
+      },
+    ]);
+    const client = createMockClient({ getSessionTurns });
+    render(
+      <MemoryRouter>
+        <FlowVoiceTest flow={createMockFlow()} client={client} keyValue="mgmt-key-1" audioController={mockAudio} wsBaseUrl="ws://127.0.0.1:9090/ws" />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Last reply")).toBeNull();
+    await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_READY, { version: "2.1.0" });
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_LLM_TEXT, { text: "Hi, how can I help?" });
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_STARTED_SPEAKING);
+    ws.receiveRTVIMessage(RTVI_TYPE_BOT_STOPPED_SPEAKING);
+    expect(await screen.findByText("Last reply")).toBeVisible();
+    expect(getSessionTurns).toHaveBeenCalledWith("test-session-uuid-999");
+    expect(screen.getAllByText("640 ms").length).toBeGreaterThan(0);
+    expect(await screen.findByText("Replied in 640 ms")).toBeVisible();
+  });
+
   it("executes normal conversational flow: connect -> bot-ready -> user speaks -> bot speaks -> barge-in -> disconnect -> trace link", async () => {
     const mockAudio = new BrowserAudioController();
     vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);

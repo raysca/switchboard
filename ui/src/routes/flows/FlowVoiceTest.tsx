@@ -9,8 +9,9 @@ import type { BrowserAudioController } from "../../voice/audio";
 import { PipecatDebugPanel } from "../../components/debug/PipecatDebugPanel";
 import { ActionButton, Status } from "../../components/primitives";
 import { NO_CALL, type CallInfo } from "./editor/useCallView";
-import { mmss } from "../sessions/callStats";
+import { formatMs, mmss } from "../sessions/callStats";
 import { useNow } from "../sessions/useNow";
+import { ReplyStrip, replyByLine, useReplyTimes } from "./useReplyTimes";
 
 export interface FlowVoiceTestProps {
   flow: FlowDTO;
@@ -81,6 +82,9 @@ export function FlowVoiceTest({
     state.sessionState === "connecting";
   const inCall = isConnectedOrReady || isConnecting;
   const now = useNow(inCall);
+  const turns = useReplyTimes(client, state.sessionId, inCall);
+  const botLines = state.transcripts.filter((t) => t.speaker !== "user").map((t) => ({ id: t.id, text: t.text }));
+  const replyOf = replyByLine(turns, botLines);
   if (inCall && startedAt.current === null) startedAt.current = Date.now();
   if (!inCall) startedAt.current = null;
   const clock = mmss(inCall && startedAt.current !== null ? (now - startedAt.current) / 1000 : 0);
@@ -253,6 +257,8 @@ export function FlowVoiceTest({
         </p>
       )}
 
+      <ReplyStrip turns={turns} />
+
       <div className="transcript" tabIndex={0} aria-label="Conversation transcripts">
         {state.transcripts.length === 0 && !state.currentInterimTranscript && !state.currentBotStreamingText ? (
           <p className="transcript__empty">
@@ -264,6 +270,7 @@ export function FlowVoiceTest({
               <div key={item.id} data-testid={item.speaker === "user" ? "transcript-user" : "transcript-bot"} className={`line line--${item.speaker === "user" ? "caller" : "bot"}`}>
                 <div className="line__who">{item.speaker === "user" ? "You" : (stepOf.current.get(item.id) ?? flow.name)}</div>
                 <div>{item.text}</div>
+                {replyOf.has(item.id) && <div className="line__note">Replied in {formatMs(replyOf.get(item.id)!)}</div>}
               </div>
             ))}
             {state.currentInterimTranscript && (

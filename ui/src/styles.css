@@ -2816,3 +2816,23 @@ main:has(.mcp-page) {
 .waterfall__bar[data-stage="Voice"] {
   background: var(--ok);
 }
+
+/* The server's reply times in the Test call panel */
+.reply-strip {
+  display: flex;
+  gap: 24px;
+  margin: 8px 0;
+}
+.reply-strip dt {
+  font-size: 0.75rem;
+  color: var(--ink-2);
+}
+.reply-strip dd {
+  margin: 0;
+  font-weight: 600;
+}
+.line__note {
+  font-size: 0.75rem;
+  color: var(--ink-2);
+  margin-top: 2px;
+}
