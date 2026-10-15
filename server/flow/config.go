@@ -32,6 +32,10 @@ type Config struct {
 	// Failover says which error classes let a stage move to its next
 	// fallback. Fallbacks are optional; none = single provider (legacy configs).
 	Failover FailoverPolicy `json:"failover,omitempty"`
+	// Idle is what happens when the caller goes quiet; Audio is the call's noise reduction, voice volume
+	// and background sound. Both are call-level (start step) and optional: absent means the server's.
+	Idle  *IdleSettings  `json:"idle,omitempty"`
+	Audio *AudioSettings `json:"audio,omitempty"`
 	// Recording opts this flow's calls into audio recording. It only takes
 	// effect when the server enables recording too.
 	Recording RecordingConfig `json:"recording,omitzero"`
@@ -149,14 +153,17 @@ const maxGreetingBytes = 500
 // GreetingText is the greeting trimmed; "" when the step has none.
 func (c Config) GreetingText() string { return strings.TrimSpace(c.Greeting) }
 
-func validateGreeting(g string) error {
-	g = strings.TrimSpace(g)
-	if len(g) > maxGreetingBytes {
-		return fmt.Errorf("%w: greeting must be at most %d bytes", ErrInvalidConfig, maxGreetingBytes)
+func validateGreeting(g string) error { return validateSpokenText("greeting", g, maxGreetingBytes) }
+
+// validateSpokenText checks text the agent will say: trimmed, at most max bytes, no control characters.
+func validateSpokenText(field, text string, max int) error {
+	text = strings.TrimSpace(text)
+	if len(text) > max {
+		return fmt.Errorf("%w: %s must be at most %d bytes", ErrInvalidConfig, field, max)
 	}
-	for _, r := range g {
+	for _, r := range text {
 		if (r < 0x20 && r != '\n' && r != '\t' && r != '\r') || r == 0x7f {
-			return fmt.Errorf("%w: greeting must be plain text (no control characters)", ErrInvalidConfig)
+			return fmt.Errorf("%w: %s must be plain text (no control characters)", ErrInvalidConfig, field)
 		}
 	}
 	return nil
@@ -195,6 +202,16 @@ func DecodeConfig(raw json.RawMessage) (Config, error) {
 	}
 	if c.STTP99MS < 0 || (c.STTP99MS > 0 && (c.STTP99MS < 100 || c.STTP99MS > 10000)) {
 		return c, fmt.Errorf("%w: stt_p99_ms must be 0 (default) or between 100 and 10000", ErrInvalidConfig)
+	}
+	if c.Idle != nil {
+		if err := c.Idle.validate(); err != nil {
+			return c, err
+		}
+	}
+	if c.Audio != nil {
+		if err := c.Audio.validate(); err != nil {
+			return c, err
+		}
 	}
 	if err := c.Context.Summarization.validate(c.LLM.Provider, c.Context.MaxTokens); err != nil {
 		return c, err
