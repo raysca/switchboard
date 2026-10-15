@@ -2768,3 +2768,15 @@ main:has(.mcp-page) {
   color: var(--ink);
   margin-top: 6px;
 }
+
+/* Settings a typical flow never touches */
+.advanced {
+  margin: 16px 0;
+}
+.advanced > summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+}

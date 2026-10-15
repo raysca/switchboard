@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
@@ -37,6 +38,10 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
   const context = rec(cfg.context);
   const recording = rec(cfg.recording);
   const problems = flowIssues(graph);
+  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context"] as const).filter((k) => k in cfg).length + (graph.route_cue ? 1 : 0);
+  const [open, setOpen] = useState(advancedSet > 0);
+  // Everything but the essentials' own messages belongs to a field inside Advanced.
+  const advancedProblem = problems.some((p) => !/^(Choose |Confirm that callers)/.test(p));
   const setKey = (key: string, value: unknown) => {
     if (!start) return;
     onChange(updateStep(graph, start.id, { config: value === null || value === undefined ? without(cfg, key) : { ...cfg, [key]: value } }));
@@ -92,6 +97,34 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
               onChange={(v: StageValue) => setKey("stt", { ...stt, provider: v.provider, model: v.model ?? "", language: v.language ?? "" })}
             />
           </fieldset>
+          <fieldset className="stage-box">
+            <legend>Recording</legend>
+            <label className="check-row" htmlFor="flow-record">
+              <input
+                id="flow-record"
+                type="checkbox"
+                checked={recording.enabled === true}
+                onChange={(e) => setKey("recording", e.target.checked ? { enabled: true, disclosure_confirmed: recording.disclosure_confirmed === true } : null)}
+              />
+              <span>Record calls</span>
+            </label>
+            <label className="check-row" htmlFor="flow-disclosure">
+              <input
+                id="flow-disclosure"
+                type="checkbox"
+                disabled={recording.enabled !== true}
+                checked={recording.disclosure_confirmed === true}
+                onChange={(e) => setKey("recording", { enabled: true, disclosure_confirmed: e.target.checked })}
+              />
+              <span>Callers are told the call is recorded</span>
+            </label>
+            <SettingHelp id="recording" />
+          </fieldset>
+        </>
+      )}
+      {start && (
+        <details className="advanced" open={open || advancedProblem} onToggle={(e) => setOpen(e.currentTarget.open)}>
+          <summary>{advancedSet > 0 ? `Advanced · ${advancedSet} set` : "Advanced"}</summary>
           <fieldset className="stage-box">
             <legend>Turn-taking</legend>
             <label className="form-field" htmlFor="flow-vad">
@@ -156,32 +189,6 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
             </label>
             <SettingHelp id="summarization.enabled" />
           </fieldset>
-          <fieldset className="stage-box">
-            <legend>Recording</legend>
-            <label className="check-row" htmlFor="flow-record">
-              <input
-                id="flow-record"
-                type="checkbox"
-                checked={recording.enabled === true}
-                onChange={(e) => setKey("recording", e.target.checked ? { enabled: true, disclosure_confirmed: recording.disclosure_confirmed === true } : null)}
-              />
-              <span>Record calls</span>
-            </label>
-            <label className="check-row" htmlFor="flow-disclosure">
-              <input
-                id="flow-disclosure"
-                type="checkbox"
-                disabled={recording.enabled !== true}
-                checked={recording.disclosure_confirmed === true}
-                onChange={(e) => setKey("recording", { enabled: true, disclosure_confirmed: e.target.checked })}
-              />
-              <span>Callers are told the call is recorded</span>
-            </label>
-            <SettingHelp id="recording" />
-          </fieldset>
-        </>
-      )}
-
       {graph.routes.length > 0 && (
         <fieldset className="stage-box">
           <legend>Route sound</legend>
@@ -221,6 +228,9 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
           <SettingHelp id="route_cue" />
         </fieldset>
       )}
+        </details>
+      )}
+
       {published && (
         <fieldset className="stage-box">
           <legend>Published version</legend>

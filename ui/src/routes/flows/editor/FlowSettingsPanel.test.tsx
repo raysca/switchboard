@@ -147,4 +147,48 @@ describe("FlowSettingsPanel footer", () => {
     render(<Harness />);
     expect(screen.getByRole("button", { name: "Explain Route sound" })).toBeInTheDocument();
   });
+
+  describe("Basic and Advanced", () => {
+    const withCfg = (extra: Record<string, unknown>) =>
+      fromFlowConfig({
+        start: "a",
+        steps: [{ id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" }, stt: { provider: "deepgram" }, ...extra } }],
+        routes: [],
+      });
+    const advanced = () => screen.getByText(/^Advanced/).closest("details")!;
+
+    it("keeps the essentials up front and the rest under a closed Advanced for a default flow", () => {
+      render(<Harness />);
+      expect(screen.getByLabelText("Flow name")).toBeVisible();
+      expect(screen.getByLabelText("Record calls")).toBeVisible();
+      expect(screen.getByLabelText("STT provider")).toBeVisible();
+      expect(advanced()).not.toHaveAttribute("open");
+      expect(advanced()).toContainElement(screen.getByLabelText("Wait after the caller stops (ms)"));
+      expect(advanced()).toContainElement(screen.getByLabelText("Max messages"));
+      expect(advanced()).toContainElement(screen.getByLabelText("Sound name"));
+      expect(advanced()).not.toContainElement(screen.getByLabelText("Record calls"));
+      expect(screen.getByText(/^Advanced/)).toHaveTextContent(/^Advanced$/);
+    });
+
+    it("says how many advanced settings are set and opens when any is", () => {
+      render(<Harness initial={withCfg({ vad_stop_ms: 400, context: { max_tokens: 3000 } })} />);
+      expect(screen.getByText(/^Advanced/)).toHaveTextContent("Advanced · 2 set");
+      expect(advanced()).toHaveAttribute("open");
+    });
+
+    it("opens by itself when an advanced field has a problem", () => {
+      render(<Harness initial={withCfg({ vad_stop_ms: 9000 })} />);
+      expect(advanced()).toHaveAttribute("open");
+      expect(screen.getByRole("note")).toHaveTextContent("Wait after the caller stops must be 200 to 2000 ms.");
+    });
+
+    it("toggles when its summary is activated (a native details element, so the keyboard works too)", async () => {
+      const user = userEvent.setup();
+      render(<Harness />);
+      await user.click(screen.getByText(/^Advanced/));
+      expect(advanced()).toHaveAttribute("open");
+      await user.click(screen.getByText(/^Advanced/));
+      expect(advanced()).not.toHaveAttribute("open");
+    });
+  });
 });
