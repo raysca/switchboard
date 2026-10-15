@@ -79,7 +79,7 @@ parity-regen: ## free|Regenerate the paired Pipecat goldens (needs pipecat-impl 
 
 verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
 	@echo "=== Checking code formatting ==="
-	@unformatted=$$(gofmt -l core/ transport/ tools/ proto/ providers/ vad/ smartturn/ cmd/ server/ examples/); \
+	@unformatted=$$(gofmt -l core/ transport/ tools/ proto/ providers/ vad/ smartturn/ cmd/ server/ examples/ offline/); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files need formatting:"; \
 		echo "$$unformatted"; \
