@@ -71,7 +71,7 @@ Switchboard (xai adapters, endpoints -> adapter)
    Ollama / llama.cpp   whisper.cpp server   Kokoro or Piper server
 ```
 
-**Why Go.** Same language and idioms as the repo (AGENTS.md bounds, `-race`); the existing supervised Silero VAD in `vad/` is reused for endpointing instead of a second VAD stack; contract tests share `coder/websocket` and the `STTMessage` type with the adapters. The models stay in their own servers, so nothing here needs cgo or Python in our code.
+**Why Go.** Same language and idioms as the repo (AGENTS.md bounds, `-race`); endpointing is a small pure-Go energy detector (the repo's `vad/` was rejected: it is cgo + onnxruntime behind worker processes; upgrade path for noisy microphones is `vad/` or sherpa-onnx); contract tests share `coder/websocket` and the `STTMessage` type with the adapters. The models stay in their own servers, so nothing here needs cgo or Python in our code.
 
 **Backends are URLs, so they are swappable.** Docker on macOS has no GPU, so on Apple Silicon the backends are better run on the host (Metal) with only the adapter, or nothing, in Docker. Compose is the default for CI, shared test runs and privacy self-hosters; every backend URL is an env var so any of them can live elsewhere. Images are pinned by tag so a backend update cannot silently change test behavior. Weights come from a mounted volume; nothing downloads at runtime (a documented `fetch-models` step runs once, with network). The adapter's `/healthz` reports ready only when every backend answers.
 
@@ -84,7 +84,7 @@ All stages are bounded: a global semaphore caps concurrent decodes and syntheses
 | Stage | Backend (default) | Notes |
 |---|---|---|
 | LLM | Ollama, called directly by the xAI adapter (not through this service) | see below |
-| STT | whisper.cpp server plus the repo's `vad/` Silero VAD | see below |
+| STT | Speaches (faster-whisper) plus a pure-Go RMS-energy endpointer (`adapter/endpoint.go`, `OFFLINE_ENERGY_THRESHOLD`, default 0.01 of full scale) | see below |
 | TTS | Kokoro-FastAPI or Piper HTTP (resampled by the adapter to the requested rate) | one sentence at a time |
 
 
@@ -96,7 +96,7 @@ All stages are bounded: a global semaphore caps concurrent decodes and syntheses
 
 ### STT (the riskiest part)
 Whisper is not a streaming model, so the service builds streaming around it:
-1. Per stream: resample if needed, run the `vad/` Silero VAD on each 20 ms frame to track speech and silence.
+1. Per stream: resample if needed, track speech and silence with the RMS-energy endpointer on each frame (ceiling: a noisy microphone needs a real VAD).
 2. **Interims:** while speech is active, every `interim_ms` (default 700) re-decode the utterance buffer so far and send an interim partial with the whole text. Only one decode in flight per stream; if one is still running, skip the tick. Decoding the whole utterance each time costs more compute as the utterance grows, so cap the utterance at `max_utterance_s` (default 25): at the cap, force a `speech_final`.
 3. **End of utterance:** when VAD sees `endpoint_ms` of silence (default 600) after speech, decode once more (final text) and send `speech_final`. Then reset the buffer and wait for the next utterance.
 4. `audio.done` finalizes an open utterance, sends `transcript.done`, closes.
