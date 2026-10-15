@@ -60,6 +60,12 @@ distinguish operational metadata from conversational content:
   payload summaries, and sanitizes text attributes in spans/events while
   preserving session, turn, span, event timestamps, latencies, and structural
   metadata for operational debugging.
+- **Who called:** a session stores `caller`, the label the integration chose
+  (the `principal` of its voice token, at most 128 characters), and `end_reason`,
+  a closed set of words (see `docs/api/v1.md`). Both are metadata and follow
+  metadata retention. No IP address, user agent or other network detail is
+  stored; the principal must not carry personal data (a phone number or
+  e-mail), because it is shown in the console.
 - **Deletion invariants:**
   Active and draining sessions (`status IN ('active', 'draining')`), current
   and historical flow versions, and MCP discoveries are never deleted by
