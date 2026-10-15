@@ -252,7 +252,15 @@ export function applySelection(g: FlowDraft, next: ToolSelection[]): FlowDraft {
   const keys = next.map(toolKey);
   return {
     ...g,
-    steps: g.steps.map((n) => ({ ...n, tools: isFlat(g) ? [...keys] : n.tools.filter((t) => keys.includes(t)) })),
+    steps: g.steps.map((n) => {
+      const out = { ...n, tools: isFlat(g) ? [...keys] : n.tools.filter((t) => keys.includes(t)) };
+      if (n.id === g.start && Array.isArray(n.config.async_tools)) {
+        const { async_tools, ...rest } = n.config;
+        const kept = (async_tools as string[]).filter((k) => keys.includes(k));
+        out.config = kept.length ? { ...rest, async_tools: kept } : rest;
+      }
+      return out;
+    }),
   };
 }
 

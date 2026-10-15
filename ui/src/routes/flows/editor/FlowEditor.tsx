@@ -111,6 +111,14 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
     setGraph((g) => applySelection(g, next));
   };
 
+  const startStep = graph.steps.find((n) => n.id === graph.start);
+  const asyncKeys = Array.isArray(startStep?.config.async_tools) ? (startStep.config.async_tools as string[]) : [];
+  const changeAsync = (keys: string[]) => {
+    if (!startStep) return;
+    const { async_tools: _drop, ...rest } = startStep.config;
+    setGraph((g) => updateStep(g, startStep.id, { config: keys.length ? { ...rest, async_tools: keys } : rest }));
+  };
+
   const open = (next: Panel, from?: HTMLElement | null) => {
     opener.current = from ?? (document.activeElement as HTMLElement | null);
     setPanel(next);
@@ -265,7 +273,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
             stepId={panel.id}
             providers={providers}
             flowTools={flowTools}
-            toolPicker={<ToolPicker client={client} selected={tools} onChange={changeTools} />}
+            toolPicker={<ToolPicker client={client} selected={tools} onChange={changeTools} asyncKeys={asyncKeys} onAsyncChange={changeAsync} />}
             tab={tab}
             onTab={setTab}
             focusRoute={focusRoute}

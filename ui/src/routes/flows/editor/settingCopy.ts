@@ -66,6 +66,13 @@ const COPY = {
     defaults: "Timeouts, server errors and an open circuit breaker.",
     careful: "Rejected requests are usually your bug, not an outage; switching can hide it.",
   },
+  async_tools: {
+    label: "Runs in the background",
+    what: "The model gets an immediate \"working on it\" and is told the result when it arrives.",
+    when: "For slow tools (a search or a booking) so the caller is not left waiting in silence.",
+    defaults: "Off: the model waits for the result.",
+    careful: "The model must handle a late answer gracefully.",
+  },
   recording: {
     label: "Recording",
     what: "Saves the call's audio on the server (only if the server enables recording too).",

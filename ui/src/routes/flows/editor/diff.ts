@@ -10,6 +10,8 @@ const FLOW_SETTINGS = [
   ["vad_stop_ms", "turn-taking"],
   ["context", "memory"],
   ["recording", "recording"],
+  ["stt_p99_ms", "late-transcript wait"],
+  ["async_tools", "background tools"],
 ] as const;
 
 /** Plain-language changes from the published version to the draft, for the publish dialog. */

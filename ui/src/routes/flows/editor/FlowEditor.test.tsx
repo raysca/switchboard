@@ -291,4 +291,25 @@ describe("FlowEditor MCP tools", () => {
     expect(sent.mcp_tools.map((t) => t.remote_name)).toEqual(["echo"]);
     expect(sent.config.steps.map((st) => st.tools)).toEqual([["crm/echo"], undefined]);
   });
+
+  it("marks a tool as running in the background: an unpublished change, listed in the dialog, sent on the start step", async () => {
+    const tools = [{ mcp_server_id: "crm", remote_name: "echo", schema_hash: "h-echo", required: false }];
+    const withTool: FlowDTO = { ...flow, current_version: { ...flow.current_version!, mcp_tools: tools } };
+    const { user, onSubmit } = setup({ flow: withTool, client: withMCP });
+    await openTools(user);
+    await user.click(await screen.findByRole("checkbox", { name: "Background: echo" }));
+    expect(screen.getByText(/unpublished changes/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Flow settings: background tools changed");
+    await user.click(screen.getByRole("button", { name: "Publish v2" }));
+    expect((onSubmit.mock.calls[0][0].config as { async_tools?: string[] }).async_tools).toEqual(["crm/echo"]);
+  });
+
+  it("opens a stored background tool ticked", async () => {
+    const tools = [{ mcp_server_id: "crm", remote_name: "echo", schema_hash: "h-echo", required: false }];
+    const stored: FlowDTO = { ...flow, current_version: { ...flow.current_version!, mcp_tools: tools, config: { ...flat, async_tools: ["crm/echo"] } } };
+    const { user } = setup({ flow: stored, client: withMCP });
+    await openTools(user);
+    expect(await screen.findByRole("checkbox", { name: "Background: echo" })).toBeChecked();
+  });
 });

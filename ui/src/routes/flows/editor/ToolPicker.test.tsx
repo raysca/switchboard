@@ -28,12 +28,30 @@ const detail = (over: Partial<MCPServerDetailDTO> = {}): MCPServerDetailDTO => (
 });
 const sel = (name: string, required = false, hash = `h-${name === "lookup_order" ? "lookup" : name}`): ToolSelection => ({ mcp_server_id: "crm", remote_name: name, schema_hash: hash, required });
 
-function Harness({ client, initial = [], onChange }: { client: Partial<ApiClient>; initial?: ToolSelection[]; onChange?: (next: ToolSelection[]) => void }) {
+function Harness({
+  client,
+  initial = [],
+  onChange,
+  initialAsync = [],
+  onAsyncChange,
+}: {
+  client: Partial<ApiClient>;
+  initial?: ToolSelection[];
+  onChange?: (next: ToolSelection[]) => void;
+  initialAsync?: string[];
+  onAsyncChange?: (keys: string[]) => void;
+}) {
   const [selected, setSelected] = useState(initial);
+  const [asyncKeys, setAsyncKeys] = useState(initialAsync);
   return (
     <ToolPicker
       client={client as ApiClient}
       selected={selected}
+      asyncKeys={asyncKeys}
+      onAsyncChange={(k) => {
+        setAsyncKeys(k);
+        onAsyncChange?.(k);
+      }}
       onChange={(n) => {
         setSelected(n);
         onChange?.(n);
@@ -41,11 +59,11 @@ function Harness({ client, initial = [], onChange }: { client: Partial<ApiClient
     />
   );
 }
-function setup(client: Partial<ApiClient>, initial: ToolSelection[] = [], onChange = vi.fn()) {
+function setup(client: Partial<ApiClient>, initial: ToolSelection[] = [], onChange = vi.fn(), asyncProps: { initialAsync?: string[]; onAsyncChange?: (k: string[]) => void } = {}) {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter>
-        <Harness client={client} initial={initial} onChange={onChange} />
+        <Harness client={client} initial={initial} onChange={onChange} {...asyncProps} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -71,6 +89,25 @@ describe("ToolPicker", () => {
     expect(onChange).toHaveBeenLastCalledWith([sel("echo")]);
     await user.click(screen.getByRole("checkbox", { name: /^echo/ }));
     expect(onChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it("lets a chosen tool run in the background, and only a chosen tool", async () => {
+    const onAsyncChange = vi.fn();
+    const { user } = setup(api(), [sel("echo"), sel("lookup_order")], vi.fn(), { onAsyncChange });
+    expect(await screen.findByText("The model gets an immediate acknowledgement and is told the result when it arrives.")).toBeVisible();
+    await user.click(await screen.findByRole("checkbox", { name: "Background: lookup_order" }));
+    expect(onAsyncChange).toHaveBeenLastCalledWith(["crm/lookup_order"]);
+    await user.click(screen.getByRole("checkbox", { name: "Background: echo" }));
+    expect(onAsyncChange).toHaveBeenLastCalledWith(["crm/echo", "crm/lookup_order"]);
+    await user.click(screen.getByRole("checkbox", { name: "Background: echo" }));
+    expect(onAsyncChange).toHaveBeenLastCalledWith(["crm/lookup_order"]);
+  });
+
+  it("offers no background box for a tool that is not chosen, and a stored one shows ticked", async () => {
+    setup(api(), [sel("echo")], vi.fn(), { initialAsync: ["crm/echo"] });
+    expect(await screen.findByRole("checkbox", { name: "Background: echo" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Background: lookup_order" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Explain Runs in the background" })).toBeInTheDocument();
   });
 
   it("lets a chosen tool be marked required", async () => {

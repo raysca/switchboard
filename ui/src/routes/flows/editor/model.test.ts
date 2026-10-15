@@ -272,6 +272,16 @@ describe("what the server will accept", () => {
     expect(validate(one({ vad_stop_ms: 2500 }))).toContain("Wait after the caller stops must be 200 to 2000 ms.");
   });
 
+  it("takes a removed tool off the start step's background list, and drops the key when it empties", () => {
+    const t = (n: string) => ({ mcp_server_id: "crm", remote_name: n, schema_hash: "h", required: false });
+    const g = one({ async_tools: ["crm/echo", "crm/lookup"] });
+    const kept = applySelection(g, [t("lookup")]);
+    expect(kept.steps.find((n) => n.id === kept.start)!.config.async_tools).toEqual(["crm/lookup"]);
+    const none = applySelection(g, []);
+    expect(none.steps.find((n) => n.id === none.start)!.config).not.toHaveProperty("async_tools");
+    expect((toPayload(g) as { steps: { id: string; config: object }[] }).steps.find((n) => n.id === "b")!.config).not.toHaveProperty("async_tools");
+  });
+
   it("flags an unknown failover class in a stored step", () => {
     const g = one({}, { failover: { on: ["timeout", "meteor"] } });
     expect(stepIssues(g, g.steps.at(-1)!.id)).toContainEqual({ tab: "advanced", message: "Failover lists an unknown error class." });

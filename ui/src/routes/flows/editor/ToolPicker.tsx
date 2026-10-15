@@ -2,6 +2,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import type { ApiClient, ApiError, MCPServerDetailDTO, ToolSelection } from "../../../api/client";
 import { LoadingState } from "../../../components/primitives";
+import { SettingHelp } from "./SettingHelp";
 
 const keyOf = (t: ToolSelection) => `${t.mcp_server_id}/${t.remote_name}`;
 
@@ -20,7 +21,20 @@ function unusable(d: MCPServerDetailDTO): string | null {
  * chooses its own subset. The lists are read from the servers' latest discoveries only while this is
  * shown (it sits in the step panel's Tools tab), through the same queries the MCP page uses.
  */
-export function ToolPicker({ client, selected, onChange }: { client: ApiClient; selected: ToolSelection[]; onChange: (next: ToolSelection[]) => void }) {
+export function ToolPicker({
+  client,
+  selected,
+  onChange,
+  asyncKeys,
+  onAsyncChange,
+}: {
+  client: ApiClient;
+  selected: ToolSelection[];
+  onChange: (next: ToolSelection[]) => void;
+  /** The chosen tools (`<server>/<tool>`) that answer the model at once and finish in the background. */
+  asyncKeys: string[];
+  onAsyncChange: (keys: string[]) => void;
+}) {
   const serversQuery = useQuery({ queryKey: ["mcp-servers"], queryFn: () => client.getMCPServers(), retry: false });
   const servers = serversQuery.data ?? [];
   const details = useQueries({
@@ -53,6 +67,10 @@ export function ToolPicker({ client, selected, onChange }: { client: ApiClient; 
     const k = `${serverId}/${e.name}`;
     onChange(on ? [...selected, { mcp_server_id: serverId, remote_name: e.name, schema_hash: e.hash, required: false }] : selected.filter((t) => keyOf(t) !== k));
   };
+  const setBackground = (t: ToolSelection, on: boolean) => {
+    const k = keyOf(t);
+    onAsyncChange(selected.map(keyOf).filter((x) => (x === k ? on : asyncKeys.includes(x))));
+  };
   const setRequired = (t: ToolSelection, required: boolean) => onChange(selected.map((x) => (keyOf(x) === keyOf(t) ? { ...x, required } : x)));
 
   const row = (serverId: string, name: string, description: string, e: Entry | null, blocked: boolean, label = name, reasonId?: string) => {
@@ -75,10 +93,16 @@ export function ToolPicker({ client, selected, onChange }: { client: ApiClient; 
           {picked && !e && <span className="subtext">No longer offered</span>}
         </label>
         {picked && (
-          <label className="check-row tool-pick__required">
-            <input type="checkbox" aria-label={`Required: ${name}`} checked={picked.required} onChange={(ev) => setRequired(picked, ev.target.checked)} />
-            Required
-          </label>
+          <>
+            <label className="check-row tool-pick__required">
+              <input type="checkbox" aria-label={`Required: ${name}`} checked={picked.required} onChange={(ev) => setRequired(picked, ev.target.checked)} />
+              Required
+            </label>
+            <label className="check-row tool-pick__required">
+              <input type="checkbox" aria-label={`Background: ${name}`} checked={asyncKeys.includes(k)} onChange={(ev) => setBackground(picked, ev.target.checked)} />
+              Runs in the background
+            </label>
+          </>
         )}
       </li>
     );
@@ -86,6 +110,12 @@ export function ToolPicker({ client, selected, onChange }: { client: ApiClient; 
 
   return (
     <div className="tool-picker">
+      {selected.length > 0 && (
+        <>
+          <p className="subtext">The model gets an immediate acknowledgement and is told the result when it arrives.</p>
+          <SettingHelp id="async_tools" />
+        </>
+      )}
       {servers.map((s, i) => {
         const q = details[i];
         const d = q?.data;
