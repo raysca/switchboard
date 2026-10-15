@@ -78,7 +78,7 @@ func TestSummarizeTextSkipsWhenBreakerOpen(t *testing.T) {
 	defer srv.Close()
 	br := resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Minute})
 	br.RecordFailure()
-	p, err := NewProcessor(Config{Endpoint: srv.URL + "/v1/responses", HTTPClient: srv.Client(), CircuitBreaker: br})
+	p, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: srv.URL + "/v1/responses", HTTPClient: srv.Client(), CircuitBreaker: br})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestSummarizeTextResponsesShapes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, tc.reply) }))
 			defer srv.Close()
-			p, err := NewProcessor(Config{Endpoint: srv.URL + "/v1/responses", HTTPClient: srv.Client()})
+			p, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: srv.URL + "/v1/responses", HTTPClient: srv.Client()})
 			if err != nil {
 				t.Fatal(err)
 			}

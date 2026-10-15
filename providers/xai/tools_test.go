@@ -38,14 +38,14 @@ func TestMapToolDefinitionsCopiesJSONSchemaAndMapsRequired(t *testing.T) {
 func TestNewProcessorRequiresLoopAndCopiesToolDefinitions(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`)
 	definitions := []core.ToolDefinition{{Name: "weather", InputSchema: schema}}
-	if _, err := NewProcessor(Config{ToolDefinitions: definitions}); err == nil {
+	if _, err := NewProcessor(Config{APIKey: "xai-test-key", ToolDefinitions: definitions}); err == nil {
 		t.Fatal("definitions without shared ToolLoop accepted")
 	}
 	loop, err := coretools.NewToolLoop(definitions, core.ToolExecutorFunc(func(context.Context, core.ToolCall) (core.ToolResult, error) { return core.ToolResult{}, nil }), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	proc, err := NewProcessor(Config{ToolDefinitions: definitions, ToolLoop: loop})
+	proc, err := NewProcessor(Config{APIKey: "xai-test-key", ToolDefinitions: definitions, ToolLoop: loop})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func runXAIToolStream(t *testing.T, wire string) ([]core.ToolCall, error) {
 		_, _ = fmt.Fprint(w, wire)
 	}))
 	defer srv.Close()
-	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: resilience.Policy{MaxAttempts: 1}})
+	proc, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: resilience.Policy{MaxAttempts: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ data: [DONE]
 		_, _ = fmt.Fprint(w, wire)
 	}))
 	defer srv.Close()
-	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: resilience.Policy{MaxAttempts: 1}})
+	proc, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: srv.URL, HTTPClient: srv.Client(), RetryPolicy: resilience.Policy{MaxAttempts: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestXAIResponsesToolLoopExecutesOnceAndContinues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proc, err := NewProcessor(Config{Endpoint: server.URL, Model: "grok-test", HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	proc, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: server.URL, Model: "grok-test", HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestXAIResponsesToolLoopCancellationDoesNotContinue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proc, _ := NewProcessor(Config{Endpoint: server.URL, HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	proc, _ := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: server.URL, HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
 	session := newMockSessionController(1, 1)
 	_ = proc.Attach(session, 0)
 	_ = proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "t", Gen: 1, Content: "x"}, core.Downstream, &mockEmitter{})
@@ -534,7 +534,7 @@ func TestXAIResponsesStaleGenerationDoesNotRunTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proc, _ := NewProcessor(Config{Endpoint: server.URL, HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	proc, _ := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: server.URL, HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
 	session := newMockSessionController(2, 1)
 	_ = proc.Attach(session, 0)
 	_ = proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "turn", Gen: 1, Content: "query"}, core.Downstream, &mockEmitter{})
@@ -563,7 +563,7 @@ func TestXAIProviderFencePreservesApplicationToolFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	proc, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: srv.URL, HTTPClient: srv.Client(), ToolDefinitions: defs, ToolLoop: loop})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +597,7 @@ func TestXAIProviderFenceStopsBatchWhenGenerationChangesDuringHandler(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	proc, err := NewProcessor(Config{Endpoint: srv.URL, HTTPClient: srv.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	proc, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: srv.URL, HTTPClient: srv.Client(), ToolDefinitions: defs, ToolLoop: loop})
 	if err != nil {
 		t.Fatal(err)
 	}

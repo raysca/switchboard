@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -332,5 +333,12 @@ func TestLLM_InterruptionCancellation(t *testing.T) {
 		// Active HTTP request was cancelled immediately
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("active xAI request was not cancelled on interruption")
+	}
+}
+
+func TestNewProcessorRequiresAnExplicitAPIKey(t *testing.T) {
+	t.Setenv("XAI_API_KEY", "xai-env-fake-key") // must not be used as a fallback
+	if _, err := NewProcessor(Config{}); !errors.Is(err, ErrMissingAPIKey) {
+		t.Fatalf("empty key: err = %v, want ErrMissingAPIKey", err)
 	}
 }
