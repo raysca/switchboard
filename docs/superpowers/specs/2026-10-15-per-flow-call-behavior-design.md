@@ -45,13 +45,13 @@ Only what a typical flow needs is visible; everything else is under the collapse
 
 Every new field in the quiet-caller and audio groups carries the same `?` button as the other obscure settings (spec of the mechanism: the UI plan's "Setting help"), with copy in the one `settingHelp.ts`: `idle.user_timeout_ms` (what "silence" means: the time since the agent stopped speaking, prompts every wait, the call ends one wait after the last ask; default 15 s), `idle.max_prompts`, `idle.prompt` and `idle.prompt_mode` (model-worded vs exactly as written, and that exact wording costs no model call), `idle.goodbye`, `audio.denoise` (what it removes: steady hum and hiss, not other voices; costs about 0.1% of one core per call; recordings keep the raw audio), `audio.output_gain_db` (positive values can clip), `audio.background` (named server sounds only; adds continuous audio traffic to every call), its gain and loop. The same guards apply (no unreferenced or missing entries).
 
-### Proven without the echo provider
+### Proven end to end on the echo providers
 
-Each option group has a browser e2e that runs against **real providers** as well as the free echo run (`GOVOICE_LIVE=1 make e2e-xai`, a few provider requests per spec; skipped with the suite's "No XAI_API_KEY" message when the key is absent, never silently green):
+Each option group has a browser e2e on the echo providers (`make e2e-echo`: free, deterministic, no credentials):
 
-- **Quiet caller:** a flow with `prompt_mode: "say"` (an exact prompt, spoken by the real TTS) and a short wait: after the silence the transcript shows the exact prompt text (the real model is not involved, so the assertion is deterministic), then the goodbye and the end of the call.
-- **Audio:** a call with `output_gain_db` and a server background sound connects, the real TTS audio reaches the client (frames with energy) and the client sees continuous traffic during a silence only when a background is set.
-- Behavior that depends on what a real model says is not asserted live; the live run proves the real server and providers accept and run a flow carrying every new key, and the exact behavior is pinned by the Go e2e on echo.
+- **Quiet caller:** a flow with `prompt_mode: "say"` (an exact prompt, spoken by the echo TTS) and a short wait: after the silence the transcript shows the exact prompt text (the model is not involved, so the assertion is deterministic), then the goodbye and the end of the call.
+- **Audio:** a call with `output_gain_db` and a server background sound connects, the echo TTS audio reaches the client (frames with energy) and the client sees continuous traffic during a silence only when a background is set.
+- Wording-dependent behavior is pinned by the Go e2e on echo; no live-provider run is required.
 
 ## Design
 
@@ -100,7 +100,6 @@ Two optional objects on the start step (call-level), both rejected on other step
 
 ### 6. Testing
 
-- **Live (real providers, `make e2e-xai`):** as in "Proven without the echo provider" above; the echo run keeps the same specs (timing shortened) plus the labelled-reply assertions.
 - **`server/flow` unit:** every range and byte limit (boundary values), control characters, wrong types, call-level only (rejected on a non-start step), flat form, config hash changes, missing keys read as nil.
 - **Server:** resolution order (flow overrides server; absent uses server) for idle and audio, unit-tested without a call; unknown background name rejected at publish and `not_ready` when removed; `allow_flow_background: false` rejects; the dtmf rule.
 - **Go e2e (echo, real WebSocket calls):** a flow with `idle.user_timeout_ms: 400, max_prompts: 1, prompt_mode: say` gets the exact prompt after the silence and then the goodbye and a hangup, while the same server with another flow gets neither; a flow with `output_gain_db` and a background sound produces audio frames with the expected extra traffic (the existing mixer tests' approach), and a flow without them produces none.
@@ -119,7 +118,7 @@ Two optional objects on the start step (call-level), both rejected on other step
 4. **Bot-idle stays server-wide:** it is an operational safety net, not a conversation choice.
 5. **Units:** milliseconds in flow config, seconds in the editor field (the editor converts).
 6. **Quiet-caller handling is on by default** (15 s, 2 asks, then end the call, with a spoken goodbye), in every profile, instead of off. Cost if wrong: an operator who relied on calls staying open through long silences must set `idle.user_timeout: 0` (server) or `idle.user_timeout_ms: 0` (flow). Nothing is deployed, so no existing behavior is broken.
-7. **Live e2e only for what is deterministic** with a real model (exact `say` prompt, audio energy, acceptance of the config); wording-dependent behavior stays in the echo Go e2e.
+7. **E2E on the echo providers only** (exact `say` prompt, audio energy, acceptance of the config); no live-provider run.
 
 ## Open points
 

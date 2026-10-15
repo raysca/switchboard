@@ -1,4 +1,4 @@
-# Flow Settings the Editor Is Missing (UI only) Implementation Plan — with defaults, a Basic/Advanced split and live e2e
+# Flow Settings the Editor Is Missing (UI only) Implementation Plan — with defaults, a Basic/Advanced split and echo-provider e2e
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -103,7 +103,7 @@ Obscure settings get an inline **explain this** affordance, not just a one-line 
 - Editor-only: no Go changes. If a rule the UI must mirror is not what the server enforces, the server wins and the mismatch is a ledger ruling.
 - A blank numeric/text field **removes the key**; the server default applies (the pattern of `vad_stop_ms`, `numberOrNothing`).
 - Call-level settings (`context`, `stt_p99_ms`, `async_tools`) are stored on the **start step** (`CALL_LEVEL` in `ui/src/routes/flows/editor/model.ts`); `toPayload` strips them from other steps.
-- **No echo dependence in the proof:** every new control has a browser e2e that runs against **real providers** (`E2E_PROVIDER=xai`, `make e2e-xai`, guarded by `GOVOICE_LIVE=1`, a few provider requests) as well as the free echo run; no `test.skip(LIVE)` unless the assertion needs a label only echo produces (and then a live-safe assertion replaces it, see Task 4).
+- **Echo-provider proof:** every new control has a browser e2e on the echo providers (`make e2e-echo`): deterministic, free, no credentials. The same specs stay free of echo-only assumptions where cheap, but no live run is required.
 - Only controls for settings the server accepts; no invented knobs. Every control has a visible label and a hint with the unit and the default; errors name the field. No shadows, tokens only (the design-rule test).
 
 ## Review Focus
@@ -201,16 +201,15 @@ Obscure settings get an inline **explain this** affordance, not just a one-line 
 
 ---
 
-### Task 4: The browser proves it (echo and real providers), docs, gate, review
+### Task 4: The browser proves it (echo providers), docs, gate, review
 
 **Files:**
 - Create: `e2e/tests-flows/36-flow-settings.spec.ts`
 - Modify: `docs/superpowers/specs/2026-10-12-switchboard-console-design.md` (the flow editor's settings list)
 
-- [ ] **Step 1: Write the spec so it runs in both modes** (no `test.skip(LIVE)`; flow-creation helpers already pick `PROVIDER`, `LLM_MODEL()` and `catalogDefault()`): create a flow through the API with `stage()`; open Flow settings, confirm `Advanced` is collapsed, open it, tick `Summarise older turns`, set `Summarise when history reaches` to 500 and `Max tokens` 1000, set `Wait for a late transcript` to 800; open the step's Advanced tab and tick the client-error failover class; tick `Runs in the background` on a tool chosen from a server connected by the spec (`/ok`, no call is made); publish; assert through `GET /flows` that the version config carries `context.summarization.trigger_tokens: 500`, `stt_p99_ms: 800` and `failover.on` with four classes; reopen (in-app) and see the controls show the stored values with `Advanced` already expanded; set a trigger above Max tokens and see Publish disabled with the reason. **Then place a call with these settings on the published flow** (`openFlowTest`, `startCall`, `sendText("Say hello")`) and expect any bot reply (`botReplies(page).first()` visible, a generous timeout in live mode): this proves a real server and real providers accept and run a flow carrying every new key. Do not assert reply wording in live mode (a real model writes it); in echo mode also assert the labelled reply.
-- [ ] **Step 1b: Run it live.** `GOVOICE_LIVE=1 make e2e-xai` (needs `XAI_API_KEY`; about 6 provider requests added to the suite's 20) — Expected: green; the spec is skipped with the suite's existing "No XAI_API_KEY" message when the key is absent, never silently passing.
+- [ ] **Step 1: Write the spec **: create a flow through the API with `stage()`; open Flow settings, confirm `Advanced` is collapsed, open it, tick `Summarise older turns`, set `Summarise when history reaches` to 500 and `Max tokens` 1000, set `Wait for a late transcript` to 800; open the step's Advanced tab and tick the client-error failover class; tick `Runs in the background` on a tool chosen from a server connected by the spec (`/ok`, no call is made); publish; assert through `GET /flows` that the version config carries `context.summarization.trigger_tokens: 500`, `stt_p99_ms: 800` and `failover.on` with four classes; reopen (in-app) and see the controls show the stored values with `Advanced` already expanded; set a trigger above Max tokens and see Publish disabled with the reason. **Then place a call with these settings on the published flow** (`openFlowTest`, `startCall`, `sendText("Say hello")`) and expect any bot reply (`botReplies(page).first()` visible and the labelled echo reply): this proves the server accepts and runs a flow carrying every new key.
 - [ ] **Step 2: Run** `make e2e-echo` — Expected: all green. Fix real failures in the code, not the spec.
 - [ ] **Step 2b: Switch the guard on.** In `settingHelp.test.ts` enable the "every entry is referenced by a control and every referenced id exists" check (it was table-only until now); in the e2e, open one `Explain …` panel (`Explain Wait for a late transcript`), see its `Default and range` text and close it with Escape.
-- [ ] **Step 3: Full gate.** `cd ui && npx vitest run && npx tsc --noEmit`; `make e2e-echo`; and, once, `GOVOICE_LIVE=1 make e2e-xai` — Expected: all green. (No Go change: the Go suites only need to still pass.)
+- [ ] **Step 3: Full gate.** `cd ui && npx vitest run && npx tsc --noEmit`; `make e2e-echo`; — Expected: all green. (No Go change: the Go suites only need to still pass.)
 - [ ] **Step 4: Independent review** (AGENTS.md): a fresh Opus reviewer on `main..HEAD` with the Review Focus items; it also checks bloat and dead code introduced by the branch.
 - [ ] **Step 5: Commit** `docs: the flow editor sets summarisation details, the late-transcript wait, background tools and the failover policy`.
