@@ -12,6 +12,8 @@ const FLOW_SETTINGS = [
   ["recording", "recording"],
   ["stt_p99_ms", "late-transcript wait"],
   ["async_tools", "background tools"],
+  ["idle", "silent-caller behavior"],
+  ["audio", "audio"],
 ] as const;
 
 /** Plain-language changes from the published version to the draft, for the publish dialog. */

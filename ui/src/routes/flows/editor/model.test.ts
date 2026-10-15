@@ -309,6 +309,31 @@ describe("what the server will accept", () => {
     expect(flowIssues(one({ stt_p99_ms: 0 }))).toEqual([]);
   });
 
+  it("mirrors the quiet-caller and audio limits", () => {
+    const bad = (cfg: Record<string, unknown>) => flowIssues(one(cfg));
+    for (const ms of [999, 300001, -1]) expect(bad({ idle: { user_timeout_ms: ms } })).toContain("Wait for a silent caller must be 1 to 300 seconds, or 0 to never hang up.");
+    for (const ms of [0, 1000, 300000]) expect(bad({ idle: { user_timeout_ms: ms } })).toEqual([]);
+    for (const n of [0, 11]) expect(bad({ idle: { max_prompts: n } })).toContain("Ask this many times must be 1 to 10.");
+    expect(bad({ idle: { max_prompts: 10 } })).toEqual([]);
+    expect(bad({ idle: { prompt: "x".repeat(201) } })).toContain("What to say is over 200 bytes.");
+    expect(bad({ idle: { prompt: "é".repeat(101) } })).toContain("What to say is over 200 bytes.");
+    expect(bad({ idle: { prompt: "x".repeat(200), goodbye: "x".repeat(200) } })).toEqual([]);
+    expect(bad({ idle: { goodbye: "x".repeat(201) } })).toContain("Goodbye is over 200 bytes.");
+    for (const g of [-30.1, 6.1]) expect(bad({ audio: { output_gain_db: g } })).toContain("Voice volume must be -30 to +6 dB.");
+    for (const g of [-30, 0, 6]) expect(bad({ audio: { output_gain_db: g } })).toEqual([]);
+    for (const s of [-0.1, 1.1]) expect(bad({ audio: { denoise: { strength: s } } })).toContain("Noise reduction strength must be 0 to 100%.");
+    expect(bad({ audio: { denoise: {}, background: { name: "office", gain_db: 0.1 } } })).toContain("Background volume must be -60 to 0 dB.");
+    expect(bad({ audio: { background: { name: "office", gain_db: -60 } } })).toEqual([]);
+  });
+
+  it("keeps idle and audio on the start step only", () => {
+    const g = one({ idle: { user_timeout_ms: 8000 }, audio: { output_gain_db: -3 } }, { idle: { user_timeout_ms: 5000 }, audio: { output_gain_db: 1 } });
+    const steps = (toPayload(g) as { steps: { id: string; config: Record<string, unknown> }[] }).steps;
+    expect(steps.find((n) => n.id === "a")!.config).toMatchObject({ idle: { user_timeout_ms: 8000 }, audio: { output_gain_db: -3 } });
+    expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("idle");
+    expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("audio");
+  });
+
   it("checks the summarisation details even while summarising is off", () => {
     const g = one({ context: { max_tokens: 800, summarization: { enabled: false, trigger_tokens: 900 } } });
     expect(flowIssues(g)).toContain("Summarise-at must be below Max tokens (800).");

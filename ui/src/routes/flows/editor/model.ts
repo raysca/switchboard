@@ -11,6 +11,9 @@ export const MAX_GREETING_BYTES = 500;
 export const MAX_SUMMARY_PROMPT_BYTES = 2048;
 export const STT_P99_RANGE = [100, 10000] as const;
 const DEFAULT_MAX_TOKENS = 4000;
+/** The server's limits for a flow's quiet-caller and audio settings (server/flow/call_behavior.go). */
+export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
+export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0], strength: [0, 1] } as const;
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
 
@@ -34,7 +37,7 @@ export type FlowDraft = {
 };
 
 // Settings that belong to the call, not to one step: only the start step has them.
-const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools"] as const;
+const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio"] as const;
 
 export function slug(name: string): string {
   return name
@@ -128,6 +131,7 @@ export function flowIssues(g: FlowDraft): string[] {
   const stt99 = start.config.stt_p99_ms;
   if (typeof stt99 === "number" && stt99 !== 0 && (stt99 < STT_P99_RANGE[0] || stt99 > STT_P99_RANGE[1]))
     out.push(`Late-transcript wait must be between ${STT_P99_RANGE[0]} and ${STT_P99_RANGE[1]} ms.`);
+  out.push(...callBehaviorIssues(start.config));
   const summary = asRecord(ctx.summarization);
   if (Object.keys(summary).length > 0) {
     const maxTokens = typeof ctx.max_tokens === "number" && ctx.max_tokens > 0 ? ctx.max_tokens : DEFAULT_MAX_TOKENS;
@@ -143,6 +147,23 @@ export function flowIssues(g: FlowDraft): string[] {
       if (provider && !SUMMARIZING.has(provider))
         out.push(`${nameIn(g, n.id)} uses ${provider}, which cannot summarise older turns. Turn summaries off or change its model.`);
     }
+  return out;
+}
+
+const outside = (v: unknown, [lo, hi]: readonly [number, number]) => typeof v === "number" && (v < lo || v > hi);
+
+function callBehaviorIssues(config: StepConfig): string[] {
+  const out: string[] = [];
+  const idle = asRecord(config.idle);
+  const t = idle.user_timeout_ms;
+  if (typeof t === "number" && t !== 0 && outside(t, IDLE_RANGE.timeoutMs)) out.push("Wait for a silent caller must be 1 to 300 seconds, or 0 to never hang up.");
+  if (outside(idle.max_prompts, IDLE_RANGE.prompts)) out.push("Ask this many times must be 1 to 10.");
+  if (typeof idle.prompt === "string" && byteLength(idle.prompt) > IDLE_RANGE.textBytes) out.push(`What to say is over ${IDLE_RANGE.textBytes} bytes.`);
+  if (typeof idle.goodbye === "string" && byteLength(idle.goodbye) > IDLE_RANGE.textBytes) out.push(`Goodbye is over ${IDLE_RANGE.textBytes} bytes.`);
+  const audio = asRecord(config.audio);
+  if (outside(audio.output_gain_db, AUDIO_RANGE.gain)) out.push("Voice volume must be -30 to +6 dB.");
+  if (outside(asRecord(audio.denoise).strength, AUDIO_RANGE.strength)) out.push("Noise reduction strength must be 0 to 100%.");
+  if (outside(asRecord(audio.background).gain_db, AUDIO_RANGE.backgroundGain)) out.push("Background volume must be -60 to 0 dB.");
   return out;
 }
 

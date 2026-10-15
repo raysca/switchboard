@@ -18,6 +18,12 @@ describe("describeChanges", () => {
     expect(describeChanges(base, base)).toEqual([]);
   });
 
+  it("names the quiet-caller and audio settings when they change", () => {
+    const start = base.start;
+    const g = updateStep(updateStep(base, start, { config: { ...base.steps[0].config, idle: { user_timeout_ms: 8000 } } }), start, { config: { ...base.steps[0].config, idle: { user_timeout_ms: 8000 }, audio: { output_gain_db: -3 } } });
+    expect(describeChanges(base, g)).toEqual(["Flow settings: silent-caller behavior changed", "Flow settings: audio changed"]);
+  });
+
   it("names step, model, voice, instruction and route changes", () => {
     let g = updateStep(base, "b", { name: "Accounts", config: { ...ready, llm: { ...ready.llm, model: "flash", system_prompt: "Bills." }, tts: { provider: "google", voice: "puck" } } });
     g = updateRoute(g, "e1", "asks about a bill");
