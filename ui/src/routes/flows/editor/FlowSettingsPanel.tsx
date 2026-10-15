@@ -1,6 +1,7 @@
 import type { ProviderStatus } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
+import { SettingHelp } from "./SettingHelp";
 import { flowIssues, updateStep, type FlowDraft, type StepConfig } from "./model";
 
 type Rec = Record<string, unknown>;
@@ -109,6 +110,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
             <p id="flow-vad-hint" className="subtext">
               200 to 2000. Shorter replies sooner; longer interrupts the caller less.
             </p>
+            <SettingHelp id="vad_stop_ms" />
           </fieldset>
           <fieldset className="stage-box">
             <legend>Memory</legend>
@@ -142,6 +144,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
                 />
               </label>
             </div>
+            <SettingHelp id="context.limits" />
             <label className="check-row" htmlFor="flow-summarise">
               <input
                 id="flow-summarise"
@@ -151,6 +154,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
               />
               <span>Summarise older turns</span>
             </label>
+            <SettingHelp id="summarization.enabled" />
           </fieldset>
           <fieldset className="stage-box">
             <legend>Recording</legend>
@@ -173,6 +177,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
               />
               <span>Callers are told the call is recorded</span>
             </label>
+            <SettingHelp id="recording" />
           </fieldset>
         </>
       )}
@@ -213,6 +218,7 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
               />
             </label>
           </div>
+          <SettingHelp id="route_cue" />
         </fieldset>
       )}
       {published && (

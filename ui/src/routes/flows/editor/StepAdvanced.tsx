@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { StageFields, type StageValue } from "../StageFields";
+import { SettingHelp } from "./SettingHelp";
 import { MAX_FALLBACKS, updateStep, type FlowDraft, type DraftStep } from "./model";
 
 type Fallback = { provider: string; model?: string; voice?: string };
@@ -26,6 +27,7 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
 
   return (
     <>
+      <SettingHelp id="fallbacks" />
       <FallbackList
         kind="llm"
         title="Model fallbacks"
@@ -66,6 +68,7 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
         <p id={`step-${step.id}-parallel-hint`} className="subtext">
           1 to 16. Higher is faster when one turn needs several lookups.
         </p>
+        <SettingHelp id="llm.max_parallel" />
         <label className="check-row" htmlFor={`step-${step.id}-clean`}>
           <input
             id={`step-${step.id}-clean`}
@@ -75,6 +78,7 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
           />
           <span>Clean text before speaking (strip markdown, links and emoji)</span>
         </label>
+        <SettingHelp id="tts.clean_text" />
       </fieldset>
     </>
   );

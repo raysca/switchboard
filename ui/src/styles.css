@@ -2746,3 +2746,25 @@ main:has(.mcp-page) {
 .key-bar .subtext {
   color: var(--paper);
 }
+
+/* Explain-this help under an obscure setting */
+.setting-help {
+  margin: 0 0 12px;
+}
+.setting-help__panel {
+  margin-top: 6px;
+  padding: 2px 0 2px 16px;
+  border-left: 3px solid var(--rule);
+  max-width: 72ch;
+  color: var(--ink-2);
+  font-size: 0.85rem;
+}
+.setting-help__panel dl,
+.setting-help__panel dd {
+  margin: 0;
+}
+.setting-help__panel dt {
+  font-weight: 600;
+  color: var(--ink);
+  margin-top: 6px;
+}

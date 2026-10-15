@@ -131,4 +131,20 @@ describe("FlowSettingsPanel footer", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Done" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
+
+  it("explains the obscure settings with a button beside each, without renaming the fields", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    expect(screen.getByLabelText("Wait after the caller stops (ms)")).toBeInTheDocument();
+    for (const name of ["Wait after the caller stops", "Memory limits", "Summarise older turns", "Recording"]) {
+      expect(screen.getByRole("button", { name: `Explain ${name}`, expanded: false })).toBeInTheDocument();
+    }
+    await user.click(screen.getByRole("button", { name: "Explain Memory limits" }));
+    expect(screen.getByRole("region", { name: "Explain Memory limits" })).toHaveTextContent("20 messages and 4000 tokens");
+  });
+
+  it("explains the route sound once a route exists", () => {
+    render(<Harness />);
+    expect(screen.getByRole("button", { name: "Explain Route sound" })).toBeInTheDocument();
+  });
 });

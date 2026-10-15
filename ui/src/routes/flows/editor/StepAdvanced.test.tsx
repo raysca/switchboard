@@ -79,4 +79,14 @@ describe("StepAdvanced", () => {
     await user.click(box);
     expect(last(onChange).tts).not.toHaveProperty("clean_text");
   });
+
+  it("explains the obscure settings and leaves the field names alone", async () => {
+    const user = userEvent.setup();
+    render(<Harness onChange={vi.fn()} />);
+    expect(screen.getByLabelText("Tool calls at once")).toBeInTheDocument();
+    for (const name of ["Fallbacks", "Tool calls at once", "Text cleaning"]) {
+      await user.click(screen.getByRole("button", { name: `Explain ${name}` }));
+    }
+    expect(screen.getByRole("region", { name: "Explain Tool calls at once" })).toHaveTextContent("1 to 16");
+  });
 });

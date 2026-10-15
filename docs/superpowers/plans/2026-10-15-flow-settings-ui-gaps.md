@@ -39,7 +39,7 @@ Obscure settings get an inline **explain this** affordance, not just a one-line 
 - A small `?` button after the field label (`aria-label="Explain <label>"`, `aria-expanded`, `aria-controls`) toggles a short panel under the field. It is a button, not a hover tooltip, so it works with a keyboard, a screen reader and touch; `Escape` closes it and returns focus to the button. Only one panel per field; panels are independent (several can be open).
 - A panel has up to four parts, in this order: **What it does** (one or two plain sentences), **When to change it**, **Default and range** (always present, with the unit), and, for risky settings, **Careful** (the cost or trap). No jargon without a gloss, no marketing words.
 - The one-line hint under a field (placeholders, "Empty: …") stays: it states the default at a glance; the panel explains.
-- **One source of truth:** `ui/src/routes/flows/editor/settingHelp.ts` exports `SETTING_HELP: Record<SettingId, { what: string; when?: string; defaults: string; careful?: string }>` and a `<SettingHelp id={...} />` component. Controls reference an id; no copy is written inside JSX.
+- **One source of truth:** `ui/src/routes/flows/editor/settingCopy.ts` exports `SETTING_HELP: Record<SettingId, { what: string; when?: string; defaults: string; careful?: string }>` and a `<SettingHelp id={...} />` component. Controls reference an id; no copy is written inside JSX.
 - Guards: a test fails if a `SettingId` has no entry, if an entry is never referenced by a control (dead copy), or if an entry lacks `what` or `defaults`; another asserts no panel is open on first render and that every `SettingHelp` renders a labelled button.
 - Applies to every Flow settings, step Advanced and tool picker control in this plan **and** to the older obscure ones (wait after the caller stops, memory limits, route sound, tool calls at once, clean text, fallbacks, recording disclosure); the per-flow call-behavior spec adds its fields to the same file.
 
@@ -67,18 +67,18 @@ Obscure settings get an inline **explain this** affordance, not just a one-line 
 ### Task 0b: The setting-help component and its guards
 
 **Files:**
-- Create: `ui/src/routes/flows/editor/settingHelp.ts`, `ui/src/routes/flows/editor/SettingHelp.tsx`
+- Create: `ui/src/routes/flows/editor/settingCopy.ts`, `ui/src/routes/flows/editor/SettingHelp.tsx`
 - Modify: `ui/src/styles.css` (a few tokenised rules: no shadows)
-- Test: `ui/src/routes/flows/editor/SettingHelp.test.tsx`, `settingHelp.test.ts`
+- Test: `ui/src/routes/flows/editor/SettingHelp.test.tsx`, `settingCopy.test.ts`
 
 **Interfaces:**
 - Produces: `type SettingId` (a string union of every id in the copy table, extended by later tasks), `SETTING_HELP`, `export function SettingHelp({ id }: { id: SettingId }): JSX.Element`.
 
 - [ ] **Step 1: Write the failing tests.**
   - `SettingHelp.test.tsx`: renders a button named `Explain <label>` (the label comes from the entry's `label`), closed with `aria-expanded="false"`; click or Enter/Space opens a region (`role="region"`, labelled by the button) showing the parts present (`What it does`, `When to change it`, `Default and range`, `Careful` only when the entry has it); `Escape` closes it and focuses the button; a second click closes it; two instances open independently; nothing is open on first render.
-  - `settingHelp.test.ts`: every key of the copy table above exists; every entry has `what` and `defaults`; no entry text is empty or contains `TODO`; the exported ids equal the ids referenced by the controls (scan the `ui/src/routes/flows` sources for `<SettingHelp id="…"`) — an unreferenced entry or an unknown id fails.
-- [ ] **Step 2: Run to see them fail.** `cd ui && npx vitest run src/routes/flows/editor/SettingHelp.test.tsx src/routes/flows/editor/settingHelp.test.ts` — Expected: FAIL.
-- [ ] **Step 3: Implement.** `settingHelp.ts` holds the table above (every cell as a string; `label` added per entry); `SettingHelp.tsx` is a `useId`/`useState` button + region, Escape handled on the region and the button; styles reuse `--rule`, `--ink-2`, the existing `.note` shape.
+  - `settingCopy.test.ts`: every key of the copy table above exists; every entry has `what` and `defaults`; no entry text is empty or contains `TODO`; the exported ids equal the ids referenced by the controls (scan the `ui/src/routes/flows` sources for `<SettingHelp id="…"`) — an unreferenced entry or an unknown id fails.
+- [ ] **Step 2: Run to see them fail.** `cd ui && npx vitest run src/routes/flows/editor/SettingHelp.test.tsx src/routes/flows/editor/settingCopy.test.ts` — Expected: FAIL.
+- [ ] **Step 3: Implement.** `settingCopy.ts` holds the table above (every cell as a string; `label` added per entry); `SettingHelp.tsx` is a `useId`/`useState` button + region, Escape handled on the region and the button; styles reuse `--rule`, `--ink-2`, the existing `.note` shape.
 - [ ] **Step 4: Run to see them pass.** `cd ui && npx vitest run && npx tsc --noEmit` — Expected: PASS (the "referenced by a control" check is pending until Task 1–3 wire the controls: until then it asserts the **table** only; the reference check is switched on in Task 4 Step 3 and listed there).
 - [ ] **Step 5: Commit** `feat(ui): an explain-this button for obscure settings, with one source of copy`.
 
@@ -209,7 +209,7 @@ Obscure settings get an inline **explain this** affordance, not just a one-line 
 
 - [ ] **Step 1: Write the spec **: create a flow through the API with `stage()`; open Flow settings, confirm `Advanced` is collapsed, open it, tick `Summarise older turns`, set `Summarise when history reaches` to 500 and `Max tokens` 1000, set `Wait for a late transcript` to 800; open the step's Advanced tab and tick the client-error failover class; tick `Runs in the background` on a tool chosen from a server connected by the spec (`/ok`, no call is made); publish; assert through `GET /flows` that the version config carries `context.summarization.trigger_tokens: 500`, `stt_p99_ms: 800` and `failover.on` with four classes; reopen (in-app) and see the controls show the stored values with `Advanced` already expanded; set a trigger above Max tokens and see Publish disabled with the reason. **Then place a call with these settings on the published flow** (`openFlowTest`, `startCall`, `sendText("Say hello")`) and expect any bot reply (`botReplies(page).first()` visible and the labelled echo reply): this proves the server accepts and runs a flow carrying every new key.
 - [ ] **Step 2: Run** `make e2e-echo` — Expected: all green. Fix real failures in the code, not the spec.
-- [ ] **Step 2b: Switch the guard on.** In `settingHelp.test.ts` enable the "every entry is referenced by a control and every referenced id exists" check (it was table-only until now); in the e2e, open one `Explain …` panel (`Explain Wait for a late transcript`), see its `Default and range` text and close it with Escape.
+- [ ] **Step 2b: Switch the guard on.** In `settingCopy.test.ts` enable the "every entry is referenced by a control and every referenced id exists" check (it was table-only until now); in the e2e, open one `Explain …` panel (`Explain Wait for a late transcript`), see its `Default and range` text and close it with Escape.
 - [ ] **Step 3: Full gate.** `cd ui && npx vitest run && npx tsc --noEmit`; `make e2e-echo`; — Expected: all green. (No Go change: the Go suites only need to still pass.)
 - [ ] **Step 4: Independent review** (AGENTS.md): a fresh Opus reviewer on `main..HEAD` with the Review Focus items; it also checks bloat and dead code introduced by the branch.
 - [ ] **Step 5: Commit** `docs: the flow editor sets summarisation details, the late-transcript wait, background tools and the failover policy`.
