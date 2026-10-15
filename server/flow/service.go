@@ -404,22 +404,11 @@ func (s *Service) SetMCPTools(ctx context.Context, id string, tools []ToolSelect
 	if err != nil {
 		return Version{}, err
 	}
-	selected, err := toStorageSelections(tools)
+	updated, err := s.Update(ctx, id, UpdateRequest{Config: current.ConfigJSON, MCPTools: &tools})
 	if err != nil {
 		return Version{}, err
 	}
-	g, err := Decode(current.ConfigJSON)
-	if err != nil {
-		return Version{}, err
-	}
-	if err := checkStepTools(g, tools); err != nil {
-		return Version{}, err
-	}
-	version, err := s.store.Flows().PublishVersion(ctx, id, current.Version+1, current.ConfigJSON, selected)
-	if err != nil {
-		return Version{}, err
-	}
-	return toVersionWithTools(version, selected), nil
+	return *updated.Version, nil
 }
 
 func (s *Service) fromRow(ctx context.Context, row storage.Flow) (Flow, error) {

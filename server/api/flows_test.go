@@ -59,54 +59,6 @@ func TestFlowManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 
 }
 
-func TestFlowMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
-	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/api-mcp.db"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	server := storage.MCPServer{ID: storage.NewID(), Name: "orders", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
-	if err := store.MCP().CreateServer(context.Background(), server); err != nil {
-		t.Fatal(err)
-	}
-	discovery, err := store.MCP().AddDiscovery(context.Background(), server.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object"}`)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := flow.NewService(store, allAvailable{})
-	created, err := service.Create(context.Background(), flow.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := `{"tools":[{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `","required":true}]}`
-	r := httptest.NewRequest(http.MethodPut, "/api/v1/flows/"+created.ID+"/mcp-tools", strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	NewFlowsHandler(service).ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"number":2`) || !strings.Contains(w.Body.String(), discovery.Tools[0].SchemaHash) {
-		t.Fatalf("selection response=%d %s", w.Code, w.Body.String())
-	}
-	current, err := service.Get(context.Background(), created.ID)
-	if err != nil || len(current.Version.MCPTools) != 1 || !current.Version.MCPTools[0].Required {
-		t.Fatalf("current flow=%+v err=%v", current, err)
-	}
-
-	// Bad selections are the caller's mistake (400), never "flow not found" or 500.
-	for name, sel := range map[string]string{
-		"unknown server": `{"mcp_server_id":"` + storage.NewID() + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
-		"unknown tool":   `{"mcp_server_id":"` + server.ID + `","remote_name":"nope","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
-		"stale schema":   `{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"stale"}`,
-	} {
-		r := httptest.NewRequest(http.MethodPut, "/api/v1/flows/"+created.ID+"/mcp-tools", strings.NewReader(`{"tools":[`+sel+`]}`))
-		r.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		NewFlowsHandler(service).ServeHTTP(w, r)
-		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_tool_selection") {
-			t.Fatalf("%s: status=%d body=%s, want 400 invalid_tool_selection", name, w.Code, w.Body)
-		}
-	}
-}
-
 func TestFlowManagementRejectsUnknownInputAndMissingFlow(t *testing.T) {
 	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "flow-api.db")})
 	if err != nil {

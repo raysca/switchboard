@@ -18,7 +18,8 @@ export function DriftPanel({ client, tool, schema, items }: { client: ApiClient;
     mutationFn: (d: Drift) => {
       const { selection } = repin(d.flow);
       if (!selection) throw new Error("The server's current schema is unknown, so there is nothing to accept.");
-      return client.setFlowMCPTools(d.flow.id, selection);
+      // One publish carries the unchanged config and the re-pinned tools.
+      return client.updateFlow(d.flow.id, { config: d.flow.current_version?.config ?? {}, mcp_tools: selection });
     },
     onSuccess: () => {
       setAccepting(null);

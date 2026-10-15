@@ -50,15 +50,12 @@ func TestRepositoryFlowVersionImmutabilityAndHistorySafety(t *testing.T) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`), nil)
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"b":2,"a":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if v.ConfigHash != "43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777" {
 		t.Fatalf("hash %s", v.ConfigHash)
-	}
-	if _, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"a":2}`), nil); err == nil {
-		t.Fatal("duplicate version accepted")
 	}
 	got, err := s.Flows().Current(ctx, a.ID)
 	if err != nil || got.CurrentVersionID != v.ID {
@@ -93,7 +90,7 @@ func TestSessionAdmissionRejectsDisabledOrArchivedFlow(t *testing.T) {
 			if err := s.Flows().Create(ctx, a); err != nil {
 				t.Fatal(err)
 			}
-			v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+			v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -120,7 +117,7 @@ func TestSessionEndRetriesPendingDeleteFinalization(t *testing.T) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,19 +146,13 @@ func TestRepositoryFlowVersionsAreMonotonicAndFlowListUpdateWork(t *testing.T) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Flows().PublishVersion(ctx, a.ID, 2, []byte(`{}`), nil); err == nil {
-		t.Fatal("first version may not skip version 1")
-	}
-	v1, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
+	v1, err := publishTestVersion(ctx, s, a.ID, []byte(`{"x":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	v2, err := s.Flows().PublishVersion(ctx, a.ID, 2, []byte(`{"x":2}`), nil)
+	v2, err := publishTestVersion(ctx, s, a.ID, []byte(`{"x":2}`), nil)
 	if err != nil || v2.Version != v1.Version+1 {
 		t.Fatalf("second version=%+v err=%v", v2, err)
-	}
-	if _, err := s.Flows().PublishVersion(ctx, a.ID, 4, []byte(`{}`), nil); err == nil {
-		t.Fatal("version may not skip a number")
 	}
 	name, desc := "after", "updated"
 	if _, _, err := s.Flows().MutateAndPublish(ctx, a.ID, FlowMutation{Name: &name, Description: &desc}, nil); err != nil {
@@ -415,7 +406,7 @@ func TestRepositoryRejectsInvalidDurableIDs(t *testing.T) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +487,7 @@ func TestRepositoryConfigHashRoundTrip(t *testing.T) {
 		if err := s.Flows().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"z":1e1000,"text":"\u0000","a":1e2}`), nil)
+		v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"z":1e1000,"text":"\u0000","a":1e2}`), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -548,7 +539,7 @@ func TestRepositoryPostgresIntegration(t *testing.T) {
 	if err := s.Flows().Create(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(context.Background(), a.ID, 1, []byte(`{"a":1}`), nil)
+	v, err := publishTestVersion(context.Background(), s, a.ID, []byte(`{"a":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -711,7 +702,7 @@ func TestRepositoryMCPAndHistory(t *testing.T) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"x":1}`), nil)
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"x":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,7 +718,7 @@ func TestRepositoryMCPAndHistory(t *testing.T) {
 	if err != nil || len(gotD.Tools) != 2 || gotD.Tools[0].RemoteName != "a" {
 		t.Fatalf("discovery=%+v err=%v", gotD, err)
 	}
-	v, err = s.Flows().PublishVersion(ctx, a.ID, 2, []byte(`{"x":2}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash, Required: true}})
+	v, err = publishTestVersion(ctx, s, a.ID, []byte(`{"x":2}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash, Required: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +742,7 @@ func TestRepositoryMCPAndHistory(t *testing.T) {
 	if _, err := s.DB().Exec("DELETE FROM mcp_servers WHERE id=?", m.ID); err == nil {
 		t.Fatal("live MCP reference deleted")
 	}
-	if _, err := s.Flows().PublishVersion(ctx, a.ID, 3, []byte(`{"x":3}`), nil); err != nil {
+	if _, err := publishTestVersion(ctx, s, a.ID, []byte(`{"x":3}`), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Sessions().End(ctx, sess.ID, EndCallerHungUp); err != nil {
@@ -787,7 +778,7 @@ func TestMCPDisableAndDeleteRespectCurrentAndActiveVersionReferences(t *testing.
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}})
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -846,7 +837,7 @@ func TestConcurrentSessionCloseAndMCPDeleteAlwaysDrainsSafely(t *testing.T) {
 		if err := s.Flows().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "tool", SchemaHash: d.Tools[0].SchemaHash, Required: true}})
+		v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "tool", SchemaHash: d.Tools[0].SchemaHash, Required: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -910,7 +901,7 @@ func TestRepositoryPublishRejectsUnknownToolAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, selection := range []SelectedTool{{ServerID: m.ID, RemoteName: "missing", SchemaHash: d.Tools[0].SchemaHash}, {ServerID: m.ID, RemoteName: "known", SchemaHash: "bad"}, {ServerID: NewID(), RemoteName: "known", SchemaHash: d.Tools[0].SchemaHash}} {
-		if _, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), []SelectedTool{selection}); err == nil {
+		if _, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), []SelectedTool{selection}); err == nil {
 			t.Fatalf("accepted selection %+v", selection)
 		}
 	}
@@ -935,7 +926,7 @@ func TestRepositoryProvenanceAndPointers(t *testing.T) {
 	if err := s.Flows().Create(ctx, b); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1008,12 +999,9 @@ func TestRepositoryContract(t *testing.T) {
 			if err != nil || len(gotD.Tools) != 2 || gotD.Tools[0].RemoteName != "a" || string(gotD.Tools[0].SchemaJSON) != `{"n":1e2}` {
 				t.Fatalf("discovery=%+v err=%v", gotD, err)
 			}
-			v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash}})
+			v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"b":2,"a":1}`), []SelectedTool{{ServerID: m.ID, RemoteName: "a", SchemaHash: gotD.Tools[0].SchemaHash}})
 			if err != nil {
 				t.Fatal(err)
-			}
-			if _, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil); err == nil {
-				t.Fatal("duplicate version")
 			}
 			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE flow_versions SET config_hash=? WHERE id=?"), "bad", v.ID); err == nil {
 				t.Fatal("immutable version changed")
@@ -1068,7 +1056,7 @@ func TestRepositoryContract(t *testing.T) {
 			if _, err := s.DB().ExecContext(ctx, s.bind("DELETE FROM mcp_servers WHERE id=?"), m.ID); err == nil {
 				t.Fatal("current MCP deleted")
 			}
-			v2, err := s.Flows().PublishVersion(ctx, a.ID, 2, []byte(`{}`), nil)
+			v2, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1146,4 +1134,10 @@ func TestOpenRefusesPreEnvironmentCredentialsDatabase(t *testing.T) {
 	if _, err := Open(context.Background(), Config{Dialect: SQLite, DSN: dsn}); !errors.Is(err, ErrPreEnvironmentCredentials) {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
+func publishTestVersion(ctx context.Context, s *Store, flowID string, config []byte, tools []SelectedTool) (FlowVersion, error) {
+	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, FlowMutation{Tools: &tools}, config)
+	return v, err
 }

@@ -37,7 +37,7 @@ func createTestSession(t *testing.T, s *storage.Store) string {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, flowID, 1, []byte(`{"llm":"test"}`), nil)
+	v, err := publishTestVersion(ctx, s, flowID, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,4 +462,10 @@ func stringContains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
+func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
+	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+	return v, err
 }

@@ -40,7 +40,7 @@ func newToolRig(t *testing.T, s *Store) *toolRig {
 		t.Fatal(err)
 	}
 	cfg := []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)
-	if _, err := s.Flows().PublishVersion(ctx, f.ID, 1, cfg, nil); err != nil {
+	if _, err := publishTestVersion(ctx, s, f.ID, cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 	return &toolRig{s: s, flowID: f.ID, server: m, hashes: hashes, config: cfg, version: 1}

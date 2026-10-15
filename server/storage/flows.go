@@ -13,7 +13,7 @@ type FlowMutation struct {
 	Description *string
 	Enabled     *bool
 	// Tools nil keeps the current version's MCP tool selection; non-nil (even empty) replaces it,
-	// is validated like PublishVersion's, and clears mcp_review_required (choosing again is the review).
+	// is validated like a publish, and clears mcp_review_required (choosing again is the review).
 	Tools *[]SelectedTool
 }
 

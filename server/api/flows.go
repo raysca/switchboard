@@ -19,7 +19,6 @@ type FlowService interface {
 	Update(context.Context, string, flow.UpdateRequest) (flow.Flow, error)
 	Archive(context.Context, string) error
 	Duplicate(context.Context, string, string) (flow.Flow, error)
-	SetMCPTools(context.Context, string, []flow.ToolSelection) (flow.Version, error)
 }
 
 // NewFlowsHandler constructs the authenticated management route handler for
@@ -67,31 +66,7 @@ func (h flowsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.duplicate(w, r, parts[0], requestID)
 		return
 	}
-	if len(parts) == 2 && parts[1] == "mcp-tools" {
-		h.mcpTools(w, r, parts[0], requestID)
-		return
-	}
 	WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)
-}
-
-func (h flowsHandler) mcpTools(w http.ResponseWriter, r *http.Request, id, requestID string) {
-	if r.Method != http.MethodPut {
-		flowMethodNotAllowed(w, requestID, "PUT")
-		return
-	}
-	var req struct {
-		Tools []flow.ToolSelection `json:"tools"`
-	}
-	if err := DecodeJSON(r, &req); err != nil {
-		WriteError(w, 400, "invalid_request", err.Error(), requestID)
-		return
-	}
-	version, err := h.service.SetMCPTools(r.Context(), id, req.Tools)
-	if err != nil {
-		h.writeServiceError(w, err, requestID)
-		return
-	}
-	WriteJSON(w, 200, SuccessResponse[flow.Version]{Data: version})
 }
 
 func (h flowsHandler) collection(w http.ResponseWriter, r *http.Request, requestID string) {
@@ -181,10 +156,6 @@ func flowMethodNotAllowed(w http.ResponseWriter, requestID, allow string) {
 func (h flowsHandler) writeServiceError(w http.ResponseWriter, err error, requestID string) {
 	if errors.Is(err, storage.ErrInvalidToolSelection) {
 		WriteError(w, http.StatusBadRequest, "invalid_tool_selection", err.Error(), requestID)
-		return
-	}
-	if errors.Is(err, storage.ErrVersionConflict) {
-		WriteError(w, http.StatusConflict, "version_conflict", "the flow changed concurrently; retry", requestID)
 		return
 	}
 	if errors.Is(err, sql.ErrNoRows) {

@@ -169,7 +169,17 @@ func (s *server) attachTool(fl, url string) error {
 	}
 	for _, t := range detail.Discovery.Tools {
 		if t.RemoteName == toolName {
-			_, err = s.call("PUT", "flows/"+fl+"/mcp-tools", map[string]any{"tools": []map[string]any{
+			cur, err := s.call("GET", "flows/"+fl, nil)
+			if err != nil {
+				return err
+			}
+			var flow struct {
+				CurrentVersion struct{ Config json.RawMessage } `json:"current_version"`
+			}
+			if err := json.Unmarshal(cur, &flow); err != nil {
+				return err
+			}
+			_, err = s.call("PUT", "flows/"+fl, map[string]any{"config": flow.CurrentVersion.Config, "mcp_tools": []map[string]any{
 				{"mcp_server_id": srv, "remote_name": toolName, "schema_hash": t.SchemaHash, "required": true}}})
 			return err
 		}

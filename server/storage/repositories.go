@@ -48,12 +48,8 @@ func (r FlowRepository) SelectedTools(ctx context.Context, versionID string) ([]
 }
 
 // ErrInvalidToolSelection: a selected MCP tool's server is missing, disabled or
-// undiscovered, or the tool or its schema changed. ErrVersionConflict: another
-// writer published the version first.
-var (
-	ErrInvalidToolSelection = errors.New("invalid MCP tool selection")
-	ErrVersionConflict      = errors.New("flow version conflict")
-)
+// undiscovered, or the tool or its schema changed.
+var ErrInvalidToolSelection = errors.New("invalid MCP tool selection")
 
 func (s *Store) Flows() FlowRepository { return FlowRepository{s} }
 func (r FlowRepository) Create(ctx context.Context, a Flow) error {
@@ -114,69 +110,6 @@ func (r FlowRepository) ValidateSelections(ctx context.Context, selections []Sel
 	return r.s.validateSelections(ctx, r.s.db, selections)
 }
 
-func (r FlowRepository) PublishVersion(ctx context.Context, flowID string, version int, config []byte, selections []SelectedTool) (FlowVersion, error) {
-	var out FlowVersion
-	if err := validID(flowID); err != nil {
-		return out, err
-	}
-	if version < 1 {
-		return out, errors.New("version must be positive")
-	}
-	hash, canonical, err := ConfigHash(config)
-	if err != nil {
-		return out, err
-	}
-	out = FlowVersion{ID: NewID(), FlowID: flowID, Version: version, SchemaVersion: 1, ConfigJSON: canonical, ConfigHash: hash, CreatedAt: time.Now().UTC()}
-	err = r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		// Serialize version allocation per flow. Version numbers are contiguous
-		// and never change once published, including under concurrent writers.
-		lockFlow := "SELECT archived FROM flows WHERE id=?"
-		if r.s.dialect == Postgres {
-			lockFlow += " FOR UPDATE"
-		}
-		var archived bool
-		if err := tx.QueryRowContext(ctx, r.s.bind(lockFlow), flowID).Scan(&archived); err != nil {
-			return err
-		}
-		if archived {
-			return errors.New("flow unavailable")
-		}
-		var latest int
-		if err := tx.QueryRowContext(ctx, r.s.bind("SELECT COALESCE(MAX(version),0) FROM flow_versions WHERE flow_id=?"), flowID).Scan(&latest); err != nil {
-			return err
-		}
-		if version != latest+1 {
-			return fmt.Errorf("%w: version %d is not next after %d", ErrVersionConflict, version, latest)
-		}
-		// The same transaction validates every selected schema and publishes the version.
-		// SQLite begins IMMEDIATE; PostgreSQL row locks block refresh or delete races.
-		if err := r.s.validateSelections(ctx, tx, selections); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO flow_versions(id,flow_id,version,schema_version,config_json,config_hash,created_at) VALUES(?,?,?,?,?,?,?)"), out.ID, flowID, version, out.SchemaVersion, string(canonical), hash, utc(out.CreatedAt))
-		if err != nil {
-			return err
-		}
-		for _, sel := range selections {
-			if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO flow_mcp_tools(flow_version_id,mcp_server_id,remote_name,schema_hash,required) VALUES(?,?,?,?,?)"), out.ID, sel.ServerID, sel.RemoteName, sel.SchemaHash, boolValue(r.s.dialect, sel.Required)); err != nil {
-				return err
-			}
-		}
-		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE flows SET current_version_id=?,updated_at=? WHERE id=? AND archived=?"), out.ID, utc(time.Now()), flowID, boolValue(r.s.dialect, false))
-		if err != nil {
-			return err
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return errors.New("flow unavailable")
-		}
-		return nil
-	})
-	return out, err
-}
 func (r FlowRepository) Current(ctx context.Context, id string) (Flow, error) {
 	var a Flow
 	var created, updated string
@@ -439,7 +372,7 @@ func (r MCPRepository) DeleteServer(ctx context.Context, id string) error {
 				return err
 			}
 		}
-		current, active, err := mcpReferenceCounts(ctx, tx, r.s, id)
+		current, active, err := countMCPReferences(ctx, tx, r.s, id)
 		if err != nil {
 			return err
 		}
@@ -551,7 +484,7 @@ func (r MCPRepository) DetachAndDelete(ctx context.Context, id string) error {
 		if _, err := tx.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET enabled=?,validation_state='disabled',pending_delete=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, false), boolValue(r.s.dialect, true), utc(time.Now()), id); err != nil {
 			return err
 		}
-		_, active, err := mcpReferenceCounts(ctx, tx, r.s, id)
+		_, active, err := countMCPReferences(ctx, tx, r.s, id)
 		if err != nil {
 			return err
 		}
@@ -592,7 +525,7 @@ func (r MCPRepository) FinalizePendingDeletes(ctx context.Context) error {
 	}
 	rows.Close()
 	for _, id := range ids {
-		current, active, err := countMCPReferences(ctx, r.s, id)
+		current, active, err := countMCPReferences(ctx, r.s.db, r.s, id)
 		if err != nil {
 			return err
 		}
@@ -605,22 +538,14 @@ func (r MCPRepository) FinalizePendingDeletes(ctx context.Context) error {
 	return nil
 }
 
-func countMCPReferences(ctx context.Context, s *Store, id string) (int, int, error) {
+// countMCPReferences counts the flows whose current version and the live sessions that use an MCP server.
+func countMCPReferences(ctx context.Context, q queryer, s *Store, id string) (int, int, error) {
 	var current, active int
-	err := s.db.QueryRowContext(ctx, s.bind("SELECT count(*) FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
+	err := q.QueryRowContext(ctx, s.bind("SELECT count(*) FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
 	if err != nil {
 		return 0, 0, err
 	}
-	err = s.db.QueryRowContext(ctx, s.bind("SELECT count(*) FROM sessions s JOIN session_mcp_tools t ON t.session_id=s.id WHERE t.mcp_server_id=? AND s.status IN ('active','draining')"), id).Scan(&active)
-	return current, active, err
-}
-func mcpReferenceCounts(ctx context.Context, tx *sql.Tx, s *Store, id string) (int, int, error) {
-	var current, active int
-	err := tx.QueryRowContext(ctx, s.bind("SELECT count(*) FROM flows a JOIN flow_mcp_tools t ON t.flow_version_id=a.current_version_id WHERE t.mcp_server_id=?"), id).Scan(&current)
-	if err != nil {
-		return 0, 0, err
-	}
-	err = tx.QueryRowContext(ctx, s.bind("SELECT count(*) FROM sessions s JOIN session_mcp_tools t ON t.session_id=s.id WHERE t.mcp_server_id=? AND s.status IN ('active','draining')"), id).Scan(&active)
+	err = q.QueryRowContext(ctx, s.bind("SELECT count(*) FROM sessions s JOIN session_mcp_tools t ON t.session_id=s.id WHERE t.mcp_server_id=? AND s.status IN ('active','draining')"), id).Scan(&active)
 	return current, active, err
 }
 
