@@ -16,6 +16,7 @@ import (
 var errBoom = errors.New("503 upstream")
 
 type failoverRig struct {
+	w        *core.LLMFailover
 	sess     *core.Session
 	rec      *coretest.PassthroughProcessor
 	events   chan core.DebugEvent
@@ -44,6 +45,7 @@ func newFailoverRig(t *testing.T, cfg core.LLMFailoverConfig) *failoverRig {
 	if err != nil {
 		t.Fatal(err)
 	}
+	r.w = w
 	pipe, err := core.NewPipeline(w, r.rec)
 	if err != nil {
 		t.Fatal(err)
@@ -413,5 +415,22 @@ func TestBargeInBeforeDeadlineStopsWatchdog(t *testing.T) {
 	time.Sleep(120 * time.Millisecond)
 	if backup.Started.Load() != 0 {
 		t.Fatal("watchdog failed over an interrupted generation")
+	}
+}
+
+func TestCloseStopsFirstTokenWatchdog(t *testing.T) {
+	primary, backup := newSilent(), fake([]string{"x"}, 0, nil)
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}},
+		FirstTokenTimeout: 40 * time.Millisecond,
+	})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { return primary.started.Load() == 1 })
+	if err := r.w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	if backup.Started.Load() != 0 {
+		t.Fatal("watchdog started a fallback after Close")
 	}
 }
