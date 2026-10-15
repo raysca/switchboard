@@ -18,6 +18,7 @@ type SessionRepository interface {
 	Get(ctx context.Context, id string) (storage.SessionRecord, error)
 	List(ctx context.Context, filter storage.SessionFilter) ([]storage.SessionRecord, error)
 	Turns(ctx context.Context, sessionID string) ([]storage.TurnRecord, error)
+	TurnLatencies(ctx context.Context, ids []string) (map[string][]string, error)
 }
 
 // TraceRepository defines the trace queries needed by traces/sessions HTTP APIs.
@@ -29,16 +30,24 @@ type TraceRepository interface {
 
 // SessionDTO represents a persisted voice session for the management API.
 type SessionDTO struct {
-	ID              string           `json:"id"`
-	FlowID          string           `json:"flow_id"`
-	FlowVersionID   string           `json:"flow_version_id"`
-	ConfigHash      string           `json:"config_hash"`
-	StartedAt       time.Time        `json:"started_at"`
-	EndedAt         *time.Time       `json:"ended_at,omitempty"`
-	Status          string           `json:"status"`
-	TurnCount       int              `json:"turn_count"`
-	SafeSummary     string           `json:"safe_summary"`
-	Draft           bool             `json:"draft"` // a test call on an unpublished config
+	ID            string     `json:"id"`
+	FlowID        string     `json:"flow_id"`
+	FlowVersionID string     `json:"flow_version_id"`
+	ConfigHash    string     `json:"config_hash"`
+	StartedAt     time.Time  `json:"started_at"`
+	EndedAt       *time.Time `json:"ended_at,omitempty"`
+	Status        string     `json:"status"`
+	TurnCount     int        `json:"turn_count"`
+	SafeSummary   string     `json:"safe_summary"`
+	Draft         bool       `json:"draft"` // a test call on an unpublished config
+	// Caller is the label the integration chose for the call (the voice token's principal).
+	Caller string `json:"caller"`
+	// EndReason is why the call ended (empty while it is live): caller_hung_up, silent_caller,
+	// agent_stuck, ended_by_flow, time_limit, connection_lost, server_shutdown, error, setup_failed
+	// or server_restart.
+	EndReason string `json:"end_reason"`
+	// MedianReplyMS is the median reply time over the call's measured turns; absent when none was measured.
+	MedianReplyMS   *int             `json:"median_reply_ms,omitempty"`
 	ProviderStack   json.RawMessage  `json:"provider_stack,omitempty"`
 	RuntimeSnapshot json.RawMessage  `json:"runtime_snapshot,omitempty"`
 	RuntimeTools    []RuntimeToolDTO `json:"runtime_tools,omitempty"`
@@ -183,9 +192,20 @@ func (h tracesHandler) collection(w http.ResponseWriter, r *http.Request, reques
 		return
 	}
 
+	ids := make([]string, 0, len(records))
+	for _, rec := range records {
+		ids = append(ids, rec.ID)
+	}
+	latencies, err := h.sessions.TurnLatencies(r.Context(), ids) // one query for the page
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to list sessions", requestID)
+		return
+	}
 	dtos := make([]SessionDTO, 0, len(records))
 	for _, rec := range records {
-		dtos = append(dtos, toSessionDTO(rec))
+		dto := toSessionDTO(rec)
+		dto.MedianReplyMS = medianReplyMS(latencies[rec.ID])
+		dtos = append(dtos, dto)
 	}
 	WriteJSON(w, http.StatusOK, SuccessResponse[[]SessionDTO]{Data: dtos})
 }
@@ -207,7 +227,11 @@ func (h tracesHandler) item(w http.ResponseWriter, r *http.Request, id, requestI
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, SuccessResponse[SessionDTO]{Data: toSessionDTO(rec)})
+	dto := toSessionDTO(rec)
+	if latencies, err := h.sessions.TurnLatencies(r.Context(), []string{id}); err == nil {
+		dto.MedianReplyMS = medianReplyMS(latencies[id])
+	}
+	WriteJSON(w, http.StatusOK, SuccessResponse[SessionDTO]{Data: dto})
 }
 
 func (h tracesHandler) turns(w http.ResponseWriter, r *http.Request, id, requestID string) {
@@ -312,6 +336,8 @@ func toSessionDTO(r storage.SessionRecord) SessionDTO {
 		TurnCount:     r.TurnCount,
 		SafeSummary:   r.SafeSummary,
 		Draft:         r.Draft,
+		Caller:        r.Caller,
+		EndReason:     r.EndReason,
 	}
 	for _, t := range r.RuntimeTools {
 		dto.RuntimeTools = append(dto.RuntimeTools, RuntimeToolDTO{MCPServerID: t.ServerID, RemoteName: t.RemoteName, SchemaHash: t.SchemaHash, Required: t.Required})

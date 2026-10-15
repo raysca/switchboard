@@ -110,3 +110,33 @@ func TestEndOrphansRecordsServerRestartAndKeepsTheNote(t *testing.T) {
 		}
 	})
 }
+
+func TestTurnLatenciesAreFetchedForAPageOfSessionsInOneQuery(t *testing.T) {
+	eachStore(t, func(t *testing.T, s *Store) {
+		ctx := context.Background()
+		a, _ := seedWithCaller(t, s, "")
+		b, _ := seedWithCaller(t, s, "")
+		none, _ := seedWithCaller(t, s, "")
+		for i, l := range []string{`{"voice_to_voice_ms":1}`, `{"voice_to_voice_ms":2}`} {
+			if err := s.Sessions().AddTurn(ctx, TurnRecord{ID: NewID(), SessionID: a, Ordinal: i + 1, StartedAt: time.Now(), LatenciesJSON: l, ToolsJSON: `[]`}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Sessions().AddTurn(ctx, TurnRecord{ID: NewID(), SessionID: b, Ordinal: 1, StartedAt: time.Now(), LatenciesJSON: `{}`, ToolsJSON: `[]`}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Sessions().TurnLatencies(ctx, []string{a, b, none})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got[a]) != 2 || got[a][0] != `{"voice_to_voice_ms":1}` || got[a][1] != `{"voice_to_voice_ms":2}` || len(got[b]) != 1 {
+			t.Fatalf("%v", got)
+		}
+		if _, ok := got[none]; ok {
+			t.Fatal("a session with no turns is absent")
+		}
+		if m, err := s.Sessions().TurnLatencies(ctx, nil); err != nil || len(m) != 0 {
+			t.Fatalf("empty ids: %v %v", m, err)
+		}
+	})
+}

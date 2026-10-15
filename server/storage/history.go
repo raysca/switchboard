@@ -317,6 +317,33 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 	return out, rows.Err()
 }
 
+// TurnLatencies returns the stored latencies JSON of every turn of the given sessions, keyed by session
+// id (sessions without turns are absent). The ids are bound, never concatenated.
+func (r SessionRepository) TurnLatencies(ctx context.Context, ids []string) (map[string][]string, error) {
+	out := make(map[string][]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT session_id,latencies_json FROM turns WHERE session_id IN ("+marks+") ORDER BY session_id,ordinal"), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, l string
+		if err := rows.Scan(&id, &l); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], l)
+	}
+	return out, rows.Err()
+}
+
 func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, error) {
 	var v SessionRecord
 	var started string

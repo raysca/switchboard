@@ -353,3 +353,54 @@ func TestSessionsSayWhetherTheyWereADraft(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
+	s := newTestStore(t)
+	flowID, vID, hash := createTestFlowAndVersion(t, s)
+	ctx := context.Background()
+	id := storage.NewID()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, FlowID: flowID, FlowVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now, Caller: "flow-test-abc"}); err != nil {
+		t.Fatal(err)
+	}
+	for i, l := range []string{`{"voice_to_voice_ms":500}`, `{"voice_to_voice_ms":900}`, `{"voice_to_voice_ms":700}`} {
+		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: storage.NewID(), SessionID: id, Ordinal: i + 1, StartedAt: now, LatenciesJSON: l, ToolsJSON: `[]`}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idle := storage.NewID() // a session with no measured turn
+	if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: idle, FlowID: flowID, FlowVersionID: vID, ConfigHash: hash, Status: "active", StartedAt: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	handler := api.NewTracesHandler(s.Sessions(), s.Traces())
+	get := func(path string, out any) {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var list struct{ Data []api.SessionDTO }
+	get("/api/v1/sessions", &list)
+	byID := map[string]api.SessionDTO{}
+	for _, d := range list.Data {
+		byID[d.ID] = d
+	}
+	if d := byID[id]; d.Caller != "flow-test-abc" || d.EndReason != "" || d.MedianReplyMS == nil || *d.MedianReplyMS != 700 {
+		t.Fatalf("list row: %+v median %v", d, d.MedianReplyMS)
+	}
+	if d := byID[idle]; d.MedianReplyMS != nil {
+		t.Fatalf("no measured turn, no median: %v", *d.MedianReplyMS)
+	}
+	if err := s.Sessions().End(ctx, id, storage.EndSilentCaller); err != nil {
+		t.Fatal(err)
+	}
+	var one struct{ Data api.SessionDTO }
+	get("/api/v1/sessions/"+id, &one)
+	if one.Data.EndReason != "silent_caller" || one.Data.MedianReplyMS == nil || *one.Data.MedianReplyMS != 700 || one.Data.Caller != "flow-test-abc" {
+		t.Fatalf("get: %+v", one.Data)
+	}
+}
