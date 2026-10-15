@@ -36,7 +36,7 @@ export default async function globalSetup() {
     // An unrelated origin: only origin_allow_same_host can admit the browser.
     .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n  - "https://not-this-site.example"\n`));
   const configPath = path.join(tmpDir, "server.yaml");
-  fs.writeFileSync(configPath, `${config}\npublic_admin:\n  enabled: true\norigin_allow_same_host: true\n`);
+  fs.writeFileSync(configPath, `${config}\npublic_admin:\n  enabled: true\norigin_allow_same_host: true\nidle:\n  user_timeout: 0s\n`);
 
   const stack: Stack = {
     repo,

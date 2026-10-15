@@ -313,7 +313,7 @@ describe("what the server will accept", () => {
     const bad = (cfg: Record<string, unknown>) => flowIssues(one(cfg));
     for (const ms of [999, 300001, -1]) expect(bad({ idle: { user_timeout_ms: ms } })).toContain("Wait for a silent caller must be 1 to 300 seconds, or 0 to never hang up.");
     for (const ms of [0, 1000, 300000]) expect(bad({ idle: { user_timeout_ms: ms } })).toEqual([]);
-    for (const n of [0, 11]) expect(bad({ idle: { max_prompts: n } })).toContain("Ask this many times must be 1 to 10.");
+    for (const n of [0, 11, 2.5]) expect(bad({ idle: { max_prompts: n } })).toContain("Ask this many times must be 1 to 10.");
     expect(bad({ idle: { max_prompts: 10 } })).toEqual([]);
     expect(bad({ idle: { prompt: "x".repeat(201) } })).toContain("What to say is over 200 bytes.");
     expect(bad({ idle: { prompt: "é".repeat(101) } })).toContain("What to say is over 200 bytes.");
@@ -321,7 +321,8 @@ describe("what the server will accept", () => {
     expect(bad({ idle: { goodbye: "x".repeat(201) } })).toContain("Goodbye is over 200 bytes.");
     for (const g of [-30.1, 6.1]) expect(bad({ audio: { output_gain_db: g } })).toContain("Voice volume must be -30 to +6 dB.");
     for (const g of [-30, 0, 6]) expect(bad({ audio: { output_gain_db: g } })).toEqual([]);
-    for (const s of [-0.1, 1.1]) expect(bad({ audio: { denoise: { strength: s } } })).toContain("Noise reduction strength must be 0 to 100%.");
+    for (const s of [-0.1, 0, 1.1]) expect(bad({ audio: { denoise: { strength: s } } })).toContain("Noise reduction strength must be 1 to 100%.");
+    expect(bad({ audio: { denoise: { strength: 0.01 } } })).toEqual([]);
     expect(bad({ audio: { denoise: {}, background: { name: "office", gain_db: 0.1 } } })).toContain("Background volume must be -60 to 0 dB.");
     expect(bad({ audio: { background: { name: "office", gain_db: -60 } } })).toEqual([]);
   });

@@ -3,7 +3,6 @@ package flow
 import (
 	"fmt"
 	"math"
-	"regexp"
 )
 
 // IdleSettings is a flow's quiet-caller behavior (call-level: the start step). Present, it replaces
@@ -33,13 +32,14 @@ type AudioSettings struct {
 }
 
 type DenoiseSettings struct {
-	// Strength is 0..1 (default 0.5).
+	// Strength is above 0 and at most 1 (default 0.5).
 	Strength *float64 `json:"strength,omitempty"`
 }
 
-// BackgroundSettings names a sound from the server's audio.backgrounds catalogue, never a path.
+// BackgroundSettings names a sound from the server's audio.backgrounds catalogue, never a path. An empty
+// name means no background for this flow, even when the server has a default one.
 type BackgroundSettings struct {
-	Name   string   `json:"name"`
+	Name   string   `json:"name"`              // present even when empty: {"name":""} is "none"
 	GainDB *float64 `json:"gain_db,omitempty"` // -60..0, default -30
 	Loop   *bool    `json:"loop,omitempty"`    // default true
 }
@@ -50,9 +50,6 @@ const (
 	maxIdleTimeoutMS = 300000
 	maxIdlePrompts   = 10
 )
-
-// soundName is the rule for a catalogue name (the same as an audio cue's).
-var soundName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
 func finite(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }
 
@@ -81,15 +78,21 @@ func (a *AudioSettings) validate() error {
 	if a.Denoise == nil && a.OutputGainDB == nil && a.Background == nil {
 		return fmt.Errorf("%w: audio must set at least one member", ErrInvalidConfig)
 	}
-	if d := a.Denoise; d != nil && d.Strength != nil && (!finite(*d.Strength) || *d.Strength < 0 || *d.Strength > 1) {
-		return fmt.Errorf("%w: audio.denoise.strength must be between 0 and 1", ErrInvalidConfig)
+	if d := a.Denoise; d != nil && d.Strength != nil && (!finite(*d.Strength) || *d.Strength <= 0 || *d.Strength > 1) {
+		return fmt.Errorf("%w: audio.denoise.strength must be above 0 and at most 1 (leave it out for 0.5)", ErrInvalidConfig)
 	}
 	if g := a.OutputGainDB; g != nil && (!finite(*g) || *g < -30 || *g > 6) {
 		return fmt.Errorf("%w: audio.output_gain_db must be between -30 and 6", ErrInvalidConfig)
 	}
 	if b := a.Background; b != nil {
-		if !soundName.MatchString(b.Name) {
-			return fmt.Errorf("%w: audio.background.name must name a server sound (lowercase letters, digits, - and _, up to 32)", ErrInvalidConfig)
+		switch {
+		case b.Name == "": // "no background for this flow", even when the server has a default
+			if b.GainDB != nil || b.Loop != nil {
+				return fmt.Errorf("%w: audio.background with no name (none) takes no gain_db or loop", ErrInvalidConfig)
+			}
+			return nil
+		case !cueName.MatchString(b.Name):
+			return fmt.Errorf("%w: audio.background.name must name a server sound (lowercase letters, digits, - and _, up to 32) or be empty for none", ErrInvalidConfig)
 		}
 		if g := b.GainDB; g != nil && (!finite(*g) || *g < -60 || *g > 0) {
 			return fmt.Errorf("%w: audio.background.gain_db must be between -60 and 0", ErrInvalidConfig)

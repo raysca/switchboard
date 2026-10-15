@@ -63,7 +63,8 @@ export default async function globalSetup() {
     .replace(/^admin_listen_addr:.*$/m, `admin_listen_addr: "127.0.0.1:${PORTS.admin}"`)
     .replace(/^origin_allowlist:\n(?:\s+-.*\n)+/m, `origin_allowlist:\n${origins.map((o) => `  - "${o}"\n`).join("")}`);
   const configPath = path.join(tmpDir, "server.yaml");
-  fs.writeFileSync(configPath, config);
+  // Quiet-caller handling is on by default; these suites hold calls open, so switch it off server-wide.
+  fs.writeFileSync(configPath, `${config}\nidle:\n  user_timeout: 0s\n`);
 
   const stack: Stack = {
     repo,

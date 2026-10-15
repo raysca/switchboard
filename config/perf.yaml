@@ -56,3 +56,6 @@ providers:
   echo:
     mimic: instant
     stt: audio
+
+# Load tests hold calls with long gaps; the 15 s quiet-caller default would prompt and hang them up.
+idle: {user_timeout: 0s}

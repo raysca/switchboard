@@ -28,6 +28,9 @@ function useIdle({ cfg, setKey }: Props) {
   return { idle, set };
 }
 
+/** The prompt mode a call would use: the flow's own, else the built-in "llm" once the flow sets idle, else the server's. */
+const effectiveMode = (idle: Rec, serverMode?: string) => (typeof idle.prompt_mode === "string" ? idle.prompt_mode : Object.keys(idle).length > 0 ? "llm" : (serverMode ?? "llm"));
+
 /** The part of "If the caller goes quiet" every flow sees: on/off and the wait. */
 export function QuietCallerBasics(props: Props) {
   const { idle, set } = useIdle(props);
@@ -80,6 +83,8 @@ export function QuietCallerBasics(props: Props) {
 /** The rest of the quiet-caller behavior: how many times, what to say, how, and the goodbye. */
 export function QuietCallerDetails(props: Props) {
   const { idle, set } = useIdle(props);
+  const serverMode = props.serverConfig?.idle.prompt_mode;
+  const mode = effectiveMode(idle, serverMode);
   return (
     <fieldset className="stage-box">
       <legend>If the caller goes quiet: the details</legend>
@@ -90,7 +95,7 @@ export function QuietCallerDetails(props: Props) {
           type="number"
           min={IDLE_RANGE.prompts[0]}
           max={IDLE_RANGE.prompts[1]}
-          placeholder="2"
+          placeholder={Object.keys(idle).length > 0 || !props.serverConfig ? "2" : String(props.serverConfig.idle.max_prompts)}
           aria-describedby="flow-idle-prompts-hint"
           value={typeof idle.max_prompts === "number" ? idle.max_prompts : ""}
           onChange={(e) => set("max_prompts", num(e.target.value))}
@@ -117,11 +122,11 @@ export function QuietCallerDetails(props: Props) {
       <SettingHelp id="idle.prompt" />
       <fieldset className="stage-box" aria-label="How to say it">
         <label className="check-row" htmlFor="flow-idle-mode-llm">
-          <input id="flow-idle-mode-llm" type="radio" name="flow-idle-mode" checked={idle.prompt_mode !== "say"} onChange={() => set("prompt_mode", null)} />
+          <input id="flow-idle-mode-llm" type="radio" name="flow-idle-mode" checked={mode !== "say"} onChange={() => set("prompt_mode", serverMode === "say" && Object.keys(idle).length === 0 ? "llm" : null)} />
           <span>Let the model word it</span>
         </label>
         <label className="check-row" htmlFor="flow-idle-mode-say">
-          <input id="flow-idle-mode-say" type="radio" name="flow-idle-mode" checked={idle.prompt_mode === "say"} onChange={() => set("prompt_mode", "say")} />
+          <input id="flow-idle-mode-say" type="radio" name="flow-idle-mode" checked={mode === "say"} onChange={() => set("prompt_mode", "say")} />
           <span>Say it exactly</span>
         </label>
         <SettingHelp id="idle.prompt_mode" />
@@ -156,7 +161,10 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
   const bg = audio.background !== undefined ? rec(audio.background) : null;
   const bgName = typeof bg?.name === "string" ? bg.name : "";
   const sounds = serverConfig?.audio.backgrounds ?? [];
-  const known = !bgName || sounds.includes(bgName);
+  const known = !bgName || !serverConfig || sounds.includes(bgName); // not "unknown" while the list is still loading
+  const serverDefault = serverConfig?.audio.background_default ?? "";
+  // No key: the server's default (if any). An empty name: none, even when the server has a default.
+  const selected = bg === null ? (serverDefault ? "default" : "") : bgName;
   const denied = serverConfig !== undefined && !serverConfig.audio.allow_flow_background && !bgName;
   const setBg = (key: string, value: unknown) => set("background", value === null ? without(bg ?? {}, key) : { ...bg, [key]: value });
   return (
@@ -172,7 +180,7 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
           <input
             id="flow-denoise-strength"
             type="number"
-            min={0}
+            min={1}
             max={100}
             placeholder="50"
             value={typeof denoise.strength === "number" ? Math.round(denoise.strength * 100) : ""}
@@ -205,11 +213,16 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
         <span>Background sound</span>
         <select
           id="flow-bg"
-          value={bgName}
+          value={selected}
           disabled={denied}
           aria-describedby={denied ? "flow-bg-denied" : undefined}
-          onChange={(e) => set("background", e.target.value ? { ...bg, name: e.target.value } : null)}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "default" || (v === "" && !serverDefault)) return set("background", null);
+            set("background", v === "" ? { name: "" } : { ...bg, name: v });
+          }}
         >
+          {serverDefault && <option value="default">Server default ({serverDefault})</option>}
           <option value="">None</option>
           {!known && <option value={bgName}>{bgName} (not on this server)</option>}
           {sounds.map((n) => (
@@ -230,7 +243,7 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
         </p>
       )}
       <SettingHelp id="audio.background" />
-      {bg !== null && (
+      {bg !== null && bgName !== "" && (
         <>
           <label className="form-field" htmlFor="flow-bg-gain">
             <span>Background volume (dB)</span>

@@ -148,7 +148,7 @@ func TestNilCueControllerIsInert(t *testing.T) {
 func TestNewCallCueNeedsFlowCueSoundAndOutput(t *testing.T) {
 	s := apiTestServer(t)
 	tl := NewSessionTimeline(1, 10, time.Minute)
-	out := ws.NewCueUnderlay(nil)
+	out := ws.NewCueUnderlay()
 	sound := func() ws.Underlay { return nil }
 	s.cues = map[string]func() ws.Underlay{"chime": sound}
 	cue := &flow.RouteCue{Name: "chime"}

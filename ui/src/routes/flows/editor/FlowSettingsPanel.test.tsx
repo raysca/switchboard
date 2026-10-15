@@ -273,7 +273,7 @@ describe("FlowSettingsPanel footer", () => {
       voice_token_max_lifetime_seconds: 60,
       client_ip: "",
       secure: false,
-      audio: { backgrounds: ["cafe", "office"], allow_flow_background: true },
+      audio: { backgrounds: ["cafe", "office"], allow_flow_background: true, background_default: "" },
       idle: { user_timeout_ms: 15000, max_prompts: 2, prompt_mode: "llm" },
     };
     const withStart = (extra: Record<string, unknown>) =>
@@ -367,6 +367,7 @@ describe("FlowSettingsPanel footer", () => {
       await user.click(screen.getByLabelText("Reduce background noise"));
       expect(startCfg(onChange).audio).toEqual({ denoise: {} });
       await user.type(screen.getByLabelText("Noise reduction strength (%)"), "80");
+      expect(screen.getByLabelText("Noise reduction strength (%)")).toHaveAttribute("min", "1");
       expect(startCfg(onChange).audio).toEqual({ denoise: { strength: 0.8 } });
       await user.click(screen.getByLabelText("Reduce background noise"));
       expect(startCfg(onChange)).not.toHaveProperty("audio");
@@ -405,9 +406,40 @@ describe("FlowSettingsPanel footer", () => {
       expect(startCfg(onChange)).not.toHaveProperty("audio");
     });
 
+    it("with a server default sound, offers it by name and a separate None that writes an empty name", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={{ ...server, audio: { ...server.audio, background_default: "cafe" } }} onChange={onChange} />);
+      await openAdvanced(user);
+      const select = screen.getByLabelText("Background sound");
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Server default (cafe)", "None", "cafe", "office"]);
+      expect(select).toHaveValue("default");
+      await user.selectOptions(select, "");
+      expect(startCfg(onChange).audio).toEqual({ background: { name: "" } });
+      expect(screen.queryByLabelText("Background volume (dB)")).toBeNull();
+      await user.selectOptions(select, "default");
+      expect(startCfg(onChange)).not.toHaveProperty("audio");
+    });
+
+    it("does not call a stored sound unknown while the server's answer is missing", () => {
+      render(<Harness initial={withStart({ audio: { background: { name: "office" } } })} />);
+      expect(screen.queryByText(/is not a sound on this server/)).toBeNull();
+    });
+
+    it("shows the server's own question count and wording mode until the flow sets its own", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={{ ...server, idle: { user_timeout_ms: 15000, max_prompts: 4, prompt_mode: "say" } }} onChange={onChange} />);
+      await openAdvanced(user);
+      expect(screen.getByLabelText("Ask this many times")).toHaveAttribute("placeholder", "4");
+      expect(screen.getByLabelText("Say it exactly")).toBeChecked();
+      await user.click(screen.getByLabelText("Let the model word it"));
+      expect(startCfg(onChange).idle).toEqual({ prompt_mode: "llm" });
+    });
+
     it("disables the sound with the reason when the server does not let flows choose one", async () => {
       const user = userEvent.setup();
-      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], allow_flow_background: false } }} />);
+      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], allow_flow_background: false, background_default: "" } }} />);
       await openAdvanced(user);
       expect(screen.getByLabelText("Background sound")).toBeDisabled();
       expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();

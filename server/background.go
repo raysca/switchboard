@@ -6,12 +6,15 @@ import (
 )
 
 // backgroundFor is the sound a call plays under the voice, or nil: the one its flow names, else the
-// server default (audio.background_default). A flow's choice is honoured only for a catalogue name and
+// server default (audio.background_default); a flow naming "" means none, default or not. A flow's choice is honoured only for a catalogue name and
 // only while the operator allows flow backgrounds; publish and readiness already refuse anything else,
 // so reaching the fallback means the configuration changed after the flow was published. The name is
 // only ever a key into the catalogue: a flow cannot make the server open a file.
 func (s *Server) backgroundFor(f *flow.AudioSettings) ws.Underlay {
 	if f != nil && f.Background != nil {
+		if f.Background.Name == "" {
+			return nil // the flow asked for none, whatever the server's default is
+		}
 		b, ok := s.backgrounds[f.Background.Name]
 		switch {
 		case !s.cfg.Audio.AllowFlowBackground:

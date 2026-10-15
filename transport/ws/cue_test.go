@@ -25,8 +25,14 @@ func (t tone) Mix(dst, src []byte) {
 
 func sample(b []byte, i int) int16 { return int16(binary.LittleEndian.Uint16(b[2*i:])) }
 
+func newCueWithBackground(u Underlay) *CueUnderlay {
+	c := NewCueUnderlay()
+	c.SetBackground(u)
+	return c
+}
+
 func TestCueMixesWithAndWithoutBackground(t *testing.T) {
-	c := NewCueUnderlay(tone{1000})
+	c := newCueWithBackground(tone{1000})
 	dst := make([]byte, 640)
 	c.Mix(dst, nil)
 	base := sample(dst, 0)
@@ -43,7 +49,7 @@ func TestCueMixesWithAndWithoutBackground(t *testing.T) {
 }
 
 func TestCueMixesUnderSpeech(t *testing.T) {
-	c := NewCueUnderlay(nil)
+	c := NewCueUnderlay()
 	c.Start(tone{500})
 	src, dst := make([]byte, 640), make([]byte, 640)
 	binary.LittleEndian.PutUint16(src, uint16(int16(200)))
@@ -54,7 +60,7 @@ func TestCueMixesUnderSpeech(t *testing.T) {
 }
 
 func TestCueActiveOnlyWhileSomethingPlays(t *testing.T) {
-	c := NewCueUnderlay(nil)
+	c := NewCueUnderlay()
 	if c.Active() {
 		t.Fatal("no background, no cue: inactive")
 	}
@@ -69,7 +75,7 @@ func TestCueActiveOnlyWhileSomethingPlays(t *testing.T) {
 }
 
 func TestCueFadeOutHasNoStep(t *testing.T) {
-	c := NewCueUnderlay(nil)
+	c := NewCueUnderlay()
 	c.Start(tone{1000})
 	c.Stop(40 * time.Millisecond) // 40 ms at 16 kHz = 640 samples = 2 frames of 320
 	dst := make([]byte, 640)      // 20 ms mono PCM16
@@ -91,7 +97,7 @@ func TestCueFadeOutHasNoStep(t *testing.T) {
 
 func TestCueStartWakesIdlePacer(t *testing.T) {
 	var wrote atomic.Int64
-	cue := NewCueUnderlay(nil)
+	cue := NewCueUnderlay()
 	cfg := DefaultPacerConfig()
 	cfg.EnablePacing = true
 	w := NewPacedWriter(cfg, func(context.Context, []byte) error { wrote.Add(1); return nil })
@@ -115,7 +121,7 @@ func TestCueStartWakesIdlePacer(t *testing.T) {
 }
 
 func TestABackgroundSetAfterTheSessionStartedIsMixedAndCanBeReplacedOrRemoved(t *testing.T) {
-	c := NewCueUnderlay(nil)
+	c := NewCueUnderlay()
 	dst := make([]byte, 640)
 	if c.Active() || c.Rate() != 0 {
 		t.Fatal("nothing set: inactive")
@@ -140,7 +146,7 @@ func TestABackgroundSetAfterTheSessionStartedIsMixedAndCanBeReplacedOrRemoved(t 
 }
 
 func TestSettingTheBackgroundWhileTheWriterMixesIsRaceFree(t *testing.T) {
-	c := NewCueUnderlay(tone{1})
+	c := newCueWithBackground(tone{1})
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {

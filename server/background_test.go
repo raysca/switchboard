@@ -67,10 +67,13 @@ func TestABackgroundIsChosenFromTheFlowThenTheServerDefaultAndNeverFromAPath(t *
 	if u := s.backgroundFor(&flow.AudioSettings{OutputGainDB: ptrF(-3)}); u == nil || !near(level(t, u), 2000) {
 		t.Fatal("a flow that sets other audio members keeps the server default background")
 	}
-	for _, bad := range []string{"../../etc/passwd", "nope", ""} {
+	for _, bad := range []string{"../../etc/passwd", "nope"} {
 		if u := s.backgroundFor(pick(bad, nil)); u == nil || !near(level(t, u), 2000) {
 			t.Fatalf("name %q must fall back to the server default and never open a file", bad)
 		}
+	}
+	if u := s.backgroundFor(pick("", nil)); u != nil {
+		t.Fatal("a flow that asks for none plays none, even when the server has a default")
 	}
 	if none := backgroundServer(t, true, ""); none.backgroundFor(nil) != nil || none.backgroundFor(&flow.AudioSettings{OutputGainDB: ptrF(0)}) != nil {
 		t.Fatal("no default and no flow choice: no background")

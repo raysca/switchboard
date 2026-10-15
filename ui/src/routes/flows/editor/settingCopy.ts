@@ -109,7 +109,7 @@ const COPY = {
     label: "Noise reduction",
     what: "Cleans the caller's audio before the call listens to it: it takes out steady hum and hiss, not other voices.",
     when: "For callers on noisy lines or in cars.",
-    defaults: "Off. Strength 0 to 100%, 50% if you leave it empty.",
+    defaults: "Off, unless the server already reduces noise on every call (a flow cannot turn that off). Strength 1 to 100%, 50% if you leave it empty.",
     careful: "Costs about 0.1% of one core per call. Recordings keep the original audio.",
   },
   "audio.output_gain_db": {
@@ -123,7 +123,7 @@ const COPY = {
     label: "Background sound",
     what: "A sound the server keeps playing quietly under the agent's voice, such as an office.",
     when: "To make a call feel less empty.",
-    defaults: "None. You can only pick sounds your server provides.",
+    defaults: "Server default: the sound the server plays on every call, if it has one. Pick None for silence, or one of the sounds your server provides.",
     careful: "It adds continuous audio traffic to every call of this flow.",
   },
   "audio.background_gain": {

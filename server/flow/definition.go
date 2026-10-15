@@ -238,7 +238,9 @@ func (g Definition) Problems(av Availability) (reasons, missingEnv []string) {
 	}
 	if p, ok := policyOf(av); ok {
 		for _, pp := range g.policyProblems(p) {
-			reasons = append(reasons, pp.reason)
+			if pp.reason != "" {
+				reasons = append(reasons, pp.reason)
+			}
 		}
 	}
 	return reasons, uniq(missingEnv)

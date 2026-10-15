@@ -77,22 +77,40 @@ func TestADraftIsCheckedLikeAPublishAndWithoutAPolicyNothingExtraIsChecked(t *te
 	}
 }
 
-func TestReadinessReportsASoundTheServerNoLongerOffers(t *testing.T) {
+func TestASoundTheServerNoLongerOffersDoesNotTakeTheFlowOffline(t *testing.T) {
 	p := &fakePolicy{sounds: []string{"office"}, allow: true}
 	svc := testServiceWith(t, p)
 	f, err := svc.Create(context.Background(), CreateRequest{Name: "bg", Config: withExtra(`"audio":{"background":{"name":"office"}}`)})
 	if err != nil || f.Readiness.State != ReadinessReady {
 		t.Fatalf("created: %+v %v", f.Readiness, err)
 	}
-	p.sounds = nil
-	got, err := svc.Get(context.Background(), f.ID)
-	if err != nil || got.Readiness.State != ReadinessNotReady || !contains(got.Readiness.Reasons, "missing_audio_background") {
-		t.Fatalf("sound removed: %+v %v", got.Readiness, err)
+	for name, mutate := range map[string]func(){"sound removed": func() { p.sounds = nil }, "ceiling off": func() { p.sounds, p.allow = []string{"office"}, false }} {
+		mutate()
+		got, err := svc.Get(context.Background(), f.ID)
+		if err != nil || got.Readiness.State != ReadinessReady {
+			t.Fatalf("%s: the call plays without the sound, so the flow stays ready: %+v %v", name, got.Readiness, err)
+		}
 	}
-	p.sounds, p.allow = []string{"office"}, false
-	got, err = svc.Get(context.Background(), f.ID)
-	if err != nil || !contains(got.Readiness.Reasons, "audio_background_not_allowed") {
-		t.Fatalf("ceiling off: %+v %v", got.Readiness, err)
+}
+
+func TestAnExplicitNoBackgroundNeedsNeitherACatalogueEntryNorTheCeiling(t *testing.T) {
+	svc := testServiceWith(t, &fakePolicy{allow: false})
+	if _, err := svc.Create(context.Background(), CreateRequest{Name: "none", Config: withExtra(`"audio":{"background":{"name":""}}`)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAWaitUnderTheDTMFFloorTakesTheFlowOfflineWhenTheFloorRisesLater(t *testing.T) {
+	p := &fakePolicy{allow: true}
+	svc := testServiceWith(t, p)
+	f, err := svc.Create(context.Background(), CreateRequest{Name: "wait", Config: withExtra(`"idle":{"user_timeout_ms":3000}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.minTimer = 5 * time.Second
+	got, err := svc.Get(context.Background(), f.ID)
+	if err != nil || got.Readiness.State != ReadinessNotReady || !contains(got.Readiness.Reasons, reasonIdleTooShort) {
+		t.Fatalf("%+v %v", got.Readiness, err)
 	}
 }
 

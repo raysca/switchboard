@@ -25,11 +25,7 @@ type cueState struct {
 // background boxes an Underlay so it can sit in an atomic pointer.
 type background struct{ u Underlay }
 
-func NewCueUnderlay(bg Underlay) *CueUnderlay {
-	c := &CueUnderlay{}
-	c.SetBackground(bg)
-	return c
-}
+func NewCueUnderlay() *CueUnderlay { return &CueUnderlay{} }
 
 // SetBackground replaces the session's ambience (nil: none). Safe to call while the writer mixes, so a
 // server that learns the call's flow after the connection was accepted can choose the sound then.

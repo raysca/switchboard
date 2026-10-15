@@ -63,7 +63,7 @@ export const serverConfigSchema = z.object({
   voice_token_max_lifetime_seconds: z.number(),
   client_ip: z.string(),
   secure: z.boolean(),
-  audio: z.object({ backgrounds: z.array(z.string()), allow_flow_background: z.boolean() }),
+  audio: z.object({ backgrounds: z.array(z.string()), allow_flow_background: z.boolean(), background_default: z.string() }),
   idle: z.object({ user_timeout_ms: z.number(), max_prompts: z.number(), prompt_mode: z.string() }),
 });
 export type ServerConfigDTO = z.infer<typeof serverConfigSchema>;

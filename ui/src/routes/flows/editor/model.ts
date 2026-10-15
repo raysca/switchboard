@@ -13,7 +13,7 @@ export const STT_P99_RANGE = [100, 10000] as const;
 const DEFAULT_MAX_TOKENS = 4000;
 /** The server's limits for a flow's quiet-caller and audio settings (server/flow/call_behavior.go). */
 export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
-export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0], strength: [0, 1] } as const;
+export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0] } as const;
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
 
@@ -157,12 +157,13 @@ function callBehaviorIssues(config: StepConfig): string[] {
   const idle = asRecord(config.idle);
   const t = idle.user_timeout_ms;
   if (typeof t === "number" && t !== 0 && outside(t, IDLE_RANGE.timeoutMs)) out.push("Wait for a silent caller must be 1 to 300 seconds, or 0 to never hang up.");
-  if (outside(idle.max_prompts, IDLE_RANGE.prompts)) out.push("Ask this many times must be 1 to 10.");
+  if (typeof idle.max_prompts === "number" && (!Number.isInteger(idle.max_prompts) || outside(idle.max_prompts, IDLE_RANGE.prompts))) out.push("Ask this many times must be 1 to 10.");
   if (typeof idle.prompt === "string" && byteLength(idle.prompt) > IDLE_RANGE.textBytes) out.push(`What to say is over ${IDLE_RANGE.textBytes} bytes.`);
   if (typeof idle.goodbye === "string" && byteLength(idle.goodbye) > IDLE_RANGE.textBytes) out.push(`Goodbye is over ${IDLE_RANGE.textBytes} bytes.`);
   const audio = asRecord(config.audio);
   if (outside(audio.output_gain_db, AUDIO_RANGE.gain)) out.push("Voice volume must be -30 to +6 dB.");
-  if (outside(asRecord(audio.denoise).strength, AUDIO_RANGE.strength)) out.push("Noise reduction strength must be 0 to 100%.");
+  const strength = asRecord(audio.denoise).strength;
+  if (typeof strength === "number" && (strength <= 0 || strength > 1)) out.push("Noise reduction strength must be 1 to 100%.");
   if (outside(asRecord(audio.background).gain_db, AUDIO_RANGE.backgroundGain)) out.push("Background volume must be -60 to 0 dB.");
   return out;
 }

@@ -84,6 +84,8 @@ type ServerConfig struct {
 type ServerAudio struct {
 	Backgrounds         []string `json:"backgrounds"`
 	AllowFlowBackground bool     `json:"allow_flow_background"`
+	// BackgroundDefault is the sound every call plays unless its flow picks another or none ("" = none).
+	BackgroundDefault string `json:"background_default"`
 }
 
 // ServerIdle is the server's quiet-caller default (0 timeout: off).

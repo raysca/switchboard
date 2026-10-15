@@ -50,12 +50,9 @@ type ServerConfig struct {
 	HandshakeRateLimit         float64       // Max handshake attempts per second per source IP (default: 20)
 	FixedPlayerRate            int           // Fixed client player rate (default: 24000)
 	Observe                    func(event string, n uint64)
-	// Underlay builds one session's background ambience (nil: none). Its Rate
-	// must equal FixedPlayerRate. See PacedWriter.Underlay.
-	Underlay func() Underlay
 	// Cues gives every session a CueUnderlay (Connection.Cue) so the server can
-	// play a sound over the call at run time and choose the call's background after
-	// the connection was accepted (Connection.SetBackground); Underlay's, if any, is kept.
+	// play a sound over the call at run time and choose the call's background once the
+	// server knows it (Connection.SetBackground).
 	Cues bool
 }
 
@@ -454,17 +451,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return wsConn.Write(ctx, websocket.MessageBinary, data)
 	})
 	conn.pacer = pacer
-	var background Underlay
-	if s.cfg.Underlay != nil {
-		background = s.cfg.Underlay() // per-session cursor over shared ambience
-	}
-	switch {
-	case s.cfg.Cues:
-		conn.cue = NewCueUnderlay(background)
+	if s.cfg.Cues {
+		conn.cue = NewCueUnderlay()
 		conn.cue.wake = pacer.wake
 		pacer.Underlay = conn.cue
-	case background != nil:
-		pacer.Underlay = background
 	}
 
 	// Completion and speaking callbacks run outside pacer locks. Speaking is
