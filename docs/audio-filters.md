@@ -109,7 +109,7 @@ The start step of a flow can carry an `audio` object; each member overrides the 
 
 - `denoise`: present turns noise reduction on (`strength` above 0 up to 1, default 0.5). A flow cannot turn off a server-wide `input_filters` denoise.
 - `output_gain_db`: -30..+6; an explicit `0` removes a server-wide gain for this flow.
-- `background`: `name` must be a key of `audio.backgrounds` (lowercase letters, digits, `-`, `_`, up to 32): never a path; `{"name": ""}` means no background for this flow even when `background_default` is set. `gain_db` -60..0 and `loop` override the catalogue entry. Publishing a flow that names an unknown sound fails with `400 invalid_config` listing the available names; while `audio.allow_flow_background` is false any `background` is refused. If the catalogue or the ceiling changes after publishing, the flow stays ready and its calls play the server default (or none) instead, with a warning in the log.
+- `background`: `name` must be a key of `audio.backgrounds` (lowercase letters, digits, `-`, `_`, up to 32): never a path; `{"name": ""}` means no background for this flow even when `background_default` is set. `gain_db` -60..0 and `loop` override the catalogue entry. Publishing a flow that names an unknown sound fails with `400 invalid_request` listing the available names; while `audio.allow_flow_background` is false any `background` is refused. If the catalogue or the ceiling changes after publishing, the flow stays ready and its calls play the server default (or none) instead, with a warning in the log.
 - Because the transport accepts the connection before the call's flow is known, the call's background is set once the flow is resolved (`Connection.SetBackground`), without disturbing the paced writer.
 
 ## Route cues

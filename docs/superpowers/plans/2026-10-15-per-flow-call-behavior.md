@@ -36,7 +36,7 @@
 1. **Idle is on in the dev profile too** (spec open point): one default everywhere keeps behavior predictable; `make dev` users who want silence can set `idle.user_timeout: 0`.
 2. **A flow may set `user_timeout_ms: 0`** in production (spec open point): the call-duration cap still ends every call.
 3. **Server policy at publish** is a new small interface `flow.Policy` (backgrounds, ceiling, minimum idle timeout) next to `Availability`, implemented in `server/` — not more methods on `Availability`, whose job is provider availability.
-4. **Readiness (revised after review):** an unknown sound at publish is `400 invalid_config`; a sound removed later, or a ceiling turned off later, does **not** take the flow offline (calls play the server default, with a log warning); only a wait that no longer exceeds the DTMF window does (`idle_timeout_too_short`). `{"name":""}` is an explicit "no background".
+4. **Readiness (revised after review):** an unknown sound at publish is `400 invalid_request`; a sound removed later, or a ceiling turned off later, does **not** take the flow offline (calls play the server default, with a log warning); only a wait that no longer exceeds the DTMF window does (`idle_timeout_too_short`). `{"name":""}` is an explicit "no background".
 5. **No new endpoint:** the editor reads placeholders from the existing `GET /server-config`.
 
 ---

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -148,5 +149,39 @@ func TestCallBehaviorTheServerDefaultBackgroundPlaysUnlessAFlowChoosesAnother(t 
 	}
 	if p := own.maxPeak(); p < 15000 {
 		t.Fatalf("the flow's own sound should replace the default, peak %d", p)
+	}
+}
+
+func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *testing.T) {
+	sound := constWAV(t, "office", 12000)
+	post := func(r *flowRigE2E, name, extra string) (int, string) {
+		body := `{"name":"` + name + `","config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},` + extra + `}}`
+		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
+		return w.Code, w.Body.String()
+	}
+	allowed := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Audio.Backgrounds = map[string]CueConfig{"office": {File: sound}, "cafe": {File: sound}}
+		c.Audio.AllowFlowBackground = true
+	})
+	code, body := post(allowed, "Unknown", `"audio":{"background":{"name":"nope"}}`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, "available: cafe, office") {
+		t.Fatalf("an unknown sound: %d %s", code, body)
+	}
+	if code, body := post(allowed, "Known", `"audio":{"background":{"name":"office"},"output_gain_db":-3}`); code != http.StatusCreated {
+		t.Fatalf("a known sound: %d %s", code, body)
+	}
+	if code, body := post(allowed, "NoneAtAll", `"audio":{"background":{"name":""}}`); code != http.StatusCreated {
+		t.Fatalf("an explicit none: %d %s", code, body)
+	}
+	denied := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Audio.Backgrounds = map[string]CueConfig{"office": {File: sound}}
+		c.Audio.AllowFlowBackground = false
+	})
+	code, body = post(denied, "Denied", `"audio":{"background":{"name":"office"}}`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "audio.allow_flow_background") {
+		t.Fatalf("the ceiling off: %d %s", code, body)
+	}
+	if code, body := post(denied, "OtherAudio", `"audio":{"denoise":{"strength":0.8},"output_gain_db":-6}`); code != http.StatusCreated {
+		t.Fatalf("noise reduction and volume need no ceiling: %d %s", code, body)
 	}
 }

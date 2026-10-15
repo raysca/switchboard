@@ -165,3 +165,14 @@ func hasKeys(m map[string]int64, keys ...string) bool {
 	}
 	return true
 }
+
+func TestCallRecordsAnAgentThatStoppedResponding(t *testing.T) {
+	// The echo model's token delay is longer than the stuck-bot watchdog, so the reply never starts speaking.
+	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) {
+		c.Providers.Echo.LLMExtraDelay = 30 * time.Second
+		c.Idle.BotTimeout, c.Idle.BotMaxStuck = 400*time.Millisecond, 1
+	})
+	c := r.dial(behaviorFlow(t, r, "Slow", "slowvoice", ``))
+	c.say("hello there")
+	r.waitEnded(c.sessionID, storage.EndAgentStuck)
+}

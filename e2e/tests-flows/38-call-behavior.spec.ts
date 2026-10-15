@@ -11,7 +11,7 @@ test.describe.configure({ mode: "serial" });
 const NAME = "E2E Call Behavior";
 const PROMPT = "Still there for the test?";
 const BYE = "Goodbye for now.";
-type Config = { idle?: { user_timeout_ms?: number; max_prompts?: number; prompt?: string; prompt_mode?: string; goodbye?: string }; audio?: { denoise?: object; output_gain_db?: number; background?: { name: string } } };
+type Config = { idle?: { user_timeout_ms?: number; max_prompts?: number; prompt?: string; prompt_mode?: string; goodbye?: string }; audio?: { denoise?: object; output_gain_db?: number; background?: { name: string; gain_db?: number; loop?: boolean } } };
 type Flow = { name: string; current_version: { number: number; config: Config & { steps?: { config: Config }[] } } };
 const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/flows")).data.find((f) => f.name === NAME)!.current_version;
 const startConfig = (c: Flow["current_version"]["config"]): Config => c.steps?.[0]?.config ?? c;
@@ -28,6 +28,8 @@ test("quiet-caller and audio settings are tried on a draft call, published, read
   await openFlowSettings(page);
   const tick = page.getByLabel("End the call if the caller stays silent", { exact: true });
   await expect(tick).not.toBeChecked();
+  // The server answers with its own defaults: handling off, so there is no wait to suggest.
+  await expect(page.getByLabel("Wait this long (seconds)", { exact: true })).toHaveAttribute("placeholder", "Server default");
   await tick.check();
   await page.getByLabel("Wait this long (seconds)", { exact: true }).fill("2");
 
@@ -39,7 +41,11 @@ test("quiet-caller and audio settings are tried on a draft call, published, read
   await page.getByLabel("Goodbye before hanging up", { exact: true }).fill(BYE);
   await page.getByLabel("Reduce background noise", { exact: true }).check();
   await page.getByLabel("Voice volume (dB)", { exact: true }).fill("-3");
-  await page.getByRole("combobox", { name: "Background sound" }).selectOption("office");
+  const sound = page.getByRole("combobox", { name: "Background sound" });
+  expect(await sound.locator("option").allTextContents()).toEqual(["None", "office"]); // the server's own sounds
+  await sound.selectOption("office");
+  await page.getByLabel("Background volume (dB)", { exact: true }).fill("-25");
+  await page.getByLabel("Repeat", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Explain Voice volume" }).click();
   await expect(page.getByRole("region", { name: "Explain Voice volume" })).toContainText("Default and range");
   await page.keyboard.press("Escape");
@@ -66,7 +72,7 @@ test("quiet-caller and audio settings are tried on a draft call, published, read
   await expect.poll(async () => (await current(stack)).number).toBe(2);
   const cfg = startConfig((await current(stack)).config);
   expect(cfg.idle).toEqual({ user_timeout_ms: 2000, max_prompts: 1, prompt: PROMPT, prompt_mode: "say", goodbye: BYE });
-  expect(cfg.audio).toEqual({ denoise: {}, output_gain_db: -3, background: { name: "office" } });
+  expect(cfg.audio).toEqual({ denoise: {}, output_gain_db: -3, background: { name: "office", gain_db: -25, loop: false } });
 
   // Reopened: Advanced is open with the stored values, and a too-short wait blocks publishing with the reason.
   await openFlowsList(page);
@@ -75,6 +81,8 @@ test("quiet-caller and audio settings are tried on a draft call, published, read
   await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
   await expect(page.locator("#flow-idle-prompt")).toHaveValue(PROMPT);
   await expect(page.getByRole("combobox", { name: "Background sound" })).toHaveValue("office");
+  await expect(page.getByLabel("Background volume (dB)", { exact: true })).toHaveValue("-25");
+  await expect(page.getByLabel("Repeat", { exact: true })).not.toBeChecked();
   await page.getByLabel("Wait this long (seconds)", { exact: true }).fill("0.5");
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Publish", exact: true }).click();

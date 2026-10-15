@@ -73,7 +73,7 @@ Two optional objects on the start step (call-level), both rejected on other step
 
 - `CallSpec` gains `Idle *flow.IdleSettings` and `Audio *flow.AudioSettings` from the start step's config. `BuildCallPipeline` resolves each against the server config: `idleFor(call) = flow value if present else cfg.Idle`; the bot-idle watchdog (`bot_*`) always comes from the server config. The same resolution for the audio chain (`denoise`), the output gain stage and the background mixer.
 - **Denoise availability:** the flow may ask for `denoise` only if the server knows the filter (`knownInputFilters`); that is always true today (pure Go), so there is no readiness reason, but the resolver keeps the check so a future non-bundled filter produces a readiness reason `unsupported_audio_filter` instead of a failed call.
-- **Background sounds** come from a server catalog, `audio.backgrounds: {name: {file, gain_db, loop}}` in YAML (like `audio.cues`). The existing single `audio.background` becomes a default: `audio.background_default: <name>` (nothing is deployed, so the old key is replaced, not kept). A flow naming an unknown sound is rejected at publish (`400 invalid_config` naming it and listing the available names). If the sound is removed later the flow stays ready and its calls play the server default (or none): taking a flow offline over an ambience sound would be worse than losing the sound. `{"name": ""}` means "no background" even when a server default is set.
+- **Background sounds** come from a server catalog, `audio.backgrounds: {name: {file, gain_db, loop}}` in YAML (like `audio.cues`). The existing single `audio.background` becomes a default: `audio.background_default: <name>` (nothing is deployed, so the old key is replaced, not kept). A flow naming an unknown sound is rejected at publish (`400 invalid_request` naming it and listing the available names). If the sound is removed later the flow stays ready and its calls play the server default (or none): taking a flow offline over an ambience sound would be worse than losing the sound. `{"name": ""}` means "no background" even when a server default is set.
 - **Safety bounds stay with the operator:** a server-wide ceiling `audio.allow_flow_background: true|false` (default false in production, true in development) because a background sound costs continuous bandwidth per call; when false, flows that ask for one are rejected at publish. The idle and gain ranges above are the only other bounds; `max_call_duration` still ends every call.
 - The idle controller's existing rules are unchanged (prompts skipped while a tool runs, the caller is muted, a reply is in progress or either side speaks; the call ends one `user_timeout` after the last prompt). `prompt_mode: say` speaks the prompt through TTS without the model, as today.
 - **Draft test calls** use the draft's `idle` and `audio` (they are built from the draft snapshot).
@@ -81,7 +81,7 @@ Two optional objects on the start step (call-level), both rejected on other step
 ### 3. API
 
 - `GET /api/v1/server-config` gains, read-only: `audio.backgrounds` (names only, never paths), `audio.allow_flow_background`, and the server's idle defaults (`user_timeout_ms`, `max_prompts`, `prompt_mode`) so the editor can show "server default: …". No file paths or secrets leave the server.
-- Flow create/update/draft validate the new objects (`400 invalid_config` with the field named); no new endpoint.
+- Flow create/update/draft validate the new objects (`400 invalid_request` with the field named); no new endpoint.
 
 ### 4. Console
 

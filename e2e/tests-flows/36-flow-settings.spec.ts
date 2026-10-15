@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { test, expect, LIVE } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
 import { api, botReplies, connectAdmin, openFlow, openFlowSettings, openFlowsList, sendText, stage, startCall } from "../lib/flows-helpers";
@@ -9,7 +10,24 @@ test.skip(LIVE, "echo-provider spec");
 test.describe.configure({ mode: "serial" });
 
 const NAME = "E2E Flow Settings";
-type Config = { context?: { max_tokens?: number; summarization?: { trigger_tokens?: number } }; stt_p99_ms?: number; failover?: { on: string[] }; async_tools?: string[] };
+
+// Every Explain button on the open panel opens a region with its default and range, and closes again.
+async function explainAll(page: Page, atLeast: number) {
+  const buttons = page.getByRole("button", { name: /^Explain / });
+  const n = await buttons.count();
+  expect(n).toBeGreaterThanOrEqual(atLeast);
+  for (let i = 0; i < n; i++) {
+    const button = buttons.nth(i);
+    const name = (await button.getAttribute("aria-label")) ?? "";
+    await button.scrollIntoViewIfNeeded();
+    await button.click();
+    const region = page.getByRole("region", { name, exact: true });
+    await expect(region).toContainText("Default and range");
+    await button.click();
+    await expect(region).toHaveCount(0);
+  }
+}
+type Config = { context?: { max_tokens?: number; summarization?: { trigger_tokens?: number; keep_turns?: number; prompt?: string } }; stt_p99_ms?: number; failover?: { on: string[] }; async_tools?: string[] };
 type Flow = { name: string; current_version: { number: number; config: Config & { steps?: { config: Config }[] } } };
 const current = async (stack: Parameters<typeof api>[0]) => (await api<{ data: Flow[] }>(stack, "/flows")).data.find((f) => f.name === NAME)!.current_version;
 const startConfig = (c: Flow["current_version"]["config"]): Config => c.steps?.[0]?.config ?? c;
@@ -36,10 +54,13 @@ test("settings set in the editor are published, read back, reopened and run on a
   await page.getByLabel("Max tokens", { exact: true }).fill("1000");
   await page.getByLabel("Summarise when history reaches (tokens)", { exact: true }).fill("500");
   await page.getByLabel("Wait for a late transcript (ms)", { exact: true }).fill("800");
+  await page.getByLabel("Keep the latest turns", { exact: true }).fill("2");
+  await page.locator("#flow-summary-prompt").fill("Keep names and amounts.");
   await page.getByRole("button", { name: "Explain Wait for a late transcript" }).click();
   await expect(page.getByRole("region", { name: "Explain Wait for a late transcript" })).toContainText("Default and range");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("region", { name: "Explain Wait for a late transcript" })).toHaveCount(0);
+  await explainAll(page, 10); // every obscure setting in Flow settings explains itself
   await step(page, "advanced flow settings");
   await page.getByRole("button", { name: "Done" }).click();
 
@@ -47,9 +68,11 @@ test("settings set in the editor are published, read back, reopened and run on a
   await page.locator(".react-flow__node").first().click();
   await page.getByRole("tab", { name: /Advanced/ }).click();
   await page.getByRole("checkbox", { name: "Rejected requests (bad request, bad key)" }).check();
+  await explainAll(page, 4); // fallbacks, failover, tool calls at once, text cleaning
   await page.getByRole("tab", { name: /Tools/ }).click();
   await page.getByRole("group", { name: "Settings ok" }).getByRole("checkbox", { name: /^lookup_order/ }).check();
   await page.getByRole("checkbox", { name: "Background: lookup_order" }).check();
+  await explainAll(page, 1);
   await step(page, "failover and a background tool");
 
   await page.getByRole("button", { name: "Publish", exact: true }).click();
@@ -58,6 +81,8 @@ test("settings set in the editor are published, read back, reopened and run on a
   await expect.poll(async () => (await current(stack)).number).toBe(2);
   const cfg = startConfig((await current(stack)).config);
   expect(cfg.context?.summarization?.trigger_tokens).toBe(500);
+  expect(cfg.context?.summarization?.keep_turns).toBe(2);
+  expect(cfg.context?.summarization?.prompt).toBe("Keep names and amounts.");
   expect(cfg.context?.max_tokens).toBe(1000);
   expect(cfg.stt_p99_ms).toBe(800);
   expect(cfg.failover?.on).toHaveLength(4);
@@ -77,6 +102,8 @@ test("settings set in the editor are published, read back, reopened and run on a
   await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
   await expect(page.getByLabel("Wait for a late transcript (ms)", { exact: true })).toHaveValue("800");
   await expect(page.getByLabel("Summarise when history reaches (tokens)", { exact: true })).toHaveValue("500");
+  await expect(page.getByLabel("Keep the latest turns", { exact: true })).toHaveValue("2");
+  await expect(page.locator("#flow-summary-prompt")).toHaveValue("Keep names and amounts.");
   await page.getByLabel("Summarise when history reaches (tokens)", { exact: true }).fill("1500");
   await expect(page.getByRole("note")).toContainText("Summarise-at must be below Max tokens (1000).");
   await page.getByRole("button", { name: "Done" }).click();
