@@ -18,9 +18,10 @@ import (
 // Build one Processor per session. When no filters are configured, do not
 // insert a Processor at all.
 type Processor struct {
-	chain  Filter
-	rate   int
-	Errors atomic.Uint64
+	chain   Filter
+	rate    int
+	scratch []int16 // input samples; reused per frame (ProcessFrame runs serially, filters must not retain pcm)
+	Errors  atomic.Uint64
 }
 
 func NewProcessor(f Filter, rate int) *Processor { return &Processor{chain: f, rate: rate} }
@@ -31,7 +32,11 @@ func (p *Processor) ProcessFrame(_ context.Context, f core.Frame, dir core.Direc
 		(a.Encoding != core.EncodingPCM16LE && a.Encoding != "") || len(a.Samples) == 0 || len(a.Samples)%2 != 0 {
 		return e.PushDirection(f, dir)
 	}
-	pcm := make([]int16, len(a.Samples)/2)
+	n := len(a.Samples) / 2
+	if cap(p.scratch) < n {
+		p.scratch = make([]int16, n)
+	}
+	pcm := p.scratch[:n]
 	for i := range pcm {
 		pcm[i] = int16(binary.LittleEndian.Uint16(a.Samples[2*i:]))
 	}

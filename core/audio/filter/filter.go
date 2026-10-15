@@ -28,6 +28,8 @@ var ErrUnsupportedRate = errors.New("filter: unsupported sample rate")
 // Implementations that wrap native code (RNNoise, Krisp, AIC) or a remote
 // worker satisfy the same interface; the chain does not care.
 type Filter interface {
+	// Process must not retain pcm after returning (the caller reuses it) and
+	// returns a new slice.
 	Process(pcm []int16, rate int) ([]int16, error)
 	// Reset drops all adaptive state (call between sessions or streams).
 	Reset()
