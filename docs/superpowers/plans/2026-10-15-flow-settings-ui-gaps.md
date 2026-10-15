@@ -1,4 +1,4 @@
-# Flow Settings the Editor Is Missing (UI only) Implementation Plan
+# Flow Settings the Editor Is Missing (UI only) Implementation Plan — with defaults, a Basic/Advanced split and live e2e
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,11 +10,34 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-12-switchboard-console-design.md` (flow editor); server rules in `server/flow/config.go`, `server/flow/fallback.go`.
 
+## Defaults (what every control means when left alone)
+
+An untouched control writes **nothing**; the server default applies, and the control shows it as its placeholder or hint (so the page always says what will happen). New flows (blank, copy, First run) start with none of these keys.
+
+| Setting | Where | Default when unset | Shown as |
+|---|---|---|---|
+| Summarise older turns | Advanced · Memory | off | unchecked |
+| Summarise when history reaches | Advanced · Memory | three quarters of Max tokens | placeholder `3000` (computed from the Max tokens field, 4000 by default) |
+| Keep the latest turns | Advanced · Memory | 4 | placeholder `4` |
+| Summary instructions | Advanced · Memory | the built-in prompt | placeholder `Built-in instructions` |
+| Wait for a late transcript | Advanced · Listening | the server's per-provider value (about 500 ms to 1.5 s) | placeholder `Server default` |
+| Failover on | step Advanced tab | timeouts, server errors, open circuit breaker | the three boxes checked |
+| Runs in the background | MCP tool picker | off (the model waits for the result) | unchecked |
+
+## Basic and Advanced
+
+Flow settings today is one long list. It is split so a first-time operator sees only what a typical flow needs, and everything that is not strictly necessary sits under one collapsed **Advanced** group:
+
+- **Always visible (Basic):** Flow name, Description, Listening (STT provider, model, language), Recording (with its disclosure confirmation; it is a compliance choice, not a tuning knob).
+- **Advanced (collapsed by default):** Turn-taking (wait after the caller stops), Late-transcript wait, Memory (max messages, max tokens, summarisation and its details), Route sound. (The silent-caller and audio groups join it in the per-flow call-behavior spec.)
+- **Step panel:** Basics, Routes and Tools stay as they are; the Advanced tab already holds fallbacks, tuning and (new) the failover policy.
+
 ## Global Constraints
 
 - Editor-only: no Go changes. If a rule the UI must mirror is not what the server enforces, the server wins and the mismatch is a ledger ruling.
 - A blank numeric/text field **removes the key**; the server default applies (the pattern of `vad_stop_ms`, `numberOrNothing`).
 - Call-level settings (`context`, `stt_p99_ms`, `async_tools`) are stored on the **start step** (`CALL_LEVEL` in `ui/src/routes/flows/editor/model.ts`); `toPayload` strips them from other steps.
+- **No echo dependence in the proof:** every new control has a browser e2e that runs against **real providers** (`E2E_PROVIDER=xai`, `make e2e-xai`, guarded by `GOVOICE_LIVE=1`, a few provider requests) as well as the free echo run; no `test.skip(LIVE)` unless the assertion needs a label only echo produces (and then a live-safe assertion replaces it, see Task 4).
 - Only controls for settings the server accepts; no invented knobs. Every control has a visible label and a hint with the unit and the default; errors name the field. No shadows, tokens only (the design-rule test).
 
 ## Review Focus
@@ -31,6 +54,25 @@
 2. **At least one class stays checked**: an empty `failover.on` means "default" on the server, so an all-unchecked state would silently re-enable the defaults. The last checked class is disabled.
 3. **Unchecking "Summarise older turns" removes the whole `summarization` block** (today's behavior), including the details typed under it; no hidden retained values.
 4. **`async_tools` is chosen in the MCP tool picker** (a per-tool "Runs in the background" checkbox beside "Required"), because it names flow tools; it is stored on the start step.
+
+---
+
+### Task 0: Basic and Advanced in Flow settings
+
+**Files:**
+- Modify: `ui/src/routes/flows/editor/FlowSettingsPanel.tsx`, `ui/src/styles.css` (only if a rule is needed; tokens, no shadows)
+- Test: `ui/src/routes/flows/editor/FlowSettingsPanel.test.tsx`
+
+- [ ] **Step 1: Write the failing tests.**
+  - The panel shows Flow name, Description, Listening and Recording without opening anything; Turn-taking, Memory and Route sound are inside a `<details>` whose summary reads `Advanced`; it is **closed** for a new or default flow.
+  - The summary says how many advanced settings are set: `Advanced` alone when none, `Advanced · 2 set` when two keys (`vad_stop_ms`, `context`, `stt_p99_ms`, `route_cue`) are present.
+  - A stored flow that already sets any advanced value opens with `Advanced` **expanded**, so no stored value is hidden.
+  - A flow issue that belongs to an advanced field (for example `Summarise-at must be below Max tokens`) forces `Advanced` open and the issue list names the field; opening and closing is keyboard operable (native `<details>`).
+  - Every existing control keeps its label, so the existing Flow settings tests pass with the group opened first where they touch an advanced field.
+- [ ] **Step 2: Run to see them fail.** `cd ui && npx vitest run src/routes/flows/editor/FlowSettingsPanel.test.tsx` — Expected: FAIL.
+- [ ] **Step 3: Implement.** Wrap the advanced fieldsets in `<details className="advanced" open={forced || hasAdvancedValue}>` with a controlled `open` that the user can still toggle (state initialised from the two conditions, forced open by an advanced issue). No new copy beyond the summary.
+- [ ] **Step 4: Run to see them pass.** `cd ui && npx vitest run && npx tsc --noEmit` — Expected: PASS.
+- [ ] **Step 5: Commit** `feat(ui): Flow settings keeps the essentials up front and the rest under Advanced`.
 
 ---
 
@@ -93,14 +135,15 @@
 
 ---
 
-### Task 4: The browser proves it, docs, gate, review
+### Task 4: The browser proves it (echo and real providers), docs, gate, review
 
 **Files:**
 - Create: `e2e/tests-flows/36-flow-settings.spec.ts`
 - Modify: `docs/superpowers/specs/2026-10-12-switchboard-console-design.md` (the flow editor's settings list)
 
-- [ ] **Step 1: Write the spec** (echo only): create a flow through the API; open Flow settings, tick `Summarise older turns`, set `Summarise when history reaches` to 500 and `Max tokens` 1000, set `Wait for a late transcript` to 800; open the step's Advanced tab and tick the client-error failover class; publish; assert through `GET /flows` that the version config carries `context.summarization.trigger_tokens: 500`, `stt_p99_ms: 800` and `failover.on` with four classes; reopen (in-app) and see the controls show the stored values; set a trigger above Max tokens and see Publish disabled with the reason.
+- [ ] **Step 1: Write the spec so it runs in both modes** (no `test.skip(LIVE)`; flow-creation helpers already pick `PROVIDER`, `LLM_MODEL()` and `catalogDefault()`): create a flow through the API with `stage()`; open Flow settings, confirm `Advanced` is collapsed, open it, tick `Summarise older turns`, set `Summarise when history reaches` to 500 and `Max tokens` 1000, set `Wait for a late transcript` to 800; open the step's Advanced tab and tick the client-error failover class; tick `Runs in the background` on a tool chosen from a server connected by the spec (`/ok`, no call is made); publish; assert through `GET /flows` that the version config carries `context.summarization.trigger_tokens: 500`, `stt_p99_ms: 800` and `failover.on` with four classes; reopen (in-app) and see the controls show the stored values with `Advanced` already expanded; set a trigger above Max tokens and see Publish disabled with the reason. **Then place a call with these settings on the published flow** (`openFlowTest`, `startCall`, `sendText("Say hello")`) and expect any bot reply (`botReplies(page).first()` visible, a generous timeout in live mode): this proves a real server and real providers accept and run a flow carrying every new key. Do not assert reply wording in live mode (a real model writes it); in echo mode also assert the labelled reply.
+- [ ] **Step 1b: Run it live.** `GOVOICE_LIVE=1 make e2e-xai` (needs `XAI_API_KEY`; about 6 provider requests added to the suite's 20) — Expected: green; the spec is skipped with the suite's existing "No XAI_API_KEY" message when the key is absent, never silently passing.
 - [ ] **Step 2: Run** `make e2e-echo` — Expected: all green. Fix real failures in the code, not the spec.
-- [ ] **Step 3: Full gate.** `cd ui && npx vitest run && npx tsc --noEmit`; `make e2e-echo` — Expected: all green. (No Go change: the Go suites only need to still pass.)
+- [ ] **Step 3: Full gate.** `cd ui && npx vitest run && npx tsc --noEmit`; `make e2e-echo`; and, once, `GOVOICE_LIVE=1 make e2e-xai` — Expected: all green. (No Go change: the Go suites only need to still pass.)
 - [ ] **Step 4: Independent review** (AGENTS.md): a fresh Opus reviewer on `main..HEAD` with the Review Focus items; it also checks bloat and dead code introduced by the branch.
 - [ ] **Step 5: Commit** `docs: the flow editor sets summarisation details, the late-transcript wait, background tools and the failover policy`.

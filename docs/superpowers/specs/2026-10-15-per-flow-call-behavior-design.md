@@ -16,6 +16,39 @@ B1 (silent-caller behavior) and B3 (audio and ambience). Not in this spec: B2 (t
 - **Audio:** `server/config.go` `audio.*` (YAML): `input_filters` (`denoise`) + `denoise_strength` (0..1, default 0.5), `output_gain_db` (−30..+6, 0 = no stage), `background` (`file`, `gain_db` −60..0 default −30, `loop` default true), `cues` (named sounds for `route_cue`). `docs/audio-filters.md`: server-wide only, "per-flow filter settings are left for later"; background mixing adds continuous WebSocket traffic (about 48 kB/s at 24 kHz) per call; recordings keep the raw inbound audio.
 - Per-flow settings live on the **start step** of the flow config (`stt`, `vad_stop_ms`, `recording`, `context`, `async_tools`, rejected on other steps by `validateCallLevel`), validated in `server/flow/config.go`, part of the version hash, and shown in the editor's Flow settings panel.
 
+## Defaults, Basic and Advanced, and how it is proven
+
+### Sensible defaults
+
+An option left alone writes nothing to the flow; the **server's built-in default** applies and the editor shows it. The built-in defaults are chosen to be safe and useful with no configuration:
+
+| Option | Built-in default | Why |
+|---|---|---|
+| Quiet-caller handling | **on**: ask after 15 s of silence, up to 2 times, then end the call | A call nobody is on costs money until `max_call_duration` (30 min). Today the default is off. |
+| Ask how | the model words it (`llm`) | Sounds natural and fits the flow's persona. |
+| What to say | "Are you still there?" | The existing built-in prompt. |
+| Goodbye before hanging up | "I'll end the call now. Goodbye." | Today the default is empty (a silent hang-up). |
+| Noise reduction | **off** | Do not alter the caller's audio unless asked. |
+| Voice volume | 0 dB (no gain stage) | No change. |
+| Background sound | none | It costs continuous bandwidth per call. |
+
+YAML can still change every default (`idle.user_timeout: 0` turns quiet-caller handling off server-wide), so an operator who wants today's behavior keeps it with one line. The built-in change is deliberate and listed as Ruling 6.
+
+### Basic and Advanced
+
+Only what a typical flow needs is visible; everything else is under the collapsed **Advanced** group of Flow settings (opened automatically when a stored value in it is set or has an error, see the UI plan):
+
+- **Basic:** *If the caller goes quiet*: one checkbox `End the call if the caller stays silent` (on by default) and its wait in seconds (placeholder: the server default).
+- **Advanced:** how many times to ask (1–10), what to say and how (the model words it / exactly as written), the goodbye, noise reduction (and strength), voice volume, background sound (and its volume and repeat). Each shows its default as a placeholder or hint.
+
+### Proven without the echo provider
+
+Each option group has a browser e2e that runs against **real providers** as well as the free echo run (`GOVOICE_LIVE=1 make e2e-xai`, a few provider requests per spec; skipped with the suite's "No XAI_API_KEY" message when the key is absent, never silently green):
+
+- **Quiet caller:** a flow with `prompt_mode: "say"` (an exact prompt, spoken by the real TTS) and a short wait: after the silence the transcript shows the exact prompt text (the real model is not involved, so the assertion is deterministic), then the goodbye and the end of the call.
+- **Audio:** a call with `output_gain_db` and a server background sound connects, the real TTS audio reaches the client (frames with energy) and the client sees continuous traffic during a silence only when a background is set.
+- Behavior that depends on what a real model says is not asserted live; the live run proves the real server and providers accept and run a flow carrying every new key, and the exact behavior is pinned by the Go e2e on echo.
+
 ## Design
 
 ### 1. Config
@@ -48,8 +81,8 @@ Two optional objects on the start step (call-level), both rejected on other step
 
 ### 4. Console
 
-- **Flow settings** gets two groups after "Turn-taking":
-  - **If the caller goes quiet:** `Wait this long (seconds)` (empty = server default, `0` = never), `Ask this many times` (1–10), `What to say` (textarea; hint "Said in the agent's own words by default, or exactly as written if you choose Say it exactly"), a radio `Let the model word it` / `Say it exactly`, and `Goodbye before hanging up`. Each field's placeholder shows the server default from `server-config`; a short line states the rule "the call ends one wait after the last ask".
+- **Flow settings** (Basic: the quiet-caller checkbox and wait; Advanced: everything below). Two groups:
+  - **If the caller goes quiet (Advanced part):** `Wait this long (seconds)` (empty = server default, `0` = never), `Ask this many times` (1–10), `What to say` (textarea; hint "Said in the agent's own words by default, or exactly as written if you choose Say it exactly"), a radio `Let the model word it` / `Say it exactly`, and `Goodbye before hanging up`. Each field's placeholder shows the server default from `server-config`; a short line states the rule "the call ends one wait after the last ask".
   - **Audio:** `Reduce background noise` (checkbox + a 0–100% strength slider with a number input, default 50%), `Voice volume (dB)` (−30 to +6), `Background sound` (a select of the server's sound names plus "None", disabled with the reason when the server does not allow flow backgrounds), its volume (−60 to 0 dB), `Repeat` (checkbox).
 - Editor validation mirrors the ranges above; Publish is blocked with the field named.
 - The Publish dialog lists `Flow settings: silent-caller behavior changed` / `audio changed`.
@@ -63,6 +96,7 @@ Two optional objects on the start step (call-level), both rejected on other step
 
 ### 6. Testing
 
+- **Live (real providers, `make e2e-xai`):** as in "Proven without the echo provider" above; the echo run keeps the same specs (timing shortened) plus the labelled-reply assertions.
 - **`server/flow` unit:** every range and byte limit (boundary values), control characters, wrong types, call-level only (rejected on a non-start step), flat form, config hash changes, missing keys read as nil.
 - **Server:** resolution order (flow overrides server; absent uses server) for idle and audio, unit-tested without a call; unknown background name rejected at publish and `not_ready` when removed; `allow_flow_background: false` rejects; the dtmf rule.
 - **Go e2e (echo, real WebSocket calls):** a flow with `idle.user_timeout_ms: 400, max_prompts: 1, prompt_mode: say` gets the exact prompt after the silence and then the goodbye and a hangup, while the same server with another flow gets neither; a flow with `output_gain_db` and a background sound produces audio frames with the expected extra traffic (the existing mixer tests' approach), and a flow without them produces none.
@@ -80,9 +114,12 @@ Two optional objects on the start step (call-level), both rejected on other step
 3. **Nothing deployed, so no compatibility:** the single `audio.background` key is replaced by `audio.backgrounds` + `background_default`.
 4. **Bot-idle stays server-wide:** it is an operational safety net, not a conversation choice.
 5. **Units:** milliseconds in flow config, seconds in the editor field (the editor converts).
+6. **Quiet-caller handling is on by default** (15 s, 2 asks, then end the call, with a spoken goodbye), in every profile, instead of off. Cost if wrong: an operator who relied on calls staying open through long silences must set `idle.user_timeout: 0` (server) or `idle.user_timeout_ms: 0` (flow). Nothing is deployed, so no existing behavior is broken.
+7. **Live e2e only for what is deterministic** with a real model (exact `say` prompt, audio energy, acceptance of the config); wording-dependent behavior stays in the echo Go e2e.
 
 ## Open points
 
+- Whether on-by-default quiet-caller handling should also apply to the **dev profile** (it does here; `make dev` calls would then end after 15 s of silence plus asks).
 - Whether a flow-level `user_timeout_ms: 0` ("never hang up on silence") should be allowed in production: this spec allows it (the call duration cap still applies); a server flag could forbid it.
 - Denoise strength is a single knob; per-band tuning is out of scope.
 - A background sound uploaded from the console (instead of a server-configured name) would need file storage and review; out of scope.
