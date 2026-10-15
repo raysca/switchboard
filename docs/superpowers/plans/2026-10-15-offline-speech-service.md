@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A standalone Go service (`offline/`) that speaks xAI's STT and TTS wire protocols and is backed by a local Speaches server (faster-whisper + Kokoro), plus a compose bundle, so the existing `xai` adapters run whole calls with real audio and no network.
+**Goal:** A standalone Go service (`offline/`) that speaks xAI's STT and TTS wire protocols and is backed by a local Speaches server (faster-whisper + Kokoro), plus a compose bundle, so the existing `xai` adapters run whole calls with real audio and no network. The server knows it as provider `offline`, and an end-to-end test runs a call through it.
 
-**Architecture:** `offline/adapter` is a thin protocol adapter: `GET /v1/stt` (WebSocket), `GET /v1/tts` (WebSocket), `POST /v1/tts` (unary), `GET /healthz`. STT builds streaming on top of batch Whisper: a pure-Go energy endpointer cuts utterances, a single ordered worker re-decodes the growing utterance for interims and decodes once more for `speech_final`, with generation fencing so a stale interim never follows a final. TTS forwards each sentence unit to Speaches and streams the PCM back as `audio.delta`. The LLM is **not** proxied: `xai_llm.endpoint` points straight at Ollama (spiked). A separate `offline/contract` module drives the real `providers/xai` clients against the adapter.
+**Architecture:** `offline/adapter` is a thin protocol adapter: `GET /v1/stt` (WebSocket), `GET /v1/tts` (WebSocket), `POST /v1/tts` (unary), `GET /healthz`. STT builds streaming on top of batch Whisper: a pure-Go energy endpointer cuts utterances, a single ordered worker re-decodes the growing utterance for interims and decodes once more for `speech_final`, with generation fencing so a stale interim never follows a final. TTS forwards each sentence unit to Speaches and streams the PCM back as `audio.delta`. The LLM is **not** proxied: `xai_llm.endpoint` points straight at Ollama (spiked). A separate `offline/contract` module drives the real `providers/xai` clients against the adapter. In `server/`, a small `offline` provider (`offline.stt/tts/llm`) reuses the xai processors with its own endpoints, breakers and no key, so one server can mix real xAI and offline agents; server e2e tests run a call through it (hermetic with fake backends, and opt-in against the real stack).
 
 **Tech Stack:** Go 1.27.1, `github.com/coder/websocket` v1.8.15, `net/http` stdlib, Docker Compose, Speaches (`ghcr.io/speaches-ai/speaches`), Ollama.
 
@@ -12,10 +12,10 @@
 
 ## Global Constraints
 
-- Separate Go modules inside the existing `go.work`: `govoice/offline` (adapter, depends only on `github.com/coder/websocket`) and `govoice/offline/contract` (tests that import `govoice/core` and `govoice/providers/xai`). The adapter module must not import `server/`, `core/` or `providers/`. `core/` and `server/` are not modified.
+- Separate Go modules inside the existing `go.work`: `govoice/offline` (adapter, depends only on `github.com/coder/websocket`) and `govoice/offline/contract` (tests that import `govoice/core` and `govoice/providers/xai`). The adapter module must not import `server/`, `core/` or `providers/`. `core/` and `providers/` are not modified. `server/` gains the `offline` provider (Task 8) and imports `govoice/offline/adapter` **only from `_test.go` files** (Task 10).
 - AGENTS.md rules apply: every queue bounded; every goroutine has a termination path (`ctx.Done()` or a closed channel); no `context.Context` in struct fields; `defer cancel()` right after creating a context; no mutex held across I/O; monotonic timing only (`time.Since`); only the producer closes a channel; errors wrapped with `%w`, inspected with `errors.Is/As`; exported sentinel errors are `var Err... = errors.New(...)`; WebSocket handlers must not let a client anomaly crash the process.
 - All code passes `go test -race ./...` and `gofmt`.
-- Provider secrets: never write or store keys in files. The adapter accepts any bearer token unless `OFFLINE_TOKEN` is set in the environment. The `xai` credential used with the offline stack is supplied through `XAI_API_KEY` in the environment.
+- Provider secrets: never write or store keys in files. The adapter accepts any bearer token unless `OFFLINE_TOKEN` is set in the environment. The server's `offline` provider reads no credential (it sends the constant bearer `offline`, which the local stack ignores); if `OFFLINE_TOKEN` is set on the adapter, the offline provider is not usable until a token option is added (documented limit).
 - Nothing downloads at runtime. Only `make offline-models` needs network.
 - xAI wire facts (copied from the spec, do not change): STT query `sample_rate=16000&encoding=pcm&language=en&interim_results=true&model=...`; server sends `{"type":"transcript.created"}` first; client sends binary PCM16LE mono then text `{"type":"audio.done"}`; server sends `transcript.partial` (`speech_final:true` carries the **whole utterance**; this plan never sends `is_final`), then `transcript.done`, then closes. TTS WebSocket: client `text.delta` + `text.done` per unit, server `audio.delta` (base64 PCM16LE, even byte count) + `audio.done`, **connection stays open** for the next unit. TTS unary: `POST /v1/tts` body `{"text","voice_id","language","output_format":{"codec":"pcm","sample_rate":24000}}` returns raw PCM16LE. Bad voice = HTTP 400; bad token = 401.
 
@@ -29,6 +29,8 @@ Failure modes the spec implies but a happy-path test would miss, most likely fir
 4. **Backend down or overloaded:** TTS returns an `error` message (the adapter retries unary); STT final failure sends `error` and closes; a full queue is HTTP 503 / `error`, never a hang. [Task 3 `TestTTSPostBackendErrors`, Task 6 `TestSTTFinalErrorSendsErrorAndCloses`]
 5. **Ordering:** a stale interim decoded after its utterance's `speech_final` must be dropped; two utterances in one stream must finalize in order; an utterance longer than `MaxUtterance` is cut with a `speech_final`, not buffered without bound. [Task 6 `TestSTTStaleInterimDropped`, `TestSTTUtteranceCap`]
 6. **Auth:** WebSocket upgrades without the token get 401 when `OFFLINE_TOKEN` is set; `/healthz` stays open. [Task 1 `TestRequireToken`]
+7. **Provider isolation:** an offline outage must not open the real xAI breakers (separate breakers); a build without `-tags xaispeech` must report `offline` STT/TTS as unsupported, not crash. [Task 8 `TestOfflineBreakersAreSeparate`, `TestOfflineSpeechAbsentWithoutXAISpeechTag`]
+8. **Call level:** a caller's audio must come back as a spoken reply through the real server, and a dead adapter must end the call cleanly, not hang it. [Task 10 `TestOfflineCallEndToEnd`, `TestOfflineAdapterDownFailsTheStage`]
 
 ---
 
@@ -60,7 +62,9 @@ offline/
     stack_test.go                real xai clients vs the running compose stack (tags xaispeech offlinestack)
 ```
 
-Modified: `go.work` (add `./offline`, `./offline/contract`), `Makefile` (MODULES, `offline-*` targets), `docs/providers.md`, `docs/privacy.md`, the spec.
+Server (Task 8, 10): `server/registry_offline.go`, `server/registry_offline_speech.go` (tag xaispeech), `server/registry_offline_test.go`, `server/catalog/data/offline.yaml`, `server/offline_e2e_test.go`, `server/offline_stack_e2e_test.go`; modified `server/config.go`, `server/config_defaults.go`, `server/registry.go`, `server/registry_noxaispeech.go`, `server/go.mod`, `server/catalog/catalog_test.go`.
+
+Modified elsewhere: `go.work` (add `./offline`, `./offline/contract`), `Makefile` (MODULES, `offline-*` targets), `docs/providers.md`, `docs/privacy.md`, the spec.
 
 ---
 
@@ -2418,7 +2422,7 @@ func TestStackRoundTrip(t *testing.T) {
 - [ ] **Step 5: Verify the opt-in test compiles and skips**
 
 Run: `cd offline/contract && go vet -tags "xaispeech offlinestack" ./... && go test -tags "xaispeech offlinestack" -run TestStackRoundTrip -v ./...`
-Expected: `--- SKIP` (no stack running yet; it passes for real in Task 8).
+Expected: `--- SKIP` (no stack running yet; it passes for real in Task 9).
 
 - [ ] **Step 6: Commit**
 
@@ -2429,7 +2433,244 @@ git commit -m "test(offline): real xai STT/TTS clients against the adapter, plus
 
 ---
 
-### Task 8: Compose bundle, LLM model choice, Make targets, docs
+### Task 8: `offline` provider in the server
+
+**Files:**
+- Create: `server/registry_offline.go`, `server/registry_offline_speech.go` (`//go:build xaispeech`), `server/catalog/data/offline.yaml`
+- Test: `server/registry_offline_test.go`
+- Modify: `server/config.go`, `server/config_defaults.go`, `server/registry.go`, `server/registry_noxaispeech.go`, `server/catalog/catalog_test.go`
+
+**Interfaces:**
+- Consumes: `xai.NewProcessor`, `xai.Config`, `xai.DefaultSTTConfig`, `xai.NewSTTProcessor`, `xai.DefaultTTSConfig`, `xai.NewStreamingTTSProcessor` (existing); `Registry.Register`, `StageSpec`, `failoverPolicy`, `xaiSpeechEnabled` (existing).
+- Produces: registry keys `offline.llm`, `offline.stt`, `offline.tts`; `cfg.Providers.Offline.{LLMEndpoint,STTEndpoint,TTSEndpoint}`; `func xaiLLMProcessor(spec StageSpec, endpoint, key string, br *resilience.Breaker, who string) (core.Processor, error)` (the xai.llm factory body, now shared); Registry fields `offlineLLMBreaker`, `offlineSTTBreaker`, `offlineTTSBreaker`.
+
+The provider reuses the real xai processors (so retries, breaker, usage, tracing and the tool loop are the real ones) and needs no key. The existing `xai` provider is untouched in behaviour.
+
+- [ ] **Step 1: Write the failing tests `server/registry_offline_test.go`**
+
+```go
+package server
+
+import "testing"
+
+func TestOfflineRegisteredAndBuildsWithoutAKey(t *testing.T) {
+	reg := NewRegistry()
+	cfg := DefaultConfig(ProfileDevelopment)
+	stages := map[string]StageSpec{"llm": {Model: "govoice-test"}}
+	if xaiSpeechEnabled {
+		stages["stt"], stages["tts"] = StageSpec{Model: "s"}, StageSpec{Voice: "af_heart"}
+	}
+	for stage, spec := range stages {
+		if !reg.Supports("offline", stage) {
+			t.Errorf("offline.%s is not registered", stage)
+			continue
+		}
+		p, err := reg.factories["offline."+stage](cfg, spec) // no Secret: offline reads none
+		if err != nil {
+			t.Errorf("offline.%s with no secret: %v", stage, err)
+			continue
+		}
+		_ = p.Close()
+	}
+}
+
+func TestOfflineSpeechAbsentWithoutXAISpeechTag(t *testing.T) {
+	if xaiSpeechEnabled {
+		t.Skip("built with xaispeech")
+	}
+	reg := NewRegistry()
+	if reg.Supports("offline", "stt") || reg.Supports("offline", "tts") {
+		t.Fatal("offline STT/TTS registered in a build without xaispeech")
+	}
+	if !reg.Supports("offline", "llm") {
+		t.Fatal("offline.llm must exist on every build")
+	}
+}
+
+func TestOfflineBreakersAreSeparate(t *testing.T) {
+	reg := NewRegistry()
+	if reg.offlineLLMBreaker == reg.xaiLLMBreaker || reg.offlineSTTBreaker == reg.xaiSTTBreaker || reg.offlineTTSBreaker == reg.xaiTTSBreaker {
+		t.Fatal("offline shares a breaker with xai: a local outage would open the real provider's circuit")
+	}
+}
+
+func TestOfflineDefaultEndpoints(t *testing.T) {
+	c := DefaultConfig(ProfileDevelopment).Providers.Offline
+	if c.LLMEndpoint != "http://127.0.0.1:11434/v1/responses" || c.STTEndpoint != "ws://127.0.0.1:8099/v1/stt" || c.TTSEndpoint != "http://127.0.0.1:8099/v1/tts" {
+		t.Fatalf("defaults: %+v", c)
+	}
+}
+```
+
+Also add `"offline"` to the provider id list in `server/catalog/catalog_test.go:35`.
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `cd server && go test -tags xaispeech -run 'Offline|Catalog' -count=1 ./... 2>&1 | head`
+Expected: FAIL (`Providers.Offline`, `offlineLLMBreaker` undefined; catalog has no `offline`).
+
+- [ ] **Step 3: Implement**
+
+`server/config.go`: add next to the `XAITTS` block:
+
+```go
+		// Offline is the local stack in offline/: the xai processors pointed at a local adapter (STT,
+		// TTS) and Ollama (LLM). It needs no key. Defaults match offline/compose.yaml.
+		Offline struct {
+			LLMEndpoint string `yaml:"llm_endpoint"`
+			STTEndpoint string `yaml:"stt_endpoint"`
+			TTSEndpoint string `yaml:"tts_endpoint"`
+		} `yaml:"offline"`
+```
+
+`server/config_defaults.go`, next to the xAI defaults:
+
+```go
+	cfg.Providers.Offline.LLMEndpoint = "http://127.0.0.1:11434/v1/responses"
+	cfg.Providers.Offline.STTEndpoint = "ws://127.0.0.1:8099/v1/stt"
+	cfg.Providers.Offline.TTSEndpoint = "http://127.0.0.1:8099/v1/tts"
+```
+
+`server/registry.go`: add fields `offlineLLMBreaker, offlineSTTBreaker, offlineTTSBreaker *resilience.Breaker` beside the xai ones (line ~143), initialise them with `resilience.NewBreaker(resilience.DefaultConfig())` in `NewRegistry` (line ~245), call `registerOffline(r)` right after `registerEcho(r)` (line ~460), and replace the body of the `xai.llm` factory with a call to the shared helper:
+
+```go
+	r.Register("xai.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		key, err := apiKey(spec.Secret)
+		if err != nil {
+			return nil, fmt.Errorf("xai.llm: %w", err)
+		}
+		return xaiLLMProcessor(spec, cfg.Providers.XAILLM.Endpoint, key, r.xaiLLMBreaker, "xai.llm")
+	})
+```
+
+```go
+// xaiLLMProcessor is the xAI Responses-API stage, shared by xai.llm and offline.llm.
+func xaiLLMProcessor(spec StageSpec, endpoint, key string, br *resilience.Breaker, who string) (core.Processor, error) {
+	xaiCfg := xai.Config{Model: spec.Model, Endpoint: endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br}
+	if len(spec.Tools) > 0 {
+		loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
+		if err != nil {
+			return nil, fmt.Errorf("%s tools: %w", who, err)
+		}
+		xaiCfg.ToolDefinitions, xaiCfg.ToolLoop = spec.Tools, loop
+	}
+	return xai.NewProcessor(xaiCfg)
+}
+```
+
+`server/registry_offline.go`:
+
+```go
+package server
+
+import "govoice/core"
+
+// offlineBearer is the constant token the xai processors send to the local stack, which ignores it.
+// The offline provider reads no credential, so no key is stored for it.
+const offlineBearer = "offline"
+
+// registerOffline registers the local stack (offline/) on every build: offline.llm needs no build
+// tag; offline.stt and offline.tts exist only where the xAI speech adapters do.
+func registerOffline(r *Registry) {
+	r.Register("offline.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		return xaiLLMProcessor(spec, cfg.Providers.Offline.LLMEndpoint, offlineBearer, r.offlineLLMBreaker, "offline.llm")
+	})
+	registerOfflineSpeech(r)
+}
+```
+
+`server/registry_offline_speech.go`:
+
+```go
+//go:build xaispeech
+
+package server
+
+import (
+	"govoice/core"
+	"govoice/providers/xai"
+)
+
+// registerOfflineSpeech wires offline.stt and offline.tts to the adapter in offline/.
+func registerOfflineSpeech(r *Registry) {
+	r.Register("offline.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		sttCfg := xai.DefaultSTTConfig()
+		if spec.Model != "" {
+			sttCfg.Model = spec.Model
+		}
+		if spec.Language != "" {
+			sttCfg.Language = spec.Language
+		}
+		sttCfg.Endpoint, sttCfg.APIKey, sttCfg.CircuitBreaker = cfg.Providers.Offline.STTEndpoint, offlineBearer, r.offlineSTTBreaker
+		if spec.Failover {
+			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
+		}
+		return xai.NewSTTProcessor(sttCfg)
+	})
+	r.Register("offline.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		ttsCfg := xai.DefaultTTSConfig()
+		if spec.Voice != "" {
+			ttsCfg.Voice = spec.Voice
+		}
+		if cfg.Providers.GoogleTTS.SampleRate > 0 { // the pipeline's output rate is configured once, under google_tts
+			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
+		}
+		ttsCfg.Endpoint, ttsCfg.APIKey, ttsCfg.CircuitBreaker = cfg.Providers.Offline.TTSEndpoint, offlineBearer, r.offlineTTSBreaker
+		if spec.Failover {
+			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
+		}
+		return xai.NewStreamingTTSProcessor(ttsCfg)
+	})
+}
+```
+
+`server/registry_noxaispeech.go`: add `func registerOfflineSpeech(*Registry) {}` with a one-line comment.
+
+`server/catalog/data/offline.yaml` (closed lists would stop users naming their own Ollama model, so leave `custom` at its default):
+
+```yaml
+# The local stack in offline/: STT and TTS through the adapter, the LLM through Ollama. No key.
+id: offline
+name: Offline (local models)
+services:
+  llm:
+    keyless: true
+    models:
+      - {id: govoice-test, label: Local model (offline/Modelfile), default: true}
+  stt:
+    keyless: true
+    models:
+      - {id: Systran/faster-whisper-small.en, label: Whisper small (English), default: true}
+    languages:
+      - {id: en, label: English, default: true}
+  tts:
+    keyless: true
+    voices:
+      - {id: af_heart, label: Kokoro Heart (en-US), default: true}
+```
+
+If the catalog loader rejects a field here (compare with `echo.yaml` and `xai.yaml`), mirror the accepted shape; do not change the loader.
+
+- [ ] **Step 4: Run, with and without the tag**
+
+Run: `cd server && go vet ./... && go vet -tags xaispeech ./... && go test -count=1 -run 'Offline|Catalog|Registry|Config' ./... && go test -tags xaispeech -count=1 -run 'Offline|Catalog|Registry|Config' ./...`
+Expected: PASS both ways (the tag-absent run exercises `TestOfflineSpeechAbsentWithoutXAISpeechTag`).
+
+- [ ] **Step 5: Docs contract**
+
+Run: `cd server && go test -tags xaispeech -run 'Docs|Contract' -count=1 ./...`
+Expected: PASS. If a contract test lists documented config keys or providers, add `providers.offline.*` / `offline` to the doc it reads (`docs/providers.md`, `docs/api/v1.md` if it lists providers) in this task.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server
+git commit -m "feat(server): offline provider reusing the xai processors with its own endpoints and breakers"
+```
+
+---
+
+### Task 9: Compose bundle, LLM model choice, Make targets, docs
 
 **Files:**
 - Create: `offline/Dockerfile`, `offline/compose.yaml`, `offline/Modelfile`, `offline/README.md`, `offline/cmd/toolcheck/main.go`
@@ -2664,16 +2905,19 @@ Expected: `--- PASS: TestStackRoundTrip`. If it fails, the failure is the spike'
 
 `offline/README.md`: what it is (3 lines), the two profiles, `make offline-up/models/test/down`, the config snippet below, the env var table from `adapter/config.go`, the chosen LLM and why, and the known limits (server-wide endpoints; usage labelled `xai`; energy endpointer; Speaches TTS returns each sentence whole).
 
-Server config to document (no key is written anywhere; the credential value comes from `XAI_API_KEY` in the environment):
+Server config to document (no key is written anywhere; the `offline` provider reads no credential):
 
 ```yaml
 providers:
-  xai_llm: { endpoint: http://127.0.0.1:11434/v1/responses }
-  xai_stt: { endpoint: ws://127.0.0.1:8099/v1/stt }
-  xai_tts: { endpoint: http://127.0.0.1:8099/v1/tts }
+  offline:
+    llm_endpoint: http://127.0.0.1:11434/v1/responses   # Ollama directly
+    stt_endpoint: ws://127.0.0.1:8099/v1/stt
+    tts_endpoint: http://127.0.0.1:8099/v1/tts
 ```
 
-Agents use provider `xai` with model `govoice-test` for the LLM. Add a short "Offline (privacy) mode" section to `docs/providers.md` pointing at `offline/README.md`, and one paragraph in `docs/privacy.md` stating that with this stack audio and text never leave the host and that the only network step is `make offline-models`.
+These are the defaults, so a default server config already works. Agents use provider `offline`: STT model any string, LLM model `govoice-test`, TTS voice `af_heart` (xAI voice names such as `eve` are aliased by the adapter).
+
+Add a short "Offline (privacy) mode" section to `docs/providers.md` pointing at `offline/README.md`, and one paragraph in `docs/privacy.md` stating that with this stack audio and text never leave the host and that the only network step is `make offline-models`.
 
 - [ ] **Step 8: Verify docs did not break the docs contract**
 
@@ -2689,7 +2933,269 @@ git commit -m "feat(offline): compose bundle with two profiles, Make targets, LL
 
 ---
 
-### Task 9: Independent review and verification gate (AGENTS.md)
+### Task 10: Server end-to-end test through the offline provider
+
+**Files:**
+- Create: `server/offline_e2e_test.go` (`//go:build xaispeech`), `server/offline_stack_e2e_test.go` (`//go:build xaispeech && offlinestack`)
+- Modify: `server/go.mod` (require and replace `govoice/offline`), `Makefile` (`offline-test` also runs the server stack e2e)
+
+**Interfaces:**
+- Consumes: `newFlowRigE2E`, `newProbe`, `flowRigE2E.dial/createRoutedFlow`'s pieces (`r.s.flows.Create`, `flow.CreateRequest`), `e2eCall` (`send`, `waitReplies`, `maxPeak`, `ended`), `eventually` (all in `server/flow_e2e_test.go`, `call_behavior_e2e_test.go`); `adapter.New`, `adapter.LoadConfig` from `govoice/offline/adapter`; `ws.EncodeAudioFrame` from `govoice/transport/ws`.
+- Produces: `func (c *e2eCall) sendAudio(pcm []byte)` (test helper: 20 ms frames at 16 kHz, paced), `func offlineFlow(t *testing.T, r *flowRigE2E, cfg string) string`.
+
+The caller speaks **audio** here (every other server e2e sends text), so this proves the whole path: caller audio, adapter STT (`speech_final`), turn, LLM Responses stream, adapter TTS audio back to the caller.
+
+- [ ] **Step 1: Make `govoice/offline` importable from the server tests**
+
+In `server/go.mod` add next to the other replaces and in the require block, mirroring them:
+
+```
+replace govoice/offline => ../offline
+```
+
+```
+	govoice/offline v0.0.0-00010101000000-000000000000
+```
+
+Run: `cd server && go mod tidy`
+Expected: no error. (The server imports the adapter only from test files; `go mod tidy` keeps the require because tests use it.)
+
+- [ ] **Step 2: Write the hermetic e2e `server/offline_e2e_test.go`**
+
+```go
+//go:build xaispeech
+
+package server
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"govoice/offline/adapter"
+	"govoice/server/flow"
+	"govoice/transport/ws"
+)
+
+// offlineFakeTTS speaks a quiet 440 Hz tone, so "bot audio arrived" is a non-zero peak.
+type offlineFakeTTS struct{}
+
+func (offlineFakeTTS) Synthesize(_ context.Context, _, _ string, rate int) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(offlineTone(time.Second, rate, 0.2))), nil
+}
+
+// offlineFakeSTT hears whatever the caller said as one fixed sentence.
+type offlineFakeSTT struct{}
+
+func (offlineFakeSTT) Transcribe(context.Context, []byte, int, string) (string, error) {
+	return "I would like to book an appointment", nil
+}
+
+func offlineTone(d time.Duration, rate int, amp float64) []byte {
+	n := int(d * time.Duration(rate) / time.Second)
+	b := make([]byte, 2*n)
+	for i := 0; i < n; i++ {
+		binary.LittleEndian.PutUint16(b[2*i:], uint16(int16(amp*32767*math.Sin(2*math.Pi*440*float64(i)/float64(rate)))))
+	}
+	return b
+}
+
+// sendAudio streams pcm to the server as 20 ms frames at 16 kHz, a little faster than real time.
+func (c *e2eCall) sendAudio(pcm []byte) {
+	c.t.Helper()
+	const step = 640
+	for i := 0; i < len(pcm); i += step {
+		frame, err := ws.EncodeAudioFrame(pcm[i:min(i+step, len(pcm))], 16000, 1)
+		if err != nil {
+			c.t.Fatal(err)
+		}
+		if err := c.conn.Write(c.ctx, websocketBinary, frame); err != nil {
+			c.t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// fakeResponsesLLM streams xAI's Responses events for a fixed reply.
+func fakeResponsesLLM(t *testing.T, reply []string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		for _, d := range reply {
+			fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\n", d)
+			fl.Flush()
+		}
+		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":6,\"total_tokens\":11}}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		fl.Flush()
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func offlineFlow(t *testing.T, r *flowRigE2E, cfg string) string {
+	t.Helper()
+	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "offline", Config: []byte(cfg)})
+	if err != nil || f.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("offline flow: %+v err=%v", f.Readiness, err)
+	}
+	return f.ID
+}
+
+const offlineFlowConfig = `{"stt":{"provider":"offline","model":"s"},"llm":{"provider":"offline","model":"govoice-test","system_prompt":"Be brief."},"tts":{"provider":"offline","voice":"eve"}}`
+
+func TestOfflineCallEndToEnd(t *testing.T) {
+	acfg, err := adapter.LoadConfig(func(k string) string {
+		return map[string]string{"OFFLINE_INTERIM_EVERY": "100ms", "OFFLINE_ENDPOINT_SILENCE": "300ms"}[k]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ad := httptest.NewServer(adapter.New(acfg, offlineFakeTTS{}, offlineFakeSTT{}, func(context.Context) error { return nil }).Handler())
+	defer ad.Close()
+	llm := fakeResponsesLLM(t, []string{"Hello ", "from the offline stack."})
+
+	rig := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(ad.URL, "http") + "/v1/stt"
+		c.Providers.Offline.TTSEndpoint = ad.URL + "/v1/tts"
+		c.Providers.Offline.LLMEndpoint = llm.URL + "/v1/responses"
+	})
+	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
+
+	// One second of speech, then silence long enough for the adapter to end the utterance.
+	call.sendAudio(append(offlineTone(time.Second, 16000, 0.3), make([]byte, 2*16000)...))
+
+	call.waitReplies("from the offline stack", 1)
+	eventually(t, "bot audio from the adapter's TTS", func() bool { return call.maxPeak() > 0 })
+}
+
+func TestOfflineAdapterDownFailsTheStage(t *testing.T) {
+	down := httptest.NewServer(http.NotFoundHandler())
+	url := down.URL
+	down.Close() // nothing listens here any more
+	llm := fakeResponsesLLM(t, []string{"never spoken"})
+	rig := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(url, "http") + "/v1/stt"
+		c.Providers.Offline.TTSEndpoint = url + "/v1/tts"
+		c.Providers.Offline.LLMEndpoint = llm.URL + "/v1/responses"
+	})
+	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
+	call.sendAudio(append(offlineTone(time.Second, 16000, 0.3), make([]byte, 2*16000)...))
+	// The call must not hang on a dead adapter: either the stage fails over/ends the call, or at the
+	// least no reply is invented. It is fine for the call to stay up; it is not fine to speak.
+	time.Sleep(2 * time.Second)
+	if call.replies("never spoken") != 0 {
+		t.Fatal("the bot replied although its STT was unreachable")
+	}
+}
+```
+
+`websocketBinary` is `websocket.MessageBinary` from `github.com/coder/websocket`; import it as `"github.com/coder/websocket"` and use `websocket.MessageBinary` directly (the alias above only shortens the snippet).
+
+- [ ] **Step 3: Run it and resolve the one open question**
+
+Run: `cd server && go test -race -tags xaispeech -run 'TestOfflineCallEndToEnd|TestOfflineAdapterDown' -count=1 -v ./...`
+Expected: PASS.
+
+Open question this step settles: the shared rig uses `mockVADExecutor`, whose `Register` returns a nil stream, so no local VAD runs. The turn must therefore close on the STT provider's `EndOfUtterance` (`speech_final`) alone. If `TestOfflineCallEndToEnd` times out waiting for the reply, check in this order: (1) the adapter sent `speech_final` (add a temporary log in the fake STT); (2) `core/turn.go` and `server/call.go` use of `cfg.Turn.Manager` and the VAD processor: if a turn only ends on a VAD stop, switch this test to the real executor (`vad.New` with the repo's ONNX model, as `make build` already requires `ort`) instead of the mock, and say so in a comment; (3) the sample rate: the call must send 16 kHz. Record which it was in the test's doc comment.
+
+- [ ] **Step 4: The opt-in real-stack e2e `server/offline_stack_e2e_test.go`**
+
+```go
+//go:build xaispeech && offlinestack
+
+package server
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"govoice/providers/xai"
+)
+
+// A real call through the server on the real local models: Whisper hears the caller, Ollama answers,
+// Kokoro speaks. Needs `make offline-up offline-models` first. The caller's audio is made by the
+// stack's own TTS, so no recording is needed.
+//
+//	OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -tags "xaispeech offlinestack" -run TestOfflineStackCall ./server/...
+func TestOfflineStackCall(t *testing.T) {
+	base := os.Getenv("OFFLINE_ADAPTER_URL")
+	if base == "" {
+		t.Skip("OFFLINE_ADAPTER_URL not set")
+	}
+	ttsCfg := xai.DefaultTTSConfig()
+	ttsCfg.Endpoint, ttsCfg.APIKey, ttsCfg.SampleRate = base+"/v1/tts", "offline", 16000
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+	defer cancel()
+	pcm, err := xai.NewRealXAITTSClient().Synthesize(ctx, "Hello, can you tell me your opening hours?", ttsCfg)
+	if err != nil {
+		t.Fatalf("make caller audio: %v", err)
+	}
+
+	rig := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(base, "http") + "/v1/stt"
+		c.Providers.Offline.TTSEndpoint = base + "/v1/tts"
+		if u := os.Getenv("OFFLINE_LLM_URL"); u != "" {
+			c.Providers.Offline.LLMEndpoint = u
+		}
+	})
+	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
+	call.sendAudio(append(pcm, make([]byte, 2*16000*2)...))
+
+	eventually2 := func(what string, ok func() bool) {
+		for end := time.Now().Add(90 * time.Second); !ok(); time.Sleep(100 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
+	}
+	eventually2("a spoken reply (bot audio)", func() bool { return call.maxPeak() > 0 })
+	if call.replyCount() == 0 {
+		t.Fatal("audio arrived but no reply text")
+	}
+}
+```
+
+(`eventually` in `flow_e2e_test.go` waits 8 s; real models need longer, hence the local waiter. Use `t.Context()` consistently; `rig.dial` already bounds the call at 30 s, so raise that bound for this test by passing a longer-lived context if the real stack needs it, e.g. add an optional `dialTimeout` field to the rig only if the test actually hits the 30 s limit.)
+
+- [ ] **Step 5: Add the stack e2e to `make offline-test`**
+
+Append to the `offline-test` recipe:
+
+```make
+	cd server && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" -run TestOfflineStackCall ./...
+```
+
+Run: `make offline-up OFFLINE_PROFILE=host-llm && make offline-test`
+Expected: both the contract round trip and `TestOfflineStackCall` PASS. If the real stack's reply is slow or the LLM does not answer, the failure belongs in the findings you report, not a loosened assertion.
+
+- [ ] **Step 6: Race run of the hermetic tests**
+
+Run: `cd server && go test -race -tags xaispeech -run 'Offline' -count=3 ./...`
+Expected: PASS three times.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add server offline Makefile
+git commit -m "test(server): end-to-end calls through the offline provider, hermetic and on the real stack"
+```
+
+---
+
+### Task 11: Independent review and verification gate (AGENTS.md)
 
 **Files:** none new; fixes land where the findings are.
 
@@ -2700,12 +3206,12 @@ Expected: no `gofmt` output, all PASS.
 
 - [ ] **Step 2: Adversarial review in a fresh context**
 
-Dispatch an independent reviewer (superpowers:requesting-code-review) on `git diff main...HEAD` with this brief: evaluate (a) YAGNI and bloat: any abstraction, config knob or file the xAI-compatible path does not use; (b) goroutine leaks, channel ownership (only producers close), a `context` stored in a struct, a lock or semaphore held across a blocking send, ordering of `transcript.partial` writes, the `cur` generation fence, and `time.Since` use; (c) the Review Focus list in this plan, each item against its named test; (d) that `core/`, `server/` and `providers/` are untouched (`git diff main... --stat`). Apply fixes for confirmed findings, each with a regression test.
+Dispatch an independent reviewer (superpowers:requesting-code-review) on `git diff main...HEAD` with this brief: evaluate (a) YAGNI and bloat: any abstraction, config knob or file the xAI-compatible path does not use; (b) goroutine leaks, channel ownership (only producers close), a `context` stored in a struct, a lock or semaphore held across a blocking send, ordering of `transcript.partial` writes, the `cur` generation fence, and `time.Since` use; (c) the Review Focus list in this plan, each item against its named test; (d) that `core/` and `providers/` are untouched and `server/` changed only by Tasks 8 and 10 (`git diff main... --stat`); (e) the `xai` provider's behaviour is unchanged by the `xaiLLMProcessor` refactor. Apply fixes for confirmed findings, each with a regression test.
 
 - [ ] **Step 3: Full verification gate**
 
 Run: `gofmt -l . ; make verify`
-Expected: no `gofmt` output; `make verify` passes, including the two new modules in `MODULES`. Note: `make verify` does not start the compose stack; `make offline-test` was run in Task 8.
+Expected: no `gofmt` output; `make verify` passes, including the two new modules in `MODULES` and the hermetic server e2e tests. Note: `make verify` does not start the compose stack; `make offline-test` (contract round trip and `TestOfflineStackCall`) was run in Tasks 9 and 10.
 
 - [ ] **Step 4: Clean status and final commit**
 
@@ -2716,9 +3222,9 @@ Expected: only intended files. Commit any review fixes with conventional message
 
 ## Self-review (run against the spec)
 
-- **Wire contract coverage:** STT created/partial/speech_final/done/error and no `is_final` (Task 6); TTS WS multi-unit reuse, `audio.done` keeps the connection open, even-length chunks, error message (Tasks 3, 4); TTS unary body and status mapping (Task 3); auth 401 and open `/healthz` (Task 1). LLM is direct to Ollama (Task 8 docs/config). Real xai clients prove all of it (Task 7).
-- **Spec sections with a task:** adapter design (1-6), spike-derived backend choices (2, 8), compose profiles and models step (8), testing (7, 8), rollout order (TTS first: Tasks 3-4, then STT: 5-6), docs (8). Known limits are documented in Task 8 step 7.
+- **Wire contract coverage:** STT created/partial/speech_final/done/error and no `is_final` (Task 6); TTS WS multi-unit reuse, `audio.done` keeps the connection open, even-length chunks, error message (Tasks 3, 4); TTS unary body and status mapping (Task 3); auth 401 and open `/healthz` (Task 1). LLM is direct to Ollama (Task 9 docs/config). Real xai clients prove all of it (Task 7).
+- **Spec sections with a task:** adapter design (1-6), spike-derived backend choices (2, 9), compose profiles and models step (9), server wiring (8), testing (7, 9, 10), rollout order (TTS first: Tasks 3-4, then STT: 5-6), docs (9). Known limits are documented in Task 9 step 7.
 - **Not covered, by decision:** sherpa-onnx streaming path (spec lists it as an alternative STT; add as a follow-up plan if Whisper re-decode CPU is too high); `offline.*` registry alias (spec limits 1 and 2); automatic reconnection or per-call model switching.
-- **Placeholders:** the only deliberate blank is the LLM base model in `Modelfile`, which Task 8 step 3 decides by running `toolcheck`; the plan cannot know the answer before that run.
+- **Placeholders:** the only deliberate blank is the LLM base model in `Modelfile`, which Task 9 step 3 decides by running `toolcheck`; the plan cannot know the answer before that run.
 - **Type consistency:** `Config`, `Limiter.Acquire`, `TTSBackend`/`STTBackend`, `writeJSON`, `ttsMsg`, `sttMsg`, `sttJob`, `Endpointer.Feed/Reset`, `streamPCM`, `queryInt` are used with the same signatures everywhere. `fakeTTS`/`fakeSTT` in `helpers_test.go` are defined in Task 3 and used in Tasks 4 and 6 (Task 1 defines only `mustConfig`; Task 3 replaces that file wholesale with the version that includes it).
 - **Not compiled:** the code in this plan was written without compiling it. Each task's first step is a failing test run, so a typo surfaces immediately; treat compile errors in plan code as plan bugs and fix them in the implementation.

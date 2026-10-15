@@ -149,21 +149,24 @@ Both use Speaches for TTS and Ollama or llama.cpp for the LLM. Not yet spiked: L
 - **Readiness.** The adapter's `/healthz` is ready only when Speaches answers. In `container-llm` the compose healthcheck also waits for Ollama; in `host-llm` the Make target checks the host Ollama before reporting the stack up.
 - **Image pinning.** Pin Speaches and Ollama images by tag (the spike used Speaches `latest-cpu`, 1.57 GB; pin a version before building).
 
-## Pointing the server at it
+## Wiring in the server
 
-Server config (no code change):
+`server/` gets an `offline` provider (`offline.stt`, `offline.tts`, `offline.llm`) that reuses the real xai processors with their own endpoints and circuit breakers and needs no key. Config (these are the defaults, matching `offline/compose.yaml`):
 ```yaml
 providers:
-  xai_llm: { endpoint: http://127.0.0.1:11434/v1/responses }   # Ollama directly
-  xai_stt: { endpoint: ws://127.0.0.1:8099/v1/stt }
-  xai_tts: { endpoint: http://127.0.0.1:8099/v1/tts }
+  offline:
+    llm_endpoint: http://127.0.0.1:11434/v1/responses   # Ollama directly
+    stt_endpoint: ws://127.0.0.1:8099/v1/stt
+    tts_endpoint: http://127.0.0.1:8099/v1/tts
 ```
-and an `xai` credential holding any non-empty value, supplied through the environment (`XAI_API_KEY`), never written to files. Agents use provider `xai`.
+Agents choose provider `offline` per stage, so one server can run real xAI and offline agents side by side, and an offline outage cannot open xAI's breakers. `offline.llm` exists on every build; `offline.stt/tts` only with `-tags xaispeech`, like the xai speech adapters they wrap. A catalog entry (`offline.yaml`, keyless) makes it selectable in the console.
+
+**End-to-end tests (in `server/`).** Existing e2e tests send text; these send caller **audio** over the WebSocket. (1) Hermetic, runs in `make verify`: an in-process adapter with fake model backends plus a fake Responses LLM, asserting a spoken reply comes back; and a dead adapter must not make the bot speak. (2) Opt-in, `make offline-test`: the same call on the real stack (Whisper, Ollama, Kokoro), with the caller's audio synthesized by the stack's own TTS. The server imports `govoice/offline/adapter` only from test files.
 
 ## Known limits of v1 (deliberately not solved)
 
-1. **Server-wide, not per agent.** The endpoints are global config, so one server instance uses either real xAI or the offline service, not both. A later `offline.stt/llm/tts` registry alias reusing the xAI processors with its own endpoints would fix this (about 40 lines in `server/`); defer until needed.
-2. **Labels.** Usage, traces and call records say `xai`. Offline runs are indistinguishable from real xAI runs in reports. Same alias would fix this.
+1. **Labels.** Usage, traces and call records still say `provider: xai`, because the xai processors hard-code the label. Offline runs look like xAI runs in reports; fixing it means touching `providers/xai`.
+2. **No token option.** The offline provider sends a constant bearer, so an adapter run with `OFFLINE_TOKEN` set is unusable from the server until a token option is added.
 3. **Realism.** CPU decode times and local-model quality are not xAI's. Use it for correctness, flow and worst-case behavior, not for quality or latency baselines.
 4. **No chunk finals** (`is_final`) and no word timings from STT in v1.
 5. **Speaker/telephony audio.** 8 kHz telephony input depends on the pipeline resampling to the configured `sample_rate` before STT; the service assumes the rate in the query.
@@ -180,7 +183,7 @@ and an `xai` credential holding any non-empty value, supplied through the enviro
 1. TTS (unary and streaming) over the Speaches backend: smallest and the clearest wire format.
 2. STT with VAD endpointing and interims.
 3. Contract tests, compose file with both profiles, docs (`docs/providers.md` privacy-mode section, `docs/privacy.md` pointer).
-4. Optional: `offline` registry alias (limits 1 and 2).
+4. Server `offline` provider and the end-to-end tests (see "Wiring in the server").
 
 ## Open questions
 
