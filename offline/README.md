@@ -10,17 +10,86 @@ Switchboard server (provider "offline")
             +--> Speaches :8000  (faster-whisper + Kokoro)
 ```
 
-## Run
+## Run it
+
+Prerequisites: Docker (OrbStack or Docker Desktop), Go 1.27.1, Node 20+ (for the CLI call), about 6 GB of disk for images and models. On Apple Silicon install Ollama natively (`brew install ollama`) and use `OFFLINE_PROFILE=host-llm` below: containers cannot use the Mac GPU. On Linux or CI leave the profile at its default (`container-llm`) and Ollama runs in a container. Pass the same `OFFLINE_PROFILE` to every `make offline-*` command.
+
+**1. Start the stack** (adapter and Speaches, plus Ollama unless `host-llm`):
 
 ```bash
-make offline-up                           # adapter + Speaches + Ollama in containers (Linux, CI)
-make offline-up OFFLINE_PROFILE=host-llm  # adapter + Speaches in containers, Ollama on the host (Apple Silicon: Metal)
-make offline-models [OFFLINE_PROFILE=...] # once, needs network: Whisper, Kokoro and the LLM (llama3.2:3b via offline/Modelfile)
-make offline-test  [OFFLINE_PROFILE=...]  # real xai clients through the running stack
-make offline-down
+make offline-up OFFLINE_PROFILE=host-llm     # drop the variable on Linux
 ```
 
-Server config (these are the defaults): see [docs/providers.md](../docs/providers.md#offline-mode-privacy). Use provider `offline` for a stage; LLM model `govoice-test`, TTS voice `af_heart` (xAI names such as `eve` are aliased).
+**2. Download the models once** (the only step that needs the network; about 3 GB: Whisper, Kokoro and the LLM):
+
+```bash
+make offline-models OFFLINE_PROFILE=host-llm
+```
+
+**3. Check it works** (real xAI clients through the stack; the first run is slow while models load):
+
+```bash
+make offline-test
+```
+
+**4. Start the Switchboard server.** No provider keys are needed:
+
+```bash
+make ort build                                    # once; ort downloads the ONNX Runtime
+export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"
+./bin/server -config config/development.yaml     # public :8080, admin :9090; creates .govoice-dev/ on first start
+```
+
+`make dev` also works (server, admin UI and seeded agents), but it seeds agents from the providers it detects, so open the console and check which provider each stage got. Set a stage to **Offline (local models)** to use this stack.
+
+**5. Create a flow on the `offline` provider** (in another terminal, same `GOVOICE_MANAGEMENT_API_KEY`):
+
+```bash
+ADMIN=http://127.0.0.1:9090
+AUTH="Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY"
+curl -fsS "$ADMIN/api/v1/providers" -H "$AUTH" | jq -c '.data[] | select(.id=="offline") | {id, detected}'
+FLOW_ID=$(curl -fsS -X POST "$ADMIN/api/v1/flows" -H "$AUTH" -H 'Content-Type: application/json' -d '{
+  "name": "Offline demo",
+  "config": {
+    "stt": {"provider": "offline"},
+    "llm": {"provider": "offline", "model": "govoice-test", "system_prompt": "You are a friendly voice assistant. Keep answers short."},
+    "tts": {"provider": "offline"}
+  }}' | jq -r .data.id)
+curl -fsS "$ADMIN/api/v1/flows/$FLOW_ID" -H "$AUTH" | jq -r .data.readiness.state     # ready
+```
+
+**6. Make a call.** The CLI streams a recorded clip ("Hi!") as the caller and prints what happened. Real models on a CPU are slow, so raise the timeout:
+
+```bash
+cd examples/rtvi_client && npm ci
+node cli.js --flow "$FLOW_ID" --timeout 90000
+```
+
+Expected summary (measured on Apple Silicon, CPU only):
+
+```
+ User Speech Detected:    PASS
+ User Transcript:         "Hi!"
+ Bot LLM Response:        "How can I help you today?"
+ Bot Audio Synthesized:   PASS (72 frames, 68608 bytes)
+ STT -> First LLM Token:  3409 ms
+ STT -> First Audio Out:  6381 ms
+```
+
+For a live microphone call use `make dev` and the console's test call, or `make example-web`, with the flow above. Send a text turn instead of audio with `--text "hello"`.
+
+**7. Stop.** `make offline-down` stops the containers and keeps the model volumes.
+
+### If something does not work
+
+| Symptom | Check |
+|---|---|
+| `make offline-up` fails on `host-llm` with "Ollama is not answering" | Start Ollama (`ollama serve`, or the menu-bar app) and retry. |
+| Flow readiness is not `ready`, or `offline` is missing from `/api/v1/providers` | The server must be built with `-tags xaispeech` (`make build` does this); without it `offline` has no STT/TTS. |
+| The call connects but the bot never answers | `docker compose -f offline/compose.yaml logs adapter speaches`. The first call after a start is slow while Whisper and Kokoro load; raise `--timeout`. Check the models exist (`make offline-models`) and the LLM model is `govoice-test`. |
+| Port 8080/9090 already in use | Another server (for example a running `make dev`) owns it. Copy the config with other ports in `public_listen_addr` and `admin_listen_addr`, and pass `--admin` and `--ws` to the CLI. |
+| The bot cuts you off or never hears you | The endpointer is energy based (`OFFLINE_ENERGY_THRESHOLD`, `OFFLINE_ENDPOINT_SILENCE`); a noisy microphone needs a real VAD. |
+| Another machine must reach the adapter | It is published on `127.0.0.1` only; widen the port mapping in `compose.yaml` and set `OFFLINE_TOKEN`. |
 
 ## The LLM
 

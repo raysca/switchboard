@@ -121,4 +121,4 @@ providers:
     tts_endpoint: http://127.0.0.1:8099/v1/tts
 ```
 
-These are the defaults. Start the stack with `make offline-up` (`OFFLINE_PROFILE=host-llm` on Apple Silicon), fetch the models once with `make offline-models` (the only step that needs network), then choose provider `offline` for a stage. The `offline` provider keeps its own circuit breakers, so a local outage does not affect `xai`. Traces and usage still say `provider: xai`.
+These are the defaults. Start the stack with `make offline-up` (`OFFLINE_PROFILE=host-llm` on Apple Silicon), fetch the models once with `make offline-models` (the only step that needs network), then choose provider `offline` for a stage. The step-by-step walkthrough, with a flow to create and a call to make, is in [offline/README.md](../offline/README.md#run-it). The `offline` provider keeps its own circuit breakers, so a local outage does not affect `xai`. Traces and usage still say `provider: xai`.

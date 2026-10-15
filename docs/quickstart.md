@@ -116,7 +116,7 @@ curl -fsS "$ADMIN/api/v1/providers" -H "$AUTH" | jq '.data[] | {id, detected, ca
 
 A provider whose variables are not set reports each service with `"reason": "missing_env"` and the variable names in `missing_env`. Values are never returned.
 
-**No provider key yet?** `echo` ("Echo (simulated)") is always detected: it needs no key and costs nothing, and runs the real pipeline against simulated speech services. Create the flow in 5b with `"provider": "echo"` in every stage (see `docs/providers.md`, "Echo (simulated)") to try everything here without spending anything.
+**No provider key yet?** To run real audio on local models with no key and no network at call time, follow [offline/README.md](../offline/README.md#run-it) and use provider `offline`. Or `echo` ("Echo (simulated)") is always detected: it needs no key and costs nothing, and runs the real pipeline against simulated speech services. Create the flow in 5b with `"provider": "echo"` in every stage (see `docs/providers.md`, "Echo (simulated)") to try everything here without spending anything.
 
 ### 5b. Create a flow
 
