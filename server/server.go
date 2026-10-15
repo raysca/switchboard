@@ -210,7 +210,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		authNow:      time.Now,
 	}
 	s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })
-	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports}
+	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports, policy: policyFrom(cfg)}
 	if lowVADStopWithoutManager(cfg) {
 		logger.Warn("turn.manager is off with a short vad.stop_ms: turns end on the raw VAD stop and cut callers off mid-sentence; set turn.manager: true or vad.stop_ms: 800")
 	}
