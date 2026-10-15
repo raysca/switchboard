@@ -88,6 +88,7 @@ type Connection struct {
 	cfg        ServerConfig
 	pacer      *PacedWriter
 	cue        *CueUnderlay                 // nil unless ServerConfig.Cues
+	closeCause atomic.Pointer[string]       // see CloseCause
 	session    atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
 	tap        atomic.Pointer[AudioTap]     // optional call recorder; nil = none
 	seqCounter atomic.Uint64
@@ -590,6 +591,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Wait for connection close or error
 	<-conn.ctx.Done()
+	if errors.Is(conn.ctx.Err(), context.DeadlineExceeded) {
+		conn.setCloseCause("connection_lifetime")
+	}
 	pacer.Close()
 	_ = wsConn.Close(websocket.StatusNormalClosure, "call concluded")
 	wg.Wait()
@@ -635,6 +639,7 @@ func (c *Connection) pingLoop() {
 		if fails++; fails < c.cfg.PingMaxFailures {
 			continue
 		}
+		c.setCloseCause("peer_unresponsive")
 		c.traceError("peer_unresponsive")
 		// No close handshake: coder/websocket's Close waits up to 5 s for a peer
 		// that is not answering. Best-effort RTVI error, then drop the socket.
@@ -1175,6 +1180,19 @@ func (c *Connection) SetBackground(u Underlay) {
 		c.cue.SetBackground(u)
 	}
 }
+
+// CloseCause says why the server itself closed the connection: "peer_unresponsive" (it stopped
+// answering pings) or "connection_lifetime" (the call reached MaxConnectionLifetime); empty when the
+// client closed it or nothing was named. It is set once, before the connection is closed.
+func (c *Connection) CloseCause() string {
+	if p := c.closeCause.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// setCloseCause records the first cause only.
+func (c *Connection) setCloseCause(cause string) { c.closeCause.CompareAndSwap(nil, &cause) }
 
 // Cue is the session's run-time cue player (nil unless ServerConfig.Cues).
 func (c *Connection) Cue() *CueUnderlay { return c.cue }

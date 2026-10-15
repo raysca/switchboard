@@ -113,6 +113,7 @@ type activeCall struct {
 	conn      *ws.Connection
 	session   *core.Session
 	timeline  *SessionTimeline
+	ending    *endReason
 }
 
 // NewServer initializes the server from configuration.
@@ -519,7 +520,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	if claims := conn.Claims(); claims != nil {
 		tokenID = claims.ID
 	}
-	call, releaseCall, err := s.resolveCall(resolveCtx, conn.FlowID(), tokenID)
+	ending := &endReason{transport: conn.CloseCause}
+	call, releaseCall, err := s.resolveCall(resolveCtx, conn.FlowID(), tokenID, principal, ending)
 	cancelResolve()
 	if err != nil {
 		s.admission.ReleaseSession(principal, flowID)
@@ -548,6 +550,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	phase := "build_pipeline"
 	var stopRecording func()
 	fail := func(err error) (*core.Session, error) {
+		ending.set(storage.EndSetupFailed)
 		recoverEach(s.logger, sessionID, "releaseCall", releaseCall)
 		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
 		s.admission.ReleaseSession(principal, flowID)
@@ -579,6 +582,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		conn:      conn,
 		session:   session,
 		timeline:  timeline,
+		ending:    ending,
 	}
 
 	var (
@@ -664,6 +668,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	for _, p := range pipe.Processors() {
 		if ic, ok := p.(*core.IdleController); ok {
 			ic.SetOnEnd(func(reason string) {
+				ending.set(reasonFromEnd(reason))
 				// Off the controller's task: Session.Close waits for it.
 				go func() {
 					timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "terminated: " + reason})
@@ -724,7 +729,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	go func() {
 		<-session.Done()
 		s.live.Delete(call.StoredSessionID) // gone for operators before teardown work starts
-		s.finishCall(sessionID, principal, flowID, session, conn, timeline, errProviders, releaseCall, stopRecording)
+		s.finishCall(sessionID, principal, flowID, session, conn, timeline, errProviders, ending, releaseCall, stopRecording)
 	}()
 
 	s.metrics.SessionsStartedTotal.Add(1)
@@ -738,6 +743,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			case <-session.Done():
 				return
 			case <-maxDurTimer.C:
+				ending.set(storage.EndTimeLimit)
 				s.metrics.MaxDurationTermTotal.Add(1)
 				timeline.Record(TimelineEvent{
 					Type:    EventDisconnect,
@@ -1021,13 +1027,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	// Snapshot under the lock and close concurrently: Session.Close can take seconds per wedged
 	// session, and serial closes under s.mu would overrun the process budget (M2-03).
 	type target struct {
-		conn *ws.Connection
-		sess interface{ Close() error }
+		conn   *ws.Connection
+		sess   interface{ Close() error }
+		ending *endReason
 	}
 	s.mu.Lock()
 	var targets []target
 	for _, call := range s.activeCalls {
-		t := target{conn: call.conn}
+		t := target{conn: call.conn, ending: call.ending}
 		if call.session != nil {
 			t.sess = call.session
 		}
@@ -1036,6 +1043,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 	var goAway sync.WaitGroup
 	for _, t := range targets {
+		t.ending.set(storage.EndServerShutdown)
 		if t.conn != nil {
 			// Tell the client to reconnect (reason server_draining, close 1001).
 			goAway.Add(1)
@@ -1295,7 +1303,7 @@ func recoverEach(log *slog.Logger, sessionID uint64, label string, fn func()) {
 	fn()
 }
 
-func (s *Server) finishCall(sessionID uint64, principal, flowID string, session *core.Session, conn *ws.Connection, timeline *SessionTimeline, errProviders map[string]string, release func(), stopRecording func()) {
+func (s *Server) finishCall(sessionID uint64, principal, flowID string, session *core.Session, conn *ws.Connection, timeline *SessionTimeline, errProviders map[string]string, ending *endReason, release func(), stopRecording func()) {
 	recDone := make(chan struct{})
 	go func() {
 		defer close(recDone)
@@ -1326,6 +1334,7 @@ func (s *Server) finishCall(sessionID uint64, principal, flowID string, session 
 			s.recordProviderErrors(proc, errProviders)
 		}
 		if err := session.Err(); err != nil {
+			ending.set(storage.EndError)
 			s.metrics.SessionsFailedTotal.Add(1)
 			s.logger.Error("session failed", slog.Uint64("session", sessionID), slog.String("err", s.redactor.Redact(err.Error())))
 			if conn != nil {

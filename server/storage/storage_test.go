@@ -36,7 +36,7 @@ func TestMigrationEmptyAndIdempotentReopen(t *testing.T) {
 			t.Fatal(err)
 		}
 		var n int
-		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 6 {
+		if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 7 {
 			t.Fatalf("version=%d err=%v", n, err)
 		}
 		s.Close()
@@ -129,7 +129,7 @@ func TestSessionEndRetriesPendingDeleteFinalization(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.finalizePendingDeletesHook = func(context.Context) error { return errors.New("transient injected failure") }
-	if err := s.Sessions().End(ctx, sessionID); err == nil {
+	if err := s.Sessions().End(ctx, sessionID, EndCallerHungUp); err == nil {
 		t.Fatal("expected injected finalization failure")
 	}
 	var status string
@@ -137,7 +137,7 @@ func TestSessionEndRetriesPendingDeleteFinalization(t *testing.T) {
 		t.Fatalf("status=%q err=%v", status, err)
 	}
 	s.finalizePendingDeletesHook = nil
-	if err := s.Sessions().End(ctx, sessionID); err != nil {
+	if err := s.Sessions().End(ctx, sessionID, EndCallerHungUp); err != nil {
 		t.Fatalf("retry End: %v", err)
 	}
 }
@@ -582,19 +582,19 @@ func TestMigrationUpgradeAndRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var n int
-	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 6 {
+	if err := s.DB().QueryRow("SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&n); err != nil || n != 7 {
 		t.Fatalf("upgrade version=%d err=%v", n, err)
 	}
 	// Goose runs each migration transactionally: failed DDL must not survive.
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_flow_mcp_review.sql", "006_session_draft.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_flow_mcp_review.sql", "006_session_draft.sql", "007_session_caller_end_reason.sql"} {
 		body, err := fs.ReadFile(initial, name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["007_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["008_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectSQLite3, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -679,18 +679,18 @@ func TestMigrationPostgresUpgradeRollback(t *testing.T) {
 	}
 	defer s.Close()
 	var version int
-	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 6 {
+	if err := s.DB().QueryRowContext(ctx, "SELECT max(version_id) FROM goose_db_version WHERE is_applied").Scan(&version); err != nil || version != 7 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	files := fstest.MapFS{}
-	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_flow_mcp_review.sql", "006_session_draft.sql"} {
+	for _, name := range []string{"001_initial.sql", "002_indexes.sql", "003_mcp_metadata.sql", "004_mcp_lifecycle.sql", "005_flow_mcp_review.sql", "006_session_draft.sql", "007_session_caller_end_reason.sql"} {
 		body, err := fs.ReadFile(migrationFS, name)
 		if err != nil {
 			t.Fatal(err)
 		}
 		files[name] = &fstest.MapFile{Data: body}
 	}
-	files["007_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
+	files["008_bad.sql"] = &fstest.MapFile{Data: []byte("-- +goose Up\nCREATE TABLE rollback_probe (id INTEGER);\nINSERT INTO absent_table VALUES (1);\n")}
 	bad, err := goose.NewProvider(goose.DialectPostgres, s.DB(), files)
 	if err != nil {
 		t.Fatal(err)
@@ -754,7 +754,7 @@ func TestRepositoryMCPAndHistory(t *testing.T) {
 	if _, err := s.Flows().PublishVersion(ctx, a.ID, 3, []byte(`{"x":3}`), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Sessions().End(ctx, sess.ID); err != nil {
+	if err := s.Sessions().End(ctx, sess.ID, EndCallerHungUp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.DB().Exec("DELETE FROM mcp_servers WHERE id=?", m.ID); err != nil {
@@ -817,7 +817,7 @@ func TestMCPDisableAndDeleteRespectCurrentAndActiveVersionReferences(t *testing.
 	if err := s.MCP().DeleteServer(ctx, m.ID); err == nil {
 		t.Fatal("direct delete bypassed active runtime reference")
 	}
-	if err := s.Sessions().End(ctx, sessionID); err != nil {
+	if err := s.Sessions().End(ctx, sessionID, EndCallerHungUp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.MCP().Server(ctx, m.ID); err == nil {
@@ -860,7 +860,7 @@ func TestConcurrentSessionCloseAndMCPDeleteAlwaysDrainsSafely(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(2)
 		errs := make(chan error, 2)
-		go func() { defer wg.Done(); errs <- s.Sessions().End(ctx, sessionID) }()
+		go func() { defer wg.Done(); errs <- s.Sessions().End(ctx, sessionID, EndCallerHungUp) }()
 		go func() {
 			defer wg.Done()
 			err := s.MCP().DeleteServer(ctx, m.ID)
@@ -1075,10 +1075,10 @@ func TestRepositoryContract(t *testing.T) {
 			if _, err := s.DB().ExecContext(ctx, s.bind("UPDATE sessions SET flow_version_id=?,config_hash=? WHERE id=?"), v2.ID, v2.ConfigHash, active); err == nil {
 				t.Fatal("session provenance mutated")
 			}
-			if err := s.Sessions().End(ctx, active); err != nil {
+			if err := s.Sessions().End(ctx, active, EndCallerHungUp); err != nil {
 				t.Fatal(err)
 			}
-			if err := s.Sessions().End(ctx, active); err != nil {
+			if err := s.Sessions().End(ctx, active, EndCallerHungUp); err != nil {
 				t.Fatalf("idempotent session end: %v", err)
 			}
 			if _, err := s.DB().ExecContext(ctx, s.bind("DELETE FROM mcp_servers WHERE id=?"), m.ID); err != nil {

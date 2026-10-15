@@ -198,7 +198,7 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.finishCall(sessionID, principal, flowID, sess, nil, s.timelines.GetOrCreate(sessionID), nil,
+		s.finishCall(sessionID, principal, flowID, sess, nil, s.timelines.GetOrCreate(sessionID), nil, nil,
 			func() { panic("simulated releaseCall panic") },
 			func() {
 				close(started)
@@ -253,7 +253,7 @@ func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
 	s.activeCalls[sessionID] = &activeCall{sessionID: sessionID, principal: principal}
 	s.mu.Unlock()
 
-	s.finishCall(sessionID, principal, flowID, sess, nil, s.timelines.GetOrCreate(sessionID), nil,
+	s.finishCall(sessionID, principal, flowID, sess, nil, s.timelines.GetOrCreate(sessionID), nil, nil,
 		func() {},
 		func() { panic("recording finalize") },
 	)

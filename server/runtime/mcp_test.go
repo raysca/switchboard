@@ -98,7 +98,7 @@ func TestSessionUsesCapturedMCPWrapperAfterDisableAndRefresh(t *testing.T) {
 	if _, err := flows.SetMCPTools(ctx, created.ID, []flow.ToolSelection{{ServerID: server.ID, RemoteName: "lookup", SchemaHash: discovery.Tools[0].SchemaHash, Required: true}}); err != nil {
 		t.Fatal(err)
 	}
-	session, err := StartSession(ctx, flows, mcpSvc, created.ID, "")
+	session, err := StartSession(ctx, flows, mcpSvc, created.ID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestToolLoopPreservesMCPCallIdentityAndAsyncTraceParent(t *testing.T) {
 		t.Fatal("discovery span was not recorded")
 	}
 	<-trace.parents
-	session, err := StartSession(ctx, flows, mcpSvc, created.ID, "")
+	session, err := StartSession(ctx, flows, mcpSvc, created.ID, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -171,7 +171,7 @@ func TestMCPSelectionsAreVersionScopedAndSchemaDriftRequiresExplicitReview(t *te
 		t.Fatal(err)
 	}
 	runtimeJSON, _ := json.Marshal(snapshot.MCPTools)
-	session, err := svc.StartCapturedSession(ctx, snapshot, "", string(runtimeJSON), []ToolSelection{selection})
+	session, err := svc.StartCapturedSession(ctx, snapshot, "", string(runtimeJSON), "", []ToolSelection{selection})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -333,10 +333,12 @@ func (s *Service) StartSession(ctx context.Context, id, sessionID string) (Sessi
 	if len(snapshot.Version.MCPTools) > 0 {
 		return SessionPin{}, errors.New("flow MCP tools require runtime session capture")
 	}
-	return s.StartCapturedSession(ctx, snapshot, sessionID, "", nil)
+	return s.StartCapturedSession(ctx, snapshot, sessionID, "", "", nil)
 }
 
-func (s *Service) StartCapturedSession(ctx context.Context, snapshot Snapshot, sessionID, runtimeJSON string, references []ToolSelection) (SessionPin, error) {
+// StartCapturedSession persists a session. caller is the label the integration chose for it (the voice
+// token's principal); empty is allowed.
+func (s *Service) StartCapturedSession(ctx context.Context, snapshot Snapshot, sessionID, runtimeJSON, caller string, references []ToolSelection) (SessionPin, error) {
 	if sessionID == "" {
 		sessionID = storage.NewID()
 	}
@@ -350,15 +352,16 @@ func (s *Service) StartCapturedSession(ctx context.Context, snapshot Snapshot, s
 	}
 	if err := s.store.Sessions().Create(ctx, storage.SessionRecord{
 		ID: sessionID, FlowID: snapshot.FlowID, FlowVersionID: snapshot.Version.ID,
-		ConfigHash: snapshot.ConfigHash, StartedAt: time.Now().UTC(), Status: "active", RuntimeSnapshotJSON: runtimeJSON, RuntimeTools: runtimeTools, Draft: snapshot.Draft,
+		ConfigHash: snapshot.ConfigHash, StartedAt: time.Now().UTC(), Status: "active", RuntimeSnapshotJSON: runtimeJSON, RuntimeTools: runtimeTools, Draft: snapshot.Draft, Caller: caller,
 	}); err != nil {
 		return SessionPin{}, err
 	}
 	return SessionPin{ID: sessionID, FlowID: snapshot.FlowID, FlowVersionID: snapshot.Version.ID, ConfigHash: snapshot.ConfigHash}, nil
 }
 
-func (s *Service) EndSession(ctx context.Context, sessionID string) error {
-	return s.store.Sessions().End(ctx, sessionID)
+// EndSession ends a session, recording why (one of storage.EndReasons).
+func (s *Service) EndSession(ctx context.Context, sessionID, reason string) error {
+	return s.store.Sessions().End(ctx, sessionID, reason)
 }
 
 func (s *Service) ResolveSession(ctx context.Context, sessionID string) (Snapshot, error) {

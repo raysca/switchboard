@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type SessionRecord struct {
@@ -13,11 +16,36 @@ type SessionRecord struct {
 	RuntimeSnapshotJSON                                                           string
 	// Draft marks a test call on an unpublished config: FlowVersionID is the version it was based on
 	// and ConfigHash is the draft's.
-	Draft              bool
+	Draft bool
+	// Caller is the label the integration chose for the call (the voice token's principal), at most
+	// maxCallerLen characters. EndReason is why it ended (one of EndReasons), empty while active.
+	Caller, EndReason  string
 	RuntimeTools       []SelectedTool
 	StartedAt, EndedAt time.Time
 	TurnCount          int
 }
+
+// Why a call ended: the closed set EndReason holds.
+const (
+	EndCallerHungUp   = "caller_hung_up"
+	EndSilentCaller   = "silent_caller"
+	EndAgentStuck     = "agent_stuck"
+	EndedByFlow       = "ended_by_flow"
+	EndTimeLimit      = "time_limit"
+	EndConnectionLost = "connection_lost"
+	EndServerShutdown = "server_shutdown"
+	EndError          = "error"
+	EndSetupFailed    = "setup_failed"
+	EndServerRestart  = "server_restart"
+	maxCallerLen      = 128
+)
+
+// EndReasons lists every valid end reason.
+var EndReasons = []string{EndCallerHungUp, EndSilentCaller, EndAgentStuck, EndedByFlow, EndTimeLimit, EndConnectionLost, EndServerShutdown, EndError, EndSetupFailed, EndServerRestart}
+
+// ErrInvalidEndReason is returned for a reason outside EndReasons.
+var ErrInvalidEndReason = errors.New("invalid session end reason")
+
 type TurnRecord struct {
 	ID, SessionID, Transcript, AssistantText, LatenciesJSON, ToolsJSON string
 	Ordinal                                                            int
@@ -32,6 +60,10 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 		if err := validID(id); err != nil {
 			return err
 		}
+	}
+	caller := strings.TrimSpace(v.Caller)
+	if utf8.RuneCountInString(caller) > maxCallerLen {
+		return fmt.Errorf("caller must be at most %d characters", maxCallerLen)
 	}
 	stack := v.ProviderStackJSON
 	if stack == "" {
@@ -118,7 +150,7 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 				return errors.New("required MCP tool was not captured for session")
 			}
 		}
-		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical), boolValue(r.s.dialect, v.Draft))
+		_, err = tx.ExecContext(ctx, r.s.bind("INSERT INTO sessions(id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.FlowID, v.FlowVersionID, v.ConfigHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, string(canonical), v.TurnCount, v.SafeSummary, string(runtimeCanonical), boolValue(r.s.dialect, v.Draft), caller)
 		if err != nil {
 			return err
 		}
@@ -131,12 +163,16 @@ func (r SessionRepository) Create(ctx context.Context, v SessionRecord) error {
 	})
 }
 
-func (r SessionRepository) End(ctx context.Context, id string) error {
+// End ends a session, recording why. Ending twice keeps the first time and reason.
+func (r SessionRepository) End(ctx context.Context, id, reason string) error {
 	if err := validID(id); err != nil {
 		return err
 	}
+	if !slices.Contains(EndReasons, reason) {
+		return fmt.Errorf("%w: %q", ErrInvalidEndReason, reason)
+	}
 	err := r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE sessions SET status='ended',ended_at=? WHERE id=? AND status IN ('active','draining')"), utc(time.Now()), id)
+		result, err := tx.ExecContext(ctx, r.s.bind("UPDATE sessions SET status='ended',ended_at=?,end_reason=? WHERE id=? AND status IN ('active','draining')"), utc(time.Now()), reason, id)
 		if err != nil {
 			return err
 		}
@@ -171,9 +207,10 @@ const orphanNote = "Ended when the server restarted."
 func (r SessionRepository) EndOrphans(ctx context.Context, before time.Time) (int, error) {
 	res, err := r.s.db.ExecContext(ctx, r.s.bind(`UPDATE sessions SET
 			status='ended',
+			end_reason=?,
 			ended_at=COALESCE((SELECT MAX(t.ended_at) FROM turns t WHERE t.session_id=sessions.id), started_at),
 			safe_summary=CASE WHEN safe_summary='' THEN ? ELSE safe_summary END
-			WHERE status IN ('active','draining') AND started_at < ?`), orphanNote, utc(before))
+			WHERE status IN ('active','draining') AND started_at < ?`), EndServerRestart, orphanNote, utc(before))
 	if err != nil {
 		return 0, err
 	}
@@ -236,7 +273,7 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 		offset = 0
 	}
 
-	query := "SELECT id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft FROM sessions"
+	query := "SELECT id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller,end_reason FROM sessions"
 	var clauses []string
 	var args []any
 	if filter.FlowID != "" {
@@ -264,7 +301,7 @@ func (r SessionRepository) List(ctx context.Context, filter SessionFilter) ([]Se
 		var v SessionRecord
 		var started string
 		var ended sql.NullString
-		if err := rows.Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft); err != nil {
+		if err := rows.Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft, &v.Caller, &v.EndReason); err != nil {
 			return nil, err
 		}
 		if v.StartedAt, err = parseTime(started); err != nil {
@@ -284,7 +321,7 @@ func (r SessionRepository) Get(ctx context.Context, id string) (SessionRecord, e
 	var v SessionRecord
 	var started string
 	var ended sql.NullString
-	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft)
+	err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id,flow_id,flow_version_id,config_hash,started_at,ended_at,status,provider_stack_json,turn_count,safe_summary,runtime_snapshot_json,draft,caller,end_reason FROM sessions WHERE id=?"), id).Scan(&v.ID, &v.FlowID, &v.FlowVersionID, &v.ConfigHash, &started, &ended, &v.Status, &v.ProviderStackJSON, &v.TurnCount, &v.SafeSummary, &v.RuntimeSnapshotJSON, &v.Draft, &v.Caller, &v.EndReason)
 	if err != nil {
 		return v, err
 	}

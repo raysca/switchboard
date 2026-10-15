@@ -477,7 +477,7 @@ func TestStoredFlow_ConfiguresMaxParallelFallbacksAndServerDefault(t *testing.T)
 		t.Fatalf("flow creation failed: %v", err)
 	}
 
-	spec, release, err := s.resolveCall(t.Context(), created.ID, "session-1")
+	spec, release, err := s.resolveCall(t.Context(), created.ID, "session-1", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,7 +509,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("flow creation failed: %v", err)
 	}
-	specDefault, releaseDefault, err := s.resolveCall(t.Context(), createdDefault.ID, "session-default")
+	specDefault, releaseDefault, err := s.resolveCall(t.Context(), createdDefault.ID, "session-default", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +528,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("flow creation failed: %v", err)
 	}
-	specDisabled, releaseDisabled, err := s.resolveCall(t.Context(), createdDisabled.ID, "session-disabled")
+	specDisabled, releaseDisabled, err := s.resolveCall(t.Context(), createdDisabled.ID, "session-disabled", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +547,7 @@ func TestStoredFlow_CleanTextConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("flow creation failed: %v", err)
 	}
-	specEnabled, releaseEnabled, err := s.resolveCall(t.Context(), createdEnabled.ID, "session-enabled")
+	specEnabled, releaseEnabled, err := s.resolveCall(t.Context(), createdEnabled.ID, "session-enabled", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

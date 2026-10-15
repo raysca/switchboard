@@ -28,7 +28,9 @@ const resolveTimeout = 10 * time.Second
 // secret. release ends the persisted session and must run exactly once.
 // The session row takes the token's single-use jti as its id, so a client that
 // holds the token can find its session (the admin voice test links to it).
-func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallSpec, func(), error) {
+// resolveCall pins the token's flow, records the session (caller is the token's principal) and returns the
+// call's spec and the function that ends it. ending is the call's end-reason holder: release records what it holds.
+func (s *Server) resolveCall(ctx context.Context, flowID, tokenID, caller string, ending *endReason) (CallSpec, func(), error) {
 	if s.flows == nil || s.mcpService == nil || s.resolver == nil || s.store == nil {
 		return CallSpec{}, nil, errFlowsUnavailable
 	}
@@ -44,14 +46,15 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 	if draft, found := s.drafts.take(sessionID); found {
 		// The flow may have been archived, disabled or left unready since the token was issued.
 		if _, err = s.flows.ResolveCurrent(ctx, flowID); err == nil {
-			rs, err = runtime.StartSnapshotSession(ctx, s.flows, s.mcpService, draft.snapshot, sessionID)
+			rs, err = runtime.StartSnapshotSession(ctx, s.flows, s.mcpService, draft.snapshot, sessionID, caller)
 		}
 	} else {
-		rs, err = runtime.StartSession(ctx, s.flows, s.mcpService, flowID, sessionID)
+		rs, err = runtime.StartSession(ctx, s.flows, s.mcpService, flowID, sessionID, caller)
 	}
 	if err != nil {
 		return CallSpec{}, nil, fmt.Errorf("start flow session: %w", err)
 	}
+	rs.EndReason = ending.get
 	lat := newTurnLatencies()
 	history := newTurnRecorder(func(ctx context.Context, row storage.TurnRecord) error {
 		s.metrics.TurnsTotal.Add(1)
@@ -74,6 +77,7 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID string) (CallS
 	}
 	call, err := s.callSpec(ctx, rs)
 	if err != nil {
+		ending.set(storage.EndSetupFailed)
 		release()
 		return CallSpec{}, nil, err
 	}

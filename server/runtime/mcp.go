@@ -16,6 +16,7 @@ import (
 	"govoice/core"
 	"govoice/server/flow"
 	"govoice/server/mcp"
+	"govoice/server/storage"
 )
 
 type Session struct {
@@ -23,10 +24,13 @@ type Session struct {
 	Snapshot    flow.Snapshot
 	Definitions []core.ToolDefinition
 	Executor    core.ToolExecutor
-	end         func(context.Context, string) error
-	closeMu     sync.Mutex
-	closed      bool
-	runner      *sessionExecutor
+	end         func(ctx context.Context, sessionID, reason string) error
+	// EndReason names why the call ended when it is closed (storage.EndReasons); nil or empty means the
+	// caller hung up. The server sets it once it knows.
+	EndReason func() string
+	closeMu   sync.Mutex
+	closed    bool
+	runner    *sessionExecutor
 }
 
 type captured struct {
@@ -108,7 +112,7 @@ func (e *sessionExecutor) close(ctx context.Context) error {
 // StartSession captures each selected MCP tool before persisting the session.
 // Required capture failures reject admission; optional failures produce no
 // wrapper. The MCP package holds the credential lease only in memory.
-func StartSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Service, flowID, sessionID string) (*Session, error) {
+func StartSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Service, flowID, sessionID, caller string) (*Session, error) {
 	if flows == nil || mcpService == nil {
 		return nil, errors.New("flow and MCP services are required")
 	}
@@ -116,12 +120,12 @@ func StartSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Serv
 	if err != nil {
 		return nil, err
 	}
-	return StartSnapshotSession(ctx, flows, mcpService, snapshot, sessionID)
+	return StartSnapshotSession(ctx, flows, mcpService, snapshot, sessionID, caller)
 }
 
 // StartSnapshotSession starts a session from an already resolved snapshot: the
 // current version, or a draft over it (flow.Service.ResolveDraft).
-func StartSnapshotSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Service, snapshot flow.Snapshot, sessionID string) (*Session, error) {
+func StartSnapshotSession(ctx context.Context, flows *flow.Service, mcpService *mcp.Service, snapshot flow.Snapshot, sessionID, caller string) (*Session, error) {
 	if flows == nil || mcpService == nil {
 		return nil, errors.New("flow and MCP services are required")
 	}
@@ -168,7 +172,7 @@ func StartSnapshotSession(ctx context.Context, flows *flow.Service, mcpService *
 		async[item.definition.Name] = item.definition.Policy.Async
 	}
 	runner := &sessionExecutor{handlers: handlers, async: async}
-	pin, err := flows.StartCapturedSession(ctx, snapshot, sessionID, string(runtimeJSON), references)
+	pin, err := flows.StartCapturedSession(ctx, snapshot, sessionID, string(runtimeJSON), caller, references)
 	if err != nil {
 		return nil, err
 	}
@@ -194,16 +198,26 @@ func (s *Session) Close(ctx context.Context) error {
 				_ = s.runner.close(context.Background())
 				endCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				_ = s.end(endCtx, s.Pin.ID)
+				_ = s.end(endCtx, s.Pin.ID, s.reason())
 			}()
 			return err
 		}
 	}
-	if err := s.end(ctx, s.Pin.ID); err != nil {
+	if err := s.end(ctx, s.Pin.ID, s.reason()); err != nil {
 		return err
 	}
 	s.closed = true
 	return nil
+}
+
+// reason is why the session ended, defaulting to the caller hanging up.
+func (s *Session) reason() string {
+	if s.EndReason != nil {
+		if r := s.EndReason(); r != "" {
+			return r
+		}
+	}
+	return storage.EndCallerHungUp
 }
 
 // ToolName is the model-facing name of a captured MCP tool.

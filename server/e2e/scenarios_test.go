@@ -526,7 +526,7 @@ func TestScenario3_MCPToolLifecycle(t *testing.T) {
 
 	// 4. Start session and capture runtime tool wrapper
 	sessionID := storage.NewID()
-	runtimeSession, err := runtime.StartSession(ctx, flowService, mcpService, flowCreated.ID, sessionID)
+	runtimeSession, err := runtime.StartSession(ctx, flowService, mcpService, flowCreated.ID, sessionID, "")
 	if err != nil {
 		t.Fatalf("start runtime session: %v", err)
 	}
@@ -722,8 +722,8 @@ func TestScenario4_ImmutableFlowVersioning(t *testing.T) {
 	}
 
 	// Clean up sessions
-	_ = flowService.EndSession(ctx, session1ID)
-	_ = flowService.EndSession(ctx, session2ID)
+	_ = flowService.EndSession(ctx, session1ID, "caller_hung_up")
+	_ = flowService.EndSession(ctx, session2ID, "caller_hung_up")
 }
 
 // =============================================================================
@@ -781,7 +781,7 @@ func TestScenario5_MCPDeletionSafety(t *testing.T) {
 
 	// 1. Start active session holding captured tool wrapper
 	sessionID := storage.NewID()
-	runtimeSession, err := runtime.StartSession(ctx, flowService, mcpService, flowCreated.ID, sessionID)
+	runtimeSession, err := runtime.StartSession(ctx, flowService, mcpService, flowCreated.ID, sessionID, "")
 	if err != nil {
 		t.Fatalf("start runtime session: %v", err)
 	}
@@ -1112,7 +1112,7 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 		}
 
 		sessionID := storage.NewID()
-		runtimeSession, err := runtime.StartSession(ctx, flowService, mcpService, flowObj.ID, sessionID)
+		runtimeSession, err := runtime.StartSession(ctx, flowService, mcpService, flowObj.ID, sessionID, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1208,14 +1208,14 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 		}
 
 		// Inject failure in Session A end
-		_ = store.Sessions().End(ctx, pinA.ID)
+		_ = store.Sessions().End(ctx, pinA.ID, "caller_hung_up")
 
 		// Session B remains completely healthy
 		snapB, err := flowService.ResolveSession(ctx, pinB.ID)
 		if err != nil || snapB.FlowID != flowB.ID {
 			t.Fatalf("session B impacted by session A failure: %v", err)
 		}
-		_ = flowService.EndSession(ctx, pinB.ID)
+		_ = flowService.EndSession(ctx, pinB.ID, "caller_hung_up")
 	})
 }
 

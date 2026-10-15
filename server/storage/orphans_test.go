@@ -125,7 +125,7 @@ func TestEndOrphansKeepsEndedSessionsAndExistingNotes(t *testing.T) {
 		ctx := context.Background()
 		old := time.Now().Add(-2 * time.Hour)
 		ended := seedSession(t, s, old, "active")
-		if err := s.Sessions().End(ctx, ended); err != nil {
+		if err := s.Sessions().End(ctx, ended, EndCallerHungUp); err != nil {
 			t.Fatal(err)
 		}
 		before := sessionOf(t, s, ended)
