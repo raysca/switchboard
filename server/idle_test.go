@@ -77,8 +77,10 @@ func idleTestPipeline(t *testing.T, cfg *Config) *core.Pipeline {
 	return pipe
 }
 
-func TestIdleDisabledAddsNoProcessor(t *testing.T) {
-	pipe := idleTestPipeline(t, DefaultConfig(ProfileDevelopment))
+func TestIdleSwitchedOffAddsNoProcessor(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Idle.UserTimeout = 0 // on by default; switched off it adds nothing
+	pipe := idleTestPipeline(t, cfg)
 	if pipe.Len() != 11 { // turn processor (manager on by default) and the async trigger (every call)
 		t.Fatalf("pipeline has %d processors, want 11", pipe.Len())
 	}
@@ -317,7 +319,7 @@ func TestCallPipelineIdleUserSilenceEndsCall(t *testing.T) {
 // of a drain) and the user_idle reason in a non-fatal RTVI error.
 func TestIdleSilentCallerIsHungUpWithNormalClose(t *testing.T) {
 	s, _, dial := drainFixture(t, time.Second)
-	s.cfg.Idle.UserTimeout, s.cfg.Idle.MaxPrompts, s.cfg.Idle.PromptMode = 100*time.Millisecond, 1, "say"
+	s.cfg.Idle.UserTimeout, s.cfg.Idle.MaxPrompts, s.cfg.Idle.PromptMode, s.cfg.Idle.Goodbye = 100*time.Millisecond, 1, "say", "" // no spoken goodbye: the drain fixture plays no audio to finish
 	conn, _ := dial(true)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

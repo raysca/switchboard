@@ -118,19 +118,17 @@
   "InputFilters": null,
   "DenoiseStrength": 0.5,
   "OutputGainDB": 0,
-  "Background": {
-   "File": "",
-   "GainDB": null,
-   "Loop": null
-  },
+  "Backgrounds": null,
+  "BackgroundDefault": "",
+  "AllowFlowBackground": false,
   "Cues": null
  },
  "Idle": {
   "UserTimeout": 30000000000,
   "MaxPrompts": 2,
-  "Prompt": "",
+  "Prompt": "Are you still there?",
   "PromptMode": "",
-  "Goodbye": "",
+  "Goodbye": "I'll end the call now. Goodbye.",
   "BotTimeout": 0,
   "BotMaxStuck": 3,
   "BotFallback": ""

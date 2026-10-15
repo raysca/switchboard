@@ -156,7 +156,15 @@ func parseWAV(b []byte) ([]byte, int, error) {
 func (a *Asset) Rate() int { return a.rate }
 
 // NewCursor starts a session's playback at the beginning.
-func (a *Asset) NewCursor(loop bool) *Cursor { return &Cursor{a: a, loop: loop} }
+func (a *Asset) NewCursor(loop bool) *Cursor { return &Cursor{a: a, loop: loop, q: unityQ} }
+
+// NewCursorGain is NewCursor with the session's own level on top of whatever the asset has baked in, so
+// one shared asset serves sessions that want it at different volumes.
+func (a *Asset) NewCursorGain(loop bool, gainDB float64) *Cursor {
+	return &Cursor{a: a, loop: loop, q: GainQ(gainDB)}
+}
+
+const unityQ = 1 << gainShift
 
 // Cursor is one session's playback position. Not safe for concurrent use: the
 // paced writer drives it from its single Run goroutine.
@@ -165,6 +173,7 @@ type Cursor struct {
 	pos  int
 	loop bool
 	done bool
+	q    int32 // fixed-point session gain, unityQ = none
 }
 
 func (c *Cursor) Rate() int    { return c.a.rate }
@@ -180,6 +189,9 @@ func (c *Cursor) Mix(dst, src []byte) {
 		var s int32
 		if !c.done {
 			s = int32(pcm[c.pos])
+			if c.q != unityQ {
+				s = int32(Scale(int16(s), c.q))
+			}
 			if c.pos++; c.pos == len(pcm) {
 				c.pos, c.done = 0, !c.loop
 			}

@@ -91,7 +91,8 @@ type Server struct {
 	publicAddr   string // bound addresses after Start (useful with ":0")
 	adminAddr    string
 	wsServer     *ws.Server
-	underlay     func() ws.Underlay            // background ambience factory, nil when off
+	backgrounds  map[string]background         // the sound catalogue (audio.backgrounds)
+	underlay     func() ws.Underlay            // the server-default background (audio.background_default), nil when none
 	cues         map[string]func() ws.Underlay // route cue sounds by name
 
 	mu          sync.Mutex
@@ -225,8 +226,11 @@ func NewServer(cfg *Config) (*Server, error) {
 		metrics.OTelStats = s.otel.Stats
 	}
 
-	if s.underlay, err = loadBackground(cfg, ws.FixedPlayerSampleRate); err != nil {
+	if s.backgrounds, err = loadBackgrounds(cfg, ws.FixedPlayerSampleRate); err != nil {
 		return nil, err
+	}
+	if b, ok := s.backgrounds[cfg.Audio.BackgroundDefault]; ok {
+		s.underlay = func() ws.Underlay { return b.underlay(nil, nil) }
 	}
 	if s.cues, err = loadCues(cfg, ws.FixedPlayerSampleRate); err != nil {
 		return nil, err

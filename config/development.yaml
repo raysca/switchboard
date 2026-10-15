@@ -126,8 +126,10 @@ warmup:
 #   input_filters: []                    # [denoise]
 #   denoise_strength: 0.5
 #   output_gain_db: 0
-#   background: {file: ambience.wav, gain_db: -30, loop: true}  # gain_db/loop need file
-# idle: {user_timeout: 0s, max_prompts: 2, prompt: "", prompt_mode: "", goodbye: "", bot_timeout: 0s, bot_max_stuck: 3, bot_fallback: ""}
+#   backgrounds: {office: {file: ambience.wav, gain_db: -30, loop: true}}  # named sounds a call (or its flow) can play under the voice
+#   background_default: office       # every call plays this unless its flow picks another; empty: none
+#   allow_flow_background: true      # a flow may pick a sound from backgrounds (default true here, false in production)
+# idle: {user_timeout: 15s, max_prompts: 2, prompt: "Are you still there?", prompt_mode: "", goodbye: "I'll end the call now. Goodbye.", bot_timeout: 0s, bot_max_stuck: 3, bot_fallback: ""}  # user_timeout: 0s turns quiet-caller handling off; a flow can set its own
 # dtmf: {detect: false, aggregate: false, send_tool: false, aggregate_timeout: 2s}
 # recording: {enabled: false, dir: "", retention_days: 7, max_duration: 1h, max_bytes: 268435456}
 # privacy:

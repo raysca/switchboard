@@ -96,7 +96,14 @@ func DefaultConfig(profile Profile) *Config {
 
 	cfg.STT.ReplayBuffer = 10 * time.Second
 	cfg.Failover.LLMBudget, cfg.Failover.LLMFirstToken = defaultLLMFailoverBudget, defaultLLMFirstToken
+	// Quiet-caller handling is on: a call nobody is on would otherwise cost money until max_call_duration.
+	// idle.user_timeout: 0 turns it off; a flow can set its own (flow idle).
+	cfg.Idle.UserTimeout = 15 * time.Second
+	cfg.Idle.MaxPrompts = 2
+	cfg.Idle.Prompt = "Are you still there?"
+	cfg.Idle.Goodbye = "I'll end the call now. Goodbye."
 	cfg.Idle.BotMaxStuck = 3
+	cfg.Audio.AllowFlowBackground = profile == ProfileDevelopment
 	cfg.DTMF.AggregateTimeout = 2 * time.Second
 	cfg.Audio.DenoiseStrength = 0.5
 	cfg.Warmup.Timeout = 3 * time.Second
@@ -105,7 +112,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.OTel.ShutdownTimeout = 5 * time.Second
 	// Not defaulted on purpose: turn.speech_timeout, eager_grace, max_mute and
 	// completion waits (setting them would trip "needs turn.manager"; the turn
-	// code owns those fallbacks), warmup.enabled and audio.background.gain_db/loop
+	// code owns those fallbacks), warmup.enabled and audio.backgrounds gain_db/loop
 	// (nil means default), otel.sampling_ratio (nil means 1).
 
 	return cfg

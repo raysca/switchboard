@@ -326,3 +326,26 @@ func FuzzNewAsset(f *testing.F) {
 		}
 	})
 }
+
+func TestCursorGainScalesTheSharedAssetPerSessionAndStaysAllocationFree(t *testing.T) {
+	a := &Asset{pcm: []int16{10000, 10000, 10000, 10000}, rate: 24000}
+	read := func(c *Cursor) int16 {
+		b := make([]byte, 2)
+		c.Mix(b, nil)
+		return samples(b)[0]
+	}
+	if v := read(a.NewCursorGain(true, 0)); v != 10000 {
+		t.Fatalf("0 dB: %d", v)
+	}
+	if v := read(a.NewCursorGain(true, -6.0206)); v < 4995 || v > 5005 {
+		t.Fatalf("-6 dB: %d", v)
+	}
+	if v := read(a.NewCursor(true)); v != 10000 {
+		t.Fatalf("NewCursor must stay at unity: %d", v)
+	}
+	c := a.NewCursorGain(true, -20)
+	dst := make([]byte, 960)
+	if n := testing.AllocsPerRun(100, func() { c.Mix(dst, nil) }); n != 0 {
+		t.Fatalf("%v allocs per frame", n)
+	}
+}

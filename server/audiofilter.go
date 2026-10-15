@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -37,12 +36,15 @@ func validateAudio(cfg *Config) error {
 	if err := mixer.ValidateGainDB(cfg.Audio.OutputGainDB); err != nil {
 		return fmt.Errorf("audio.%w", err)
 	}
-	if b := cfg.Audio.Background; b.File == "" && (b.GainDB != nil || b.Loop != nil) {
-		return errors.New("audio.background.gain_db/loop set without audio.background.file")
-	} else if g := b.GainDB; g != nil && (*g < -60 || *g > 0 || *g != *g) {
-		return fmt.Errorf("audio.background.gain_db %v out of range -60..0", *g)
+	if err := validateSounds("backgrounds", cfg.Audio.Backgrounds); err != nil {
+		return err
 	}
-	if err := validateCues(cfg.Audio.Cues); err != nil {
+	if d := cfg.Audio.BackgroundDefault; d != "" {
+		if _, ok := cfg.Audio.Backgrounds[d]; !ok {
+			return fmt.Errorf("audio.background_default %q is not in audio.backgrounds", d)
+		}
+	}
+	if err := validateSounds("cues", cfg.Audio.Cues); err != nil {
 		return err
 	}
 	return nil
@@ -52,18 +54,19 @@ const maxCues = 8
 
 var cueName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
-func validateCues(cues map[string]CueConfig) error {
-	if len(cues) > maxCues {
-		return fmt.Errorf("audio.cues: at most %d cues", maxCues)
+// validateSounds checks a named-sound map (audio.cues or audio.backgrounds).
+func validateSounds(kind string, sounds map[string]CueConfig) error {
+	if len(sounds) > maxCues {
+		return fmt.Errorf("audio.%s: at most %d sounds", kind, maxCues)
 	}
-	for name, c := range cues {
+	for name, c := range sounds {
 		switch {
 		case !cueName.MatchString(name):
-			return fmt.Errorf("audio.cues: name %q must match %s", name, cueName)
+			return fmt.Errorf("audio.%s: name %q must match %s", kind, name, cueName)
 		case c.File == "":
-			return fmt.Errorf("audio.cues.%s.file is required", name)
+			return fmt.Errorf("audio.%s.%s.file is required", kind, name)
 		case c.GainDB != nil && (*c.GainDB < -60 || *c.GainDB > 0 || *c.GainDB != *c.GainDB):
-			return fmt.Errorf("audio.cues.%s.gain_db %v out of range -60..0", name, *c.GainDB)
+			return fmt.Errorf("audio.%s.%s.gain_db %v out of range -60..0", kind, name, *c.GainDB)
 		}
 	}
 	return nil
@@ -100,24 +103,41 @@ func buildOutputGain(cfg *Config) (core.Processor, error) {
 	return mixer.NewGain(cfg.Audio.OutputGainDB)
 }
 
-// loadBackground reads the ambience file once for the process (resampled to the
-// transport's fixed player rate) and returns the per-session underlay factory,
-// or nil when no file is configured.
-func loadBackground(cfg *Config, rate int) (func() ws.Underlay, error) {
-	b := cfg.Audio.Background
-	if b.File == "" {
-		return nil, nil
+// background is a catalogue sound loaded once for the process (at unity, resampled to the transport's
+// fixed player rate); each call plays its own cursor at the level it asks for.
+type background struct {
+	asset  *mixer.Asset
+	gainDB float64
+	loop   bool
+}
+
+// underlay starts a call's playback; a nil gain or loop takes the catalogue entry's.
+func (b background) underlay(gainDB *float64, loop *bool) ws.Underlay {
+	g, l := b.gainDB, b.loop
+	if gainDB != nil {
+		g = *gainDB
 	}
-	g := -30.0
-	if b.GainDB != nil {
-		g = *b.GainDB
+	if loop != nil {
+		l = *loop
 	}
-	a, err := mixer.LoadAsset(b.File, rate, g)
-	if err != nil {
-		return nil, fmt.Errorf("audio.background.file: %w", err)
+	return b.asset.NewCursorGain(l, g)
+}
+
+// loadBackgrounds reads every catalogue sound once.
+func loadBackgrounds(cfg *Config, rate int) (map[string]background, error) {
+	out := make(map[string]background, len(cfg.Audio.Backgrounds))
+	for name, c := range cfg.Audio.Backgrounds {
+		a, err := mixer.LoadAsset(c.File, rate, 0)
+		if err != nil {
+			return nil, fmt.Errorf("audio.backgrounds.%s.file: %w", name, err)
+		}
+		b := background{asset: a, gainDB: -30, loop: c.Loop == nil || *c.Loop}
+		if c.GainDB != nil {
+			b.gainDB = *c.GainDB
+		}
+		out[name] = b
 	}
-	loop := b.Loop == nil || *b.Loop
-	return func() ws.Underlay { return a.NewCursor(loop) }, nil
+	return out, nil
 }
 
 // buildInputFilter returns the per-call filter processor, or nil when no

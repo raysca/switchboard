@@ -224,21 +224,22 @@ type Config struct {
 	// listed order between the DTMF detector (which hears unfiltered audio)
 	// and VAD; empty (default) leaves the pipeline unchanged. Known filters:
 	// denoise. DenoiseStrength is 0..1; 0 means the default (0.5). Recordings
-	// tap the transport and keep the raw audio. Per-flow filter settings are
-	// not supported yet: this is server-wide.
+	// tap the transport and keep the raw audio. A flow can turn denoise on for
+	// its calls (flow audio.denoise).
 	Audio struct {
 		InputFilters    []string `yaml:"input_filters"`
 		DenoiseStrength float64  `yaml:"denoise_strength"`
 		// OutputGainDB scales the bot's audio, -30..+6 dB; 0 (default) inserts
-		// no stage. Background mixes a looping WAV under the speech and keeps
-		// playing in silences (continuous WS traffic, ~48 kB/s at 24 kHz); off
-		// unless File is set. See docs/audio-filters.md.
+		// no stage. A flow can override it.
 		OutputGainDB float64 `yaml:"output_gain_db"`
-		Background   struct {
-			File   string   `yaml:"file"`
-			GainDB *float64 `yaml:"gain_db"` // -60..0, default -30 when unset
-			Loop   *bool    `yaml:"loop"`    // default true
-		} `yaml:"background"`
+		// Backgrounds are named looping sounds mixed under the speech; they keep playing in silences
+		// (continuous WS traffic, ~48 kB/s at 24 kHz). BackgroundDefault names the one every call
+		// gets unless its flow picks another or none; empty (default) means none. A flow can only pick
+		// a name from this map, and only while AllowFlowBackground is true (default false; true in
+		// the development profile). See docs/audio-filters.md.
+		Backgrounds         map[string]CueConfig `yaml:"backgrounds"`
+		BackgroundDefault   string               `yaml:"background_default"`
+		AllowFlowBackground bool                 `yaml:"allow_flow_background"`
 		// Cues are named sounds a routed flow plays while the call is between
 		// steps (route_cue). See docs/audio-filters.md.
 		Cues map[string]CueConfig `yaml:"cues"`

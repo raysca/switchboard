@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,14 +105,22 @@ func TestAudioOutputConfigValidationAndBuild(t *testing.T) {
 	if g, err := buildOutputGain(c); g != nil || err != nil {
 		t.Fatalf("0 dB must insert no stage: %v %v", g, err)
 	}
-	if u, err := loadBackground(c, 24000); u != nil || err != nil {
-		t.Fatalf("no file must mean no underlay: %v", err)
+	if m, err := loadBackgrounds(c, 24000); len(m) != 0 || err != nil {
+		t.Fatalf("no sounds must mean no catalogue: %v %v", m, err)
 	}
 	for name, mut := range map[string]func(*Config){
-		"gain-low":    func(c *Config) { c.Audio.OutputGainDB = -31 },
-		"gain-high":   func(c *Config) { c.Audio.OutputGainDB = 7 },
-		"bg-no-file":  func(c *Config) { c.Audio.Background.GainDB = ptrF(-10) },
-		"bg-gain-pos": func(c *Config) { c.Audio.Background.File, c.Audio.Background.GainDB = "x.wav", ptrF(3) },
+		"gain-low":        func(c *Config) { c.Audio.OutputGainDB = -31 },
+		"gain-high":       func(c *Config) { c.Audio.OutputGainDB = 7 },
+		"bg-no-file":      func(c *Config) { c.Audio.Backgrounds = map[string]CueConfig{"amb": {GainDB: ptrF(-10)}} },
+		"bg-gain-pos":     func(c *Config) { c.Audio.Backgrounds = map[string]CueConfig{"amb": {File: "x.wav", GainDB: ptrF(3)}} },
+		"bg-bad-name":     func(c *Config) { c.Audio.Backgrounds = map[string]CueConfig{"../x": {File: "x.wav"}} },
+		"bg-default-none": func(c *Config) { c.Audio.BackgroundDefault = "nope" },
+		"bg-too-many": func(c *Config) {
+			c.Audio.Backgrounds = map[string]CueConfig{}
+			for i := 0; i <= maxCues; i++ {
+				c.Audio.Backgrounds[fmt.Sprintf("s%d", i)] = CueConfig{File: "x.wav"}
+			}
+		},
 	} {
 		c := DefaultConfig(ProfileDevelopment)
 		mut(c)
@@ -119,7 +128,8 @@ func TestAudioOutputConfigValidationAndBuild(t *testing.T) {
 			t.Errorf("%s accepted", name)
 		}
 	}
-	c.Audio.Background.File, c.Audio.Background.GainDB = "x.wav", ptrF(0) // explicit 0 dB is full level, not "default"
+	c.Audio.Backgrounds = map[string]CueConfig{"amb": {File: "x.wav", GainDB: ptrF(0)}} // explicit 0 dB is full level, not "default"
+	c.Audio.BackgroundDefault = "amb"
 	if err := validateAudio(c); err != nil {
 		t.Fatalf("background gain_db 0 rejected: %v", err)
 	}
@@ -147,7 +157,7 @@ func TestOutputGainPipelinePlacement(t *testing.T) {
 	}
 }
 
-func TestBackgroundLoadedOncePerProcessCursorPerSession(t *testing.T) {
+func TestBackgroundsLoadedOncePerProcessCursorPerSession(t *testing.T) {
 	pcm := make([]byte, 2*2400)
 	wav := append([]byte("RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data"), byte(len(pcm)), byte(len(pcm)>>8), 0, 0)
 	path := filepath.Join(t.TempDir(), "amb.wav")
@@ -155,20 +165,25 @@ func TestBackgroundLoadedOncePerProcessCursorPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := DefaultConfig(ProfileDevelopment)
-	c.Audio.Background.File = path
-	mk, err := loadBackground(c, 24000)
-	if err != nil || mk == nil {
-		t.Fatalf("load: %v", err)
+	c.Audio.Backgrounds = map[string]CueConfig{"amb": {File: path}, "quiet": {File: path, GainDB: ptrF(-50), Loop: ptrBool(false)}}
+	m, err := loadBackgrounds(c, 24000)
+	if err != nil || len(m) != 2 {
+		t.Fatalf("load: %v %v", m, err)
 	}
-	a, b := mk(), mk()
+	a, b := m["amb"].underlay(nil, nil), m["amb"].underlay(nil, nil)
 	if a == b || a.Rate() != 24000 {
 		t.Fatal("each session needs its own cursor at the player rate")
 	}
-	c.Audio.Background.File = filepath.Join(t.TempDir(), "nope.wav")
-	if _, err := loadBackground(c, 24000); err == nil {
-		t.Fatal("missing file accepted")
+	if m["amb"].gainDB != -30 || !m["amb"].loop || m["quiet"].gainDB != -50 || m["quiet"].loop {
+		t.Fatalf("catalogue defaults: %+v %+v", m["amb"], m["quiet"])
+	}
+	c.Audio.Backgrounds = map[string]CueConfig{"gone": {File: filepath.Join(t.TempDir(), "nope.wav")}}
+	if _, err := loadBackgrounds(c, 24000); err == nil || !strings.Contains(err.Error(), "audio.backgrounds.gone.file") {
+		t.Fatalf("missing file: %v", err)
 	}
 }
+
+func ptrBool(v bool) *bool { return &v }
 
 func ptrF(v float64) *float64 { return &v }
 
