@@ -8,7 +8,7 @@ audio:
   denoise_strength: 0.5      # 0..1, 0 = default (0.5)
 ```
 
-Server-wide only. Per-flow filter settings are left for later.
+A flow can turn denoise on for its own calls (`audio.denoise` on the start step, optional `strength` 0..1, default 0.5); the server's `input_filters` still apply to every call. See "Per-flow audio" below.
 
 ## Pipeline order
 
@@ -61,14 +61,17 @@ Package `core/audio/mixer`; mixing hook in `transport/ws/pacing.go`. Both are of
 
 ```yaml
 audio:
-  output_gain_db: -3        # -30..+6, 0 = off (no processor inserted)
-  background:
-    file: /etc/govoice/office.wav   # PCM16 mono WAV, 8..192 kHz, <= 10 MB
-    gain_db: -30            # -60..0; unset = -30, 0 = full level
-    loop: true              # default true
+  output_gain_db: -3        # -30..+6, 0 = off (no processor inserted); a flow can override it
+  backgrounds:              # named sounds (at most 8); a call plays one, never a path a flow gives
+    office:
+      file: /etc/govoice/office.wav   # PCM16 mono WAV, 8..192 kHz, <= 10 MB
+      gain_db: -30          # -60..0; unset = -30, 0 = full level
+      loop: true            # default true
+  background_default: office   # every call plays this unless its flow picks another; empty (default) = none
+  allow_flow_background: false # a flow may choose a sound from `backgrounds` (default false; true in the development profile)
 ```
 
-Server-wide only. Both are validated at config load; the file is read when the server starts (a bad file stops startup).
+Validated at config load; every file is read when the server starts (a bad file stops startup). The single `audio.background` key of earlier builds is gone: an old file that still has it fails to load (unknown field).
 
 ## Gain
 
@@ -76,7 +79,7 @@ Server-wide only. Both are validated at config load; the file is read when the s
 
 ## Background ambience
 
-The WAV is parsed (PCM16 mono only, including `WAVE_FORMAT_EXTENSIBLE`; 8/24-bit, float and stereo are rejected with a conversion hint; the 10 MB cap applies before parsing), low-passed (63-tap windowed sinc) when the file rate is above 24 kHz, resampled once to the 24 kHz player rate and gain-scaled once at startup. The last 5 ms are crossfaded into the first 5 ms so the loop point has no click. The samples are shared read-only; each session has a `Cursor` (just a position).
+The WAV is parsed (PCM16 mono only, including `WAVE_FORMAT_EXTENSIBLE`; 8/24-bit, float and stereo are rejected with a conversion hint; the 10 MB cap applies before parsing), low-passed (63-tap windowed sinc) when the file rate is above 24 kHz, resampled once to the 24 kHz player rate and kept at unity once at startup (each call's cursor applies its own level). The last 5 ms are crossfaded into the first 5 ms so the loop point has no click. The samples are shared read-only; each session has a `Cursor` (just a position).
 
 Mixing happens inside `PacedWriter` (an `Underlay`), on the pacer's clock:
 
@@ -95,6 +98,19 @@ Cost and limits:
 - If a flush or arriving speech races an ambience frame between mixing and write, the ambience position skips one frame (a possible tick, once).
 - A one-shot also starts with that 5 ms blend. A one-shot (`loop: false`) ends in silence and the writer stops emitting.
 - An ambience write failure ends the connection like any slow-client error.
+
+## Per-flow audio
+
+The start step of a flow can carry an `audio` object; each member overrides the server's setting for that flow's calls only when present:
+
+```json
+"audio": { "denoise": { "strength": 0.5 }, "output_gain_db": -3, "background": { "name": "office", "gain_db": -30, "loop": true } }
+```
+
+- `denoise`: present turns noise reduction on (`strength` 0..1, default 0.5).
+- `output_gain_db`: -30..+6; an explicit `0` removes a server-wide gain for this flow.
+- `background`: `name` must be a key of `audio.backgrounds` (lowercase letters, digits, `-`, `_`, up to 32): never a path. `gain_db` -60..0 and `loop` override the catalogue entry. Publishing a flow that names an unknown sound fails with `400 invalid_config` listing the available names; while `audio.allow_flow_background` is false any `background` is refused. If the catalogue or the ceiling changes after publishing, the flow's readiness becomes `not_ready` with `missing_audio_background` or `audio_background_not_allowed`, and a call that still starts plays the server default (or none) instead.
+- Because the transport accepts the connection before the call's flow is known, the call's background is set once the flow is resolved (`Connection.SetBackground`), without disturbing the paced writer.
 
 ## Route cues
 
