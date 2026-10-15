@@ -143,7 +143,7 @@ func (p *Processor) runDeadlineDriver(ctx context.Context) {
 	}
 }
 
-func (p *Processor) ProcessFrame(_ context.Context, frame core.Frame, dir core.Direction, emitter core.Emitter) error {
+func (p *Processor) ProcessFrame(ctx context.Context, frame core.Frame, dir core.Direction, emitter core.Emitter) error {
 	if _, ok := frame.(*core.InterruptionFrame); ok {
 		generation := p.legacyGen
 		if p.session != nil && core.Generation(p.session.CurrentGeneration()) > generation {
@@ -156,12 +156,46 @@ func (p *Processor) ProcessFrame(_ context.Context, frame core.Frame, dir core.D
 	if dir != core.Downstream {
 		return emitter.PushDirection(frame, dir)
 	}
-	var (
-		outputs []Output
-		err     error
-		forward = true
-	)
 	policyAt := p.nextPolicyTime()
+	outputs, forward, err := p.apply(frame, policyAt)
+	if errors.Is(err, ErrRetiredTurnLimit) {
+		// Pending-turn bookkeeping overflowed (orphan candidates); drop it and
+		// retry rather than failing the call.
+		p.finalizer.Reset()
+		if span := core.SpanFromContext(ctx); span != nil {
+			span.AddEvent(core.NewTraceEvent("transcript.turn_limit_reset", time.Now(), "", "", 0, core.TraceContextFromContext(ctx).Policy, nil))
+		}
+		outputs, forward, err = p.apply(frame, policyAt)
+	}
+	if err != nil {
+		return err
+	}
+	if forward {
+		if err := emitter.PushDirection(frame, dir); err != nil {
+			return err
+		}
+	}
+	p.signalDeadlineDriver()
+	for _, output := range outputs {
+		if output.Kind == Interim {
+			if err := emitter.Push(&core.InterimTranscriptionFrame{
+				Text: output.Text, Turn: string(output.Turn), Gen: uint64(output.Generation), Timestamp: output.SourceAt,
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := emitter.Push(&core.FinalTranscriptionFrame{
+			Text: output.Text, Turn: string(output.Turn), Gen: uint64(output.Generation), Timestamp: output.SourceAt, Committed: true,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Processor) apply(frame core.Frame, policyAt time.Time) (outputs []Output, forward bool, err error) {
+	forward = true
 	switch value := frame.(type) {
 	case *core.TranscriptCandidateFrame:
 		forward = false
@@ -203,29 +237,5 @@ func (p *Processor) ProcessFrame(_ context.Context, frame core.Frame, dir core.D
 			outputs, err = p.finalizer.Complete(p.legacyTurn, p.legacyGen, policyAt)
 		}
 	}
-	if err != nil {
-		return err
-	}
-	if forward {
-		if err := emitter.PushDirection(frame, dir); err != nil {
-			return err
-		}
-	}
-	p.signalDeadlineDriver()
-	for _, output := range outputs {
-		if output.Kind == Interim {
-			if err := emitter.Push(&core.InterimTranscriptionFrame{
-				Text: output.Text, Turn: string(output.Turn), Gen: uint64(output.Generation), Timestamp: output.SourceAt,
-			}); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := emitter.Push(&core.FinalTranscriptionFrame{
-			Text: output.Text, Turn: string(output.Turn), Gen: uint64(output.Generation), Timestamp: output.SourceAt, Committed: true,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return outputs, forward, err
 }

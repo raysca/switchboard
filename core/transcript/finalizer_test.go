@@ -300,3 +300,20 @@ func TestFinalizerExpiresBeforeLateInputAndPreservesUtteranceFinalStrength(t *te
 		t.Fatalf("weaker final replaced utterance final: outputs=%v err=%v", outs, err)
 	}
 }
+
+func TestFinalizerResetClearsPendingKeepsRetired(t *testing.T) {
+	f, _ := NewFinalizer(testConfig())
+	at := time.Unix(10, 0)
+	for _, id := range []string{"a", "b"} {
+		if _, err := f.Observe(candidate(id, 1, "x", at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.Observe(candidate("c", 1, "x", at.Add(time.Millisecond))); !errors.Is(err, ErrRetiredTurnLimit) {
+		t.Fatalf("want limit error, got %v", err)
+	}
+	f.Reset()
+	if _, err := f.Observe(candidate("c", 1, "x", at.Add(2*time.Millisecond))); err != nil {
+		t.Fatalf("after reset: %v", err)
+	}
+}

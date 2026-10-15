@@ -139,6 +139,14 @@ func NewFinalizer(cfg Config) (*Finalizer, error) {
 	}, nil
 }
 
+// Reset drops pending (unfinalized) turns; retired memory is kept so an
+// already-finalized turn is never committed twice.
+func (f *Finalizer) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	clear(f.turns)
+}
+
 func (f *Finalizer) Observe(candidate Candidate) ([]Output, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
