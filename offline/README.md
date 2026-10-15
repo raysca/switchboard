@@ -102,17 +102,22 @@ For a live microphone call use `make dev` and the console's test call, or `make 
 | `OFFLINE_LISTEN` | `:8099` | listen address |
 | `OFFLINE_TOKEN` | empty | bearer token required on `/v1/*`; empty accepts any (the server's offline provider sends a constant token, so leave it empty when the server is the client) |
 | `OFFLINE_SPEACHES_URL` | `http://127.0.0.1:8000` | Speaches base URL |
-| `OFFLINE_STT_MODEL`, `OFFLINE_TTS_MODEL` | faster-whisper-small.en, Kokoro-82M | Speaches model ids |
+| `OFFLINE_STT_MODEL`, `OFFLINE_TTS_MODEL` | faster-whisper-base.en, Kokoro-82M | Speaches model ids; see "Speed" below before choosing a bigger STT model |
 | `OFFLINE_DEFAULT_VOICE`, `OFFLINE_VOICE_ALIASES` | `af_heart`, `eve=af_heart` | voice mapping (`name=voice,...`) |
-| `OFFLINE_MAX_CONCURRENCY`, `OFFLINE_QUEUE_WAIT` | 2, 5s | simultaneous Speaches requests; wait for a slot before 503 |
+| `OFFLINE_MAX_CONCURRENCY`, `OFFLINE_QUEUE_WAIT` | 1, 5s | simultaneous Speaches requests; wait for a slot before 503 |
 | `OFFLINE_INTERIM_EVERY`, `OFFLINE_ENDPOINT_SILENCE`, `OFFLINE_MAX_UTTERANCE` | 700ms, 600ms, 25s | STT interim cadence, end-of-utterance silence, forced cut |
 | `OFFLINE_ENERGY_THRESHOLD` | 0.01 | RMS (fraction of full scale) that counts as speech |
 
 The `sample_rate` query value (and `output_format.sample_rate` on `POST /v1/tts`) must be between 8000 and 48000; anything else is refused with HTTP 400.
+
+## Speed (why the defaults are small)
+
+When the caller pauses, the server tells the STT stream `audio.done` and waits only about 2 seconds for the final transcript. After that it drops the stream, and **whatever was still being transcribed is lost: the bot answers a sentence that is missing words, or whole sentences**. Batch Whisper on a CPU decodes at roughly 0.3 to 0.7 times real time with `small.en`, so a few seconds of speech already overruns that window. The defaults therefore use `base.en` (about 1.7 times faster than `small.en` on short clips, same text on the test clips) and one decode at a time, and interim decodes never wait for a decode slot, so they cannot delay a final. If the end of long sentences still goes missing on your machine, switch to `Systran/faster-whisper-tiny.en` (download it with `curl -X POST http://127.0.0.1:8000/v1/models/Systran/faster-whisper-tiny.en`) or run the stack on a GPU. `make offline-test` includes a long-speech check (`TestStackLongSpeechIsNotCutOff` and the server's `TestOfflineStackLongCallerSpeechIsOneTurn`).
 
 ## Limits
 
 - Traces and usage say `provider: xai`: the xai processors hard-code the label.
 - The endpointer is energy based: clean and synthetic audio is fine, a noisy microphone needs a real VAD.
 - Speaches returns each synthesized sentence whole, so the first audio of a sentence arrives after the sentence is synthesized (about 0.4x its length on CPU).
+- Whisper can occasionally emit a degenerate repeated-word interim ("I- I- I-") for a very short clip; the final decode of that sentence was correct in testing, and interims are not used as the final text.
 - Whisper is batch: interims re-decode the utterance so far, so CPU grows with utterance length (capped by `OFFLINE_MAX_UTTERANCE`).

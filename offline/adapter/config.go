@@ -29,9 +29,9 @@ type Config struct {
 func LoadConfig(getenv func(string) string) (Config, error) {
 	c := Config{
 		Listen: ":8099", SpeachesURL: "http://127.0.0.1:8000",
-		STTModel: "Systran/faster-whisper-small.en", TTSModel: "speaches-ai/Kokoro-82M-v1.0-ONNX",
+		STTModel: "Systran/faster-whisper-base.en", TTSModel: "speaches-ai/Kokoro-82M-v1.0-ONNX",
 		DefaultVoice: "af_heart", VoiceAliases: map[string]string{"eve": "af_heart"},
-		MaxConcurrency: 2, QueueWait: 5 * time.Second, InterimEvery: 700 * time.Millisecond,
+		MaxConcurrency: 1, QueueWait: 5 * time.Second, InterimEvery: 700 * time.Millisecond,
 		EndpointSilence: 600 * time.Millisecond, MaxUtterance: 25 * time.Second, EnergyThreshold: 0.01,
 	}
 	var errs []error

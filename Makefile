@@ -314,7 +314,7 @@ offline-up: ## dev|Start the offline speech stack (OFFLINE_PROFILE=container-llm
 	@if [ "$(OFFLINE_PROFILE)" = host-llm ]; then curl -sf http://127.0.0.1:11434/api/tags >/dev/null || { echo "host-llm: Ollama is not answering on 127.0.0.1:11434"; exit 1; }; fi
 
 offline-models: ## dev|Download Whisper, Kokoro and the LLM into the offline stack (needs network, run once)
-	curl -sf -X POST http://127.0.0.1:8000/v1/models/Systran/faster-whisper-small.en
+	curl -sf -X POST http://127.0.0.1:8000/v1/models/Systran/faster-whisper-base.en
 	curl -sf -X POST http://127.0.0.1:8000/v1/models/speaches-ai/Kokoro-82M-v1.0-ONNX
 ifeq ($(OFFLINE_PROFILE),host-llm)
 	ollama pull $(OFFLINE_LLM_BASE) && ollama create govoice-test -f offline/Modelfile
@@ -328,6 +328,6 @@ offline-down: ## dev|Stop the offline speech stack (volumes are kept)
 
 offline-test: ## dev|Round trip through the running offline stack with the real xai clients (needs offline-up and offline-models)
 	cd offline/contract && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" ./...
-	cd server && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" -run TestOfflineStackCall .
+	cd server && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" -run TestOfflineStack .
 
 .PHONY: offline-up offline-models offline-down offline-test

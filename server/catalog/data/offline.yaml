@@ -9,7 +9,9 @@ services:
   stt:
     keyless: true
     models:
-      - {id: Systran/faster-whisper-small.en, label: Whisper small (English), default: true}
+      - {id: Systran/faster-whisper-base.en, label: Whisper base (English), default: true}
+      - {id: Systran/faster-whisper-small.en, label: "Whisper small (English, slower)"}
+      - {id: Systran/faster-whisper-tiny.en, label: "Whisper tiny (English, fastest)"}
     languages:
       - {id: en, label: English, default: true}
   tts:

@@ -34,3 +34,19 @@ func TestLimiterHonoursCancel(t *testing.T) {
 		t.Fatalf("got %v, want context.Canceled", err)
 	}
 }
+
+func TestLimiterTryAcquireNeverWaits(t *testing.T) {
+	l := NewLimiter(1, time.Minute)
+	rel, ok := l.TryAcquire()
+	if !ok {
+		t.Fatal("a free slot was refused")
+	}
+	start := time.Now()
+	if _, ok := l.TryAcquire(); ok || time.Since(start) > 50*time.Millisecond {
+		t.Fatalf("TryAcquire on a busy limiter: ok=%v after %v, want an immediate refusal", ok, time.Since(start))
+	}
+	rel()
+	if _, ok := l.TryAcquire(); !ok {
+		t.Fatal("the slot was not freed")
+	}
+}

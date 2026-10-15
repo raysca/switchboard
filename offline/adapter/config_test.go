@@ -12,7 +12,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Listen != ":8099" || c.SpeachesURL != "http://127.0.0.1:8000" || c.MaxConcurrency != 2 ||
+	if c.Listen != ":8099" || c.SpeachesURL != "http://127.0.0.1:8000" || c.MaxConcurrency != 1 || c.STTModel != "Systran/faster-whisper-base.en" ||
 		c.InterimEvery != 700*time.Millisecond || c.EndpointSilence != 600*time.Millisecond ||
 		c.MaxUtterance != 25*time.Second || c.EnergyThreshold != 0.01 {
 		t.Fatalf("defaults: %+v", c)

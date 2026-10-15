@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -117,5 +118,53 @@ func TestSTTSecondUtteranceStillGetsInterims(t *testing.T) {
 	}
 	if finals != 2 || interimsAfterFirstFinal == 0 {
 		t.Fatalf("finals=%d interims during the second utterance=%d", finals, interimsAfterFirstFinal)
+	}
+}
+
+// Late-final regression (found in a real call): interim decodes used to queue for a decode slot like
+// finals do, so on a busy CPU one call's interim could take the slot ahead of another call's final, and
+// that final missed the client's ~2 s window after audio.done. An interim must not wait for a slot: with
+// the slot busy it is skipped, so the next decode to run is the final.
+func TestSTTAnInterimNeverTakesTheSlotFromAFinal(t *testing.T) {
+	var mu sync.Mutex
+	var sizes []int
+	stt := &fakeSTT{fn: func(_ context.Context, pcm []byte) (string, error) {
+		mu.Lock()
+		sizes = append(sizes, len(pcm))
+		mu.Unlock()
+		return "text", nil
+	}}
+	cfg := fastCfg(t)
+	cfg.MaxConcurrency = 1
+	cfg.QueueWait = time.Minute
+	cfg.InterimEvery = 30 * time.Millisecond
+	s := New(cfg, nil, stt, okReady)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	held, err := s.lim.Acquire(context.Background()) // another decode owns the only slot
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Call A is mid-sentence: its interims want the slot.
+	a, actx := dialWS(t, srv, "/v1/stt")
+	readSTT(t, actx, a)
+	sendAudio(t, actx, a, pcmTone(time.Second, 0.3), 5*time.Millisecond)
+	// Call B has finished speaking: its final waits for the slot.
+	b, bctx := dialWS(t, srv, "/v1/stt")
+	readSTT(t, bctx, b)
+	sendAudio(t, bctx, b, append(pcmTone(time.Second, 0.3), pcmSilence(500*time.Millisecond)...), time.Millisecond)
+	audioDone(t, bctx, b)
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	if len(sizes) != 0 {
+		t.Fatalf("%d decodes ran while the slot was held", len(sizes))
+	}
+	mu.Unlock()
+	held()
+	finals := speechFinals(drainSTT(t, bctx, b))
+	mu.Lock()
+	defer mu.Unlock()
+	if len(finals) != 1 || len(sizes) != 1 || sizes[0] < 32000 {
+		t.Fatalf("finals=%v decode sizes=%v: want B's final to be the first and only decode (A's interims must have been skipped, not queued)", finals, sizes)
 	}
 }

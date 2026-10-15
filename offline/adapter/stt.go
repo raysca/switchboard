@@ -178,7 +178,7 @@ func (s *Server) sttWorker(ctx context.Context, c *websocket.Conn, jobs <-chan s
 				cancel()
 			}
 		}
-		text, err := s.transcribe(dctx, j.pcm, rate, lang)
+		text, err := s.transcribe(dctx, j.pcm, rate, lang, j.kind == "final")
 		cancel()
 		if err != nil {
 			if j.kind == "interim" || ctx.Err() != nil {
@@ -211,8 +211,19 @@ func (s *Server) sttWorker(ctx context.Context, c *websocket.Conn, jobs <-chan s
 
 // transcribe runs one backend decode. A panic inside the backend call becomes an error: it runs on a
 // goroutine net/http does not recover, and one bad call must not take the whole adapter down.
-func (s *Server) transcribe(ctx context.Context, pcm []byte, rate int, lang string) (text string, err error) {
-	release, err := s.lim.Acquire(ctx)
+//
+// A final waits for a decode slot; an interim does not (it is skipped, as a failed interim is, when the
+// slot is busy): on a busy CPU an interim must never run in front of the final, which the client only
+// waits about 2 s for after the caller stops.
+func (s *Server) transcribe(ctx context.Context, pcm []byte, rate int, lang string, wait bool) (text string, err error) {
+	var release func()
+	if wait {
+		release, err = s.lim.Acquire(ctx)
+	} else if rel, ok := s.lim.TryAcquire(); ok {
+		release = rel
+	} else {
+		err = ErrBusy
+	}
 	if err != nil {
 		return "", err
 	}

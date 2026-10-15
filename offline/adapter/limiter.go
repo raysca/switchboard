@@ -20,6 +20,17 @@ func NewLimiter(n int, wait time.Duration) *Limiter {
 	return &Limiter{slots: make(chan struct{}, n), wait: wait}
 }
 
+// TryAcquire takes a slot only if one is free right now. Interim decodes use it: they are best effort
+// and must never queue in front of a final.
+func (l *Limiter) TryAcquire() (release func(), ok bool) {
+	select {
+	case l.slots <- struct{}{}:
+		return func() { <-l.slots }, true
+	default:
+		return nil, false
+	}
+}
+
 func (l *Limiter) Acquire(ctx context.Context) (release func(), err error) {
 	t := time.NewTimer(l.wait)
 	defer t.Stop()
