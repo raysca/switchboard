@@ -4,6 +4,7 @@ package trace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -451,7 +452,7 @@ func (s *adapterSpan) End(err error) {
 	now := time.Now().UTC()
 
 	if err != nil {
-		s.attributes["error.category"] = err.Error()
+		s.attributes["error.category"] = fmt.Sprintf("%T", err) // type only: messages can carry credentials
 		s.attributes["status"] = "error"
 	} else if _, ok := s.attributes["status"]; !ok {
 		s.attributes["status"] = "ok"

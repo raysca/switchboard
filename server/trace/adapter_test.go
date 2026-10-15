@@ -469,3 +469,33 @@ func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, co
 	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
 	return v, err
 }
+
+func TestSpanEnd_ErrorCategoryNeverContainsMessage(t *testing.T) {
+	s := newTestStore(t)
+	sessID := createTestSession(t, s)
+	adapter := trace.NewAdapter(s.Traces())
+	defer adapter.Close()
+
+	ctx := context.Background()
+	ev := core.NewTraceEvent("err.test", time.Now().UTC(), core.SessionID(sessID), "", 1, core.TracePolicy{Content: core.TraceMetadata}, nil)
+	span := adapter.StartSpan(ctx, ev)
+	span.End(errors.New("dial https://x.example?api_key=SECRET failed"))
+
+	if err := adapter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	spans, err := s.Traces().Spans(ctx, sessID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	attrs := spans[0].AttributesJSON
+	if contains(attrs, "SECRET") || contains(attrs, "api_key") {
+		t.Fatalf("error message leaked into stored attributes: %s", attrs)
+	}
+	if !contains(attrs, "errorString") {
+		t.Fatalf("error type missing from attributes: %s", attrs)
+	}
+}
