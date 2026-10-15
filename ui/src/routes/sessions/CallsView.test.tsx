@@ -30,6 +30,8 @@ const call = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   status: "ended",
   turn_count: 6,
   safe_summary: "",
+  caller: "",
+  end_reason: "",
   ...over,
 });
 
@@ -103,6 +105,31 @@ describe("CallsView", () => {
     const rows = await screen.findAllByRole("row");
     expect(within(rows[1]).getByText("Draft")).toBeVisible();
     expect(within(rows[2]).queryByText("Draft")).toBeNull();
+  });
+
+  it("shows who called, how the call ended and its median reply, and says so plainly when it does not know", async () => {
+    setup({
+      getSessions: listOnly([
+        call({ caller: "flow-test-0192aaaa", end_reason: "caller_hung_up", median_reply_ms: 612 }),
+        call({ id: "0192aaaa-0000-7000-8000-000000000002", caller: "alice", end_reason: "silent_caller", median_reply_ms: 1500 }),
+        call({ id: "0192aaaa-0000-7000-8000-000000000003" }),
+        call({ id: "0192aaaa-0000-7000-8000-000000000004", status: "active", caller: "alice" }),
+      ]),
+    });
+    const rows = await screen.findAllByRole("row");
+    const header = within(rows[0]).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(header).toEqual(["Started", "Caller", "Flow", "Duration", "Turns", "Median reply", "Outcome"]);
+    expect(within(rows[1]).getByText("Console test")).toBeVisible();
+    expect(within(rows[1]).getByText("612 ms")).toBeVisible();
+    expect(within(rows[1]).getByText("Ended · Caller hung up")).toBeVisible();
+    expect(within(rows[2]).getByText("alice")).toBeVisible();
+    expect(within(rows[2]).getByText("1.5 s")).toBeVisible();
+    expect(within(rows[2]).getByText("Ended · Caller went silent")).toBeVisible();
+    expect(within(rows[3]).getByText("Not recorded")).toBeVisible();
+    expect(within(rows[3]).getByText("—")).toBeVisible();
+    expect(within(rows[3]).getByText("Ended")).toBeVisible();
+    expect(within(rows[4]).getByText("Live")).toBeVisible();
+    expect(screen.getByText(/Median reply is the middle time/)).toBeVisible();
   });
 
   it("shows a status the server might add as it is, instead of hiding the call", async () => {
@@ -261,7 +288,7 @@ describe("CallsView", () => {
     setup({ getSessions: listOnly([call()], [call({ status: "active" })]) });
     await screen.findByRole("table");
     expect(screen.getByRole("heading", { level: 1, name: "Calls" }).parentElement).toHaveTextContent("1 live now");
-    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Started", "Flow", "Duration", "Turns", "Outcome"]);
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Started", "Caller", "Flow", "Duration", "Turns", "Median reply", "Outcome"]);
     const row = screen.getAllByRole("row")[1];
     expect(within(row).getByText("04:12").closest("td")).toHaveClass("num");
     expect(within(row).getByText("6").closest("td")).toHaveClass("num");

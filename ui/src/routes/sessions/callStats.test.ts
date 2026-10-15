@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlowDTO, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
-import { clock, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, mmss, replyMs, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import { callerLabel, clock, endReasonText, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, mmss, replyMs, outcome, path, steps, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 
 const flow = (config: Record<string, unknown> = {}): FlowDTO => ({
   id: "a1",
@@ -16,6 +16,8 @@ const flow = (config: Record<string, unknown> = {}): FlowDTO => ({
 const graph = { start: "r", steps: [{ id: "r", name: "Reception" }, { id: "b", name: "Billing" }], routes: [] };
 const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   draft: false,
+  caller: "",
+  end_reason: "",
   id: "s1",
   flow_id: "a1",
   flow_version_id: "v7",
@@ -241,5 +243,34 @@ describe("reply time", () => {
     const rows = turnRows(session(), [withLat(1, { voice_to_voice_ms: 900 }), withLat(2, {})], null);
     expect(rows[0].notes).toEqual(["Replied in 900 ms"]);
     expect(rows[1].notes).toEqual([]);
+  });
+});
+
+describe("callerLabel", () => {
+  it("shows the console's own test calls as such, anything else as written, and an unrecorded caller plainly", () => {
+    expect(callerLabel("flow-test-0192aaaa")).toBe("Console test");
+    expect(callerLabel("alice")).toBe("alice");
+    expect(callerLabel("")).toBe("Not recorded");
+  });
+});
+
+describe("endReasonText", () => {
+  it("has words for every reason the server records, and names the step for a flow that ended the call", () => {
+    const words: Record<string, string> = {
+      caller_hung_up: "Caller hung up",
+      silent_caller: "Caller went silent",
+      agent_stuck: "Agent stopped responding",
+      ended_by_flow: "Ended by the flow",
+      time_limit: "Reached the time limit",
+      connection_lost: "Connection lost",
+      server_shutdown: "Server shutting down",
+      error: "Ended with an error",
+      setup_failed: "Could not start",
+      server_restart: "Ended when the server restarted",
+    };
+    for (const [reason, text] of Object.entries(words)) expect(endReasonText(reason)).toBe(text);
+    expect(endReasonText("ended_by_flow", "Billing")).toBe("Ended by the flow (Billing)");
+    expect(endReasonText("")).toBe("Ended");
+    expect(endReasonText("something_new")).toBe("Ended");
   });
 });

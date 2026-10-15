@@ -194,3 +194,28 @@ export function endedByFlow(traces: SessionTracesDTO | null | undefined): { step
   }
   return null;
 }
+
+/** Who the call was: the label the integration chose. The console's own test calls say so. */
+export function callerLabel(caller: string): string {
+  if (!caller) return "Not recorded";
+  return caller.startsWith("flow-test-") ? "Console test" : caller;
+}
+
+const END_WORDS: Record<string, string> = {
+  caller_hung_up: "Caller hung up",
+  silent_caller: "Caller went silent",
+  agent_stuck: "Agent stopped responding",
+  ended_by_flow: "Ended by the flow",
+  time_limit: "Reached the time limit",
+  connection_lost: "Connection lost",
+  server_shutdown: "Server shutting down",
+  error: "Ended with an error",
+  setup_failed: "Could not start",
+  server_restart: "Ended when the server restarted",
+};
+
+/** Why a call ended, in words. An empty or unknown reason (an older call) is just "Ended". */
+export function endReasonText(reason: string, step?: string): string {
+  const text = END_WORDS[reason] ?? "Ended";
+  return reason === "ended_by_flow" && step ? `${text} (${step})` : text;
+}

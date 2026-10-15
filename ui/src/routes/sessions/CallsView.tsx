@@ -3,7 +3,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { FlowDTO, ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { useActiveSessions } from "../flows/useActiveSessions";
-import { clock, outcome, versionLabel } from "./callStats";
+import { callerLabel, clock, endReasonText, formatMs, outcome, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
 export type CallsViewProps = { client: ApiClient; keyValue: string | null };
@@ -154,12 +154,16 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
               <thead>
                 <tr>
                   <th scope="col">Started</th>
+                  <th scope="col">Caller</th>
                   <th scope="col">Flow</th>
                   <th scope="col" className="num">
                     Duration
                   </th>
                   <th scope="col" className="num">
                     Turns
+                  </th>
+                  <th scope="col" className="num">
+                    Median reply
                   </th>
                   <th scope="col">Outcome</th>
                 </tr>
@@ -173,15 +177,17 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
                       <td>
                         <Link to={`/sessions/${encodeURIComponent(s.id)}`}>{new Date(s.started_at).toLocaleString()}</Link>
                       </td>
+                      <td>{callerLabel(s.caller)}</td>
                       <td>
                         {f?.name ?? "Unknown flow"} <span className="chip">{versionLabel(s, f)}</span>{s.draft && <> <span className="chip">Draft</span></>}
                       </td>
                       <td className="num">{clock(s.started_at, s.ended_at, now)}</td>
                       <td className="num">{s.turn_count}</td>
+                      <td className="num">{typeof s.median_reply_ms === "number" ? formatMs(s.median_reply_ms) : "—"}</td>
                       <td>
                         <span className="row">
                           <span className="lamp" data-tone={o.live ? "warn" : undefined} aria-hidden="true" />
-                          {o.label}
+                          {!o.live && s.status === "ended" && s.end_reason ? `${o.label} · ${endReasonText(s.end_reason)}` : o.label}
                         </span>
                       </td>
                     </tr>
@@ -190,6 +196,9 @@ export function CallsView({ client, keyValue }: CallsViewProps) {
               </tbody>
             </table>
           </div>
+          <p className="subtext">
+            Median reply is the middle time between the caller finishing and the agent starting to answer, over the call's measured replies. Caller is the label the integration chose for the call; calls tested from this console say Console test.
+          </p>
           <nav className="calls-pager" aria-label="Pagination">
             <span>
               Calls {page * PAGE + 1}–{page * PAGE + rows.length}

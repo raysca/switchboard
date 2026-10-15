@@ -5,7 +5,7 @@ import type { ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
-import { clock, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
+import { callerLabel, clock, endReasonText, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
 
 export type CallViewProps = { client: ApiClient; keyValue: string | null };
@@ -111,10 +111,14 @@ export function CallView({ client, keyValue }: CallViewProps) {
           <dt>Duration</dt>
           <dd>{clock(s.started_at, s.ended_at, now)}</dd>
         </div>
-        {ended && (
+        <div>
+          <dt>Caller</dt>
+          <dd>{callerLabel(s.caller)}</dd>
+        </div>
+        {s.status === "ended" && (s.end_reason || ended) && (
           <div>
             <dt>Ended</dt>
-            <dd>By the flow ({label(ended.step)})</dd>
+            <dd>{endReasonText(s.end_reason || "ended_by_flow", ended ? label(ended.step) : undefined)}</dd>
           </div>
         )}
         <div>

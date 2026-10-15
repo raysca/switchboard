@@ -32,6 +32,8 @@ const session = (over: Partial<SessionDTO> = {}): SessionDTO => ({
   status: "ended",
   turn_count: 3,
   safe_summary: "Billing question",
+  caller: "",
+  end_reason: "",
   ...over,
 });
 const turn = (n: number, started: string, ended: string, said: string, reply: string, interrupted = false): TurnDTO => ({
@@ -202,8 +204,8 @@ describe("CallView", () => {
     setup({});
     await screen.findByRole("list", { name: "Transcript" });
     expect(screen.getByText(/^Started /)).toBeVisible();
-    const terms = screen.getAllByRole("term").slice(0, 5).map((t) => t.textContent);
-    expect(terms).toEqual(["Flow", "Path", "Duration", "Turns", "Interrupted replies"]);
+    const terms = screen.getAllByRole("term").slice(0, 6).map((t) => t.textContent);
+    expect(terms).toEqual(["Flow", "Path", "Duration", "Caller", "Turns", "Interrupted replies"]);
     expect(screen.getByRole("region", { name: "Turns" })).toBeVisible();
     expect(screen.getByRole("complementary", { name: "Transcript" })).toBeVisible();
   });
@@ -235,6 +237,24 @@ describe("CallView", () => {
 
   it("says when the flow ended the call", async () => {
     setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling, span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" }))) });
-    expect(await screen.findByText("By the flow (Billing)")).toBeVisible();
+    expect(await screen.findByText("Ended by the flow (Billing)")).toBeVisible();
+  });
+
+  it("shows who called and why the call ended, in words", async () => {
+    setup({ getSession: vi.fn().mockResolvedValue(session({ caller: "flow-test-0192aaaa", end_reason: "silent_caller" })) });
+    expect(await screen.findByText("Console test")).toBeVisible();
+    expect(screen.getByText("Caller went silent")).toBeVisible();
+  });
+
+  it("says an older call's caller was not recorded and leaves the ending as plain Ended", async () => {
+    setup({ getSession: vi.fn().mockResolvedValue(session()) });
+    expect(await screen.findByText("Not recorded")).toBeVisible();
+    expect(screen.queryByText("Caller hung up")).toBeNull();
+  });
+
+  it("does not claim an ending for a call that is still live", async () => {
+    setup({ getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null })) });
+    await screen.findByText("Not recorded");
+    expect(screen.queryByText("Ended by the flow")).toBeNull();
   });
 });

@@ -22,6 +22,8 @@ const flow = (over: Partial<FlowDTO> = {}, config: Record<string, unknown> = {})
 const graph = { start: "a", steps: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }], routes: [{ id: "e1" }, { id: "e2" }, { id: "e3" }] };
 const session = (over: Partial<SessionDTO>): SessionDTO => ({
   draft: false,
+  caller: "",
+  end_reason: "",
   id: "s",
   flow_id: "a1",
   flow_version_id: "v2",
