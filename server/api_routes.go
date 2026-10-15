@@ -24,7 +24,9 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		api.WriteError(w, http.StatusServiceUnavailable, "management_unavailable", "management API is not configured", requestID)
 		return
 	}
-	// Failed attempts share one global allowance; a correct key is never throttled.
+	// The limiter runs after Authenticate: it only converts repeated 401s into 429s
+	// and counts a metric; it does not stop guessing. A correct key is never
+	// throttled; the 32+ byte key makes guessing infeasible.
 	if !s.management.Authenticate(r) {
 		s.metrics.ManagementAuthFailuresTotal.Add(1)
 		if !s.authFails.AllowN(s.authNow(), 1) {
