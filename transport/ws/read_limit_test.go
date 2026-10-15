@@ -51,10 +51,30 @@ func TestMessageOverAdvertisedMaxIsAProtocolError(t *testing.T) {
 	}
 }
 
-// Beyond the read limit the library closes the connection before any frame is decoded.
-func TestMessageBeyondReadLimitClosesTheConnection(t *testing.T) {
-	e, got := sendRaw(t, 80*1024)
-	if got != 0 || e.count("protocol_error") != 0 {
-		t.Fatalf("decoder saw %d bytes, protocol_error=%d", got, e.count("protocol_error"))
+// Beyond the read limit the library closes with 1009 before any frame is decoded; the
+// server records it as a protocol error and a server-side disconnect, not a client one.
+func TestMessageBeyondReadLimitEndsAsProtocolError(t *testing.T) {
+	e := newPingEnv(t, func(c *ws.ServerConfig) {})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, e.url(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	performHandshake(t, ctx, c)
+	base := e.count("frame_in")
+	_ = c.Write(ctx, websocket.MessageBinary, make([]byte, 80*1024))
+	_, _, err = c.Read(ctx)
+	if got := websocket.CloseStatus(err); got != websocket.StatusMessageTooBig {
+		t.Fatalf("client saw close status %d (%v), want 1009", got, err)
+	}
+	if !waitFor(t, 5*time.Second, func() bool { return e.count("client_disconnected") == 1 }) {
+		t.Fatal("connection was not closed")
+	}
+	if e.count("frame_in") != base || e.count("protocol_error") != 1 ||
+		e.count("disconnect_server") != 1 || e.count("disconnect_client") != 0 {
+		t.Fatalf("decoded=%d protocol_error=%d server=%d client=%d",
+			e.count("frame_in")-base, e.count("protocol_error"), e.count("disconnect_server"), e.count("disconnect_client"))
 	}
 }
