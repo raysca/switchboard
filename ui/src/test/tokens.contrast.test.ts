@@ -29,7 +29,17 @@ describe("Switchboard tokens", () => {
     ["caller", "surface", 4.5],
     ["ok", "paper", 4.5],
     ["bad", "paper", 4.5],
-    ["ink", "lamp", 4.5], // text on an amber fill
+    ["ink-2", "surface-2", 4.5],
+    ["ok", "surface", 4.5],
+    ["bad", "surface", 4.5],
+    ["on-accent", "caller", 4.5], // text on the accent fill
+    ["on-accent", "lamp", 4.5], // text on an amber fill
+    ["on-accent", "ok", 4.5],
+    ["on-accent", "bad", 4.5],
+    ["ok", "ok-tint", 4.5], // pills: status colour on its tint
+    ["bad", "bad-tint", 4.5],
+    ["lamp", "warn-tint", 4.5],
+    ["caller", "accent-tint", 4.5],
     ["rule", "paper", 1.2], // hairline: decorative, must still be visible
   ];
   for (const [fg, bg, min] of pairs) {
@@ -37,20 +47,17 @@ describe("Switchboard tokens", () => {
       expect(ratio(token(fg), token(bg))).toBeGreaterThanOrEqual(min);
     });
   }
-  it("amber is a fill or border, never text on the paper", () => {
-    expect(ratio(token("lamp"), token("paper"))).toBeLessThan(4.5);
-    expect(ratio(token("lamp"), token("ink"))).toBeGreaterThanOrEqual(4.5);
+  it("the accent is a fill that carries --on-accent text, and is also readable as text on the ground", () => {
+    expect(ratio(token("caller"), token("paper"))).toBeGreaterThanOrEqual(4.5);
+    expect(ratio(token("on-accent"), token("caller"))).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("the dark call header uses light tokens for text and focus", () => {
-    expect(ratio(token("paper"), token("ink"))).toBeGreaterThanOrEqual(4.5);
-    expect(ratio(token("rule"), token("ink"))).toBeGreaterThanOrEqual(4.5);
-    const dark = [...css.matchAll(/([^{}]*(?:call-panel__top|side-panel__head--dark)[^{}]*)\{([^}]*)\}/g)];
-    expect(dark.length).toBeGreaterThan(0);
-    for (const [, selector, body] of dark) {
-      expect(body, selector).not.toMatch(/(?<!-)(?:^|[\s;])color:\s*var\(--(bad|ink-2|caller)\)/);
+  it("the key bar and the call and step heads are raised surfaces, not inverted bands", () => {
+    for (const sel of ["call-panel__top", "side-panel__head--dark", "key-bar"]) {
+      const rule = css.match(new RegExp(`\\.${sel}\\s*\\{([^}]*)\\}`));
+      expect(rule, sel).not.toBeNull();
+      expect(rule![1], sel).toMatch(/background:\s*var\(--surface-2\)/);
+      expect(rule![1], sel).toMatch(/color:\s*var\(--ink\)/);
     }
-    // The dark head needs its own focus ring: --caller on --ink is below 3:1.
-    expect(css).toMatch(/call-panel__top[^{}]*:focus-visible[^{}]*\{[^}]*outline-color:\s*var\(--paper\)/);
   });
 });

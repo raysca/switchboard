@@ -13,13 +13,15 @@ describe("Switchboard system rules", () => {
     expect(good?.body).toContain("var(--ok)");
     expect(bad?.body).toContain("var(--bad)");
   });
-  // 999px is the filter pills of the Calls list (canvas board 13); everything else is the token or a dot.
-  it("uses one radius: the token, 50% for dots, 999px for pills", () => {
-    const off = decls(/border-radius:\s*([^;]+);/g).filter((d) => d.value !== "var(--radius)" && d.value !== "50%" && d.value !== "999px");
+  // Square everywhere: pills, dots and the switch use the token too, so one edit changes the whole UI.
+  it("uses only the radius tokens", () => {
+    const off = decls(/border-radius:\s*([^;]+);/g).filter((d) => !["var(--radius)", "var(--radius-lg)"].includes(d.value));
     expect(off).toEqual([]);
   });
-  it("has no all-caps labels", () => {
-    expect(decls(/text-transform:\s*([^;]+);/g).filter((d) => d.value === "uppercase")).toEqual([]);
+  // Small all-caps is for metric labels and dashboard table heads only; nothing else shouts.
+  it("has no all-caps labels outside metric labels and dashboard table heads", () => {
+    const caps = decls(/text-transform:\s*([^;]+);/g).filter((d) => d.value === "uppercase");
+    expect(caps.map((d) => d.sel).sort()).toEqual([".dash-card th", ".kpi__label"]);
   });
   it("uses only the 450, 600 and 800 weights", () => {
     const off = decls(/font-weight:\s*([^;]+);/g).filter((d) => !["450", "600", "800"].includes(d.value));

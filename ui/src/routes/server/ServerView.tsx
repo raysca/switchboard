@@ -90,8 +90,9 @@ export function ServerView({ client, keyValue }: ServerViewProps) {
         Configuration available • System {op.health}
       </Status>
 
+      <div className="server-grid">
       {/* System Overview */}
-      <section style={{ marginTop: "24px" }} aria-label="System overview">
+      <section className="server-card" aria-label="System overview">
         <DataTable
           caption="System overview"
           columns={["Setting", "Value"]}
@@ -105,7 +106,7 @@ export function ServerView({ client, keyValue }: ServerViewProps) {
       </section>
 
       {/* Operational Limits */}
-      <section style={{ marginTop: "28px" }} aria-label="Operational limits">
+      <section className="server-card" aria-label="Operational limits">
         <DataTable
           caption="Operational limits"
           columns={["Limit", "Value"]}
@@ -128,7 +129,7 @@ export function ServerView({ client, keyValue }: ServerViewProps) {
       </section>
 
       {/* Storage Engine Diagnostics */}
-      <section style={{ marginTop: "28px" }} aria-label="Storage diagnostics">
+      <section className="server-card" aria-label="Storage diagnostics">
         <DataTable
           caption="Storage diagnostics"
           columns={["Property", "Value"]}
@@ -164,7 +165,7 @@ export function ServerView({ client, keyValue }: ServerViewProps) {
       </section>
 
       {/* VAD Diagnostics */}
-      <section style={{ marginTop: "28px" }} aria-label="VAD diagnostics">
+      <section className="server-card" aria-label="VAD diagnostics">
         <DataTable
           caption="VAD diagnostics"
           columns={["Parameter", "Value"]}
@@ -193,6 +194,7 @@ export function ServerView({ client, keyValue }: ServerViewProps) {
           ]}
         />
       </section>
+      </div>
     </>
   );
 }

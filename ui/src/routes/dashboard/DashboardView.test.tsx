@@ -109,13 +109,14 @@ describe("DashboardView", () => {
     renderWithProviders(<DashboardView client={client} keyValue="test-key" />);
 
     // Health Banner
-    expect(await screen.findByText("System healthy. 4 of 50 sessions active.")).toBeVisible();
-    expect(screen.getByText("2h 0m")).toBeVisible();
-    expect(screen.getByText("All core components and voice runtime pipelines are operating normally.")).toBeVisible();
+    expect(await screen.findByText("System healthy · up 2h 0m")).toBeVisible();
+    expect(screen.queryByText(/degraded conditions/)).toBeNull();
 
-    // Operational Metrics Grid
-    expect(screen.getByText("8.0%")).toBeVisible();
+    // Capacity card and metric tiles
+    expect(screen.getByText("8% of capacity")).toBeVisible();
+    expect(screen.getByText("concurrent", { exact: false })).toHaveTextContent("4 / 50 concurrent");
     expect(screen.getByText("120")).toBeVisible();
+    expect(screen.getByText("4.0 per call")).toBeVisible();
 
     // Readiness Summary
     expect(screen.getByRole("link", { name: "View flows" })).toBeVisible();
@@ -144,10 +145,11 @@ describe("DashboardView", () => {
 
     renderWithProviders(<DashboardView client={client} keyValue="test-key" />);
 
-    expect(await screen.findByText(/System degraded\./)).toBeVisible();
+    expect(await screen.findByText(/System degraded/)).toBeVisible();
+    expect(screen.getByText(/degraded conditions/)).toBeVisible();
     expect(screen.getByRole("alert", { name: "Capacity warning" })).toBeVisible();
     expect(screen.getByText(/Active sessions are at 96% capacity/)).toBeVisible();
-    expect(screen.getByText(/48 of 50 sessions active/)).toBeVisible();
+    expect(screen.getByText("96% of capacity")).toBeVisible();
   });
 
   it("renders empty sessions message when no sessions exist", async () => {

@@ -1,15 +1,24 @@
 :root {
-  --paper: #e8edef;
-  --surface: #f5f8f9;
-  --ink: #12222b;
-  --ink-2: #4a5b64;
-  --rule: #c5cfd4;
-  --caller: #2f3fe0;
+  /* Signal: graphite ground, lime accent. --on-accent is the text colour on any filled accent, ok, bad or amber surface. */
+  --paper: #0e1116;
+  --surface: #161b22;
+  --surface-2: #1c232c;
+  --ink: #e6edf3;
+  --ink-2: #9aa7b4;
+  --rule: #2a323c;
+  --caller: #c6f432;
+  --on-accent: #0e1116;
   --lamp: #f0a400;
-  --ok: #17704a;
-  --bad: #b8381f;
-  --radius: 4px;
-  --font: "Schibsted Grotesk Variable", system-ui, sans-serif;
+  --ok: #4ade80;
+  --bad: #ff8a75;
+  --accent-tint: #1a2110;
+  --ok-tint: #12301f;
+  --bad-tint: #3a1a17;
+  --warn-tint: #2b2208;
+  --radius: 0;
+  --radius-lg: 0;
+  --font: "Space Grotesk Variable", system-ui, sans-serif;
+  color-scheme: dark;
   font-family: var(--font);
   font-size: 15px;
   line-height: 1.55;
@@ -19,7 +28,8 @@
 }
 /* end tokens */
 /* Tabular figures only where numbers line up: the font widens punctuation under tnum. */
-.figures dd,
+.kpi dd,
+.capacity-card__value b,
 td,
 .badge,
 .latency-pill {
@@ -32,16 +42,27 @@ body {
   margin: 0;
 }
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
+  border-radius: var(--radius);
 }
 button {
   cursor: pointer;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--caller);
+  width: 20px;
+  height: 20px;
+  flex: none;
 }
 a {
   color: inherit;
 }
 a:focus-visible,
+summary:focus-visible,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -86,10 +107,14 @@ textarea:focus-visible {
   padding: 0 0 28px;
 }
 .brand-mark {
-  color: var(--caller);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 1.8rem;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius);
+  background: var(--caller);
+  color: var(--on-accent);
 }
 .brand > span:last-child {
   position: absolute;
@@ -109,25 +134,26 @@ textarea:focus-visible {
   justify-content: center;
   gap: 12px;
   text-decoration: none;
-  padding: 10px 0;
-  border-left: 3px solid transparent;
+  min-height: 44px;
+  margin: 0 8px;
+  border-radius: var(--radius);
   color: var(--ink-2);
   font-weight: 450;
 }
 .nav-link:hover {
-  background: var(--rule);
+  background: var(--surface-2);
   color: var(--ink);
 }
 .nav-link--current {
-  border-left-color: var(--caller);
+  background: var(--surface);
   color: var(--ink);
   font-weight: 600;
 }
+.nav-link--current .nav-icon {
+  color: var(--caller);
+}
 .nav-icon {
-  font-size: 0.8rem;
-  font-weight: 600;
-  width: 28px;
-  text-align: center;
+  flex: none;
 }
 .nav-text {
   position: absolute;
@@ -180,7 +206,7 @@ textarea:focus-visible {
   }
   .nav-link {
     justify-content: flex-start;
-    padding: 10px 20px 10px 17px;
+    padding: 0 12px;
   }
   .nav-text {
     position: static;
@@ -232,13 +258,15 @@ main {
   line-height: 1.6;
 }
 .message-panel {
-  margin-top: 36px;
-  border-left: 3px solid var(--caller);
-  padding: 3px 0 4px 27px;
+  margin-top: 28px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 22px 24px;
   max-width: 62ch;
 }
 .message-panel h2 {
-  font-size: 1.6rem;
+  font-size: 1.25rem;
   letter-spacing: -0.02em;
   line-height: 1.15;
   font-weight: 600;
@@ -251,6 +279,7 @@ main {
 }
 .message-panel--error {
   border-color: var(--bad);
+  background: var(--bad-tint);
 }
 .message-panel--error button {
   margin-top: 20px;
@@ -274,9 +303,10 @@ main {
   align-items: end;
   margin: 0 0 32px;
   padding: 16px 20px;
-  border-radius: var(--radius);
-  background: var(--ink);
-  color: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--ink);
 }
 .key-bar .message-panel {
   margin-top: 18px;
@@ -287,7 +317,7 @@ main {
   margin: 0 0 6px;
 }
 .key-bar p {
-  color: var(--paper);
+  color: var(--ink-2);
   margin: 0;
   max-width: 62ch;
   font-size: 0.875rem;
@@ -301,10 +331,7 @@ main {
   gap: 10px;
 }
 .key-bar .form-field {
-  color: var(--paper);
-}
-.key-bar :focus-visible {
-  outline-color: var(--paper);
+  color: var(--ink);
 }
 .form-field {
   display: grid;
@@ -323,7 +350,7 @@ main {
 .action-button,
 .message-panel button {
   background: var(--caller);
-  color: var(--surface);
+  color: var(--on-accent);
   border: 1px solid var(--caller);
   border-radius: var(--radius);
   padding: 9px 15px;
@@ -332,7 +359,7 @@ main {
 }
 .action-button:hover,
 .message-panel button:hover {
-  background: color-mix(in srgb, var(--caller) 85%, var(--ink));
+  background: color-mix(in srgb, var(--caller) 85%, var(--paper));
 }
 .capability-line {
   display: flex;
@@ -412,12 +439,8 @@ th {
   }
   .nav-link {
     white-space: nowrap;
-    border-left: 0;
-    border-bottom: 3px solid transparent;
-    padding: 12px;
-  }
-  .nav-link--current {
-    border-bottom-color: var(--caller);
+    margin: 0;
+    padding: 0 12px;
   }
   .sidebar-foot {
     display: none;
@@ -481,28 +504,37 @@ th {
   color: var(--caller);
   border: 1px solid var(--caller);
   border-radius: var(--radius);
-  padding: 6px 12px;
-  font-size: 0.82rem;
-  font-weight: 450;
+  padding: 9px 14px;
+  font-size: 0.875rem;
+  font-weight: 600;
   cursor: pointer;
   text-decoration: none;
   display: inline-block;
   white-space: nowrap;
 }
 .action-button-small:hover {
-  background: color-mix(in srgb, var(--caller) 10%, transparent);
+  background: var(--accent-tint);
 }
 .action-button-danger {
   color: var(--bad);
   border-color: var(--bad);
 }
+/* The large destructive button (Archive, Delete confirmations) is a solid fill with dark text. */
+.action-button.action-button-danger {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: var(--on-accent);
+}
+.action-button.action-button-danger:hover {
+  background: color-mix(in srgb, var(--bad) 85%, var(--paper));
+}
 .action-button-danger:hover {
-  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  background: var(--bad-tint);
 }
 .masked-value {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.85rem;
-  background: var(--paper);
+  background: var(--surface-2);
   padding: 2px 6px;
   border-radius: var(--radius);
 }
@@ -517,34 +549,38 @@ th {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.78rem;
-  font-weight: 450;
-  padding: 3px 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 3px 10px;
   border-radius: var(--radius);
-  background: var(--paper);
+  background: var(--surface-2);
   color: var(--ink);
 }
 .badge--good {
-  background: color-mix(in srgb, var(--ok) 14%, var(--surface));
+  background: var(--ok-tint);
   color: var(--ok);
 }
 .badge--bad {
-  background: color-mix(in srgb, var(--bad) 12%, var(--surface));
+  background: var(--bad-tint);
   color: var(--bad);
 }
+.badge--warning {
+  background: var(--warn-tint);
+  color: var(--lamp);
+}
 .badge--neutral {
-  background: var(--paper);
+  background: var(--surface-2);
   color: var(--ink-2);
 }
 
 /* Conflict & Warning Alerts */
 .alert-box {
-  background: color-mix(in srgb, var(--bad) 8%, var(--surface));
-  border-left: 4px solid var(--bad);
+  background: var(--bad-tint);
+  border: 1px solid var(--bad);
   padding: 16px 20px;
   margin-top: 16px;
   margin-bottom: 16px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
 }
 .alert-box h3 {
   margin: 0 0 6px;
@@ -600,7 +636,7 @@ th {
   border-left: 3px solid var(--caller);
 }
 .turn-bubble--bot {
-  border-left: 3px solid var(--ink);
+  border-left: 3px solid var(--ink-2);
 }
 .bubble-speaker {
   font-size: 0.87rem;
@@ -668,6 +704,21 @@ th {
   border-bottom: 1px solid var(--rule);
   background: var(--surface);
 }
+/* React Flow's own stylesheet paints the controls light; override the buttons and the dot grid with tokens. */
+.flow-canvas .react-flow__controls-button {
+  background: var(--surface-2);
+  color: var(--ink);
+  border-bottom-color: var(--rule);
+}
+.flow-canvas .react-flow__controls-button:hover {
+  background: var(--rule);
+}
+.flow-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+}
+.flow-canvas .react-flow__background pattern circle {
+  fill: var(--rule);
+}
 .flow-canvas .react-flow__edge-path {
   stroke: var(--ink-2);
   stroke-width: 2;
@@ -700,7 +751,7 @@ th {
 .step-node--active {
   background: var(--lamp);
   border-color: var(--ink);
-  color: var(--ink);
+  color: var(--on-accent);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--lamp) 35%, transparent);
 }
 .step-node--preparing {
@@ -750,15 +801,18 @@ th {
 .step-node__dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--ok);
 }
 .step-node__dot[data-shape="square"] {
   border-radius: var(--radius);
   background: var(--bad);
 }
+.step-node--active .step-node__tag {
+  color: inherit;
+}
 .step-node--active .step-node__dot {
-  background: var(--ink);
+  background: var(--on-accent);
 }
 .step-node--visited .step-node__dot {
   background: var(--ink-2);
@@ -768,9 +822,17 @@ th {
   stroke-width: 3;
 }
 .stage-box {
+  display: grid;
+  gap: 14px;
   border-top: 1px solid var(--rule);
   padding: 12px 0;
   margin-top: 12px;
+}
+.side-panel__body .form-field {
+  margin-left: 0;
+}
+.side-panel__body .action-button-small {
+  min-height: 44px;
 }
 .designer-layout {
   display: grid;
@@ -878,7 +940,7 @@ th {
 }
 .line {
   padding-left: 14px;
-  border-left: 3px solid var(--ink);
+  border-left: 3px solid var(--ink-2);
   max-width: 72ch;
 }
 .line--caller {
@@ -897,15 +959,21 @@ th {
 .line--caller .line__who {
   color: var(--caller);
 }
+/* One row: the field takes the space, the button sits at its end. The label stays for screen readers. */
 .stage__send {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 10px;
   margin: 16px 0;
 }
 .stage__send label {
-  font-size: 0.87rem;
-  font-weight: 600;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .stage__send input {
   flex: 1;
@@ -914,7 +982,15 @@ th {
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--ink);
-  padding: 7px 10px;
+  padding: 0 12px;
+  min-height: 44px;
+}
+.stage__send .action-button-small {
+  flex: none;
+}
+.stage__send .action-button-small,
+.stage__debug .action-button-small {
+  min-height: 44px;
 }
 .session-summary-card {
   display: flex;
@@ -949,7 +1025,7 @@ th {
   display: inline-block;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius);
   background: var(--ink-2);
   flex: none;
 }
@@ -963,63 +1039,233 @@ th {
   background: var(--bad);
 }
 
-/* Dashboard: a state line, figures and ledger rows instead of cards */
-.state-line {
-  margin-top: 32px;
-}
-.state-line__headline {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0;
-  font-size: 1.6rem;
-  font-weight: 800;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-}
-.state-line__desc {
-  margin: 8px 0 0 22px;
-  color: var(--ink-2);
-  max-width: 62ch;
-}
-.figures {
+/* Dashboard: header with a health pill, a capacity card, metric tiles, then calls and readiness */
+.dash-head {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px 40px;
-  margin: 28px 0 0;
-  padding: 20px 0;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 28px;
 }
-.figures dt {
-  font-size: 0.87rem;
+.dash-head h1 {
+  font-size: clamp(2rem, 4vw, 2.267rem);
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin: 0 0 6px;
+  font-weight: 800;
+}
+.dash-head p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 1.05rem;
+}
+.dash-head .health-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  background: var(--ok-tint);
+  color: var(--ok);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.health-pill[data-tone="warn"] {
+  background: var(--warn-tint);
+  color: var(--lamp);
+}
+.health-pill[data-tone="bad"] {
+  background: var(--bad-tint);
+  color: var(--bad);
+}
+.health-pill .lamp {
+  background: currentColor;
+}
+.dash-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin: 0 0 28px;
+}
+@media (min-width: 1200px) {
+  .dash-metrics {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+.capacity-card,
+.kpi,
+.dash-card {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+}
+.capacity-card {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.capacity-card__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.85rem;
   color: var(--ink-2);
 }
-.figures dd {
-  margin: 2px 0 0;
-  font-size: 1.6rem;
+.kpi__label {
+  font-size: 0.78rem;
   font-weight: 600;
-  line-height: 1.15;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.capacity-card__value {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--ink-2);
+}
+.capacity-card__value b {
+  font-size: 3.2rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.meter {
+  height: 10px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.meter > span {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius);
+  background: var(--caller);
+}
+.meter[data-tone="warn"] > span {
+  background: var(--lamp);
+}
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+}
+.kpi dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.kpi dd {
+  margin: 0;
+  font-size: 2.1rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.kpi[data-tone="bad"] dd {
+  color: var(--bad);
+}
+.kpi__note {
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+.dash-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.dash-grid__main {
+  flex: 999 1 520px;
+  min-width: 0;
+}
+.dash-grid__side {
+  flex: 1 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.dash-card {
+  padding: 0;
+  overflow: hidden;
+}
+.dash-card .section-row {
+  margin: 0;
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--rule);
+}
+.dash-card .section-row h2 {
+  font-size: 1.1rem;
+}
+.dash-card .table-scroll {
+  margin-top: 0;
+}
+.dash-card caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  padding: 0;
+}
+.dash-card th {
+  background: var(--surface-2);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.dash-card th,
+.dash-card td {
+  padding: 13px 8px;
+}
+.dash-card th:first-child,
+.dash-card td:first-child {
+  padding-left: 22px;
+}
+.dash-card th:last-child,
+.dash-card td:last-child {
+  padding-right: 22px;
+  text-align: right;
+}
+.dash-card tbody tr:last-child td {
+  border-bottom: 0;
+}
+.dash-card .empty-state {
+  margin: 0;
+  padding: 28px 22px;
 }
 .ledger {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 18px 22px;
 }
 .ledger__row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 14px;
-  padding: 14px 0;
+  gap: 4px 12px;
+  padding: 12px 0;
   border-bottom: 1px solid var(--rule);
+}
+.ledger__row:last-child {
+  border-bottom: 0;
 }
 .ledger__name {
   font-weight: 600;
-  min-width: 7rem;
+  min-width: 5.5rem;
 }
 .ledger__value {
-  color: var(--ink);
+  color: var(--ink-2);
 }
 .ledger__link {
   margin-left: auto;
@@ -1030,9 +1276,6 @@ th {
 .ledger__link:hover {
   text-decoration: underline;
 }
-.section-block {
-  margin-top: 40px;
-}
 .section-row {
   display: flex;
   justify-content: space-between;
@@ -1040,9 +1283,6 @@ th {
   flex-wrap: wrap;
   gap: 16px;
   margin-top: 28px;
-}
-.section-block .section-row {
-  margin-top: 0;
 }
 .section-row h2 {
   margin: 0;
@@ -1365,7 +1605,9 @@ legend {
 }
 .side-panel__body {
   flex: 1;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -1479,7 +1721,7 @@ legend {
   display: flex;
 }
 .dialog::backdrop {
-  background: color-mix(in srgb, var(--ink) 50%, transparent);
+  background: color-mix(in srgb, var(--paper) 75%, transparent);
 }
 .dialog__head {
   display: flex;
@@ -1514,6 +1756,20 @@ main:has(.flow-editor) {
   gap: 10px 16px;
   padding: 12px 24px;
   border-bottom: 1px solid var(--rule);
+}
+@media (max-width: 760px) {
+  /* The four header buttons share two even rows instead of leaving Close alone on a third. */
+  .flow-editor__head {
+    padding: 12px 16px;
+  }
+  .flow-editor__head .grow {
+    flex-basis: 100%;
+    height: 0;
+  }
+  .flow-editor__head > button {
+    flex: 1 1 calc(50% - 8px);
+    min-height: 44px;
+  }
 }
 .flow-editor__crumb {
   color: var(--ink-2);
@@ -1604,7 +1860,7 @@ main:has(.flow-editor) {
   justify-content: center;
   width: 44px;
   height: 44px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--ink-2);
   border-radius: var(--radius);
   font-size: 1.375rem;
 }
@@ -1632,19 +1888,123 @@ main:has(.flow-editor) {
   width: 240px;
   max-width: 100%;
 }
+@media (max-width: 760px) {
+  .page-head .grow {
+    display: none;
+  }
+  .flows-filter {
+    flex: 1 1 200px;
+    width: auto;
+    margin-left: 0;
+  }
+}
 .flow-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-top: 1px solid var(--ink);
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
 }
 .flow-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px 32px;
-  padding: 20px 0;
-  border-bottom: 1px solid var(--rule);
+  padding: 18px 22px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+}
+.flow-row {
+  position: relative;
+}
+.flow-row .check-row input {
+  appearance: none;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border-radius: var(--radius);
+  background: var(--rule);
+  border: 1px solid var(--ink-2); /* keeps the switch visible in forced-colors mode */
+  position: relative;
+}
+.flow-row .check-row input::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius);
+  background: var(--ink-2);
+}
+.flow-row .check-row input:checked {
+  background: var(--caller);
+}
+.flow-row .check-row input:checked::after {
+  left: auto;
+  right: 3px;
+  background: var(--on-accent);
+}
+.flow-row .check-row input:disabled {
+  opacity: 0.5;
+}
+/* ponytail: native <details>; it does not close on outside click, add a handler if that bothers anyone */
+.row-menu {
+  position: relative;
+}
+.row-menu summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  cursor: pointer;
+  list-style: none;
+}
+.row-menu summary::-webkit-details-marker {
+  display: none;
+}
+.row-menu summary:hover,
+.row-menu[open] summary {
+  color: var(--ink);
+  border-color: var(--ink-2);
+}
+.row-menu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--ink-2);
+  border-radius: var(--radius-lg);
+}
+.row-menu__panel button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.row-menu__panel button:hover {
+  background: var(--surface);
+}
+.row-menu__panel .row-menu__danger {
+  color: var(--bad);
+}
+.flow-row:hover {
+  border-color: var(--ink-2);
 }
 .flow-row__main {
   flex: 3 1 320px;
@@ -1662,6 +2022,10 @@ main:has(.flow-editor) {
 .flow-row__title a {
   font-size: 19px;
   font-weight: 600;
+  text-decoration: none;
+}
+.flow-row__title a:hover {
+  text-decoration: underline;
 }
 .flow-row__state,
 .flow-row__figures {
@@ -1687,7 +2051,7 @@ main:has(.flow-editor) {
   flex-wrap: wrap;
   gap: 40px;
   padding: 32px 0;
-  border-top: 1px solid var(--ink);
+  border-top: 1px solid var(--ink-2);
 }
 .flows-empty__lead {
   flex: 1 1 360px;
@@ -1776,8 +2140,14 @@ main:has(.flow-editor) {
   overflow-x: auto;
   position: relative; /* clips the absolutely positioned .visually-hidden header cells instead of widening the page */
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   background: var(--surface);
+}
+.calls-table thead th {
+  background: var(--surface-2);
+}
+.calls-table tbody tr:last-child td {
+  border-bottom: 0;
 }
 .calls-table table {
   width: 100%;
@@ -1805,7 +2175,7 @@ main:has(.flow-editor) {
   position: relative;
   padding: 6px 12px;
   border: 1px solid var(--rule);
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--surface);
   color: var(--ink);
   font: inherit;
@@ -1818,9 +2188,9 @@ main:has(.flow-editor) {
   inset: -8px -2px;
 }
 .chip-button[aria-pressed="true"] {
-  border-color: var(--ink);
-  background: var(--ink);
-  color: var(--surface);
+  border-color: var(--caller);
+  background: var(--caller);
+  color: var(--on-accent);
 }
 .calls-pager {
   display: flex;
@@ -1875,7 +2245,7 @@ main:has(.flow-editor) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   margin: 0;
-  border-top: 2px solid var(--ink);
+  border-top: 2px solid var(--ink-2);
   border-bottom: 1px solid var(--rule);
 }
 .call-figures > div {
@@ -1953,7 +2323,7 @@ main:has(.flow-editor) {
   list-style: none;
   margin: 0;
   padding: 14px 0 0;
-  border-top: 1px solid var(--ink);
+  border-top: 1px solid var(--ink-2);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2008,7 +2378,7 @@ main:has(.providers-layout) {
 .providers-main {
   flex: 999 1 520px;
   min-width: 0;
-  padding: 24px 32px 40px;
+  padding: clamp(36px, 6vw, 76px) 32px 40px clamp(24px, 5vw, 72px);
 }
 .provider-pick {
   display: inline-flex;
@@ -2059,7 +2429,7 @@ main:has(.providers-layout) {
 .provider-panel h3 {
   margin: 0 0 8px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--ink);
+  border-bottom: 1px solid var(--rule);
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--ink-2);
@@ -2157,14 +2527,15 @@ main:has(.providers-layout) {
   flex-direction: column;
   gap: 12px;
   padding: 18px 20px;
-  border: 1px solid var(--bad);
-  border-radius: var(--radius);
-  background: var(--surface);
+  border: 1px solid var(--lamp);
+  border-radius: var(--radius-lg);
+  background: var(--warn-tint);
 }
 .drift-panel h3 {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
+  color: var(--lamp);
 }
 .drift-panel p {
   margin: 0;
@@ -2198,10 +2569,10 @@ main:has(.mcp-page) {
   padding: 0;
 }
 .mcp-page {
-  padding-top: 24px;
+  padding-top: clamp(36px, 6vw, 76px);
 }
 .mcp-page > :not(.mcp-layout) {
-  margin-inline: 32px;
+  margin-inline: clamp(24px, 5vw, 72px) 32px;
 }
 .mcp-layout {
   display: flex;
@@ -2215,6 +2586,12 @@ main:has(.mcp-page) {
   max-width: 100%;
   min-width: 0;
   border-right: 1px solid var(--rule);
+}
+@media (max-width: 760px) {
+  .mcp-side {
+    flex-basis: 100%;
+    border-right: 0;
+  }
 }
 .mcp-main {
   flex: 999 1 520px;
@@ -2334,12 +2711,12 @@ main:has(.mcp-page) {
 }
 
 .side-panel__head--dark {
-  background: var(--ink);
-  color: var(--paper);
-  border-bottom-color: var(--ink);
+  background: var(--surface-2);
+  color: var(--ink);
+  border-bottom-color: var(--rule);
 }
 .side-panel__head--dark .icon-button {
-  color: var(--paper);
+  color: var(--ink);
 }
 .call-panel {
   display: flex;
@@ -2356,8 +2733,9 @@ main:has(.mcp-page) {
   flex-direction: column;
   gap: 12px;
   padding: 16px;
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--surface-2);
+  color: var(--ink);
+  border-bottom: 1px solid var(--rule);
 }
 .call-panel__title {
   display: flex;
@@ -2368,13 +2746,13 @@ main:has(.mcp-page) {
 .call-panel__ready {
   font-size: 0.75rem;
   font-weight: 450;
-  color: var(--rule);
+  color: var(--ink-2);
 }
 .call-panel__clock {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.8125rem;
   font-weight: 450;
-  color: var(--rule);
+  color: var(--ink-2);
 }
 .call-panel__state {
   display: flex;
@@ -2384,26 +2762,41 @@ main:has(.mcp-page) {
   margin: 0;
 }
 .call-panel__state .status {
-  color: var(--paper);
+  color: var(--ink);
 }
 .call-panel__controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.call-panel__controls .stage__ptt {
+  min-height: 44px;
+  gap: 10px;
+  font-size: 0.9375rem;
+}
+.call-panel__controls .stage__ptt input {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+}
+.call-panel__controls .action-button,
+.call-panel__controls .action-button-small {
+  min-height: 44px;
 }
 .call-panel__top .action-button-small {
-  border-color: var(--rule);
+  border-color: var(--ink-2);
   background: transparent;
-  color: var(--paper);
+  color: var(--ink);
 }
 .call-panel__top .action-button-danger {
   border-color: var(--bad);
   background: var(--bad);
-  color: var(--paper);
+  color: var(--on-accent);
 }
 .call-panel__top .stage__ptt {
-  color: var(--paper);
+  color: var(--ink);
 }
 
 .option-card {
@@ -2435,7 +2828,7 @@ main:has(.mcp-page) {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-top: 1px solid var(--ink);
+  border-top: 1px solid var(--ink-2);
 }
 .change-rows li {
   display: flex;
@@ -2452,18 +2845,15 @@ main:has(.mcp-page) {
   color: var(--bad);
   font-weight: 600;
 }
-/* The dark head: light tokens only. --bad, --ink-2 and --caller are below 3:1 on --ink, so text and the focus ring switch. */
+/* The call and step heads are raised surfaces; status text stays --ink so a flag never reads as an error by colour alone. */
 .call-panel__top .flag,
 .call-panel__top .flag--bad {
-  color: var(--paper);
-}
-.call-panel__top :focus-visible,
-.side-panel__head--dark :focus-visible {
-  outline-color: var(--paper);
+  color: var(--ink);
 }
 .call-panel__top .action-button-small[aria-pressed="true"] {
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--caller);
+  border-color: var(--caller);
+  color: var(--on-accent);
 }
 
 .skeleton {
@@ -2547,19 +2937,19 @@ main:has(.mcp-page) {
   width: 26px;
   height: 26px;
   border: 1.5px solid var(--ink-2);
-  border-radius: 50%;
+  border-radius: var(--radius);
   font-size: 0.75rem;
   font-weight: 600;
 }
 .setup-steps li[data-state="current"] .setup-steps__mark {
   border-color: var(--caller);
   background: var(--caller);
-  color: var(--surface);
+  color: var(--on-accent);
 }
 .setup-steps li[data-state="done"] .setup-steps__mark {
   border-color: var(--ok);
   background: var(--ok);
-  color: var(--surface);
+  color: var(--on-accent);
 }
 .first-run__main {
   flex: 999 1 520px;
@@ -2617,10 +3007,17 @@ main:has(.mcp-page) {
   margin-top: 20px;
 }
 .first-run__summary section {
+  min-width: 0;
   padding: 20px;
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   background: var(--surface);
+}
+.first-run__summary .row {
+  flex-wrap: wrap;
+}
+.first-run__main > .message-panel:first-child {
+  margin-top: 0;
 }
 .first-run__summary h3 {
   margin: 0 0 12px;
@@ -2672,7 +3069,7 @@ main:has(.mcp-page) {
 }
 .first-run__more {
   max-width: 760px;
-  border-top: 1px solid var(--ink);
+  border-top: 1px solid var(--ink-2);
 }
 .first-run__more h3 {
   margin: 0;
@@ -2712,7 +3109,7 @@ main:has(.mcp-page) {
   list-style: none;
   margin: 0;
   padding: 0;
-  border-top: 1px solid var(--ink);
+  border-top: 1px solid var(--ink-2);
 }
 .setup-checklist li {
   display: grid;
@@ -2732,24 +3129,37 @@ main:has(.mcp-page) {
   justify-content: center;
   width: 20px;
   height: 20px;
-  border: 1.5px solid var(--ink);
-  border-radius: 50%;
+  border: 1.5px solid var(--ink-2);
+  border-radius: var(--radius);
   font-size: 0.75rem;
 }
 .setup-checklist li[data-done] .setup-checklist__mark {
   border-color: var(--ok);
   background: var(--ok);
-  color: var(--surface);
+  color: var(--on-accent);
 }
 
 .key-bar .error-details,
 .key-bar .subtext {
-  color: var(--paper);
+  color: var(--ink-2);
 }
 
 /* Explain-this help under an obscure setting */
 .setting-help {
   margin: 0 0 12px;
+}
+/* The explain toggle is a quiet text button; it must not compete with the primary actions. */
+.setting-help > .action-button-small {
+  min-height: 44px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+  font-weight: 450;
+}
+.setting-help > .action-button-small:hover {
+  background: transparent;
+  color: var(--ink);
 }
 .setting-help__panel {
   margin-top: 6px;
@@ -2835,4 +3245,62 @@ main:has(.mcp-page) {
   font-size: 0.75rem;
   color: var(--ink-2);
   margin-top: 2px;
+}
+
+/* Server: one card per group; the caption is the card title and the column heads stay for screen readers */
+.server-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 16px;
+  margin-top: 24px;
+}
+.server-card {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.server-card .table-scroll {
+  margin-top: 0;
+}
+.server-card caption {
+  padding: 16px 22px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+.server-card thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.server-card td {
+  padding: 13px 8px 13px 22px;
+}
+.server-card td:last-child {
+  padding-right: 22px;
+  text-align: right;
+}
+.server-card tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* Tool picker: a plain stack of checkable rows, no list bullets */
+.tool-picker ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.tool-pick {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.tool-pick:last-child {
+  border-bottom: 0;
 }

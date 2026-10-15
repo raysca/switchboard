@@ -137,7 +137,9 @@ export function App({ initialPath }: { initialPath?: string }) {
           <aside className="sidebar">
             <div className="brand">
               <span className="brand-mark" aria-hidden="true">
-                ⌁
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 12h3l2-6 4 12 2-6h5" />
+                </svg>
               </span>
               <span>Switchboard</span>
             </div>
@@ -150,9 +152,9 @@ export function App({ initialPath }: { initialPath?: string }) {
                     isActive ? "nav-link nav-link--current" : "nav-link"
                   }
                 >
-                  <span className="nav-icon" aria-hidden="true">
-                    {section.icon}
-                  </span>
+                  <svg className="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d={section.icon} />
+                  </svg>
                   <span className="nav-text">{section.name}</span>
                 </NavLink>
               ))}

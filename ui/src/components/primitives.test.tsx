@@ -77,8 +77,8 @@ describe("LoadingState skeleton", () => {
 });
 
 describe("key strip contrast", () => {
-  it("styles error details and hints readable on the dark strip", () => {
+  it("styles error details and hints with the secondary ink on the raised strip", () => {
     const css = readFileSync("src/styles.css", "utf8");
-    expect(css).toMatch(/\.key-bar \.error-details[^{]*\{[^}]*color: var\(--paper\)/);
+    expect(css).toMatch(/\.key-bar \.error-details[^{]*\{[^}]*color: var\(--ink-2\)/);
   });
 });

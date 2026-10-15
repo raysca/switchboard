@@ -194,12 +194,30 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
                       />
                       Enabled
                     </label>
-                    <button type="button" className="action-button-small" aria-label={`Duplicate ${f.name}`} disabled={copyMutation.isPending} onClick={() => copyMutation.mutate({ id: f.id })}>
-                      Duplicate
-                    </button>
-                    <button type="button" className="action-button-small action-button-danger" aria-label={`Archive ${f.name}`} onClick={() => openDialog({ kind: "archive", flow: f })}>
-                      Archive
-                    </button>
+                    <details
+                      className="row-menu"
+                      onKeyDown={(e) => {
+                        if (e.key !== "Escape") return;
+                        e.currentTarget.open = false;
+                        e.currentTarget.querySelector("summary")?.focus();
+                      }}
+                    >
+                      <summary aria-label={`More actions for ${f.name}`}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                          <circle cx="5" cy="12" r="1.8" />
+                          <circle cx="12" cy="12" r="1.8" />
+                          <circle cx="19" cy="12" r="1.8" />
+                        </svg>
+                      </summary>
+                      <div className="row-menu__panel" onClick={(e) => (e.currentTarget.closest("details")!.open = false)}>
+                        <button type="button" aria-label={`Duplicate ${f.name}`} disabled={copyMutation.isPending} onClick={() => copyMutation.mutate({ id: f.id })}>
+                          Duplicate
+                        </button>
+                        <button type="button" className="row-menu__danger" aria-label={`Archive ${f.name}`} onClick={() => openDialog({ kind: "archive", flow: f })}>
+                          Archive
+                        </button>
+                      </div>
+                    </details>
                   </div>
                 </li>
               );
