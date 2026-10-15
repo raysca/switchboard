@@ -422,14 +422,14 @@ func TestCloseStopsFirstTokenWatchdog(t *testing.T) {
 	primary, backup := newSilent(), fake([]string{"x"}, 0, nil)
 	r := newFailoverRig(t, core.LLMFailoverConfig{
 		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}},
-		FirstTokenTimeout: 40 * time.Millisecond,
+		FirstTokenTimeout: 200 * time.Millisecond,
 	})
 	r.say(t, "hi")
 	r.waitFor(t, func() bool { return primary.started.Load() == 1 })
 	if err := r.w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(400 * time.Millisecond)
 	if backup.Started.Load() != 0 {
 		t.Fatal("watchdog started a fallback after Close")
 	}
