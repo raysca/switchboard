@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ProviderStatus } from "../../../api/client";
 import { StageFields, type StageValue } from "../StageFields";
 import { SettingHelp } from "./SettingHelp";
-import { MAX_FALLBACKS, updateStep, type FlowDraft, type DraftStep } from "./model";
+import { DEFAULT_FAILOVER, FAILOVER_CLASSES, MAX_FALLBACKS, updateStep, type FlowDraft, type DraftStep } from "./model";
 
 type Fallback = { provider: string; model?: string; voice?: string };
 type Stage = Record<string, unknown>;
@@ -23,6 +23,13 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
   const setStage = (cap: "llm" | "tts", stage: Stage) => onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: stage } }));
   const setFallbacks = (cap: "llm" | "tts", stage: Stage, items: Fallback[]) =>
     setStage(cap, items.length ? { ...stage, fallbacks: items } : without(stage, "fallbacks"));
+  const failoverOn = Array.isArray(rec(step.config.failover).on) ? (rec(step.config.failover).on as string[]) : [];
+  const failover = failoverOn.length ? failoverOn : DEFAULT_FAILOVER;
+  const setFailover = (id: string, on: boolean) => {
+    const next = FAILOVER_CLASSES.map((c): string => c.id).filter((c) => (c === id ? on : failover.includes(c)));
+    const isDefault = next.length === DEFAULT_FAILOVER.length && DEFAULT_FAILOVER.every((c) => next.includes(c));
+    onChange(updateStep(graph, step.id, { config: isDefault ? without(step.config, "failover") : { ...step.config, failover: { on: next } } }));
+  };
   const parallel = Number(llm.max_parallel) || 1;
 
   return (
@@ -48,6 +55,23 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
         idPrefix={`step-${step.id}-tts-fallback`}
         onChange={(items) => setFallbacks("tts", tts, items)}
       />
+      <fieldset className="stage-box">
+        <legend>When to move to a fallback</legend>
+        <p className="subtext">Only matters when a stage has fallbacks.</p>
+        {FAILOVER_CLASSES.map((c) => (
+          <label key={c.id} className="check-row" htmlFor={`step-${step.id}-failover-${c.id}`}>
+            <input
+              id={`step-${step.id}-failover-${c.id}`}
+              type="checkbox"
+              checked={failover.includes(c.id)}
+              disabled={failover.includes(c.id) && failover.length === 1}
+              onChange={(e) => setFailover(c.id, e.target.checked)}
+            />
+            <span>{c.label}</span>
+          </label>
+        ))}
+        <SettingHelp id="failover.on" />
+      </fieldset>
       <fieldset className="stage-box">
         <legend>Tuning</legend>
         <label className="form-field" htmlFor={`step-${step.id}-parallel`}>

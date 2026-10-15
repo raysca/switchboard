@@ -59,6 +59,13 @@ const COPY = {
     defaults: "Empty: the built-in instructions. At most 2048 bytes.",
     careful: "The call transcript is always sent as untrusted data.",
   },
+  "failover.on": {
+    label: "When to move to a fallback",
+    what: "Which kinds of failure make a stage switch to its next fallback.",
+    when: "Rarely. Add rejected requests only if a bad request to one provider may succeed on another.",
+    defaults: "Timeouts, server errors and an open circuit breaker.",
+    careful: "Rejected requests are usually your bug, not an outage; switching can hide it.",
+  },
   recording: {
     label: "Recording",
     what: "Saves the call's audio on the server (only if the server enables recording too).",

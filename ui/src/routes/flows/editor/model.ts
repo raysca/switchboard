@@ -91,11 +91,23 @@ export function stepIssues(g: FlowDraft, id: string): StepIssue[] {
     if (fallbacks.length && new Set(keys).size < keys.length)
       issues.push({ tab: "advanced", message: `A ${what} fallback repeats the ${what} or another fallback.` });
   }
+  const failover = asRecord(n.config.failover).on;
+  if (Array.isArray(failover) && failover.some((c) => !FAILOVER_CLASSES.some((k) => k.id === c)))
+    issues.push({ tab: "advanced", message: "Failover lists an unknown error class." });
   return issues;
 }
 
 /** The server's chain limit, primary excluded. */
 export const MAX_FALLBACKS = 2;
+
+/** The error classes server/flow/fallback.go lets a stage fail over on; the first three apply when none is set. */
+export const FAILOVER_CLASSES = [
+  { id: "timeout", label: "Timeouts" },
+  { id: "server_error", label: "Server errors and dropped connections" },
+  { id: "circuit_open", label: "The provider's circuit breaker is open" },
+  { id: "client_error", label: "Rejected requests (bad request, bad key)" },
+] as const;
+export const DEFAULT_FAILOVER: readonly string[] = ["timeout", "server_error", "circuit_open"];
 const SUMMARIZING = new Set(["google", "echo", "nvidia", "openai", "xai"]);
 
 /** Problems that belong to the whole flow (header state line and Flow settings). */

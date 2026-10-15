@@ -272,6 +272,13 @@ describe("what the server will accept", () => {
     expect(validate(one({ vad_stop_ms: 2500 }))).toContain("Wait after the caller stops must be 200 to 2000 ms.");
   });
 
+  it("flags an unknown failover class in a stored step", () => {
+    const g = one({}, { failover: { on: ["timeout", "meteor"] } });
+    expect(stepIssues(g, g.steps.at(-1)!.id)).toContainEqual({ tab: "advanced", message: "Failover lists an unknown error class." });
+    const ok = one({}, { failover: { on: ["timeout"] } });
+    expect(stepIssues(ok, ok.steps.at(-1)!.id).filter((i) => i.message.includes("Failover"))).toEqual([]);
+  });
+
   it("flags summaries when a step's model provider cannot summarise", () => {
     const g = one({ context: { summarization: { enabled: true } } }, { llm: { provider: "groq", model: "llama" } });
     expect(flowIssues(g)).toContain("Billing uses groq, which cannot summarise older turns. Turn summaries off or change its model.");

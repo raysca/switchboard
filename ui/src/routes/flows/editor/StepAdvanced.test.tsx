@@ -89,4 +89,46 @@ describe("StepAdvanced", () => {
     }
     expect(screen.getByRole("region", { name: "Explain Tool calls at once" })).toHaveTextContent("1 to 16");
   });
+
+  describe("failover policy", () => {
+    const box = (name: RegExp | string) => screen.getByRole("checkbox", { name });
+
+    it("shows the three defaults checked, with the rejected-requests class off", () => {
+      render(<Harness onChange={vi.fn()} />);
+      const group = screen.getByRole("group", { name: "When to move to a fallback" });
+      expect(group).toHaveTextContent("Only matters when a stage has fallbacks.");
+      expect(box("Timeouts")).toBeChecked();
+      expect(box("Server errors and dropped connections")).toBeChecked();
+      expect(box("The provider's circuit breaker is open")).toBeChecked();
+      expect(box("Rejected requests (bad request, bad key)")).not.toBeChecked();
+    });
+
+    it("writes the policy in a fixed order, and drops the key when it is the default again", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness onChange={onChange} />);
+      await user.click(box("Rejected requests (bad request, bad key)"));
+      expect(last(onChange).failover).toEqual({ on: ["timeout", "server_error", "circuit_open", "client_error"] });
+      await user.click(box("Rejected requests (bad request, bad key)"));
+      expect(last(onChange)).not.toHaveProperty("failover");
+    });
+
+    it("keeps at least one class checked: an empty list would silently mean the defaults", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness onChange={onChange} />);
+      await user.click(box("Timeouts"));
+      await user.click(box("Server errors and dropped connections"));
+      expect(last(onChange).failover).toEqual({ on: ["circuit_open"] });
+      expect(box("The provider's circuit breaker is open")).toBeDisabled();
+    });
+
+    it("opens a stored policy showing it, and leaves it alone until changed", () => {
+      const stored = fromFlowConfig({ llm: { provider: "google", model: "gemini" }, tts: { provider: "google" }, stt: { provider: "google" }, failover: { on: ["client_error"] } });
+      render(<StepAdvanced graph={stored} step={stored.steps[0]} providers={providers} onChange={vi.fn()} />);
+      expect(box("Rejected requests (bad request, bad key)")).toBeChecked();
+      expect(box("Timeouts")).not.toBeChecked();
+      expect(screen.getByRole("button", { name: "Explain When to move to a fallback" })).toBeInTheDocument();
+    });
+  });
 });
