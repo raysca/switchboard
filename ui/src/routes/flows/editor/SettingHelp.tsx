@@ -31,7 +31,9 @@ export function SettingHelp({ id }: { id: SettingId }) {
         aria-controls={`${uid}-panel`}
         onClick={() => setOpen(!open)}
         onKeyDown={(e) => {
-          if (e.key === "Escape" && open) setOpen(false);
+          if (e.key !== "Escape" || !open) return;
+          e.stopPropagation();
+          setOpen(false);
         }}
       >
         <span aria-hidden="true">? </span>Explain
@@ -44,6 +46,7 @@ export function SettingHelp({ id }: { id: SettingId }) {
           className="setting-help__panel"
           onKeyDown={(e) => {
             if (e.key !== "Escape") return;
+            e.stopPropagation();
             setOpen(false);
             button.current?.focus();
           }}

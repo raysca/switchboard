@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SettingHelp } from "./SettingHelp";
@@ -54,5 +54,21 @@ describe("SettingHelp", () => {
     expect(screen.getAllByRole("region")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Explain Wait after the caller stops" }));
     expect(screen.getAllByRole("region")).toHaveLength(2);
+  });
+
+  it("keeps Escape to itself while open, so a surrounding panel stays open; closed, Escape passes through", async () => {
+    const user = userEvent.setup();
+    const outer = vi.fn();
+    render(
+      <div onKeyDown={(e) => e.key === "Escape" && outer()}>
+        <SettingHelp id="vad_stop_ms" />
+      </div>,
+    );
+    const button = screen.getByRole("button", { name: /^Explain/ });
+    await user.click(button);
+    await user.keyboard("{Escape}");
+    expect(outer).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(outer).toHaveBeenCalledTimes(1);
   });
 });
