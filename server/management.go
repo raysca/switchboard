@@ -197,7 +197,7 @@ func (s *Server) developmentStore() (string, error) {
 		return "", fmt.Errorf("development store: %w", err)
 	}
 	s.logger.Warn("development profile: using a local flow store; never use it in production", slog.String("dir", dir))
-	return filepath.Join(dir, "govoice.db"), nil
+	return filepath.Join(dir, "switchboard.db"), nil
 }
 
 // providersRoutes serves the read-only provider listing and the on-demand provider test; every other

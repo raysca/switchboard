@@ -77,7 +77,7 @@ observability:
 # Flow store (required): calls run stored flows. The server requires:
 #   GOVOICE_DATABASE_DSN     storage DSN (file path for sqlite, URL for postgres)
 # In this development profile it is optional: when unset the server creates
-# .govoice-dev/govoice.db (override the directory with GOVOICE_DEV_DIR).
+# .govoice-dev/switchboard.db (override the directory with GOVOICE_DEV_DIR).
 # Production always requires it.
 # Local test MCP servers (make mcp-test, make dev) run on plain HTTP at loopback.
 # Development and tests only: the production profile refuses this setting.

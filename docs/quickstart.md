@@ -46,12 +46,12 @@ TTS streams by default. Two optional kill switches: `providers.google_tts.disabl
 
 The flow store is required. Set its DSN, the management API key and the provider variables:
 
-In the development profile you can skip the DSN: the server then creates `.govoice-dev/govoice.db`. Production always requires it.
+In the development profile you can skip the DSN: the server then creates `.govoice-dev/switchboard.db`. Production always requires it.
 
 ```bash
 mkdir -p data
 # SQLite file (development.yaml uses storage.dialect: sqlite). For postgres use a postgres:// URL.
-export GOVOICE_DATABASE_DSN="$PWD/data/govoice.db"
+export GOVOICE_DATABASE_DSN="$PWD/data/switchboard.db"
 # Management API bearer key, at least 32 bytes.
 export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"
 # Provider keys (set the ones you use; see docs/providers.md for the full table).

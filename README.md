@@ -69,7 +69,7 @@ Validates code formatting, runs all tests with `-race` across all modules (root,
 The flow store is required. Provide its DSN, a management API key and the provider variables you use:
 ```bash
 mkdir -p data
-export GOVOICE_DATABASE_DSN="$PWD/data/govoice.db"            # sqlite path, or a postgres:// URL with storage.dialect: postgres
+export GOVOICE_DATABASE_DSN="$PWD/data/switchboard.db"            # sqlite path, or a postgres:// URL with storage.dialect: postgres
 export GOVOICE_MANAGEMENT_API_KEY="$(openssl rand -hex 32)"     # >= 32 bytes
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json      # Google STT, TTS, LLM
 export XAI_API_KEY="..."                                        # optional: xAI LLM, STT, TTS
