@@ -68,14 +68,14 @@ Switchboard (xai adapters, endpoints -> adapter)
         |
    Go adapter  (xAI STT/TTS protocol; endpointing, framing, limits)
         | HTTP, URLs from env
-   Ollama / llama.cpp   whisper.cpp server   Kokoro or Piper server
+   Ollama (called directly)   Speaches: faster-whisper + Kokoro
 ```
 
 **Why Go.** Same language and idioms as the repo (AGENTS.md bounds, `-race`); endpointing is a small pure-Go energy detector (the repo's `vad/` was rejected: it is cgo + onnxruntime behind worker processes; upgrade path for noisy microphones is `vad/` or sherpa-onnx); contract tests share `coder/websocket` and the `STTMessage` type with the adapters. The models stay in their own servers, so nothing here needs cgo or Python in our code.
 
 **Backends are URLs, so they are swappable.** Docker on macOS has no GPU, so on Apple Silicon the backends are better run on the host (Metal) with only the adapter, or nothing, in Docker. Compose is the default for CI, shared test runs and privacy self-hosters; every backend URL is an env var so any of them can live elsewhere. Images are pinned by tag so a backend update cannot silently change test behavior. Weights come from a mounted volume; nothing downloads at runtime (a documented `fetch-models` step runs once, with network). The adapter's `/healthz` reports ready only when every backend answers.
 
-**Backend candidates (to verify before building).** LLM: Ollama or llama.cpp. STT: whisper.cpp server (batch `/inference`, which suits re-decoding a growing utterance). TTS: Kokoro-FastAPI or a Piper HTTP server, which must stream chunked PCM; confirm this first, since a non-streaming TTS backend would make `audio.delta` arrive only after the whole sentence.
+**Backend candidates (to verify before building).** LLM: Ollama or llama.cpp. STT and TTS: Speaches (`/v1/audio/transcriptions` is batch, which suits re-decoding a growing utterance; `/v1/audio/speech` returns each request whole, confirmed by the spike, so `audio.delta` arrives after the sentence is synthesized). Chosen and built; Kokoro-FastAPI, Piper and sherpa-onnx remain alternatives.
 
 All stages are bounded: a global semaphore caps concurrent decodes and syntheses, queued work waits with a deadline and then gets HTTP 503 / WS `error`. The per-stream audio buffer is capped at the utterance cap.
 
