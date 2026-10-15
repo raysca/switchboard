@@ -277,6 +277,21 @@ describe("what the server will accept", () => {
     expect(flowIssues(g)).toContain("Billing uses groq, which cannot summarise older turns. Turn summaries off or change its model.");
   });
 
+  it("mirrors the summarisation and late-transcript limits", () => {
+    const sum = (summarization: Record<string, unknown>, ctx: Record<string, unknown> = {}) => one({ context: { ...ctx, summarization: { enabled: true, ...summarization } } }, { llm: { provider: "google", model: "m" } });
+    expect(flowIssues(sum({ trigger_tokens: 4000 }))).toContain("Summarise-at must be below Max tokens (4000).");
+    expect(flowIssues(sum({ trigger_tokens: 900 }, { max_tokens: 900 }))).toContain("Summarise-at must be below Max tokens (900).");
+    expect(flowIssues(sum({ trigger_tokens: 3999 }))).toEqual([]);
+    expect(flowIssues(sum({ keep_turns: -1 }))).toContain("Summarise-at and Keep the latest turns cannot be negative.");
+    expect(flowIssues(sum({ prompt: "x".repeat(2049) }))).toContain("Summary instructions are over 2048 bytes.");
+    expect(flowIssues(sum({ prompt: "é".repeat(1025) }))).toContain("Summary instructions are over 2048 bytes.");
+    expect(flowIssues(sum({ prompt: "x".repeat(2048) }))).toEqual([]);
+    expect(flowIssues(one({ context: { max_tokens: 100, summarization: { trigger_tokens: 5000 } } }))).toEqual([]);
+    for (const bad of [99, 10001]) expect(flowIssues(one({ stt_p99_ms: bad }))).toContain("Late-transcript wait must be between 100 and 10000 ms.");
+    expect(flowIssues(one({ stt_p99_ms: 800 }))).toEqual([]);
+    expect(flowIssues(one({ stt_p99_ms: 0 }))).toEqual([]);
+  });
+
   it("accepts summaries on the echo provider, which runs the real Google processors", () => {
     const g = one({ context: { summarization: { enabled: true } } }, { llm: { provider: "echo", model: "gemini-2.5-flash" } });
     expect(flowIssues(g).filter((m) => m.includes("cannot summarise"))).toEqual([]);

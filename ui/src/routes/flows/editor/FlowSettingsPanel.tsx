@@ -3,7 +3,7 @@ import type { ProviderStatus } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
 import { SettingHelp } from "./SettingHelp";
-import { flowIssues, updateStep, type FlowDraft, type StepConfig } from "./model";
+import { flowIssues, MAX_SUMMARY_PROMPT_BYTES, STT_P99_RANGE, updateStep, type FlowDraft, type StepConfig } from "./model";
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (v && typeof v === "object" && !Array.isArray(v) ? (v as Rec) : {});
@@ -46,6 +46,8 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
     if (!start) return;
     onChange(updateStep(graph, start.id, { config: value === null || value === undefined ? without(cfg, key) : { ...cfg, [key]: value } }));
   };
+  const summary = rec(context.summarization);
+  const setSummary = (key: string, value: unknown) => setContext({ ...context, summarization: value === null ? without(summary, key) : { ...summary, [key]: value } });
   const setContext = (next: Rec) => setKey("context", Object.keys(next).length ? next : null);
   const cue = graph.route_cue;
 
@@ -144,6 +146,23 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
               200 to 2000. Shorter replies sooner; longer interrupts the caller less.
             </p>
             <SettingHelp id="vad_stop_ms" />
+            <label className="form-field" htmlFor="flow-stt-p99">
+              <span>Wait for a late transcript (ms)</span>
+              <input
+                id="flow-stt-p99"
+                type="number"
+                min={STT_P99_RANGE[0]}
+                max={STT_P99_RANGE[1]}
+                placeholder="Server default"
+                aria-describedby="flow-stt-p99-hint"
+                value={typeof cfg.stt_p99_ms === "number" ? cfg.stt_p99_ms : ""}
+                onChange={(e) => setKey("stt_p99_ms", numberOrNothing(e.target.value))}
+              />
+            </label>
+            <p id="flow-stt-p99-hint" className="subtext">
+              {STT_P99_RANGE[0]} to {STT_P99_RANGE[1]}. Empty: the server default.
+            </p>
+            <SettingHelp id="stt_p99_ms" />
           </fieldset>
           <fieldset className="stage-box">
             <legend>Memory</legend>
@@ -188,6 +207,57 @@ export function FlowSettingsPanel({ graph, providers, name, description, onName,
               <span>Summarise older turns</span>
             </label>
             <SettingHelp id="summarization.enabled" />
+            {summary.enabled === true && (
+              <>
+                <label className="form-field" htmlFor="flow-summary-trigger">
+                  <span>Summarise when history reaches (tokens)</span>
+                  <input
+                    id="flow-summary-trigger"
+                    type="number"
+                    min={1}
+                    placeholder="Three quarters of Max tokens"
+                    aria-describedby="flow-summary-trigger-hint"
+                    value={typeof summary.trigger_tokens === "number" ? summary.trigger_tokens : ""}
+                    onChange={(e) => setSummary("trigger_tokens", numberOrNothing(e.target.value))}
+                  />
+                </label>
+                <p id="flow-summary-trigger-hint" className="subtext">
+                  Empty: three quarters of Max tokens. Must be below Max tokens.
+                </p>
+                <SettingHelp id="summarization.trigger_tokens" />
+                <label className="form-field" htmlFor="flow-summary-keep">
+                  <span>Keep the latest turns</span>
+                  <input
+                    id="flow-summary-keep"
+                    type="number"
+                    min={1}
+                    placeholder="4"
+                    aria-describedby="flow-summary-keep-hint"
+                    value={typeof summary.keep_turns === "number" ? summary.keep_turns : ""}
+                    onChange={(e) => setSummary("keep_turns", numberOrNothing(e.target.value))}
+                  />
+                </label>
+                <p id="flow-summary-keep-hint" className="subtext">
+                  Empty: 4.
+                </p>
+                <SettingHelp id="summarization.keep_turns" />
+                <label className="form-field" htmlFor="flow-summary-prompt">
+                  <span>Summary instructions</span>
+                  <textarea
+                    id="flow-summary-prompt"
+                    rows={3}
+                    placeholder="Built-in instructions"
+                    aria-describedby="flow-summary-prompt-hint"
+                    value={typeof summary.prompt === "string" ? summary.prompt : ""}
+                    onChange={(e) => setSummary("prompt", e.target.value === "" ? null : e.target.value)}
+                  />
+                </label>
+                <p id="flow-summary-prompt-hint" className="subtext">
+                  Empty: the built-in prompt. At most {MAX_SUMMARY_PROMPT_BYTES} bytes.
+                </p>
+                <SettingHelp id="summarization.prompt" />
+              </>
+            )}
           </fieldset>
       {graph.routes.length > 0 && (
         <fieldset className="stage-box">

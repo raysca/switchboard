@@ -8,6 +8,9 @@ export const MAX_STEPS = 8;
 export const MAX_ROUTES = 32;
 /** The server counts a greeting in bytes (server/flow/config.go). */
 export const MAX_GREETING_BYTES = 500;
+export const MAX_SUMMARY_PROMPT_BYTES = 2048;
+export const STT_P99_RANGE = [100, 10000] as const;
+const DEFAULT_MAX_TOKENS = 4000;
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
 
@@ -110,7 +113,19 @@ export function flowIssues(g: FlowDraft): string[] {
   const ctx = asRecord(start.config.context);
   if (typeof ctx.max_messages === "number" && (ctx.max_messages < 0 || ctx.max_messages === 1)) out.push("Max messages must be at least 2.");
   if (typeof ctx.max_tokens === "number" && ctx.max_tokens < 0) out.push("Max tokens cannot be negative.");
-  if (asRecord(ctx.summarization).enabled === true)
+  const stt99 = start.config.stt_p99_ms;
+  if (typeof stt99 === "number" && stt99 !== 0 && (stt99 < STT_P99_RANGE[0] || stt99 > STT_P99_RANGE[1]))
+    out.push(`Late-transcript wait must be between ${STT_P99_RANGE[0]} and ${STT_P99_RANGE[1]} ms.`);
+  const summary = asRecord(ctx.summarization);
+  if (summary.enabled === true) {
+    const maxTokens = typeof ctx.max_tokens === "number" && ctx.max_tokens > 0 ? ctx.max_tokens : DEFAULT_MAX_TOKENS;
+    const trigger = summary.trigger_tokens;
+    if ((typeof trigger === "number" && trigger < 0) || (typeof summary.keep_turns === "number" && summary.keep_turns < 0))
+      out.push("Summarise-at and Keep the latest turns cannot be negative.");
+    else if (typeof trigger === "number" && trigger >= maxTokens) out.push(`Summarise-at must be below Max tokens (${maxTokens}).`);
+    if (typeof summary.prompt === "string" && byteLength(summary.prompt) > MAX_SUMMARY_PROMPT_BYTES) out.push(`Summary instructions are over ${MAX_SUMMARY_PROMPT_BYTES} bytes.`);
+  }
+  if (summary.enabled === true)
     for (const n of g.steps) {
       const provider = String(asRecord(n.config.llm).provider ?? "");
       if (provider && !SUMMARIZING.has(provider))

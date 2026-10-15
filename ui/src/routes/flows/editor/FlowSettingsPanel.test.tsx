@@ -191,4 +191,70 @@ describe("FlowSettingsPanel footer", () => {
       expect(advanced()).not.toHaveAttribute("open");
     });
   });
+
+  describe("summarisation details and the late-transcript wait", () => {
+    const stored = fromFlowConfig({
+      start: "a",
+      steps: [
+        {
+          id: "a",
+          name: "Reception",
+          config: {
+            llm: { provider: "google", model: "m" },
+            tts: { provider: "g" },
+            stt: { provider: "deepgram" },
+            stt_p99_ms: 900,
+            context: { summarization: { enabled: true, trigger_tokens: 900, keep_turns: 2, prompt: "Notes." } },
+          },
+        },
+      ],
+      routes: [],
+    });
+
+    it("shows the three fields only while summarising is on, and writes them", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness onChange={onChange} />);
+      await user.click(screen.getByText(/^Advanced/));
+      expect(screen.queryByLabelText("Summarise when history reaches (tokens)")).toBeNull();
+      await user.click(screen.getByLabelText("Summarise older turns"));
+      await user.type(screen.getByLabelText("Summarise when history reaches (tokens)"), "900");
+      await user.type(screen.getByLabelText("Keep the latest turns"), "2");
+      await user.type(screen.getByLabelText("Summary instructions"), "Notes.");
+      expect(startCfg(onChange).context).toEqual({ summarization: { enabled: true, trigger_tokens: 900, keep_turns: 2, prompt: "Notes." } });
+      await user.clear(screen.getByLabelText("Keep the latest turns"));
+      expect(startCfg(onChange).context).toEqual({ summarization: { enabled: true, trigger_tokens: 900, prompt: "Notes." } });
+      await user.clear(screen.getByLabelText("Summary instructions"));
+      expect(startCfg(onChange).context).toEqual({ summarization: { enabled: true, trigger_tokens: 900 } });
+      await user.click(screen.getByLabelText("Summarise older turns"));
+      expect(startCfg(onChange)).not.toHaveProperty("context");
+      expect(screen.queryByLabelText("Keep the latest turns")).toBeNull();
+    });
+
+    it("opens a stored flow showing its values", () => {
+      render(<Harness initial={stored} />);
+      expect(screen.getByLabelText("Summarise when history reaches (tokens)")).toHaveValue(900);
+      expect(screen.getByLabelText("Keep the latest turns")).toHaveValue(2);
+      expect(screen.getByLabelText("Summary instructions")).toHaveValue("Notes.");
+      expect(screen.getByLabelText("Wait for a late transcript (ms)")).toHaveValue(900);
+    });
+
+    it("sets and clears the late-transcript wait", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness onChange={onChange} />);
+      await user.click(screen.getByText(/^Advanced/));
+      await user.type(screen.getByLabelText("Wait for a late transcript (ms)"), "800");
+      expect(startCfg(onChange).stt_p99_ms).toBe(800);
+      await user.clear(screen.getByLabelText("Wait for a late transcript (ms)"));
+      expect(startCfg(onChange)).not.toHaveProperty("stt_p99_ms");
+    });
+
+    it("explains each new field", () => {
+      render(<Harness initial={stored} />);
+      for (const name of ["Summarise-at", "Keep the latest turns", "Summary instructions", "Wait for a late transcript"]) {
+        expect(screen.getByRole("button", { name: `Explain ${name}` })).toBeInTheDocument();
+      }
+    });
+  });
 });

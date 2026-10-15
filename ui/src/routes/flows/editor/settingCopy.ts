@@ -33,6 +33,32 @@ const COPY = {
     defaults: "Off.",
     careful: "Uses an extra model call when it runs.",
   },
+  stt_p99_ms: {
+    label: "Wait for a late transcript",
+    what: "How long the call waits for the speech-to-text service's final transcript after the caller stops.",
+    when: "Raise it if replies sometimes start without the caller's last words.",
+    defaults: "100 to 10000 ms. Empty: the server's value for your provider.",
+    careful: "Too high adds that delay to every reply that waits.",
+  },
+  "summarization.trigger_tokens": {
+    label: "Summarise-at",
+    what: "The history size at which summarising starts.",
+    when: "Lower it to summarise earlier.",
+    defaults: "Empty: three quarters of Max tokens. Must be below Max tokens.",
+  },
+  "summarization.keep_turns": {
+    label: "Keep the latest turns",
+    what: "How many of the newest turns are kept word for word.",
+    when: "Raise it if the model loses recent detail.",
+    defaults: "Empty: 4.",
+  },
+  "summarization.prompt": {
+    label: "Summary instructions",
+    what: "Tells the model what to keep in the notes (names, amounts, promises).",
+    when: "When the built-in notes miss what your calls need.",
+    defaults: "Empty: the built-in instructions. At most 2048 bytes.",
+    careful: "The call transcript is always sent as untrusted data.",
+  },
   recording: {
     label: "Recording",
     what: "Saves the call's audio on the server (only if the server enables recording too).",
