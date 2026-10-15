@@ -15,11 +15,25 @@ import (
 
 const maxTTSBody = 1 << 20 // a sentence unit is a few hundred bytes; 1 MiB is far beyond any real request
 
-func queryInt(r *http.Request, key string, def int) int {
-	if n, err := strconv.Atoi(r.URL.Query().Get(key)); err == nil && n > 0 {
-		return n
+// Speech PCM is 8 to 48 kHz. Anything else is refused: a huge rate overflows the buffer sizes derived
+// from it (and lets one connection hold hundreds of MiB), a tiny one makes a zero-length chunk.
+const (
+	minSampleRate = 8000
+	maxSampleRate = 48000
+)
+
+// sampleRate reads the sample_rate query value: def when absent, false when present but unusable.
+func sampleRate(r *http.Request, def int) (int, bool) {
+	v := r.URL.Query().Get("sample_rate")
+	if v == "" {
+		return def, true
 	}
-	return def
+	n, err := strconv.Atoi(v)
+	return n, err == nil && n >= minSampleRate && n <= maxSampleRate
+}
+
+func badSampleRate(w http.ResponseWriter) {
+	writeError(w, http.StatusBadRequest, "sample_rate must be between 8000 and 48000")
 }
 
 // handleTTSPost is the unary fallback the xAI adapter uses when the stream fails before audio.
@@ -40,8 +54,12 @@ func (s *Server) handleTTSPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rate := req.OutputFormat.SampleRate
-	if rate <= 0 {
+	if rate == 0 {
 		rate = 24000
+	}
+	if rate < minSampleRate || rate > maxSampleRate {
+		badSampleRate(w)
+		return
 	}
 	release, err := s.lim.Acquire(r.Context())
 	if err != nil {
@@ -103,7 +121,11 @@ func writeJSON(ctx context.Context, c *websocket.Conn, v any) error {
 // stays open for the next unit. Closing the socket (barge-in) cancels the running synthesis.
 func (s *Server) handleTTSWS(w http.ResponseWriter, r *http.Request) {
 	voice := s.cfg.Voice(r.URL.Query().Get("voice"))
-	rate := queryInt(r, "sample_rate", 24000)
+	rate, ok := sampleRate(r, 24000)
+	if !ok {
+		badSampleRate(w)
+		return
+	}
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return

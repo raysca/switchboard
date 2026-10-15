@@ -10,6 +10,9 @@ import (
 // registerOfflineSpeech wires offline.stt and offline.tts to the adapter in offline/.
 func registerOfflineSpeech(r *Registry) {
 	r.Register("offline.stt", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		if err := offlineEndpoint("stt_endpoint", cfg.Providers.Offline.STTEndpoint); err != nil {
+			return nil, err
+		}
 		sttCfg := xai.DefaultSTTConfig()
 		if spec.Model != "" {
 			sttCfg.Model = spec.Model
@@ -24,6 +27,9 @@ func registerOfflineSpeech(r *Registry) {
 		return xai.NewSTTProcessor(sttCfg)
 	})
 	r.Register("offline.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		if err := offlineEndpoint("tts_endpoint", cfg.Providers.Offline.TTSEndpoint); err != nil {
+			return nil, err
+		}
 		ttsCfg := xai.DefaultTTSConfig()
 		if spec.Voice != "" {
 			ttsCfg.Voice = spec.Voice

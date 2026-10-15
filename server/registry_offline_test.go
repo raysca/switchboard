@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestOfflineRegisteredAndBuildsWithoutAKey(t *testing.T) {
 	reg := NewRegistry()
@@ -44,5 +47,23 @@ func TestOfflineDefaultEndpoints(t *testing.T) {
 	c := DefaultConfig(ProfileDevelopment).Providers.Offline
 	if c.LLMEndpoint != "http://127.0.0.1:11434/v1/responses" || c.STTEndpoint != "ws://127.0.0.1:8099/v1/stt" || c.TTSEndpoint != "http://127.0.0.1:8099/v1/tts" {
 		t.Fatalf("defaults: %+v", c)
+	}
+}
+
+// Second review, finding 2: the xai processors fall back to api.x.ai when their endpoint is empty. An
+// offline stage with an empty endpoint must fail to build, never send a prompt to a cloud provider.
+func TestOfflineWithAnEmptyEndpointDoesNotBuild(t *testing.T) {
+	reg := NewRegistry()
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Providers.Offline.LLMEndpoint, cfg.Providers.Offline.STTEndpoint, cfg.Providers.Offline.TTSEndpoint = "", "", ""
+	stages := map[string]string{"llm": "llm_endpoint"}
+	if xaiSpeechEnabled {
+		stages["stt"], stages["tts"] = "stt_endpoint", "tts_endpoint"
+	}
+	for stage, key := range stages {
+		_, err := reg.factories["offline."+stage](cfg, StageSpec{Model: "m", Voice: "v"})
+		if err == nil || !strings.Contains(err.Error(), "providers.offline."+key) {
+			t.Errorf("offline.%s with an empty endpoint: %v, want an error naming providers.offline.%s", stage, err, key)
+		}
 	}
 }

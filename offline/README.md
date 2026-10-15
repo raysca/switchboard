@@ -108,6 +108,8 @@ For a live microphone call use `make dev` and the console's test call, or `make 
 | `OFFLINE_INTERIM_EVERY`, `OFFLINE_ENDPOINT_SILENCE`, `OFFLINE_MAX_UTTERANCE` | 700ms, 600ms, 25s | STT interim cadence, end-of-utterance silence, forced cut |
 | `OFFLINE_ENERGY_THRESHOLD` | 0.01 | RMS (fraction of full scale) that counts as speech |
 
+The `sample_rate` query value (and `output_format.sample_rate` on `POST /v1/tts`) must be between 8000 and 48000; anything else is refused with HTTP 400.
+
 ## Limits
 
 - Traces and usage say `provider: xai`: the xai processors hard-code the label.

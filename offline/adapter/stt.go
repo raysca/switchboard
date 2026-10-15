@@ -37,7 +37,11 @@ const preRoll = 200 * time.Millisecond
 // once more. A single worker owns the backend calls and every transcript write, so results are
 // ordered; a generation id drops an interim that finishes after its utterance's final.
 func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
-	rate := queryInt(r, "sample_rate", 16000)
+	rate, ok := sampleRate(r, 16000)
+	if !ok {
+		badSampleRate(w)
+		return
+	}
 	lang := r.URL.Query().Get("language")
 	c, err := websocket.Accept(w, r, nil)
 	if err != nil {
@@ -55,14 +59,17 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cur atomic.Uint64 // id of the utterance in progress
+	// interimCancel stops the interim decode in flight: when an utterance ends its final must not wait
+	// behind a decode whose result would be thrown away (the client allows about 2 s for the final).
+	var interimCancel atomic.Pointer[context.CancelFunc]
 	jobs := make(chan sttJob, 4)
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		s.sttWorker(ctx, c, jobs, &cur, rate, lang)
+		s.sttWorker(ctx, c, jobs, &cur, &interimCancel, rate, lang)
 	}()
 
-	clean := s.sttReadLoop(ctx, c, jobs, &cur, rate)
+	clean := s.sttReadLoop(ctx, c, jobs, &cur, &interimCancel, rate)
 	if !clean {
 		cancel() // the client is gone: stop decoding
 	}
@@ -75,7 +82,7 @@ func (s *Server) handleSTT(w http.ResponseWriter, r *http.Request) {
 
 // sttReadLoop feeds frames to the endpointer and queues jobs. It returns true when the client sent
 // audio.done and false on a read error or cancellation. It is the producer of jobs.
-func (s *Server) sttReadLoop(ctx context.Context, c *websocket.Conn, jobs chan<- sttJob, cur *atomic.Uint64, rate int) bool {
+func (s *Server) sttReadLoop(ctx context.Context, c *websocket.Conn, jobs chan<- sttJob, cur *atomic.Uint64, interimCancel *atomic.Pointer[context.CancelFunc], rate int) bool {
 	ep := NewEndpointer(rate, s.cfg.EndpointSilence, s.cfg.EnergyThreshold)
 	maxBytes := int(s.cfg.MaxUtterance/time.Second) * rate * 2
 	preBytes := int(preRoll*time.Duration(rate)/time.Second) * 2
@@ -91,6 +98,9 @@ func (s *Server) sttReadLoop(ctx context.Context, c *websocket.Conn, jobs chan<-
 				return false
 			}
 			cur.Add(1) // any interim still queued or decoding for the old id is now stale
+			if cancel := interimCancel.Swap(nil); cancel != nil {
+				(*cancel)()
+			}
 		}
 		utt, inUtt = nil, false
 		return true
@@ -145,7 +155,7 @@ func (s *Server) sttReadLoop(ctx context.Context, c *websocket.Conn, jobs chan<-
 
 // sttWorker is the only caller of the backend and the only writer of transcripts. It runs jobs in
 // order and ends when jobs is closed (audio.done or a dead client) or ctx is cancelled.
-func (s *Server) sttWorker(ctx context.Context, c *websocket.Conn, jobs <-chan sttJob, cur *atomic.Uint64, rate int, lang string) {
+func (s *Server) sttWorker(ctx context.Context, c *websocket.Conn, jobs <-chan sttJob, cur *atomic.Uint64, interimCancel *atomic.Pointer[context.CancelFunc], rate int, lang string) {
 	// However the worker exits, keep draining: the reader is the producer and may be blocked on a full
 	// queue; it ends on its own once the connection fails its next read, and then closes jobs.
 	defer func() {
@@ -160,7 +170,16 @@ func (s *Server) sttWorker(ctx context.Context, c *websocket.Conn, jobs <-chan s
 		if j.kind == "interim" && j.id != cur.Load() {
 			continue
 		}
-		text, err := s.transcribe(ctx, j.pcm, rate, lang)
+		dctx, cancel := ctx, context.CancelFunc(func() {})
+		if j.kind == "interim" {
+			dctx, cancel = context.WithCancel(ctx)
+			interimCancel.Store(&cancel)
+			if j.id != cur.Load() { // the utterance ended while this job was being picked up
+				cancel()
+			}
+		}
+		text, err := s.transcribe(dctx, j.pcm, rate, lang)
+		cancel()
 		if err != nil {
 			if j.kind == "interim" || ctx.Err() != nil {
 				continue // an interim is best effort; a cancelled ctx means the client left
