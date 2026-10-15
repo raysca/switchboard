@@ -113,3 +113,58 @@ func TestCueStartWakesIdlePacer(t *testing.T) {
 		t.Fatal("a cue started on an idle writer must reach the wire within 200 ms")
 	}
 }
+
+func TestABackgroundSetAfterTheSessionStartedIsMixedAndCanBeReplacedOrRemoved(t *testing.T) {
+	c := NewCueUnderlay(nil)
+	dst := make([]byte, 640)
+	if c.Active() || c.Rate() != 0 {
+		t.Fatal("nothing set: inactive")
+	}
+	c.SetBackground(tone{1000})
+	if !c.Active() || c.Rate() != 16000 {
+		t.Fatalf("active=%v rate=%d", c.Active(), c.Rate())
+	}
+	c.Mix(dst, nil)
+	if sample(dst, 0) != 1000 {
+		t.Fatalf("background not mixed: %d", sample(dst, 0))
+	}
+	c.SetBackground(tone{300})
+	c.Mix(dst, nil)
+	if sample(dst, 0) != 300 {
+		t.Fatalf("replacement not mixed: %d", sample(dst, 0))
+	}
+	c.SetBackground(nil)
+	if c.Active() {
+		t.Fatal("removed background must leave the underlay inactive")
+	}
+}
+
+func TestSettingTheBackgroundWhileTheWriterMixesIsRaceFree(t *testing.T) {
+	c := NewCueUnderlay(tone{1})
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		dst := make([]byte, 640)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				if c.Active() {
+					_ = c.Rate()
+					c.Mix(dst, nil)
+				}
+			}
+		}
+	}()
+	for i := 0; i < 2000; i++ {
+		if i%3 == 0 {
+			c.SetBackground(nil)
+		} else {
+			c.SetBackground(tone{int16(i)})
+		}
+	}
+	close(stop)
+	<-done
+}

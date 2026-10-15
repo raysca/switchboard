@@ -92,7 +92,6 @@ type Server struct {
 	adminAddr    string
 	wsServer     *ws.Server
 	backgrounds  map[string]background         // the sound catalogue (audio.backgrounds)
-	underlay     func() ws.Underlay            // the server-default background (audio.background_default), nil when none
 	cues         map[string]func() ws.Underlay // route cue sounds by name
 
 	mu          sync.Mutex
@@ -228,9 +227,6 @@ func NewServer(cfg *Config) (*Server, error) {
 
 	if s.backgrounds, err = loadBackgrounds(cfg, ws.FixedPlayerSampleRate); err != nil {
 		return nil, err
-	}
-	if b, ok := s.backgrounds[cfg.Audio.BackgroundDefault]; ok {
-		s.underlay = func() ws.Underlay { return b.underlay(nil, nil) }
 	}
 	if s.cues, err = loadCues(cfg, ws.FixedPlayerSampleRate); err != nil {
 		return nil, err
@@ -433,8 +429,7 @@ func (s *Server) setupRoutes() {
 	}
 
 	s.secure = sec.IsSecure
-	wsCfg.Underlay = s.underlay
-	wsCfg.Cues = len(s.cues) > 0
+	wsCfg.Cues = len(s.cues) > 0 || len(s.backgrounds) > 0 // the call's background is set once its flow is known
 	s.wsServer = ws.NewServer(wsCfg)
 	s.wsServer.OnSessionReady = s.onSessionReady
 	s.wsServer.OnText = s.onText
@@ -534,6 +529,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		return nil, fmt.Errorf("resolve flow: %w", err)
 	}
 	call.PushToTalk = conn.PushToTalk()
+	conn.SetBackground(s.backgroundFor(call.Audio))
 	var injector ContextInjector
 	call.OnInjector = func(i ContextInjector) { injector = i }
 	var greet func(string)

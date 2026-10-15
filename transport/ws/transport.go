@@ -54,7 +54,8 @@ type ServerConfig struct {
 	// must equal FixedPlayerRate. See PacedWriter.Underlay.
 	Underlay func() Underlay
 	// Cues gives every session a CueUnderlay (Connection.Cue) so the server can
-	// play a sound over the call at run time; the background, if any, is kept.
+	// play a sound over the call at run time and choose the call's background after
+	// the connection was accepted (Connection.SetBackground); Underlay's, if any, is kept.
 	Cues bool
 }
 
@@ -1175,6 +1176,14 @@ func (c *Connection) FlowID() string {
 // ID returns the unique connection identifier.
 func (c *Connection) ID() uint64 {
 	return c.id
+}
+
+// SetBackground sets the session's background ambience once the server knows what it should be
+// (needs ServerConfig.Cues; a no-op otherwise). nil removes it.
+func (c *Connection) SetBackground(u Underlay) {
+	if c.cue != nil {
+		c.cue.SetBackground(u)
+	}
 }
 
 // Cue is the session's run-time cue player (nil unless ServerConfig.Cues).

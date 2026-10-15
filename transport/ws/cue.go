@@ -10,7 +10,7 @@ import (
 // stops at run time (the route gap sound). Mix, Active and Rate run on the
 // paced writer's goroutine; Start and Stop may be called from any goroutine.
 type CueUnderlay struct {
-	bg      Underlay
+	bg      atomic.Pointer[background] // the session's ambience; set at accept or later (SetBackground)
 	cur     atomic.Pointer[cueState]
 	wake    func() // nudges an idle pacer when a cue starts; set by the transport
 	scratch []byte // Mix goroutine only; sized once
@@ -22,9 +22,32 @@ type cueState struct {
 	fadeLeft atomic.Int64 // Mix goroutine only
 }
 
-func NewCueUnderlay(background Underlay) *CueUnderlay { return &CueUnderlay{bg: background} }
+// background boxes an Underlay so it can sit in an atomic pointer.
+type background struct{ u Underlay }
 
-func (c *CueUnderlay) bgActive() bool { return c.bg != nil && c.bg.Active() }
+func NewCueUnderlay(bg Underlay) *CueUnderlay {
+	c := &CueUnderlay{}
+	c.SetBackground(bg)
+	return c
+}
+
+// SetBackground replaces the session's ambience (nil: none). Safe to call while the writer mixes, so a
+// server that learns the call's flow after the connection was accepted can choose the sound then.
+func (c *CueUnderlay) SetBackground(u Underlay) {
+	if u == nil {
+		c.bg.Store(nil)
+	} else {
+		c.bg.Store(&background{u})
+	}
+	if c.wake != nil {
+		c.wake()
+	}
+}
+
+func (c *CueUnderlay) bgActive() bool {
+	b := c.bg.Load()
+	return b != nil && b.u.Active()
+}
 
 func (c *CueUnderlay) cueActive() bool {
 	s := c.cur.Load()
@@ -32,8 +55,8 @@ func (c *CueUnderlay) cueActive() bool {
 }
 
 func (c *CueUnderlay) Rate() int {
-	if c.bg != nil {
-		return c.bg.Rate()
+	if b := c.bg.Load(); b != nil {
+		return b.u.Rate()
 	}
 	if s := c.cur.Load(); s != nil {
 		return s.u.Rate()
@@ -68,9 +91,10 @@ func (c *CueUnderlay) Stop(fade time.Duration) {
 
 // Mix fills dst with src (nil: silence) plus the background plus the cue.
 func (c *CueUnderlay) Mix(dst, src []byte) {
+	bg := c.bg.Load() // once: SetBackground may swap it between the check and the mix
 	switch {
-	case c.bgActive():
-		c.bg.Mix(dst, src)
+	case bg != nil && bg.u.Active():
+		bg.u.Mix(dst, src)
 	case src != nil:
 		copy(dst, src)
 	default:
