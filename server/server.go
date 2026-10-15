@@ -155,6 +155,7 @@ func NewServer(cfg *Config) (*Server, error) {
 	)
 	admission := NewAdmissionController(cfg, metrics)
 	registry := NewRegistry()
+	registry.PruneOffline(cfg)
 	registry.BindMetrics(metrics)
 	cfg.Warmup.Apply()
 	if cfg.Warmup.OnStart {

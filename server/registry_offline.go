@@ -19,6 +19,19 @@ func offlineEndpoint(key, value string) error {
 	return nil
 }
 
+// PruneOffline drops every offline stage whose endpoint is empty, so it is reported unavailable.
+// The production profile ships no offline endpoints: the provider is off until an operator sets
+// providers.offline.*, because it talks plaintext to whatever listens there.
+func (r *Registry) PruneOffline(cfg *Config) {
+	for stage, endpoint := range map[string]string{
+		"llm": cfg.Providers.Offline.LLMEndpoint, "stt": cfg.Providers.Offline.STTEndpoint, "tts": cfg.Providers.Offline.TTSEndpoint,
+	} {
+		if endpoint == "" {
+			delete(r.factories, factoryKey("offline", stage))
+		}
+	}
+}
+
 // registerOffline registers the local stack (offline/) on every build: offline.llm needs no build
 // tag; offline.stt and offline.tts exist only where the xAI speech adapters do.
 func registerOffline(r *Registry) {

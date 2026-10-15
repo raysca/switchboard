@@ -8,6 +8,8 @@
 
 **Tech Stack:** Go 1.27.1, `github.com/coder/websocket` v1.8.15, `net/http` stdlib, Docker Compose, Speaches (`ghcr.io/speaches-ai/speaches`), Ollama.
 
+> **Executed.** Later changes: `offline/cmd/toolcheck` (Task 9 step 3) was deleted after it picked the model, and the production profile ships the `providers.offline.*` endpoints empty so `offline` is off there until configured.
+
 **Spec:** `docs/superpowers/specs/2026-10-15-offline-speech-service-design.md` (wire contract, spike results, compose profiles). **Deviation from the spec, decided while planning:** the spec said to reuse `vad/` for endpointing. `vad/` is cgo + onnxruntime behind supervised worker processes with a 576-sample IPC protocol, which would pull cgo and a native library into the adapter image. This plan uses a ~60-line pure-Go RMS-energy endpointer instead (ceiling: noisy microphones; upgrade path is `vad/` or sherpa-onnx). Task 1 step 1 corrects the spec.
 
 ## Global Constraints

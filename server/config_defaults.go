@@ -79,9 +79,12 @@ func DefaultConfig(profile Profile) *Config {
 
 	cfg.Providers.XAITTS.Endpoint = "https://api.x.ai/v1/tts"
 
-	cfg.Providers.Offline.LLMEndpoint = "http://127.0.0.1:11434/v1/responses"
-	cfg.Providers.Offline.STTEndpoint = "ws://127.0.0.1:8099/v1/stt"
-	cfg.Providers.Offline.TTSEndpoint = "http://127.0.0.1:8099/v1/tts"
+	// The local stack (offline/) is on by default for development only; production sets these on purpose.
+	if profile != ProfileProduction {
+		cfg.Providers.Offline.LLMEndpoint = "http://127.0.0.1:11434/v1/responses"
+		cfg.Providers.Offline.STTEndpoint = "ws://127.0.0.1:8099/v1/stt"
+		cfg.Providers.Offline.TTSEndpoint = "http://127.0.0.1:8099/v1/tts"
+	}
 
 	// Observability
 	cfg.Observability.LogLevel = "info"

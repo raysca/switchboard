@@ -67,3 +67,45 @@ func TestOfflineWithAnEmptyEndpointDoesNotBuild(t *testing.T) {
 		}
 	}
 }
+
+// Second review, finding 3: in the production profile offline is off until an operator configures it.
+// Its stages are then not registered, so flows see them as unavailable instead of "ready" and failing
+// on the first call, and a tenant cannot reach plaintext loopback services through the provider.
+func TestOfflineIsOffInProductionUntilConfigured(t *testing.T) {
+	prod := DefaultConfig(ProfileProduction).Providers.Offline
+	if prod.LLMEndpoint != "" || prod.STTEndpoint != "" || prod.TTSEndpoint != "" {
+		t.Fatalf("production defaults must be empty, got %+v", prod)
+	}
+	reg := NewRegistry()
+	reg.PruneOffline(DefaultConfig(ProfileProduction))
+	for _, stage := range []string{"llm", "stt", "tts"} {
+		if reg.Supports("offline", stage) {
+			t.Errorf("offline.%s is registered in the production profile with no endpoint", stage)
+		}
+	}
+}
+
+func TestOfflineKeepsOnlyTheStagesThatHaveAnEndpoint(t *testing.T) {
+	cfg := DefaultConfig(ProfileProduction)
+	cfg.Providers.Offline.LLMEndpoint = "http://ollama.internal:11434/v1/responses"
+	reg := NewRegistry()
+	reg.PruneOffline(cfg)
+	if !reg.Supports("offline", "llm") || reg.Supports("offline", "stt") || reg.Supports("offline", "tts") {
+		t.Fatalf("llm=%v stt=%v tts=%v, want only llm", reg.Supports("offline", "llm"), reg.Supports("offline", "stt"), reg.Supports("offline", "tts"))
+	}
+}
+
+func TestNewServerPrunesUnconfiguredOffline(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Providers.Offline.LLMEndpoint = ""
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.registry.Supports("offline", "llm") {
+		t.Fatal("NewServer left offline.llm registered with an empty endpoint")
+	}
+	if xaiSpeechEnabled && !s.registry.Supports("offline", "stt") {
+		t.Fatal("NewServer dropped offline.stt although its endpoint is set")
+	}
+}
