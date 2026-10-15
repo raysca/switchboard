@@ -185,3 +185,23 @@ func TestAuthenticatedMCPCreateValidateDetailAndExecuteJSONContract(t *testing.T
 type allAvailable struct{}
 
 func (allAvailable) Check(string, string) flow.Unavailable { return flow.Unavailable{} }
+
+// A deleted detach result carries no server object (omitempty is a no-op on structs).
+func TestDetachDeleteResultOmitsServerWhenDeleted(t *testing.T) {
+	svc, _ := newTestService(t, &testRemote{}, testTokens{})
+	id := mustCreateMCP(t, svc)
+	r := httptest.NewRequest("POST", "/api/v1/mcp-servers/"+id+"/detach-delete", strings.NewReader(`{"confirm":true}`))
+	r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	Handler(svc).ServeHTTP(w, r)
+	var body struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != 200 {
+		t.Fatalf("status=%d err=%v body=%s", w.Code, err, w.Body.String())
+	}
+	if _, ok := body.Data["server"]; ok {
+		t.Fatalf("deleted result has a server key: %s", w.Body.String())
+	}
+}

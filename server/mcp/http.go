@@ -132,7 +132,8 @@ func Handler(service *Service) http.Handler {
 			api.WriteJSON(w, 200, api.SuccessResponse[DetachResult]{Data: DetachResult{Deleted: true}})
 			return
 		}
-		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: view(m, service.tokens)}})
+		v := view(m, service.tokens)
+		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: &v}})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/validate", func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(w, r)
@@ -186,9 +187,9 @@ type ServerView struct {
 	LastDiscoveredAt  *time.Time `json:"last_discovered_at,omitempty"`
 }
 type DetachResult struct {
-	Pending bool       `json:"pending"`
-	Deleted bool       `json:"deleted"`
-	Server  ServerView `json:"server,omitempty"`
+	Pending bool        `json:"pending"`
+	Deleted bool        `json:"deleted"`
+	Server  *ServerView `json:"server,omitempty"`
 }
 type ServerDetail struct {
 	ServerView
