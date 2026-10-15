@@ -98,10 +98,8 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Failover.LLMBudget, cfg.Failover.LLMFirstToken = defaultLLMFailoverBudget, defaultLLMFirstToken
 	// Quiet-caller handling is on: a call nobody is on would otherwise cost money until max_call_duration.
 	// idle.user_timeout: 0 turns it off; a flow can set its own (flow idle).
-	cfg.Idle.UserTimeout = 15 * time.Second
-	cfg.Idle.MaxPrompts = 2
-	cfg.Idle.Prompt = "Are you still there?"
-	cfg.Idle.Goodbye = "I'll end the call now. Goodbye."
+	cfg.Idle.UserTimeout, cfg.Idle.MaxPrompts = defaultUserTimeout, defaultMaxPrompts
+	cfg.Idle.Prompt, cfg.Idle.Goodbye = defaultIdlePrompt, defaultIdleBye
 	cfg.Idle.BotMaxStuck = 3
 	cfg.Audio.AllowFlowBackground = profile == ProfileDevelopment
 	cfg.DTMF.AggregateTimeout = 2 * time.Second

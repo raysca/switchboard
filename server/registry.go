@@ -116,6 +116,9 @@ type CallSpec struct {
 	VADStopMS int
 	// STTP99MS overrides the STT p99 for this call if > 0.
 	STTP99MS int
+	// Idle and Audio are the flow's quiet-caller and audio settings (nil: the server's).
+	Idle  *flow.IdleSettings
+	Audio *flow.AudioSettings
 	// PushToTalk: the client opted in at client-ready. Turns start and end
 	// only on its push-to-talk messages (ExternalStart/ExternalStop).
 	PushToTalk bool
@@ -533,11 +536,15 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		return fail(fmt.Errorf("create stt processor: %w", err))
 	}
 	built = append(built, sttProc)
+	idleCfg := cfg.Idle.forCall(call.Idle)
+	if err := idleCfg.validate(cfg.DTMF.Aggregate, cfg.DTMF.AggregateTimeout); err != nil {
+		return fail(fmt.Errorf("flow idle settings: %w", err)) // the server's DTMF rules changed since the flow was published
+	}
 	dt, err := buildDTMF(cfg, &call)
 	if err != nil {
 		return fail(fmt.Errorf("create dtmf processors: %w", err))
 	}
-	inFilter, err := buildInputFilter(cfg, r.onFilter)
+	inFilter, err := buildInputFilter(cfg, call.Audio, r.onFilter)
 	if err != nil {
 		return fail(fmt.Errorf("create input filter: %w", err))
 	}
@@ -552,7 +559,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	// function_call mute: every LLM stage's tool executor reports in-flight calls.
 	var muteTools *coreturn.ToolActivity
-	if (cfg.Turn.Manager && slices.Contains(cfg.Turn.Mute, coreturn.MuteFunctionCall)) || cfg.Idle.enabled() { // idle also pauses while a tool runs
+	if (cfg.Turn.Manager && slices.Contains(cfg.Turn.Mute, coreturn.MuteFunctionCall)) || idleCfg.enabled() { // idle also pauses while a tool runs
 		muteTools = coreturn.NewToolActivity()
 	}
 	// The trigger is on every call: finished async tools, route flips and operator notes
@@ -758,7 +765,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 
 	procs := []core.Processor{vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc, &core.UnitFailureReporter{}}
-	idleProc, err := cfg.Idle.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, held, call.Flow != nil && call.Flow.CanEnd)
+	idleProc, err := idleCfg.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, held, call.Flow != nil && call.Flow.CanEnd)
 	if err != nil {
 		return fail(fmt.Errorf("create idle controller: %w", err))
 	}
@@ -803,7 +810,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if idleProc != nil {
 		idleProc.SetSpeakIndex(slices.Index(procs, ttsProc)) // after every front insertion (dt.in, inFilter shift it)
 	}
-	if g, err := buildOutputGain(cfg); err != nil {
+	if g, err := buildOutputGain(cfg, call.Audio); err != nil {
 		return fail(fmt.Errorf("create output gain: %w", err))
 	} else if g != nil {
 		procs = append(procs, g) // last stage: scales speech and DTMF tones

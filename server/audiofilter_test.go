@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"govoice/server/flow"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,8 +72,8 @@ func TestAudioFilterPipelineOrder(t *testing.T) {
 func TestAudioFilterPerCallInstances(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Audio.InputFilters = []string{"denoise"}
-	a, _ := buildInputFilter(cfg, nil)
-	b, _ := buildInputFilter(cfg, nil)
+	a, _ := buildInputFilter(cfg, nil, nil)
+	b, _ := buildInputFilter(cfg, nil, nil)
 	if a == nil || a == b {
 		t.Fatal("filter processor must be new per call")
 	}
@@ -102,7 +103,7 @@ func TestAudioFilterMetrics(t *testing.T) {
 
 func TestAudioOutputConfigValidationAndBuild(t *testing.T) {
 	c := DefaultConfig(ProfileDevelopment)
-	if g, err := buildOutputGain(c); g != nil || err != nil {
+	if g, err := buildOutputGain(c, nil); g != nil || err != nil {
 		t.Fatalf("0 dB must insert no stage: %v %v", g, err)
 	}
 	if m, err := loadBackgrounds(c, 24000); len(m) != 0 || err != nil {
@@ -134,7 +135,7 @@ func TestAudioOutputConfigValidationAndBuild(t *testing.T) {
 		t.Fatalf("background gain_db 0 rejected: %v", err)
 	}
 	c.Audio.OutputGainDB = -6
-	g, err := buildOutputGain(c)
+	g, err := buildOutputGain(c, nil)
 	if err != nil || g == nil {
 		t.Fatalf("gain stage: %v %v", g, err)
 	}
@@ -237,3 +238,36 @@ func tooManyCues(path string) map[string]CueConfig {
 }
 
 func ptrB(v bool) *bool { return &v }
+
+func TestAFlowsAudioSettingsReplaceTheServersPerCall(t *testing.T) {
+	zero, minusSix := 0.0, -6.0
+	strong := 0.8
+	c := DefaultConfig(ProfileDevelopment)
+	// Server defaults: nothing on.
+	if f, err := buildInputFilter(c, nil, nil); f != nil || err != nil {
+		t.Fatalf("server off, flow silent: %v %v", f, err)
+	}
+	if f, err := buildInputFilter(c, &flow.AudioSettings{Denoise: &flow.DenoiseSettings{}}, nil); f == nil || err != nil {
+		t.Fatalf("flow denoise on, server off: %v %v", f, err)
+	}
+	if f, err := buildInputFilter(c, &flow.AudioSettings{Denoise: &flow.DenoiseSettings{Strength: &strong}}, nil); f == nil || err != nil {
+		t.Fatalf("flow denoise with a strength: %v %v", f, err)
+	}
+	if f, err := buildInputFilter(c, &flow.AudioSettings{OutputGainDB: &minusSix}, nil); f != nil || err != nil {
+		t.Fatalf("a flow without denoise leaves the server's choice: %v %v", f, err)
+	}
+	if g, err := buildOutputGain(c, &flow.AudioSettings{OutputGainDB: &minusSix}); g == nil || err != nil {
+		t.Fatalf("flow gain, server 0: %v %v", g, err)
+	}
+	// Server on: the flow's silence keeps it, an explicit 0 dB removes the gain stage.
+	c.Audio.InputFilters, c.Audio.OutputGainDB = []string{"denoise"}, -3
+	if f, _ := buildInputFilter(c, &flow.AudioSettings{OutputGainDB: &minusSix}, nil); f == nil {
+		t.Fatal("server denoise lost when the flow only sets gain")
+	}
+	if g, _ := buildOutputGain(c, nil); g == nil {
+		t.Fatal("server gain lost for a flow with no audio settings")
+	}
+	if g, err := buildOutputGain(c, &flow.AudioSettings{OutputGainDB: &zero}); g != nil || err != nil {
+		t.Fatalf("an explicit 0 dB must override the server's -3: %v %v", g, err)
+	}
+}

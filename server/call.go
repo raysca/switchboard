@@ -199,6 +199,8 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		StoredSessionID:     rs.Pin.ID,
 		Recording:           cfg.Recording.Active(),
 		VADStopMS:           cfg.VADStopMS,
+		Idle:                cfg.Idle,
+		Audio:               cfg.Audio,
 		STTP99MS:            cfg.STTP99MS,
 		Flow:                graph,
 	}, nil

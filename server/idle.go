@@ -2,10 +2,12 @@ package server
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"govoice/core"
 	coreturn "govoice/core/turn"
+	"govoice/server/flow"
 )
 
 // IdleConfig enables the user-idle prompt/hang-up and the bot-idle (stuck
@@ -35,6 +37,39 @@ type IdleConfig struct {
 	BotTimeout  time.Duration `yaml:"bot_timeout"`
 	BotMaxStuck int           `yaml:"bot_max_stuck"`
 	BotFallback string        `yaml:"bot_fallback"`
+}
+
+// The built-in quiet-caller defaults: what the server config starts from and what a flow's idle settings
+// fall back to for any member they leave out.
+const (
+	defaultUserTimeout = 15 * time.Second
+	defaultMaxPrompts  = 2
+	defaultIdlePrompt  = "Are you still there?"
+	defaultIdleBye     = "I'll end the call now. Goodbye."
+)
+
+// forCall is the idle config one call runs: the server's, unless its flow sets idle. A flow's idle
+// replaces the user-idle members as one unit (members it leaves out take the built-in defaults, so what
+// the editor shows is what the call does); the bot-idle watchdog always stays the server's.
+func (c IdleConfig) forCall(f *flow.IdleSettings) IdleConfig {
+	if f == nil {
+		return c
+	}
+	c.UserTimeout, c.MaxPrompts, c.Prompt, c.PromptMode, c.Goodbye = defaultUserTimeout, defaultMaxPrompts, defaultIdlePrompt, "", defaultIdleBye
+	if f.UserTimeoutMS != nil {
+		c.UserTimeout = time.Duration(*f.UserTimeoutMS) * time.Millisecond
+	}
+	if f.MaxPrompts != nil {
+		c.MaxPrompts = *f.MaxPrompts
+	}
+	if p := strings.TrimSpace(f.Prompt); p != "" {
+		c.Prompt = p
+	}
+	c.PromptMode = f.PromptMode
+	if g := strings.TrimSpace(f.Goodbye); g != "" {
+		c.Goodbye = g
+	}
+	return c
 }
 
 func (c IdleConfig) enabled() bool { return c.UserTimeout > 0 || c.BotTimeout > 0 }

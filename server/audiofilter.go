@@ -11,6 +11,7 @@ import (
 	"govoice/core"
 	"govoice/core/audio/filter"
 	"govoice/core/audio/mixer"
+	"govoice/server/flow"
 	"govoice/transport/ws"
 )
 
@@ -95,12 +96,20 @@ func loadCues(cfg *Config, rate int) (map[string]func() ws.Underlay, error) {
 	return out, nil
 }
 
-// buildOutputGain returns the pre-transport gain stage, or nil at 0 dB.
-func buildOutputGain(cfg *Config) (core.Processor, error) {
-	if cfg == nil || cfg.Audio.OutputGainDB == 0 {
+// buildOutputGain returns the pre-transport gain stage, or nil at 0 dB. A flow's output_gain_db
+// (even an explicit 0) replaces the server's.
+func buildOutputGain(cfg *Config, flowAudio *flow.AudioSettings) (core.Processor, error) {
+	if cfg == nil {
 		return nil, nil
 	}
-	return mixer.NewGain(cfg.Audio.OutputGainDB)
+	db := cfg.Audio.OutputGainDB
+	if flowAudio != nil && flowAudio.OutputGainDB != nil {
+		db = *flowAudio.OutputGainDB
+	}
+	if db == 0 {
+		return nil, nil
+	}
+	return mixer.NewGain(db)
 }
 
 // background is a catalogue sound loaded once for the process (at unity, resampled to the transport's
@@ -141,28 +150,33 @@ func loadBackgrounds(cfg *Config, rate int) (map[string]background, error) {
 }
 
 // buildInputFilter returns the per-call filter processor, or nil when no
-// filters are configured (the pipeline is then unchanged). Each call gets its
-// own filter instances: they carry per-session adaptive state.
-func buildInputFilter(cfg *Config, obs filter.Observer) (core.Processor, error) {
-	if cfg == nil || len(cfg.Audio.InputFilters) == 0 {
+// filters are on (the pipeline is then unchanged). The server's input_filters apply to every call; a
+// flow can also turn denoise on for its own calls. Each call gets its own filter instances: they carry
+// per-session adaptive state.
+func buildInputFilter(cfg *Config, flowAudio *flow.AudioSettings, obs filter.Observer) (core.Processor, error) {
+	if cfg == nil {
 		return nil, nil
 	}
-	var fs []filter.Filter
-	for _, n := range cfg.Audio.InputFilters {
-		switch n {
-		case "denoise":
-			s := cfg.Audio.DenoiseStrength
-			if s == 0 {
-				s = filter.DefaultDnSt
-			}
-			d, err := filter.NewDenoiser(s)
-			if err != nil {
-				return nil, err
-			}
-			fs = append(fs, d)
-		default:
-			return nil, fmt.Errorf("unknown input filter %q", n)
+	strength, denoise := cfg.Audio.DenoiseStrength, slices.Contains(cfg.Audio.InputFilters, "denoise")
+	if flowAudio != nil && flowAudio.Denoise != nil {
+		strength, denoise = filter.DefaultDnSt, true
+		if s := flowAudio.Denoise.Strength; s != nil {
+			strength = *s
 		}
+	}
+	var fs []filter.Filter
+	if denoise {
+		if strength == 0 {
+			strength = filter.DefaultDnSt
+		}
+		d, err := filter.NewDenoiser(strength)
+		if err != nil {
+			return nil, err
+		}
+		fs = append(fs, d)
+	}
+	if len(fs) == 0 {
+		return nil, nil
 	}
 	c := filter.NewChain(fs...)
 	c.SetObserver(obs)
