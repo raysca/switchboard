@@ -845,6 +845,26 @@ func TestRunner_FinalBeforeFinishThenEndIsQuiet(t *testing.T) {
 	}
 }
 
+// An empty Final (noise retracted) settles the turn: nothing heard remains
+// uncommitted, so the stream's end is not a lost utterance.
+func TestRunner_EmptyFinalSettlesTheTurn(t *testing.T) {
+	conn := newFakeConn(t)
+	h := newHarness(t, Config{Dial: dialConn(conn)})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	conn.results <- recvResult{res: Result{Text: "uh"}}
+	h.waitFor("interim", func() bool { return len(h.candidates()) == 1 })
+	conn.results <- recvResult{res: Result{Final: true}}
+	h.post(&core.UserStoppedSpeakingFrame{})
+	h.waitFor("finish sent", func() bool { return slices.Contains(conn.snapshot(), "finish") })
+	conn.results <- recvResult{err: ErrStreamEnded}
+	h.waitFor("released", func() bool { return h.r.Streams() == 0 })
+	time.Sleep(20 * time.Millisecond)
+	if n := len(h.errorFrames()) + len(h.invalidations()); n != 0 || len(h.candidates()) != 1 {
+		t.Fatalf("retracted noise called lost: %d frames, %d candidates", n, len(h.candidates()))
+	}
+}
+
 // A bound stream whose pre-roll flush fails lost the turn's held audio: the
 // turn is invalidated (so failover replays it) and nothing redials this turn.
 func TestRunner_FlushSendFailureLosesBoundTurn(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"govoice/core"
 	"govoice/core/coretest"
 	"govoice/core/resilience"
+	"govoice/core/sttunit"
 )
 
 // fakeDeepgram is a local Deepgram: handler runs once per accepted socket.
@@ -644,4 +645,62 @@ func TestSTT_UnboundFinalResurfacesAfterFinish(t *testing.T) {
 		c := h.candidates()
 		return len(c) > 0 && c[len(c)-1].Text == "hello there" && c[len(c)-1].Final
 	})
+}
+
+func dgMsg(text string, final, speechFinal, fromFinalize bool) *message {
+	m := &message{IsFinal: final, SpeechFinal: speechFinal, FromFinalize: fromFinalize}
+	m.Channel.Alternatives = []struct {
+		Transcript string `json:"transcript"`
+	}{{Transcript: text}}
+	return m
+}
+
+// The runner drops results that arrive while a stream is unbound, so the Conn
+// itself must keep the committed text and re-surface it on the next result.
+// Deterministic: results is a pure function of (conn state, message).
+func TestDGConn_ResurfacesCommittedTextAfterUnboundFinal(t *testing.T) {
+	c := &dgConn{}
+	_ = c.results(dgMsg("hello there", true, false, false)) // heard while unbound; the runner drops it
+	got := c.results(dgMsg("", true, true, true))
+	if want := (sttunit.Result{Text: "hello there", Final: true, EndOfUtterance: true}); got != want {
+		t.Fatalf("after Finish: %+v, want %+v", got, want)
+	}
+	if got := c.results(dgMsg("x", false, false, false)); got.Text != "hello there x" || got.Final {
+		t.Fatalf("interim after: %+v", got)
+	}
+	// an empty final with nothing committed settles without text
+	if got := (&dgConn{}).results(dgMsg("", true, false, false)); got != (sttunit.Result{Final: true}) {
+		t.Fatalf("empty final: %+v", got)
+	}
+}
+
+// Noise retracted (interim, then an empty final) settles the turn: a clean
+// close afterwards is not a lost utterance.
+func TestSTT_EmptyFinalThenCleanCloseIsQuiet(t *testing.T) {
+	f := newFake(t, func(ctx context.Context, c *websocket.Conn) {
+		for {
+			typ, data, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			switch {
+			case typ == websocket.MessageBinary:
+				_ = c.Write(ctx, websocket.MessageText, results("uh", false, false, false))
+				_ = c.Write(ctx, websocket.MessageText, results("", true, false, false))
+			case strings.Contains(string(data), "Finalize"):
+				_ = c.Write(ctx, websocket.MessageText, results("", true, false, true))
+			case strings.Contains(string(data), "CloseStream"):
+				_ = c.Close(websocket.StatusNormalClosure, "")
+			}
+		}
+	})
+	h := start(t, f.cfg(), nil)
+	h.speak(t)
+	waitFor(t, "interim", func() bool { return len(h.candidates()) >= 1 })
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{})
+	waitFor(t, "release", func() bool { return h.proc.activeCount() == 0 })
+	time.Sleep(50 * time.Millisecond)
+	if len(h.errors()) != 0 {
+		t.Fatalf("retracted noise called lost: %v", h.errors())
+	}
 }

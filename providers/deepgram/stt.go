@@ -235,6 +235,9 @@ func (c *dgConn) results(m *message) sttunit.Result {
 		c.committed = text
 	}
 	eou := m.SpeechFinal || m.FromFinalize
+	if text == "" && m.IsFinal { // noise retracted: settles the turn, emits nothing
+		return sttunit.Result{Final: true, EndOfUtterance: eou}
+	}
 	if seg == "" && !(m.IsFinal && eou) {
 		return sttunit.Result{}
 	}

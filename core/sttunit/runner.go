@@ -663,6 +663,13 @@ func (r *Runner) invalidate(st *stream, cause error) {
 // emit turns a result into a candidate for the stream's turn.
 func (r *Runner) emit(st *stream, res Result) {
 	if res.Text == "" {
+		if res.Final { // an empty Final retracts what was heard: nothing is left uncommitted
+			st.mu.Lock()
+			if st.turn != "" {
+				st.lastText, st.settled = "", true
+			}
+			st.mu.Unlock()
+		}
 		return
 	}
 	st.mu.Lock()
