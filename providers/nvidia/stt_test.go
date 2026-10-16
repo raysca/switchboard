@@ -141,6 +141,16 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
+// ensureStream dials one stream the way the runner's stream task does, then
+// closes it (breaker tests).
+func (p *STTProcessor) ensureStream(ctx context.Context) error {
+	c, err := p.dial(ctx)
+	if err == nil {
+		c.Close()
+	}
+	return err
+}
+
 // Interim, final, then the drain after the user stops: cumulative text, the
 // config message and the NVCF metadata.
 func TestSTT_InterimFinalDrain(t *testing.T) {
@@ -187,6 +197,52 @@ func TestSTT_InterimFinalDrain(t *testing.T) {
 	md := <-f.md
 	if md.Get("function-id")[0] != "fn-123" || md.Get("authorization")[0] != "Bearer nvapi-test-key-0123456789" {
 		t.Fatalf("metadata: %v", md)
+	}
+	if n := len(h.errs()); n != 0 {
+		t.Fatalf("a normal turn raised errors: %v", h.errs())
+	}
+}
+
+// Text heard while unbound is kept by the Conn and surfaces, cumulative, in
+// the first result after binding (the runner drops results of an unbound
+// stream by design).
+func TestSTTConn_ResurfacesUnboundTextCumulatively(t *testing.T) {
+	c := &sttConn{}
+	r, ok := c.results(result("hel", false, 0.4))
+	if !ok || r.Text != "hel" || r.Final || !r.HasStability {
+		t.Fatalf("interim: %+v ok=%v", r, ok)
+	}
+	if r, _ = c.results(result("hello", true, 0)); r.Text != "hello" || !r.Final || r.EndOfUtterance {
+		t.Fatalf("final before CloseSend: %+v", r)
+	}
+	if r, _ = c.results(result("wor", false, 0.2)); r.Text != "hello wor" || r.Final {
+		t.Fatalf("cumulative interim: %+v", r)
+	}
+	c.closing.Store(true)
+	if r, _ = c.results(result("world", true, 0)); r.Text != "hello world" || !r.Final || !r.EndOfUtterance {
+		t.Fatalf("final after CloseSend: %+v", r)
+	}
+	if _, ok := c.results(result("  ", true, 0)); ok {
+		t.Fatal("an empty segment produced a result")
+	}
+}
+
+// An unbound stream the server ends cleanly owed no turn: quiet.
+func TestSTT_UnboundCleanEndIsQuiet(t *testing.T) {
+	f, cc := newFake(t, func(ctx context.Context, s rivapb.RivaSpeechRecognition_StreamingRecognizeServer) error {
+		_, err := s.Recv() // first audio
+		return err
+	})
+	h := start(t, f.cfg(cc))
+	h.audio() // no UserStartedSpeaking: no turn bound
+	select {
+	case <-f.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the RPC never ended")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(h.errs()); n != 0 {
+		t.Fatalf("unbound end raised errors: %v", h.errs())
 	}
 }
 
@@ -301,7 +357,7 @@ func TestDial_SSRFGuard(t *testing.T) {
 	cfg.RetryPolicy = resilience.Policy{MaxAttempts: 1, AttemptTimeout: time.Second}
 	h := start(t, cfg)
 	h.speak()
-	waitFor(t, "open error", func() bool { return h.proc.Errors.Load() > 0 })
+	waitFor(t, "open error", func() bool { _, _, _, n := h.proc.STTCounts(); return n > 0 })
 	if len(h.candidates()) != 0 {
 		t.Fatal("unexpected candidates")
 	}
@@ -362,7 +418,7 @@ func TestSTT_BreakerOpensOnOutageNotOnAuth(t *testing.T) {
 		before := len(h.errs())
 		h.speak()
 		waitFor(t, "stream error", func() bool { return len(h.errs()) > before })
-		h.proc.finishActive("", 0) // let the next speech open a fresh stream
+		_ = h.sess.Post(&core.UserStoppedSpeakingFrame{}) // let the next speech open a fresh stream
 	}
 	waitFor(t, "breaker open", func() bool { return cfg.CircuitBreaker.WouldRefuse() })
 	if err := h.proc.ensureStream(context.Background()); !errors.Is(err, ErrCircuitOpen) {
@@ -394,14 +450,11 @@ func TestSTT_TeardownAndRebind(t *testing.T) {
 	h := start(t, f.cfg(cc))
 	h.speak()
 	waitFor(t, "open", func() bool { return f.opens.Load() == 1 })
-	h.proc.beginTurn("turn-1-1", 2) // same turn, newer generation
+	_ = h.sess.Post(&core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "turn-1-1", Gen: 2}) // same turn, newer generation
 	h.audio()
 	time.Sleep(50 * time.Millisecond)
 	if f.opens.Load() != 1 {
 		t.Fatalf("rebind reopened the stream: %d opens", f.opens.Load())
-	}
-	if turn, gen := h.proc.active.owner(); turn != "turn-1-1" || gen != 2 {
-		t.Fatalf("owner = %s/%d", turn, gen)
 	}
 	_ = h.proc.Close()
 	select {
@@ -429,7 +482,7 @@ func TestSTT_NewTurnFinalizesOldStream(t *testing.T) {
 	h := start(t, f.cfg(cc))
 	h.speak()
 	waitFor(t, "open", func() bool { return f.opens.Load() == 1 })
-	h.proc.beginTurn("turn-9-9", 9)
+	_ = h.sess.Post(&core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "turn-9-9", Gen: 9})
 	waitFor(t, "half-close", sawEOF.Load)
 }
 
@@ -452,5 +505,58 @@ func TestSTT_EchoedMetadataRedacted(t *testing.T) {
 		if strings.Contains(msg, "0123456789") || !strings.Contains(msg, "[REDACTED]") {
 			t.Fatalf("key leaked or not redacted: %s", msg)
 		}
+	}
+}
+
+// A8: the server ends the RPC (OK status, io.EOF) before our CloseSend: the
+// turn still owed its transcript, so it is invalidated.
+func TestSTT_CleanCloseMidUtteranceInvalidatesTurn(t *testing.T) {
+	f, cc := newFake(t, func(ctx context.Context, s rivapb.RivaSpeechRecognition_StreamingRecognizeServer) error {
+		_, err := s.Recv() // first audio
+		return err
+	})
+	cfg := f.cfg(cc)
+	cfg.CircuitBreaker = resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Minute})
+	h := start(t, cfg)
+	h.speak()
+	waitFor(t, "invalidating error", func() bool {
+		for _, err := range h.errs() {
+			if errors.Is(err, core.ErrTranscriptInvalidated) {
+				return true
+			}
+		}
+		return false
+	})
+	if cfg.CircuitBreaker.WouldRefuse() {
+		t.Fatal("a clean end is not an outage")
+	}
+}
+
+// Riva may answer CloseSend with no further result: a final before it already
+// committed the text, so the RPC's end is quiet, not a lost turn (settled = Final).
+func TestSTT_FinalBeforeCloseSendThenEndIsQuiet(t *testing.T) {
+	f, cc := newFake(t, func(ctx context.Context, s rivapb.RivaSpeechRecognition_StreamingRecognizeServer) error {
+		if _, err := s.Recv(); err != nil { // first audio
+			return err
+		}
+		_ = s.Send(result("hello", true, 0)) // a final, before any CloseSend: no EndOfUtterance
+		for {                                // until the client half-closes; then end with nothing more
+			if _, err := s.Recv(); err != nil {
+				return nil
+			}
+		}
+	})
+	h := start(t, f.cfg(cc))
+	h.speak()
+	waitFor(t, "final", func() bool { c := h.candidates(); return len(c) == 1 && c[0].Final && !c[0].EndOfUtterance })
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{})
+	select {
+	case <-f.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the RPC never ended")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(h.errs()); n != 0 {
+		t.Fatalf("a committed turn raised errors: %v", h.errs())
 	}
 }

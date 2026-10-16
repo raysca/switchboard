@@ -16,10 +16,9 @@ import (
 )
 
 var (
-	ErrCircuitOpen         = resilience.ErrCircuitOpen // shared with every provider
-	ErrProviderUnavailable = errors.New("nvidia: provider unavailable")
-	ErrMissingFunctionID   = errors.New("nvidia: function_id is required for the hosted endpoint")
-	ErrMissingAPIKey       = errors.New("nvidia: api_key is required for the hosted endpoint")
+	ErrCircuitOpen       = resilience.ErrCircuitOpen // shared with every provider
+	ErrMissingFunctionID = errors.New("nvidia: function_id is required for the hosted endpoint")
+	ErrMissingAPIKey     = errors.New("nvidia: api_key is required for the hosted endpoint")
 )
 
 // ProviderError is a sanitized, classified Riva failure.
