@@ -595,7 +595,7 @@ func TestRunner_ProviderCloseRacingSendIsQuiet(t *testing.T) {
 		return second, nil
 	}})
 	t.Cleanup(func() { close(first.closeGate) }) // runs before the harness cleanup
-	h.audio(1) // unbound stream: a provider end owes nobody a transcript (A8 applies to bound turns)
+	h.audio(1)                                   // unbound stream: a provider end owes nobody a transcript (A8 applies to bound turns)
 	h.waitFor("open", func() bool { return first.recvs.Load() >= 1 })
 	first.setSendErr(errors.New("write: use of closed connection"))
 	first.results <- recvResult{err: ErrStreamEnded}
