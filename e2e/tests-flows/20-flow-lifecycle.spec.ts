@@ -246,12 +246,16 @@ test("flows list: status, enable toggle without a new version, copy and archive"
   await expect(row).toContainText("Ready");
   expect(await current(), "toggling Enabled must not publish a version").toBe(before);
 
+  // Duplicate and Archive live in the row's "More actions" menu (a <details>), closed until opened.
+  await row.locator("summary").click();
   await row.getByRole("button", { name: `Duplicate ${FLOW}` }).click();
   // The server names a copy "<name> copy" (server/flow/service.go, Duplicate).
   const copyName = `${FLOW} copy`;
   const copy = page.getByRole("link", { name: copyName, exact: true });
   await expect(copy).toBeVisible();
-  await copy.locator("xpath=ancestor::li[1]").getByRole("button", { name: `Archive ${copyName}` }).click();
+  const copyRow = copy.locator("xpath=ancestor::li[1]");
+  await copyRow.locator("summary").click();
+  await copyRow.getByRole("button", { name: `Archive ${copyName}` }).click();
   await page.getByRole("button", { name: "Archive flow" }).click();
   await expect(page.getByRole("link", { name: copyName, exact: true })).toHaveCount(0);
 });

@@ -62,9 +62,10 @@ test("repeated wrong keys are throttled and the page says so", async ({ page, re
   // (b) the CORRECT key is never throttled, so the admin still gets in.
   await key.fill(stack.managementKey);
   await connect.click();
-  // "Uptime" renders only from an authenticated /api/v1/operations/status response (the key badge
-  // shows for any non-empty key), and a refused key would show the rejection message instead.
-  await expect(page.getByText("Uptime", { exact: true })).toBeVisible();
+  // The dashboard's "System <health> · up <time>" status renders only from an authenticated
+  // /api/v1/operations/status response (the key badge shows for any non-empty key), and a refused key
+  // would show the rejection message instead.
+  await expect(page.getByText(/^System \w+ · up /)).toBeVisible();
   await expect(page.getByText(/Management key was rejected/)).toHaveCount(0);
   await expect(page.getByText(/too many failed attempts/i)).toHaveCount(0);
 });
