@@ -434,3 +434,98 @@ func TestCloseStopsFirstTokenWatchdog(t *testing.T) {
 		t.Fatal("watchdog started a fallback after Close")
 	}
 }
+
+// toolCaller announces one tool call and, once released, settles it at the
+// generation it ran in, like a provider's tool loop.
+type toolCaller struct {
+	s       core.SessionController
+	idx     int
+	release chan struct{}
+	started atomic.Bool
+	late    bool // announce only after release too (an attempt abandoned before its call frame)
+}
+
+func (p *toolCaller) Attach(s core.SessionController, i int) error { p.s, p.idx = s, i; return nil }
+func (p *toolCaller) ProcessFrame(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+	um, ok := f.(*core.UserMessageFrame)
+	if !ok {
+		return e.PushDirection(f, d)
+	}
+	if err := e.Push(f); err != nil {
+		return err
+	}
+	gen := um.Gen
+	call := core.ToolCall{ID: "call-1", Name: "lookup", SessionID: "s", TurnID: core.TurnID(um.Turn), Generation: core.Generation(gen)}
+	return p.s.Go(func(ctx context.Context) {
+		if !p.late {
+			_ = p.s.Reenter(&core.ToolCallFrame{Call: call}, core.Downstream, p.idx+1, gen)
+		}
+		p.started.Store(true)
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+			return
+		}
+		if p.late {
+			_ = p.s.Reenter(&core.ToolCallFrame{Call: call}, core.Downstream, p.idx+1, gen)
+		}
+		_ = p.s.Reenter(&core.ToolResultFrame{Turn: call.TurnID, Gen: call.Generation, Result: core.ToolResult{CallID: call.ID, Status: core.ToolCancelled}}, core.Downstream, p.idx+1, gen)
+	})
+}
+
+func countOf[T core.Frame](frames []core.Frame) int {
+	n := 0
+	for _, f := range frames {
+		if _, ok := f.(T); ok {
+			n++
+		}
+	}
+	return n
+}
+
+func TestToolResultOfAnInterruptedCandidateStillReachesTheSession(t *testing.T) {
+	primary := &toolCaller{release: make(chan struct{})}
+	r := newFailoverRig(t, core.LLMFailoverConfig{Candidates: []core.LLMCandidate{
+		{Provider: "a", Proc: primary}, {Provider: "b", Proc: fake([]string{"x"}, 0, nil)}}})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { return primary.started.Load() && countOf[*core.ToolCallFrame](r.rec.GetFrames()) == 1 })
+	if err := r.sess.Post(&core.InterruptionFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	r.waitFor(t, func() bool { return countOf[*core.InterruptionFrame](r.rec.GetFrames()) >= 1 })
+	close(primary.release)
+	r.waitFor(t, func() bool { return countOf[*core.ToolResultFrame](r.rec.GetFrames()) == 1 })
+}
+
+func TestToolCallOfAnAbandonedCandidateStillReachesTheSession(t *testing.T) {
+	primary := &toolCaller{release: make(chan struct{}), late: true}
+	r := newFailoverRig(t, core.LLMFailoverConfig{Candidates: []core.LLMCandidate{
+		{Provider: "a", Proc: primary}, {Provider: "b", Proc: fake([]string{"x"}, 0, nil)}}})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { return primary.started.Load() })
+	if err := r.sess.Post(&core.InterruptionFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	r.waitFor(t, func() bool { return countOf[*core.InterruptionFrame](r.rec.GetFrames()) >= 1 })
+	close(primary.release) // the attempt is done: its loop announced the call before it saw the interruption
+	r.waitFor(t, func() bool {
+		f := r.rec.GetFrames()
+		return countOf[*core.ToolCallFrame](f) == 1 && countOf[*core.ToolResultFrame](f) == 1
+	})
+}
+
+// Pin (passes before this task too): a tool call is the candidate's first
+// output, so the first-token watchdog never replays a turn whose tool runs long.
+func TestToolCallIsTheFirstOutput(t *testing.T) {
+	primary, backup := &toolCaller{release: make(chan struct{})}, fake([]string{"x"}, 0, nil)
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}},
+		FirstTokenTimeout: 40 * time.Millisecond,
+	})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { return primary.started.Load() })
+	time.Sleep(120 * time.Millisecond) // past the deadline: asserts an absence
+	if backup.Started.Load() != 0 {
+		t.Fatal("a turn whose model called a tool was replayed on the fallback")
+	}
+}

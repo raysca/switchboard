@@ -616,3 +616,53 @@ func TestXAIProviderFenceStopsBatchWhenGenerationChangesDuringHandler(t *testing
 		}
 	}
 }
+
+func TestXAIToolLoopFramesReachTheSession(t *testing.T) {
+	var n atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n.Add(1) == 1 {
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"weather\",\"arguments\":\"{}\"}}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"weather\",\"arguments\":\"{}\"}]}}\n\n")
+		} else {
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Sunny.\"}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"output_text\":\"Sunny.\"}}\n\n")
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+	defs := []core.ToolDefinition{{Name: "weather", Description: "Get weather", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{"weather":"sunny"}`)}, nil
+	}), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proc, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: server.URL, Model: "grok-test", HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newMockSessionController(3, 4)
+	if err := proc.Attach(session, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "turn-1", Gen: 4, Content: "weather"}, core.Downstream, &mockEmitter{}); err != nil {
+		t.Fatal(err)
+	}
+	session.taskWg.Wait()
+	var got []string
+	session.reenteredMu.Lock()
+	for _, f := range session.reentered {
+		switch f := f.(type) {
+		case *core.ToolCallFrame:
+			got = append(got, "call:"+f.Call.ID)
+		case *core.ToolResultFrame:
+			got = append(got, "result:"+f.Result.CallID+":"+string(f.Result.Status))
+		}
+	}
+	session.reenteredMu.Unlock()
+	if strings.Join(got, ",") != "call:call_1,result:call_1:succeeded" {
+		t.Fatalf("frames %v", got)
+	}
+}

@@ -44,6 +44,7 @@ type stageProbe struct {
 	closed        map[string]int
 	units         map[string]int      // synthesis units each TTS voice was asked to speak
 	said          map[string][]string // the text of those units, by voice
+	tools         map[string][]string // tool calls and results each stage saw ("call:<name>", "result:<status>")
 	failTTS       string              // a TTS voice whose build fails
 	holdTTS       string              // a TTS voice whose build waits for gate
 	failAfterHold bool                // the held build fails once released (a provider that times out)
@@ -68,6 +69,13 @@ func (p *stageProbe) sayings(voice string) []string {
 	return append([]string(nil), p.said[voice]...)
 }
 
+// toolFrames is the tool calls and results a stage saw, in order.
+func (p *stageProbe) toolFrames(k string) []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.tools[k]...)
+}
+
 type probedStage struct {
 	core.Processor
 	key   string
@@ -86,6 +94,16 @@ func (s *probedStage) ProcessFrame(ctx context.Context, f core.Frame, dir core.D
 		s.probe.mu.Lock()
 		s.probe.units[s.key]++
 		s.probe.said[s.key] = append(s.probe.said[s.key], u.Text)
+		s.probe.mu.Unlock()
+	}
+	switch v := f.(type) {
+	case *core.ToolCallFrame:
+		s.probe.mu.Lock()
+		s.probe.tools[s.key] = append(s.probe.tools[s.key], "call:"+v.Call.Name)
+		s.probe.mu.Unlock()
+	case *core.ToolResultFrame:
+		s.probe.mu.Lock()
+		s.probe.tools[s.key] = append(s.probe.tools[s.key], "result:"+string(v.Result.Status))
 		s.probe.mu.Unlock()
 	}
 	return s.Processor.ProcessFrame(ctx, f, dir, e)
@@ -132,7 +150,7 @@ func (p *stageProbe) install(s *Server) {
 }
 
 func newProbe() *stageProbe {
-	return &stageProbe{built: map[string]int{}, closed: map[string]int{}, units: map[string]int{}, said: map[string][]string{}, gate: make(chan struct{}), entered: make(chan struct{})}
+	return &stageProbe{built: map[string]int{}, closed: map[string]int{}, units: map[string]int{}, said: map[string][]string{}, tools: map[string][]string{}, gate: make(chan struct{}), entered: make(chan struct{})}
 }
 
 type flowRigE2E struct {

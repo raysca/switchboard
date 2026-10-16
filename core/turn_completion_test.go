@@ -48,6 +48,10 @@ func (l *scriptLLM) ProcessFrame(_ context.Context, f core.Frame, dir core.Direc
 	}
 	var full strings.Builder
 	for _, c := range chunks {
+		if c == "<stale-tool>" { // a call frame of another (older) turn, delivered late
+			_ = l.sess.Reenter(&core.ToolCallFrame{Call: core.ToolCall{ID: "c0", Name: "t", TurnID: "old-turn"}}, core.Downstream, l.index+1, gen)
+			continue
+		}
 		if c == "<tool>" {
 			_ = l.sess.Reenter(&core.ToolCallFrame{Call: core.ToolCall{ID: "c1", Name: "t"}}, core.Downstream, l.index+1, gen)
 			continue
@@ -378,5 +382,21 @@ func TestCompletion_LookalikesAndRepeatedMarkers(t *testing.T) {
 		if r.asst.Held() {
 			t.Fatalf("%q: held", tc.chunks)
 		}
+	}
+}
+
+// Call frames now survive the generation fence, so one of an older turn can arrive while a new reply is being
+// judged: it must not make that reply tool-first.
+func TestCompletion_AToolCallOfAnotherTurnIsNotToolFirst(t *testing.T) {
+	r := newComplRig(t, func(turn, _ string) []string {
+		if strings.HasPrefix(turn, "completion-") {
+			return nil // the nudge never answers in this test
+		}
+		return []string{"<stale-tool>", "◐ Sunny today."}
+	})
+	r.say("turn-1", "weather?")
+	waitFor(t, "hold", r.asst.Held)
+	if u := units(r.shape()); len(u) != 0 {
+		t.Fatalf("an older turn's tool call made the reply tool-first: spoke %q", u)
 	}
 }

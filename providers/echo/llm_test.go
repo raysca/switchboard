@@ -357,3 +357,69 @@ func TestEchoReportsACancelledToolRequestToo(t *testing.T) {
 		t.Fatalf("error channel carried %v", got)
 	}
 }
+
+func TestEchoCallsEveryMCPToolItsMessageNames(t *testing.T) {
+	c := NewLLMClient(LLMOptions{
+		Phrases: map[string]string{"call tool lookup_order": "mcp__x_lookup_order", "call tool echo": "mcp__x_echo", "transfer to sales": "transfer_to_sales"},
+		Spoken:  map[string]string{"mcp__x_lookup_order": "lookup_order", "mcp__x_echo": "echo"},
+	})
+	defs := []core.ToolDefinition{{Name: "mcp__x_lookup_order", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(`call tool lookup_order {"order_id":"42"} then call tool echo {"text":"hi"} and transfer to sales`), nil, defs, core.ToolCall{})
+	var calls []core.ToolCall
+	for _, ck := range collect(t, ch, errs) {
+		calls = append(calls, ck.ToolCalls...)
+	}
+	if len(calls) != 2 || calls[0].Name != "mcp__x_lookup_order" || string(calls[0].Arguments) != `{"order_id":"42"}` ||
+		calls[1].Name != "mcp__x_echo" || string(calls[1].Arguments) != `{"text":"hi"}` || calls[0].ID == calls[1].ID {
+		t.Fatalf("calls %+v", calls)
+	}
+}
+
+func TestRealLLMProcessorReportsToolFramesBeforeItsAnswer(t *testing.T) {
+	history := core.NewConversationContext(core.ContextConfig{})
+	cfg := google.DefaultLLMConfig()
+	cfg.Provider = "echo"
+	cfg.Client = NewLLMClient(LLMOptions{Phrases: map[string]string{"transfer to sales": "transfer_to_sales"}})
+	cfg.ToolDefinitions = tools
+	cfg.ToolExecutor = core.ToolExecutorFunc(func(_ context.Context, call core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{}`)}, nil
+	})
+	cfg.ToolHistory = history
+	cfg.ContextProvider = history.Messages
+	proc, err := google.NewLLMProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	sess, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	_ = proc.Attach(sess, 0)
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	if err := history.AddMessage(core.Message{Role: core.RoleUser, Content: "please transfer to sales", TurnID: "turn-1"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = sess.Post(&core.UserMessageFrame{Turn: "turn-1", Gen: 1, Content: "please transfer to sales"})
+	var got []string
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		got = got[:0]
+		for _, f := range sink.GetFrames() {
+			switch v := f.(type) {
+			case *core.ToolCallFrame:
+				got = append(got, "call:"+v.Call.Name)
+			case *core.ToolResultFrame:
+				got = append(got, "result:"+string(v.Result.Status))
+			case *core.LLMTextFrame:
+				got = append(got, "text")
+			}
+		}
+		if len(got) >= 3 {
+			break
+		}
+	}
+	if strings.Join(got, ",") != "call:transfer_to_sales,result:succeeded,text" {
+		t.Fatalf("frames %v", got)
+	}
+}

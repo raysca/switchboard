@@ -366,7 +366,7 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			} else {
 				currentLoop := p.cfg.ToolLoop.WithTraceContext(streamCtx).WithCurrentFence(func(call core.ToolCall) bool {
 					return call.SessionID == core.SessionID(fmt.Sprint(s.ID())) && call.TurnID == core.TurnID(turn) && call.Generation == core.Generation(gen) && p.isCurrent(gen)
-				})
+				}).WithFrames(func(f core.Frame) { _ = s.Reenter(f, core.Downstream, p.index, gen) })
 				_, opErr = currentLoop.Run(streamCtx, initialCalls, func(roundCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
 					if roundCtx.Err() != nil || sessionCtx.Err() != nil || !p.isCurrent(gen) {
 						return nil, false, context.Canceled

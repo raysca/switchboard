@@ -440,3 +440,38 @@ func TestRetiredModelIsClientError(t *testing.T) {
 		}
 	}
 }
+
+func TestToolLoopFramesReachTheSession(t *testing.T) {
+	var n atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		if n.Add(1) == 1 {
+			sse(w, `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","function":{"name":"weather","arguments":"{}"}}]}}]}`, "[DONE]")
+			return
+		}
+		sse(w, `{"choices":[{"delta":{"content":"done"}}]}`, "[DONE]")
+	}))
+	defer srv.Close()
+	defs := []core.ToolDefinition{{Name: "weather", Description: "d", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(_ context.Context, c core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{CallID: c.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{}`)}, nil
+	}), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := run(t, Config{BaseURL: srv.URL, ToolDefinitions: defs, ToolLoop: loop, HTTPClient: srv.Client()})
+	var got []string
+	for _, f := range s.got {
+		switch f := f.(type) {
+		case *core.ToolCallFrame:
+			got = append(got, "call:"+f.Call.ID)
+		case *core.ToolResultFrame:
+			got = append(got, "result:"+f.Result.CallID+":"+string(f.Result.Status))
+		case *core.LLMTextFrame:
+			got = append(got, "text:"+f.Text)
+		}
+	}
+	if strings.Join(got, ",") != "call:call_a,result:call_a:succeeded,text:done" {
+		t.Fatalf("frames %v", got)
+	}
+}

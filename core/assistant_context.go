@@ -204,7 +204,8 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		return e.PushDirection(f, dir)
 
 	case FrameToolCall:
-		if p.gate != nil && !p.gate.decided {
+		// Call frames survive the generation fence: only this reply's own call is tool-first.
+		if tc := f.(*ToolCallFrame); p.gate != nil && !p.gate.decided && !p.isStaleTurn(string(tc.Call.TurnID), uint64(tc.Call.Generation)) {
 			p.gate.lenient = true // a tool call before any text: the turn is complete
 		}
 		return e.PushDirection(f, dir)

@@ -568,7 +568,8 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 				p.Errors.Add(1)
 				return
 			}
-			loop = loop.WithTraceContext(genCtx).WithCurrentFence(func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) })
+			loop = loop.WithTraceContext(genCtx).WithCurrentFence(func(call core.ToolCall) bool { return p.isCurrentGeneration(uint64(call.Generation)) }).
+				WithFrames(func(f core.Frame) { _ = p.session.Reenter(f, core.Downstream, p.index+1, gen) })
 			_, loopErr := loop.Run(genCtx, calls, func(continueCtx context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
 				committed = false
 				for _, result := range results {

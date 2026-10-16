@@ -67,12 +67,12 @@ func (c *LLMClient) stream(ctx context.Context, history []core.Message, hasTools
 			}
 		}
 		promptTokens := wordCount(history)
-		if call, ok := c.toolCall(history, hasTools); ok {
+		if calls := c.toolCalls(history, hasTools); len(calls) > 0 {
 			if err := ctx.Err(); err != nil { // cancelled before the call: report it, emit nothing
 				errs <- err
 				return
 			}
-			if !send(google.LLMStreamChunk{ToolCalls: []core.ToolCall{call}, PromptTokens: promptTokens, TotalTokens: promptTokens}) {
+			if !send(google.LLMStreamChunk{ToolCalls: calls, PromptTokens: promptTokens, TotalTokens: promptTokens}) {
 				errs <- ctx.Err()
 			}
 			return
@@ -160,29 +160,58 @@ func (c *LLMClient) toolAnswer(m core.Message) string {
 	return "Tool " + spoken + " returned " + m.Content
 }
 
-// toolCall is the call the last user message asks for (first matching phrase in sorted order, so
-// the choice is deterministic), unless the model is already answering a tool result.
-func (c *LLMClient) toolCall(history []core.Message, hasTools bool) (core.ToolCall, bool) {
+// toolCalls is what the user's own last message asks for, unless the model is already answering a
+// tool result: every attached MCP tool whose phrase it contains, in the order the phrases appear, each
+// with the {json} that follows its phrase (several make one parallel round); otherwise the first other
+// phrase (a transfer, end_call) in sorted order, so the choice is deterministic.
+// ponytail: offsets assume ToLower keeps byte lengths (ASCII messages); otherwise every call gets the
+// message's first {json}.
+func (c *LLMClient) toolCalls(history []core.Message, hasTools bool) []core.ToolCall {
 	// Only the user's own last message asks for a tool: an older one must not call it again.
 	if !hasTools || len(history) == 0 {
-		return core.ToolCall{}, false
+		return nil
 	}
 	if last := history[len(history)-1]; last.Role != core.RoleUser || last.Kind != "" && last.Kind != core.MessageText {
-		return core.ToolCall{}, false
+		return nil
 	}
 	msg := lastUser(history)
 	lower := strings.ToLower(msg)
+	type hit struct {
+		at   int
+		name string
+	}
+	var mcp []hit
 	for _, p := range c.phrases {
-		if strings.Contains(lower, p) {
-			name := c.o.Phrases[p]
-			args := json.RawMessage(`{}`)
-			if _, say := c.o.Spoken[name]; say {
-				args = toolArguments(msg)
-			}
-			return core.ToolCall{ID: "echo-call-" + strconv.FormatUint(callSeq.Add(1), 10), Name: name, Arguments: args}, true
+		name := c.o.Phrases[p]
+		if _, spoken := c.o.Spoken[name]; !spoken {
+			continue
+		}
+		if at := strings.Index(lower, p); at >= 0 {
+			mcp = append(mcp, hit{at + len(p), name})
 		}
 	}
-	return core.ToolCall{}, false
+	if len(mcp) > 0 {
+		sort.Slice(mcp, func(i, j int) bool { return mcp[i].at < mcp[j].at })
+		calls := make([]core.ToolCall, 0, len(mcp))
+		for _, h := range mcp {
+			args := toolArguments(msg)
+			if len(lower) == len(msg) {
+				args = toolArguments(msg[h.at:])
+			}
+			calls = append(calls, c.call(h.name, args))
+		}
+		return calls
+	}
+	for _, p := range c.phrases {
+		if strings.Contains(lower, p) {
+			return []core.ToolCall{c.call(c.o.Phrases[p], json.RawMessage(`{}`))}
+		}
+	}
+	return nil
+}
+
+func (c *LLMClient) call(name string, args json.RawMessage) core.ToolCall {
+	return core.ToolCall{ID: "echo-call-" + strconv.FormatUint(callSeq.Add(1), 10), Name: name, Arguments: args}
 }
 
 func lastUser(history []core.Message) string {

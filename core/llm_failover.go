@@ -232,6 +232,11 @@ func (w *LLMFailover) begin(ctx context.Context, um *UserMessageFrame, dir Direc
 
 // fromCandidate sees every frame a candidate re-enters.
 func (w *LLMFailover) fromCandidate(idx int, f Frame, dir Direction, resume int, gen uint64) error {
+	if _, settles := f.(*ToolResultFrame); settles {
+		// An announced call is settled whatever became of its attempt
+		// (interrupted, abandoned).
+		return w.session.Reenter(f, dir, resume, gen)
+	}
 	w.mu.Lock()
 	g := w.cur
 	switch {
@@ -240,8 +245,12 @@ func (w *LLMFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 		return w.session.Reenter(f, dir, resume, gen)
 	case g.done || g.order[g.pos] != idx:
 		// A finished, interrupted or abandoned attempt: drop, whatever its
-		// generation (a replay can start under a newer one than g.gen).
+		// generation (a replay can start under a newer one than g.gen), except
+		// a tool call its loop already announced (it may be running).
 		w.mu.Unlock()
+		if _, announced := f.(*ToolCallFrame); announced {
+			return w.session.Reenter(f, dir, resume, gen)
+		}
 		return nil
 	case gen != 0 && gen != g.gen:
 		w.mu.Unlock()
