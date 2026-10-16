@@ -367,3 +367,57 @@ func TestPushToTalk(t *testing.T) {
 		}
 	}
 }
+
+// Pipecat's default function_call_report_level is "none": the call's id only.
+func TestFunctionCallMessagesCarryTheIDOnly(t *testing.T) {
+	h := rtvi.NewHandler()
+	var got []string
+	add := func(msgs []string) {
+		for _, m := range msgs {
+			var msg rtvi.Message
+			if err := json.Unmarshal([]byte(m), &msg); err != nil {
+				t.Fatal(err)
+			}
+			if msg.Label != rtvi.LabelRTVI || msg.ID == "" {
+				t.Fatalf("envelope %s", m)
+			}
+			got = append(got, msg.Type+" "+string(msg.Data))
+		}
+	}
+	add(h.FunctionCallStarted("call-1"))
+	add(h.FunctionCallStarted("call-2"))
+	add(h.FunctionCallStopped("call-1", false))
+	add(h.FunctionCallStopped("call-2", true))
+	want := []string{
+		`llm-function-call-started {}`,
+		`llm-function-call-in-progress {"tool_call_id":"call-1"}`,
+		`llm-function-call-started {}`,
+		`llm-function-call-in-progress {"tool_call_id":"call-2"}`,
+		`llm-function-call-stopped {"tool_call_id":"call-1","cancelled":false}`,
+		`llm-function-call-stopped {"tool_call_id":"call-2","cancelled":true}`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestFunctionCallStoppedOnlyForAnnouncedCalls(t *testing.T) {
+	h := rtvi.NewHandler()
+	if msgs := h.FunctionCallStopped("never-announced", true); len(msgs) != 0 {
+		t.Fatalf("stopped a call that was never announced: %v", msgs)
+	}
+	h.FunctionCallStarted("call-1")
+	if msgs := h.FunctionCallStopped("call-1", false); len(msgs) != 1 {
+		t.Fatalf("announced call not stopped: %v", msgs)
+	}
+	if msgs := h.FunctionCallStopped("call-1", false); len(msgs) != 0 {
+		t.Fatal("a call was stopped twice")
+	}
+	for i := 0; i < 64; i++ { // results that never came
+		h.FunctionCallStarted(fmt.Sprint("lost-", i))
+	}
+	h.FunctionCallStarted("late") // the 65th forgets the lost ones
+	if len(h.FunctionCallStopped("lost-0", false)) != 0 || len(h.FunctionCallStopped("late", false)) != 1 {
+		t.Fatal("the announced-call set is not bounded to 64")
+	}
+}

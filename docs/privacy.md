@@ -163,6 +163,7 @@ privacy:
   are not exported). Debug events and stored traces are metadata only. Tool
   arguments/results are not stored by the server and are not exported to
   OTel (no tool-content redactor is configured).
+- **Tool calls on the client wire:** `llm-function-call-started`, `-in-progress` and `-stopped` carry only the call's `tool_call_id` (and `cancelled`), Pipecat's default `function_call_report_level` `none`: no tool name, arguments or result reaches the client, whatever the redaction settings.
 - **NOT covered:** the live LLM context; anything the STT/LLM/TTS providers
   receive; the client's `user-transcription`; audio recordings (speech and DTMF
   tones remain); the summarizer input; content already stored before the

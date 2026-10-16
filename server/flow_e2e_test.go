@@ -212,9 +212,24 @@ type e2eCall struct {
 	sessionID string // the stored session (the token's jti)
 	mu        sync.Mutex
 	texts     []string
+	fn        []fnEvent // llm-function-call-* messages, in arrival order
 	audio     []audioArrival
 	seq       int
 	done      chan struct{} // closed when the server ends the connection
+}
+
+// fnEvent is one llm-function-call-* message the client received.
+type fnEvent struct {
+	Type        string         `json:"type"`
+	Data        map[string]any `json:"data"`
+	Raw         string         `json:"-"` // the whole message, as sent
+	TextsBefore int            `json:"-"` // bot-llm-text messages received before it
+}
+
+func (c *e2eCall) fnEvents() []fnEvent {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.fn)
 }
 
 // audioArrival is one bot audio frame on the wire. The fake TTS sends silence,
@@ -227,12 +242,18 @@ type audioArrival struct {
 
 func (r *flowRigE2E) dial(flowID string) *e2eCall {
 	r.t.Helper()
+	return r.dialToken(r.voiceToken(flowID))
+}
+
+// voiceToken issues a voice token for flowID, as an integration's backend does.
+func (r *flowRigE2E) voiceToken(flowID string) string {
+	r.t.Helper()
 	w := apiRequest(r.s, http.MethodPost, "/api/v1/voice-tokens", e2eMgmtKey, `{"principal":"alice","flow_id":"`+flowID+`"}`)
 	var resp struct {
 		Data struct{ Token string } `json:"data"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	return r.dialToken(resp.Data.Token)
+	return resp.Data.Token
 }
 
 // dialToken connects with an already issued voice token (a draft token, for one).
@@ -277,6 +298,15 @@ func (c *e2eCall) read() {
 					c.mu.Lock()
 					c.texts = append(c.texts, m.Data)
 					c.mu.Unlock()
+				}
+				if strings.Contains(m.Data, `"type":"llm-function-call-`) {
+					ev := fnEvent{Raw: m.Data}
+					if json.Unmarshal([]byte(m.Data), &ev) == nil {
+						c.mu.Lock()
+						ev.TextsBefore = len(c.texts)
+						c.fn = append(c.fn, ev)
+						c.mu.Unlock()
+					}
 				}
 			case *core.InputAudioFrame: // server-to-client audio decodes as an audio frame
 				peak := 0
