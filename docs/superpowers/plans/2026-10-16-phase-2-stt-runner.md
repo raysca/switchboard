@@ -173,7 +173,12 @@ Here `settled` means the last emitted candidate was `Final`, so all heard text i
 1. A `Finish` write that fails after words were heard (the runner closes the stream quietly, as every adapter does today).
 2. A mid-stream `Recv` failure that is not `ErrStreamEnded` (a plain `ErrorFrame`, as today; `STTFailover` still fails over on its class).
 
-Routing them through `invalidate` would force failover class `server_error` even for client errors (`core/stt_failover.go:478-483`), changing the class-based failover policy. That needs its own decision.
+Two further gaps found in review (accepted, not fixed):
+
+3. Adoption race: a provider idle-close that arrives just after `beginTurn` adopts an unbound stream invalidates the new turn (the stream was healthy when adopted and lost the turn's first words). Failover replays the turn, so the cost is one replay.
+4. A real write failure that lands just before `ErrStreamEnded` is treated as quiet (`handleAudio` sees `st.ended` set, or the stream stopped), so it is neither counted nor reported to the breaker. The next audio opens a fresh stream.
+
+Routing items 1 and 2 through `invalidate` would force failover class `server_error` even for client errors (`core/stt_failover.go:478-483`), changing the class-based failover policy. That needs its own decision.
 
 ### Decision 5: Google and xAI do not migrate; they get local fixes (Task 2.7)
 

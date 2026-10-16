@@ -618,6 +618,35 @@ func TestRunner_ProviderCloseRacingSendIsQuiet(t *testing.T) {
 	}
 }
 
+// The bound variant: the provider's end loses the turn (A8: one invalidation, one
+// ErrorFrame, one count), and a Send racing that close adds nothing and tells the
+// breaker nothing.
+func TestRunner_ProviderCloseRacingSendOnBoundStreamIsOnlyA8(t *testing.T) {
+	first := newFakeConn(t)
+	first.closeGate, first.closeEntered = make(chan struct{}), make(chan struct{})
+	br := resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
+	h := newHarness(t, Config{Dial: dialConn(first), Breaker: br, Classify: func(error) resilience.Verdict { return resilience.Verdict{Retryable: true} }})
+	t.Cleanup(func() { close(first.closeGate) })
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	h.waitFor("open", func() bool { return first.recvs.Load() >= 1 })
+	first.setSendErr(errors.New("write: use of closed connection"))
+	first.results <- recvResult{err: ErrStreamEnded}
+	<-first.closeEntered
+	err := h.r.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: []byte{1, 0}}, core.Downstream, discard{})
+	if err != nil {
+		t.Fatalf("ProcessFrame err = %v, want nil", err)
+	}
+	h.waitFor("invalidation and error", func() bool { return len(h.invalidations()) == 1 && len(h.errorFrames()) == 1 })
+	time.Sleep(20 * time.Millisecond)
+	if _, _, _, n := h.r.STTCounts(); n != 1 {
+		t.Fatalf("errors counted = %d, want 1 (the A8 invalidation only)", n)
+	}
+	if len(h.errorFrames()) != 1 || br.WouldRefuse() {
+		t.Fatalf("error frames = %d, breaker open = %v", len(h.errorFrames()), br.WouldRefuse())
+	}
+}
+
 // A panicking provider Close on the drain timer goroutine must not take the
 // process down; the stream is still removed.
 func TestRunner_DrainTimeoutRecoversProviderClosePanic(t *testing.T) {

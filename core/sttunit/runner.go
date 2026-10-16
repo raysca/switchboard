@@ -663,8 +663,9 @@ func (r *Runner) dropTurn(st *stream, cause error) {
 }
 
 // invalidate retires the bound turn's partial transcript, then raises the
-// error an STT failover replays the turn on (the xai M3-09 shape). A clean
-// end is not an outage, so the breaker is not told.
+// error an STT failover replays the turn on (the xai M3-09 shape). It tells
+// the breaker nothing itself: a clean end is not an outage, and a write
+// failure was already reported by its caller (run's flush path).
 func (r *Runner) invalidate(st *stream, cause error) {
 	turn, gen := st.owner()
 	gen = r.frameGen(gen)
@@ -672,7 +673,7 @@ func (r *Runner) invalidate(st *stream, cause error) {
 		return // the session is closing
 	}
 	_ = r.session.Reenter(&core.ErrorFrame{
-		Err:  fmt.Errorf("%w: %s stream ended mid-utterance: %w", core.ErrTranscriptInvalidated, r.cfg.Provider, cause),
+		Err:  fmt.Errorf("%w: %s stream lost mid-utterance: %w", core.ErrTranscriptInvalidated, r.cfg.Provider, cause),
 		Turn: core.TurnID(turn), Gen: core.Generation(gen),
 	}, core.Downstream, r.index+1, gen)
 }
