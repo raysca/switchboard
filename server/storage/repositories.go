@@ -174,6 +174,16 @@ func (r FlowRepository) Version(ctx context.Context, id string) (FlowVersion, er
 	}
 	return v, nil
 }
+
+// VersionByNumber returns one numbered version of a flow with its selected tools, or sql.ErrNoRows.
+// Versions are immutable, so this is what an earlier publish looked like.
+func (r FlowRepository) VersionByNumber(ctx context.Context, flowID string, number int) (FlowVersion, error) {
+	var id string
+	if err := r.s.db.QueryRowContext(ctx, r.s.bind("SELECT id FROM flow_versions WHERE flow_id=? AND version=?"), flowID, number).Scan(&id); err != nil {
+		return FlowVersion{}, err
+	}
+	return r.Version(ctx, id)
+}
 func (r FlowRepository) Archive(ctx context.Context, id string) error {
 	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE flows SET archived=?,enabled=?,updated_at=? WHERE id=?"), boolValue(r.s.dialect, true), boolValue(r.s.dialect, false), utc(time.Now()), id)
 	if err != nil {

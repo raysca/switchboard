@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ type FlowService interface {
 	Update(context.Context, string, flow.UpdateRequest) (flow.Flow, error)
 	Archive(context.Context, string) error
 	Duplicate(context.Context, string, string) (flow.Flow, error)
+	VersionByNumber(context.Context, string, int) (flow.Version, error)
 }
 
 // NewFlowsHandler constructs the authenticated management route handler for
@@ -62,6 +64,10 @@ func (h flowsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusOK, SuccessResponse[map[string]bool]{Data: map[string]bool{"archived": true}})
 		return
 	}
+	if len(parts) == 3 && parts[1] == "versions" {
+		h.version(w, r, parts[0], parts[2], requestID)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "duplicate" {
 		h.duplicate(w, r, parts[0], requestID)
 		return
@@ -98,6 +104,25 @@ func (h flowsHandler) collection(w http.ResponseWriter, r *http.Request, request
 	default:
 		flowMethodNotAllowed(w, requestID, "GET, POST")
 	}
+}
+
+// version serves GET /flows/{id}/versions/{number}: one earlier publish, read-only.
+func (h flowsHandler) version(w http.ResponseWriter, r *http.Request, id, number, requestID string) {
+	if r.Method != http.MethodGet {
+		flowMethodNotAllowed(w, requestID, "GET")
+		return
+	}
+	n, err := strconv.Atoi(number)
+	if err != nil || n < 1 {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "version must be a positive number", requestID)
+		return
+	}
+	v, err := h.service.VersionByNumber(r.Context(), id, n)
+	if err != nil {
+		h.writeServiceError(w, err, requestID)
+		return
+	}
+	WriteJSON(w, http.StatusOK, SuccessResponse[flow.Version]{Data: v})
 }
 
 func (h flowsHandler) item(w http.ResponseWriter, r *http.Request, id, requestID string) {

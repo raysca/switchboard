@@ -2,6 +2,7 @@ package flow
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -431,3 +432,26 @@ func TestRuntimeResolutionFollowsProviderAvailability(t *testing.T) {
 }
 
 func stringPointer(value string) *string { return &value }
+
+// An earlier publish can be read back by number, so a client can show it or publish it again.
+func TestVersionByNumberReturnsAnEarlierPublish(t *testing.T) {
+	svc := testService(t)
+	ctx := context.Background()
+	a, err := svc.Create(ctx, CreateRequest{Name: "Support", Config: validConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(ctx, a.ID, UpdateRequest{Config: validConfig()}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.VersionByNumber(ctx, a.ID, 1)
+	if err != nil || first.Number != 1 || first.ConfigHash != a.Version.ConfigHash {
+		t.Fatalf("version 1 = %+v err=%v, created = %+v", first, err, a.Version)
+	}
+	if second, err := svc.VersionByNumber(ctx, a.ID, 2); err != nil || second.Number != 2 {
+		t.Fatalf("version 2 = %+v err=%v", second, err)
+	}
+	if _, err := svc.VersionByNumber(ctx, a.ID, 3); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("a version that was never published should be sql.ErrNoRows, got %v", err)
+	}
+}

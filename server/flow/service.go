@@ -236,6 +236,16 @@ func (s *Service) checkConfigTools(ctx context.Context, id string, config json.R
 	return checkStepTools(g, current)
 }
 
+// VersionByNumber returns an earlier published version (config and tool selection) so a client can show it or
+// publish it again with Update. Nothing is written: restoring is a normal publish of the old content.
+func (s *Service) VersionByNumber(ctx context.Context, id string, number int) (Version, error) {
+	v, err := s.store.Flows().VersionByNumber(ctx, id, number)
+	if err != nil {
+		return Version{}, err
+	}
+	return toVersion(v), nil
+}
+
 func (s *Service) Archive(ctx context.Context, id string) error {
 	return s.store.Flows().Archive(ctx, id)
 }

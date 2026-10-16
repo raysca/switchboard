@@ -282,3 +282,45 @@ func TestDuplicateFlow_SchemaDrift_Returns400(t *testing.T) {
 	}
 	wantInvalidSelection(t, r.do(http.MethodPost, "/api/v1/flows/"+env.Data.ID+"/duplicate", `{}`))
 }
+
+func TestFlowVersionEndpointIsReadOnlyAndNumbered(t *testing.T) {
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "flow-versions.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	handler := NewFlowsHandler(flow.NewService(store, allAvailable{}))
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	config := `{"stt":{"provider":"google","model":"g.stt"},"llm":{"provider":"google","model":"g.llm"},"tts":{"provider":"google","voice":"g.tts"}}`
+	created := request(http.MethodPost, "/api/v1/flows", `{"name":"Voice","config":`+config+`}`)
+	var envelope struct {
+		Data flow.Flow `json:"data"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &envelope); err != nil || envelope.Data.ID == "" {
+		t.Fatalf("create response=%s err=%v", created.Body, err)
+	}
+	base := "/api/v1/flows/" + envelope.Data.ID + "/versions/"
+	if got := request(http.MethodGet, base+"1", ""); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"number":1`) {
+		t.Fatalf("version 1 status=%d body=%s", got.Code, got.Body)
+	}
+	for _, tc := range []struct {
+		method, path string
+		want         int
+	}{
+		{http.MethodGet, base + "2", http.StatusNotFound},
+		{http.MethodGet, base + "0", http.StatusBadRequest},
+		{http.MethodGet, base + "abc", http.StatusBadRequest},
+		{http.MethodPost, base + "1", http.StatusMethodNotAllowed},
+		{http.MethodDelete, base + "1", http.StatusMethodNotAllowed},
+	} {
+		if got := request(tc.method, tc.path, ""); got.Code != tc.want {
+			t.Errorf("%s %s = %d (%s), want %d", tc.method, tc.path, got.Code, got.Body, tc.want)
+		}
+	}
+}
