@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"govoice/core/coretest"
 	"sync"
 	"testing"
@@ -75,10 +76,11 @@ func TestEndCauses(t *testing.T) {
 }
 
 func TestSTTOutageEndsTheCallOnlyAfterTwoFailuresWithNoTranscriptBetween(t *testing.T) {
-	downFrame := func() *core.ErrorFrame {
-		return &core.ErrorFrame{Err: errors.Join(core.ErrSTTUnavailable, errors.New("refused"))}
+	turn := 0
+	down := func() *core.ErrorFrame { // each call is the next turn's failure
+		turn++
+		return &core.ErrorFrame{Err: errors.Join(core.ErrSTTUnavailable, errors.New("refused")), Turn: core.TurnID(fmt.Sprintf("turn-%d", turn))}
 	}
-	down := downFrame
 	other := &core.ErrorFrame{Err: errors.New("tts failed")}
 
 	var o sttOutage
@@ -101,6 +103,25 @@ func TestSTTOutageEndsTheCallOnlyAfterTwoFailuresWithNoTranscriptBetween(t *test
 	o.observe(&core.UserMessageFrame{})
 	if o.observe(down()) {
 		t.Fatal("a user message resets the count")
+	}
+}
+
+// An unbound dial (no turn) is not a lost turn, and one turn's failures count once
+// however many frames report them.
+func TestSTTOutageCountsLogicalTurns(t *testing.T) {
+	unbound := func() *core.ErrorFrame { return &core.ErrorFrame{Err: core.ErrSTTUnavailable} }
+	turnFail := func(turn string) *core.ErrorFrame {
+		return &core.ErrorFrame{Err: core.ErrSTTUnavailable, Turn: core.TurnID(turn)}
+	}
+	var o sttOutage
+	if o.observe(unbound()) || o.observe(turnFail("turn-1")) {
+		t.Fatal("an unbound pre-onset dial failure plus the turn's own failure is one lost turn")
+	}
+	if o.observe(turnFail("turn-1")) {
+		t.Fatal("another frame of the same turn must not count")
+	}
+	if !o.observe(turnFail("turn-2")) {
+		t.Fatal("a second turn ends the call")
 	}
 }
 
@@ -134,8 +155,8 @@ func TestSTTOutageCountsAFrameOncePerPipelineNotPerHop(t *testing.T) {
 	}
 	defer sess.Close()
 	gen := sess.CurrentGeneration()
-	fail := func() {
-		_ = sess.Reenter(&core.ErrorFrame{Err: core.ErrSTTUnavailable, Gen: core.Generation(gen)}, core.Downstream, 1, gen)
+	fail := func(n int) {
+		_ = sess.Reenter(&core.ErrorFrame{Err: core.ErrSTTUnavailable, Turn: core.TurnID(fmt.Sprint(n)), Gen: core.Generation(gen)}, core.Downstream, 1, gen)
 	}
 	settle := func(want int) {
 		t.Helper()
@@ -151,7 +172,7 @@ func TestSTTOutageCountsAFrameOncePerPipelineNotPerHop(t *testing.T) {
 			}
 		}
 	}
-	fail()
+	fail(1)
 	settle(2) // indexes 1 and 2 of the 3-hop pipeline (and the sink)
 	time.Sleep(50 * time.Millisecond)
 	mu.Lock()
@@ -161,7 +182,7 @@ func TestSTTOutageCountsAFrameOncePerPipelineNotPerHop(t *testing.T) {
 	}
 	seen := changes
 	mu.Unlock()
-	fail() // a second, different frame
+	fail(2) // a second turn
 	settle(seen + 2)
 	time.Sleep(50 * time.Millisecond)
 	mu.Lock()

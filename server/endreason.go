@@ -69,21 +69,22 @@ func reasonFromTransport(cause string) string {
 // only a stage with nothing left to try reaches this count. Not configurable on purpose.
 const sttUnavailableLimit = 2
 
-// sttOutage counts consecutive STT-unreachable error frames. It is used from the one goroutine that
+// sttOutage counts consecutive turns whose STT was unreachable. It is used from the one goroutine that
 // observes the call's pipeline output, so it needs no lock.
 type sttOutage struct {
 	n    int
-	last *core.ErrorFrame // OnFrame sees one frame at every pipeline hop: count it once (like lastSTTTurn)
+	last core.TurnID // OnFrame sees one frame at every pipeline hop, and a turn can fail twice: count a turn once
 }
 
 // observe reports true once, when f is the error that reaches sttUnavailableLimit.
 func (o *sttOutage) observe(f core.Frame) bool {
 	switch fr := f.(type) {
 	case *core.TranscriptCandidateFrame, *core.UserMessageFrame:
-		o.n = 0
+		o.n, o.last = 0, ""
 	case *core.ErrorFrame:
-		if errors.Is(fr.Err, core.ErrSTTUnavailable) && fr != o.last {
-			o.last = fr
+		// A frame with no turn is an unbound pre-onset dial: no turn lost its transcript.
+		if errors.Is(fr.Err, core.ErrSTTUnavailable) && fr.Turn != "" && fr.Turn != o.last {
+			o.last = fr.Turn
 			o.n++
 			return o.n == sttUnavailableLimit
 		}
