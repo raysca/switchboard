@@ -9,13 +9,13 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"govoice/core"
 	"govoice/core/netpool"
 	"govoice/core/resilience"
+	"govoice/core/sttunit"
 )
 
 // STTConfig configures the Deepgram live-transcription processor.
@@ -59,64 +59,16 @@ type message struct {
 	ErrMsg string `json:"err_msg"`
 }
 
-type stream struct {
-	conn   *websocket.Conn
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	mu        sync.Mutex
-	turn      string // "" until a turn adopts the stream
-	gen       uint64
-	committed string // finalized segments of this turn, space-joined
-	draining  *time.Timer
-	closing   bool
-
-	stopOnce, traceFinal, traceEnd sync.Once
-	span                           core.Span
-	policy                         core.TracePolicy
-	traceSession                   core.SessionID
-}
-
-func (st *stream) owner() (string, uint64) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	return st.turn, st.gen
-}
-
-func (st *stream) event(name string) {
-	if st.span != nil {
-		turn, gen := st.owner()
-		st.span.AddEvent(core.NewTraceEvent(name, time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.policy, nil))
-	}
-}
-func (st *stream) endTrace(err error) {
-	st.traceEnd.Do(func() {
-		if st.span == nil {
-			return
-		}
-		if err != nil {
-			st.event("stt.failure")
-		} else {
-			st.event("stt.complete")
-		}
-		st.span.End(err)
-	})
-}
-
-// STTProcessor implements core.Processor for Deepgram speech-to-text. One
-// websocket per turn, opened on the first speech/audio frame of the turn.
+// STTProcessor implements core.Processor for Deepgram speech-to-text: one
+// websocket per utterance, dialed off the run loop (turn binding, pre-roll,
+// drain and drop recovery live in core/sttunit).
 type STTProcessor struct {
-	cfg     STTConfig
-	session core.SessionController
-	index   int
-
-	mu     sync.Mutex
-	active *stream
-	all    map[*stream]struct{} // active plus draining, for teardown
-	closed bool
-	turn   string
-	gen    uint64
+	*sttunit.Runner
+	cfg STTConfig
 }
+
+// B7: the runner's error count reaches voice_provider_errors_total.
+var _ core.STTCounters = (*STTProcessor)(nil)
 
 func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	if cfg.APIKey == "" {
@@ -144,7 +96,12 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	if cfg.Pool == nil {
 		cfg.Pool = netpool.Get(netpool.Options{Provider: "deepgram", Stage: "stt", HTTP1Only: true})
 	}
-	return &STTProcessor{cfg: cfg, all: map[*stream]struct{}{}}, nil
+	p := &STTProcessor{cfg: cfg}
+	p.Runner = sttunit.New(sttunit.Config{
+		Provider: "deepgram", Dial: p.dial, Breaker: cfg.CircuitBreaker, Classify: classify,
+		DrainTimeout: cfg.DrainTimeout, Now: cfg.Now,
+	})
+	return p, nil
 }
 
 // Warm pre-dials TCP+TLS to the endpoint (no websocket session: Deepgram
@@ -157,142 +114,6 @@ func (p *STTProcessor) Warm(ctx context.Context) error {
 		return nil
 	}
 	return p.cfg.Pool.Warm(ctx, p.cfg.Endpoint)
-}
-
-func (p *STTProcessor) Attach(s core.SessionController, index int) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.session, p.index = s, index
-	return nil
-}
-
-// Close tears down every stream; it is idempotent.
-func (p *STTProcessor) Close() error {
-	p.mu.Lock()
-	p.closed = true
-	streams := p.detachAllLocked()
-	p.mu.Unlock()
-	for _, st := range streams {
-		p.stop(st, nil)
-	}
-	return nil
-}
-
-func (p *STTProcessor) detachAllLocked() []*stream {
-	out := make([]*stream, 0, len(p.all))
-	for st := range p.all {
-		out = append(out, st)
-	}
-	p.all, p.active = map[*stream]struct{}{}, nil
-	return out
-}
-
-func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
-	switch fr := f.(type) {
-	case *core.UserStartedSpeakingFrame:
-		p.beginTurn(fmt.Sprintf("turn-%d-%d", fr.Gen, fr.Seq), fr.Gen)
-		if err := p.ensureStream(ctx); err != nil {
-			return err
-		}
-		return e.Push(f)
-	case *core.TurnEventFrame:
-		switch fr.Kind {
-		case core.TurnEventStarted:
-			p.beginTurn(string(fr.Turn), uint64(fr.Gen))
-		case core.TurnEventCompleted:
-			p.finishActive(string(fr.Turn), uint64(fr.Gen))
-		case core.TurnEventInterrupted:
-			p.stopTurn(string(fr.Turn), uint64(fr.Gen))
-		}
-		return e.PushDirection(f, dir)
-	case *core.InputAudioFrame:
-		return p.handleAudio(ctx, fr, e)
-	case *core.UserStoppedSpeakingFrame:
-		p.finishActive("", 0)
-		return e.PushDirection(f, dir)
-	case *core.InterruptionFrame, *core.CancelFrame:
-		p.mu.Lock()
-		if _, ok := f.(*core.InterruptionFrame); ok && p.session != nil && p.turn != "" {
-			// Barge-in advanced the generation: the rest of this utterance opens
-			// a new stream that must carry it, or the session fence drops it.
-			p.gen = max(p.gen, p.session.CurrentGeneration())
-		}
-		streams := p.detachAllLocked()
-		p.mu.Unlock()
-		for _, st := range streams {
-			p.stop(st, nil)
-		}
-		return e.PushDirection(f, dir)
-	default:
-		return e.PushDirection(f, dir)
-	}
-}
-
-// beginTurn makes (turn, gen) current. An unbound stream (opened between
-// turns) is adopted: it already carries the speech onset VAD reported late.
-// A stream owned by another turn is finalized and drains on its own.
-func (p *STTProcessor) beginTurn(turn string, gen uint64) {
-	p.mu.Lock()
-	p.turn, p.gen = turn, gen
-	var old *stream
-	if a := p.active; a != nil {
-		a.mu.Lock()
-		if a.turn == "" || (a.turn == turn && a.gen < gen) {
-			// Unbound, or a turn manager barged in mid-utterance: the stream
-			// moves to the new generation instead of being cut.
-			a.turn, a.gen = turn, gen
-		} else if a.turn != turn || a.gen != gen {
-			old, p.active = a, nil
-		}
-		a.mu.Unlock()
-	}
-	p.mu.Unlock()
-	if old != nil {
-		p.finish(old)
-	}
-}
-
-func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame, e core.Emitter) error {
-	p.mu.Lock()
-	closed := p.closed
-	p.mu.Unlock()
-	if closed {
-		return nil
-	}
-	if err := p.ensureStream(ctx); err != nil {
-		return err
-	}
-	p.mu.Lock()
-	st := p.active
-	p.mu.Unlock()
-	if st == nil {
-		return ErrProviderUnavailable
-	}
-	sendCtx, cancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
-	defer cancel()
-	if err := st.conn.Write(sendCtx, websocket.MessageBinary, f.Samples); err != nil {
-		if st.ctx.Err() != nil { // torn down concurrently: not a provider failure
-			return e.Push(f)
-		}
-		perr := MapError("stt", err, nil)
-		p.release(st)
-		p.stop(st, errors.New("provider_failure"))
-		if p.cfg.CircuitBreaker != nil {
-			p.cfg.CircuitBreaker.Report(perr, classify)
-		}
-		return perr
-	}
-	return e.Push(f)
-}
-
-func (p *STTProcessor) ioParent(ctx context.Context) context.Context {
-	if p.session != nil {
-		return p.session.Context()
-	}
-	if ctx != nil {
-		return ctx
-	}
-	return context.Background()
 }
 
 func (p *STTProcessor) wsURL() (string, error) {
@@ -315,35 +136,13 @@ func (p *STTProcessor) wsURL() (string, error) {
 	return u.String(), nil
 }
 
-func (p *STTProcessor) ensureStream(ctx context.Context) error {
-	p.mu.Lock()
-	if p.active != nil || p.closed {
-		p.mu.Unlock()
-		return nil
-	}
-	turn, gen := p.turn, p.gen
-	p.mu.Unlock()
-
+// dial opens one stream on ctx. The breaker and retries wrap only the dial:
+// nothing is committed until audio flows, so a failed open is always safe to retry.
+func (p *STTProcessor) dial(ctx context.Context) (sttunit.Conn, error) {
 	target, err := p.wsURL()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	traceSession := core.SessionID("")
-	if p.session != nil {
-		traceSession = core.SessionID(strconv.FormatUint(p.session.ID(), 10))
-	}
-	span := core.StartContextSpan(ctx, "stt.stream", traceSession, core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "deepgram"})
-	policy := core.TraceContextFromContext(ctx).Policy
-	fail := func(err error) error {
-		if span != nil {
-			span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), traceSession, core.TurnID(turn), core.Generation(gen), policy, nil))
-			span.End(errors.New("provider_failure"))
-		}
-		return err
-	}
-
-	// The breaker and retries wrap only the dial: nothing is committed until
-	// audio flows, so a failed open is always safe to retry.
 	var conn *websocket.Conn
 	opts := &websocket.DialOptions{HTTPClient: p.cfg.Pool.Client(0), HTTPHeader: http.Header{"Authorization": {"Token " + p.cfg.APIKey}}}
 	err = resilience.Execute(ctx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, classify, nil, func(actx context.Context, _ int) error {
@@ -355,71 +154,46 @@ func (p *STTProcessor) ensureStream(ctx context.Context) error {
 		return nil
 	})
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
+	return &dgConn{conn: conn}, nil
+}
 
-	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
-	st := &stream{conn: conn, ctx: streamCtx, cancel: cancel, turn: turn, gen: gen, span: span, policy: policy, traceSession: traceSession}
-	p.mu.Lock()
-	if p.closed || p.active != nil {
-		closed := p.closed
-		p.mu.Unlock()
-		cancel()
-		conn.CloseNow()
-		if span != nil {
-			span.End(errors.New("canceled"))
-		}
-		if closed {
-			return core.ErrSessionClosed
-		}
-		return nil
-	}
-	p.active = st
-	p.all[st] = struct{}{}
-	p.mu.Unlock()
-	st.event("stt.start")
+// errInBand marks Deepgram's in-band "Error" message: a failure of one
+// stream, which says nothing about the provider's health. The breaker is
+// shared by every call, so classify keeps it out (as before this runner).
+var errInBand = errors.New("deepgram: in-band stream error")
 
-	if p.session == nil {
-		return nil
-	}
-	if err := p.session.Go(func(sctx context.Context) { p.receive(sctx, st) }); err != nil {
-		p.release(st)
-		p.stop(st, errors.New("canceled"))
-		return err
+// dgConn is one Deepgram stream and its turn transcript.
+type dgConn struct {
+	conn      *websocket.Conn
+	committed string // finalized segments of this turn, space-joined (Recv's task only)
+}
+
+func (c *dgConn) Send(ctx context.Context, pcm []byte) error {
+	if err := c.conn.Write(ctx, websocket.MessageBinary, pcm); err != nil {
+		return MapError("stt", err, nil)
 	}
 	return nil
 }
 
-// receive reads Deepgram messages until the stream ends, then cleans up.
-func (p *STTProcessor) receive(sctx context.Context, st *stream) {
-	var traceErr error
-	defer func() {
-		p.release(st)
-		p.stop(st, traceErr)
-		st.endTrace(traceErr)
-	}()
+// Finish asks Deepgram to flush its final results and close.
+func (c *dgConn) Finish(ctx context.Context) error {
+	for _, msg := range []string{`{"type":"Finalize"}`, `{"type":"CloseStream"}`} {
+		if err := c.conn.Write(ctx, websocket.MessageText, []byte(msg)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *dgConn) Close() { _ = c.conn.CloseNow() }
+
+func (c *dgConn) Recv(ctx context.Context) (sttunit.Result, error) {
 	for {
-		_, data, err := st.conn.Read(st.ctx)
+		_, data, err := c.conn.Read(ctx)
 		if err != nil {
-			if st.ctx.Err() != nil || sctx.Err() != nil {
-				return
-			}
-			if s := websocket.CloseStatus(err); s == websocket.StatusNormalClosure || s == websocket.StatusGoingAway {
-				return
-			}
-			// NET-0001: Deepgram's idle timeout (no audio for ~10s). Our silence,
-			// not an outage: end quietly; the next audio opens a new stream.
-			var ce websocket.CloseError
-			if errors.As(err, &ce) && strings.Contains(strings.ReplaceAll(strings.ToUpper(ce.Reason), "-", ""), "NET0001") {
-				return
-			}
-			traceErr = errors.New("provider_failure")
-			perr := MapError("stt", err, nil)
-			if p.cfg.CircuitBreaker != nil {
-				p.cfg.CircuitBreaker.Report(perr, classify)
-			}
-			p.reportError(st, perr)
-			return
+			return sttunit.Result{}, readError(err)
 		}
 		var m message
 		if json.Unmarshal(data, &m) != nil {
@@ -427,58 +201,47 @@ func (p *STTProcessor) receive(sctx context.Context, st *stream) {
 		}
 		switch m.Type {
 		case "Results", "":
-			p.results(st, &m)
+			return c.results(&m), nil
 		case "Error":
-			traceErr = errors.New("provider_failure")
-			p.reportError(st, MapError("stt", errors.New(m.ErrMsg), nil))
-			return
+			// errInBand keeps it out of the shared breaker (classify), as before.
+			return sttunit.Result{}, MapError("stt", fmt.Errorf("%w: %s", errInBand, m.ErrMsg), nil)
 		}
 	}
 }
 
-func (p *STTProcessor) reportError(st *stream, err error) {
-	if p.session != nil {
-		turn, gen := st.owner()
-		gen = p.frameGen(gen)
-		_ = p.session.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+// readError maps a failed read: a clean close, or Deepgram's idle timeout
+// (NET-0001, no audio for ~10 s: our silence, not an outage), ends the
+// stream; anything else is a provider failure.
+func readError(err error) error {
+	if s := websocket.CloseStatus(err); s == websocket.StatusNormalClosure || s == websocket.StatusGoingAway {
+		return sttunit.ErrStreamEnded
 	}
+	var ce websocket.CloseError
+	if errors.As(err, &ce) && strings.Contains(strings.ReplaceAll(strings.ToUpper(ce.Reason), "-", ""), "NET0001") {
+		return sttunit.ErrStreamEnded
+	}
+	return MapError("stt", err, nil)
 }
 
-func (p *STTProcessor) frameGen(gen uint64) uint64 {
-	if gen == 0 && p.session != nil {
-		return p.session.CurrentGeneration()
-	}
-	return gen
-}
-
-// results turns one Results message into a cumulative turn candidate: the
+// results turns one Results message into the cumulative turn text: the
 // finalized segments so far plus this message's text.
-func (p *STTProcessor) results(st *stream, m *message) {
+func (c *dgConn) results(m *message) sttunit.Result {
 	seg := ""
 	if len(m.Channel.Alternatives) > 0 {
 		seg = strings.TrimSpace(m.Channel.Alternatives[0].Transcript)
 	}
-	st.mu.Lock()
-	text := join(st.committed, seg)
+	text := join(c.committed, seg)
 	if m.IsFinal {
-		st.committed = text
+		c.committed = text
 	}
-	turn, gen := st.turn, st.gen
-	st.mu.Unlock()
 	eou := m.SpeechFinal || m.FromFinalize
-	// Unbound (between turns): keep committed text for the adopting turn, but
-	// a candidate needs a turn identity.
-	if turn == "" || text == "" || (seg == "" && !(m.IsFinal && eou)) {
-		return
+	if text == "" && m.IsFinal { // noise retracted: settles the turn, emits nothing
+		return sttunit.Result{Final: true, EndOfUtterance: eou}
 	}
-	gen = p.frameGen(gen)
-	frame := &core.TranscriptCandidateFrame{
-		Text: text, Turn: core.TurnID(turn), Gen: core.Generation(gen), Timestamp: p.cfg.Now(),
-		Final: m.IsFinal, EndOfUtterance: m.IsFinal && eou, Provider: "deepgram",
+	if seg == "" && !(m.IsFinal && eou) {
+		return sttunit.Result{}
 	}
-	if p.session != nil && p.session.Reenter(frame, core.Downstream, p.index+1, gen) == nil && m.IsFinal {
-		st.traceFinal.Do(func() { st.event("stt.first_final") })
-	}
+	return sttunit.Result{Text: text, Final: m.IsFinal, EndOfUtterance: m.IsFinal && eou}
 }
 
 func join(a, b string) string {
@@ -486,92 +249,4 @@ func join(a, b string) string {
 		return a + b
 	}
 	return a + " " + b
-}
-
-// finishActive finalizes the active stream (turn "" = whichever is active,
-// i.e. the user stopped speaking). The turn is released so audio after it opens
-// an unbound stream for the next utterance.
-func (p *STTProcessor) finishActive(turn string, gen uint64) {
-	p.mu.Lock()
-	st := p.active
-	if st == nil {
-		p.mu.Unlock()
-		return
-	}
-	t, g := st.owner()
-	if turn != "" && (t != turn || g != gen) {
-		p.mu.Unlock()
-		return
-	}
-	p.active = nil // late audio opens a new stream rather than a closing one
-	if p.turn == t && p.gen == g {
-		p.turn, p.gen = "", 0
-	}
-	p.mu.Unlock()
-	p.finish(st)
-}
-
-// finish asks Deepgram to flush and close st, then force-closes after
-// DrainTimeout. Safe to call more than once.
-func (p *STTProcessor) finish(st *stream) {
-	st.mu.Lock()
-	if st.closing {
-		st.mu.Unlock()
-		return
-	}
-	st.closing = true
-	st.mu.Unlock()
-	wctx, cancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
-	defer cancel()
-	for _, msg := range []string{`{"type":"Finalize"}`, `{"type":"CloseStream"}`} {
-		if err := st.conn.Write(wctx, websocket.MessageText, []byte(msg)); err != nil {
-			p.release(st)
-			p.stop(st, nil)
-			return
-		}
-	}
-	st.mu.Lock()
-	st.draining = time.AfterFunc(p.cfg.DrainTimeout, func() { p.release(st); p.stop(st, nil) })
-	st.mu.Unlock()
-}
-
-func (p *STTProcessor) stopTurn(turn string, gen uint64) {
-	p.mu.Lock()
-	var victims []*stream
-	for st := range p.all {
-		if t, g := st.owner(); t == turn && g == gen {
-			victims = append(victims, st)
-			delete(p.all, st)
-			if p.active == st {
-				p.active = nil
-			}
-		}
-	}
-	p.mu.Unlock()
-	for _, st := range victims {
-		p.stop(st, nil)
-	}
-}
-
-func (p *STTProcessor) release(st *stream) {
-	p.mu.Lock()
-	delete(p.all, st)
-	if p.active == st {
-		p.active = nil
-	}
-	p.mu.Unlock()
-}
-
-// stop closes the socket exactly once and ends the trace with err.
-func (p *STTProcessor) stop(st *stream, err error) {
-	st.mu.Lock()
-	if st.draining != nil {
-		st.draining.Stop()
-	}
-	st.mu.Unlock()
-	st.stopOnce.Do(func() {
-		st.cancel()
-		st.conn.CloseNow()
-	})
-	st.endTrace(err)
 }

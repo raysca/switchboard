@@ -17,6 +17,7 @@ import (
 	"govoice/core"
 	"govoice/core/coretest"
 	"govoice/core/resilience"
+	"govoice/core/sttunit"
 )
 
 const sttKey = "xi-test-key-0123456789"
@@ -159,11 +160,17 @@ func sttWait(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-func (p *STTProcessor) activeCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.all)
+// ensureStream dials one stream the way the runner's stream task does, then
+// closes it (dial, retry and breaker tests).
+func (p *STTProcessor) ensureStream(ctx context.Context) error {
+	c, err := p.dial(ctx)
+	if err == nil {
+		c.Close()
+	}
+	return err
 }
+
+func (p *STTProcessor) activeCount() int { return p.Streams() }
 
 func sttBreaker() *resilience.Breaker {
 	return resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
@@ -234,6 +241,10 @@ func TestSTT_CumulativeTextAndManualCommit(t *testing.T) {
 		t.Fatal("socket not closed after the committed answer")
 	}
 	sttWait(t, "release", func() bool { return h.proc.activeCount() == 0 })
+	// A settled normal turn must not look like a lost one.
+	if n := len(h.errors()); n != 0 {
+		t.Fatalf("normal turn produced %d error frames: %v", n, h.errors())
+	}
 }
 
 // The wire message carries base64 audio and the configured rate.
@@ -507,7 +518,7 @@ func TestSTT_IdleCloseIsNotAnOutage(t *testing.T) {
 		cfg := f.cfg()
 		cfg.CircuitBreaker = sttBreaker()
 		h := startSTT(t, cfg, nil)
-		h.speak()
+		h.audio(1)
 		sttWait(t, "release", func() bool { return f.opens.Load() == 1 && h.proc.activeCount() == 0 })
 		if len(h.errors()) != 0 || !cfg.CircuitBreaker.Allow() {
 			t.Fatalf("%v: idle close reported as outage: %v", tc.code, h.errors())
@@ -620,39 +631,29 @@ func TestSTT_UnboundStreamAdoptedByNextTurn(t *testing.T) {
 		}
 	})
 	h := startSTT(t, f.cfg(), nil)
-	committed := func() string {
-		h.proc.mu.Lock()
-		defer h.proc.mu.Unlock()
-		if h.proc.active == nil {
-			return ""
+	last := func() *core.TranscriptCandidateFrame {
+		c := h.candidates()
+		if len(c) == 0 {
+			return nil
 		}
-		h.proc.active.mu.Lock()
-		defer h.proc.active.mu.Unlock()
-		return h.proc.active.committed
+		return c[len(c)-1]
 	}
 	h.audio(1)
-	sttWait(t, "onset final", func() bool { return committed() == "hi" })
-	if len(h.candidates()) != 0 {
-		t.Fatal("unbound stream emitted a candidate")
-	}
+	sttWait(t, "unbound stream", func() bool { return f.opens.Load() == 1 })
 	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
 	h.audio(1)
-	sttWait(t, "adopted candidate", func() bool { return len(h.candidates()) == 1 })
-	if c := h.candidates()[0]; c.Text != "hi there" || c.Turn != "turn-1-1" || f.opens.Load() != 1 {
+	sttWait(t, "adopted candidate", func() bool { c := last(); return c != nil && c.Text == "hi there" })
+	if c := last(); c.Turn != "turn-1-1" || f.opens.Load() != 1 {
 		t.Fatalf("candidate %+v opens=%d", c, f.opens.Load())
 	}
 	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{})
 	h.audio(1)
-	sttWait(t, "fresh unbound stream", func() bool {
-		h.proc.mu.Lock()
-		defer h.proc.mu.Unlock()
-		return f.opens.Load() == 2 && h.proc.active != nil
-	})
-	h.proc.mu.Lock()
-	turn, _ := h.proc.active.owner()
-	h.proc.mu.Unlock()
-	if turn != "" {
-		t.Fatalf("stream after the turn is bound to %q", turn)
+	sttWait(t, "fresh stream", func() bool { return f.opens.Load() == 2 })
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 2})
+	h.audio(1)
+	sttWait(t, "second turn adopts it", func() bool { c := last(); return c != nil && c.Turn == "turn-1-2" })
+	if n := f.opens.Load(); n != 2 {
+		t.Fatalf("the second turn opened its own stream: opens=%d", n)
 	}
 }
 
@@ -769,7 +770,7 @@ func TestSTT_InsufficientAudioActivityIsQuiet(t *testing.T) {
 	cfg := f.cfg()
 	cfg.CircuitBreaker = sttBreaker()
 	h := startSTT(t, cfg, nil)
-	h.speak()
+	h.audio(1)
 	sttWait(t, "release", func() bool { return f.opens.Load() == 1 && h.proc.activeCount() == 0 })
 	time.Sleep(20 * time.Millisecond)
 	if len(h.errors()) != 0 || !cfg.CircuitBreaker.Allow() {
@@ -797,5 +798,92 @@ func TestSTT_CancelledOpenDoesNotWedgeBreaker(t *testing.T) {
 	}
 	if !cfg.CircuitBreaker.Allow() {
 		t.Fatal("cancelled probe wedged the breaker")
+	}
+}
+
+// A8: a clean close while the turn still owes its transcript invalidates it.
+func TestSTT_CleanCloseMidUtteranceInvalidatesTurn(t *testing.T) {
+	f := newSTTFake(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _ = readChunk(ctx, c)
+		_ = c.Close(websocket.StatusNormalClosure, "")
+	})
+	cfg := f.cfg()
+	cfg.CircuitBreaker = sttBreaker()
+	h := startSTT(t, cfg, nil)
+	h.speak()
+	sttWait(t, "invalidating error", func() bool {
+		for _, err := range h.errors() {
+			if errors.Is(err, core.ErrTranscriptInvalidated) {
+				return true
+			}
+		}
+		return false
+	})
+	if !cfg.CircuitBreaker.Allow() {
+		t.Fatal("a clean close is not an outage")
+	}
+}
+
+// The same provider idle-close that is quiet for an unbound stream (see
+// TestSTT_InsufficientAudioActivityIsQuiet) loses a bound, unfinished turn.
+func TestSTT_IdleCloseOfBoundUnfinishedTurnInvalidates(t *testing.T) {
+	f := newSTTFake(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _ = readChunk(ctx, c)
+		sttErr(ctx, c, "insufficient_audio_activity", "not enough audio")
+		_ = c.Close(websocket.StatusPolicyViolation, "insufficient audio activity")
+	})
+	cfg := f.cfg()
+	cfg.CircuitBreaker = sttBreaker()
+	h := startSTT(t, cfg, nil)
+	h.speak()
+	sttWait(t, "invalidating error", func() bool {
+		for _, err := range h.errors() {
+			if errors.Is(err, core.ErrTranscriptInvalidated) {
+				if !strings.Contains(err.Error(), "insufficient_audio_activity") {
+					t.Errorf("the provider's reason is missing from %v", err)
+				}
+				return true
+			}
+		}
+		return false
+	})
+	if !cfg.CircuitBreaker.Allow() {
+		t.Fatal("an idle close is not an outage")
+	}
+}
+
+// Deterministic pin of the unbound-resurface contract: text committed while no
+// turn was bound (the runner drops those results) is in the next result's
+// cumulative Text; a duplicate commit form is swallowed; an empty commit after
+// our commit settles the turn with the text so far as the ending Final.
+func TestSTTConn_ResurfacesUnboundTextAndDedupsCommitForms(t *testing.T) {
+	c := &sttConn{}
+	_, _ = c.transcript(&sttMessage{Type: "committed_transcript", Text: "hi"}) // dropped by the runner
+	got, done := c.transcript(&sttMessage{Type: "partial_transcript", Text: "there"})
+	if want := (sttunit.Result{Text: "hi there"}); got != want || done {
+		t.Fatalf("partial: %+v done=%v, want %+v", got, done, want)
+	}
+	got, done = c.transcript(&sttMessage{Type: "committed_transcript", Text: "there"})
+	if want := (sttunit.Result{Text: "hi there", Final: true}); got != want || done {
+		t.Fatalf("commit: %+v done=%v, want %+v", got, done, want)
+	}
+	if got, _ := c.transcript(&sttMessage{Type: "committed_transcript_with_timestamps", Text: "there"}); got != (sttunit.Result{}) {
+		t.Fatalf("duplicate form not swallowed: %+v", got)
+	}
+	c.commitSent.Store(true)
+	got, done = c.transcript(&sttMessage{Type: "committed_transcript", Text: ""})
+	if want := (sttunit.Result{Text: "hi there", Final: true, EndOfUtterance: true}); got != want || !done {
+		t.Fatalf("end: %+v done=%v, want %+v", got, done, want)
+	}
+}
+
+// Nothing heard at all: the commit we asked for is answered with an empty
+// Final that ends the utterance (the runner settles the turn on it).
+func TestSTTConn_EmptyFinalAfterOurCommitEndsTheUtterance(t *testing.T) {
+	c := &sttConn{}
+	c.commitSent.Store(true)
+	got, done := c.transcript(&sttMessage{Type: "committed_transcript", Text: ""})
+	if want := (sttunit.Result{Final: true, EndOfUtterance: true}); got != want || !done {
+		t.Fatalf("empty final: %+v done=%v, want %+v", got, done, want)
 	}
 }

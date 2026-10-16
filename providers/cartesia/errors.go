@@ -16,9 +16,8 @@ import (
 )
 
 var (
-	ErrCircuitOpen         = resilience.ErrCircuitOpen // shared with every provider
-	ErrMissingAPIKey       = errors.New("cartesia: missing API key (CARTESIA_API_KEY)")
-	ErrProviderUnavailable = errors.New("cartesia: provider unavailable")
+	ErrCircuitOpen   = resilience.ErrCircuitOpen // shared with every provider
+	ErrMissingAPIKey = errors.New("cartesia: missing API key (CARTESIA_API_KEY)")
 )
 
 // ProviderError is a sanitized, classified Cartesia failure.

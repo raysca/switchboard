@@ -9,6 +9,11 @@ import (
 // candidate must never be committed.
 var ErrTranscriptInvalidated = errors.New("core: transcript candidate invalidated")
 
+// ErrSTTUnavailable marks the error an STT adapter reports when it could not
+// open (dial) its stream for a turn. The server ends a call after repeated ones
+// with no transcript between them (an STT failover recovers or swallows them first).
+var ErrSTTUnavailable = errors.New("core: stt unavailable")
+
 // FrameType identifies the concrete category of a framework frame.
 type FrameType uint16
 

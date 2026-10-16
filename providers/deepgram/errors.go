@@ -17,9 +17,8 @@ import (
 )
 
 var (
-	ErrCircuitOpen         = resilience.ErrCircuitOpen // shared with every provider
-	ErrMissingAPIKey       = errors.New("deepgram: missing API key (DEEPGRAM_API_KEY)")
-	ErrProviderUnavailable = errors.New("deepgram: provider unavailable")
+	ErrCircuitOpen   = resilience.ErrCircuitOpen // shared with every provider
+	ErrMissingAPIKey = errors.New("deepgram: missing API key (DEEPGRAM_API_KEY)")
 )
 
 // ProviderError is a sanitized, classified Deepgram failure.
@@ -84,6 +83,9 @@ func MapError(capability string, err error, resp *http.Response) *ProviderError 
 func classify(err error) resilience.Verdict {
 	if errors.Is(err, context.Canceled) {
 		return resilience.Verdict{ClientError: true}
+	}
+	if errors.Is(err, errInBand) { // one stream's in-band error: fail over, but not an outage
+		return resilience.Verdict{Retryable: true, NoBreaker: true}
 	}
 	var pe *ProviderError
 	if errors.As(err, &pe) {

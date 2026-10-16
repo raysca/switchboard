@@ -104,10 +104,9 @@ func TestReply_OneSocketManyUnits(t *testing.T) {
 	if f.opened() != 1 {
 		t.Fatalf("opens=%d, want 1", f.opened())
 	}
+	// The socket-close message follows the last stop; wait for it rather than race it.
+	waitFor(t, 3*time.Second, "9 context messages and the socket close", func() bool { return len(f.sent()) >= 10 })
 	m := f.sent()
-	if len(m) < 10 {
-		t.Fatalf("messages: %v", m)
-	}
 	for u, text := range []string{"One. ", "Two. ", "Three."} {
 		open, txt, cl := m[u*3], m[u*3+1], m[u*3+2]
 		cid := open["context_id"]

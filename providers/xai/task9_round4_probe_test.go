@@ -153,15 +153,12 @@ func TestRound4XAICloseDuringOpenReleasesReturnedSocket(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	p, _ := NewSTTProcessor(cfg)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = p.ProcessFrame(context.Background(), &core.UserStartedSpeakingFrame{Gen: 1, Seq: 1}, core.Downstream, &mockEmitter{})
-	}()
-	<-opener.entered
+	s := bareSession(p)
+	_ = p.ProcessFrame(context.Background(), &core.UserStartedSpeakingFrame{Gen: 1, Seq: 1}, core.Downstream, &mockEmitter{})
+	<-opener.entered // the open runs on a session task, not in ProcessFrame
 	_ = p.Close()
 	close(opener.release)
-	<-done
+	s.taskWg.Wait()
 	if got := st.closes.Load(); got != 1 {
 		t.Fatalf("socket opened after Close was lost: closes=%d", got)
 	}
@@ -190,7 +187,7 @@ func TestRound4XAIClosesEveryDrainingStreamAfterSessionCancel(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i <= 12; i++ {
+	for i := 1; i <= maxLiveStreams; i++ { // the live-stream cap bounds the draining set below its own 8
 		if err := s.Post(&core.UserStartedSpeakingFrame{Seq: uint64(i), Gen: 1}); err != nil {
 			t.Fatal(err)
 		}

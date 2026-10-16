@@ -97,14 +97,18 @@ func TestXAISTTTraceOpenPanicEndsFailure(t *testing.T) {
 	r := &lifecycleRecorder{}
 	ctx := core.ContextWithTraceContext(context.Background(), r, core.TracePolicy{})
 	p.turnID, p.streamGen = "turn-panic", 1
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("expected opener panic")
-			}
-		}()
-		_ = p.ensureStream(ctx)
-	}()
+	// The open runs on a session task now: its panic fails the session, not the
+	// caller, and the span still ends as a provider failure.
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_ = p.ensure(ctx)
+	waitLifecycle(t, func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return len(r.endErrors["stt.stream"]) == 1
+	})
 	r.mu.Lock()
 	ends := append([]error(nil), r.endErrors["stt.stream"]...)
 	r.mu.Unlock()

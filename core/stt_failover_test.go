@@ -13,6 +13,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/coretest"
+	"govoice/core/sttunit"
 	"govoice/core/transcript"
 )
 
@@ -573,5 +574,47 @@ func TestSTTFailoverInvalidatingDropAfterSpeechFinalCommitsOnce(t *testing.T) {
 		case *core.ErrorFrame, *core.TranscriptInvalidationFrame:
 			t.Fatalf("%T leaked downstream", f)
 		}
+	}
+}
+
+// Review Focus 1 (A1): the primary's dial hangs past the 2 s frame watchdog
+// for 3 s, the worst case of failoverPolicy("stt") after Steps 7-11. The call
+// survives (the dial runs off the run loop), the failed open fails over, and
+// the fallback transcribes the whole utterance from the replay.
+func TestSTTFailoverPrimaryDialHangsFallbackTranscribes(t *testing.T) {
+	primary := sttunit.New(sttunit.Config{Provider: "a", Dial: func(ctx context.Context) (sttunit.Conn, error) {
+		select {
+		case <-time.After(3 * time.Second):
+			return nil, errors.New("dial: no answer")
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}})
+	fallback := fakeSTT("b", coretest.STTConfig{})
+	r := newSTTRig(t, core.STTFailoverConfig{Candidates: cands(core.STTCandidate{Provider: "a", Proc: primary}, core.STTCandidate{Provider: "b", Proc: fallback})}, false)
+	r.audio(0) // pre-speech padding: VAD reports the start late
+	r.start()
+	for _, w := range []int{1, 2, 3} {
+		r.audio(w)
+	}
+	for deadline := time.Now().Add(6 * time.Second); r.w.Active() != "b"; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no failover; session err = %v", r.sess.Err())
+		}
+	}
+	r.audio(4)
+	r.stop()
+	r.waitFinal(1)
+	if err := r.sess.Err(); err != nil {
+		t.Fatalf("the hung dial ended the call: %v", err)
+	}
+	if got := fallback.Received(); !bytes.Equal(got, r.sent) {
+		t.Fatalf("fallback audio is not the utterance once: got %d bytes, want %d", len(got), len(r.sent))
+	}
+	if f := r.finals(); len(f) != 1 || f[0].Text != allWords || f[0].Provider != "b" {
+		t.Fatalf("finals = %+v", f)
+	}
+	if r.errors() != 0 {
+		t.Fatal("the failed primary's error leaked downstream")
 	}
 }

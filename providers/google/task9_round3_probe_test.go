@@ -1,8 +1,8 @@
 package google
 
 import (
-	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -112,27 +112,52 @@ func TestRound3GoogleAssemblyErrorCannotLaterCommitPartial(t *testing.T) {
 }
 
 func TestRound3GoogleAutomaticRotationDoesNotDuplicateCurrentAudio(t *testing.T) {
-	now := time.Unix(1, 0)
+	var nowNanos atomic.Int64
+	nowNanos.Store(time.Unix(1, 0).UnixNano())
 	cfg := DefaultSTTConfig()
-	cfg.Now = func() time.Time { return now }
+	cfg.Now = func() time.Time { return time.Unix(0, nowNanos.Load()) }
 	cfg.StreamRotationThreshold = time.Second
 	opener := &mockSTTOpener{}
 	cfg.StreamOpener = opener
 	p, _ := NewSTTProcessor(cfg)
-	defer p.Close()
-	ctx := context.Background()
-	e := probeEmitter{}
-	p.ProcessFrame(ctx, &core.UserStartedSpeakingFrame{Seq: 1, Gen: 1}, core.Downstream, e)
-	p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
-	now = now.Add(2 * time.Second)
-	p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
-	if len(opener.streams) != 2 {
-		t.Fatal("rotation not triggered")
+	pipe, _ := core.NewPipeline(p, &coretest.PassthroughProcessor{})
+	s, _ := core.NewSession(995, pipe, core.DefaultResourceBudget())
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
 	}
+	defer s.Close()
+	_ = s.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = s.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	// The first stream opens on a session task; rotation needs it attached.
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		for deadline := time.Now().Add(2 * time.Second); !cond(); time.Sleep(time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal(what)
+			}
+		}
+	}
+	waitFor("first stream never attached", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.active != nil && p.active.stream != nil
+	})
+	nowNanos.Add(int64(2 * time.Second))
+	_ = s.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	waitFor("rotation not triggered", func() bool {
+		opener.mu.Lock()
+		defer opener.mu.Unlock()
+		return len(opener.streams) == 2
+	})
+	opener.mu.Lock()
+	second := opener.streams[1]
+	opener.mu.Unlock()
+	second.mu.Lock()
 	total := 0
-	for _, b := range opener.streams[1].audioChunks {
+	for _, b := range second.audioChunks {
 		total += len(b)
 	}
+	second.mu.Unlock()
 	if total != 1280 {
 		t.Fatalf("new stream contains repeated current audio: got %d bytes want 1280", total)
 	}

@@ -48,14 +48,34 @@ func TestRound3XAINewTurnPreservesPendingPriorFinal(t *testing.T) {
 	cfg.StreamOpener = opener
 	p, _ := NewSTTProcessor(cfg)
 	defer p.Close()
+	bareSession(p)
 	ctx := context.Background()
 	e := reviewEmitter{}
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "A", Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "A", Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "B", Gen: 1}, core.Downstream, e)
-	if opener.streams[0].closes.Load() != 0 {
-		t.Fatalf("A's drain was canceled at B start before final/timeout: closes=%d", opener.streams[0].closes.Load())
+	// A's stream parks as draining when B starts; wait for its open to attach, then give
+	// a wrongful cancel time to show before asserting it was not closed.
+	eventually(t, "A's stream attached", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		for _, d := range p.draining {
+			d.mu.Lock()
+			ok := d.stream != nil
+			d.mu.Unlock()
+			if ok {
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(50 * time.Millisecond)
+	opener.mu.Lock()
+	first := opener.streams[0]
+	opener.mu.Unlock()
+	if first.closes.Load() != 0 {
+		t.Fatalf("A's drain was canceled at B start before final/timeout: closes=%d", first.closes.Load())
 	}
 }
 

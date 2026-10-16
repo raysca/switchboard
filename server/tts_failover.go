@@ -56,8 +56,10 @@ func (r *Registry) ttsBreaker(provider string) *resilience.Breaker {
 
 // failoverPolicy tightens a provider's retry policy for a stage candidate that
 // has a fallback behind it: 2 tries instead of 3, and for stt opens at most
-// 5 s each, so the fallback starts after about 10 s (stt) or 2 x the
-// provider's request timeout (tts) instead of up to 45 s. It only ever shortens
+// sttFailoverAttempt each, so a hung STT dial reports (and the fallback
+// starts) after about 3 s, before the turn processor drops the untranscribed
+// turn (turn.DefaultNoTranscriptTimeout, 5 s after silence onset); for tts
+// after 2 x the provider's request timeout instead of up to 45 s. It only ever shortens
 // base (a zero base field counts as unset). The last candidate keeps its full
 // policy. LLMs are instead bounded by the first-token deadline (core.LLMFailover).
 //
@@ -70,11 +72,21 @@ func failoverPolicy(stage string, base resilience.Policy) resilience.Policy {
 	if base.MaxAttempts <= 0 || base.MaxAttempts > 2 {
 		base.MaxAttempts = 2
 	}
-	if stage == "stt" && (base.AttemptTimeout <= 0 || base.AttemptTimeout > 5*time.Second) {
-		base.AttemptTimeout = 5 * time.Second
+	if stage == "stt" && (base.AttemptTimeout <= 0 || base.AttemptTimeout > sttFailoverAttempt) {
+		base.AttemptTimeout = sttFailoverAttempt
 	}
 	return base
 }
+
+// sttFailoverAttempt bounds one STT open of a candidate with a fallback: a
+// websocket/gRPC handshake on a healthy provider takes well under it. Two
+// attempts (~3 s) only beat turn.no_transcript_timeout while that stays above
+// it (config validation warns otherwise).
+// ponytail: a cold Google channel (TLS) can need longer. Predial is off by
+// default and Google's Warm fetches no token, so one slow attempt costs a
+// retry; timed-out attempts feed the provider's shared breaker (Deepgram and
+// ElevenLabs share one, threshold 5).
+const sttFailoverAttempt = 1500 * time.Millisecond
 
 // ttsRate is the one output rate the call's TTS candidates are built for. The
 // transport builds its resampler from the first frame and cannot follow a

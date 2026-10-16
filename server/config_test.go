@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -301,5 +303,27 @@ func TestValidateProductionSecurity_PublicAdmin(t *testing.T) {
 	err = validateProductionSecurity(cfg)
 	if err == nil || !strings.Contains(err.Error(), "public_admin") {
 		t.Fatalf("want public_admin rejection, got %v", err)
+	}
+}
+
+func TestValidateConfig_WarnsOnShortNoTranscriptTimeout(t *testing.T) {
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	for _, tc := range []struct {
+		d    time.Duration
+		warn bool
+	}{{0, false}, {5 * time.Second, false}, {3200 * time.Millisecond, false}, {2 * time.Second, true}} {
+		logs.Reset()
+		cfg := DefaultConfig(ProfileDevelopment)
+		cfg.Turn.Manager = true
+		cfg.Turn.NoTranscriptTimeout = tc.d
+		if err := ValidateConfig(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(logs.String(), "no_transcript_timeout"); got != tc.warn {
+			t.Errorf("timeout %v: warned = %v, want %v (%s)", tc.d, got, tc.warn, logs.String())
+		}
 	}
 }

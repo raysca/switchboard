@@ -72,18 +72,37 @@ func TestReviewGoogleRotationOriginIsCurrentTurn(t *testing.T) {
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = &mockSTTOpener{}
 	p, _ := NewSTTProcessor(cfg)
-	ctx := context.Background()
-	e := probeEmitter{}
-	p.ProcessFrame(ctx, &core.UserStartedSpeakingFrame{Seq: 1, Gen: 1}, core.Downstream, e)
-	for i := 0; i < 10; i++ {
-		p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 3200), Gen: 1}, core.Downstream, e)
+	pipe, _ := core.NewPipeline(p, &coretest.PassthroughProcessor{})
+	s, _ := core.NewSession(998, pipe, core.DefaultResourceBudget())
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
 	}
-	p.ProcessFrame(ctx, &core.UserStartedSpeakingFrame{Seq: 2, Gen: 1}, core.Downstream, e)
+	defer s.Close()
+	_ = s.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
 	for i := 0; i < 10; i++ {
-		p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 3200), Gen: 1}, core.Downstream, e)
+		_ = s.Post(&core.InputAudioFrame{Samples: make([]byte, 3200), Gen: 1})
 	}
-	p.rotateStream(ctx)
-	if got := p.active.offsetBase; got != 500*time.Millisecond {
+	_ = s.Post(&core.UserStartedSpeakingFrame{Seq: 2, Gen: 1})
+	for i := 0; i < 10; i++ {
+		_ = s.Post(&core.InputAudioFrame{Samples: make([]byte, 3200), Gen: 1})
+	}
+	// The stream opens on a session task: wait for the second turn's audio and its stream.
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(time.Millisecond) {
+		p.mu.Lock()
+		ready := p.turnAudioBytes == 10*3200 && p.active != nil && p.active.stream != nil
+		p.mu.Unlock()
+		if ready {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("second turn's stream never opened")
+		}
+	}
+	p.rotateStream(context.Background())
+	p.mu.Lock()
+	got := p.active.offsetBase
+	p.mu.Unlock()
+	if got != 500*time.Millisecond {
 		t.Fatalf("rotation offset includes previous turn: got=%v want=500ms", got)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"govoice/core"
 	"govoice/core/coretest"
 	"govoice/core/resilience"
+	"govoice/core/sttunit"
 )
 
 const sttKey = "cartesia-test-key-0123456789"
@@ -115,11 +116,18 @@ func (h *sharness) errors() (out []error) {
 	}
 	return
 }
-func (p *STTProcessor) activeCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.all)
+
+// ensureStream dials one stream the way the runner's stream task does, then
+// closes it (dial, retry and breaker tests).
+func (p *STTProcessor) ensureStream(ctx context.Context) error {
+	c, err := p.dial(ctx)
+	if err == nil {
+		c.Close()
+	}
+	return err
 }
+
+func (p *STTProcessor) activeCount() int { return p.Streams() }
 
 func swait(t *testing.T, what string, cond func() bool) {
 	t.Helper()
@@ -208,6 +216,9 @@ func TestSTT_InterimFinalCumulativeAndFinalizeOnStop(t *testing.T) {
 		t.Errorf("headers %v", hd)
 	}
 	swait(t, "release", func() bool { return h.proc.activeCount() == 0 })
+	if errs := h.errors(); len(errs) != 0 {
+		t.Errorf("a normal finalize -> flush_done -> done raised %v", errs)
+	}
 }
 
 func TestSTT_OptionalQueryParams(t *testing.T) {
@@ -294,9 +305,6 @@ func TestSTT_BreakerOpensOnOutage(t *testing.T) {
 	}
 	if opens.Load() != 2 {
 		t.Fatalf("opens=%d", opens.Load())
-	}
-	if _, _, _, errs := h.proc.STTCounts(); errs != 2 {
-		t.Fatalf("errs=%d", errs)
 	}
 }
 
@@ -398,7 +406,7 @@ func TestSTT_IdleCloseIsNotAnOutage(t *testing.T) {
 	cfg := f.cfg()
 	cfg.CircuitBreaker = resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
 	h := sstart(t, cfg, nil)
-	h.speak()
+	h.audio(1)
 	swait(t, "release", func() bool { return f.opens.Load() == 1 && h.proc.activeCount() == 0 })
 	if len(h.errors()) != 0 || !cfg.CircuitBreaker.Allow() {
 		t.Fatalf("idle close reported as outage: %v", h.errors())
@@ -488,6 +496,8 @@ func TestSTT_DrainTimeoutForcesClose(t *testing.T) {
 	swait(t, "release", func() bool { return h.proc.activeCount() == 0 })
 }
 
+// Timing-dependent end to end (the echo fake answers as audio arrives); the
+// deterministic version is sttunit's TestRunner_UnboundStreamAdoptedByNextTurn.
 func TestSTT_UnboundStreamAdoptedByNextTurn(t *testing.T) {
 	f := newSFake(t, echo(func(n int) [][]byte {
 		if n == 1 {
@@ -496,36 +506,30 @@ func TestSTT_UnboundStreamAdoptedByNextTurn(t *testing.T) {
 		return [][]byte{transcript(" there", false)}
 	}, nil))
 	h := sstart(t, f.cfg(), nil)
-	h.audio(1)
-	swait(t, "onset final", func() bool {
-		h.proc.mu.Lock()
-		defer h.proc.mu.Unlock()
-		if h.proc.active == nil {
-			return false
+	last := func() *core.TranscriptCandidateFrame {
+		c := h.candidates()
+		if len(c) == 0 {
+			return nil
 		}
-		h.proc.active.mu.Lock()
-		defer h.proc.active.mu.Unlock()
-		return h.proc.active.committed == "hi"
-	})
-	if len(h.candidates()) != 0 {
-		t.Fatal("unbound stream emitted a candidate")
+		return c[len(c)-1]
 	}
+	h.audio(1)
+	swait(t, "unbound stream", func() bool { return f.opens.Load() == 1 })
 	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
 	h.audio(1)
-	swait(t, "adopted candidate", func() bool { return len(h.candidates()) == 1 })
-	if c := h.candidates()[0]; c.Text != "hi there" || c.Turn != "turn-1-1" || f.opens.Load() != 1 {
+	swait(t, "adopted candidate", func() bool { c := last(); return c != nil && c.Text == "hi there" })
+	if c := last(); c.Turn != "turn-1-1" || f.opens.Load() != 1 {
 		t.Fatalf("candidate %+v opens=%d", c, f.opens.Load())
 	}
 	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{})
 	swait(t, "closed", func() bool { return h.proc.activeCount() == 0 })
 	h.audio(1)
-	swait(t, "fresh unbound stream", func() bool {
-		h.proc.mu.Lock()
-		defer h.proc.mu.Unlock()
-		return f.opens.Load() == 2 && h.proc.active != nil
-	})
-	if turn, _ := h.proc.active.owner(); turn != "" {
-		t.Fatalf("bound to %q", turn)
+	swait(t, "fresh stream", func() bool { return f.opens.Load() == 2 })
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 2})
+	h.audio(1)
+	swait(t, "second turn adopts it", func() bool { c := last(); return c != nil && c.Turn == "turn-1-2" })
+	if n := f.opens.Load(); n != 2 {
+		t.Fatalf("the second turn opened its own stream: opens=%d", n)
 	}
 }
 
@@ -634,5 +638,50 @@ func TestSTT_WhisperOnlyParamsOmittedForOtherModels(t *testing.T) {
 	u, _ := p.wsURL()
 	if strings.Contains(u, "language=") || strings.Contains(u, "min_volume") || strings.Contains(u, "max_silence") || !strings.Contains(u, "model=ink-2") {
 		t.Fatal(u)
+	}
+}
+
+// A8: a clean close while the turn still owes its transcript invalidates it.
+func TestSTT_CleanCloseMidUtteranceInvalidatesTurn(t *testing.T) {
+	f := newSFake(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _, _ = c.Read(ctx)
+		_ = c.Close(websocket.StatusNormalClosure, "")
+	})
+	cfg := f.cfg()
+	cfg.CircuitBreaker = resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
+	h := sstart(t, cfg, nil)
+	h.speak()
+	swait(t, "invalidating error", func() bool {
+		for _, err := range h.errors() {
+			if errors.Is(err, core.ErrTranscriptInvalidated) {
+				return true
+			}
+		}
+		return false
+	})
+	if !cfg.CircuitBreaker.Allow() {
+		t.Fatal("a clean close is not an outage")
+	}
+}
+
+// Text heard while the stream was unbound (the runner drops those results) is
+// re-surfaced by the next result: the Conn's text is cumulative.
+func TestSTTConn_ResurfacesUnboundTextAndFlushPromotesInterim(t *testing.T) {
+	c := &sttConn{}
+	_ = c.transcript(&sttMessage{Text: "hi", IsFinal: true}) // dropped by the runner
+	_ = c.transcript(&sttMessage{Text: " the", IsFinal: false})
+	got := c.transcript(&sttMessage{Text: " there", IsFinal: false})
+	if want := (sttunit.Result{Text: "hi there"}); got != want {
+		t.Fatalf("interim: %+v, want %+v", got, want)
+	}
+	if got, want := c.flushed(), (sttunit.Result{Text: "hi there", Final: true, EndOfUtterance: true}); got != want {
+		t.Fatalf("flush: %+v, want %+v", got, want)
+	}
+	got = c.transcript(&sttMessage{Text: " now", IsFinal: true})
+	if want := (sttunit.Result{Text: "hi there now", Final: true}); got != want {
+		t.Fatalf("final after flush: %+v, want %+v", got, want)
+	}
+	if got := (&sttConn{}).transcript(&sttMessage{IsFinal: true}); got != (sttunit.Result{Final: true}) {
+		t.Fatalf("empty final: %+v", got)
 	}
 }

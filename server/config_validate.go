@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -12,6 +13,10 @@ import (
 
 	coreturn "govoice/core/turn"
 )
+
+// minNoTranscriptForSTTFailover is the dial budget of a failing-over STT candidate (2 attempts of
+// sttFailoverAttempt) plus slack: a turn.no_transcript_timeout below it can drop the turn first.
+const minNoTranscriptForSTTFailover = 2*sttFailoverAttempt + 200*time.Millisecond
 
 // ValidateConfig enforces production safety and constraint validation.
 func ValidateConfig(cfg *Config) error {
@@ -168,6 +173,11 @@ func validateTurn(cfg *Config) error {
 	}
 	if cfg.Turn.SpeechTimeout < 0 || cfg.Turn.EagerGrace < 0 || cfg.Turn.NoTranscriptTimeout < 0 {
 		return errors.New("turn.speech_timeout, turn.eager_grace and turn.no_transcript_timeout must be >= 0")
+	}
+	if d := cfg.Turn.NoTranscriptTimeout; d > 0 && d < minNoTranscriptForSTTFailover {
+		// Which agents have an STT failover is per-agent data, unknown here, so this warns for any config.
+		slog.Warn("turn.no_transcript_timeout is shorter than an STT failover's dial budget: a turn can be dropped before the fallback STT opens",
+			"no_transcript_timeout", d, "recommended_min", minNoTranscriptForSTTFailover)
 	}
 	for p, d := range cfg.Turn.STTP99 {
 		if d < 100*time.Millisecond || d > 10*time.Second {
