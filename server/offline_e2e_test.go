@@ -180,11 +180,23 @@ func TestOfflineAdapterDownFailsTheStage(t *testing.T) {
 	})
 	realVAD(t, rig.s)
 	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
-	// Two spoken turns, each failing its STT dial: the second ends the call.
+	// The first failing turn is reported but the call stays up; the second ends it.
+	timelineErrors := func() (n int) {
+		for _, e := range rig.timeline() {
+			if e.Type == EventError {
+				n++
+			}
+		}
+		return n
+	}
 	call.sendAudioLoose(callerSpeech(t))
+	eventually(t, "the first STT failure on the timeline", func() bool { return timelineErrors() >= 1 })
+	time.Sleep(500 * time.Millisecond) // a miscounted first failure would hang up within this window
+	if call.ended() {
+		t.Fatal("the call ended after the first failed turn")
+	}
 	call.sendAudioLoose(callerSpeech(t))
-	// A call whose STT cannot be reached must end, not hang deaf: the dial failure of each turn is
-	// a non-fatal error, and two in a row with no transcript hang the call up as an error.
+	// A call whose STT cannot be reached must end, not hang deaf.
 	eventually(t, "the call to end after its STT failed twice", call.ended)
 	rig.waitEnded(call.sessionID, storage.EndError)
 	if call.replies("never spoken") != 0 {

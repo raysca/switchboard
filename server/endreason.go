@@ -71,7 +71,10 @@ const sttUnavailableLimit = 2
 
 // sttOutage counts consecutive STT-unreachable error frames. It is used from the one goroutine that
 // observes the call's pipeline output, so it needs no lock.
-type sttOutage struct{ n int }
+type sttOutage struct {
+	n    int
+	last *core.ErrorFrame // OnFrame sees one frame at every pipeline hop: count it once (like lastSTTTurn)
+}
 
 // observe reports true once, when f is the error that reaches sttUnavailableLimit.
 func (o *sttOutage) observe(f core.Frame) bool {
@@ -79,7 +82,8 @@ func (o *sttOutage) observe(f core.Frame) bool {
 	case *core.TranscriptCandidateFrame, *core.UserMessageFrame:
 		o.n = 0
 	case *core.ErrorFrame:
-		if errors.Is(fr.Err, core.ErrSTTUnavailable) {
+		if errors.Is(fr.Err, core.ErrSTTUnavailable) && fr != o.last {
+			o.last = fr
 			o.n++
 			return o.n == sttUnavailableLimit
 		}
