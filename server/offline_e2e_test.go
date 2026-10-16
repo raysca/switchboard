@@ -177,6 +177,7 @@ func TestOfflineAdapterDownFailsTheStage(t *testing.T) {
 		c.Providers.Offline.STTEndpoint = "ws" + strings.TrimPrefix(url, "http") + "/v1/stt"
 		c.Providers.Offline.TTSEndpoint = url + "/v1/tts"
 		c.Providers.Offline.LLMEndpoint = llm.URL + "/v1/responses"
+		c.Turn.NoTranscriptTimeout = time.Second // the hang-up counts failures a window apart
 	})
 	realVAD(t, rig.s)
 	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
@@ -191,7 +192,7 @@ func TestOfflineAdapterDownFailsTheStage(t *testing.T) {
 	}
 	call.sendAudioLoose(callerSpeech(t))
 	eventually(t, "the first STT failure on the timeline", func() bool { return timelineErrors() >= 1 })
-	time.Sleep(500 * time.Millisecond) // a miscounted first failure would hang up within this window
+	time.Sleep(1200 * time.Millisecond) // a miscounted first failure would hang up here; and the window has passed
 	if call.ended() {
 		t.Fatal("the call ended after the first failed turn")
 	}

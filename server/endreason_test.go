@@ -75,53 +75,86 @@ func TestEndCauses(t *testing.T) {
 	}
 }
 
-func TestSTTOutageEndsTheCallOnlyAfterTwoFailuresWithNoTranscriptBetween(t *testing.T) {
-	turn := 0
-	down := func() *core.ErrorFrame { // each call is the next turn's failure
-		turn++
-		return &core.ErrorFrame{Err: errors.Join(core.ErrSTTUnavailable, errors.New("refused")), Turn: core.TurnID(fmt.Sprintf("turn-%d", turn))}
-	}
-	other := &core.ErrorFrame{Err: errors.New("tts failed")}
+// testClock is a hand-driven clock for sttOutage.
+type testClock struct{ t time.Time }
 
-	var o sttOutage
-	if o.observe(down()) || o.observe(other) {
+func (c *testClock) now() time.Time          { return c.t }
+func (c *testClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func sttDown(turn string) *core.ErrorFrame {
+	return &core.ErrorFrame{Err: errors.Join(core.ErrSTTUnavailable, errors.New("refused")), Turn: core.TurnID(turn)}
+}
+
+func TestSTTOutageEndsTheCallOnlyAfterTwoFailuresAWindowApartWithNoTranscriptBetween(t *testing.T) {
+	clk := &testClock{t: time.Unix(1000, 0)}
+	o := sttOutage{window: 5 * time.Second, now: clk.now}
+	other := &core.ErrorFrame{Err: errors.New("tts failed")}
+	if o.observe(sttDown("turn-1-1")) || o.observe(other) {
 		t.Fatal("a lone failure (or another error) must not end the call")
 	}
-	if !o.observe(down()) {
-		t.Fatal("the second consecutive failure must end the call")
+	clk.advance(5 * time.Second)
+	if !o.observe(sttDown("turn-1-2")) {
+		t.Fatal("the second failure a full window later must end the call")
 	}
-	if o.observe(down()) {
+	if o.observe(sttDown("turn-1-3")) {
 		t.Fatal("the end is signalled once")
 	}
 
-	o = sttOutage{}
-	o.observe(down())
+	o = sttOutage{window: 5 * time.Second, now: clk.now}
+	o.observe(sttDown("a"))
 	o.observe(&core.TranscriptCandidateFrame{Text: "hi"})
-	if o.observe(down()) {
+	clk.advance(10 * time.Second)
+	if o.observe(sttDown("b")) {
 		t.Fatal("a transcript between failures resets the count")
 	}
 	o.observe(&core.UserMessageFrame{})
-	if o.observe(down()) {
+	clk.advance(10 * time.Second)
+	if o.observe(sttDown("c")) {
 		t.Fatal("a user message resets the count")
 	}
 }
 
-// An unbound dial (no turn) is not a lost turn, and one turn's failures count once
-// however many frames report them.
-func TestSTTOutageCountsLogicalTurns(t *testing.T) {
+// STT keys errors by VAD segment; the turn processor merges segments into one turn. A pause inside
+// an utterance (two segments within one no-transcript window) is one lost turn, not two.
+func TestSTTOutageSegmentsInsideOneWindowAreOneLostTurn(t *testing.T) {
+	clk := &testClock{t: time.Unix(1000, 0)}
+	o := sttOutage{window: 5 * time.Second, now: clk.now}
+	if o.observe(sttDown("turn-1-1")) {
+		t.Fatal("first segment failure ended the call")
+	}
+	clk.advance(1200 * time.Millisecond) // the caller paused, a second VAD segment
+	if o.observe(sttDown("turn-1-2")) {
+		t.Fatal("a second segment inside the window hung the call up")
+	}
+	clk.advance(4 * time.Second) // 5.2s after the first counted failure
+	if !o.observe(sttDown("turn-1-3")) {
+		t.Fatal("a failure a full window after the first must end the call")
+	}
+}
+
+// While a provider's breaker is open every call's dial fails fast on each segment; none of the
+// calls may hang up on its second segment.
+func TestSTTOutageOpenBreakerDoesNotHangUpCallsOnTheirSecondSegment(t *testing.T) {
+	clk := &testClock{t: time.Unix(1000, 0)}
+	for i := 0; i < 50; i++ {
+		o := sttOutage{window: 5 * time.Second, now: clk.now}
+		o.observe(sttDown("turn-1-1"))
+		clk.advance(300 * time.Millisecond)
+		if o.observe(sttDown("turn-1-2")) {
+			t.Fatalf("call %d hung up on its second segment", i)
+		}
+	}
+}
+
+// An unbound dial (no turn) is not a lost turn.
+func TestSTTOutageIgnoresUnboundDials(t *testing.T) {
+	clk := &testClock{t: time.Unix(1000, 0)}
+	o := sttOutage{window: time.Second, now: clk.now}
 	unbound := func() *core.ErrorFrame { return &core.ErrorFrame{Err: core.ErrSTTUnavailable} }
-	turnFail := func(turn string) *core.ErrorFrame {
-		return &core.ErrorFrame{Err: core.ErrSTTUnavailable, Turn: core.TurnID(turn)}
-	}
-	var o sttOutage
-	if o.observe(unbound()) || o.observe(turnFail("turn-1")) {
-		t.Fatal("an unbound pre-onset dial failure plus the turn's own failure is one lost turn")
-	}
-	if o.observe(turnFail("turn-1")) {
-		t.Fatal("another frame of the same turn must not count")
-	}
-	if !o.observe(turnFail("turn-2")) {
-		t.Fatal("a second turn ends the call")
+	o.observe(unbound())
+	clk.advance(2 * time.Second)
+	if o.observe(unbound()) || o.observe(sttDown("turn-1-1")) {
+		t.Fatal("unbound dial failures counted as lost turns")
 	}
 }
 
@@ -138,10 +171,12 @@ func TestSTTOutageCountsAFrameOncePerPipelineNotPerHop(t *testing.T) {
 	}
 	var (
 		mu      sync.Mutex
-		outage  sttOutage
+		clk     = &testClock{t: time.Unix(1000, 0)}
+		outage  = sttOutage{window: 5 * time.Second}
 		ends    int
 		changes int
 	)
+	outage.now = clk.now
 	sess.OnFrame = func(f core.Frame, _ core.Direction) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -181,6 +216,7 @@ func TestSTTOutageCountsAFrameOncePerPipelineNotPerHop(t *testing.T) {
 		t.Fatalf("one failed dial ended the call (%d hops counted it)", changes)
 	}
 	seen := changes
+	clk.advance(6 * time.Second)
 	mu.Unlock()
 	fail(2) // a second turn
 	settle(seen + 2)

@@ -3,8 +3,10 @@ package server
 import (
 	"errors"
 	"sync/atomic"
+	"time"
 
 	"govoice/core"
+	coreturn "govoice/core/turn"
 	"govoice/server/storage"
 )
 
@@ -64,30 +66,51 @@ func reasonFromTransport(cause string) string {
 	return ""
 }
 
-// sttUnavailableLimit is how many STT-unreachable errors in a row (no transcript between them)
-// end a call. An STT failover recovers or swallows such errors until its chain is exhausted, so
-// only a stage with nothing left to try reaches this count. Not configurable on purpose.
+// sttUnavailableLimit is how many STT-unreachable errors, at least one no-transcript window apart
+// with no transcript between them, end a call. An STT failover recovers or swallows such errors until
+// its chain is exhausted, so only a stage with nothing left to try reaches this count. Not
+// configurable on purpose.
 const sttUnavailableLimit = 2
 
-// sttOutage counts consecutive turns whose STT was unreachable. It is used from the one goroutine that
-// observes the call's pipeline output, so it needs no lock.
+// sttOutage counts STT-unreachable error frames. STT keys its errors by VAD segment, and the turn
+// processor merges several segments into one logical turn that STT never sees, so a failure counts
+// only once a full no-transcript window (turn.no_transcript_timeout) has passed since the last
+// counted one: segments inside one window are one lost turn. It is used from the one goroutine
+// that observes the call's pipeline output, so it needs no lock.
 type sttOutage struct {
-	n    int
-	last core.TurnID // OnFrame sees one frame at every pipeline hop, and a turn can fail twice: count a turn once
+	window time.Duration    // 0: turn.DefaultNoTranscriptTimeout
+	now    func() time.Time // nil: time.Now (monotonic); tests inject a clock
+	n      int
+	last   *core.ErrorFrame // OnFrame sees one frame at every pipeline hop: count it once
+	at     time.Time        // when the last failure was counted
 }
 
 // observe reports true once, when f is the error that reaches sttUnavailableLimit.
 func (o *sttOutage) observe(f core.Frame) bool {
 	switch fr := f.(type) {
 	case *core.TranscriptCandidateFrame, *core.UserMessageFrame:
-		o.n, o.last = 0, ""
+		o.n, o.last = 0, nil
 	case *core.ErrorFrame:
 		// A frame with no turn is an unbound pre-onset dial: no turn lost its transcript.
-		if errors.Is(fr.Err, core.ErrSTTUnavailable) && fr.Turn != "" && fr.Turn != o.last {
-			o.last = fr.Turn
-			o.n++
-			return o.n == sttUnavailableLimit
+		if !errors.Is(fr.Err, core.ErrSTTUnavailable) || fr.Turn == "" || fr == o.last {
+			return false
 		}
+		o.last = fr
+		now := time.Now
+		if o.now != nil {
+			now = o.now
+		}
+		window := o.window
+		if window <= 0 {
+			window = coreturn.DefaultNoTranscriptTimeout
+		}
+		t := now()
+		if o.n > 0 && t.Sub(o.at) < window {
+			return false
+		}
+		o.at = t
+		o.n++
+		return o.n == sttUnavailableLimit
 	}
 	return false
 }

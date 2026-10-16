@@ -617,7 +617,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		lastTTSUnit        uint64
 		lastInterruption   uint64
 		lastFlushAck       uint64
-		outage             sttOutage
+		outage             = sttOutage{window: s.cfg.Turn.NoTranscriptTimeout}
 	)
 
 	session.OnFrame = func(f core.Frame, dir core.Direction) {
