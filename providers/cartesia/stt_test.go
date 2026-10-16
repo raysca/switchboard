@@ -216,6 +216,9 @@ func TestSTT_InterimFinalCumulativeAndFinalizeOnStop(t *testing.T) {
 		t.Errorf("headers %v", hd)
 	}
 	swait(t, "release", func() bool { return h.proc.activeCount() == 0 })
+	if errs := h.errors(); len(errs) != 0 {
+		t.Errorf("a normal finalize -> flush_done -> done raised %v", errs)
+	}
 }
 
 func TestSTT_OptionalQueryParams(t *testing.T) {
@@ -493,6 +496,8 @@ func TestSTT_DrainTimeoutForcesClose(t *testing.T) {
 	swait(t, "release", func() bool { return h.proc.activeCount() == 0 })
 }
 
+// Timing-dependent end to end (the echo fake answers as audio arrives); the
+// deterministic version is sttunit's TestRunner_UnboundStreamAdoptedByNextTurn.
 func TestSTT_UnboundStreamAdoptedByNextTurn(t *testing.T) {
 	f := newSFake(t, echo(func(n int) [][]byte {
 		if n == 1 {
