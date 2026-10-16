@@ -120,7 +120,24 @@ func TestGoogleSTTTraceOpenAndRotationPanicEndFailure(t *testing.T) {
 		if rotation {
 			assertGoogleSTTPanicTrace(t, func() { _ = p.rotateStream(ctx) }, r)
 		} else {
-			assertGoogleSTTPanicTrace(t, func() { _ = p.openPrimaryStream(ctx) }, r)
+			// The open runs on a session task now: its panic fails the session,
+			// not the caller, and the span still ends as a provider failure.
+			if err := s.Start(); err != nil {
+				t.Fatal(err)
+			}
+			_ = p.openPrimaryStream(ctx)
+			waitLifecycle(t, func() bool {
+				r.mu.Lock()
+				defer r.mu.Unlock()
+				return len(r.endErrors["stt.stream"]) == 1
+			})
+			r.mu.Lock()
+			ends := append([]error(nil), r.endErrors["stt.stream"]...)
+			r.mu.Unlock()
+			if ends[0] == nil || ends[0].Error() != "provider_failure" {
+				t.Fatalf("open panic trace ends=%v", ends)
+			}
+			_ = s.Close()
 		}
 	}
 }

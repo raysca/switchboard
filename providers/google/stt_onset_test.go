@@ -35,13 +35,16 @@ func TestGoogleSTTNextUtteranceStreamGetsItsOnsetAudio(t *testing.T) {
 	for {
 		var got []byte
 		opener.mu.Lock()
-		if n := len(opener.streams); n > 0 {
-			last := opener.streams[n-1]
-			last.mu.Lock()
-			for _, c := range last.audioChunks {
-				got = append(got, c[0])
+		for _, s := range opener.streams {
+			var chunks []byte
+			s.mu.Lock()
+			for _, c := range s.audioChunks {
+				chunks = append(chunks, c[0])
 			}
-			last.mu.Unlock()
+			s.mu.Unlock()
+			if bytes.HasSuffix(chunks, []byte{3}) {
+				got = chunks
+			}
 		}
 		opener.mu.Unlock()
 		if bytes.HasSuffix(got, []byte{3}) {
