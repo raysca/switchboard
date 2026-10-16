@@ -48,6 +48,30 @@ textarea {
   font: inherit;
   border-radius: var(--radius);
 }
+/* Every select and text area looks the same, in or out of a .form-field. The chevron is drawn with two gradients so it follows the tokens. */
+select {
+  appearance: none;
+  min-height: 44px;
+  padding: 0 40px 0 12px;
+  border: 1px solid var(--ink-2);
+  background-color: var(--surface);
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-2) 50%), linear-gradient(135deg, var(--ink-2) 50%, transparent 50%);
+  background-position: calc(100% - 20px) 50%, calc(100% - 15px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--ink);
+  max-width: 100%;
+}
+select:disabled {
+  color: var(--ink-2);
+}
+textarea {
+  padding: 10px 12px;
+  border: 1px solid var(--ink-2);
+  background: var(--surface);
+  color: var(--ink);
+  max-width: 100%;
+}
 button {
   cursor: pointer;
 }
@@ -236,7 +260,9 @@ textarea:focus-visible {
   background: var(--bad);
 }
 main {
-  max-width: 1100px;
+  max-width: 1440px;
+  width: 100%;
+  margin-inline: auto;
   padding: clamp(36px, 6vw, 76px) clamp(24px, 5vw, 72px) 60px;
 }
 .section-heading {
@@ -485,11 +511,6 @@ th {
 
 .form-field select,
 .form-field textarea {
-  border: 1px solid var(--ink-2);
-  background: var(--surface);
-  color: var(--ink);
-  border-radius: var(--radius);
-  padding: 9px 11px;
   font: inherit;
 }
 .form-card {
@@ -3148,23 +3169,33 @@ main:has(.mcp-page) {
 .setting-help {
   margin: 0 0 12px;
 }
-/* The explain toggle is a quiet text button; it must not compete with the primary actions. */
+/* The explain toggle is an accent-tinted chip with an info icon, so a hint reads as help and not as an action. */
 .setting-help > .action-button-small {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-height: 44px;
-  padding: 0;
+  padding: 0 14px;
   border-color: transparent;
-  background: transparent;
-  color: var(--ink-2);
-  font-weight: 450;
+  background: var(--accent-tint);
+  color: var(--caller);
+  font-weight: 600;
 }
 .setting-help > .action-button-small:hover {
-  background: transparent;
-  color: var(--ink);
+  border-color: var(--caller);
+  background: var(--accent-tint);
+}
+.setting-help > .action-button-small[aria-expanded="true"] {
+  border-color: var(--caller);
+}
+.setting-help__icon {
+  flex: none;
 }
 .setting-help__panel {
-  margin-top: 6px;
-  padding: 2px 0 2px 16px;
-  border-left: 3px solid var(--rule);
+  margin-top: 8px;
+  padding: 12px 16px;
+  border-left: 3px solid var(--caller);
+  background: var(--accent-tint);
   max-width: 72ch;
   color: var(--ink-2);
   font-size: 0.85rem;
