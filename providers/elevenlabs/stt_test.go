@@ -839,6 +839,9 @@ func TestSTT_IdleCloseOfBoundUnfinishedTurnInvalidates(t *testing.T) {
 	sttWait(t, "invalidating error", func() bool {
 		for _, err := range h.errors() {
 			if errors.Is(err, core.ErrTranscriptInvalidated) {
+				if !strings.Contains(err.Error(), "insufficient_audio_activity") {
+					t.Errorf("the provider's reason is missing from %v", err)
+				}
 				return true
 			}
 		}
@@ -852,7 +855,7 @@ func TestSTT_IdleCloseOfBoundUnfinishedTurnInvalidates(t *testing.T) {
 // Deterministic pin of the unbound-resurface contract: text committed while no
 // turn was bound (the runner drops those results) is in the next result's
 // cumulative Text; a duplicate commit form is swallowed; an empty commit after
-// our commit is an empty Final that ends the utterance.
+// our commit settles the turn with the text so far as the ending Final.
 func TestSTTConn_ResurfacesUnboundTextAndDedupsCommitForms(t *testing.T) {
 	c := &sttConn{}
 	_, _ = c.transcript(&sttMessage{Type: "committed_transcript", Text: "hi"}) // dropped by the runner
@@ -871,5 +874,16 @@ func TestSTTConn_ResurfacesUnboundTextAndDedupsCommitForms(t *testing.T) {
 	got, done = c.transcript(&sttMessage{Type: "committed_transcript", Text: ""})
 	if want := (sttunit.Result{Text: "hi there", Final: true, EndOfUtterance: true}); got != want || !done {
 		t.Fatalf("end: %+v done=%v, want %+v", got, done, want)
+	}
+}
+
+// Nothing heard at all: the commit we asked for is answered with an empty
+// Final that ends the utterance (the runner settles the turn on it).
+func TestSTTConn_EmptyFinalAfterOurCommitEndsTheUtterance(t *testing.T) {
+	c := &sttConn{}
+	c.commitSent.Store(true)
+	got, done := c.transcript(&sttMessage{Type: "committed_transcript", Text: ""})
+	if want := (sttunit.Result{Final: true, EndOfUtterance: true}); got != want || !done {
+		t.Fatalf("empty final: %+v done=%v, want %+v", got, done, want)
 	}
 }

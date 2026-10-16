@@ -260,7 +260,7 @@ func (c *sttConn) Recv(ctx context.Context) (sttunit.Result, error) {
 			return res, nil
 		case m.Type == "session_time_limit_exceeded" || m.Type == "insufficient_audio_activity":
 			// A very long session, or our own silence: the server closes next.
-			return sttunit.Result{}, sttunit.ErrStreamEnded
+			return sttunit.Result{}, fmt.Errorf("%s: %w", m.Type, sttunit.ErrStreamEnded)
 		case sttErrorKinds[m.Type]:
 			return sttunit.Result{}, sttMessageError(m.Type, strings.ReplaceAll(m.Error, c.p.cfg.APIKey, "[REDACTED]"))
 		} // session_started, warning, entities, edited_transcript...: nothing to do
