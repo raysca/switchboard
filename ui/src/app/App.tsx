@@ -36,10 +36,28 @@ function RouteFocus() {
   const location = useLocation();
   const previousPath = useRef(location.pathname);
   useEffect(() => {
-    if (previousPath.current !== location.pathname) {
-      previousPath.current = location.pathname;
-      document.querySelector<HTMLElement>("main h1")?.focus();
+    if (previousPath.current === location.pathname) return;
+    previousPath.current = location.pathname;
+    const heading = () => document.querySelector<HTMLElement>("main h1");
+    if (heading()) {
+      heading()?.focus();
+      return;
     }
+    // A lazy route is still loading: focus its heading as soon as it mounts (give up after a few seconds).
+    const main = document.querySelector("main");
+    if (!main) return;
+    const observer = new MutationObserver(() => {
+      const h1 = heading();
+      if (!h1) return;
+      h1.focus();
+      observer.disconnect();
+    });
+    observer.observe(main, { childList: true, subtree: true });
+    const giveUp = window.setTimeout(() => observer.disconnect(), 5000);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(giveUp);
+    };
   }, [location.pathname]);
   return null;
 }

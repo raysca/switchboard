@@ -38,6 +38,7 @@ export type FlowSettingsPanelProps = {
 /** What the whole call shares. Stored on the start step (server: call-level config). */
 export function FlowSettingsPanel({ graph, providers, serverConfig, name, description, onName, onDescription, onChange, onClose, returnFocusTo, fallbackFocusId, published, onRestore }: FlowSettingsPanelProps) {
   const [restoring, setRestoring] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const start = graph.steps.find((n) => n.id === graph.start);
   const cfg: StepConfig = start?.config ?? {};
@@ -333,12 +334,16 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
                   <button
                     type="button"
                     className="action-button"
+                    disabled={restoreBusy}
                     onClick={() => {
                       setRestoreError(null);
-                      onRestore().catch((e: unknown) => {
-                        setRestoring(false);
-                        setRestoreError(e instanceof Error ? e.message : "The previous version could not be restored.");
-                      });
+                      setRestoreBusy(true);
+                      onRestore()
+                        .catch((e: unknown) => {
+                          setRestoring(false);
+                          setRestoreError(e instanceof Error ? e.message : "The previous version could not be restored.");
+                        })
+                        .finally(() => setRestoreBusy(false));
                     }}
                   >
                     Restore v{published.number - 1}

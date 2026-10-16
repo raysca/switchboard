@@ -84,8 +84,8 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const draftKey = canonical([toPayload(graph), tools]);
   const [testedKey, setTestedKey] = useState<string | null>(null);
   useEffect(() => {
-    if (call.live) setTestedKey(draftKey);
-  }, [call.live, draftKey]);
+    if (call.live && call.sessionId) setTestedKey(draftKey);
+  }, [call.live, call.sessionId, draftKey]);
   const opener = useRef<HTMLElement | null>(null);
   // The latest flow, for a panel that closes because its step was deleted (React Flow drops the step's DOM a beat later).
   const graphNow = useRef(graph);
