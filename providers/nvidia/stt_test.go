@@ -594,3 +594,17 @@ func TestSTT_EmptyFinalThenEndIsQuiet(t *testing.T) {
 		t.Fatalf("retracted noise called lost: %v", h.errs())
 	}
 }
+
+// One response may split the interim into a stable head and an unstable tail:
+// the result's stability is the lowest of them, not the last one's.
+func TestSTTConn_StabilityIsTheLowestOfTheTail(t *testing.T) {
+	c := &sttConn{}
+	resp := &rivapb.StreamingRecognizeResponse{Results: []*rivapb.StreamingRecognitionResult{
+		{Alternatives: []*rivapb.SpeechRecognitionAlternative{{Transcript: "hel"}}, Stability: 0.25},
+		{Alternatives: []*rivapb.SpeechRecognitionAlternative{{Transcript: "lo"}}, Stability: 0.75},
+	}}
+	r, ok := c.results(resp)
+	if !ok || r.Text != "hel lo" || r.Stability != 0.25 || !r.HasStability {
+		t.Fatalf("result %+v ok=%v, want stability 0.25", r, ok)
+	}
+}
