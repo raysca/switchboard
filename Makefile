@@ -155,7 +155,9 @@ e2e: ## paid|Playwright browser e2e against REAL Google (GOVOICE_LIVE=1; the mos
 # live call with a route, republish, a failed route and a plain flow (e2e/tests-flows).
 E2E_SETUP = cd e2e && npm ci --no-audit --no-fund && npm run typecheck && npx playwright install chromium
 e2e-fake: ui-embed ## free|Playwright browser e2e for routed flows and the one-port server against the echo provider (about 2 min)
-	$(E2E_SETUP) && npx playwright test -c playwright.flows.config.ts && npx playwright test -c playwright.oneport.config.ts
+	$(E2E_SETUP)
+	@# Run both suites so a failure in one cannot hide the other; fail if either did.
+	@cd e2e && rc=0; npx playwright test -c playwright.flows.config.ts || rc=1; npx playwright test -c playwright.oneport.config.ts || rc=1; exit $$rc
 
 # Every free end-to-end test: the Go suite, then the browser suite (echo provider, offline, about 2 min).
 e2e-echo: test-e2e-go e2e-fake ## free|Every end-to-end test on the echo provider: Go (test-e2e-go) then browser (e2e-fake)
