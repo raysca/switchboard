@@ -79,9 +79,13 @@ func failoverPolicy(stage string, base resilience.Policy) resilience.Policy {
 }
 
 // sttFailoverAttempt bounds one STT open of a candidate with a fallback: a
-// websocket/gRPC handshake on a healthy provider takes well under it.
-// ponytail: a cold Google channel (TLS + token fetch) can need longer; Warm
-// pre-dials, and a slow open only costs a needless failover, not the turn.
+// websocket/gRPC handshake on a healthy provider takes well under it. Two
+// attempts (~3 s) only beat turn.no_transcript_timeout while that stays above
+// it (config validation warns otherwise).
+// ponytail: a cold Google channel (TLS) can need longer. Predial is off by
+// default and Google's Warm fetches no token, so one slow attempt costs a
+// retry; timed-out attempts feed the provider's shared breaker (Deepgram and
+// ElevenLabs share one, threshold 5).
 const sttFailoverAttempt = 1500 * time.Millisecond
 
 // ttsRate is the one output rate the call's TTS candidates are built for. The
