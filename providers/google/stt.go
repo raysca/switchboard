@@ -723,7 +723,7 @@ func (p *STTProcessor) openAndReceive(ctx context.Context, st *activeStream) {
 		return p.cfg.StreamOpener.OpenStream(st.ctx, p.cfg)
 	}()
 	if err != nil {
-		p.openFailed(st, err)
+		p.openFailed(st, err, false)
 		return
 	}
 	if p.cfg.CircuitBreaker != nil {
@@ -731,7 +731,7 @@ func (p *STTProcessor) openAndReceive(ctx context.Context, st *activeStream) {
 	}
 	if err := p.flushPending(st, stream); err != nil {
 		_ = stream.Close()
-		p.openFailed(st, err)
+		p.openFailed(st, err, true)
 		return
 	}
 	p.receive(ctx, st)
@@ -774,8 +774,10 @@ func (p *STTProcessor) flushPending(st *activeStream, stream STTStream) error {
 // openFailed reports a stream that could not be opened (or died taking its
 // held audio): an ErrorFrame for its turn, which an STT failover moves on.
 // Nothing reopens until the next turn or a barge-in, so an outage costs one
-// error per turn, not one per audio frame.
-func (p *STTProcessor) openFailed(st *activeStream, err error) {
+// error per turn, not one per audio frame. heldAudioLost is a stream that
+// opened and then died taking its held audio: a bound turn lost that audio, so
+// it is invalidated (A8) rather than reported as an unreachable STT.
+func (p *STTProcessor) openFailed(st *activeStream, err error, heldAudioLost bool) {
 	stopped := st.ctx.Err() != nil // torn down (barge-in, hang-up): not a provider failure
 	st.cancel()
 	p.mu.Lock()
@@ -796,6 +798,10 @@ func (p *STTProcessor) openFailed(st *activeStream, err error) {
 	p.Errors.Add(1)
 	if gen == 0 {
 		gen = p.session.CurrentGeneration()
+	}
+	if heldAudioLost && turn != "" {
+		p.invalidateTurn(turn, gen, err)
+		return
 	}
 	_ = p.session.Reenter(&core.ErrorFrame{Err: fmt.Errorf("%w: %w", core.ErrSTTUnavailable, provErr), Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
 }
@@ -933,7 +939,9 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 		st.endTrace(core.TurnID(turn), core.Generation(gen), errors.New("canceled"))
 		st.cancel()
 		_ = st.stream.Close()
-		p.Errors.Add(1)
+		if !errors.Is(err, core.ErrTooManyTasks) { // the local task budget is not a provider error
+			p.Errors.Add(1)
+		}
 		if gen == 0 {
 			gen = p.session.CurrentGeneration()
 		}

@@ -11,6 +11,8 @@ import (
 
 	"govoice/core"
 	"govoice/core/coretest"
+
+	speechpb "cloud.google.com/go/speech/apiv2/speechpb"
 )
 
 type slowOpener struct {
@@ -368,5 +370,59 @@ func TestGoogleSTTRotationReceiverStartFailureClearsTheStream(t *testing.T) {
 	proc.mu.Unlock()
 	if cancelledStillActive {
 		t.Fatal("a cancelled replacement stayed the active stream")
+	}
+	for _, ef := range countFrames[*core.ErrorFrame](sink) {
+		if errors.Is(ef.Err, core.ErrTooManyTasks) && errors.Is(ef.Err, core.ErrSTTUnavailable) {
+			t.Fatalf("the local task budget is not an unreachable STT: %v", ef.Err)
+		}
+	}
+	if n := proc.Errors.Load(); n != 0 {
+		t.Fatalf("the local task limit counted %d provider errors", n)
+	}
+}
+
+// sendFailStream fails every Send, like a connection that died while its held audio flushed.
+type sendFailStream struct{ *mockSTTStream }
+
+func (sendFailStream) Send([]byte) error { return errors.New("write: broken pipe") }
+
+// A stream that dies taking a BOUND turn's held audio lost the turn: it is
+// invalidated (A8, so a failover replays it), not reported as an unreachable STT.
+func TestGoogleSTTFlushFailureOfBoundTurnInvalidatesIt(t *testing.T) {
+	proc, session, sink := startGoogleProc(t, openerFunc(func() STTStream { return sendFailStream{newMockSTTStream()} }))
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	gwait(t, "invalidation and error", 2*time.Second, func() bool {
+		return len(countFrames[*core.TranscriptInvalidationFrame](sink)) == 1 && len(countFrames[*core.ErrorFrame](sink)) == 1
+	})
+	ef := countFrames[*core.ErrorFrame](sink)[0]
+	if !errors.Is(ef.Err, core.ErrTranscriptInvalidated) || errors.Is(ef.Err, core.ErrSTTUnavailable) || ef.Turn != "turn-1-1" {
+		t.Fatalf("error frame %+v", ef)
+	}
+	if n := proc.Errors.Load(); n != 1 {
+		t.Fatalf("errors counted = %d, want 1", n)
+	}
+}
+
+type openerFunc func() STTStream
+
+func (f openerFunc) OpenStream(context.Context, STTConfig) (STTStream, error) { return f(), nil }
+
+type recvOnlyClient struct {
+	speechpb.Speech_StreamingRecognizeClient
+	resp *speechpb.StreamingRecognizeResponse
+}
+
+func (c recvOnlyClient) Recv() (*speechpb.StreamingRecognizeResponse, error) { return c.resp, nil }
+
+// A final with no alternatives (noise retracted) reaches the receiver as an empty final.
+func TestGRPCSTTStreamRecvPassesAFinalWithoutAlternativesThrough(t *testing.T) {
+	s := &grpcSTTStream{stream: recvOnlyClient{resp: &speechpb.StreamingRecognizeResponse{Results: []*speechpb.StreamingRecognitionResult{
+		{IsFinal: true},
+		{IsFinal: false}, // an interim with nothing recognised stays out
+	}}}}
+	got, err := s.Recv()
+	if err != nil || len(got) != 1 || !got[0].IsFinal || got[0].Transcript != "" {
+		t.Fatalf("Recv = %+v, %v", got, err)
 	}
 }
