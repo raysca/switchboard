@@ -33,7 +33,9 @@ describe("admin shell", () => {
 
   it("keeps old /agents bookmarks working", async () => {
     render(<App initialPath="/agents/abc" />);
-    expect(await screen.findByRole("link", { name: "Flows" })).toHaveAttribute("aria-current", "page");
+    const nav = within(screen.getByRole("navigation", { name: "Main navigation" }));
+    const flowsLink = await nav.findByRole("link", { name: "Flows" });
+    await waitFor(() => expect(flowsLink).toHaveAttribute("aria-current", "page"));
     expect(screen.queryByText("Area not found")).toBeNull();
   });
 
@@ -125,9 +127,9 @@ describe("admin shell", () => {
     }
   });
 
-  it("renders the call page for a direct link /sessions/:sessionId", () => {
+  it("renders the call page for a direct link /sessions/:sessionId", async () => {
     render(<App initialPath="/sessions/test-session-123" />);
-    expect(screen.getByRole("heading", { name: "Connect to see this call" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Connect to see this call" })).toBeVisible();
   });
 });
 

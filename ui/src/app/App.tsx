@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   BrowserRouter,
   MemoryRouter,
@@ -15,19 +15,22 @@ import {
   ActionButton,
   ErrorState,
   FormField,
+  LoadingState,
   Status,
 } from "../components/primitives";
 import { getBrowserCapabilities } from "./capabilities";
-import { OnboardingView } from "../routes/onboarding/OnboardingView";
 import { ProvidersView } from "../routes/providers/ProvidersView";
 import { FlowsView } from "../routes/flows/FlowsView";
-import { FlowPage } from "../routes/flows/FlowPage";
 import { MCPView } from "../routes/mcp/MCPView";
 import { CallsView } from "../routes/sessions/CallsView";
-import { CallView } from "../routes/sessions/CallView";
 import { DashboardView } from "../routes/dashboard/DashboardView";
 import { ServerView } from "../routes/server/ServerView";
 import { sections } from "../routes/sections";
+
+// The flow editor (React Flow), the call detail and first run are only opened sometimes: load them on demand so the first screen stays small.
+const OnboardingView = lazy(() => import("../routes/onboarding/OnboardingView").then((m) => ({ default: m.OnboardingView })));
+const FlowPage = lazy(() => import("../routes/flows/FlowPage").then((m) => ({ default: m.FlowPage })));
+const CallView = lazy(() => import("../routes/sessions/CallView").then((m) => ({ default: m.CallView })));
 
 function RouteFocus() {
   const location = useLocation();
@@ -199,6 +202,7 @@ export function App({ initialPath }: { initialPath?: string }) {
                   </form>
                 </section>
               )}
+              <Suspense fallback={<LoadingState label="Loading" />}>
               <Routes>
                 <Route
                   path="/"
@@ -261,6 +265,7 @@ export function App({ initialPath }: { initialPath?: string }) {
                   }
                 />
               </Routes>
+              </Suspense>
               <section
                 className="capability-line"
                 aria-label="Browser capabilities"
