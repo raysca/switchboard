@@ -222,8 +222,11 @@ func TestSTTConn_ResurfacesUnboundTextCumulatively(t *testing.T) {
 	if r, _ = c.results(result("world", true, 0)); r.Text != "hello world" || !r.Final || !r.EndOfUtterance {
 		t.Fatalf("final after CloseSend: %+v", r)
 	}
-	if _, ok := c.results(result("  ", true, 0)); ok {
-		t.Fatal("an empty segment produced a result")
+	if r, ok = c.results(result("  ", true, 0)); !ok || !r.Final || !r.EndOfUtterance || r.Text != "hello world" {
+		t.Fatalf("empty final keeps committed text and settles: %+v ok=%v", r, ok)
+	}
+	if _, ok = c.results(result("  ", false, 0)); ok {
+		t.Fatal("an empty interim produced a result")
 	}
 }
 
@@ -558,5 +561,36 @@ func TestSTT_FinalBeforeCloseSendThenEndIsQuiet(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if n := len(h.errs()); n != 0 {
 		t.Fatalf("a committed turn raised errors: %v", h.errs())
+	}
+}
+
+// Noise retracted (interim, then an empty final) settles the turn: the end of
+// the RPC after CloseSend is not a lost utterance.
+func TestSTT_EmptyFinalThenEndIsQuiet(t *testing.T) {
+	f, cc := newFake(t, func(ctx context.Context, s rivapb.RivaSpeechRecognition_StreamingRecognizeServer) error {
+		if _, err := s.Recv(); err != nil { // first audio
+			return err
+		}
+		_ = s.Send(result("uh", false, 0.1))
+		_ = s.Send(result("", true, 0))
+		for {
+			if _, err := s.Recv(); err != nil {
+				return nil
+			}
+		}
+	})
+	h := start(t, f.cfg(cc))
+	h.speak()
+	waitFor(t, "interim", func() bool { return len(h.candidates()) >= 1 })
+	time.Sleep(50 * time.Millisecond) // the empty final reaches the runner
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{})
+	select {
+	case <-f.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the RPC never ended")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(h.errs()); n != 0 {
+		t.Fatalf("retracted noise called lost: %v", h.errs())
 	}
 }

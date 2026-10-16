@@ -246,7 +246,7 @@ func (c *sttConn) Recv(context.Context) (sttunit.Result, error) {
 // joined in order as riva/client/asr.py does. Stability is the tail's lowest.
 func (c *sttConn) results(resp *rivapb.StreamingRecognizeResponse) (sttunit.Result, bool) {
 	var interim string
-	var final, any bool
+	var final, any, emptyFinal bool
 	var stability float32
 	for _, r := range resp.GetResults() {
 		alts := r.GetAlternatives()
@@ -255,6 +255,7 @@ func (c *sttConn) results(resp *rivapb.StreamingRecognizeResponse) (sttunit.Resu
 		}
 		seg := strings.TrimSpace(alts[0].GetTranscript())
 		if seg == "" {
+			emptyFinal = emptyFinal || r.GetIsFinal()
 			continue
 		}
 		any, final = true, r.GetIsFinal()
@@ -268,6 +269,9 @@ func (c *sttConn) results(resp *rivapb.StreamingRecognizeResponse) (sttunit.Resu
 		}
 	}
 	if !any {
+		if emptyFinal { // retracted noise: an empty Final settles the turn (keeps committed text)
+			return sttunit.Result{Text: c.committed, Final: true, EndOfUtterance: c.closing.Load()}, true
+		}
 		return sttunit.Result{}, false
 	}
 	return sttunit.Result{
