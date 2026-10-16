@@ -193,6 +193,10 @@ type sttConn struct {
 	br      *resilience.Breaker
 	okOnce  sync.Once
 	closing atomic.Bool // CloseSend sent: a final now ends the utterance
+	// timedOut is set by a Send that outlived its deadline, before it cancels the RPC: the
+	// Recv that then fails with Canceled reports the stall as the timeout it is, whichever
+	// of the two the runner hears first.
+	timedOut atomic.Bool
 
 	committed string // finalized segments of this turn, space-joined (Recv's task only)
 }
@@ -201,17 +205,20 @@ type sttConn struct {
 // SendTimeout) cancels the RPC and fails as a timeout: a hung connection is
 // an outage.
 func (c *sttConn) Send(ctx context.Context, pcm []byte) error {
-	var stuck atomic.Bool
-	stop := context.AfterFunc(ctx, func() { stuck.Store(true); c.cancel() })
+	stop := context.AfterFunc(ctx, func() { c.timedOut.Store(true); c.cancel() })
 	err := c.rpc.Send(&rivapb.StreamingRecognizeRequest{StreamingRequest: &rivapb.StreamingRecognizeRequest_AudioContent{AudioContent: pcm}})
 	stop()
 	switch {
-	case err != nil && stuck.Load():
-		return MapError("stt", fmt.Errorf("%w: audio send blocked past its deadline: %w", resilience.ErrTimeout, err))
+	case err != nil && c.timedOut.Load():
+		return c.timeoutErr(err)
 	case err == nil, errors.Is(err, io.EOF):
 		return nil // io.EOF: the RPC ended; Recv reads the real status and reports it
 	}
 	return MapError("stt", err)
+}
+
+func (c *sttConn) timeoutErr(err error) error {
+	return MapError("stt", fmt.Errorf("%w: audio send blocked past its deadline: %w", resilience.ErrTimeout, err))
 }
 
 // Finish half-closes the RPC so Riva flushes its final results and ends it.
@@ -229,6 +236,9 @@ func (c *sttConn) Recv(context.Context) (sttunit.Result, error) {
 			if streamEnded(err) { // server finished (after our CloseSend, or its own end)
 				c.okOnce.Do(c.br.RecordSuccess)
 				return sttunit.Result{}, sttunit.ErrStreamEnded
+			}
+			if c.timedOut.Load() { // our own cancel after a stalled Send, not a client cancel
+				return sttunit.Result{}, c.timeoutErr(err)
 			}
 			return sttunit.Result{}, MapError("stt", err)
 		}

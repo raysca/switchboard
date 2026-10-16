@@ -178,6 +178,9 @@ Two further gaps found in review (accepted, not fixed):
 3. Adoption race: a provider idle-close that arrives just after `beginTurn` adopts an unbound stream invalidates the new turn (the stream was healthy when adopted and lost the turn's first words). Failover replays the turn, so the cost is one replay.
 4. A real write failure that lands just before `ErrStreamEnded` is treated as quiet (`handleAudio` sees `st.ended` set, or the stream stopped), so it is neither counted nor reported to the breaker. The next audio opens a fresh stream.
 
+5. Drain-timeout loss: if a stream has heard interim words, was asked to finish, and the drain timer fires before any final arrives, the stream is closed quietly (our own cut). The turn gets no transcript and no error; only the turn processor's `NoTranscriptTimeout` covers it.
+6. Riva live-Send stall without failover: a Send that outlives `SendTimeout` returns a retryable timeout error from `ProcessFrame` (a failover needs that synchronous error to jump). Without an STT failover the error fails the session, as before this phase. The concurrent `Recv` reports the same stall as a timeout too (not a client-class `Canceled`), so which side is heard first no longer changes the failover class or the breaker charge.
+
 Routing items 1 and 2 through `invalidate` would force failover class `server_error` even for client errors (`core/stt_failover.go:478-483`), changing the class-based failover policy. That needs its own decision.
 
 ### Decision 5: Google and xAI do not migrate; they get local fixes (Task 2.7)
