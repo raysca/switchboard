@@ -498,6 +498,61 @@ def constants_scenarios():
                  pipecat_out=[f"complete:{c.complete_marker}", f"short:{c.incomplete_short_marker}", f"long:{c.incomplete_long_marker}"])]
 
 
+# --------------------------------------------------------------------------- function-call RTVI messages
+
+def _function_calls(steps):
+    from pipecat.frames.frames import (FunctionCallCancelFrame, FunctionCallFromLLM, FunctionCallInProgressFrame,
+                                       FunctionCallResultFrame, FunctionCallsStartedFrame)
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.processors.frame_processor import FrameDirection
+    from pipecat.processors.frameworks.rtvi.observer import RTVIObserver
+
+    out = []
+
+    class Capture(RTVIObserver):
+        async def send_rtvi_message(self, model, exclude_none=True):
+            d = model.model_dump(exclude_none=exclude_none)
+            out.append(json.dumps({"type": d["type"], "data": d.get("data", {})}, sort_keys=True, separators=(",", ":")))
+
+    frames, i = [], 0
+    while i < len(steps):
+        if steps[i]["ev"] == "call":  # consecutive calls are one model response: one batch, as LLMService runs them
+            batch = []
+            while i < len(steps) and steps[i]["ev"] == "call":
+                batch.append(steps[i])
+                i += 1
+            frames.append(FunctionCallsStartedFrame(function_calls=[
+                FunctionCallFromLLM(function_name=s["text"], tool_call_id=s["id"], arguments={}, context=None) for s in batch]))
+            frames += [FunctionCallInProgressFrame(function_name=s["text"], tool_call_id=s["id"], arguments={}) for s in batch]
+            continue
+        s = steps[i]
+        i += 1
+        if s["ev"] == "result":
+            frames.append(FunctionCallResultFrame(function_name=s["text"], tool_call_id=s["id"], arguments={}, result={"ok": True}))
+        else:
+            frames.append(FunctionCallCancelFrame(function_name=s["text"], tool_call_id=s["id"]))
+
+    async def main():
+        obs = Capture()  # default params: function_call_report_level {"*": NONE}
+        for f in frames:
+            await obs.on_push_frame(FramePushed(source=None, destination=None, frame=f, direction=FrameDirection.DOWNSTREAM, timestamp=0))
+        return out
+
+    return run_virtual(main)
+
+
+def function_call_scenarios():
+    def F(ev, call_id, name="lookup_order"):
+        return {"t": 0, "ev": ev, "id": call_id, "text": name}
+    mod = "processors/frameworks/rtvi/observer.py"
+    return [
+        dict(id="one_call_result", pipecat_module=mod, params={}, steps=[F("call", "call-a"), F("result", "call-a")]),
+        dict(id="one_call_cancelled", pipecat_module=mod, params={}, steps=[F("call", "call-a"), F("cancel", "call-a")]),
+        dict(id="two_calls_parallel", pipecat_module=mod, params={},
+             steps=[F("call", "call-a"), F("call", "call-b", "echo"), F("result", "call-a"), F("result", "call-b", "echo")]),
+    ]
+
+
 # --------------------------------------------------------------------------- declared intentional differences
 # id -> (reason, what go-voice does instead). The Go test fails if go-voice stops matching this or starts matching Pipecat.
 MINLEN = "go-voice merges a sentence shorter than assistant_context min_unit_length (10 runes) into the next unit so TTS gets prosodic context; Pipecat's SimpleTextAggregator emits every sentence."
@@ -539,6 +594,14 @@ DIFFS = {
     "summary/unresolved_tool_call_stops_cut_before_it": (
         "Both stop the cut before an unresolved tool call; go-voice then keeps that whole turn verbatim (the user message too), Pipecat cuts right before the tool-call message.",
         ["summarize:4", "last_index:4"]),
+    "function_calls/two_calls_parallel": (
+        "go-voice reports each call as one ToolCallFrame when its tool loop claims it, so a call's llm-function-call-started goes out with its own in-progress; Pipecat sends one started per call of the batch (FunctionCallsStartedFrame) before any in-progress.",
+        ['{"data":{},"type":"llm-function-call-started"}',
+         '{"data":{"tool_call_id":"call-a"},"type":"llm-function-call-in-progress"}',
+         '{"data":{},"type":"llm-function-call-started"}',
+         '{"data":{"tool_call_id":"call-b"},"type":"llm-function-call-in-progress"}',
+         '{"data":{"cancelled":false,"tool_call_id":"call-a"},"type":"llm-function-call-stopped"}',
+         '{"data":{"cancelled":false,"tool_call_id":"call-b"},"type":"llm-function-call-stopped"}']),
 }
 
 AREAS = [
@@ -550,6 +613,7 @@ AREAS = [
     ("assistant", assistant_scenarios, lambda sc: _assistant(sc["units"], sc["interrupt_ms"])),
     ("summary", summary_scenarios, lambda sc: _summary(sc["messages"], sc["params"]["keep_turns"] * 2)),
     ("constants", constants_scenarios, lambda sc: sc["pipecat_out"]),
+    ("function_calls", function_call_scenarios, lambda sc: _function_calls(sc["steps"])),
 ]
 
 

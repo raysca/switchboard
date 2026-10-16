@@ -23,6 +23,7 @@ import (
 	"govoice/core/audio/dtmf"
 	"govoice/core/coretest"
 	"govoice/core/turn"
+	"govoice/transport/rtvi"
 )
 
 const parityRevision = "2967e1c09ad484076089bc88427d305fe8f79fa9"
@@ -692,4 +693,53 @@ func TestParityTurnCompletionMarkers(t *testing.T) {
 	runParity(t, "constants", func(t *testing.T, sc parityScenario) []string {
 		return []string{"complete:" + core.CompleteMarker, "short:" + core.IncompleteShortMarker, "long:" + core.IncompleteLongMarker}
 	})
+}
+
+// ---------------------------------------------------------------- function-call RTVI messages
+
+func TestParityFunctionCallMessages(t *testing.T) {
+	runParity(t, "function_calls", func(t *testing.T, sc parityScenario) []string {
+		h := rtvi.NewHandler()
+		var out []string
+		for _, st := range sc.Steps {
+			var msgs []string
+			switch st.Ev {
+			case "call":
+				msgs = h.FunctionCallStarted(st.ID)
+			case "result":
+				msgs = h.FunctionCallStopped(st.ID, false)
+			case "cancel":
+				msgs = h.FunctionCallStopped(st.ID, true)
+			default:
+				t.Fatalf("unknown step %q", st.Ev)
+			}
+			for _, m := range msgs {
+				out = append(out, rtviTypeAndData(t, m))
+			}
+		}
+		return out
+	})
+}
+
+// rtviTypeAndData is a wire message as the goldens hold it: type and data, keys sorted, compact.
+func rtviTypeAndData(t *testing.T, msg string) string {
+	t.Helper()
+	var m struct {
+		Type string          `json:"type"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(msg), &m); err != nil {
+		t.Fatal(err)
+	}
+	var data any = map[string]any{}
+	if len(m.Data) > 0 {
+		if err := json.Unmarshal(m.Data, &data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := json.Marshal(map[string]any{"type": m.Type, "data": data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
