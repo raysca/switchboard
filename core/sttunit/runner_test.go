@@ -595,7 +595,7 @@ func TestRunner_ProviderCloseRacingSendIsQuiet(t *testing.T) {
 		return second, nil
 	}})
 	t.Cleanup(func() { close(first.closeGate) }) // runs before the harness cleanup
-	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1) // unbound stream: a provider end owes nobody a transcript (A8 applies to bound turns)
 	h.waitFor("open", func() bool { return first.recvs.Load() >= 1 })
 	first.setSendErr(errors.New("write: use of closed connection"))
 	first.results <- recvResult{err: ErrStreamEnded}
@@ -734,4 +734,135 @@ func TestRunner_StopEndsSpanWhenClosePanics(t *testing.T) {
 	}()
 	// The session exports spans through an async queue: wait for the End.
 	h.waitFor("stt.stream span ended by stop despite the panic", func() bool { return tr.ended("stt.stream") })
+}
+
+func (h *harness) invalidations() []*core.TranscriptInvalidationFrame {
+	return framesOf[*core.TranscriptInvalidationFrame](h)
+}
+
+// A8: the provider ends the stream while the turn still owes its transcript
+// (no Finish sent yet): the turn is invalidated, then an error raised, so an
+// STT failover replays it. A clean end is not an outage: the breaker is not told.
+func TestRunner_MidUtteranceDrop_InvalidatesTurn(t *testing.T) {
+	conn := newFakeConn(t)
+	br := resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
+	h := newHarness(t, Config{Dial: dialConn(conn), Breaker: br, Classify: func(error) resilience.Verdict { return resilience.Verdict{Retryable: true} }})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	conn.results <- recvResult{res: Result{Text: "hel"}}
+	h.waitFor("interim", func() bool { return len(h.candidates()) == 1 })
+	conn.results <- recvResult{err: fmt.Errorf("close 1000: %w", ErrStreamEnded)}
+	h.waitFor("invalidation and error", func() bool { return len(h.invalidations()) == 1 && len(h.errorFrames()) == 1 })
+
+	inv, ef := h.invalidations()[0], h.errorFrames()[0]
+	if inv.Turn != "turn-1-1" || inv.Gen != 1 || ef.Turn != "turn-1-1" || ef.Gen != 1 {
+		t.Fatalf("invalidation %+v error %+v", inv, ef)
+	}
+	if !errors.Is(ef.Err, core.ErrTranscriptInvalidated) || !errors.Is(ef.Err, ErrStreamEnded) {
+		t.Fatalf("error %v must wrap ErrTranscriptInvalidated and the cause", ef.Err)
+	}
+	frames := h.sink.GetFrames()
+	invAt := slices.IndexFunc(frames, func(f core.Frame) bool { _, ok := f.(*core.TranscriptInvalidationFrame); return ok })
+	errAt := slices.IndexFunc(frames, func(f core.Frame) bool { _, ok := f.(*core.ErrorFrame); return ok })
+	if invAt > errAt {
+		t.Fatal("the error overtook the invalidation")
+	}
+	if br.WouldRefuse() {
+		t.Fatal("a clean provider end was reported to the breaker")
+	}
+	if _, _, _, n := h.r.STTCounts(); n != 1 {
+		t.Fatalf("errors counted = %d", n)
+	}
+}
+
+func TestRunner_ProviderEndIsQuietWhenNothingIsOwed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script func(h *harness, conn *fakeConn)
+	}{
+		{"unbound", func(h *harness, conn *fakeConn) { h.audio(1) }},
+		{"after the utterance final", func(h *harness, conn *fakeConn) {
+			h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+			h.audio(1)
+			h.post(&core.UserStoppedSpeakingFrame{})
+			conn.results <- recvResult{res: Result{Text: "done", Final: true, EndOfUtterance: true}}
+			h.waitFor("final", func() bool { return len(h.candidates()) == 1 })
+		}},
+		{"after finish with nothing heard", func(h *harness, conn *fakeConn) {
+			h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+			h.audio(1)
+			h.post(&core.UserStoppedSpeakingFrame{})
+			h.waitFor("finish sent", func() bool { return slices.Contains(conn.snapshot(), "finish") })
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn := newFakeConn(t)
+			h := newHarness(t, Config{Dial: dialConn(conn)})
+			tc.script(h, conn)
+			h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+			conn.results <- recvResult{err: ErrStreamEnded}
+			h.waitFor("released", func() bool { return h.r.Streams() == 0 })
+			time.Sleep(20 * time.Millisecond)
+			if n := len(h.errorFrames()) + len(h.invalidations()); n != 0 {
+				t.Fatalf("a clean end with nothing owed raised %d frames", n)
+			}
+		})
+	}
+}
+
+// After Finish the provider may still drop before the final: words were heard
+// and no utterance-final candidate came, so the turn is lost (xai M3-09 rule).
+func TestRunner_EndAfterFinishWithWordsButNoFinalInvalidates(t *testing.T) {
+	conn := newFakeConn(t)
+	h := newHarness(t, Config{Dial: dialConn(conn)})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	conn.results <- recvResult{res: Result{Text: "hel"}}
+	h.waitFor("interim", func() bool { return len(h.candidates()) == 1 })
+	h.post(&core.UserStoppedSpeakingFrame{})
+	h.waitFor("finish sent", func() bool { return slices.Contains(conn.snapshot(), "finish") })
+	conn.results <- recvResult{err: ErrStreamEnded}
+	h.waitFor("invalidation and error", func() bool { return len(h.invalidations()) == 1 && len(h.errorFrames()) == 1 })
+}
+
+// A Final candidate commits all heard text even without EndOfUtterance (Riva
+// answers CloseSend with no further result after an earlier final): the
+// provider's end after Finish is then quiet, not a lost turn.
+func TestRunner_FinalBeforeFinishThenEndIsQuiet(t *testing.T) {
+	conn := newFakeConn(t)
+	h := newHarness(t, Config{Dial: dialConn(conn)})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	conn.results <- recvResult{res: Result{Text: "hello", Final: true}}
+	h.waitFor("final", func() bool { return len(h.candidates()) == 1 })
+	h.post(&core.UserStoppedSpeakingFrame{})
+	h.waitFor("finish sent", func() bool { return slices.Contains(conn.snapshot(), "finish") })
+	conn.results <- recvResult{err: ErrStreamEnded}
+	h.waitFor("released", func() bool { return h.r.Streams() == 0 })
+	time.Sleep(20 * time.Millisecond)
+	if n := len(h.errorFrames()) + len(h.invalidations()); n != 0 {
+		t.Fatalf("a committed turn was called lost: %d frames", n)
+	}
+}
+
+// A bound stream whose pre-roll flush fails lost the turn's held audio: the
+// turn is invalidated (so failover replays it) and nothing redials this turn.
+func TestRunner_FlushSendFailureLosesBoundTurn(t *testing.T) {
+	release := make(chan struct{})
+	conn := newFakeConn(t)
+	conn.setSendErr(errors.New("broken pipe"))
+	h := newHarness(t, Config{Dial: gatedDial(release, conn)})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	h.waitFor("held", func() bool { return h.audioPassed() == 1 })
+	close(release)
+	h.waitFor("invalidation and error", func() bool { return len(h.invalidations()) == 1 && len(h.errorFrames()) == 1 })
+	if ef := h.errorFrames()[0]; !errors.Is(ef.Err, core.ErrTranscriptInvalidated) || ef.Turn != "turn-1-1" {
+		t.Fatalf("error frame %+v", ef)
+	}
+	h.audio(2)
+	h.waitFor("audio passed", func() bool { return h.audioPassed() == 2 })
+	if n := h.dials.Load(); n != 1 {
+		t.Fatalf("dials = %d: no redial for a lost turn", n)
+	}
 }

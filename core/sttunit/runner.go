@@ -97,6 +97,8 @@ type stream struct {
 	stopped  bool
 	ended    atomic.Bool // the provider ended the stream (Recv returned ErrStreamEnded)
 	draining *time.Timer
+	lastText string // last candidate emitted for the bound turn
+	settled  bool   // that candidate was Final: all heard text is committed
 
 	stopOnce, traceFinal, traceEnd, overflow sync.Once
 	span                                     core.Span
@@ -407,7 +409,11 @@ func (r *Runner) run(ctx context.Context, st *stream) {
 			// The stream died taking its held audio: a failed open, with the breaker told.
 			traceErr = errProviderFailure
 			r.report(err)
-			r.dialFailed(st, err)
+			if turn, _ := st.owner(); turn != "" {
+				r.dropTurn(st, err) // the held audio of a bound turn is gone (A8)
+			} else {
+				r.dialFailed(st, err)
+			}
 		}
 		return
 	}
@@ -603,7 +609,11 @@ func (r *Runner) receive(ctx context.Context, st *stream, conn Conn) error {
 			return nil // stopped: barge-in, turn interrupted, drain timeout or Close
 		case errors.Is(err, ErrStreamEnded):
 			st.ended.Store(true)
-			return nil
+			if !r.lost(st) {
+				return nil
+			}
+			r.dropTurn(st, err)
+			return errProviderFailure
 		default:
 			r.errs.Add(1)
 			r.report(err)
@@ -613,12 +623,56 @@ func (r *Runner) receive(ctx context.Context, st *stream, conn Conn) error {
 	}
 }
 
+// lost reports whether the provider ended st while its bound turn still owed
+// a transcript: before Finish, or after it with words heard but not committed
+// by a Final candidate.
+func (r *Runner) lost(st *stream) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.turn != "" && (!st.closing || (st.lastText != "" && !st.settled))
+}
+
+// dropTurn ends a bound stream that lost its turn's audio. Nothing redials
+// for the rest of the turn (the turn is invalidated and, under failover,
+// replayed elsewhere); then the turn is invalidated.
+func (r *Runner) dropTurn(st *stream, cause error) {
+	r.mu.Lock()
+	if r.active == st {
+		r.noDial = true
+	}
+	r.mu.Unlock()
+	r.errs.Add(1)
+	r.invalidate(st, cause)
+}
+
+// invalidate retires the bound turn's partial transcript, then raises the
+// error an STT failover replays the turn on (the xai M3-09 shape). A clean
+// end is not an outage, so the breaker is not told.
+func (r *Runner) invalidate(st *stream, cause error) {
+	turn, gen := st.owner()
+	gen = r.frameGen(gen)
+	if err := r.session.Reenter(&core.TranscriptInvalidationFrame{Turn: core.TurnID(turn), Gen: core.Generation(gen), Err: cause}, core.Downstream, r.index+1, gen); err != nil {
+		return // the session is closing
+	}
+	_ = r.session.Reenter(&core.ErrorFrame{
+		Err:  fmt.Errorf("%w: %s stream ended mid-utterance: %w", core.ErrTranscriptInvalidated, r.cfg.Provider, cause),
+		Turn: core.TurnID(turn), Gen: core.Generation(gen),
+	}, core.Downstream, r.index+1, gen)
+}
+
 // emit turns a result into a candidate for the stream's turn.
 func (r *Runner) emit(st *stream, res Result) {
 	if res.Text == "" {
 		return
 	}
-	turn, gen := st.owner()
+	st.mu.Lock()
+	turn, gen := st.turn, st.gen
+	if turn != "" {
+		// Final, not Final && EndOfUtterance: a closing response need not carry
+		// an EOU final (Riva may answer CloseSend with nothing more).
+		st.lastText, st.settled = res.Text, res.Final
+	}
+	st.mu.Unlock()
 	if turn == "" { // unbound (between turns): the Conn keeps the text for the adopting turn
 		return
 	}
