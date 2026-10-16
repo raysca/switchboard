@@ -3335,3 +3335,28 @@ main:has(.mcp-page) {
 .tool-pick:last-child {
   border-bottom: 0;
 }
+
+/* Reply-time chart: one bar per recent call, bars scale to the slowest call */
+.reply-chart {
+  margin-bottom: 20px;
+}
+.reply-chart__plot {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 120px;
+  margin: 20px 22px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.reply-chart__bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 28px;
+  background: var(--caller);
+}
+.reply-chart__bar[data-slow] {
+  background: var(--lamp);
+}
+.reply-chart__legend {
+  margin: 10px 22px 18px;
+}

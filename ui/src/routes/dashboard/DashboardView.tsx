@@ -2,12 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import type { ApiClient, ApiError } from "../../api/client";
 import { DemoCard } from "./DemoCard";
+import { ReplyChart } from "./ReplyChart";
 import {
   DataTable,
   EmptyState,
   ErrorState,
   LoadingState,
 } from "../../components/primitives";
+
+/** The dashboard loads this many recent calls once: the first few fill the table, all of them draw the reply-time chart. */
+const RECENT_LIMIT = 40;
 
 export type DashboardViewProps = {
   client: ApiClient;
@@ -61,7 +65,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
 
   const sessionsQuery = useQuery({
     queryKey: ["dashboard-sessions"],
-    queryFn: () => client.getSessions({ limit: 5 }),
+    queryFn: () => client.getSessions({ limit: RECENT_LIMIT }),
     enabled: !!keyValue,
     retry: false,
   });
@@ -123,6 +127,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
   const flows = (flowsQuery.data ?? []).filter((a) => !a.archived);
   const providers = providersQuery.data ?? [];
   const sessions = sessionsQuery.data ?? [];
+  const recent = sessions.slice(0, 5);
 
   // Readiness calculations
   const readyFlowsCount = flows.filter((a) => a.readiness?.state === "ready").length;
@@ -242,6 +247,8 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
         </div>
       </section>
 
+      <ReplyChart sessions={sessions} />
+
       <div className="dash-grid">
         <section className="dash-card dash-grid__main" aria-label="Recent calls">
           <div className="section-row">
@@ -251,7 +258,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
             </Link>
           </div>
 
-          {sessions.length === 0 ? (
+          {recent.length === 0 ? (
             <EmptyState title="No recent calls">
               No calls recorded yet. Test a flow to see one here.
             </EmptyState>
@@ -259,7 +266,7 @@ export function DashboardView({ client, keyValue }: DashboardViewProps) {
             <DataTable
               caption="Recent voice sessions"
               columns={["Session ID", "Status", "Turns", "Started", "Action"]}
-              rows={sessions.map((s) => [
+              rows={recent.map((s) => [
                 <span key="id" className="masked-value">
                   {s.id.slice(0, 8)}…
                 </span>,
