@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -332,6 +333,8 @@ func (r *Runner) handleAudio(ctx context.Context, f *core.InputAudioFrame, e cor
 	sctx, cancel := context.WithTimeout(ctx, r.cfg.SendTimeout)
 	defer cancel()
 	if err := conn.Send(sctx, f.Samples); err != nil {
+		// A genuine write failure landing just before ErrStreamEnded is quiet too, by
+		// design: the stream is already gone and the next audio opens a fresh one.
 		if r.isStopped(st) || st.ended.Load() { // torn down, or closed by the provider first: not this Send's failure
 			return e.Push(f)
 		}
@@ -501,7 +504,12 @@ func (r *Runner) sendFinish(ctx context.Context, st *stream, conn Conn) {
 	st.mu.Lock()
 	if !st.stopped {
 		st.draining = time.AfterFunc(r.cfg.DrainTimeout, func() {
-			defer func() { _ = recover() }() // a provider's Close must not kill the daemon from a timer goroutine
+			defer func() { // a provider's Close must not kill the daemon from a timer goroutine
+				if rec := recover(); rec != nil {
+					turn, _ := st.owner()
+					slog.Error("sttunit: recovered provider panic on drain timeout", "provider", r.cfg.Provider, "turn", turn, "panic", fmt.Sprint(rec))
+				}
+			}()
 			r.release(st)
 			r.stop(st, nil)
 		})
@@ -562,6 +570,7 @@ func (r *Runner) release(st *stream) {
 // stop cancels st (its dial, reads and drain) and closes its conn exactly
 // once, then ends the trace with err.
 func (r *Runner) stop(st *stream, err error) {
+	defer st.endTrace(err) // even if a provider's Close panics
 	st.mu.Lock()
 	st.stopped = true
 	if st.draining != nil {
@@ -575,7 +584,6 @@ func (r *Runner) stop(st *stream, err error) {
 			conn.Close()
 		}
 	})
-	st.endTrace(err)
 }
 
 func (r *Runner) isStopped(st *stream) bool {

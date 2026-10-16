@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -167,6 +169,11 @@ func newHarness(t *testing.T, cfg Config) *harness {
 
 func newHarnessWithBudget(t *testing.T, cfg Config, budget core.ResourceBudget) *harness {
 	t.Helper()
+	return newHarnessTraced(t, cfg, budget, nil)
+}
+
+func newHarnessTraced(t *testing.T, cfg Config, budget core.ResourceBudget, tracer core.Tracer) *harness {
+	t.Helper()
 	h := &harness{t: t, sink: &coretest.PassthroughProcessor{}}
 	dial := cfg.Dial
 	cfg.Dial = func(ctx context.Context) (Conn, error) {
@@ -184,6 +191,11 @@ func newHarnessWithBudget(t *testing.T, cfg Config, budget core.ResourceBudget) 
 	h.sess, err = core.NewSession(7, pipe, budget)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if tracer != nil {
+		if err := h.sess.SetTracer(tracer, core.TracePolicy{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := h.sess.Start(); err != nil {
 		t.Fatal(err)
@@ -598,12 +610,22 @@ func TestRunner_ProviderCloseRacingSendIsQuiet(t *testing.T) {
 func TestRunner_DrainTimeoutRecoversProviderClosePanic(t *testing.T) {
 	conn := newFakeConn(t)
 	conn.panicClose.Store(true)
-	h := newHarness(t, Config{Dial: dialConn(conn), DrainTimeout: 20 * time.Millisecond})
+	var logs syncBuf
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	tr := &spanTracer{}
+	h := newHarnessTraced(t, Config{Dial: dialConn(conn), DrainTimeout: 20 * time.Millisecond}, core.DefaultResourceBudget(), tr)
 	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
 	h.audio(1)
 	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
 	h.post(&core.UserStoppedSpeakingFrame{})
 	h.waitFor("drain timeout closed the stream", func() bool { return h.r.Streams() == 0 && conn.closes.Load() >= 1 })
+	h.waitFor("recovery logged", func() bool { return strings.Contains(logs.String(), "provider Close panicked") })
+	if out := logs.String(); !strings.Contains(out, "provider=fake") || !strings.Contains(out, "turn=turn-1-1") {
+		t.Fatalf("log lacks provider/turn: %s", out)
+	}
+	h.waitFor("stt.stream span ended despite the panic", func() bool { return tr.ended("stt.stream") })
 	if err := h.sess.Err(); err != nil {
 		t.Fatalf("session failed: %v", err)
 	}
@@ -628,4 +650,53 @@ func TestRunner_DialErrorWithConnClosesIt(t *testing.T) {
 	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
 	h.waitFor("error frame", func() bool { return len(h.errorFrames()) == 1 })
 	h.waitFor("conn closed", conn.isClosed)
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// spanTracer records which named spans have ended.
+type spanTracer struct {
+	mu   sync.Mutex
+	done map[string]bool
+}
+
+func (t *spanTracer) StartSpan(_ context.Context, ev core.TraceEvent) core.Span {
+	return &recSpan{t: t, name: ev.Name}
+}
+
+func (t *spanTracer) ended(name string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.done[name]
+}
+
+type recSpan struct {
+	t    *spanTracer
+	name string
+}
+
+func (*recSpan) SetAttribute(string, any) {}
+func (*recSpan) AddEvent(core.TraceEvent) {}
+func (s *recSpan) End(error) {
+	s.t.mu.Lock()
+	defer s.t.mu.Unlock()
+	if s.t.done == nil {
+		s.t.done = map[string]bool{}
+	}
+	s.t.done[s.name] = true
 }
