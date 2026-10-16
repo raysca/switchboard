@@ -926,10 +926,18 @@ func (p *STTProcessor) spawnReceiver(st *activeStream) {
 	if err := p.session.Go(func(ctx context.Context) { p.receive(ctx, st) }); err != nil {
 		p.mu.Lock()
 		turn, gen := st.turnID, st.gen
+		if p.active == st { // a cancelled stream must not stay active: Send would drop audio silently
+			p.active, p.dialFailed = nil, true
+		}
 		p.mu.Unlock()
 		st.endTrace(core.TurnID(turn), core.Generation(gen), errors.New("canceled"))
 		st.cancel()
 		_ = st.stream.Close()
+		p.Errors.Add(1)
+		if gen == 0 {
+			gen = p.session.CurrentGeneration()
+		}
+		_ = p.session.Reenter(&core.ErrorFrame{Err: fmt.Errorf("google stt receiver task: %w", err), Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
 	}
 }
 

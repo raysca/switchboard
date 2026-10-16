@@ -326,3 +326,47 @@ func TestGoogleSTTOpenFailureWrapsErrSTTUnavailable(t *testing.T) {
 		t.Fatalf("error %v does not wrap core.ErrSTTUnavailable", ef.Err)
 	}
 }
+
+// When the rotation's receiver task cannot start (task budget), the replacement is
+// cancelled: it must not stay the active stream, where Send would hit io.EOF and drop
+// audio silently. The turn's loss is reported.
+func TestGoogleSTTRotationReceiverStartFailureClearsTheStream(t *testing.T) {
+	var nowNanos atomic.Int64
+	nowNanos.Store(time.Unix(1, 0).UnixNano())
+	cfg := DefaultSTTConfig()
+	cfg.Now = func() time.Time { return time.Unix(0, nowNanos.Load()) }
+	cfg.StreamRotationThreshold = time.Second
+	cfg.StreamOpener = &mockSTTOpener{}
+	proc, err := NewSTTProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	budget := core.DefaultResourceBudget()
+	budget.MaxAsyncTasks = 1 // the first stream's task takes it
+	session, _ := core.NewSession(44, pipe, budget)
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	attachedStream(t, proc)
+	nowNanos.Add(int64(2 * time.Second))
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}) // rotates
+	gwait(t, "error frame", 2*time.Second, func() bool {
+		for _, ef := range countFrames[*core.ErrorFrame](sink) {
+			if errors.Is(ef.Err, core.ErrTooManyTasks) {
+				return true
+			}
+		}
+		return false
+	})
+	proc.mu.Lock()
+	cancelledStillActive := proc.active != nil && proc.active.ctx.Err() != nil
+	proc.mu.Unlock()
+	if cancelledStillActive {
+		t.Fatal("a cancelled replacement stayed the active stream")
+	}
+}
