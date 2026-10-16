@@ -60,8 +60,8 @@ func TestFailoverPolicyOnlyTightens(t *testing.T) {
 		// tts keeps its timeout: it bounds the whole unit, a long sentence must not be cut
 		{"tts", resilience.Policy{MaxAttempts: 3, AttemptTimeout: 15 * time.Second}, 2, 15 * time.Second, 30 * time.Second},
 		{"tts", resilience.Policy{MaxAttempts: 3, AttemptTimeout: 10 * time.Second}, 2, 10 * time.Second, 20 * time.Second},
-		{"stt", resilience.Policy{MaxAttempts: 3, AttemptTimeout: 5 * time.Second}, 2, 5 * time.Second, 10 * time.Second},
-		{"stt", resilience.Policy{MaxAttempts: 1, AttemptTimeout: 2 * time.Second}, 1, 2 * time.Second, 2 * time.Second}, // never loosened
+		{"stt", resilience.Policy{MaxAttempts: 3, AttemptTimeout: 5 * time.Second}, 2, 1500 * time.Millisecond, 3 * time.Second},
+		{"stt", resilience.Policy{MaxAttempts: 1, AttemptTimeout: time.Second}, 1, time.Second, time.Second}, // never loosened
 		{"tts", resilience.Policy{}, 2, 0, 0}, // zero timeout: the provider's default applies
 	}
 	for _, c := range cases {

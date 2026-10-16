@@ -32,6 +32,9 @@ const maxSTTReplay = 60 * time.Second
 // in the chain (checked by ClassOf); a provider-side deadline (a hung send) is a
 // timeout, not the caller's own expiry.
 func sttClassify(err error) string {
+	if errors.Is(err, core.ErrTooManyTasks) {
+		return "" // the session's own task budget, not a provider outage: a jump would not help
+	}
 	var ge *google.ProviderError
 	var xe *xai.ProviderError
 	var de *deepgram.ProviderError

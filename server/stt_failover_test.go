@@ -60,6 +60,67 @@ func TestSTTClassifyPerProvider(t *testing.T) {
 	}
 }
 
+// The session's own task budget is not a provider outage: a jump would not
+// help, so it never fails over, while a real provider error still does.
+func TestSTTFailoverIgnoresLocalTaskBudgetError(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		err        error
+		wantActive string
+	}{
+		{"local task budget", fmt.Errorf("stt: dial: %w", core.ErrTooManyTasks), "a"},
+		{"provider error", errors.New("stt: stream dropped"), "b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, err := core.NewSTTFailover(core.STTFailoverConfig{
+				Classify: sttClassify,
+				Candidates: []core.STTCandidate{
+					{Provider: "a", Proc: coretest.NewSTTProcessor(coretest.STTConfig{Provider: "a", Words: sttWords, FailAfter: 1, FailErr: tc.err})},
+					{Provider: "b", Proc: coretest.NewSTTProcessor(coretest.STTConfig{Provider: "b", Words: sttWords})},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pipe, err := core.NewPipeline(w, &coretest.PassthroughProcessor{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sess, err := core.NewSession(902, pipe, core.DefaultResourceBudget())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := sess.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer sess.Close()
+			gen := sess.CurrentGeneration()
+			post := func(f core.Frame) {
+				t.Helper()
+				if err := sess.Reenter(f, core.Downstream, 0, gen); err != nil {
+					t.Fatal(err)
+				}
+			}
+			post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: gen})
+			for i := 0; i < 3; i++ {
+				post(&core.InputAudioFrame{Samples: bytes.Repeat([]byte{byte(i)}, 64), Encoding: core.EncodingPCM16LE, SampleRate: 16000, Channels: 1})
+			}
+			if tc.wantActive == "b" {
+				for end := time.Now().Add(3 * time.Second); w.Active() != "b"; time.Sleep(2 * time.Millisecond) {
+					if time.Now().After(end) {
+						t.Fatal("a provider error did not fail over")
+					}
+				}
+				return
+			}
+			time.Sleep(300 * time.Millisecond) // a jump would have happened by now
+			if got := w.Active(); got != "a" {
+				t.Fatalf("active = %q: a local error caused a jump", got)
+			}
+		})
+	}
+}
+
 var sttWords = []string{"book", "a", "table", "for", "two"}
 
 func sttRegistry(primary coretest.STTConfig) *Registry {
