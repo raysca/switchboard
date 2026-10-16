@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -56,7 +57,7 @@ func Handler(service *Service) http.Handler {
 					api.WriteJSON(w, http.StatusConflict, api.ErrorResponse{Error: api.Error{Code: "mcp_server_in_use", Message: "MCP server is referenced by flows or active sessions", RequestID: id, Details: refs}})
 					return
 				}
-				api.WriteError(w, 404, "not_found", "MCP server not found", id)
+				writeLookupError(w, err, id)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -69,7 +70,7 @@ func Handler(service *Service) http.Handler {
 		}
 		m, err := service.Get(r.Context(), r.PathValue("id"))
 		if err != nil {
-			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			writeLookupError(w, err, id)
 			return
 		}
 		response := ServerDetail{ServerView: view(m, service.tokens)}
@@ -120,19 +121,20 @@ func Handler(service *Service) http.Handler {
 		}
 		serverID := r.PathValue("id")
 		if err := service.DetachAndDelete(r.Context(), serverID); err != nil {
-			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			writeLookupError(w, err, id)
 			return
 		}
 		m, err := service.Get(r.Context(), serverID)
-		if errors.Is(err, storage.ErrMCPReferenced) {
-			api.WriteError(w, 409, "mcp_server_in_use", "MCP server is still in use", id)
-			return
-		}
-		if err != nil {
+		if errors.Is(err, ErrNotFound) { // detached and removed
 			api.WriteJSON(w, 200, api.SuccessResponse[DetachResult]{Data: DetachResult{Deleted: true}})
 			return
 		}
-		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: view(m, service.tokens)}})
+		if err != nil {
+			writeLookupError(w, err, id)
+			return
+		}
+		v := view(m, service.tokens)
+		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: &v}})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/validate", func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(w, r)
@@ -186,9 +188,9 @@ type ServerView struct {
 	LastDiscoveredAt  *time.Time `json:"last_discovered_at,omitempty"`
 }
 type DetachResult struct {
-	Pending bool       `json:"pending"`
-	Deleted bool       `json:"deleted"`
-	Server  ServerView `json:"server,omitempty"`
+	Pending bool        `json:"pending"`
+	Deleted bool        `json:"deleted"`
+	Server  *ServerView `json:"server,omitempty"`
 }
 type ServerDetail struct {
 	ServerView
@@ -243,6 +245,17 @@ func safeEndpoint(raw string) string {
 	u.RawQuery = q.Encode()
 	return u.String()
 }
+
+// writeLookupError maps a missing server to 404 and anything else (a broken
+// store) to 500.
+func writeLookupError(w http.ResponseWriter, err error, requestID string) {
+	if errors.Is(err, ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
+		api.WriteError(w, 404, "not_found", "MCP server not found", requestID)
+		return
+	}
+	api.WriteError(w, 500, "internal_error", "MCP server request failed", requestID)
+}
+
 func requestID(w http.ResponseWriter, r *http.Request) string {
 	id := api.RequestIDFromContext(r.Context())
 	if id == "" {

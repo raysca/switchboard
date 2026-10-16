@@ -57,7 +57,8 @@ function setup(client: Partial<ApiClient> = {}, path = "/mcp-servers", key: stri
     disableMCPServer: vi.fn().mockResolvedValue(server({ enabled: false })),
     discoverMCPServer: vi.fn().mockResolvedValue(server()),
     testMCPTool: vi.fn().mockResolvedValue({ execution_id: "exec-9999", mcp_server_id: "billing", tool_name: "latest_invoice", status: "completed", duration_ms: 12, result: { ok: true } }),
-    setFlowMCPTools: vi.fn().mockResolvedValue({}),
+    getFlow: vi.fn().mockResolvedValue(drifted),
+    updateFlow: vi.fn().mockResolvedValue({}),
     ...client,
   } as unknown as ApiClient;
   render(
@@ -162,7 +163,7 @@ describe("MCPView", () => {
     const { client, user } = setup({});
     await user.click(await screen.findByRole("button", { name: "Accept new schema for Front desk" }));
     await user.click(screen.getByRole("button", { name: "Publish new version" }));
-    expect(client.setFlowMCPTools).toHaveBeenCalledWith("f1", [{ mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "c9d00000bb", required: true }]);
+    expect(client.updateFlow).toHaveBeenCalledWith("f1", { config: {}, mcp_tools: [{ mcp_server_id: "billing", remote_name: "send_pay_link", schema_hash: "c9d00000bb", required: true }] });
   });
 
   it("toggles a tool's schema, and opens the test console", async () => {

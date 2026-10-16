@@ -34,7 +34,7 @@ func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, s
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, flowID, 1, []byte(`{"llm":"test"}`), nil)
+	v, err := publishTestVersion(ctx, s, flowID, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,4 +403,10 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 	if one.Data.EndReason != "silent_caller" || one.Data.MedianReplyMS == nil || *one.Data.MedianReplyMS != 700 || one.Data.Caller != "flow-test-abc" {
 		t.Fatalf("get: %+v", one.Data)
 	}
+}
+
+// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
+func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
+	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+	return v, err
 }

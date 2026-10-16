@@ -34,7 +34,7 @@ func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, s
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, flowID, 1, []byte(`{"llm":"test"}`), nil)
+	v, err := publishTestVersion(ctx, s, flowID, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,4 +772,10 @@ func onlyTurn(ctx context.Context, s *storage.Store, sessionID string) (storage.
 		return storage.TurnRecord{}, err
 	}
 	return turns[0], nil
+}
+
+// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
+func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
+	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+	return v, err
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -56,54 +57,6 @@ func TestFlowManagementCRUDDuplicateArchiveAndV1Import(t *testing.T) {
 		t.Fatalf("archive status=%d body=%s", archived.Code, archived.Body)
 	}
 
-}
-
-func TestFlowMCPToolReplacementPublishesVersionedAssociation(t *testing.T) {
-	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/api-mcp.db"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	server := storage.MCPServer{ID: storage.NewID(), Name: "orders", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
-	if err := store.MCP().CreateServer(context.Background(), server); err != nil {
-		t.Fatal(err)
-	}
-	discovery, err := store.MCP().AddDiscovery(context.Background(), server.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object"}`)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := flow.NewService(store, allAvailable{})
-	created, err := service.Create(context.Background(), flow.CreateRequest{Name: "api", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := `{"tools":[{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `","required":true}]}`
-	r := httptest.NewRequest(http.MethodPut, "/api/v1/flows/"+created.ID+"/mcp-tools", strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	NewFlowsHandler(service).ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"number":2`) || !strings.Contains(w.Body.String(), discovery.Tools[0].SchemaHash) {
-		t.Fatalf("selection response=%d %s", w.Code, w.Body.String())
-	}
-	current, err := service.Get(context.Background(), created.ID)
-	if err != nil || len(current.Version.MCPTools) != 1 || !current.Version.MCPTools[0].Required {
-		t.Fatalf("current flow=%+v err=%v", current, err)
-	}
-
-	// Bad selections are the caller's mistake (400), never "flow not found" or 500.
-	for name, sel := range map[string]string{
-		"unknown server": `{"mcp_server_id":"` + storage.NewID() + `","remote_name":"lookup","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
-		"unknown tool":   `{"mcp_server_id":"` + server.ID + `","remote_name":"nope","schema_hash":"` + discovery.Tools[0].SchemaHash + `"}`,
-		"stale schema":   `{"mcp_server_id":"` + server.ID + `","remote_name":"lookup","schema_hash":"stale"}`,
-	} {
-		r := httptest.NewRequest(http.MethodPut, "/api/v1/flows/"+created.ID+"/mcp-tools", strings.NewReader(`{"tools":[`+sel+`]}`))
-		r.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		NewFlowsHandler(service).ServeHTTP(w, r)
-		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_tool_selection") {
-			t.Fatalf("%s: status=%d body=%s, want 400 invalid_tool_selection", name, w.Code, w.Body)
-		}
-	}
 }
 
 func TestFlowManagementRejectsUnknownInputAndMissingFlow(t *testing.T) {
@@ -223,4 +176,109 @@ func TestFlowUpdateCarriesMCPToolsAndPublishesOneVersion(t *testing.T) {
 	if w := put(`{"config":` + cfg + `,"mcp_tools":[` + stale + `]}`); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_tool_selection") {
 		t.Fatalf("stale: %d %s", w.Code, w.Body)
 	}
+}
+
+// createRig is a flow API over a store with one MCP server offering one tool.
+type createRig struct {
+	store   *storage.Store
+	handler http.Handler
+	server  storage.MCPServer
+	hash    string
+	cfg     string
+}
+
+func newCreateRig(t *testing.T) createRig {
+	t.Helper()
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: filepath.Join(t.TempDir(), "create-mcp.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	server := storage.MCPServer{ID: storage.NewID(), Name: "orders", Endpoint: "https://mcp.example/rpc", Transport: "streamable-http", Enabled: true, ValidationState: "healthy"}
+	if err := store.MCP().CreateServer(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	d, err := store.MCP().AddDiscovery(context.Background(), server.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return createRig{store: store, handler: NewFlowsHandler(flow.NewService(store, allAvailable{})), server: server, hash: d.Tools[0].SchemaHash,
+		cfg: `{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`}
+}
+
+func (r createRig) sel(serverID, tool, hash string) string {
+	return `{"mcp_server_id":"` + serverID + `","remote_name":"` + tool + `","schema_hash":"` + hash + `","required":true}`
+}
+
+func (r createRig) do(method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.handler.ServeHTTP(w, req)
+	return w
+}
+
+func (r createRig) create(selections string) *httptest.ResponseRecorder {
+	return r.do(http.MethodPost, "/api/v1/flows", `{"name":"F","config":`+r.cfg+`,"mcp_tools":[`+selections+`]}`)
+}
+
+func wantInvalidSelection(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_tool_selection") {
+		t.Fatalf("status=%d body=%s, want 400 invalid_tool_selection", w.Code, w.Body)
+	}
+}
+
+func TestCreateFlow_DisabledMCPServer_Returns400(t *testing.T) {
+	r := newCreateRig(t)
+	if err := r.store.MCP().DisableServer(context.Background(), r.server.ID); err != nil {
+		t.Fatal(err)
+	}
+	wantInvalidSelection(t, r.create(r.sel(r.server.ID, "lookup", r.hash)))
+}
+
+func TestCreateFlow_SchemaDrift_Returns400(t *testing.T) {
+	r := newCreateRig(t)
+	wantInvalidSelection(t, r.create(r.sel(r.server.ID, "lookup", "stale")))
+}
+
+func TestCreateFlow_TooManySelections_Returns400(t *testing.T) {
+	r := newCreateRig(t)
+	tools := make([]storage.MCPTool, storage.MaxSelectedTools+1)
+	for i := range tools {
+		tools[i] = storage.MCPTool{RemoteName: fmt.Sprintf("tool_%03d", i), SchemaJSON: []byte(`{"type":"object"}`)}
+	}
+	d, err := r.store.MCP().AddDiscovery(context.Background(), r.server.ID, tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sels := make([]string, len(d.Tools))
+	for i, tool := range d.Tools {
+		sels[i] = r.sel(r.server.ID, tool.RemoteName, tool.SchemaHash)
+	}
+	wantInvalidSelection(t, r.create(strings.Join(sels, ",")))
+}
+
+func TestCreateFlow_UnknownServer_Returns400_Not404(t *testing.T) {
+	r := newCreateRig(t)
+	wantInvalidSelection(t, r.create(r.sel(storage.NewID(), "lookup", r.hash)))
+}
+
+func TestDuplicateFlow_SchemaDrift_Returns400(t *testing.T) {
+	r := newCreateRig(t)
+	w := r.create(r.sel(r.server.ID, "lookup", r.hash))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	var env struct {
+		Data flow.Flow `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	// The server re-discovers with a changed schema after the flow was saved.
+	if _, err := r.store.MCP().AddDiscovery(context.Background(), r.server.ID, []storage.MCPTool{{RemoteName: "lookup", SchemaJSON: []byte(`{"type":"object","properties":{"q":{"type":"string"}}}`)}}); err != nil {
+		t.Fatal(err)
+	}
+	wantInvalidSelection(t, r.do(http.MethodPost, "/api/v1/flows/"+env.Data.ID+"/duplicate", `{}`))
 }

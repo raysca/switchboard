@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os/exec"
 	"path/filepath"
@@ -276,7 +277,7 @@ func (w *worker) crash() {
 	w.p.wg.Add(1)
 	go func() {
 		defer w.p.wg.Done()
-		for !w.p.closed.Load() {
+		for attempt := 1; !w.p.closed.Load(); attempt++ {
 			now := time.Now()
 			kept := w.crashes[:0]
 			for _, t := range append(w.crashes, now) {
@@ -293,11 +294,14 @@ func (w *worker) crash() {
 			if w.p.closed.Load() {
 				return
 			}
-			if err := w.start(); err == nil {
+			err := w.start()
+			if err == nil {
 				w.p.up.Add(1)
 				w.p.idle <- w
 				return
 			}
+			// Bounded: attempts are paced by the backoff above (1/s once crash-looping).
+			slog.Warn("smartturn: worker respawn failed", "attempt", attempt, "backoff", delay, "error", err)
 		}
 	}()
 }

@@ -24,6 +24,8 @@ type Resampler struct {
 	phase      float64 // fractional input index accumulator
 	lastSample int16   // trailing sample from previous chunk for interpolation
 	hasHistory bool
+	rem        [2]int16 // 48->16 only: input samples not yet forming a full 3-sample group
+	nRem       int
 }
 
 // NewResampler creates a new stateful Resampler for converting mono PCM16 audio
@@ -46,6 +48,7 @@ func (r *Resampler) Reset() {
 	r.phase = 0
 	r.lastSample = 0
 	r.hasHistory = false
+	r.nRem = 0
 }
 
 // ResamplePCM16 processes a chunk of raw 16-bit little-endian mono PCM audio.
@@ -68,15 +71,15 @@ func (r *Resampler) ResamplePCM16(pcmIn []byte) ([]byte, error) {
 		return out, nil
 	}
 
+	// Downsampling: 48kHz -> 16kHz (ratio 3.0)
+	if r.inRate == 48000 && r.outRate == 16000 {
+		return r.downsample48To16(pcmIn), nil
+	}
+
 	numSamplesIn := len(pcmIn) / 2
 	samplesIn := make([]int16, numSamplesIn)
 	for i := 0; i < numSamplesIn; i++ {
 		samplesIn[i] = int16(binary.LittleEndian.Uint16(pcmIn[i*2 : i*2+2]))
-	}
-
-	// Downsampling: 48kHz -> 16kHz (ratio 3.0)
-	if r.inRate == 48000 && r.outRate == 16000 {
-		return r.downsample48To16(samplesIn)
 	}
 
 	// General stateful linear interpolation resampler
@@ -132,20 +135,31 @@ func (r *Resampler) ResamplePCM16(pcmIn []byte) ([]byte, error) {
 	return out, nil
 }
 
-// downsample48To16 applies a 3-tap FIR boxcar anti-aliasing filter before 3:1 decimation.
-func (r *Resampler) downsample48To16(samplesIn []int16) ([]byte, error) {
-	outCount := len(samplesIn) / 3
-	out := make([]byte, outCount*2)
-	for i := 0; i < outCount; i++ {
-		// Low-pass average of 3 consecutive samples
-		idx := i * 3
-		sum := int32(samplesIn[idx]) + int32(samplesIn[idx+1]) + int32(samplesIn[idx+2])
-		avg := int16(sum / 3)
-		binary.LittleEndian.PutUint16(out[i*2:i*2+2], uint16(avg))
+// downsample48To16 applies a 3-tap boxcar anti-aliasing filter before 3:1
+// decimation, reading little-endian PCM16 directly from pcmIn. Leftover samples
+// (0-2) are carried in r.rem so output is independent of input chunking. The
+// result is a fresh exact-size slice (callers may retain it); this is the only
+// allocation. Caller holds r.mu.
+func (r *Resampler) downsample48To16(pcmIn []byte) []byte {
+	n := len(pcmIn) / 2
+	groups := (r.nRem + n) / 3
+	out := make([]byte, groups*2)
+	at := func(j int) int32 { // j indexes the logical stream rem ++ pcmIn
+		if j < r.nRem {
+			return int32(r.rem[j])
+		}
+		k := (j - r.nRem) * 2
+		return int32(int16(binary.LittleEndian.Uint16(pcmIn[k:])))
 	}
-	if len(samplesIn) > 0 {
-		r.lastSample = samplesIn[len(samplesIn)-1]
-		r.hasHistory = true
+	for i := 0; i < groups; i++ {
+		avg := int16((at(3*i) + at(3*i+1) + at(3*i+2)) / 3)
+		binary.LittleEndian.PutUint16(out[i*2:], uint16(avg))
 	}
-	return out, nil
+	left := r.nRem + n - groups*3
+	var rem [2]int16
+	for k := 0; k < left; k++ {
+		rem[k] = int16(at(groups*3 + k))
+	}
+	r.rem, r.nRem = rem, left
+	return out
 }

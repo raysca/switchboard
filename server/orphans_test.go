@@ -30,7 +30,7 @@ func seedActiveSession(t *testing.T, store *storage.Store, started time.Time) st
 	if err := store.Flows().Create(ctx, f); err != nil {
 		t.Fatal(err)
 	}
-	v, err := store.Flows().PublishVersion(ctx, f.ID, 1, []byte(`{}`), nil)
+	v, err := publishTestVersion(ctx, store, f.ID, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,4 +103,10 @@ func TestAFailingSweepDoesNotStopStartup(t *testing.T) {
 	}
 	closed.Close() // every query on it fails
 	s.endOrphanedSessions(context.Background(), closed)
+}
+
+// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
+func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
+	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+	return v, err
 }

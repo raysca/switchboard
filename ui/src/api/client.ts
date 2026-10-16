@@ -186,7 +186,6 @@ export type FlowDTO = z.infer<typeof flowSchema>;
 const flowsEnvelope = z.object({
   data: z.array(flowSchema),
 });
-const flowVersionEnvelope = z.object({ data: flowVersionSchema });
 const flowEnvelope = z.object({
   data: flowSchema,
 });
@@ -595,14 +594,6 @@ export function createApiClient(
         await request(`/flows/${encodeURIComponent(id)}`, flowEnvelope, {
           method: "PUT",
           body: input,
-        })
-      ).data,
-    // Replaces the tool selection and publishes a new version with the same config.
-    setFlowMCPTools: async (id: string, tools: ToolSelection[]) =>
-      (
-        await request(`/flows/${encodeURIComponent(id)}/mcp-tools`, flowVersionEnvelope, {
-          method: "PUT",
-          body: { tools },
         })
       ).data,
     archiveFlow: async (id: string) =>

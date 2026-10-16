@@ -24,6 +24,8 @@ var (
 	ErrMaxSessionsExceeded    = errors.New("ws: maximum concurrent sessions exceeded")
 )
 
+const readLimitHeadroom = 1024
+
 // ServerConfig configures WebSocket connection lifecycle, timeouts, limits, and security.
 type ServerConfig struct {
 	Security         SecurityConfig
@@ -423,6 +425,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	// The library default (32 KB) is below the advertised MaxEncodedFrameSize. The limit
+	// carries 1 KB of headroom so a message just over the max reaches DecodeBinaryFrame and
+	// ends as a protocol error (1007, "protocol_error"); anything larger is closed by the
+	// library (1009), which observeDisconnect also records as protocol_error + disconnect_server.
+	wsConn.SetReadLimit(MaxEncodedFrameSize + readLimitHeadroom)
 	// The handshake is finished. Pending slots must not be held for the call.
 	releasePending()
 	s.observe("client_connected", 1)
@@ -811,6 +818,12 @@ func (c *Connection) observeDisconnect(err error) {
 	if c.cfg.Observe == nil {
 		return
 	}
+	if errors.Is(err, websocket.ErrMessageTooBig) {
+		// A message past the read limit (the library sent 1009): a protocol violation, not a client hang-up.
+		c.cfg.Observe("protocol_error", 1)
+		c.cfg.Observe("disconnect_server", 1)
+		return
+	}
 	switch websocket.CloseStatus(err) {
 	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
 		c.cfg.Observe("disconnect_normal", 1)
@@ -826,6 +839,9 @@ func (c *Connection) observeDisconnect(err error) {
 }
 
 func disconnectCategory(err error) string {
+	if errors.Is(err, websocket.ErrMessageTooBig) {
+		return "server"
+	}
 	switch websocket.CloseStatus(err) {
 	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
 		return "normal"

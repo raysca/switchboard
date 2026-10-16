@@ -1,8 +1,10 @@
 package resample
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
+	"math/rand"
 	"sync"
 	"testing"
 )
@@ -91,6 +93,73 @@ func TestResampler_Concurreny(t *testing.T) {
 func BenchmarkResampler_20msChunk(b *testing.B) {
 	r, _ := NewResampler(16000, 24000)
 	chunk := makeSinePCM(16000, 440.0, 0.02)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = r.ResamplePCM16(chunk)
+	}
+}
+
+func randPCM(rng *rand.Rand, samples int) []byte {
+	b := make([]byte, samples*2)
+	for i := 0; i < samples; i++ {
+		binary.LittleEndian.PutUint16(b[i*2:], uint16(int16(rng.Intn(65536)-32768)))
+	}
+	return b
+}
+
+func TestDownsample48To16_ChunkingInvariant(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+	const total = 48000
+	stream := randPCM(rng, total)
+
+	whole, err := NewResampler(48000, 16000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := whole.ResamplePCM16(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(want) != total/3*2 {
+		t.Fatalf("single-shot length = %d, want %d", len(want), total/3*2)
+	}
+
+	chunked, _ := NewResampler(48000, 16000)
+	var got []byte
+	for off := 0; off < total; {
+		n := 1 + rng.Intn(960)
+		if off+n > total {
+			n = total - off
+		}
+		out, err := chunked.ResamplePCM16(stream[off*2 : (off+n)*2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, out...)
+		off += n
+	}
+	if len(got) != len(want) {
+		t.Fatalf("chunked length = %d, want %d", len(got), len(want))
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("chunked output differs from single-shot output")
+	}
+}
+
+func TestDownsample48To16_AllocsPerRun(t *testing.T) {
+	r, _ := NewResampler(48000, 16000)
+	chunk := makeSinePCM(48000, 440, 0.02)
+	_, _ = r.ResamplePCM16(chunk)
+	// One alloc: the exact-size result, which callers may retain.
+	if a := testing.AllocsPerRun(100, func() { _, _ = r.ResamplePCM16(chunk) }); a > 1 {
+		t.Fatalf("allocs/op = %v, want <= 1", a)
+	}
+}
+
+func BenchmarkDownsample48To16(b *testing.B) {
+	r, _ := NewResampler(48000, 16000)
+	chunk := makeSinePCM(48000, 440, 0.02)
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = r.ResamplePCM16(chunk)

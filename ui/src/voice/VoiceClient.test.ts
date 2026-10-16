@@ -104,3 +104,26 @@ describe("VoiceClient connect cancelled by disconnect", () => {
     expect(issue.mock.calls[1][0]).not.toHaveProperty("draft");
   });
 });
+
+describe("VoiceClient websocket URL", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const resolve = (base?: string) =>
+    (new VoiceClient({} as ApiClient, {} as BrowserAudioController) as unknown as {
+      resolveWsUrl(token: string, base?: string): string;
+    }).resolveWsUrl("tok", base);
+
+  it("derives ws:// from an http page, keeping host and port", () => {
+    vi.stubGlobal("window", { location: { protocol: "http:", host: "localhost:8080" } });
+    expect(resolve()).toBe("ws://localhost:8080/ws?token=tok");
+  });
+
+  it("derives wss:// from an https page", () => {
+    vi.stubGlobal("window", { location: { protocol: "https:", host: "voice.example.com" } });
+    expect(resolve()).toBe("wss://voice.example.com/ws?token=tok");
+  });
+
+  it("has no hardcoded fallback when there is no page location", () => {
+    vi.stubGlobal("window", undefined);
+    expect(() => resolve()).toThrow();
+  });
+});

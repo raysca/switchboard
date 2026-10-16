@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -179,5 +180,42 @@ func TestProcessorDropsInterruptedTurn(t *testing.T) {
 		if final, ok := frame.(*core.FinalTranscriptionFrame); ok && final.Committed {
 			t.Fatalf("interrupted turn committed: %#v", final)
 		}
+	}
+}
+
+func TestProcessor_PendingTurnLimit_ResetsAndContinues(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxRetiredTurns = 128
+	cfg.GracePeriod = 0
+	cfg.PolicyClock = &manualPolicyClock{now: time.Unix(100, 0)}
+	p, err := NewProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emitter := &recordingEmitter{}
+	ctx := context.Background()
+	at := time.Unix(10, 0)
+	for i := 0; i < 129; i++ {
+		err := p.ProcessFrame(ctx, &core.TranscriptCandidateFrame{
+			Text: "never completes", Turn: core.TurnID(fmt.Sprintf("orphan-%d", i)), Gen: 1, Timestamp: at,
+		}, core.Downstream, emitter)
+		if err != nil {
+			t.Fatalf("orphan %d: ProcessFrame returned %v", i, err)
+		}
+	}
+	err = p.ProcessFrame(ctx, &core.TranscriptCandidateFrame{
+		Text: "hello", Turn: "normal", Gen: 1, Timestamp: at, Final: true, EndOfUtterance: true,
+	}, core.Downstream, emitter)
+	if err != nil {
+		t.Fatalf("normal turn: %v", err)
+	}
+	var finals []*core.FinalTranscriptionFrame
+	for _, f := range emitter.frames {
+		if ft, ok := f.(*core.FinalTranscriptionFrame); ok {
+			finals = append(finals, ft)
+		}
+	}
+	if len(finals) != 1 || finals[0].Turn != "normal" || finals[0].Text != "hello" {
+		t.Fatalf("expected only the normal turn final, got %#v", finals)
 	}
 }

@@ -1,11 +1,13 @@
 package smartturn
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -264,4 +267,51 @@ func TestTurnWorkerExitsCleanOnStdinClose(t *testing.T) {
 	if err := cmd.Wait(); err != nil || stderr.Len() != 0 {
 		t.Fatalf("exit err=%v stderr=%q", err, stderr.String())
 	}
+}
+
+// A worker that dies during handshake: every failed respawn is logged with the
+// child's stderr tail, so a permanently broken turnworker is not just a counter.
+func TestRespawnFailureIsLoggedWithStderr(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "badworker")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho boom-from-worker >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var buf syncBuffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	p := &Pool{cfg: PoolConfig{Binary: script, IntraOp: 1}, idle: make(chan *worker, 1)}
+	w := &worker{p: p}
+	p.ws = []*worker{w}
+	p.up.Store(1)
+	w.crash()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(buf.String(), "boom-from-worker") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no respawn failure logged; log=%q", buf.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = p.Close()
+	if !strings.Contains(buf.String(), "attempt=1") {
+		t.Fatalf("log lacks attempt number: %q", buf.String())
+	}
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

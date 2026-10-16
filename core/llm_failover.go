@@ -83,8 +83,9 @@ type LLMFailover struct {
 	session SessionController
 	index   int
 
-	mu  sync.Mutex
-	cur *failoverGen
+	mu     sync.Mutex
+	cur    *failoverGen
+	closed bool // set by Close: the watchdog never fails over again
 }
 
 // failoverGen is the state of the latest generation.
@@ -145,6 +146,12 @@ func (w *LLMFailover) SetContextProvider(fn func() []Message) {
 }
 
 func (w *LLMFailover) Close() error {
+	w.mu.Lock()
+	w.closed = true
+	if w.cur != nil {
+		stopTimerLocked(w.cur)
+	}
+	w.mu.Unlock()
 	var errs []error
 	for _, c := range w.cfg.Candidates {
 		if cl, ok := c.Proc.(Closer); ok {
@@ -173,6 +180,7 @@ func (w *LLMFailover) ProcessFrame(ctx context.Context, f Frame, dir Direction, 
 				active = w.cfg.Candidates[g.order[g.pos]].Proc
 			}
 			g.done = true
+			stopTimerLocked(g)
 		}
 		w.mu.Unlock()
 		if active != nil {
@@ -210,6 +218,7 @@ func (w *LLMFailover) begin(ctx context.Context, um *UserMessageFrame, dir Direc
 	var stale Processor
 	if prev != nil && !prev.done {
 		prev.done = true
+		stopTimerLocked(prev)
 		if p := w.cfg.Candidates[prev.order[prev.pos]].Proc; p != w.cfg.Candidates[g.order[0]].Proc {
 			stale = p // the new first candidate cancels its own previous work
 		}
@@ -243,11 +252,13 @@ func (w *LLMFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 	case !isErr:
 		if _, usage := f.(*UsageMetricsFrame); !usage {
 			g.committed = true
+			stopTimerLocked(g)
 		}
 		w.mu.Unlock()
 		return w.session.Reenter(f, dir, resume, gen)
 	case ef.Fatal || !w.mayFailOver(g, ef.Err):
 		g.done = true
+		stopTimerLocked(g)
 		w.mu.Unlock()
 		return w.session.Reenter(f, dir, resume, gen)
 	}
@@ -287,20 +298,28 @@ func (w *LLMFailover) failoverLocked(g *failoverGen, idx int, err error, exhaust
 		}
 	}
 	g.done = true
+	stopTimerLocked(g)
 	w.mu.Unlock()
 	return exhausted()
 }
 
 // armLocked starts the first-token watchdog for the running candidate (w.mu held).
 func (w *LLMFailover) armLocked(g *failoverGen) {
-	if w.cfg.FirstTokenTimeout <= 0 || g.done || g.pos+1 >= len(g.order) {
+	if w.cfg.FirstTokenTimeout <= 0 || w.closed || g.done || g.pos+1 >= len(g.order) {
 		return
 	}
-	if g.timer != nil {
-		g.timer.Stop()
-	}
+	stopTimerLocked(g)
 	pos := g.pos
 	g.timer = time.AfterFunc(w.cfg.FirstTokenTimeout, func() { w.firstTokenExpired(g, pos) })
+}
+
+// stopTimerLocked disarms g's watchdog (w.mu held). A callback already running
+// is neutralised by firstTokenExpired re-checking closed/done/committed under w.mu.
+func stopTimerLocked(g *failoverGen) {
+	if g.timer != nil {
+		g.timer.Stop()
+		g.timer = nil
+	}
 }
 
 // firstTokenExpired abandons the candidate at pos if it is still silent: its
@@ -308,7 +327,7 @@ func (w *LLMFailover) armLocked(g *failoverGen) {
 // (anything it emits later is dropped like any abandoned attempt).
 func (w *LLMFailover) firstTokenExpired(g *failoverGen, pos int) {
 	w.mu.Lock()
-	if g.done || g.committed || g.pos != pos || !w.mayFailOver(g, ErrFirstTokenTimeout) {
+	if w.closed || g.done || g.committed || g.pos != pos || !w.mayFailOver(g, ErrFirstTokenTimeout) {
 		w.mu.Unlock()
 		return
 	}

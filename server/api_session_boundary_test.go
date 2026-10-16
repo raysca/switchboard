@@ -82,7 +82,7 @@ func TestSessionRoutesUseManagementBoundaryAndServeQueries(t *testing.T) {
 	if err := store.Flows().Create(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := store.Flows().PublishVersion(context.Background(), flowID, 1, []byte(`{"llm":"test"}`), nil)
+	v, err := publishTestVersion(context.Background(), store, flowID, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

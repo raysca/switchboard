@@ -9,6 +9,7 @@ import (
 
 	"context"
 	"govoice/server/flow"
+	"govoice/server/storage"
 )
 
 func TestManagementHandlerProtectsMCPAndNeverReturnsSecretEndpointQuery(t *testing.T) {
@@ -185,3 +186,50 @@ func TestAuthenticatedMCPCreateValidateDetailAndExecuteJSONContract(t *testing.T
 type allAvailable struct{}
 
 func (allAvailable) Check(string, string) flow.Unavailable { return flow.Unavailable{} }
+
+// A deleted detach result carries no server object (omitempty is a no-op on structs).
+func TestDetachDeleteResultOmitsServerWhenDeleted(t *testing.T) {
+	svc, _ := newTestService(t, &testRemote{}, testTokens{})
+	id := mustCreateMCP(t, svc)
+	r := httptest.NewRequest("POST", "/api/v1/mcp-servers/"+id+"/detach-delete", strings.NewReader(`{"confirm":true}`))
+	r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	Handler(svc).ServeHTTP(w, r)
+	var body struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != 200 {
+		t.Fatalf("status=%d err=%v body=%s", w.Code, err, w.Body.String())
+	}
+	if _, ok := body.Data["server"]; ok {
+		t.Fatalf("deleted result has a server key: %s", w.Body.String())
+	}
+}
+
+// Only a genuinely missing server is 404; a broken store is 500.
+func TestMCPRoutesDistinguishNotFoundFromStoreFailure(t *testing.T) {
+	svc, store := newTestService(t, &testRemote{}, testTokens{})
+	h := Handler(svc)
+	do := func(method, path, body string) int {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	routes := [][3]string{{"DELETE", "", ""}, {"GET", "", ""}, {"POST", "/detach-delete", `{"confirm":true}`}}
+	for _, rt := range routes {
+		if code := do(rt[0], "/api/v1/mcp-servers/"+storage.NewID()+rt[1], rt[2]); code != 404 {
+			t.Errorf("%s%s missing server: %d, want 404", rt[0], rt[1], code)
+		}
+	}
+	id := mustCreateMCP(t, svc)
+	_ = store.Close()
+	for _, rt := range routes {
+		if code := do(rt[0], "/api/v1/mcp-servers/"+id+rt[1], rt[2]); code != 500 {
+			t.Errorf("%s%s closed store: %d, want 500", rt[0], rt[1], code)
+		}
+	}
+}

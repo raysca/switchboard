@@ -15,7 +15,7 @@ func seedWithCaller(t *testing.T, s *Store, caller string) (string, error) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

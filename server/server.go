@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 	"govoice/core"
 	"govoice/core/observe"
@@ -78,9 +79,12 @@ type Server struct {
 	ready        atomic.Bool
 	shuttingDown atomic.Bool
 
-	pingMu sync.Mutex // storeHealthy cache
-	pingAt time.Time
-	pingOK bool
+	pingMu        sync.Mutex // guards pingAt/pingOK only, never held across the ping
+	pingSF        singleflight.Group
+	pingDB        func(context.Context) error // test seam; nil pings the store
+	sessionBudget core.ResourceBudget
+	pingAt        time.Time
+	pingOK        bool
 
 	publicMux    *http.ServeMux
 	adminMux     http.Handler
@@ -101,7 +105,7 @@ type Server struct {
 	nextCallID  atomic.Uint64
 	textTurns   atomic.Uint64
 	pruneStop   chan struct{}
-	demoMu      sync.Mutex         // serialises demo installs
+	demoSF      singleflight.Group // collapses overlapping demo installs
 	stopDemo    context.CancelFunc // cancels the startup demo install; guarded by mu
 	demoWG      sync.WaitGroup     // the startup demo install goroutine
 	recSink     *record.LocalSink  // nil unless recording.enabled
@@ -190,25 +194,26 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 
 	s := &Server{
-		catalog:      cat,
-		cfg:          cfg,
-		metrics:      metrics,
-		timelines:    timelines,
-		live:         newLiveCalls(),
-		admission:    admission,
-		registry:     registry,
-		env:          os.Getenv,
-		validator:    validator,
-		management:   management,
-		voiceSignKey: []byte(tokenSecret),
-		voiceKeyID:   tokenCfg.KeyID,
-		voiceEpoch:   validator.ScopeEpoch(),
-		drafts:       newDraftCalls(),
-		logger:       logger,
-		startedAt:    metrics.StartTime,
-		activeCalls:  make(map[uint64]*activeCall),
-		authFails:    rate.NewLimiter(rate.Every(6*time.Second), 10),
-		authNow:      time.Now,
+		catalog:       cat,
+		sessionBudget: core.DefaultResourceBudget(),
+		cfg:           cfg,
+		metrics:       metrics,
+		timelines:     timelines,
+		live:          newLiveCalls(),
+		admission:     admission,
+		registry:      registry,
+		env:           os.Getenv,
+		validator:     validator,
+		management:    management,
+		voiceSignKey:  []byte(tokenSecret),
+		voiceKeyID:    tokenCfg.KeyID,
+		voiceEpoch:    validator.ScopeEpoch(),
+		drafts:        newDraftCalls(),
+		logger:        logger,
+		startedAt:     metrics.StartTime,
+		activeCalls:   make(map[uint64]*activeCall),
+		authFails:     rate.NewLimiter(rate.Every(6*time.Second), 10),
+		authNow:       time.Now,
 	}
 	s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })
 	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports, policy: policyFrom(cfg)}
@@ -550,7 +555,23 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 	phase := "build_pipeline"
 	var stopRecording func()
+	var pipe *core.Pipeline
+	var session *core.Session
 	fail := func(err error) (*core.Session, error) {
+		// Release provider clients: the session closes its processors, and
+		// before a session exists the built pipeline's processors are closed here.
+		if session != nil {
+			_ = session.Close()
+		} else if pipe != nil {
+			for _, p := range pipe.Processors() {
+				if c, ok := p.(core.Closer); ok {
+					func() {
+						defer func() { _ = recover() }()
+						_ = c.Close()
+					}()
+				}
+			}
+		}
 		ending.set(storage.EndSetupFailed)
 		recoverEach(s.logger, sessionID, "releaseCall", releaseCall)
 		recoverEach(s.logger, sessionID, "stopRecording", stopRecording)
@@ -563,16 +584,18 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 
 	// 3. Build VAD processor and the flow's pipeline
 	vadProc := vad.NewProcessor(s.vadExecutor, s.cfg.VADProcessorConfigForStopMS(call.VADStopMS))
-	pipe, err := s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
+	pipe, err = s.registry.BuildCallPipeline(s.cfg, call, vadProc, conn)
 	call.wipeSecrets()
 	if err != nil {
+		pipe = nil // BuildCallPipeline already closed what it built
 		return fail(fmt.Errorf("build pipeline: %w", err))
 	}
 	errProviders := stageProviders(call)
 
 	// 4. Construct Core Session
-	session, err := core.NewSession(sessionID, pipe, core.DefaultResourceBudget())
+	session, err = core.NewSession(sessionID, pipe, s.sessionBudget)
 	if err != nil {
+		session = nil
 		phase = "create_session"
 		return fail(fmt.Errorf("create session: %w", err))
 	}
@@ -840,16 +863,28 @@ func (s *Server) storeHealthy(ctx context.Context) bool {
 		return true
 	}
 	s.pingMu.Lock()
-	defer s.pingMu.Unlock()
 	if time.Since(s.pingAt) < time.Second {
-		return s.pingOK
+		ok := s.pingOK
+		s.pingMu.Unlock()
+		return ok
 	}
-	// WithoutCancel: one aborted probe must not cache an "unhealthy" verdict for every other caller.
-	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
-	defer cancel()
-	s.pingOK = s.store.DB().PingContext(pctx) == nil
-	s.pingAt = time.Now()
-	return s.pingOK
+	s.pingMu.Unlock()
+	// Concurrent callers share one in-flight ping; no lock is held during it.
+	v, _, _ := s.pingSF.Do("ping", func() (any, error) {
+		// WithoutCancel: one aborted probe must not cache an "unhealthy" verdict for every other caller.
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
+		ping := s.pingDB
+		if ping == nil {
+			ping = s.store.DB().PingContext
+		}
+		ok := ping(pctx) == nil
+		s.pingMu.Lock()
+		s.pingOK, s.pingAt = ok, time.Now()
+		s.pingMu.Unlock()
+		return ok, nil
+	})
+	return v.(bool)
 }
 
 func circuitStateName(val int64) string {

@@ -31,7 +31,7 @@ func createTestFlowAndVersion(t *testing.T, s *storage.Store) (string, string, s
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, flowID, 1, []byte(`{"llm":"test"}`), nil)
+	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{}, []byte(`{"llm":"test"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

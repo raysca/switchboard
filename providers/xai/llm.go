@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,7 +87,7 @@ func NewProcessor(cfg Config) (*Processor, error) {
 		cfg.Endpoint = PinnedEndpoint
 	}
 	if cfg.APIKey == "" {
-		cfg.APIKey = os.Getenv("XAI_API_KEY")
+		return nil, ErrMissingAPIKey
 	}
 	if cfg.CircuitBreaker == nil {
 		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())

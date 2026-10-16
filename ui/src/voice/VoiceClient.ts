@@ -412,12 +412,9 @@ export class VoiceClient {
     customBaseUrl?: string,
   ): string {
     let base = customBaseUrl;
-    if (!base && typeof window !== "undefined") {
+    if (!base) {
       const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
       base = `${proto}//${window.location.host}/ws`;
-    }
-    if (!base) {
-      base = "ws://127.0.0.1:9090/ws";
     }
 
     const url = new URL(base, "http://localhost");

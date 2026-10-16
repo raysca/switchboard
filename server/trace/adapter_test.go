@@ -37,7 +37,7 @@ func createTestSession(t *testing.T, s *storage.Store) string {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, flowID, 1, []byte(`{"llm":"test"}`), nil)
+	v, err := publishTestVersion(ctx, s, flowID, []byte(`{"llm":"test"}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,4 +462,40 @@ func stringContains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// publishTestVersion publishes config (with the given MCP selection) as the flow's next version.
+func publishTestVersion(ctx context.Context, s *storage.Store, flowID string, config []byte, tools []storage.SelectedTool) (storage.FlowVersion, error) {
+	v, _, err := s.Flows().MutateAndPublish(ctx, flowID, storage.FlowMutation{Tools: &tools}, config)
+	return v, err
+}
+
+func TestSpanEnd_ErrorCategoryNeverContainsMessage(t *testing.T) {
+	s := newTestStore(t)
+	sessID := createTestSession(t, s)
+	adapter := trace.NewAdapter(s.Traces())
+	defer adapter.Close()
+
+	ctx := context.Background()
+	ev := core.NewTraceEvent("err.test", time.Now().UTC(), core.SessionID(sessID), "", 1, core.TracePolicy{Content: core.TraceMetadata}, nil)
+	span := adapter.StartSpan(ctx, ev)
+	span.End(errors.New("dial https://x.example?api_key=SECRET failed"))
+
+	if err := adapter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	spans, err := s.Traces().Spans(ctx, sessID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spans) != 1 {
+		t.Fatalf("expected 1 span, got %d", len(spans))
+	}
+	attrs := spans[0].AttributesJSON
+	if contains(attrs, "SECRET") || contains(attrs, "api_key") {
+		t.Fatalf("error message leaked into stored attributes: %s", attrs)
+	}
+	if !contains(attrs, "errorString") {
+		t.Fatalf("error type missing from attributes: %s", attrs)
+	}
 }

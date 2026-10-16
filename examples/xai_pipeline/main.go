@@ -81,6 +81,7 @@ func main() {
 	xaiProc, err := xai.NewProcessor(xai.Config{
 		Model:        model,
 		Endpoint:     endpoint,
+		APIKey:       os.Getenv("XAI_API_KEY"),
 		SystemPrompt: "You are a concise voice assistant.",
 	})
 	if err != nil {

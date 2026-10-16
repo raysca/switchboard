@@ -40,7 +40,7 @@ func TestSQLite_VacuumIntoBackupAndRestore(t *testing.T) {
 	if err := s.Flows().Create(ctx, fl); err != nil {
 		t.Fatalf("create flow: %v", err)
 	}
-	ver, err := s.Flows().PublishVersion(ctx, fl.ID, 1, []byte(`{"voice":"default","prompt":"hello"}`), nil)
+	ver, err := publishTestVersion(ctx, s, fl.ID, []byte(`{"voice":"default","prompt":"hello"}`), nil)
 	if err != nil {
 		t.Fatalf("add version: %v", err)
 	}

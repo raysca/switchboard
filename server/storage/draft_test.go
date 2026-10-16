@@ -17,7 +17,7 @@ func TestSessionDraftFlagRoundTripsAndDefaultsToFalse(t *testing.T) {
 		if err := s.Flows().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+		v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +47,7 @@ func TestConfigHashMatchesAPublishedVersionsHash(t *testing.T) {
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"b":2,"a":1}`), nil)
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"b":2,"a":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestOnlyDraftSessionsMayCarryAnotherHash(t *testing.T) {
 		if err := s.Flows().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+		v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

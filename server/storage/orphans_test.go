@@ -36,7 +36,7 @@ func seedSession(t *testing.T, s *Store, started time.Time, status string) (sess
 	if err := s.Flows().Create(ctx, a); err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{}`), nil)
+	v, err := publishTestVersion(ctx, s, a.ID, []byte(`{}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestEndOrphansUnblocksAnMCPServerPinnedOnlyByTheDeadCall(t *testing.T) {
 		if err := s.Flows().Create(ctx, a); err != nil {
 			t.Fatal(err)
 		}
-		v, err := s.Flows().PublishVersion(ctx, a.ID, 1, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "tool", SchemaHash: d.Tools[0].SchemaHash, Required: true}})
+		v, err := publishTestVersion(ctx, s, a.ID, []byte(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`), []SelectedTool{{ServerID: m.ID, RemoteName: "tool", SchemaHash: d.Tools[0].SchemaHash, Required: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
