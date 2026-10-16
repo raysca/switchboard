@@ -32,6 +32,7 @@ const DefaultMaxPreRollBytes = 60 * 16000 * 2
 var ErrStreamEnded = errors.New("sttunit: stream ended by the provider")
 
 var (
+	errNilConn         = errors.New("sttunit: Dial returned a nil Conn without an error")
 	errProviderFailure = errors.New("provider_failure")
 	errCanceled        = errors.New("canceled")
 )
@@ -66,7 +67,9 @@ type Result struct {
 type Config struct {
 	Provider string // label on candidates and the trace span
 	// Dial opens one stream on ctx (the stream lives on it). Retries and the
-	// breaker's accounting of the open stay with the provider.
+	// breaker's accounting of the open stay with the provider. It must return
+	// a non-nil Conn when err is nil (nil, nil is treated as a failed dial);
+	// a non-nil Conn returned with an error is closed by the Runner.
 	Dial func(ctx context.Context) (Conn, error)
 	// Breaker, with Classify, gets one report per mid-stream failure. May be nil.
 	Breaker  *resilience.Breaker
@@ -91,6 +94,7 @@ type stream struct {
 	gen      uint64
 	closing  bool // Finish is owed (still dialing) or sent
 	stopped  bool
+	ended    atomic.Bool // the provider ended the stream (Recv returned ErrStreamEnded)
 	draining *time.Timer
 
 	stopOnce, traceFinal, traceEnd, overflow sync.Once
@@ -328,7 +332,7 @@ func (r *Runner) handleAudio(ctx context.Context, f *core.InputAudioFrame, e cor
 	sctx, cancel := context.WithTimeout(ctx, r.cfg.SendTimeout)
 	defer cancel()
 	if err := conn.Send(sctx, f.Samples); err != nil {
-		if r.isStopped(st) { // torn down concurrently: not a provider failure
+		if r.isStopped(st) || st.ended.Load() { // torn down, or closed by the provider first: not this Send's failure
 			return e.Push(f)
 		}
 		r.errs.Add(1)
@@ -372,11 +376,21 @@ func (r *Runner) hold(st *stream, pcm []byte) Conn {
 // results until the stream ends or is stopped.
 func (r *Runner) run(ctx context.Context, st *stream) {
 	var traceErr error
+	var conn Conn
 	defer func() {
+		// Stopped before the conn closes: a Send racing the provider's close
+		// then sees a dead stream, not a provider failure.
 		r.release(st)
 		r.stop(st, traceErr)
+		if conn != nil {
+			conn.Close() // idempotent (Conn contract)
+		}
 	}()
-	conn, err := r.cfg.Dial(ctx)
+	var err error
+	conn, err = r.cfg.Dial(ctx)
+	if err == nil && conn == nil {
+		err = errNilConn
+	}
 	if err != nil {
 		if ctx.Err() == nil { // not our own teardown
 			traceErr = errProviderFailure
@@ -384,7 +398,6 @@ func (r *Runner) run(ctx context.Context, st *stream) {
 		}
 		return
 	}
-	defer conn.Close()
 	st.event("stt.start")
 	if err := r.flush(ctx, st, conn); err != nil {
 		if ctx.Err() == nil && !r.isStopped(st) {
@@ -412,7 +425,8 @@ func (r *Runner) dialFailed(st *stream, err error) {
 		r.noDial = true
 	}
 	r.mu.Unlock()
-	if !errors.Is(err, resilience.ErrCircuitOpen) {
+	// An open breaker and the session's own task budget are not provider errors.
+	if !errors.Is(err, resilience.ErrCircuitOpen) && !errors.Is(err, core.ErrTooManyTasks) {
 		r.errs.Add(1)
 	}
 	if turn, _ := st.owner(); turn == "" && !active {
@@ -486,7 +500,11 @@ func (r *Runner) sendFinish(ctx context.Context, st *stream, conn Conn) {
 	}
 	st.mu.Lock()
 	if !st.stopped {
-		st.draining = time.AfterFunc(r.cfg.DrainTimeout, func() { r.release(st); r.stop(st, nil) })
+		st.draining = time.AfterFunc(r.cfg.DrainTimeout, func() {
+			defer func() { _ = recover() }() // a provider's Close must not kill the daemon from a timer goroutine
+			r.release(st)
+			r.stop(st, nil)
+		})
 	}
 	st.mu.Unlock()
 }
@@ -576,6 +594,7 @@ func (r *Runner) receive(ctx context.Context, st *stream, conn Conn) error {
 		case ctx.Err() != nil:
 			return nil // stopped: barge-in, turn interrupted, drain timeout or Close
 		case errors.Is(err, ErrStreamEnded):
+			st.ended.Store(true)
 			return nil
 		default:
 			r.errs.Add(1)

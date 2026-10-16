@@ -32,8 +32,14 @@ type fakeConn struct {
 	ops     []string // "send:<first byte>" or "finish"
 	closed  bool
 	sendErr error
-	recvs   atomic.Int32 // Recv calls so far (a call after a result means it was processed)
-	results chan recvResult
+	// closeGate, when set, blocks every Close until it is closed; closeEntered
+	// is closed when the first Close begins. panicClose makes the first Close panic.
+	closeGate    chan struct{}
+	closeEntered chan struct{}
+	panicClose   atomic.Bool
+	closes       atomic.Int32
+	recvs        atomic.Int32 // Recv calls so far (a call after a result means it was processed)
+	results      chan recvResult
 }
 
 type recvResult struct {
@@ -98,6 +104,15 @@ func (c *fakeConn) Recv(ctx context.Context) (Result, error) {
 }
 
 func (c *fakeConn) Close() {
+	if c.closes.Add(1) == 1 && c.closeEntered != nil {
+		close(c.closeEntered)
+	}
+	if c.closeGate != nil {
+		<-c.closeGate
+	}
+	if c.panicClose.CompareAndSwap(true, false) {
+		panic("provider Close panicked")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
@@ -373,6 +388,9 @@ func TestRunner_CloseCancelsDialAndLeaksNothing(t *testing.T) {
 	if len(h.errorFrames()) != 0 {
 		t.Fatal("a cancelled dial was reported as a failure")
 	}
+	if _, _, _, n := h.r.STTCounts(); n != 0 {
+		t.Fatalf("a cancelled dial counted %d provider errors", n)
+	}
 }
 
 func TestRunner_UnboundStreamAdoptedByNextTurn(t *testing.T) {
@@ -407,7 +425,7 @@ func TestRunner_LateResultOfOldGenerationIsFenced(t *testing.T) {
 	h.sess.IncrementGeneration() // a barge-in moved on; its InterruptionFrame is not here yet
 	conn.results <- recvResult{res: Result{Text: "stale", Final: true, EndOfUtterance: true}}
 	h.waitFor("result read", func() bool { return conn.recvs.Load() >= 2 })
-	time.Sleep(50 * time.Millisecond)
+	h.waitFor("fenced", func() bool { return h.sess.StaleDiscarded.Load() > 0 })
 	if c := h.candidates(); len(c) != 0 {
 		t.Fatalf("a generation-1 final reached the transcript stage: %+v", c)
 	}
@@ -489,6 +507,9 @@ func TestRunner_CloseDuringFlushIsQuiet(t *testing.T) {
 	if len(h.errorFrames()) != 0 {
 		t.Fatal("Close during a flush was reported as a failure")
 	}
+	if _, _, _, n := h.r.STTCounts(); n != 0 {
+		t.Fatalf("Close during a flush counted %d provider errors", n)
+	}
 }
 
 // A flush Send that fails is a failed open: one error, no redial this turn.
@@ -530,10 +551,81 @@ func TestRunner_TaskLimitLosesTheTurnNotTheCall(t *testing.T) {
 	if !errors.Is(ef.Err, core.ErrTooManyTasks) || ef.Fatal || ef.Turn != "turn-1-2" {
 		t.Fatalf("error frame %+v", ef)
 	}
+	if _, _, _, n := h.r.STTCounts(); n != 0 {
+		t.Fatalf("the local task limit counted %d provider errors", n)
+	}
 	h.waitFor("frames passed", func() bool {
 		return len(framesOf[*core.UserStartedSpeakingFrame](h)) == 2 && h.audioPassed() == 1
 	})
 	if err := h.sess.Err(); err != nil {
 		t.Fatalf("the task limit ended the call: %v", err)
 	}
+}
+
+// The provider closes the stream cleanly while a live Send is about to follow:
+// the stream is stopped before its conn closes, so the racing Send is quiet:
+// no error returned, none counted, nothing for the breaker, no ErrorFrame.
+func TestRunner_ProviderCloseRacingSendIsQuiet(t *testing.T) {
+	first, second := newFakeConn(t), newFakeConn(t)
+	first.closeGate, first.closeEntered = make(chan struct{}), make(chan struct{})
+	var n atomic.Int32
+	h := newHarness(t, Config{Dial: func(context.Context) (Conn, error) {
+		if n.Add(1) == 1 {
+			return first, nil
+		}
+		return second, nil
+	}})
+	t.Cleanup(func() { close(first.closeGate) }) // runs before the harness cleanup
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.waitFor("open", func() bool { return first.recvs.Load() >= 1 })
+	first.setSendErr(errors.New("write: use of closed connection"))
+	first.results <- recvResult{err: ErrStreamEnded}
+	<-first.closeEntered
+	err := h.r.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: []byte{1, 0}}, core.Downstream, discard{})
+	if err != nil {
+		t.Fatalf("ProcessFrame err = %v, want nil", err)
+	}
+	if _, _, _, errs := h.r.STTCounts(); errs != 0 {
+		t.Fatalf("errors counted = %d", errs)
+	}
+	if len(h.errorFrames()) != 0 {
+		t.Fatal("a clean provider close raced by a Send was reported")
+	}
+}
+
+// A panicking provider Close on the drain timer goroutine must not take the
+// process down; the stream is still removed.
+func TestRunner_DrainTimeoutRecoversProviderClosePanic(t *testing.T) {
+	conn := newFakeConn(t)
+	conn.panicClose.Store(true)
+	h := newHarness(t, Config{Dial: dialConn(conn), DrainTimeout: 20 * time.Millisecond})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	h.post(&core.UserStoppedSpeakingFrame{})
+	h.waitFor("drain timeout closed the stream", func() bool { return h.r.Streams() == 0 && conn.closes.Load() >= 1 })
+	if err := h.sess.Err(); err != nil {
+		t.Fatalf("session failed: %v", err)
+	}
+}
+
+func TestRunner_DialReturningNilConnIsAFailedDial(t *testing.T) {
+	h := newHarness(t, Config{Dial: func(context.Context) (Conn, error) { return nil, nil }})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.waitFor("error frame", func() bool { return len(h.errorFrames()) == 1 })
+	if !errors.Is(h.errorFrames()[0].Err, errNilConn) {
+		t.Fatalf("err = %v", h.errorFrames()[0].Err)
+	}
+	if err := h.sess.Err(); err != nil {
+		t.Fatalf("session failed: %v", err)
+	}
+}
+
+func TestRunner_DialErrorWithConnClosesIt(t *testing.T) {
+	conn := newFakeConn(t)
+	boom := errors.New("handshake failed")
+	h := newHarness(t, Config{Dial: func(context.Context) (Conn, error) { return conn, boom }})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.waitFor("error frame", func() bool { return len(h.errorFrames()) == 1 })
+	h.waitFor("conn closed", conn.isClosed)
 }
