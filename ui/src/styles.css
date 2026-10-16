@@ -3360,3 +3360,16 @@ main:has(.mcp-page) {
 .reply-chart__legend {
   margin: 10px 22px 18px;
 }
+
+/* Rollback confirmation inside Flow settings */
+.restore-confirm {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--lamp);
+  background: var(--warn-tint);
+}
+.restore-confirm p {
+  margin: 0;
+}

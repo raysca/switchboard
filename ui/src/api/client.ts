@@ -186,6 +186,7 @@ export type FlowDTO = z.infer<typeof flowSchema>;
 const flowsEnvelope = z.object({
   data: z.array(flowSchema),
 });
+const flowVersionEnvelope = z.object({ data: flowVersionSchema });
 const flowEnvelope = z.object({
   data: flowSchema,
 });
@@ -582,6 +583,9 @@ export function createApiClient(
       (await request("/flows?limit=100", flowsEnvelope)).data,
     getFlow: async (id: string) =>
       (await request(`/flows/${encodeURIComponent(id)}`, flowEnvelope)).data,
+    /** One earlier publish of a flow (config and tools), read-only: a rollback publishes it again. */
+    getFlowVersion: async (id: string, number: number) =>
+      (await request(`/flows/${encodeURIComponent(id)}/versions/${number}`, flowVersionEnvelope)).data,
     createFlow: async (input: CreateFlowInput) =>
       (
         await request("/flows", flowEnvelope, {

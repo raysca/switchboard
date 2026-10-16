@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { FlowDTO, ApiClient, CreateFlowInput, ProviderStatus, ServerConfigDTO, ToolSelection } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
@@ -80,6 +80,12 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const [wide, setWide] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [call, setCall] = useState<CallInfo>(NO_CALL);
+  // What a test call would run: the canvas and its tools. Editing is locked during a call, so the key at the moment it goes live is what was tested.
+  const draftKey = canonical([toPayload(graph), tools]);
+  const [testedKey, setTestedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (call.live) setTestedKey(draftKey);
+  }, [call.live, draftKey]);
   const opener = useRef<HTMLElement | null>(null);
   // The latest flow, for a panel that closes because its step was deleted (React Flow drops the step's DOM a beat later).
   const graphNow = useRef(graph);
@@ -168,6 +174,15 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
         openStep(graph, e.from, "routes");
       }
     } else if (panel?.kind === "step") close();
+  };
+  // Roll back: read the previous publish and publish it again as the next version (history stays append-only).
+  const restorePrevious = async () => {
+    if (!flow?.current_version || flow.current_version.number < 2) return;
+    const old = await client.getFlowVersion(flow.id, flow.current_version.number - 1);
+    setTools(old.mcp_tools);
+    setGraph(fromFlowConfig(old.config, old.mcp_tools.map(toolKey)));
+    onSubmit({ name: name.trim(), description: description.trim(), enabled: flow.enabled, config: old.config as CreateFlowInput["config"], mcp_tools: old.mcp_tools });
+    close();
   };
   const publish = () => {
     onSubmit({
@@ -299,6 +314,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
                 ? { number: flow.current_version.number, createdAt: flow.current_version.created_at, hash: flow.current_version.config_hash }
                 : undefined
             }
+            onRestore={restorePrevious}
             graph={graph}
             providers={providers}
             serverConfig={serverConfig}
@@ -339,6 +355,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
           currentVersion={flow ? version : undefined}
           callsInProgress={callsInProgress}
           unreachable={unreachableSteps(graph)}
+          tested={flow ? testedKey === draftKey : undefined}
           firstVersion={!published}
           changes={[
             ...(renamed ? [`Renamed the flow to ${name.trim()}`] : []),

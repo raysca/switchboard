@@ -9,6 +9,8 @@ export type PublishDialogProps = {
   callsInProgress?: number;
   /** Steps no path from the start step reaches; they are named instead of ticking the reachability check. */
   unreachable?: string[];
+  /** Whether a test call has run on exactly this draft. Absent when the flow cannot be tested yet (never published). */
+  tested?: boolean;
   firstVersion: boolean;
   changes: string[];
   problems: string[];
@@ -18,7 +20,7 @@ export type PublishDialogProps = {
 };
 
 /** Publishing is the one irreversible step: say what changes and what happens to live calls. */
-export function PublishDialog({ flowName, version, currentVersion, callsInProgress = 0, unreachable = [], firstVersion, changes, problems, pending, onConfirm, onCancel }: PublishDialogProps) {
+export function PublishDialog({ flowName, version, currentVersion, callsInProgress = 0, unreachable = [], tested, firstVersion, changes, problems, pending, onConfirm, onCancel }: PublishDialogProps) {
   const changesId = useId();
   const checksId = useId();
   const blocked = problems.length > 0;
@@ -86,6 +88,22 @@ export function PublishDialog({ flowName, version, currentVersion, callsInProgre
                   {unreachable.join(", ")} cannot be reached from the start step.
                 </li>
               )}
+              {tested !== undefined &&
+                (tested ? (
+                  <li>
+                    <span aria-hidden="true" className="check-mark">
+                      ✓
+                    </span>
+                    Tested with a call on this draft
+                  </li>
+                ) : (
+                  <li>
+                    <span aria-hidden="true" className="check-mark check-mark--warn">
+                      !
+                    </span>
+                    Not tested with a call since your last change. You can still publish.
+                  </li>
+                ))}
             </ul>
           </section>
         </>
