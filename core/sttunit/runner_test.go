@@ -40,8 +40,11 @@ type fakeConn struct {
 	closeEntered chan struct{}
 	panicClose   atomic.Bool
 	closes       atomic.Int32
-	recvs        atomic.Int32 // Recv calls so far (a call after a result means it was processed)
-	results      chan recvResult
+	// recvHold, when set, makes Recv ignore ctx until it is closed, so a test
+	// can keep the stream's run goroutine (and its deferred teardown) parked.
+	recvHold chan struct{}
+	recvs    atomic.Int32 // Recv calls so far (a call after a result means it was processed)
+	results  chan recvResult
 }
 
 type recvResult struct {
@@ -97,6 +100,10 @@ func (c *fakeConn) Finish(context.Context) error {
 
 func (c *fakeConn) Recv(ctx context.Context) (Result, error) {
 	c.recvs.Add(1)
+	if c.recvHold != nil {
+		<-c.recvHold
+		return Result{}, ctx.Err()
+	}
 	select {
 	case r := <-c.results:
 		return r.res, r.err
@@ -699,4 +706,32 @@ func (s *recSpan) End(error) {
 		s.t.done = map[string]bool{}
 	}
 	s.t.done[s.name] = true
+}
+
+// stop ends the span even when the provider's Close panics. The run goroutine
+// is parked in Recv, so its own deferred teardown cannot end the span first:
+// only stop's deferred endTrace can.
+func TestRunner_StopEndsSpanWhenClosePanics(t *testing.T) {
+	conn := newFakeConn(t)
+	conn.recvHold = make(chan struct{})
+	conn.panicClose.Store(true)
+	tr := &spanTracer{}
+	h := newHarnessTraced(t, Config{Dial: dialConn(conn)}, core.DefaultResourceBudget(), tr)
+	t.Cleanup(func() { close(conn.recvHold) }) // runs before the harness cleanup
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(1)
+	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	h.r.mu.Lock()
+	st := h.r.active
+	h.r.mu.Unlock()
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("expected the provider Close panic to propagate out of stop")
+			}
+		}()
+		h.r.stop(st, nil)
+	}()
+	// The session exports spans through an async queue: wait for the End.
+	h.waitFor("stt.stream span ended by stop despite the panic", func() bool { return tr.ended("stt.stream") })
 }
