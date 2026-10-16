@@ -174,3 +174,127 @@ func TestXAISTTOpenFailureWrapsErrSTTUnavailable(t *testing.T) {
 		return false
 	})
 }
+
+// hungXAIOpener blocks every open until its ctx ends (a provider-wide hang).
+type hungXAIOpener struct{ live, peak atomic.Int32 }
+
+func (o *hungXAIOpener) OpenStream(ctx context.Context, _ STTConfig) (STTStream, error) {
+	n := o.live.Add(1)
+	defer o.live.Add(-1)
+	for p := o.peak.Load(); n > p && !o.peak.CompareAndSwap(p, n); p = o.peak.Load() {
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func startXAIBudget(t *testing.T, opener STTStreamOpener, maxTasks int) (*STTProcessor, *core.Session, *coretest.PassthroughProcessor) {
+	t.Helper()
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = opener
+	proc, err := NewSTTProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	budget := core.DefaultResourceBudget()
+	if maxTasks > 0 {
+		budget.MaxAsyncTasks = maxTasks
+	}
+	session, _ := core.NewSession(46, pipe, budget)
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return proc, session, sink
+}
+
+func errorFramesOf(sink *coretest.PassthroughProcessor) (out []*core.ErrorFrame) {
+	for _, f := range sink.GetFrames() {
+		if ef, ok := f.(*core.ErrorFrame); ok {
+			out = append(out, ef)
+		}
+	}
+	return out
+}
+
+func waitUntil(t *testing.T, what string, d time.Duration, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(d); !cond(); time.Sleep(2 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+}
+
+// A provider hang must not fail the call or starve its other tasks: each short turn parks a
+// still-opening stream and the next audio opens another. Past the cap a turn loses its
+// transcript with a local, non-fatal error.
+func TestXAISTTProviderHangDoesNotStackSessionTasks(t *testing.T) {
+	opener := &hungXAIOpener{}
+	proc, session, sink := startXAIBudget(t, opener, 0)
+	const turns = 30
+	for i := 1; i <= turns; i++ {
+		_ = session.Post(&core.UserStartedSpeakingFrame{Seq: uint64(i), Gen: 1})
+		_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+		_ = session.Post(&core.UserStoppedSpeakingFrame{})
+		_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+		time.Sleep(5 * time.Millisecond)
+	}
+	waitUntil(t, "local errors", 3*time.Second, func() bool { return len(errorFramesOf(sink)) >= turns-maxLiveStreams })
+	if err := session.Err(); err != nil {
+		t.Fatalf("the call failed: %v", err)
+	}
+	if p := opener.peak.Load(); p > maxLiveStreams {
+		t.Fatalf("peak live opens = %d, want <= %d", p, maxLiveStreams)
+	}
+	for _, ef := range errorFramesOf(sink) {
+		if ef.Fatal || !errors.Is(ef.Err, core.ErrTooManyTasks) || errors.Is(ef.Err, core.ErrSTTUnavailable) {
+			t.Fatalf("error frame %+v: a local limit is non-fatal and not an unreachable STT", ef)
+		}
+	}
+	if n := proc.ErrorsTotal.Load(); n != 0 {
+		t.Fatalf("the local limit counted %d provider errors", n)
+	}
+	hold := make(chan struct{})
+	defer close(hold)
+	for i := 0; i < core.DefaultResourceBudget().MaxAsyncTasks-maxLiveStreams-4; i++ {
+		if err := session.Go(func(ctx context.Context) {
+			select {
+			case <-hold:
+			case <-ctx.Done():
+			}
+		}); err != nil {
+			t.Fatalf("session task %d could not be scheduled: %v", i, err)
+		}
+	}
+}
+
+// The session's task budget exhausted at open: one non-fatal local error per turn, ProcessFrame returns nil.
+func TestXAISTTTaskBudgetAtOpenReportsOncePerTurnAndKeepsTheCall(t *testing.T) {
+	proc, session, sink := startXAIBudget(t, &hungXAIOpener{}, 1)
+	hold := make(chan struct{})
+	defer close(hold)
+	_ = session.Go(func(ctx context.Context) {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+		}
+	}) // the only task
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	for i := 0; i < 3; i++ {
+		_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	}
+	waitUntil(t, "error frame", 2*time.Second, func() bool { return len(errorFramesOf(sink)) >= 1 })
+	time.Sleep(50 * time.Millisecond)
+	efs := errorFramesOf(sink)
+	if len(efs) != 1 || !errors.Is(efs[0].Err, core.ErrTooManyTasks) || errors.Is(efs[0].Err, core.ErrSTTUnavailable) || efs[0].Fatal {
+		t.Fatalf("error frames %+v, want one local non-fatal", efs)
+	}
+	if err := session.Err(); err != nil {
+		t.Fatalf("the call failed: %v", err)
+	}
+	if n := proc.ErrorsTotal.Load(); n != 0 {
+		t.Fatalf("counted %d provider errors", n)
+	}
+}

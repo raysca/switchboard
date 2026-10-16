@@ -4,7 +4,6 @@ package xai
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -44,7 +43,7 @@ type reviewRejectGoSession struct{ *mockSessionController }
 
 func (*reviewRejectGoSession) Go(func(context.Context)) error { return core.ErrTooManyTasks }
 
-func TestXAIReceiverStartFailurePropagates(t *testing.T) {
+func TestXAIReceiverStartFailureLosesTheTurnNotTheCall(t *testing.T) {
 	st := &reviewClosingStream{}
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = reviewClosingOpener{st}
@@ -54,8 +53,8 @@ func TestXAIReceiverStartFailurePropagates(t *testing.T) {
 	e := reviewEmitter{}
 	_ = p.ProcessFrame(context.Background(), &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "A", Gen: 1}, core.Downstream, e)
 	err := p.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
-	if !errors.Is(err, core.ErrTooManyTasks) {
-		t.Fatalf("receiver task start failure was swallowed: %v", err)
+	if err != nil { // a local task limit loses the turn's transcript (a non-fatal ErrorFrame), not the call
+		t.Fatalf("receiver task start failure failed the frame: %v", err)
 	}
 }
 

@@ -187,7 +187,7 @@ func TestRound4XAIClosesEveryDrainingStreamAfterSessionCancel(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
-	for i := 1; i <= 12; i++ {
+	for i := 1; i <= maxLiveStreams; i++ { // the live-stream cap bounds the draining set below its own 8
 		if err := s.Post(&core.UserStartedSpeakingFrame{Seq: uint64(i), Gen: 1}); err != nil {
 			t.Fatal(err)
 		}

@@ -324,6 +324,14 @@ const (
 	maxGoogleSegments   = 256
 )
 
+// maxLiveStreams bounds the streams a processor has opening or detached and still closing; each holds
+// a session task, so a provider hang would otherwise stack them up to the session's MaxAsyncTasks.
+const maxLiveStreams = 4
+
+// errTooManyStreams wraps ErrTooManyTasks so it is handled as the session's own task limit: a local
+// condition, neither a provider error nor an unreachable STT.
+var errTooManyStreams = fmt.Errorf("google stt: %d streams already open: %w", maxLiveStreams, core.ErrTooManyTasks)
+
 var errNotAttached = errors.New("google: stt is not attached to a session")
 
 // STTProcessor implements core.Processor for Google Speech-to-Text V2.
@@ -341,6 +349,7 @@ type STTProcessor struct {
 	assemblies     map[googleAssemblyKey]*googleAssembly
 	assemblyGen    uint64
 	turnAudioBytes int64
+	liveStreams    int  // streams opening or detached and still closing, each holding a session task
 	dialFailed     bool // an open failed: no reopen until the next turn or a barge-in
 
 	// Audio overlap buffer: keeps last 500ms (16,000 bytes for 16kHz 16-bit mono)
@@ -683,6 +692,17 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		}
 		return nil
 	}
+	if p.liveStreams >= maxLiveStreams { // earlier opens are still hanging: lose this turn, keep the session's tasks
+		p.dialFailed = true
+		p.mu.Unlock()
+		cancel()
+		if span != nil {
+			span.End(errors.New("canceled"))
+		}
+		p.refuseOpen(turn, gen, errTooManyStreams)
+		return nil
+	}
+	p.liveStreams++
 	p.streamID++
 	st := &activeStream{
 		cancel: cancel, ctx: streamCtx, id: p.streamID, turnID: p.turnID, gen: p.streamGen,
@@ -692,8 +712,13 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 	p.mu.Unlock()
 	if err := p.session.Go(func(sctx context.Context) { p.openAndReceive(sctx, st) }); err != nil {
 		p.mu.Lock()
+		p.liveStreams--
 		if p.active == st {
 			p.active = nil
+		}
+		tooMany := errors.Is(err, core.ErrTooManyTasks)
+		if tooMany {
+			p.dialFailed = true
 		}
 		p.mu.Unlock()
 		cancel()
@@ -701,14 +726,36 @@ func (p *STTProcessor) openPrimaryStream(ctx context.Context) error {
 		if errors.Is(err, core.ErrSessionClosed) {
 			return nil
 		}
+		if tooMany { // lose this turn's transcript, not the call
+			p.refuseOpen(turn, gen, err)
+			return nil
+		}
 		return err
 	}
 	return nil
 }
 
+// refuseOpen reports a stream this processor could not start for a local reason (its stream cap
+// or the session's task budget): a non-fatal error for the bound turn, not a provider error and
+// not an unreachable STT.
+func (p *STTProcessor) refuseOpen(turn string, gen uint64, err error) {
+	if turn == "" {
+		return
+	}
+	if gen == 0 {
+		gen = p.session.CurrentGeneration()
+	}
+	_ = p.session.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+}
+
 // openAndReceive opens st's stream, sends the audio held while it opened, then
 // reads results until the stream ends.
 func (p *STTProcessor) openAndReceive(ctx context.Context, st *activeStream) {
+	defer func() {
+		p.mu.Lock()
+		p.liveStreams--
+		p.mu.Unlock()
+	}()
 	stream, err := func() (STTStream, error) {
 		defer func() {
 			if v := recover(); v != nil {

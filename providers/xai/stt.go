@@ -253,6 +253,14 @@ func (st *activeSTTStream) endTrace(err error) {
 	})
 }
 
+// maxLiveStreams bounds the streams a processor has opening, active or draining; each holds a
+// session task, so a provider hang would otherwise stack them up to the session's MaxAsyncTasks.
+const maxLiveStreams = 4
+
+// errTooManyStreams wraps ErrTooManyTasks so it is handled as the session's own task limit: a local
+// condition, neither a provider error nor an unreachable STT.
+var errTooManyStreams = fmt.Errorf("xai stt: %d streams already open: %w", maxLiveStreams, core.ErrTooManyTasks)
+
 var errNotAttached = errors.New("xai: stt is not attached to a session")
 
 // STTProcessor implements core.Processor for xAI Speech-to-Text.
@@ -270,6 +278,7 @@ type STTProcessor struct {
 	streamGen uint64
 
 	dialFailed bool // an open failed: no reopen until the next turn or a barge-in
+	live       int  // streams opening, active or draining; each holds a session task
 
 	// Metrics
 	RequestsTotal atomic.Uint64
@@ -535,6 +544,15 @@ func (p *STTProcessor) ensure(ctx context.Context) error {
 		span.End(errors.New("canceled"))
 		return nil
 	}
+	if p.live >= maxLiveStreams { // earlier opens are still hanging: lose this turn, keep the session's tasks
+		p.dialFailed = true
+		p.mu.Unlock()
+		cancel()
+		span.End(errors.New("canceled"))
+		p.refuseOpen(turn, gen, errTooManyStreams)
+		return nil
+	}
+	p.live++
 	p.streamID++
 	st := &activeSTTStream{
 		cancel: cancel, ctx: streamCtx, id: p.streamID, readyCh: make(chan struct{}),
@@ -544,15 +562,39 @@ func (p *STTProcessor) ensure(ctx context.Context) error {
 	p.active = st
 	p.mu.Unlock()
 	if err := p.session.Go(func(sctx context.Context) { p.run(sctx, st) }); err != nil {
+		tooMany := errors.Is(err, core.ErrTooManyTasks)
+		p.mu.Lock()
+		p.live--
+		if tooMany {
+			p.dialFailed = true
+		}
+		p.mu.Unlock()
 		p.releaseStream(st)
 		p.stopStream(st)
 		st.endTrace(errors.New("canceled"))
 		if errors.Is(err, core.ErrSessionClosed) {
 			return nil
 		}
+		if tooMany { // lose this turn's transcript, not the call
+			p.refuseOpen(turn, gen, err)
+			return nil
+		}
 		return err
 	}
 	return nil
+}
+
+// refuseOpen reports a stream this processor could not start for a local reason (its stream cap
+// or the session's task budget): a non-fatal error for the bound turn, not a provider error and
+// not an unreachable STT.
+func (p *STTProcessor) refuseOpen(turn string, gen uint64, err error) {
+	if turn == "" {
+		return
+	}
+	if gen == 0 {
+		gen = p.session.CurrentGeneration()
+	}
+	_ = p.session.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
 }
 
 // open dials one stream on ctx. An open breaker stops the dial; WouldRefuse
@@ -578,6 +620,11 @@ func (p *STTProcessor) open(ctx context.Context) (STTStream, error) {
 
 // run is a stream's session task: open it, then read it.
 func (p *STTProcessor) run(ctx context.Context, st *activeSTTStream) {
+	defer func() {
+		p.mu.Lock()
+		p.live--
+		p.mu.Unlock()
+	}()
 	s, err := func() (STTStream, error) {
 		defer func() {
 			if v := recover(); v != nil {
