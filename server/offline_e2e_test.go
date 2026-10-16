@@ -180,8 +180,16 @@ func TestOfflineAdapterDownFailsTheStage(t *testing.T) {
 	realVAD(t, rig.s)
 	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
 	call.sendAudioLoose(callerSpeech(t))
-	// A call whose STT cannot be reached must end, not hang, and the bot must not invent a reply.
-	eventually(t, "the call to end after its STT failed", call.ended)
+	// A call whose STT cannot be reached reports the failure (the dial runs off the run loop, so
+	// it no longer ends the call) and the bot must not invent a reply.
+	eventually(t, "the STT failure on the timeline", func() bool {
+		for _, e := range rig.timeline() {
+			if e.Type == EventError {
+				return true
+			}
+		}
+		return false
+	})
 	if call.replies("never spoken") != 0 {
 		t.Fatal("the bot replied although its STT was unreachable")
 	}
