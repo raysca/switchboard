@@ -1024,3 +1024,47 @@ func TestRunner_EachFailurePathReportsOnce(t *testing.T) {
 		})
 	}
 }
+
+// While the provider hangs, every short turn's dial would hold a session task for
+// the whole dial timeout (and the idle audio after it opens another). Unbounded,
+// that stacks up to the session's MaxAsyncTasks and starves LLM and TTS tasks, so
+// a runner holds at most maxStreams; a turn past it loses its transcript with a
+// local, non-fatal error, not an "unreachable STT" and not a provider error.
+func TestRunner_ProviderHangDoesNotStackSessionTasks(t *testing.T) {
+	var live, peak atomic.Int32
+	h := newHarness(t, Config{Dial: func(ctx context.Context) (Conn, error) {
+		n := live.Add(1)
+		defer live.Add(-1)
+		for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
+		}
+		<-ctx.Done() // a provider-wide hang
+		return nil, ctx.Err()
+	}})
+	const turns = 30
+	for i := 1; i <= turns; i++ {
+		h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: uint64(i)})
+		h.audio(1)
+		h.post(&core.UserStoppedSpeakingFrame{})
+		h.audio(2) // idle audio after the turn: opens an unbound stream
+		time.Sleep(5 * time.Millisecond)
+	}
+	h.waitFor("frames through", func() bool { return h.audioPassed() == 2*turns })
+	if p := peak.Load(); p > maxStreams {
+		t.Fatalf("peak concurrent dials (session tasks held) = %d, want <= %d", p, maxStreams)
+	}
+	if n := h.r.Streams(); n > maxStreams {
+		t.Fatalf("open streams = %d, want <= %d", n, maxStreams)
+	}
+	h.waitFor("local errors", func() bool { return len(h.errorFrames()) >= turns-maxStreams })
+	for _, ef := range h.errorFrames() {
+		if ef.Fatal || !errors.Is(ef.Err, core.ErrTooManyTasks) || errors.Is(ef.Err, core.ErrSTTUnavailable) {
+			t.Fatalf("error frame %+v: a local limit is non-fatal and not an unreachable STT", ef)
+		}
+	}
+	if _, _, _, n := h.r.STTCounts(); n != 0 {
+		t.Fatalf("the local limit counted %d provider errors", n)
+	}
+	if err := h.sess.Err(); err != nil {
+		t.Fatalf("the call failed: %v", err)
+	}
+}

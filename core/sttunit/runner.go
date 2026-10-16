@@ -32,10 +32,18 @@ const DefaultMaxPreRollBytes = 60 * 16000 * 2
 // after Finish.
 var ErrStreamEnded = errors.New("sttunit: stream ended by the provider")
 
+// maxStreams bounds a Runner's open streams (dialing, active or finishing),
+// each of which holds a session task. A provider-wide hang otherwise stacks one
+// per short turn up to the session's MaxAsyncTasks and starves its LLM and TTS.
+const maxStreams = 4
+
 var (
 	errNilConn         = errors.New("sttunit: Dial returned a nil Conn without an error")
 	errProviderFailure = errors.New("provider_failure")
 	errCanceled        = errors.New("canceled")
+	// Wraps ErrTooManyTasks so it is handled like the session's own task limit:
+	// a local condition, neither a provider error nor an unreachable STT.
+	errTooManyStreams = fmt.Errorf("sttunit: %d streams already open: %w", maxStreams, core.ErrTooManyTasks)
 )
 
 // Conn is one open provider stream. The Runner calls Send and Finish from one
@@ -309,6 +317,16 @@ func (r *Runner) ensure(ctx context.Context) *stream {
 		cancel()
 		st.endTrace(errCanceled)
 		return cur
+	}
+	if len(r.all) >= maxStreams { // earlier dials are still hanging: lose this turn, keep the session's tasks
+		r.noDial = true
+		r.mu.Unlock()
+		cancel()
+		st.endTrace(errProviderFailure)
+		if turn != "" {
+			r.reportError(st, errTooManyStreams)
+		}
+		return nil
 	}
 	r.active = st
 	r.all[st] = struct{}{}
