@@ -54,9 +54,10 @@ type Conn interface {
 	Close()
 }
 
-// Result is a stream's cumulative transcript after one provider event. An
-// empty Text emits nothing; the Conn keeps its own state, so a turn that
-// adopts an unbound stream gets the text heard before it.
+// Result is a stream's cumulative transcript after one provider event. Text is
+// cumulative per Conn (the Conn keeps its own state, so a turn that adopts an
+// unbound stream gets the text heard before it); an empty Text emits no
+// candidate, and an empty-text Final settles the turn.
 type Result struct {
 	Text                  string
 	Final, EndOfUtterance bool
