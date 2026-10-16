@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -68,5 +69,32 @@ func TestEndCauses(t *testing.T) {
 		if got := reasonFromTransport(in); got != want {
 			t.Errorf("reasonFromTransport(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestSTTOutageEndsTheCallOnlyAfterTwoFailuresWithNoTranscriptBetween(t *testing.T) {
+	down := &core.ErrorFrame{Err: errors.Join(core.ErrSTTUnavailable, errors.New("refused"))}
+	other := &core.ErrorFrame{Err: errors.New("tts failed")}
+
+	var o sttOutage
+	if o.observe(down) || o.observe(other) {
+		t.Fatal("a lone failure (or another error) must not end the call")
+	}
+	if !o.observe(down) {
+		t.Fatal("the second consecutive failure must end the call")
+	}
+	if o.observe(down) {
+		t.Fatal("the end is signalled once")
+	}
+
+	o = sttOutage{}
+	o.observe(down)
+	o.observe(&core.TranscriptCandidateFrame{Text: "hi"})
+	if o.observe(down) {
+		t.Fatal("a transcript between failures resets the count")
+	}
+	o.observe(&core.UserMessageFrame{})
+	if o.observe(down) {
+		t.Fatal("a user message resets the count")
 	}
 }

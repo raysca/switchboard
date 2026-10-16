@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"sync/atomic"
 
 	"govoice/core"
@@ -61,4 +62,27 @@ func reasonFromTransport(cause string) string {
 		return storage.EndSetupFailed
 	}
 	return ""
+}
+
+// sttUnavailableLimit is how many STT-unreachable errors in a row (no transcript between them)
+// end a call. An STT failover recovers or swallows such errors until its chain is exhausted, so
+// only a stage with nothing left to try reaches this count. Not configurable on purpose.
+const sttUnavailableLimit = 2
+
+// sttOutage counts consecutive STT-unreachable error frames. It is used from the one goroutine that
+// observes the call's pipeline output, so it needs no lock.
+type sttOutage struct{ n int }
+
+// observe reports true once, when f is the error that reaches sttUnavailableLimit.
+func (o *sttOutage) observe(f core.Frame) bool {
+	switch fr := f.(type) {
+	case *core.TranscriptCandidateFrame, *core.UserMessageFrame:
+		o.n = 0
+	case *core.ErrorFrame:
+		if errors.Is(fr.Err, core.ErrSTTUnavailable) {
+			o.n++
+			return o.n == sttUnavailableLimit
+		}
+	}
+	return false
 }

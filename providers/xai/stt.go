@@ -629,7 +629,7 @@ func (p *STTProcessor) openFailed(st *activeSTTStream, err error) {
 	if gen == 0 {
 		gen = p.session.CurrentGeneration()
 	}
-	_ = p.session.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+	_ = p.session.Reenter(&core.ErrorFrame{Err: fmt.Errorf("%w: %w", core.ErrSTTUnavailable, err), Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
 }
 
 // receive reads st until the stream ends.

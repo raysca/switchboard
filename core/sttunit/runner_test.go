@@ -353,6 +353,9 @@ func TestRunner_DialFailureReportsErrorFrame(t *testing.T) {
 	if !errors.Is(ef.Err, boom) || ef.Fatal || ef.Turn != "turn-1-1" || ef.Gen != 1 {
 		t.Fatalf("error frame %+v", ef)
 	}
+	if !errors.Is(ef.Err, core.ErrSTTUnavailable) {
+		t.Fatalf("dial failure %v does not wrap core.ErrSTTUnavailable", ef.Err)
+	}
 	if _, _, _, n := h.r.STTCounts(); n != 1 {
 		t.Fatalf("errors counted = %d, want 1", n)
 	}
@@ -569,6 +572,9 @@ func TestRunner_TaskLimitLosesTheTurnNotTheCall(t *testing.T) {
 	ef := h.errorFrames()[0]
 	if !errors.Is(ef.Err, core.ErrTooManyTasks) || ef.Fatal || ef.Turn != "turn-1-2" {
 		t.Fatalf("error frame %+v", ef)
+	}
+	if errors.Is(ef.Err, core.ErrSTTUnavailable) {
+		t.Fatalf("the local task budget is not an unreachable STT: %v", ef.Err)
 	}
 	if _, _, _, n := h.r.STTCounts(); n != 0 {
 		t.Fatalf("the local task limit counted %d provider errors", n)

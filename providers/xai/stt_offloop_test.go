@@ -158,3 +158,19 @@ func waitAttached(t *testing.T, p *STTProcessor) {
 		return st.stream != nil
 	})
 }
+
+// A failed open reports an error that says the STT is unreachable (the server ends
+// the call after repeated ones).
+func TestXAISTTOpenFailureWrapsErrSTTUnavailable(t *testing.T) {
+	var opens atomic.Int32
+	session, sink := startXAI(t, &countOpener{n: &opens, err: errors.New("dial refused")})
+	_ = session.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	eventually(t, "error frame", func() bool {
+		for _, f := range sink.GetFrames() {
+			if ef, ok := f.(*core.ErrorFrame); ok {
+				return errors.Is(ef.Err, core.ErrSTTUnavailable)
+			}
+		}
+		return false
+	})
+}

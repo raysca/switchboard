@@ -442,6 +442,9 @@ func (r *Runner) dialFailed(st *stream, err error) {
 	if turn, _ := st.owner(); turn == "" && !active {
 		return
 	}
+	if !errors.Is(err, core.ErrTooManyTasks) { // the local task budget is not an unreachable STT
+		err = fmt.Errorf("%w: %w", core.ErrSTTUnavailable, err)
+	}
 	r.reportError(st, err)
 }
 

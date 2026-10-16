@@ -617,9 +617,22 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		lastTTSUnit        uint64
 		lastInterruption   uint64
 		lastFlushAck       uint64
+		outage             sttOutage
 	)
 
 	session.OnFrame = func(f core.Frame, dir core.Direction) {
+		if outage.observe(f) {
+			// The STT stayed unreachable for consecutive turns (an STT failover chain, if any, is
+			// exhausted): a deaf call is worse than a clear hang-up. Like the idle end, off this
+			// observer, since Session.Close waits for it.
+			ending.set(storage.EndError)
+			go func() {
+				timeline.Record(TimelineEvent{Type: EventDisconnect, Details: "terminated: stt unavailable"})
+				conn.Hangup("stt_unavailable", 2*time.Second) // final RTVI error with the reason, 1000 close
+				conn.Close()
+				_ = session.Close()
+			}()
+		}
 		switch f.Type() {
 		case core.FrameUserStartedSpeaking:
 			cue.userSpeech(true)

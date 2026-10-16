@@ -797,7 +797,7 @@ func (p *STTProcessor) openFailed(st *activeStream, err error) {
 	if gen == 0 {
 		gen = p.session.CurrentGeneration()
 	}
-	_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+	_ = p.session.Reenter(&core.ErrorFrame{Err: fmt.Errorf("%w: %w", core.ErrSTTUnavailable, provErr), Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
 }
 
 // rotateStream performs pre-limit stream rotation with bounded overlap and transcript deduplication.

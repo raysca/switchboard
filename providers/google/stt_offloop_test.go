@@ -314,3 +314,15 @@ func TestGoogleSTTPrerollOverflowIsTraced(t *testing.T) {
 	}
 	gwait(t, "preroll_dropped event", 10*time.Second, func() bool { return r.count("stt.preroll_dropped", "turn-1-1") == 1 })
 }
+
+// A failed open reports an error that says the STT is unreachable (the server ends
+// the call after repeated ones).
+func TestGoogleSTTOpenFailureWrapsErrSTTUnavailable(t *testing.T) {
+	session, sink := startGoogle(t, &failingOpener{})
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	gwait(t, "error frame", time.Second, func() bool { return len(countFrames[*core.ErrorFrame](sink)) == 1 })
+	if ef := countFrames[*core.ErrorFrame](sink)[0]; !errors.Is(ef.Err, core.ErrSTTUnavailable) {
+		t.Fatalf("error %v does not wrap core.ErrSTTUnavailable", ef.Err)
+	}
+}
