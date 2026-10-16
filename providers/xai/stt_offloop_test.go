@@ -142,3 +142,19 @@ func waitReady(t *testing.T, p *STTProcessor) {
 		return st.isReady
 	})
 }
+
+// waitAttached waits until the active stream's open has completed (stream set).
+func waitAttached(t *testing.T, p *STTProcessor) {
+	t.Helper()
+	eventually(t, "stream attached", func() bool {
+		p.mu.Lock()
+		st := p.active
+		p.mu.Unlock()
+		if st == nil {
+			return false
+		}
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		return st.stream != nil
+	})
+}

@@ -55,11 +55,22 @@ func TestRound3XAINewTurnPreservesPendingPriorFinal(t *testing.T) {
 	p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "A", Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "B", Gen: 1}, core.Downstream, e)
-	eventually(t, "A's stream", func() bool {
-		opener.mu.Lock()
-		defer opener.mu.Unlock()
-		return len(opener.streams) >= 1
+	// A's stream parks as draining when B starts; wait for its open to attach, then give
+	// a wrongful cancel time to show before asserting it was not closed.
+	eventually(t, "A's stream attached", func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		for _, d := range p.draining {
+			d.mu.Lock()
+			ok := d.stream != nil
+			d.mu.Unlock()
+			if ok {
+				return true
+			}
+		}
+		return false
 	})
+	time.Sleep(50 * time.Millisecond)
 	opener.mu.Lock()
 	first := opener.streams[0]
 	opener.mu.Unlock()

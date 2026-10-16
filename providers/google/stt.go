@@ -224,6 +224,10 @@ func (s *grpcSTTStream) Recv() ([]*STTResult, error) {
 				result.ResultEndOffset = res.ResultEndOffset.AsDuration()
 			}
 			results = append(results, result)
+		} else if res.IsFinal {
+			// A final with nothing recognised retracts what was heard; the
+			// receiver settles the turn on it.
+			results = append(results, &STTResult{IsFinal: true})
 		}
 	}
 	return results, nil
@@ -254,6 +258,7 @@ type activeStream struct {
 	traceSession      core.SessionID
 	traceEnd          sync.Once
 	traceFinal        sync.Once
+	overflow          sync.Once // stt.preroll_dropped is traced once
 
 	// While the stream opens (stream == nil) audio waits in pending, oldest
 	// dropped past sttunit.DefaultMaxPreRollBytes; a half-close asked for
@@ -577,6 +582,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	}
 	st := p.active
 	var stream STTStream
+	dropped := false
 	if st != nil {
 		stream = st.stream
 		if stream == nil { // still opening: hold the audio in order, oldest dropped past the bound
@@ -587,10 +593,19 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 				st.pendingBytes -= len(st.pending[0])
 				st.pending[0] = nil
 				st.pending = st.pending[1:]
+				dropped = true
 			}
 		}
 	}
 	p.mu.Unlock()
+	if dropped && st.traceSpan != nil {
+		st.overflow.Do(func() {
+			p.mu.Lock()
+			turn, gen := st.turnID, st.gen
+			p.mu.Unlock()
+			st.traceSpan.AddEvent(core.NewTraceEvent("stt.preroll_dropped", time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.tracePolicy, nil))
+		})
+	}
 	if stream == nil { // held, or this turn's open failed (already reported)
 		return e.Push(f)
 	}
@@ -599,13 +614,9 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	if err := stream.Send(f.Samples); err != nil {
 		if errors.Is(err, io.EOF) {
 			// gRPC: the stream already ended (the server closed it, or call
-			// teardown cancelled it); its status is the receiver's to report.
-			// Not a session failure: drop this frame, the next opens a new stream.
-			p.mu.Lock()
-			if p.active == st {
-				p.active = nil
-			}
-			p.mu.Unlock()
+			// teardown cancelled it); its end is the receiver's to handle, and
+			// it clears p.active, so a next frame cannot open a second stream
+			// for this turn first. Not a session failure: drop this frame.
 			return e.Push(f)
 		}
 		p.mu.Lock()
@@ -790,6 +801,15 @@ func (p *STTProcessor) openFailed(st *activeStream, err error) {
 }
 
 // rotateStream performs pre-limit stream rotation with bounded overlap and transcript deduplication.
+//
+// The replacement still opens here, on the run loop (A1 residual risk). Streams open
+// on any audio, bound or not (handleAudio -> ensureStream), and an unbound stream
+// lives from UserStopped until the next utterance ends, so this fires for any stretch
+// over StreamRotationThreshold without a UserStopped (a silent caller through a long
+// bot answer, a hold, a caller who never speaks), not only for one long utterance.
+// The open may take up to 2 x 5 s under DefaultSTTOpenPolicy; the call dies only if
+// it exceeds the 2 s frame watchdog. Move it to a session task with the same pending
+// hold if that ever matters.
 func (p *STTProcessor) rotateStream(ctx context.Context) error {
 	p.mu.Lock()
 	if p.closed || p.active == nil {
@@ -946,7 +966,8 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeStream) {
 		if err != nil {
 			p.mu.Lock()
 			turnGen := st.gen
-			if p.active == st {
+			wasActive := p.active == st
+			if wasActive {
 				p.active = nil
 			}
 			p.mu.Unlock()
@@ -962,9 +983,8 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeStream) {
 				// the error an STT failover replays it on (A8).
 				p.mu.Lock()
 				turn := st.turnID
-				settled := st.lastText != "" && st.lastFinal
-				lost := turn != "" && !st.retired && !settled && (!st.halfClosed || st.lastText != "")
-				if lost && p.active == nil {
+				lost := turn != "" && !st.retired && (!st.halfClosed || (st.lastText != "" && !st.lastFinal))
+				if lost && wasActive {
 					p.dialFailed = true // no redial for the rest of this turn
 				}
 				p.mu.Unlock()
@@ -1000,10 +1020,16 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeStream) {
 		var latest *STTResult
 		var hasFinal bool
 		var assemblyErr error
+		retracted := false // an empty final after the last text: nothing is left uncommitted
 		for _, res := range results {
-			if res == nil || res.Transcript == "" {
+			if res == nil {
 				continue
 			}
+			if res.Transcript == "" {
+				retracted = retracted || res.IsFinal
+				continue
+			}
+			retracted = false
 			text, assemblyErr = p.assembleResultLocked(st, res)
 			latest = res
 			hasFinal = hasFinal || res.IsFinal
@@ -1013,6 +1039,9 @@ func (p *STTProcessor) receive(ctx context.Context, st *activeStream) {
 		}
 		if latest != nil && assemblyErr == nil {
 			st.lastText, st.lastFinal = text, latest.IsFinal
+		}
+		if retracted && assemblyErr == nil {
+			st.lastText, st.lastFinal = "", true
 		}
 		p.mu.Unlock()
 		if assemblyErr != nil {

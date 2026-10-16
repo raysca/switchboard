@@ -191,11 +191,8 @@ func TestXAISameTurnNewerGenerationAdoptsStream(t *testing.T) {
 	p.mu.Lock()
 	gen, draining := p.active.gen, len(p.draining)
 	p.mu.Unlock()
-	eventually(t, "stream open", func() bool {
-		opener.mu.Lock()
-		defer opener.mu.Unlock()
-		return len(opener.streams) >= 1
-	})
+	waitAttached(t, p)
+	time.Sleep(50 * time.Millisecond) // a wrongly opened second stream would show within this window
 	opener.mu.Lock()
 	defer opener.mu.Unlock()
 	if len(opener.streams) != 1 || opener.streams[0].closeSends.Load() != 0 || gen != 2 || draining != 0 {

@@ -137,6 +137,7 @@ func TestGoogleSTTTraceOpenAndRotationPanicEndFailure(t *testing.T) {
 			if ends[0] == nil || ends[0].Error() != "provider_failure" {
 				t.Fatalf("open panic trace ends=%v", ends)
 			}
+			waitLifecycle(t, func() bool { return s.Err() != nil }) // the panic still fails the session
 			_ = s.Close()
 		}
 	}

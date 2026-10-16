@@ -14,6 +14,16 @@ import (
 type eofSendStream struct {
 	*mockSTTStream
 	eof *atomic.Bool
+	end chan struct{} // closed: the server ends the stream (Recv returns io.EOF)
+}
+
+func (s eofSendStream) Recv() ([]*STTResult, error) {
+	select {
+	case <-s.end:
+		return nil, io.EOF
+	case <-s.closed:
+		return nil, context.Canceled
+	}
 }
 
 func (s eofSendStream) Send(audio []byte) error {
@@ -26,11 +36,12 @@ func (s eofSendStream) Send(audio []byte) error {
 type eofOpener struct {
 	opened atomic.Int32
 	eof    atomic.Bool
+	end    chan struct{}
 }
 
 func (o *eofOpener) OpenStream(context.Context, STTConfig) (STTStream, error) {
 	o.opened.Add(1)
-	return eofSendStream{newMockSTTStream(), &o.eof}, nil
+	return eofSendStream{newMockSTTStream(), &o.eof, o.end}, nil
 }
 
 // gRPC's Send returns io.EOF once the stream has ended (server close, or the
@@ -38,7 +49,7 @@ func (o *eofOpener) OpenStream(context.Context, STTConfig) (STTStream, error) {
 // must not fail the session ("session failed: stt: EOF"): the next audio frame
 // opens a new stream.
 func TestGoogleSTTSendEOFIsNotSessionFailure(t *testing.T) {
-	opener := &eofOpener{}
+	opener := &eofOpener{end: make(chan struct{})}
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = opener
 	proc, _ := NewSTTProcessor(cfg)
@@ -61,8 +72,17 @@ func TestGoogleSTTSendEOFIsNotSessionFailure(t *testing.T) {
 	opener.eof.Store(true)
 	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}) // Send -> io.EOF
 	time.Sleep(20 * time.Millisecond)
-	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
-	waitFor(func() bool { return opener.opened.Load() == 2 }, "no new stream after the ended one")
+	// The receiver, not Send, retires the ended stream: the server's end reaches Recv.
+	if n := opener.opened.Load(); n != 1 {
+		t.Fatalf("opens = %d before the receiver saw the end, want 1", n)
+	}
+	close(opener.end)
+	// The ended turn is lost (no redial within it); the next turn opens a new stream.
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 2, Gen: 1})
+	waitFor(func() bool {
+		_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+		return opener.opened.Load() == 2
+	}, "no new stream after the ended one")
 	if err := session.Err(); err != nil {
 		t.Fatalf("session failed on a send to an ended stream: %v", err)
 	}

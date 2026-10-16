@@ -161,3 +161,156 @@ func TestGoogleSTTProviderEndMidUtteranceInvalidatesTurn(t *testing.T) {
 		t.Fatalf("error frames = %d, want 1", n)
 	}
 }
+
+// attachedStream waits until the processor's active stream has opened.
+func attachedStream(t *testing.T, p *STTProcessor) {
+	t.Helper()
+	gwait(t, "stream attached", 2*time.Second, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.active != nil && p.active.stream != nil
+	})
+}
+
+func startGoogleProc(t *testing.T, opener STTStreamOpener) (*STTProcessor, *core.Session, *coretest.PassthroughProcessor) {
+	t.Helper()
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = opener
+	proc, err := NewSTTProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(proc, sink)
+	session, _ := core.NewSession(42, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return proc, session, sink
+}
+
+// settleThenEnd drives: start, interim "uh", stop (half-close), then final(finalText), then the provider's end.
+func settleThenEnd(t *testing.T, finalText string) *coretest.PassthroughProcessor {
+	st := endingStream{newMockSTTStream(), make(chan struct{})}
+	proc, session, sink := startGoogleProc(t, endingOpener{st})
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	attachedStream(t, proc)
+	st.PushResult(&STTResult{Transcript: "uh"})
+	gwait(t, "interim", time.Second, func() bool { return len(countFrames[*core.TranscriptCandidateFrame](sink)) == 1 })
+	_ = session.Post(&core.UserStoppedSpeakingFrame{})
+	gwait(t, "half-closed", time.Second, func() bool {
+		proc.mu.Lock()
+		defer proc.mu.Unlock()
+		return proc.active == nil
+	})
+	st.PushResult(&STTResult{Transcript: finalText, IsFinal: true})
+	gwait(t, "final consumed", time.Second, func() bool { return len(st.results) == 0 })
+	close(st.end)
+	time.Sleep(150 * time.Millisecond)
+	return sink
+}
+
+// A coughed utterance: the provider retracts it with an empty final, then ends the
+// stream. Nothing was lost, so no invalidation and no error (as the runner does).
+func TestGoogleSTTEmptyFinalSettlesTheTurn(t *testing.T) {
+	for _, final := range []string{"", "uh"} {
+		sink := settleThenEnd(t, final)
+		if n := len(countFrames[*core.TranscriptInvalidationFrame](sink)) + len(countFrames[*core.ErrorFrame](sink)); n != 0 {
+			t.Fatalf("final %q: %d invalidation/error frames, want none", final, n)
+		}
+	}
+}
+
+// A mid-turn final does not settle a stream that is still bound and not half-closed:
+// the user is still talking, so the provider's end loses the rest of the turn.
+func TestGoogleSTTMidTurnFinalThenEndWhileBoundInvalidates(t *testing.T) {
+	st := endingStream{newMockSTTStream(), make(chan struct{})}
+	proc, session, sink := startGoogleProc(t, endingOpener{st})
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	attachedStream(t, proc)
+	st.PushResult(&STTResult{Transcript: "hello", IsFinal: true})
+	gwait(t, "final", time.Second, func() bool { return len(countFrames[*core.TranscriptCandidateFrame](sink)) == 1 })
+	close(st.end)
+	gwait(t, "invalidation and error", time.Second, func() bool {
+		return len(countFrames[*core.TranscriptInvalidationFrame](sink)) == 1 && len(countFrames[*core.ErrorFrame](sink)) == 1
+	})
+}
+
+// armedEOFStream fails Send with io.EOF once armed; its Recv ends only when released.
+type armedEOFStream struct {
+	endingStream
+	armed atomic.Bool
+}
+
+func (s *armedEOFStream) Send(b []byte) error {
+	if s.armed.Load() {
+		return io.EOF
+	}
+	return s.mockSTTStream.Send(b)
+}
+
+type countingOpener struct {
+	st    STTStream
+	opens atomic.Int32
+}
+
+func (o *countingOpener) OpenStream(context.Context, STTConfig) (STTStream, error) {
+	o.opens.Add(1)
+	return o.st, nil
+}
+
+// A Send that sees the stream already ended must not clear the active stream: the next
+// audio frame would open a second stream for the turn before the receiver reports the
+// end. The receiver clears it and the turn is not redialled.
+func TestGoogleSTTSendEOFLeavesTheEndToTheReceiver(t *testing.T) {
+	st := &armedEOFStream{endingStream: endingStream{newMockSTTStream(), make(chan struct{})}}
+	op := &countingOpener{st: st}
+	proc, session, sink := startGoogleProc(t, op)
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	attachedStream(t, proc)
+	st.armed.Store(true)
+	for i := 0; i < 3; i++ {
+		_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	}
+	gwait(t, "audio passed", time.Second, func() bool { return len(countFrames[*core.InputAudioFrame](sink)) == 4 })
+	if n := op.opens.Load(); n != 1 {
+		t.Fatalf("opens = %d after Send EOF, want 1 (the receiver reports the end)", n)
+	}
+	close(st.end)
+	gwait(t, "invalidation", time.Second, func() bool { return len(countFrames[*core.TranscriptInvalidationFrame](sink)) == 1 })
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	gwait(t, "audio passed", time.Second, func() bool { return len(countFrames[*core.InputAudioFrame](sink)) == 5 })
+	if n := op.opens.Load(); n != 1 {
+		t.Fatalf("opens = %d: the invalidated turn was redialled", n)
+	}
+}
+
+func TestGoogleSTTPrerollOverflowIsTraced(t *testing.T) {
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = slowOpener{10 * time.Second, newMockSTTStream()} // never opens within the test
+	proc, _ := NewSTTProcessor(cfg)
+	pipe, _ := core.NewPipeline(proc, &coretest.PassthroughProcessor{})
+	s, _ := core.NewSession(43, pipe, core.DefaultResourceBudget())
+	r := &lifecycleRecorder{}
+	if err := s.SetTracer(r, core.TracePolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_ = s.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	for i := 1; i <= 80; i++ { // 2 MB held against a 1.92 MB bound, paced so none is shed
+		_ = s.Post(&core.InputAudioFrame{Samples: make([]byte, 25000), Gen: 1})
+		gwait(t, "frame handled", 5*time.Second, func() bool {
+			proc.mu.Lock()
+			defer proc.mu.Unlock()
+			return proc.turnAudioBytes >= int64(i)*25000
+		})
+	}
+	gwait(t, "preroll_dropped event", 10*time.Second, func() bool { return r.count("stt.preroll_dropped", "turn-1-1") == 1 })
+}
