@@ -24,6 +24,7 @@ Copied from `AGENTS.md`; every task inherits them.
 - Conventional commits, one logical change each; commit trailer `Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>`.
 - Provider secrets are read from the environment only; never write or store keys (user memory: provider-secrets-env-only).
 - Wire protocol stays compatible with the unmodified Pipecat RTVI 2.1.0 client.
+- **E2E regression gate (user requirement, 2026-10-16):** every task and every phase must also pass the end-to-end suites on free providers: `make e2e-echo` (Go e2e + Playwright `e2e-fake`, echo provider) and, when the offline stack is up (`docker ps` shows offline-adapter-1 / offline-speaches-1; adapter on 127.0.0.1:8099), `make offline-test`. `make verify` alone is NOT enough: it runs only the Go e2e subset, not the browser suite. Run these on an otherwise idle machine (one load-sensitive e2e flake was seen when runs overlapped). Paid/live targets are never run without being asked. Phase 1 was merged only after this gate ran.
 - **Per-phase gate (AGENTS.md "Mandatory Code Review Workflow"):** an independent adversarial reviewer agent audits the phase diff for YAGNI/bloat, races, goroutine leaks, time handling, cleanup. Phase is not done until `make verify` (or `go test -race ./...` in each module in `Makefile MODULES`) is green and the reviewer's findings are resolved.
 
 ## Review Focus
