@@ -892,3 +892,106 @@ func TestRunner_FlushSendFailureLosesBoundTurn(t *testing.T) {
 		t.Fatalf("dials = %d: no redial for a lost turn", n)
 	}
 }
+
+// One stalled stream is one failure: a Send that times out while Recv fails
+// concurrently (the adapter cancelled its RPC) counts, reports to the breaker
+// and raises an ErrorFrame once, whichever side notices first.
+func TestRunner_StalledSendAndFailingRecvReportOnce(t *testing.T) {
+	conn := newFakeConn(t)
+	conn.gate, conn.started = make(chan struct{}), make(chan struct{}) // Send blocks until its SendTimeout
+	var reports atomic.Int32
+	second := make(chan struct{})
+	br := resilience.NewBreaker(resilience.Config{FailureThreshold: 100, Cooldown: time.Hour})
+	h := newHarness(t, Config{
+		Dial: dialConn(conn), Breaker: br, SendTimeout: 100 * time.Millisecond,
+		Classify: func(error) resilience.Verdict {
+			// Hold the first report until a second one shows up (the bug) or 400 ms pass, so
+			// the other side runs while this one is mid-report and the stream not yet stopped.
+			if reports.Add(1) == 1 {
+				select {
+				case <-second:
+				case <-time.After(400 * time.Millisecond):
+				}
+			} else {
+				close(second)
+			}
+			return resilience.Verdict{Retryable: true}
+		},
+	})
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.waitFor("open", func() bool { return conn.recvs.Load() >= 1 })
+	go func() {
+		<-conn.started
+		conn.results <- recvResult{err: errors.New("rpc: context canceled")}
+	}()
+	err := h.r.ProcessFrame(context.Background(), &core.InputAudioFrame{Samples: []byte{1, 0}}, core.Downstream, discard{})
+	h.waitFor("error frame", func() bool { return len(h.errorFrames()) >= 1 })
+	h.waitFor("released", func() bool { return h.r.Streams() == 0 })
+	time.Sleep(30 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("ProcessFrame err = %v: the receive side already reported this stall", err)
+	}
+	if _, _, _, n := h.r.STTCounts(); n != 1 {
+		t.Fatalf("errors counted = %d, want 1", n)
+	}
+	if n := reports.Load(); n != 1 {
+		t.Fatalf("breaker reports = %d, want 1", n)
+	}
+	if n := len(h.errorFrames()); n != 1 {
+		t.Fatalf("error frames = %d, want 1", n)
+	}
+}
+
+// A stream reports one failure whichever path found it: the dial, the
+// pre-roll flush (unbound and bound), or a failure after the first report.
+func TestRunner_EachFailurePathReportsOnce(t *testing.T) {
+	broken := errors.New("broken pipe")
+	for _, tc := range []struct {
+		name   string
+		dial   func(release chan struct{}) func(context.Context) (Conn, error)
+		script func(h *harness)
+		frames int // error frames expected (an invalidation brings its own)
+	}{
+		{"dial", func(chan struct{}) func(context.Context) (Conn, error) {
+			return func(context.Context) (Conn, error) { return nil, broken }
+		}, func(h *harness) {
+			h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+			h.audio(1)
+		}, 1},
+		{"flush unbound", func(release chan struct{}) func(context.Context) (Conn, error) {
+			c := newFakeConn(t)
+			c.setSendErr(broken)
+			return gatedDial(release, c)
+		}, func(h *harness) { h.audio(1) }, 1},
+		{"flush bound", func(release chan struct{}) func(context.Context) (Conn, error) {
+			c := newFakeConn(t)
+			c.setSendErr(broken)
+			return gatedDial(release, c)
+		}, func(h *harness) {
+			h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+			h.audio(1)
+		}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			release := make(chan struct{})
+			var reports atomic.Int32
+			br := resilience.NewBreaker(resilience.Config{FailureThreshold: 100, Cooldown: time.Hour})
+			h := newHarness(t, Config{
+				Dial: tc.dial(release), Breaker: br,
+				Classify: func(error) resilience.Verdict { reports.Add(1); return resilience.Verdict{Retryable: true} },
+			})
+			tc.script(h)
+			h.waitFor("held", func() bool { return h.audioPassed() == 1 })
+			close(release)
+			h.waitFor("error frame", func() bool { return len(h.errorFrames()) >= 1 })
+			h.waitFor("released", func() bool { return h.r.Streams() == 0 })
+			time.Sleep(30 * time.Millisecond)
+			if n := len(h.errorFrames()); n != tc.frames {
+				t.Fatalf("error frames = %d, want %d", n, tc.frames)
+			}
+			if _, _, _, n := h.r.STTCounts(); n != 1 {
+				t.Fatalf("errors counted = %d, want 1", n)
+			}
+		})
+	}
+}

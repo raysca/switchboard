@@ -97,9 +97,12 @@ type stream struct {
 	closing  bool // Finish is owed (still dialing) or sent
 	stopped  bool
 	ended    atomic.Bool // the provider ended the stream (Recv returned ErrStreamEnded)
-	draining *time.Timer
-	lastText string // last candidate emitted for the bound turn
-	settled  bool   // that candidate was Final: all heard text is committed
+	// errReported is set by the first failure reported for this stream; one
+	// stall can fail Send and Recv together, and must count once.
+	errReported atomic.Bool
+	draining    *time.Timer
+	lastText    string // last candidate emitted for the bound turn
+	settled     bool   // that candidate was Final: all heard text is committed
 
 	stopOnce, traceFinal, traceEnd, overflow sync.Once
 	span                                     core.Span
@@ -341,6 +344,11 @@ func (r *Runner) handleAudio(ctx context.Context, f *core.InputAudioFrame, e cor
 		if r.isStopped(st) || st.ended.Load() { // torn down, or closed by the provider first: not this Send's failure
 			return e.Push(f)
 		}
+		if !st.errReported.CompareAndSwap(false, true) { // receive reported this stall first
+			r.release(st)
+			r.stop(st, errProviderFailure)
+			return e.Push(f)
+		}
 		r.errs.Add(1)
 		r.release(st)
 		r.stop(st, errProviderFailure)
@@ -398,7 +406,7 @@ func (r *Runner) run(ctx context.Context, st *stream) {
 		err = errNilConn
 	}
 	if err != nil {
-		if ctx.Err() == nil { // not our own teardown
+		if ctx.Err() == nil && st.errReported.CompareAndSwap(false, true) { // not our own teardown
 			traceErr = errProviderFailure
 			r.dialFailed(st, err)
 		}
@@ -406,7 +414,7 @@ func (r *Runner) run(ctx context.Context, st *stream) {
 	}
 	st.event("stt.start")
 	if err := r.flush(ctx, st, conn); err != nil {
-		if ctx.Err() == nil && !r.isStopped(st) {
+		if ctx.Err() == nil && !r.isStopped(st) && st.errReported.CompareAndSwap(false, true) {
 			// The stream died taking its held audio: a failed open, with the breaker told.
 			traceErr = errProviderFailure
 			r.report(err)
@@ -616,9 +624,14 @@ func (r *Runner) receive(ctx context.Context, st *stream, conn Conn) error {
 			if !r.lost(st) {
 				return nil
 			}
-			r.dropTurn(st, err)
+			if st.errReported.CompareAndSwap(false, true) {
+				r.dropTurn(st, err)
+			}
 			return errProviderFailure
 		default:
+			if !st.errReported.CompareAndSwap(false, true) { // a failed Send reported this stall first
+				return errProviderFailure
+			}
 			r.errs.Add(1)
 			r.report(err)
 			r.reportError(st, err)
