@@ -200,7 +200,7 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 }
 
 type activeSTTStream struct {
-	stream     STTStream
+	stream     STTStream // nil while the open runs (set once, under mu)
 	cancel     context.CancelFunc
 	ctx        context.Context
 	id         int
@@ -218,7 +218,6 @@ type activeSTTStream struct {
 	pendingDone bool
 	stopOnce    sync.Once
 
-	sendMu       sync.Mutex
 	mu           sync.Mutex
 	audioBuf     [][]byte
 	isReady      bool
@@ -254,6 +253,8 @@ func (st *activeSTTStream) endTrace(err error) {
 	})
 }
 
+var errNotAttached = errors.New("xai: stt is not attached to a session")
+
 // STTProcessor implements core.Processor for xAI Speech-to-Text.
 type STTProcessor struct {
 	cfg     STTConfig
@@ -267,6 +268,8 @@ type STTProcessor struct {
 	closed    bool
 	turnID    string
 	streamGen uint64
+
+	dialFailed bool // an open failed: no reopen until the next turn or a barge-in
 
 	// Metrics
 	RequestsTotal atomic.Uint64
@@ -323,6 +326,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	case *core.UserStartedSpeakingFrame:
 		p.mu.Lock()
+		p.dialFailed = false
 		p.turnID = fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq)
 		p.streamGen = frame.Gen
 		var old, parked *activeSTTStream
@@ -343,7 +347,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.mu.Unlock()
 		p.stopStream(old)
 		_ = p.beginDrain(ctx, parked) // another turn's stream finalizes and drains on its own
-		if err := p.ensureStream(ctx); err != nil {
+		if err := p.ensure(ctx); err != nil {
 			p.ErrorsTotal.Add(1)
 			return err
 		}
@@ -353,6 +357,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		switch frame.Kind {
 		case core.TurnEventStarted:
 			p.mu.Lock()
+			p.dialFailed = false
 			p.turnID = string(frame.Turn)
 			p.streamGen = uint64(frame.Gen)
 			var old, parked *activeSTTStream
@@ -412,6 +417,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 
 	case *core.InterruptionFrame:
 		p.mu.Lock()
+		p.dialFailed = false
 		generation := uint64(frame.Gen)
 		if p.session != nil && p.session.CurrentGeneration() > generation {
 			generation = p.session.CurrentGeneration()
@@ -452,7 +458,7 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	}
 	p.mu.Unlock()
 
-	if err := p.ensureStream(ctx); err != nil {
+	if err := p.ensure(ctx); err != nil {
 		p.ErrorsTotal.Add(1)
 		return err
 	}
@@ -461,15 +467,16 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	st := p.active
 	p.mu.Unlock()
 
-	if st == nil {
-		return ErrProviderUnavailable
+	if st == nil { // closed, or this turn's open failed (already reported)
+		return e.Push(f)
 	}
 
 	st.mu.Lock()
 	if !st.isReady {
-		// Buffer audio until transcript.created arrives. Live audio only fills the
-		// handshake time; an STT failover replays up to 60 s at once into a new
-		// stream, so the bound (3000 chunks = 60 s of 20 ms audio) covers that burst.
+		// Buffer audio until transcript.created arrives (and while the open runs).
+		// Live audio only fills the handshake time; an STT failover replays up to
+		// 60 s at once into a new stream, so the bound (3000 chunks = 60 s of
+		// 20 ms audio) covers that burst.
 		if len(st.audioBuf) < 3000 {
 			st.audioBuf = append(st.audioBuf, append([]byte(nil), f.Samples...))
 		}
@@ -477,14 +484,13 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 		p.RequestsTotal.Add(1)
 		return e.Push(f)
 	}
+	s := st.stream
 	st.mu.Unlock()
 
 	sendCtx, sendCancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
 	defer sendCancel()
 
-	st.sendMu.Lock()
-	err := st.stream.SendAudio(sendCtx, f.Samples)
-	st.sendMu.Unlock()
+	err := s.SendAudio(sendCtx, f.Samples)
 	if err != nil {
 		if st.ctx.Err() != nil { // torn down concurrently: not a provider failure
 			return e.Push(f)
@@ -502,192 +508,224 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 	return e.Push(f)
 }
 
-func (p *STTProcessor) ioParent(ctx context.Context) context.Context {
-	if p.session != nil {
-		return p.session.Context()
-	}
-	if ctx != nil {
-		return ctx
-	}
-	return context.Background()
-}
-
-func (p *STTProcessor) ensureStream(ctx context.Context) error {
+// ensure starts a stream when none is active. The open runs on a session task,
+// never on the run loop (A1); audio meanwhile waits in st.audioBuf exactly as
+// it waits for transcript.created. After a failed open nothing reopens until
+// the next turn or a barge-in.
+func (p *STTProcessor) ensure(ctx context.Context) error {
 	p.mu.Lock()
-	if p.active != nil || p.closed {
+	if p.active != nil || p.closed || p.dialFailed {
 		p.mu.Unlock()
 		return nil
+	}
+	if p.session == nil {
+		p.mu.Unlock()
+		return errNotAttached
 	}
 	turn, gen := p.turnID, p.streamGen
 	p.mu.Unlock()
 
-	// An open breaker stops the dial. WouldRefuse does not take the half-open probe: a cooled-down
-	// breaker lets this dial through, and its one Report/RecordSuccess below settles the state.
-	if br := p.cfg.CircuitBreaker; br != nil && br.WouldRefuse() {
-		return ErrCircuitOpen
-	}
-	traceSession := core.SessionID("")
-	if p.session != nil {
-		traceSession = core.SessionID(strconv.FormatUint(p.session.ID(), 10))
-	}
+	traceSession := core.SessionID(strconv.FormatUint(p.session.ID(), 10))
 	span := core.StartContextSpan(ctx, "stt.stream", traceSession, core.TurnID(turn), core.Generation(gen), map[string]any{"provider": "xai"})
-	policy := core.TraceContextFromContext(ctx).Policy
-	streamCtx, cancel := context.WithCancel(p.ioParent(ctx))
-	st, err := func() (STTStream, error) {
-		defer func() {
-			if v := recover(); v != nil {
-				cancel()
-				span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), traceSession, core.TurnID(turn), core.Generation(gen), policy, nil))
-				span.End(errors.New("provider_failure"))
-				panic(v)
-			}
-		}()
-		return p.cfg.StreamOpener.OpenStream(streamCtx, p.cfg)
-	}()
-	if err != nil {
-		span.AddEvent(core.NewTraceEvent("stt.failure", time.Now(), traceSession, core.TurnID(turn), core.Generation(gen), policy, nil))
-		span.End(errors.New("provider_failure"))
-		cancelled := streamCtx.Err() != nil // session torn down / caller gave up: not a provider outage
-		cancel()
-		provErr := MapError("stt", err)
-		if p.cfg.CircuitBreaker != nil && !cancelled {
-			p.cfg.CircuitBreaker.Report(err, classify)
-		}
-		return provErr
-	}
-
-	if p.cfg.CircuitBreaker != nil {
-		p.cfg.CircuitBreaker.RecordSuccess()
-	}
-
+	streamCtx, cancel := context.WithCancel(p.session.Context())
 	p.mu.Lock()
 	if p.closed || p.active != nil {
-		closed := p.closed
 		p.mu.Unlock()
 		cancel()
-		_ = st.Close()
 		span.End(errors.New("canceled"))
-		if closed {
-			return core.ErrSessionClosed
-		}
 		return nil
 	}
 	p.streamID++
-	active := &activeSTTStream{
-		stream:    st,
-		cancel:    cancel,
-		ctx:       streamCtx,
-		id:        p.streamID,
-		readyCh:   make(chan struct{}),
-		turnID:    p.turnID,
-		gen:       p.streamGen,
-		audioBuf:  make([][]byte, 0, 16),
-		traceSpan: span, tracePolicy: policy, traceSession: traceSession,
-		// Without a session no receiver runs, so nothing would ever deliver
-		// transcript.created: treat the stream as ready (bare-processor use).
-		isReady: p.session == nil,
+	st := &activeSTTStream{
+		cancel: cancel, ctx: streamCtx, id: p.streamID, readyCh: make(chan struct{}),
+		turnID: p.turnID, gen: p.streamGen, audioBuf: make([][]byte, 0, 16),
+		traceSpan: span, tracePolicy: core.TraceContextFromContext(ctx).Policy, traceSession: traceSession,
 	}
-	p.active = active
+	p.active = st
 	p.mu.Unlock()
-	span.AddEvent(core.NewTraceEvent("stt.start", time.Now(), traceSession, core.TurnID(active.turnID), core.Generation(active.gen), policy, nil))
-
-	if err := p.spawnReceiver(active); err != nil {
-		p.mu.Lock()
-		if p.active == active {
-			p.active = nil
+	if err := p.session.Go(func(sctx context.Context) { p.run(sctx, st) }); err != nil {
+		p.releaseStream(st)
+		p.stopStream(st)
+		st.endTrace(errors.New("canceled"))
+		if errors.Is(err, core.ErrSessionClosed) {
+			return nil
 		}
-		p.mu.Unlock()
-		p.stopStream(active)
-		active.endTrace(errors.New("canceled"))
 		return err
 	}
 	return nil
 }
 
-func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
-	if p.session == nil {
-		return nil
+// open dials one stream on ctx. An open breaker stops the dial; WouldRefuse
+// does not take the half-open probe, so a cooled-down breaker lets this dial
+// through and its one Report/RecordSuccess settles the state.
+func (p *STTProcessor) open(ctx context.Context) (STTStream, error) {
+	if br := p.cfg.CircuitBreaker; br != nil && br.WouldRefuse() {
+		return nil, ErrCircuitOpen
 	}
+	s, err := p.cfg.StreamOpener.OpenStream(ctx, p.cfg)
+	if err != nil {
+		cancelled := ctx.Err() != nil // session torn down / caller gave up: not a provider outage
+		if p.cfg.CircuitBreaker != nil && !cancelled {
+			p.cfg.CircuitBreaker.Report(err, classify)
+		}
+		return nil, MapError("stt", err)
+	}
+	if p.cfg.CircuitBreaker != nil {
+		p.cfg.CircuitBreaker.RecordSuccess()
+	}
+	return s, nil
+}
 
-	return p.session.Go(func(ctx context.Context) {
-		var traceFailure error
+// run is a stream's session task: open it, then read it.
+func (p *STTProcessor) run(ctx context.Context, st *activeSTTStream) {
+	s, err := func() (STTStream, error) {
 		defer func() {
 			if v := recover(); v != nil {
-				traceFailure = errors.New("provider_failure")
-				st.endTrace(traceFailure)
+				st.endTrace(errors.New("provider_failure"))
 				panic(v)
 			}
-			st.endTrace(traceFailure)
 		}()
-		defer p.releaseStream(st)
-		defer p.stopStream(st)
-		for {
-			select {
-			case <-st.ctx.Done():
-				return
-			case <-ctx.Done():
-				return
-			default:
-			}
+		return p.open(st.ctx)
+	}()
+	if err != nil {
+		p.openFailed(st, err)
+		return
+	}
+	st.mu.Lock()
+	st.stream = s
+	turn, gen := st.turnID, st.gen
+	st.mu.Unlock()
+	if st.ctx.Err() != nil { // stopped while opening: stopStream had no stream to close
+		_ = s.Close()
+		p.releaseStream(st)
+		st.endTrace(errors.New("canceled"))
+		return
+	}
+	st.traceSpan.AddEvent(core.NewTraceEvent("stt.start", time.Now(), st.traceSession, core.TurnID(turn), core.Generation(gen), st.tracePolicy, nil))
+	p.receive(ctx, st)
+}
 
-			msg, err := st.stream.Recv(st.ctx)
-			if err != nil {
-				if errors.Is(err, context.Canceled) || st.ctx.Err() != nil {
-					traceFailure = errors.New("canceled")
-					return
+// openFailed reports a stream that could not be opened: an ErrorFrame for its
+// turn (what an STT failover moves on). Nothing reopens until the next turn or
+// a barge-in, so an outage costs one error per turn, not one per audio frame.
+func (p *STTProcessor) openFailed(st *activeSTTStream, err error) {
+	stopped := st.ctx.Err() != nil
+	p.mu.Lock()
+	if p.active == st {
+		p.active, p.dialFailed = nil, !stopped
+	}
+	p.mu.Unlock()
+	p.releaseStream(st)
+	p.stopStream(st)
+	if stopped {
+		st.endTrace(errors.New("canceled"))
+		return
+	}
+	st.endTrace(errors.New("provider_failure"))
+	p.ErrorsTotal.Add(1)
+	st.mu.Lock()
+	turn, gen := st.turnID, st.gen
+	st.mu.Unlock()
+	if gen == 0 {
+		gen = p.session.CurrentGeneration()
+	}
+	_ = p.session.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+}
+
+// receive reads st until the stream ends.
+func (p *STTProcessor) receive(ctx context.Context, st *activeSTTStream) {
+	var traceFailure error
+	defer func() {
+		if v := recover(); v != nil {
+			traceFailure = errors.New("provider_failure")
+			st.endTrace(traceFailure)
+			panic(v)
+		}
+		st.endTrace(traceFailure)
+	}()
+	defer p.releaseStream(st)
+	defer p.stopStream(st)
+	for {
+		select {
+		case <-st.ctx.Done():
+			return
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		msg, err := st.stream.Recv(st.ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || st.ctx.Err() != nil {
+				traceFailure = errors.New("canceled")
+				return
+			}
+			st.mu.Lock()
+			bound := st.turnID != ""
+			// A drop after audio.done but before transcript.done, with words heard and no
+			// speech_final yet, still loses the utterance (M3-09 follow-up).
+			closing := st.closing && !(bound && !st.settled && st.lastText != "")
+			st.mu.Unlock()
+			closeStatus := websocket.CloseStatus(err) != -1
+			if closing || (!bound && (errors.Is(err, io.EOF) || closeStatus)) {
+				// Drained after audio.done, or an idle pre-opened stream the
+				// server closed: nothing was lost.
+				return
+			}
+			// A drop while a turn is bound and audio.done is not sent loses the
+			// utterance: retire the partial and raise a retryable error so
+			// STTFailover fires (M3-09).
+			p.ErrorsTotal.Add(1)
+			traceFailure = errors.New("provider_failure")
+			providerErr := MapError("stt", err)
+			if bound {
+				if p.cfg.CircuitBreaker != nil {
+					p.cfg.CircuitBreaker.Report(err, classify)
 				}
+				p.failBoundStream(st, providerErr, "xai stream dropped mid-utterance")
+			} else if p.session != nil {
 				st.mu.Lock()
-				bound := st.turnID != ""
-				// A drop after audio.done but before transcript.done, with words heard and no
-				// speech_final yet, still loses the utterance (M3-09 follow-up).
-				closing := st.closing && !(bound && !st.settled && st.lastText != "")
+				turnGen := st.gen
 				st.mu.Unlock()
-				closeStatus := websocket.CloseStatus(err) != -1
-				if closing || (!bound && (errors.Is(err, io.EOF) || closeStatus)) {
-					// Drained after audio.done, or an idle pre-opened stream the
-					// server closed: nothing was lost.
-					return
-				}
-				// A drop while a turn is bound and audio.done is not sent loses the
-				// utterance: retire the partial and raise a retryable error so
-				// STTFailover fires (M3-09).
-				p.ErrorsTotal.Add(1)
-				traceFailure = errors.New("provider_failure")
-				providerErr := MapError("stt", err)
-				if bound {
-					if p.cfg.CircuitBreaker != nil {
-						p.cfg.CircuitBreaker.Report(err, classify)
-					}
-					p.failBoundStream(st, providerErr, "xai stream dropped mid-utterance")
-				} else if p.session != nil {
-					st.mu.Lock()
-					turnGen := st.gen
-					st.mu.Unlock()
-					_ = p.session.Reenter(&core.ErrorFrame{Err: providerErr}, core.Downstream, p.index+1, turnGen)
-				}
-				return
+				_ = p.session.Reenter(&core.ErrorFrame{Err: providerErr}, core.Downstream, p.index+1, turnGen)
 			}
+			return
+		}
 
-			if msg == nil {
-				continue
-			}
+		if msg == nil {
+			continue
+		}
 
-			switch msg.Type {
-			case "transcript.created":
-				st.sendMu.Lock()
+		switch msg.Type {
+		case "transcript.created":
+			// Flush the audio held before the handshake in order, then let live
+			// audio through. Audio arriving during a pass joins audioBuf and goes
+			// in the next one, so no lock is held across a network write (A15).
+			var sendErr error
+			for sendErr == nil {
 				st.mu.Lock()
-				st.isReady = true
-				select {
-				case <-st.readyCh:
-				default:
-					close(st.readyCh)
-				}
-				// Publish readiness while sendMu reserves the wire. New audio
-				// waits until these earlier buffered chunks have been sent.
 				buffered := st.audioBuf
 				st.audioBuf = nil
+				if len(buffered) == 0 {
+					st.isReady = true
+					select {
+					case <-st.readyCh:
+					default:
+						close(st.readyCh)
+					}
+					// The turn ended before the handshake finished: audio.done goes
+					// after the buffered audio, never before it (M3-02).
+					owed := st.pendingDone
+					st.pendingDone = false
+					st.mu.Unlock()
+					if owed {
+						if sendErr = st.stream.CloseSend(st.ctx); sendErr == nil {
+							p.armDrainTimer(st)
+						}
+					}
+					break
+				}
 				st.mu.Unlock()
-				var sendErr error
 				for _, chunk := range buffered {
 					sendCtx, cancel := context.WithTimeout(st.ctx, 500*time.Millisecond)
 					sendErr = st.stream.SendAudio(sendCtx, chunk)
@@ -696,153 +734,139 @@ func (p *STTProcessor) spawnReceiver(st *activeSTTStream) error {
 						break
 					}
 				}
-				// The turn ended before the handshake finished: audio.done goes
-				// after the buffered audio, never before it (M3-02).
-				st.mu.Lock()
-				owed := st.pendingDone
-				st.pendingDone = false
-				st.mu.Unlock()
-				if owed && sendErr == nil {
-					sendErr = st.stream.CloseSend(st.ctx)
-					if sendErr == nil {
-						p.armDrainTimer(st)
-					}
-				}
-				st.sendMu.Unlock()
-				if sendErr != nil {
-					if st.ctx.Err() != nil {
-						traceFailure = errors.New("canceled")
-						return
-					}
-					p.ErrorsTotal.Add(1)
-					traceFailure = errors.New("provider_failure")
-					providerErr := MapError("stt", sendErr)
-					if p.cfg.CircuitBreaker != nil {
-						p.cfg.CircuitBreaker.Report(sendErr, classify)
-					}
-					p.failBoundStream(st, providerErr, "xai buffered audio send failed")
+			}
+			if sendErr != nil {
+				if st.ctx.Err() != nil {
+					traceFailure = errors.New("canceled")
 					return
 				}
-
-			case "transcript.partial":
-				if msg.Text == "" {
-					continue
-				}
-
-				st.mu.Lock()
-				turn := st.turnID
-				turnGen := st.gen
-				if turnGen == 0 && p.session != nil {
-					turnGen = p.session.CurrentGeneration()
-				}
-				// xAI sends per-segment text: interims and chunk finals carry only the current
-				// chunk, speech_final the stitched utterance. Candidates are cumulative for the
-				// turn, like the other STT adapters (interim = locked + chunk).
-				seg := strings.TrimSpace(msg.Text)
-				var text string
-				switch {
-				case msg.SpeechFinal:
-					text = joinWords(st.base, seg)
-					st.base, st.chunks = text, ""
-				case msg.IsFinal:
-					st.chunks = joinWords(st.chunks, seg)
-					text = joinWords(st.base, st.chunks)
-				default:
-					text = joinWords(joinWords(st.base, st.chunks), seg)
-				}
-				st.lastText = text
-				st.settled = msg.SpeechFinal
-				isProviderFinal := msg.IsFinal || msg.SpeechFinal
-				isUtteranceFinal := msg.SpeechFinal
-				st.mu.Unlock()
-				if turn == "" { // unbound (between turns): the adopting turn's next candidate carries the text
-					continue
-				}
-
-				// is_final closes a chunk but does not close the utterance;
-				// speech_final is the utterance-final signal.
-				frame := &core.TranscriptCandidateFrame{
-					Text:           text,
-					Turn:           core.TurnID(turn),
-					Gen:            core.Generation(turnGen),
-					Timestamp:      p.cfg.Now(),
-					Final:          isProviderFinal,
-					EndOfUtterance: isUtteranceFinal,
-					Stability:      boolStability(msg.IsFinal),
-					HasStability:   false,
-					Provider:       "xai",
-				}
-				// A detached stream's speech_final is admitted at the current
-				// generation so a later barge-in does not drop it. The frame
-				// Gen stays the utterance generation. An active stream keeps
-				// its own generation.
-				admitGen := turnGen
-				if isUtteranceFinal {
-					p.mu.Lock()
-					if p.active != st {
-						admitGen = p.session.CurrentGeneration()
-					}
-					p.mu.Unlock()
-				}
-				if err := p.session.Reenter(frame, core.Downstream, p.index+1, admitGen); err == nil && isProviderFinal {
-					st.firstFinal(turn, turnGen)
-				}
-
-			case "transcript.done":
-				st.mu.Lock()
-				turn := st.turnID
-				turnGen := st.gen
-				if turnGen == 0 && p.session != nil {
-					turnGen = p.session.CurrentGeneration()
-				}
-				lastText := msg.Text
-				if lastText == "" {
-					lastText = st.lastText
-				}
-				// Nothing is pending when the last candidate was already a speech_final: a second
-				// final would only be a late duplicate that lands in the next turn's window.
-				pending := !st.settled
-				st.mu.Unlock()
-
-				// transcript.done closes the stream/utterance. An utterance still open at that
-				// point (audio.done before the server endpointed) is finalized from its text.
-				if lastText != "" && pending && turn != "" && p.session != nil {
-					frame := &core.TranscriptCandidateFrame{
-						Text: lastText, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
-						Timestamp: p.cfg.Now(), Final: true, EndOfUtterance: true, Provider: "xai",
-					}
-					admitGen := turnGen
-					p.mu.Lock()
-					if p.active != st {
-						admitGen = p.session.CurrentGeneration()
-					}
-					p.mu.Unlock()
-					if err := p.session.Reenter(frame, core.Downstream, p.index+1, admitGen); err == nil {
-						st.firstFinal(turn, turnGen)
-					}
-				}
-
-				return
-
-			case "error":
 				p.ErrorsTotal.Add(1)
 				traceFailure = errors.New("provider_failure")
-				errMsg := msg.Message
-				if errMsg == "" {
-					errMsg = msg.Code
+				providerErr := MapError("stt", sendErr)
+				if p.cfg.CircuitBreaker != nil {
+					p.cfg.CircuitBreaker.Report(sendErr, classify)
 				}
-				if p.session != nil {
-					st.mu.Lock()
-					turnGen := st.gen
-					st.mu.Unlock()
-					_ = p.session.Reenter(&core.ErrorFrame{
-						Err: MapError("stt", errors.New(errMsg)),
-					}, core.Downstream, p.index+1, turnGen)
-				}
+				p.failBoundStream(st, providerErr, "xai buffered audio send failed")
 				return
 			}
+		case "transcript.partial":
+			if msg.Text == "" {
+				continue
+			}
+
+			st.mu.Lock()
+			turn := st.turnID
+			turnGen := st.gen
+			if turnGen == 0 && p.session != nil {
+				turnGen = p.session.CurrentGeneration()
+			}
+			// xAI sends per-segment text: interims and chunk finals carry only the current
+			// chunk, speech_final the stitched utterance. Candidates are cumulative for the
+			// turn, like the other STT adapters (interim = locked + chunk).
+			seg := strings.TrimSpace(msg.Text)
+			var text string
+			switch {
+			case msg.SpeechFinal:
+				text = joinWords(st.base, seg)
+				st.base, st.chunks = text, ""
+			case msg.IsFinal:
+				st.chunks = joinWords(st.chunks, seg)
+				text = joinWords(st.base, st.chunks)
+			default:
+				text = joinWords(joinWords(st.base, st.chunks), seg)
+			}
+			st.lastText = text
+			st.settled = msg.SpeechFinal
+			isProviderFinal := msg.IsFinal || msg.SpeechFinal
+			isUtteranceFinal := msg.SpeechFinal
+			st.mu.Unlock()
+			if turn == "" { // unbound (between turns): the adopting turn's next candidate carries the text
+				continue
+			}
+
+			// is_final closes a chunk but does not close the utterance;
+			// speech_final is the utterance-final signal.
+			frame := &core.TranscriptCandidateFrame{
+				Text:           text,
+				Turn:           core.TurnID(turn),
+				Gen:            core.Generation(turnGen),
+				Timestamp:      p.cfg.Now(),
+				Final:          isProviderFinal,
+				EndOfUtterance: isUtteranceFinal,
+				Stability:      boolStability(msg.IsFinal),
+				HasStability:   false,
+				Provider:       "xai",
+			}
+			// A detached stream's speech_final is admitted at the current
+			// generation so a later barge-in does not drop it. The frame
+			// Gen stays the utterance generation. An active stream keeps
+			// its own generation.
+			admitGen := turnGen
+			if isUtteranceFinal {
+				p.mu.Lock()
+				if p.active != st {
+					admitGen = p.session.CurrentGeneration()
+				}
+				p.mu.Unlock()
+			}
+			if err := p.session.Reenter(frame, core.Downstream, p.index+1, admitGen); err == nil && isProviderFinal {
+				st.firstFinal(turn, turnGen)
+			}
+
+		case "transcript.done":
+			st.mu.Lock()
+			turn := st.turnID
+			turnGen := st.gen
+			if turnGen == 0 && p.session != nil {
+				turnGen = p.session.CurrentGeneration()
+			}
+			lastText := msg.Text
+			if lastText == "" {
+				lastText = st.lastText
+			}
+			// Nothing is pending when the last candidate was already a speech_final: a second
+			// final would only be a late duplicate that lands in the next turn's window.
+			pending := !st.settled
+			st.mu.Unlock()
+
+			// transcript.done closes the stream/utterance. An utterance still open at that
+			// point (audio.done before the server endpointed) is finalized from its text.
+			if lastText != "" && pending && turn != "" && p.session != nil {
+				frame := &core.TranscriptCandidateFrame{
+					Text: lastText, Turn: core.TurnID(turn), Gen: core.Generation(turnGen),
+					Timestamp: p.cfg.Now(), Final: true, EndOfUtterance: true, Provider: "xai",
+				}
+				admitGen := turnGen
+				p.mu.Lock()
+				if p.active != st {
+					admitGen = p.session.CurrentGeneration()
+				}
+				p.mu.Unlock()
+				if err := p.session.Reenter(frame, core.Downstream, p.index+1, admitGen); err == nil {
+					st.firstFinal(turn, turnGen)
+				}
+			}
+
+			return
+
+		case "error":
+			p.ErrorsTotal.Add(1)
+			traceFailure = errors.New("provider_failure")
+			errMsg := msg.Message
+			if errMsg == "" {
+				errMsg = msg.Code
+			}
+			if p.session != nil {
+				st.mu.Lock()
+				turnGen := st.gen
+				st.mu.Unlock()
+				_ = p.session.Reenter(&core.ErrorFrame{
+					Err: MapError("stt", errors.New(errMsg)),
+				}, core.Downstream, p.index+1, turnGen)
+			}
+			return
 		}
-	})
+	}
 }
 
 func (p *STTProcessor) completeStream(ctx context.Context, turn string, gen uint64) error {
@@ -876,10 +900,9 @@ func (p *STTProcessor) beginDrain(ctx context.Context, st *activeSTTStream) erro
 		st.mu.Unlock()
 		return nil
 	}
+	s := st.stream
 	st.mu.Unlock()
-	st.sendMu.Lock()
-	err := st.stream.CloseSend(ctx)
-	st.sendMu.Unlock()
+	err := s.CloseSend(ctx)
 	if err != nil {
 		st.endTrace(errors.New("provider_failure"))
 		p.stopStream(st)
@@ -954,7 +977,12 @@ func (p *STTProcessor) stopStream(st *activeSTTStream) {
 	p.stopDrainTimer(st)
 	st.stopOnce.Do(func() {
 		st.cancel()
-		_ = st.stream.Close()
+		st.mu.Lock()
+		s := st.stream
+		st.mu.Unlock()
+		if s != nil {
+			_ = s.Close()
+		}
 	})
 }
 

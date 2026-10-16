@@ -48,14 +48,23 @@ func TestRound3XAINewTurnPreservesPendingPriorFinal(t *testing.T) {
 	cfg.StreamOpener = opener
 	p, _ := NewSTTProcessor(cfg)
 	defer p.Close()
+	bareSession(p)
 	ctx := context.Background()
 	e := reviewEmitter{}
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "A", Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "A", Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "B", Gen: 1}, core.Downstream, e)
-	if opener.streams[0].closes.Load() != 0 {
-		t.Fatalf("A's drain was canceled at B start before final/timeout: closes=%d", opener.streams[0].closes.Load())
+	eventually(t, "A's stream", func() bool {
+		opener.mu.Lock()
+		defer opener.mu.Unlock()
+		return len(opener.streams) >= 1
+	})
+	opener.mu.Lock()
+	first := opener.streams[0]
+	opener.mu.Unlock()
+	if first.closes.Load() != 0 {
+		t.Fatalf("A's drain was canceled at B start before final/timeout: closes=%d", first.closes.Load())
 	}
 }
 

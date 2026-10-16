@@ -150,3 +150,13 @@ func TestXAISTT_DoneFinalizesOnlyAnOpenUtterance(t *testing.T) {
 		t.Fatalf("open utterance + done: %d end-of-utterance candidates, want 1", n)
 	}
 }
+
+// ensureStream opens one stream the way the processor's open task does (on the
+// session's context), then closes it.
+func (p *STTProcessor) ensureStream(context.Context) error {
+	s, err := p.open(p.session.Context())
+	if err == nil {
+		_ = s.Close()
+	}
+	return err
+}

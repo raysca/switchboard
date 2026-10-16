@@ -37,7 +37,6 @@ var (
 	ErrCircuitOpen          = resilience.ErrCircuitOpen    // shared with every provider
 	ErrRetryCommitted       = resilience.ErrRetryCommitted // shared with every provider
 	ErrMissingAPIKey        = errors.New("xai: missing API key (XAI_API_KEY)")
-	ErrProviderUnavailable  = errors.New("xai: provider unavailable")
 	ErrMissingTerminalEvent = errors.New("xai sse: stream ended without terminal completion event")
 	ErrOversizedLine        = errors.New("xai sse: line exceeded maximum size")
 	ErrOversizedEvent       = errors.New("xai sse: event exceeded maximum size")

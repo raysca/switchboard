@@ -15,20 +15,24 @@ import (
 )
 
 type reviewClosingStream struct {
-	closeSends int
-	closes     int
+	closeSends atomic.Int32
+	closes     atomic.Int32
+	created    atomic.Bool
 }
 
 func (*reviewClosingStream) SendAudio(context.Context, []byte) error { return nil }
 func (s *reviewClosingStream) CloseSend(context.Context) error {
-	s.closeSends++
+	s.closeSends.Add(1)
 	return nil
 }
-func (*reviewClosingStream) Recv(ctx context.Context) (*STTMessage, error) {
+func (s *reviewClosingStream) Recv(ctx context.Context) (*STTMessage, error) {
+	if s.created.CompareAndSwap(false, true) {
+		return &STTMessage{Type: "transcript.created"}, nil
+	}
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
-func (s *reviewClosingStream) Close() error { s.closes++; return nil }
+func (s *reviewClosingStream) Close() error { s.closes.Add(1); return nil }
 
 type reviewClosingOpener struct{ stream *reviewClosingStream }
 
@@ -74,16 +78,26 @@ func TestXAITypedInterruptionCancelsAndRestartsMatchingStream(t *testing.T) {
 	cfg.StreamOpener = opener
 	p, _ := NewSTTProcessor(cfg)
 	defer p.Close()
+	bareSession(p)
 	e := reviewEmitter{}
 	ctx := context.Background()
 	_ = p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "A", Gen: 1}, core.Downstream, e)
 	_ = p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
+	waitReady(t, p) // audio.done is sent only on a ready stream
 	_ = p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "A", Gen: 1}, core.Downstream, e)
 	_ = p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventInterrupted, Turn: "A", Gen: 1}, core.Downstream, e)
 	_ = p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "B", Gen: 1}, core.Downstream, e)
 	_ = p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
-	if len(opener.streams) != 2 || opener.streams[0].closeSends != 1 || opener.streams[0].closes == 0 {
-		t.Fatalf("typed stream lifecycle mismatch: streams=%d first=%+v", len(opener.streams), opener.streams[0])
+	eventually(t, "second stream", func() bool {
+		opener.mu.Lock()
+		defer opener.mu.Unlock()
+		return len(opener.streams) == 2
+	})
+	opener.mu.Lock()
+	first := opener.streams[0]
+	opener.mu.Unlock()
+	if first.closeSends.Load() != 1 || first.closes.Load() == 0 {
+		t.Fatalf("typed stream lifecycle mismatch: first closeSends=%d closes=%d", first.closeSends.Load(), first.closes.Load())
 	}
 }
 
@@ -147,13 +161,15 @@ func TestReviewXAITypedCompletionClosesAudio(t *testing.T) {
 	cfg.StreamOpener = reviewClosingOpener{st}
 	p, _ := NewSTTProcessor(cfg)
 	defer p.Close()
+	bareSession(p)
 	ctx := context.Background()
 	e := reviewEmitter{}
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "A", Gen: 1}, core.Downstream, e)
 	p.ProcessFrame(ctx, &core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1}, core.Downstream, e)
+	waitReady(t, p)
 	p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventCompleted, Turn: "A", Gen: 1}, core.Downstream, e)
-	if st.closeSends != 1 {
-		t.Fatalf("typed completion did not send audio.done; close sends=%d", st.closeSends)
+	if st.closeSends.Load() != 1 {
+		t.Fatalf("typed completion did not send audio.done; close sends=%d", st.closeSends.Load())
 	}
 }
 
@@ -165,6 +181,7 @@ func TestXAISameTurnNewerGenerationAdoptsStream(t *testing.T) {
 	cfg.StreamOpener = opener
 	p, _ := NewSTTProcessor(cfg)
 	defer p.Close()
+	bareSession(p)
 	e := reviewEmitter{}
 	ctx := context.Background()
 	_ = p.ProcessFrame(ctx, &core.TurnEventFrame{Kind: core.TurnEventStarted, Turn: "A", Gen: 1}, core.Downstream, e)
@@ -174,7 +191,14 @@ func TestXAISameTurnNewerGenerationAdoptsStream(t *testing.T) {
 	p.mu.Lock()
 	gen, draining := p.active.gen, len(p.draining)
 	p.mu.Unlock()
-	if len(opener.streams) != 1 || opener.streams[0].closeSends != 0 || gen != 2 || draining != 0 {
+	eventually(t, "stream open", func() bool {
+		opener.mu.Lock()
+		defer opener.mu.Unlock()
+		return len(opener.streams) >= 1
+	})
+	opener.mu.Lock()
+	defer opener.mu.Unlock()
+	if len(opener.streams) != 1 || opener.streams[0].closeSends.Load() != 0 || gen != 2 || draining != 0 {
 		t.Fatalf("streams=%d gen=%d draining=%d", len(opener.streams), gen, draining)
 	}
 }
