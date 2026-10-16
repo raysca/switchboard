@@ -380,11 +380,17 @@ func TestSTT_DrainTimeoutForcesClose(t *testing.T) {
 	waitFor(t, "release", func() bool { return h.proc.activeCount() == 0 })
 }
 
-func (p *STTProcessor) activeCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.all)
+// ensureStream dials one stream the way the runner's stream task does, then
+// closes it (dial, retry and breaker tests).
+func (p *STTProcessor) ensureStream(ctx context.Context) error {
+	c, err := p.dial(ctx)
+	if err == nil {
+		c.Close()
+	}
+	return err
 }
+
+func (p *STTProcessor) activeCount() int { return p.Streams() }
 
 type lifecycleRecorder struct {
 	mu   sync.Mutex
@@ -424,7 +430,7 @@ func TestSTT_IdleTimeoutCloseIsNotAnOutage(t *testing.T) {
 	cfg := f.cfg()
 	cfg.CircuitBreaker = resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
 	h := start(t, cfg, nil)
-	h.speak(t)
+	_ = h.sess.Post(&core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000, Channels: 1, Gen: 1})
 	waitFor(t, "release", func() bool { return f.opens.Load() == 1 && h.proc.activeCount() == 0 })
 	if len(h.errors()) != 0 || !cfg.CircuitBreaker.Allow() {
 		t.Fatalf("idle close reported as outage: %v", h.errors())
@@ -433,7 +439,9 @@ func TestSTT_IdleTimeoutCloseIsNotAnOutage(t *testing.T) {
 
 // Audio between turns opens an unbound stream; the next turn adopts it (VAD
 // reports speech start after the onset audio was sent) and keeps its text.
-// UserStopped finalizes it and later audio opens a fresh unbound stream.
+// UserStopped finalizes it; later audio opens a fresh unbound stream, which
+// the following turn adopts in turn. That an unbound stream emits nothing is
+// pinned race-free by sttunit's TestRunner_UnboundStreamAdoptedByNextTurn.
 func TestSTT_UnboundStreamAdoptedByNextTurn(t *testing.T) {
 	var n atomic.Int32
 	ctl := make(chan string, 8)
@@ -458,25 +466,19 @@ func TestSTT_UnboundStreamAdoptedByNextTurn(t *testing.T) {
 	audio := func() {
 		_ = h.sess.Post(&core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000, Channels: 1, Gen: 1})
 	}
-	committed := func() string {
-		h.proc.mu.Lock()
-		defer h.proc.mu.Unlock()
-		if h.proc.active == nil {
-			return ""
+	last := func() *core.TranscriptCandidateFrame {
+		c := h.candidates()
+		if len(c) == 0 {
+			return nil
 		}
-		h.proc.active.mu.Lock()
-		defer h.proc.active.mu.Unlock()
-		return h.proc.active.committed
+		return c[len(c)-1]
 	}
 	audio()
-	waitFor(t, "onset final", func() bool { return committed() == "hi" })
-	if len(h.candidates()) != 0 {
-		t.Fatal("unbound stream emitted a candidate")
-	}
+	waitFor(t, "unbound stream", func() bool { return f.opens.Load() == 1 })
 	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
 	audio()
-	waitFor(t, "adopted candidate", func() bool { return len(h.candidates()) == 1 })
-	if c := h.candidates()[0]; c.Text != "hi there" || c.Turn != "turn-1-1" || f.opens.Load() != 1 {
+	waitFor(t, "adopted candidate", func() bool { c := last(); return c != nil && c.Text == "hi there" })
+	if c := last(); c.Turn != "turn-1-1" || f.opens.Load() != 1 {
 		t.Fatalf("candidate %+v opens=%d", c, f.opens.Load())
 	}
 	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{})
@@ -491,16 +493,12 @@ func TestSTT_UnboundStreamAdoptedByNextTurn(t *testing.T) {
 		}
 	}
 	audio()
-	waitFor(t, "fresh stream", func() bool {
-		h.proc.mu.Lock()
-		defer h.proc.mu.Unlock()
-		return f.opens.Load() == 2 && h.proc.active != nil
-	})
-	h.proc.mu.Lock()
-	turn, _ := h.proc.active.owner()
-	h.proc.mu.Unlock()
-	if turn != "" {
-		t.Fatalf("stream after the turn is bound to %q", turn)
+	waitFor(t, "fresh stream", func() bool { return f.opens.Load() == 2 })
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 2})
+	audio()
+	waitFor(t, "second turn adopts it", func() bool { c := last(); return c != nil && c.Turn == "turn-1-2" })
+	if n := f.opens.Load(); n != 2 {
+		t.Fatalf("the second turn opened its own stream: opens=%d", n)
 	}
 }
 
@@ -560,4 +558,90 @@ func TestSTT_InterruptionReopensAtNewGeneration(t *testing.T) {
 	if c := h.candidates()[1]; c.Gen != 2 || c.Turn != "turn-1-1" {
 		t.Fatalf("candidate %+v", c)
 	}
+}
+
+// A8: a clean close while the turn still owes its transcript (no Finalize
+// sent) loses the utterance: the turn is invalidated so an STT failover
+// replays it, and the breaker is not told.
+func TestSTT_CleanCloseMidUtteranceInvalidatesTurn(t *testing.T) {
+	f := newFake(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _, _ = c.Read(ctx)
+		_ = c.Close(websocket.StatusNormalClosure, "")
+	})
+	cfg := f.cfg()
+	cfg.CircuitBreaker = resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
+	h := start(t, cfg, nil)
+	h.speak(t)
+	waitFor(t, "invalidating error", func() bool {
+		for _, err := range h.errors() {
+			if errors.Is(err, core.ErrTranscriptInvalidated) {
+				return true
+			}
+		}
+		return false
+	})
+	if !cfg.CircuitBreaker.Allow() {
+		t.Fatal("a clean close is not an outage")
+	}
+}
+
+// B7: Deepgram stream errors reach voice_provider_errors_total via STTCounts.
+func TestSTT_CountsErrorsForMetrics(t *testing.T) {
+	f := newFake(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _, _ = c.Read(ctx)
+		_ = c.Close(websocket.StatusInternalError, "NET-0000")
+	})
+	h := start(t, f.cfg(), nil)
+	var counters core.STTCounters = h.proc
+	h.speak(t)
+	waitFor(t, "counted error", func() bool { _, _, _, n := counters.STTCounts(); return n == 1 })
+}
+
+// Deepgram's in-band "Error" message fails that stream (an ErrorFrame, so a
+// failover moves on) but stays out of the shared breaker, as before the runner.
+func TestSTT_InBandErrorStaysOutOfTheBreaker(t *testing.T) {
+	f := newFake(t, func(ctx context.Context, c *websocket.Conn) {
+		_, _, _ = c.Read(ctx)
+		_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"Error","err_msg":"bad audio"}`))
+		<-ctx.Done()
+	})
+	cfg := f.cfg()
+	cfg.CircuitBreaker = resilience.NewBreaker(resilience.Config{FailureThreshold: 1, Cooldown: time.Hour})
+	h := start(t, cfg, nil)
+	h.speak(t)
+	waitFor(t, "error frame", func() bool { return len(h.errors()) > 0 })
+	if !errors.Is(h.errors()[0], errInBand) {
+		t.Fatalf("err = %v", h.errors()[0])
+	}
+	if !cfg.CircuitBreaker.Allow() {
+		t.Fatal("an in-band stream error opened the shared breaker")
+	}
+}
+
+// The runner drops results that arrive while a stream is unbound, so the
+// conn re-surfaces text heard before binding: a final that arrived unbound,
+// then Finish, still yields the full cumulative final for the adopting turn.
+func TestSTT_UnboundFinalResurfacesAfterFinish(t *testing.T) {
+	f := newFake(t, func(ctx context.Context, c *websocket.Conn) {
+		for {
+			typ, data, err := c.Read(ctx)
+			if err != nil {
+				return
+			}
+			if typ == websocket.MessageBinary {
+				_ = c.Write(ctx, websocket.MessageText, results("hello there", true, false, false))
+			} else if strings.Contains(string(data), "Finalize") {
+				_ = c.Write(ctx, websocket.MessageText, results("", true, false, true))
+			}
+		}
+	})
+	h := start(t, f.cfg(), nil)
+	_ = h.sess.Post(&core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000, Channels: 1, Gen: 1})
+	waitFor(t, "unbound stream", func() bool { return f.opens.Load() == 1 })
+	_ = h.sess.Post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	_ = h.sess.Post(&core.UserStoppedSpeakingFrame{})
+	waitFor(t, "resurfaced final", func() bool {
+		c := h.candidates()
+		return len(c) > 0 && c[len(c)-1].Text == "hello there" && c[len(c)-1].Final
+	})
 }
