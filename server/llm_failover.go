@@ -60,7 +60,10 @@ func validateLLMFailoverTiming(budget, firstToken time.Duration) error {
 // Providers expose ClientError() on their ProviderError.
 func llmClassify(err error) string {
 	var ce interface{ ClientError() bool }
-	if errors.Is(err, core.ErrFirstTokenTimeout) {
+	switch {
+	case errors.Is(err, core.ErrTooManyTasks), errors.Is(err, core.ErrSessionClosed):
+		return "" // the session's own limits or teardown: another model would not help
+	case errors.Is(err, core.ErrFirstTokenTimeout):
 		return flow.ClassTimeout
 	}
 	return flow.ClassOf(err, resilience.Verdict{ClientError: errors.As(err, &ce) && ce.ClientError()})
