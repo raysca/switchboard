@@ -133,3 +133,31 @@ func TestTurnRecorderKeepsADefinedToolNameWhoseExecutorSaysUnknownTool(t *testin
 		})
 	}
 }
+
+// Audio passes at 50 frames/s per call: the recorder must not take its lock for it.
+func TestTurnRecorderPassesAudioWithoutItsLock(t *testing.T) {
+	r := newTurnRecorder(func(context.Context, storage.TurnRecord) error { return nil }, func(context.Context, storage.ToolCallRecord) error { return nil },
+		func(string) (flow.MCPToolSnapshot, bool) { return flow.MCPToolSnapshot{}, false }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
+	tail := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(r, tail)
+	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock() // held for the whole test: only a frame that needs recorder state may wait
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			r.mu.Unlock()
+		}
+	}
+	defer release()
+	if err := session.Post(&core.OutputAudioFrame{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the audio frame to pass the recorder while its lock is held", func() bool { return len(tail.GetFrames()) == 1 })
+	release()
+	_ = session.Close()
+	r.close(t.Context())
+}

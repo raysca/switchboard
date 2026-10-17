@@ -170,6 +170,11 @@ func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, ad
 }
 
 func (r *turnRecorder) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	switch f.(type) {
+	case *core.UserMessageFrame, *core.ToolCallFrame, *core.ToolResultFrame, *core.AssistantMessageFrame:
+	default: // audio and the rest pass without the lock
+		return e.PushDirection(f, dir)
+	}
 	r.mu.Lock()
 	switch m := f.(type) {
 	case *core.UserMessageFrame:
