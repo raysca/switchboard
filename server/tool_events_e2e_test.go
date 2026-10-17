@@ -155,6 +155,8 @@ func TestMCPCallBargeInSettlesTheAnnouncedCallAndNothingElse(t *testing.T) {
 	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":4000}`)
 	waitFnEvents(t, c, 2) // announced: started, in-progress
+	// in-progress precedes the executor's MCP request: barge in only once the server has the call.
+	eventually(t, "the MCP server to receive the call", func() bool { return r.lastCall("slow_lookup").Tool != "" })
 	bargeIn(t, session())
 	eventually(t, "the server to see the call abandoned", func() bool { return r.lastCall("slow_lookup").Cancelled })
 	want := []string{`started{}`, `in-progress{"tool_call_id":"#1"}`, `stopped{"cancelled":true,"tool_call_id":"#1"}`}
