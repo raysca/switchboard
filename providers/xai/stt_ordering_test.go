@@ -68,11 +68,16 @@ type sttHarness struct {
 	finals  []string
 }
 
-func newSTTHarness(t *testing.T) *sttHarness {
+func newSTTHarness(t *testing.T) *sttHarness { return newSTTHarnessCfg(t, nil) }
+
+func newSTTHarnessCfg(t *testing.T, tune func(*STTConfig)) *sttHarness {
 	t.Helper()
 	h := &sttHarness{ws: newWireSTTStream()}
 	cfg := DefaultSTTConfig()
 	cfg.StreamOpener = wireOpener{h.ws}
+	if tune != nil {
+		tune(&cfg)
+	}
 	p, err := NewSTTProcessor(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -261,5 +266,36 @@ func TestXAISTTInterruptionAdmitsDetachedSpeechFinal(t *testing.T) {
 			}
 		}
 		return false
+	})
+}
+
+// A batch recognizer (the offline Whisper) decodes a long segment for longer than the cloud default
+// wait after audio.done; its final must still arrive within the configured DrainTimeout. Found
+// when a middle segment of a 22 s statement was dropped at exactly 2.000 s under CPU load.
+func TestXAISTTWaitsDrainTimeoutForALateFinal(t *testing.T) {
+	h := newSTTHarnessCfg(t, func(c *STTConfig) { c.DrainTimeout = 4 * time.Second })
+	h.send(t, &core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.send(t, &core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000})
+	h.ws.recv <- recvItem{msg: &STTMessage{Type: "transcript.created"}}
+	waitFor(t, "audio", func() bool { return len(h.ws.snapshot()) == 1 })
+	h.send(t, &core.UserStoppedSpeakingFrame{})
+	waitFor(t, "done", func() bool { return len(h.ws.snapshot()) == 2 })
+	time.Sleep(2300 * time.Millisecond) // past the 2 s default wait
+	h.ws.recv <- recvItem{msg: &STTMessage{Type: "transcript.partial", Text: "late final", SpeechFinal: true}}
+	waitFor(t, "late final", func() bool { return len(h.finalTexts()) == 1 })
+}
+
+// The wait is bounded: a final that never comes closes the stream.
+func TestXAISTTDrainTimeoutClosesTheStream(t *testing.T) {
+	h := newSTTHarnessCfg(t, func(c *STTConfig) { c.DrainTimeout = 100 * time.Millisecond })
+	h.send(t, &core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.send(t, &core.InputAudioFrame{Samples: make([]byte, 640), SampleRate: 16000})
+	h.ws.recv <- recvItem{msg: &STTMessage{Type: "transcript.created"}}
+	waitFor(t, "audio", func() bool { return len(h.ws.snapshot()) == 1 })
+	h.send(t, &core.UserStoppedSpeakingFrame{})
+	waitFor(t, "stream released", func() bool {
+		h.p.mu.Lock()
+		defer h.p.mu.Unlock()
+		return len(h.p.draining) == 0
 	})
 }

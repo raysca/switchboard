@@ -36,6 +36,9 @@ type STTConfig struct {
 	// AttemptTimeout each (zero = DefaultSTTOpenPolicy).
 	RetryPolicy  resilience.Policy
 	StreamOpener STTStreamOpener
+	// DrainTimeout bounds the wait for the final transcript after audio.done (0: 2 s). A batch
+	// recognizer decodes a long segment slower than the cloud service streams it.
+	DrainTimeout time.Duration
 	Now          func() time.Time // Receipt clock; policy time is carried in candidate frames.
 }
 
@@ -295,6 +298,9 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.DrainTimeout <= 0 {
+		cfg.DrainTimeout = 2 * time.Second
 	}
 	return &STTProcessor{
 		cfg: cfg,
@@ -989,8 +995,8 @@ func (p *STTProcessor) armDrainTimer(st *activeSTTStream) {
 	st.mu.Lock()
 	if st.drainTimer == nil {
 		// The stream is detached, so a long wait costs nothing; live finals land 0.2-0.4 s after
-		// audio.done. ponytail: fixed bound like Deepgram's default DrainTimeout; config if needed.
-		st.drainTimer = time.AfterFunc(2*time.Second, func() {
+		// audio.done.
+		st.drainTimer = time.AfterFunc(p.cfg.DrainTimeout, func() {
 			st.mu.Lock()
 			if st.drainTimer == nil {
 				st.mu.Unlock()
