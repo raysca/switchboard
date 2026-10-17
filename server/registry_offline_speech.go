@@ -3,9 +3,16 @@
 package server
 
 import (
+	"time"
+
 	"govoice/core"
 	"govoice/providers/xai"
 )
+
+// offlineSTTDrainTimeout is how long a stream waits for its final after audio.done: batch Whisper on
+// a CPU needs 1 to 2.5 s for a 6 s segment and more under load, and a final that misses the wait
+// drops that segment from the turn.
+const offlineSTTDrainTimeout = 6 * time.Second
 
 // registerOfflineSpeech wires offline.stt and offline.tts to the adapter in offline/.
 func registerOfflineSpeech(r *Registry) {
@@ -20,6 +27,7 @@ func registerOfflineSpeech(r *Registry) {
 		if spec.Language != "" {
 			sttCfg.Language = spec.Language
 		}
+		sttCfg.DrainTimeout = offlineSTTDrainTimeout
 		sttCfg.Endpoint, sttCfg.APIKey, sttCfg.CircuitBreaker = cfg.Providers.Offline.STTEndpoint, offlineBearer, r.offlineSTTBreaker
 		if spec.Failover {
 			sttCfg.RetryPolicy = failoverPolicy("stt", sttCfg.RetryPolicy)
