@@ -130,7 +130,7 @@ export function transcript(session: SessionDTO, turns: TurnDTO[], traces: Sessio
 export type TurnRow = { id: string; at: string; text: string; notes: string[]; latencies: unknown };
 
 /** One row per turn: when, what the assistant said, and what happened in it (tool calls, being cut off). */
-export function turnRows(session: SessionDTO, turns: TurnDTO[], traces: SessionTracesDTO | null | undefined): TurnRow[] {
+export function turnRows(session: SessionDTO, turns: TurnDTO[]): TurnRow[] {
   const start = Date.parse(session.started_at);
   const ordered = [...turns].sort((a, b) => a.ordinal - b.ordinal || Date.parse(a.started_at) - Date.parse(b.started_at));
   return ordered.map((t) => {
@@ -139,11 +139,8 @@ export function turnRows(session: SessionDTO, turns: TurnDTO[], traces: SessionT
     const reply = replyMs(t);
     if (reply !== null) notes.push(`Replied in ${formatMs(reply)}`);
     if (t.interrupted) notes.push("Interrupted by the caller");
-    for (const c of traces?.tool_calls ?? []) {
-      if (c.turn_id !== t.id) continue;
-      if (c.status === "failed" || c.status === "error") notes.push(`Tool ${c.remote_name} failed`);
-      else if (c.ended_at) notes.push(`Tool ${c.remote_name} · ${Math.max(0, Date.parse(c.ended_at) - Date.parse(c.started_at))} ms`);
-      else notes.push(`Tool ${c.remote_name} running`);
+    for (const c of t.tools ?? []) {
+      notes.push(c.status === "succeeded" ? `Tool ${c.name} · ${c.duration_ms} ms` : `Tool ${c.name} ${c.status}`);
     }
     return {
       id: t.id,

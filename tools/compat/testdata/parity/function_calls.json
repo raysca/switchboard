@@ -1,0 +1,108 @@
+{
+ "area": "function_calls",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "one_call_result",
+   "params": {},
+   "pipecat": [
+    "{\"data\":{},\"type\":\"llm-function-call-started\"}",
+    "{\"data\":{\"tool_call_id\":\"call-a\"},\"type\":\"llm-function-call-in-progress\"}",
+    "{\"data\":{\"cancelled\":false,\"tool_call_id\":\"call-a\"},\"type\":\"llm-function-call-stopped\"}"
+   ],
+   "pipecat_module": "processors/frameworks/rtvi/observer.py",
+   "steps": [
+    {
+     "ev": "call",
+     "id": "call-a",
+     "t": 0,
+     "text": "lookup_order"
+    },
+    {
+     "ev": "result",
+     "id": "call-a",
+     "t": 0,
+     "text": "lookup_order"
+    }
+   ]
+  },
+  {
+   "id": "one_call_cancelled",
+   "params": {},
+   "pipecat": [
+    "{\"data\":{},\"type\":\"llm-function-call-started\"}",
+    "{\"data\":{\"tool_call_id\":\"call-a\"},\"type\":\"llm-function-call-in-progress\"}",
+    "{\"data\":{\"cancelled\":true,\"tool_call_id\":\"call-a\"},\"type\":\"llm-function-call-stopped\"}"
+   ],
+   "pipecat_module": "processors/frameworks/rtvi/observer.py",
+   "steps": [
+    {
+     "ev": "call",
+     "id": "call-a",
+     "t": 0,
+     "text": "lookup_order"
+    },
+    {
+     "ev": "cancel",
+     "id": "call-a",
+     "t": 0,
+     "text": "lookup_order"
+    }
+   ]
+  },
+  {
+   "id": "two_calls_parallel",
+   "intentional_difference": {
+    "go": [
+     "{\"data\":{},\"type\":\"llm-function-call-started\"}",
+     "{\"data\":{\"tool_call_id\":\"call-a\"},\"type\":\"llm-function-call-in-progress\"}",
+     "{\"data\":{},\"type\":\"llm-function-call-started\"}",
+     "{\"data\":{\"tool_call_id\":\"call-b\"},\"type\":\"llm-function-call-in-progress\"}",
+     "{\"data\":{\"cancelled\":false,\"tool_call_id\":\"call-a\"},\"type\":\"llm-function-call-stopped\"}",
+     "{\"data\":{\"cancelled\":false,\"tool_call_id\":\"call-b\"},\"type\":\"llm-function-call-stopped\"}"
+    ],
+    "reason": "go-voice reports each call as one ToolCallFrame when its tool loop claims it, so a call's llm-function-call-started goes out with its own in-progress; Pipecat sends one started per call of the batch (FunctionCallsStartedFrame) before any in-progress."
+   },
+   "params": {},
+   "pipecat": [
+    "{\"data\":{},\"type\":\"llm-function-call-started\"}",
+    "{\"data\":{},\"type\":\"llm-function-call-started\"}",
+    "{\"data\":{\"tool_call_id\":\"call-a\"},\"type\":\"llm-function-call-in-progress\"}",
+    "{\"data\":{\"tool_call_id\":\"call-b\"},\"type\":\"llm-function-call-in-progress\"}",
+    "{\"data\":{\"cancelled\":false,\"tool_call_id\":\"call-a\"},\"type\":\"llm-function-call-stopped\"}",
+    "{\"data\":{\"cancelled\":false,\"tool_call_id\":\"call-b\"},\"type\":\"llm-function-call-stopped\"}"
+   ],
+   "pipecat_module": "processors/frameworks/rtvi/observer.py",
+   "steps": [
+    {
+     "ev": "call",
+     "id": "call-a",
+     "t": 0,
+     "text": "lookup_order"
+    },
+    {
+     "ev": "call",
+     "id": "call-b",
+     "t": 0,
+     "text": "echo"
+    },
+    {
+     "ev": "result",
+     "id": "call-a",
+     "t": 0,
+     "text": "lookup_order"
+    },
+    {
+     "ev": "result",
+     "id": "call-b",
+     "t": 0,
+     "text": "echo"
+    }
+   ]
+  }
+ ]
+}

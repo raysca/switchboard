@@ -85,7 +85,7 @@ type Session struct {
 	outSlots chan struct{}
 	// outputGate, if set, holds a bot-audio producer until playback has room,
 	// so the transport's pacing backpressure stops landing on the run loop.
-	outputGate func(ctx context.Context, d time.Duration)
+	outputGate atomic.Pointer[func(ctx context.Context, d time.Duration)]
 
 	state          atomic.Int32
 	gen            atomic.Uint64
@@ -435,18 +435,24 @@ const maxQueuedOutputAudio = 2
 // apply playback backpressure to TTS instead of blocking the run loop, where
 // it delays caller audio. The gate must return on ctx cancellation and should
 // give up after a bounded time; the transport's own enqueue still enforces its
-// budget. Call before Start.
+// budget. Safe to call at any time, including while audio is being posted
+// (the transport installs it from its read loop); frames already past the gate
+// are unaffected. A nil g removes the gate.
 func (s *Session) SetOutputGate(g func(ctx context.Context, d time.Duration)) {
-	s.outputGate = g
+	if g == nil {
+		s.outputGate.Store(nil)
+		return
+	}
+	s.outputGate.Store(&g)
 }
 
 // enqueueOutputAudio takes an output slot (released when the run loop dequeues
 // the frame) before queueing; a producer that cannot get one within the frame
 // budget ends the session like any other output that does not fit.
 func (s *Session) enqueueOutputAudio(env Envelope) error {
-	if s.outputGate != nil {
+	if gate := s.outputGate.Load(); gate != nil {
 		if f, ok := env.Frame.(*OutputAudioFrame); ok && f.Duration > 0 {
-			s.outputGate(s.ctx, f.Duration)
+			(*gate)(s.ctx, f.Duration)
 		}
 	}
 	select {

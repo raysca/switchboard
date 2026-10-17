@@ -1012,6 +1012,20 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		}
 		return e.PushDirection(f, dir)
 
+	case core.FrameToolCall:
+		tc := f.(*core.ToolCallFrame)
+		for _, msg := range c.rtvi.FunctionCallStarted(tc.Call.ID) {
+			_ = c.WriteWireMessage(ctx, msg)
+		}
+		return e.PushDirection(f, dir)
+
+	case core.FrameToolResult:
+		tr := f.(*core.ToolResultFrame)
+		for _, msg := range c.rtvi.FunctionCallStopped(tr.Result.CallID, tr.Result.Status == core.ToolCancelled) {
+			_ = c.WriteWireMessage(ctx, msg)
+		}
+		return e.PushDirection(f, dir)
+
 	case core.FrameTTSStarted:
 		msg, _ := c.rtvi.FormatBotTTSStarted()
 		_ = c.WriteWireMessage(ctx, msg)

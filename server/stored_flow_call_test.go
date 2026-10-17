@@ -355,7 +355,7 @@ func TestTurnRecorderPairsUserAndAssistant(t *testing.T) {
 		rows = append(rows, row)
 		mu.Unlock()
 		return nil
-	}, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
+	}, nil, nil, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
 	pipe, _ := core.NewPipeline(r)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = session.Start()

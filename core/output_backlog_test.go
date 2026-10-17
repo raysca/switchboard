@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -186,4 +187,52 @@ func TestSession_OutputGateHoldsProducer(t *testing.T) {
 	if len(got) != 1 || got[0] != 20*time.Millisecond {
 		t.Fatalf("gate calls = %v, want one of 20ms", got)
 	}
+}
+
+// The transport installs the gate from the RTVI read loop while TTS audio is
+// already being posted; that must not be a data race.
+func TestSetOutputGateIsSafeWhileAudioIsPosted(t *testing.T) {
+	sink := &countSink{}
+	pipe, _ := NewPipeline(sink)
+	s, _ := NewSession(78, pipe, DefaultResourceBudget())
+	_ = s.Start()
+	defer s.Close()
+
+	gate := func(ctx context.Context, d time.Duration) {}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; ; i++ {
+			if i%2 == 0 {
+				s.SetOutputGate(gate)
+			} else {
+				s.SetOutputGate(nil)
+			}
+			if i > 2000 {
+				return
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		if err := s.Post(&OutputAudioFrame{Samples: make([]byte, 640), Encoding: EncodingPCM16LE, SampleRate: 16000, Channels: 1, Duration: 20 * time.Millisecond}); err != nil {
+			t.Fatalf("post: %v", err)
+		}
+	}
+	<-done
+	deadline := time.Now().Add(3 * time.Second)
+	for sink.n.Load() < 200 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := sink.n.Load(); n != 200 {
+		t.Fatalf("delivered %d/200 frames", n)
+	}
+}
+
+type countSink struct{ n atomic.Int64 }
+
+func (c *countSink) ProcessFrame(ctx context.Context, f Frame, dir Direction, e Emitter) error {
+	if f.Type() == FrameOutputAudio {
+		c.n.Add(1)
+	}
+	return e.PushDirection(f, dir)
 }

@@ -489,6 +489,12 @@ describe("management client", () => {
       expect(fetcher).toHaveBeenLastCalledWith("/api/v1/sessions/sess-1/traces?turn_id=turn-1", expect.any(Object));
     });
 
+    it("parses the tool calls a turn made", async () => {
+      const turn = { id: "t1", session_id: "s", ordinal: 1, started_at: "2026-10-05T12:00:01Z", interrupted: false, tools: [{ name: "lookup_order", status: "succeeded", duration_ms: 42 }] };
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({ data: [turn] }), { status: 200 }));
+      const turns = await createApiClient(() => ({ key: "k", generation: 1 }), fetcher).getSessionTurns("s");
+      expect(turns[0].tools).toEqual([{ name: "lookup_order", status: "succeeded", duration_ms: 42 }]);
+    });
     it("fetches operational status and diagnostics", async () => {
       const mockOperations = {
         uptime_seconds: 3600,

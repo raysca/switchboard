@@ -223,8 +223,8 @@ describe("CallView", () => {
   });
 
   it("lists the turns with what happened in them", async () => {
-    const tool = { id: "c1", session_id: ID, turn_id: "t2", remote_name: "crm.verify_identity", schema_hash: "x", started_at: "2026-10-12T14:00:07.000Z", ended_at: "2026-10-12T14:00:07.160Z", status: "completed", arguments_summary: "", result_summary: "" };
-    setup({ getSessionTraces: vi.fn().mockResolvedValue({ ...traces(toBilling), tool_calls: [tool] }) });
+    const withTool = { ...turns[1], tools: [{ name: "crm.verify_identity", status: "succeeded", duration_ms: 160 }] };
+    setup({ getSessionTurns: vi.fn().mockResolvedValue([turns[0], withTool, turns[2]]) });
     const region = await screen.findByRole("region", { name: "Turns" });
     const items = within(region).getAllByRole("listitem").map((li) => li.textContent);
     expect(items).toEqual([
@@ -233,6 +233,16 @@ describe("CallView", () => {
       "00:43Let me checkInterrupted by the caller",
     ]);
     expect(within(region).queryByText(/not recorded yet/)).toBeNull();
+  });
+
+  it("lists two identical tool lines on one turn without duplicate React keys", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const twice = { ...turns[1], tools: [{ name: "lookup", status: "failed", duration_ms: 0 }, { name: "lookup", status: "failed", duration_ms: 0 }] };
+    setup({ getSessionTurns: vi.fn().mockResolvedValue([turns[0], twice, turns[2]]) });
+    const region = await screen.findByRole("region", { name: "Turns" });
+    expect(within(region).getAllByText("Tool lookup failed")).toHaveLength(2);
+    expect(spy.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
+    spy.mockRestore();
   });
 
   it("says when the flow ended the call", async () => {

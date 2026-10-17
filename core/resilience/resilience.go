@@ -179,6 +179,12 @@ type Policy struct {
 	// stream). Hitting it is ErrTimeout: a provider failure, retried unless
 	// output was committed.
 	AttemptTimeout time.Duration
+	// OnRetry, if set, is told when a failed attempt has been judged
+	// retryable, before the backoff wait, with the retry's number (1 for the
+	// second attempt). A cancellation during the backoff means that retry
+	// never starts. It runs on the caller's goroutine and must not block; a
+	// panic in it is contained.
+	OnRetry func(retry int)
 }
 
 func DefaultPolicy() Policy {
@@ -281,6 +287,12 @@ func Execute(ctx context.Context, b *Breaker, p Policy, classify Classify, commi
 		}
 		if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= delay {
 			return err // no time left to retry
+		}
+		if p.OnRetry != nil {
+			func() {
+				defer func() { _ = recover() }() // an observer bug must not fail the request
+				p.OnRetry(attempt + 1)
+			}()
 		}
 		if serr := sleep(ctx, delay); serr != nil {
 			return serr

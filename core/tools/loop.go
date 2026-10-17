@@ -93,6 +93,7 @@ type ToolLoop struct {
 	cfg         ToolLoopConfig
 	ownedTracer *core.AsyncTracer
 	async       *asyncState
+	emit        func(core.Frame) // WithFrames; nil reports nothing
 }
 
 func NewToolLoop(definitions []ToolDefinition, executor ToolExecutor, history *core.ConversationContext, cfg ToolLoopConfig) (*ToolLoop, error) {
@@ -167,7 +168,7 @@ func (l *ToolLoop) WithCurrentFence(fence func(ToolCall) bool) *ToolLoop {
 	if l == nil {
 		return nil
 	}
-	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg, async: l.async}
+	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg, async: l.async, emit: l.emit}
 	if fence == nil {
 		return derived
 	}
@@ -188,13 +189,51 @@ func (l *ToolLoop) WithTraceContext(ctx context.Context) *ToolLoop {
 	if l == nil {
 		return nil
 	}
-	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg, async: l.async}
+	derived := &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg, async: l.async, emit: l.emit}
 	trace := core.TraceContextFromContext(ctx)
 	if _, noop := trace.Tracer.(core.NoopTracer); !noop {
 		derived.cfg.Tracer = trace.Tracer
 		derived.cfg.TracePolicy = trace.Policy
 	}
 	return derived
+}
+
+// WithFrames derives a loop that reports the calls it runs through emit: a
+// *core.ToolCallFrame when it claims a call whose generation is current (an
+// announced call), and exactly one *core.ToolResultFrame per announced call
+// once its result is final (for an async tool, when the background run ends).
+// Replays and stale calls are never announced. emit runs on the loop's
+// goroutines; providers re-enter the frames into the session.
+func (l *ToolLoop) WithFrames(emit func(core.Frame)) *ToolLoop {
+	if l == nil {
+		return nil
+	}
+	return &ToolLoop{definitions: l.definitions, executor: l.executor, history: l.history, cfg: l.cfg, async: l.async, emit: emit}
+}
+
+// announce reports a claimed call when frames are wanted and its generation is
+// current, and says whether it did; only an announced call is later settled. A
+// name the loop has no definition for is announced as "unknown_tool": the model
+// wrote it, and it can hold the caller's words.
+func (l *ToolLoop) announce(call ToolCall, started time.Time) bool {
+	if l.emit == nil || !l.isCurrent(call) {
+		return false
+	}
+	c := cloneCall(call)
+	if _, ok := l.definitions[c.Name]; !ok {
+		c.Name = "unknown_tool"
+	}
+	l.emit(&core.ToolCallFrame{Call: c, Timestamp: started})
+	return true
+}
+
+// report settles an announced call. A loop error (history refused the result)
+// settles it as failed with the category context_error.
+func (l *ToolLoop) report(call ToolCall, started time.Time, res ToolResult, err error) {
+	if err != nil {
+		res = ToolResult{CallID: call.ID, Status: ToolFailed, ErrorCategory: "context_error", StartedAt: started, EndedAt: l.cfg.Now()}
+	}
+	l.emit(&core.ToolResultFrame{Turn: call.TurnID, Gen: call.Generation, Result: cloneToolResult(res), Timestamp: l.cfg.Now()})
 }
 
 func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Continuation) (ToolLoopResult, error) {
@@ -219,6 +258,15 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 			batch = batch[:l.cfg.MaxCalls-result.Calls]
 		}
 		slots := func() []slot {
+			// AGENTS.md says never block under a lock; this read lock is a deliberate exception.
+			// It already spans the executors, and announce/report (which can wait up to 2 s in
+			// Session.Reenter) run inside the round, in call order, from the executor goroutines.
+			// Collecting the frames to post after RUnlock would deliver every `started` after
+			// the tools finished and need a second ordering layer for the exactly-once settle.
+			// It cannot deadlock: only injectAsync takes the lock exclusively, on a background
+			// goroutine, so the worst case is a delayed async injection.
+			// Ceiling: in the parallel claim phase each announce can block up to 2 s on a full
+			// data queue (16 calls = 32 s) before any tool runs, with the round timer ticking.
 			l.async.round.RLock()
 			defer l.async.round.RUnlock()
 			l.history.BeginToolRound() // plain messages queue until the results are written
@@ -301,7 +349,7 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 	return result, nil
 }
 
-// execute is begin followed by finish with no commit gate (sequential path).
+// execute is begin, announce and finish with no commit gate (sequential path).
 // abandonGrace is how long a cancelled executor may take to return before
 // its round stops waiting for it.
 const abandonGrace = time.Second
@@ -311,7 +359,7 @@ func (l *ToolLoop) execute(roundCtx context.Context, call ToolCall) (ToolResult,
 	if done {
 		return res, err
 	}
-	return l.finish(roundCtx, call, started, nil)
+	return l.finish(roundCtx, call, started, l.announce(call, started), nil)
 }
 
 // begin checks and claims a call. Its only history write is the claim (the
@@ -341,10 +389,18 @@ func (l *ToolLoop) begin(call ToolCall) (ToolResult, bool, time.Time, error) {
 	return ToolResult{}, false, started, nil
 }
 
-// finish validates a claimed call, runs the executor (or acknowledges an async
-// tool) and commits the result. gate, when non-nil, is called before every
-// history write so parallel rounds commit in call order.
-func (l *ToolLoop) finish(roundCtx context.Context, call ToolCall, started time.Time, gate func()) (ToolResult, error) {
+// finish validates a claimed call, runs the executor (or acknowledges an async tool) and commits
+// the result; an announced call is settled when finish returns. gate, when non-nil, is called
+// before every history write so parallel rounds commit in call order.
+func (l *ToolLoop) finish(roundCtx context.Context, call ToolCall, started time.Time, announced bool, gate func()) (res ToolResult, err error) {
+	async := false // startAsync settled the call elsewhere (background run, or cancelled on close)
+	if announced {
+		defer func() {
+			if !async {
+				l.report(call, started, res, err)
+			}
+		}()
+	}
 	if gate == nil {
 		gate = func() {}
 	}
@@ -376,7 +432,8 @@ func (l *ToolLoop) finish(roundCtx context.Context, call ToolCall, started time.
 	}
 	if def := l.definitions[call.Name]; def.Policy.Async {
 		gate() // in call order, so MaxAsyncInFlight rejects deterministically
-		return l.startAsync(call, def, started, commit)
+		res, async, err = l.startAsync(call, def, started, announced, commit)
+		return res, err
 	}
 	def := l.definitions[call.Name]
 	timeout := def.Policy.Timeout

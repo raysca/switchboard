@@ -57,6 +57,10 @@ type StageSpec struct {
 	// built with failoverPolicy (fewer, shorter attempts) so a fallback is
 	// reached while the caller still waits.
 	Failover bool
+
+	// OnRetry, if set, is told before each retried request (LLM and TTS
+	// factories copy it into their provider's retry policy).
+	OnRetry func(retry int)
 }
 
 // toolLoopConfig is the default loop config with the stage's async hooks.
@@ -84,6 +88,9 @@ type CallSpec struct {
 	OnRoute func(core.RouteEvent)
 	// OnEndCall receives the step whose end_call ended the call (trace).
 	OnEndCall func(stepID string)
+
+	// OnProviderRetry, if set, is told of every retried LLM or TTS request (timeline).
+	OnProviderRetry func(stage, provider string, retry int)
 	// OnInjector, if set, receives the call's context injector as the pipeline is assembled
 	// (before any stage runs); the server registers it only after a successful build.
 	OnInjector func(ContextInjector)
@@ -172,6 +179,9 @@ type Registry struct {
 	onLLMFallbackSkipped func()                                           // set by BindMetrics
 	onTTSFailover        func(from, to, class string)                     // set by BindMetrics
 	onTTSFallbackSkipped func()                                           // set by BindMetrics
+	// onCircuit receives every breaker state report (the server's call timelines);
+	// set once by NewServer, read by breaker observers on any goroutine.
+	onCircuit atomic.Pointer[func(stage, provider string, st resilience.State)]
 }
 
 // The Google stage configs, shared by the google and the echo factories: echo runs these same
@@ -203,6 +213,7 @@ func googleLLMConfig(spec StageSpec, breaker *resilience.Breaker) google.LLMConf
 		c.ToolLoopConfig = spec.toolLoopConfig()
 	}
 	c.CircuitBreaker = breaker
+	c.RetryPolicy.OnRetry = spec.OnRetry
 	return c
 }
 
@@ -218,6 +229,7 @@ func googleTTSConfig(cfg *Config, spec StageSpec, breaker *resilience.Breaker) g
 	if spec.Failover {
 		c.RetryPolicy = failoverPolicy("tts", c.RetryPolicy)
 	}
+	c.RetryPolicy.OnRetry = spec.OnRetry
 	return c
 }
 
@@ -336,6 +348,7 @@ func NewRegistry() *Registry {
 		br, _ := r.openaiBreakers.LoadOrStore(baseURL, resilience.NewBreaker(resilience.DefaultConfig()))
 		oaCfg := openai.Config{Model: spec.Model, BaseURL: baseURL, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br.(*resilience.Breaker),
 			AllowPrivate: cfg.Providers.OpenAILLM.AllowPrivateBaseURL}
+		oaCfg.RetryPolicy.OnRetry = spec.OnRetry
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
@@ -407,6 +420,7 @@ func NewRegistry() *Registry {
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
+		ttsCfg.RetryPolicy.OnRetry = spec.OnRetry
 		return cartesia.NewTTSProcessor(ttsCfg)
 	})
 
@@ -449,6 +463,7 @@ func NewRegistry() *Registry {
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
+		ttsCfg.RetryPolicy.OnRetry = spec.OnRetry
 		return elevenlabs.NewTTSProcessor(ttsCfg)
 	})
 
@@ -464,6 +479,7 @@ func NewRegistry() *Registry {
 // xaiLLMProcessor is the xAI Responses-API stage, shared by xai.llm and offline.llm.
 func xaiLLMProcessor(spec StageSpec, endpoint, key string, br *resilience.Breaker, who string) (core.Processor, error) {
 	xaiCfg := xai.Config{Model: spec.Model, Endpoint: endpoint, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br}
+	xaiCfg.RetryPolicy.OnRetry = spec.OnRetry
 	if len(spec.Tools) > 0 {
 		loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 		if err != nil {
@@ -524,6 +540,10 @@ const CallUserContextIndex = 4
 // assistant context -> TTS -> transport for one call of a stored flow.
 func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, error) {
 	build := func(stage string, spec StageSpec) (core.Processor, error) {
+		if report := call.OnProviderRetry; report != nil {
+			provider := spec.Provider
+			spec.OnRetry = func(retry int) { report(stage, provider, retry) }
+		}
 		proc, err := r.BuildStage(cfg, stage, spec)
 		if err == nil {
 			r.warm(cfg, proc) // every candidate, primary and fallbacks
@@ -858,26 +878,35 @@ func (r *Registry) BindMetrics(m *Metrics) {
 	r.onFilter = m.filters.observe
 	r.googleSTTBreaker.SetObserver(func(st resilience.State) {
 		m.STTCircuitStateGoogle.Store(circuitCode(string(st)))
+		r.circuit("stt", "google", st)
 	})
 	r.googleLLMBreaker.SetObserver(func(st resilience.State) {
 		m.LLMCircuitStateGoogle.Store(circuitCode(string(st)))
+		r.circuit("llm", "google", st)
 	})
 	r.googleTTSBreaker.SetObserver(func(st resilience.State) {
 		m.TTSCircuitStateGoogle.Store(circuitCode(string(st)))
+		r.circuit("tts", "google", st)
 	})
 	r.xaiLLMBreaker.SetObserver(func(st resilience.State) {
 		m.LLMCircuitStateXAI.Store(circuitCode(string(st)))
+		r.circuit("llm", "xai", st)
 	})
 	r.xaiSTTBreaker.SetObserver(func(st resilience.State) {
 		m.STTCircuitStateXAI.Store(circuitCode(string(st)))
+		r.circuit("stt", "xai", st)
 	})
 	r.xaiTTSBreaker.SetObserver(func(st resilience.State) {
 		m.TTSCircuitStateXAI.Store(circuitCode(string(st)))
+		r.circuit("tts", "xai", st)
 	})
 	// The simulated provider's breakers join the dynamic gauges (endpoint "simulated").
 	for stage, br := range map[string]*resilience.Breaker{"stt": r.echoSTTBreaker, "llm": r.echoLLMBreaker, "tts": r.echoTTSBreaker} {
 		m.circuits.set(stage, "echo", "simulated", 0)
-		br.SetObserver(func(st resilience.State) { m.circuits.set(stage, "echo", "simulated", circuitCode(string(st))) })
+		br.SetObserver(func(st resilience.State) {
+			m.circuits.set(stage, "echo", "simulated", circuitCode(string(st)))
+			r.circuit(stage, "echo", st)
+		})
 	}
 	// So do the local stack's (endpoint "local"), for the stages this build has.
 	for stage, br := range map[string]*resilience.Breaker{"stt": r.offlineSTTBreaker, "llm": r.offlineLLMBreaker, "tts": r.offlineTTSBreaker} {
@@ -885,7 +914,17 @@ func (r *Registry) BindMetrics(m *Metrics) {
 			continue
 		}
 		m.circuits.set(stage, "offline", "local", 0)
-		br.SetObserver(func(st resilience.State) { m.circuits.set(stage, "offline", "local", circuitCode(string(st))) })
+		br.SetObserver(func(st resilience.State) {
+			m.circuits.set(stage, "offline", "local", circuitCode(string(st)))
+			r.circuit(stage, "offline", st)
+		})
+	}
+}
+
+// circuit passes a breaker state report on to the server's call timelines.
+func (r *Registry) circuit(stage, provider string, st resilience.State) {
+	if h := r.onCircuit.Load(); h != nil {
+		(*h)(stage, provider, st)
 	}
 }
 

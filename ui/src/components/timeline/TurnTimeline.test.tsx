@@ -205,4 +205,18 @@ describe("TurnTimeline", () => {
     // Other spans stay as they were.
     expect(screen.getByText("llm.generate").closest("[data-testid='span-item']")).not.toHaveAttribute("data-route");
   });
+
+  it("shows each tool call's outcome in words and tone", async () => {
+    const user = userEvent.setup();
+    const turns: TurnDTO[] = [
+      { id: "t1", session_id: "s", ordinal: 1, started_at: "2026-10-05T12:00:00Z", transcript: "Book me in", assistant_text: "Done.", interrupted: false },
+    ];
+    const call = (id: string, status: string) => ({ id, session_id: "s", turn_id: "t1", remote_name: `tool_${id}`, schema_hash: "h", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:01.200Z", status, arguments_summary: "", result_summary: "" });
+    const traces: SessionTracesDTO = { session_id: "s", spans: [], events: [], tool_calls: [call("a", "succeeded"), call("b", "failed"), call("c", "cancelled")] };
+    render(<TurnTimeline turns={turns} traces={traces} />);
+    await user.click(screen.getByRole("button", { name: /Show traces/i }));
+    expect(screen.getByText("succeeded")).toHaveClass("status--good");
+    expect(screen.getByText("failed")).toHaveClass("status--bad");
+    expect(screen.getByText("cancelled")).toHaveClass("status--neutral");
+  });
 });

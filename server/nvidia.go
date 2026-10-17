@@ -37,6 +37,7 @@ func (r *Registry) nvidiaBreaker(key string) *resilience.Breaker {
 		r.metrics.circuits.set(stage, "nvidia", endpoint, 0)
 		b.SetObserver(func(st resilience.State) {
 			r.metrics.circuits.set(stage, "nvidia", endpoint, circuitCode(string(st)))
+			r.circuit(stage, "nvidia", st)
 		})
 	}
 	return b
@@ -86,6 +87,7 @@ func (r *Registry) registerNvidia() {
 		}
 		oaCfg := openai.Config{Provider: "nvidia", Model: model, BaseURL: nvidiaNIMBaseURL, SystemPrompt: spec.SystemPrompt, APIKey: key,
 			CircuitBreaker: r.nvidiaBreaker("llm|" + nvidiaNIMBaseURL)}
+		oaCfg.RetryPolicy.OnRetry = spec.OnRetry
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
@@ -139,6 +141,7 @@ func (r *Registry) registerNvidia() {
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
+		ttsCfg.RetryPolicy.OnRetry = spec.OnRetry
 		return nvidia.NewTTSProcessor(ttsCfg)
 	})
 }

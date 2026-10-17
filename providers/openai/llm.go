@@ -401,7 +401,7 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 			} else {
 				loop := p.cfg.ToolLoop.WithTraceContext(streamCtx).WithCurrentFence(func(c core.ToolCall) bool {
 					return c.SessionID == core.SessionID(sid) && c.TurnID == core.TurnID(turn) && c.Generation == core.Generation(gen) && p.isCurrent(gen)
-				})
+				}).WithFrames(func(f core.Frame) { _ = s.Reenter(f, core.Downstream, p.index, gen) })
 				toolCalls := toCoreCalls(calls, sid, turn, gen)
 				_, opErr = loop.Run(streamCtx, toolCalls, func(rc context.Context, results []core.ToolResult) ([]core.ToolCall, bool, error) {
 					if rc.Err() != nil || sessionCtx.Err() != nil || !p.isCurrent(gen) {

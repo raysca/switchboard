@@ -22,6 +22,7 @@ import (
 	"govoice/core/observe"
 	"govoice/core/record"
 	"govoice/core/redact"
+	"govoice/core/resilience"
 	"govoice/server/adminui"
 	"govoice/server/api"
 	"govoice/server/auth"
@@ -98,17 +99,19 @@ type Server struct {
 	backgrounds  map[string]background         // the sound catalogue (audio.backgrounds)
 	cues         map[string]func() ws.Underlay // route cue sounds by name
 
-	mu          sync.Mutex
-	activeCalls map[uint64]*activeCall
-	live        *liveCalls     // stored session id -> context injector of a call running here
-	connecting  sync.WaitGroup // calls admitted but not yet in activeCalls
-	nextCallID  atomic.Uint64
-	textTurns   atomic.Uint64
-	pruneStop   chan struct{}
-	demoSF      singleflight.Group // collapses overlapping demo installs
-	stopDemo    context.CancelFunc // cancels the startup demo install; guarded by mu
-	demoWG      sync.WaitGroup     // the startup demo install goroutine
-	recSink     *record.LocalSink  // nil unless recording.enabled
+	mu            sync.Mutex
+	activeCalls   map[uint64]*activeCall
+	circuitMu     sync.Mutex                       // guards circuitStates only (never held with mu)
+	circuitStates map[providerKey]resilience.State // last state each circuit reported (recordCircuit)
+	live          *liveCalls                       // stored session id -> context injector of a call running here
+	connecting    sync.WaitGroup                   // calls admitted but not yet in activeCalls
+	nextCallID    atomic.Uint64
+	textTurns     atomic.Uint64
+	pruneStop     chan struct{}
+	demoSF        singleflight.Group // collapses overlapping demo installs
+	stopDemo      context.CancelFunc // cancels the startup demo install; guarded by mu
+	demoWG        sync.WaitGroup     // the startup demo install goroutine
+	recSink       *record.LocalSink  // nil unless recording.enabled
 }
 
 type activeCall struct {
@@ -118,6 +121,7 @@ type activeCall struct {
 	session   *core.Session
 	timeline  *SessionTimeline
 	ending    *endReason
+	providers map[providerKey]bool // every candidate (stage, provider) of the start step
 }
 
 // NewServer initializes the server from configuration.
@@ -217,6 +221,8 @@ func NewServer(cfg *Config) (*Server, error) {
 	}
 	s.resolver = catalog.NewResolver(s.catalog, func(k string) string { return s.env(k) })
 	s.availability = providerAvailability{cat: s.catalog, res: s.resolver, supports: s.registry.Supports, policy: policyFrom(cfg)}
+	circuit := s.recordCircuit
+	s.registry.onCircuit.Store(&circuit)
 	if lowVADStopWithoutManager(cfg) {
 		logger.Warn("turn.manager is off with a short vad.stop_ms: turns end on the raw VAD stop and cut callers off mid-sentence; set turn.manager: true or vad.stop_ms: 800")
 	}
@@ -548,6 +554,9 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 	call.OnRoute = s.onRoute(timeline, call.StoredSessionID)
 	call.OnEndCall = s.onEndCall(call.StoredSessionID)
+	call.OnProviderRetry = func(stage, provider string, retry int) {
+		timeline.Record(TimelineEvent{Type: EventProviderRetry, Provider: provider, Details: fmt.Sprintf("%s retry %d", stage, retry)})
+	}
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
 	if cue != nil {
 		base := call.OnRoute
@@ -607,6 +616,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		session:   session,
 		timeline:  timeline,
 		ending:    ending,
+		providers: callProviders(call),
 	}
 
 	var (
@@ -1206,6 +1216,24 @@ func (s *Server) sampleVADMetrics() {
 	if st.Restarts > 0 {
 		s.metrics.VADWorkerRestartsTotal.Store(uint64(st.Restarts))
 	}
+}
+
+// callProviders is "stage/provider" for every candidate (primary and fallbacks) of the call's start step.
+// providerKey names one provider circuit; a struct key so a breaker report allocates nothing.
+type providerKey struct{ stage, provider string }
+
+func callProviders(c CallSpec) map[providerKey]bool {
+	m := map[providerKey]bool{}
+	add := func(stage string, primary StageSpec, fallbacks []StageSpec) {
+		m[providerKey{stage, primary.Provider}] = true
+		for _, f := range fallbacks {
+			m[providerKey{stage, f.Provider}] = true
+		}
+	}
+	add("stt", c.STT, c.STTFallbacks)
+	add("llm", c.LLM, c.LLMFallbacks)
+	add("tts", c.TTS, c.TTSFallbacks)
+	return m
 }
 
 // stageProviders names the provider each stage's errors are attributed to: its

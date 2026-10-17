@@ -72,7 +72,15 @@ type TurnDTO struct {
 	AssistantText string          `json:"assistant_text,omitempty"`
 	Interrupted   bool            `json:"interrupted"`
 	Latencies     json.RawMessage `json:"latencies,omitempty"`
-	Tools         json.RawMessage `json:"tools,omitempty"`
+	// Tools are the turn's tool calls, from tool_calls: name, outcome and duration only.
+	Tools []TurnToolDTO `json:"tools"`
+}
+
+// TurnToolDTO is one tool call of a turn; never its arguments or result.
+type TurnToolDTO struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	DurationMS int64  `json:"duration_ms"`
 }
 
 // SessionTracesDTO aggregates trace spans, events, and tool calls for timeline rendering.
@@ -260,9 +268,25 @@ func (h tracesHandler) turns(w http.ResponseWriter, r *http.Request, id, request
 		return
 	}
 
+	calls, err := h.traces.ToolCalls(r.Context(), id, "")
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "internal_error", "failed to get tool calls", requestID)
+		return
+	}
+	byTurn := make(map[string][]TurnToolDTO, len(turns))
+	for _, c := range calls {
+		if c.TurnID == "" {
+			continue
+		}
+		var ms int64
+		if !c.EndedAt.IsZero() {
+			ms = max(c.EndedAt.Sub(c.StartedAt).Milliseconds(), 0)
+		}
+		byTurn[c.TurnID] = append(byTurn[c.TurnID], TurnToolDTO{Name: c.RemoteName, Status: c.Status, DurationMS: ms})
+	}
 	dtos := make([]TurnDTO, 0, len(turns))
 	for _, turn := range turns {
-		dtos = append(dtos, toTurnDTO(turn))
+		dtos = append(dtos, toTurnDTO(turn, byTurn[turn.ID]))
 	}
 	WriteJSON(w, http.StatusOK, SuccessResponse[[]TurnDTO]{Data: dtos})
 }
@@ -357,7 +381,7 @@ func toSessionDTO(r storage.SessionRecord) SessionDTO {
 	return dto
 }
 
-func toTurnDTO(r storage.TurnRecord) TurnDTO {
+func toTurnDTO(r storage.TurnRecord, tools []TurnToolDTO) TurnDTO {
 	dto := TurnDTO{
 		ID:            r.ID,
 		SessionID:     r.SessionID,
@@ -373,8 +397,9 @@ func toTurnDTO(r storage.TurnRecord) TurnDTO {
 	if r.LatenciesJSON != "" && json.Valid([]byte(r.LatenciesJSON)) {
 		dto.Latencies = json.RawMessage(r.LatenciesJSON)
 	}
-	if r.ToolsJSON != "" && json.Valid([]byte(r.ToolsJSON)) {
-		dto.Tools = json.RawMessage(r.ToolsJSON)
+	dto.Tools = tools
+	if dto.Tools == nil {
+		dto.Tools = []TurnToolDTO{}
 	}
 	return dto
 }

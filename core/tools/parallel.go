@@ -63,17 +63,20 @@ func (l *ToolLoop) runRound(roundCtx context.Context, calls []ToolCall) []slot {
 	// Claim every call first, in order, so history holds one contiguous call
 	// batch followed by its results (Gemini pairs calls and responses per turn).
 	started := make([]time.Time, len(calls))
+	announced := make([]bool, len(calls))
 	claimed := 0
 	for ; claimed < len(calls); claimed++ {
 		res, fin, at, err := l.begin(calls[claimed])
 		started[claimed] = at
-		if fin {
-			slots[claimed] = slot{res, err, true}
-			if failed(slots[claimed]) {
-				cancel() // claimed calls still run and commit "cancelled"
-				claimed++
-				break
-			}
+		if !fin {
+			announced[claimed] = l.announce(calls[claimed], at) // in call order, before any call runs
+			continue
+		}
+		slots[claimed] = slot{res, err, true}
+		if failed(slots[claimed]) {
+			cancel() // claimed calls still run and commit "cancelled"
+			claimed++
+			break
 		}
 	}
 	done := make([]chan struct{}, claimed)
@@ -95,7 +98,7 @@ func (l *ToolLoop) runRound(roundCtx context.Context, calls []ToolCall) []slot {
 			defer wg.Done()
 			defer func() { <-sem }()
 			defer close(done[i])
-			res, err := l.finish(rctx, calls[i], started[i], func() {
+			res, err := l.finish(rctx, calls[i], started[i], announced[i], func() {
 				if prev != nil {
 					<-prev
 				}
@@ -130,15 +133,18 @@ func (l *ToolLoop) watchStale(ctx context.Context, cancel context.CancelFunc, ca
 	}
 }
 
-// startAsync acknowledges an async call at once and runs the executor in the
-// background. The real result is injected into history as a user-role context
-// message when it arrives. Async calls deliberately ignore the generation
+// startAsync acknowledges an async call at once and runs the executor in the background. Its bool
+// is true once the acknowledgement is in history: from then on startAsync owns settling the call
+// (when it was announced), either from the background run or here as cancelled when the loop
+// closed meanwhile; the caller must not settle it. The real result is injected into history as a
+// user-role context message when it arrives. Async calls deliberately ignore the generation
 // fence: like Pipecat's cancel_on_interruption=False, they outlive barge-in.
-func (l *ToolLoop) startAsync(call ToolCall, def ToolDefinition, started time.Time, commit func(ToolStatus, json.RawMessage, string) (ToolResult, error)) (ToolResult, error) {
+func (l *ToolLoop) startAsync(call ToolCall, def ToolDefinition, started time.Time, announced bool, commit func(ToolStatus, json.RawMessage, string) (ToolResult, error)) (ToolResult, bool, error) {
 	a := l.async
 	if int(a.inflight.Add(1)) > l.cfg.MaxAsyncInFlight {
 		a.inflight.Add(-1)
-		return commit(ToolFailed, errorPayload("too_many_async"), "too_many_async")
+		res, err := commit(ToolFailed, errorPayload("too_many_async"), "too_many_async")
+		return res, false, err
 	}
 	if l.cfg.OnAsyncStart != nil {
 		l.cfg.OnAsyncStart(cloneCall(call))
@@ -146,27 +152,30 @@ func (l *ToolLoop) startAsync(call ToolCall, def ToolDefinition, started time.Ti
 	ack, err := commit(ToolSucceeded, json.RawMessage(`{"status":"running","async":true}`), "")
 	if err != nil {
 		a.inflight.Add(-1)
-		return ack, err
+		return ack, false, err
 	}
 	// Launch only after the ack is in history so the injected message can never
 	// precede the tool result it follows.
 	a.mu.Lock()
-	if a.ctx.Err() != nil { // loop closed meanwhile: never start
+	if a.ctx.Err() != nil { // loop closed meanwhile: never start; the model keeps the ack, the call is settled cancelled
 		a.mu.Unlock()
 		a.inflight.Add(-1)
-		return ack, nil
+		if announced {
+			l.report(call, started, ToolResult{CallID: call.ID, Status: ToolCancelled, Result: errorPayload("cancelled"), ErrorCategory: "cancelled", StartedAt: started, EndedAt: l.cfg.Now()}, nil)
+		}
+		return ack, true, nil
 	}
 	a.wg.Add(1)
 	a.mu.Unlock()
 	go func() {
 		defer a.wg.Done()
 		defer a.inflight.Add(-1)
-		l.runAsync(call, def, started)
+		l.runAsync(call, def, started, announced)
 	}()
-	return ack, nil
+	return ack, true, nil
 }
 
-func (l *ToolLoop) runAsync(call ToolCall, def ToolDefinition, started time.Time) {
+func (l *ToolLoop) runAsync(call ToolCall, def ToolDefinition, started time.Time, announced bool) {
 	timeout := def.Policy.Timeout
 	if timeout <= 0 || timeout > l.cfg.AsyncTimeout {
 		timeout = l.cfg.AsyncTimeout
@@ -184,8 +193,11 @@ func (l *ToolLoop) runAsync(call ToolCall, def ToolDefinition, started time.Time
 		}()
 		res, execErr = l.executor.Execute(ctx, cloneCall(call))
 	}()
-	if l.async.ctx.Err() != nil {
-		return // loop closed: drop silently
+	if l.async.ctx.Err() != nil { // loop closed: no result reaches history, but an announced call is settled
+		if announced {
+			l.report(call, started, ToolResult{CallID: call.ID, Status: ToolCancelled, Result: errorPayload("cancelled"), ErrorCategory: "cancelled", StartedAt: started, EndedAt: l.cfg.Now()}, nil)
+		}
+		return
 	}
 	res.CallID, res.StartedAt, res.EndedAt = call.ID, started, l.cfg.Now()
 	switch {
@@ -213,6 +225,9 @@ func (l *ToolLoop) runAsync(call ToolCall, def ToolDefinition, started time.Time
 			res.Status, res.ErrorCategory = ToolFailed, category
 		}
 		res.Result = payload
+	}
+	if announced {
+		l.report(call, started, res, nil)
 	}
 	// The result is model-visible data in a user-role message: keep it inside a
 	// JSON envelope with a label so it is not mistaken for something the user said.

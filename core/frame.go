@@ -382,6 +382,12 @@ type ToolCallFrame struct {
 func (f *ToolCallFrame) Type() FrameType    { return FrameToolCall }
 func (f *ToolCallFrame) Generation() uint64 { return uint64(f.Call.Generation) }
 
+// SurvivesGenerationFence: the tool loop announces a call only while its
+// generation is current (ToolLoop.announce), and the executor may already run
+// when an interruption (a control frame, ahead of the data queue) moves the
+// generation on, so the announcement is delivered and recorded regardless.
+func (*ToolCallFrame) SurvivesGenerationFence() {}
+
 type ToolResultFrame struct {
 	Turn      TurnID
 	Gen       Generation
@@ -391,6 +397,11 @@ type ToolResultFrame struct {
 
 func (f *ToolResultFrame) Type() FrameType    { return FrameToolResult }
 func (f *ToolResultFrame) Generation() uint64 { return uint64(f.Gen) }
+
+// SurvivesGenerationFence: a result settles a call the client already saw, so
+// it is delivered even when barge-in moved the generation on (Pipecat settles
+// such a call with FunctionCallCancelFrame, a SystemFrame no interruption drops).
+func (*ToolResultFrame) SurvivesGenerationFence() {}
 
 // -------------------------------------------------------------------------
 // Lifecycle and Control Frames

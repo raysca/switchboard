@@ -56,6 +56,7 @@ func registerXAISpeech(r *Registry) {
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
+		ttsCfg.RetryPolicy.OnRetry = spec.OnRetry
 		if cfg.Providers.XAITTS.DisableStreaming {
 			return xai.NewTTSProcessor(ttsCfg)
 		}

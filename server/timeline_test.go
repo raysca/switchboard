@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"govoice/core/resilience"
 )
 
 func TestTimeline_OrderingAndCapacityEviction(t *testing.T) {
@@ -92,7 +95,7 @@ func TestTimeline_NonBlockingConcurrentRingEviction(t *testing.T) {
 				tl.Record(TimelineEvent{
 					TurnID:  "turn-1",
 					Gen:     1,
-					Type:    EventTTSAudio,
+					Type:    EventTTSUnit,
 					Details: "audio chunk",
 				})
 			}
@@ -161,5 +164,37 @@ func TestTimelinePruneKeepsActiveTimelines(t *testing.T) {
 	}
 	if r.Get(2) != nil {
 		t.Fatal("idle timeline was kept")
+	}
+}
+func TestCircuitStateGoesOnTheTimelinesOfCallsUsingThatProviderOncePerChange(t *testing.T) {
+	uses, other := NewSessionTimeline(1, 10, time.Minute), NewSessionTimeline(2, 10, time.Minute)
+	s := &Server{activeCalls: map[uint64]*activeCall{
+		1: {timeline: uses, providers: map[providerKey]bool{{"llm", "echo"}: true}},
+		2: {timeline: other, providers: map[providerKey]bool{{"llm", "google"}: true}},
+	}}
+	for _, st := range []resilience.State{resilience.Closed, resilience.Open, resilience.Open, resilience.HalfOpen, resilience.Closed, resilience.Closed} {
+		s.recordCircuit("llm", "echo", st)
+	}
+	var got []string
+	for _, e := range uses.Events() {
+		if e.Type != EventCircuitState {
+			t.Fatalf("event %+v", e)
+		}
+		got = append(got, e.Provider+":"+e.Details)
+	}
+	if want := []string{"echo:llm open", "echo:llm half_open", "echo:llm closed"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("timeline %q, want %q", got, want)
+	}
+	if n := len(other.Events()); n != 0 {
+		t.Fatalf("a call on another provider got %d circuit events", n)
+	}
+}
+
+// Breakers report every success; an unchanged state must cost nothing.
+func TestRecordCircuitUnchangedStateAllocatesNothing(t *testing.T) {
+	s := &Server{activeCalls: map[uint64]*activeCall{}}
+	s.recordCircuit("llm", "echo", resilience.Open)
+	if n := testing.AllocsPerRun(100, func() { s.recordCircuit("llm", "echo", resilience.Open) }); n != 0 {
+		t.Fatalf("%v allocations per unchanged report", n)
 	}
 }

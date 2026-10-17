@@ -63,7 +63,7 @@ func TestDTMFTurnStoredMasked(t *testing.T) {
 		rows = append(rows, s.redactTurn(row))
 		mu.Unlock()
 		return nil
-	}, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
+	}, nil, nil, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
 	pipe, _ := core.NewPipeline(r)
 	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	_ = session.Start()
@@ -151,7 +151,7 @@ func TestRedactionEndToEnd(t *testing.T) {
 		rows = append(rows, s.redactTurn(row)) // as resolveCall does
 		mu.Unlock()
 		return nil
-	}, "sess", s.logger, newTurnLatencies())
+	}, nil, nil, "sess", s.logger, newTurnLatencies())
 
 	llm := &echoLLM{}
 	reg := NewRegistry()

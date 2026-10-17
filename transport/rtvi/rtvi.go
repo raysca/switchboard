@@ -38,6 +38,11 @@ const (
 	TypeDTMF                = "dtmf"         // client key presses: {"buttons": ["1","#"]} (2.0.x clients: {"button": "1"})
 	TypeSetMuted            = "set-muted"    // client mic mute: {"muted": true|false}; the session drops input audio while muted
 	TypePushToTalk          = "push-to-talk" // {"pressed": true|false}; only on calls whose client-ready set push_to_talk
+
+	// Function calls, at Pipecat's default function_call_report_level "none".
+	TypeLLMFunctionCallStarted    = "llm-function-call-started"
+	TypeLLMFunctionCallInProgress = "llm-function-call-in-progress"
+	TypeLLMFunctionCallStopped    = "llm-function-call-stopped"
 )
 
 var (
@@ -92,6 +97,21 @@ type ErrorData struct {
 	Fatal bool   `json:"fatal"`
 }
 
+// FunctionCallInProgressData is llm-function-call-in-progress at report level
+// "none": the call's id, never its name or arguments.
+type FunctionCallInProgressData struct {
+	ToolCallID string `json:"tool_call_id"`
+}
+
+// FunctionCallStoppedData is llm-function-call-stopped at report level "none":
+// the call's id and whether it was cancelled (barge-in, a loop close or the
+// loop's own call timeout; an MCP server timeout is a failed call, cancelled
+// false), never its result.
+type FunctionCallStoppedData struct {
+	ToolCallID string `json:"tool_call_id"`
+	Cancelled  bool   `json:"cancelled"`
+}
+
 // Handler manages RTVI protocol handshake, event conversion, and message serialization.
 type Handler struct {
 	idCounter  atomic.Uint64
@@ -110,6 +130,9 @@ type Handler struct {
 	llmMu    sync.Mutex
 	llmOpen  bool   // bot-llm-started sent and not yet stopped
 	llmReply string // key of the open reply
+
+	fnMu    sync.Mutex
+	fnCalls map[string]struct{} // tool_call_ids sent as in-progress and not yet stopped
 }
 
 const (
@@ -400,4 +423,40 @@ func (h *Handler) formatMessage(msgType string, data json.RawMessage) (string, e
 
 func isCompatibleVersion(clientVer string) bool {
 	return clientVer == ProtocolVersion || clientVer == "2.1"
+}
+
+// maxOpenFunctionCalls bounds the announced calls a connection remembers; a
+// tool round runs at most 16 calls, so only lost results ever reach it.
+const maxOpenFunctionCalls = 64
+
+// FunctionCallStarted returns llm-function-call-started and
+// llm-function-call-in-progress for one tool call. They carry only the
+// call's id (Pipecat's default report level "none"): tool names, arguments
+// and results can hold the caller's personal details.
+func (h *Handler) FunctionCallStarted(toolCallID string) []string {
+	h.fnMu.Lock()
+	if h.fnCalls == nil || len(h.fnCalls) >= maxOpenFunctionCalls {
+		h.fnCalls = make(map[string]struct{}) // ponytail: forgets calls whose result never came
+	}
+	h.fnCalls[toolCallID] = struct{}{}
+	h.fnMu.Unlock()
+	started, _ := h.formatMessage(TypeLLMFunctionCallStarted, json.RawMessage(`{}`))
+	data, _ := json.Marshal(FunctionCallInProgressData{ToolCallID: toolCallID})
+	inProgress, _ := h.formatMessage(TypeLLMFunctionCallInProgress, data)
+	return []string{started, inProgress}
+}
+
+// FunctionCallStopped returns llm-function-call-stopped for a call announced
+// by FunctionCallStarted, once, and nothing for any other call.
+func (h *Handler) FunctionCallStopped(toolCallID string, cancelled bool) []string {
+	h.fnMu.Lock()
+	_, open := h.fnCalls[toolCallID]
+	delete(h.fnCalls, toolCallID)
+	h.fnMu.Unlock()
+	if !open {
+		return nil
+	}
+	data, _ := json.Marshal(FunctionCallStoppedData{ToolCallID: toolCallID, Cancelled: cancelled})
+	msg, _ := h.formatMessage(TypeLLMFunctionCallStopped, data)
+	return []string{msg}
 }
