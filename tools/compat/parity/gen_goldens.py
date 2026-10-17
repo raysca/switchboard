@@ -505,7 +505,7 @@ def _function_calls(steps):
                                        FunctionCallResultFrame, FunctionCallsStartedFrame)
     from pipecat.observers.base_observer import FramePushed
     from pipecat.processors.frame_processor import FrameDirection
-    from pipecat.processors.frameworks.rtvi.observer import RTVIObserver
+    from pipecat.processors.frameworks.rtvi.observer import RTVIFunctionCallReportLevel, RTVIObserver, RTVIObserverParams
 
     out = []
 
@@ -533,7 +533,7 @@ def _function_calls(steps):
             frames.append(FunctionCallCancelFrame(function_name=s["text"], tool_call_id=s["id"]))
 
     async def main():
-        obs = Capture()  # default params: function_call_report_level {"*": NONE}
+        obs = Capture(params=RTVIObserverParams(function_call_report_level={"*": RTVIFunctionCallReportLevel.NONE}))
         for f in frames:
             await obs.on_push_frame(FramePushed(source=None, destination=None, frame=f, direction=FrameDirection.DOWNSTREAM, timestamp=0))
         return out
