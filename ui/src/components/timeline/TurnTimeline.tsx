@@ -166,7 +166,7 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                                 {tc.mcp_server_id && ` (${tc.mcp_server_id})`}
                               </span>
                               <div className="row">
-                                <Status tone={tc.status === "completed" || tc.status === "success" ? "good" : "bad"}>
+                                <Status tone={tc.status === "succeeded" ? "good" : tc.status === "cancelled" ? "neutral" : "bad"}>
                                   {tc.status}
                                 </Status>
                                 <span>{formatDuration(tc.started_at, tc.ended_at)}</span>

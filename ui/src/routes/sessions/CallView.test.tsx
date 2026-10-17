@@ -223,8 +223,8 @@ describe("CallView", () => {
   });
 
   it("lists the turns with what happened in them", async () => {
-    const tool = { id: "c1", session_id: ID, turn_id: "t2", remote_name: "crm.verify_identity", schema_hash: "x", started_at: "2026-10-12T14:00:07.000Z", ended_at: "2026-10-12T14:00:07.160Z", status: "completed", arguments_summary: "", result_summary: "" };
-    setup({ getSessionTraces: vi.fn().mockResolvedValue({ ...traces(toBilling), tool_calls: [tool] }) });
+    const withTool = { ...turns[1], tools: [{ name: "crm.verify_identity", status: "succeeded", duration_ms: 160 }] };
+    setup({ getSessionTurns: vi.fn().mockResolvedValue([turns[0], withTool, turns[2]]) });
     const region = await screen.findByRole("region", { name: "Turns" });
     const items = within(region).getAllByRole("listitem").map((li) => li.textContent);
     expect(items).toEqual([

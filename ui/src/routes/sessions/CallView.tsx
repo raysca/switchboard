@@ -153,7 +153,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
             <LoadingState label="Loading turns" />
           ) : (
             <ol className="call-turns">
-              {turnRows(s, turns, traces).map((r) => (
+              {turnRows(s, turns).map((r) => (
                 <li key={r.id}>
                   <span className="call-turns__at">{r.at}</span>
                   <span className="call-turns__body">

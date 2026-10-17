@@ -183,27 +183,27 @@ describe("stepsFor", () => {
 });
 
 describe("turnRows", () => {
-  const tools = {
-    ...traces(),
-    tool_calls: [
-      { id: "c1", session_id: "s1", turn_id: "t2", remote_name: "crm.verify_identity", schema_hash: "x", started_at: "2026-10-12T14:00:07.000Z", ended_at: "2026-10-12T14:00:07.160Z", status: "completed", arguments_summary: "", result_summary: "" },
-      { id: "c2", session_id: "s1", turn_id: "t2", remote_name: "crm.lookup", schema_hash: "x", started_at: "2026-10-12T14:00:08Z", ended_at: null, status: "failed", arguments_summary: "", result_summary: "" },
-    ],
-  };
   const turns = [
-    turn(2, "2026-10-12T14:00:06Z", "2026-10-12T14:00:09Z", "My bill went up.", "I can look into that."),
+    {
+      ...turn(2, "2026-10-12T14:00:06Z", "2026-10-12T14:00:09Z", "My bill went up.", "I can look into that."),
+      tools: [
+        { name: "crm.verify_identity", status: "succeeded", duration_ms: 160 },
+        { name: "crm.lookup", status: "failed", duration_ms: 0 },
+        { name: "crm.slow", status: "cancelled", duration_ms: 900 },
+      ],
+    },
     turn(1, "2026-10-12T14:00:01Z", "2026-10-12T14:00:01Z", "", "Hi there."),
     turn(3, "2026-10-12T14:00:43Z", "2026-10-12T14:00:45Z", "[async tool result: transfer_to_billing]", "Let me check", true),
   ];
   it("lists each turn in order with the reply, and notes what happened in it", () => {
-    expect(turnRows(session(), turns, tools)).toEqual([
-      { id: "t1", at: "00:01", text: "Hi there.", notes: [] },
-      { id: "t2", at: "00:06", text: "I can look into that.", notes: ["Tool crm.verify_identity · 160 ms", "Tool crm.lookup failed"] },
-      { id: "t3", at: "00:43", text: "Let me check", notes: ["Interrupted by the caller"] },
+    expect(turnRows(session(), turns)).toEqual([
+      { id: "t1", at: "00:01", text: "Hi there.", notes: [], latencies: undefined },
+      { id: "t2", at: "00:06", text: "I can look into that.", notes: ["Tool crm.verify_identity · 160 ms", "Tool crm.lookup failed", "Tool crm.slow cancelled"], latencies: undefined },
+      { id: "t3", at: "00:43", text: "Let me check", notes: ["Interrupted by the caller"], latencies: undefined },
     ]);
   });
   it("falls back to the caller's words, then to a plain note", () => {
-    const rows = turnRows(session(), [turn(1, "2026-10-12T14:00:01Z", "2026-10-12T14:00:01Z", "Hello?", ""), turn(2, "2026-10-12T14:00:05Z", "2026-10-12T14:00:05Z", " ", "")], null);
+    const rows = turnRows(session(), [turn(1, "2026-10-12T14:00:01Z", "2026-10-12T14:00:01Z", "Hello?", ""), turn(2, "2026-10-12T14:00:05Z", "2026-10-12T14:00:05Z", " ", "")]);
     expect(rows.map((r) => r.text)).toEqual(["Hello?", "No words recorded"]);
   });
 
@@ -240,7 +240,7 @@ describe("reply time", () => {
     expect(formatMs(1250)).toBe("1.3 s");
   });
   it("notes the reply time on the turn row", () => {
-    const rows = turnRows(session(), [withLat(1, { voice_to_voice_ms: 900 }), withLat(2, {})], null);
+    const rows = turnRows(session(), [withLat(1, { voice_to_voice_ms: 900 }), withLat(2, {})]);
     expect(rows[0].notes).toEqual(["Replied in 900 ms"]);
     expect(rows[1].notes).toEqual([]);
   });

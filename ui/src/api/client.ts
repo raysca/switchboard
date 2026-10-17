@@ -392,6 +392,14 @@ export const sessionTracesSchema = z.object({
 });
 export type SessionTracesDTO = z.infer<typeof sessionTracesSchema>;
 
+/** One tool call a turn made: never its arguments or result. */
+export const turnToolSchema = z.object({
+  name: z.string(),
+  status: z.string(),
+  duration_ms: z.number(),
+});
+export type TurnToolDTO = z.infer<typeof turnToolSchema>;
+
 export const turnSchema = z.object({
   id: z.string(),
   session_id: z.string(),
@@ -402,7 +410,7 @@ export const turnSchema = z.object({
   assistant_text: z.string().optional().default(""),
   interrupted: z.boolean().default(false),
   latencies: z.unknown().optional(),
-  tools: z.unknown().optional(),
+  tools: z.array(turnToolSchema).optional(),
 });
 export type TurnDTO = z.infer<typeof turnSchema>;
 
