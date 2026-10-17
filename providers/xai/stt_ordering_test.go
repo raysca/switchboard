@@ -299,3 +299,13 @@ func TestXAISTTDrainTimeoutClosesTheStream(t *testing.T) {
 		return len(h.p.draining) == 0
 	})
 }
+
+func TestXAISTTDrainTimeoutDefaultsToTwoSeconds(t *testing.T) {
+	p, err := NewSTTProcessor(DefaultSTTConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.cfg.DrainTimeout != 2*time.Second {
+		t.Fatalf("default DrainTimeout = %v, want 2s", p.cfg.DrainTimeout)
+	}
+}
