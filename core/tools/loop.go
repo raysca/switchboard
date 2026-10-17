@@ -230,9 +230,9 @@ func (l *ToolLoop) announce(call ToolCall, started time.Time) bool {
 
 // report settles an announced call. A loop error (history refused the result)
 // settles it as failed with the category context_error.
-func (l *ToolLoop) report(call ToolCall, res ToolResult, err error) {
+func (l *ToolLoop) report(call ToolCall, started time.Time, res ToolResult, err error) {
 	if err != nil {
-		res = ToolResult{CallID: call.ID, Status: ToolFailed, ErrorCategory: "context_error", EndedAt: l.cfg.Now()}
+		res = ToolResult{CallID: call.ID, Status: ToolFailed, ErrorCategory: "context_error", StartedAt: started, EndedAt: l.cfg.Now()}
 	}
 	l.emit(&core.ToolResultFrame{Turn: call.TurnID, Gen: call.Generation, Result: cloneToolResult(res), Timestamp: l.cfg.Now()})
 }
@@ -259,6 +259,13 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 			batch = batch[:l.cfg.MaxCalls-result.Calls]
 		}
 		slots := func() []slot {
+			// AGENTS.md says never block under a lock; this read lock is a deliberate exception.
+			// It already spans the executors, and announce/report (which can wait up to 2 s in
+			// Session.Reenter) run inside the round, in call order, from the executor goroutines.
+			// Collecting the frames to post after RUnlock would deliver every `started` after
+			// the tools finished and need a second ordering layer for the exactly-once settle.
+			// It cannot deadlock: only injectAsync takes the lock exclusively, on a background
+			// goroutine, so the worst case is a delayed async injection.
 			l.async.round.RLock()
 			defer l.async.round.RUnlock()
 			l.history.BeginToolRound() // plain messages queue until the results are written
@@ -387,7 +394,7 @@ func (l *ToolLoop) finish(roundCtx context.Context, call ToolCall, started time.
 	if announced {
 		defer func() {
 			if !async {
-				l.report(call, res, err)
+				l.report(call, started, res, err)
 			}
 		}()
 	}

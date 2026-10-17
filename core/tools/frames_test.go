@@ -245,3 +245,133 @@ func TestAsyncToolIsSettledCancelledWhenTheLoopCloses(t *testing.T) {
 		t.Fatalf("frames %q, want %q (exactly one settlement, never succeeded)", got, want)
 	}
 }
+
+// settledOnce asserts that the log holds exactly one result frame for each id.
+func settledOnce(t *testing.T, log *frameLog, ids ...string) {
+	t.Helper()
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	n := map[string]int{}
+	for _, f := range log.frames {
+		if r, ok := f.(*core.ToolResultFrame); ok {
+			n[r.Result.CallID]++
+		}
+	}
+	for _, id := range ids {
+		if n[id] != 1 {
+			t.Fatalf("call %s settled %d times, want 1 (%v)", id, n[id], log.got)
+		}
+	}
+}
+
+func TestParallelBargeInSettlesEveryAnnouncedCallOnceInOrder(t *testing.T) {
+	var current atomic.Bool
+	current.Store(true)
+	var running sync.WaitGroup
+	running.Add(3)
+	loop, _ := newParallelLoop(t, ToolExecutorFunc(func(ctx context.Context, _ ToolCall) (ToolResult, error) {
+		running.Done()
+		<-ctx.Done()
+		return ToolResult{}, ctx.Err()
+	}), func(c *ToolLoopConfig) {
+		c.IsCurrent = func(ToolCall) bool { return current.Load() }
+		c.MaxCalls, c.DefaultCallTimeout, c.RoundTimeout = 8, 5*time.Second, 5*time.Second
+	}, ToolDefinition{Name: "slow"})
+	go func() { running.Wait(); current.Store(false) }()
+	var log frameLog
+	calls := []ToolCall{testCall("a", "slow", "{}"), testCall("b", "slow", "{}"), testCall("c", "slow", "{}")}
+	if _, err := loop.WithFrames(log.emit).Run(context.Background(), calls, nil); !errors.Is(err, ErrStaleToolCall) {
+		t.Fatalf("err = %v", err)
+	}
+	want := "call:a call:b call:c result:a:cancelled:stale_generation result:b:cancelled:stale_generation result:c:cancelled:stale_generation"
+	if got := log.seq(); got != want {
+		t.Fatalf("frames %q, want %q", got, want)
+	}
+}
+
+func TestParallelClaimFailureSettlesTheEarlierAnnouncedCallOnce(t *testing.T) {
+	loop, _ := newParallelLoop(t, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+		t.Error("a call ran after the batch's claim failed")
+		return ToolResult{}, nil
+	}), nil, ToolDefinition{Name: "x"})
+	var log frameLog
+	bad := testCall("b", "x", "{}")
+	bad.SessionID = ""
+	if _, err := loop.WithFrames(log.emit).Run(context.Background(), []ToolCall{testCall("a", "x", "{}"), bad}, nil); !errors.Is(err, ErrMalformedToolCall) {
+		t.Fatalf("err = %v", err)
+	}
+	if got, want := log.seq(), "call:a result:a:cancelled:cancelled"; got != want {
+		t.Fatalf("frames %q, want %q (b was never claimed, so never announced)", got, want)
+	}
+}
+
+func TestToolLoopSettlesAnExecutorFailureOnce(t *testing.T) {
+	for name, tc := range map[string]struct {
+		exec ToolExecutor
+		def  ToolDefinition
+		want string
+	}{
+		"panic": {ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) { panic("boom") }),
+			ToolDefinition{Name: "x"}, "call:a result:a:failed:executor_panic"},
+		"timeout": {ToolExecutorFunc(func(ctx context.Context, _ ToolCall) (ToolResult, error) {
+			<-ctx.Done()
+			return ToolResult{}, ctx.Err()
+		}),
+			ToolDefinition{Name: "x", Policy: ToolPolicy{Timeout: 20 * time.Millisecond}}, "call:a result:a:cancelled:timeout"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			loop, _ := newTestLoop(t, tc.exec, tc.def)
+			defer loop.Close()
+			var log frameLog
+			if _, err := loop.WithFrames(log.emit).Run(context.Background(), []ToolCall{testCall("a", "x", "{}")}, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := log.seq(); got != tc.want {
+				t.Fatalf("frames %q, want %q", got, tc.want)
+			}
+			settledOnce(t, &log, "a")
+		})
+	}
+}
+
+// A history that refuses the result settles the call once as context_error, stamped with the time it was announced.
+func TestToolLoopSettlesAHistoryRefusalOnceWithItsAnnouncedStart(t *testing.T) {
+	var history *core.ConversationContext
+	loop, h := newParallelLoop(t, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
+		// A conflicting result for the same call makes the loop's own write fail.
+		if err := history.AddToolResult("t", 1, c.ID, []byte(`{"other":1}`), "", time.Time{}); err != nil {
+			t.Error(err)
+		}
+		return okResult(c.ID), nil
+	}), nil, ToolDefinition{Name: "x"})
+	history = h
+	var log frameLog
+	if _, err := loop.WithFrames(log.emit).Run(context.Background(), []ToolCall{testCall("a", "x", "{}")}, nil); err == nil {
+		t.Fatal("history refusal not returned")
+	}
+	if got, want := log.seq(), "call:a result:a:failed:context_error"; got != want {
+		t.Fatalf("frames %q, want %q", got, want)
+	}
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	if res := log.frames[1].(*core.ToolResultFrame).Result; !res.StartedAt.Equal(fixedNow) {
+		t.Fatalf("StartedAt = %v, want the announced time %v", res.StartedAt, fixedNow)
+	}
+}
+
+// Closed before the background run could start: the ack stays in history, the call is settled cancelled once, the executor never runs.
+func TestAsyncToolOnAClosedLoopIsSettledCancelledOnce(t *testing.T) {
+	loop, _ := newParallelLoop(t, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
+		t.Error("executor ran on a closed loop")
+		return ToolResult{}, nil
+	}), func(c *ToolLoopConfig) { c.IsCurrent = func(ToolCall) bool { return true } }, ToolDefinition{Name: "report", Policy: ToolPolicy{Async: true}})
+	loop.Close()
+	var log frameLog
+	if _, err := loop.WithFrames(log.emit).Run(context.Background(), []ToolCall{testCall("a", "report", "{}")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	loop.Close() // waits for any background run: a late duplicate would be in the log by now
+	if got, want := log.seq(), "call:a result:a:cancelled:cancelled"; got != want {
+		t.Fatalf("frames %q, want %q", got, want)
+	}
+}

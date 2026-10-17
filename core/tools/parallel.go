@@ -160,7 +160,7 @@ func (l *ToolLoop) startAsync(call ToolCall, def ToolDefinition, started time.Ti
 		a.mu.Unlock()
 		a.inflight.Add(-1)
 		if announced {
-			l.report(call, ToolResult{CallID: call.ID, Status: ToolCancelled, Result: errorPayload("cancelled"), ErrorCategory: "cancelled", StartedAt: started, EndedAt: l.cfg.Now()}, nil)
+			l.report(call, started, ToolResult{CallID: call.ID, Status: ToolCancelled, Result: errorPayload("cancelled"), ErrorCategory: "cancelled", StartedAt: started, EndedAt: l.cfg.Now()}, nil)
 		}
 		return ack, true, nil
 	}
@@ -194,7 +194,7 @@ func (l *ToolLoop) runAsync(call ToolCall, def ToolDefinition, started time.Time
 	}()
 	if l.async.ctx.Err() != nil { // loop closed: no result reaches history, but an announced call is settled
 		if announced {
-			l.report(call, ToolResult{CallID: call.ID, Status: ToolCancelled, Result: errorPayload("cancelled"), ErrorCategory: "cancelled", StartedAt: started, EndedAt: l.cfg.Now()}, nil)
+			l.report(call, started, ToolResult{CallID: call.ID, Status: ToolCancelled, Result: errorPayload("cancelled"), ErrorCategory: "cancelled", StartedAt: started, EndedAt: l.cfg.Now()}, nil)
 		}
 		return
 	}
@@ -226,7 +226,7 @@ func (l *ToolLoop) runAsync(call ToolCall, def ToolDefinition, started time.Time
 		res.Result = payload
 	}
 	if announced {
-		l.report(call, res, nil)
+		l.report(call, started, res, nil)
 	}
 	// The result is model-visible data in a user-role message: keep it inside a
 	// JSON envelope with a label so it is not mistaken for something the user said.
