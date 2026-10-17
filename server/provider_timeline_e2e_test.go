@@ -35,14 +35,29 @@ func TestCallBehaviorTimelineShowsProviderRetriesAndTheCircuitOpening(t *testing
 		llmCfg.RetryPolicy.MaxAttempts = 5
 		return google.NewLLMProcessor(llmCfg)
 	})
+	// activeIDs lists the registered calls once there are n of them, so a session id is looked up, not assumed.
+	activeIDs := func(n int) (ids []uint64) {
+		eventually(t, strconv.Itoa(n)+" live call(s)", func() bool {
+			r.s.mu.Lock()
+			defer r.s.mu.Unlock()
+			ids = ids[:0]
+			for id := range r.s.activeCalls {
+				ids = append(ids, id)
+			}
+			return len(ids) == n
+		})
+		return ids
+	}
 	c := r.dial(behaviorFlow(t, r, "Broken", "brokenmodel", ``))
+	brokenID := activeIDs(1)[0]
 	// A bystander call shares the echo LLM circuit but its own model works.
 	bystander := r.dial(behaviorFlow(t, r, "Bystander", "bystandervoice", ``))
-	eventually(t, "both calls to be live", func() bool {
-		r.s.mu.Lock()
-		defer r.s.mu.Unlock()
-		return len(r.s.activeCalls) == 2
-	})
+	var bystanderID uint64
+	for _, id := range activeIDs(2) {
+		if id != brokenID {
+			bystanderID = id
+		}
+	}
 	c.say("hello")
 	eventually(t, "the circuit to open on the call's timeline", func() bool { return r.has(EventCircuitState, "llm open") })
 
@@ -59,23 +74,30 @@ func TestCallBehaviorTimelineShowsProviderRetriesAndTheCircuitOpening(t *testing
 	}
 	// Decision 4: the circuit is shared, so the bystander is told it opened; retries are the broken call's alone.
 	eventually(t, "the bystander's timeline to show the shared circuit", func() bool {
-		for _, e := range timeline(2) {
+		for _, e := range timeline(int(bystanderID)) {
 			if e.Type == EventCircuitState && e.Provider == "echo" && e.Details == "llm open" {
 				return true
 			}
 		}
 		return false
 	})
-	for _, e := range timeline(2) {
+	opens := 0
+	for _, e := range timeline(int(bystanderID)) {
 		if e.Type == EventProviderRetry {
 			t.Fatalf("the bystander got a retry event: %+v", e)
 		}
+		if e.Type == EventCircuitState && e.Details == "llm open" {
+			opens++
+		}
+	}
+	if opens != 1 {
+		t.Fatalf("the bystander got %d circuit open events, want 1", opens)
 	}
 	if bystander.ended() {
 		t.Fatal("the bystander's call ended")
 	}
 	var body struct{ Events []TimelineEvent }
-	body.Events = timeline(1)
+	body.Events = timeline(int(brokenID))
 	var retries, circuits []string
 	for _, e := range body.Events {
 		switch e.Type {
