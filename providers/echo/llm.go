@@ -177,8 +177,8 @@ func (c *LLMClient) toolCalls(history []core.Message, hasTools bool) []core.Tool
 	msg := lastUser(history)
 	lower := strings.ToLower(msg)
 	type hit struct {
-		at   int
-		name string
+		start, at int // phrase start, and where its {json} begins
+		name      string
 	}
 	var mcp []hit
 	for _, p := range c.phrases {
@@ -187,11 +187,31 @@ func (c *LLMClient) toolCalls(history []core.Message, hasTools bool) []core.Tool
 			continue
 		}
 		if at := strings.Index(lower, p); at >= 0 {
-			mcp = append(mcp, hit{at + len(p), name})
+			mcp = append(mcp, hit{at, at + len(p), name})
 		}
 	}
 	if len(mcp) > 0 {
-		sort.Slice(mcp, func(i, j int) bool { return mcp[i].at < mcp[j].at })
+		// The longest phrase wins where phrases overlap (`call tool get` inside `call tool get_order`).
+		kept := mcp[:0:0]
+		for _, h := range mcp {
+			covered := false
+			for _, o := range mcp {
+				if o != h && o.start <= h.start && o.at >= h.at {
+					covered = true
+					break
+				}
+			}
+			if !covered {
+				kept = append(kept, h)
+			}
+		}
+		mcp = kept
+		sort.Slice(mcp, func(i, j int) bool {
+			if mcp[i].at != mcp[j].at {
+				return mcp[i].at < mcp[j].at
+			}
+			return mcp[i].name < mcp[j].name
+		})
 		calls := make([]core.ToolCall, 0, len(mcp))
 		for _, h := range mcp {
 			args := toolArguments(msg)

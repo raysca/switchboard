@@ -423,3 +423,22 @@ func TestRealLLMProcessorReportsToolFramesBeforeItsAnswer(t *testing.T) {
 		t.Fatalf("frames %v", got)
 	}
 }
+
+// MCP tools sharing a prefix: the longer phrase owns its position, so one phrase makes one call.
+func TestEchoLongestToolPhraseWins(t *testing.T) {
+	c := NewLLMClient(LLMOptions{
+		Phrases: map[string]string{"call tool get": "mcp__x_get", "call tool get_order": "mcp__x_get_order"},
+		Spoken:  map[string]string{"mcp__x_get": "get", "mcp__x_get_order": "get_order"},
+	})
+	defs := []core.ToolDefinition{{Name: "mcp__x_get", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	for i := 0; i < 20; i++ { // map order must not matter
+		ch, errs, _ := c.GenerateStreamWithNativeTools(context.Background(), "m", "", user(`call tool get_order {"id":"7"}`), nil, defs, core.ToolCall{})
+		var calls []core.ToolCall
+		for _, ck := range collect(t, ch, errs) {
+			calls = append(calls, ck.ToolCalls...)
+		}
+		if len(calls) != 1 || calls[0].Name != "mcp__x_get_order" || string(calls[0].Arguments) != `{"id":"7"}` {
+			t.Fatalf("calls %+v", calls)
+		}
+	}
+}
