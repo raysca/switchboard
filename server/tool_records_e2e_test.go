@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/providers/echo"
+	"govoice/providers/google"
 	"govoice/server/api"
 	"govoice/server/storage"
 )
@@ -169,9 +172,10 @@ func TestMCPCallParallelToolCallsAreEachRecorded(t *testing.T) {
 	}
 }
 
+// Recorder, database and API plumbing only: the real loop's rewrite is guarded by TestMCPCallRealLoopInventedToolNameIsNeverStored.
 // The echo model only calls attached tools, so an unknown tool is posted into the live call's
 // pipeline as the tool loop announces it (the placeholder name, failed): the real recorder, database and API.
-func TestMCPCallModelInventedToolNameIsNeverStored(t *testing.T) {
+func TestMCPCallPlaceholderIsStoredAsCategory(t *testing.T) {
 	r := newMCPCallRig(t)
 	session := r.liveSession()
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
@@ -206,5 +210,75 @@ func TestMCPCallModelInventedToolNameIsNeverStored(t *testing.T) {
 	turns, _ := json.Marshal(r.sessionTurns(c.sessionID))
 	if strings.Contains(string(b), "my_card_is") || strings.Contains(string(turns), "my_card_is") {
 		t.Fatalf("the model's tool name leaked: %s %s", b, turns)
+	}
+}
+
+// inventingLLM answers the user's "invent" with calls to tools that do not exist, whose names hold the caller's words
+// or are not valid names; everything else goes to the echo model.
+type inventingLLM struct {
+	*echo.LLMClient
+	done atomic.Bool
+}
+
+var inventedNames = []string{"my_card_is_4111111111111111", "my card is 4111 1111 1111 1111", "ça_carte_是_4111", "my_card_" + strings.Repeat("x", 200)}
+
+func (c *inventingLLM) GenerateStreamWithNativeTools(ctx context.Context, m, sp string, h []core.Message, n []google.GoogleNativeExchange, d []core.ToolDefinition, id core.ToolCall) (<-chan google.LLMStreamChunk, <-chan error, error) {
+	if last := h[len(h)-1]; last.Role == core.RoleUser && strings.Contains(last.Content, "invent") && c.done.CompareAndSwap(false, true) {
+		calls := make([]core.ToolCall, 0, len(inventedNames))
+		for i, name := range inventedNames {
+			calls = append(calls, core.ToolCall{ID: fmt.Sprintf("inv-%d", i+1), Name: name, Arguments: json.RawMessage(`{}`)})
+		}
+		ch, errs := make(chan google.LLMStreamChunk, 1), make(chan error)
+		ch <- google.LLMStreamChunk{ToolCalls: calls}
+		close(ch)
+		close(errs)
+		return ch, errs, nil
+	}
+	return c.LLMClient.GenerateStreamWithNativeTools(ctx, m, sp, h, n, d, id)
+}
+
+// The real google processor and tool loop against a model that invents tool names: the name never reaches the
+// stored rows, the API, the stored spans or the client wire; each call is stored as unknown_tool.
+func TestMCPCallRealLoopInventedToolNameIsNeverStored(t *testing.T) {
+	r := newMCPCallRig(t)
+	r.s.registry.Register("echo.llm", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		llmCfg := googleLLMConfig(spec, r.s.registry.echoLLMBreaker)
+		llmCfg.Provider = "echo"
+		llmCfg.Client = &inventingLLM{LLMClient: echo.NewLLMClient(echoLLMOptions(cfg, spec))}
+		return google.NewLLMProcessor(llmCfg)
+	})
+	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
+	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c.say("please invent")
+	waitFnEvents(t, c, 3*len(inventedNames)) // started, in-progress, stopped for each
+	c.waitReplies("Connecting you.", 1)
+	r.waitTurns(c.sessionID, 1) // before any barrier turn: a reply cut off by a typed turn has no row
+	c.barrier(t)
+	c.hangUp()
+	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
+
+	traces := r.sessionTraces(c.sessionID)
+	unknown := 0
+	for _, tc := range traces.ToolCalls {
+		// A well-formed undefined name is unknown_tool; a malformed one (spaces, non-ASCII, too long) invalid_tool_name.
+		if (tc.RemoteName == "unknown_tool" || tc.RemoteName == "invalid_tool_name") && tc.Status == "failed" && tc.MCPServerID == "" {
+			unknown++
+		}
+	}
+	if unknown != len(inventedNames) || len(traces.ToolCalls) != len(inventedNames) {
+		t.Fatalf("tool calls %+v, want %d failed rows stored by category", traces.ToolCalls, len(inventedNames))
+	}
+	b, _ := json.Marshal(traces)
+	turns, _ := json.Marshal(r.sessionTurns(c.sessionID))
+	wire := ""
+	for _, e := range c.fnEvents() {
+		wire += e.Raw
+	}
+	for _, seen := range []string{string(b), string(turns), wire} {
+		for _, leak := range []string{"my_card", "my card", "carte", "xxxxxxxxxx"} {
+			if strings.Contains(seen, leak) {
+				t.Fatalf("the model's tool name leaked (%q): %.2000s", leak, seen)
+			}
+		}
 	}
 }
