@@ -94,7 +94,6 @@ type ToolLoop struct {
 	ownedTracer *core.AsyncTracer
 	async       *asyncState
 	emit        func(core.Frame) // WithFrames; nil reports nothing
-
 }
 
 func NewToolLoop(definitions []ToolDefinition, executor ToolExecutor, history *core.ConversationContext, cfg ToolLoopConfig) (*ToolLoop, error) {
@@ -266,6 +265,8 @@ func (l *ToolLoop) Run(ctx context.Context, initial []ToolCall, continuation Con
 			// the tools finished and need a second ordering layer for the exactly-once settle.
 			// It cannot deadlock: only injectAsync takes the lock exclusively, on a background
 			// goroutine, so the worst case is a delayed async injection.
+			// Ceiling: in the parallel claim phase each announce can block up to 2 s on a full
+			// data queue (16 calls = 32 s) before any tool runs, with the round timer ticking.
 			l.async.round.RLock()
 			defer l.async.round.RUnlock()
 			l.history.BeginToolRound() // plain messages queue until the results are written
@@ -388,7 +389,9 @@ func (l *ToolLoop) begin(call ToolCall) (ToolResult, bool, time.Time, error) {
 	return ToolResult{}, false, started, nil
 }
 
-// finish validates a claimed call, runs the executor (or acknowledges an async tool) and commits the result; an announced call is settled when finish returns. gate, when non-nil, is called before every history write so parallel rounds commit in call order.
+// finish validates a claimed call, runs the executor (or acknowledges an async tool) and commits
+// the result; an announced call is settled when finish returns. gate, when non-nil, is called
+// before every history write so parallel rounds commit in call order.
 func (l *ToolLoop) finish(roundCtx context.Context, call ToolCall, started time.Time, announced bool, gate func()) (res ToolResult, err error) {
 	async := false // startAsync settled the call elsewhere (background run, or cancelled on close)
 	if announced {

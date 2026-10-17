@@ -133,10 +133,11 @@ func (l *ToolLoop) watchStale(ctx context.Context, cancel context.CancelFunc, ca
 	}
 }
 
-// startAsync acknowledges an async call at once and runs the executor in the
-// background. It reports true when the announced call is settled elsewhere: by
-// the background run, or here as cancelled when the loop closed meanwhile. The real result is injected into history as a user-role context
-// message when it arrives. Async calls deliberately ignore the generation
+// startAsync acknowledges an async call at once and runs the executor in the background. Its bool
+// is true once the acknowledgement is in history: from then on startAsync owns settling the call
+// (when it was announced), either from the background run or here as cancelled when the loop
+// closed meanwhile; the caller must not settle it. The real result is injected into history as a
+// user-role context message when it arrives. Async calls deliberately ignore the generation
 // fence: like Pipecat's cancel_on_interruption=False, they outlive barge-in.
 func (l *ToolLoop) startAsync(call ToolCall, def ToolDefinition, started time.Time, announced bool, commit func(ToolStatus, json.RawMessage, string) (ToolResult, error)) (ToolResult, bool, error) {
 	a := l.async
