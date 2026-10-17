@@ -243,7 +243,7 @@ func (r *TimelineRegistry) Handler() http.Handler {
 // closed again (the circuit gauge has the same race).
 // ponytail: matches the start step's candidates; a later step's providers are not matched.
 func (s *Server) recordCircuit(stage, provider string, st resilience.State) {
-	key := stage + "/" + provider
+	key := providerKey{stage, provider}
 	s.circuitMu.Lock()
 	prev, seen := s.circuitStates[key]
 	if (seen && prev == st) || (!seen && st == resilience.Closed) {
@@ -251,7 +251,7 @@ func (s *Server) recordCircuit(stage, provider string, st resilience.State) {
 		return
 	}
 	if s.circuitStates == nil {
-		s.circuitStates = map[string]resilience.State{}
+		s.circuitStates = map[providerKey]resilience.State{}
 	}
 	s.circuitStates[key] = st
 	s.circuitMu.Unlock()

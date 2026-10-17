@@ -169,8 +169,8 @@ func TestTimelinePruneKeepsActiveTimelines(t *testing.T) {
 func TestCircuitStateGoesOnTheTimelinesOfCallsUsingThatProviderOncePerChange(t *testing.T) {
 	uses, other := NewSessionTimeline(1, 10, time.Minute), NewSessionTimeline(2, 10, time.Minute)
 	s := &Server{activeCalls: map[uint64]*activeCall{
-		1: {timeline: uses, providers: map[string]bool{"llm/echo": true}},
-		2: {timeline: other, providers: map[string]bool{"llm/google": true}},
+		1: {timeline: uses, providers: map[providerKey]bool{{"llm", "echo"}: true}},
+		2: {timeline: other, providers: map[providerKey]bool{{"llm", "google"}: true}},
 	}}
 	for _, st := range []resilience.State{resilience.Closed, resilience.Open, resilience.Open, resilience.HalfOpen, resilience.Closed, resilience.Closed} {
 		s.recordCircuit("llm", "echo", st)
@@ -187,5 +187,14 @@ func TestCircuitStateGoesOnTheTimelinesOfCallsUsingThatProviderOncePerChange(t *
 	}
 	if n := len(other.Events()); n != 0 {
 		t.Fatalf("a call on another provider got %d circuit events", n)
+	}
+}
+
+// Breakers report every success; an unchanged state must cost nothing.
+func TestRecordCircuitUnchangedStateAllocatesNothing(t *testing.T) {
+	s := &Server{activeCalls: map[uint64]*activeCall{}}
+	s.recordCircuit("llm", "echo", resilience.Open)
+	if n := testing.AllocsPerRun(100, func() { s.recordCircuit("llm", "echo", resilience.Open) }); n != 0 {
+		t.Fatalf("%v allocations per unchanged report", n)
 	}
 }

@@ -101,10 +101,10 @@ type Server struct {
 
 	mu            sync.Mutex
 	activeCalls   map[uint64]*activeCall
-	circuitMu     sync.Mutex                  // guards circuitStates only (never held with mu)
-	circuitStates map[string]resilience.State // last state each "stage/provider" circuit reported (recordCircuit)
-	live          *liveCalls                  // stored session id -> context injector of a call running here
-	connecting    sync.WaitGroup              // calls admitted but not yet in activeCalls
+	circuitMu     sync.Mutex                       // guards circuitStates only (never held with mu)
+	circuitStates map[providerKey]resilience.State // last state each circuit reported (recordCircuit)
+	live          *liveCalls                       // stored session id -> context injector of a call running here
+	connecting    sync.WaitGroup                   // calls admitted but not yet in activeCalls
 	nextCallID    atomic.Uint64
 	textTurns     atomic.Uint64
 	pruneStop     chan struct{}
@@ -121,7 +121,7 @@ type activeCall struct {
 	session   *core.Session
 	timeline  *SessionTimeline
 	ending    *endReason
-	providers map[string]bool // "stage/provider" of every candidate of the start step
+	providers map[providerKey]bool // every candidate (stage, provider) of the start step
 }
 
 // NewServer initializes the server from configuration.
@@ -1219,12 +1219,15 @@ func (s *Server) sampleVADMetrics() {
 }
 
 // callProviders is "stage/provider" for every candidate (primary and fallbacks) of the call's start step.
-func callProviders(c CallSpec) map[string]bool {
-	m := map[string]bool{}
+// providerKey names one provider circuit; a struct key so a breaker report allocates nothing.
+type providerKey struct{ stage, provider string }
+
+func callProviders(c CallSpec) map[providerKey]bool {
+	m := map[providerKey]bool{}
 	add := func(stage string, primary StageSpec, fallbacks []StageSpec) {
-		m[stage+"/"+primary.Provider] = true
+		m[providerKey{stage, primary.Provider}] = true
 		for _, f := range fallbacks {
-			m[stage+"/"+f.Provider] = true
+			m[providerKey{stage, f.Provider}] = true
 		}
 	}
 	add("stt", c.STT, c.STTFallbacks)
