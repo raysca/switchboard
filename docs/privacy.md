@@ -160,9 +160,11 @@ privacy:
   session timeline and the "session failed" log (provider errors can echo
   request text), and OTel `transcript`/`prompt`/`text` attributes when
   `otel.capture_content` is on (today no span carries them: per-frame events
-  are not exported). Debug events and stored traces are metadata only. Tool
-  arguments/results are not stored by the server and are not exported to
-  OTel (no tool-content redactor is configured).
+  are not exported). Debug events and stored traces are metadata only.
+  Tool calls are stored by name, status and timing only (`tool_calls`;
+  `arguments_summary` and `result_summary` stay empty); their arguments and
+  results are never stored and are not exported to OTel (no tool-content
+  redactor is configured).
 - **Tool calls on the client wire:** `llm-function-call-started`, `-in-progress` and `-stopped` carry only the call's `tool_call_id` (and `cancelled`), Pipecat's default `function_call_report_level` `none`: no tool name, arguments or result reaches the client, whatever the redaction settings.
 - **NOT covered:** the live LLM context; anything the STT/LLM/TTS providers
   receive; the client's `user-transcription`; audio recordings (speech and DTMF

@@ -1,0 +1,130 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"govoice/core"
+	"govoice/core/coretest"
+	"govoice/server/flow"
+	"govoice/server/storage"
+)
+
+func TestTurnRecorderStoresToolCallsWithTheirTurn(t *testing.T) {
+	var mu sync.Mutex
+	var turns []storage.TurnRecord
+	var calls []storage.ToolCallRecord
+	snap := flow.MCPToolSnapshot{ServerID: "srv-1", RemoteName: "lookup_order", SchemaHash: "hash-1"}
+	r := newTurnRecorder(func(_ context.Context, row storage.TurnRecord) error {
+		mu.Lock()
+		defer mu.Unlock()
+		turns = append(turns, row)
+		return nil
+	}, func(_ context.Context, tc storage.ToolCallRecord) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, tc)
+		return nil
+	}, func(name string) (flow.MCPToolSnapshot, bool) { return snap, name == "mcp__lookup" }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
+	tail := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(r, tail)
+	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(100, 0)
+	call := func(id, name, turn string) *core.ToolCallFrame {
+		return &core.ToolCallFrame{Call: core.ToolCall{ID: id, Name: name, SessionID: "1", TurnID: core.TurnID(turn), Generation: 1}, Timestamp: at}
+	}
+	result := func(id, turn string, st core.ToolStatus) *core.ToolResultFrame {
+		return &core.ToolResultFrame{Turn: core.TurnID(turn), Gen: 1, Result: core.ToolResult{CallID: id, Status: st, StartedAt: at, EndedAt: at.Add(120 * time.Millisecond)}}
+	}
+	for _, f := range []core.Frame{
+		&core.UserMessageFrame{Turn: "t1", Content: "Where is my order?", Timestamp: at},
+		call("c1", "mcp__lookup", "t1"),
+		result("c1", "t1", core.ToolSucceeded),
+		call("c2", "transfer_to_sales", "t1"),
+		&core.AssistantMessageFrame{Turn: "t1", Content: "Shipped.", Timestamp: at.Add(time.Second)},
+		result("c2", "t1", core.ToolCancelled), // settled after its turn's row (barge-in, an async tool)
+		result("c3", "t1", core.ToolFailed),    // never announced: its generation was stale
+		call("c4", "mcp__lookup", "t2"),        // still running when the call ends
+		&core.LLMTextFrame{Text: "marker", Turn: "t9", Gen: 1},
+	} {
+		if err := session.Post(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventually(t, "every frame through the recorder", func() bool {
+		for _, f := range tail.GetFrames() {
+			if _, ok := f.(*core.LLMTextFrame); ok {
+				return true
+			}
+		}
+		return false
+	})
+	_ = session.Close()
+	r.close(t.Context())
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(turns) != 1 || turns[0].AssistantText != "Shipped." {
+		t.Fatalf("turns %+v", turns)
+	}
+	row := turns[0].ID
+	if len(calls) != 3 {
+		t.Fatalf("tool rows %+v, want 3 (c1, c2, c4; never c3)", calls)
+	}
+	c1, c2, c4 := calls[0], calls[1], calls[2]
+	if c1.SessionID != "sess" || c1.TurnID != row || c1.MCPServerID != "srv-1" || c1.RemoteName != "lookup_order" || c1.SchemaHash != "hash-1" ||
+		c1.Status != "succeeded" || c1.EndedAt.Sub(c1.StartedAt) != 120*time.Millisecond || c1.ArgumentsSummary != "" || c1.ResultSummary != "" {
+		t.Fatalf("c1 %+v", c1)
+	}
+	if c2.TurnID != row || c2.RemoteName != "transfer_to_sales" || c2.MCPServerID != "" || c2.Status != "cancelled" {
+		t.Fatalf("c2 %+v", c2)
+	}
+	if c4.TurnID != "" || c4.RemoteName != "lookup_order" || c4.Status != "cancelled" || !c4.EndedAt.IsZero() {
+		t.Fatalf("c4 %+v", c4)
+	}
+}
+
+// A tool name the model invented can carry the caller's words; it is stored by its category only.
+func TestTurnRecorderNeverStoresAModelInventedToolName(t *testing.T) {
+	var mu sync.Mutex
+	var calls []storage.ToolCallRecord
+	r := newTurnRecorder(func(context.Context, storage.TurnRecord) error { return nil }, func(_ context.Context, tc storage.ToolCallRecord) error {
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, tc)
+		return nil
+	}, func(string) (flow.MCPToolSnapshot, bool) { return flow.MCPToolSnapshot{}, false }, "sess", slog.New(slog.NewTextHandler(io.Discard, nil)), newTurnLatencies())
+	tail := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(r, tail)
+	session, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	name := "my_card_is_4111111111111111_" + strings.Repeat("x", 40)
+	for _, f := range []core.Frame{
+		&core.ToolCallFrame{Call: core.ToolCall{ID: "c1", Name: name, SessionID: "1", TurnID: "t1", Generation: 1}, Timestamp: time.Unix(100, 0)},
+		&core.ToolResultFrame{Turn: "t1", Gen: 1, Result: core.ToolResult{CallID: "c1", Status: core.ToolFailed, ErrorCategory: "unknown_tool"}},
+		&core.LLMTextFrame{Text: "marker", Turn: "t9", Gen: 1},
+	} {
+		if err := session.Post(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventually(t, "every frame through the recorder", func() bool { return len(tail.GetFrames()) == 3 })
+	_ = session.Close()
+	r.close(t.Context())
+	mu.Lock()
+	defer mu.Unlock()
+	if len(calls) != 1 || calls[0].RemoteName != "unknown_tool" || strings.Contains(fmt.Sprintf("%+v", calls[0]), "4111") {
+		t.Fatalf("stored %+v", calls)
+	}
+}

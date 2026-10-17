@@ -499,3 +499,27 @@ func TestSpanEnd_ErrorCategoryNeverContainsMessage(t *testing.T) {
 		t.Fatalf("error type missing from attributes: %s", attrs)
 	}
 }
+
+func TestAdapterKeepsWhichMCPToolRan(t *testing.T) {
+	s := newTestStore(t)
+	sessID := createTestSession(t, s)
+	adapter := trace.NewAdapter(s.Traces())
+	ctx := context.Background()
+	span := adapter.StartSpan(ctx, core.NewTraceEvent("mcp.tool.execute", time.Now().UTC(), core.SessionID(sessID), "", 1, core.TracePolicy{Content: core.TraceMetadata}, nil))
+	span.SetAttribute("mcp.server_id", "0192aaaa-0000-7000-8000-000000000001")
+	span.SetAttribute("mcp.tool_name", "lookup_order")
+	span.SetAttribute("mcp.duration_ms", int64(42))
+	span.End(nil)
+	if err := adapter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	spans, err := s.Traces().Spans(ctx, sessID, "")
+	if err != nil || len(spans) != 1 {
+		t.Fatalf("spans %+v err %v", spans, err)
+	}
+	for _, want := range []string{`"mcp.server_id":"0192aaaa-0000-7000-8000-000000000001"`, `"mcp.tool_name":"lookup_order"`, `"mcp.duration_ms":42`} {
+		if !strings.Contains(spans[0].AttributesJSON, want) {
+			t.Fatalf("attributes %s lack %s", spans[0].AttributesJSON, want)
+		}
+	}
+}

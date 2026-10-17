@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -60,7 +61,7 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID, caller string
 		s.metrics.TurnsTotal.Add(1)
 		row = s.redactTurn(row)
 		return s.store.Sessions().AddTurn(ctx, row)
-	}, rs.Pin.ID, s.logger, lat)
+	}, s.store.Traces().AddToolCall, rs.MCPTool, rs.Pin.ID, s.logger, lat)
 	release := func() {
 		// In-flight MCP tool calls are waited for, but never past the session
 		// teardown budget: a stuck remote tool must not pin the call forever.
@@ -94,26 +95,73 @@ func (s *Server) redactTurn(row storage.TurnRecord) storage.TurnRecord {
 }
 
 // turnRecorder stores one turn row per assistant reply, complete or
-// interrupted, pairing it with the user message that started it. Rows are
-// written by one goroutine per call so the session run loop never waits on
-// the database.
+// interrupted, pairing it with the user message that started it, and one
+// tool_calls row per tool call the loop announced: its name, status and
+// timing, never its arguments or result. Rows are written by one goroutine per
+// call so the session run loop never waits on the database; a turn row is
+// written before the tool calls that reference it.
 type turnRecorder struct {
-	users   map[string]*core.UserMessageFrame // run-loop only
-	ordinal int
-	rows    chan storage.TurnRecord
-	done    chan struct{}
-	lat     *turnLatencies
+	mu       sync.Mutex // the run loop and close; never held across a write
+	users    map[string]*core.UserMessageFrame
+	calls    map[string]pendingTool              // announced calls by tool call id, until their result
+	finished map[string][]storage.ToolCallRecord // settled calls by turn, until the turn's row is queued
+	rowIDs   map[string]string                   // turn -> its queued row id, for calls settled after it
+	ordinal  int
+	closed   bool
+	rows     chan turnWrite
+	done     chan struct{}
+	lat      *turnLatencies
+	mcpTool  func(name string) (flow.MCPToolSnapshot, bool)
 }
 
-func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, sessionID string, logger *slog.Logger, lat *turnLatencies) *turnRecorder {
-	r := &turnRecorder{lat: lat, users: map[string]*core.UserMessageFrame{}, rows: make(chan storage.TurnRecord, 64), done: make(chan struct{})}
+// pendingTool is an announced call waiting for its result.
+type pendingTool struct {
+	turn string
+	rec  storage.ToolCallRecord
+}
+
+// turnWrite is one ordered write: a turn row (nil for none), then the tool
+// calls that belong with it.
+type turnWrite struct {
+	turn  *storage.TurnRecord
+	tools []storage.ToolCallRecord
+}
+
+// The recorder forgets what it can no longer pair. A tool round runs at most 16
+// calls and a reply settles its turn, so these bounds are reached only when
+// results or replies never come.
+const (
+	maxRecordedTurns = 32
+	maxPendingTools  = 64
+)
+
+func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, addToolCall func(context.Context, storage.ToolCallRecord) error,
+	mcpTool func(name string) (flow.MCPToolSnapshot, bool), sessionID string, logger *slog.Logger, lat *turnLatencies) *turnRecorder {
+	r := &turnRecorder{lat: lat, mcpTool: mcpTool, users: map[string]*core.UserMessageFrame{}, calls: map[string]pendingTool{},
+		finished: map[string][]storage.ToolCallRecord{}, rowIDs: map[string]string{}, rows: make(chan turnWrite, 64), done: make(chan struct{})}
 	go func() {
 		defer close(r.done)
-		for row := range r.rows {
-			row.SessionID = sessionID
+		for w := range r.rows {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if err := addTurn(ctx, row); err != nil {
-				logger.Warn("turn not recorded", "session", sessionID, "err", err.Error())
+			stored := true
+			if w.turn != nil {
+				w.turn.SessionID = sessionID
+				if err := addTurn(ctx, *w.turn); err != nil {
+					stored = false
+					logger.Warn("turn not recorded", "session", sessionID, "err", err.Error())
+				}
+			}
+			for _, tc := range w.tools {
+				tc.SessionID = sessionID
+				if !stored {
+					tc.TurnID = "" // its turn row is missing: keep the call, unattached
+				}
+				if addToolCall == nil {
+					continue
+				}
+				if err := addToolCall(ctx, tc); err != nil {
+					logger.Warn("tool call not recorded", "session", sessionID, "err", err.Error())
+				}
 			}
 			cancel()
 		}
@@ -122,12 +170,20 @@ func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, se
 }
 
 func (r *turnRecorder) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	r.mu.Lock()
 	switch m := f.(type) {
 	case *core.UserMessageFrame:
-		if len(r.users) >= 32 { // ponytail: replies never came for these; forget them
+		if len(r.users) >= maxRecordedTurns { // ponytail: replies never came for these; forget them
 			clear(r.users)
 		}
 		r.users[m.Turn] = m
+	case *core.ToolCallFrame:
+		if len(r.calls) >= maxPendingTools { // ponytail: results never came for these; forget them
+			clear(r.calls)
+		}
+		r.calls[m.Call.ID] = pendingTool{turn: string(m.Call.TurnID), rec: r.toolRecord(m.Call.Name, m.Timestamp)}
+	case *core.ToolResultFrame:
+		r.settleLocked(m.Result)
 	case *core.AssistantMessageFrame:
 		user := r.users[m.Turn]
 		delete(r.users, m.Turn)
@@ -135,18 +191,106 @@ func (r *turnRecorder) ProcessFrame(_ context.Context, f core.Frame, dir core.Di
 		if user != nil {
 			row.Transcript, row.StartedAt = user.Content, user.Timestamp
 		}
-		select {
-		case r.rows <- row:
+		tools := r.finished[m.Turn]
+		delete(r.finished, m.Turn)
+		for i := range tools {
+			tools[i].TurnID = row.ID
+		}
+		if r.sendLocked(turnWrite{turn: &row, tools: tools}) {
 			r.ordinal++
-		default: // ponytail: history is best effort; never stall the call on the DB
+			if len(r.rowIDs) >= maxRecordedTurns {
+				clear(r.rowIDs)
+			}
+			r.rowIDs[m.Turn] = row.ID
 		}
 	}
+	r.mu.Unlock()
 	return e.PushDirection(f, dir)
 }
 
-// close stops accepting rows and waits (bounded by ctx) for queued ones.
+// toolRecord starts a call's row: an MCP tool by its server, remote name and
+// schema hash, a built-in tool (a route's transfer, end_call) by its own name.
+// It reads cancelled until a result settles it.
+func (r *turnRecorder) toolRecord(name string, at time.Time) storage.ToolCallRecord {
+	rec := storage.ToolCallRecord{ID: storage.NewID(), RemoteName: name, StartedAt: at, Status: string(core.ToolCancelled)}
+	if r.mcpTool != nil {
+		if t, ok := r.mcpTool(name); ok {
+			rec.MCPServerID, rec.RemoteName, rec.SchemaHash = t.ServerID, t.RemoteName, t.SchemaHash
+		}
+	}
+	return rec
+}
+
+// settleLocked completes an announced call's row with its result; a result for
+// a call that was never announced (a stale generation) is ignored.
+func (r *turnRecorder) settleLocked(res core.ToolResult) {
+	p, ok := r.calls[res.CallID]
+	if !ok {
+		return
+	}
+	delete(r.calls, res.CallID)
+	p.rec.Status, p.rec.EndedAt = string(res.Status), res.EndedAt
+	if c := res.ErrorCategory; c == "unknown_tool" || c == "invalid_tool_name" {
+		// The model wrote that name (it can hold the caller's words) and remote_name is never purged.
+		p.rec.RemoteName, p.rec.MCPServerID, p.rec.SchemaHash = c, "", ""
+	}
+	if !res.StartedAt.IsZero() {
+		p.rec.StartedAt = res.StartedAt
+	}
+	if id, ok := r.rowIDs[p.turn]; ok { // settled after its turn's row: an async tool, a call cut off by barge-in
+		p.rec.TurnID = id
+		r.sendLocked(turnWrite{tools: []storage.ToolCallRecord{p.rec}})
+		return
+	}
+	if _, ok := r.finished[p.turn]; !ok && len(r.finished) >= maxRecordedTurns {
+		r.flushWaitingLocked() // ponytail: replies never came for these turns
+	}
+	r.finished[p.turn] = append(r.finished[p.turn], p.rec)
+}
+
+// flushWaitingLocked writes the settled calls still waiting for a turn row, as
+// they are (unattached unless their turn's row id is known).
+func (r *turnRecorder) flushWaitingLocked() {
+	var rest []storage.ToolCallRecord
+	for _, tools := range r.finished {
+		rest = append(rest, tools...)
+	}
+	clear(r.finished)
+	if len(rest) > 0 {
+		r.sendLocked(turnWrite{tools: rest})
+	}
+}
+
+// sendLocked queues w without waiting: history is best effort and never stalls the call on the database.
+func (r *turnRecorder) sendLocked(w turnWrite) bool {
+	if r.closed {
+		return false
+	}
+	select {
+	case r.rows <- w:
+		return true
+	default:
+		return false
+	}
+}
+
+// close records the calls still running (cancelled), stops accepting rows and
+// waits (bounded by ctx) for queued ones.
 func (r *turnRecorder) close(ctx context.Context) {
-	close(r.rows)
+	r.mu.Lock()
+	if !r.closed {
+		for _, p := range r.calls {
+			if id, ok := r.rowIDs[p.turn]; ok {
+				p.rec.TurnID = id
+			}
+			r.finished[p.turn] = append(r.finished[p.turn], p.rec)
+		}
+		clear(r.calls)
+		r.flushWaitingLocked()
+		r.closed = true
+		close(r.rows)
+	}
+	r.mu.Unlock()
 	select {
 	case <-r.done:
 	case <-ctx.Done():

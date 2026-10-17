@@ -181,6 +181,17 @@ func StartSnapshotSession(ctx context.Context, flows *flow.Service, mcpService *
 	return &Session{Pin: pin, Snapshot: snapshot, Definitions: definitions, Executor: runner, end: flows.EndSession, runner: runner}, nil
 }
 
+// MCPTool is the captured MCP tool a model-facing tool name stands for; false
+// for a built-in tool (a route's transfer, end_call, send_dtmf).
+func (s *Session) MCPTool(name string) (flow.MCPToolSnapshot, bool) {
+	for _, t := range s.Snapshot.MCPTools {
+		if runtimeToolName(t.ServerID, t.RemoteName) == name {
+			return t, true
+		}
+	}
+	return flow.MCPToolSnapshot{}, false
+}
+
 func (s *Session) Close(ctx context.Context) error {
 	if s == nil || s.end == nil {
 		return nil
