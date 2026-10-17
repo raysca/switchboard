@@ -24,4 +24,4 @@ Explicitly uninterruptible output and its final drain are retained in place, eve
 
 The deterministic TTS test double (`coretest.TTSProcessor`) uses a cancellation-safe admission-order chain, matching the serialized Google/xAI unit boundary: every frame for unit 1 is emitted before unit 2 starts. Interruption cancels the active and queued fake synthesis work; session teardown also releases queued waiters.
 
-The server guarantee ends at bytes already accepted by the socket. The pinned unmodified browser client still cannot clear buffered playback; `docs/compatibility/playback-clear-decision.json` therefore remains unresolved and is not a pass.
+The server guarantee ends at bytes already accepted by the socket. After the flush the transport sends RTVI `bot-interrupted` (at most the one audio frame already admitted to the socket, one provider chunk, follows it). The pinned unmodified browser client ignores that message and still cannot clear buffered playback; `docs/compatibility/playback-clear-decision.json` therefore remains unresolved and is not a pass.

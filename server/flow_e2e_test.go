@@ -213,6 +213,7 @@ type e2eCall struct {
 	mu        sync.Mutex
 	texts     []string
 	fn        []fnEvent // llm-function-call-* messages, in arrival order
+	wire      []string  // every RTVI message ("msg:<type>") and bot audio frame ("audio"), in arrival order
 	audio     []audioArrival
 	seq       int
 	done      chan struct{} // closed when the server ends the connection
@@ -294,6 +295,13 @@ func (c *e2eCall) read() {
 		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
 			switch m := f.(type) {
 			case *ws.WireMessageFrame:
+				var head struct {
+					Type string `json:"type"`
+				}
+				_ = json.Unmarshal([]byte(m.Data), &head)
+				c.mu.Lock()
+				c.wire = append(c.wire, "msg:"+head.Type)
+				c.mu.Unlock()
 				if strings.Contains(m.Data, "bot-llm-text") {
 					c.mu.Lock()
 					c.texts = append(c.texts, m.Data)
@@ -316,6 +324,7 @@ func (c *e2eCall) read() {
 				}
 				c.mu.Lock()
 				c.audio = append(c.audio, audioArrival{at: time.Now(), peak: peak, dur: m.Duration})
+				c.wire = append(c.wire, "audio")
 				c.mu.Unlock()
 			}
 		}

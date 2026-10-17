@@ -8,14 +8,25 @@
   },
   "probes": {
     "protobuf_interruption_field_5": {
-      "supported": false,
-      "observed_error": "Unknown frame kind"
+      "delivered_to_client": false,
+      "media_manager_calls": [],
+      "logged": ["error: Failed to deserialize incoming message Error: Unknown frame kind"]
+    },
+    "rtvi_bot_interrupted": {
+      "delivered_to_client": true,
+      "media_manager_calls": [],
+      "logged": []
     },
     "rtvi_user_started_speaking": {
-      "deserializes": true,
-      "client_callback_fires": true,
-      "media_manager_interrupt_called": false
+      "delivered_to_client": true,
+      "media_manager_calls": [],
+      "logged": []
     }
+  },
+  "server_barge_in_emission": {
+    "rtvi_bot_interrupted": "sent once per barge-in that cuts a reply off (the transport's FlushFrame), after the paced writer dropped that reply's queued audio; at most the one audio frame already admitted to the socket (one provider chunk) follows it; Pipecat's RTVIObserver sends it on every InterruptionFrame",
+    "protobuf_interruption_field_5": "not sent: the pinned transport rejects it and logs Failed to deserialize incoming message on every barge-in",
+    "evidence": "transport/ws/bot_interrupted_test.go, server/barge_in_e2e_test.go, server/barge_in_client_e2e_test.go"
   },
   "v1_server_side_residual_playback": {
     "bounded_by_pacing": true,

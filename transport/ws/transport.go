@@ -1037,8 +1037,9 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		return e.PushDirection(f, dir)
 
 	case core.FrameInterruption:
-		// The following flush drives an output-derived stopped transition. The
-		// pinned client still does not clear audio it already buffered.
+		// An interruption that cut a reply off is followed by its flush, which
+		// tells the client (bot-interrupted below); one with nothing to cut (a
+		// typed turn while the bot is quiet) sends nothing.
 		return e.PushDirection(f, dir)
 
 	case core.FrameFlush:
@@ -1058,6 +1059,16 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 				_ = session.Reenter(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream, session.TailIndex(), 0)
 			}
 		})
+		// The flush is the barrier that cut a reply off (only the assistant's
+		// handleInterruption emits one): tell the client, as Pipecat's
+		// RTVIObserver does. BeginFlush has just dropped the reply's queued
+		// audio, so only the audio frame already admitted to the socket (one
+		// provider chunk) can follow this message. The pinned client ignores it
+		// (docs/compatibility/playback-clear-decision.json); the protobuf
+		// interruption frame is not sent: the pinned client rejects it.
+		if msg, err := c.rtvi.FormatBotInterrupted(); err == nil {
+			_ = c.WriteWireMessage(ctx, msg)
+		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameError:
