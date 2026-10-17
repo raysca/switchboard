@@ -158,8 +158,8 @@ export function CallView({ client, keyValue }: CallViewProps) {
                   <span className="call-turns__at">{r.at}</span>
                   <span className="call-turns__body">
                     <span className="call-turns__text">{r.text}</span>
-                    {r.notes.map((n) => (
-                      <span key={n} className="call-turns__note">
+                    {r.notes.map((n, i) => (
+                      <span key={i} className="call-turns__note">
                         {n}
                       </span>
                     ))}

@@ -1,7 +1,7 @@
 import { test, expect, LIVE } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
 import { botReply, connectAdmin, openFlowTest, sendText, startCall } from "../lib/flows-helpers";
-import { mcpFlow } from "../lib/mcp-helpers";
+import { mcpFlow, pace } from "../lib/mcp-helpers";
 
 // A tool call seen live in the test call's RTVI event log, then on the call's page: its turn and its technical trace.
 // The local test MCP server (cmd/mcptest) and the echo providers: free and deterministic.
@@ -23,6 +23,7 @@ test("a tool call shows in the test call's events and on the call's page", async
   const events = ["llm-function-call-stopped", "llm-function-call-in-progress", "llm-function-call-started"];
   await expect(page.getByLabel("RTVI event log").locator("code")).toHaveText(events);
   // Ordering barrier: after one more answered turn the log must still hold exactly those three.
+  await pace(page); // the stack's guard against a text turn sent while the last reply commits (mcp-helpers.ts)
   await sendText(page, "barrier");
   await expect(botReply(page, /You said: barrier/)).toBeVisible();
   await expect(page.getByLabel("RTVI event log").locator("code")).toHaveText(events);
@@ -33,11 +34,13 @@ test("a tool call shows in the test call's events and on the call's page", async
   await expect(page).toHaveURL(/\/sessions\/[^/]+$/);
   // The note sits on the turn that made the call (the one that answered "shipped"), not on the barrier turn.
   const turns = page.locator(".call-turns li");
-  const callTurn = turns.filter({ hasText: /^Tool lookup_order|Tool lookup_order · / });
+  const callTurn = turns.filter({ hasText: "Tool lookup_order · " });
   await expect(callTurn).toHaveCount(1, { timeout: 15_000 });
   await expect(callTurn.getByText(/^Tool lookup_order · \d+ ms$/)).toBeVisible();
   await expect(callTurn).toContainText("shipped");
-  await expect(turns.filter({ hasText: "barrier" })).not.toContainText("lookup_order");
+  const barrierTurn = turns.filter({ hasText: "barrier" });
+  await expect(barrierTurn).toHaveCount(1);
+  await expect(barrierTurn).not.toContainText("lookup_order");
   await step(page, "the tool call on its turn");
 
   await page.getByText("Technical trace").click();

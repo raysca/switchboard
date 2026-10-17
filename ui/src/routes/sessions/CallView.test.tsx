@@ -235,6 +235,16 @@ describe("CallView", () => {
     expect(within(region).queryByText(/not recorded yet/)).toBeNull();
   });
 
+  it("lists two identical tool lines on one turn without duplicate React keys", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const twice = { ...turns[1], tools: [{ name: "lookup", status: "failed", duration_ms: 0 }, { name: "lookup", status: "failed", duration_ms: 0 }] };
+    setup({ getSessionTurns: vi.fn().mockResolvedValue([turns[0], twice, turns[2]]) });
+    const region = await screen.findByRole("region", { name: "Turns" });
+    expect(within(region).getAllByText("Tool lookup failed")).toHaveLength(2);
+    expect(spy.mock.calls.filter((c) => String(c[0]).includes("same key"))).toEqual([]);
+    spy.mockRestore();
+  });
+
   it("says when the flow ended the call", async () => {
     setup({ getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling, span("call.end", "2026-10-12T14:04:12Z", { reason: "ended_by_flow", from_step: "b" }))) });
     expect(await screen.findByText("Ended by the flow (Billing)")).toBeVisible();
