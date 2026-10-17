@@ -14,10 +14,10 @@ import (
 
 func TestTimelineStampsActiveStep(t *testing.T) {
 	tl := NewSessionTimeline(1, 10, time.Minute)
-	tl.Record(TimelineEvent{Type: EventLLMStart})
+	tl.Record(TimelineEvent{Type: EventLLMFirstToken})
 	tl.SetStep("sales")
-	tl.Record(TimelineEvent{Type: EventLLMStart})
-	tl.Record(TimelineEvent{Type: EventTTSAudio, Step: "explicit"})
+	tl.Record(TimelineEvent{Type: EventLLMFirstToken})
+	tl.Record(TimelineEvent{Type: EventTTSUnit, Step: "explicit"})
 	ev := tl.Events()
 	if ev[0].Step != "" || ev[1].Step != "sales" || ev[2].Step != "explicit" {
 		t.Fatalf("steps = %q %q %q", ev[0].Step, ev[1].Step, ev[2].Step)

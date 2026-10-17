@@ -41,6 +41,7 @@ func registerOfflineSpeech(r *Registry) {
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
 		}
+		ttsCfg.RetryPolicy.OnRetry = spec.OnRetry
 		return xai.NewStreamingTTSProcessor(ttsCfg)
 	})
 }

@@ -104,6 +104,10 @@ A flow with more than one step moves the call between steps. Every timeline even
 
 Metrics (unlabelled: step ids are tenant data): `voice_routes_total`, `voice_route_failures_total`, and the `voice_route_seconds` histogram.
 
+### Provider retries and circuits
+
+`provider_retry` is recorded each time an LLM or TTS request of the call is retried (`provider`, `details` `<stage> retry <n>`; `n` = 1 for the second attempt). `circuit_state` is recorded when a provider circuit the call uses changes state (`provider`, `details` `<stage> <closed|open|half_open>`); circuits are shared by every call, so each live call that uses the provider for that stage in its start step gets the event, whichever call's requests moved the circuit. Only the circuits exported as `voice_{stt,llm,tts}_circuit_state` report (google, xai, echo, offline, nvidia): a call on an OpenAI-compatible, Deepgram, Cartesia or ElevenLabs stage gets `provider_retry` events but no `circuit_state` (those breakers have no observer). STT stream dials do not record retries. Breaker reports from concurrent requests can arrive out of order, so a timeline can end on `open` while the circuit has closed again (the gauge has the same race).
+
 ---
 
 ## 5. Incident Interpretation Runbook

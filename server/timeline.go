@@ -4,35 +4,34 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"govoice/core/resilience"
 )
 
 // TimelineEventType categorizes trace events for a session timeline.
 type TimelineEventType string
 
 const (
-	EventConnect         TimelineEventType = "connect"
-	EventAuthenticate    TimelineEventType = "authenticate"
-	EventReady           TimelineEventType = "ready"
-	EventSpeechStart     TimelineEventType = "speech_start"
-	EventSpeechStop      TimelineEventType = "speech_stop"
-	EventSTTRotation     TimelineEventType = "stt_rotation"
-	EventSTTResult       TimelineEventType = "stt_result"
-	EventLLMStart        TimelineEventType = "llm_start"
-	EventLLMFirstToken   TimelineEventType = "llm_first_token"
-	EventLLMComplete     TimelineEventType = "llm_complete"
-	EventTTSUnit         TimelineEventType = "tts_unit"
-	EventTTSAudio        TimelineEventType = "tts_audio"
-	EventInterruption    TimelineEventType = "interruption"
-	EventFlushAck        TimelineEventType = "flush_ack"
-	EventContextEviction TimelineEventType = "context_eviction"
-	EventProviderRetry   TimelineEventType = "provider_retry"
-	EventCircuitState    TimelineEventType = "circuit_state"
-	EventLatency         TimelineEventType = "latency" // Details = stage, DurationMs = value
-	EventError           TimelineEventType = "error"
-	EventDisconnect      TimelineEventType = "disconnect"
+	EventConnect       TimelineEventType = "connect"
+	EventAuthenticate  TimelineEventType = "authenticate"
+	EventReady         TimelineEventType = "ready"
+	EventSpeechStart   TimelineEventType = "speech_start"
+	EventSpeechStop    TimelineEventType = "speech_stop"
+	EventSTTResult     TimelineEventType = "stt_result"
+	EventLLMFirstToken TimelineEventType = "llm_first_token"
+	EventLLMComplete   TimelineEventType = "llm_complete"
+	EventTTSUnit       TimelineEventType = "tts_unit"
+	EventInterruption  TimelineEventType = "interruption"
+	EventFlushAck      TimelineEventType = "flush_ack"
+	EventProviderRetry TimelineEventType = "provider_retry"
+	EventCircuitState  TimelineEventType = "circuit_state"
+	EventLatency       TimelineEventType = "latency" // Details = stage, DurationMs = value
+	EventError         TimelineEventType = "error"
+	EventDisconnect    TimelineEventType = "disconnect"
 
 	// Routed flows: the call moving between steps.
 	EventStepPreparing TimelineEventType = "step_preparing" // Details = target step being built
@@ -233,4 +232,38 @@ func (r *TimelineRegistry) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(resp)
 	})
+}
+
+// recordCircuit puts a provider circuit's state change on the timeline of every
+// live call whose start step uses that provider for that stage. Breakers report
+// every success and failure, so the dedupe has its own lock and the server's
+// mu is taken only for a real change; a circuit never seen before counts as
+// closed. Breakers notify after unlocking, so reports from concurrent requests
+// can arrive out of order and a timeline can end on "open" while the breaker is
+// closed again (the circuit gauge has the same race).
+// ponytail: matches the start step's candidates; a later step's providers are not matched.
+func (s *Server) recordCircuit(stage, provider string, st resilience.State) {
+	key := stage + "/" + provider
+	s.circuitMu.Lock()
+	prev, seen := s.circuitStates[key]
+	if (seen && prev == st) || (!seen && st == resilience.Closed) {
+		s.circuitMu.Unlock()
+		return
+	}
+	if s.circuitStates == nil {
+		s.circuitStates = map[string]resilience.State{}
+	}
+	s.circuitStates[key] = st
+	s.circuitMu.Unlock()
+	var timelines []*SessionTimeline
+	s.mu.Lock()
+	for _, c := range s.activeCalls {
+		if c.providers[key] {
+			timelines = append(timelines, c.timeline)
+		}
+	}
+	s.mu.Unlock()
+	for _, tl := range timelines {
+		tl.Record(TimelineEvent{Type: EventCircuitState, Provider: provider, Details: stage + " " + strings.ToLower(string(st))})
+	}
 }
