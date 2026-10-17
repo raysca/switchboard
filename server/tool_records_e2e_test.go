@@ -68,7 +68,7 @@ func TestMCPCallToolCallsAreRecorded(t *testing.T) {
 	}
 	tc := calls[0]
 	if tc.RemoteName != "lookup_order" || tc.MCPServerID != id || tc.SchemaHash != hashes["lookup_order"] || tc.Status != "succeeded" ||
-		tc.EndedAt == nil || tc.EndedAt.Before(tc.StartedAt) || tc.TurnID == "" || tc.ArgumentsSummary != "" || tc.ResultSummary != "" {
+		tc.EndedAt == nil || !tc.EndedAt.After(tc.StartedAt) || tc.TurnID == "" || tc.ArgumentsSummary != "" || tc.ResultSummary != "" {
 		t.Fatalf("tool call %+v", tc)
 	}
 	var tools []api.TurnToolDTO
@@ -77,7 +77,7 @@ func TestMCPCallToolCallsAreRecorded(t *testing.T) {
 			tools = turn.Tools
 		}
 	}
-	if len(tools) != 1 || tools[0].Name != "lookup_order" || tools[0].Status != "succeeded" || tools[0].DurationMS < 0 {
+	if len(tools) != 1 || tools[0].Name != "lookup_order" || tools[0].Status != "succeeded" || tools[0].DurationMS != tc.EndedAt.Sub(tc.StartedAt).Milliseconds() {
 		t.Fatalf("the call's turn lists %+v", tools)
 	}
 	attrs := r.spanAttributes(c.sessionID, "mcp.tool.execute")
@@ -99,7 +99,7 @@ func TestMCPCallFailedToolIsRecordedFailed(t *testing.T) {
 	c.hangUp()
 	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
 	calls := r.sessionTraces(c.sessionID).ToolCalls
-	if len(calls) != 1 || calls[0].RemoteName != "tool_error" || calls[0].MCPServerID != id || calls[0].Status != "failed" {
+	if len(calls) != 1 || calls[0].RemoteName != "tool_error" || calls[0].MCPServerID != id || calls[0].Status != "failed" || calls[0].ArgumentsSummary != "" || calls[0].ResultSummary != "" {
 		t.Fatalf("tool calls %+v", calls)
 	}
 }
@@ -117,7 +117,7 @@ func TestMCPCallBargeInRecordsTheToolCancelled(t *testing.T) {
 	c.hangUp()
 	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
 	calls := r.sessionTraces(c.sessionID).ToolCalls
-	if len(calls) != 1 || calls[0].RemoteName != "slow_lookup" || calls[0].Status != "cancelled" || calls[0].EndedAt == nil {
+	if len(calls) != 1 || calls[0].RemoteName != "slow_lookup" || calls[0].Status != "cancelled" || calls[0].EndedAt == nil || calls[0].ArgumentsSummary != "" || calls[0].ResultSummary != "" {
 		t.Fatalf("tool calls %+v", calls)
 	}
 }
@@ -128,12 +128,18 @@ func TestMCPCallAsyncToolIsRecordedWhenItEnds(t *testing.T) {
 	c := r.dial(r.flowWith(id, hashes, false, []string{id + "/slow_lookup"}, "slow_lookup").ID)
 	c.say(`call tool slow_lookup {"delay_ms":300}`)
 	assertFnEvents(t, c, []string{`started{}`, `in-progress{"tool_call_id":"#1"}`, `stopped{"cancelled":false,"tool_call_id":"#1"}`}) // the background run ended
+	r.waitTurns(c.sessionID, 1)
 	c.hangUp()
 	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
 	calls := r.sessionTraces(c.sessionID).ToolCalls
 	if len(calls) != 1 || calls[0].Status != "succeeded" || calls[0].EndedAt == nil || calls[0].TurnID == "" ||
-		calls[0].EndedAt.Sub(calls[0].StartedAt) < 250*time.Millisecond {
+		calls[0].EndedAt.Sub(calls[0].StartedAt) < 250*time.Millisecond || calls[0].ArgumentsSummary != "" || calls[0].ResultSummary != "" {
 		t.Fatalf("tool calls %+v (want the background run's outcome and duration, on its turn)", calls)
+	}
+	for _, turn := range r.sessionTurns(c.sessionID) {
+		if turn.ID == calls[0].TurnID && (len(turn.Tools) != 1 || turn.Tools[0].DurationMS < 250) {
+			t.Fatalf("the turn lists %+v, want the background run's duration (>= 250 ms)", turn.Tools)
+		}
 	}
 }
 
@@ -154,7 +160,7 @@ func TestMCPCallParallelToolCallsAreEachRecorded(t *testing.T) {
 	names := map[string]bool{}
 	for _, tc := range calls {
 		names[tc.RemoteName] = true
-		if tc.Status != "succeeded" || tc.MCPServerID != id || tc.TurnID == "" || tc.EndedAt == nil {
+		if tc.Status != "succeeded" || tc.MCPServerID != id || tc.TurnID == "" || tc.EndedAt == nil || tc.ArgumentsSummary != "" || tc.ResultSummary != "" {
 			t.Fatalf("tool call %+v", tc)
 		}
 	}
@@ -163,8 +169,8 @@ func TestMCPCallParallelToolCallsAreEachRecorded(t *testing.T) {
 	}
 }
 
-// The echo model only calls attached tools, so the model-invented name is posted into the live call's
-// pipeline as the tool loop would report it (an unknown tool, failed): the real recorder, database and API.
+// The echo model only calls attached tools, so an unknown tool is posted into the live call's
+// pipeline as the tool loop announces it (the placeholder name, failed): the real recorder, database and API.
 func TestMCPCallModelInventedToolNameIsNeverStored(t *testing.T) {
 	r := newMCPCallRig(t)
 	session := r.liveSession()
@@ -176,7 +182,7 @@ func TestMCPCallModelInventedToolNameIsNeverStored(t *testing.T) {
 	sess := session()
 	gen, at := core.Generation(sess.CurrentGeneration()), time.Now()
 	for _, f := range []core.Frame{
-		&core.ToolCallFrame{Call: core.ToolCall{ID: "invented-1", Name: "my_card_is_4111111111111111", TurnID: "turn-invented", Generation: gen}, Timestamp: at},
+		&core.ToolCallFrame{Call: core.ToolCall{ID: "invented-1", Name: "unknown_tool", TurnID: "turn-invented", Generation: gen}, Timestamp: at},
 		&core.ToolResultFrame{Turn: "turn-invented", Gen: gen, Result: core.ToolResult{CallID: "invented-1", Status: core.ToolFailed, ErrorCategory: "unknown_tool", StartedAt: at, EndedAt: at.Add(time.Millisecond)}},
 	} {
 		if err := sess.Post(f); err != nil {
