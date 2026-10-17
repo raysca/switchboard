@@ -252,7 +252,7 @@ func TestMCPCallRealLoopInventedToolNameIsNeverStored(t *testing.T) {
 	c.say("please invent")
 	waitFnEvents(t, c, 3*len(inventedNames)) // started, in-progress, stopped for each
 	c.waitReplies("Connecting you.", 1)
-	r.waitTurns(c.sessionID, 1) // before any barrier turn: a reply cut off by a typed turn has no row
+	r.waitTurns(c.sessionID, 1) // before the barrier turn, which would cut the reply off
 	c.barrier(t)
 	c.hangUp()
 	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
@@ -280,5 +280,60 @@ func TestMCPCallRealLoopInventedToolNameIsNeverStored(t *testing.T) {
 				t.Fatalf("the model's tool name leaked (%q): %.2000s", leak, seen)
 			}
 		}
+	}
+}
+
+// A typed turn that arrives while the previous reply is still on its way supersedes it. The
+// superseded turn keeps its row: the caller's words are history even when none of the reply was heard.
+func TestCallRecordsATypedTurnLeavesTheSupersededTurnRow(t *testing.T) {
+	r := newMCPCallRig(t)
+	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
+	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	long := "please tell me everything about the weather in every city of the world, starting with the biggest and ending with the smallest one you know"
+	c.say(long)
+	c.waitReplies("weather", 1) // the reply's text reached the client; its audio has not finished
+	c.say("second")
+	c.waitReplies("second", 1)
+	r.waitTurns(c.sessionID, 2)
+	c.barrier(t)
+	c.hangUp()
+	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
+
+	turns, err := r.s.store.Sessions().Turns(context.Background(), c.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 || turns[0].Transcript != long || !turns[0].Interrupted || turns[1].Transcript != "second" || turns[1].Interrupted {
+		t.Fatalf("stored turns %+v", turns)
+	}
+}
+
+// The tool call a typed turn cuts off belongs to the turn row that typed turn leaves behind.
+func TestCallRecordsATypedTurnLeavesTheToolCallAttached(t *testing.T) {
+	r := newMCPCallRig(t, func(c *Config) { c.MCP.Timeout = 10 * time.Second })
+	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
+	c := r.dial(r.flowWith(id, hashes, false, nil, "slow_lookup").ID)
+	c.say(`call tool slow_lookup {"delay_ms":4000}`)
+	eventually(t, "the tool call to start", func() bool { return r.lastCall("slow_lookup").Tool != "" })
+	c.say("second")
+	eventually(t, "the slow call to be abandoned", func() bool { return r.lastCall("slow_lookup").Cancelled })
+	c.waitReplies("second", 1)
+	r.waitTurns(c.sessionID, 2)
+	c.barrier(t)
+	c.hangUp()
+	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
+
+	calls := r.sessionTraces(c.sessionID).ToolCalls
+	if len(calls) != 1 || calls[0].TurnID == "" {
+		t.Fatalf("tool calls %+v", calls)
+	}
+	var tools []api.TurnToolDTO
+	for _, turn := range r.sessionTurns(c.sessionID) {
+		if turn.ID == calls[0].TurnID {
+			tools = turn.Tools
+		}
+	}
+	if len(tools) != 1 || tools[0].Name != "slow_lookup" {
+		t.Fatalf("the cut-off turn lists %+v", tools)
 	}
 }

@@ -95,7 +95,8 @@ func (s *Server) redactTurn(row storage.TurnRecord) storage.TurnRecord {
 }
 
 // turnRecorder stores one turn row per assistant reply, complete or
-// interrupted, pairing it with the user message that started it, and one
+// interrupted (a reply cut off before any of it was heard keeps a row with no
+// reply text), pairing it with the user message that started it, and one
 // tool_calls row per tool call the loop announced: its name, status and
 // timing, never its arguments or result. Rows are written by one goroutine per
 // call so the session run loop never waits on the database; a turn row is
@@ -171,7 +172,7 @@ func newTurnRecorder(addTurn func(context.Context, storage.TurnRecord) error, ad
 
 func (r *turnRecorder) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch f.(type) {
-	case *core.UserMessageFrame, *core.ToolCallFrame, *core.ToolResultFrame, *core.AssistantMessageFrame:
+	case *core.UserMessageFrame, *core.ToolCallFrame, *core.ToolResultFrame, *core.AssistantMessageFrame, *core.InterruptionFrame:
 	default: // audio and the rest pass without the lock
 		return e.PushDirection(f, dir)
 	}
@@ -190,27 +191,41 @@ func (r *turnRecorder) ProcessFrame(_ context.Context, f core.Frame, dir core.Di
 	case *core.ToolResultFrame:
 		r.settleLocked(m.Result)
 	case *core.AssistantMessageFrame:
-		user := r.users[m.Turn]
-		delete(r.users, m.Turn)
-		row := storage.TurnRecord{ID: storage.NewID(), Ordinal: r.ordinal + 1, StartedAt: m.Timestamp, EndedAt: m.Timestamp, AssistantText: m.Content, Interrupted: m.Partial, LatenciesJSON: r.lat.take(m.Turn)}
-		if user != nil {
-			row.Transcript, row.StartedAt = user.Content, user.Timestamp
-		}
-		tools := r.finished[m.Turn]
-		delete(r.finished, m.Turn)
-		for i := range tools {
-			tools[i].TurnID = row.ID
-		}
-		if r.sendLocked(turnWrite{turn: &row, tools: tools}) {
-			r.ordinal++
-			if len(r.rowIDs) >= maxRecordedTurns {
-				clear(r.rowIDs)
-			}
-			r.rowIDs[m.Turn] = row.ID
+		r.recordTurnLocked(m.Turn, m.Timestamp, m.Content, m.Partial)
+	case *core.InterruptionFrame:
+		// A reply cut off before any of it was heard emits no assistant message (nothing to put in the
+		// context), but the turn happened: it keeps its row, with no reply text.
+		// ponytail: the session fence drops this frame when a second interruption bumped the generation
+		// first; that turn then has no row (its entry leaves with the maxRecordedTurns clear).
+		if _, open := r.users[m.Turn]; open && m.Turn != "" {
+			r.recordTurnLocked(m.Turn, time.Now(), "", true)
 		}
 	}
 	r.mu.Unlock()
 	return e.PushDirection(f, dir)
+}
+
+// recordTurnLocked queues turn's row, pairing it with the user message that started it and the tool
+// calls already settled for it.
+func (r *turnRecorder) recordTurnLocked(turn string, at time.Time, reply string, interrupted bool) {
+	user := r.users[turn]
+	delete(r.users, turn)
+	row := storage.TurnRecord{ID: storage.NewID(), Ordinal: r.ordinal + 1, StartedAt: at, EndedAt: at, AssistantText: reply, Interrupted: interrupted, LatenciesJSON: r.lat.take(turn)}
+	if user != nil {
+		row.Transcript, row.StartedAt = user.Content, user.Timestamp
+	}
+	tools := r.finished[turn]
+	delete(r.finished, turn)
+	for i := range tools {
+		tools[i].TurnID = row.ID
+	}
+	if r.sendLocked(turnWrite{turn: &row, tools: tools}) {
+		r.ordinal++
+		if len(r.rowIDs) >= maxRecordedTurns {
+			clear(r.rowIDs)
+		}
+		r.rowIDs[turn] = row.ID
+	}
 }
 
 // toolRecord starts a call's row: an MCP tool by its server, remote name and
