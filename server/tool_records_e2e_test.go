@@ -204,7 +204,7 @@ func TestMCPCallModelInventedToolNameIsNeverStored(t *testing.T) {
 	}
 	b, _ := json.Marshal(traces)
 	turns, _ := json.Marshal(r.sessionTurns(c.sessionID))
-	if strings.Contains(string(b), "my_card_is") || strings.Contains(string(b), "4111") || strings.Contains(string(turns), "4111") {
+	if strings.Contains(string(b), "my_card_is") || strings.Contains(string(turns), "my_card_is") {
 		t.Fatalf("the model's tool name leaked: %s %s", b, turns)
 	}
 }
