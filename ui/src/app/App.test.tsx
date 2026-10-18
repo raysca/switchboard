@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
+import { QueryClient } from "@tanstack/react-query";
 
 // A complete /operations/status payload, as the server always sends it.
 const operationsStatus = {
@@ -111,7 +112,18 @@ describe("admin shell", () => {
   it("TestSignOutClearsTheKey", async () => {
     const fetcher = keyedServer();
     const user = await signedInApp(fetcher);
+    // The cache that held the protected data is emptied: observe the one client the app owns.
+    let cache: QueryClient | undefined;
+    const clear = QueryClient.prototype.clear;
+    const spy = vi.spyOn(QueryClient.prototype, "clear").mockImplementation(function (this: QueryClient) {
+      cache = this;
+      return clear.call(this);
+    });
     await user.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(cache).toBeDefined();
+    // Disabled observers may re-register empty queries; none may still hold the old data.
+    expect(cache!.getQueryCache().getAll().filter((q) => q.state.data !== undefined)).toEqual([]);
+    spy.mockRestore();
     expect(screen.getByLabelText(/management key/i)).toBeVisible();
     expect(screen.getByText("No management key")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
