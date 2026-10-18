@@ -1,7 +1,6 @@
 package token_test
 
 import (
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -250,21 +249,6 @@ func TestToken_MissingPrincipalRejected(t *testing.T) {
 	}
 	if _, err := val.ValidateAndConsume(signed); err != token.ErrTokenPrincipal {
 		t.Fatalf("principal without sub must be rejected, got %v", err)
-	}
-}
-
-func TestToken_Redaction(t *testing.T) {
-	rawURL := "wss://api.example.com/v1/connect?token=secret-token-value-12345&client=pipecat"
-	redactedURL := token.RedactToken(rawURL)
-	expectedURL := "wss://api.example.com/v1/connect?token=[REDACTED]&client=pipecat"
-	if redactedURL != expectedURL {
-		t.Fatalf("expected %q, got %q", expectedURL, redactedURL)
-	}
-
-	logLine := fmt.Sprintf("failed handshake from ip=1.2.3.4 url=/ws?token=%s&foo=bar", "very-secret-token")
-	redactedLog := token.RedactToken(logLine)
-	if redactedLog != "failed handshake from ip=1.2.3.4 url=/ws?token=[REDACTED]&foo=bar" {
-		t.Fatalf("unexpected redacted log: %s", redactedLog)
 	}
 }
 

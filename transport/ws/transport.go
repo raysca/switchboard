@@ -58,7 +58,8 @@ type ServerConfig struct {
 	Cues bool
 }
 
-// DefaultServerConfig returns production-ready server parameters.
+// DefaultServerConfig returns a test/dev default: it allows any origin and a
+// missing Origin header. The server builds its own ServerConfig.
 func DefaultServerConfig(val *token.Validator) ServerConfig {
 	return ServerConfig{
 		Security: SecurityConfig{
@@ -1164,19 +1165,9 @@ func (c *Connection) WriteWireMessage(ctx context.Context, rtviJSON string) erro
 	return err
 }
 
-// RTVI returns the associated RTVI protocol handler.
-func (c *Connection) RTVI() *rtvi.Handler {
-	return c.rtvi
-}
-
 // Session returns the allocated core session, or nil if not ready yet.
 func (c *Connection) Session() *core.Session {
 	return c.session.Load()
-}
-
-// Pacer returns the underlying PacedWriter.
-func (c *Connection) Pacer() *PacedWriter {
-	return c.pacer
 }
 
 // AudioTap observes call audio for recording. Both methods must return

@@ -2,6 +2,14 @@ package ws
 
 import "time"
 
+// Pacer exposes the connection's PacedWriter to the ws_test package.
+func (c *Connection) Pacer() *PacedWriter { return c.pacer }
+
+// SetTestHooks installs the write-loop synchronization hooks (either may be nil).
+func (w *PacedWriter) SetTestHooks(afterSelect, beforeAdmission func()) {
+	w.afterSelect, w.beforeWriteAdmission = afterSelect, beforeAdmission
+}
+
 func (w *PacedWriter) QueuedDuration() time.Duration {
 	w.mu.Lock()
 	defer w.mu.Unlock()
