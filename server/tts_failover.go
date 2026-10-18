@@ -22,6 +22,9 @@ const defaultTTSRate = 24000
 // elevenlabs and nvidia carry it as a field, which the method check would flatten into
 // server_error.
 func ttsClassify(err error) string {
+	if errors.Is(err, core.ErrTooManyTasks) {
+		return "" // the session's own task budget, not a provider outage: lose the unit, keep the provider
+	}
 	var ce interface{ ClientError() bool }
 	var cp *cartesia.ProviderError
 	var ep *elevenlabs.ProviderError

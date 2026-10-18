@@ -185,3 +185,65 @@ func TestCallBehaviorARefusedTaskLosesTheTurnNotTheCall(t *testing.T) {
 		t.Fatalf("a refused task switched providers:\n%s", rec.Body.String())
 	}
 }
+
+// refuseFirstUnitTTS answers like a TTS provider whose session refused a synthesis task: it takes the
+// first unit, re-enters a non-fatal ErrTooManyTasks error for it, and returns nil. Later units go to inner.
+type refuseFirstUnitTTS struct {
+	core.Processor
+	s     core.SessionController
+	index int
+	units atomic.Int32
+}
+
+func (p *refuseFirstUnitTTS) Attach(s core.SessionController, index int) error {
+	p.s, p.index = s, index
+	if a, ok := p.Processor.(core.Attacher); ok {
+		return a.Attach(s, index)
+	}
+	return nil
+}
+
+func (p *refuseFirstUnitTTS) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	su, ok := f.(*core.SynthesisUnitFrame)
+	if !ok || p.units.Add(1) > 1 {
+		return p.Processor.ProcessFrame(ctx, f, dir, e)
+	}
+	return p.s.Reenter(&core.ErrorFrame{Err: core.ErrTooManyTasks, Turn: core.TurnID(su.Turn), Gen: core.Generation(su.Gen), UnitID: su.UnitID}, core.Downstream, p.index, uint64(su.Gen))
+}
+
+// A TTS unit refused by the session's own task budget is lost, not failed over: the healthy primary keeps
+// the later units, no fallback speaks, no failover is counted, and the call lives.
+func TestCallBehaviorARefusedTTSUnitIsLostWithoutFailover(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	var primary atomic.Pointer[refuseFirstUnitTTS]
+	healthy := r.s.registry.factories["echo.tts"]
+	r.s.registry.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		inner, err := healthy(cfg, spec)
+		if err != nil || spec.Voice != "refusevoice" {
+			return inner, err
+		}
+		p := &refuseFirstUnitTTS{Processor: inner}
+		primary.Store(p)
+		return p, nil
+	})
+	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "RefusedTTS", Config: json.RawMessage(
+		`{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"RefusedTTS"},` +
+			`"tts":{"provider":"echo","voice":"refusevoice","fallbacks":[{"provider":"echo","voice":"okvoice"}]}}`)})
+	if err != nil || f.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", f.Readiness, err)
+	}
+	c := r.dial(f.ID)
+	c.say("First sentence here. Second sentence here.")
+	eventually(t, "the later unit spoken by the primary", func() bool { return r.spokenBy("refusevoice", "Second sentence") })
+	if r.spokenBy("okvoice", "First sentence") || r.spokenBy("okvoice", "Second sentence") {
+		t.Fatal("the fallback spoke: a refused task demoted the primary")
+	}
+	if c.ended() {
+		t.Fatal("a refused TTS task ended the call")
+	}
+	rec := httptest.NewRecorder()
+	r.s.handleMetrics(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if strings.Contains(rec.Body.String(), "voice_tts_failover_total{") {
+		t.Fatalf("a refused task switched providers:\n%s", rec.Body.String())
+	}
+}

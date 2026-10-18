@@ -80,6 +80,9 @@ func TestTTS_RefusedHandoffDoesNotWedgeLaterUnits(t *testing.T) {
 	if audio[1] != 0 || errs[1] != 1 || len(errs) != 1 {
 		t.Fatalf("audio=%v errors=%v", audio, errs)
 	}
+	if n := proc.ErrorsTotal.Load(); n != 0 {
+		t.Fatalf("a refused local task counted as %d provider errors", n)
+	}
 }
 
 // A unit that fails while an earlier one is still synthesizing must still

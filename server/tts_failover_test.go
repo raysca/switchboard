@@ -45,6 +45,11 @@ func TestTTSClassifyEveryProvider(t *testing.T) {
 			t.Errorf("%s: class %q, want %q", tc.name, got, tc.want)
 		}
 	}
+	for _, err := range []error{core.ErrTooManyTasks, fmt.Errorf("unit 3: %w", core.ErrTooManyTasks)} {
+		if got := ttsClassify(err); got != "" {
+			t.Errorf("the session's own task budget classed %q, want none", got)
+		}
+	}
 	if ttsClassify(errors.New("context canceled")) != flow.ClassServer || ttsClassify(nil) != "" {
 		t.Error("plain errors are server_error, nil is none")
 	}

@@ -70,6 +70,9 @@ func TestTTS_RefusedHandoffDoesNotWedgeLaterUnits(t *testing.T) {
 	if audio[1] != 0 || errs[1] != 1 || len(errs) != 1 {
 		t.Fatalf("audio=%v errors=%v", audio, errs)
 	}
+	if n := proc.Errors.Load(); n != 0 {
+		t.Fatalf("a refused local task counted as %d provider errors", n)
+	}
 }
 
 // The in-task error carries the unit's Turn and Gen like ttsunit's, so the

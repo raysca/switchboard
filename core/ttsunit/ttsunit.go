@@ -232,7 +232,6 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 			return nil
 		}
 		if errors.Is(err, core.ErrTooManyTasks) { // lose this unit, not the call
-			r.ErrorsTotal.Add(1)
 			// Re-entered, not pushed: under TTSFailover e swallows, and the
 			// wrapper would wait for this unit until its watchdog fired.
 			_ = s.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(unit.Turn), Gen: core.Generation(unit.Gen), UnitID: unit.UnitID}, core.Downstream, r.index+1, unit.Gen)
