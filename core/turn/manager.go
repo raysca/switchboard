@@ -362,8 +362,6 @@ func (m *Manager) finishDetection(frames []core.Frame, snapshot *detectionSnapsh
 	return frames
 }
 
-func sameDetectionInput(a, b DetectionInput) bool { return a == b }
-
 // Current means the snapshot matches actual detector-relevant state, not just
 // an observation counter or another queued snapshot. Control timestamps alone
 // do not advance detection; an accepted Observe/Advance queues its own input.
@@ -373,10 +371,10 @@ func (m *Manager) snapshotCurrentLocked(snapshot *detectionSnapshot) bool {
 		!m.turnStartedAt.Equal(snapshot.turnStartedAt) || !m.silenceSince.Equal(snapshot.silenceSince) {
 		return false
 	}
-	if m.pendingDetection != nil && !sameDetectionInput(snapshot.input, m.pendingDetection.input) {
+	if m.pendingDetection != nil && snapshot.input != m.pendingDetection.input {
 		return false
 	}
-	return sameDetectionInput(snapshot.input, m.newDetectionSnapshotLocked(snapshot.input.At).input)
+	return snapshot.input == m.newDetectionSnapshotLocked(snapshot.input.At).input
 }
 
 func (m *Manager) takePendingDetectionLocked() *detectionSnapshot {
