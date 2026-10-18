@@ -41,6 +41,7 @@ async function main() {
   let interrupts = 0;
   const debug = console.debug;
   const error = console.error;
+  const warn = console.warn;
   // The client logs every RTVI message it handles as console.debug('[RTVI Message]', msg) (its logger is at
   // DEBUG by default), types it does not recognise included; WebSocketTransport logs a frame it cannot
   // deserialize with console.error. Both are observed here, the packages are not changed.
@@ -48,6 +49,7 @@ async function main() {
     if (a[0] === '[RTVI Message]' && a[1] && a[1].type) log.push('msg:' + a[1].type);
   };
   console.error = (...a) => errors.push(a.map(String).join(' '));
+  console.warn = (...a) => errors.push(a.map(String).join(' '));
   const mediaManager = {
     initialize: async () => {}, connect: async () => {}, disconnect: async () => {},
     setUserAudioCallback: () => {}, setClientOptions: () => {}, tracks: () => ({}),
@@ -79,6 +81,7 @@ async function main() {
   } finally {
     console.debug = debug;
     console.error = error;
+    console.warn = warn;
   }
   console.log('EVENTS ' + JSON.stringify({ log, interrupts, errors: seen }));
 }

@@ -24,7 +24,7 @@
     }
   },
   "server_barge_in_emission": {
-    "rtvi_bot_interrupted": "sent once per barge-in that cuts a reply off (the transport's FlushFrame), after the paced writer dropped that reply's queued audio; at most the one audio frame already admitted to the socket (one provider chunk) follows it; Pipecat's RTVIObserver sends it on every InterruptionFrame",
+    "rtvi_bot_interrupted": "sent once each time the assistant's interruption barrier runs (a reply generating or playing: a barge-in, and also a typed turn or DTMF during generation, or the idle bot-stuck watchdog; the transport's committed FlushFrame), after the paced writer dropped that reply's queued audio; its order against bot-stopped-speaking is unspecified; at most the one audio frame already admitted to the socket (one provider chunk) follows it; Pipecat's RTVIObserver sends it on every InterruptionFrame",
     "protobuf_interruption_field_5": "not sent: the pinned transport rejects it and logs Failed to deserialize incoming message on every barge-in",
     "evidence": "transport/ws/bot_interrupted_test.go, server/barge_in_e2e_test.go, server/barge_in_client_e2e_test.go"
   },
