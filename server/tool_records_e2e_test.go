@@ -52,6 +52,18 @@ func (r *flowRigE2E) waitTurns(id string, n int) {
 	})
 }
 
+// assertNoToolContentStored is the privacy pin: whatever the API shows, the stored tool_calls rows carry
+// no argument or result content (the summary columns stay ”).
+func (r *flowRigE2E) assertNoToolContentStored() {
+	r.t.Helper()
+	var rows, withContent int
+	err := r.s.store.DB().QueryRowContext(context.Background(),
+		`SELECT count(*), coalesce(sum(CASE WHEN arguments_summary <> '' OR result_summary <> '' THEN 1 ELSE 0 END), 0) FROM tool_calls`).Scan(&rows, &withContent)
+	if err != nil || rows == 0 || withContent != 0 {
+		r.t.Fatalf("tool_calls rows=%d with stored content=%d err=%v", rows, withContent, err)
+	}
+}
+
 func (c *e2eCall) hangUp() { _ = c.conn.Close(websocket.StatusNormalClosure, "bye") }
 
 func TestMCPCallToolCallsAreRecorded(t *testing.T) {
@@ -71,9 +83,10 @@ func TestMCPCallToolCallsAreRecorded(t *testing.T) {
 	}
 	tc := calls[0]
 	if tc.RemoteName != "lookup_order" || tc.MCPServerID != id || tc.SchemaHash != hashes["lookup_order"] || tc.Status != "succeeded" ||
-		tc.EndedAt == nil || !tc.EndedAt.After(tc.StartedAt) || tc.TurnID == "" || tc.ArgumentsSummary != "" || tc.ResultSummary != "" {
+		tc.EndedAt == nil || !tc.EndedAt.After(tc.StartedAt) || tc.TurnID == "" {
 		t.Fatalf("tool call %+v", tc)
 	}
+	r.assertNoToolContentStored()
 	var tools []api.TurnToolDTO
 	for _, turn := range r.sessionTurns(c.sessionID) {
 		if turn.ID == tc.TurnID {
@@ -102,9 +115,10 @@ func TestMCPCallFailedToolIsRecordedFailed(t *testing.T) {
 	c.hangUp()
 	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
 	calls := r.sessionTraces(c.sessionID).ToolCalls
-	if len(calls) != 1 || calls[0].RemoteName != "tool_error" || calls[0].MCPServerID != id || calls[0].Status != "failed" || calls[0].ArgumentsSummary != "" || calls[0].ResultSummary != "" {
+	if len(calls) != 1 || calls[0].RemoteName != "tool_error" || calls[0].MCPServerID != id || calls[0].Status != "failed" {
 		t.Fatalf("tool calls %+v", calls)
 	}
+	r.assertNoToolContentStored()
 }
 
 func TestMCPCallBargeInRecordsTheToolCancelled(t *testing.T) {
@@ -120,9 +134,10 @@ func TestMCPCallBargeInRecordsTheToolCancelled(t *testing.T) {
 	c.hangUp()
 	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
 	calls := r.sessionTraces(c.sessionID).ToolCalls
-	if len(calls) != 1 || calls[0].RemoteName != "slow_lookup" || calls[0].Status != "cancelled" || calls[0].EndedAt == nil || calls[0].ArgumentsSummary != "" || calls[0].ResultSummary != "" {
+	if len(calls) != 1 || calls[0].RemoteName != "slow_lookup" || calls[0].Status != "cancelled" || calls[0].EndedAt == nil {
 		t.Fatalf("tool calls %+v", calls)
 	}
+	r.assertNoToolContentStored()
 }
 
 func TestMCPCallAsyncToolIsRecordedWhenItEnds(t *testing.T) {
@@ -136,9 +151,10 @@ func TestMCPCallAsyncToolIsRecordedWhenItEnds(t *testing.T) {
 	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
 	calls := r.sessionTraces(c.sessionID).ToolCalls
 	if len(calls) != 1 || calls[0].Status != "succeeded" || calls[0].EndedAt == nil || calls[0].TurnID == "" ||
-		calls[0].EndedAt.Sub(calls[0].StartedAt) < 250*time.Millisecond || calls[0].ArgumentsSummary != "" || calls[0].ResultSummary != "" {
+		calls[0].EndedAt.Sub(calls[0].StartedAt) < 250*time.Millisecond {
 		t.Fatalf("tool calls %+v (want the background run's outcome and duration, on its turn)", calls)
 	}
+	r.assertNoToolContentStored()
 	for _, turn := range r.sessionTurns(c.sessionID) {
 		if turn.ID == calls[0].TurnID && (len(turn.Tools) != 1 || turn.Tools[0].DurationMS < 250) {
 			t.Fatalf("the turn lists %+v, want the background run's duration (>= 250 ms)", turn.Tools)
@@ -163,13 +179,14 @@ func TestMCPCallParallelToolCallsAreEachRecorded(t *testing.T) {
 	names := map[string]bool{}
 	for _, tc := range calls {
 		names[tc.RemoteName] = true
-		if tc.Status != "succeeded" || tc.MCPServerID != id || tc.TurnID == "" || tc.EndedAt == nil || tc.ArgumentsSummary != "" || tc.ResultSummary != "" {
+		if tc.Status != "succeeded" || tc.MCPServerID != id || tc.TurnID == "" || tc.EndedAt == nil {
 			t.Fatalf("tool call %+v", tc)
 		}
 	}
 	if !names["lookup_order"] || !names["echo"] {
 		t.Fatalf("recorded %v", names)
 	}
+	r.assertNoToolContentStored()
 }
 
 // Recorder, database and API plumbing only: the real loop's rewrite is guarded by TestMCPCallRealLoopInventedToolNameIsNeverStored.

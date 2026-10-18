@@ -345,15 +345,13 @@ func TestTraceRepositorySpansEventsAndToolCalls(t *testing.T) {
 	// 3. Tool Calls
 	tcID := storage.NewID()
 	if err := s.Traces().AddToolCall(ctx, storage.ToolCallRecord{
-		ID:               tcID,
-		SessionID:        sessID,
-		TurnID:           turnID,
-		RemoteName:       "search",
-		SchemaHash:       "hash123",
-		StartedAt:        now.Add(150 * time.Millisecond),
-		Status:           "completed",
-		ArgumentsSummary: `{"q":"test"}`,
-		ResultSummary:    `{"found":1}`,
+		ID:         tcID,
+		SessionID:  sessID,
+		TurnID:     turnID,
+		RemoteName: "search",
+		SchemaHash: "hash123",
+		StartedAt:  now.Add(150 * time.Millisecond),
+		Status:     "completed",
 	}); err != nil {
 		t.Fatalf("add tool call: %v", err)
 	}

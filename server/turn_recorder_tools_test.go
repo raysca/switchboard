@@ -80,7 +80,7 @@ func TestTurnRecorderStoresToolCallsWithTheirTurn(t *testing.T) {
 	}
 	c1, c2, c4 := calls[0], calls[1], calls[2]
 	if c1.SessionID != "sess" || c1.TurnID != row || c1.MCPServerID != "srv-1" || c1.RemoteName != "lookup_order" || c1.SchemaHash != "hash-1" ||
-		c1.Status != "succeeded" || c1.EndedAt.Sub(c1.StartedAt) != 120*time.Millisecond || c1.ArgumentsSummary != "" || c1.ResultSummary != "" {
+		c1.Status != "succeeded" || c1.EndedAt.Sub(c1.StartedAt) != 120*time.Millisecond {
 		t.Fatalf("c1 %+v", c1)
 	}
 	if c2.TurnID != row || c2.RemoteName != "transfer_to_sales" || c2.MCPServerID != "" || c2.Status != "cancelled" {

@@ -44,9 +44,9 @@ type ContentCursor struct{ EndedAt, ID string }
 
 // ContentPurgeResult reports one PurgeContent batch.
 type ContentPurgeResult struct {
-	TurnsPurged, ToolCallsPurged, TracesSanitized int64
-	Examined                                      int           // sessions selected in this batch
-	Next                                          ContentCursor // pass to the next call
+	TurnsPurged, TracesSanitized int64
+	Examined                     int           // sessions selected in this batch
+	Next                         ContentCursor // pass to the next call
 }
 
 func (r RetentionRepository) PurgeContent(ctx context.Context, cutoff time.Time, limit int, after ContentCursor) (res ContentPurgeResult, err error) {
@@ -67,7 +67,6 @@ WHERE status = 'ended'
   AND ended_at <= ?` + cursorClause + `
   AND (
     EXISTS (SELECT 1 FROM turns WHERE session_id = sessions.id AND (transcript IS NOT NULL OR assistant_text IS NOT NULL))
-    OR EXISTS (SELECT 1 FROM tool_calls WHERE session_id = sessions.id AND (arguments_summary != '' OR result_summary != ''))
     OR EXISTS (SELECT 1 FROM trace_spans WHERE session_id = sessions.id AND (
     ` + contentKeyPredicate + `))
     OR EXISTS (SELECT 1 FROM trace_events WHERE session_id = sessions.id AND (
@@ -126,19 +125,6 @@ LIMIT ?`
 					return err
 				}
 				res.TurnsPurged += nTurns
-
-				// Redact tool calls: clear arguments_summary and result_summary
-				resTC, err := tx.ExecContext(ctx, r.s.bind(
-					"UPDATE tool_calls SET arguments_summary = '', result_summary = '' WHERE session_id = ? AND (arguments_summary != '' OR result_summary != '')",
-				), sessID)
-				if err != nil {
-					return err
-				}
-				nTC, err := resTC.RowsAffected()
-				if err != nil {
-					return err
-				}
-				res.ToolCallsPurged += nTC
 
 				for _, table := range []string{"trace_spans", "trace_events"} {
 					n, err := sanitizeTraceContent(ctx, tx, r.s, table, sessID)

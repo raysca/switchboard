@@ -78,7 +78,6 @@ func createSessionWithData(t *testing.T, s *storage.Store, flowID, versionID, co
 		Transcript:    "Hello world user question",
 		AssistantText: "Hello there assistant response",
 		LatenciesJSON: `{"llm_first_chunk_ms":120}`,
-		ToolsJSON:     `[]`,
 	}
 	if err := s.Sessions().AddTurn(ctx, turn); err != nil {
 		t.Fatal(err)
@@ -86,16 +85,14 @@ func createSessionWithData(t *testing.T, s *storage.Store, flowID, versionID, co
 
 	toolCallID := storage.NewID()
 	tc := storage.ToolCallRecord{
-		ID:               toolCallID,
-		SessionID:        sessID,
-		TurnID:           turnID,
-		RemoteName:       "weather_check",
-		SchemaHash:       "hash123",
-		StartedAt:        startedAt,
-		EndedAt:          endedAt,
-		Status:           "completed",
-		ArgumentsSummary: `{"city":"Berlin"}`,
-		ResultSummary:    `{"temp":21}`,
+		ID:         toolCallID,
+		SessionID:  sessID,
+		TurnID:     turnID,
+		RemoteName: "weather_check",
+		SchemaHash: "hash123",
+		StartedAt:  startedAt,
+		EndedAt:    endedAt,
+		Status:     "completed",
 	}
 	if err := s.Traces().AddToolCall(ctx, tc); err != nil {
 		t.Fatal(err)
@@ -239,9 +236,6 @@ func TestContentPurge(t *testing.T) {
 	if res.TurnsPurged != 1 {
 		t.Errorf("expected 1 turn purged, got %d", res.TurnsPurged)
 	}
-	if res.ToolCallsPurged != 1 {
-		t.Errorf("expected 1 tool call purged, got %d", res.ToolCallsPurged)
-	}
 
 	// Verify session 1: content purged, metadata preserved
 	turn1, err := onlyTurn(ctx, s, sess1.sessionID)
@@ -261,10 +255,6 @@ func TestContentPurge(t *testing.T) {
 	tcs1, err := s.Traces().ToolCalls(ctx, sess1.sessionID, "")
 	if err != nil || len(tcs1) == 0 {
 		t.Fatalf("tool calls query: %v", err)
-	}
-	if tcs1[0].ArgumentsSummary != "" || tcs1[0].ResultSummary != "" {
-		t.Errorf("expected purged tool call arguments and results, got args=%q, res=%q",
-			tcs1[0].ArgumentsSummary, tcs1[0].ResultSummary)
 	}
 	if tcs1[0].RemoteName != "weather_check" || tcs1[0].Status != "completed" {
 		t.Errorf("expected tool call metadata preserved, got %+v", tcs1[0])
@@ -476,7 +466,6 @@ func TestPurgeContent_ToolResultAndTextSanitization(t *testing.T) {
 		Transcript:    "",
 		AssistantText: "",
 		LatenciesJSON: `{}`,
-		ToolsJSON:     `[]`,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -660,7 +649,7 @@ func TestPurgeContent_LabelMentionsDoNotStarveNewerContent(t *testing.T) {
 		}
 		turnID := storage.NewID()
 		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: turnID, SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
-			Transcript: transcript, LatenciesJSON: `{}`, ToolsJSON: `[]`}); err != nil {
+			Transcript: transcript, LatenciesJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.Traces().AddSpan(ctx, storage.TraceSpan{ID: storage.NewID(), SessionID: id, TurnID: turnID, Name: "processor.frame",
@@ -706,7 +695,7 @@ func TestPurgeContent_UnsanitizableRowsDoNotStall(t *testing.T) {
 		}
 		turnID := storage.NewID()
 		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: turnID, SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
-			Transcript: transcript, LatenciesJSON: `{}`, ToolsJSON: `[]`}); err != nil {
+			Transcript: transcript, LatenciesJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.Traces().AddSpan(ctx, storage.TraceSpan{ID: storage.NewID(), SessionID: id, TurnID: turnID, Name: "x",

@@ -61,8 +61,7 @@ The retention cleanup runner (`server/retention/job.go`) runs periodically accor
 When `content_retention_days` has expired for ended sessions:
 - `turns.transcript` is set to `NULL`.
 - `turns.assistant_text` is set to `NULL`.
-- `tool_calls.arguments_summary` is set to `""`.
-- `tool_calls.result_summary` is set to `""`.
+- `tool_calls` rows hold no argument or result content, so there is nothing to purge there.
 - `trace_spans` and `trace_events` attributes are sanitized to remove any text fields (`transcript`, `prompt`, `text`, `tool.arguments`, `tool.result`).
 
 **Preserved Metadata:** Session records, turn rows, ordinal sequence, latencies, tool call status, error categories, and span trees are completely preserved for operations and performance dashboards.

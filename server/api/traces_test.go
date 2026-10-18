@@ -73,7 +73,6 @@ func setupTracesHandler(t *testing.T) (*storage.Store, http.Handler, string, str
 		Transcript:    "user query",
 		AssistantText: "assistant response",
 		LatenciesJSON: `{"ttft":150}`,
-		ToolsJSON:     `[]`,
 	}
 	if err := s.Sessions().AddTurn(context.Background(), turn); err != nil {
 		t.Fatal(err)
@@ -106,15 +105,13 @@ func setupTracesHandler(t *testing.T) (*storage.Store, http.Handler, string, str
 
 	tcID := storage.NewID()
 	if err := s.Traces().AddToolCall(context.Background(), storage.ToolCallRecord{
-		ID:               tcID,
-		SessionID:        sessID,
-		TurnID:           turnID,
-		RemoteName:       "get_weather",
-		SchemaHash:       "hashweather",
-		StartedAt:        now.Add(1100 * time.Millisecond),
-		Status:           "completed",
-		ArgumentsSummary: `{"city":"london"}`,
-		ResultSummary:    `{"temp":20}`,
+		ID:         tcID,
+		SessionID:  sessID,
+		TurnID:     turnID,
+		RemoteName: "get_weather",
+		SchemaHash: "hashweather",
+		StartedAt:  now.Add(1100 * time.Millisecond),
+		Status:     "completed",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +361,7 @@ func TestSessionsCarryTheCallerTheEndReasonAndAMedianReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, l := range []string{`{"voice_to_voice_ms":500}`, `{"voice_to_voice_ms":900}`, `{"voice_to_voice_ms":700}`} {
-		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: storage.NewID(), SessionID: id, Ordinal: i + 1, StartedAt: now, LatenciesJSON: l, ToolsJSON: `[]`}); err != nil {
+		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: storage.NewID(), SessionID: id, Ordinal: i + 1, StartedAt: now, LatenciesJSON: l}); err != nil {
 			t.Fatal(err)
 		}
 	}

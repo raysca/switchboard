@@ -123,11 +123,11 @@ func TestTurnLatenciesAreFetchedForAPageOfSessionsInOneQuery(t *testing.T) {
 		b, _ := seedWithCaller(t, s, "")
 		none, _ := seedWithCaller(t, s, "")
 		for i, l := range []string{`{"voice_to_voice_ms":1}`, `{"voice_to_voice_ms":2}`} {
-			if err := s.Sessions().AddTurn(ctx, TurnRecord{ID: NewID(), SessionID: a, Ordinal: i + 1, StartedAt: time.Now(), LatenciesJSON: l, ToolsJSON: `[]`}); err != nil {
+			if err := s.Sessions().AddTurn(ctx, TurnRecord{ID: NewID(), SessionID: a, Ordinal: i + 1, StartedAt: time.Now(), LatenciesJSON: l}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err := s.Sessions().AddTurn(ctx, TurnRecord{ID: NewID(), SessionID: b, Ordinal: 1, StartedAt: time.Now(), LatenciesJSON: `{}`, ToolsJSON: `[]`}); err != nil {
+		if err := s.Sessions().AddTurn(ctx, TurnRecord{ID: NewID(), SessionID: b, Ordinal: 1, StartedAt: time.Now(), LatenciesJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.Sessions().TurnLatencies(ctx, []string{a, b, none})

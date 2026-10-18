@@ -46,10 +46,10 @@ var EndReasons = []string{EndCallerHungUp, EndSilentCaller, EndAgentStuck, Ended
 var ErrInvalidEndReason = errors.New("invalid session end reason")
 
 type TurnRecord struct {
-	ID, SessionID, Transcript, AssistantText, LatenciesJSON, ToolsJSON string
-	Ordinal                                                            int
-	StartedAt, EndedAt                                                 time.Time
-	Interrupted                                                        bool
+	ID, SessionID, Transcript, AssistantText, LatenciesJSON string
+	Ordinal                                                 int
+	StartedAt, EndedAt                                      time.Time
+	Interrupted                                             bool
 }
 type SessionRepository struct{ s *Store }
 
@@ -232,20 +232,12 @@ func (r SessionRepository) AddTurn(ctx context.Context, v TurnRecord) error {
 	if latency == "" {
 		latency = "{}"
 	}
-	tools := v.ToolsJSON
-	if tools == "" {
-		tools = "[]"
-	}
 	latencyJSON, err := CanonicalJSON([]byte(latency))
 	if err != nil {
 		return err
 	}
-	toolsJSON, err := CanonicalJSON([]byte(tools))
-	if err != nil {
-		return err
-	}
 	return r.s.WithTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO turns(id,session_id,ordinal,started_at,ended_at,transcript,assistant_text,latencies_json,interrupted,tools_json) VALUES(?,?,?,?,?,?,?,?,?,?)"), v.ID, v.SessionID, v.Ordinal, utc(v.StartedAt), nullTime(v.EndedAt), nullable(v.Transcript), nullable(v.AssistantText), string(latencyJSON), boolValue(r.s.dialect, v.Interrupted), string(toolsJSON)); err != nil {
+		if _, err := tx.ExecContext(ctx, r.s.bind("INSERT INTO turns(id,session_id,ordinal,started_at,ended_at,transcript,assistant_text,latencies_json,interrupted,tools_json) VALUES(?,?,?,?,?,?,?,?,?,'[]')"), v.ID, v.SessionID, v.Ordinal, utc(v.StartedAt), nullTime(v.EndedAt), nullable(v.Transcript), nullable(v.AssistantText), string(latencyJSON), boolValue(r.s.dialect, v.Interrupted)); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, r.s.bind("UPDATE sessions SET turn_count=turn_count+1 WHERE id=?"), v.SessionID)
@@ -376,7 +368,7 @@ func (r SessionRepository) Turns(ctx context.Context, sessionID string) ([]TurnR
 	if err := validID(sessionID); err != nil {
 		return nil, err
 	}
-	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id,session_id,ordinal,started_at,ended_at,transcript,assistant_text,latencies_json,interrupted,tools_json FROM turns WHERE session_id=? ORDER BY ordinal ASC"), sessionID)
+	rows, err := r.s.db.QueryContext(ctx, r.s.bind("SELECT id,session_id,ordinal,started_at,ended_at,transcript,assistant_text,latencies_json,interrupted FROM turns WHERE session_id=? ORDER BY ordinal ASC"), sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +379,7 @@ func (r SessionRepository) Turns(ctx context.Context, sessionID string) ([]TurnR
 		var v TurnRecord
 		var started string
 		var ended, transcript, assistant sql.NullString
-		if err := rows.Scan(&v.ID, &v.SessionID, &v.Ordinal, &started, &ended, &transcript, &assistant, &v.LatenciesJSON, &v.Interrupted, &v.ToolsJSON); err != nil {
+		if err := rows.Scan(&v.ID, &v.SessionID, &v.Ordinal, &started, &ended, &transcript, &assistant, &v.LatenciesJSON, &v.Interrupted); err != nil {
 			return nil, err
 		}
 		if v.StartedAt, err = parseTime(started); err != nil {
@@ -414,8 +406,8 @@ type TraceEvent struct {
 	OccurredAt                                          time.Time
 }
 type ToolCallRecord struct {
-	ID, SessionID, TurnID, MCPServerID, RemoteName, SchemaHash, Status, ArgumentsSummary, ResultSummary string
-	StartedAt, EndedAt                                                                                  time.Time
+	ID, SessionID, TurnID, MCPServerID, RemoteName, SchemaHash, Status string
+	StartedAt, EndedAt                                                 time.Time
 }
 type TraceRepository struct{ s *Store }
 
@@ -579,7 +571,7 @@ func (r TraceRepository) AddToolCall(ctx context.Context, v ToolCallRecord) erro
 	if v.SessionID == "" {
 		return errors.New("tool call session required")
 	}
-	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO tool_calls(id,session_id,turn_id,mcp_server_id,remote_name,schema_hash,started_at,ended_at,status,arguments_summary,result_summary) VALUES(?,?,?,?,?,?,?,?,?,?,?)"), v.ID, v.SessionID, nullable(v.TurnID), nullable(v.MCPServerID), v.RemoteName, v.SchemaHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status, v.ArgumentsSummary, v.ResultSummary)
+	_, err := r.s.db.ExecContext(ctx, r.s.bind("INSERT INTO tool_calls(id,session_id,turn_id,mcp_server_id,remote_name,schema_hash,started_at,ended_at,status,arguments_summary,result_summary) VALUES(?,?,?,?,?,?,?,?,?,'','')"), v.ID, v.SessionID, nullable(v.TurnID), nullable(v.MCPServerID), v.RemoteName, v.SchemaHash, utc(v.StartedAt), nullTime(v.EndedAt), v.Status)
 	return err
 }
 
@@ -589,7 +581,7 @@ func (r TraceRepository) ToolCalls(ctx context.Context, sessionID, turnID string
 			return nil, err
 		}
 	}
-	query := "SELECT id,session_id,turn_id,mcp_server_id,remote_name,schema_hash,started_at,ended_at,status,arguments_summary,result_summary FROM tool_calls"
+	query := "SELECT id,session_id,turn_id,mcp_server_id,remote_name,schema_hash,started_at,ended_at,status FROM tool_calls"
 	var clauses []string
 	var args []any
 	if sessionID != "" {
@@ -616,7 +608,7 @@ func (r TraceRepository) ToolCalls(ctx context.Context, sessionID, turnID string
 		var v ToolCallRecord
 		var turn, mcpServer, ended sql.NullString
 		var started string
-		if err := rows.Scan(&v.ID, &v.SessionID, &turn, &mcpServer, &v.RemoteName, &v.SchemaHash, &started, &ended, &v.Status, &v.ArgumentsSummary, &v.ResultSummary); err != nil {
+		if err := rows.Scan(&v.ID, &v.SessionID, &turn, &mcpServer, &v.RemoteName, &v.SchemaHash, &started, &ended, &v.Status); err != nil {
 			return nil, err
 		}
 		v.TurnID = turn.String
