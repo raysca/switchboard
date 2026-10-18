@@ -138,8 +138,8 @@
       "max_concurrent_sessions_per_ip": 10,
       "max_pending_handshakes": 50,
       "handshake_rate_limit_per_second_per_ip": 20,
-      "output_queue_duration_ms": 100,
-      "output_queue_bytes": 4800,
+      "output_queue_duration_ms": 2000,
+      "output_queue_bytes": 96000,
       "socket_write_timeout_seconds": 2
     }
   },
