@@ -104,6 +104,67 @@ func TestMCPCallToolCallsAreRecorded(t *testing.T) {
 	}
 }
 
+// TestStoredTraceAttributesNeverCarryContent is the privacy pin for the trace adapter: whatever a call
+// does, no stored trace row carries a content key, at any depth.
+func TestStoredTraceAttributesNeverCarryContent(t *testing.T) {
+	r := newMCPCallRig(t)
+	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")
+	c := r.dial(r.flowWith(id, hashes, true, nil, "lookup_order").ID)
+	c.say(`call tool lookup_order {"order_id":"42"}`)
+	c.waitReplies("shipped", 1)
+	r.waitTurns(c.sessionID, 1)
+	c.barrier(t)
+	c.hangUp()
+	r.waitEnded(c.sessionID, storage.EndCallerHungUp)
+
+	var hasKey func(v any) string
+	hasKey = func(v any) string {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, child := range x {
+				switch k {
+				case "transcript", "prompt", "text", "tool.arguments", "tool.result":
+					return k
+				}
+				if bad := hasKey(child); bad != "" {
+					return bad
+				}
+			}
+		case []any:
+			for _, child := range x {
+				if bad := hasKey(child); bad != "" {
+					return bad
+				}
+			}
+		}
+		return ""
+	}
+	rows, err := r.s.store.DB().QueryContext(context.Background(),
+		`SELECT attributes_json FROM trace_spans UNION ALL SELECT attributes_json FROM trace_events`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var attrs any
+		if err := json.Unmarshal([]byte(raw), &attrs); err != nil {
+			t.Fatalf("attributes_json %q: %v", raw, err)
+		}
+		if bad := hasKey(attrs); bad != "" {
+			t.Fatalf("stored trace attributes carry content key %q: %s", bad, raw)
+		}
+		n++
+	}
+	if err := rows.Err(); err != nil || n == 0 {
+		t.Fatalf("trace rows=%d err=%v", n, err)
+	}
+}
+
 func TestMCPCallFailedToolIsRecordedFailed(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("fail", r.ts.URL+"/fail/tools", "")
