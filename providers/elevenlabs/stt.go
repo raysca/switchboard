@@ -29,17 +29,14 @@ type STTConfig struct {
 	Model    string // default "scribe_v2_realtime"
 	// Language is an ISO 639 code ("en"); "" lets the model detect it. A regional
 	// tag ("en-US") is cut to its primary subtag.
-	Language   string
-	SampleRate int // default 16000; input is 16-bit mono PCM (pcm_<rate>)
-	// IncludeTimestamps asks for word timings (not used by the pipeline yet).
-	IncludeTimestamps bool
-	APIKey            string
-	RetryPolicy       resilience.Policy // applied to opening the stream
-	CircuitBreaker    *resilience.Breaker
+	Language       string
+	SampleRate     int // default 16000; input is 16-bit mono PCM (pcm_<rate>)
+	APIKey         string
+	RetryPolicy    resilience.Policy // applied to opening the stream
+	CircuitBreaker *resilience.Breaker
 	// DrainTimeout bounds the wait for the committed transcript after the turn
 	// ends before the socket is torn down.
 	DrainTimeout time.Duration
-	Now          func() time.Time
 	// Pool dials the websocket; default is the process-wide "elevenlabs"/"stt" pool.
 	Pool *netpool.Pool
 }
@@ -93,16 +90,13 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	if cfg.RetryPolicy.MaxAttempts <= 0 {
 		cfg.RetryPolicy = def.RetryPolicy
 	}
-	if cfg.Now == nil {
-		cfg.Now = time.Now
-	}
 	if cfg.Pool == nil {
 		cfg.Pool = netpool.Get(netpool.Options{Provider: "elevenlabs", Stage: "stt", HTTP1Only: true})
 	}
 	p := &STTProcessor{cfg: cfg}
 	p.Runner = sttunit.New(sttunit.Config{
 		Provider: "elevenlabs", Dial: p.dial, Breaker: cfg.CircuitBreaker, Classify: classify,
-		DrainTimeout: cfg.DrainTimeout, Now: cfg.Now,
+		DrainTimeout: cfg.DrainTimeout,
 	})
 	return p, nil
 }
@@ -151,9 +145,6 @@ func (p *STTProcessor) wsURL() (string, error) {
 			l = l[:i]
 		}
 		q.Set("language_code", strings.ToLower(l))
-	}
-	if p.cfg.IncludeTimestamps {
-		q.Set("include_timestamps", "true")
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
