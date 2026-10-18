@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"govoice/core/audio/dtmf"
 )
 
 // Config is the privacy.redaction policy.
@@ -57,7 +59,9 @@ var rules = map[string]rule{
 // ruleOrder is the application order (most specific first).
 var ruleOrder = []string{"pin", "ssn", "iban", "card", "digits", "email", "phone"}
 
-var dtmfRe = regexp.MustCompile(`(?i)(\bDTMF:[ \t]*)[0-9*#][0-9*# \-]*`)
+// dtmfRe masks the keys after a "DTMF:" marker; the key class is the whole
+// keypad alphabet (dtmf.Digits, A-D included), upper case like dtmf.Valid.
+var dtmfRe = regexp.MustCompile(`(?i:\bDTMF:)[ \t]*[` + dtmf.Digits + `][` + dtmf.Digits + ` \-]*`)
 
 // Redactor is immutable and safe for concurrent use. A nil *Redactor is a
 // no-op.
@@ -116,7 +120,7 @@ func (r *Redactor) Redact(s string) string {
 			i := strings.IndexByte(m, ':')
 			keys := 0
 			for _, c := range m[i:] {
-				if c >= '0' && c <= '9' || c == '*' {
+				if c != '#' && c < 0x80 && dtmf.Valid(byte(c)) {
 					keys++
 				}
 			}
