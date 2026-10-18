@@ -659,9 +659,9 @@ func TestParitySummarizationCutPoint(t *testing.T) {
 			case "assistant":
 				err = c.AddMessage(core.Message{Role: core.RoleAssistant, Content: m.Text, TurnID: turn})
 			case "tool_call":
-				err = c.AddToolCall(turn, 1, m.ID, "f", []byte("{}"), now)
+				_, _, err = c.ClaimToolCall(core.ToolCall{TurnID: core.TurnID(turn), Generation: 1, ID: m.ID, Name: "f", Arguments: []byte("{}")}, now)
 			case "tool_result":
-				err = c.AddToolResult(turn, 1, m.ID, []byte(`"ok"`), "", now)
+				err = c.AddToolResultStatus(turn, 1, m.ID, core.ToolSucceeded, []byte(`"ok"`), "", now)
 			}
 			if err != nil {
 				t.Fatal(err)

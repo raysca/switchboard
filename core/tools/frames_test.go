@@ -339,7 +339,7 @@ func TestToolLoopSettlesAHistoryRefusalOnceWithItsAnnouncedStart(t *testing.T) {
 	var history *core.ConversationContext
 	loop, h := newParallelLoop(t, ToolExecutorFunc(func(_ context.Context, c ToolCall) (ToolResult, error) {
 		// A conflicting result for the same call makes the loop's own write fail.
-		if err := history.AddToolResult("t", 1, c.ID, []byte(`{"other":1}`), "", time.Time{}); err != nil {
+		if err := history.AddToolResultStatus("t", 1, c.ID, core.ToolSucceeded, []byte(`{"other":1}`), "", time.Time{}); err != nil {
 			t.Error(err)
 		}
 		return okResult(c.ID), nil

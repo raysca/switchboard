@@ -245,7 +245,7 @@ func (c *ConversationContext) AddMessage(msg Message) error {
 	if msg.Kind != "" && msg.Kind != MessageText && msg.Kind != MessageToolCall && msg.Kind != MessageToolResult {
 		return ErrInvalidToolMessage
 	}
-	// Tool messages must use AddToolCall/AddToolResult so correlation and replay
+	// Tool messages must use ClaimToolCall/AddToolResultStatus so correlation and replay
 	// validation has one authoritative path.
 	if msg.Kind == MessageToolCall || msg.Kind == MessageToolResult || msg.Role == RoleTool {
 		return ErrInvalidToolMessage
@@ -292,38 +292,6 @@ func (c *ConversationContext) addMessageLocked(msg Message) error {
 	return nil
 }
 
-// AddToolCall appends the provider-neutral context projection of a tool request.
-// Replays with the same turn/generation/call identity are idempotent; conflicting
-// reuse fails closed.
-func (c *ConversationContext) AddToolCall(turn string, gen uint64, callID, name string, arguments []byte, at time.Time) error {
-	if turn == "" || gen == 0 || callID == "" || name == "" {
-		return ErrInvalidToolMessage
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if identity, exists := c.toolLedger[callID]; exists {
-		if identity.turn == turn && identity.gen == gen && identity.name == name && identity.arguments == string(arguments) {
-			return nil
-		}
-		return ErrToolCorrelation
-	}
-	if at.IsZero() {
-		at = time.Now()
-	}
-	originalMessages := append([]Message(nil), c.messages...)
-	originalEvictions := c.evictions
-	if err := c.addMessageLocked(Message{Role: RoleAssistant, Kind: MessageToolCall, Content: string(append([]byte(nil), arguments...)), TurnID: turn, ToolCallID: callID, ToolName: name, Generation: gen, CreatedAt: at}); err != nil {
-		return err
-	}
-	if !c.hasToolMessageLocked(MessageToolCall, turn, gen, callID) {
-		c.messages = originalMessages
-		c.evictions = originalEvictions
-		return ErrContextLimitExceeded
-	}
-	c.rememberToolLocked(callID, toolReplayIdentity{turn: turn, gen: gen, name: name, arguments: string(arguments), startedAt: at})
-	return nil
-}
-
 // ClaimToolCall atomically records a first-seen tool call. It returns claimed
 // true only to the caller allowed to execute it. A completed exact replay
 // returns its copied prior result; an in-flight replay fails closed.
@@ -359,15 +327,7 @@ func (c *ConversationContext) ClaimToolCall(call ToolCall, at time.Time) (ToolRe
 	return ToolResult{}, true, nil
 }
 
-// AddToolResult appends a result only after its matching call and at most once.
-func (c *ConversationContext) AddToolResult(turn string, gen uint64, callID string, result []byte, safeError string, at time.Time) error {
-	status := ToolSucceeded
-	if safeError != "" {
-		status = ToolFailed
-	}
-	return c.AddToolResultStatus(turn, gen, callID, status, result, safeError, at)
-}
-
+// AddToolResultStatus appends a result only after its matching call and at most once.
 func (c *ConversationContext) AddToolResultStatus(turn string, gen uint64, callID string, status ToolStatus, result []byte, safeError string, at time.Time) error {
 	if turn == "" || gen == 0 || callID == "" || (len(result) == 0 && safeError == "") {
 		return ErrInvalidToolMessage

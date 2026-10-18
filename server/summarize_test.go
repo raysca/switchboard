@@ -55,8 +55,8 @@ func (p *sumFakeLLM) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		if strings.HasSuffix(um.Turn, "3") || strings.HasSuffix(um.Turn, "6") {
 			id := "call-" + um.Turn
 			now := time.Now()
-			_ = p.spec.History.AddToolCall(um.Turn, gen, id, "lookup", []byte(`{}`), now)
-			_ = p.spec.History.AddToolResult(um.Turn, gen, id, []byte(`"ok"`), "", now)
+			_, _, _ = p.spec.History.ClaimToolCall(core.ToolCall{TurnID: core.TurnID(um.Turn), Generation: core.Generation(gen), ID: id, Name: "lookup", Arguments: []byte(`{}`)}, now)
+			_ = p.spec.History.AddToolResultStatus(um.Turn, gen, id, core.ToolSucceeded, []byte(`"ok"`), "", now)
 		}
 		text := "answer " + um.Turn + sumPad
 		_ = p.session.Reenter(&core.LLMTextDeltaFrame{Delta: text, Turn: um.Turn, Gen: gen}, core.Downstream, p.index+1, gen)

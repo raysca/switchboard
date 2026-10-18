@@ -51,8 +51,8 @@ func (r *summaryRig) turn(t *testing.T, i int, tool bool) {
 	}
 	must(r.c.AddMessage(Message{Role: RoleUser, Content: "question " + id + pad, TurnID: id, CreatedAt: at}))
 	if tool {
-		must(r.c.AddToolCall(id, 1, "c"+id, "lookup", []byte(`{}`), at))
-		must(r.c.AddToolResult(id, 1, "c"+id, []byte(`"ok"`), "", at))
+		must(seedToolCall(r.c, id, 1, "c"+id, "lookup", []byte(`{}`), at))
+		must(seedToolResult(r.c, id, 1, "c"+id, []byte(`"ok"`), "", at))
 	}
 	must(r.c.AddMessage(Message{Role: RoleAssistant, Content: "answer " + id + pad, TurnID: id, CreatedAt: at}))
 }
@@ -115,7 +115,7 @@ func TestSummary_NeverSplitsInFlightToolPair(t *testing.T) {
 	r.turn(t, 2, false)
 	// Turn 3: call in flight (no result yet), then turn 4 is newest.
 	_ = r.c.AddMessage(Message{Role: RoleUser, Content: "q3" + pad, TurnID: "t3", CreatedAt: time.Unix(3, 0)})
-	_ = r.c.AddToolCall("t3", 1, "ct3", "slow", []byte(`{}`), time.Unix(3, 0))
+	_ = seedToolCall(r.c, "t3", 1, "ct3", "slow", []byte(`{}`), time.Unix(3, 0))
 	r.turn(t, 4, false)
 	if !r.s.Maybe() {
 		t.Fatal("expected start")
@@ -125,7 +125,7 @@ func TestSummary_NeverSplitsInFlightToolPair(t *testing.T) {
 	if !strings.Contains(msgs[1].Content, "summary of 4") { // t1+t2 only; turn 3 stays whole
 		t.Fatalf("span should stop before the in-flight call: %q", msgs[1].Content)
 	}
-	if err := r.c.AddToolResult("t3", 1, "ct3", []byte(`"late"`), "", time.Unix(5, 0)); err != nil {
+	if err := seedToolResult(r.c, "t3", 1, "ct3", []byte(`"late"`), "", time.Unix(5, 0)); err != nil {
 		t.Fatalf("late result must still match its call: %v", err)
 	}
 	assertNoOrphans(t, r.c.Messages())
@@ -232,10 +232,10 @@ func TestSummary_LongConversation_BudgetNeverExceededNoOrphans(t *testing.T) {
 	for i := 1; i <= 200; i++ {
 		r.turn(t, i, i%3 == 0)
 		if i%5 == 0 { // slow tool: call now, result two turns later, so it is in flight across a summary
-			_ = r.c.AddToolCall(fmt.Sprint("t", i), 1, fmt.Sprint("slow", i), "slow", []byte(`{}`), time.Unix(int64(i), 0))
+			_ = seedToolCall(r.c, fmt.Sprint("t", i), 1, fmt.Sprint("slow", i), "slow", []byte(`{}`), time.Unix(int64(i), 0))
 		}
 		if i%5 == 2 && i > 5 {
-			if err := r.c.AddToolResult(fmt.Sprint("t", i-2), 1, fmt.Sprint("slow", i-2), []byte(`"ok"`), "", time.Unix(int64(i), 0)); err != nil {
+			if err := seedToolResult(r.c, fmt.Sprint("t", i-2), 1, fmt.Sprint("slow", i-2), []byte(`"ok"`), "", time.Unix(int64(i), 0)); err != nil {
 				t.Fatalf("turn %d: late result lost its call: %v", i, err)
 			}
 		}
@@ -261,10 +261,10 @@ func TestSummary_PullBackDoesNotOrphanEarlierLateResult(t *testing.T) {
 	r.turn(t, 1, false)
 	at := time.Unix(2, 0)
 	_ = r.c.AddMessage(Message{Role: RoleUser, Content: "q2" + pad, TurnID: "t2", CreatedAt: at})
-	_ = r.c.AddToolCall("t2", 1, "c2", "slow", []byte(`{}`), at)
+	_ = seedToolCall(r.c, "t2", 1, "c2", "slow", []byte(`{}`), at)
 	_ = r.c.AddMessage(Message{Role: RoleUser, Content: "q3" + pad, TurnID: "t3", CreatedAt: at})
-	_ = r.c.AddToolCall("t3", 1, "c3", "slow", []byte(`{}`), at)   // still in flight
-	_ = r.c.AddToolResult("t2", 1, "c2", []byte(`"late"`), "", at) // lands after t3 started
+	_ = seedToolCall(r.c, "t3", 1, "c3", "slow", []byte(`{}`), at)   // still in flight
+	_ = seedToolResult(r.c, "t2", 1, "c2", []byte(`"late"`), "", at) // lands after t3 started
 	r.turn(t, 4, false)
 	if r.s.Maybe() {
 		r.wait(t)

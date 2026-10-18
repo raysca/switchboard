@@ -253,10 +253,10 @@ func TestRoundExecutorIgnoringCtxDoesNotWedgeHistory(t *testing.T) {
 func TestRoundForgottenIdentityStaysPaired(t *testing.T) {
 	h := core.NewConversationContext(core.ContextConfig{MaxMessages: 64, MaxTokens: 10000, MaxToolIdentities: 1})
 	for _, id := range []string{"a", "b"} {
-		if err := h.AddToolCall("t", 1, id, "lookup", []byte("{}"), time.Time{}); err != nil {
+		if _, _, err := h.ClaimToolCall(core.ToolCall{TurnID: "t", Generation: 1, ID: id, Name: "lookup", Arguments: []byte("{}")}, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
-		if err := h.AddToolResult("t", 1, id, []byte("{}"), "", time.Time{}); err != nil {
+		if err := h.AddToolResultStatus("t", 1, id, core.ToolSucceeded, []byte("{}"), "", time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}

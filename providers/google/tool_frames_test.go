@@ -14,7 +14,7 @@ func (r *toolFrameRecorder) ProcessFrame(_ context.Context, f core.Frame, dir co
 	if dir == core.Downstream {
 		switch v := f.(type) {
 		case *core.ToolCallFrame:
-			if err := r.history.AddToolCall(string(v.Call.TurnID), uint64(v.Call.Generation), v.Call.ID, v.Call.Name, v.Call.Arguments, v.Timestamp); err != nil {
+			if _, _, err := r.history.ClaimToolCall(v.Call, v.Timestamp); err != nil {
 				return err
 			}
 		case *core.ToolResultFrame:
