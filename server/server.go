@@ -1142,7 +1142,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.probeServer != nil {
 		_ = s.probeServer.Close()
 	}
-	if !s.waitDemo(ctx) { // the install must not run against a closed store
+	// The install must not run against a closed store. A short grace on a context that survives an
+	// already-expired shutdown ctx: the install was cancelled above and ends promptly.
+	graceCtx, graceCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer graceCancel()
+	if !s.waitDemo(graceCtx) {
 		s.logger.Warn("demo install still running at shutdown")
 	}
 	s.closeManagement()

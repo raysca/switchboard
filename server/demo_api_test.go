@@ -370,3 +370,39 @@ func TestShutdownCancelsARealDemoInstallBeforeClosingTheStore(t *testing.T) {
 		t.Fatal("the install is still registered after Shutdown")
 	}
 }
+
+// A panic inside the shared install runs on singleflight's own goroutine, where no request or
+// auto-install recover reaches it: it must come back as an error, not kill the daemon.
+type panicServers struct{ *racyServers }
+
+func (panicServers) List(context.Context) ([]storage.MCPServer, error) { panic("bad discovery") }
+
+func TestDentalInstallPanicIsAnErrorNotACrash(t *testing.T) {
+	s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	_, err := s.installDental(context.Background(), panicServers{&racyServers{}}, &racyFlows{}, "https://d/mcp")
+	if err == nil || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("a panicking install returned %v, want a 'panicked' error", err)
+	}
+	if !s.waitDemo(context.Background()) {
+		t.Fatal("the panicked install is still registered on the wait group")
+	}
+}
+
+// Shutdown must wait for a running install (demoWG) before it closes the store.
+func TestShutdownWaitsForTheDemoWaitGroup(t *testing.T) {
+	s := dentalRig(t)
+	s.demoWG.Add(1)
+	done := make(chan struct{})
+	go func() { _ = s.Shutdown(context.Background()); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("Shutdown returned (and closed the store) while a demo install was running")
+	case <-time.After(300 * time.Millisecond):
+	}
+	s.demoWG.Done()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown did not return after the install ended")
+	}
+}

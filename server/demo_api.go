@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"govoice/server/api"
@@ -44,9 +45,18 @@ var errDemoShuttingDown = errors.New("demo install refused: the server is shutti
 // during discovery or DB work. The run is shared by every caller, so it does
 // not use any caller's context: it runs on its own, bounded, which Shutdown
 // cancels (stopDemoLocked) and then waits for (waitDemo, through demoWG) before
-// it closes the store. Each caller waits for the result or for its own ctx.
+// it closes the store (the flight has its own 30 s bound, so a startup install can outlive
+// autoInstallDemo's 60 s context; still bounded, and Shutdown cancels it). Each caller waits for the result or for its own ctx.
 func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows demo.Flows, endpoint string) (demo.Result, error) {
-	ch := s.demoSF.DoChan("dental", func() (any, error) {
+	ch := s.demoSF.DoChan("dental", func() (res any, err error) {
+		// DoChan runs this on its own goroutine: neither net/http's per-request recover nor
+		// autoInstallDemo's covers it, and a panic here would end the process.
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("demo install panicked", "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+				res, err = demo.Result{}, fmt.Errorf("demo install panicked: %v", r)
+			}
+		}()
 		fctx, cancel := context.WithTimeout(context.Background(), demoInstallTimeout)
 		defer cancel()
 		s.mu.Lock()
