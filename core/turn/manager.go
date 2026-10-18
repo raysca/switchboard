@@ -28,7 +28,6 @@ type Config struct {
 	StartDebounce         time.Duration
 	StopDebounce          time.Duration
 	MinimumSpeechDuration time.Duration
-	SemanticMaxAge        time.Duration
 	MaxRetiredTurns       int
 	// StartStrategies is the first-yes-wins chain deciding when a user turn
 	// starts. Nil means VAD only (the historical behavior). Instances are
@@ -44,14 +43,13 @@ func DefaultConfig() Config {
 		StartDebounce:         80 * time.Millisecond,
 		StopDebounce:          120 * time.Millisecond,
 		MinimumSpeechDuration: 150 * time.Millisecond,
-		SemanticMaxAge:        time.Second,
 		MaxRetiredTurns:       128,
 	}
 }
 
 func (c Config) validate() error {
 	if c.InitialSilenceTimeout <= 0 || c.SilenceTimeout <= 0 || c.MaxTurnDuration <= 0 ||
-		c.StartDebounce < 0 || c.StopDebounce < 0 || c.MinimumSpeechDuration < 0 || c.SemanticMaxAge < 0 || c.MaxRetiredTurns <= 0 {
+		c.StartDebounce < 0 || c.StopDebounce < 0 || c.MinimumSpeechDuration < 0 || c.MaxRetiredTurns <= 0 {
 		return ErrInvalidConfig
 	}
 	for _, s := range c.StartStrategies {
@@ -71,7 +69,6 @@ type Observation struct {
 	Generation   core.Generation
 	Speaking     bool
 	Activity     bool
-	Semantic     *SemanticEvidence
 	// Optional start-strategy evidence; ignored by the default VAD chain.
 	Transcript      string
 	TranscriptFinal bool
@@ -117,7 +114,6 @@ type Manager struct {
 	silenceSince    time.Time
 	hasSilenceSince bool
 	muteSince       time.Time
-	semantic        *SemanticEvidence
 
 	starters     []UserTurnStartStrategy
 	startByVAD   bool
@@ -242,11 +238,6 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 		return frames, nil, nil
 	}
 
-	if observation.Semantic == nil {
-		m.semantic = nil
-	} else {
-		m.semantic = normalizedSemanticEvidence(observation.Semantic)
-	}
 	if observation.Activity || observation.Speaking {
 		m.noSpeechSince = observation.At
 	}
@@ -381,14 +372,7 @@ func (m *Manager) finishDetection(frames []core.Frame, snapshot *detectionSnapsh
 	return frames
 }
 
-func sameDetectionInput(a, b DetectionInput) bool {
-	aSemantic, bSemantic := a.Semantic, b.Semantic
-	a.Semantic, b.Semantic = nil, nil
-	if a != b || (aSemantic == nil) != (bSemantic == nil) {
-		return false
-	}
-	return aSemantic == nil || *aSemantic == *bSemantic
-}
+func sameDetectionInput(a, b DetectionInput) bool { return a == b }
 
 // Current means the snapshot matches actual detector-relevant state, not just
 // an observation counter or another queued snapshot. Control timestamps alone
@@ -467,7 +451,6 @@ func (m *Manager) SetMuted(muted bool, at time.Time) error {
 		m.startCandidate = false
 		m.stopCandidate = false
 		m.clearPendingDetectionLocked()
-		m.semantic = nil
 		return nil
 	}
 	paused := at.Sub(m.muteSince)
@@ -497,7 +480,6 @@ func (m *Manager) Reset(at time.Time) error {
 	m.noSpeechSince = at
 	m.currentGen, m.currentID = 0, ""
 	m.retiredTurns = make(map[core.TurnID]struct{})
-	m.semantic = nil
 	m.pendingText, m.hasText, m.pendingExt = "", false, false
 	for _, s := range m.starters {
 		s.reset()
@@ -574,11 +556,6 @@ func (m *Manager) advanceLocked(at time.Time) ([]core.Frame, *detectionSnapshot)
 }
 
 func (m *Manager) newDetectionSnapshotLocked(at time.Time) *detectionSnapshot {
-	var semantic *SemanticEvidence
-	if m.semantic != nil {
-		evidence := *m.semantic
-		semantic = &evidence
-	}
 	var silenceFor time.Duration
 	if m.hasSilenceSince {
 		silenceFor = at.Sub(m.silenceSince)
@@ -587,20 +564,11 @@ func (m *Manager) newDetectionSnapshotLocked(at time.Time) *detectionSnapshot {
 		At: at, TurnStartedAt: m.turnStartedAt, TurnID: m.currentID, Generation: m.currentGen,
 		Text: m.text, TextFinal: m.textFinal, TextAt: m.textAt, ExternalStop: m.extStop,
 		SilenceFor: silenceFor, SilenceAfter: m.cfg.SilenceTimeout,
-		SemanticMaxAge: m.cfg.SemanticMaxAge, Semantic: semantic,
 	}
 	return &detectionSnapshot{
 		input: input, epoch: m.epoch, turn: m.currentID,
 		generation: m.currentGen, turnStartedAt: m.turnStartedAt, silenceSince: m.silenceSince,
 	}
-}
-
-func normalizedSemanticEvidence(source *SemanticEvidence) *SemanticEvidence {
-	if source == nil || math.IsNaN(source.Confidence) || math.IsInf(source.Confidence, 0) || source.Confidence < 0 || source.Confidence > 1 {
-		return nil
-	}
-	evidence := *source
-	return &evidence
 }
 
 // tryStartLocked consults the strategy chain (first yes wins) and consumes

@@ -17,7 +17,6 @@ func TestTurnManagerQueuedDetectionStateChanges(t *testing.T) {
 		action       func(*Manager, time.Time) error
 		wantErr      error
 		wantComplete bool
-		wantSemantic bool
 	}{
 		{name: "no-op mute", wantComplete: true, action: func(m *Manager, at time.Time) error { return m.SetMuted(false, at) }},
 		{name: "later no-op mute", wantComplete: true, action: func(m *Manager, at time.Time) error { return m.SetMuted(false, at.Add(time.Second)) }},
@@ -40,8 +39,8 @@ func TestTurnManagerQueuedDetectionStateChanges(t *testing.T) {
 			_, err := m.Observe(Observation{At: at, TurnID: "queued", Generation: 1, Activity: true})
 			return err
 		}},
-		{name: "semantic change", wantComplete: true, wantSemantic: true, action: func(m *Manager, at time.Time) error {
-			_, err := m.Observe(Observation{At: at, TurnID: "queued", Generation: 1, Semantic: &SemanticEvidence{At: at, TurnID: "queued", Generation: 1, Confidence: .9}})
+		{name: "transcript change", wantComplete: true, action: func(m *Manager, at time.Time) error {
+			_, err := m.Observe(Observation{At: at, TurnID: "queued", Generation: 1, Transcript: "queued words"})
 			return err
 		}},
 		{name: "speech resumes", action: func(m *Manager, at time.Time) error {
@@ -106,8 +105,8 @@ func TestTurnManagerQueuedDetectionStateChanges(t *testing.T) {
 				if len(inputs) != 2 || !completed.At.Equal(at) {
 					t.Fatalf("queued input lost or altered: inputs=%+v completion=%+v", inputs, completed)
 				}
-				if (inputs[1].Semantic != nil) != tc.wantSemantic {
-					t.Fatalf("queued callback used stale semantic state: %+v", inputs[1])
+				if tc.name == "transcript change" && inputs[1].Text != "queued words" {
+					t.Fatalf("queued callback used a stale transcript: %+v", inputs[1])
 				}
 			}
 			if tc.name == "mute then unmute" && (len(inputs) != 2 || inputs[1].SilenceFor != 0) {

@@ -3,6 +3,7 @@ package turn
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"testing"
@@ -21,7 +22,6 @@ func testConfig() Config {
 		StartDebounce:         100 * time.Millisecond,
 		StopDebounce:          100 * time.Millisecond,
 		MinimumSpeechDuration: 200 * time.Millisecond,
-		SemanticMaxAge:        time.Second,
 		MaxRetiredTurns:       4,
 	}
 }
@@ -542,19 +542,15 @@ func TestTurnManagerResetClearsPendingDetectionSnapshot(t *testing.T) {
 func TestTurnManagerBoundsAdversarialDetectorCoalescing(t *testing.T) {
 	var m *Manager
 	calls := 0
-	sawInvalidEvidence := false
 	detector := detectorFunc(func(input DetectionInput) (DetectionDecision, bool) {
 		calls++
-		if input.Semantic != nil {
-			sawInvalidEvidence = true
-		}
 		if calls > 4 {
 			panic("unbounded detector drain")
 		}
 		next := input.At.Add(time.Nanosecond)
 		_, _ = m.Observe(Observation{
 			At: next, TurnID: input.TurnID, Generation: input.Generation,
-			Semantic: &SemanticEvidence{TurnID: input.TurnID, Generation: input.Generation, At: next, Confidence: math.NaN()},
+			Transcript: fmt.Sprint(calls),
 		})
 		return DetectionDecision{}, false
 	})
@@ -571,9 +567,6 @@ func TestTurnManagerBoundsAdversarialDetectorCoalescing(t *testing.T) {
 	completed := findEvent(eventFrames(frames), core.TurnEventCompleted)
 	if err != nil || completed == nil || completed.Reason != core.TurnReasonSilence || calls != 2 {
 		t.Fatalf("bounded fallback failed: events=%+v calls=%d err=%v", eventFrames(frames), calls, err)
-	}
-	if sawInvalidEvidence {
-		t.Fatal("invalid semantic evidence reached detector snapshot")
 	}
 }
 
@@ -749,35 +742,6 @@ func TestTurnManagerReentrantEpochChangeDiscardsPreCallbackFrames(t *testing.T) 
 				}
 			}
 		})
-	}
-}
-
-func TestTurnDetectorReceivesDefensiveSemanticEvidenceCopy(t *testing.T) {
-	var m *Manager
-	seen := false
-	detector := detectorFunc(func(input DetectionInput) (DetectionDecision, bool) {
-		if input.Semantic != nil {
-			input.Semantic.Confidence = 0
-			seen = true
-		}
-		return DetectionDecision{}, false
-	})
-	var err error
-	m, err = NewManager(testConfig(), detector)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Start(t0); err != nil {
-		t.Fatal(err)
-	}
-	_, _ = m.Observe(observation(t0, "evidence-copy", 1, true))
-	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
-	_, _ = m.Observe(observation(t0.Add(time.Second), "evidence-copy", 1, false))
-	evidence := &SemanticEvidence{TurnID: "evidence-copy", Generation: 1, At: t0.Add(1100 * time.Millisecond), Confidence: 0.95}
-	_, _ = m.Observe(Observation{At: t0.Add(1100 * time.Millisecond), TurnID: "evidence-copy", Generation: 1, Semantic: evidence})
-	_, err = m.Advance(t0.Add(1200 * time.Millisecond))
-	if err != nil || !seen || evidence.Confidence != 0.95 {
-		t.Fatalf("detector input was not isolated: seen=%v source confidence=%v err=%v", seen, evidence.Confidence, err)
 	}
 }
 
