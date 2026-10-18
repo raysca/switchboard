@@ -193,6 +193,8 @@ docker stop -t 60 govoice-server   # at least drain_timeout + 5 s (50 s in produ
 - **Automated Mitigation**: The parent process detects the child exit, reaps the PID via `cmd.Wait()`, updates capacity, and automatically spawns a healthy replacement worker with exponential backoff.
 - **Action Required**: The child's stderr tail is held in memory only (64 KB) and is not written to the journal; find the cause from the host side. Verify that the host is not experiencing OOM kills (`dmesg -T | grep -i oom`).
 
+- **Client symptom: audio keeps playing briefly after a barge-in.** The server drops the cut reply's queued audio and sends `bot-interrupted`, but the unmodified Pipecat client ignores that message and cannot clear what it already buffered (recorded decision `relax-unmodified-client-playback-clear`, `docs/compatibility/playback-clear-decision.json`); this is not a server fault.
+
 ### Incident 2: Leaked Goroutines / Leaked Work
 - **Symptoms**: Alert `GovoiceLeakedWork` (`increase(voice_leaked_work_total[15m]) > 0`; `voice_leaked_sessions_total` counts the affected sessions).
 - **Underlying Mechanism**: A session was terminated, but a managed child task failed to exit within `TeardownTimeout: 2s`.
