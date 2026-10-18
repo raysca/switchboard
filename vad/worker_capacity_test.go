@@ -15,10 +15,14 @@ func TestWorkerRespawnFailuresDoNotDrainCapacity(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		b.workers[0].markDown() // the respawn of the missing binary keeps failing meanwhile
 	}
+	for end := time.Now().Add(5 * time.Second); b.statCounters.restarts.Load() < 2; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the respawn loop never retried")
+		}
+	}
 	if avail, _ := b.capacity(); avail != 1 {
 		t.Fatalf("available = %d after repeated failed respawns of one worker, want 1", avail)
 	}
-
 }
 
 // A parent descheduled past the deadline (timer and reply ready together, or

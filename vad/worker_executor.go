@@ -437,12 +437,12 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 	wp.mu.Unlock()
 
 	if stdin == nil || stdout == nil {
-		wp.handleWorkerFailure(jobs, ErrWorker)
+		wp.handleWorkerFailure(jobs, ErrWorker, true)
 		return
 	}
 
 	if err := WriteFrame(stdin, payload); err != nil {
-		wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, err))
+		wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, err), true) // died before reading them
 		return
 	}
 
@@ -460,13 +460,13 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 		wp.backend.statCounters.batchedJobs.Add(int64(len(jobs)))
 
 		if res.err != nil {
-			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, res.err))
+			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, res.err), false)
 			return
 		}
 
 		respItems, err := DecodeInferResp(res.payload)
 		if err != nil {
-			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: decode response: %v", ErrWorker, err))
+			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: decode response: %v", ErrWorker, err), false)
 			return
 		}
 
@@ -549,9 +549,11 @@ func awaitReply(resCh <-chan readResult, deadline time.Time, grace time.Duration
 	}
 }
 
-// handleWorkerFailure kills a worker whose pipe failed and hands the batch to
-// a live worker: the jobs' input and state are unchanged by the failed attempt.
-func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error) {
+// handleWorkerFailure kills a worker whose pipe failed. The batch goes to a
+// live worker only if retry (the worker never read it: the jobs' input and
+// state are unchanged); a batch the worker read and died on may be a poison
+// chunk, which must not kill every worker in turn, so it fails.
+func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error, retry bool) {
 	wp.mu.Lock()
 	wp.killAndReapLocked()
 	wp.mu.Unlock()
@@ -563,7 +565,15 @@ func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error) {
 	wp.inFlightMu.Unlock()
 
 	wp.markDown()
-	wp.handOff(jobs, err)
+	if retry {
+		wp.handOff(jobs, err)
+		return
+	}
+	for _, j := range jobs {
+		j.Err = err
+		wp.backend.statCounters.workerErrors.Add(1)
+		wp.backend.finish(j)
+	}
 }
 
 // markDown takes the worker out of capacity and of handOff targets and starts

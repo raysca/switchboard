@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -47,6 +48,20 @@ func vadWorkerPIDs(t *testing.T) []int {
 	return pids
 }
 
+// pinRecorder records the session ids the calls register with, to prove the two calls sit on different workers.
+type pinRecorder struct {
+	*vad.Executor
+	mu  sync.Mutex
+	ids []uint64
+}
+
+func (p *pinRecorder) Register(id uint64) vad.Stream {
+	p.mu.Lock()
+	p.ids = append(p.ids, id)
+	p.mu.Unlock()
+	return p.Executor.Register(id)
+}
+
 // Two calls on the real process VAD executor (one per worker). One worker process is SIGKILLed mid-call and
 // cannot restart (crash loop): both callers' speech is still detected, the dead worker stays out of capacity
 // and the restarts metric counts its attempts.
@@ -62,7 +77,8 @@ func TestCallBehaviorVADKeepsHearingCallersWhileAWorkerCrashLoops(t *testing.T) 
 		t.Fatalf("process VAD executor (run `make ort` and `make build`): %v", err)
 	}
 	t.Cleanup(func() { _ = vexec.Close() })
-	r.s.SetVADExecutor(vexec)
+	rec := &pinRecorder{Executor: vexec}
+	r.s.SetVADExecutor(rec)
 	flowID := behaviorFlow(t, r, "Listener", "listenvoice", ``)
 	calls := []*e2eCall{r.dial(flowID), r.dial(flowID)} // consecutive session ids: one per worker
 	speech := callerSpeech(t)
@@ -70,6 +86,12 @@ func TestCallBehaviorVADKeepsHearingCallersWhileAWorkerCrashLoops(t *testing.T) 
 	for i, c := range calls {
 		c.sendAudio(speech)
 		eventually(t, fmt.Sprintf("call %d's speech before the crash", i), func() bool { return heard(c) >= 1 })
+	}
+	rec.mu.Lock()
+	ids := append([]uint64(nil), rec.ids...)
+	rec.mu.Unlock()
+	if len(ids) != 2 || ids[0]%2 == ids[1]%2 {
+		t.Fatalf("the calls registered VAD sessions %v, want two ids pinned to different workers", ids)
 	}
 	pids := vadWorkerPIDs(t)
 	if len(pids) != 2 {
