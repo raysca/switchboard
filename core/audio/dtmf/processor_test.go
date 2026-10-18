@@ -262,9 +262,15 @@ func TestSendDTMFToolValidationAndDelegation(t *testing.T) {
 		return core.ToolResult{CallID: c.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{}`)}, nil
 	}))
 	call := func(name, args string) core.ToolResult {
-		r, err := exec.Execute(context.Background(), core.ToolCall{ID: "c1", Name: name, Arguments: json.RawMessage(args), Generation: 0})
+		// A reply that never comes ends the wait here and fails the test.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		r, err := exec.Execute(ctx, core.ToolCall{ID: "c1", Name: name, Arguments: json.RawMessage(args), Generation: 0})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("%s: no reply within 2s", name)
 		}
 		return r
 	}

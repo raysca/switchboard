@@ -161,9 +161,15 @@ func TestSendDTMFToolPlaysTonesToTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	r, err := spec.ToolExecutor.Execute(context.Background(), core.ToolCall{ID: "c1", Name: dtmf.ToolName, Arguments: []byte(`{"digits":"5#"}`)})
+	// A reply that never comes ends the wait here and fails the test.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	r, err := spec.ToolExecutor.Execute(ctx, core.ToolCall{ID: "c1", Name: dtmf.ToolName, Arguments: []byte(`{"digits":"5#"}`)})
 	if err != nil || r.Status != core.ToolSucceeded {
 		t.Fatalf("%+v %v", r, err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("send_dtmf gave no reply within 2s")
 	}
 	want, _ := dtmf.Generate("5#", dtmf.DefaultGeneratorConfig(24000))
 	var got int
