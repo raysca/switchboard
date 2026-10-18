@@ -21,11 +21,9 @@ import (
 
 // Config bounds a recording. Zero values select the defaults.
 type Config struct {
-	SampleRate   int           // file rate; default 16000
 	MaxDuration  time.Duration // hard cap; default 1h
 	MaxBytes     int64         // hard cap on file size; default 256 MiB (max 4 GiB-1KiB)
 	QueueLen     int           // tap queue; default 256 frames
-	Holdback     time.Duration // lateness tolerated before a track is padded; default 500ms
 	FlushEvery   time.Duration // mix/write cadence; default 250ms
 	CloseTimeout time.Duration // max wait for the sink in Close; default 5s
 	Now          func() time.Time
@@ -78,6 +76,8 @@ const (
 	maxFileBytes = 4<<30 - 1<<10
 	maxPending   = 10 // seconds of not-yet-written audio per track
 	snap         = 60 * time.Millisecond
+	sampleRate   = 16000                  // file rate
+	holdback     = 500 * time.Millisecond // lateness tolerated before a track is padded
 )
 
 type track int
@@ -137,9 +137,6 @@ var ErrCloseTimeout = errors.New("record: sink did not finish in time")
 
 // New starts a recorder. It never touches the sink on the caller's goroutine.
 func New(sink Sink, meta Meta, cfg Config) *Recorder {
-	if cfg.SampleRate <= 0 {
-		cfg.SampleRate = 16000
-	}
 	if cfg.MaxDuration <= 0 {
 		cfg.MaxDuration = time.Hour
 	}
@@ -152,9 +149,6 @@ func New(sink Sink, meta Meta, cfg Config) *Recorder {
 	if cfg.QueueLen <= 0 {
 		cfg.QueueLen = 256
 	}
-	if cfg.Holdback <= 0 {
-		cfg.Holdback = 500 * time.Millisecond
-	}
 	if cfg.FlushEvery <= 0 {
 		cfg.FlushEvery = 250 * time.Millisecond
 	}
@@ -164,7 +158,7 @@ func New(sink Sink, meta Meta, cfg Config) *Recorder {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	capS := int64(cfg.MaxDuration) * int64(cfg.SampleRate) / int64(time.Second)
+	capS := int64(cfg.MaxDuration) * int64(sampleRate) / int64(time.Second)
 	if bySize := (cfg.MaxBytes - wavHeaderLen) / 4; bySize < capS {
 		capS = bySize
 	}
@@ -241,7 +235,7 @@ func (r *Recorder) off(t time.Time) int64 {
 	if d < 0 {
 		return 0
 	}
-	return int64(d) * int64(r.cfg.SampleRate) / int64(time.Second)
+	return int64(d) * int64(sampleRate) / int64(time.Second)
 }
 
 // writer-goroutine state
@@ -263,7 +257,7 @@ func (r *Recorder) run() {
 		case it := <-r.q:
 			w.ingest(it)
 		case <-tick.C:
-			w.drain(r.off(r.cfg.Now()) - int64(r.cfg.Holdback)*int64(r.cfg.SampleRate)/int64(time.Second))
+			w.drain(r.off(r.cfg.Now()) - int64(holdback)*int64(sampleRate)/int64(time.Second))
 		case <-r.stop:
 			for len(r.q) > 0 {
 				w.ingest(<-r.q)
@@ -283,7 +277,7 @@ func (w *writer) open() bool {
 	}
 	obj, err := w.r.sink.Create(w.r.meta.ID)
 	if err == nil {
-		_, err = obj.Write(wavHeader(w.r.cfg.SampleRate, 0))
+		_, err = obj.Write(wavHeader(sampleRate, 0))
 		if err != nil {
 			_ = obj.Abort()
 		}
@@ -316,9 +310,9 @@ func (w *writer) ingest(it item) {
 	r := w.r
 	ts := &w.tr[it.t]
 	pcm := it.pcm
-	if it.rate != r.cfg.SampleRate {
+	if it.rate != sampleRate {
 		if ts.rs == nil || ts.rsRate != it.rate {
-			rs, err := resample.NewResampler(it.rate, r.cfg.SampleRate)
+			rs, err := resample.NewResampler(it.rate, sampleRate)
 			if err != nil {
 				r.dropped.Add(1)
 				return
@@ -345,7 +339,7 @@ func (w *writer) ingest(it item) {
 	if it.t == user {
 		start -= n
 	}
-	if start < ts.pos+int64(snap)*int64(r.cfg.SampleRate)/int64(time.Second) {
+	if start < ts.pos+int64(snap)*int64(sampleRate)/int64(time.Second) {
 		start = ts.pos
 	}
 	if start < w.emitted { // arrived after its slot was already written
@@ -366,7 +360,7 @@ func (w *writer) ingest(it item) {
 		pcm = pcm[:n*2]
 		r.truncated = true
 	}
-	if ts.pending+n > maxPending*int64(r.cfg.SampleRate) {
+	if ts.pending+n > maxPending*int64(sampleRate) {
 		r.dropped.Add(1)
 		return
 	}
@@ -380,7 +374,7 @@ func (w *writer) drain(upTo int64) {
 	if upTo > w.r.capS {
 		upTo = w.r.capS
 	}
-	chunk := int64(w.r.cfg.SampleRate) // 1s per write
+	chunk := int64(sampleRate) // 1s per write
 	for !w.failed && w.emitted < upTo {
 		n := upTo - w.emitted
 		if n > chunk {
@@ -450,11 +444,11 @@ func (w *writer) finish() {
 	sc, _ := json.Marshal(Sidecar{
 		ID: r.meta.ID, SessionID: r.meta.SessionID, FlowID: r.meta.FlowID, CallID: r.meta.CallID,
 		StartedAt: r.t0.UTC(), EndedAt: r.cfg.Now().UTC(),
-		Format:   Format{"wav", r.cfg.SampleRate, 2, 16, "L=user,R=bot"},
-		Duration: w.emitted * 1000 / int64(r.cfg.SampleRate), Bytes: data + wavHeaderLen,
+		Format:   Format{"wav", sampleRate, 2, 16, "L=user,R=bot"},
+		Duration: w.emitted * 1000 / int64(sampleRate), Bytes: data + wavHeaderLen,
 		Truncated: r.truncated, Dropped: r.dropped.Load(), Turns: turns,
 	})
-	if err := w.obj.Finalize(wavHeader(r.cfg.SampleRate, uint32(data)), sc); err != nil {
+	if err := w.obj.Finalize(wavHeader(sampleRate, uint32(data)), sc); err != nil {
 		r.err = err
 	}
 	w.obj = nil
