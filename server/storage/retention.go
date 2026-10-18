@@ -22,35 +22,26 @@ func (s *Store) Retention() RetentionRepository {
 	return RetentionRepository{s: s}
 }
 
-// ContentCursor resumes a content purge after the last session examined.
-type ContentCursor struct{ EndedAt, ID string }
-
 // ContentPurgeResult reports one PurgeContent batch.
 type ContentPurgeResult struct {
 	TurnsPurged int64
-	Examined    int           // sessions selected in this batch
-	Next        ContentCursor // pass to the next call
+	Examined    int // sessions selected in this batch
 }
 
 // PurgeContent nulls turns.transcript and turns.assistant_text for ended sessions whose ended_at is at or
 // before cutoff, up to limit sessions. Structural metadata (sessions, turns, latencies, spans, events) is
-// preserved. Active and draining sessions are never modified.
-func (r RetentionRepository) PurgeContent(ctx context.Context, cutoff time.Time, limit int, after ContentCursor) (res ContentPurgeResult, err error) {
+// preserved. Active and draining sessions are never modified. A session leaves the selection once purged, so
+// calling it again until Examined < limit purges everything.
+func (r RetentionRepository) PurgeContent(ctx context.Context, cutoff time.Time, limit int) (res ContentPurgeResult, err error) {
 	if limit <= 0 {
 		limit = 500
 	}
 
-	args := []any{utc(cutoff)}
-	cursorClause := ""
-	if after.ID != "" {
-		cursorClause = "\n  AND (ended_at > ? OR (ended_at = ? AND id > ?))"
-		args = append(args, after.EndedAt, after.EndedAt, after.ID)
-	}
-	args = append(args, limit)
+	args := []any{utc(cutoff), limit}
 	query := `SELECT id, ended_at FROM sessions
 WHERE status = 'ended'
   AND ended_at IS NOT NULL
-  AND ended_at <= ?` + cursorClause + `
+  AND ended_at <= ?
   AND (
     EXISTS (SELECT 1 FROM turns WHERE session_id = sessions.id AND (transcript IS NOT NULL OR assistant_text IS NOT NULL))
   )
@@ -70,7 +61,6 @@ LIMIT ?`
 			return res, err
 		}
 		sessionIDs = append(sessionIDs, id)
-		res.Next = ContentCursor{EndedAt: endedAt, ID: id}
 	}
 	if err := rows.Err(); err != nil {
 		return res, err

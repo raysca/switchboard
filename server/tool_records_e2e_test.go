@@ -104,8 +104,9 @@ func TestMCPCallToolCallsAreRecorded(t *testing.T) {
 	}
 }
 
-// TestStoredTraceAttributesNeverCarryContent is the privacy pin for the trace adapter: whatever a call
-// does, no stored trace row carries a content key, at any depth.
+// TestStoredTraceAttributesNeverCarryContent pins the PRODUCERS: after a real call, no stored trace row
+// carries a content key, at any depth. It cannot catch a regression of the adapter's key whitelist (no real
+// producer emits a content key); TestAdapterFilterAttributesPrivacyPolicy in server/trace pins the adapter.
 func TestStoredTraceAttributesNeverCarryContent(t *testing.T) {
 	r := newMCPCallRig(t)
 	id, hashes := r.server("ok", r.ts.URL+"/ok", "MCP_TOKEN_TEST")

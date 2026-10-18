@@ -12,7 +12,7 @@ import (
 
 // Store defines repository operations required by the retention job.
 type Store interface {
-	PurgeContent(ctx context.Context, cutoff time.Time, limit int, after storage.ContentCursor) (storage.ContentPurgeResult, error)
+	PurgeContent(ctx context.Context, cutoff time.Time, limit int) (storage.ContentPurgeResult, error)
 	PurgeMetadata(ctx context.Context, cutoff time.Time, limit int) (stats storage.PurgeMetadataStats, err error)
 }
 
@@ -106,14 +106,12 @@ func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
 	if j.policy.ContentRetention > 0 {
 		contentCutoff := now.Add(-j.policy.ContentRetention)
 
-		// Page forward with a cursor: each session is examined at most once per
-		// run, so rows that cannot be sanitized never stall newer content.
-		var cursor storage.ContentCursor
+		// A purged session no longer matches the selection, so each batch makes progress.
 		for {
 			if ctx.Err() != nil {
 				return res, ctx.Err()
 			}
-			batch, err := j.store.PurgeContent(ctx, contentCutoff, batchSize, cursor)
+			batch, err := j.store.PurgeContent(ctx, contentCutoff, batchSize)
 			if err != nil {
 				return res, err
 			}
@@ -121,7 +119,6 @@ func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
 			if batch.Examined < batchSize {
 				break
 			}
-			cursor = batch.Next
 		}
 	}
 

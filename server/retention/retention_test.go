@@ -532,9 +532,8 @@ func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 	}
 }
 
-// Already content-free sessions older than the batch size must not starve the purge of newer sessions that
-// still hold content.
-func TestPurgeContent_ContentFreeSessionsDoNotStarveNewerContent(t *testing.T) {
+// More content-bearing sessions than one batch: every one is purged, with no resume state between batches.
+func TestPurgeContent_PurgesEveryContentSessionAcrossBatches(t *testing.T) {
 	s := newTestStore(t)
 	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx := context.Background()
@@ -547,36 +546,40 @@ func TestPurgeContent_ContentFreeSessionsDoNotStarveNewerContent(t *testing.T) {
 			Status: "ended", StartedAt: ended.Add(-time.Minute), EndedAt: ended, ProviderStackJSON: `{}`, RuntimeSnapshotJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}
-		turnID := storage.NewID()
-		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: turnID, SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
+		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: storage.NewID(), SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
 			Transcript: transcript, LatenciesJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}
 		return id
 	}
-	for i := 0; i < 3; i++ { // older than the batch size, already content-free
+	for i := 0; i < 3; i++ { // already content-free
 		addSession(time.Duration(20+i)*24*time.Hour, "")
 	}
-	fresh := addSession(10*24*time.Hour, "secret transcript")
+	var withContent []string
+	for i := 0; i < 5; i++ { // 5 sessions with BatchSize 2: three batches
+		withContent = append(withContent, addSession(time.Duration(10+i)*24*time.Hour, "secret transcript"))
+	}
 
 	job := retention.NewJob(s.Retention(), retention.Policy{ContentRetention: 7 * 24 * time.Hour, MetadataRetention: 30 * 24 * time.Hour, BatchSize: 2},
 		retention.WithClock(func() time.Time { return now }))
 	if _, err := job.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	turns, err := s.Sessions().Turns(ctx, fresh)
-	if err != nil || len(turns) != 1 {
-		t.Fatalf("turns: %v %d", err, len(turns))
-	}
-	if turns[0].Transcript != "" {
-		t.Fatalf("content past retention was not purged: %q", turns[0].Transcript)
+	for _, id := range withContent {
+		turns, err := s.Sessions().Turns(ctx, id)
+		if err != nil || len(turns) != 1 {
+			t.Fatalf("turns: %v %d", err, len(turns))
+		}
+		if turns[0].Transcript != "" {
+			t.Fatalf("session %s: content past retention was not purged: %q", id, turns[0].Transcript)
+		}
 	}
 }
 
 // blockingStore stalls a purge until its context ends.
 type blockingStore struct{ entered chan struct{} }
 
-func (b blockingStore) PurgeContent(ctx context.Context, _ time.Time, _ int, _ storage.ContentCursor) (storage.ContentPurgeResult, error) {
+func (b blockingStore) PurgeContent(ctx context.Context, _ time.Time, _ int) (storage.ContentPurgeResult, error) {
 	close(b.entered)
 	<-ctx.Done()
 	return storage.ContentPurgeResult{}, ctx.Err()
