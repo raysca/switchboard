@@ -39,7 +39,6 @@ type STTConfig struct {
 	// SendTimeout bounds one audio Send (HTTP/2 flow control can block it).
 	// Live sends run on the session run loop: keep it under the 2 s frame watchdog.
 	SendTimeout time.Duration
-	Now         func() time.Time
 	// Conn is an existing channel (tests); the processor does not close it.
 	Conn *grpc.ClientConn
 }
@@ -90,9 +89,6 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	if cfg.CircuitBreaker == nil {
 		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())
 	}
-	if cfg.Now == nil {
-		cfg.Now = time.Now
-	}
 	if !cfg.Insecure && cfg.Endpoint == DefaultEndpoint {
 		switch {
 		case cfg.FunctionID == "":
@@ -109,7 +105,7 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	p := &STTProcessor{cfg: cfg, conn: conn, client: rivapb.NewRivaSpeechRecognitionClient(conn.Channel())}
 	p.Runner = sttunit.New(sttunit.Config{
 		Provider: "nvidia", Dial: p.dial, Breaker: cfg.CircuitBreaker, Classify: classify,
-		DrainTimeout: cfg.DrainTimeout, SendTimeout: cfg.SendTimeout, Now: cfg.Now,
+		DrainTimeout: cfg.DrainTimeout, SendTimeout: cfg.SendTimeout,
 	})
 	return p, nil
 }
