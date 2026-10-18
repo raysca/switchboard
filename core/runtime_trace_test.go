@@ -238,7 +238,7 @@ func TestSessionTraceGenericFramesDoNotClaimProviderFirstOrCompletion(t *testing
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
-	frames := []core.Frame{&core.LLMTextDeltaFrame{Delta: "a"}, &core.LLMTextDeltaFrame{Delta: "b"}, &core.TTSStartedFrame{}, &core.TTSAudioFrame{}, &core.TTSAudioFrame{}, &core.TTSStoppedFrame{}}
+	frames := []core.Frame{&core.LLMTextDeltaFrame{Delta: "a"}, &core.LLMTextDeltaFrame{Delta: "b"}, &core.TTSStartedFrame{}, &core.OutputAudioFrame{}, &core.OutputAudioFrame{}, &core.TTSStoppedFrame{}}
 	for _, f := range frames {
 		if err := s.Post(f); err != nil {
 			t.Fatal(err)
@@ -265,7 +265,7 @@ func TestSessionTraceGenericFramesDoNotClaimProviderFirstOrCompletion(t *testing
 			t.Fatalf("generic frame claimed provider lifecycle: %s", ev.Name)
 		}
 	}
-	for name, want := range map[string]int{"llm.delta": 2, "tts.started": 1, "tts.audio_chunk": 2, "tts.stopped": 1} {
+	for name, want := range map[string]int{"llm.delta": 2, "tts.started": 1, "transport.output_audio": 2, "tts.stopped": 1} {
 		if counts[name] != want {
 			t.Fatalf("generic %s count=%d, want %d", name, counts[name], want)
 		}

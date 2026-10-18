@@ -39,7 +39,7 @@ func TestWatchdogFailsHungProcessor(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.Post(&SystemMessageFrame{})
+	_ = s.Post(&inertFrame{})
 	select {
 	case <-s.Done():
 	case <-time.After(3 * time.Second):
@@ -154,7 +154,7 @@ func TestWedgedLoopTeardownWithTracingIsRaceFree(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.Post(&SystemMessageFrame{})
+	_ = s.Post(&inertFrame{})
 	<-s.Done()
 	close(release) // the wedged processor returns and the loop unwinds its trace state
 	time.Sleep(50 * time.Millisecond)
@@ -200,7 +200,7 @@ func TestCloseRacingProcessorIsClean(t *testing.T) {
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.Post(&SystemMessageFrame{})
+	_ = s.Post(&inertFrame{})
 	<-p.entered
 	if err := s.Close(); err != nil || s.State() != StateStopped {
 		t.Fatalf("clean Close racing a processor: err=%v state=%v", err, s.State())
@@ -229,7 +229,7 @@ func TestWatchdogPreservesMonotonicClock(t *testing.T) {
 	if err := sFast.Start(); err != nil {
 		t.Fatal(err)
 	}
-	_ = sFast.Post(&SystemMessageFrame{})
+	_ = sFast.Post(&inertFrame{})
 	processed.Wait()
 	time.Sleep(80 * time.Millisecond) // wait past watchdog check interval
 	if sFast.Err() != nil {
@@ -249,7 +249,7 @@ func TestWatchdogPreservesMonotonicClock(t *testing.T) {
 	if err := sSlow.Start(); err != nil {
 		t.Fatal(err)
 	}
-	_ = sSlow.Post(&SystemMessageFrame{})
+	_ = sSlow.Post(&inertFrame{})
 	select {
 	case <-sSlow.Done():
 	case <-time.After(2 * time.Second):
@@ -260,3 +260,8 @@ func TestWatchdogPreservesMonotonicClock(t *testing.T) {
 	}
 	_ = sSlow.Close()
 }
+
+// inertFrame is a frame no processor or session path handles.
+type inertFrame struct{}
+
+func (*inertFrame) Type() FrameType { return FrameType(65000) }

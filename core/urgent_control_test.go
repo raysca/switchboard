@@ -49,10 +49,10 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 		}
 	}
 
-	// Post an urgent control frame: CancelFrame
-	cancelFrame := &core.CancelFrame{}
+	// Post an urgent control frame: InputMutedStateFrame
+	cancelFrame := &core.InputMutedStateFrame{}
 	if err := s.Post(cancelFrame); err != nil {
-		t.Fatalf("Post CancelFrame: %v", err)
+		t.Fatalf("Post InputMutedStateFrame: %v", err)
 	}
 
 	// Also post an ordinary control frame: InputMuteFrame
@@ -77,10 +77,10 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 		t.Fatalf("expected at least 2 processed frames, got %d", len(processed))
 	}
 
-	// The urgent frame (CancelFrame) must be processed BEFORE the ordinary data queue frames
+	// The urgent frame (InputMutedStateFrame) must be processed BEFORE the ordinary data queue frames
 	firstProcessed := processed[0]
-	if firstProcessed.Type() != core.FrameCancel {
-		t.Fatalf("expected first processed frame to be FrameCancel, got %v", firstProcessed.Type())
+	if firstProcessed.Type() != core.FrameInputMutedState {
+		t.Fatalf("expected first processed frame to be FrameInputMutedState, got %v", firstProcessed.Type())
 	}
 }
 
@@ -101,7 +101,7 @@ func TestUrgentControl_PreservesControlOrder(t *testing.T) {
 
 	// Post urgent frames in specific order: Flush -> Cancel
 	_ = s.Post(&core.FlushFrame{Gen: 1})
-	_ = s.Post(&core.CancelFrame{})
+	_ = s.Post(&core.InputMutedStateFrame{})
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -120,8 +120,8 @@ func TestUrgentControl_PreservesControlOrder(t *testing.T) {
 	if processedTypes[0] != core.FrameFlush {
 		t.Fatalf("expected first frame FrameFlush, got %v", processedTypes[0])
 	}
-	if processedTypes[1] != core.FrameCancel {
-		t.Fatalf("expected second frame FrameCancel, got %v", processedTypes[1])
+	if processedTypes[1] != core.FrameInputMutedState {
+		t.Fatalf("expected second frame FrameInputMutedState, got %v", processedTypes[1])
 	}
 }
 
@@ -166,7 +166,7 @@ func TestUrgentControl_StarvationPrevention(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 20; i++ {
-			_ = s.Post(&core.CancelFrame{})
+			_ = s.Post(&core.InputMutedStateFrame{})
 			time.Sleep(2 * time.Millisecond)
 		}
 	}()

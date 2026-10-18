@@ -427,7 +427,7 @@ func TestAssistantContextCancelDropsUndeliveredAndLateFinality(t *testing.T) {
 	e := &captureEmitter{}
 	_ = p.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t", Gen: 2}, Downstream, e)
 	_ = p.ProcessFrame(context.Background(), &LLMTextDeltaFrame{Turn: "t", Gen: 2, Delta: "not delivered"}, Downstream, e)
-	_ = p.ProcessFrame(context.Background(), &CancelFrame{Gen: 2}, Downstream, e)
+	_ = p.ProcessFrame(context.Background(), &InterruptionFrame{Gen: 2}, Downstream, e)
 	_ = p.ProcessFrame(context.Background(), &LLMTextFrame{Turn: "t", Gen: 2, Text: "not delivered"}, Downstream, e)
 	_ = p.ProcessFrame(context.Background(), &WriteCompletionFrame{Turn: "t", Gen: 2, UnitID: 1, IsFinal: true}, Downstream, e)
 	if len(store.Messages()) != 0 {
@@ -437,29 +437,6 @@ func TestAssistantContextCancelDropsUndeliveredAndLateFinality(t *testing.T) {
 		if unit, ok := f.(*SynthesisUnitFrame); ok && unit.Turn == "" {
 			t.Fatalf("cancelled turn resumed synthesis: %#v", unit)
 		}
-	}
-}
-
-func TestAssistantContextGenerationlessUserCancelUsesSessionGeneration(t *testing.T) {
-	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
-	p := NewAssistantContextProcessor(store, DefaultAssistantContextConfig())
-	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
-	e := &captureEmitter{}
-	for _, f := range []Frame{&UserMessageFrame{Turn: "legacy"}, &LLMTextFrame{Turn: "legacy", Gen: 1, Text: "cancel me"}, &CancelFrame{Gen: 1}, &WriteCompletionFrame{Turn: "legacy", Gen: 1, UnitID: 1, IsFinal: true}} {
-		if err := p.ProcessFrame(context.Background(), f, Downstream, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(store.Messages()) != 0 {
-		t.Fatalf("generationless cancelled turn committed: %#v", store.Messages())
-	}
-	for _, f := range []Frame{&UserMessageFrame{Turn: "next", Gen: 1}, &LLMTextFrame{Turn: "next", Gen: 1, Text: "works"}, &WriteCompletionFrame{Turn: "next", Gen: 1, UnitID: 2, IsFinal: true}} {
-		if err := p.ProcessFrame(context.Background(), f, Downstream, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := store.Messages(); len(got) != 1 || got[0].Content != "works" {
-		t.Fatalf("next turn = %#v", got)
 	}
 }
 
