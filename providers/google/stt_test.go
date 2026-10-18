@@ -131,9 +131,6 @@ func TestSTT_AcceleratedFiveRotationsWithoutDuplicates(t *testing.T) {
 	if finals[0] != "hello world" {
 		t.Fatalf("unexpected transcript: %s", finals[0])
 	}
-	if proc.DeduplicatedResults.Load() != 0 {
-		t.Fatalf("provider-local text dedupe must be disabled, got %d", proc.DeduplicatedResults.Load())
-	}
 
 	// Verify overlap: streams opened after stream 1 received overlap audio
 	opener.mu.Lock()

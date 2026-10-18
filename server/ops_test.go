@@ -110,7 +110,7 @@ type sttErrStub uint64
 func (sttErrStub) ProcessFrame(_ context.Context, _ core.Frame, _ core.Direction, _ core.Emitter) error {
 	return nil
 }
-func (e sttErrStub) STTCounts() (uint64, uint64, uint64, uint64) { return 0, 0, 0, uint64(e) }
+func (e sttErrStub) STTCounts() (uint64, uint64, uint64) { return 0, 0, uint64(e) }
 
 func TestProbeListenAddrValidation(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)

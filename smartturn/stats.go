@@ -49,19 +49,6 @@ func countFallback(reason string) {
 	}
 }
 
-// Fallbacks returns the fallback count for a reason (tests, diagnostics).
-func Fallbacks(reason string) uint64 {
-	for i, r := range reasons {
-		if r == reason {
-			return stats.fallbacks[i].Load()
-		}
-	}
-	return 0
-}
-
-// Crashes is the number of worker processes lost (exit, hang, bad frame).
-func Crashes() uint64 { return stats.crashes.Load() }
-
 // WriteMetrics renders Prometheus text for the smart-turn model.
 func WriteMetrics(w io.Writer) {
 	fmt.Fprint(w, "# HELP voice_smartturn_inference_ms Smart-turn inference latency.\n# TYPE voice_smartturn_inference_ms histogram\n")

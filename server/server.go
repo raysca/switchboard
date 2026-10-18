@@ -1256,7 +1256,7 @@ func stageProviders(c CallSpec) map[string]string {
 func (s *Server) recordProviderErrors(proc core.Processor, prov map[string]string) {
 	switch p := proc.(type) {
 	case core.STTCounters:
-		_, _, _, errs := p.STTCounts()
+		_, _, errs := p.STTCounts()
 		s.metrics.providerErrors.add(prov["stt"], "stt", errs)
 	case core.LLMCounters:
 		_, errs, _, _ := p.LLMCounts()
@@ -1281,10 +1281,9 @@ func (s *Server) recordProcessorMetrics(proc core.Processor) {
 			s.metrics.ContextEvictionsTotal.Add(uint64(n))
 		}
 	case core.STTCounters: // google and the failover wrapper
-		rot, rotFail, dedup, errs := p.STTCounts()
+		rot, rotFail, errs := p.STTCounts()
 		s.metrics.STTRotationsTotal.Add(rot)
 		s.metrics.STTRotationFailuresTotal.Add(rotFail)
-		s.metrics.STTDeduplicatedTotal.Add(dedup)
 		s.metrics.STTErrorsTotal.Add(errs)
 	case core.LLMCounters: // google, xai, openai and the failover wrapper
 		req, errs, retries, stale := p.LLMCounts()

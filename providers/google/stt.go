@@ -357,15 +357,14 @@ type STTProcessor struct {
 	overlapBytes int
 
 	// Metrics
-	RotationsCount      atomic.Uint64
-	RotationFailures    atomic.Uint64
-	DeduplicatedResults atomic.Uint64
-	Errors              atomic.Uint64
+	RotationsCount   atomic.Uint64
+	RotationFailures atomic.Uint64
+	Errors           atomic.Uint64
 }
 
 // STTCounts implements core.STTCounters.
-func (p *STTProcessor) STTCounts() (rot, rotFail, dedup, errs uint64) {
-	return p.RotationsCount.Load(), p.RotationFailures.Load(), p.DeduplicatedResults.Load(), p.Errors.Load()
+func (p *STTProcessor) STTCounts() (rot, rotFail, errs uint64) {
+	return p.RotationsCount.Load(), p.RotationFailures.Load(), p.Errors.Load()
 }
 
 // NewSTTProcessor creates a new STTProcessor with the given config.

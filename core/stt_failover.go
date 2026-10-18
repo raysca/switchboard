@@ -29,15 +29,15 @@ const (
 // STTCounters is implemented by STT processors that keep stream counters (and
 // the failover wrapper, which sums its candidates) so the server exports them.
 type STTCounters interface {
-	STTCounts() (rotations, rotationFailures, deduplicated, errors uint64)
+	STTCounts() (rotations, rotationFailures, errors uint64)
 }
 
 // STTCounts sums the counters of every candidate that reports them.
-func (w *STTFailover) STTCounts() (rot, rotFail, dedup, errs uint64) {
+func (w *STTFailover) STTCounts() (rot, rotFail, errs uint64) {
 	for _, c := range w.cfg.Candidates {
 		if m, ok := c.Proc.(STTCounters); ok {
-			a, b, d, e := m.STTCounts()
-			rot, rotFail, dedup, errs = rot+a, rotFail+b, dedup+d, errs+e
+			a, b, e := m.STTCounts()
+			rot, rotFail, errs = rot+a, rotFail+b, errs+e
 		}
 	}
 	return

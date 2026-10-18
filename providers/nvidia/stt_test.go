@@ -360,7 +360,7 @@ func TestDial_SSRFGuard(t *testing.T) {
 	cfg.RetryPolicy = resilience.Policy{MaxAttempts: 1, AttemptTimeout: time.Second}
 	h := start(t, cfg)
 	h.speak()
-	waitFor(t, "open error", func() bool { _, _, _, n := h.proc.STTCounts(); return n > 0 })
+	waitFor(t, "open error", func() bool { _, _, n := h.proc.STTCounts(); return n > 0 })
 	if len(h.candidates()) != 0 {
 		t.Fatal("unexpected candidates")
 	}

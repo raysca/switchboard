@@ -369,7 +369,7 @@ func TestSTT_ErrorMessagesBreakerAndRedaction(t *testing.T) {
 			t.Errorf("%s: breaker allow=%v", tc.kind, !tc.client)
 		}
 		sttWait(t, "release", func() bool { return h.proc.activeCount() == 0 })
-		if n := func() uint64 { _, _, _, e := h.proc.STTCounts(); return e }(); n != 1 {
+		if n := func() uint64 { _, _, e := h.proc.STTCounts(); return e }(); n != 1 {
 			t.Errorf("%s: error count %d", tc.kind, n)
 		}
 	}

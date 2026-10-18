@@ -183,9 +183,9 @@ func New(cfg Config) *Runner {
 	return &Runner{cfg: cfg, maxPreRoll: DefaultMaxPreRollBytes, all: map[*stream]struct{}{}}
 }
 
-// STTCounts implements core.STTCounters (no rotation or dedup here).
-func (r *Runner) STTCounts() (rot, rotFail, dedup, errs uint64) {
-	return 0, 0, 0, r.errs.Load()
+// STTCounts implements core.STTCounters (no rotation here).
+func (r *Runner) STTCounts() (rot, rotFail, errs uint64) {
+	return 0, 0, r.errs.Load()
 }
 
 // Streams is the number of open provider streams (dialing, active or

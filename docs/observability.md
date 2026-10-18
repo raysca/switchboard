@@ -75,6 +75,8 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_stt_errors_total` / `voice_llm_errors_total` / `voice_tts_errors_total` | Counter | Provider errors per stage (all providers) |
 | `voice_provider_errors_total` | Counter | Stage errors by `provider` and `stage` (`provider="failover"` when the stage had fallbacks) |
 | `voice_provider_requests_total` | Counter | Requests sent to a provider (`provider`, `stage`), retries included |
+| `voice_smartturn_fallbacks_total` | Counter | Turns that fell back to the speech timeout instead of the smart-turn model, by `reason` (`timeout`, `error`, `overload`, `unavailable`, `no_audio`) |
+| `voice_smartturn_worker_crashes_total` | Counter | Smart-turn worker processes lost (exit, hang, bad output) |
 | `voice_stt_circuit_state` / `voice_llm_circuit_state` / `voice_tts_circuit_state` | Gauge | Circuit breaker per `provider` (0=closed, 1=open, 2=half_open); Nvidia adds an `endpoint` label |
 | `voice_latency_seconds` | Histogram | Per-turn latency by `stage` (`stt_final`, `llm_ttft`, `tts_ttfb`, `voice_to_voice`, `startup`) |
 | `voice_transport_connected_clients` | Gauge | Connected WebSocket clients |

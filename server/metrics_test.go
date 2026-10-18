@@ -133,7 +133,6 @@ func TestRecordProcessorMetrics_LLMAndSTTCountersIncludingFailoverCandidates(t *
 	gs1, gs2 := &google.STTProcessor{}, &google.STTProcessor{}
 	gs1.RotationsCount.Store(1)
 	gs1.RotationFailures.Store(2)
-	gs1.DeduplicatedResults.Store(3)
 	gs1.Errors.Store(4)
 	gs2.RotationsCount.Store(10)
 	gs2.Errors.Store(40)
@@ -148,7 +147,7 @@ func TestRecordProcessorMetrics_LLMAndSTTCountersIncludingFailoverCandidates(t *
 	if m.LLMRequestsTotal.Load() != 111 || m.LLMErrorsTotal.Load() != 202 || m.LLMRetriesTotal.Load() != 3 || m.LLMStaleDeltasDiscarded.Load() != 44 {
 		t.Fatalf("llm req=%d err=%d retries=%d stale=%d", m.LLMRequestsTotal.Load(), m.LLMErrorsTotal.Load(), m.LLMRetriesTotal.Load(), m.LLMStaleDeltasDiscarded.Load())
 	}
-	if m.STTRotationsTotal.Load() != 11 || m.STTRotationFailuresTotal.Load() != 2 || m.STTDeduplicatedTotal.Load() != 3 || m.STTErrorsTotal.Load() != 44 {
-		t.Fatalf("stt rot=%d fail=%d dedup=%d err=%d", m.STTRotationsTotal.Load(), m.STTRotationFailuresTotal.Load(), m.STTDeduplicatedTotal.Load(), m.STTErrorsTotal.Load())
+	if m.STTRotationsTotal.Load() != 11 || m.STTRotationFailuresTotal.Load() != 2 || m.STTErrorsTotal.Load() != 44 {
+		t.Fatalf("stt rot=%d fail=%d err=%d", m.STTRotationsTotal.Load(), m.STTRotationFailuresTotal.Load(), m.STTErrorsTotal.Load())
 	}
 }

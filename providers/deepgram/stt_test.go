@@ -595,7 +595,7 @@ func TestSTT_CountsErrorsForMetrics(t *testing.T) {
 	h := start(t, f.cfg(), nil)
 	var counters core.STTCounters = h.proc
 	h.speak(t)
-	waitFor(t, "counted error", func() bool { _, _, _, n := counters.STTCounts(); return n == 1 })
+	waitFor(t, "counted error", func() bool { _, _, n := counters.STTCounts(); return n == 1 })
 }
 
 // Deepgram's in-band "Error" message fails that stream (an ErrorFrame, so a
