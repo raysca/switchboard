@@ -80,6 +80,45 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 	}
 }
 
+// TestUrgentControl_InterruptionJumpsCongestedDataQueue pins barge-in latency: an
+// InterruptionFrame posted behind a full data queue is processed before the queued audio.
+func TestUrgentControl_InterruptionJumpsCongestedDataQueue(t *testing.T) {
+	var processed []core.FrameType
+	var mu sync.Mutex
+	pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+		mu.Lock()
+		processed = append(processed, f.Type())
+		mu.Unlock()
+		return e.PushDirection(f, d)
+	}})
+	s, err := core.NewSession(202, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	// Not started yet: the audio is queued behind the interruption's arrival.
+	for i := 0; i < 10; i++ {
+		if err := s.Post(&core.InputAudioFrame{Samples: []byte{byte(i)}, Encoding: core.EncodingPCM16LE, SampleRate: 16000, Channels: 1}); err != nil {
+			t.Fatalf("Post audio %d: %v", i, err)
+		}
+	}
+	if err := s.Post(&core.InterruptionFrame{}); err != nil {
+		t.Fatalf("Post InterruptionFrame: %v", err)
+	}
+	if err := s.Post(&core.InputMutedStateFrame{}); err != nil {
+		t.Fatalf("Post InputMutedStateFrame: %v", err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(processed) < 2 || processed[0] != core.FrameInterruption || processed[1] != core.FrameInputMutedState {
+		t.Fatalf("interruption then muted state must run before queued audio, got %v", processed)
+	}
+}
+
 // TestUrgentControl_PreservesControlOrder verifies that multiple urgent frames
 // posted consecutively maintain strict FIFO order among themselves.
 func TestUrgentControl_PreservesControlOrder(t *testing.T) {
