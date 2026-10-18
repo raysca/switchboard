@@ -46,7 +46,8 @@ func (p *parityTurnProcessor) ProcessFrame(_ context.Context, f core.Frame, dir 
 	case core.FrameUserStoppedSpeaking:
 		decisions, err = p.manager.Observe(turn.Observation{At: p.clock, TurnID: core.TurnID(fmt.Sprintf("turn-%d", p.turn)), Generation: core.Generation(p.turn), Speaking: false})
 	case core.FrameEnd:
-		decisions, err = p.manager.Interrupt(core.TurnID(fmt.Sprintf("turn-%d", p.turn)), core.Generation(p.turn), p.clock)
+		// production interruption path: a newer generation fences the active turn
+		decisions, err = p.manager.Observe(turn.Observation{At: p.clock, TurnID: core.TurnID(fmt.Sprintf("turn-%d", p.turn)), Generation: core.Generation(p.turn + 1), Speaking: false})
 	}
 	if err != nil {
 		return err
