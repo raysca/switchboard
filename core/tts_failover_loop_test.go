@@ -226,7 +226,8 @@ func TestTTSWatchdogExpiryIgnoredAfterProgress(t *testing.T) {
 		close(release)
 		t.Fatal(err)
 	}
-	time.Sleep(20 * time.Millisecond)
+	// Reenter already counted the progress and re-armed the watchdog on this goroutine; answer at once so
+	// the reply keeps nearly the whole 50 ms margin even on a slow -race box.
 	close(release)
 	if err := primary.answer(su); err != nil { // the rest of the unit, well within the re-armed 50 ms
 		t.Fatal(err)
@@ -243,5 +244,45 @@ func TestTTSWatchdogExpiryIgnoredAfterProgress(t *testing.T) {
 	}
 	if n := fallback.units.Load(); n != 0 {
 		t.Fatalf("the progressing candidate was abandoned: fallback got %d units", n)
+	}
+}
+
+// A generation bump with no InterruptionFrame (a committed flush) lands between a watchdog's post and the
+// run loop's dequeue: the fence drops the expiry (ttsRun and ttsExpire are deliberately not FenceSurvivors).
+// That is safe because the next unit abandons a fenced current unit (ProcessFrame), so nothing queues behind
+// the wedged one for good.
+func TestTTSNextUnitAfterAGenerationBumpAbandonsAFencedWedgedUnit(t *testing.T) {
+	sess, primary, _, rec, entered, release := newLoopFailover(t)
+	defer func() {
+		_ = sess.Close()
+		if n := sess.LeakedTasks(); n != 0 {
+			t.Errorf("leaked %d tasks", n)
+		}
+	}()
+	gen := sess.CurrentGeneration()
+	primary.stall.Store(true)
+	for i, f := range []core.Frame{
+		&core.SynthesisUnitFrame{Turn: "t", Gen: gen, UnitID: 1, Text: "a"},
+		&gateFrame{},
+	} {
+		if err := sess.Post(f); err != nil {
+			t.Fatal(i, err)
+		}
+	}
+	<-entered
+	time.Sleep(120 * time.Millisecond) // the expiry is admitted at gen, queued behind the parked loop
+	if err := sess.Reenter(&core.FlushFrame{Gen: gen}, core.Downstream, 0, 0); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	close(release)
+	gen = sess.CurrentGeneration()
+	if err := sess.Post(&core.SynthesisUnitFrame{Turn: "t2", Gen: gen, UnitID: 2, Text: "b", IsFinal: true}); err != nil {
+		t.Fatal(err)
+	}
+	for end := time.Now().Add(2 * time.Second); !audioFor(rec, 2); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the unit after the bump never spoke: the stale-gen expiry was dropped and the wedged unit stayed current")
+		}
 	}
 }

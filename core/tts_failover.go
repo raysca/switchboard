@@ -351,6 +351,7 @@ func (w *TTSFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 			w.bad[idx] = class
 			u.pos++
 			to := w.cfg.Candidates[u.order[u.pos]].Provider
+			u.stop() // the watchdog must not expire the unit while the retry waits for the run loop
 			w.mu.Unlock()
 			w.noteFailover(&failNote{from, to, class}, u.su)
 			w.post(&ttsRun{u})
@@ -429,7 +430,11 @@ func (*ttsExpire) Type() FrameType { return FrameInternal }
 
 // post queues f for the run loop behind the frames already admitted. A
 // full inbox refuses internal frames, so it retries until the session takes it;
-// a closed session (ErrSessionClosed) ends it.
+// a closed session (ErrSessionClosed) ends it. Under sustained LLM/inbox pressure
+// the 5 ms retry can be starved, so a unit boundary (the next unit's start) may
+// lag for as long as the inbox stays full (the watchdog is stopped meanwhile, so it cannot expire the unit).
+// ttsRun and ttsExpire are not FenceSurvivors on purpose: a generation bump with no
+// InterruptionFrame drops them, and the next unit abandons the fenced current unit.
 func (w *TTSFailover) post(f Frame) {
 	if errors.Is(w.session.Reenter(f, Downstream, w.index, 0), ErrQueueFull) {
 		time.AfterFunc(5*time.Millisecond, func() { w.post(f) })
