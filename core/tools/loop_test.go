@@ -20,6 +20,7 @@ type loopTraceRecorder struct {
 	events  []core.TraceEvent
 	ended   []error
 	parents []core.Span
+	attrs   []string // SetAttribute key=value, scanned for leaks
 }
 type loopTraceSpan struct{ recorder *loopTraceRecorder }
 
@@ -53,7 +54,11 @@ func TestToolLoopInheritsSessionTraceContextAndParent(t *testing.T) {
 		t.Fatalf("tool parent=%v", r.parents)
 	}
 }
-func (loopTraceSpan) SetAttribute(string, any) {}
+func (s loopTraceSpan) SetAttribute(k string, v any) {
+	s.recorder.mu.Lock()
+	defer s.recorder.mu.Unlock()
+	s.recorder.attrs = append(s.recorder.attrs, fmt.Sprint(k, "=", v))
+}
 func (s loopTraceSpan) AddEvent(event core.TraceEvent) {
 	s.recorder.mu.Lock()
 	defer s.recorder.mu.Unlock()
@@ -63,6 +68,18 @@ func (s loopTraceSpan) End(err error) {
 	s.recorder.mu.Lock()
 	defer s.recorder.mu.Unlock()
 	s.recorder.ended = append(s.recorder.ended, err)
+}
+
+// noAttrContains fails if any recorded span attribute holds secret.
+func (r *loopTraceRecorder) noAttrContains(t *testing.T, secret string) {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, a := range r.attrs {
+		if strings.Contains(a, secret) {
+			t.Fatalf("secret in span attribute: %s", a)
+		}
+	}
 }
 
 func (r *loopTraceRecorder) snapshot(t *testing.T, ends int) ([]core.TraceEvent, []error) {
@@ -172,6 +189,7 @@ func TestToolContentNeverReachesATrace(t *testing.T) {
 			t.Fatalf("tool content in span end: %v", err)
 		}
 	}
+	recorder.noAttrContains(t, secret)
 }
 
 func TestToolLoopUnknownMalformedAndDuplicateCallsAreDeterministic(t *testing.T) {
@@ -412,6 +430,7 @@ func TestToolLoopTraceDropsRawInvalidResultAndExecutorError(t *testing.T) {
 			t.Fatalf("raw executor error leaked: %v", err)
 		}
 	}
+	trace.noAttrContains(t, secret)
 }
 
 func TestToolLoopRejectsOversizedArgumentsBeforeContextOrExecutor(t *testing.T) {
