@@ -168,6 +168,8 @@ func observedParityEvents(t *testing.T, name string) []core.TurnEventFrame {
 	if name == "user_interrupts_bot" {
 		sequence = append(sequence, &core.UserStartedSpeakingFrame{}, &core.EndFrame{})
 	} else {
+		// cancel_flushes_active_turn: Pipecat's turn_tracking_observer.py:102 treats
+		// EndFrame and CancelFrame alike (both end the active turn as interrupted).
 		sequence = append(sequence, &core.EndFrame{})
 	}
 	observed := make([]core.TurnEventFrame, 0, 4)

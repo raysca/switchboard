@@ -49,16 +49,13 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 		}
 	}
 
-	// Post an urgent control frame: InputMutedStateFrame
-	cancelFrame := &core.InputMutedStateFrame{}
-	if err := s.Post(cancelFrame); err != nil {
-		t.Fatalf("Post InputMutedStateFrame: %v", err)
-	}
-
-	// Also post an ordinary control frame: InputMuteFrame
-	muteFrame := &core.InputMuteFrame{}
-	if err := s.Post(muteFrame); err != nil {
+	// Two distinguishable control frames, in this order: the mute (seen by the
+	// processor as FrameInputMutedState), then a flush (FrameFlush).
+	if err := s.Post(&core.InputMuteFrame{}); err != nil {
 		t.Fatalf("Post InputMuteFrame: %v", err)
+	}
+	if err := s.Post(&core.FlushFrame{Gen: 1}); err != nil {
+		t.Fatalf("Post FlushFrame: %v", err)
 	}
 
 	// Start the session to let run loop process envelopes
@@ -77,10 +74,9 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 		t.Fatalf("expected at least 2 processed frames, got %d", len(processed))
 	}
 
-	// The urgent frame (InputMutedStateFrame) must be processed BEFORE the ordinary data queue frames
-	firstProcessed := processed[0]
-	if firstProcessed.Type() != core.FrameInputMutedState {
-		t.Fatalf("expected first processed frame to be FrameInputMutedState, got %v", firstProcessed.Type())
+	// Control frames run before the congested data queue, in posting order.
+	if processed[0].Type() != core.FrameInputMutedState || processed[1].Type() != core.FrameFlush {
+		t.Fatalf("expected [FrameInputMutedState FrameFlush] first, got %v then %v", processed[0].Type(), processed[1].Type())
 	}
 }
 
@@ -99,7 +95,7 @@ func TestUrgentControl_PreservesControlOrder(t *testing.T) {
 
 	s, _ := core.NewSession(201, pipe, core.DefaultResourceBudget())
 
-	// Post urgent frames in specific order: Flush -> Cancel
+	// Post control frames in specific order: Flush -> mute state
 	_ = s.Post(&core.FlushFrame{Gen: 1})
 	_ = s.Post(&core.InputMutedStateFrame{})
 

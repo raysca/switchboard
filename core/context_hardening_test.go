@@ -421,7 +421,7 @@ func TestAssistantContextWaitsForEveryDeliveryAndCommitsOnce(t *testing.T) {
 	}
 }
 
-func TestAssistantContextCancelDropsUndeliveredAndLateFinality(t *testing.T) {
+func TestAssistantContextInterruptionDropsUndeliveredAndLateFinality(t *testing.T) {
 	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	p := NewAssistantContextProcessor(store, DefaultAssistantContextConfig())
 	e := &captureEmitter{}

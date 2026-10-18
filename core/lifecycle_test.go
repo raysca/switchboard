@@ -266,7 +266,7 @@ drained:
 
 func TestControlReentryAndInlineCommit(t *testing.T) {
 	pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
-		if f.Type() == core.FrameInputMutedState {
+		if f.Type() == core.FrameFlushProcessed {
 			return e.Push(&core.InputMuteFrame{})
 		}
 		return e.PushDirection(f, d)
@@ -281,17 +281,18 @@ func TestControlReentryAndInlineCommit(t *testing.T) {
 	_ = s.Start()
 	defer s.Close()
 	_ = s.Reenter(&core.InputUnmuteFrame{}, core.Downstream, 0, 0)
-	_ = s.Post(&core.InputMutedStateFrame{})
-	// Reentry and inline emission must both commit the state they report.
-	select {
-	case <-states:
-	case <-time.After(time.Second):
-		t.Fatal("reentry state missing")
-	}
-	select {
-	case <-states:
-	case <-time.After(time.Second):
-		t.Fatal("inline state missing")
+	_ = s.Post(&core.FlushProcessedFrame{})
+	// Reentry and inline emission must both commit and publish the state they
+	// report, in order: unmute (re-entered) then mute (inline).
+	for i, want := range []bool{false, true} {
+		select {
+		case got := <-states:
+			if got != want {
+				t.Fatalf("state %d = %v, want %v", i, got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("state %d missing", i)
+		}
 	}
 	if !s.InputMuted() {
 		t.Fatal("inline mute did not commit")
