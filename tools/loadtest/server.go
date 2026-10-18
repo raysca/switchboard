@@ -102,7 +102,7 @@ token:
   issuer: "govoice-v1"
   audience: "govoice-v1-client"
   key_id: "v1"
-  max_lifetime: 5m
+  max_lifetime: 1m
   clock_skew: 30s
   replay_cache_limit: 100000
 limits:

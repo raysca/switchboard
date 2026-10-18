@@ -160,7 +160,7 @@ func serverYAML(sp serverSpec, pub, adm int) string {
 public_listen_addr: "127.0.0.1:%d"
 admin_listen_addr: "127.0.0.1:%d"
 origin_allowlist: ["*"]
-token: {secret_env: "TOKEN_SECRET", issuer: "govoice-v1", audience: "govoice-v1-client", key_id: "v1", max_lifetime: 5m, clock_skew: 30s, replay_cache_limit: 1000}
+token: {secret_env: "TOKEN_SECRET", issuer: "govoice-v1", audience: "govoice-v1-client", key_id: "v1", max_lifetime: 1m, clock_skew: 30s, replay_cache_limit: 1000}
 %s
 vad: {mode: "process", workers: 1, batch: 8, model_path: "third_party/silero_vad.onnx", queue_cap: 8192%s}
 providers:
