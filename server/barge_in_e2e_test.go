@@ -84,6 +84,16 @@ func TestCallBehaviorBargeInSendsBotInterruptedOnceAfterTheCutReplysAudio(t *tes
 	if n := countOf(log[at:next], "audio"); n > 1 {
 		t.Fatalf("%d audio frames between bot-interrupted and the next reply (at most the one already on the socket): %v", n, log[at:next+1])
 	}
+	// A third turn once the assistant is idle cuts nothing off: no second bot-interrupted, now or late.
+	before := len(log)
+	c.say("third")
+	c.waitReplies("third", 1)
+	within(t, 20*time.Second, "the third reply to finish playing", func() bool {
+		return indexFrom(c.wireLog(), "msg:bot-stopped-speaking", indexFrom(c.wireLog(), "msg:bot-tts-started", before)) >= 0
+	})
+	if n := countOf(c.wireLog(), "msg:bot-interrupted"); n != 1 {
+		t.Fatalf("bot-interrupted %d times after an idle turn, want 1: %v", n, c.wireLog())
+	}
 	if c.ended() {
 		t.Fatal("the barge-in ended the call")
 	}
