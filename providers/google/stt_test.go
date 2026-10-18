@@ -268,8 +268,8 @@ func TestGoogleSTTReconcilesRotationOverlapByOffset(t *testing.T) {
 	old := &activeStream{turnID: "A", gen: 1}
 	rotated := &activeStream{turnID: "A", gen: 1, offsetBase: 1500 * time.Millisecond}
 	proc.mu.Lock()
-	first := proc.assembleLocked(old, &STTResult{Transcript: "hello world", IsFinal: true, ResultEndOffset: 2 * time.Second})
-	overlap := proc.assembleLocked(rotated, &STTResult{Transcript: "world", IsFinal: true, ResultEndOffset: 500 * time.Millisecond})
+	first, _ := proc.assembleResultLocked(old, &STTResult{Transcript: "hello world", IsFinal: true, ResultEndOffset: 2 * time.Second})
+	overlap, _ := proc.assembleResultLocked(rotated, &STTResult{Transcript: "world", IsFinal: true, ResultEndOffset: 500 * time.Millisecond})
 	proc.mu.Unlock()
 	if first != "hello world" || overlap != "hello world" {
 		t.Fatalf("overlap duplicated/lost text: first=%q overlap=%q", first, overlap)

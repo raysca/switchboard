@@ -15,8 +15,8 @@ import (
 func TestReviewGooglePreservesNonoverlappingRepeatedWords(t *testing.T) {
 	p, _ := NewSTTProcessor(DefaultSTTConfig())
 	st := &activeStream{turnID: "A", gen: 1}
-	p.assembleLocked(st, &STTResult{Transcript: "very", IsFinal: true, ResultEndOffset: time.Second})
-	got := p.assembleLocked(st, &STTResult{Transcript: "very good", IsFinal: true, ResultEndOffset: 2 * time.Second})
+	_, _ = p.assembleResultLocked(st, &STTResult{Transcript: "very", IsFinal: true, ResultEndOffset: time.Second})
+	got, _ := p.assembleResultLocked(st, &STTResult{Transcript: "very good", IsFinal: true, ResultEndOffset: 2 * time.Second})
 	if got != "very very good" {
 		t.Fatalf("nonoverlapping segments lost speech: got %q", got)
 	}
@@ -110,11 +110,11 @@ func TestReviewGoogleRotationOriginIsCurrentTurn(t *testing.T) {
 func TestReviewGoogleAssemblyCapacityPreservesNewTurn(t *testing.T) {
 	p, _ := NewSTTProcessor(DefaultSTTConfig())
 	for i := 0; i < 128; i++ {
-		p.assembleLocked(&activeStream{turnID: fmt.Sprint(i), gen: 1}, &STTResult{Transcript: "old", IsFinal: true, ResultEndOffset: time.Second})
+		_, _ = p.assembleResultLocked(&activeStream{turnID: fmt.Sprint(i), gen: 1}, &STTResult{Transcript: "old", IsFinal: true, ResultEndOffset: time.Second})
 	}
 	st := &activeStream{turnID: "new", gen: 2}
-	p.assembleLocked(st, &STTResult{Transcript: "hello", IsFinal: true, ResultEndOffset: time.Second})
-	got := p.assembleLocked(st, &STTResult{Transcript: "world", IsFinal: true, ResultEndOffset: 2 * time.Second})
+	_, _ = p.assembleResultLocked(st, &STTResult{Transcript: "hello", IsFinal: true, ResultEndOffset: time.Second})
+	got, _ := p.assembleResultLocked(st, &STTResult{Transcript: "world", IsFinal: true, ResultEndOffset: 2 * time.Second})
 	if got != "hello world" {
 		t.Fatalf("assembly capacity silently discarded prior segment: got %q", got)
 	}
@@ -125,7 +125,7 @@ func TestReviewGoogleSegmentCapacityPreservesPrefix(t *testing.T) {
 	st := &activeStream{turnID: "A", gen: 1}
 	var got string
 	for i := 1; i <= 129; i++ {
-		got = p.assembleLocked(st, &STTResult{Transcript: fmt.Sprintf("word%d", i), IsFinal: true, ResultEndOffset: time.Duration(i) * time.Second})
+		got, _ = p.assembleResultLocked(st, &STTResult{Transcript: fmt.Sprintf("word%d", i), IsFinal: true, ResultEndOffset: time.Duration(i) * time.Second})
 	}
 	if !strings.HasPrefix(got, "word1 ") {
 		t.Fatalf("segment capacity silently truncated first speech: prefix %.40q", got)

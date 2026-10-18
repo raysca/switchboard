@@ -1195,11 +1195,6 @@ func (p *STTProcessor) setPendingOwnershipLocked(turn string, gen uint64) *activ
 	return p.bindOrDetachActiveLocked(turn, gen)
 }
 
-func (p *STTProcessor) assembleLocked(st *activeStream, result *STTResult) string {
-	text, _ := p.assembleResultLocked(st, result)
-	return text
-}
-
 func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult) (string, error) {
 	if st.gen > p.assemblyGen {
 		for key := range p.assemblies {
@@ -1286,8 +1281,6 @@ func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult)
 			existing := a.segments[i].text
 			if strings.Contains(existing, text) {
 				text = existing
-			} else if !strings.Contains(text, existing) {
-				a.segments[i].text = text
 			} else {
 				a.segments[i].text = text
 			}
