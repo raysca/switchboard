@@ -182,8 +182,7 @@ func (p *Processor) now() time.Time {
 }
 
 // run polls only while a turn is open or the user is speaking; an idle
-// session blocks on wake. (The manager's initial no-speech event is trace-only
-// and is not worth a per-session idle poll.)
+// session blocks on wake.
 func (p *Processor) run(ctx context.Context) {
 	for {
 		if !p.busy.Load() {

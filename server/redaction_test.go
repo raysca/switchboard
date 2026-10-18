@@ -250,6 +250,8 @@ func TestRedactionEndToEnd(t *testing.T) {
 	if !strings.Contains(exported, "govoice.turn") {
 		t.Fatalf("nothing exported to the collector (%d bytes)", len(exported))
 	}
+	// The otel entry is vacuous in metadata mode (no content is exported); it only
+	// guards against a regression to text mode. turns/sidecar carry the real check.
 	for name, got := range map[string]string{"turns": string(stored), "sidecar": string(sidecar), "otel": exported} {
 		if rawLeak(got) {
 			t.Errorf("%s holds raw content: %s", name, got)

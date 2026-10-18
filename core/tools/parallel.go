@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -247,7 +248,11 @@ func (l *ToolLoop) runAsync(call ToolCall, def ToolDefinition, started time.Time
 		l.cfg.AsyncSink(core.AsyncToolResult{Call: cloneCall(call), Result: cloneToolResult(res), Message: msg, Inject: func() error { return l.injectAsync(msg) }})
 		return
 	}
-	_ = l.injectAsync(msg)
+	// Test seam: the server always sets AsyncSink (server/registry.go). Making it
+	// required would force a sink into every loop test for no production gain.
+	if err := l.injectAsync(msg); err != nil {
+		slog.Warn("async tool result dropped", "tool_call_id", call.ID, "error", err)
+	}
 }
 
 // injectAsync adds an async result message to history once no round of this

@@ -161,6 +161,10 @@ func TestContextClaimToolCallElectsOneExecutorAndReturnsCompletedReplay(t *testi
 	if claimCount != 1 {
 		t.Fatalf("executor claim count = %d, want 1", claimCount)
 	}
+	// Only the elected executor commits the call message; pending replays add none.
+	if n := len(ctx.Messages()); n != 1 {
+		t.Fatalf("committed messages after %d claimers = %d, want 1", workers, n)
+	}
 	result := ToolResult{CallID: call.ID, Status: ToolSucceeded, Result: json.RawMessage(`{"ok":true}`)}
 	if err := ctx.AddToolResultStatus("turn", 1, call.ID, result.Status, result.Result, "", time.Now()); err != nil {
 		t.Fatal(err)

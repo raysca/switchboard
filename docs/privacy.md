@@ -14,6 +14,8 @@ are never traced: the core ToolLoop's execution span carries no argument or
 result attribute, and the trace policy drops any `tool.arguments` or
 `tool.result` key a caller supplies. A result payload is untrusted until the
 loop has normalized it and committed it to the conversation context.
+Core spans carry only what the loop emits, and core does not filter attribute
+keys itself; the server's trace adapter filters keys before export.
 
 Trace attributes are copied and recursively validate only finite scalar and
 bounded `custom.*` numeric/boolean metadata. Custom metadata never admits
