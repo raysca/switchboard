@@ -110,6 +110,7 @@ type Server struct {
 	pruneStop     chan struct{}
 	demoSF        singleflight.Group // collapses overlapping demo installs
 	stopDemo      context.CancelFunc // cancels the startup demo install; guarded by mu
+	stopFlight    context.CancelFunc // cancels the running demo install flight; guarded by mu
 	demoWG        sync.WaitGroup     // the startup demo install goroutine
 	recSink       *record.LocalSink  // nil unless recording.enabled
 }
@@ -1018,9 +1019,7 @@ func (s *Server) AdminAddr() string  { return s.adminAddr }
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.shuttingDown.Store(true)
-	if s.stopDemo != nil {
-		s.stopDemo()
-	}
+	s.stopDemoLocked()
 	s.mu.Unlock()
 	s.ready.Store(false)
 	s.metrics.Draining.Store(1)

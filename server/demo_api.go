@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -32,15 +33,56 @@ func (d demoServers) Refresh(ctx context.Context, id string) (storage.MCPDiscove
 // dentalEndpoint is where the demo's MCP server lives; empty when the deployment has none.
 func (s *Server) dentalEndpoint() string { return s.env("DENTAL_MCP_URL") }
 
+// demoInstallTimeout bounds one shared install (discovery plus DB writes).
+const demoInstallTimeout = 30 * time.Second
+
+// errDemoShuttingDown refuses an install once Shutdown began: it must not run against a closing store.
+var errDemoShuttingDown = errors.New("demo install refused: the server is shutting down")
+
 // installDental collapses overlapping installs (startup auto-install vs the API)
 // into one run, so the list-then-create inside cannot run twice; no lock is held
-// during discovery or DB work. Joiners share the first caller's result and ctx.
+// during discovery or DB work. The run is shared by every caller, so it does
+// not use any caller's context: it runs on its own, bounded, which Shutdown
+// cancels (stopDemoLocked) and then waits for (waitDemo, through demoWG) before
+// it closes the store. Each caller waits for the result or for its own ctx.
 func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows demo.Flows, endpoint string) (demo.Result, error) {
-	v, err, _ := s.demoSF.Do("dental", func() (any, error) {
-		return demo.InstallDental(ctx, servers, flows, endpoint)
+	ch := s.demoSF.DoChan("dental", func() (any, error) {
+		fctx, cancel := context.WithTimeout(context.Background(), demoInstallTimeout)
+		defer cancel()
+		s.mu.Lock()
+		if s.shuttingDown.Load() {
+			s.mu.Unlock()
+			return demo.Result{}, errDemoShuttingDown
+		}
+		s.demoWG.Add(1) // under mu with the check, so Shutdown's waitDemo cannot see zero first
+		s.stopFlight = cancel
+		s.mu.Unlock()
+		defer s.demoWG.Done()
+		defer func() {
+			s.mu.Lock()
+			s.stopFlight = nil
+			s.mu.Unlock()
+		}()
+		return demo.InstallDental(fctx, servers, flows, endpoint)
 	})
-	res, _ := v.(demo.Result)
-	return res, err
+	select {
+	case r := <-ch:
+		res, _ := r.Val.(demo.Result)
+		return res, r.Err
+	case <-ctx.Done():
+		return demo.Result{}, ctx.Err()
+	}
+}
+
+// stopDemoLocked cancels the startup auto-install and the running install
+// flight (Shutdown, with s.mu held).
+func (s *Server) stopDemoLocked() {
+	if s.stopDemo != nil {
+		s.stopDemo()
+	}
+	if s.stopFlight != nil {
+		s.stopFlight()
+	}
 }
 
 // demoStatus reports the demo's state; a failed lookup is an error, not "not installed".
