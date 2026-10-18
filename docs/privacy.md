@@ -14,10 +14,12 @@ are never traced: the core ToolLoop's execution span carries no argument or
 result attribute, and the trace policy drops any `tool.arguments` or
 `tool.result` key a caller supplies. A result payload is untrusted until the
 loop has normalized it and committed it to the conversation context.
-Core spans carry only what the loop emits, and core does not filter attribute
-keys itself; the server's trace adapter filters keys before export.
+Core filters attribute keys itself: the trace policy admits only the content
+fields selected above, the known metadata keys and finite scalar `custom.*`
+keys, and drops everything else. Core spans go to the OpenTelemetry exporter
+(when enabled), not through the server's trace adapter.
 
-The server's trace adapter stores only an exact whitelist of finite scalar
+The server's trace adapter, which writes the stored (database) traces, keeps only an exact whitelist of finite scalar
 metadata keys (`status`, `error.category`, `reason`, `from_step`, `to_step`,
 `mcp.server_id`, `mcp.tool_name`, `mcp.duration_ms`); every other key is
 dropped. The trace policy is an admission boundary, not a
