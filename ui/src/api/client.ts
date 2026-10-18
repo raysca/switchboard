@@ -17,21 +17,21 @@ const tokenEnvelope = z.object({
 });
 
 // Operations & telemetry schemas & types
-export const databaseStatusSchema = z.object({
+const databaseStatusSchema = z.object({
   dialect: z.string(),
   status: z.string(),
   open_connections: z.number(),
   in_use: z.number(),
   migration_version: z.number().optional(),
 });
-export type DatabaseStatus = z.infer<typeof databaseStatusSchema>;
+type DatabaseStatus = z.infer<typeof databaseStatusSchema>;
 
-export const vadStatusSchema = z.object({
+const vadStatusSchema = z.object({
   worker_status: z.string(),
   sample_rate: z.number(),
   frame_size: z.number(),
 });
-export type VADStatus = z.infer<typeof vadStatusSchema>;
+type VADStatus = z.infer<typeof vadStatusSchema>;
 
 // The server always sends every non-optional field; a missing one is an error,
 // never a made-up healthy value.
@@ -69,18 +69,18 @@ export const serverConfigSchema = z.object({
 export type ServerConfigDTO = z.infer<typeof serverConfigSchema>;
 const serverConfigEnvelope = z.object({ data: serverConfigSchema });
 
-export const demoStatusSchema = z.object({
+const demoStatusSchema = z.object({
   dental: z.object({ available: z.boolean(), installed: z.boolean(), flow_id: z.string().optional() }),
 });
-export type DemoStatus = z.infer<typeof demoStatusSchema>;
-export const demoInstallSchema = z.object({
+type DemoStatus = z.infer<typeof demoStatusSchema>;
+const demoInstallSchema = z.object({
   mcp_server_id: z.string(),
   mcp_created: z.boolean(),
   tools: z.number(),
   flow_id: z.string(),
   flow_created: z.boolean(),
 });
-export type DemoInstall = z.infer<typeof demoInstallSchema>;
+type DemoInstall = z.infer<typeof demoInstallSchema>;
 
 const operationsStatusEnvelope = z.object({
   data: operationsStatusSchema,
@@ -93,7 +93,7 @@ const catalogEntrySchema = z.object({
   label: z.string(),
   default: z.boolean().optional(),
 });
-export const serviceStatusSchema = z.object({
+const serviceStatusSchema = z.object({
   available: z.boolean(),
   reason: z.enum(["missing_env", "not_in_build"]).optional(),
   missing_env: z.array(z.string()).optional(),
@@ -151,7 +151,7 @@ export const flowVersionSchema = z.object({
   mcp_tools: z.array(toolSelectionSchema),
   mcp_review_required: z.boolean().optional(),
 });
-export type FlowVersionDTO = z.infer<typeof flowVersionSchema>;
+type FlowVersionDTO = z.infer<typeof flowVersionSchema>;
 
 export const toolDependencySchema = z.object({
   mcp_server_id: z.string(),
@@ -163,12 +163,12 @@ export const toolDependencySchema = z.object({
 });
 export type ToolDependencyDTO = z.infer<typeof toolDependencySchema>;
 
-export const readinessSchema = z.object({
+const readinessSchema = z.object({
   state: z.string(),
   reasons: z.array(z.string()),
   tool_dependencies: z.array(toolDependencySchema).optional(),
 });
-export type ReadinessDTO = z.infer<typeof readinessSchema>;
+type ReadinessDTO = z.infer<typeof readinessSchema>;
 
 export const flowSchema = z.object({
   id: z.string(),
@@ -196,63 +196,19 @@ const archiveEnvelope = z.object({
   }),
 });
 
-// Flow config schema v2: one typed block per stage. Every stage names its
-// provider; secrets come from server environment variables, never the config.
-const nonEmpty = z.string().trim().min(1);
-export const stepConfigV2Schema = z.object({
-  // Mirrors the server: provider is required per stage and
-  // llm.model is required; stt.model and tts.voice fall back to provider defaults.
-  stt: z.object({
-    provider: nonEmpty,
-    model: z.string().optional(),
-    language: z.string().optional(),
-  }),
-  llm: z.object({
-    provider: nonEmpty,
-    model: nonEmpty,
-    system_prompt: z.string().optional(),
-  }),
-  tts: z.object({
-    provider: nonEmpty,
-    voice: z.string().optional(),
-    voice_settings: z
-      .object({
-        stability: z.number().min(0).max(1).optional(),
-        similarity_boost: z.number().min(0).max(1).optional(),
-        style: z.number().min(0).max(1).optional(),
-        speed: z.number().min(0.7).max(1.2).optional(),
-      })
-      .optional(),
-  }),
-  context: z
-    .object({
-      max_messages: z.number().int().min(2).optional(),
-      max_tokens: z.number().int().positive().optional(),
-    })
-    .optional(),
-});
-export type StepConfigV2 = z.infer<typeof stepConfigV2Schema>;
-
-/**
- * What the flows API accepts as `config`: the flat stage config, or a flow
- * ({start, steps, routes, route_cue}) whose steps carry flat stage configs.
- * The server validates flows (server/flow/definition.go); the designer mirrors it.
- */
-export type FlowConfigPayload = StepConfigV2 | Record<string, unknown>;
-
 export type CreateFlowInput = {
   name: string;
   description: string;
   enabled?: boolean;
-  config: FlowConfigPayload;
+  config: Record<string, unknown>;
   mcp_tools?: ToolSelection[];
 };
 
-export type UpdateFlowInput = {
+type UpdateFlowInput = {
   name?: string;
   description?: string;
   enabled?: boolean;
-  config?: FlowConfigPayload;
+  config?: Record<string, unknown>;
   mcp_tools?: ToolSelection[];
 };
 
@@ -274,28 +230,28 @@ export const mcpServerSchema = z.object({
 });
 export type MCPServerDTO = z.infer<typeof mcpServerSchema>;
 
-export const mcpToolSchema = z.object({
+const mcpToolSchema = z.object({
   remote_name: z.string(),
   description: z.string().optional().default(""),
   input_schema: z.unknown().optional(),
   schema_hash: z.string(),
 });
-export type MCPToolDTO = z.infer<typeof mcpToolSchema>;
+type MCPToolDTO = z.infer<typeof mcpToolSchema>;
 
-export const mcpDiscoverySchema = z.object({
+const mcpDiscoverySchema = z.object({
   id: z.string(),
   discovery_hash: z.string(),
   created_at: z.string(),
   tools: z.array(mcpToolSchema),
 });
-export type MCPDiscoveryDTO = z.infer<typeof mcpDiscoverySchema>;
+type MCPDiscoveryDTO = z.infer<typeof mcpDiscoverySchema>;
 
 export const mcpServerDetailSchema = mcpServerSchema.extend({
   discovery: mcpDiscoverySchema.nullish(),
 });
 export type MCPServerDetailDTO = z.infer<typeof mcpServerDetailSchema>;
 
-export const mcpExecutionSchema = z.object({
+const mcpExecutionSchema = z.object({
   execution_id: z.string(),
   mcp_server_id: z.string(),
   tool_name: z.string(),
@@ -303,14 +259,14 @@ export const mcpExecutionSchema = z.object({
   duration_ms: z.number(),
   result: z.unknown().optional(),
 });
-export type MCPToolExecutionResultDTO = z.infer<typeof mcpExecutionSchema>;
+type MCPToolExecutionResultDTO = z.infer<typeof mcpExecutionSchema>;
 
-export const mcpDetachResultSchema = z.object({
+const mcpDetachResultSchema = z.object({
   pending: z.boolean().optional(),
   deleted: z.boolean().optional(),
   server: mcpServerSchema.optional(),
 });
-export type MCPDetachResultDTO = z.infer<typeof mcpDetachResultSchema>;
+type MCPDetachResultDTO = z.infer<typeof mcpDetachResultSchema>;
 
 export type CreateMCPServerInput = {
   name: string;
@@ -387,8 +343,6 @@ export const sessionToolCallSchema = z.object({
   started_at: z.string(),
   ended_at: z.string().nullish(),
   status: z.string(),
-  arguments_summary: z.string().optional().default(""),
-  result_summary: z.string().optional().default(""),
 });
 export type ToolCallDTO = z.infer<typeof sessionToolCallSchema>;
 
@@ -401,12 +355,12 @@ export const sessionTracesSchema = z.object({
 export type SessionTracesDTO = z.infer<typeof sessionTracesSchema>;
 
 /** One tool call a turn made: never its arguments or result. */
-export const turnToolSchema = z.object({
+const turnToolSchema = z.object({
   name: z.string(),
   status: z.string(),
   duration_ms: z.number(),
 });
-export type TurnToolDTO = z.infer<typeof turnToolSchema>;
+type TurnToolDTO = z.infer<typeof turnToolSchema>;
 
 export const turnSchema = z.object({
   id: z.string(),
@@ -422,13 +376,13 @@ export const turnSchema = z.object({
 });
 export type TurnDTO = z.infer<typeof turnSchema>;
 
-export const sessionRuntimeToolSchema = z.object({
+const sessionRuntimeToolSchema = z.object({
   mcp_server_id: z.string(),
   remote_name: z.string(),
   schema_hash: z.string(),
   required: z.boolean(),
 });
-export type SessionRuntimeToolDTO = z.infer<typeof sessionRuntimeToolSchema>;
+type SessionRuntimeToolDTO = z.infer<typeof sessionRuntimeToolSchema>;
 
 export const sessionSchema = z.object({
   id: z.string(),
@@ -450,7 +404,7 @@ export const sessionSchema = z.object({
 });
 export type SessionDTO = z.infer<typeof sessionSchema>;
 
-export type SessionFilterParams = {
+type SessionFilterParams = {
   limit?: number;
   offset?: number;
   status?: string;
@@ -470,8 +424,8 @@ const sessionTracesEnvelope = z.object({
   data: sessionTracesSchema,
 });
 
-export type VoiceToken = z.infer<typeof tokenEnvelope>["data"];
-export type AuthSnapshot = { key: string | null; generation: number };
+type VoiceToken = z.infer<typeof tokenEnvelope>["data"];
+type AuthSnapshot = { key: string | null; generation: number };
 
 export class ApiError extends Error {
   constructor(
@@ -731,11 +685,10 @@ export function createApiClient(
           turnsEnvelope,
         )
       ).data,
-    getSessionTraces: async (id: string, turnId?: string) => {
-      const qs = turnId ? `?turn_id=${encodeURIComponent(turnId)}` : "";
+    getSessionTraces: async (id: string) => {
       return (
         await request(
-          `/sessions/${encodeURIComponent(id)}/traces${qs}`,
+          `/sessions/${encodeURIComponent(id)}/traces`,
           sessionTracesEnvelope,
         )
       ).data;

@@ -1,6 +1,6 @@
 import type { FlowDTO, SessionDTO } from "../../api/client";
 
-export type Tone = "ok" | "bad" | "idle";
+type Tone = "ok" | "bad" | "idle";
 
 export function stepCount(a: FlowDTO): number {
   const steps = a.current_version?.config?.steps;
@@ -38,7 +38,7 @@ export function canTest(a: FlowDTO): boolean {
   return a.enabled && (a.readiness.state === "ready" || a.readiness.state === "ready_with_tool_warning");
 }
 
-export type LiveCalls = { live: number; onOlderVersion: number };
+type LiveCalls = { live: number; onOlderVersion: number };
 
 /** A flow's calls in progress, and how many started on a version that is no longer current. */
 export function liveCalls(sessions: SessionDTO[], a: FlowDTO): LiveCalls {

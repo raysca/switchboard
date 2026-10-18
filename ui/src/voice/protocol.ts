@@ -27,7 +27,7 @@ export interface RTVIMessage<T = unknown> {
   data?: T;
 }
 
-export interface RTVIClientReadyData {
+interface RTVIClientReadyData {
   version: string;
   about?: Record<string, unknown>;
   push_to_talk?: boolean;

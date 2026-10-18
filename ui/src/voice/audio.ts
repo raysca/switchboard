@@ -2,7 +2,7 @@
  * Browser Audio Capture and Playback Manager for RTVI voice sessions.
  */
 
-export type AudioErrorType =
+type AudioErrorType =
   | "permission_denied"
   | "device_not_found"
   | "unsupported"

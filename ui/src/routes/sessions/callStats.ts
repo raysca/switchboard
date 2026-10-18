@@ -34,7 +34,7 @@ export function clock(startedAt: string, endedAt: string | null | undefined, now
   return mmss((end - Date.parse(startedAt)) / 1000);
 }
 
-export type Steps = { names: Map<string, string>; start: string | undefined };
+type Steps = { names: Map<string, string>; start: string | undefined };
 
 /**
  * Like `steps`, but a call on an earlier version does not inherit the current start step: it may have
@@ -127,7 +127,7 @@ export function transcript(session: SessionDTO, turns: TurnDTO[], traces: Sessio
   return out;
 }
 
-export type TurnRow = { id: string; at: string; text: string; notes: string[]; latencies: unknown };
+type TurnRow = { id: string; at: string; text: string; notes: string[]; latencies: unknown };
 
 /** One row per turn: when, what the assistant said, and what happened in it (tool calls, being cut off). */
 export function turnRows(session: SessionDTO, turns: TurnDTO[]): TurnRow[] {
@@ -218,7 +218,7 @@ export function endReasonText(reason: string, step?: string): string {
   return reason === "ended_by_flow" && step ? `${text} (${step})` : text;
 }
 
-export type Stage = { label: "Heard" | "Model" | "Voice"; start: number; end: number };
+type Stage = { label: "Heard" | "Model" | "Voice"; start: number; end: number };
 
 /**
  * Where a reply's time went, as windows from the moment the caller finished (or, for a typed turn, from the

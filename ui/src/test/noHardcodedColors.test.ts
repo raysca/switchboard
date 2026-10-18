@@ -2,16 +2,18 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-// Files already moved to tokens. Each task appends the files it converted.
-export const CONVERTED: string[] = ["app/App.tsx", "routes/sections.tsx", "components/primitives.tsx", "routes/dashboard/DashboardView.tsx", "routes/dashboard/ReplyChart.tsx", "routes/providers/ProvidersView.tsx", "routes/flows/FlowVoiceTest.tsx", "routes/flows/useReplyTimes.tsx", "routes/flows/editor/Canvas.tsx", "routes/flows/StageFields.tsx", "components/debug/PipecatDebugPanel.tsx", "components/timeline/TurnTimeline.tsx", "routes/mcp/MCPView.tsx", "routes/server/ServerView.tsx", "routes/onboarding/OnboardingView.tsx", "components/SidePanel.tsx", "routes/flows/editor/StepPanel.tsx", "routes/flows/editor/StepAdvanced.tsx", "routes/flows/editor/FlowSettingsPanel.tsx", "routes/flows/editor/PublishDialog.tsx", "routes/flows/editor/FlowEditor.tsx", "components/Modal.tsx", "routes/flows/NewFlowDialog.tsx", "routes/flows/ArchiveFlowDialog.tsx", "routes/flows/FlowsView.tsx", "routes/flows/FlowPage.tsx", "routes/flows/PublishedBanner.tsx", "routes/sessions/CallsView.tsx", "routes/sessions/CallView.tsx", "routes/sessions/CallTranscript.tsx", "routes/sessions/ReplyWaterfall.tsx", "routes/mcp/ToolTestConsole.tsx", "routes/mcp/DriftPanel.tsx", "routes/mcp/ConnectServerDialog.tsx", "routes/mcp/DeleteServerDialog.tsx", "routes/mcp/ServerList.tsx", "routes/mcp/ServerDetail.tsx"];
-
 const colour = /#[0-9a-fA-F]{3,8}\b|rgba?\(/;
 
+// Every non-test component source, so a new file cannot dodge the check.
+const sources = import.meta.glob(["../**/*.tsx", "!../**/*.test.tsx"], { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+
 describe("no hard-coded colours outside the token block", () => {
-  for (const f of CONVERTED) {
+  it("finds the component sources", () => {
+    expect(Object.keys(sources).length).toBeGreaterThan(30);
+  });
+  for (const [f, src] of Object.entries(sources)) {
     it(f, () => {
-      const lines = readFileSync(resolve(__dirname, "..", f), "utf8").split("\n");
-      const bad = lines.map((l, i) => [i + 1, l] as const).filter(([, l]) => colour.test(l));
+      const bad = src.split("\n").map((l, i) => [i + 1, l] as const).filter(([, l]) => colour.test(l));
       expect(bad).toEqual([]);
     });
   }

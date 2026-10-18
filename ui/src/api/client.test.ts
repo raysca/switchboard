@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, PROXIED_ACCESS, probeProxiedAccess, stepConfigV2Schema, createApiClient, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
+import { ApiError, PROXIED_ACCESS, probeProxiedAccess, createApiClient, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
 
 describe("management client", () => {
   it("sends an in-memory bearer and parses the response", async () => {
@@ -452,8 +452,6 @@ describe("management client", () => {
           schema_hash: "sh1",
           started_at: "2026-10-05T12:00:02Z",
           status: "completed",
-          arguments_summary: `{"id":"123"}`,
-          result_summary: `{"found":true}`,
         }],
       };
 
@@ -483,10 +481,6 @@ describe("management client", () => {
       const traces = await client.getSessionTraces("sess-1");
       expect(traces.spans).toHaveLength(1);
       expect(traces.tool_calls).toHaveLength(1);
-
-      const turnTraces = await client.getSessionTraces("sess-1", "turn-1");
-      expect(turnTraces.events).toHaveLength(1);
-      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/sessions/sess-1/traces?turn_id=turn-1", expect.any(Object));
     });
 
     it("parses the tool calls a turn made", async () => {
@@ -555,15 +549,6 @@ describe("demo", () => {
     expect((await client.installDentalDemo()).flow_id).toBe("f");
     expect(fetcher.mock.calls[1][0]).toBe("/api/v1/demo/dental");
     expect((fetcher.mock.calls[1][1] as RequestInit).method).toBe("POST");
-  });
-});
-
-describe("stepConfigV2Schema", () => {
-  it("does not require or expose credential_id", () => {
-    const stage = { provider: "google" };
-    const cfg = { stt: stage, llm: { ...stage, model: "gemini-2.0-flash" }, tts: stage };
-    const parsed = stepConfigV2Schema.parse({ ...cfg, stt: { ...stage, credential_id: "x" } });
-    expect(parsed.stt).not.toHaveProperty("credential_id");
   });
 });
 

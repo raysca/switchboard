@@ -3,9 +3,9 @@ import type { Activity, StepVisual } from "./Canvas";
 import type { DraftRoute } from "./model";
 
 /** What the voice client says the call is doing right now (it is the call's only live signal). */
-export type VoiceActivity = { userSpeaking: boolean; botSpeaking: boolean; thinking: boolean };
+type VoiceActivity = { userSpeaking: boolean; botSpeaking: boolean; thinking: boolean };
 
-export type GraphView = {
+type GraphView = {
   steps: Record<string, StepVisual>;
   /** Routes the call has taken, oldest first. */
   traversed: { routeId: string | null; from: string; to: string; at: string }[];
