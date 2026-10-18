@@ -113,9 +113,8 @@ type Session struct {
 	procStart  atomic.Int64 // Monotonic nanos since Created when current envelope began processing (+1 offset so >0 indicates active processing)
 
 	// Edge callbacks
-	OnOutput   func(Frame)
-	OnUpstream func(Frame)
-	OnFrame    func(Frame, Direction)
+	OnOutput func(Frame)
+	OnFrame  func(Frame, Direction)
 
 	// Metrics
 	StaleDiscarded atomic.Uint64
@@ -877,10 +876,7 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 		return nil
 
 	case to < 0:
-		// Reached upstream edge
-		if s.OnUpstream != nil {
-			s.OnUpstream(f)
-		}
+		// Reached upstream edge: dropped.
 		return nil
 
 	default:

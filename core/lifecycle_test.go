@@ -531,8 +531,8 @@ func TestFlushTransportPreservesUninterruptibleAudio(t *testing.T) {
 	pipe, _ := core.NewPipeline(transport)
 	s, _ := core.NewSession(3, pipe, core.DefaultResourceBudget())
 	acks := make(chan core.FrameType, 1)
-	s.OnUpstream = func(f core.Frame) {
-		if f.Type() == core.FrameFlushProcessed {
+	s.OnFrame = func(f core.Frame, dir core.Direction) {
+		if dir == core.Upstream && f.Type() == core.FrameFlushProcessed {
 			acks <- f.Type()
 		}
 	}

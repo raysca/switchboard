@@ -45,10 +45,7 @@ type ToolLoopConfig struct {
 	StaleCheckInterval time.Duration
 	// MaxAsyncInFlight bounds background ToolPolicy.Async executions (default 4).
 	MaxAsyncInFlight int
-	// OnAsyncResult, if set, runs after an async tool's result has been
-	// injected into history, so the owner can trigger a model turn.
-	OnAsyncResult func(ToolCall, ToolResult)
-	// AsyncSink, if set, replaces the immediate injection and OnAsyncResult: the
+	// AsyncSink, if set, replaces the immediate injection: the
 	// sink receives the finished call and decides when to inject its message
 	// (AsyncToolResult.Inject) and trigger a model turn. It must not block.
 	AsyncSink func(core.AsyncToolResult)

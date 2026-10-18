@@ -247,9 +247,7 @@ func (l *ToolLoop) runAsync(call ToolCall, def ToolDefinition, started time.Time
 		l.cfg.AsyncSink(core.AsyncToolResult{Call: cloneCall(call), Result: cloneToolResult(res), Message: msg, Inject: func() error { return l.injectAsync(msg) }})
 		return
 	}
-	if err := l.injectAsync(msg); err == nil && l.cfg.OnAsyncResult != nil {
-		l.cfg.OnAsyncResult(cloneCall(call), cloneToolResult(res))
-	}
+	_ = l.injectAsync(msg)
 }
 
 // injectAsync adds an async result message to history once no round of this

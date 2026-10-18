@@ -94,10 +94,12 @@ func TestCore_BidirectionalRouting(t *testing.T) {
 	pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{}, pMiddle, &coretest.PassthroughProcessor{})
 	session, _ := core.NewSession(2, pipe, core.DefaultResourceBudget())
 
-	session.OnUpstream = func(f core.Frame) {
-		mu.Lock()
-		upstreamReceived = f
-		mu.Unlock()
+	session.OnFrame = func(f core.Frame, dir core.Direction) {
+		if dir == core.Upstream {
+			mu.Lock()
+			upstreamReceived = f
+			mu.Unlock()
+		}
 	}
 
 	session.OnOutput = func(f core.Frame) {

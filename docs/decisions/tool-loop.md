@@ -106,12 +106,12 @@ This supersedes the "Calls execute sequentially" bullet above when opted in.
   ack (`{"status":"running","async":true}`) as the tool result, then runs the
   executor in a background goroutine. When it finishes, the result is injected
   as a user-role context message (metadata `async_tool_call_id`) and
-  `OnAsyncResult` is called so the owner can trigger a model turn. The
+  `AsyncSink` (when set) receives the finished call instead and decides when to inject and trigger a model turn. The
   injection waits until no round of this loop is in flight, so it never
   precedes its ack or splits a call batch from its results; user turns added
   meanwhile simply sit between them. The message is a labelled JSON envelope
   (`call_id`, `tool`, `status`, `result`) marked as tool output, not user
-  instructions. `OnAsyncResult` must not call `Close` (Close waits for it).
+  instructions. `AsyncSink` must not call `Close` (Close waits for it).
 - Async calls ignore the generation fence (they survive barge-in, as Pipecat's
   `cancel_on_interruption=False`). They are bounded by `MaxAsyncInFlight`
   (default 4, excess calls fail `too_many_async`), use the same timeout and
