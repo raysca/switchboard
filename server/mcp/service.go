@@ -196,7 +196,7 @@ func (t *CapturedTool) AuthEnv() string {
 func (s *Service) CaptureTool(ctx context.Context, id, name, schemaHash string) (*CapturedTool, error) {
 	m, err := s.Get(ctx, id)
 	if err != nil {
-		return nil, ErrNotFound
+		return nil, err // ErrNotFound, or a store failure
 	}
 	if !m.Enabled || m.ValidationState != StateHealthy || m.LatestDiscoveryID == "" {
 		return nil, ErrUnavailable
@@ -473,8 +473,8 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 	defer end(nil)
 	m, err := s.Get(ctx, id)
 	if err != nil {
-		end(ErrNotFound)
-		return storage.MCPDiscovery{}, ErrNotFound
+		end(err)
+		return storage.MCPDiscovery{}, err // ErrNotFound, or a store failure
 	}
 	if !m.Enabled {
 		_ = s.store.MCP().SetValidation(ctx, m.ID, StateDisabled, time.Time{}, time.Time{})
@@ -537,7 +537,10 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 
 func (s *Service) Validate(ctx context.Context, id string) (storage.MCPServer, error) {
 	if _, err := s.Refresh(ctx, id); err != nil {
-		m, _ := s.Get(context.WithoutCancel(ctx), id)
+		m, gerr := s.Get(context.WithoutCancel(ctx), id)
+		if gerr != nil {
+			return m, gerr
+		}
 		return m, err
 	}
 	return s.Get(ctx, id)
@@ -546,11 +549,14 @@ func (s *Service) Validate(ctx context.Context, id string) (storage.MCPServer, e
 func (s *Service) Execute(ctx context.Context, id, name string, args json.RawMessage) (ToolResult, error) {
 	m, err := s.Get(ctx, id)
 	if err != nil {
-		return ToolResult{}, ErrNotFound
+		return ToolResult{}, err // ErrNotFound, or a store failure
 	}
 	d, err := s.store.MCP().LatestDiscovery(ctx, id)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		return ToolResult{}, ErrNotFound
+	}
+	if err != nil {
+		return ToolResult{}, fmt.Errorf("load MCP discovery: %w", err)
 	}
 	var hash string
 	for _, tool := range d.Tools {

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -148,11 +149,13 @@ func Handler(service *Service) http.Handler {
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/validate", func(w http.ResponseWriter, r *http.Request) {
 		id := requestID(w, r)
 		m, err := service.Validate(r.Context(), r.PathValue("id"))
-		if errors.Is(err, ErrNotFound) {
-			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+		// Validation failures (unavailable, invalid schema, a cancelled context)
+		// are reported in the view; a missing server is 404, a store failure 500.
+		if err != nil && !errors.Is(err, ErrUnavailable) && !errors.Is(err, ErrInvalidSchema) &&
+			!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			writeLookupError(w, err, id)
 			return
 		}
-		// Validation failures are reported in the view, not as an HTTP error.
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/tools/{tool}/test", func(w http.ResponseWriter, r *http.Request) {
@@ -166,14 +169,16 @@ func Handler(service *Service) http.Handler {
 		}
 		result, err := service.Execute(r.Context(), r.PathValue("id"), r.PathValue("tool"), input.Arguments)
 		if err != nil {
-			status := 400
-			if errors.Is(err, ErrNotFound) {
-				status = 404
+			switch {
+			case errors.Is(err, ErrNotFound):
+				api.WriteError(w, 404, "mcp_tool_failed", err.Error(), id)
+			case errors.Is(err, ErrUnavailable) || errors.Is(err, ErrRemoteFailure):
+				api.WriteError(w, 502, "mcp_tool_failed", err.Error(), id)
+			case isMCPSentinel(err):
+				api.WriteError(w, 400, "mcp_tool_failed", err.Error(), id)
+			default: // a store failure or other internal error: no internal text
+				writeLookupError(w, err, id)
 			}
-			if errors.Is(err, ErrUnavailable) || errors.Is(err, ErrRemoteFailure) {
-				status = 502
-			}
-			api.WriteError(w, status, "mcp_tool_failed", err.Error(), id)
 			return
 		}
 		api.WriteJSON(w, 200, api.SuccessResponse[ExecutionView]{Data: executionView(result)})
@@ -263,6 +268,18 @@ func writeLookupError(w http.ResponseWriter, err error, requestID string) {
 		return
 	}
 	api.WriteError(w, 500, "internal_error", "MCP server request failed", requestID)
+}
+
+// isMCPSentinel reports whether err is one of the package's user-facing errors,
+// whose fixed messages are safe to return.
+func isMCPSentinel(err error) bool {
+	for _, e := range []error{ErrInvalidSchema, ErrInvalidArguments, ErrResultTooLarge, ErrLocalDisabled, ErrAuthenticationFailed,
+		ErrInitializeFailed, ErrDiscoveryFailed, ErrConnectionFailed, ErrExecutionFailed} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
 }
 
 func requestID(w http.ResponseWriter, r *http.Request) string {
