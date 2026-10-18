@@ -104,7 +104,6 @@ type Manager struct {
 	currentGen      core.Generation
 	currentID       core.TurnID
 	retiredTurns    map[core.TurnID]struct{}
-	retiredOrder    []core.TurnID
 	lifecycle       core.TurnLifecycle
 	active          bool
 	turnStartedAt   time.Time
@@ -237,7 +236,6 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 		m.currentGen, m.currentID = observation.Generation, ""
 		m.lifecycle = core.TurnLifecycle{}
 		m.retiredTurns = make(map[core.TurnID]struct{})
-		m.retiredOrder = nil
 		m.bumpEpochLocked()
 	}
 	if m.muted {
@@ -487,22 +485,6 @@ func (m *Manager) SetMuted(muted bool, at time.Time) error {
 	return nil
 }
 
-// Interrupt commits a one-shot interruption for the expected active turn.
-func (m *Manager) Interrupt(id core.TurnID, generation core.Generation, at time.Time) ([]core.Frame, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.checkReady(); err != nil {
-		return nil, err
-	}
-	if generation < m.currentGen || !m.active || id != m.currentID || generation != m.currentGen {
-		return nil, nil
-	}
-	if err := m.acceptTimestamp(at); err != nil {
-		return nil, err
-	}
-	return m.interruptLocked(id, generation, at), nil
-}
-
 // Reset is idempotent and begins a fresh caller-timestamped state epoch.
 func (m *Manager) Reset(at time.Time) error {
 	m.mu.Lock()
@@ -515,7 +497,6 @@ func (m *Manager) Reset(at time.Time) error {
 	m.noSpeechSince = at
 	m.currentGen, m.currentID = 0, ""
 	m.retiredTurns = make(map[core.TurnID]struct{})
-	m.retiredOrder = nil
 	m.semantic = nil
 	m.pendingText, m.hasText, m.pendingExt = "", false, false
 	for _, s := range m.starters {
@@ -718,7 +699,6 @@ func (m *Manager) retireLocked(id core.TurnID) bool {
 		return false
 	}
 	m.retiredTurns[id] = struct{}{}
-	m.retiredOrder = append(m.retiredOrder, id)
 	return true
 }
 

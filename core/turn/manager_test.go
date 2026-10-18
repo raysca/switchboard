@@ -347,15 +347,17 @@ func TestTurnManagerInterruptionAndGenerationFence(t *testing.T) {
 	m := manager(t, SilenceDetector{})
 	_, _ = m.Observe(observation(t0, "old", 1, true))
 	_, _ = m.Advance(t0.Add(250 * time.Millisecond))
-	frames, err := m.Interrupt("old", 1, t0.Add(time.Second))
-	if err != nil || len(eventFrames(frames)) != 1 || eventFrames(frames)[0].Kind != core.TurnEventInterrupted {
+	// A newer generation is the production interruption path.
+	frames, err := m.Observe(observation(t0.Add(time.Second), "new", 2, true))
+	if err != nil || len(eventFrames(frames)) < 1 || eventFrames(frames)[0].Kind != core.TurnEventInterrupted || eventFrames(frames)[0].Turn != "old" {
 		t.Fatalf("interruption missing: events=%+v err=%v", eventFrames(frames), err)
 	}
-	frames, _ = m.Interrupt("old", 1, t0.Add(1100*time.Millisecond))
-	if len(eventFrames(frames)) != 0 {
-		t.Fatal("duplicate interruption emitted")
+	frames, _ = m.Observe(observation(t0.Add(1100*time.Millisecond), "new", 2, true))
+	for _, e := range eventFrames(frames) {
+		if e.Kind == core.TurnEventInterrupted {
+			t.Fatal("duplicate interruption emitted")
+		}
 	}
-	_, _ = m.Observe(observation(t0.Add(2*time.Second), "new", 2, true))
 	frames, _ = m.Observe(observation(t0.Add(3*time.Second), "old", 1, false))
 	if len(eventFrames(frames)) != 0 {
 		t.Fatal("old turn interrupted or completed new generation")
@@ -405,9 +407,6 @@ func TestTurnManagerRejectsOperationsAfterClose(t *testing.T) {
 	if err := m.SetMuted(true, t0); !errors.Is(err, ErrClosed) {
 		t.Fatalf("SetMuted after Close: %v", err)
 	}
-	if _, err := m.Interrupt("closed", 1, t0); !errors.Is(err, ErrClosed) {
-		t.Fatalf("Interrupt after Close: %v", err)
-	}
 	if err := m.Reset(t0); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Reset after Close: %v", err)
 	}
@@ -422,7 +421,7 @@ func TestTurnDetectorMayReenterManagerControlsWithoutStaleCommit(t *testing.T) {
 	}{
 		{name: "close", action: func(m *Manager, _ time.Time) ([]core.Frame, error) { return nil, m.Close() }},
 		{name: "interrupt", wantInt: true, action: func(m *Manager, at time.Time) ([]core.Frame, error) {
-			return m.Interrupt("reentrant", 1, at)
+			return m.Observe(observation(at, "reentrant", 2, false))
 		}},
 		{name: "mute", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return nil, m.SetMuted(true, at) }},
 		{name: "reset", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return nil, m.Reset(at) }},
@@ -718,7 +717,6 @@ func TestTurnManagerReentrantEpochChangeDiscardsPreCallbackFrames(t *testing.T) 
 	}{
 		{name: "reset", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return nil, m.Reset(at) }},
 		{name: "close", action: func(m *Manager, _ time.Time) ([]core.Frame, error) { return nil, m.Close() }},
-		{name: "interrupt", action: func(m *Manager, at time.Time) ([]core.Frame, error) { return m.Interrupt("epoch", 1, at) }},
 		{name: "generation", action: func(m *Manager, at time.Time) ([]core.Frame, error) {
 			return m.Observe(observation(at, "next", 2, false))
 		}},

@@ -34,7 +34,6 @@ func TestTurnManagerQueuedDetectionStateChanges(t *testing.T) {
 			_, err := m.Observe(observation(at, "other", 1, false))
 			return err
 		}},
-		{name: "wrong interrupt", wantComplete: true, action: func(m *Manager, at time.Time) error { _, err := m.Interrupt("other", 1, at); return err }},
 		{name: "duplicate advance", wantComplete: true, action: func(m *Manager, at time.Time) error { _, err := m.Advance(at); return err }},
 		{name: "duplicate start", wantComplete: true, action: func(m *Manager, at time.Time) error { return m.Start(at) }},
 		{name: "activity", wantComplete: true, action: func(m *Manager, at time.Time) error {
