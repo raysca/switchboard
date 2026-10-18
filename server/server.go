@@ -289,33 +289,33 @@ func (s *Server) SetTurnBackend(b smartturn.Backend) {
 	}
 }
 
-// SetProviderManagementAPI installs the authenticated management route handler.
+// setProviderManagementAPI installs the authenticated management route handler.
 // Configure it before serving requests; the outer API boundary always performs
 // administrator authentication before this handler is called.
-func (s *Server) SetProviderManagementAPI(handler http.Handler) {
+func (s *Server) setProviderManagementAPI(handler http.Handler) {
 	s.providerManagementAPI = handler
 }
 
-// SetFlowManagementAPI installs the flow route handler behind management
+// setFlowManagementAPI installs the flow route handler behind management
 // authentication. Configure it before serving requests.
-func (s *Server) SetFlowManagementAPI(handler http.Handler) {
+func (s *Server) setFlowManagementAPI(handler http.Handler) {
 	s.flowManagementAPI = handler
 }
 
-// SetMCPManagementAPI installs the MCP handler behind the management listener
+// setMCPManagementAPI installs the MCP handler behind the management listener
 // authentication boundary. Configure it before serving requests.
-func (s *Server) SetMCPManagementAPI(handler http.Handler) {
+func (s *Server) setMCPManagementAPI(handler http.Handler) {
 	s.mcpManagementAPI = handler
 }
 
-// SetSessionManagementAPI installs the session and traces route handler behind
+// setSessionManagementAPI installs the session and traces route handler behind
 // management authentication. Configure it before serving requests.
-func (s *Server) SetSessionManagementAPI(handler http.Handler) {
+func (s *Server) setSessionManagementAPI(handler http.Handler) {
 	s.sessionManagementAPI = handler
 }
 
-// SetStore attaches a durable SQL store for operations inspection and diagnostics.
-func (s *Server) SetStore(store *storage.Store) {
+// setStore attaches a durable SQL store for operations inspection and diagnostics.
+func (s *Server) setStore(store *storage.Store) {
 	s.store = store
 }
 

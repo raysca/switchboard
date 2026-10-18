@@ -23,7 +23,7 @@ func TestOperationsRouteUsesManagementBoundaryAndServesDiagnostics(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s.SetStore(store)
+	s.setStore(store)
 
 	key := "management-test-key-32-bytes-long-and-separate"
 	paths := []string{"/api/v1/operations/status"}

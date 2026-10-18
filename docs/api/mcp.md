@@ -1,6 +1,6 @@
 # MCP management API
 
-The MCP API is mounted under `/api/v1` behind the existing management bearer authentication. Compose the service and call `Server.SetMCPManagementAPI(mcp.Handler(service, management))`; the management listener authenticates first and propagates its trusted request ID. The `server/mcp.Handler` also independently fails closed if authentication is absent. Request and response bodies use JSON; responses are `no-store` through the shared API writer.
+The MCP API is mounted under `/api/v1` behind the existing management bearer authentication. The server composes the service and mounts `mcp.Handler(service, management)` on the management listener; the listener authenticates first and propagates its trusted request ID. The `server/mcp.Handler` also independently fails closed if authentication is absent. Request and response bodies use JSON; responses are `no-store` through the shared API writer.
 
 | Method and path | Purpose |
 |---|---|

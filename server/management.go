@@ -98,14 +98,14 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		}
 	}
 
-	s.SetStore(store)
+	s.setStore(store)
 	s.endOrphanedSessions(ctx, store)
 	s.mcpService = mcpService
-	s.SetProviderManagementAPI(s.providersRoutes())
+	s.setProviderManagementAPI(s.providersRoutes())
 	s.flows = flows
-	s.SetFlowManagementAPI(api.NewFlowsHandler(s.flows))
-	s.SetMCPManagementAPI(mcp.Handler(mcpService))
-	s.SetSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
+	s.setFlowManagementAPI(api.NewFlowsHandler(s.flows))
+	s.setMCPManagementAPI(mcp.Handler(mcpService))
+	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
 	if policy != nil {
 		m.retention = retention.NewJob(store.Retention(), *policy, retention.WithInterval(s.cfg.Retention.Interval), retention.WithLogger(s.logger))
