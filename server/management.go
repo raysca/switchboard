@@ -80,11 +80,29 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 		policy = &p
 	}
 
+	// The production provider check and the recording sink can still fail:
+	// both run before anything points at the store fail() closes.
+	flows := flow.NewService(store, s.availability)
+	if bad := s.unavailableFlowProviders(ctx, flows); len(bad) > 0 {
+		for _, b := range bad {
+			s.logger.Error("flow references a provider this build cannot run", slog.String("problem", b))
+		}
+		if s.cfg.Profile == ProfileProduction {
+			return fail(fmt.Errorf("%d stored flow stage(s) use providers missing from this build (xAI STT/TTS need -tags xaispeech): %s", len(bad), strings.Join(bad, "; ")))
+		}
+	}
+	var sink *record.LocalSink
+	if rc := s.cfg.Recording; rc.Enabled {
+		if sink, err = record.NewLocalSink(rc.Dir); err != nil {
+			return fail(fmt.Errorf("recording sink: %w", err))
+		}
+	}
+
 	s.SetStore(store)
 	s.endOrphanedSessions(ctx, store)
 	s.mcpService = mcpService
 	s.SetProviderManagementAPI(s.providersRoutes())
-	s.flows = flow.NewService(store, s.availability)
+	s.flows = flows
 	s.SetFlowManagementAPI(api.NewFlowsHandler(s.flows))
 	s.SetMCPManagementAPI(mcp.Handler(mcpService))
 	s.SetSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
@@ -95,23 +113,11 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	} else {
 		s.logger.Warn("retention disabled: stored transcripts and traces are kept indefinitely")
 	}
-	if rc := s.cfg.Recording; rc.Enabled {
-		sink, err := record.NewLocalSink(rc.Dir)
-		if err != nil {
-			return fail(fmt.Errorf("recording sink: %w", err))
-		}
+	if sink != nil {
 		s.recSink = sink
 		jctx, stop := context.WithCancel(context.Background())
 		m.recStop = stop
-		go sink.Janitor(jctx, time.Duration(rc.RetentionDays)*24*time.Hour, time.Hour, s.logger)
-	}
-	if bad := s.unavailableFlowProviders(ctx); len(bad) > 0 {
-		for _, b := range bad {
-			s.logger.Error("flow references a provider this build cannot run", slog.String("problem", b))
-		}
-		if s.cfg.Profile == ProfileProduction {
-			return fail(fmt.Errorf("%d stored flow stage(s) use providers missing from this build (xAI STT/TTS need -tags xaispeech): %s", len(bad), strings.Join(bad, "; ")))
-		}
+		go sink.Janitor(jctx, time.Duration(s.cfg.Recording.RetentionDays)*24*time.Hour, time.Hour, s.logger)
 	}
 	s.mgmt = m
 	s.logger.Info("management plane enabled", slog.String("dialect", s.cfg.Storage.Dialect), slog.Bool("retention", m.retention != nil))
@@ -121,10 +127,10 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 // unavailableFlowProviders lists "flow id stage provider" for every enabled,
 // non-archived stored flow whose stage (or fallback) has no factory in this
 // build, so a tagged-vs-untagged build mismatch fails startup, not calls.
-func (s *Server) unavailableFlowProviders(ctx context.Context) []string {
+func (s *Server) unavailableFlowProviders(ctx context.Context, flows *flow.Service) []string {
 	var bad []string
 	for offset := 0; ; offset += 100 {
-		page, err := s.flows.List(ctx, 100, offset)
+		page, err := flows.List(ctx, 100, offset)
 		if err != nil {
 			s.logger.Warn("flow provider check skipped", slog.String("err", s.redactor.Redact(err.Error())))
 			return bad

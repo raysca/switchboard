@@ -401,7 +401,7 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 
 	// Launch async generation task on session supervisor
 	p.Requests.Add(1)
-	return p.session.Go(func(taskCtx context.Context) {
+	err := p.session.Go(func(taskCtx context.Context) {
 		defer cancel()
 
 		var committed bool
@@ -654,6 +654,14 @@ func (p *LLMProcessor) handleUserTurn(ctx context.Context, um *core.UserMessageF
 			_ = p.session.Reenter(usageFrame, core.Downstream, p.index+1, gen)
 		}
 	})
+	if errors.Is(err, core.ErrTooManyTasks) { // the session's task budget: lose this turn, not the call
+		cancel() // the session's own budget is not a provider error: Errors stays untouched
+		// Re-entered, not pushed: under LLMFailover a fallback's emitter swallows,
+		// and the wrapper must see the error to end the generation.
+		_ = p.session.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index+1, gen)
+		return nil
+	}
+	return err
 }
 
 func (p *LLMProcessor) isCurrentGeneration(generation uint64) bool {

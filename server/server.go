@@ -110,6 +110,7 @@ type Server struct {
 	pruneStop     chan struct{}
 	demoSF        singleflight.Group // collapses overlapping demo installs
 	stopDemo      context.CancelFunc // cancels the startup demo install; guarded by mu
+	stopFlight    context.CancelFunc // cancels the running demo install flight; guarded by mu
 	demoWG        sync.WaitGroup     // the startup demo install goroutine
 	recSink       *record.LocalSink  // nil unless recording.enabled
 }
@@ -250,9 +251,7 @@ func NewServer(cfg *Config) (*Server, error) {
 
 func voiceTokenConfig(cfg *Config, tokenSecret string) token.Config {
 	tokenCfg := token.DefaultConfig(cfg.Token.Issuer, cfg.Token.Audience, []byte(tokenSecret))
-	if cfg.Token.MaxLifetime > 0 {
-		tokenCfg.MaxLifetime = cfg.Token.MaxLifetime
-	}
+	tokenCfg.MaxLifetime = voiceTokenLifetime(cfg) // the same value the mint side uses
 	if cfg.Token.ClockSkew > 0 {
 		tokenCfg.ClockSkew = cfg.Token.ClockSkew
 	}
@@ -1018,9 +1017,7 @@ func (s *Server) AdminAddr() string  { return s.adminAddr }
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.shuttingDown.Store(true)
-	if s.stopDemo != nil {
-		s.stopDemo()
-	}
+	s.stopDemoLocked()
 	s.mu.Unlock()
 	s.ready.Store(false)
 	s.metrics.Draining.Store(1)
@@ -1143,7 +1140,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.probeServer != nil {
 		_ = s.probeServer.Close()
 	}
-	if !s.waitDemo(ctx) { // the install must not run against a closed store
+	// The install must not run against a closed store. A short grace on a context that survives an
+	// already-expired shutdown ctx: the install was cancelled above and ends promptly.
+	graceCtx, graceCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer graceCancel()
+	if !s.waitDemo(graceCtx) {
 		s.logger.Warn("demo install still running at shutdown")
 	}
 	s.closeManagement()

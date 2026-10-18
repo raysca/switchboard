@@ -227,7 +227,59 @@ func (w *LLMFailover) begin(ctx context.Context, um *UserMessageFrame, dir Direc
 	if stale != nil {
 		_ = stale.ProcessFrame(ctx, &InterruptionFrame{}, Downstream, swallow{})
 	}
-	return w.cfg.Candidates[g.order[0]].Proc.ProcessFrame(ctx, um, dir, e)
+	pe := &pushTracker{Emitter: e}
+	err := w.cfg.Candidates[g.order[0]].Proc.ProcessFrame(ctx, um, dir, pe)
+	if err == nil || pe.downstreamErr != nil {
+		return err // started, or a later stage refused the user message: not this candidate's failure
+	}
+	return w.syncFailure(g, err, um, dir, e, pe.pushed)
+}
+
+// pushTracker records whether a candidate forwarded the user message and what
+// the stages after this one answered.
+type pushTracker struct {
+	Emitter
+	pushed        bool
+	downstreamErr error
+}
+
+func (p *pushTracker) Push(f Frame) error { return p.note(f, p.Emitter.Push(f)) }
+
+func (p *pushTracker) PushDirection(f Frame, d Direction) error {
+	return p.note(f, p.Emitter.PushDirection(f, d))
+}
+
+func (p *pushTracker) note(f Frame, err error) error {
+	if _, ok := f.(*UserMessageFrame); ok {
+		p.pushed, p.downstreamErr = true, err
+	}
+	return err
+}
+
+// syncFailure handles the first candidate refusing the user message
+// synchronously (its request could not start). Like an error frame before any
+// output, it moves to the next candidate when mayFailOver allows: a provider
+// failure does; the session's own limits do not (server llmClassify maps
+// ErrTooManyTasks and ErrSessionClosed to ""), and then the error is the
+// session's, as before. The user message is forwarded here when the failed
+// candidate had not forwarded it.
+func (w *LLMFailover) syncFailure(g *failoverGen, err error, um *UserMessageFrame, dir Direction, e Emitter, pushed bool) error {
+	w.mu.Lock()
+	if w.cur != g || g.done || g.pos != 0 || !w.mayFailOver(g, err) {
+		if w.cur == g && !g.done {
+			g.done = true
+			stopTimerLocked(g)
+		}
+		w.mu.Unlock()
+		return err
+	}
+	if ferr := w.failoverLocked(g, g.order[0], err, func() error { return err }); ferr != nil {
+		return ferr // every candidate failed synchronously: the session's error, as before
+	}
+	if !pushed {
+		return e.PushDirection(um, dir)
+	}
+	return nil
 }
 
 // fromCandidate sees every frame a candidate re-enters.

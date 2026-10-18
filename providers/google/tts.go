@@ -558,7 +558,6 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 			return nil
 		}
 		if errors.Is(err, core.ErrTooManyTasks) { // lose this unit, not the call
-			p.Errors.Add(1)
 			// Re-entered, not pushed: under TTSFailover e swallows, and the
 			// wrapper would wait for this unit until its watchdog fired.
 			_ = p.session.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(su.Turn), Gen: core.Generation(su.Gen), UnitID: su.UnitID}, core.Downstream, p.index+1, su.Gen)

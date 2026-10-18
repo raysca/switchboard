@@ -6,7 +6,7 @@ Task 8 hardens the existing WebSocket `PacedWriter`; there is no second pacing e
 
 Enqueue copies the frame and sample bytes, derives a single normalized duration when the producer omits one, and stores that duration with the queue entry. Admission checks frame-count, byte, and media-duration budgets before mutation. Overflow returns both `ErrQueueBufferFull` and the V1-compatible `ErrSlowClient`; retained accounting and a matching pending final marker are unchanged, so a retry can still become turn-final. Non-positive budget values are normalized to bounded defaults without changing the public constructor. Queue locks are not held during pacing waits, encoding, socket writes, or callbacks.
 
-The default queue remains 4,800 bytes / 100 ms at 24-kHz PCM16 mono and is additionally bounded to 64 frames, including empty frames. The queue stores at most 64 pending whole-turn final markers. A marker-limit failure is explicit and fail-closed.
+The default queue is 96,000 bytes / 2 s at 24-kHz PCM16 mono (`ws.DefaultPacerConfig`; a flush drops it all) and is additionally bounded to 512 frames, including empty frames. The queue stores at most 64 pending whole-turn final markers. A marker-limit failure is explicit and fail-closed.
 
 ## Whole-turn finality and speaking
 
@@ -24,4 +24,4 @@ Explicitly uninterruptible output and its final drain are retained in place, eve
 
 The deterministic TTS test double (`coretest.TTSProcessor`) uses a cancellation-safe admission-order chain, matching the serialized Google/xAI unit boundary: every frame for unit 1 is emitted before unit 2 starts. Interruption cancels the active and queued fake synthesis work; session teardown also releases queued waiters.
 
-The server guarantee ends at bytes already accepted by the socket. The pinned unmodified browser client still cannot clear buffered playback; `docs/compatibility/playback-clear-decision.json` therefore remains unresolved and is not a pass.
+The server guarantee ends at bytes already accepted by the socket. After the flush the transport sends RTVI `bot-interrupted` (at most the one audio frame already admitted to the socket, one provider chunk, follows it). The pinned unmodified browser client ignores that message and still cannot clear buffered playback; `docs/compatibility/playback-clear-decision.json` therefore remains unresolved and is not a pass.

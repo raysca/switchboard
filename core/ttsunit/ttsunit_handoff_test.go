@@ -69,8 +69,9 @@ func TestRefusedHandoffUnderFailover(t *testing.T) {
 				return u.Finish()
 			}})
 	}
+	ca := cand()
 	fo, err := core.NewTTSFailover(core.TTSFailoverConfig{
-		Candidates:  []core.TTSCandidate{{Provider: "a", Proc: cand()}, {Provider: "b", Proc: cand()}},
+		Candidates:  []core.TTSCandidate{{Provider: "a", Proc: ca}, {Provider: "b", Proc: cand()}},
 		Classify:    func(error) string { return "server_error" },
 		UnitTimeout: 10 * time.Second,
 	})
@@ -104,5 +105,8 @@ func TestRefusedHandoffUnderFailover(t *testing.T) {
 		if a.UnitID == 1 {
 			t.Fatal("refused unit was spoken")
 		}
+	}
+	if n := ca.ErrorsTotal.Load(); n != 0 {
+		t.Fatalf("a refused local task counted as %d provider errors", n)
 	}
 }

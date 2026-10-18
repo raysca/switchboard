@@ -122,13 +122,13 @@ func (smartBackend) Close() error { return nil }
 // "incomplete" holds it to stop_secs, and a model that never answers degrades
 // to exactly speech_timeout. Real clock, so the bounds are generous.
 func TestTurnAnalyzerThroughCallPipeline(t *testing.T) {
-	const speechTimeout, stopSecs = 400 * time.Millisecond, 1500 * time.Millisecond
+	const speechTimeout, hold = 400 * time.Millisecond, 1500 * time.Millisecond
 	run := func(t *testing.T, be smartturn.Backend, silence bool, budget time.Duration) (core.TurnReason, time.Duration) {
 		cfg := DefaultConfig(ProfileDevelopment)
 		cfg.Turn.Manager = true
 		cfg.Turn.Stop = []string{"turn-analyzer", "speech-timeout"}
 		cfg.Turn.SpeechTimeout = speechTimeout
-		cfg.Turn.Analyzer.StopSecs = stopSecs
+		cfg.Turn.Analyzer.Hold = hold
 		cfg.Turn.Analyzer.Budget = budget
 		reg := NewRegistry()
 		llm := &coretest.PassthroughProcessor{}
@@ -186,7 +186,7 @@ func TestTurnAnalyzerThroughCallPipeline(t *testing.T) {
 	})
 	t.Run("incomplete holds to stop_secs", func(t *testing.T) {
 		r, d := run(t, smartBackend{p: 0.1}, false, 100*time.Millisecond)
-		if r != core.TurnReasonSilence || d < stopSecs-50*time.Millisecond || d > stopSecs+400*time.Millisecond {
+		if r != core.TurnReasonSilence || d < hold-50*time.Millisecond || d > hold+400*time.Millisecond {
 			t.Fatalf("reason %v after %v", r, d)
 		}
 	})

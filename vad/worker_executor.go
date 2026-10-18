@@ -117,8 +117,12 @@ type workerProcess struct {
 	mu         sync.Mutex
 	healthy    bool
 	crashes    []time.Time
-	down       bool // counted out of backend.availCount
+	down       bool          // counted out of backend.availCount
+	respawning bool          // a respawnLoop is running
+	up         atomic.Bool   // healthy and serving: handOff only sends to an up worker
+	quit       chan struct{} // closed by close: ends respawnLoop's wait
 	closed     bool
+	gapHook    func() // deliberate nil-in-production test seam, read under the wp.mu executeBatch already holds; runs between its health read and markDown
 	wg         sync.WaitGroup
 	inFlightMu sync.Mutex
 	inFlight   map[uint64]*Job
@@ -157,14 +161,20 @@ func NewWorkerProcessExecutor(cfg Config) (*Executor, error) {
 			q:        q,
 			stderr:   newBoundedBuffer(MaxStderrBytes),
 			inFlight: make(map[uint64]*Job),
+			quit:     make(chan struct{}),
 		}
 		b.workers = append(b.workers, wp)
 
-		if err := wp.startAndHandshake(); err != nil {
+		p, err := wp.start()
+		if err != nil {
 			_ = b.close()
 			return nil, fmt.Errorf("vad worker %d startup handshake failed: %w", i, err)
 		}
+		wp.mu.Lock()
+		wp.installLocked(p)
+		wp.mu.Unlock()
 		b.availCount.Add(1)
+		wp.up.Store(true)
 
 		wp.wg.Add(1)
 		go wp.runLoop()
@@ -230,51 +240,66 @@ func (b *workerProcessBackend) close() error {
 	return nil
 }
 
-func (wp *workerProcess) startAndHandshake() error {
-	wp.mu.Lock()
-	defer wp.mu.Unlock()
+// workerProc is a started worker process that passed its handshake.
+type workerProc struct {
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
+}
 
+func (p workerProc) reap() {
+	_ = p.stdin.Close()
+	_ = p.stdout.Close()
+	_ = p.cmd.Process.Kill()
+	_ = p.cmd.Wait()
+}
+
+// start starts a worker process and checks its model without taking wp.mu
+// (the handshake can take 3 s and the run loop must not wait on it). The
+// caller installs the result with installLocked.
+func (wp *workerProcess) start() (workerProc, error) {
 	cmd := exec.Command(wp.backend.cfg.WorkerBinary, fmt.Sprint(wp.backend.cfg.Batch))
 	cmd.Env = WorkerEnv()
 	cmd.Stderr = wp.stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("stdin pipe: %w", err)
+		return workerProc{}, fmt.Errorf("stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
-		return fmt.Errorf("stdout pipe: %w", err)
+		return workerProc{}, fmt.Errorf("stdout pipe: %w", err)
 	}
-
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
 		_ = stdout.Close()
-		return fmt.Errorf("start worker: %w", err)
+		return workerProc{}, fmt.Errorf("start worker: %w", err)
 	}
-
-	wp.cmd = cmd
-	wp.stdin = stdin
-	wp.stdout = stdout
-
-	handshakeDeadline := time.Now().Add(3 * time.Second)
-	req := HandshakeReq{
-		ExpectedModelSHA256: wp.backend.modelSHA,
-		MaxBatch:            uint32(wp.backend.cfg.Batch),
+	p := workerProc{cmd: cmd, stdin: stdin, stdout: stdout}
+	if err := wp.handshake(stdin, stdout); err != nil {
+		p.reap()
+		return workerProc{}, err
 	}
-	reqData := EncodeHandshakeReq(req)
+	return p, nil
+}
 
-	if err := WriteFrame(stdin, reqData); err != nil {
-		wp.killAndReapLocked()
+// installLocked makes p the worker's process. wp.mu held.
+func (wp *workerProcess) installLocked(p workerProc) {
+	wp.cmd, wp.stdin, wp.stdout, wp.healthy = p.cmd, p.stdin, p.stdout, true
+}
+
+// handshake sends the expected model hash and checks the worker's answer within 3 s.
+func (wp *workerProcess) handshake(stdin io.Writer, stdout io.Reader) error {
+	req := HandshakeReq{ExpectedModelSHA256: wp.backend.modelSHA, MaxBatch: uint32(wp.backend.cfg.Batch)}
+	if err := WriteFrame(stdin, EncodeHandshakeReq(req)); err != nil {
 		return fmt.Errorf("send handshake: %w", err)
 	}
-
 	type hsResult struct {
 		resp HandshakeResp
 		err  error
 	}
 	hsCh := make(chan hsResult, 1)
-	go func() {
+	go func() { // ends with the reply, or when reap closes stdout
 		payload, err := ReadFrame(stdout, nil)
 		if err != nil {
 			hsCh <- hsResult{err: err}
@@ -283,28 +308,22 @@ func (wp *workerProcess) startAndHandshake() error {
 		resp, err := DecodeHandshakeResp(payload)
 		hsCh <- hsResult{resp: resp, err: err}
 	}()
-
+	t := time.NewTimer(3 * time.Second)
+	defer t.Stop()
 	select {
 	case res := <-hsCh:
-		if res.err != nil {
-			wp.killAndReapLocked()
+		switch {
+		case res.err != nil:
 			return fmt.Errorf("handshake read/decode: %w", res.err)
-		}
-		if res.resp.Status != StatusOK {
-			wp.killAndReapLocked()
+		case res.resp.Status != StatusOK:
 			return fmt.Errorf("%w: worker returned status %d", ErrWorkerHandshake, res.resp.Status)
-		}
-		if !bytes.Equal(res.resp.ActualModelSHA256[:], wp.backend.modelSHA[:]) {
-			wp.killAndReapLocked()
+		case !bytes.Equal(res.resp.ActualModelSHA256[:], wp.backend.modelSHA[:]):
 			return fmt.Errorf("%w: worker model SHA mismatch", ErrModelHashMismatch)
 		}
-	case <-time.After(time.Until(handshakeDeadline)):
-		wp.killAndReapLocked()
+		return nil
+	case <-t.C:
 		return errors.New("worker handshake timed out")
 	}
-
-	wp.healthy = true
-	return nil
 }
 
 func (wp *workerProcess) killAndReapLocked() {
@@ -327,6 +346,7 @@ func (wp *workerProcess) close() {
 	wp.closed = true
 	wp.killAndReapLocked()
 	wp.mu.Unlock()
+	close(wp.quit) // backend.close calls close once per worker
 }
 
 func (wp *workerProcess) runLoop() {
@@ -378,17 +398,18 @@ func (wp *workerProcess) runLoop() {
 func (wp *workerProcess) executeBatch(jobs []*Job) {
 	wp.mu.Lock()
 	healthy := wp.healthy && !wp.closed
+	hook := wp.gapHook
 	wp.mu.Unlock()
 
 	if !healthy {
-		if !wp.respawnWithBackoff() {
-			for _, j := range jobs {
-				j.Err = ErrWorker
-				wp.backend.statCounters.workerErrors.Add(1)
-				wp.backend.finish(j)
-			}
-			return
+		if hook != nil {
+			hook()
 		}
+		// Down (crashed, or killed between batches): restart it off this loop
+		// and let a live worker serve these chunks instead of failing them.
+		wp.markDown()
+		wp.handOff(jobs, ErrWorker)
+		return
 	}
 
 	reqItems := make([]InferItemReq, len(jobs))
@@ -421,12 +442,12 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 	wp.mu.Unlock()
 
 	if stdin == nil || stdout == nil {
-		wp.handleWorkerFailure(jobs, ErrWorker)
+		wp.handleWorkerFailure(jobs, ErrWorker, true)
 		return
 	}
 
 	if err := WriteFrame(stdin, payload); err != nil {
-		wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, err))
+		wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, err), true) // died before reading them
 		return
 	}
 
@@ -444,13 +465,13 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 		wp.backend.statCounters.batchedJobs.Add(int64(len(jobs)))
 
 		if res.err != nil {
-			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, res.err))
+			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: %v", ErrWorker, res.err), false)
 			return
 		}
 
 		respItems, err := DecodeInferResp(res.payload)
 		if err != nil {
-			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: decode response: %v", ErrWorker, err))
+			wp.handleWorkerFailure(jobs, fmt.Errorf("%w: decode response: %v", ErrWorker, err), false)
 			return
 		}
 
@@ -470,9 +491,11 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 				wp.backend.finish(j)
 			}
 		}
-		for _, j := range jobs {
-			if _, ok := wp.inFlight[j.RequestID]; ok {
-				delete(wp.inFlight, j.RequestID)
+		// By request id from reqItems, not j.RequestID: a finished job may already be
+		// resubmitted and re-stamped by another worker (handOff).
+		for i, j := range jobs {
+			if _, ok := wp.inFlight[reqItems[i].RequestID]; ok {
+				delete(wp.inFlight, reqItems[i].RequestID)
 				j.Err = ErrWorker
 				wp.backend.statCounters.workerErrors.Add(1)
 				wp.backend.finish(j)
@@ -498,7 +521,7 @@ func (wp *workerProcess) executeBatch(jobs []*Job) {
 		}
 		wp.inFlightMu.Unlock()
 
-		_ = wp.respawnWithBackoff()
+		wp.markDown()
 	}
 }
 
@@ -531,9 +554,11 @@ func awaitReply(resCh <-chan readResult, deadline time.Time, grace time.Duration
 	}
 }
 
-func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error) {
-	wp.backend.statCounters.workerErrors.Add(int64(len(jobs)))
-
+// handleWorkerFailure kills a worker whose pipe failed. The batch goes to a
+// live worker only if retry (the worker never read it: the jobs' input and
+// state are unchanged); a batch the worker read and died on may be a poison
+// chunk, which must not kill every worker in turn, so it fails.
+func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error, retry bool) {
 	wp.mu.Lock()
 	wp.killAndReapLocked()
 	wp.mu.Unlock()
@@ -541,27 +566,84 @@ func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error) {
 	wp.inFlightMu.Lock()
 	for _, j := range jobs {
 		delete(wp.inFlight, j.RequestID)
-		j.Err = err
-		wp.backend.finish(j)
 	}
 	wp.inFlightMu.Unlock()
 
-	_ = wp.respawnWithBackoff()
+	wp.markDown()
+	if retry {
+		wp.handOff(jobs, err)
+		return
+	}
+	for _, j := range jobs {
+		j.Err = err
+		wp.backend.statCounters.workerErrors.Add(1)
+		wp.backend.finish(j)
+	}
 }
 
-func (wp *workerProcess) respawnWithBackoff() bool {
+// markDown takes the worker out of capacity and of handOff targets and starts
+// one respawnLoop, unless the backend is closing. Called on the run loop.
+func (wp *workerProcess) markDown() {
 	wp.mu.Lock()
-	if wp.closed {
-		wp.mu.Unlock()
-		return false
+	defer wp.mu.Unlock()
+	if wp.healthy && !wp.closed {
+		// A respawn finished since the caller saw the worker down (every other
+		// caller just ran killAndReapLocked, which clears healthy): marking it
+		// down would orphan the new process behind a second respawnLoop.
+		return
 	}
+	wp.up.Store(false)
 	if !wp.down {
 		wp.down = true
 		wp.backend.availCount.Add(-1)
 	}
-	now := time.Now()
-	wp.crashes = append(wp.crashes, now)
+	if wp.closed || wp.respawning {
+		return
+	}
+	wp.respawning = true
+	wait := wp.noteCrashLocked()
+	wp.wg.Add(1) // the run loop holds a wg count here, so this never races backend.close's Wait at zero
+	go wp.respawnLoop(wait)
+}
 
+// respawnLoop restarts the worker off its run loop, backing off while the
+// restart keeps failing, until it succeeds or the backend closes.
+func (wp *workerProcess) respawnLoop(wait time.Duration) {
+	defer wp.wg.Done()
+	for {
+		t := time.NewTimer(wait)
+		select {
+		case <-wp.quit:
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		if p, err := wp.start(); err == nil {
+			// One critical section: a crash noticed after this sees a worker that
+			// is up and healthy, marks it down and starts a new respawnLoop.
+			wp.mu.Lock()
+			if wp.closed {
+				wp.mu.Unlock()
+				p.reap()
+				return
+			}
+			wp.installLocked(p)
+			wp.respawning, wp.down = false, false
+			wp.backend.availCount.Add(1)
+			wp.up.Store(true)
+			wp.mu.Unlock()
+			return
+		}
+		wp.mu.Lock()
+		wait = wp.noteCrashLocked()
+		wp.mu.Unlock()
+	}
+}
+
+// noteCrashLocked records a failure (one restart) and returns the wait before
+// the next start: 20 ms doubling to 1 s, and 1 s while crash-looping. wp.mu held.
+func (wp *workerProcess) noteCrashLocked() time.Duration {
+	now := time.Now()
 	cutoff := now.Add(-CrashLoopWindow)
 	pruned := wp.crashes[:0]
 	for _, t := range wp.crashes {
@@ -569,37 +651,49 @@ func (wp *workerProcess) respawnWithBackoff() bool {
 			pruned = append(pruned, t)
 		}
 	}
-	wp.crashes = pruned
-	crashCount := len(wp.crashes)
+	wp.crashes = append(pruned, now)
 	wp.backend.statCounters.restarts.Add(1)
-	wp.mu.Unlock()
+	n := len(wp.crashes)
+	if n >= CrashLoopThreshold {
+		return time.Second
+	}
+	return min(10*time.Millisecond*time.Duration(1<<min(n, 6)), time.Second)
+}
 
-	if crashCount >= CrashLoopThreshold {
-		time.Sleep(1 * time.Second)
-	} else {
-		backoff := 10 * time.Millisecond * time.Duration(1<<min(crashCount, 6))
-		if backoff > 1000*time.Millisecond {
-			backoff = 1000 * time.Millisecond
+// handOff gives the jobs of a down worker to a live one: a Silero job carries
+// its detector state (Job.State) and a session has one outstanding job, so any
+// worker can serve it in order. A job no live worker can take now fails with
+// failErr, as before. Called on the run loop.
+func (wp *workerProcess) handOff(jobs []*Job, failErr error) {
+	b := wp.backend
+	failed := jobs[:0]
+	b.closeMu.RLock() // Submit's guard: no queue is closed while it is held
+	for _, j := range jobs {
+		if q := b.liveQueue(wp.id); q != nil && !b.closed.Load() {
+			select {
+			case q <- j:
+				continue
+			default:
+			}
 		}
-		time.Sleep(backoff)
+		failed = append(failed, j)
 	}
-
-	wp.mu.Lock()
-	if wp.closed {
-		wp.mu.Unlock()
-		return false
+	b.closeMu.RUnlock()
+	for _, j := range failed {
+		j.Err = failErr
+		b.statCounters.workerErrors.Add(1)
+		b.finish(j)
 	}
-	wp.mu.Unlock()
+}
 
-	if err := wp.startAndHandshake(); err != nil {
-		return false
+// liveQueue is the queue of the next worker after from that is up, or nil.
+func (b *workerProcessBackend) liveQueue(from int) chan *Job {
+	for i := 1; i < len(b.workers); i++ {
+		if w := b.workers[(from+i)%len(b.workers)]; w.up.Load() {
+			return w.q
+		}
 	}
-
-	wp.mu.Lock()
-	wp.down = false
-	wp.mu.Unlock()
-	wp.backend.availCount.Add(1)
-	return true
+	return nil
 }
 
 func (b *workerProcessBackend) finish(j *Job) {

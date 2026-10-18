@@ -135,8 +135,8 @@ func TestPhase3_FuzzProperty_WireValidation(t *testing.T) {
 		t.Fatalf("expected error on random garbage, got nil")
 	}
 
-	// 2b. Oversized message (> 64 KB)
-	oversized := make([]byte, 70*1024)
+	// 2b. Oversized message (> MaxEncodedFrameSize)
+	oversized := make([]byte, ws.MaxEncodedFrameSize+1)
 	_, err = ws.DecodeBinaryFrame(oversized, 2, now)
 	if err != ws.ErrOversizedMessage {
 		t.Fatalf("expected ErrOversizedMessage, got: %v", err)

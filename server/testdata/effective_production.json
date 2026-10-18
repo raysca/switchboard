@@ -42,7 +42,7 @@
   "Secret": "",
   "Issuer": "govoice-v1",
   "Audience": "govoice-v1-client",
-  "MaxLifetime": 300000000000,
+  "MaxLifetime": 60000000000,
   "ClockSkew": 30000000000,
   "ReplayCacheLimit": 50000,
   "KeyID": "v1"
@@ -104,7 +104,7 @@
    "Mode": "",
    "Workers": 1,
    "ModelPath": "",
-   "StopSecs": 3000000000,
+   "Hold": 3000000000,
    "Budget": 150000000
   }
  },

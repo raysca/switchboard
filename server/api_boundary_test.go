@@ -370,3 +370,68 @@ func TestAPITokenRequiresReadyStoredFlow(t *testing.T) {
 		t.Fatalf("token claims flow=%q err=%v", claims.FlowID, err)
 	}
 }
+
+// token.max_lifetime is the lifetime of the tokens the server issues (and the validator's ceiling), not only
+// the ceiling with a hidden one-minute cap on issuance.
+func TestVoiceTokenLifetimeFollowsTheConfiguredMaximum(t *testing.T) {
+	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", "management-test-key-32-bytes-long-and-separate")
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
+	cfg.Token.MaxLifetime = 3 * time.Minute
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.env = testProviderEnv(t)
+	flowID := readyTestFlow(t, s)
+	w := apiRequest(s, "POST", "/api/v1/voice-tokens", "management-test-key-32-bytes-long-and-separate", `{"principal":"alice","flow_id":"`+flowID+`"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	claims, err := s.validator.ValidateAndConsume(resp.Data.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := claims.ExpiresAt.Time.Sub(claims.IssuedAt.Time); got != 3*time.Minute {
+		t.Fatalf("issued lifetime %s, want the configured 3m", got)
+	}
+	var sc struct {
+		Data struct {
+			Lifetime int `json:"voice_token_max_lifetime_seconds"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(apiRequest(s, "GET", "/api/v1/server-config", "management-test-key-32-bytes-long-and-separate", "").Body.Bytes(), &sc)
+	if sc.Data.Lifetime != 180 {
+		t.Fatalf("server-config reports %d s", sc.Data.Lifetime)
+	}
+}
+
+// The voice token travels in the /ws URL query: its configured lifetime is capped at 5 minutes.
+func TestConfigRejectsAVoiceTokenLifetimeAboveFiveMinutes(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Token.MaxLifetime = 5 * time.Minute
+	if err := ValidateConfig(cfg); err != nil {
+		t.Fatalf("5m rejected: %v", err)
+	}
+	cfg.Token.MaxLifetime = 5*time.Minute + time.Second
+	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "at most 5m0s") {
+		t.Fatalf("5m1s accepted or wrong error: %v", err)
+	}
+}
+
+// A zero max_lifetime must mean the same 1 m default to the minting side and
+// to the validator (which otherwise falls back to 300 s).
+func TestZeroMaxLifetimeAgreesBetweenMintAndValidator(t *testing.T) {
+	cfg := &Config{}
+	if got := voiceTokenConfig(cfg, "secret").MaxLifetime; got != time.Minute {
+		t.Fatalf("validator max lifetime = %v, want 1m", got)
+	}
+}

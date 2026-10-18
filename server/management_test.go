@@ -72,11 +72,11 @@ func readyTestFlow(t *testing.T, s *Server) string {
 func TestUnavailableFlowProvidersReported(t *testing.T) {
 	s := apiTestServer(t)
 	id := readyTestFlow(t, s)
-	if bad := s.unavailableFlowProviders(t.Context()); len(bad) != 0 {
+	if bad := s.unavailableFlowProviders(t.Context(), s.flows); len(bad) != 0 {
 		t.Fatalf("complete build reported %v", bad)
 	}
 	delete(s.registry.factories, factoryKey("google", "tts"))
-	bad := s.unavailableFlowProviders(t.Context())
+	bad := s.unavailableFlowProviders(t.Context(), s.flows)
 	if len(bad) != 1 || bad[0] != "flow "+id+" tts=google" {
 		t.Fatalf("got %v", bad)
 	}
@@ -106,5 +106,52 @@ func TestManagementStartsWithoutAKeyring(t *testing.T) {
 	t.Cleanup(s.closeManagement)
 	if _, err := os.Stat(filepath.Join(dir, "credential.key")); !os.IsNotExist(err) {
 		t.Fatalf("credential.key exists or unexpected error: %v", err)
+	}
+}
+
+// A start EnableManagement refuses (a production store with flows this build cannot run, an unusable
+// recording directory) closes the store: nothing may still point at it and the APIs stay unavailable.
+func TestRefusedManagementStartLeavesNoClosedStoreBehind(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		refuse func(t *testing.T, s *Server)
+	}{
+		{"production flow this build cannot run", func(t *testing.T, s *Server) {
+			s.cfg.Profile = ProfileProduction
+			delete(s.registry.factories, factoryKey("google", "tts"))
+		}},
+		{"recording directory is a file", func(t *testing.T, s *Server) {
+			file := filepath.Join(t.TempDir(), "not-a-dir")
+			if err := os.WriteFile(file, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			s.cfg.Recording.Enabled, s.cfg.Recording.Dir = true, file
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GOVOICE_DATABASE_DSN", filepath.Join(t.TempDir(), "mgmt.db"))
+			seed := apiTestServer(t)
+			seed.cfg.Storage.Dialect = "sqlite"
+			if err := seed.EnableManagement(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			readyTestFlow(t, seed)
+			seed.closeManagement()
+
+			s := apiTestServer(t)
+			s.cfg.Storage.Dialect = "sqlite"
+			tc.refuse(t, s)
+			if err := s.EnableManagement(t.Context()); err == nil {
+				s.closeManagement()
+				t.Fatal("the start was not refused")
+			}
+			if s.store != nil || s.flows != nil || s.mcpService != nil || s.mgmt != nil || s.recSink != nil {
+				t.Fatalf("a refused start left store=%v flows=%v mcp=%v mgmt=%v recSink=%v",
+					s.store != nil, s.flows != nil, s.mcpService != nil, s.mgmt != nil, s.recSink != nil)
+			}
+			if code := apiRequest(s, http.MethodGet, "/api/v1/flows", "management-test-key-32-bytes-long-and-separate", "").Code; code != http.StatusServiceUnavailable {
+				t.Fatalf("/api/v1/flows = %d after a refused start, want 503", code)
+			}
+		})
 	}
 }

@@ -85,6 +85,10 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_user_idle_hangups_total` | Counter | Calls ended after the user stayed silent |
 | `voice_otel_spans_dropped_total` / `voice_otel_spans_failed_total` | Counter | OTel export losses (only with `otel.enabled`) |
 
+Every closed connection counts exactly one disconnect by cause (normal, client, server, timeout), so the causes sum to the connections closed; a frame the server rejects (1007/1008/1009), an admission or setup refusal (1013/1011), a drain and any call the server ends itself (end of call, fatal error, idle hang-up, slow client, ready timeout) are `server`; the client's `disconnect-bot` is `normal`; a client that stops answering pings is `client`. `timeout` is a read timeout or the connection lifetime. Messages larger than 21 KB (the largest valid frame is a 16 KB RTVI message) are refused with 1009.
+
+The wire message `bot-interrupted` (sent when the assistant's interruption barrier runs) has no metric of its own; it is visible in the client's RTVI log. It does not clear audio the client already buffered (`docs/compatibility/playback-clear-decision.json`).
+
 The series for smart-turn, audio filters, summaries, failover and warm-up are described in the runbook sections for those features.
 
 

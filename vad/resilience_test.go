@@ -2,6 +2,7 @@ package vad
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -386,5 +387,175 @@ func TestDetectorStateCheckpointRecovery(t *testing.T) {
 		if proc.state[i] != nextState[i] || proc.checkpointState[i] != nextState[i] {
 			t.Fatalf("state not updated on success: state=%v, checkpoint=%v", proc.state[i], proc.checkpointState[i])
 		}
+	}
+}
+
+// crashableWorker is a vadworker launcher that exits at once while flag exists, so a killed worker's
+// restarts keep failing (a crash loop) until the test removes the flag.
+func crashableWorker(t *testing.T, flag string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "vadworker.sh")
+	script := "#!/bin/sh\n[ -e '" + flag + "' ] && exit 1\nexec '" + WorkerBinary() + "' \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A worker that crash-loops must not leave the sessions pinned to it VAD-blind: from the first chunk after the
+// crash they are served by the live worker, while the dead one keeps retrying off its run loop and comes back
+// once it can start again.
+func TestWorkerProcess_CrashLoopingWorkerHandsItsSessionsToALiveOne(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "crash")
+	exec, err := New(Config{Mode: "process", Workers: 2, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1,
+		ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond, WorkerBinary: crashableWorker(t, flag)})
+	if err != nil {
+		t.Fatalf("new worker process executor: %v", err)
+	}
+	defer exec.Close()
+	st := exec.Register(0) // session 0 -> worker 0
+	defer st.Close()
+	run := func(seq uint64) error {
+		done := make(chan error, 1)
+		if err := st.Submit(&Job{Seq: seq, Done: func(j *Job) { done <- j.Err }}); err != nil {
+			return err
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(2 * time.Second):
+			return errors.New("the chunk never finished")
+		}
+	}
+	waitUntil := func(what string, cond func() bool) {
+		t.Helper()
+		for end := time.Now().Add(5 * time.Second); !cond(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
+	}
+	if err := run(1); err != nil {
+		t.Fatalf("warm-up: %v", err)
+	}
+	if err := os.WriteFile(flag, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.HardKill(0); err != nil {
+		t.Fatal(err)
+	}
+	for seq := uint64(2); seq <= 40; seq++ {
+		if err := run(seq); err != nil {
+			t.Fatalf("chunk %d after worker 0 crashed: %v", seq, err)
+		}
+	}
+	waitUntil("worker 0 to crash-loop", func() bool { return exec.Stats().Restarts >= 3 })
+	if avail, total := exec.Capacity(); avail != 1 || total != 2 {
+		t.Fatalf("capacity (%d,%d) while worker 0 crash-loops, want (1,2)", avail, total)
+	}
+	if err := run(100); err != nil {
+		t.Fatalf("a chunk during the crash loop: %v", err)
+	}
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil("worker 0 to come back", func() bool { a, _ := exec.Capacity(); return a == 2 })
+	if err := run(101); err != nil {
+		t.Fatalf("a chunk after recovery: %v", err)
+	}
+}
+
+// poisonSeq is the chunk the fake worker below dies on.
+const poisonSeq = 666
+
+// TestFakePoisonWorker is not a test: with VAD_FAKE_WORKER set, the test binary re-executed by
+// poisonWorker speaks the worker protocol, answers every chunk and exits on the poison chunk.
+func TestFakePoisonWorker(t *testing.T) {
+	if os.Getenv("VAD_FAKE_WORKER") == "" {
+		t.Skip("only runs as the fake worker child")
+	}
+	hs, err := ReadFrame(os.Stdin, nil)
+	if err != nil {
+		os.Exit(2)
+	}
+	req, err := DecodeHandshakeReq(hs)
+	if err != nil {
+		os.Exit(2)
+	}
+	_ = WriteFrame(os.Stdout, EncodeHandshakeResp(HandshakeResp{Status: StatusOK, ActualModelSHA256: req.ExpectedModelSHA256}))
+	for {
+		p, err := ReadFrame(os.Stdin, nil)
+		if err != nil {
+			os.Exit(0)
+		}
+		items, err := DecodeInferReq(p)
+		if err != nil {
+			os.Exit(2)
+		}
+		resp := make([]InferItemResp, len(items))
+		for i, it := range items {
+			if it.Seq == poisonSeq {
+				os.Exit(1)
+			}
+			resp[i] = InferItemResp{RequestID: it.RequestID, SessionID: it.SessionID, Seq: it.Seq, Status: StatusOK, State: it.State}
+		}
+		_ = WriteFrame(os.Stdout, EncodeInferResp(resp))
+	}
+}
+
+// poisonWorker is a launcher that re-executes this test binary as the fake worker.
+func poisonWorker(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "vadworker.sh")
+	script := "#!/bin/sh\nshift\nVAD_FAKE_WORKER=1 exec '" + os.Args[0] + "' -test.run='^TestFakePoisonWorker$'\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A chunk the worker died on may be what killed it (a native crash): it fails rather than being re-run
+// on the next worker, so one poison chunk costs one worker, not all of them.
+func TestWorkerProcess_PoisonChunkKillsOneWorkerNotAll(t *testing.T) {
+	exec, err := New(Config{Mode: "process", Workers: 2, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1,
+		ParentDeadline: 500 * time.Millisecond, ParentGrace: 500 * time.Millisecond, WorkerBinary: poisonWorker(t)})
+	if err != nil {
+		t.Fatalf("new worker process executor: %v", err)
+	}
+	defer exec.Close()
+	st0, st1 := exec.Register(0), exec.Register(1)
+	defer st0.Close()
+	defer st1.Close()
+	run := func(st Stream, seq uint64) error {
+		done := make(chan error, 1)
+		if err := st.Submit(&Job{Seq: seq, Done: func(j *Job) { done <- j.Err }}); err != nil {
+			return err
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(3 * time.Second):
+			return errors.New("the chunk never finished")
+		}
+	}
+	if err := run(st0, 1); err != nil {
+		t.Fatalf("warm-up: %v", err)
+	}
+	if err := run(st0, poisonSeq); !errors.Is(err, ErrWorker) {
+		t.Fatalf("the poison chunk finished with %v, want ErrWorker", err)
+	}
+	for end := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		if a, _ := exec.Capacity(); a == 2 {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatal("worker 0 never came back")
+		}
+	}
+	if n := exec.Stats().Restarts; n != 1 {
+		t.Fatalf("restarts = %d, want 1: the poison chunk killed more than one worker", n)
+	}
+	if err := run(st1, 2); err != nil {
+		t.Fatalf("a chunk on the other worker: %v", err)
 	}
 }

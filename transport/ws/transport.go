@@ -84,18 +84,19 @@ func DefaultServerConfig(val *token.Validator) ServerConfig {
 
 // Connection represents a live, authenticated WebSocket voice connection.
 type Connection struct {
-	id         uint64
-	conn       *websocket.Conn
-	claims     *token.Claims
-	cfg        ServerConfig
-	pacer      *PacedWriter
-	cue        *CueUnderlay                 // nil unless ServerConfig.Cues
-	closeCause atomic.Pointer[string]       // see CloseCause
-	session    atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
-	tap        atomic.Pointer[AudioTap]     // optional call recorder; nil = none
-	seqCounter atomic.Uint64
-	rtvi       *rtvi.Handler
-	handling   atomic.Bool // read goroutine is in a handler, not Read: pongs wait
+	id            uint64
+	conn          *websocket.Conn
+	claims        *token.Claims
+	cfg           ServerConfig
+	pacer         *PacedWriter
+	cue           *CueUnderlay                 // nil unless ServerConfig.Cues
+	closeCause    atomic.Pointer[string]       // see CloseCause
+	serverClosing atomic.Bool                  // the server started a close handshake (closeBounded)
+	session       atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
+	tap           atomic.Pointer[AudioTap]     // optional call recorder; nil = none
+	seqCounter    atomic.Uint64
+	rtvi          *rtvi.Handler
+	handling      atomic.Bool // read goroutine is in a handler, not Read: pongs wait
 
 	writeMu   sync.Mutex
 	readyCh   chan struct{}
@@ -103,7 +104,8 @@ type Connection struct {
 	// Resamplers
 	resamplersMu sync.Mutex
 	inResamplers map[int]*resample.Resampler // inRate -> 16000
-	outResampler *resample.Resampler         // providerRate -> 24000
+	outResampler *resample.Resampler         // providerRate -> FixedPlayerRate
+	outRate      int                         // the rate outResampler was built for
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -425,10 +427,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	// The library default (32 KB) is below the advertised MaxEncodedFrameSize. The limit
-	// carries 1 KB of headroom so a message just over the max reaches DecodeBinaryFrame and
-	// ends as a protocol error (1007, "protocol_error"); anything larger is closed by the
-	// library (1009), which observeDisconnect also records as protocol_error + disconnect_server.
+	// The read limit is MaxEncodedFrameSize plus 1 KB of headroom, below the
+	// library's 32 KB default: it bounds what one socket can make the server
+	// buffer. A message just over the max reaches DecodeBinaryFrame and ends as a
+	// protocol error (1007, "protocol_error"); anything larger is closed by the
+	// library (1009), which readLoop records as protocol_error + disconnect_server.
 	wsConn.SetReadLimit(MaxEncodedFrameSize + readLimitHeadroom)
 	// The handshake is finished. Pending slots must not be held for the call.
 	releasePending()
@@ -663,6 +666,12 @@ func (c *Connection) pingLoop() {
 }
 
 func (c *Connection) readLoop() {
+	// Every exit counts one disconnect_<cause>, so they sum to client_disconnected:
+	// a failed Read classifies itself; the client's disconnect-bot is normal;
+	// every other return is the server closing the socket (1007, 1008, 1011,
+	// 1013, going away).
+	cause := "server"
+	defer func() { c.observe("disconnect_"+cause, 1) }()
 	for {
 		readCtx := c.ctx
 		var cancel context.CancelFunc
@@ -677,8 +686,17 @@ func (c *Connection) readLoop() {
 			cancel()
 		}
 		if err != nil {
-			c.observeDisconnect(err)
-			c.traceEvent("transport.disconnect", map[string]any{"reason": disconnectCategory(err)})
+			cause = disconnectCategory(err)
+			if (c.serverClosing.Load() || cause == "client" && c.ctx.Err() != nil) && c.CloseCause() != "peer_unresponsive" {
+				// The server ended the call from outside this loop (Close, hang-up,
+				// going-away, ready timeout): even a client echoing the close cleanly
+				// is a server disconnect. A client that stopped answering pings stays "client".
+				cause = "server"
+			}
+			if errors.Is(err, websocket.ErrMessageTooBig) {
+				c.observe("protocol_error", 1) // past the read limit: the library closed with 1009
+			}
+			c.traceEvent("transport.disconnect", map[string]any{"reason": cause})
 			return
 		}
 
@@ -740,6 +758,7 @@ func (c *Connection) readLoop() {
 			}
 			if respFrame != nil {
 				if _, ok := respFrame.(*core.EndFrame); ok {
+					cause = "normal" // the client's own disconnect-bot
 					c.traceEvent("transport.rtvi_disconnect", nil)
 					c.Close()
 					return
@@ -813,28 +832,9 @@ func (c *Connection) resampleInput(samples []byte, inRate int) ([]byte, error) {
 	return r.ResamplePCM16(samples)
 }
 
-// Close gracefully terminates the connection.
-func (c *Connection) observeDisconnect(err error) {
-	if c.cfg.Observe == nil {
-		return
-	}
-	if errors.Is(err, websocket.ErrMessageTooBig) {
-		// A message past the read limit (the library sent 1009): a protocol violation, not a client hang-up.
-		c.cfg.Observe("protocol_error", 1)
-		c.cfg.Observe("disconnect_server", 1)
-		return
-	}
-	switch websocket.CloseStatus(err) {
-	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
-		c.cfg.Observe("disconnect_normal", 1)
-	case websocket.StatusPolicyViolation, websocket.StatusUnsupportedData, websocket.StatusInternalError:
-		c.cfg.Observe("disconnect_server", 1)
-	default:
-		if errors.Is(err, context.DeadlineExceeded) {
-			c.cfg.Observe("disconnect_timeout", 1)
-			return
-		}
-		c.cfg.Observe("disconnect_client", 1)
+func (c *Connection) observe(event string, n uint64) {
+	if c.cfg.Observe != nil {
+		c.cfg.Observe(event, n)
 	}
 }
 
@@ -899,6 +899,7 @@ func (c *Connection) closeWith(reason string, fatal bool, code websocket.StatusC
 // ponytail: when the read goroutine is itself the caller (not in Read), the
 // library's own 5 s handshake bounds still apply.
 func (c *Connection) closeBounded(code websocket.StatusCode, reason string, d time.Duration) {
+	c.serverClosing.Store(true)
 	done := make(chan struct{})
 	go func() { _ = c.conn.Close(code, reason); close(done) }()
 	t := time.NewTimer(d)
@@ -937,16 +938,18 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 	switch f.Type() {
 	case core.FrameOutputAudio:
 		oaf := f.(*core.OutputAudioFrame)
-		// Convert provider rate to fixed player rate if necessary
+		// Convert provider rate to fixed player rate if necessary. A frame at
+		// another rate than the last (a TTS fallback, a tone) gets a resampler
+		// built for its own rate.
 		if oaf.SampleRate != c.cfg.FixedPlayerRate {
 			c.resamplersMu.Lock()
-			if c.outResampler == nil {
-				var err error
-				c.outResampler, err = resample.NewResampler(oaf.SampleRate, c.cfg.FixedPlayerRate)
+			if c.outResampler == nil || c.outRate != oaf.SampleRate {
+				r, err := resample.NewResampler(oaf.SampleRate, c.cfg.FixedPlayerRate)
 				if err != nil {
 					c.resamplersMu.Unlock()
 					return err
 				}
+				c.outResampler, c.outRate = r, oaf.SampleRate
 			}
 			resampled, err := c.outResampler.ResamplePCM16(oaf.Samples)
 			c.resamplersMu.Unlock()
@@ -1037,8 +1040,9 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		return e.PushDirection(f, dir)
 
 	case core.FrameInterruption:
-		// The following flush drives an output-derived stopped transition. The
-		// pinned client still does not clear audio it already buffered.
+		// An interruption that cut a reply off is followed by its flush, which
+		// tells the client (bot-interrupted below); one with nothing to cut (a
+		// typed turn while the bot is quiet) sends nothing.
 		return e.PushDirection(f, dir)
 
 	case core.FrameFlush:
@@ -1058,6 +1062,16 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 				_ = session.Reenter(&core.FlushProcessedFrame{Gen: ff.Gen}, core.Upstream, session.TailIndex(), 0)
 			}
 		})
+		// The flush is the barrier that cut a reply off (only the assistant's
+		// handleInterruption emits one): tell the client, as Pipecat's
+		// RTVIObserver does. BeginFlush has just dropped the reply's queued
+		// audio, so only the audio frame already admitted to the socket (one
+		// provider chunk) can follow this message. The pinned client ignores it
+		// (docs/compatibility/playback-clear-decision.json); the protobuf
+		// interruption frame is not sent: the pinned client rejects it.
+		if msg, err := c.rtvi.FormatBotInterrupted(); err == nil {
+			_ = c.WriteWireMessage(ctx, msg)
+		}
 		return e.PushDirection(f, dir)
 
 	case core.FrameError:
@@ -1065,7 +1079,8 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		// The client gets a category only: ef.Err can carry provider bodies and
 		// project paths, and keeps travelling downstream for logs and the timeline.
 		// ponytail: non-fatal errors are almost all provider failures; add a typed
-		// category on ErrorFrame if the client needs finer detail.
+		// category on ErrorFrame if the client needs finer detail. A local task-budget
+		// refusal (core.ErrTooManyTasks) is reported as provider_error too, as TTS does.
 		category := "provider_error"
 		switch {
 		case errors.Is(ef.Err, context.DeadlineExceeded):

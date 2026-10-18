@@ -18,6 +18,9 @@ import (
 // sttFailoverAttempt) plus slack: a turn.no_transcript_timeout below it can drop the turn first.
 const minNoTranscriptForSTTFailover = 2*sttFailoverAttempt + 200*time.Millisecond
 
+// maxVoiceTokenLifetime caps token.max_lifetime, the lifetime of issued voice tokens.
+const maxVoiceTokenLifetime = 5 * time.Minute
+
 // ValidateConfig enforces production safety and constraint validation.
 func ValidateConfig(cfg *Config) error {
 	if err := validateProfileAndStorage(cfg); err != nil {
@@ -56,6 +59,10 @@ func validateProfileAndStorage(cfg *Config) error {
 	}
 	if cfg.Token.MaxLifetime != 0 && cfg.Token.MaxLifetime < 2*time.Second {
 		return errors.New("token.max_lifetime must be at least 2 seconds when configured")
+	}
+	if cfg.Token.MaxLifetime > maxVoiceTokenLifetime {
+		// The voice token travels in the /ws URL query (proxy and access logs): keep its life short.
+		return fmt.Errorf("token.max_lifetime must be at most %v", maxVoiceTokenLifetime)
 	}
 	if a := cfg.Demo.AutoInstall; a != "" && a != "dental" {
 		return errors.New(`demo.auto_install must be empty or "dental"`)
@@ -164,7 +171,7 @@ func validateTurn(cfg *Config) error {
 		if a.Mode != "" && a.Mode != "process" && a.Mode != "inprocess" {
 			return fmt.Errorf("turn.analyzer.mode %q must be process or inprocess", a.Mode)
 		}
-		if a.StopSecs < 0 || a.Budget < 0 || a.Workers < 0 {
+		if a.Hold < 0 || a.Budget < 0 || a.Workers < 0 {
 			return errors.New("turn.analyzer.stop_secs, budget and workers must be >= 0")
 		}
 		if cfg.Profile == ProfileProduction && cfg.TurnAnalyzerMode() != "process" {

@@ -28,7 +28,7 @@ func createScenarioToken(t *testing.T, srv *Server, principal string, jti string
 			Issuer:    srv.cfg.Token.Issuer,
 			Audience:  jwt.ClaimStrings{srv.cfg.Token.Audience},
 			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(5 * time.Minute)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
 			Subject:   principal,
 		},
 		Principal: principal,

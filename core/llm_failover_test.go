@@ -529,3 +529,110 @@ func TestToolCallIsTheFirstOutput(t *testing.T) {
 		t.Fatal("a turn whose model called a tool was replayed on the fallback")
 	}
 }
+
+// syncFailLLM refuses a user message synchronously, as a provider whose request cannot start does;
+// push says whether it forwarded the message first (every production LLM does).
+type syncFailLLM struct {
+	err   error
+	push  bool
+	calls atomic.Int32
+}
+
+func (p *syncFailLLM) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	if _, ok := f.(*core.UserMessageFrame); !ok {
+		return e.PushDirection(f, dir)
+	}
+	p.calls.Add(1)
+	if p.push {
+		if err := e.PushDirection(f, dir); err != nil {
+			return err
+		}
+	}
+	return p.err
+}
+
+func TestSyncErrorFromThePrimaryFailsOver(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		push bool
+	}{{"after forwarding the turn", true}, {"before forwarding the turn", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			primary, backup := &syncFailLLM{err: errBoom, push: tc.push}, fake([]string{"hel", "lo"}, 0, nil)
+			r := newFailoverRig(t, core.LLMFailoverConfig{Candidates: []core.LLMCandidate{
+				{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}}})
+			r.say(t, "hi")
+			r.waitFor(t, func() bool { _, _, f, _ := r.summary(); return f == 1 })
+			users, deltas, finals, errs := r.summary()
+			if users != 1 || deltas != "hello" || finals != 1 || errs != 0 {
+				t.Fatalf("users=%d deltas=%q finals=%d errs=%d", users, deltas, finals, errs)
+			}
+			if err := r.sess.Err(); err != nil {
+				t.Fatalf("a synchronous provider error failed the session: %v", err)
+			}
+			if got := r.switched(); len(got) != 1 || got[0] != "a>b:server_error" {
+				t.Fatalf("switches %v", got)
+			}
+		})
+	}
+}
+
+// The session's own task budget is not a provider outage: no jump, the error stays the session's.
+func TestLocalSyncErrorNeverFailsOver(t *testing.T) {
+	primary, backup := &syncFailLLM{err: core.ErrTooManyTasks, push: true}, fake([]string{"x"}, 0, nil)
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates: []core.LLMCandidate{{Provider: "a", Proc: primary}, {Provider: "b", Proc: backup}},
+		Classify: func(err error) string {
+			if errors.Is(err, core.ErrTooManyTasks) {
+				return ""
+			}
+			return "server_error"
+		},
+	})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { return r.sess.Err() != nil })
+	if !errors.Is(r.sess.Err(), core.ErrTooManyTasks) || backup.Started.Load() != 0 || len(r.switched()) != 0 {
+		t.Fatalf("err=%v backupStarted=%d switches=%v", r.sess.Err(), backup.Started.Load(), r.switched())
+	}
+}
+
+var errRefused = errors.New("a later stage refused the turn")
+
+// refuseUser is a stage after the LLM that refuses every user message.
+type refuseUser struct{}
+
+func (refuseUser) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	if _, ok := f.(*core.UserMessageFrame); ok {
+		return errRefused
+	}
+	return e.PushDirection(f, dir)
+}
+
+// A later stage refusing the user message is not the candidate's failure (pin: true before and after).
+func TestADownstreamRefusalIsNotTheCandidatesFailure(t *testing.T) {
+	backup := fake([]string{"x"}, 0, nil)
+	w, err := core.NewLLMFailover(core.LLMFailoverConfig{Classify: func(error) string { return "server_error" },
+		Candidates: []core.LLMCandidate{{Provider: "a", Proc: fake([]string{"never"}, 0, nil)}, {Provider: "b", Proc: backup}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pipe, err := core.NewPipeline(w, refuseUser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := core.NewSession(901, pipe, core.DefaultResourceBudget())
+	if err != nil || sess.Start() != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sess.Close() }()
+	if err := sess.Post(&core.UserMessageFrame{Turn: "t1", Content: "hi", Gen: sess.CurrentGeneration(), Timestamp: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for end := time.Now().Add(2 * time.Second); sess.Err() == nil; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("the refusal did not reach the session")
+		}
+	}
+	if !errors.Is(sess.Err(), errRefused) || backup.Started.Load() != 0 {
+		t.Fatalf("err=%v backupStarted=%d", sess.Err(), backup.Started.Load())
+	}
+}

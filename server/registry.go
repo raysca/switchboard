@@ -179,6 +179,7 @@ type Registry struct {
 	onLLMFallbackSkipped func()                                           // set by BindMetrics
 	onTTSFailover        func(from, to, class string)                     // set by BindMetrics
 	onTTSFallbackSkipped func()                                           // set by BindMetrics
+	ttsUnitTimeout       time.Duration                                    // TTSFailover's stall watchdog; 0 = core's default (30 s); e2e tests shorten it
 	// onCircuit receives every breaker state report (the server's call timelines);
 	// set once by NewServer, read by breaker observers on any goroutine.
 	onCircuit atomic.Pointer[func(stage, provider string, st resilience.State)]
@@ -735,10 +736,10 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			}
 			var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
 			if slices.Contains(cfg.Turn.Stop, "turn-analyzer") && r.turnBackend != nil {
-				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.StopSecs})
+				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.Hold})
 				turnTap = a.Tap()
 				analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
-					return smartturn.Stop(a, base, cfg.Turn.Analyzer.StopSecs)
+					return smartturn.Stop(a, base, cfg.Turn.Analyzer.Hold)
 				}
 			}
 			var err error

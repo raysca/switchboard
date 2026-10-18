@@ -86,7 +86,7 @@ Mixing happens inside `PacedWriter` (an `Underlay`), on the pacer's clock:
 - speech frame released: `speech + ambience` (saturating) is what goes on the wire;
 - queue empty: the writer emits 20 ms ambience-only frames at real time, so the ambience never stops during silences;
 - ambience frames are `NonSpeech` + `Uninterruptible`: `BeginFlush` clears speech and leaves them alone; they never call `OnWriteComplete` and never change speaking state. So the recording tap, the heard-text tracker (`Media` durations), the idle controller and the "bot first audio" metric see speech only. **Recordings capture the bot's speech without ambience** (the tap gets the unmixed frame);
-- queue bound: ambience is never queued. An ambience frame still waiting for its slot when speech arrives gives the slot to speech, so speech waits at most the one 20 ms frame already on the wire; the 100 ms queue cap and flush behavior are unchanged (tests use the real `PacedWriter`);
+- queue bound: ambience is never queued. An ambience frame still waiting for its slot when speech arrives gives the slot to speech, so speech waits at most the one 20 ms frame already on the wire; the 2 s queue cap and flush behavior are unchanged (tests use the real `PacedWriter`);
 - requires `EnablePacing` (the production default); without pacing the underlay is ignored.
 
 Cost and limits:

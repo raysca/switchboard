@@ -25,7 +25,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Token.Issuer = "govoice-v1"
 	cfg.Token.Audience = "govoice-v1-client"
 	cfg.Token.KeyID = "v1"
-	cfg.Token.MaxLifetime = 5 * time.Minute
+	cfg.Token.MaxLifetime = time.Minute
 	cfg.Token.ClockSkew = 30 * time.Second
 	cfg.Token.ReplayCacheLimit = 10000
 
@@ -61,7 +61,7 @@ func DefaultConfig(profile Profile) *Config {
 	// Model paths stay empty: the vad and smartturn packages resolve their
 	// default artifacts (and GOVOICE_*_MODEL_PATH) themselves.
 	cfg.Turn.Analyzer.Workers = 1
-	cfg.Turn.Analyzer.StopSecs = 3 * time.Second
+	cfg.Turn.Analyzer.Hold = 3 * time.Second
 	cfg.Turn.Analyzer.Budget = 150 * time.Millisecond
 
 	// Providers

@@ -70,4 +70,9 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 	if n := s.metrics.MaxDurationTermTotal.Load(); n != 1 {
 		t.Fatalf("max duration terminations = %d, want exactly 1", n)
 	}
+	// The server ended the call (the client merely echoed the close): one server disconnect, no normal one.
+	waitFor(t, func() bool { return s.metrics.DisconnectsServerError.Load() == 1 })
+	if n, srv := s.metrics.DisconnectsNormal.Load(), s.metrics.DisconnectsServerError.Load(); n != 0 || srv != 1 {
+		t.Fatalf("disconnects: normal=%d server=%d, want 0 and 1", n, srv)
+	}
 }

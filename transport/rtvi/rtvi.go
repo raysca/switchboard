@@ -32,6 +32,7 @@ const (
 	TypeBotTTSStopped       = "bot-tts-stopped"
 	TypeBotStartedSpeaking  = "bot-started-speaking"
 	TypeBotStoppedSpeaking  = "bot-stopped-speaking"
+	TypeBotInterrupted      = "bot-interrupted" // a barge-in cut the bot's reply off (Pipecat BotInterruptedMessage)
 	TypeError               = "error"
 	TypeDisconnectBot       = "disconnect-bot"
 	TypeSendText            = "send-text"    // client text turn: {"content": "..."}
@@ -383,6 +384,12 @@ func (h *Handler) FormatBotStartedSpeaking() (string, error) {
 // FormatBotStoppedSpeaking produces bot-stopped-speaking state events and barge-in clear events.
 func (h *Handler) FormatBotStoppedSpeaking() (string, error) {
 	return h.formatMessage(TypeBotStoppedSpeaking, nil)
+}
+
+// FormatBotInterrupted produces bot-interrupted: the bot's in-flight reply was
+// cut off. Pipecat's RTVIObserver sends it on an InterruptionFrame.
+func (h *Handler) FormatBotInterrupted() (string, error) {
+	return h.formatMessage(TypeBotInterrupted, nil)
 }
 
 // FormatSpeakingState maps the provider-neutral, output-derived framework

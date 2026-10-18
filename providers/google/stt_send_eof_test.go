@@ -77,6 +77,9 @@ func TestGoogleSTTSendEOFIsNotSessionFailure(t *testing.T) {
 		t.Fatalf("opens = %d before the receiver saw the end, want 1", n)
 	}
 	close(opener.end)
+	// Wait for the receiver to retire the ended stream (it counts the lost turn):
+	// a turn that starts first binds to the dead stream and, by design, is not redialled.
+	waitFor(func() bool { return proc.Errors.Load() == 1 }, "receiver did not see the stream end")
 	// The ended turn is lost (no redial within it); the next turn opens a new stream.
 	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 2, Gen: 1})
 	waitFor(func() bool {

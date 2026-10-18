@@ -219,7 +219,9 @@ func TestMCPRoutesDistinguishNotFoundFromStoreFailure(t *testing.T) {
 		h.ServeHTTP(w, r)
 		return w.Code
 	}
-	routes := [][3]string{{"DELETE", "", ""}, {"GET", "", ""}, {"POST", "/detach-delete", `{"confirm":true}`}}
+	routes := [][3]string{{"DELETE", "", ""}, {"GET", "", ""}, {"POST", "/detach-delete", `{"confirm":true}`},
+		{"POST", "/disable", ""}, {"POST", "/enable", ""},
+		{"POST", "/validate", ""}, {"POST", "/tools/lookup/test", `{"arguments":{}}`}}
 	for _, rt := range routes {
 		if code := do(rt[0], "/api/v1/mcp-servers/"+storage.NewID()+rt[1], rt[2]); code != 404 {
 			t.Errorf("%s%s missing server: %d, want 404", rt[0], rt[1], code)
@@ -231,5 +233,24 @@ func TestMCPRoutesDistinguishNotFoundFromStoreFailure(t *testing.T) {
 		if code := do(rt[0], "/api/v1/mcp-servers/"+id+rt[1], rt[2]); code != 500 {
 			t.Errorf("%s%s closed store: %d, want 500", rt[0], rt[1], code)
 		}
+	}
+}
+
+// Enable on a server whose deletion is pending answers 409. (Disable on one
+// answers 200: an accepted asymmetry, disabling is harmless.) This passes on
+// the pre-4.6e code too (it answered 409 for every enable error); it pins the
+// 409 branch against the new lookup mapping.
+func TestMCPEnablePendingDeletionIsConflict(t *testing.T) {
+	svc, store := newTestService(t, &testRemote{}, testTokens{})
+	id := mustCreateMCP(t, svc)
+	if _, err := store.DB().Exec("UPDATE mcp_servers SET pending_delete=1 WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/api/v1/mcp-servers/"+id+"/enable", nil)
+	r.Header.Set("Authorization", "Bearer management-test-secret-which-is-long-enough")
+	w := httptest.NewRecorder()
+	Handler(svc).ServeHTTP(w, r)
+	if w.Code != 409 {
+		t.Fatalf("enable pending deletion: %d %s, want 409", w.Code, w.Body.String())
 	}
 }

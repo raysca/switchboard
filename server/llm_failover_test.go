@@ -30,6 +30,8 @@ func TestLLMClassify(t *testing.T) {
 		{fmt.Errorf("x: %w", resilience.ErrCircuitOpen), flow.ClassCircuit},
 		{clientErr{}, flow.ClassClient},
 		{errors.New("503"), flow.ClassServer},
+		{fmt.Errorf("openai llm: %w", core.ErrTooManyTasks), ""}, // the session's own task budget
+		{core.ErrSessionClosed, ""},                              // teardown
 	} {
 		if got := llmClassify(tc.err); got != tc.want {
 			t.Errorf("llmClassify(%v) = %q, want %q", tc.err, got, tc.want)

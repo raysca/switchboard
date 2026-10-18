@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -237,3 +238,171 @@ func TestDemoStatusFlowLookupError(t *testing.T) {
 }
 
 func (f *racyFlows) Archive(context.Context, string) error { return nil }
+
+// gatedServers hands the context an install runs on to the test, then waits for release. With
+// ignoreCancel it keeps waiting after that context is cancelled (an install that has not reached a
+// cancellation point yet).
+type gatedServers struct {
+	*racyServers
+	got          chan context.Context
+	release      chan struct{}
+	ignoreCancel bool
+}
+
+func newGatedServers(ignoreCancel bool) *gatedServers {
+	return &gatedServers{racyServers: &racyServers{}, got: make(chan context.Context, 1), release: make(chan struct{}), ignoreCancel: ignoreCancel}
+}
+
+func (g *gatedServers) List(ctx context.Context) ([]storage.MCPServer, error) {
+	select {
+	case g.got <- ctx:
+	default:
+	}
+	if g.ignoreCancel {
+		<-g.release
+	} else {
+		select {
+		case <-g.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return g.racyServers.List(ctx)
+}
+
+// The install is shared by every caller (singleflight): the caller that started it hanging up must not
+// cancel it, or every joiner fails with context.Canceled too.
+func TestDentalInstallOutlivesTheCallerThatStartedIt(t *testing.T) {
+	s, fl, srv := &Server{}, &racyFlows{}, newGatedServers(false)
+	caller, hangUp := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() { _, err := s.installDental(caller, srv, fl, "https://d/mcp"); first <- err }()
+	flight := <-srv.got
+	hangUp()
+	if err := <-first; !errors.Is(err, context.Canceled) {
+		t.Fatalf("the caller that hung up got %v, want context.Canceled", err)
+	}
+	if err := flight.Err(); err != nil {
+		t.Fatalf("the shared install was cancelled with its first caller (%v): every joiner would fail", err)
+	}
+	close(srv.release)
+	if _, err := s.installDental(context.Background(), srv, fl, "https://d/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	if srv.creates != 1 || fl.creates != 1 {
+		t.Fatalf("server creates %d, flow creates %d, want one install", srv.creates, fl.creates)
+	}
+}
+
+// Shutdown cancels a running install and waits for it (waitDemo) before it closes the store; once shutting
+// down, no install starts.
+func TestShutdownCancelsTheDemoInstallAndWaitsForIt(t *testing.T) {
+	s, fl, srv := &Server{}, &racyFlows{}, newGatedServers(true)
+	done := make(chan error, 1)
+	go func() { _, err := s.installDental(context.Background(), srv, fl, "https://d/mcp"); done <- err }()
+	flight := <-srv.got
+	s.mu.Lock() // what Shutdown does first
+	s.shuttingDown.Store(true)
+	s.stopDemoLocked()
+	s.mu.Unlock()
+	if !errors.Is(flight.Err(), context.Canceled) {
+		t.Fatalf("Shutdown did not cancel the install: %v", flight.Err())
+	}
+	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if s.waitDemo(short) {
+		t.Fatal("waitDemo returned while the install still ran: the store would close under it")
+	}
+	close(srv.release)
+	if !s.waitDemo(context.Background()) {
+		t.Fatal("waitDemo did not return after the install ended")
+	}
+	<-done
+	if _, err := s.installDental(context.Background(), srv, fl, "https://d/mcp"); !errors.Is(err, errDemoShuttingDown) {
+		t.Fatalf("an install after Shutdown began got %v, want errDemoShuttingDown", err)
+	}
+}
+
+// End to end on a real management server: an API install is mid-discovery against an MCP endpoint that
+// never answers when Shutdown begins. Shutdown must cancel that install (the endpoint sees the request
+// abort), wait for it, and only then close the store, long before the install's own 30 s bound.
+func TestShutdownCancelsARealDemoInstallBeforeClosingTheStore(t *testing.T) {
+	s := dentalRig(t)
+	reached, aborted := make(chan struct{}), make(chan struct{})
+	var once, abortedOnce sync.Once
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(reached) })
+		_, _ = io.Copy(io.Discard, r.Body) // net/http notices a hang-up only after the body is read
+		<-r.Context().Done()
+		abortedOnce.Do(func() { close(aborted) })
+	}))
+	t.Cleanup(hang.Close)
+	base := s.env
+	s.env = func(k string) string {
+		if k == "DENTAL_MCP_URL" {
+			return hang.URL + "/mcp"
+		}
+		return base(k)
+	}
+	posted := make(chan int, 1)
+	go func() { posted <- apiRequest(s, http.MethodPost, "/api/v1/demo/dental", testMgmtKey, "").Code }()
+	select {
+	case <-reached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the install never reached the MCP endpoint")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	start := time.Now()
+	_ = s.Shutdown(ctx)
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("Shutdown took %v: it waited out the install instead of cancelling it", d)
+	}
+	select {
+	case <-aborted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown returned but the install's request was never cancelled")
+	}
+	if code := <-posted; code != http.StatusBadGateway {
+		t.Fatalf("the in-flight install request got %d, want 502", code)
+	}
+	if !s.waitDemo(context.Background()) {
+		t.Fatal("the install is still registered after Shutdown")
+	}
+}
+
+// A panic inside the shared install runs on singleflight's own goroutine, where no request or
+// auto-install recover reaches it: it must come back as an error, not kill the daemon.
+type panicServers struct{ *racyServers }
+
+func (panicServers) List(context.Context) ([]storage.MCPServer, error) { panic("bad discovery") }
+
+func TestDentalInstallPanicIsAnErrorNotACrash(t *testing.T) {
+	s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	_, err := s.installDental(context.Background(), panicServers{&racyServers{}}, &racyFlows{}, "https://d/mcp")
+	if err == nil || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("a panicking install returned %v, want a 'panicked' error", err)
+	}
+	if !s.waitDemo(context.Background()) {
+		t.Fatal("the panicked install is still registered on the wait group")
+	}
+}
+
+// Shutdown must wait for a running install (demoWG) before it closes the store.
+func TestShutdownWaitsForTheDemoWaitGroup(t *testing.T) {
+	s := dentalRig(t)
+	s.demoWG.Add(1)
+	done := make(chan struct{})
+	go func() { _ = s.Shutdown(context.Background()); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("Shutdown returned (and closed the store) while a demo install was running")
+	case <-time.After(300 * time.Millisecond):
+	}
+	s.demoWG.Done()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown did not return after the install ended")
+	}
+}

@@ -90,6 +90,16 @@ function validateManifest() {
     }
   }
 
+  // The output queue bound is recorded in the lock and in the playback-clear decision; they must agree.
+  const decision = JSON.parse(fs.readFileSync(path.join(rootDir, 'docs/compatibility/playback-clear-decision.json'), 'utf8'));
+  const residual = decision.v1_server_side_residual_playback;
+  const limits = manifest.limits_and_timeouts.default_websocket;
+  for (const [lockKey, decisionKey] of [['output_queue_duration_ms', 'maximum_queued_duration_ms'], ['output_queue_bytes', 'maximum_queued_bytes']]) {
+    if (limits[lockKey] !== residual[decisionKey]) {
+      throw new Error(`${lockKey} (${limits[lockKey]}) differs from playback-clear-decision ${decisionKey} (${residual[decisionKey]})`);
+    }
+  }
+
   // 5. Verify installed npm package versions in tools/compat
   for (const [pkgName, pkgMeta] of Object.entries(manifest.client_packages)) {
     const pkgJsonPath = path.join(__dirname, 'node_modules', pkgName, 'package.json');

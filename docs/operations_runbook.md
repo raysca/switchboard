@@ -189,9 +189,11 @@ docker stop -t 60 govoice-server   # at least drain_timeout + 5 s (50 s in produ
 
 ### Incident 1: Native VAD Worker Crash
 - **Symptoms**: Alert `GovoiceVADWorkerRestarts` (`increase(voice_vad_worker_restarts_total[10m]) > 5`) or `GovoiceVADUnavailable` (admission rejects with `reason="vad_unavailable"`).
-- **Underlying Mechanism**: A Silero VAD C/ONNX native routine crashed (e.g. SIGSEGV).
+- **Underlying Mechanism**: A Silero VAD C/ONNX native routine crashed (e.g. SIGSEGV). While a worker restarts (or crash-loops), the chunks of the calls pinned to it are handed to a live worker (each chunk carries its detector state), so those callers keep their VAD; the worker is out of `vad_unavailable` capacity until it starts again, and restarts back off from 20 ms to 1 s off the worker's run loop. A batch written to a worker that had already died (e.g. after a SIGKILL) is re-run on a live worker; a batch the worker read and died on, or that hung past its deadline, fails (a poison chunk costs one worker, not all of them), and chunks are lost while every worker is down. The child's stderr tail is kept in memory (64 KB) but not logged.
 - **Automated Mitigation**: The parent process detects the child exit, reaps the PID via `cmd.Wait()`, updates capacity, and automatically spawns a healthy replacement worker with exponential backoff.
-- **Action Required**: Inspect `journalctl -u govoice.service` for child stderr diagnostics (bounded to 64KB). Verify that the host is not experiencing OOM kills (`dmesg -T | grep -i oom`).
+- **Action Required**: The child's stderr tail is held in memory only (64 KB) and is not written to the journal; find the cause from the host side. Verify that the host is not experiencing OOM kills (`dmesg -T | grep -i oom`).
+
+- **Client symptom: audio keeps playing briefly after a barge-in.** The server drops the cut reply's queued audio and sends `bot-interrupted`, but the unmodified Pipecat client ignores that message and cannot clear what it already buffered (recorded decision `relax-unmodified-client-playback-clear`, `docs/compatibility/playback-clear-decision.json`); this is not a server fault.
 
 ### Incident 2: Leaked Goroutines / Leaked Work
 - **Symptoms**: Alert `GovoiceLeakedWork` (`increase(voice_leaked_work_total[15m]) > 0`; `voice_leaked_sessions_total` counts the affected sessions).

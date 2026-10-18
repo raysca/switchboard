@@ -213,6 +213,7 @@ type e2eCall struct {
 	mu        sync.Mutex
 	texts     []string
 	fn        []fnEvent // llm-function-call-* messages, in arrival order
+	wire      []string  // every RTVI message ("msg:<type>") and bot audio frame ("audio"), in arrival order
 	audio     []audioArrival
 	seq       int
 	done      chan struct{} // closed when the server ends the connection
@@ -294,6 +295,13 @@ func (c *e2eCall) read() {
 		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
 			switch m := f.(type) {
 			case *ws.WireMessageFrame:
+				var head struct {
+					Type string `json:"type"`
+				}
+				_ = json.Unmarshal([]byte(m.Data), &head)
+				c.mu.Lock()
+				c.wire = append(c.wire, "msg:"+head.Type)
+				c.mu.Unlock()
 				if strings.Contains(m.Data, "bot-llm-text") {
 					c.mu.Lock()
 					c.texts = append(c.texts, m.Data)
@@ -316,6 +324,7 @@ func (c *e2eCall) read() {
 				}
 				c.mu.Lock()
 				c.audio = append(c.audio, audioArrival{at: time.Now(), peak: peak, dur: m.Duration})
+				c.wire = append(c.wire, "audio")
 				c.mu.Unlock()
 			}
 		}
@@ -833,5 +842,31 @@ func TestFlowE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
 	c.waitReplies("[FRONT", 2)
 	if r.activeSessions() != 1 || r.has(EventDisconnect, "terminated: "+EndReasonFlow) {
 		t.Fatal("a step without end_call must not hang up")
+	}
+}
+
+// A token minted with a configured token.max_lifetime carries that lifetime and is honoured by the live /ws
+// path (the call connects and talks); a lifetime above the 5m ceiling is refused when the server is built.
+func TestFlowE2EConfiguredTokenLifetimeIsHonouredByTheLiveConnect(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Token.MaxLifetime = 3 * time.Minute })
+	tok := r.voiceToken(r.createRoutedFlow("salesvoice"))
+	claims := jwt.MapClaims{}
+	if _, _, err := jwt.NewParser().ParseUnverified(tok, claims); err != nil {
+		t.Fatal(err)
+	}
+	exp, _ := claims["exp"].(float64)
+	iat, _ := claims["iat"].(float64)
+	if exp-iat != 180 {
+		t.Fatalf("exp-iat = %v s, want 180", exp-iat)
+	}
+	c := r.dialToken(tok)
+	c.say("hello")
+	c.waitReplies("[FRONT", 1)
+
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
+	cfg.Token.MaxLifetime = 5*time.Minute + time.Second
+	if _, err := NewServer(cfg); err == nil || !strings.Contains(err.Error(), "token.max_lifetime") {
+		t.Fatalf("over-limit config built a server: %v", err)
 	}
 }
