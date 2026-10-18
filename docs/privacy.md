@@ -17,10 +17,10 @@ loop has normalized it and committed it to the conversation context.
 Core spans carry only what the loop emits, and core does not filter attribute
 keys itself; the server's trace adapter filters keys before export.
 
-Trace attributes are copied and recursively validate only finite scalar and
-bounded `custom.*` numeric/boolean metadata. Custom metadata never admits
-strings, even under innocent-looking keys; selected text must use the explicit
-bounded text/redaction policy. The trace policy is an admission boundary, not a
+The server's trace adapter stores only an exact whitelist of finite scalar
+metadata keys (`status`, `error.category`, `reason`, `from_step`, `to_step`,
+`mcp.server_id`, `mcp.tool_name`, `mcp.duration_ms`); every other key is
+dropped. The trace policy is an admission boundary, not a
 retention policy: exporters and the Server remain responsible for access,
 storage, and deletion controls.
 

@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,9 +16,8 @@ import (
 )
 
 const (
-	queueSize                  = 2048
-	maxLabelLength             = 256
-	maxStructuredMetadataNodes = 1024
+	queueSize      = 2048
+	maxLabelLength = 256
 )
 
 type traceOpKind uint8
@@ -73,33 +70,18 @@ func (a *Adapter) StartSpan(ctx context.Context, event core.TraceEvent) core.Spa
 		startedAt = time.Now().UTC()
 	}
 
-	parentSpan := core.SpanFromContext(ctx)
-	parentID := extractSpanID(parentSpan)
+	parentID := extractSpanID(core.SpanFromContext(ctx))
 
 	sessionID := string(event.SessionID)
 	if !isValidUUIDv7(sessionID) {
 		sessionID = ""
-		if pInfo, ok := parentSpan.(sessionInfo); ok && isValidUUIDv7(pInfo.SessionID()) {
-			sessionID = pInfo.SessionID()
-		}
 	}
-
 	turnID := string(event.TurnID)
 	if !isValidUUIDv7(turnID) {
 		turnID = ""
-		if pInfo, ok := parentSpan.(sessionInfo); ok && isValidUUIDv7(pInfo.TurnID()) {
-			turnID = pInfo.TurnID()
-		}
 	}
 
-	rawAttrs := event.Attributes()
-	attrs := a.filterAttributes(rawAttrs)
-	if !isValidUUIDv7(string(event.SessionID)) && string(event.SessionID) != "" {
-		attrs["session_label"] = string(event.SessionID)
-	}
-	if !isValidUUIDv7(string(event.TurnID)) && string(event.TurnID) != "" {
-		attrs["turn_label"] = string(event.TurnID)
-	}
+	attrs := a.filterAttributes(event.Attributes())
 
 	span := &adapterSpan{
 		adapter:    a,
@@ -209,14 +191,11 @@ func (a *Adapter) worker() {
 }
 
 func (a *Adapter) filterAttributes(input map[string]any) map[string]any {
-	// ponytail: metadata-only; transcript/prompt/text/tool content never persists.
+	// ponytail: metadata-only; an exact whitelist of keys the server sends, so transcript/prompt/text/tool content never persists.
 	out := make(map[string]any)
-	var customKeys []string
-	tooManyCustom := false
-
 	for k, v := range input {
 		switch k {
-		case "count", "sample_rate", "channels", "duration_ms", "latency_ms", "sequence", "model", "provider", "format", "status", "error.category", "unit", "quantity", "reason", "component", "frame", "direction", "from_step", "to_step", "mcp.server_id", "mcp.tool_name", "mcp.duration_ms":
+		case "status", "error.category", "reason", "from_step", "to_step", "mcp.server_id", "mcp.tool_name", "mcp.duration_ms":
 			switch val := v.(type) {
 			case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
 				out[k] = val
@@ -233,110 +212,9 @@ func (a *Adapter) filterAttributes(input map[string]any) map[string]any {
 					out[k] = val
 				}
 			}
-		default:
-			if strings.HasPrefix(k, "custom.") && safeKey(k) {
-				if len(customKeys) == maxStructuredMetadataNodes {
-					tooManyCustom = true
-				} else {
-					customKeys = append(customKeys, k)
-				}
-			}
-		}
-	}
-
-	if tooManyCustom {
-		return out
-	}
-
-	sort.Strings(customKeys)
-	remaining := maxStructuredMetadataNodes
-	for _, key := range customKeys {
-		if copied, ok := copyStructuredMetadata(input[key], 0, &remaining); ok {
-			out[key] = copied
 		}
 	}
 	return out
-}
-
-func safeKey(key string) bool {
-	if key == "" || len(key) > 64 {
-		return false
-	}
-	lower := strings.ToLower(key)
-	for _, forbidden := range []string{
-		"secret", "token", "password", "credential", "api_key", "audio",
-		"transcript", "prompt", "argument", "result", "text",
-	} {
-		if strings.Contains(lower, forbidden) {
-			return false
-		}
-	}
-	for _, r := range key {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// copyStructuredMetadata accepts bounded JSON-like numeric/boolean metadata.
-// Strings, bytes, pointers, and unsupported collections fail closed.
-func copyStructuredMetadata(value any, depth int, remaining *int) (any, bool) {
-	if depth > 8 || *remaining == 0 {
-		return nil, false
-	}
-	*remaining--
-	switch v := value.(type) {
-	case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return v, true
-	case float32:
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-			return nil, false
-		}
-		return v, true
-	case float64:
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return nil, false
-		}
-		return v, true
-	case map[string]any:
-		if len(v) > 64 {
-			return nil, false
-		}
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		out := make(map[string]any, len(v))
-		for _, key := range keys {
-			if !safeKey(key) {
-				return nil, false
-			}
-			copied, ok := copyStructuredMetadata(v[key], depth+1, remaining)
-			if !ok {
-				return nil, false
-			}
-			out[key] = copied
-		}
-		return out, true
-	case []any:
-		if len(v) > 64 {
-			return nil, false
-		}
-		out := make([]any, len(v))
-		for i, child := range v {
-			copied, ok := copyStructuredMetadata(child, depth+1, remaining)
-			if !ok {
-				return nil, false
-			}
-			out[i] = copied
-		}
-		return out, true
-	default:
-		return nil, false
-	}
 }
 
 func isValidUUIDv7(s string) bool {
@@ -350,11 +228,6 @@ type spanWithID interface {
 
 type spanUnwrapper interface {
 	Unwrap() core.Span
-}
-
-type sessionInfo interface {
-	SessionID() string
-	TurnID() string
 }
 
 func extractSpanID(s core.Span) string {
@@ -384,9 +257,7 @@ type adapterSpan struct {
 	attributes map[string]any
 }
 
-func (s *adapterSpan) SpanID() string    { return s.id }
-func (s *adapterSpan) SessionID() string { return s.sessionID }
-func (s *adapterSpan) TurnID() string    { return s.turnID }
+func (s *adapterSpan) SpanID() string { return s.id }
 
 func (s *adapterSpan) SetAttribute(key string, value any) {
 	s.mu.Lock()
