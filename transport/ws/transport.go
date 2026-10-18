@@ -103,7 +103,8 @@ type Connection struct {
 	// Resamplers
 	resamplersMu sync.Mutex
 	inResamplers map[int]*resample.Resampler // inRate -> 16000
-	outResampler *resample.Resampler         // providerRate -> 24000
+	outResampler *resample.Resampler         // providerRate -> FixedPlayerRate
+	outRate      int                         // the rate outResampler was built for
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -937,16 +938,18 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 	switch f.Type() {
 	case core.FrameOutputAudio:
 		oaf := f.(*core.OutputAudioFrame)
-		// Convert provider rate to fixed player rate if necessary
+		// Convert provider rate to fixed player rate if necessary. A frame at
+		// another rate than the last (a TTS fallback, a tone) gets a resampler
+		// built for its own rate.
 		if oaf.SampleRate != c.cfg.FixedPlayerRate {
 			c.resamplersMu.Lock()
-			if c.outResampler == nil {
-				var err error
-				c.outResampler, err = resample.NewResampler(oaf.SampleRate, c.cfg.FixedPlayerRate)
+			if c.outResampler == nil || c.outRate != oaf.SampleRate {
+				r, err := resample.NewResampler(oaf.SampleRate, c.cfg.FixedPlayerRate)
 				if err != nil {
 					c.resamplersMu.Unlock()
 					return err
 				}
+				c.outResampler, c.outRate = r, oaf.SampleRate
 			}
 			resampled, err := c.outResampler.ResamplePCM16(oaf.Samples)
 			c.resamplersMu.Unlock()

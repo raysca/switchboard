@@ -24,8 +24,8 @@ type TTSCandidate struct {
 	// Open candidates are tried last. May be nil.
 	Open func() bool
 	// Rate is the output sample rate the candidate is configured for (0 =
-	// unknown). The transport builds its resampler from the first frame and
-	// cannot follow a mid-session change, so known rates must all be equal.
+	// unknown). expire closes a stalled unit with a frame at this rate, so
+	// known rates must all be equal.
 	Rate int
 }
 
