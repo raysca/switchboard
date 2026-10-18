@@ -261,6 +261,15 @@ func (p *OutputProcessor) send(gen uint64, digits string) (<-chan struct{}, erro
 	}
 }
 
+// reply never blocks: Result is documented as buffered, and an unbuffered one
+// nobody reads must not wedge the output stage.
+func reply(c chan<- error, err error) {
+	select {
+	case c <- err:
+	default:
+	}
+}
+
 func (p *OutputProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	o, ok := f.(*core.OutputDTMFFrame)
 	if !ok || dir != core.Downstream {
@@ -272,13 +281,13 @@ func (p *OutputProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core
 	switch {
 	case o.Result == nil:
 	case err != nil:
-		o.Result <- err
+		reply(o.Result, err)
 	default:
 		// One supervised waiter per send; at most maxPending are queued.
 		_ = p.session.Go(func(ctx context.Context) {
 			select {
 			case <-done:
-				o.Result <- nil
+				reply(o.Result, nil)
 			case <-ctx.Done():
 			}
 		})

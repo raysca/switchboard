@@ -47,6 +47,11 @@ func Executor(out *OutputProcessor, next core.ToolExecutor) core.ToolExecutor {
 		// through ctx: the tool loop cancels it when the call's generation goes stale.
 		res := make(chan error, 1)
 		frame := &core.OutputDTMFFrame{Digits: args.Digits, Gen: uint64(call.Generation), Result: res}
+		if out.session == nil {
+			r := failed(call, "unavailable")
+			r.StartedAt = started
+			return r, nil
+		}
 		if err := out.session.Reenter(frame, core.Downstream, out.index, frame.Gen); err != nil {
 			r := failed(call, "unavailable")
 			r.StartedAt = started
