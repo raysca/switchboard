@@ -86,12 +86,12 @@ func Handler(service *Service) http.Handler {
 		id := requestID(w, r)
 		serverID := r.PathValue("id")
 		if err := service.Disable(r.Context(), serverID); err != nil {
-			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			writeLookupError(w, err, id)
 			return
 		}
 		m, err := service.Get(r.Context(), serverID)
 		if err != nil {
-			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			writeLookupError(w, err, id)
 			return
 		}
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
@@ -100,12 +100,21 @@ func Handler(service *Service) http.Handler {
 		id := requestID(w, r)
 		serverID := r.PathValue("id")
 		if err := service.Enable(r.Context(), serverID); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				writeLookupError(w, err, id) // the store failed: 500
+				return
+			}
+			// No row updated: the server is missing (404) or its deletion is pending (409).
+			if _, gerr := service.Get(r.Context(), serverID); gerr != nil {
+				writeLookupError(w, gerr, id)
+				return
+			}
 			api.WriteError(w, 409, "mcp_server_unavailable", "MCP server cannot be enabled while deletion is pending", id)
 			return
 		}
 		m, err := service.Get(r.Context(), serverID)
 		if err != nil {
-			api.WriteError(w, 404, "not_found", "MCP server not found", id)
+			writeLookupError(w, err, id)
 			return
 		}
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
