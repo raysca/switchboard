@@ -39,6 +39,9 @@ func TestRefusedTaskLosesTheTurnNotTheCall(t *testing.T) {
 	if err := p.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "t1", Gen: 1, Content: "hi"}, core.Downstream, probeEmitter{}); err != nil {
 		t.Fatalf("a spent task budget failed the call: %v", err)
 	}
+	if _, errs, _, _ := p.LLMCounts(); errs != 0 {
+		t.Fatalf("a refused local task counted as %d provider errors", errs)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.got) != 1 {

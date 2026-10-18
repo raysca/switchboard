@@ -30,6 +30,33 @@ func (p *syncDownLLM) ProcessFrame(_ context.Context, f core.Frame, dir core.Dir
 		StatusCode: http.StatusServiceUnavailable, Retryable: true}
 }
 
+// userTurnCounter is a stage after the LLM that counts the user messages reaching it.
+type userTurnCounter struct {
+	core.Processor
+	n *atomic.Int32
+}
+
+func (u userTurnCounter) Attach(s core.SessionController, i int) error {
+	if a, ok := u.Processor.(core.Attacher); ok {
+		return a.Attach(s, i)
+	}
+	return nil
+}
+
+func (u userTurnCounter) Close() error {
+	if c, ok := u.Processor.(core.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
+func (u userTurnCounter) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	if _, ok := f.(*core.UserMessageFrame); ok {
+		u.n.Add(1)
+	}
+	return u.Processor.ProcessFrame(ctx, f, dir, e)
+}
+
 // A primary LLM failing synchronously on every turn: the fallback answers each turn and the call lives on.
 func TestCallBehaviorASynchronousLLMFailureFailsOverAndTheCallSurvives(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe())
@@ -40,6 +67,15 @@ func TestCallBehaviorASynchronousLLMFailureFailsOverAndTheCallSurvives(t *testin
 			return down, nil
 		}
 		return healthy(cfg, spec)
+	})
+	var userTurns atomic.Int32
+	healthyTTS := r.s.registry.factories["echo.tts"]
+	r.s.registry.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) {
+		p, err := healthyTTS(cfg, spec)
+		if err != nil {
+			return nil, err
+		}
+		return userTurnCounter{Processor: p, n: &userTurns}, nil
 	})
 	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "Failover", Config: json.RawMessage(
 		`{"stt":{"provider":"echo","model":"s"},` +
@@ -58,6 +94,9 @@ func TestCallBehaviorASynchronousLLMFailureFailsOverAndTheCallSurvives(t *testin
 	}
 	if c.ended() {
 		t.Fatal("a synchronous LLM failure ended the call")
+	}
+	if n := userTurns.Load(); n != 2 {
+		t.Fatalf("the stages after the LLM saw %d user messages, want one per question (2)", n)
 	}
 	if n := down.calls.Load(); n != 2 {
 		t.Fatalf("the primary was tried %d times, want once per turn", n)

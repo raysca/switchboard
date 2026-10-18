@@ -464,8 +464,7 @@ func (p *Processor) handleUserTurn(ctx context.Context, f *core.UserMessageFrame
 		}
 	})
 	if errors.Is(err, core.ErrTooManyTasks) { // the session's task budget: lose this turn, not the call
-		cancel()
-		p.Errors.Add(1)
+		cancel() // the session's own budget is not a provider error: Errors stays untouched
 		// Re-entered, not pushed: under LLMFailover a fallback's emitter swallows,
 		// and the wrapper must see the error to end the generation.
 		_ = s.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(turn), Gen: core.Generation(gen)}, core.Downstream, p.index, gen)
