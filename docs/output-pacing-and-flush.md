@@ -6,7 +6,7 @@ Task 8 hardens the existing WebSocket `PacedWriter`; there is no second pacing e
 
 Enqueue copies the frame and sample bytes, derives a single normalized duration when the producer omits one, and stores that duration with the queue entry. Admission checks frame-count, byte, and media-duration budgets before mutation. Overflow returns both `ErrQueueBufferFull` and the V1-compatible `ErrSlowClient`; retained accounting and a matching pending final marker are unchanged, so a retry can still become turn-final. Non-positive budget values are normalized to bounded defaults without changing the public constructor. Queue locks are not held during pacing waits, encoding, socket writes, or callbacks.
 
-The default queue remains 4,800 bytes / 100 ms at 24-kHz PCM16 mono and is additionally bounded to 64 frames, including empty frames. The queue stores at most 64 pending whole-turn final markers. A marker-limit failure is explicit and fail-closed.
+The default queue is 96,000 bytes / 2 s at 24-kHz PCM16 mono (`ws.DefaultPacerConfig`; a flush drops it all) and is additionally bounded to 512 frames, including empty frames. The queue stores at most 64 pending whole-turn final markers. A marker-limit failure is explicit and fail-closed.
 
 ## Whole-turn finality and speaking
 

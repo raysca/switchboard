@@ -30,8 +30,8 @@
   },
   "v1_server_side_residual_playback": {
     "bounded_by_pacing": true,
-    "maximum_queued_duration_ms": 100,
-    "maximum_queued_bytes": 4800,
+    "maximum_queued_duration_ms": 2000,
+    "maximum_queued_bytes": 96000,
     "format": "24-kHz PCM16 mono",
     "scope": "server-side queued output only; this does not bound audio already delivered to or buffered by the client"
   },
