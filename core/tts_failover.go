@@ -97,6 +97,7 @@ type ttsUnit struct {
 	owner     int             // candidate index running it
 	committed bool            // a frame of this unit went downstream
 	attempt   int             // bumped per candidate start; fences the watchdog
+	progress  int             // bumped per frame from the candidate; an expiry posted before it moved is stale
 	watchdog  *time.Timer
 }
 
@@ -190,7 +191,10 @@ func (w *TTSFailover) ProcessFrame(ctx context.Context, f Frame, dir Direction, 
 		}
 		return nil
 	case *ttsExpire:
-		w.expire(fr.u, fr.attempt) // a watchdog fired: handled here, on the run loop
+		w.expire(fr.u, fr.attempt, fr.progress) // a watchdog fired: handled here, on the run loop
+		return nil
+	case *ttsRun:
+		w.run(fr.u) // a candidate's re-entry started or retried a unit: driven here, on the run loop
 		return nil
 	case *InterruptionFrame, *CancelFrame:
 		w.mu.Lock()
@@ -258,7 +262,12 @@ func (w *TTSFailover) run(u *ttsUnit) {
 				u.stop()
 				u.attempt++
 				attempt := u.attempt
-				u.watchdog = time.AfterFunc(w.unitTimeout(u), func() { w.postExpire(&ttsExpire{u: u, attempt: attempt}) })
+				u.watchdog = time.AfterFunc(w.unitTimeout(u), func() {
+					w.mu.Lock()
+					e := &ttsExpire{u: u, attempt: attempt, progress: u.progress}
+					w.mu.Unlock()
+					w.post(e)
+				})
 			}
 			w.mu.Unlock()
 			return
@@ -328,6 +337,7 @@ func (w *TTSFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 	}
 	if u == w.cur && u.watchdog != nil {
 		u.watchdog.Reset(w.unitTimeout(u)) // progress
+		u.progress++
 	}
 	var started *ttsUnit
 	var note *failNote
@@ -343,7 +353,7 @@ func (w *TTSFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 			to := w.cfg.Candidates[u.order[u.pos]].Provider
 			w.mu.Unlock()
 			w.noteFailover(&failNote{from, to, class}, u.su)
-			w.run(u)
+			w.post(&ttsRun{u})
 			return nil
 		}
 		if allowed {
@@ -368,7 +378,7 @@ func (w *TTSFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 	err := w.session.Reenter(f, dir, resume, gen)
 	w.noteFailover(note, nil)
 	if started != nil {
-		w.run(started)
+		w.post(&ttsRun{started}) // behind the frame re-entered above
 	}
 	return err
 }
@@ -403,18 +413,26 @@ func (w *TTSFailover) unitTimeout(u *ttsUnit) time.Duration {
 // candidate is never driven from the timer goroutine while the run loop drives
 // it too (ttsunit.Runner and core.SerialQueue need their callers serialized).
 type ttsExpire struct {
-	u       *ttsUnit
-	attempt int
+	u        *ttsUnit
+	attempt  int
+	progress int
 }
+
+// ttsRun carries a candidate's request to start (or retry) a unit onto the run
+// loop: a candidate re-enters from its provider's task, which must not drive
+// candidates.
+type ttsRun struct{ u *ttsUnit }
+
+func (*ttsRun) Type() FrameType { return FrameInternal }
 
 func (*ttsExpire) Type() FrameType { return FrameInternal }
 
-// postExpire queues e for the run loop behind the frames already admitted. A
+// post queues f for the run loop behind the frames already admitted. A
 // full inbox refuses internal frames, so it retries until the session takes it;
 // a closed session (ErrSessionClosed) ends it.
-func (w *TTSFailover) postExpire(e *ttsExpire) {
-	if errors.Is(w.session.Reenter(e, Downstream, w.index, 0), ErrQueueFull) {
-		time.AfterFunc(5*time.Millisecond, func() { w.postExpire(e) })
+func (w *TTSFailover) post(f Frame) {
+	if errors.Is(w.session.Reenter(f, Downstream, w.index, 0), ErrQueueFull) {
+		time.AfterFunc(5*time.Millisecond, func() { w.post(f) })
 	}
 }
 
@@ -423,9 +441,9 @@ func (w *TTSFailover) postExpire(e *ttsExpire) {
 // demoted, and u moves to the next candidate if nothing was released yet;
 // otherwise u ends with one error (plus a closing final frame if audio went
 // out, so playback drains) and the next unit starts.
-func (w *TTSFailover) expire(u *ttsUnit, attempt int) {
+func (w *TTSFailover) expire(u *ttsUnit, attempt, progress int) {
 	w.mu.Lock()
-	if w.cur != u || u.attempt != attempt {
+	if w.cur != u || u.attempt != attempt || u.progress != progress {
 		w.mu.Unlock()
 		return
 	}
