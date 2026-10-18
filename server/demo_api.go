@@ -53,7 +53,7 @@ func (s *Server) installDental(ctx context.Context, servers demo.Servers, flows 
 		// autoInstallDemo's covers it, and a panic here would end the process.
 		defer func() {
 			if r := recover(); r != nil {
-				s.logger.Error("demo install panicked", "panic", fmt.Sprint(r), "stack", string(debug.Stack()))
+				s.logger.Error("demo install panicked", "panic", s.redactor.Redact(fmt.Sprint(r)), "stack", s.redactor.Redact(string(debug.Stack())))
 				res, err = demo.Result{}, fmt.Errorf("demo install panicked: %v", r)
 			}
 		}()
