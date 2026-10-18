@@ -84,18 +84,19 @@ func DefaultServerConfig(val *token.Validator) ServerConfig {
 
 // Connection represents a live, authenticated WebSocket voice connection.
 type Connection struct {
-	id         uint64
-	conn       *websocket.Conn
-	claims     *token.Claims
-	cfg        ServerConfig
-	pacer      *PacedWriter
-	cue        *CueUnderlay                 // nil unless ServerConfig.Cues
-	closeCause atomic.Pointer[string]       // see CloseCause
-	session    atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
-	tap        atomic.Pointer[AudioTap]     // optional call recorder; nil = none
-	seqCounter atomic.Uint64
-	rtvi       *rtvi.Handler
-	handling   atomic.Bool // read goroutine is in a handler, not Read: pongs wait
+	id            uint64
+	conn          *websocket.Conn
+	claims        *token.Claims
+	cfg           ServerConfig
+	pacer         *PacedWriter
+	cue           *CueUnderlay                 // nil unless ServerConfig.Cues
+	closeCause    atomic.Pointer[string]       // see CloseCause
+	serverClosing atomic.Bool                  // the server started a close handshake (closeBounded)
+	session       atomic.Pointer[core.Session] // published after Start succeeds; read by pacer callbacks
+	tap           atomic.Pointer[AudioTap]     // optional call recorder; nil = none
+	seqCounter    atomic.Uint64
+	rtvi          *rtvi.Handler
+	handling      atomic.Bool // read goroutine is in a handler, not Read: pongs wait
 
 	writeMu   sync.Mutex
 	readyCh   chan struct{}
@@ -686,9 +687,10 @@ func (c *Connection) readLoop() {
 		}
 		if err != nil {
 			cause = disconnectCategory(err)
-			if cause == "client" && c.ctx.Err() != nil && c.CloseCause() != "peer_unresponsive" {
+			if (c.serverClosing.Load() || cause == "client" && c.ctx.Err() != nil) && c.CloseCause() != "peer_unresponsive" {
 				// The server ended the call from outside this loop (Close, hang-up,
-				// ready timeout); a client that stopped answering pings stays "client".
+				// going-away, ready timeout): even a client echoing the close cleanly
+				// is a server disconnect. A client that stopped answering pings stays "client".
 				cause = "server"
 			}
 			if errors.Is(err, websocket.ErrMessageTooBig) {
@@ -897,6 +899,7 @@ func (c *Connection) closeWith(reason string, fatal bool, code websocket.StatusC
 // ponytail: when the read goroutine is itself the caller (not in Read), the
 // library's own 5 s handshake bounds still apply.
 func (c *Connection) closeBounded(code websocket.StatusCode, reason string, d time.Duration) {
+	c.serverClosing.Store(true)
 	done := make(chan struct{})
 	go func() { _ = c.conn.Close(code, reason); close(done) }()
 	t := time.NewTimer(d)

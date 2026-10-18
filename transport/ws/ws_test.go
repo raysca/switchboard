@@ -136,7 +136,7 @@ func TestPhase3_FuzzProperty_WireValidation(t *testing.T) {
 	}
 
 	// 2b. Oversized message (> MaxEncodedFrameSize)
-	oversized := make([]byte, 70*1024)
+	oversized := make([]byte, ws.MaxEncodedFrameSize+1)
 	_, err = ws.DecodeBinaryFrame(oversized, 2, now)
 	if err != ws.ErrOversizedMessage {
 		t.Fatalf("expected ErrOversizedMessage, got: %v", err)

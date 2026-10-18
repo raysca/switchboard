@@ -138,3 +138,42 @@ func TestServerSideCloseCountsOneServerDisconnect(t *testing.T) {
 		t.Fatalf("disconnect_server=%d disconnect_client=%d", e.count("disconnect_server"), e.count("disconnect_client"))
 	}
 }
+
+// The server hanging up or sending going-away while the client reads: the client echoes the close, so the
+// read loop sees a clean 1000/1001, yet the server started it: exactly one disconnect_server.
+func TestServerInitiatedCloseHandshakeCountsServer(t *testing.T) {
+	for name, closeFn := range map[string]func(*ws.Connection){
+		"hangup": func(c *ws.Connection) { c.Hangup("user_idle", 2*time.Second) },
+		"goaway": func(c *ws.Connection) { c.GoAway("server_draining", 2*time.Second) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newPingEnv(t, func(c *ws.ServerConfig) {})
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			c, _, err := websocket.Dial(ctx, e.url(t), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.CloseNow()
+			performHandshake(t, ctx, c)
+			if !waitFor(t, 5*time.Second, func() bool { return e.conn.Load() != nil }) {
+				t.Fatal("no session")
+			}
+			go func() { // a reading client answers the close handshake
+				for {
+					if _, _, err := c.Read(ctx); err != nil {
+						return
+					}
+				}
+			}()
+			closeFn(e.conn.Load())
+			if !waitFor(t, 5*time.Second, func() bool { return disconnects(e) >= 1 }) {
+				t.Fatal("no disconnect was counted")
+			}
+			time.Sleep(100 * time.Millisecond)
+			if e.count("disconnect_server") != 1 || disconnects(e) != 1 {
+				t.Fatalf("disconnect_server=%d normal=%d client=%d", e.count("disconnect_server"), e.count("disconnect_normal"), e.count("disconnect_client"))
+			}
+		})
+	}
+}
