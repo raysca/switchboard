@@ -8,6 +8,7 @@ import (
 	"time"
 
 	core "govoice/core"
+	"govoice/core/coretest"
 )
 
 func addUser(t *testing.T, h *core.ConversationContext, turn, text string) {
@@ -20,7 +21,7 @@ func addUser(t *testing.T, h *core.ConversationContext, turn, text string) {
 func mustValid(t *testing.T, h *core.ConversationContext) []core.Message {
 	t.Helper()
 	msgs := h.Messages()
-	if err := core.ValidateToolPairing(msgs); err != nil {
+	if err := coretest.ValidateToolPairing(msgs); err != nil {
 		t.Fatalf("invalid history: %v\n%+v", err, msgs)
 	}
 	return msgs
