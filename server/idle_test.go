@@ -114,8 +114,6 @@ func TestIdleEnabledSitsBeforeTheModel(t *testing.T) {
 type stallLLM struct {
 	sess      core.SessionController
 	idx       int
-	mu        sync.Mutex
-	cancel    context.CancelFunc
 	cancelled atomic.Int32
 }
 

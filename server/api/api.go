@@ -45,8 +45,8 @@ type SuccessResponse[T any] struct {
 }
 
 type Pagination struct {
-	Limit  int `json:"limit"`
-	Offset int `json:"offset"`
+	Limit  int
+	Offset int
 }
 
 type VoiceTokenRequest struct {

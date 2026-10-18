@@ -2,8 +2,6 @@ package e2e_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -187,34 +185,6 @@ func (m *mockXAILLM) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 			Text: m.response,
 			Turn: frame.Turn,
 			Gen:  frame.Gen,
-		})
-	}
-	return e.PushDirection(f, dir)
-}
-
-// mockTTS simulates TTS converting synthesis units into PCM output audio frames.
-type mockTTS struct {
-	mu          sync.Mutex
-	synthesized []string
-}
-
-func (m *mockTTS) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
-	switch frame := f.(type) {
-	case *core.SynthesisUnitFrame:
-		m.mu.Lock()
-		m.synthesized = append(m.synthesized, frame.Text)
-		m.mu.Unlock()
-		return e.Push(&core.OutputAudioFrame{
-			Samples:    make([]byte, 960), // 20ms chunk PCM16
-			Encoding:   core.EncodingPCM16LE,
-			SampleRate: 24000,
-			Channels:   1,
-			Duration:   20 * time.Millisecond,
-			Timestamp:  time.Now(),
-			Turn:       frame.Turn,
-			Gen:        frame.Gen,
-			UnitID:     frame.UnitID,
-			IsFinal:    true,
 		})
 	}
 	return e.PushDirection(f, dir)
@@ -1217,10 +1187,4 @@ func TestScenario7_FaultIsolation(t *testing.T) {
 		}
 		_ = flowService.EndSession(ctx, pinB.ID, "caller_hung_up")
 	})
-}
-
-// computeSHA256 returns hex encoded SHA-256 string.
-func computeSHA256(data []byte) string {
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:])
 }
