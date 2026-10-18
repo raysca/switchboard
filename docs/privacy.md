@@ -10,11 +10,10 @@ provider/executor errors, unrestricted text, or arbitrary attributes.
 
 Text mode is bounded (4 KiB by default and 16 KiB maximum) and only admits the
 selected `transcript`, `prompt`, and `text` fields. Tool arguments and results
-need a caller-supplied redactor; the redactor is panic-isolated and over-limit
-or invalid output is dropped. The core ToolLoop records only the redacted
-argument at execution start. It intentionally does not trace a result payload:
-that value is untrusted until the loop has normalized it and committed it to
-the conversation context.
+are never traced: the core ToolLoop's execution span carries no argument or
+result attribute, and the trace policy drops any `tool.arguments` or
+`tool.result` key a caller supplies. A result payload is untrusted until the
+loop has normalized it and committed it to the conversation context.
 
 Trace attributes are copied and recursively validate only finite scalar and
 bounded `custom.*` numeric/boolean metadata. Custom metadata never admits
@@ -163,8 +162,7 @@ privacy:
   are not exported). Debug events and stored traces are metadata only.
   Tool calls are stored by name, status and timing only (`tool_calls`;
   `arguments_summary` and `result_summary` stay empty); their arguments and
-  results are never stored and are not exported to OTel (no tool-content
-  redactor is configured).
+  results are never stored, traced or exported to OTel.
 - **Tool calls on the client wire:** `llm-function-call-started`, `-in-progress` and `-stopped` carry only the call's `tool_call_id` (and `cancelled`), Pipecat's default `function_call_report_level` `none`: no tool name, arguments or result reaches the client, whatever the redaction settings. The `tool_call_id` itself is chosen by the provider or model (OpenAI-compatible backends echo whatever the server returns); it reaches the RTVI wire and the stored span's `ToolCallID`, as in Pipecat.
 - **NOT covered:** the live LLM context; anything the STT/LLM/TTS providers
   receive; the client's `user-transcription`; audio recordings (speech and DTMF

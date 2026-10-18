@@ -141,40 +141,36 @@ func TestToolLoopRunsMultipleCallsSequentiallyInInputOrderAndContinues(t *testin
 	}
 }
 
-func TestToolLoopTraceRedactsOptInArgumentsWithoutRecordingResults(t *testing.T) {
-	const sentinel = "tool-payload-secret-886"
+// Tool arguments and results never enter a trace, even in text mode.
+func TestToolContentNeverReachesATrace(t *testing.T) {
+	const secret = "tool-payload-secret-886"
 	recorder := &loopTraceRecorder{}
 	cfg := testLoopConfig()
 	cfg.Tracer = recorder
-	cfg.TracePolicy = core.TracePolicy{Content: core.TraceText, RedactToolContent: func(text string) string {
-		return strings.ReplaceAll(text, sentinel, "[redacted]")
-	}}
+	cfg.TracePolicy = core.TracePolicy{Content: core.TraceText}
 	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 8, MaxTokens: 2048})
 	loop, err := NewToolLoop([]ToolDefinition{{Name: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`)}}, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) {
-		return ToolResult{CallID: "call-1", Status: ToolSucceeded, Result: json.RawMessage(`{"value":"` + sentinel + `"}`)}, nil
+		return ToolResult{CallID: "call-1", Status: ToolSucceeded, Result: json.RawMessage(`{"value":"` + secret + `"}`)}, nil
 	}), history, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loop.Run(context.Background(), []ToolCall{testCall("call-1", "lookup", `{"value":"`+sentinel+`"}`)}, nil); err != nil {
+	if _, err := loop.Run(context.Background(), []ToolCall{testCall("call-1", "lookup", `{"value":"`+secret+`"}`)}, nil); err != nil {
 		t.Fatal(err)
 	}
-	events, _ := recorder.snapshot(t, 1)
-	var sawArguments bool
+	events, ended := recorder.snapshot(t, 1)
+	if len(events) == 0 {
+		t.Fatal("no trace events recorded")
+	}
 	for _, event := range events {
-		attrs := event.Attributes()
-		if value, ok := attrs["tool.arguments"].(string); ok {
-			sawArguments = true
-			if strings.Contains(value, sentinel) || !strings.Contains(value, "[redacted]") {
-				t.Fatalf("tool args were not redacted: %q", value)
-			}
-		}
-		if _, ok := attrs["tool.result"]; ok {
-			t.Fatalf("tool result must not be traced before its normalized context commit: %#v", attrs)
+		if strings.Contains(fmt.Sprint(event.Attributes()), secret) {
+			t.Fatalf("tool content traced: %#v", event.Attributes())
 		}
 	}
-	if !sawArguments {
-		t.Fatalf("opt-in trace content missing: %#v", events)
+	for _, err := range ended {
+		if err != nil && strings.Contains(err.Error(), secret) {
+			t.Fatalf("tool content in span end: %v", err)
+		}
 	}
 }
 
@@ -389,7 +385,7 @@ func TestToolLoopTraceDropsRawInvalidResultAndExecutorError(t *testing.T) {
 	trace := &loopTraceRecorder{}
 	cfg := testLoopConfig()
 	cfg.Tracer = trace
-	cfg.TracePolicy = core.TracePolicy{Content: core.TraceText, RedactToolContent: func(s string) string { return s }}
+	cfg.TracePolicy = core.TracePolicy{Content: core.TraceText}
 	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 8, MaxTokens: 1000})
 	loop, err := NewToolLoop([]ToolDefinition{{Name: "x", InputSchema: json.RawMessage(`{"type":"object"}`)}}, ToolExecutorFunc(func(_ context.Context, call ToolCall) (ToolResult, error) {
 		if call.ID == "bad" {

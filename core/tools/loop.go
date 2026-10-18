@@ -442,9 +442,7 @@ func (l *ToolLoop) finish(roundCtx context.Context, call ToolCall, started time.
 	callCtx = core.ContextWithTraceContext(callCtx, l.cfg.Tracer, l.cfg.TracePolicy)
 	var toolResult ToolResult
 	var execErr error
-	event := core.NewTraceEvent("tool.execute", started, call.SessionID, call.TurnID, call.Generation, l.cfg.TracePolicy, map[string]any{
-		"tool.arguments": string(call.Arguments),
-	})
+	event := core.NewTraceEvent("tool.execute", started, call.SessionID, call.TurnID, call.Generation, l.cfg.TracePolicy, nil)
 	event.ToolCallID = call.ID
 	span := core.StartSpanSafe(callCtx, l.cfg.Tracer, event)
 	callCtx = core.ContextWithSpan(callCtx, span)
