@@ -24,8 +24,11 @@ type TTSCandidate struct {
 	// Open candidates are tried last. May be nil.
 	Open func() bool
 	// Rate is the output sample rate the candidate is configured for (0 =
-	// unknown). expire closes a stalled unit with a frame at this rate, so
-	// known rates must all be equal.
+	// unknown). expire closes a stalled unit with an empty final frame at this
+	// rate, which must be the rate of the audio already sent. The transport
+	// follows rate changes (4.3), so that frame would not break playback; the
+	// rates are still required equal so a failover never changes the call's
+	// output rate mid-turn (the server builds every candidate at ttsRate).
 	Rate int
 }
 

@@ -92,9 +92,10 @@ func failoverPolicy(stage string, base resilience.Policy) resilience.Policy {
 const sttFailoverAttempt = 1500 * time.Millisecond
 
 // ttsRate is the one output rate the call's TTS candidates are built for.
-// TTSFailover closes a stalled unit with a frame at the candidate's rate, so
-// every candidate is configured to this rate (the factories read it from the
-// same setting) and core.NewTTSFailover rejects a mismatch.
+// TTSFailover closes a stalled unit with an empty frame at the candidate's
+// rate and requires one rate across candidates, so a failover never changes the
+// call's output rate mid-turn; every candidate is configured to this rate (the
+// factories read it from the same setting).
 func ttsRate(cfg *Config) int {
 	if cfg != nil && cfg.Providers.GoogleTTS.SampleRate > 0 {
 		return cfg.Providers.GoogleTTS.SampleRate
