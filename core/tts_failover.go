@@ -353,6 +353,7 @@ func (w *TTSFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 			from := w.cfg.Candidates[idx].Provider
 			w.bad[idx] = class
 			u.pos++
+			u.attempt++  // fences an expiry already in flight (the watchdog fired before stop)
 			u.owner = -1 // the failed candidate's later frames are dropped until run starts the next one
 			to := w.cfg.Candidates[u.order[u.pos]].Provider
 			u.stop() // the watchdog must not expire the unit while the retry waits for the run loop
@@ -452,7 +453,9 @@ func (w *TTSFailover) post(f Frame) {
 // out, so playback drains) and the next unit starts.
 func (w *TTSFailover) expire(u *ttsUnit, attempt, progress int) {
 	w.mu.Lock()
-	if w.cur != u || u.attempt != attempt || u.progress != progress {
+	if w.cur != u || u.attempt != attempt || u.progress != progress || u.owner < 0 {
+		// owner < 0: the retry branch advanced u and run has not started the next candidate; an
+		// expiry from before that must not index Candidates[-1].
 		w.mu.Unlock()
 		return
 	}
