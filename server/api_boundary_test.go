@@ -426,3 +426,12 @@ func TestConfigRejectsAVoiceTokenLifetimeAboveFiveMinutes(t *testing.T) {
 		t.Fatalf("5m1s accepted or wrong error: %v", err)
 	}
 }
+
+// A zero max_lifetime must mean the same 1 m default to the minting side and
+// to the validator (which otherwise falls back to 300 s).
+func TestZeroMaxLifetimeAgreesBetweenMintAndValidator(t *testing.T) {
+	cfg := &Config{}
+	if got := voiceTokenConfig(cfg, "secret").MaxLifetime; got != time.Minute {
+		t.Fatalf("validator max lifetime = %v, want 1m", got)
+	}
+}

@@ -182,7 +182,13 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 // token.max_lifetime (default 1 m), in whole seconds so exp-iat stays within
 // the validator's ceiling, which is the same setting.
 func (s *Server) effectiveVoiceTokenLifetime() time.Duration {
-	lifetime := s.cfg.Token.MaxLifetime
+	return voiceTokenLifetime(s.cfg)
+}
+
+// voiceTokenLifetime is the one place a zero token.max_lifetime becomes the default,
+// shared by the minting side and the validator.
+func voiceTokenLifetime(cfg *Config) time.Duration {
+	lifetime := cfg.Token.MaxLifetime
 	if lifetime <= 0 {
 		lifetime = time.Minute
 	}

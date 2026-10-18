@@ -251,9 +251,7 @@ func NewServer(cfg *Config) (*Server, error) {
 
 func voiceTokenConfig(cfg *Config, tokenSecret string) token.Config {
 	tokenCfg := token.DefaultConfig(cfg.Token.Issuer, cfg.Token.Audience, []byte(tokenSecret))
-	if cfg.Token.MaxLifetime > 0 {
-		tokenCfg.MaxLifetime = cfg.Token.MaxLifetime
-	}
+	tokenCfg.MaxLifetime = voiceTokenLifetime(cfg) // the same value the mint side uses
 	if cfg.Token.ClockSkew > 0 {
 		tokenCfg.ClockSkew = cfg.Token.ClockSkew
 	}
