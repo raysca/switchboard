@@ -189,6 +189,9 @@ func (w *TTSFailover) ProcessFrame(ctx context.Context, f Frame, dir Direction, 
 			w.run(start)
 		}
 		return nil
+	case *ttsExpire:
+		w.expire(fr.u, fr.attempt) // a watchdog fired: handled here, on the run loop
+		return nil
 	case *InterruptionFrame, *CancelFrame:
 		w.mu.Lock()
 		w.cur.stop()
@@ -255,7 +258,7 @@ func (w *TTSFailover) run(u *ttsUnit) {
 				u.stop()
 				u.attempt++
 				attempt := u.attempt
-				u.watchdog = time.AfterFunc(w.unitTimeout(u), func() { w.expire(u, attempt) })
+				u.watchdog = time.AfterFunc(w.unitTimeout(u), func() { w.postExpire(&ttsExpire{u: u, attempt: attempt}) })
 			}
 			w.mu.Unlock()
 			return
@@ -394,6 +397,25 @@ func (w *TTSFailover) unitTimeout(u *ttsUnit) time.Duration {
 		d = 30 * time.Second
 	}
 	return d + time.Duration(utf8.RuneCountInString(u.su.Text))*20*time.Millisecond
+}
+
+// ttsExpire carries a unit watchdog's expiry onto the session run loop, so a
+// candidate is never driven from the timer goroutine while the run loop drives
+// it too (ttsunit.Runner and core.SerialQueue need their callers serialized).
+type ttsExpire struct {
+	u       *ttsUnit
+	attempt int
+}
+
+func (*ttsExpire) Type() FrameType { return FrameInternal }
+
+// postExpire queues e for the run loop behind the frames already admitted. A
+// full inbox refuses internal frames, so it retries until the session takes it;
+// a closed session (ErrSessionClosed) ends it.
+func (w *TTSFailover) postExpire(e *ttsExpire) {
+	if errors.Is(w.session.Reenter(e, Downstream, w.index, 0), ErrQueueFull) {
+		time.AfterFunc(5*time.Millisecond, func() { w.postExpire(e) })
+	}
 }
 
 // expire abandons a candidate that went quiet on u (wedged socket, a provider
