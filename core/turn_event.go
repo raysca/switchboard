@@ -10,7 +10,6 @@ const (
 	TurnEventStopped
 	TurnEventCompleted
 	TurnEventInterrupted
-	TurnEventNoSpeechTimeout
 )
 
 // TurnReason explains why a turn manager emitted a terminal event.
@@ -21,7 +20,6 @@ const (
 	TurnReasonSilence
 	TurnReasonSemantic
 	TurnReasonMaxDuration
-	TurnReasonInitialNoSpeech
 	TurnReasonInterrupted
 )
 

@@ -16,7 +16,6 @@ var t0 = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 
 func testConfig() Config {
 	return Config{
-		InitialSilenceTimeout: 5 * time.Second,
 		SilenceTimeout:        time.Second,
 		MaxTurnDuration:       10 * time.Second,
 		StartDebounce:         100 * time.Millisecond,
@@ -62,27 +61,6 @@ func TestTurnManagerRejectsInvalidConfig(t *testing.T) {
 	cfg.MaxRetiredTurns = 0
 	if _, err := NewManager(cfg, SilenceDetector{}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("zero retired-turn capacity: got %v", err)
-	}
-}
-
-func TestNoSpeechTimeoutResetsOnActivity(t *testing.T) {
-	m := manager(t, SilenceDetector{})
-	frames, err := m.Observe(Observation{At: t0.Add(4 * time.Second), Activity: true})
-	if err != nil || len(eventFrames(frames)) != 0 {
-		t.Fatalf("activity should reset initial silence: frames=%v err=%v", frames, err)
-	}
-	frames, err = m.Advance(t0.Add(8 * time.Second))
-	if err != nil || len(eventFrames(frames)) != 0 {
-		t.Fatalf("timeout fired before reset deadline: frames=%v err=%v", frames, err)
-	}
-	frames, err = m.Advance(t0.Add(9 * time.Second))
-	events := eventFrames(frames)
-	if err != nil || len(events) != 1 || events[0].Kind != core.TurnEventNoSpeechTimeout || events[0].At != t0.Add(9*time.Second) {
-		t.Fatalf("expected one timestamped initial no-speech timeout: events=%+v err=%v", events, err)
-	}
-	frames, _ = m.Advance(t0.Add(20 * time.Second))
-	if len(eventFrames(frames)) != 0 {
-		t.Fatal("initial no-speech timeout repeated")
 	}
 }
 

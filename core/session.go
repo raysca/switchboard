@@ -996,7 +996,7 @@ func frameTrace(f Frame) (string, map[string]any) {
 			return "turn.event", attrs
 		case TurnEventStopped:
 			return "speech.stop", attrs
-		case TurnEventCompleted, TurnEventNoSpeechTimeout:
+		case TurnEventCompleted:
 			return "turn.complete", attrs
 		case TurnEventInterrupted:
 			return "turn.interrupted", attrs
@@ -1047,7 +1047,7 @@ func traceStatusError(err error, category string) error {
 func traceTurnTerminal(frame Frame) bool {
 	switch value := frame.(type) {
 	case *TurnEventFrame:
-		return value.Kind == TurnEventCompleted || value.Kind == TurnEventInterrupted || value.Kind == TurnEventNoSpeechTimeout
+		return value.Kind == TurnEventCompleted || value.Kind == TurnEventInterrupted
 	case *InterruptionFrame:
 		return true
 	}

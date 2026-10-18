@@ -165,7 +165,7 @@ func TestParityTurnStartStop(t *testing.T) {
 		cfg := turn.DefaultConfig()
 		// Pipecat's VAD analyzer owns start/stop debounce; neutralize the Manager's so only strategy policy is compared.
 		cfg.StartDebounce, cfg.StopDebounce, cfg.MinimumSpeechDuration = 0, 0, 0
-		cfg.SilenceTimeout, cfg.MaxTurnDuration, cfg.InitialSilenceTimeout = ms(p.StopMs), time.Hour, time.Hour
+		cfg.SilenceTimeout, cfg.MaxTurnDuration = ms(p.StopMs), time.Hour
 		for _, s := range p.Start {
 			switch s.Kind {
 			case "vad":

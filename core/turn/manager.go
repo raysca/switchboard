@@ -22,7 +22,6 @@ var (
 // Config contains deterministic user-speech timing policy. All durations are
 // evaluated against caller-supplied observation and advance timestamps.
 type Config struct {
-	InitialSilenceTimeout time.Duration
 	SilenceTimeout        time.Duration
 	MaxTurnDuration       time.Duration
 	StartDebounce         time.Duration
@@ -37,7 +36,6 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		InitialSilenceTimeout: 10 * time.Second,
 		SilenceTimeout:        700 * time.Millisecond,
 		MaxTurnDuration:       60 * time.Second,
 		StartDebounce:         80 * time.Millisecond,
@@ -48,7 +46,7 @@ func DefaultConfig() Config {
 }
 
 func (c Config) validate() error {
-	if c.InitialSilenceTimeout <= 0 || c.SilenceTimeout <= 0 || c.MaxTurnDuration <= 0 ||
+	if c.SilenceTimeout <= 0 || c.MaxTurnDuration <= 0 ||
 		c.StartDebounce < 0 || c.StopDebounce < 0 || c.MinimumSpeechDuration < 0 || c.MaxRetiredTurns <= 0 {
 		return ErrInvalidConfig
 	}
@@ -93,10 +91,6 @@ type Manager struct {
 	lastAt  time.Time
 	hasLast bool
 	epoch   uint64
-
-	noSpeechSince  time.Time
-	noSpeechFired  bool
-	speechAccepted bool
 
 	currentGen      core.Generation
 	currentID       core.TurnID
@@ -162,7 +156,6 @@ func (m *Manager) Start(at time.Time) error {
 		return nil
 	}
 	m.started, m.lastAt, m.hasLast = true, at, true
-	m.noSpeechSince = at
 	m.bumpEpochLocked()
 	return nil
 }
@@ -238,9 +231,6 @@ func (m *Manager) observeLocked(observation Observation) ([]core.Frame, *detecti
 		return frames, nil, nil
 	}
 
-	if observation.Activity || observation.Speaking {
-		m.noSpeechSince = observation.At
-	}
 	m.botSpeaking = observation.BotSpeaking
 	if observation.Activity || observation.Speaking || observation.BotSpeaking || observation.Transcript != "" {
 		for _, s := range m.starters {
@@ -454,7 +444,6 @@ func (m *Manager) SetMuted(muted bool, at time.Time) error {
 		return nil
 	}
 	paused := at.Sub(m.muteSince)
-	m.noSpeechSince = m.noSpeechSince.Add(paused)
 	if m.active {
 		m.turnStartedAt = m.turnStartedAt.Add(paused)
 		m.speaking = false
@@ -475,9 +464,8 @@ func (m *Manager) Reset(at time.Time) error {
 	if m.closed {
 		return ErrClosed
 	}
-	m.started, m.muted, m.noSpeechFired, m.speechAccepted = true, false, false, false
+	m.started, m.muted = true, false
 	m.lastAt, m.hasLast = at, true
-	m.noSpeechSince = at
 	m.currentGen, m.currentID = 0, ""
 	m.retiredTurns = make(map[core.TurnID]struct{})
 	m.pendingText, m.hasText, m.pendingExt = "", false, false
@@ -548,10 +536,6 @@ func (m *Manager) advanceLocked(at time.Time) ([]core.Frame, *detectionSnapshot)
 			return frames, snapshot
 		}
 	}
-	if !m.speechAccepted && !m.noSpeechFired && at.Sub(m.noSpeechSince) >= m.cfg.InitialSilenceTimeout {
-		m.noSpeechFired = true
-		frames = append(frames, event("", m.currentGen, core.TurnEventNoSpeechTimeout, at, core.TurnReasonInitialNoSpeech, 0, false))
-	}
 	return frames, nil
 }
 
@@ -611,7 +595,7 @@ func (m *Manager) startLocked(at time.Time) []core.Frame {
 			return nil
 		}
 	}
-	m.active, m.speechAccepted = true, true
+	m.active = true
 	m.currentID, m.currentGen = m.startTurn, m.startGen
 	m.turnStartedAt = m.startSince
 	m.speaking, m.startCandidate, m.stopCandidate = true, false, false

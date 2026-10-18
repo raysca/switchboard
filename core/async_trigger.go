@@ -118,7 +118,7 @@ func (t *AsyncTrigger) ProcessFrame(_ context.Context, f Frame, dir Direction, e
 		switch v.Kind {
 		case TurnEventStarted:
 			set(&t.turnUser, true)
-		case TurnEventCompleted, TurnEventInterrupted, TurnEventNoSpeechTimeout:
+		case TurnEventCompleted, TurnEventInterrupted:
 			set(&t.turnUser, false)
 		}
 	case *UserMessageFrame:

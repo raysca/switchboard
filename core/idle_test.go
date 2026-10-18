@@ -354,7 +354,7 @@ func TestIdleUserActivityResets(t *testing.T) {
 		"dtmf": func(r *idleRig) { r.down(&core.InputDTMFFrame{Digit: "5"}) },
 		"turn": func(r *idleRig) {
 			r.down(&core.TurnEventFrame{Kind: core.TurnEventStarted})
-			r.down(&core.TurnEventFrame{Kind: core.TurnEventNoSpeechTimeout})
+			r.down(&core.TurnEventFrame{Kind: core.TurnEventCompleted})
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
