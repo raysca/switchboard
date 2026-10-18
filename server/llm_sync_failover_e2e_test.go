@@ -175,6 +175,10 @@ func TestCallBehaviorARefusedTaskLosesTheTurnNotTheCall(t *testing.T) {
 	if c.ended() {
 		t.Fatal("a refused task ended the call")
 	}
+	// The client is told about the lost turn with one non-fatal error (a fatal one would have ended the call).
+	if n := countOf(c.wireLog(), "msg:error"); n != 1 {
+		t.Fatalf("client got %d RTVI errors for the refused turn, want 1: %v", n, c.wireLog())
+	}
 	rec := httptest.NewRecorder()
 	r.s.handleMetrics(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if strings.Contains(rec.Body.String(), "voice_llm_failover_total{") {

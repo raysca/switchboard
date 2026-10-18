@@ -1079,7 +1079,8 @@ func (c *Connection) ProcessFrame(ctx context.Context, f core.Frame, dir core.Di
 		// The client gets a category only: ef.Err can carry provider bodies and
 		// project paths, and keeps travelling downstream for logs and the timeline.
 		// ponytail: non-fatal errors are almost all provider failures; add a typed
-		// category on ErrorFrame if the client needs finer detail.
+		// category on ErrorFrame if the client needs finer detail. A local task-budget
+		// refusal (core.ErrTooManyTasks) is reported as provider_error too, as TTS does.
 		category := "provider_error"
 		switch {
 		case errors.Is(ef.Err, context.DeadlineExceeded):
