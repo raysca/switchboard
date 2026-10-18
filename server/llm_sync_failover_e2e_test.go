@@ -115,6 +115,15 @@ type refuseFirstTurnLLM struct {
 	s     core.SessionController
 	index int
 	calls atomic.Int32
+	ctx   func() []core.Message
+	next  atomic.Pointer[[]core.Message] // the history the second request is built from
+}
+
+func (p *refuseFirstTurnLLM) SetContextProvider(fn func() []core.Message) {
+	p.ctx = fn
+	if c, ok := p.Processor.(interface{ SetContextProvider(func() []core.Message) }); ok {
+		c.SetContextProvider(fn)
+	}
 }
 
 func (p *refuseFirstTurnLLM) Attach(s core.SessionController, index int) error {
@@ -128,6 +137,10 @@ func (p *refuseFirstTurnLLM) Attach(s core.SessionController, index int) error {
 func (p *refuseFirstTurnLLM) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	um, ok := f.(*core.UserMessageFrame)
 	if !ok || p.calls.Add(1) > 1 {
+		if ok && p.ctx != nil {
+			h := p.ctx()
+			p.next.Store(&h)
+		}
 		return p.Processor.ProcessFrame(ctx, f, dir, e)
 	}
 	if err := e.PushDirection(f, dir); err != nil {
@@ -174,6 +187,19 @@ func TestCallBehaviorARefusedTaskLosesTheTurnNotTheCall(t *testing.T) {
 	}
 	if c.ended() {
 		t.Fatal("a refused task ended the call")
+	}
+	// What the next request carries: the refused turn's user message stays in the history.
+	h := primary.Load().next.Load()
+	if h == nil {
+		t.Fatal("the second request's history was not captured")
+	}
+	var roles []string
+	for _, m := range *h {
+		roles = append(roles, string(m.Role)+":"+m.Content)
+	}
+	t.Logf("history for the request after a refused turn: %v", roles)
+	if len(roles) < 2 || !strings.Contains(roles[len(roles)-2], "first question") || !strings.Contains(roles[len(roles)-1], "second question") {
+		t.Fatalf("history after a refused turn = %v", roles)
 	}
 	// The client is told about the lost turn with one non-fatal error (a fatal one would have ended the call).
 	if n := countOf(c.wireLog(), "msg:error"); n != 1 {
