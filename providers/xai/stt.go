@@ -29,7 +29,6 @@ type STTConfig struct {
 	Language       string // Default: "en"
 	SampleRate     int    // Default: 16000
 	Encoding       string // Default: "pcm"
-	InterimResults bool   // Default: true
 	APIKey         string // Bearer token
 	CircuitBreaker *resilience.Breaker
 	// RetryPolicy bounds opening the websocket: MaxAttempts tries of
@@ -45,13 +44,12 @@ type STTConfig struct {
 // DefaultSTTConfig returns recommended default settings for xAI STT.
 func DefaultSTTConfig() STTConfig {
 	return STTConfig{
-		Endpoint:       "wss://api.x.ai/v1/stt",
-		Model:          "grok-voice-transcribe-2.0",
-		Language:       "en",
-		SampleRate:     16000,
-		Encoding:       "pcm",
-		InterimResults: true,
-		RetryPolicy:    DefaultSTTOpenPolicy(),
+		Endpoint:    "wss://api.x.ai/v1/stt",
+		Model:       "grok-voice-transcribe-2.0",
+		Language:    "en",
+		SampleRate:  16000,
+		Encoding:    "pcm",
+		RetryPolicy: DefaultSTTOpenPolicy(),
 	}
 }
 
@@ -164,9 +162,7 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 	if cfg.Language != "" {
 		q.Set("language", cfg.Language)
 	}
-	if cfg.InterimResults {
-		q.Set("interim_results", "true")
-	}
+	q.Set("interim_results", "true")
 	if cfg.Model != "" {
 		q.Set("model", cfg.Model)
 	}
