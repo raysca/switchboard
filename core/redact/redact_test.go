@@ -85,6 +85,15 @@ func TestDTMF(t *testing.T) {
 	}
 }
 
+// Known false positive: the key class includes A-D, so prose right after the
+// machine marker loses its first A-D letter (documented in docs/privacy.md).
+func TestDTMFMarkerMasksLeadingLetterOfProse(t *testing.T) {
+	r := mk(t, Config{})
+	if got, want := r.Redact("DTMF: Call me"), "DTMF: [REDACTED:dtmf 1]all me"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 // Every symbol the keypad accepts (dtmf.Digits, including A-D) is masked.
 func TestDTMFMasksFullKeypadAlphabet(t *testing.T) {
 	r := mk(t, Config{})

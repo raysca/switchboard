@@ -53,7 +53,7 @@ func (r *flowRigE2E) waitTurns(id string, n int) {
 }
 
 // assertNoToolContentStored is the privacy pin: whatever the API shows, the stored tool_calls rows carry
-// no argument or result content (the summary columns stay ”).
+// no argument or result content (the summary columns stay "").
 func (r *flowRigE2E) assertNoToolContentStored() {
 	r.t.Helper()
 	var rows, withContent int

@@ -154,7 +154,9 @@ privacy:
   invisible characters (zero-width, bidi controls, soft hyphen) are dropped,
   so they cannot split a number; the stored text changes only in those
   characters. Redacting is idempotent. DTMF: every `DTMF:` marker run loses
-  its keys but keeps the marker and key count.
+  its keys but keeps the marker and key count. The key class includes the
+  letters A-D, so the first A-D letter after a `DTMF:` marker is masked even in
+  prose ("DTMF: Call me" becomes "DTMF: [REDACTED:dtmf 1]all me").
 - **Applied at:** stored turn history (`transcript`, `assistant_text`; admin
   API reads from it), recording sidecar transcript turns, error text in the
   session timeline and the "session failed" log (provider errors can echo
