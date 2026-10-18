@@ -221,16 +221,6 @@ func TestSTT_InterimFinalCumulativeAndFinalizeOnStop(t *testing.T) {
 	}
 }
 
-func TestSTT_OptionalQueryParams(t *testing.T) {
-	cfg := DefaultSTTConfig()
-	cfg.APIKey, cfg.MinVolume, cfg.MaxSilenceSecs = sttKey, 0.2, 1.5
-	p, _ := NewSTTProcessor(cfg)
-	u, _ := p.wsURL()
-	if !strings.Contains(u, "min_volume=0.2") || !strings.Contains(u, "max_silence_duration_secs=1.5") || strings.Contains(u, sttKey) {
-		t.Fatal(u)
-	}
-}
-
 func TestSTT_MissingKey(t *testing.T) {
 	if _, err := NewSTTProcessor(STTConfig{}); !errors.Is(err, ErrMissingAPIKey) {
 		t.Fatal(err)
@@ -631,12 +621,12 @@ func TestSTT_CancelledOpenDoesNotTripBreaker(t *testing.T) {
 	}
 }
 
-func TestSTT_WhisperOnlyParamsOmittedForOtherModels(t *testing.T) {
+func TestSTT_LanguageOmittedForOtherModels(t *testing.T) {
 	cfg := DefaultSTTConfig()
-	cfg.APIKey, cfg.Model, cfg.MinVolume, cfg.MaxSilenceSecs = sttKey, "ink-2", 0.2, 1.5
+	cfg.APIKey, cfg.Model = sttKey, "ink-2"
 	p, _ := NewSTTProcessor(cfg)
 	u, _ := p.wsURL()
-	if strings.Contains(u, "language=") || strings.Contains(u, "min_volume") || strings.Contains(u, "max_silence") || !strings.Contains(u, "model=ink-2") {
+	if strings.Contains(u, "language=") || !strings.Contains(u, "model=ink-2") {
 		t.Fatal(u)
 	}
 }

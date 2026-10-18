@@ -24,32 +24,27 @@ import (
 // text is a delta: finals are concatenated verbatim (no added whitespace), an
 // interim replaces the previous interim.
 
+// sttVersion is the Cartesia-Version sent on the STT websocket (header and query).
+const sttVersion = "2026-08-14"
+
 // STTConfig configures the Cartesia (Ink) streaming transcription processor.
 type STTConfig struct {
 	Endpoint   string // default "wss://api.cartesia.ai/stt/websocket"
-	Version    string // Cartesia-Version (header and cartesia_version query), default "2026-08-14"
 	Model      string // default "ink-whisper"; docs also list "ink-2", "ink-preview"
 	Language   string // default "en"; sent for ink-whisper only (per the docs)
 	SampleRate int    // default 16000; input is 16-bit mono PCM (pcm_s16le)
-	// MinVolume (0-1) and MaxSilenceSecs tune Cartesia's own silence
-	// auto-finalization (ink-whisper only); zero leaves the server default.
-	MinVolume      float64
-	MaxSilenceSecs float64
-	APIKey         string
+	APIKey     string
 	// RetryPolicy bounds opening the websocket (default 2 tries x 5 s).
 	RetryPolicy    resilience.Policy
 	CircuitBreaker *resilience.Breaker
 	// DrainTimeout bounds the wait for the final results after the turn ends
 	// before the socket is torn down.
 	DrainTimeout time.Duration
-	Now          func() time.Time
-	// Pool dials the websocket; default is the process-wide "cartesia"/"stt" pool.
-	Pool *netpool.Pool
 }
 
 func DefaultSTTConfig() STTConfig {
 	return STTConfig{
-		Endpoint: "wss://api.cartesia.ai/stt/websocket", Version: "2026-08-14", Model: "ink-whisper",
+		Endpoint: "wss://api.cartesia.ai/stt/websocket", Model: "ink-whisper",
 		Language: "en", SampleRate: 16000, DrainTimeout: 2 * time.Second,
 		RetryPolicy: resilience.Policy{MaxAttempts: 2, AttemptTimeout: 5 * time.Second, InitialBackoff: 100 * time.Millisecond},
 	}
@@ -70,7 +65,8 @@ type sttMessage struct {
 // in core/sttunit).
 type STTProcessor struct {
 	*sttunit.Runner
-	cfg STTConfig
+	cfg  STTConfig
+	pool *netpool.Pool
 }
 
 var _ core.STTCounters = (*STTProcessor)(nil)
@@ -82,9 +78,6 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	def := DefaultSTTConfig()
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = def.Endpoint
-	}
-	if cfg.Version == "" {
-		cfg.Version = def.Version
 	}
 	if cfg.Model == "" {
 		cfg.Model = def.Model
@@ -98,16 +91,10 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	if cfg.RetryPolicy.MaxAttempts <= 0 {
 		cfg.RetryPolicy = def.RetryPolicy
 	}
-	if cfg.Now == nil {
-		cfg.Now = time.Now
-	}
-	if cfg.Pool == nil {
-		cfg.Pool = netpool.Get(netpool.Options{Provider: "cartesia", Stage: "stt", HTTP1Only: true})
-	}
-	p := &STTProcessor{cfg: cfg}
+	p := &STTProcessor{cfg: cfg, pool: netpool.Get(netpool.Options{Provider: "cartesia", Stage: "stt", HTTP1Only: true})}
 	p.Runner = sttunit.New(sttunit.Config{
 		Provider: "cartesia", Dial: p.dial, Breaker: cfg.CircuitBreaker, Classify: classify,
-		DrainTimeout: cfg.DrainTimeout, Now: cfg.Now,
+		DrainTimeout: cfg.DrainTimeout,
 	})
 	return p, nil
 }
@@ -116,10 +103,10 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 // Skipped while the breaker is open; never reports to it.
 func (p *STTProcessor) Warm(ctx context.Context) error {
 	if br := p.cfg.CircuitBreaker; br != nil && br.WouldRefuse() {
-		p.cfg.Pool.NoteSkipped()
+		p.pool.NoteSkipped()
 		return nil
 	}
-	return p.cfg.Pool.Warm(ctx, p.cfg.Endpoint)
+	return p.pool.Warm(ctx, p.cfg.Endpoint)
 }
 
 // wsURL carries no credential; the key travels in a header only.
@@ -132,18 +119,11 @@ func (p *STTProcessor) wsURL() (string, error) {
 	q.Set("model", p.cfg.Model)
 	q.Set("encoding", "pcm_s16le")
 	q.Set("sample_rate", strconv.Itoa(p.cfg.SampleRate))
-	q.Set("cartesia_version", p.cfg.Version)
-	// language, min_volume and max_silence_duration_secs are documented as
-	// ink-whisper only; other models (ink-2, ink-preview) do not get them.
+	q.Set("cartesia_version", sttVersion)
+	// language is documented as ink-whisper only; other models (ink-2, ink-preview) do not get it.
 	whisper := strings.HasPrefix(p.cfg.Model, "ink-whisper")
 	if whisper && p.cfg.Language != "" {
 		q.Set("language", p.cfg.Language)
-	}
-	if whisper && p.cfg.MinVolume > 0 {
-		q.Set("min_volume", strconv.FormatFloat(p.cfg.MinVolume, 'f', -1, 64))
-	}
-	if whisper && p.cfg.MaxSilenceSecs > 0 {
-		q.Set("max_silence_duration_secs", strconv.FormatFloat(p.cfg.MaxSilenceSecs, 'f', -1, 64))
 	}
 	u.RawQuery = q.Encode()
 	return u.String(), nil
@@ -160,8 +140,8 @@ func (p *STTProcessor) dial(ctx context.Context) (sttunit.Conn, error) {
 	if br != nil && br.WouldRefuse() {
 		return nil, ErrCircuitOpen
 	}
-	opts := &websocket.DialOptions{HTTPClient: p.cfg.Pool.Client(0),
-		HTTPHeader: http.Header{"X-API-Key": {p.cfg.APIKey}, "Cartesia-Version": {p.cfg.Version}}}
+	opts := &websocket.DialOptions{HTTPClient: p.pool.Client(0),
+		HTTPHeader: http.Header{"X-API-Key": {p.cfg.APIKey}, "Cartesia-Version": {sttVersion}}}
 	conn, err := resilience.OpenBounded(ctx, p.cfg.RetryPolicy, classify, func(actx context.Context) (*websocket.Conn, error) {
 		c, resp, derr := websocket.Dial(actx, target, opts)
 		if derr != nil {
