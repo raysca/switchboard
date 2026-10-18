@@ -341,7 +341,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.dialFailed = false
 		p.turnID = fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq)
 		p.streamGen = frame.Gen
-		var old, parked *activeSTTStream
+		var parked *activeSTTStream
 		if p.active != nil {
 			p.active.mu.Lock()
 			owned := p.active.turnID != "" && (p.active.turnID != p.turnID || p.active.gen != frame.Gen)
@@ -353,11 +353,9 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 				parked = p.active
 				p.draining = append(p.draining, p.active)
 				p.active = nil
-				old = p.trimDrainingLocked()
 			}
 		}
 		p.mu.Unlock()
-		p.stopStream(old)
 		_ = p.beginDrain(ctx, parked) // another turn's stream finalizes and drains on its own
 		if err := p.ensure(ctx); err != nil {
 			p.ErrorsTotal.Add(1)
@@ -372,7 +370,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.dialFailed = false
 			p.turnID = string(frame.Turn)
 			p.streamGen = uint64(frame.Gen)
-			var old, parked *activeSTTStream
+			var parked *activeSTTStream
 			if p.active != nil {
 				p.active.mu.Lock()
 				if p.active.turnID == p.turnID && p.active.gen < p.streamGen {
@@ -388,11 +386,9 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 					parked = p.active
 					p.draining = append(p.draining, p.active)
 					p.active = nil
-					old = p.trimDrainingLocked()
 				}
 			}
 			p.mu.Unlock()
-			p.stopStream(old)
 			_ = p.beginDrain(ctx, parked)
 		case core.TurnEventCompleted:
 			if err := p.completeStream(ctx, string(frame.Turn), uint64(frame.Gen)); err != nil {
@@ -411,15 +407,13 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		// stop opens a fresh unbound stream that the next UserStarted adopts, so a quick resume
 		// keeps its onset instead of feeding a stream that already got audio.done.
 		p.mu.Lock()
-		active, old := p.active, (*activeSTTStream)(nil)
+		active := p.active
 		if active != nil {
 			p.active = nil
 			p.draining = append(p.draining, active)
-			old = p.trimDrainingLocked()
 		}
 		p.turnID, p.streamGen = "", 0
 		p.mu.Unlock()
-		p.stopStream(old)
 		if active != nil {
 			if err := p.beginDrain(ctx, active); err != nil {
 				return err
@@ -1049,16 +1043,6 @@ func (p *STTProcessor) stopMatchingStream(turn string, gen uint64) {
 	}
 	p.mu.Unlock()
 	p.stopStream(st)
-}
-
-func (p *STTProcessor) trimDrainingLocked() *activeSTTStream {
-	const maxDrainingStreams = 8
-	if len(p.draining) <= maxDrainingStreams {
-		return nil
-	}
-	oldest := p.draining[0]
-	p.draining = p.draining[1:]
-	return oldest
 }
 
 func (p *STTProcessor) releaseStream(st *activeSTTStream) {
