@@ -2,6 +2,7 @@ package vad
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -386,5 +387,80 @@ func TestDetectorStateCheckpointRecovery(t *testing.T) {
 		if proc.state[i] != nextState[i] || proc.checkpointState[i] != nextState[i] {
 			t.Fatalf("state not updated on success: state=%v, checkpoint=%v", proc.state[i], proc.checkpointState[i])
 		}
+	}
+}
+
+// crashableWorker is a vadworker launcher that exits at once while flag exists, so a killed worker's
+// restarts keep failing (a crash loop) until the test removes the flag.
+func crashableWorker(t *testing.T, flag string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "vadworker.sh")
+	script := "#!/bin/sh\n[ -e '" + flag + "' ] && exit 1\nexec '" + WorkerBinary() + "' \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A worker that crash-loops must not leave the sessions pinned to it VAD-blind: from the first chunk after the
+// crash they are served by the live worker, while the dead one keeps retrying off its run loop and comes back
+// once it can start again.
+func TestWorkerProcess_CrashLoopingWorkerHandsItsSessionsToALiveOne(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "crash")
+	exec, err := New(Config{Mode: "process", Workers: 2, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1,
+		ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond, WorkerBinary: crashableWorker(t, flag)})
+	if err != nil {
+		t.Fatalf("new worker process executor: %v", err)
+	}
+	defer exec.Close()
+	st := exec.Register(0) // session 0 -> worker 0
+	defer st.Close()
+	run := func(seq uint64) error {
+		done := make(chan error, 1)
+		if err := st.Submit(&Job{Seq: seq, Done: func(j *Job) { done <- j.Err }}); err != nil {
+			return err
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(2 * time.Second):
+			return errors.New("the chunk never finished")
+		}
+	}
+	waitUntil := func(what string, cond func() bool) {
+		t.Helper()
+		for end := time.Now().Add(5 * time.Second); !cond(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(end) {
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
+	}
+	if err := run(1); err != nil {
+		t.Fatalf("warm-up: %v", err)
+	}
+	if err := os.WriteFile(flag, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.HardKill(0); err != nil {
+		t.Fatal(err)
+	}
+	for seq := uint64(2); seq <= 40; seq++ {
+		if err := run(seq); err != nil {
+			t.Fatalf("chunk %d after worker 0 crashed: %v", seq, err)
+		}
+	}
+	waitUntil("worker 0 to crash-loop", func() bool { return exec.Stats().Restarts >= 3 })
+	if avail, total := exec.Capacity(); avail != 1 || total != 2 {
+		t.Fatalf("capacity (%d,%d) while worker 0 crash-loops, want (1,2)", avail, total)
+	}
+	if err := run(100); err != nil {
+		t.Fatalf("a chunk during the crash loop: %v", err)
+	}
+	if err := os.Remove(flag); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil("worker 0 to come back", func() bool { a, _ := exec.Capacity(); return a == 2 })
+	if err := run(101); err != nil {
+		t.Fatalf("a chunk after recovery: %v", err)
 	}
 }

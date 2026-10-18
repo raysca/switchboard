@@ -189,7 +189,7 @@ docker stop -t 60 govoice-server   # at least drain_timeout + 5 s (50 s in produ
 
 ### Incident 1: Native VAD Worker Crash
 - **Symptoms**: Alert `GovoiceVADWorkerRestarts` (`increase(voice_vad_worker_restarts_total[10m]) > 5`) or `GovoiceVADUnavailable` (admission rejects with `reason="vad_unavailable"`).
-- **Underlying Mechanism**: A Silero VAD C/ONNX native routine crashed (e.g. SIGSEGV).
+- **Underlying Mechanism**: A Silero VAD C/ONNX native routine crashed (e.g. SIGSEGV). While a worker restarts (or crash-loops), the chunks of the calls pinned to it are handed to a live worker (each chunk carries its detector state), so those callers keep their VAD; the worker is out of `vad_unavailable` capacity until it starts again, and restarts back off from 20 ms to 1 s off the worker's run loop. A batch whose worker died under it (a pipe failure, e.g. a SIGKILL) is re-run on a live worker; a batch that hung past its deadline fails, and chunks are lost while every worker is down. The child's stderr tail is kept in memory (64 KB) but not logged.
 - **Automated Mitigation**: The parent process detects the child exit, reaps the PID via `cmd.Wait()`, updates capacity, and automatically spawns a healthy replacement worker with exponential backoff.
 - **Action Required**: Inspect `journalctl -u govoice.service` for child stderr diagnostics (bounded to 64KB). Verify that the host is not experiencing OOM kills (`dmesg -T | grep -i oom`).
 

@@ -8,18 +8,17 @@ import (
 func TestWorkerRespawnFailuresDoNotDrainCapacity(t *testing.T) {
 	b := &workerProcessBackend{cfg: Config{WorkerBinary: "/nonexistent/vadworker"}}
 	for i := 0; i < 2; i++ {
-		b.workers = append(b.workers, &workerProcess{id: i, backend: b, stderr: newBoundedBuffer(64)})
+		b.workers = append(b.workers, &workerProcess{id: i, backend: b, stderr: newBoundedBuffer(64), quit: make(chan struct{})})
 	}
 	b.availCount.Store(2)
-
+	defer func() { b.workers[0].close(); b.workers[0].wg.Wait() }() // ends the respawnLoop
 	for i := 0; i < 3; i++ {
-		if b.workers[0].respawnWithBackoff() {
-			t.Fatal("respawn of a missing binary succeeded")
-		}
+		b.workers[0].markDown() // the respawn of the missing binary keeps failing meanwhile
 	}
 	if avail, _ := b.capacity(); avail != 1 {
 		t.Fatalf("available = %d after repeated failed respawns of one worker, want 1", avail)
 	}
+
 }
 
 // A parent descheduled past the deadline (timer and reply ready together, or
