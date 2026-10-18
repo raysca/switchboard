@@ -122,7 +122,7 @@ type workerProcess struct {
 	up         atomic.Bool   // healthy and serving: handOff only sends to an up worker
 	quit       chan struct{} // closed by close: ends respawnLoop's wait
 	closed     bool
-	gapHook    func() // test seam: runs between executeBatch's health read and markDown
+	gapHook    func() // deliberate nil-in-production test seam, read under the wp.mu executeBatch already holds; runs between its health read and markDown
 	wg         sync.WaitGroup
 	inFlightMu sync.Mutex
 	inFlight   map[uint64]*Job
