@@ -85,6 +85,8 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_user_idle_hangups_total` | Counter | Calls ended after the user stayed silent |
 | `voice_otel_spans_dropped_total` / `voice_otel_spans_failed_total` | Counter | OTel export losses (only with `otel.enabled`) |
 
+Every closed connection counts exactly one disconnect by cause (normal, client, server, timeout), so the causes sum to the connections closed; a frame the server rejects (1007/1008/1009), an admission or setup refusal (1013/1011), a drain and any call the server ends itself (end of call, fatal error, idle hang-up, slow client, ready timeout) are `server`; the client's `disconnect-bot` is `normal`; a client that stops answering pings is `client`. Messages larger than 21 KB (the largest valid frame is a 16 KB RTVI message) are refused with 1009.
+
 The series for smart-turn, audio filters, summaries, failover and warm-up are described in the runbook sections for those features.
 
 

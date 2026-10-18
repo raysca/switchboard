@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	MaxEncodedFrameSize   = 64 * 1024 // 64 KB maximum protobuf binary frame
+	MaxEncodedFrameSize   = 20 * 1024 // the largest valid frame is a 16 KB message plus a few bytes (audio is at most 4 KB)
 	MaxAudioBytes         = 4096      // Max 4 KB raw PCM16 per 20-40ms chunk
 	MaxMessageDataBytes   = 16 * 1024 // Max 16 KB nested message/RTVI JSON string
 	MinChunkDuration      = 10 * time.Millisecond

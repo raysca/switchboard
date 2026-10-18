@@ -426,10 +426,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	// The library default (32 KB) is below the advertised MaxEncodedFrameSize. The limit
-	// carries 1 KB of headroom so a message just over the max reaches DecodeBinaryFrame and
-	// ends as a protocol error (1007, "protocol_error"); anything larger is closed by the
-	// library (1009), which observeDisconnect also records as protocol_error + disconnect_server.
+	// The read limit is MaxEncodedFrameSize plus 1 KB of headroom, below the
+	// library's 32 KB default: it bounds what one socket can make the server
+	// buffer. A message just over the max reaches DecodeBinaryFrame and ends as a
+	// protocol error (1007, "protocol_error"); anything larger is closed by the
+	// library (1009), which readLoop records as protocol_error + disconnect_server.
 	wsConn.SetReadLimit(MaxEncodedFrameSize + readLimitHeadroom)
 	// The handshake is finished. Pending slots must not be held for the call.
 	releasePending()
@@ -664,6 +665,12 @@ func (c *Connection) pingLoop() {
 }
 
 func (c *Connection) readLoop() {
+	// Every exit counts one disconnect_<cause>, so they sum to client_disconnected:
+	// a failed Read classifies itself; the client's disconnect-bot is normal;
+	// every other return is the server closing the socket (1007, 1008, 1011,
+	// 1013, going away).
+	cause := "server"
+	defer func() { c.observe("disconnect_"+cause, 1) }()
 	for {
 		readCtx := c.ctx
 		var cancel context.CancelFunc
@@ -678,8 +685,16 @@ func (c *Connection) readLoop() {
 			cancel()
 		}
 		if err != nil {
-			c.observeDisconnect(err)
-			c.traceEvent("transport.disconnect", map[string]any{"reason": disconnectCategory(err)})
+			cause = disconnectCategory(err)
+			if cause == "client" && c.ctx.Err() != nil && c.CloseCause() != "peer_unresponsive" {
+				// The server ended the call from outside this loop (Close, hang-up,
+				// ready timeout); a client that stopped answering pings stays "client".
+				cause = "server"
+			}
+			if errors.Is(err, websocket.ErrMessageTooBig) {
+				c.observe("protocol_error", 1) // past the read limit: the library closed with 1009
+			}
+			c.traceEvent("transport.disconnect", map[string]any{"reason": cause})
 			return
 		}
 
@@ -741,6 +756,7 @@ func (c *Connection) readLoop() {
 			}
 			if respFrame != nil {
 				if _, ok := respFrame.(*core.EndFrame); ok {
+					cause = "normal" // the client's own disconnect-bot
 					c.traceEvent("transport.rtvi_disconnect", nil)
 					c.Close()
 					return
@@ -814,28 +830,9 @@ func (c *Connection) resampleInput(samples []byte, inRate int) ([]byte, error) {
 	return r.ResamplePCM16(samples)
 }
 
-// Close gracefully terminates the connection.
-func (c *Connection) observeDisconnect(err error) {
-	if c.cfg.Observe == nil {
-		return
-	}
-	if errors.Is(err, websocket.ErrMessageTooBig) {
-		// A message past the read limit (the library sent 1009): a protocol violation, not a client hang-up.
-		c.cfg.Observe("protocol_error", 1)
-		c.cfg.Observe("disconnect_server", 1)
-		return
-	}
-	switch websocket.CloseStatus(err) {
-	case websocket.StatusNormalClosure, websocket.StatusGoingAway:
-		c.cfg.Observe("disconnect_normal", 1)
-	case websocket.StatusPolicyViolation, websocket.StatusUnsupportedData, websocket.StatusInternalError:
-		c.cfg.Observe("disconnect_server", 1)
-	default:
-		if errors.Is(err, context.DeadlineExceeded) {
-			c.cfg.Observe("disconnect_timeout", 1)
-			return
-		}
-		c.cfg.Observe("disconnect_client", 1)
+func (c *Connection) observe(event string, n uint64) {
+	if c.cfg.Observe != nil {
+		c.cfg.Observe(event, n)
 	}
 }
 
