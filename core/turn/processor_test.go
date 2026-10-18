@@ -55,14 +55,13 @@ type fakeSTT struct {
 }
 
 type harness struct {
-	t     *testing.T
-	clk   *fakeClock
-	sess  *core.Session
-	stt   *fakeSTT
-	sink  *coretest.PassthroughProcessor
-	asst  *core.AssistantContextProcessor
-	proc  *Processor
-	turns int
+	t    *testing.T
+	clk  *fakeClock
+	sess *core.Session
+	stt  *fakeSTT
+	sink *coretest.PassthroughProcessor
+	asst *core.AssistantContextProcessor
+	proc *Processor
 }
 
 func newHarness(t *testing.T, cfg Config) *harness {
