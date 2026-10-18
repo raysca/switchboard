@@ -29,7 +29,7 @@ func TestLoadConfig_DocumentedDefaults(t *testing.T) {
 		"public addr":           c.PublicListenAddr == "127.0.0.1:8080",
 		"admin addr":            c.AdminListenAddr == "127.0.0.1:9090",
 		"storage sqlite":        c.Storage.Dialect == "sqlite",
-		"token lifetime 5m":     c.Token.MaxLifetime == 5*time.Minute,
+		"token lifetime 1m":     c.Token.MaxLifetime == time.Minute,
 		"token skew 30s":        c.Token.ClockSkew == 30*time.Second,
 		"token key id":          c.Token.KeyID == "v1",
 		"max_sessions 100":      c.Limits.MaxSessions == 100,

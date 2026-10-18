@@ -40,7 +40,7 @@
   "Secret": "dev-insecure-secret-key-for-testing-only-12345",
   "Issuer": "govoice-v1",
   "Audience": "govoice-v1-client",
-  "MaxLifetime": 300000000000,
+  "MaxLifetime": 60000000000,
   "ClockSkew": 30000000000,
   "ReplayCacheLimit": 10000,
   "KeyID": "v1"

@@ -178,12 +178,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// effectiveVoiceTokenLifetime is how long an issued voice token is valid:
+// token.max_lifetime (default 1 m), in whole seconds so exp-iat stays within
+// the validator's ceiling, which is the same setting.
 func (s *Server) effectiveVoiceTokenLifetime() time.Duration {
 	lifetime := s.cfg.Token.MaxLifetime
 	if lifetime <= 0 {
-		lifetime = 5 * time.Minute
+		lifetime = time.Minute
 	}
-	return min(time.Minute, lifetime).Truncate(time.Second)
+	return lifetime.Truncate(time.Second)
 }
 
 // flowCallable reports whether a flow in this readiness state may run calls.

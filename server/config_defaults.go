@@ -25,7 +25,7 @@ func DefaultConfig(profile Profile) *Config {
 	cfg.Token.Issuer = "govoice-v1"
 	cfg.Token.Audience = "govoice-v1-client"
 	cfg.Token.KeyID = "v1"
-	cfg.Token.MaxLifetime = 5 * time.Minute
+	cfg.Token.MaxLifetime = time.Minute
 	cfg.Token.ClockSkew = 30 * time.Second
 	cfg.Token.ReplayCacheLimit = 10000
 

@@ -41,7 +41,7 @@ token:
   secret_env: "TOKEN_SECRET"
   issuer: "govoice-v1"
   audience: "govoice-v1-client"
-  max_lifetime: 5m
+  max_lifetime: 1m
   clock_skew: 30s
   replay_cache_limit: 50000
   key_id: "v1"
