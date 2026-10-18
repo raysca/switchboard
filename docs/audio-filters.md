@@ -49,7 +49,7 @@ Known limits: needs a pause per frequency bin within about 1.5 s to find the noi
 
 ## Pluggable replacements
 
-RNNoise, Krisp and AIC are not implemented. Each would be another `Filter` registered in `knownInputFilters` (`server/audiofilter.go`). Native ones should run in a supervised worker process like the VAD worker, with the `Filter` talking to it over a pipe and failing open on worker loss. Chain them with `denoise` or instead of it. Their latency must report via `Delayer`.
+RNNoise, Krisp and AIC are not implemented. Each would be another `Filter` registered in `knownInputFilters` (`server/audiofilter.go`). Native ones should run in a supervised worker process like the VAD worker, with the `Filter` talking to it over a pipe and failing open on worker loss. Chain them with `denoise` or instead of it. Any algorithmic delay must be constant and fixed.
 
 ## Observability
 

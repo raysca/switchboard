@@ -23,7 +23,7 @@ var ErrUnsupportedRate = errors.New("filter: unsupported sample rate")
 // one session; it is not safe for concurrent use.
 //
 // Contract: Process returns a NEW slice of len(pcm) and never mutates pcm.
-// Any algorithmic delay is constant and fixed (see Delayer); the output is the
+// Any algorithmic delay is constant and fixed; the output is the
 // input delayed by that amount, so chunking never changes the result.
 // Implementations that wrap native code (RNNoise, Krisp, AIC) or a remote
 // worker satisfy the same interface; the chain does not care.
@@ -35,9 +35,6 @@ type Filter interface {
 	Reset()
 	Close() error
 }
-
-// Delayer is optionally implemented by filters that add algorithmic latency.
-type Delayer interface{ Delay() time.Duration }
 
 // Namer is optionally implemented by filters; the name labels metrics.
 type Namer interface{ Name() string }
@@ -55,9 +52,6 @@ func NewChain(filters ...Filter) *Chain { return &Chain{filters: filters} }
 
 // SetObserver installs a timing hook; nil disables it. Call before use.
 func (c *Chain) SetObserver(o Observer) { c.obs = o }
-
-// Len is the number of filters.
-func (c *Chain) Len() int { return len(c.filters) }
 
 func (c *Chain) Process(pcm []int16, rate int) ([]int16, error) {
 	cur := pcm
@@ -96,17 +90,6 @@ func (c *Chain) Close() error {
 		errs = append(errs, f.Close())
 	}
 	return errors.Join(errs...)
-}
-
-// Delay is the summed algorithmic latency of the chain.
-func (c *Chain) Delay() time.Duration {
-	var d time.Duration
-	for _, f := range c.filters {
-		if x, ok := f.(Delayer); ok {
-			d += x.Delay()
-		}
-	}
-	return d
 }
 
 func nameOf(f Filter) string {
