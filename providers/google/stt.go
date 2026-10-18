@@ -444,9 +444,6 @@ func (p *STTProcessor) Close() error {
 // ProcessFrame handles incoming pipeline frames.
 func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch frame := f.(type) {
-	case *core.StartFrame:
-		return e.PushDirection(f, dir)
-
 	case *core.UserStartedSpeakingFrame:
 		p.mu.Lock()
 		old := p.setPendingOwnershipLocked(fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq), frame.Gen)
@@ -509,9 +506,6 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 				_ = oldStream.Close()
 			}
 		}
-		return e.PushDirection(f, dir)
-
-	case *core.CancelFrame:
 		return e.PushDirection(f, dir)
 
 	default:

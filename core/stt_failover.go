@@ -213,7 +213,7 @@ func (w *STTFailover) ProcessFrame(ctx context.Context, f Frame, dir Direction, 
 	switch f.(type) {
 	case *TurnEventFrame:
 		return w.deliver(ctx, f, 0, dir, e, false)
-	case *InterruptionFrame, *CancelFrame:
+	case *InterruptionFrame:
 		return w.deliver(ctx, f, 0, dir, e, true)
 	}
 	if dir != Downstream {

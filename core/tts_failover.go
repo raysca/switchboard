@@ -199,7 +199,7 @@ func (w *TTSFailover) ProcessFrame(ctx context.Context, f Frame, dir Direction, 
 	case *ttsRun:
 		w.run(fr.u) // a candidate's re-entry started or retried a unit: driven here, on the run loop
 		return nil
-	case *InterruptionFrame, *CancelFrame:
+	case *InterruptionFrame:
 		w.mu.Lock()
 		w.cur.stop()
 		w.queue, w.cur, w.done, w.carry = nil, nil, nil, nil

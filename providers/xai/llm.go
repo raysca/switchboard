@@ -178,15 +178,6 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 		p.mu.Unlock()
 		return e.PushDirection(f, dir)
 
-	case *core.CancelFrame:
-		p.mu.Lock()
-		if p.activeCancel != nil {
-			p.activeCancel()
-			p.activeCancel = nil
-		}
-		p.mu.Unlock()
-		return e.PushDirection(f, dir)
-
 	case *core.LLMTextDeltaFrame, *core.LLMTextFrame:
 		// Re-entered frames proceed downstream
 		return e.Push(f)

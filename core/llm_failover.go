@@ -172,7 +172,7 @@ func (w *LLMFailover) ProcessFrame(ctx context.Context, f Frame, dir Direction, 
 	switch fr := f.(type) {
 	case *UserMessageFrame:
 		return w.begin(ctx, fr, dir, e)
-	case *InterruptionFrame, *CancelFrame:
+	case *InterruptionFrame:
 		w.mu.Lock()
 		var active Processor
 		if g := w.cur; g != nil {

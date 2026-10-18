@@ -262,14 +262,6 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.mu.Unlock()
 		return e.Push(f)
 
-	case *core.CancelFrame:
-		p.mu.Lock()
-		p.cancelAllLocked()
-		p.finishedSeq = p.nextSeq
-		p.cond.Broadcast()
-		p.mu.Unlock()
-		return e.Push(f)
-
 	default:
 		return e.PushDirection(f, dir)
 	}

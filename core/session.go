@@ -825,7 +825,7 @@ func (s *Session) processEnvelope(env Envelope) bool {
 		return false
 	}
 
-	// If StartFrame or EndFrame, handle lifecycle
+	// If EndFrame, close
 	if env.Frame.Type() == FrameEnd {
 		go s.Close()
 		return false
@@ -988,9 +988,6 @@ func frameTrace(f Frame) (string, map[string]any) {
 		return "tool.failed", attrs
 	case *TTSStartedFrame:
 		return "tts.started", attrs
-	case *TTSAudioFrame:
-		attrs["count"], attrs["sample_rate"], attrs["channels"], attrs["duration_ms"] = len(v.Audio), v.SampleRate, v.Channels, float64(v.Duration.Microseconds())/1000
-		return "tts.audio_chunk", attrs
 	case *TTSStoppedFrame:
 		return "tts.stopped", attrs
 	case *TurnEventFrame:
@@ -1068,8 +1065,6 @@ func traceTurnID(f Frame) TurnID {
 	case *SynthesisUnitFrame:
 		return TurnID(v.Turn)
 	case *TTSStartedFrame:
-		return TurnID(v.Turn)
-	case *TTSAudioFrame:
 		return TurnID(v.Turn)
 	case *TTSStoppedFrame:
 		return TurnID(v.Turn)
@@ -1251,7 +1246,7 @@ func isControlFrame(f Frame) bool {
 		return false
 	}
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
+	case FrameEnd, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
 		return true
 	default:
 		return false
@@ -1268,7 +1263,7 @@ func isFenceSurvivingControl(f Frame) bool {
 		return true
 	}
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
+	case FrameEnd, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
 		return true
 	}
 	return false
@@ -1277,8 +1272,6 @@ func isFenceSurvivingControl(f Frame) bool {
 func isUninterruptibleOutput(f Frame) bool {
 	switch v := f.(type) {
 	case *OutputAudioFrame:
-		return v.Disposition == OutputUninterruptible
-	case *TTSAudioFrame:
 		return v.Disposition == OutputUninterruptible
 	}
 	return false
@@ -1294,7 +1287,7 @@ func isInterruptibleOutput(f Frame) bool {
 		return false
 	}
 	switch f.Type() {
-	case FrameLLMTextDelta, FrameLLMText, FrameSynthesisUnit, FrameOutputTurnFinal, FrameTTSStarted, FrameTTSAudio, FrameTTSStopped, FrameOutputAudio, FrameAssistantMessage:
+	case FrameLLMTextDelta, FrameLLMText, FrameSynthesisUnit, FrameOutputTurnFinal, FrameTTSStarted, FrameTTSStopped, FrameOutputAudio, FrameAssistantMessage:
 		return !isUninterruptibleOutput(f)
 	}
 	return false

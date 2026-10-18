@@ -144,7 +144,7 @@ func (t *FakeTTS) ProcessFrame(_ context.Context, f core.Frame, dir core.Directi
 		}
 		t.task(func(ctx context.Context) { t.speak(ctx, fr) })
 		return nil
-	case *core.InterruptionFrame, *core.CancelFrame:
+	case *core.InterruptionFrame:
 		if t.fault != FaultNoInterrupt {
 			t.cancelAll()
 		}
@@ -295,7 +295,7 @@ func (l *FakeLLM) ProcessFrame(_ context.Context, f core.Frame, dir core.Directi
 		}
 		l.task(func(ctx context.Context) { l.reply(ctx, fr) })
 		return nil
-	case *core.InterruptionFrame, *core.CancelFrame:
+	case *core.InterruptionFrame:
 		if l.fault != FaultNoInterrupt {
 			l.cancelAll()
 		}

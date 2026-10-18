@@ -105,7 +105,7 @@ func (r *Runner) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direct
 	switch fr := f.(type) {
 	case *core.SynthesisUnitFrame:
 		return r.synthesizeUnit(ctx, fr, e)
-	case *core.InterruptionFrame, *core.CancelFrame:
+	case *core.InterruptionFrame:
 		r.mu.Lock()
 		r.cancelAllLocked()
 		r.mu.Unlock()

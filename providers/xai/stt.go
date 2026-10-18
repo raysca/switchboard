@@ -336,9 +336,6 @@ func (p *STTProcessor) Close() error {
 // ProcessFrame processes frames traversing the pipeline.
 func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch frame := f.(type) {
-	case *core.StartFrame:
-		return e.PushDirection(f, dir)
-
 	case *core.UserStartedSpeakingFrame:
 		p.mu.Lock()
 		p.dialFailed = false
@@ -444,20 +441,6 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.active = nil
 		p.mu.Unlock()
 		p.stopStream(old)
-		return e.PushDirection(f, dir)
-
-	case *core.CancelFrame:
-		p.mu.Lock()
-		streams := append([]*activeSTTStream(nil), p.draining...)
-		if p.active != nil {
-			streams = append(streams, p.active)
-		}
-		p.active = nil
-		p.draining = nil
-		p.mu.Unlock()
-		for _, st := range streams {
-			p.stopStream(st)
-		}
 		return e.PushDirection(f, dir)
 
 	default:

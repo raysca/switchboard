@@ -37,20 +37,20 @@ const (
 
 	// TTS frames
 	FrameTTSStarted FrameType = 500 + iota
-	FrameTTSAudio
+	_                         // TTS audio frame, deleted in Phase 5
 	FrameTTSStopped
 
 	// Conversation context frames
 	FrameUserMessage FrameType = 600 + iota
 	FrameAssistantMessage
-	FrameSystemMessage
+	_ // System message frame, deleted in Phase 5
 	FrameToolCall
 	FrameToolResult
 
 	// Lifecycle and control frames
-	FrameStart FrameType = 700 + iota
+	_ FrameType = 700 + iota // Start frame, deleted in Phase 5
 	FrameEnd
-	FrameCancel
+	_ // Cancel frame, deleted in Phase 5
 	FrameError
 	FrameInterruption
 	FrameFlush
@@ -311,22 +311,6 @@ type TTSStartedFrame struct {
 func (f *TTSStartedFrame) Type() FrameType    { return FrameTTSStarted }
 func (f *TTSStartedFrame) Generation() uint64 { return f.Gen }
 
-// TTSAudioFrame carries synthesized audio from the TTS provider.
-type TTSAudioFrame struct {
-	Audio       []byte
-	SampleRate  int
-	Channels    int
-	Duration    time.Duration
-	Turn        string
-	Gen         uint64
-	UnitID      uint64
-	IsFinal     bool
-	Disposition OutputDisposition
-}
-
-func (f *TTSAudioFrame) Type() FrameType    { return FrameTTSAudio }
-func (f *TTSAudioFrame) Generation() uint64 { return f.Gen }
-
 // TTSStoppedFrame marks completion of synthesis for a turn/unit.
 type TTSStoppedFrame struct {
 	Turn   string
@@ -364,14 +348,6 @@ type AssistantMessageFrame struct {
 func (f *AssistantMessageFrame) Type() FrameType    { return FrameAssistantMessage }
 func (f *AssistantMessageFrame) Generation() uint64 { return f.Gen }
 
-// SystemMessageFrame injects or replaces the provider-neutral system instruction.
-type SystemMessageFrame struct {
-	Content   string
-	Timestamp time.Time
-}
-
-func (f *SystemMessageFrame) Type() FrameType { return FrameSystemMessage }
-
 // ToolCallFrame and ToolResultFrame carry the public V2 tool contracts through
 // the pipeline while retaining turn/generation correlation on results.
 type ToolCallFrame struct {
@@ -407,24 +383,10 @@ func (*ToolResultFrame) SurvivesGenerationFence() {}
 // Lifecycle and Control Frames
 // -------------------------------------------------------------------------
 
-// StartFrame signals pipeline initialization.
-type StartFrame struct{}
-
-func (f *StartFrame) Type() FrameType { return FrameStart }
-
 // EndFrame signals orderly session termination.
 type EndFrame struct{}
 
 func (f *EndFrame) Type() FrameType { return FrameEnd }
-
-// CancelFrame signals immediate cancellation of the active operation.
-type CancelFrame struct {
-	Reason string
-	Gen    uint64
-}
-
-func (f *CancelFrame) Type() FrameType    { return FrameCancel }
-func (f *CancelFrame) Generation() uint64 { return f.Gen }
 
 // ErrorFrame carries an unrecoverable or informational error.
 type ErrorFrame struct {

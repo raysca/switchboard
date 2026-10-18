@@ -246,7 +246,7 @@ func (r *Runner) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direct
 	case *core.UserStoppedSpeakingFrame:
 		r.finishActive(ctx, "", 0)
 		return e.PushDirection(f, dir)
-	case *core.InterruptionFrame, *core.CancelFrame:
+	case *core.InterruptionFrame:
 		r.mu.Lock()
 		if _, ok := f.(*core.InterruptionFrame); ok && r.session != nil && r.turn != "" {
 			// Barge-in advanced the generation: the rest of this utterance opens
