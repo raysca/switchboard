@@ -24,7 +24,6 @@ import (
 
 // STTConfig configures the Google Speech-to-Text V2 processor.
 type STTConfig struct {
-	Endpoint                string        // Pinned: "speech.googleapis.com"
 	Model                   string        // Pinned: "chirp_2"
 	LanguageCode            string        // Default: "en-US"
 	StreamRotationThreshold time.Duration // Pinned: 240s (shorter for tests)
@@ -45,7 +44,6 @@ type STTConfig struct {
 // DefaultSTTConfig returns the configuration matching v1-lock.json.
 func DefaultSTTConfig() STTConfig {
 	return STTConfig{
-		Endpoint:                "speech.googleapis.com",
 		Model:                   "chirp_2",
 		LanguageCode:            "en-US",
 		StreamRotationThreshold: 240 * time.Second,
@@ -92,9 +90,6 @@ func speechEndpoint(cfg STTConfig) string {
 	loc := cfg.Location
 	if loc == "" {
 		loc = "us-central1"
-	}
-	if cfg.Endpoint != "" && cfg.Endpoint != "speech.googleapis.com" {
-		return cfg.Endpoint
 	}
 	if loc == "global" {
 		return "speech.googleapis.com"
@@ -374,9 +369,6 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	}
 	if cfg.Model == "" {
 		cfg.Model = "chirp_2"
-	}
-	if cfg.Endpoint == "" {
-		cfg.Endpoint = "speech.googleapis.com"
 	}
 	if cfg.StreamRotationThreshold <= 0 {
 		cfg.StreamRotationThreshold = 240 * time.Second

@@ -97,7 +97,6 @@ func TestTTS_HeaderlessPCM20msChunking(t *testing.T) {
 
 	cfg := DefaultTTSConfig()
 	cfg.SampleRate = 24000
-	cfg.ChunkDuration = 20 * time.Millisecond
 	cfg.Client = mockClient
 
 	proc, _ := NewTTSProcessor(cfg)
