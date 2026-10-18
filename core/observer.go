@@ -26,10 +26,9 @@ func (s *Subscription) Dropped() uint64 { return s.dropped.Load() }
 // observerSet is a per-session fan-out of DebugEvents. emit never blocks: a full
 // buffer drops the event for that observer only and counts it.
 type observerSet struct {
-	mu      sync.RWMutex
-	subs    map[*Subscription]struct{}
-	n       atomic.Int32  // len(subs); lock-free "anyone listening?" for hot paths
-	dropped atomic.Uint64 // total, survives unsubscribed observers
+	mu   sync.RWMutex
+	subs map[*Subscription]struct{}
+	n    atomic.Int32 // len(subs); lock-free "anyone listening?" for hot paths
 }
 
 // emit offers e to every subscriber without blocking.
@@ -41,7 +40,6 @@ func (o *observerSet) emit(e DebugEvent) {
 		case s.ch <- e:
 		default:
 			s.dropped.Add(1)
-			o.dropped.Add(1)
 		}
 	}
 }
@@ -96,6 +94,3 @@ func (s *Session) Subscribe(buffer int, fn DebugObserver) (*Subscription, func()
 
 // EmitDebug delivers e to this session's observers without blocking.
 func (s *Session) EmitDebug(e DebugEvent) { s.observers.emit(e) }
-
-// DebugDropped reports the total DebugEvents dropped by slow observers, past and present.
-func (s *Session) DebugDropped() uint64 { return s.observers.dropped.Load() }

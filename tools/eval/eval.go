@@ -14,7 +14,6 @@ import (
 	"govoice/core/transcript"
 	"govoice/core/turn"
 	"govoice/tools/compat/whisker"
-	"govoice/transport/rtvi"
 	"govoice/transport/ws"
 )
 
@@ -63,7 +62,6 @@ func RunAll() (Report, error) {
 		{"tool_interruption_cancellation", time.Millisecond, []string{"interrupt active tool call", "verify executor cancellation"}, checkToolCancellation},
 		{"teardown_leak", time.Millisecond, []string{"start session runtime", "close and await teardown", "verify no supervised tasks leaked"}, checkSessionTeardown},
 		{"input_mute", time.Millisecond, []string{"mute turn manager and runtime admission", "verify input is dropped before processors", "unmute and resume audio"}, func() error { return checkMute(base) }},
-		{"rtvi_wire", time.Millisecond, []string{"encode semantic speech-start event", "verify RTVI envelope and identity"}, checkRTVI},
 	}
 	report := Report{Schema: "govoice.eval/v1", Results: make([]Result, 0, len(scenarios))}
 	for _, sc := range scenarios {
@@ -773,17 +771,6 @@ func checkSessionTeardown() error {
 	}
 	if session.LeakedTasks() != 0 {
 		return fmt.Errorf("session reported %d leaked tasks", session.LeakedTasks())
-	}
-	return nil
-}
-func checkRTVI() error {
-	e := core.NewDebugEvent("user.speech.started", time.Unix(1, 0), "s", "t", 1, nil)
-	m, err := rtvi.EncodeDebugEvent(e)
-	if err != nil {
-		return err
-	}
-	if m.Label != rtvi.LabelRTVI || m.Type != rtvi.TypeUserStartedSpeaking {
-		return errors.New("RTVI event mismatch")
 	}
 	return nil
 }

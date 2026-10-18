@@ -29,9 +29,22 @@ type Event struct {
 
 func (e Event) Attributes() map[string]any { return cloneMap(e.attributes) }
 
+// Observed is a core.DebugEvent plus the pipeline-position envelope Whisker
+// reports; core keeps none of these fields.
+type Observed struct {
+	core.DebugEvent
+	PipelineID     string
+	Processor      string
+	ProcessorIndex int
+	FrameKind      core.FrameType
+	Direction      core.Direction
+	Sequence       uint64
+	ToolCallID     string
+}
+
 type Adapter struct{}
 
-func (Adapter) Adapt(in core.DebugEvent) (Event, error) {
+func (Adapter) Adapt(in Observed) (Event, error) {
 	if !validScalar(in.Name, true) || !validScalar(string(in.SessionID), false) || !validScalar(string(in.TurnID), false) || !validScalar(in.PipelineID, false) || !validScalar(in.Processor, false) || !validScalar(in.ToolCallID, false) || in.ProcessorIndex < 0 || (in.Direction != core.Downstream && in.Direction != core.Upstream) {
 		return Event{}, ErrMalformedEvent
 	}

@@ -215,22 +215,6 @@ func TestDebugContractImmutableValue(t *testing.T) {
 	}
 }
 
-func TestDebugContractFlowAndToolCorrelation(t *testing.T) {
-	first := core.NewDebugEvent("frame.flow", time.Now(), "s", "t", 2, nil)
-	first.PipelineID = "voice-pipeline"
-	first.Processor = "vad"
-	first.ProcessorIndex = 1
-	first.FrameKind = core.FrameInputAudio
-	first.Direction = core.Downstream
-	first.Sequence = 42
-	first.ToolCallID = "call-a"
-	second := first
-	second.ToolCallID = "call-b"
-	if first.PipelineID != "voice-pipeline" || first.ProcessorIndex != 1 || first.FrameKind != core.FrameInputAudio || first.Direction != core.Downstream || first.Sequence != 42 || first.ToolCallID != "call-a" || second.ToolCallID != "call-b" {
-		t.Fatal("debug values lost frame, processor, order, or tool correlation")
-	}
-}
-
 func TestToolContractSignatures(t *testing.T) {
 	var _ tools.ToolExecutor = tools.ToolExecutorFunc(func(context.Context, tools.ToolCall) (tools.ToolResult, error) { return tools.ToolResult{}, nil })
 	call := tools.ToolCall{ID: "call-1", Name: "lookup", Arguments: []byte(`{"city":"London"}`), SessionID: "s", TurnID: "t", Generation: 2}

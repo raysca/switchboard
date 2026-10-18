@@ -154,7 +154,7 @@ Collected from the goalpulse record and re-checked against the code (G5 re-verif
 - **TTS text filters are enabled**: `CleanTTSText` strips markdown, HTML/XML tags, and emojis before synthesis; opt-out per flow via `clean_text: false`.
 - **Eager stop has no speculation gate** and no retraction; use only with punctuating STT.
 - **Failover timing and residuals.** First-token watchdog `failover.llm_first_token` 8 s with fallbacks, total `failover.llm_budget` 60 s; Google and xAI STT open is 2 attempts of 5 s (Deepgram 3 x 5 s when it is the last candidate); non-last STT/TTS candidates get at most 2 attempts (STT opens capped at 5 s each). Still open: a primary that has started streaming is bounded only by the provider request timeout (30 s for the whole LLM stream, per round); reasoning models whose first token exceeds 8 s need a raised `llm_first_token`; the breaker can open after 5 watchdog cancels; a TTS cascade deeper than 3 finishing units loses the oldest unit's tail frames (stopped, usage, tail error). Deepgram and xAI STT export no counters.
-- **Dead or library-only code**: `Session.DebugDropped` (no exporter), `ValidateToolPairing`, `AnalyzerStop` are unused by the server. `DefaultConfig` is now used by `LoadConfig`.
+- **Dead or library-only code**: `ValidateToolPairing`, `AnalyzerStop` are unused by the server. `DefaultConfig` is now used by `LoadConfig`.
 - **Summaries**: token usage not attributed, no output-token cap, no cooldown after a discarded summary.
 - **Redaction**: DTMF digits reach the client's user-transcription frame and the LLM context by design; digit-run and IBAN rules are heuristics. Trace spans record only the Go error type (`%T`), not the message. Raw error text remains at `server/call.go` ("turn not recorded" log) and `server/recording.go` ("call recording not saved" log); Google STT `endTrace` only receives fixed strings today (checked), so that site is safe unless a caller changes.
 - **Recording** is unencrypted at rest, taps audio before the filter chain (unfiltered inbound), a mid-call flow disable does not stop it, and no disclosure is played to the caller.
@@ -197,7 +197,7 @@ Core library and server, transports aside. Re-ranked on 2026-10-10: live tests f
    - nginx 503 retry (M4-18);
    - pinning the macOS ONNX Runtime sha256;
    - tool-result sizing against the context budget.
-10. **Library-only code.** `Session.DebugDropped`, `ValidateToolPairing` and `AnalyzerStop` have no server caller: wire them or delete them.
+10. **Library-only code.** `ValidateToolPairing` and `AnalyzerStop` have no server caller: wire them or delete them.
 
 ## Missing versus Pipecat (ranked)
 
