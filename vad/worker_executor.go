@@ -122,6 +122,7 @@ type workerProcess struct {
 	up         atomic.Bool   // healthy and serving: handOff only sends to an up worker
 	quit       chan struct{} // closed by close: ends respawnLoop's wait
 	closed     bool
+	gapHook    func() // test seam: runs between executeBatch's health read and markDown
 	wg         sync.WaitGroup
 	inFlightMu sync.Mutex
 	inFlight   map[uint64]*Job
@@ -397,9 +398,13 @@ func (wp *workerProcess) runLoop() {
 func (wp *workerProcess) executeBatch(jobs []*Job) {
 	wp.mu.Lock()
 	healthy := wp.healthy && !wp.closed
+	hook := wp.gapHook
 	wp.mu.Unlock()
 
 	if !healthy {
+		if hook != nil {
+			hook()
+		}
 		// Down (crashed, or killed between batches): restart it off this loop
 		// and let a live worker serve these chunks instead of failing them.
 		wp.markDown()
@@ -581,6 +586,12 @@ func (wp *workerProcess) handleWorkerFailure(jobs []*Job, err error, retry bool)
 func (wp *workerProcess) markDown() {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
+	if wp.healthy && !wp.closed {
+		// A respawn finished since the caller saw the worker down (every other
+		// caller just ran killAndReapLocked, which clears healthy): marking it
+		// down would orphan the new process behind a second respawnLoop.
+		return
+	}
 	wp.up.Store(false)
 	if !wp.down {
 		wp.down = true
