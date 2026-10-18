@@ -125,34 +125,6 @@ func (c Config) Chain(stage string) []Candidate {
 	return out
 }
 
-// BreakerOpen reports whether the circuit breaker serving (stage, provider) is
-// open. The server's registry owns the breakers and supplies this.
-type BreakerOpen func(stage, providerID string) bool
-
-// Candidates is what P2-2/3/4 consume: the stage chain with entries whose
-// breaker is open moved to the back, order otherwise kept. Open entries are
-// demoted, not dropped: a breaker only leaves Open when a call reaches it
-// (resilience.Breaker grants the half-open probe inside allow), so dropping
-// them would strand a single-provider flow forever once its breaker opened.
-// An open entry tried last costs one immediate ErrCircuitOpen. open must report
-// true only while the breaker would refuse (Open and inside its cooldown). A
-// nil open keeps chain order.
-func (c Config) Candidates(stage string, open BreakerOpen) []Candidate {
-	chain := c.Chain(stage)
-	if open == nil {
-		return chain
-	}
-	var up, down []Candidate
-	for _, cand := range chain {
-		if open(stage, cand.Provider) {
-			down = append(down, cand)
-		} else {
-			up = append(up, cand)
-		}
-	}
-	return append(up, down...)
-}
-
 // validateChains is the structural check (no registry needed): length,
 // duplicates, required fields, policy classes.
 func (c *Config) validateChains() error {

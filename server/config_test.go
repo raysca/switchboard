@@ -236,7 +236,7 @@ func TestConfig_Retention(t *testing.T) {
 
 func TestConfig_VADStopMS(t *testing.T) {
 	cfg := DefaultConfig(ProfileDevelopment)
-	if got := cfg.VADProcessorConfig().StopChunks; got != 7 {
+	if got := cfg.VADProcessorConfigForStopMS(0).StopChunks; got != 7 {
 		t.Fatalf("default StopChunks=%d, want 7 (200 ms)", got)
 	}
 	for ms, want := range map[int]int{200: 7, 300: 10, 500: 16, 2000: 63} {
@@ -244,7 +244,7 @@ func TestConfig_VADStopMS(t *testing.T) {
 		if err := ValidateConfig(cfg); err != nil {
 			t.Fatalf("stop_ms %d: %v", ms, err)
 		}
-		if got := cfg.VADProcessorConfig().StopChunks; got != want {
+		if got := cfg.VADProcessorConfigForStopMS(0).StopChunks; got != want {
 			t.Fatalf("stop_ms %d: chunks=%d want %d", ms, got, want)
 		}
 	}
