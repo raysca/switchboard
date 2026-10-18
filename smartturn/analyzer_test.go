@@ -168,9 +168,9 @@ func TestAnalyzerNewSilenceReinfers(t *testing.T) {
 	be := newFake(0.1, nil)
 	close(be.release)
 	a := newTestAnalyzer(be, clk)
-	a.Analyze(input(clk, 100*time.Millisecond, "t1"))
+	a.verdict(input(clk, 100*time.Millisecond, "t1"))
 	clk.Advance(2 * time.Second) // user spoke again, then went quiet: different silence start
-	a.Analyze(input(clk, 100*time.Millisecond, "t1"))
+	a.verdict(input(clk, 100*time.Millisecond, "t1"))
 	eventually(t, func() bool { return be.calls.Load() == 2 })
 }
 
@@ -231,14 +231,14 @@ func TestAnalyzerNoAudioAndPanic(t *testing.T) {
 	clk := &fakeClock{now: time.Unix(1000, 0)}
 	a := NewAnalyzer(newFake(0.9, nil), Config{Now: clk.Now}) // nothing fed
 	before := Fallbacks(ReasonNoAudio)
-	a.Analyze(input(clk, 120*time.Millisecond, "t1"))
+	a.verdict(input(clk, 120*time.Millisecond, "t1"))
 	if Fallbacks(ReasonNoAudio) != before+1 {
 		t.Fatal("no_audio not counted")
 	}
 	pb := &panicBackend{}
 	a = newTestAnalyzer(pb, clk)
 	b := Fallbacks(ReasonError)
-	a.Analyze(input(clk, 120*time.Millisecond, "t2"))
+	a.verdict(input(clk, 120*time.Millisecond, "t2"))
 	eventually(t, func() bool { return Fallbacks(ReasonError) == b+1 })
 }
 
