@@ -332,14 +332,6 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		}
 		return e.PushDirection(f, dir)
 
-	case FrameCancel:
-		cancel := f.(*CancelFrame)
-		p.cancelHold()
-		if p.activeTurn != "" && (cancel.Gen == 0 || cancel.Gen == p.activeGen) {
-			p.resetTurn()
-		}
-		return e.PushDirection(f, dir)
-
 	case FrameFlushProcessed:
 		fp := f.(*FlushProcessedFrame)
 		if p.pendingFlushGen.Load() == fp.Gen {

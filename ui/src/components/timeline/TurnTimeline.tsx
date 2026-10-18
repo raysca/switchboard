@@ -35,7 +35,7 @@ function parseLatencies(raw: unknown): LatencyData | null {
   return null;
 }
 
-export function formatDuration(startedAt: string, endedAt?: string | null): string {
+function formatDuration(startedAt: string, endedAt?: string | null): string {
   if (!endedAt) return "In progress";
   const ms = Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
   if (ms < 1000) return `${ms}ms`;
@@ -172,16 +172,6 @@ export function TurnTimeline({ turns, traces, loading }: TurnTimelineProps) {
                                 <span>{formatDuration(tc.started_at, tc.ended_at)}</span>
                               </div>
                             </div>
-                            {tc.arguments_summary && (
-                              <div className="subtext">
-                                <strong>Args:</strong> <code>{tc.arguments_summary}</code>
-                              </div>
-                            )}
-                            {tc.result_summary && (
-                              <div className="subtext">
-                                <strong>Result:</strong> <code>{tc.result_summary}</code>
-                              </div>
-                            )}
                           </div>
                         ))}
                       </div>

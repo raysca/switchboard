@@ -29,7 +29,6 @@ type STTConfig struct {
 	Language       string // Default: "en"
 	SampleRate     int    // Default: 16000
 	Encoding       string // Default: "pcm"
-	InterimResults bool   // Default: true
 	APIKey         string // Bearer token
 	CircuitBreaker *resilience.Breaker
 	// RetryPolicy bounds opening the websocket: MaxAttempts tries of
@@ -45,13 +44,12 @@ type STTConfig struct {
 // DefaultSTTConfig returns recommended default settings for xAI STT.
 func DefaultSTTConfig() STTConfig {
 	return STTConfig{
-		Endpoint:       "wss://api.x.ai/v1/stt",
-		Model:          "grok-voice-transcribe-2.0",
-		Language:       "en",
-		SampleRate:     16000,
-		Encoding:       "pcm",
-		InterimResults: true,
-		RetryPolicy:    DefaultSTTOpenPolicy(),
+		Endpoint:    "wss://api.x.ai/v1/stt",
+		Model:       "grok-voice-transcribe-2.0",
+		Language:    "en",
+		SampleRate:  16000,
+		Encoding:    "pcm",
+		RetryPolicy: DefaultSTTOpenPolicy(),
 	}
 }
 
@@ -164,9 +162,7 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 	if cfg.Language != "" {
 		q.Set("language", cfg.Language)
 	}
-	if cfg.InterimResults {
-		q.Set("interim_results", "true")
-	}
+	q.Set("interim_results", "true")
 	if cfg.Model != "" {
 		q.Set("model", cfg.Model)
 	}
@@ -336,15 +332,12 @@ func (p *STTProcessor) Close() error {
 // ProcessFrame processes frames traversing the pipeline.
 func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch frame := f.(type) {
-	case *core.StartFrame:
-		return e.PushDirection(f, dir)
-
 	case *core.UserStartedSpeakingFrame:
 		p.mu.Lock()
 		p.dialFailed = false
 		p.turnID = fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq)
 		p.streamGen = frame.Gen
-		var old, parked *activeSTTStream
+		var parked *activeSTTStream
 		if p.active != nil {
 			p.active.mu.Lock()
 			owned := p.active.turnID != "" && (p.active.turnID != p.turnID || p.active.gen != frame.Gen)
@@ -356,11 +349,9 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 				parked = p.active
 				p.draining = append(p.draining, p.active)
 				p.active = nil
-				old = p.trimDrainingLocked()
 			}
 		}
 		p.mu.Unlock()
-		p.stopStream(old)
 		_ = p.beginDrain(ctx, parked) // another turn's stream finalizes and drains on its own
 		if err := p.ensure(ctx); err != nil {
 			p.ErrorsTotal.Add(1)
@@ -375,7 +366,7 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 			p.dialFailed = false
 			p.turnID = string(frame.Turn)
 			p.streamGen = uint64(frame.Gen)
-			var old, parked *activeSTTStream
+			var parked *activeSTTStream
 			if p.active != nil {
 				p.active.mu.Lock()
 				if p.active.turnID == p.turnID && p.active.gen < p.streamGen {
@@ -391,11 +382,9 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 					parked = p.active
 					p.draining = append(p.draining, p.active)
 					p.active = nil
-					old = p.trimDrainingLocked()
 				}
 			}
 			p.mu.Unlock()
-			p.stopStream(old)
 			_ = p.beginDrain(ctx, parked)
 		case core.TurnEventCompleted:
 			if err := p.completeStream(ctx, string(frame.Turn), uint64(frame.Gen)); err != nil {
@@ -414,15 +403,13 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		// stop opens a fresh unbound stream that the next UserStarted adopts, so a quick resume
 		// keeps its onset instead of feeding a stream that already got audio.done.
 		p.mu.Lock()
-		active, old := p.active, (*activeSTTStream)(nil)
+		active := p.active
 		if active != nil {
 			p.active = nil
 			p.draining = append(p.draining, active)
-			old = p.trimDrainingLocked()
 		}
 		p.turnID, p.streamGen = "", 0
 		p.mu.Unlock()
-		p.stopStream(old)
 		if active != nil {
 			if err := p.beginDrain(ctx, active); err != nil {
 				return err
@@ -444,20 +431,6 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		p.active = nil
 		p.mu.Unlock()
 		p.stopStream(old)
-		return e.PushDirection(f, dir)
-
-	case *core.CancelFrame:
-		p.mu.Lock()
-		streams := append([]*activeSTTStream(nil), p.draining...)
-		if p.active != nil {
-			streams = append(streams, p.active)
-		}
-		p.active = nil
-		p.draining = nil
-		p.mu.Unlock()
-		for _, st := range streams {
-			p.stopStream(st)
-		}
 		return e.PushDirection(f, dir)
 
 	default:
@@ -1066,16 +1039,6 @@ func (p *STTProcessor) stopMatchingStream(turn string, gen uint64) {
 	}
 	p.mu.Unlock()
 	p.stopStream(st)
-}
-
-func (p *STTProcessor) trimDrainingLocked() *activeSTTStream {
-	const maxDrainingStreams = 8
-	if len(p.draining) <= maxDrainingStreams {
-		return nil
-	}
-	oldest := p.draining[0]
-	p.draining = p.draining[1:]
-	return oldest
 }
 
 func (p *STTProcessor) releaseStream(st *activeSTTStream) {

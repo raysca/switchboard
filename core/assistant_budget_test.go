@@ -17,11 +17,11 @@ func TestOverBudgetReplyDoesNotFailCommit(t *testing.T) {
 		if err := ctx.AddMessage(core.Message{Role: core.RoleUser, Content: "look it up", TurnID: "t1"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := ctx.AddToolCall("t1", 1, "c1", "search", []byte(`{}`), time.Time{}); err != nil {
+		if _, _, err := ctx.ClaimToolCall(core.ToolCall{TurnID: "t1", Generation: 1, ID: "c1", Name: "search", Arguments: []byte(`{}`)}, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 		big := `"` + strings.Repeat("x", 15000) + `"`
-		if err := ctx.AddToolResult("t1", 1, "c1", []byte(big), "", time.Time{}); err != nil {
+		if err := ctx.AddToolResultStatus("t1", 1, "c1", core.ToolSucceeded, []byte(big), "", time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 		p := core.NewAssistantContextProcessor(ctx, core.DefaultAssistantContextConfig())

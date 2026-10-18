@@ -122,36 +122,8 @@ func TestLegacyConfigHasEmptyChain(t *testing.T) {
 		t.Fatalf("legacy config changed: %s hash=%s", a.Version.Config, a.Version.ConfigHash)
 	}
 	cfg, _ := DecodeConfig(a.Version.Config)
-	if len(cfg.Chain("llm")) != 1 || len(cfg.Candidates("tts", nil)) != 1 {
+	if len(cfg.Chain("llm")) != 1 || len(cfg.Chain("tts")) != 1 {
 		t.Fatal("legacy chain should be primary only")
-	}
-}
-
-func TestResolverSkipsOpenBreaker(t *testing.T) {
-	cfg, err := DecodeConfig(json.RawMessage(`{"llm":{"provider":"google","model":"a","fallbacks":[{"provider":"xai","model":"b"},{"provider":"google","model":"c"}]}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	models := func(cs []Candidate) string {
-		var s []string
-		for _, c := range cs {
-			s = append(s, c.Model)
-		}
-		return strings.Join(s, ",")
-	}
-	if got := models(cfg.Candidates("llm", nil)); got != "a,b,c" {
-		t.Fatalf("no breakers: %s", got)
-	}
-	googleOpen := func(stage, p string) bool { return stage == "llm" && p == "google" }
-	if got := models(cfg.Candidates("llm", googleOpen)); got != "b,a,c" {
-		t.Fatalf("google open: %s", got)
-	}
-	// All open: keep the chain so the breakers can grant their half-open probe.
-	if got := models(cfg.Candidates("llm", func(string, string) bool { return true })); got != "a,b,c" {
-		t.Fatalf("all open: %s", got)
-	}
-	if got := cfg.Candidates("llm", func(stage, p string) bool { return stage == "tts" }); len(got) != 3 {
-		t.Fatal("breaker of another stage must not skip")
 	}
 }
 

@@ -39,7 +39,6 @@ type AsyncTracer struct {
 	mu       sync.Mutex
 	closed   bool
 	active   int
-	dropped  atomic.Uint64
 
 	terminalMu      sync.Mutex
 	terminals       []traceOperation
@@ -80,10 +79,6 @@ func NewAsyncTracer(tracer Tracer, queueSize int) *AsyncTracer {
 	return dispatcher
 }
 
-// DroppedOperations reports work discarded because the bounded queue was full
-// or the dispatcher had already closed. It is diagnostic only.
-func (t *AsyncTracer) DroppedOperations() uint64 { return t.dropped.Load() }
-
 // Close stops accepting new work and lets the worker drain queued operations.
 // It does not wait for exporter callbacks, which may be blocked independently.
 func (t *AsyncTracer) Close() {
@@ -115,7 +110,6 @@ func (t *AsyncTracer) enqueueStart(operation traceOperation) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed || t.active >= t.capacity {
-		t.dropped.Add(1)
 		return false
 	}
 	select {
@@ -123,7 +117,6 @@ func (t *AsyncTracer) enqueueStart(operation traceOperation) bool {
 		t.active++
 		return true
 	default:
-		t.dropped.Add(1)
 		return false
 	}
 }
@@ -132,14 +125,12 @@ func (t *AsyncTracer) enqueue(operation traceOperation) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed {
-		t.dropped.Add(1)
 		return false
 	}
 	select {
 	case t.queue <- operation:
 		return true
 	default:
-		t.dropped.Add(1)
 		return false
 	}
 }
@@ -338,7 +329,6 @@ func (t *AsyncTracer) dropUnstartedTerminals(spans map[*asyncSpan]Span) {
 			continue
 		}
 		delete(t.terminalPending, operation.proxy)
-		t.dropped.Add(1)
 		t.releaseStart()
 	}
 	t.terminals = deferred

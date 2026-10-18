@@ -32,8 +32,7 @@ type TTSConfig struct {
 	// Pipecat relies on. Set it only for a server that refuses SampleRate: the
 	// local resampler is linear with no anti-alias filter, so a RivaRate above
 	// SampleRate aliases audibly (about -2 to -6 dB at 22050->16000/8000).
-	RivaRate         int
-	CustomDictionary string // optional "grapheme  phoneme" pairs
+	RivaRate int
 
 	// Timeout bounds one synthesis request (stream open through the last audio).
 	Timeout        time.Duration
@@ -144,7 +143,7 @@ func (p *TTSProcessor) attempt(ctx context.Context, u *ttsunit.Unit, _ int) erro
 	}
 	req := &rivapb.SynthesizeSpeechRequest{
 		Text: u.Frame.Text, LanguageCode: cfg.Language, Encoding: rivapb.AudioEncoding_LINEAR_PCM,
-		SampleRateHz: int32(cfg.RivaRate), VoiceName: cfg.Voice, CustomDictionary: cfg.CustomDictionary,
+		SampleRateHz: int32(cfg.RivaRate), VoiceName: cfg.Voice,
 	}
 	// One request then half-close: also what a pre-bidi (server-streaming)
 	// SynthesizeOnline server expects on the wire.

@@ -33,12 +33,14 @@ import (
 // Secret is the credential assembled from the environment for this stage's
 // provider only (server/catalog); the caller wipes it after the build.
 type StageSpec struct {
-	Provider     string
-	Model        string
-	Language     string
-	Voice        string
-	SystemPrompt string
-	Secret       []byte
+	Provider string
+	Model    string
+	Language string
+	Voice    string
+	// VoiceSettings (ElevenLabs TTS only; nil = provider defaults).
+	VoiceSettings *flow.ElevenLabsVoiceSettings
+	SystemPrompt  string
+	Secret        []byte
 
 	// LLM stage only: the flow's captured MCP tools and the call history
 	// the tool loop records into.
@@ -449,17 +451,7 @@ func NewRegistry() *Registry {
 		if err != nil {
 			return nil, fmt.Errorf("elevenlabs.tts: %w", err)
 		}
-		ttsCfg := elevenlabs.DefaultTTSConfig()
-		if spec.Model != "" {
-			ttsCfg.Model = spec.Model
-		}
-		if spec.Voice != "" {
-			ttsCfg.Voice = spec.Voice
-		}
-		// The pipeline's TTS output rate is configured once, under the google TTS settings.
-		if cfg.Providers.GoogleTTS.SampleRate > 0 {
-			ttsCfg.SampleRate = cfg.Providers.GoogleTTS.SampleRate
-		}
+		ttsCfg := elevenlabsTTSConfig(cfg, spec)
 		ttsCfg.APIKey, ttsCfg.CircuitBreaker = key, r.elevenlabsBreaker
 		if spec.Failover {
 			ttsCfg.RetryPolicy = failoverPolicy("tts", ttsCfg.RetryPolicy)
@@ -474,6 +466,26 @@ func NewRegistry() *Registry {
 	registerOffline(r)
 
 	return r
+}
+
+// elevenlabsTTSConfig applies the stage spec (model, voice, voice settings) and
+// the pipeline sample rate to the provider defaults.
+func elevenlabsTTSConfig(cfg *Config, spec StageSpec) elevenlabs.TTSConfig {
+	c := elevenlabs.DefaultTTSConfig()
+	if spec.Model != "" {
+		c.Model = spec.Model
+	}
+	if spec.Voice != "" {
+		c.Voice = spec.Voice
+	}
+	// The pipeline's TTS output rate is configured once, under the google TTS settings.
+	if cfg.Providers.GoogleTTS.SampleRate > 0 {
+		c.SampleRate = cfg.Providers.GoogleTTS.SampleRate
+	}
+	if v := spec.VoiceSettings; v != nil {
+		c.Stability, c.SimilarityBoost, c.Style, c.Speed = v.Stability, v.SimilarityBoost, v.Style, v.Speed
+	}
+	return c
 }
 
 // apiKey validates an API key credential: a single non-empty token.

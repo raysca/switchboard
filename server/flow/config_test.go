@@ -80,3 +80,33 @@ func TestDecodeConfigSummarization(t *testing.T) {
 		t.Fatal("default trigger")
 	}
 }
+
+func TestDecodeConfigTTSVoiceSettings(t *testing.T) {
+	tts := func(provider, vs string) string {
+		return `{"tts":{"provider":"` + provider + `","voice_settings":` + vs + `}}`
+	}
+	for _, ok := range []string{
+		`{"stability":0,"similarity_boost":1,"style":0.5,"speed":0.7}`,
+		`{"speed":1.2}`,
+		`{}`,
+	} {
+		c, err := DecodeConfig(json.RawMessage(tts("elevenlabs", ok)))
+		if err != nil || c.TTS.VoiceSettings == nil {
+			t.Errorf("%s: err=%v vs=%v", ok, err, c.TTS.VoiceSettings)
+		}
+	}
+	for _, bad := range []struct{ raw, field string }{
+		{tts("elevenlabs", `{"stability":1.1}`), "tts.voice_settings.stability"},
+		{tts("elevenlabs", `{"similarity_boost":-0.1}`), "tts.voice_settings.similarity_boost"},
+		{tts("elevenlabs", `{"style":2}`), "tts.voice_settings.style"},
+		{tts("elevenlabs", `{"speed":0.69}`), "tts.voice_settings.speed"},
+		{tts("elevenlabs", `{"speed":1.21}`), "tts.voice_settings.speed"},
+		{tts("elevenlabs", `{"pitch":1}`), "pitch"},
+		{tts("cartesia", `{"speed":1}`), "tts.voice_settings"},
+	} {
+		_, err := DecodeConfig(json.RawMessage(bad.raw))
+		if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), bad.field) {
+			t.Errorf("%s: err=%v, want ErrInvalidConfig mentioning %s", bad.raw, err, bad.field)
+		}
+	}
+}

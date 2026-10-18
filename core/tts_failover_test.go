@@ -21,7 +21,6 @@ type ttsRig struct {
 	mu       sync.Mutex
 	switches []string
 	events   chan core.DebugEvent
-	cands    []core.TTSCandidate
 }
 
 func newTTSRig(t *testing.T, cfg core.TTSFailoverConfig) *ttsRig {

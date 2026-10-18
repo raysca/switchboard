@@ -15,6 +15,7 @@ import (
 	coretranscript "govoice/core/transcript"
 	coreturn "govoice/core/turn"
 	"govoice/providers/google"
+	"govoice/server/flow"
 	"govoice/vad"
 )
 
@@ -593,5 +594,16 @@ func TestGoogleTTSFactoryStreamsChirp3HDOnly(t *testing.T) {
 		if cl, ok := p.(interface{ Close() error }); ok {
 			_ = cl.Close()
 		}
+	}
+}
+
+func TestElevenLabsTTSConfigFromStageSpec(t *testing.T) {
+	if c := elevenlabsTTSConfig(&Config{}, StageSpec{}); c.Stability != nil || c.SimilarityBoost != nil || c.Style != nil || c.Speed != nil {
+		t.Fatalf("unset spec must keep provider defaults: %+v", c)
+	}
+	st, sb, sty, sp := 0.3, 0.9, 0.1, 1.1
+	c := elevenlabsTTSConfig(&Config{}, StageSpec{VoiceSettings: &flow.ElevenLabsVoiceSettings{Stability: &st, SimilarityBoost: &sb, Style: &sty, Speed: &sp}})
+	if *c.Stability != st || *c.SimilarityBoost != sb || *c.Style != sty || *c.Speed != sp {
+		t.Fatalf("settings not applied: %+v", c)
 	}
 }

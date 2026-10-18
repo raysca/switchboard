@@ -24,14 +24,12 @@ type STTConfig struct {
 	Model          string // default "nova-3"
 	Language       string // default "en"
 	SampleRate     int    // default 16000; input is 16-bit mono PCM (linear16)
-	InterimResults bool   // default true
 	APIKey         string
 	RetryPolicy    resilience.Policy // applied to opening the stream
 	CircuitBreaker *resilience.Breaker
 	// DrainTimeout bounds the wait for Deepgram's final results after the
 	// turn ends before the socket is torn down.
 	DrainTimeout time.Duration
-	Now          func() time.Time
 	// Pool is the connection pool used to dial the websocket; default is the
 	// process-wide "deepgram"/"stt" pool (see core/netpool).
 	Pool *netpool.Pool
@@ -40,7 +38,7 @@ type STTConfig struct {
 func DefaultSTTConfig() STTConfig {
 	return STTConfig{
 		Endpoint: "wss://api.deepgram.com/v1/listen", Model: "nova-3", Language: "en",
-		SampleRate: 16000, InterimResults: true, DrainTimeout: 2 * time.Second,
+		SampleRate: 16000, DrainTimeout: 2 * time.Second,
 		RetryPolicy: resilience.Policy{MaxAttempts: 3, AttemptTimeout: 5 * time.Second},
 	}
 }
@@ -90,16 +88,13 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	if cfg.RetryPolicy.MaxAttempts <= 0 {
 		cfg.RetryPolicy = def.RetryPolicy
 	}
-	if cfg.Now == nil {
-		cfg.Now = time.Now
-	}
 	if cfg.Pool == nil {
 		cfg.Pool = netpool.Get(netpool.Options{Provider: "deepgram", Stage: "stt", HTTP1Only: true})
 	}
 	p := &STTProcessor{cfg: cfg}
 	p.Runner = sttunit.New(sttunit.Config{
 		Provider: "deepgram", Dial: p.dial, Breaker: cfg.CircuitBreaker, Classify: classify,
-		DrainTimeout: cfg.DrainTimeout, Now: cfg.Now,
+		DrainTimeout: cfg.DrainTimeout,
 	})
 	return p, nil
 }
@@ -129,7 +124,7 @@ func (p *STTProcessor) wsURL() (string, error) {
 	q.Set("encoding", "linear16")
 	q.Set("sample_rate", strconv.Itoa(p.cfg.SampleRate))
 	q.Set("channels", "1")
-	q.Set("interim_results", strconv.FormatBool(p.cfg.InterimResults))
+	q.Set("interim_results", "true")
 	q.Set("endpointing", "false") // we own turns
 	q.Set("smart_format", "true")
 	u.RawQuery = q.Encode()

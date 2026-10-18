@@ -61,9 +61,17 @@ The retention cleanup runner (`server/retention/job.go`) runs periodically accor
 When `content_retention_days` has expired for ended sessions:
 - `turns.transcript` is set to `NULL`.
 - `turns.assistant_text` is set to `NULL`.
-- `tool_calls.arguments_summary` is set to `""`.
-- `tool_calls.result_summary` is set to `""`.
-- `trace_spans` and `trace_events` attributes are sanitized to remove any text fields (`transcript`, `prompt`, `text`, `tool.arguments`, `tool.result`).
+- `tool_calls` rows hold no argument or result content, so there is nothing to purge there.
+- `trace_spans` and `trace_events` are not touched: the trace adapter stores a fixed whitelist of metadata attributes and never the content keys `transcript`, `prompt`, `text`, `tool.arguments`, `tool.result` (a server test pins this).
+
+**Upgrade note.** A database written by a build between commits `5be193e` and `12a7884` (2026-10-05/06) with a trace content mode configured may hold such keys in stored traces. This build no longer sanitizes stored traces, so purge them by hand. Stop the server, back up the database, then run on SQLite or Postgres (the column is `TEXT` in both; this resets only the matching rows to an empty attribute set):
+
+```sql
+UPDATE trace_spans SET attributes_json = '{}' WHERE attributes_json LIKE '%"transcript":%' OR attributes_json LIKE '%"prompt":%' OR attributes_json LIKE '%"text":%' OR attributes_json LIKE '%"tool.arguments":%' OR attributes_json LIKE '%"tool.result":%';
+UPDATE trace_events SET attributes_json = '{}' WHERE attributes_json LIKE '%"transcript":%' OR attributes_json LIKE '%"prompt":%' OR attributes_json LIKE '%"text":%' OR attributes_json LIKE '%"tool.arguments":%' OR attributes_json LIKE '%"tool.result":%';
+```
+
+Databases never run with a trace content mode need no action.
 
 **Preserved Metadata:** Session records, turn rows, ordinal sequence, latencies, tool call status, error categories, and span trees are completely preserved for operations and performance dashboards.
 

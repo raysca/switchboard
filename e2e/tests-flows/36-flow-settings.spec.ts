@@ -112,3 +112,34 @@ test("settings set in the editor are published, read back, reopened and run on a
   await expect(page.getByRole("button", { name: "Publish v3" })).toBeDisabled();
   await step(page, "an invalid trigger blocks publishing");
 });
+
+// ElevenLabs voice settings (D-0.4): set on the step, published, read back, shown again after a reload.
+// No call: the echo stack has a placeholder ElevenLabs key only (server tests pin the call path).
+const EL_NAME = "E2E Voice Settings";
+test("ElevenLabs voice settings are saved, published and shown again after a reload", async ({ page, stack }) => {
+  await api(stack, "/flows", {
+    method: "POST",
+    body: JSON.stringify({ name: EL_NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: { provider: "elevenlabs", voice: "v" } } }),
+  });
+  await connectAdmin(page, stack);
+  await openFlow(page, EL_NAME);
+  await page.locator(".react-flow__node").first().click();
+  await page.getByRole("tab", { name: /Advanced/ }).click();
+  const fields = { Stability: "0.4", "Similarity boost": "0.8", Style: "0.2", Speed: "1.1" };
+  for (const [label, value] of Object.entries(fields)) await page.getByLabel(label, { exact: true }).fill(value);
+  await step(page, "elevenlabs voice settings");
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v2" }).click();
+  const read = async () => {
+    const f = (await api<{ data: Flow[] }>(stack, "/flows")).data.find((x) => x.name === EL_NAME)!.current_version;
+    return f.number === 2 ? (f.config as unknown as { tts?: { voice_settings?: object } }).tts?.voice_settings : undefined;
+  };
+  await expect.poll(read).toEqual({ stability: 0.4, similarity_boost: 0.8, style: 0.2, speed: 1.1 });
+
+  await page.reload();
+  await connectAdmin(page, stack);
+  await openFlow(page, EL_NAME);
+  await page.locator(".react-flow__node").first().click();
+  await page.getByRole("tab", { name: /Advanced/ }).click();
+  for (const [label, value] of Object.entries(fields)) await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
+});

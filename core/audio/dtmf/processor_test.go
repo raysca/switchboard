@@ -3,11 +3,14 @@ package dtmf
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"govoice/core"
 	"govoice/core/coretest"
+	"govoice/core/tools"
 )
 
 func startSession(t *testing.T, procs ...core.Processor) *core.Session {
@@ -224,7 +227,7 @@ func TestOutputFrameBecomesPacedToneAudio(t *testing.T) {
 
 func TestOutputStopsOnBargeIn(t *testing.T) {
 	out, sink, s := newOut(t)
-	if err := out.Send(0, "1234567890"); err != nil {
+	if _, err := out.send(0, "1234567890"); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "first frames", func() bool { n, _, _ := audioBytes(sink); return n > 0 })
@@ -242,7 +245,7 @@ func TestOutputStopsOnBargeIn(t *testing.T) {
 func TestOutputStaleGenerationIsDropped(t *testing.T) {
 	out, sink, s := newOut(t)
 	s.IncrementGeneration()
-	if err := out.Send(1, "5"); err != nil { // queued under the old generation
+	if _, err := out.send(1, "5"); err != nil { // queued under the old generation
 		t.Fatal(err)
 	}
 	time.Sleep(150 * time.Millisecond)
@@ -259,9 +262,15 @@ func TestSendDTMFToolValidationAndDelegation(t *testing.T) {
 		return core.ToolResult{CallID: c.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{}`)}, nil
 	}))
 	call := func(name, args string) core.ToolResult {
-		r, err := exec.Execute(context.Background(), core.ToolCall{ID: "c1", Name: name, Arguments: json.RawMessage(args), Generation: 0})
+		// A reply that never comes ends the wait here and fails the test.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		r, err := exec.Execute(ctx, core.ToolCall{ID: "c1", Name: name, Arguments: json.RawMessage(args), Generation: 0})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("%s: no reply within 2s", name)
 		}
 		return r
 	}
@@ -292,7 +301,8 @@ func TestSendDTMFToolValidationAndDelegation(t *testing.T) {
 	// Bounded backlog: a flood is refused, never queued without limit.
 	var busy bool
 	for i := 0; i < 3*maxPending && !busy; i++ {
-		busy = out.Send(0, "1") == ErrBusy
+		_, err := out.send(0, "1")
+		busy = err == ErrBusy
 	}
 	if !busy {
 		t.Fatal("pending sends are unbounded")
@@ -316,4 +326,140 @@ func TestToolDefinitionSchemaMatchesValidation(t *testing.T) {
 	if p := schema.Properties["digits"]; p.MaxLength != MaxDigitsPerSend || p.Pattern != "^[0-9*#A-D]{1,32}$" {
 		t.Fatalf("schema drifted from validation: %+v", p)
 	}
+}
+
+func TestSendDTMFGoesThroughTheOutputFrame(t *testing.T) {
+	out, err := NewOutputProcessor(OutputConfig{Tones: DefaultGeneratorConfig(24000)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &coretest.PassthroughProcessor{}
+	pipe, err := core.NewPipeline(out, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen atomic.Int32
+	s.OnFrame = func(f core.Frame, _ core.Direction) {
+		if o, ok := f.(*core.OutputDTMFFrame); ok && o.Digits == "42" {
+			seen.Add(1)
+		}
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	r, err := Executor(out, nil).Execute(context.Background(), core.ToolCall{ID: "c", Name: ToolName, Arguments: json.RawMessage(`{"digits":"42"}`)})
+	if err != nil || r.Status != core.ToolSucceeded {
+		t.Fatalf("%+v %v", r, err)
+	}
+	want, _ := Generate("42", DefaultGeneratorConfig(24000))
+	if n, _, _ := audioBytes(sink); n != len(want) {
+		t.Fatalf("tool returned with %d of %d tone bytes released", n, len(want))
+	}
+	if seen.Load() == 0 {
+		t.Fatal("send_dtmf did not post an OutputDTMFFrame")
+	}
+}
+
+func TestSendDTMFFencedByBargeInEndsWithTheCall(t *testing.T) {
+	out, sink, s := newOut(t)
+	exec := Executor(out, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.IncrementGeneration() // the call's generation (1) is now stale: the frame never plays
+	done := make(chan core.ToolResult, 1)
+	go func() {
+		r, _ := exec.Execute(ctx, core.ToolCall{ID: "c", Name: ToolName, Arguments: json.RawMessage(`{"digits":"1234"}`), Generation: 1})
+		done <- r
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel() // what the tool loop's stale watch does
+	select {
+	case r := <-done:
+		if r.Status != core.ToolSucceeded || string(r.Result) != `{"played":true}` {
+			t.Fatalf("result changed: %+v", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("executor hung after ctx cancel")
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n, _, _ := audioBytes(sink); n != 0 {
+		t.Fatalf("fenced call played %d tone bytes", n)
+	}
+}
+
+// The production path: the tool loop's stale watch (IsCurrent) cancels the
+// call's ctx on barge-in, so a long send_dtmf returns promptly and stops sounding.
+func TestSendDTMFEndsViaToolLoopStaleWatchOnBargeIn(t *testing.T) {
+	out, sink, s := newOut(t)
+	cfg := tools.DefaultToolLoopConfig()
+	cfg.StaleCheckInterval = 5 * time.Millisecond
+	cfg.IsCurrent = func(c core.ToolCall) bool { return uint64(c.Generation) == s.CurrentGeneration() }
+	history := core.NewConversationContext(core.ContextConfig{MaxMessages: 32, MaxTokens: 10000})
+	loop, err := tools.NewToolLoop([]core.ToolDefinition{ToolDefinition()}, Executor(out, nil), history, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := core.ToolCall{ID: "c", Name: ToolName, Arguments: json.RawMessage(`{"digits":"12345678901234567890"}`), SessionID: "s", TurnID: "t", Generation: core.Generation(s.CurrentGeneration())}
+	errc := make(chan error, 1)
+	go func() { _, err := loop.Run(context.Background(), []core.ToolCall{call}, nil); errc <- err }()
+	eventually(t, "tones sounding", func() bool { n, _, _ := audioBytes(sink); return n > 0 })
+	s.IncrementGeneration()
+	at := time.Now()
+	select {
+	case err := <-errc:
+		if !errors.Is(err, tools.ErrStaleToolCall) {
+			t.Fatalf("err = %v", err)
+		}
+		if el := time.Since(at); el > 300*time.Millisecond {
+			t.Fatalf("call took %v to end after barge-in", el)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("tool call hung after barge-in")
+	}
+}
+
+func TestExecutorUnattachedOutputIsUnavailable(t *testing.T) {
+	out, _ := NewOutputProcessor(OutputConfig{Tones: DefaultGeneratorConfig(24000)})
+	r, err := Executor(out, nil).Execute(context.Background(), core.ToolCall{ID: "c", Name: ToolName, Arguments: json.RawMessage(`{"digits":"1"}`)})
+	if err != nil || r.ErrorCategory != "unavailable" {
+		t.Fatalf("%+v %v", r, err)
+	}
+}
+
+func TestExecutorFullQueueIsBusyThroughTheFrame(t *testing.T) {
+	out, sink, _ := newOut(t)
+	long := "12345678901234567890123456789012"
+	if _, err := out.send(0, long); err != nil {
+		t.Fatal(err)
+	}
+	// Once it sounds the run loop has taken it off the queue, so no slot frees later.
+	eventually(t, "first send sounding", func() bool { n, _, _ := audioBytes(sink); return n > 0 })
+	var busy bool
+	for i := 0; i < 3*maxPending && !busy; i++ {
+		_, err := out.send(0, long)
+		busy = err == ErrBusy
+	}
+	if !busy {
+		t.Fatal("could not fill the queue")
+	}
+	r, _ := Executor(out, nil).Execute(context.Background(), core.ToolCall{ID: "c", Name: ToolName, Arguments: json.RawMessage(`{"digits":"1"}`)})
+	if r.ErrorCategory != "busy" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// An unbuffered Result nobody reads must not wedge the output processor.
+func TestOutputFrameWithUnreadUnbufferedResultDoesNotWedge(t *testing.T) {
+	_, sink, s := newOut(t)
+	_ = s.Post(&core.OutputDTMFFrame{Digits: "bad!", Result: make(chan error)}) // error path
+	_ = s.Post(&core.OutputDTMFFrame{Digits: "1", Result: make(chan error)})    // played path
+	_ = s.Post(&core.OutputDTMFFrame{Digits: "5"})
+	want1, _ := Generate("1", DefaultGeneratorConfig(24000))
+	want5, _ := Generate("5", DefaultGeneratorConfig(24000))
+	eventually(t, "later frames still play", func() bool { n, _, _ := audioBytes(sink); return n == len(want1)+len(want5) })
 }

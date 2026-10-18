@@ -58,8 +58,6 @@ func reasonFromTransport(cause string) string {
 	switch cause {
 	case "peer_unresponsive":
 		return storage.EndConnectionLost
-	case "connection_lifetime":
-		return storage.EndTimeLimit
 	case "session_start_failed":
 		return storage.EndSetupFailed
 	}

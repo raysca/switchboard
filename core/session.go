@@ -113,9 +113,8 @@ type Session struct {
 	procStart  atomic.Int64 // Monotonic nanos since Created when current envelope began processing (+1 offset so >0 indicates active processing)
 
 	// Edge callbacks
-	OnOutput   func(Frame)
-	OnUpstream func(Frame)
-	OnFrame    func(Frame, Direction)
+	OnOutput func(Frame)
+	OnFrame  func(Frame, Direction)
 
 	// Metrics
 	StaleDiscarded atomic.Uint64
@@ -825,7 +824,7 @@ func (s *Session) processEnvelope(env Envelope) bool {
 		return false
 	}
 
-	// If StartFrame or EndFrame, handle lifecycle
+	// If EndFrame, close
 	if env.Frame.Type() == FrameEnd {
 		go s.Close()
 		return false
@@ -877,10 +876,7 @@ func (s *Session) deliver(f Frame, dir Direction, to int) (resultErr error) {
 		return nil
 
 	case to < 0:
-		// Reached upstream edge
-		if s.OnUpstream != nil {
-			s.OnUpstream(f)
-		}
+		// Reached upstream edge: dropped.
 		return nil
 
 	default:
@@ -988,9 +984,6 @@ func frameTrace(f Frame) (string, map[string]any) {
 		return "tool.failed", attrs
 	case *TTSStartedFrame:
 		return "tts.started", attrs
-	case *TTSAudioFrame:
-		attrs["count"], attrs["sample_rate"], attrs["channels"], attrs["duration_ms"] = len(v.Audio), v.SampleRate, v.Channels, float64(v.Duration.Microseconds())/1000
-		return "tts.audio_chunk", attrs
 	case *TTSStoppedFrame:
 		return "tts.stopped", attrs
 	case *TurnEventFrame:
@@ -999,7 +992,7 @@ func frameTrace(f Frame) (string, map[string]any) {
 			return "turn.event", attrs
 		case TurnEventStopped:
 			return "speech.stop", attrs
-		case TurnEventCompleted, TurnEventNoSpeechTimeout:
+		case TurnEventCompleted:
 			return "turn.complete", attrs
 		case TurnEventInterrupted:
 			return "turn.interrupted", attrs
@@ -1050,7 +1043,7 @@ func traceStatusError(err error, category string) error {
 func traceTurnTerminal(frame Frame) bool {
 	switch value := frame.(type) {
 	case *TurnEventFrame:
-		return value.Kind == TurnEventCompleted || value.Kind == TurnEventInterrupted || value.Kind == TurnEventNoSpeechTimeout
+		return value.Kind == TurnEventCompleted || value.Kind == TurnEventInterrupted
 	case *InterruptionFrame:
 		return true
 	}
@@ -1068,8 +1061,6 @@ func traceTurnID(f Frame) TurnID {
 	case *SynthesisUnitFrame:
 		return TurnID(v.Turn)
 	case *TTSStartedFrame:
-		return TurnID(v.Turn)
-	case *TTSAudioFrame:
 		return TurnID(v.Turn)
 	case *TTSStoppedFrame:
 		return TurnID(v.Turn)
@@ -1251,7 +1242,7 @@ func isControlFrame(f Frame) bool {
 		return false
 	}
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
+	case FrameEnd, FrameError, FrameInterruption, FrameFlush, FrameFlushProcessed, FrameWriteCompletion, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
 		return true
 	default:
 		return false
@@ -1268,7 +1259,7 @@ func isFenceSurvivingControl(f Frame) bool {
 		return true
 	}
 	switch f.Type() {
-	case FrameStart, FrameEnd, FrameCancel, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
+	case FrameEnd, FrameError, FrameFlushProcessed, FrameSpeakingState, FrameInputMute, FrameInputUnmute, FrameInputMutedState:
 		return true
 	}
 	return false
@@ -1277,8 +1268,6 @@ func isFenceSurvivingControl(f Frame) bool {
 func isUninterruptibleOutput(f Frame) bool {
 	switch v := f.(type) {
 	case *OutputAudioFrame:
-		return v.Disposition == OutputUninterruptible
-	case *TTSAudioFrame:
 		return v.Disposition == OutputUninterruptible
 	}
 	return false
@@ -1294,7 +1283,7 @@ func isInterruptibleOutput(f Frame) bool {
 		return false
 	}
 	switch f.Type() {
-	case FrameLLMTextDelta, FrameLLMText, FrameSynthesisUnit, FrameOutputTurnFinal, FrameTTSStarted, FrameTTSAudio, FrameTTSStopped, FrameOutputAudio, FrameAssistantMessage:
+	case FrameLLMTextDelta, FrameLLMText, FrameSynthesisUnit, FrameOutputTurnFinal, FrameTTSStarted, FrameTTSStopped, FrameOutputAudio, FrameAssistantMessage:
 		return !isUninterruptibleOutput(f)
 	}
 	return false

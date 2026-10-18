@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -78,7 +77,6 @@ func createSessionWithData(t *testing.T, s *storage.Store, flowID, versionID, co
 		Transcript:    "Hello world user question",
 		AssistantText: "Hello there assistant response",
 		LatenciesJSON: `{"llm_first_chunk_ms":120}`,
-		ToolsJSON:     `[]`,
 	}
 	if err := s.Sessions().AddTurn(ctx, turn); err != nil {
 		t.Fatal(err)
@@ -86,16 +84,14 @@ func createSessionWithData(t *testing.T, s *storage.Store, flowID, versionID, co
 
 	toolCallID := storage.NewID()
 	tc := storage.ToolCallRecord{
-		ID:               toolCallID,
-		SessionID:        sessID,
-		TurnID:           turnID,
-		RemoteName:       "weather_check",
-		SchemaHash:       "hash123",
-		StartedAt:        startedAt,
-		EndedAt:          endedAt,
-		Status:           "completed",
-		ArgumentsSummary: `{"city":"Berlin"}`,
-		ResultSummary:    `{"temp":21}`,
+		ID:         toolCallID,
+		SessionID:  sessID,
+		TurnID:     turnID,
+		RemoteName: "weather_check",
+		SchemaHash: "hash123",
+		StartedAt:  startedAt,
+		EndedAt:    endedAt,
+		Status:     "completed",
 	}
 	if err := s.Traces().AddToolCall(ctx, tc); err != nil {
 		t.Fatal(err)
@@ -239,9 +235,6 @@ func TestContentPurge(t *testing.T) {
 	if res.TurnsPurged != 1 {
 		t.Errorf("expected 1 turn purged, got %d", res.TurnsPurged)
 	}
-	if res.ToolCallsPurged != 1 {
-		t.Errorf("expected 1 tool call purged, got %d", res.ToolCallsPurged)
-	}
 
 	// Verify session 1: content purged, metadata preserved
 	turn1, err := onlyTurn(ctx, s, sess1.sessionID)
@@ -261,10 +254,6 @@ func TestContentPurge(t *testing.T) {
 	tcs1, err := s.Traces().ToolCalls(ctx, sess1.sessionID, "")
 	if err != nil || len(tcs1) == 0 {
 		t.Fatalf("tool calls query: %v", err)
-	}
-	if tcs1[0].ArgumentsSummary != "" || tcs1[0].ResultSummary != "" {
-		t.Errorf("expected purged tool call arguments and results, got args=%q, res=%q",
-			tcs1[0].ArgumentsSummary, tcs1[0].ResultSummary)
 	}
 	if tcs1[0].RemoteName != "weather_check" || tcs1[0].Status != "completed" {
 		t.Errorf("expected tool call metadata preserved, got %+v", tcs1[0])
@@ -441,105 +430,6 @@ func TestBatchPurge(t *testing.T) {
 	}
 }
 
-func TestPurgeContent_ToolResultAndTextSanitization(t *testing.T) {
-	s := newTestStore(t)
-	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
-	ctx := context.Background()
-	now := time.Now().UTC()
-
-	// Session 1: ended 10 days ago (content expired).
-	// Turns have NO transcript/assistant text, and tool calls have NO arguments/result summary.
-	// ONLY spans and events have "tool.result" and "text" attributes!
-	sessID1 := storage.NewID()
-	if err := s.Sessions().Create(ctx, storage.SessionRecord{
-		ID:                  sessID1,
-		FlowID:              flowID,
-		FlowVersionID:       versionID,
-		ConfigHash:          configHash,
-		Status:              "ended",
-		StartedAt:           now.Add(-10 * 24 * time.Hour),
-		EndedAt:             now.Add(-10*24*time.Hour + time.Minute),
-		ProviderStackJSON:   `{}`,
-		RuntimeSnapshotJSON: `{}`,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Turn has empty transcript and assistant_text
-	turnID1 := storage.NewID()
-	if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{
-		ID:            turnID1,
-		SessionID:     sessID1,
-		Ordinal:       1,
-		StartedAt:     now.Add(-10 * 24 * time.Hour),
-		EndedAt:       now.Add(-10*24*time.Hour + time.Minute),
-		Transcript:    "",
-		AssistantText: "",
-		LatenciesJSON: `{}`,
-		ToolsJSON:     `[]`,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Span has "tool.result", along with preserved metadata
-	spanID1 := storage.NewID()
-	if err := s.Traces().AddSpan(ctx, storage.TraceSpan{
-		ID:             spanID1,
-		SessionID:      sessID1,
-		TurnID:         turnID1,
-		Name:           "tool.execution",
-		StartedAt:      now.Add(-10 * 24 * time.Hour),
-		EndedAt:        now.Add(-10*24*time.Hour + time.Second),
-		AttributesJSON: `{"tool.result":"sensitive-tool-output","sample_rate":24000}`,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	// Event has "text" attribute, along with preserved metadata
-	eventID1 := storage.NewID()
-	if err := s.Traces().AddEvent(ctx, storage.TraceEvent{
-		ID:             eventID1,
-		SpanID:         spanID1,
-		SessionID:      sessID1,
-		TurnID:         turnID1,
-		Name:           "user.speech",
-		OccurredAt:     now.Add(-10 * 24 * time.Hour),
-		AttributesJSON: `{"text":"sensitive-user-speech","duration_ms":300}`,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	cutoff := now.Add(-7 * 24 * time.Hour)
-	_, err := s.Retention().PurgeContent(ctx, cutoff, 100, storage.ContentCursor{})
-	if err != nil {
-		t.Fatalf("PurgeContent failed: %v", err)
-	}
-
-	// Verify span: "tool.result" must be purged, "sample_rate" must be preserved
-	spans, err := s.Traces().Spans(ctx, sessID1, "")
-	if err != nil || len(spans) == 0 {
-		t.Fatalf("query spans: %v", err)
-	}
-	if strings.Contains(spans[0].AttributesJSON, "tool.result") || strings.Contains(spans[0].AttributesJSON, "sensitive-tool-output") {
-		t.Errorf("expected tool.result to be purged from span attributes, got %s", spans[0].AttributesJSON)
-	}
-	if !strings.Contains(spans[0].AttributesJSON, "sample_rate") {
-		t.Errorf("expected sample_rate to be preserved in span attributes, got %s", spans[0].AttributesJSON)
-	}
-
-	// Verify event: "text" must be purged, "duration_ms" must be preserved
-	events, err := s.Traces().Events(ctx, sessID1, "")
-	if err != nil || len(events) == 0 {
-		t.Fatalf("query events: %v", err)
-	}
-	if strings.Contains(events[0].AttributesJSON, "text") || strings.Contains(events[0].AttributesJSON, "sensitive-user-speech") {
-		t.Errorf("expected text to be purged from event attributes, got %s", events[0].AttributesJSON)
-	}
-	if !strings.Contains(events[0].AttributesJSON, "duration_ms") {
-		t.Errorf("expected duration_ms to be preserved in event attributes, got %s", events[0].AttributesJSON)
-	}
-}
-
 func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 	s := newTestStore(t)
 	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
@@ -642,10 +532,8 @@ func TestConcurrentPurgeAndTraceInsertion(t *testing.T) {
 	}
 }
 
-// Sessions whose only trace attributes merely mention a content word in a label
-// (e.g. "frame":"transcript_candidate") must not be re-selected forever and
-// starve the purge of newer sessions that still hold real content.
-func TestPurgeContent_LabelMentionsDoNotStarveNewerContent(t *testing.T) {
+// More content-bearing sessions than one batch: every one is purged, with no resume state between batches.
+func TestPurgeContent_PurgesEveryContentSessionAcrossBatches(t *testing.T) {
 	s := newTestStore(t)
 	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
 	ctx := context.Background()
@@ -658,86 +546,40 @@ func TestPurgeContent_LabelMentionsDoNotStarveNewerContent(t *testing.T) {
 			Status: "ended", StartedAt: ended.Add(-time.Minute), EndedAt: ended, ProviderStackJSON: `{}`, RuntimeSnapshotJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}
-		turnID := storage.NewID()
-		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: turnID, SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
-			Transcript: transcript, LatenciesJSON: `{}`, ToolsJSON: `[]`}); err != nil {
-			t.Fatal(err)
-		}
-		if err := s.Traces().AddSpan(ctx, storage.TraceSpan{ID: storage.NewID(), SessionID: id, TurnID: turnID, Name: "processor.frame",
-			StartedAt: ended.Add(-time.Minute), EndedAt: ended,
-			AttributesJSON: `{"component":"*transcript.Processor","frame":"transcript_candidate","prompt_tokens":3}`}); err != nil {
+		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: storage.NewID(), SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
+			Transcript: transcript, LatenciesJSON: `{}`}); err != nil {
 			t.Fatal(err)
 		}
 		return id
 	}
-	for i := 0; i < 3; i++ { // older than the batch size, already content-free
+	for i := 0; i < 3; i++ { // already content-free
 		addSession(time.Duration(20+i)*24*time.Hour, "")
 	}
-	fresh := addSession(10*24*time.Hour, "secret transcript")
+	var withContent []string
+	for i := 0; i < 5; i++ { // 5 sessions with BatchSize 2: three batches
+		withContent = append(withContent, addSession(time.Duration(10+i)*24*time.Hour, "secret transcript"))
+	}
 
 	job := retention.NewJob(s.Retention(), retention.Policy{ContentRetention: 7 * 24 * time.Hour, MetadataRetention: 30 * 24 * time.Hour, BatchSize: 2},
 		retention.WithClock(func() time.Time { return now }))
 	if _, err := job.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	turns, err := s.Sessions().Turns(ctx, fresh)
-	if err != nil || len(turns) != 1 {
-		t.Fatalf("turns: %v %d", err, len(turns))
-	}
-	if turns[0].Transcript != "" {
-		t.Fatalf("content past retention was not purged: %q", turns[0].Transcript)
-	}
-}
-
-// Rows that match the content predicate but cannot be sanitized (here a string
-// value containing an escaped "text": key) must be passed over, not re-selected
-// forever ahead of newer sessions with real content.
-func TestPurgeContent_UnsanitizableRowsDoNotStall(t *testing.T) {
-	s := newTestStore(t)
-	flowID, versionID, configHash := createTestFlowAndVersion(t, s)
-	ctx := context.Background()
-	now := time.Now().UTC()
-	add := func(endedAgo time.Duration, transcript, attrs string) string {
-		id := storage.NewID()
-		ended := now.Add(-endedAgo)
-		if err := s.Sessions().Create(ctx, storage.SessionRecord{ID: id, FlowID: flowID, FlowVersionID: versionID, ConfigHash: configHash,
-			Status: "ended", StartedAt: ended.Add(-time.Minute), EndedAt: ended, ProviderStackJSON: `{}`, RuntimeSnapshotJSON: `{}`}); err != nil {
-			t.Fatal(err)
+	for _, id := range withContent {
+		turns, err := s.Sessions().Turns(ctx, id)
+		if err != nil || len(turns) != 1 {
+			t.Fatalf("turns: %v %d", err, len(turns))
 		}
-		turnID := storage.NewID()
-		if err := s.Sessions().AddTurn(ctx, storage.TurnRecord{ID: turnID, SessionID: id, Ordinal: 1, StartedAt: ended.Add(-time.Minute), EndedAt: ended,
-			Transcript: transcript, LatenciesJSON: `{}`, ToolsJSON: `[]`}); err != nil {
-			t.Fatal(err)
+		if turns[0].Transcript != "" {
+			t.Fatalf("session %s: content past retention was not purged: %q", id, turns[0].Transcript)
 		}
-		if err := s.Traces().AddSpan(ctx, storage.TraceSpan{ID: storage.NewID(), SessionID: id, TurnID: turnID, Name: "x",
-			StartedAt: ended.Add(-time.Minute), EndedAt: ended, AttributesJSON: attrs}); err != nil {
-			t.Fatal(err)
-		}
-		return id
-	}
-	for i := 0; i < 3; i++ {
-		add(time.Duration(20+i)*24*time.Hour, "", `{"custom.note":"he said \"text\": hi"}`)
-	}
-	nested := add(15*24*time.Hour, "", `{"custom.payload":{"text":"nested secret"}}`)
-	fresh := add(10*24*time.Hour, "secret transcript", `{}`)
-
-	job := retention.NewJob(s.Retention(), retention.Policy{ContentRetention: 7 * 24 * time.Hour, MetadataRetention: 30 * 24 * time.Hour, BatchSize: 2},
-		retention.WithClock(func() time.Time { return now }))
-	if _, err := job.RunOnce(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if turns, _ := s.Sessions().Turns(ctx, fresh); len(turns) != 1 || turns[0].Transcript != "" {
-		t.Fatalf("newer content stalled behind unsanitizable rows: %+v", turns)
-	}
-	if spans, _ := s.Traces().Spans(ctx, nested, ""); len(spans) != 1 || strings.Contains(spans[0].AttributesJSON, "nested secret") {
-		t.Fatalf("nested content key not removed: %+v", spans)
 	}
 }
 
 // blockingStore stalls a purge until its context ends.
 type blockingStore struct{ entered chan struct{} }
 
-func (b blockingStore) PurgeContent(ctx context.Context, _ time.Time, _ int, _ storage.ContentCursor) (storage.ContentPurgeResult, error) {
+func (b blockingStore) PurgeContent(ctx context.Context, _ time.Time, _ int) (storage.ContentPurgeResult, error) {
 	close(b.entered)
 	<-ctx.Done()
 	return storage.ContentPurgeResult{}, ctx.Err()

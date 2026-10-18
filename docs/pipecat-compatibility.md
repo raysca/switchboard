@@ -62,11 +62,11 @@ go test -race -count=1 ./transport/rtvi ./transport/ws
 
 Until an official Whisker package and protocol version are pinned, the V2 target is a semantic observer/debug adapter. The adapter translates `core.DebugEvent` values and does not add Whisker-specific concepts to core processors or the RTVI message vocabulary. Tests assert required semantics and event ordering, not a guessed byte-for-byte protocol. Pin an official package/protocol coordinate before any claim of wire compatibility.
 
-Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` directly carries pipeline/processor position, frame kind, direction, sequence, and tool call ID with session/turn/generation correlation. Namespaced structured metadata is restricted to copied numeric/boolean values. The Task 14 semantic adapter deep-copies nested metadata and rejects malformed identifiers, processor indexes, and directions. Its eleven cases use live session/probe processing or the actual paced writer, then adapt observed transitions to `DebugEvent` values. Interruption and transport flush acknowledgement come from the assistant/transport processors; queued and in-flight flush completion comes from the paced writer. Tool start and failure come from live executor outcomes. This validates the narrow adapter; a general runtime observer subscription/delivery API belongs to Task 35.
+Task 1 adds the protocol-neutral `core.DebugEvent` and immutable observer value contracts. `DebugEvent` carries session/turn/generation correlation; the Whisker adapter wraps it in its own `Observed` envelope (pipeline/processor position, frame kind, direction, sequence, tool call ID). Namespaced structured metadata is restricted to copied numeric/boolean values. The Task 14 semantic adapter deep-copies nested metadata and rejects malformed identifiers, processor indexes, and directions. Its eleven cases use live session/probe processing or the actual paced writer, then adapt observed transitions to `DebugEvent` values. Interruption and transport flush acknowledgement come from the assistant/transport processors; queued and in-flight flush completion comes from the paced writer. Tool start and failure come from live executor outcomes. This validates the narrow adapter; a general runtime observer subscription/delivery API belongs to Task 35.
 
 The teardown probe implements `core.Closer` and records `processor.shutdown` only from its actual `Close` callback. Its session-supervised worker waits for cancellation and the close callback, then records `session.resources.completed` as it exits. The scenario requires both observations before session `Done` and zero leaked tasks. Suppressing the close observation fails the negative regression. This does not add a general processor shutdown event to core; Task 35 owns general observer delivery.
 
-Task 35 is delivered by `core/observer.go` (plan task P0-1). `Session.Subscribe(buffer, fn)` runs each observer on its own session-supervised task with a bounded queue. `Session.EmitDebug` never blocks: a full queue drops the event for that observer only, and the drop is counted (`Subscription.Dropped`, `Session.DebugDropped`). An observer panic is recovered and never fails the session. Cancel is idempotent, and teardown leaves no tasks behind unless an observer blocks forever, which Close reports as a leaked task.
+Task 35 is delivered by `core/observer.go` (plan task P0-1). `Session.Subscribe(buffer, fn)` runs each observer on its own session-supervised task with a bounded queue. `Session.EmitDebug` never blocks: a full queue drops the event for that observer only, and the drop is counted (`Subscription.Dropped`). An observer panic is recovered and never fails the session. Cancel is idempotent, and teardown leaves no tasks behind unless an observer blocks forever, which Close reports as a leaked task.
 
 The conformance scenario set is:
 
@@ -109,17 +109,8 @@ runtime semantic scenario results; any failed case makes eval exit nonzero. The 
 `UNMODIFIED_CLIENT_CANNOT_CLEAR_BUFFERED_PLAYBACK_ON_WIRE_EVENT`; it is reported
 as unsupported and never counted as a pass or a client clear.
 
-The RTVI `DebugEvent` encoder maps the admitted `error.category` metadata to a
-bounded safe category. `session.error` is fatal and `provider.error` is
-nonfatal; arbitrary category text is emitted as `internal_error`. The wire
-error payload omits the original category and every other source attribute.
-The encoder
-rejects malformed identifiers, processor indexes, and directions. The RTVI `DebugEvent` encoder rejects transcript/text events when their
-content is absent under Task 1's default metadata privacy policy. Callers that
-have explicitly authorized content use the existing typed
-`Handler.FormatUserTranscription` or `Handler.FormatBotLLMText` path. This
-prevents the compatibility adapter from fabricating empty content or widening
-debug-event privacy policy.
+Typed transcript and bot-text messages go through `Handler.FormatUserTranscription` and
+`Handler.FormatBotLLMText`; there is no generic `DebugEvent` to RTVI encoder.
 
 ## Pipecat behavioral parity: matrix and paired fixtures
 
@@ -157,10 +148,10 @@ The table tracks every V2 P0/P1/P2 capability from the original V2 specification
 | P0 — Bot speaking state | Gate B passed | Task 8 starts typed speaking state only after a successful non-empty paced write and stops once on whole-turn drain, flush, fatal write failure, or close. A late whole-turn marker reconciles already-completed output exactly once. Empty/error/stale output and per-unit TTS boundaries do not flicker state. The same transition maps to RTVI; it is not client playback acknowledgement. |
 | P0 — Interruptible vs uninterruptible output | Gate B passed | Task 8 tests show flush drops queued/selected interruptible output through the target generation while old-generation explicitly uninterruptible media survives in relative order and new-generation output recovers. A transport-bound real WebSocket write finishes before acknowledgement because canceling it would close the connection. |
 | P0 — Output flush semantics | Gate B passed; client clear unsupported | Task 8 bounds/copies the paced queue by frame/byte/duration, atomically fences write admission, preserves uninterruptible final drains, and schedules late finality at recorded media time. The real-WebSocket integration proves barrier waiting plus same-connection reuse. The pinned browser probe still cannot clear already-buffered playback, so no client-buffer claim is made; Gate B permits this documented already-delivered-audio exception. |
-| P0 — Turn management controller | Gate B passed | `core/turn` tests cover caller-timestamped initial no-speech and inter-turn silence, debounced start/stop and minimum speech, maximum active duration, one-shot completion/interruption, mute/unmute, reset/close rejection, timestamp regression, bounded retirement, and higher-generation fencing/interruption. The independent Gate B tester reran focused turn and lifecycle suites under the race detector. |
+| P0 — Turn management controller | Gate B passed | `core/turn` tests cover inter-turn silence, debounced start/stop and minimum speech, maximum active duration, one-shot completion/interruption, mute/unmute, reset/close rejection, timestamp regression, and higher-generation fencing/interruption. The independent Gate B tester reran focused turn and lifecycle suites under the race detector. |
 | P0 — STT commit/finalization policy | Gate B passed | `core/transcript` separates raw candidates from marked commits, orders policy by an injected monotonic receipt clock, and has one session-owned deadline driver. Google and xAI preserve immutable turn ownership, bounded invalidation, multi-result completeness, rotation/drain lifecycle, and exactly-once cleanup. Provider-local wall-clock/text dedupe is absent, V2 UserContext suppresses committed-frame replay by turn/generation, and the independent Gate B tester passed focused transcript and mocked multi-turn provider integrations under the race detector. |
 | P0 — Turn-scoped audio buffer | removed | Deleted from core: it had no production users. |
-| P0 — Behavioral eval harness | P0 gate | Machine-readable scenarios pass for barge-in, turn completion, silence/no-speech timeout, flush, transcript stabilization, tool interruption, pacing, teardown, RTVI, and Whisker. |
+| P0 — Behavioral eval harness | P0 gate | Machine-readable scenarios pass for barge-in, turn completion, flush, transcript stabilization, tool interruption, pacing, teardown, RTVI, and Whisker. |
 | P1 — Runtime service settings updates | removed | Deleted from core: it had no production users. |
 | P1 — Context summarization/compaction hook | rebuilt (P3-4) | `core/context_summary.go`, per-flow opt-in. |
 | P1 — Audio recording/capture processor | rebuilt (P4-4) | `core/record`, server and flow opt-in. |

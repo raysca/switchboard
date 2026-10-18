@@ -29,15 +29,15 @@ const (
 // STTCounters is implemented by STT processors that keep stream counters (and
 // the failover wrapper, which sums its candidates) so the server exports them.
 type STTCounters interface {
-	STTCounts() (rotations, rotationFailures, deduplicated, errors uint64)
+	STTCounts() (rotations, rotationFailures, errors uint64)
 }
 
 // STTCounts sums the counters of every candidate that reports them.
-func (w *STTFailover) STTCounts() (rot, rotFail, dedup, errs uint64) {
+func (w *STTFailover) STTCounts() (rot, rotFail, errs uint64) {
 	for _, c := range w.cfg.Candidates {
 		if m, ok := c.Proc.(STTCounters); ok {
-			a, b, d, e := m.STTCounts()
-			rot, rotFail, dedup, errs = rot+a, rotFail+b, dedup+d, errs+e
+			a, b, e := m.STTCounts()
+			rot, rotFail, errs = rot+a, rotFail+b, errs+e
 		}
 	}
 	return
@@ -58,10 +58,8 @@ type STTFailoverConfig struct {
 	Classify func(error) string
 	// Allow reports whether the class may fail over. Nil allows every class.
 	Allow func(class string) bool
-	// BufferBytes bounds the replay buffer (default DefaultSTTReplayBytes);
-	// PreRollBytes is the audio before the speech-start signal replayed with the
-	// utterance (default DefaultSTTPreRollBytes).
-	BufferBytes, PreRollBytes int
+	// BufferBytes bounds the replay buffer (default DefaultSTTReplayBytes).
+	BufferBytes int
 	// OnFailover is called for every switch (metrics). May be nil.
 	OnFailover func(from, to, class string)
 	// OnDropped is called with the bytes of open-utterance audio evicted from a
@@ -129,9 +127,6 @@ func NewSTTFailover(cfg STTFailoverConfig) (*STTFailover, error) {
 	}
 	if cfg.BufferBytes <= 0 {
 		cfg.BufferBytes = DefaultSTTReplayBytes
-	}
-	if cfg.PreRollBytes <= 0 {
-		cfg.PreRollBytes = DefaultSTTPreRollBytes
 	}
 	n := len(cfg.Candidates)
 	w := &STTFailover{cfg: cfg, abandoned: make([]bool, n), demoted: make([]bool, n)}
@@ -213,7 +208,7 @@ func (w *STTFailover) ProcessFrame(ctx context.Context, f Frame, dir Direction, 
 	switch f.(type) {
 	case *TurnEventFrame:
 		return w.deliver(ctx, f, 0, dir, e, false)
-	case *InterruptionFrame, *CancelFrame:
+	case *InterruptionFrame:
 		return w.deliver(ctx, f, 0, dir, e, true)
 	}
 	if dir != Downstream {
@@ -331,7 +326,7 @@ func (w *STTFailover) startUtterance(ctx context.Context, fr *UserStartedSpeakin
 	// Replay starts PreRoll bytes of audio before the speech-start signal.
 	w.mark = w.nextSeq + 1
 	// It never reaches into the previous utterance (its stop/start frames bound it).
-	for i, got := len(w.journal)-1, 0; i >= 0 && got < w.cfg.PreRollBytes; i-- {
+	for i, got := len(w.journal)-1, 0; i >= 0 && got < DefaultSTTPreRollBytes; i-- {
 		switch w.journal[i].f.(type) {
 		case *UserStoppedSpeakingFrame, *UserStartedSpeakingFrame:
 			i = -1

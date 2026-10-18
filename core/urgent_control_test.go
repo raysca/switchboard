@@ -49,16 +49,13 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 		}
 	}
 
-	// Post an urgent control frame: CancelFrame
-	cancelFrame := &core.CancelFrame{}
-	if err := s.Post(cancelFrame); err != nil {
-		t.Fatalf("Post CancelFrame: %v", err)
-	}
-
-	// Also post an ordinary control frame: InputMuteFrame
-	muteFrame := &core.InputMuteFrame{}
-	if err := s.Post(muteFrame); err != nil {
+	// Two distinguishable control frames, in this order: the mute (seen by the
+	// processor as FrameInputMutedState), then a flush (FrameFlush).
+	if err := s.Post(&core.InputMuteFrame{}); err != nil {
 		t.Fatalf("Post InputMuteFrame: %v", err)
+	}
+	if err := s.Post(&core.FlushFrame{Gen: 1}); err != nil {
+		t.Fatalf("Post FlushFrame: %v", err)
 	}
 
 	// Start the session to let run loop process envelopes
@@ -77,10 +74,48 @@ func TestUrgentControl_BypassesCongestedMediaQueue(t *testing.T) {
 		t.Fatalf("expected at least 2 processed frames, got %d", len(processed))
 	}
 
-	// The urgent frame (CancelFrame) must be processed BEFORE the ordinary data queue frames
-	firstProcessed := processed[0]
-	if firstProcessed.Type() != core.FrameCancel {
-		t.Fatalf("expected first processed frame to be FrameCancel, got %v", firstProcessed.Type())
+	// Control frames run before the congested data queue, in posting order.
+	if processed[0].Type() != core.FrameInputMutedState || processed[1].Type() != core.FrameFlush {
+		t.Fatalf("expected [FrameInputMutedState FrameFlush] first, got %v then %v", processed[0].Type(), processed[1].Type())
+	}
+}
+
+// TestUrgentControl_InterruptionJumpsCongestedDataQueue pins barge-in latency: an
+// InterruptionFrame posted behind a full data queue is processed before the queued audio.
+func TestUrgentControl_InterruptionJumpsCongestedDataQueue(t *testing.T) {
+	var processed []core.FrameType
+	var mu sync.Mutex
+	pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+		mu.Lock()
+		processed = append(processed, f.Type())
+		mu.Unlock()
+		return e.PushDirection(f, d)
+	}})
+	s, err := core.NewSession(202, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	// Not started yet: the audio is queued behind the interruption's arrival.
+	for i := 0; i < 10; i++ {
+		if err := s.Post(&core.InputAudioFrame{Samples: []byte{byte(i)}, Encoding: core.EncodingPCM16LE, SampleRate: 16000, Channels: 1}); err != nil {
+			t.Fatalf("Post audio %d: %v", i, err)
+		}
+	}
+	if err := s.Post(&core.InterruptionFrame{}); err != nil {
+		t.Fatalf("Post InterruptionFrame: %v", err)
+	}
+	if err := s.Post(&core.InputMutedStateFrame{}); err != nil {
+		t.Fatalf("Post InputMutedStateFrame: %v", err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Close()
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(processed) < 2 || processed[0] != core.FrameInterruption || processed[1] != core.FrameInputMutedState {
+		t.Fatalf("interruption then muted state must run before queued audio, got %v", processed)
 	}
 }
 
@@ -99,9 +134,9 @@ func TestUrgentControl_PreservesControlOrder(t *testing.T) {
 
 	s, _ := core.NewSession(201, pipe, core.DefaultResourceBudget())
 
-	// Post urgent frames in specific order: Flush -> Cancel
+	// Post control frames in specific order: Flush -> mute state
 	_ = s.Post(&core.FlushFrame{Gen: 1})
-	_ = s.Post(&core.CancelFrame{})
+	_ = s.Post(&core.InputMutedStateFrame{})
 
 	if err := s.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -120,8 +155,8 @@ func TestUrgentControl_PreservesControlOrder(t *testing.T) {
 	if processedTypes[0] != core.FrameFlush {
 		t.Fatalf("expected first frame FrameFlush, got %v", processedTypes[0])
 	}
-	if processedTypes[1] != core.FrameCancel {
-		t.Fatalf("expected second frame FrameCancel, got %v", processedTypes[1])
+	if processedTypes[1] != core.FrameInputMutedState {
+		t.Fatalf("expected second frame FrameInputMutedState, got %v", processedTypes[1])
 	}
 }
 
@@ -166,7 +201,7 @@ func TestUrgentControl_StarvationPrevention(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 20; i++ {
-			_ = s.Post(&core.CancelFrame{})
+			_ = s.Post(&core.InputMutedStateFrame{})
 			time.Sleep(2 * time.Millisecond)
 		}
 	}()

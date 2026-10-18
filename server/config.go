@@ -382,12 +382,6 @@ func (c *Config) TurnAnalyzerMode() string {
 	return "process"
 }
 
-// VADProcessorConfig is the per-call VAD config: library defaults with
-// vad.stop_ms applied (0 keeps the 200 ms default).
-func (c *Config) VADProcessorConfig() vad.ProcessorConfig {
-	return c.VADProcessorConfigForStopMS(0)
-}
-
 // vadStop is the call's VAD stop: the flow override (ms > 0), else vad.stop_ms, rounded up to
 // whole 32 ms chunks like the VAD processor.
 func (c *Config) vadStop(flowMS int) time.Duration {

@@ -5,7 +5,7 @@
 import type { ToolSelection } from "../../../api/client";
 
 export const MAX_STEPS = 8;
-export const MAX_ROUTES = 32;
+const MAX_ROUTES = 32;
 /** The server counts a greeting in bytes (server/flow/config.go). */
 export const MAX_GREETING_BYTES = 500;
 export const MAX_SUMMARY_PROMPT_BYTES = 2048;
@@ -54,7 +54,7 @@ const asRecord = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
 export type StepTab = "basics" | "routes" | "tools" | "advanced";
-export type StepIssue = { tab: StepTab; message: string };
+type StepIssue = { tab: StepTab; message: string };
 
 /** A flow with no steps yet: the editor shows "Start with one step." */
 export function emptyFlow(): FlowDraft {

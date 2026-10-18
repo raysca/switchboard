@@ -123,8 +123,8 @@ type PacedWriter struct {
 	OnSpeakingState func(core.SpeakingStateFrame)
 
 	// Test synchronization hooks. Production leaves these nil.
-	AfterSelect          func()
-	BeforeWriteAdmission func()
+	afterSelect          func()
+	beforeWriteAdmission func()
 }
 
 // Underlay is a background audio source mixed by the paced writer. Rate must
@@ -599,8 +599,8 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 		if entry == nil {
 			return nil
 		}
-		if w.AfterSelect != nil {
-			w.AfterSelect()
+		if w.afterSelect != nil {
+			w.afterSelect()
 		}
 		if waitDuration > 0 {
 			timer := time.NewTimer(waitDuration)
@@ -637,8 +637,8 @@ func (w *PacedWriter) Run(ctx context.Context) error {
 			w.safeWriteComplete(entry.frame, err)
 			return err
 		}
-		if w.BeforeWriteAdmission != nil {
-			w.BeforeWriteAdmission()
+		if w.beforeWriteAdmission != nil {
+			w.beforeWriteAdmission()
 		}
 		writeCtx, writeCancel, admitted := w.beginWrite(ctx, entry)
 		if !admitted {

@@ -11,14 +11,12 @@ import (
 // DetectionInput is a snapshot supplied by the manager to a detector. Every
 // timestamp and duration is derived from caller observations, never a clock.
 type DetectionInput struct {
-	At             time.Time
-	TurnStartedAt  time.Time
-	TurnID         core.TurnID
-	Generation     core.Generation
-	SilenceFor     time.Duration
-	SilenceAfter   time.Duration
-	SemanticMaxAge time.Duration
-	Semantic       *SemanticEvidence
+	At            time.Time
+	TurnStartedAt time.Time
+	TurnID        core.TurnID
+	Generation    core.Generation
+	SilenceFor    time.Duration
+	SilenceAfter  time.Duration
 	// Latest transcript of the open turn (joined across segments) and when it
 	// arrived; TextFinal is false for interim results.
 	Text         string
@@ -56,13 +54,4 @@ func (SilenceDetector) Detect(input DetectionInput) (DetectionDecision, bool) {
 		return DetectionDecision{Reason: core.TurnReasonSilence}, true
 	}
 	return DetectionDecision{}, false
-}
-
-// SemanticEvidence is provider-neutral output from an optional semantic end
-// of turn scorer. It contains no transcript or provider-specific payload.
-type SemanticEvidence struct {
-	TurnID     core.TurnID
-	Generation core.Generation
-	At         time.Time
-	Confidence float64
 }

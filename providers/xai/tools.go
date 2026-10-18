@@ -365,7 +365,7 @@ func (p *Processor) requestRound(ctx, sessionCtx context.Context, req responsesR
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 			return MapHTTPError("llm", resp, string(b), nil)
 		}
-		sse := NewSSEReader(resp.Body, p.cfg.MaxLineLength, p.cfg.MaxEventSize, p.cfg.MaxTotalSize)
+		sse := NewSSEReader(resp.Body, 0, 0, 0)
 		// The Responses API ends the stream with response.completed and no "[DONE]" sentinel
 		// (chat/completions still sends [DONE]); either one is a terminal event.
 		completed := false

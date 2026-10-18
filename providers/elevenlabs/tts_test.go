@@ -454,3 +454,14 @@ func TestMessageErrorClassification(t *testing.T) {
 		}
 	}
 }
+
+// Unset settings send no voice_settings (ElevenLabs defaults apply).
+func TestTTS_UnsetVoiceSettingsAreOmitted(t *testing.T) {
+	f := newFake(t, func(ctx context.Context, c *websocket.Conn) { send(ctx, c, final) })
+	h := start(t, f.cfg())
+	h.say(t, "Hello", true)
+	waitFor(t, 3*time.Second, "stop", func() bool { return h.stopped() == 1 })
+	if msgs := <-f.msgs; msgs[0].VoiceSettings != nil {
+		t.Fatalf("voice_settings sent when unset: %v", msgs[0].VoiceSettings)
+	}
+}

@@ -116,17 +116,15 @@ type TraceEventDTO struct {
 
 // ToolCallDTO represents a recorded tool call.
 type ToolCallDTO struct {
-	ID               string     `json:"id"`
-	SessionID        string     `json:"session_id"`
-	TurnID           string     `json:"turn_id,omitempty"`
-	MCPServerID      string     `json:"mcp_server_id,omitempty"`
-	RemoteName       string     `json:"remote_name"`
-	SchemaHash       string     `json:"schema_hash"`
-	StartedAt        time.Time  `json:"started_at"`
-	EndedAt          *time.Time `json:"ended_at,omitempty"`
-	Status           string     `json:"status"`
-	ArgumentsSummary string     `json:"arguments_summary,omitempty"`
-	ResultSummary    string     `json:"result_summary,omitempty"`
+	ID          string     `json:"id"`
+	SessionID   string     `json:"session_id"`
+	TurnID      string     `json:"turn_id,omitempty"`
+	MCPServerID string     `json:"mcp_server_id,omitempty"`
+	RemoteName  string     `json:"remote_name"`
+	SchemaHash  string     `json:"schema_hash"`
+	StartedAt   time.Time  `json:"started_at"`
+	EndedAt     *time.Time `json:"ended_at,omitempty"`
+	Status      string     `json:"status"`
 }
 
 // NewTracesHandler constructs the HTTP handler for sessions and traces query endpoints.
@@ -439,16 +437,14 @@ func toTraceEventDTO(r storage.TraceEvent) TraceEventDTO {
 
 func toToolCallDTO(r storage.ToolCallRecord) ToolCallDTO {
 	dto := ToolCallDTO{
-		ID:               r.ID,
-		SessionID:        r.SessionID,
-		TurnID:           r.TurnID,
-		MCPServerID:      r.MCPServerID,
-		RemoteName:       r.RemoteName,
-		SchemaHash:       r.SchemaHash,
-		StartedAt:        r.StartedAt,
-		Status:           r.Status,
-		ArgumentsSummary: r.ArgumentsSummary,
-		ResultSummary:    r.ResultSummary,
+		ID:          r.ID,
+		SessionID:   r.SessionID,
+		TurnID:      r.TurnID,
+		MCPServerID: r.MCPServerID,
+		RemoteName:  r.RemoteName,
+		SchemaHash:  r.SchemaHash,
+		StartedAt:   r.StartedAt,
+		Status:      r.Status,
 	}
 	if !r.EndedAt.IsZero() {
 		dto.EndedAt = &r.EndedAt

@@ -2,10 +2,11 @@ package trace_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -201,14 +202,13 @@ func TestAdapterMetadataOnly(t *testing.T) {
 	ctx := context.Background()
 	ev := core.NewTraceEvent("privacy.test", time.Now().UTC(), core.SessionID(sessID), "", 1, policy, map[string]any{
 		"transcript": "sensitive user speech",
-		"count":      42,
-		"latency_ms": 120,
+		"reason":     "hangup",
 	})
 	span := adapter.StartSpan(ctx, ev)
 	// Try setting sensitive and forbidden attributes
 	span.SetAttribute("secret_key", "sk-secret123")
 	span.SetAttribute("prompt", "system instructions")
-	span.SetAttribute("model", "gpt-4o")
+	span.SetAttribute("mcp.tool_name", "gpt-4o")
 	span.End(nil)
 
 	if err := adapter.Close(); err != nil {
@@ -233,7 +233,7 @@ func TestAdapterMetadataOnly(t *testing.T) {
 	if contains(attrs, "system instructions") {
 		t.Fatalf("prompt leaked in metadata-only mode: %s", attrs)
 	}
-	if !contains(attrs, "gpt-4o") || !contains(attrs, "42") {
+	if !contains(attrs, "gpt-4o") || !contains(attrs, "hangup") {
 		t.Fatalf("metadata fields missing from attributes: %s", attrs)
 	}
 }
@@ -293,161 +293,44 @@ func TestAdapterConcurrentCloseNoPanic(t *testing.T) {
 	}
 }
 
+// Only the whitelisted metadata keys are stored: content keys, custom.* keys, unknown keys, oversized
+// strings and non-finite numbers are all dropped.
 func TestAdapterFilterAttributesPrivacyPolicy(t *testing.T) {
 	s := newTestStore(t)
 	sessID := createTestSession(t, s)
 
-	policy := core.TracePolicy{Content: core.TraceMetadata}
 	adapter := trace.NewAdapter(s.Traces())
 	defer adapter.Close()
 
 	ctx := context.Background()
-	ev := core.NewTraceEvent("policy.span", time.Now().UTC(), core.SessionID(sessID), "", 1, policy, nil)
-	span := adapter.StartSpan(ctx, ev)
+	span := adapter.StartSpan(ctx, core.NewTraceEvent("policy.span", time.Now().UTC(), core.SessionID(sessID), "", 1, core.TracePolicy{}, nil))
 
-	// 1. Forbidden keys (must be safely filtered out)
-	forbiddenKeys := []string{
-		"transcript", "prompt", "argument", "result", "text",
-		"secret", "token", "password", "credential", "api_key", "audio",
-		"custom.transcript", "custom.prompt", "custom.argument", "custom.result", "custom.text",
-		"custom.secret_key", "custom.auth_token", "custom.password_val", "custom.credential_data", "custom.api_key_str", "custom.audio_stream",
-		"bad key with spaces", "invalid$key!", strings.Repeat("k", 65),
+	for _, k := range []string{"transcript", "prompt", "text", "tool.arguments", "tool.result", "secret", "audio", "custom.metric", "custom.text", "count", "model", "latency_ms"} {
+		span.SetAttribute(k, "leak_attempt")
+		span.SetAttribute(k, 123)
 	}
-	for _, fk := range forbiddenKeys {
-		span.SetAttribute(fk, "leak_attempt")
-		span.SetAttribute(fk, 123)
-	}
-
-	// 2. Raw byte slices (must be safely filtered out)
-	span.SetAttribute("custom.raw_bytes", []byte{1, 2, 3, 4})
-	span.SetAttribute("audio_chunk", []byte{0xDE, 0xAD, 0xBE, 0xEF})
-	span.SetAttribute("custom.nested_bytes", map[string]any{"bytes": []byte{5, 6, 7}})
-	span.SetAttribute("custom.slice_bytes", []any{[]byte{8, 9}})
-
-	// 3. Audio-like objects (must be safely filtered out)
-	span.SetAttribute("audio", "audio/raw")
-	span.SetAttribute("custom.audio_buffer", []any{1, 2, 3})
-	span.SetAttribute("custom.nested_audio", map[string]any{"audio_samples": 16000})
-
-	// 4. Oversized and unsupported objects
-	// Map with > 64 elements
-	bigMap := make(map[string]any)
-	for i := 0; i < 65; i++ {
-		bigMap[fmt.Sprintf("k%d", i)] = i
-	}
-	span.SetAttribute("custom.big_map", bigMap)
-
-	// Slice with > 64 elements
-	bigSlice := make([]any, 65)
-	for i := 0; i < 65; i++ {
-		bigSlice[i] = i
-	}
-	span.SetAttribute("custom.big_slice", bigSlice)
-
-	// Deeply nested map (> 8 levels)
-	deepMap := map[string]any{"leaf": 1}
-	for i := 0; i < 10; i++ {
-		deepMap = map[string]any{"next": deepMap}
-	}
-	span.SetAttribute("custom.deep_map", deepMap)
-
-	// Step budget exceeded (> 1024 steps)
-	var manyNodes []any
-	for i := 0; i < 20; i++ {
-		sub := make(map[string]any)
-		for j := 0; j < 60; j++ {
-			sub[fmt.Sprintf("f%d", j)] = j
-		}
-		manyNodes = append(manyNodes, sub)
-	}
-	span.SetAttribute("custom.many_nodes", manyNodes)
-
-	// Oversized string in whitelisted metadata label (> 256 bytes)
-	span.SetAttribute("model", strings.Repeat("m", 300))
-
-	// Non-finite floats
-	span.SetAttribute("latency_ms", math.NaN())
-	span.SetAttribute("duration_ms", math.Inf(1))
-
-	// Unsupported types (channels, funcs, structs)
-	span.SetAttribute("custom.ch", make(chan int))
-	span.SetAttribute("custom.fn", func() {})
-	span.SetAttribute("custom.struct_val", struct{ A int }{A: 1})
-
-	// 5. Allowed valid metadata (must be preserved)
-	span.SetAttribute("status", "ok")
-	span.SetAttribute("count", 99)
-	span.SetAttribute("latency_ms", 12.34)
-	span.SetAttribute("custom.metric", 100)
-	span.SetAttribute("custom.flag", true)
-	span.SetAttribute("custom.nested_valid", map[string]any{
-		"sub_count": 5,
-		"is_active": false,
-	})
-
+	span.SetAttribute("custom.nested", map[string]any{"sub_count": 5})
+	span.SetAttribute("mcp.tool_name", strings.Repeat("m", 300)) // whitelisted key, oversized string
+	span.SetAttribute("mcp.duration_ms", math.NaN())
+	span.SetAttribute("mcp.server_id", []byte{1, 2}) // unsupported type
+	span.SetAttribute("reason", "hangup")
+	span.SetAttribute("mcp.duration_ms", 12.5)
 	span.End(nil)
 
 	if err := adapter.Close(); err != nil {
 		t.Fatal(err)
 	}
-
 	spans, err := s.Traces().Spans(ctx, sessID, "")
-	if err != nil {
-		t.Fatalf("query spans: %v", err)
+	if err != nil || len(spans) != 1 {
+		t.Fatalf("spans %v err %v", spans, err)
 	}
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
+	var got map[string]any
+	if err := json.Unmarshal([]byte(spans[0].AttributesJSON), &got); err != nil {
+		t.Fatal(err)
 	}
-
-	attrs := spans[0].AttributesJSON
-
-	// Verify that forbidden markers and leak attempts are absent
-	forbiddenSubstrings := []string{
-		"leak_attempt",
-		"transcript",
-		"prompt",
-		"argument",
-		"result",
-		"text",
-		"secret",
-		"token",
-		"password",
-		"credential",
-		"api_key",
-		"audio",
-		"raw_bytes",
-		"nested_bytes",
-		"slice_bytes",
-		"audio_chunk",
-		"big_map",
-		"big_slice",
-		"deep_map",
-		"many_nodes",
-		strings.Repeat("m", 300),
-		"NaN",
-		"+Inf",
-	}
-	for _, sub := range forbiddenSubstrings {
-		if strings.Contains(attrs, sub) {
-			t.Errorf("forbidden substring %q leaked into span attributes: %s", sub, attrs)
-		}
-	}
-
-	// Verify allowed metadata is present
-	expectedSubstrings := []string{
-		`"status":"ok"`,
-		`"count":99`,
-		`"latency_ms":12.34`,
-		`"custom.metric":100`,
-		`"custom.flag":true`,
-		`"custom.nested_valid"`,
-		`"sub_count":5`,
-		`"is_active":false`,
-	}
-	for _, exp := range expectedSubstrings {
-		if !strings.Contains(attrs, exp) {
-			t.Errorf("expected metadata %q missing from attributes: %s", exp, attrs)
-		}
+	want := map[string]any{"status": "ok", "reason": "hangup", "mcp.duration_ms": 12.5}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("stored attributes %v, want %v", got, want)
 	}
 }
 

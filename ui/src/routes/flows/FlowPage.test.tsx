@@ -137,13 +137,13 @@ describe("FlowPage", () => {
   });
 
   it("shows a failed publish with a way to dismiss it", async () => {
-    const { user } = setup({ updateFlow: vi.fn().mockRejectedValue(new ApiError("version conflict", "version_conflict", 409, "r")) }, "/flows/a1");
+    const { user } = setup({ updateFlow: vi.fn().mockRejectedValue(new ApiError("invalid flow config", "invalid_config", 422, "r")) }, "/flows/a1");
     await screen.findByRole("heading", { name: "Front desk", level: 1 });
     await user.click(screen.getByRole("button", { name: "Flow settings" }));
     await user.type(screen.getByLabelText("Flow name"), "!");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     await user.click(screen.getByRole("button", { name: "Publish v2" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("version conflict");
+    expect(await screen.findByRole("alert")).toHaveTextContent("invalid flow config");
   });
 
   it("closing the editor goes back to the list", async () => {

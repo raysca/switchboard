@@ -2,7 +2,7 @@ import type { SessionDTO } from "../../api/client";
 import { formatMs } from "../sessions/callStats";
 
 /** A reply over this is drawn in amber. */
-export const SLOW_REPLY_MS = 1000;
+const SLOW_REPLY_MS = 1000;
 
 /** Median reply of the calls that have one, oldest first (the API lists newest first). */
 export function replyTimes(sessions: SessionDTO[]): number[] {

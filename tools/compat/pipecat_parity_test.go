@@ -45,8 +45,9 @@ func (p *parityTurnProcessor) ProcessFrame(_ context.Context, f core.Frame, dir 
 		decisions, err = p.manager.Observe(turn.Observation{At: p.clock, TurnID: core.TurnID(fmt.Sprintf("turn-%d", p.turn)), Generation: core.Generation(p.turn), Speaking: true, Activity: true})
 	case core.FrameUserStoppedSpeaking:
 		decisions, err = p.manager.Observe(turn.Observation{At: p.clock, TurnID: core.TurnID(fmt.Sprintf("turn-%d", p.turn)), Generation: core.Generation(p.turn), Speaking: false})
-	case core.FrameEnd, core.FrameCancel:
-		decisions, err = p.manager.Interrupt(core.TurnID(fmt.Sprintf("turn-%d", p.turn)), core.Generation(p.turn), p.clock)
+	case core.FrameEnd:
+		// production interruption path: a newer generation fences the active turn
+		decisions, err = p.manager.Observe(turn.Observation{At: p.clock, TurnID: core.TurnID(fmt.Sprintf("turn-%d", p.turn)), Generation: core.Generation(p.turn + 1), Speaking: false})
 	}
 	if err != nil {
 		return err
@@ -167,7 +168,9 @@ func observedParityEvents(t *testing.T, name string) []core.TurnEventFrame {
 	if name == "user_interrupts_bot" {
 		sequence = append(sequence, &core.UserStartedSpeakingFrame{}, &core.EndFrame{})
 	} else {
-		sequence = append(sequence, &core.CancelFrame{})
+		// cancel_flushes_active_turn: Pipecat's turn_tracking_observer.py:102 treats
+		// EndFrame and the cancel frame alike (both end the active turn as interrupted).
+		sequence = append(sequence, &core.EndFrame{})
 	}
 	observed := make([]core.TurnEventFrame, 0, 4)
 	for _, f := range sequence {

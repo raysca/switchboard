@@ -183,7 +183,7 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 	switch frame := f.(type) {
 	case *core.UserMessageFrame:
 		return p.handleUserTurn(ctx, frame, e)
-	case *core.InterruptionFrame, *core.CancelFrame:
+	case *core.InterruptionFrame:
 		p.cancelActive()
 		return e.PushDirection(f, dir)
 	case *core.LLMTextDeltaFrame, *core.LLMTextFrame:

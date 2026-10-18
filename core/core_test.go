@@ -57,7 +57,7 @@ func TestCore_ProcessorOrderingAndEmission(t *testing.T) {
 	}
 	defer session.Close()
 
-	if err := session.Post(&core.StartFrame{}); err != nil {
+	if err := session.Post(&core.InputMutedStateFrame{}); err != nil {
 		t.Fatalf("Post error: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestCore_ProcessorOrderingAndEmission(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// p1 processed StartFrame and emitted 2 frames to p2
+	// p1 processed InputMutedStateFrame and emitted 2 frames to p2
 	if len(executionOrder) != 3 || executionOrder[0] != "p1" || executionOrder[1] != "p2" || executionOrder[2] != "p2" {
 		t.Fatalf("Unexpected execution order: %v", executionOrder)
 	}
@@ -83,9 +83,9 @@ func TestCore_BidirectionalRouting(t *testing.T) {
 	var mu sync.Mutex
 
 	pMiddle := &testFnProcessor{fn: func(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
-		if f.Type() == core.FrameStart {
+		if f.Type() == core.FrameInputMutedState {
 			// Emit one upstream, one downstream
-			_ = e.PushDirection(&core.CancelFrame{Reason: "up"}, core.Upstream)
+			_ = e.PushDirection(&core.FlushProcessedFrame{}, core.Upstream)
 			_ = e.PushDirection(&core.UserStartedSpeakingFrame{Seq: 10}, core.Downstream)
 		}
 		return nil
@@ -94,10 +94,12 @@ func TestCore_BidirectionalRouting(t *testing.T) {
 	pipe, _ := core.NewPipeline(&coretest.PassthroughProcessor{}, pMiddle, &coretest.PassthroughProcessor{})
 	session, _ := core.NewSession(2, pipe, core.DefaultResourceBudget())
 
-	session.OnUpstream = func(f core.Frame) {
-		mu.Lock()
-		upstreamReceived = f
-		mu.Unlock()
+	session.OnFrame = func(f core.Frame, dir core.Direction) {
+		if dir == core.Upstream {
+			mu.Lock()
+			upstreamReceived = f
+			mu.Unlock()
+		}
 	}
 
 	session.OnOutput = func(f core.Frame) {
@@ -109,14 +111,14 @@ func TestCore_BidirectionalRouting(t *testing.T) {
 	_ = session.Start()
 	defer session.Close()
 
-	_ = session.Post(&core.StartFrame{})
+	_ = session.Post(&core.InputMutedStateFrame{})
 	time.Sleep(50 * time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()
 
-	if upstreamReceived == nil || upstreamReceived.Type() != core.FrameCancel {
-		t.Fatalf("Expected upstream CancelFrame, got %v", upstreamReceived)
+	if upstreamReceived == nil || upstreamReceived.Type() != core.FrameFlushProcessed {
+		t.Fatalf("Expected upstream FlushProcessedFrame, got %v", upstreamReceived)
 	}
 	if downstreamReceived == nil || downstreamReceived.Type() != core.FrameUserStartedSpeaking {
 		t.Fatalf("Expected downstream UserStartedSpeakingFrame, got %v", downstreamReceived)
@@ -220,7 +222,7 @@ func TestCore_QueueOverflowPolicies(t *testing.T) {
 	// overflow comes on the 3rd or 4th post.
 	var errCtrl error
 	for i := 0; i < 4 && errCtrl == nil; i++ {
-		errCtrl = s1.Post(&core.StartFrame{})
+		errCtrl = s1.Post(&core.InputMutedStateFrame{})
 	}
 	if errCtrl != core.ErrControlQueueFull {
 		t.Fatalf("Expected ErrControlQueueFull, got: %v", errCtrl)
@@ -245,7 +247,7 @@ func TestCore_QueueOverflowPolicies(t *testing.T) {
 	_ = s3.Start()
 	defer s3.Close()
 
-	_ = s3.Post(&core.StartFrame{})
+	_ = s3.Post(&core.InputMutedStateFrame{})
 	time.Sleep(50 * time.Millisecond)
 	if !errors.Is(s3.Err(), core.ErrRunawayEmits) {
 		t.Fatalf("Expected ErrRunawayEmits, got: %v", s3.Err())
@@ -300,11 +302,11 @@ func TestCore_InternalFramesFailFastWhenFull(t *testing.T) {
 // 6. Test processor and session.Go panic containment
 func TestCore_PanicContainment(t *testing.T) {
 	// 6a. Inline processor panic
-	pipeInline, _ := core.NewPipeline(&coretest.PanicProcessor{PanicOn: core.FrameStart})
+	pipeInline, _ := core.NewPipeline(&coretest.PanicProcessor{PanicOn: core.FrameInputMutedState})
 	sInline, _ := core.NewSession(61, pipeInline, core.DefaultResourceBudget())
 	_ = sInline.Start()
 
-	_ = sInline.Post(&core.StartFrame{})
+	_ = sInline.Post(&core.InputMutedStateFrame{})
 	time.Sleep(50 * time.Millisecond)
 	_ = sInline.Close()
 
@@ -320,7 +322,7 @@ func TestCore_PanicContainment(t *testing.T) {
 	sChild, _ := core.NewSession(62, pipeChild, core.DefaultResourceBudget())
 	_ = sChild.Start()
 
-	_ = sChild.Post(&core.StartFrame{})
+	_ = sChild.Post(&core.InputMutedStateFrame{})
 	time.Sleep(50 * time.Millisecond)
 	_ = sChild.Close()
 
@@ -338,7 +340,7 @@ func TestCore_TeardownAndLeakedTaskDetection(t *testing.T) {
 	session, _ := core.NewSession(7, pipe, budget)
 	_ = session.Start()
 
-	_ = session.Post(&core.StartFrame{})
+	_ = session.Post(&core.InputMutedStateFrame{})
 	time.Sleep(20 * time.Millisecond)
 
 	// Close session: task ignores cancellation, so teardown will timeout
@@ -378,8 +380,8 @@ func TestCore_SessionIsolation(t *testing.T) {
 	defer sGood.Close()
 
 	// Post to both
-	_ = sBad.Post(&core.StartFrame{})
-	_ = sGood.Post(&core.StartFrame{})
+	_ = sBad.Post(&core.InputMutedStateFrame{})
+	_ = sGood.Post(&core.InputMutedStateFrame{})
 
 	time.Sleep(50 * time.Millisecond)
 

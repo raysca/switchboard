@@ -77,10 +77,6 @@ func TestChainComposition(t *testing.T) {
 	if _, err := NewChain(&gain{name: "s", k: 1, short: true}).Process(in, sr); err == nil {
 		t.Fatal("want length error")
 	}
-	d, _ := NewDenoiser(0.5)
-	if got := NewChain(d, d).Delay(); got != 2*d.Delay() {
-		t.Fatalf("delay %v", got)
-	}
 }
 
 func pcmBytes(s []int16) []byte {

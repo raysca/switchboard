@@ -90,20 +90,20 @@ func TestContextToolOrderingCorrelationAndReplay(t *testing.T) {
 	if err := ctx.AddMessage(Message{Role: RoleUser, Content: "weather", TurnID: "t"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ctx.AddToolCall("t", 1, "call-1", "weather", []byte(`{"city":"LON"}`), time.Now()); err != nil {
+	if err := seedToolCall(ctx, "t", 1, "call-1", "weather", []byte(`{"city":"LON"}`), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := ctx.AddToolResult("t", 1, "call-1", []byte(`{"temp":12}`), "", time.Now()); err != nil {
+	if err := seedToolResult(ctx, "t", 1, "call-1", []byte(`{"temp":12}`), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := ctx.AddToolResult("t", 1, "call-1", []byte(`{"temp":12}`), "", time.Now()); err != nil {
+	if err := seedToolResult(ctx, "t", 1, "call-1", []byte(`{"temp":12}`), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	msgs := ctx.Messages()
 	if len(msgs) != 3 || msgs[1].Role != RoleAssistant || msgs[1].ToolCallID != "call-1" || msgs[2].Role != RoleTool || msgs[2].ToolCallID != "call-1" {
 		t.Fatalf("bad tool exchange: %#v", msgs)
 	}
-	if err := ctx.AddToolResult("t", 1, "missing", nil, "bad", time.Now()); !errors.Is(err, ErrUnmatchedToolResult) {
+	if err := seedToolResult(ctx, "t", 1, "missing", nil, "bad", time.Now()); !errors.Is(err, ErrUnmatchedToolResult) {
 		t.Fatalf("unmatched result error = %v", err)
 	}
 }
@@ -118,7 +118,7 @@ func TestContextRejectsDirectToolMessagesAndConflictingResultStatus(t *testing.T
 	if err := ctx.AddMessage(direct); !errors.Is(err, ErrInvalidToolMessage) {
 		t.Fatalf("direct tool result = %v", err)
 	}
-	if err := ctx.AddToolCall("t", 1, "c", "lookup", []byte(`{}`), time.Now()); err != nil {
+	if err := seedToolCall(ctx, "t", 1, "c", "lookup", []byte(`{}`), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctx.AddToolResultStatus("t", 1, "c", ToolFailed, nil, "timeout", time.Now()); err != nil {
@@ -132,22 +132,6 @@ func TestContextRejectsDirectToolMessagesAndConflictingResultStatus(t *testing.T
 	}
 	if ctx.Messages()[1].ToolStatus != ToolFailed {
 		t.Fatal("tool status was not retained")
-	}
-}
-
-func TestContextConcurrentToolReplayCommitsExactlyOnce(t *testing.T) {
-	store := NewConversationContext(ContextConfig{MaxMessages: 20, MaxTokens: 1000})
-	var done = make(chan error, 16)
-	for i := 0; i < cap(done); i++ {
-		go func() { done <- store.AddToolCall("t", 1, "c", "n", []byte(`{}`), time.Now()) }()
-	}
-	for i := 0; i < cap(done); i++ {
-		if err := <-done; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := len(store.Messages()); got != 1 {
-		t.Fatalf("replayed calls committed %d messages", got)
 	}
 }
 
@@ -177,6 +161,10 @@ func TestContextClaimToolCallElectsOneExecutorAndReturnsCompletedReplay(t *testi
 	if claimCount != 1 {
 		t.Fatalf("executor claim count = %d, want 1", claimCount)
 	}
+	// Only the elected executor commits the call message; pending replays add none.
+	if n := len(ctx.Messages()); n != 1 {
+		t.Fatalf("committed messages after %d claimers = %d, want 1", workers, n)
+	}
 	result := ToolResult{CallID: call.ID, Status: ToolSucceeded, Result: json.RawMessage(`{"ok":true}`)}
 	if err := ctx.AddToolResultStatus("turn", 1, call.ID, result.Status, result.Result, "", time.Now()); err != nil {
 		t.Fatal(err)
@@ -197,7 +185,7 @@ func TestContextClaimToolCallElectsOneExecutorAndReturnsCompletedReplay(t *testi
 func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 4, MaxTokens: 1000, MaxToolIdentities: 4})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})
-	_ = ctx.AddToolCall("t1", 1, "c1", "lookup", []byte(`{}`), time.Now())
+	_ = seedToolCall(ctx, "t1", 1, "c1", "lookup", []byte(`{}`), time.Now())
 	_ = ctx.AddToolResultStatus("t1", 1, "c1", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now())
 	_ = ctx.AddMessage(Message{Role: RoleAssistant, Content: "done", TurnID: "t1"})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "two", TurnID: "t2"})
@@ -205,7 +193,7 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 		t.Fatalf("turn one was not evicted: %#v", ctx.Messages())
 	}
 	before := ctx.Messages()
-	if err := ctx.AddToolCall("t1", 1, "c1", "lookup", []byte(`{}`), time.Now()); err != nil {
+	if err := seedToolCall(ctx, "t1", 1, "c1", "lookup", []byte(`{}`), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := ctx.AddToolResultStatus("t1", 1, "c1", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); err != nil {
@@ -214,19 +202,19 @@ func TestContextToolReplayFenceSurvivesMessageEviction(t *testing.T) {
 	if !reflect.DeepEqual(ctx.Messages(), before) {
 		t.Fatal("exact replay after eviction re-entered history")
 	}
-	if err := ctx.AddToolCall("t2", 2, "c1", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrToolCorrelation) {
+	if err := seedToolCall(ctx, "t2", 2, "c1", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrToolCorrelation) {
 		t.Fatalf("identity reuse = %v", err)
 	}
 	bounded := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000, MaxToolIdentities: 1})
-	if err := bounded.AddToolCall("t", 1, "one", "lookup", []byte(`{}`), time.Now()); err != nil {
+	if err := seedToolCall(bounded, "t", 1, "one", "lookup", []byte(`{}`), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	// The ledger is a FIFO window: a full ledger forgets the oldest call
 	// instead of failing every later tool call.
-	if err := bounded.AddToolCall("t", 1, "two", "lookup", []byte(`{}`), time.Now()); err != nil {
+	if err := seedToolCall(bounded, "t", 1, "two", "lookup", []byte(`{}`), time.Now()); err != nil {
 		t.Fatalf("full ledger rejected new call: %v", err)
 	}
-	if err := bounded.AddToolResult("t", 1, "two", []byte(`{}`), "", time.Now()); err != nil {
+	if err := seedToolResult(bounded, "t", 1, "two", []byte(`{}`), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if len(bounded.toolLedger) != 1 || len(bounded.toolOrder) != 1 {
@@ -316,7 +304,7 @@ func TestContextEvictsUnansweredTurns(t *testing.T) {
 func TestContextPendingToolCallCannotCompleteAfterCallEviction(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 3, MaxTokens: 1000})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})
-	_ = ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now())
+	_ = seedToolCall(ctx, "t1", 1, "c", "lookup", []byte(`{}`), time.Now())
 	_ = ctx.AddMessage(Message{Role: RoleAssistant, Content: "done", TurnID: "t1"})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "two", TurnID: "t2"})
 	before := ctx.Messages()
@@ -331,7 +319,7 @@ func TestContextPendingToolCallCannotCompleteAfterCallEviction(t *testing.T) {
 func TestContextToolResultTransactionRejectsSelfEviction(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 4, MaxTokens: 1000})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})
-	_ = ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now())
+	_ = seedToolCall(ctx, "t1", 1, "c", "lookup", []byte(`{}`), time.Now())
 	_ = ctx.AddMessage(Message{Role: RoleAssistant, Content: "done", TurnID: "t1"})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "two", TurnID: "t2"})
 	before := ctx.Messages()
@@ -362,7 +350,7 @@ func TestContextToolCallTransactionRejectsSelfEviction(t *testing.T) {
 	before := ctx.Messages()
 	beforeEvictions := ctx.EvictionCount()
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
+		if err := seedToolCall(ctx, "t1", 1, "c", "lookup", []byte(`{}`), time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
 			t.Fatalf("self-evicted call attempt %d = %v", attempt, err)
 		}
 		if !reflect.DeepEqual(ctx.Messages(), before) || ctx.EvictionCount() != beforeEvictions {
@@ -370,10 +358,10 @@ func TestContextToolCallTransactionRejectsSelfEviction(t *testing.T) {
 		}
 	}
 	// A failed call must neither reserve its ID nor consume the sole ledger slot.
-	if err := ctx.AddToolCall("t2", 2, "c", "lookup", []byte(`{}`), time.Now()); err != nil {
+	if err := seedToolCall(ctx, "t2", 2, "c", "lookup", []byte(`{}`), time.Now()); err != nil {
 		t.Fatalf("failed call retained phantom identity or capacity: %v", err)
 	}
-	if err := ctx.AddToolResult("t2", 2, "c", []byte(`{"ok":true}`), "", time.Now()); err != nil {
+	if err := seedToolResult(ctx, "t2", 2, "c", []byte(`{"ok":true}`), "", time.Now()); err != nil {
 		t.Fatalf("retained call could not accept result: %v", err)
 	}
 	if got := ctx.Messages(); len(got) != 3 || got[1].Kind != MessageToolCall || got[2].Kind != MessageToolResult {
@@ -384,7 +372,7 @@ func TestContextToolCallTransactionRejectsSelfEviction(t *testing.T) {
 func TestContextPendingToolResultCommitsWhileCallRetained(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 4, MaxTokens: 1000})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "one", TurnID: "t1"})
-	_ = ctx.AddToolCall("t1", 1, "c", "lookup", []byte(`{}`), time.Now())
+	_ = seedToolCall(ctx, "t1", 1, "c", "lookup", []byte(`{}`), time.Now())
 	if err := ctx.AddToolResultStatus("t1", 1, "c", ToolSucceeded, []byte(`{"ok":true}`), "", time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -421,13 +409,13 @@ func TestAssistantContextWaitsForEveryDeliveryAndCommitsOnce(t *testing.T) {
 	}
 }
 
-func TestAssistantContextCancelDropsUndeliveredAndLateFinality(t *testing.T) {
+func TestAssistantContextInterruptionDropsUndeliveredAndLateFinality(t *testing.T) {
 	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
 	p := NewAssistantContextProcessor(store, DefaultAssistantContextConfig())
 	e := &captureEmitter{}
 	_ = p.ProcessFrame(context.Background(), &UserMessageFrame{Turn: "t", Gen: 2}, Downstream, e)
 	_ = p.ProcessFrame(context.Background(), &LLMTextDeltaFrame{Turn: "t", Gen: 2, Delta: "not delivered"}, Downstream, e)
-	_ = p.ProcessFrame(context.Background(), &CancelFrame{Gen: 2}, Downstream, e)
+	_ = p.ProcessFrame(context.Background(), &InterruptionFrame{Gen: 2}, Downstream, e)
 	_ = p.ProcessFrame(context.Background(), &LLMTextFrame{Turn: "t", Gen: 2, Text: "not delivered"}, Downstream, e)
 	_ = p.ProcessFrame(context.Background(), &WriteCompletionFrame{Turn: "t", Gen: 2, UnitID: 1, IsFinal: true}, Downstream, e)
 	if len(store.Messages()) != 0 {
@@ -437,29 +425,6 @@ func TestAssistantContextCancelDropsUndeliveredAndLateFinality(t *testing.T) {
 		if unit, ok := f.(*SynthesisUnitFrame); ok && unit.Turn == "" {
 			t.Fatalf("cancelled turn resumed synthesis: %#v", unit)
 		}
-	}
-}
-
-func TestAssistantContextGenerationlessUserCancelUsesSessionGeneration(t *testing.T) {
-	store := NewConversationContext(ContextConfig{MaxMessages: 10, MaxTokens: 1000})
-	p := NewAssistantContextProcessor(store, DefaultAssistantContextConfig())
-	_ = p.Attach(&fixedGenerationSession{gen: 1}, 0)
-	e := &captureEmitter{}
-	for _, f := range []Frame{&UserMessageFrame{Turn: "legacy"}, &LLMTextFrame{Turn: "legacy", Gen: 1, Text: "cancel me"}, &CancelFrame{Gen: 1}, &WriteCompletionFrame{Turn: "legacy", Gen: 1, UnitID: 1, IsFinal: true}} {
-		if err := p.ProcessFrame(context.Background(), f, Downstream, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(store.Messages()) != 0 {
-		t.Fatalf("generationless cancelled turn committed: %#v", store.Messages())
-	}
-	for _, f := range []Frame{&UserMessageFrame{Turn: "next", Gen: 1}, &LLMTextFrame{Turn: "next", Gen: 1, Text: "works"}, &WriteCompletionFrame{Turn: "next", Gen: 1, UnitID: 2, IsFinal: true}} {
-		if err := p.ProcessFrame(context.Background(), f, Downstream, e); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := store.Messages(); len(got) != 1 || got[0].Content != "works" {
-		t.Fatalf("next turn = %#v", got)
 	}
 }
 
@@ -547,9 +512,9 @@ func TestInterruptedAssistantBudgetFailureEmitsNoCommit(t *testing.T) {
 func TestContextToolResultFailsClosedAtBudget(t *testing.T) {
 	ctx := NewConversationContext(ContextConfig{MaxMessages: 0, MaxTokens: 20})
 	_ = ctx.AddMessage(Message{Role: RoleUser, Content: "x", TurnID: "t"})
-	_ = ctx.AddToolCall("t", 1, "c", "lookup", []byte(`{}`), time.Now())
+	_ = seedToolCall(ctx, "t", 1, "c", "lookup", []byte(`{}`), time.Now())
 	before := ctx.Messages()
-	if err := ctx.AddToolResult("t", 1, "c", []byte(`{"very_large_result":"this cannot fit"}`), "", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
+	if err := seedToolResult(ctx, "t", 1, "c", []byte(`{"very_large_result":"this cannot fit"}`), "", time.Now()); !errors.Is(err, ErrContextLimitExceeded) {
 		t.Fatalf("budget error = %v", err)
 	}
 	if len(ctx.Messages()) != len(before) {
@@ -634,4 +599,19 @@ func TestCommittedUserTurnInterruptsActiveReply(t *testing.T) {
 	if err := s.Err(); err != nil {
 		t.Fatalf("session failed: %v", err)
 	}
+}
+
+// seedToolCall and seedToolResult put a tool exchange into history through the
+// production path (ClaimToolCall, AddToolResultStatus) for tests that need one.
+func seedToolCall(c *ConversationContext, turn string, gen uint64, id, name string, args []byte, at time.Time) error {
+	_, _, err := c.ClaimToolCall(ToolCall{TurnID: TurnID(turn), Generation: Generation(gen), ID: id, Name: name, Arguments: args}, at)
+	return err
+}
+
+func seedToolResult(c *ConversationContext, turn string, gen uint64, id string, result []byte, safeErr string, at time.Time) error {
+	status := ToolSucceeded
+	if safeErr != "" {
+		status = ToolFailed
+	}
+	return c.AddToolResultStatus(turn, gen, id, status, result, safeErr, at)
 }

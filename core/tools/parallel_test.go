@@ -168,6 +168,16 @@ func TestParallelPerCallTimeoutOnlyAffectsSlowCall(t *testing.T) {
 	}
 }
 
+// injectThen is an AsyncSink that injects the result into history at once, then
+// reports it: the server's sink does the same when it triggers a model turn.
+func injectThen(after func(core.AsyncToolResult)) func(core.AsyncToolResult) {
+	return func(a core.AsyncToolResult) {
+		if a.Inject() == nil {
+			after(a)
+		}
+	}
+}
+
 func TestAsyncToolAcksImmediatelyAndInjectsResultLater(t *testing.T) {
 	release := make(chan struct{})
 	injected := make(chan ToolResult, 1)
@@ -175,7 +185,7 @@ func TestAsyncToolAcksImmediatelyAndInjectsResultLater(t *testing.T) {
 		<-release
 		return ToolResult{Status: ToolSucceeded, Result: json.RawMessage(`{"answer":42}`)}, nil
 	}), func(c *ToolLoopConfig) {
-		c.OnAsyncResult = func(_ ToolCall, r ToolResult) { injected <- r }
+		c.AsyncSink = injectThen(func(a core.AsyncToolResult) { injected <- a.Result })
 		// An async tool outlives barge-in: the fence is stale but the call still lands.
 		c.IsCurrent = func(ToolCall) bool { return true }
 	}, ToolDefinition{Name: "report", Policy: ToolPolicy{Async: true}})
@@ -273,7 +283,9 @@ func TestParallelPanickingExecutorIsContained(t *testing.T) {
 func TestAsyncPanickingExecutorIsContained(t *testing.T) {
 	injected := make(chan ToolResult, 1)
 	loop, _ := newParallelLoop(t, ToolExecutorFunc(func(context.Context, ToolCall) (ToolResult, error) { panic("boom") }),
-		func(c *ToolLoopConfig) { c.OnAsyncResult = func(_ ToolCall, r ToolResult) { injected <- r } },
+		func(c *ToolLoopConfig) {
+			c.AsyncSink = injectThen(func(a core.AsyncToolResult) { injected <- a.Result })
+		},
 		ToolDefinition{Name: "bg", Policy: ToolPolicy{Async: true}})
 	if _, err := loop.Run(context.Background(), []ToolCall{testCall("a", "bg", "{}")}, nil); err != nil {
 		t.Fatal(err)
@@ -314,7 +326,7 @@ func TestAsyncResultNeverSplitsARound(t *testing.T) {
 		return okResult(c.ID), nil
 	}), func(c *ToolLoopConfig) {
 		c.MaxAsyncInFlight = 1
-		c.OnAsyncResult = func(ToolCall, ToolResult) { close(injected) }
+		c.AsyncSink = injectThen(func(core.AsyncToolResult) { close(injected) })
 	}, ToolDefinition{Name: "bg", Policy: ToolPolicy{Async: true}}, ToolDefinition{Name: "slow"})
 	go func() { time.Sleep(50 * time.Millisecond); close(release) }()
 	res, err := loop.Run(context.Background(), []ToolCall{testCall("a", "bg", "{}"), testCall("b", "bg", "{}"), testCall("slow", "slow", "{}")}, nil)

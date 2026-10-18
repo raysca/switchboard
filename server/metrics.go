@@ -56,7 +56,6 @@ type Metrics struct {
 	STTErrorsTotal           atomic.Uint64
 	STTRotationsTotal        atomic.Uint64
 	STTRotationFailuresTotal atomic.Uint64
-	STTDeduplicatedTotal     atomic.Uint64
 	STTCircuitStateGoogle    atomic.Int64
 	STTCircuitStateXAI       atomic.Int64
 
@@ -272,10 +271,6 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	fmt.Fprintf(w, "# HELP voice_stt_rotation_failures_total Total pre-limit stream rotations that failed.\n")
 	fmt.Fprintf(w, "# TYPE voice_stt_rotation_failures_total counter\n")
 	fmt.Fprintf(w, "voice_stt_rotation_failures_total %d\n", m.STTRotationFailuresTotal.Load())
-
-	fmt.Fprintf(w, "# HELP voice_stt_deduplicated_results_total Deduplicated STT results ignored.\n")
-	fmt.Fprintf(w, "# TYPE voice_stt_deduplicated_results_total counter\n")
-	fmt.Fprintf(w, "voice_stt_deduplicated_results_total %d\n", m.STTDeduplicatedTotal.Load())
 
 	fmt.Fprintf(w, "# HELP voice_stt_circuit_state STT circuit state (0=closed, 1=open, 2=half_open).\n")
 	fmt.Fprintf(w, "# TYPE voice_stt_circuit_state gauge\n")

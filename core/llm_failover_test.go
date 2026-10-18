@@ -259,7 +259,6 @@ type silent struct {
 	release chan struct{}
 	started atomic.Uint64
 	stopped atomic.Uint64
-	ctxc    context.CancelFunc
 }
 
 func newSilent() *silent { return &silent{release: make(chan struct{})} }

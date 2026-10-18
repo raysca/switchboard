@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"regexp"
 	"sync"
 	"time"
 
@@ -27,13 +26,6 @@ var (
 	ErrReplayCacheFull  = errors.New("token: replay cache full; unexpired tokens cannot be evicted")
 	ErrTokenEpoch       = errors.New("token: admission token was issued by another server process")
 )
-
-var tokenQueryRegex = regexp.MustCompile(`([?&]token=)[^&#\s]+`)
-
-// RedactToken replaces token parameter values in URLs or logs with [REDACTED].
-func RedactToken(s string) string {
-	return tokenQueryRegex.ReplaceAllString(s, "${1}[REDACTED]")
-}
 
 // Config defines the validation parameters for admission tokens.
 type Config struct {

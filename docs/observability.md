@@ -75,6 +75,8 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_stt_errors_total` / `voice_llm_errors_total` / `voice_tts_errors_total` | Counter | Provider errors per stage (all providers) |
 | `voice_provider_errors_total` | Counter | Stage errors by `provider` and `stage` (`provider="failover"` when the stage had fallbacks) |
 | `voice_provider_requests_total` | Counter | Requests sent to a provider (`provider`, `stage`), retries included |
+| `voice_smartturn_fallbacks_total` | Counter | Turns that fell back to the speech timeout instead of the smart-turn model, by `reason` (`timeout`, `error`, `overload`, `unavailable`, `no_audio`) |
+| `voice_smartturn_worker_crashes_total` | Counter | Smart-turn worker processes lost (exit, hang, bad output) |
 | `voice_stt_circuit_state` / `voice_llm_circuit_state` / `voice_tts_circuit_state` | Gauge | Circuit breaker per `provider` (0=closed, 1=open, 2=half_open); Nvidia adds an `endpoint` label |
 | `voice_latency_seconds` | Histogram | Per-turn latency by `stage` (`stt_final`, `llm_ttft`, `tts_ttfb`, `voice_to_voice`, `startup`) |
 | `voice_transport_connected_clients` | Gauge | Connected WebSocket clients |
@@ -85,7 +87,7 @@ To prevent memory exhaustion in Prometheus and TSDB instances:
 | `voice_user_idle_hangups_total` | Counter | Calls ended after the user stayed silent |
 | `voice_otel_spans_dropped_total` / `voice_otel_spans_failed_total` | Counter | OTel export losses (only with `otel.enabled`) |
 
-Every closed connection counts exactly one disconnect by cause (normal, client, server, timeout), so the causes sum to the connections closed; a frame the server rejects (1007/1008/1009), an admission or setup refusal (1013/1011), a drain and any call the server ends itself (end of call, fatal error, idle hang-up, slow client, ready timeout) are `server`; the client's `disconnect-bot` is `normal`; a client that stops answering pings is `client`. `timeout` is a read timeout or the connection lifetime. Messages larger than 21 KB (the largest valid frame is a 16 KB RTVI message) are refused with 1009.
+Every closed connection counts exactly one disconnect by cause (normal, client, server, timeout), so the causes sum to the connections closed; a frame the server rejects (1007/1008/1009), an admission or setup refusal (1013/1011), a drain and any call the server ends itself (end of call, fatal error, idle hang-up, slow client, ready timeout) are `server`; the client's `disconnect-bot` is `normal`; a client that stops answering pings is `client`. `timeout` is a read timeout. Messages larger than 21 KB (the largest valid frame is a 16 KB RTVI message) are refused with 1009.
 
 The wire message `bot-interrupted` (sent when the assistant's interruption barrier runs) has no metric of its own; it is visible in the client's RTVI log. It does not clear audio the client already buffered (`docs/compatibility/playback-clear-decision.json`).
 

@@ -64,7 +64,6 @@ func TestEndCauses(t *testing.T) {
 	}
 	for in, want := range map[string]string{
 		"peer_unresponsive":    storage.EndConnectionLost,
-		"connection_lifetime":  storage.EndTimeLimit,
 		"session_start_failed": storage.EndSetupFailed,
 		"":                     "",
 		"unknown":              "",

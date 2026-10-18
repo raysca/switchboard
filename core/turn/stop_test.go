@@ -8,25 +8,22 @@ import (
 	"govoice/core/coretest"
 )
 
-type fakeAnalyzer struct {
-	res   AnalyzerResult
+// fakeStop is a decisive UserTurnStopStrategy probe: it always ends the turn
+// with a fixed decision and counts its calls.
+type fakeStop struct {
+	d     DetectionDecision
 	calls int
 }
 
-func (f *fakeAnalyzer) Analyze(DetectionInput) AnalyzerResult { f.calls++; return f.res }
+func (f *fakeStop) Detect(DetectionInput) (DetectionDecision, bool) { f.calls++; return f.d, true }
 
 func TestStopStrategyDecisionTable(t *testing.T) {
-	an := &fakeAnalyzer{res: AnalyzerResult{Complete: true, Confidence: 0.9}}
-	incomplete := &fakeAnalyzer{}
 	cases := []struct {
 		name string
 		s    UserTurnStopStrategy
 		in   DetectionInput
 		want core.TurnReason // None: no decision
 	}{
-		{"analyzer complete", AnalyzerStop(an, 3*time.Second), DetectionInput{SilenceFor: 100 * time.Millisecond}, core.TurnReasonSemantic},
-		{"analyzer incomplete waits", AnalyzerStop(incomplete, 3*time.Second), DetectionInput{SilenceFor: 2 * time.Second}, core.TurnReasonNone},
-		{"analyzer fallback", AnalyzerStop(incomplete, 3*time.Second), DetectionInput{SilenceFor: 3 * time.Second}, core.TurnReasonSilence},
 		{"eager final sentence", EagerStop(200 * time.Millisecond), DetectionInput{Text: "Book it.", TextFinal: true, SilenceFor: 200 * time.Millisecond}, core.TurnReasonSilence},
 		{"eager within grace", EagerStop(200 * time.Millisecond), DetectionInput{Text: "Book it.", TextFinal: true, SilenceFor: 199 * time.Millisecond}, core.TurnReasonNone},
 		{"eager interim", EagerStop(0), DetectionInput{Text: "Book it.", SilenceFor: time.Second}, core.TurnReasonNone},
@@ -34,16 +31,12 @@ func TestStopStrategyDecisionTable(t *testing.T) {
 		{"eager quoted cjk", EagerStop(0), DetectionInput{Text: "好的。」", TextFinal: true}, core.TurnReasonSilence},
 		{"external none", ExternalStop(), DetectionInput{SilenceFor: time.Hour}, core.TurnReasonNone},
 		{"external signal", ExternalStop(), DetectionInput{ExternalStop: true}, core.TurnReasonSilence},
-		{"analyzer default fallback", AnalyzerStop(incomplete, 0), DetectionInput{SilenceFor: time.Second, SilenceAfter: time.Second}, core.TurnReasonSilence},
 	}
 	for _, c := range cases {
 		d, ok := c.s.Detect(c.in)
 		if (c.want != core.TurnReasonNone) != ok || (ok && d.Reason != c.want) {
 			t.Errorf("%s: got %+v ok=%v want %v", c.name, d, ok, c.want)
 		}
-	}
-	if d, _ := AnalyzerStop(an, 0).Detect(DetectionInput{}); !d.HasConfidence || d.Confidence != 0.9 {
-		t.Fatalf("analyzer confidence not carried: %+v", d)
 	}
 }
 
@@ -56,9 +49,9 @@ func TestStopChainFirstDecisiveWins(t *testing.T) {
 	if _, ok := StopChain().Detect(DetectionInput{SilenceFor: time.Hour, SilenceAfter: 1}); ok {
 		t.Fatal("empty chain never stops")
 	}
-	an := &fakeAnalyzer{res: AnalyzerResult{Complete: true, Confidence: 1}}
-	StopChain(SpeechTimeout(SpeechTimeoutConfig{}), AnalyzerStop(an, 0)).Detect(DetectionInput{SilenceFor: 5 * time.Second}) // the no-transcript fallback decides
-	if an.calls != 0 {
+	later := &fakeStop{d: DetectionDecision{Reason: core.TurnReasonSemantic}}
+	StopChain(SpeechTimeout(SpeechTimeoutConfig{}), later).Detect(DetectionInput{SilenceFor: 5 * time.Second}) // the no-transcript fallback decides
+	if later.calls != 0 {
 		t.Fatal("later strategy evaluated after an earlier one decided")
 	}
 }
@@ -85,25 +78,8 @@ func completed(frames []core.Frame) *core.TurnEventFrame {
 	return nil
 }
 
-func TestManagerAnalyzerIncompleteWaitsForFallback(t *testing.T) {
-	an := &fakeAnalyzer{}
-	m := manager(t, AnalyzerStop(an, 3*time.Second))
-	openTurn(t, m)
-	// Silence is 2.9s: well past SilenceTimeout (1s) but the analyzer holds the turn.
-	if f, _ := m.Advance(t0.Add(3200 * time.Millisecond)); completed(f) != nil {
-		t.Fatal("completed while analyzer said incomplete")
-	}
-	if an.calls == 0 {
-		t.Fatal("analyzer not consulted")
-	}
-	f, _ := m.Advance(t0.Add(3300 * time.Millisecond))
-	if e := completed(f); e == nil || e.Reason != core.TurnReasonSilence {
-		t.Fatalf("fallback: %+v", eventFrames(f))
-	}
-}
-
-func TestManagerAnalyzerComplete(t *testing.T) {
-	m := manager(t, AnalyzerStop(&fakeAnalyzer{res: AnalyzerResult{Complete: true, Confidence: 0.8}}, 3*time.Second))
+func TestManagerDecisiveStrategyCarriesReasonAndConfidence(t *testing.T) {
+	m := manager(t, &fakeStop{d: DetectionDecision{Reason: core.TurnReasonSemantic, Confidence: 0.8, HasConfidence: true}})
 	openTurn(t, m)
 	f, _ := m.Advance(t0.Add(400 * time.Millisecond))
 	if e := completed(f); e == nil || e.Reason != core.TurnReasonSemantic || !e.HasConfidence || e.Confidence != 0.8 {

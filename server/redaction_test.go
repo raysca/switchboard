@@ -37,9 +37,27 @@ func TestStoredTurnsAreRedacted(t *testing.T) {
 	}
 	// Default policy (text rules off) still masks DTMF.
 	d, _ := redact.New(redact.Config{})
-	got := (&Server{redactor: d}).redactTurn(storage.TurnRecord{Transcript: "DTMF: 1234#"}).Transcript
-	if got != "DTMF: [REDACTED:dtmf 4]" {
+	got := (&Server{redactor: d}).redactTurn(storage.TurnRecord{Transcript: "DTMF: 1*2*3*4#"}).Transcript
+	if got != "DTMF: [REDACTED:dtmf 7]" {
 		t.Fatal(got)
+	}
+}
+
+// rawLeak reports a raw secret in stored/exported text. The DTMF secret has
+// '*' separators and the card number a separator, so neither can occur in a
+// timestamp (a bare "1234" or "4111" can: ".123443Z").
+func rawLeak(s string) bool {
+	return strings.Contains(s, "1*2*3*4") || strings.Contains(s, "4111 1111") || strings.Contains(s, "4111111111111111")
+}
+
+func TestRawLeakIgnoresTimestamps(t *testing.T) {
+	if rawLeak(`{"ended_at":"2026-10-18T10:20:24.123443Z","n":"4111"}`) {
+		t.Fatal("timestamp digits flagged as a leak")
+	}
+	for _, leak := range []string{"DTMF: 1*2*3*4#", "card 4111 1111 1111 1111", "4111111111111111"} {
+		if !rawLeak(leak) {
+			t.Fatalf("real leak missed: %q", leak)
+		}
 	}
 }
 
@@ -197,12 +215,12 @@ func TestRedactionEndToEnd(t *testing.T) {
 	}
 	nrows := func() int { mu.Lock(); defer mu.Unlock(); return len(rows) }
 
-	for _, d := range []string{"1", "2", "3", "4", "#"} {
+	for _, d := range []string{"1", "*", "2", "*", "3", "*", "4", "#"} {
 		if err := sess.Post(&core.InputDTMFFrame{Digit: d}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	wait("DTMF at the model", func() bool { return strings.Contains(llm.received(), "DTMF: 1234#") })
+	wait("DTMF at the model", func() bool { return strings.Contains(llm.received(), "DTMF: 1*2*3*4#") })
 	wait("first turn stored", func() bool { return nrows() >= 1 })
 	gen := sess.CurrentGeneration()
 	if err := sess.Reenter(&core.FinalTranscriptionFrame{Text: "my card is 4111 1111 1111 1111", Turn: "t2", Gen: gen, Committed: true, Timestamp: time.Now()}, core.Downstream, userCtx, gen); err != nil {
@@ -232,13 +250,15 @@ func TestRedactionEndToEnd(t *testing.T) {
 	if !strings.Contains(exported, "govoice.turn") {
 		t.Fatalf("nothing exported to the collector (%d bytes)", len(exported))
 	}
+	// The otel entry is vacuous in metadata mode (no content is exported); it only
+	// guards against a regression to text mode. turns/sidecar carry the real check.
 	for name, got := range map[string]string{"turns": string(stored), "sidecar": string(sidecar), "otel": exported} {
-		if strings.Contains(got, "4111") || strings.Contains(got, "1234") {
+		if rawLeak(got) {
 			t.Errorf("%s holds raw content: %s", name, got)
 		}
 	}
 	for name, got := range map[string]string{"turns": string(stored), "sidecar": string(sidecar)} {
-		if !strings.Contains(got, "[REDACTED:dtmf 4]") || !strings.Contains(got, "[REDACTED:card]") {
+		if !strings.Contains(got, "[REDACTED:dtmf 7]") || !strings.Contains(got, "[REDACTED:card]") {
 			t.Errorf("%s lacks placeholders: %s", name, got)
 		}
 	}

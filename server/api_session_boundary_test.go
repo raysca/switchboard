@@ -24,7 +24,7 @@ func TestSessionRoutesUseManagementBoundaryAndServeQueries(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	s.SetSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
+	s.setSessionManagementAPI(api.NewTracesHandler(store.Sessions(), store.Traces()))
 
 	key := "management-test-key-32-bytes-long-and-separate"
 	path := "/api/v1/sessions"

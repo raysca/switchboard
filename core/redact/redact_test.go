@@ -85,6 +85,31 @@ func TestDTMF(t *testing.T) {
 	}
 }
 
+// Known false positive: the key class includes A-D, so prose right after the
+// machine marker loses its first A-D letter (documented in docs/privacy.md).
+func TestDTMFMarkerMasksLeadingLetterOfProse(t *testing.T) {
+	r := mk(t, Config{})
+	if got, want := r.Redact("DTMF: Call me"), "DTMF: [REDACTED:dtmf 1]all me"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// Every symbol the keypad accepts (dtmf.Digits, including A-D) is masked.
+func TestDTMFMasksFullKeypadAlphabet(t *testing.T) {
+	r := mk(t, Config{})
+	for in, want := range map[string]string{
+		"DTMF: 1A2B#":        "DTMF: [REDACTED:dtmf 4]",
+		"DTMF: ABCD":         "DTMF: [REDACTED:dtmf 4]",
+		"DTMF: 9 C - D":      "DTMF: [REDACTED:dtmf 3]",
+		"DTMF: pressed A":    "DTMF: pressed A",
+		"ABC and 12 DTMF: x": "ABC and 12 DTMF: x",
+	} {
+		if got := r.Redact(in); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestValidate(t *testing.T) {
 	if _, err := New(Config{Rules: []string{"nope"}}); err == nil {
 		t.Fatal("unknown rule accepted")

@@ -498,14 +498,14 @@ func TestPacedWriterFinalMarkerReconcilesQueuedSelectedInflightAndCompleted(t *t
 				<-releaseWrite
 				return nil
 			})
-			pacer.AfterSelect = func() {
+			pacer.SetTestHooks(func() {
 				select {
 				case <-selected:
 				default:
 					close(selected)
 				}
 				<-releaseSelected
-			}
+			}, nil)
 			if tc.name == "before enqueue" {
 				tc.mark(t, pacer, selected, registered)
 			}
@@ -1142,7 +1142,7 @@ func TestPacedWriterFlushWinsBeforeWriteAdmission(t *testing.T) {
 		writes.Add(1)
 		return nil
 	})
-	pacer.BeforeWriteAdmission = func() { close(admissionReached); <-releaseAdmission }
+	pacer.SetTestHooks(nil, func() { close(admissionReached); <-releaseAdmission })
 	if err := pacer.Enqueue(outputFrame(1, 1, core.OutputInterruptible)); err != nil {
 		t.Fatal(err)
 	}
@@ -1300,11 +1300,11 @@ func TestPacedWriterCancellationClearsQueueAndBalancesSpeaking(t *testing.T) {
 			secondSelected := make(chan struct{})
 			if tc.pacing {
 				var selections atomic.Int32
-				pacer.AfterSelect = func() {
+				pacer.SetTestHooks(func() {
 					if selections.Add(1) == 2 {
 						close(secondSelected)
 					}
-				}
+				}, nil)
 				second := outputFrame(2, 1, core.OutputInterruptible)
 				second.Duration = 200 * time.Millisecond
 				if err := pacer.Enqueue(second); err != nil {

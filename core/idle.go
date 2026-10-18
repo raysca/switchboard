@@ -287,7 +287,7 @@ func (c *IdleController) observe(f Frame) {
 		case TurnEventStarted:
 			c.userInput()
 			c.turnUser = true
-		case TurnEventCompleted, TurnEventInterrupted, TurnEventNoSpeechTimeout:
+		case TurnEventCompleted, TurnEventInterrupted:
 			// The committed user message usually follows and stops the clock; a
 			// turn that commits nothing (filtered backchannel) must not stop it for good.
 			c.turnUser = false

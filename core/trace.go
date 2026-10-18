@@ -18,11 +18,10 @@ const (
 	TraceText     TraceContentMode = "text"
 )
 
-// TracePolicy defaults to metadata. Tool content requires an explicit redactor.
+// TracePolicy defaults to metadata. Tool arguments and results are never traced.
 type TracePolicy struct {
-	Content           TraceContentMode
-	RedactToolContent func(string) string
-	// MaxTextBytes bounds selected text and redactor output. Zero uses 4 KiB;
+	Content TraceContentMode
+	// MaxTextBytes bounds selected text. Zero uses 4 KiB;
 	// values above 16 KiB are clamped.
 	MaxTextBytes int
 }
@@ -193,14 +192,6 @@ func safeEventAttributes(policy TracePolicy, input map[string]any) map[string]an
 					}
 				}
 			}
-		case "tool.arguments", "tool.result":
-			if mode == TraceText && policy.RedactToolContent != nil {
-				if s, ok := value.(string); ok {
-					if bounded, ok := redactTraceText(policy, s); ok {
-						out[key] = bounded
-					}
-				}
-			}
 		case "count", "sample_rate", "channels", "duration_ms", "latency_ms", "sequence", "model", "provider", "format", "status", "error.category", "unit", "quantity", "reason", "component", "frame", "direction", "from_step", "to_step":
 			switch v := value.(type) {
 			case bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
@@ -256,19 +247,6 @@ func boundedTraceText(policy TracePolicy, text string) (string, bool) {
 		return "", false
 	}
 	return text, true
-}
-
-func redactTraceText(policy TracePolicy, text string) (result string, ok bool) {
-	defer func() {
-		if recover() != nil {
-			result, ok = "", false
-		}
-	}()
-	result = policy.RedactToolContent(text)
-	if len(result) > traceTextLimit(policy) {
-		return "", false
-	}
-	return result, true
 }
 
 func cloneAttributes(input map[string]any) map[string]any {

@@ -143,7 +143,7 @@ func TestFlushLateTextTTSAndAudioAreDropped(t *testing.T) {
 		t.Fatal("flush not observed")
 	}
 	_ = s.Post(&core.LLMTextDeltaFrame{Gen: 1, Delta: "late"})
-	_ = s.Post(&core.TTSAudioFrame{Gen: 1, Audio: []byte{1}})
+	_ = s.Post(&core.OutputAudioFrame{Gen: 1, Samples: []byte{2}})
 	_ = s.Post(&core.OutputAudioFrame{Gen: 1, Samples: []byte{1}})
 	_ = s.Post(&core.LLMTextDeltaFrame{Gen: 2, Delta: "fresh"})
 	select {
@@ -266,7 +266,7 @@ drained:
 
 func TestControlReentryAndInlineCommit(t *testing.T) {
 	pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
-		if f.Type() == core.FrameStart {
+		if f.Type() == core.FrameFlushProcessed {
 			return e.Push(&core.InputMuteFrame{})
 		}
 		return e.PushDirection(f, d)
@@ -281,17 +281,18 @@ func TestControlReentryAndInlineCommit(t *testing.T) {
 	_ = s.Start()
 	defer s.Close()
 	_ = s.Reenter(&core.InputUnmuteFrame{}, core.Downstream, 0, 0)
-	_ = s.Post(&core.StartFrame{})
-	// Reentry and inline emission must both commit the state they report.
-	select {
-	case <-states:
-	case <-time.After(time.Second):
-		t.Fatal("reentry state missing")
-	}
-	select {
-	case <-states:
-	case <-time.After(time.Second):
-		t.Fatal("inline state missing")
+	_ = s.Post(&core.FlushProcessedFrame{})
+	// Reentry and inline emission must both commit and publish the state they
+	// report, in order: unmute (re-entered) then mute (inline).
+	for i, want := range []bool{false, true} {
+		select {
+		case got := <-states:
+			if got != want {
+				t.Fatalf("state %d = %v, want %v", i, got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("state %d missing", i)
+		}
 	}
 	if !s.InputMuted() {
 		t.Fatal("inline mute did not commit")
@@ -313,7 +314,7 @@ func TestMuteQueuedAndInlineControlsKeepAdmissionAndStateOrdered(t *testing.T) {
 			inlineDone := make(chan struct{})
 			audio := make(chan struct{}, 1)
 			pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
-				if f.Type() == core.FrameStart {
+				if f.Type() == core.FrameFlushProcessed {
 					close(entered)
 					<-release
 					err := e.Push(tc.inline)
@@ -334,7 +335,7 @@ func TestMuteQueuedAndInlineControlsKeepAdmissionAndStateOrdered(t *testing.T) {
 			}
 			_ = s.Start()
 			defer s.Close()
-			_ = s.Post(&core.StartFrame{})
+			_ = s.Post(&core.FlushProcessedFrame{})
 			<-entered
 			if err := s.Post(tc.queued); err != nil {
 				t.Fatal(err)
@@ -417,7 +418,7 @@ func TestControlReentryFlushCommitsFence(t *testing.T) {
 
 func TestControlInlineStaleFlushIsNotPublished(t *testing.T) {
 	pipe, _ := core.NewPipeline(&testFnProcessor{fn: func(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
-		if f.Type() == core.FrameStart {
+		if f.Type() == core.FrameInputMutedState {
 			if err := e.Push(&core.FlushFrame{Gen: 1}); err != nil {
 				return err
 			}
@@ -431,8 +432,8 @@ func TestControlInlineStaleFlushIsNotPublished(t *testing.T) {
 	_ = s.Start()
 	defer s.Close()
 	awaitType(t, seen, core.FrameFlush)
-	_ = s.Post(&core.StartFrame{})
-	awaitType(t, seen, core.FrameStart)
+	_ = s.Post(&core.InputMutedStateFrame{})
+	awaitType(t, seen, core.FrameInputMutedState)
 	select {
 	case kind := <-seen:
 		t.Fatalf("stale inline control published: %v", kind)
@@ -487,7 +488,7 @@ func TestFlushQueuedMediaPreservesControl(t *testing.T) {
 	s, _ := core.NewSession(1, pipe, core.DefaultResourceBudget())
 	s.OnOutput = func(f core.Frame) { seen <- f.Type() }
 	_ = s.Post(&core.LLMTextDeltaFrame{Gen: 1, Delta: "stale"})
-	_ = s.Post(&core.TTSAudioFrame{Gen: 1, Audio: []byte{1}})
+	_ = s.Post(&core.OutputAudioFrame{Gen: 1, Samples: []byte{2}})
 	_ = s.Post(&core.OutputAudioFrame{Gen: 1, Samples: []byte{1}})
 	_ = s.Post(&core.FlushFrame{Gen: 1})
 	_ = s.Post(&core.ErrorFrame{})
@@ -530,8 +531,8 @@ func TestFlushTransportPreservesUninterruptibleAudio(t *testing.T) {
 	pipe, _ := core.NewPipeline(transport)
 	s, _ := core.NewSession(3, pipe, core.DefaultResourceBudget())
 	acks := make(chan core.FrameType, 1)
-	s.OnUpstream = func(f core.Frame) {
-		if f.Type() == core.FrameFlushProcessed {
+	s.OnFrame = func(f core.Frame, dir core.Direction) {
+		if dir == core.Upstream && f.Type() == core.FrameFlushProcessed {
 			acks <- f.Type()
 		}
 	}

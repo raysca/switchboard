@@ -10,16 +10,19 @@ provider/executor errors, unrestricted text, or arbitrary attributes.
 
 Text mode is bounded (4 KiB by default and 16 KiB maximum) and only admits the
 selected `transcript`, `prompt`, and `text` fields. Tool arguments and results
-need a caller-supplied redactor; the redactor is panic-isolated and over-limit
-or invalid output is dropped. The core ToolLoop records only the redacted
-argument at execution start. It intentionally does not trace a result payload:
-that value is untrusted until the loop has normalized it and committed it to
-the conversation context.
+are never traced: the core ToolLoop's execution span carries no argument or
+result attribute, and the trace policy drops any `tool.arguments` or
+`tool.result` key a caller supplies. A result payload is untrusted until the
+loop has normalized it and committed it to the conversation context.
+Core filters attribute keys itself: the trace policy admits only the content
+fields selected above, the known metadata keys and finite scalar `custom.*`
+keys, and drops everything else. Core spans go to the OpenTelemetry exporter
+(when enabled), not through the server's trace adapter.
 
-Trace attributes are copied and recursively validate only finite scalar and
-bounded `custom.*` numeric/boolean metadata. Custom metadata never admits
-strings, even under innocent-looking keys; selected text must use the explicit
-bounded text/redaction policy. The trace policy is an admission boundary, not a
+The server's trace adapter, which writes the stored (database) traces, keeps only an exact whitelist of finite scalar
+metadata keys (`status`, `error.category`, `reason`, `from_step`, `to_step`,
+`mcp.server_id`, `mcp.tool_name`, `mcp.duration_ms`); every other key is
+dropped. The trace policy is an admission boundary, not a
 retention policy: exporters and the Server remain responsible for access,
 storage, and deletion controls.
 
@@ -54,10 +57,9 @@ distinguish operational metadata from conversational content:
   pruned.
 - **Content retention (`ContentRetentionDays` / `ContentRetention`):**
   Defines the lifetime of conversation content (STT transcripts, LLM assistant
-  responses, tool argument summaries, and tool result summaries).
+  responses). Tool argument and result content is never stored.
   When content retention expires prior to metadata retention, the content purge
-  sets `transcript` and `assistant_text` to null, clears tool argument/result
-  payload summaries, and sanitizes text attributes in spans/events while
+  sets `transcript` and `assistant_text` to null while
   preserving session, turn, span, event timestamps, latencies, and structural
   metadata for operational debugging.
 - **Who called:** a session stores `caller`, the label the integration chose
@@ -154,7 +156,9 @@ privacy:
   invisible characters (zero-width, bidi controls, soft hyphen) are dropped,
   so they cannot split a number; the stored text changes only in those
   characters. Redacting is idempotent. DTMF: every `DTMF:` marker run loses
-  its keys but keeps the marker and key count.
+  its keys but keeps the marker and key count. The key class includes the
+  letters A-D, so the first A-D letter after a `DTMF:` marker is masked even in
+  prose ("DTMF: Call me" becomes "DTMF: [REDACTED:dtmf 1]all me").
 - **Applied at:** stored turn history (`transcript`, `assistant_text`; admin
   API reads from it), recording sidecar transcript turns, error text in the
   session timeline and the "session failed" log (provider errors can echo
@@ -162,9 +166,8 @@ privacy:
   `otel.capture_content` is on (today no span carries them: per-frame events
   are not exported). Debug events and stored traces are metadata only.
   Tool calls are stored by name, status and timing only (`tool_calls`;
-  `arguments_summary` and `result_summary` stay empty); their arguments and
-  results are never stored and are not exported to OTel (no tool-content
-  redactor is configured).
+  the summary columns stay empty and the API does not return them); their
+  arguments and results are never stored, traced or exported to OTel.
 - **Tool calls on the client wire:** `llm-function-call-started`, `-in-progress` and `-stopped` carry only the call's `tool_call_id` (and `cancelled`), Pipecat's default `function_call_report_level` `none`: no tool name, arguments or result reaches the client, whatever the redaction settings. The `tool_call_id` itself is chosen by the provider or model (OpenAI-compatible backends echo whatever the server returns); it reaches the RTVI wire and the stored span's `ToolCallID`, as in Pipecat.
 - **NOT covered:** the live LLM context; anything the STT/LLM/TTS providers
   receive; the client's `user-transcription`; audio recordings (speech and DTMF

@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"time"
 )
 
@@ -23,55 +22,28 @@ func (s *Store) Retention() RetentionRepository {
 	return RetentionRepository{s: s}
 }
 
-// contentKeyPredicate matches trace attribute JSON holding one of the content
-// keys sanitizeAttributesJSON removes. Attributes are stored as compact JSON, so
-// a top-level key is always `"key":`. Matching key substrings instead (e.g.
-// '%transcript%') also matched labels like "frame":"transcript_candidate"; those
-// rows can never be cleaned, so the same oldest sessions were re-selected
-// forever and newer content was never purged.
-const contentKeyPredicate = `attributes_json LIKE '%"transcript":%' OR attributes_json LIKE '%"prompt":%'
-        OR attributes_json LIKE '%"text":%' OR attributes_json LIKE '%"tool.arguments":%'
-        OR attributes_json LIKE '%"tool.result":%'`
-
-// PurgeContent redacts transcript, assistant_text, and tool call argument/result summaries
-// for ended sessions whose ended_at is at or before cutoff, up to limit sessions.
-// Structural metadata (sessions, turns, latencies, spans, events) are preserved.
-// Active and draining sessions are never modified.
-// ContentCursor resumes a content purge after the last session examined, so a
-// session whose rows cannot be sanitized is passed over instead of being
-// re-selected forever.
-type ContentCursor struct{ EndedAt, ID string }
-
 // ContentPurgeResult reports one PurgeContent batch.
 type ContentPurgeResult struct {
-	TurnsPurged, ToolCallsPurged, TracesSanitized int64
-	Examined                                      int           // sessions selected in this batch
-	Next                                          ContentCursor // pass to the next call
+	TurnsPurged int64
+	Examined    int // sessions selected in this batch
 }
 
-func (r RetentionRepository) PurgeContent(ctx context.Context, cutoff time.Time, limit int, after ContentCursor) (res ContentPurgeResult, err error) {
+// PurgeContent nulls turns.transcript and turns.assistant_text for ended sessions whose ended_at is at or
+// before cutoff, up to limit sessions. Structural metadata (sessions, turns, latencies, spans, events) is
+// preserved. Active and draining sessions are never modified. A session leaves the selection once purged, so
+// calling it again until Examined < limit purges everything.
+func (r RetentionRepository) PurgeContent(ctx context.Context, cutoff time.Time, limit int) (res ContentPurgeResult, err error) {
 	if limit <= 0 {
 		limit = 500
 	}
 
-	args := []any{utc(cutoff)}
-	cursorClause := ""
-	if after.ID != "" {
-		cursorClause = "\n  AND (ended_at > ? OR (ended_at = ? AND id > ?))"
-		args = append(args, after.EndedAt, after.EndedAt, after.ID)
-	}
-	args = append(args, limit)
+	args := []any{utc(cutoff), limit}
 	query := `SELECT id, ended_at FROM sessions
 WHERE status = 'ended'
   AND ended_at IS NOT NULL
-  AND ended_at <= ?` + cursorClause + `
+  AND ended_at <= ?
   AND (
     EXISTS (SELECT 1 FROM turns WHERE session_id = sessions.id AND (transcript IS NOT NULL OR assistant_text IS NOT NULL))
-    OR EXISTS (SELECT 1 FROM tool_calls WHERE session_id = sessions.id AND (arguments_summary != '' OR result_summary != ''))
-    OR EXISTS (SELECT 1 FROM trace_spans WHERE session_id = sessions.id AND (
-    ` + contentKeyPredicate + `))
-    OR EXISTS (SELECT 1 FROM trace_events WHERE session_id = sessions.id AND (
-    ` + contentKeyPredicate + `))
   )
 ORDER BY ended_at ASC, id ASC
 LIMIT ?`
@@ -89,7 +61,6 @@ LIMIT ?`
 			return res, err
 		}
 		sessionIDs = append(sessionIDs, id)
-		res.Next = ContentCursor{EndedAt: endedAt, ID: id}
 	}
 	if err := rows.Err(); err != nil {
 		return res, err
@@ -126,27 +97,6 @@ LIMIT ?`
 					return err
 				}
 				res.TurnsPurged += nTurns
-
-				// Redact tool calls: clear arguments_summary and result_summary
-				resTC, err := tx.ExecContext(ctx, r.s.bind(
-					"UPDATE tool_calls SET arguments_summary = '', result_summary = '' WHERE session_id = ? AND (arguments_summary != '' OR result_summary != '')",
-				), sessID)
-				if err != nil {
-					return err
-				}
-				nTC, err := resTC.RowsAffected()
-				if err != nil {
-					return err
-				}
-				res.ToolCallsPurged += nTC
-
-				for _, table := range []string{"trace_spans", "trace_events"} {
-					n, err := sanitizeTraceContent(ctx, tx, r.s, table, sessID)
-					if err != nil {
-						return err
-					}
-					res.TracesSanitized += n
-				}
 			}
 			return nil
 		})
@@ -156,60 +106,6 @@ LIMIT ?`
 	}
 
 	return res, nil
-}
-
-// sanitizeTraceContent removes content keys from one session's trace rows.
-// Any failure aborts the transaction so content is never silently retained.
-func sanitizeTraceContent(ctx context.Context, tx *sql.Tx, s *Store, table, sessionID string) (int64, error) {
-	rows, err := tx.QueryContext(ctx, s.bind("SELECT id, attributes_json FROM "+table+" WHERE session_id = ? AND ("+contentKeyPredicate+")"), sessionID)
-	if err != nil {
-		return 0, err
-	}
-	var updates [][2]string
-	for rows.Next() {
-		var id, attrs string
-		if err := rows.Scan(&id, &attrs); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		if cleaned := sanitizeAttributesJSON(attrs); cleaned != attrs {
-			updates = append(updates, [2]string{id, cleaned})
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, err
-	}
-	rows.Close()
-	for _, u := range updates {
-		if _, err := tx.ExecContext(ctx, s.bind("UPDATE "+table+" SET attributes_json = ? WHERE id = ?"), u[1], u[0]); err != nil {
-			return 0, err
-		}
-	}
-	return int64(len(updates)), nil
-}
-
-func sanitizeAttributesJSON(raw string) string {
-	if raw == "" || raw == "{}" {
-		return "{}"
-	}
-	var attrs map[string]any
-	if err := json.Unmarshal([]byte(raw), &attrs); err != nil {
-		return raw
-	}
-	changed := removeContentKeys(attrs)
-	if !changed {
-		return raw
-	}
-	out, err := json.Marshal(attrs)
-	if err != nil {
-		return raw
-	}
-	canonical, err := CanonicalJSON(out)
-	if err != nil {
-		return string(out)
-	}
-	return string(canonical)
 }
 
 // PurgeMetadata deletes ended sessions and all associated child records (trace_events, trace_spans,
@@ -337,29 +233,4 @@ LIMIT ?`
 	})
 
 	return stats, err
-}
-
-var contentKeys = []string{"transcript", "prompt", "text", "tool.arguments", "tool.result"}
-
-// removeContentKeys deletes content keys at any depth, matching the
-// key-anywhere selection predicate.
-func removeContentKeys(v any) bool {
-	changed := false
-	switch t := v.(type) {
-	case map[string]any:
-		for _, key := range contentKeys {
-			if _, ok := t[key]; ok {
-				delete(t, key)
-				changed = true
-			}
-		}
-		for _, child := range t {
-			changed = removeContentKeys(child) || changed
-		}
-	case []any:
-		for _, child := range t {
-			changed = removeContentKeys(child) || changed
-		}
-	}
-	return changed
 }

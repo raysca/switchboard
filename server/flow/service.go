@@ -618,10 +618,4 @@ func toStorageSelections(tools []ToolSelection) ([]storage.SelectedTool, error) 
 	return selected, nil
 }
 
-func toVersionWithTools(v storage.FlowVersion, selections []storage.SelectedTool) Version {
-	version := toVersion(v)
-	version.MCPTools = fromStorageSelections(selections)
-	return version
-}
-
 func boolPointer(value bool) *bool { return &value }

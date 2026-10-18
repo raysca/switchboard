@@ -14,6 +14,14 @@ const without = (stage: Stage, key: string): Stage => {
   return rest;
 };
 
+const VOICE_SETTINGS = [
+  { key: "stability", label: "Stability", min: 0, max: 1 },
+  { key: "similarity_boost", label: "Similarity boost", min: 0, max: 1 },
+  { key: "style", label: "Style", min: 0, max: 1 },
+  { key: "speed", label: "Speed", min: 0.7, max: 1.2 },
+] as const;
+type VoiceKey = (typeof VOICE_SETTINGS)[number]["key"];
+
 type Props = { graph: FlowDraft; step: DraftStep; providers: ProviderStatus[]; onChange: (g: FlowDraft) => void };
 
 /** Optional depth for one step: fallbacks and tuning. Nothing here is needed to take calls. */
@@ -31,6 +39,7 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
     onChange(updateStep(graph, step.id, { config: isDefault ? without(step.config, "failover") : { ...step.config, failover: { on: next } } }));
   };
   const parallel = Number(llm.max_parallel) || 1;
+  const voiceSettings = rec(tts.voice_settings) as Partial<Record<VoiceKey, number>>;
 
   return (
     <>
@@ -104,6 +113,37 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
         </label>
         <SettingHelp id="tts.clean_text" />
       </fieldset>
+      {tts.provider === "elevenlabs" && (
+        <fieldset className="stage-box">
+          <legend>Voice settings</legend>
+          <p className="subtext">Leave a field empty to keep the ElevenLabs default.</p>
+          {VOICE_SETTINGS.map(({ key, label, min, max }) => (
+            <label key={key} className="form-field" htmlFor={`step-${step.id}-vs-${key}`}>
+              <span>{label}</span>
+              <input
+                id={`step-${step.id}-vs-${key}`}
+                type="number"
+                min={min}
+                max={max}
+                step={0.05}
+                defaultValue={voiceSettings[key] ?? ""}
+                onChange={(e) => {
+                  const next = { ...voiceSettings };
+                  if (e.target.value.trim() === "" || !Number.isFinite(Number(e.target.value))) delete next[key];
+                  else next[key] = Math.min(max, Math.max(min, Number(e.target.value)));
+                  setStage("tts", Object.keys(next).length ? { ...tts, voice_settings: next } : without(tts, "voice_settings"));
+                }}
+                onBlur={(e) => {
+                  // The input is uncontrolled: show the clamped value that was stored.
+                  const n = Number(e.target.value);
+                  if (e.target.value.trim() !== "" && Number.isFinite(n)) e.target.value = String(Math.min(max, Math.max(min, n)));
+                }}
+              />
+            </label>
+          ))}
+          <SettingHelp id="tts.voice_settings" />
+        </fieldset>
+      )}
     </>
   );
 }

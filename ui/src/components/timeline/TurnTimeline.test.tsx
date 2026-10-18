@@ -153,8 +153,6 @@ describe("TurnTimeline", () => {
           started_at: "2026-10-05T12:00:01.200Z",
           ended_at: "2026-10-05T12:00:01.800Z",
           status: "completed",
-          arguments_summary: `{"id":"42"}`,
-          result_summary: `{"status":"shipped"}`,
         },
       ],
     };
@@ -169,8 +167,6 @@ describe("TurnTimeline", () => {
     // Correlated tool call verified
     expect(screen.getByText("lookup_order")).toBeVisible();
     expect(screen.getByText(/mcp-orders/)).toBeVisible();
-    expect(screen.getByText(`{"id":"42"}`)).toBeVisible();
-    expect(screen.getByText(`{"status":"shipped"}`)).toBeVisible();
 
     // Correlated span verified
     expect(screen.getByText("llm.generate")).toBeVisible();
@@ -211,7 +207,7 @@ describe("TurnTimeline", () => {
     const turns: TurnDTO[] = [
       { id: "t1", session_id: "s", ordinal: 1, started_at: "2026-10-05T12:00:00Z", transcript: "Book me in", assistant_text: "Done.", interrupted: false },
     ];
-    const call = (id: string, status: string) => ({ id, session_id: "s", turn_id: "t1", remote_name: `tool_${id}`, schema_hash: "h", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:01.200Z", status, arguments_summary: "", result_summary: "" });
+    const call = (id: string, status: string) => ({ id, session_id: "s", turn_id: "t1", remote_name: `tool_${id}`, schema_hash: "h", started_at: "2026-10-05T12:00:01Z", ended_at: "2026-10-05T12:00:01.200Z", status });
     const traces: SessionTracesDTO = { session_id: "s", spans: [], events: [], tool_calls: [call("a", "succeeded"), call("b", "failed"), call("c", "cancelled")] };
     render(<TurnTimeline turns={turns} traces={traces} />);
     await user.click(screen.getByRole("button", { name: /Show traces/i }));

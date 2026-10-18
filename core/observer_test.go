@@ -48,8 +48,8 @@ func TestBlockedObserverDoesNotStallAndDropsCounted(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("EmitDebug blocked on a stuck observer")
 	}
-	if sub.Dropped() != 8 || s.DebugDropped() != 8 {
-		t.Fatalf("dropped = %d/%d, want 8", sub.Dropped(), s.DebugDropped())
+	if sub.Dropped() != 8 {
+		t.Fatalf("dropped = %d, want 8", sub.Dropped())
 	}
 	close(block)
 	_ = s.Close()

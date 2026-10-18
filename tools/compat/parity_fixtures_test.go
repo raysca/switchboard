@@ -165,7 +165,7 @@ func TestParityTurnStartStop(t *testing.T) {
 		cfg := turn.DefaultConfig()
 		// Pipecat's VAD analyzer owns start/stop debounce; neutralize the Manager's so only strategy policy is compared.
 		cfg.StartDebounce, cfg.StopDebounce, cfg.MinimumSpeechDuration = 0, 0, 0
-		cfg.SilenceTimeout, cfg.MaxTurnDuration, cfg.InitialSilenceTimeout = ms(p.StopMs), time.Hour, time.Hour
+		cfg.SilenceTimeout, cfg.MaxTurnDuration = ms(p.StopMs), time.Hour
 		for _, s := range p.Start {
 			switch s.Kind {
 			case "vad":
@@ -659,9 +659,9 @@ func TestParitySummarizationCutPoint(t *testing.T) {
 			case "assistant":
 				err = c.AddMessage(core.Message{Role: core.RoleAssistant, Content: m.Text, TurnID: turn})
 			case "tool_call":
-				err = c.AddToolCall(turn, 1, m.ID, "f", []byte("{}"), now)
+				_, _, err = c.ClaimToolCall(core.ToolCall{TurnID: core.TurnID(turn), Generation: 1, ID: m.ID, Name: "f", Arguments: []byte("{}")}, now)
 			case "tool_result":
-				err = c.AddToolResult(turn, 1, m.ID, []byte(`"ok"`), "", now)
+				err = c.AddToolResultStatus(turn, 1, m.ID, core.ToolSucceeded, []byte(`"ok"`), "", now)
 			}
 			if err != nil {
 				t.Fatal(err)

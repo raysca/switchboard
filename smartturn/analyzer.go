@@ -32,8 +32,8 @@ type Config struct {
 	Now       func() time.Time // default time.Now; must be the turn processor's clock
 }
 
-// Analyzer is a per-call turn.TurnAnalyzer. It never runs inference on the
-// caller: Analyze starts one async job per (turn, silence start), returns
+// Analyzer is the per-call smart-turn model client. It never runs inference on the
+// caller: verdict starts one async job per (turn, silence start), returns
 // "incomplete" while it runs, and serves the cached verdict afterwards. A job
 // that is not done inside Budget, or that fails, is a degraded verdict, which
 // Stop turns into the plain speech-timeout.
@@ -81,8 +81,6 @@ type job struct {
 	res     turn.AnalyzerResult
 	reason  string // non-empty: degraded
 }
-
-var _ turn.TurnAnalyzer = (*Analyzer)(nil)
 
 func NewAnalyzer(be Backend, cfg Config) *Analyzer {
 	if cfg.Budget <= 0 {
@@ -152,12 +150,6 @@ func (a *Analyzer) Close() {
 		a.job.cancel()
 	}
 	a.mu.Unlock()
-}
-
-// Analyze implements turn.TurnAnalyzer: complete only on a model verdict.
-func (a *Analyzer) Analyze(in turn.DetectionInput) turn.AnalyzerResult {
-	r, _ := a.verdict(in)
-	return r
 }
 
 // verdict returns the cached/async result; degraded is true when the model

@@ -86,22 +86,22 @@ type DestinationPolicy interface {
 }
 
 type ServiceConfig struct {
-	Store                                            *storage.Store
-	Remote                                           RemoteClient
-	Tokens                                           TokenSource
-	Destinations                                     DestinationPolicy
-	Tracer                                           core.Tracer
-	Timeout                                          time.Duration
-	MaxSchemaBytes, MaxResultBytes, MaxArgumentBytes int
+	Store          *storage.Store
+	Remote         RemoteClient
+	Tokens         TokenSource
+	Destinations   DestinationPolicy
+	Tracer         core.Tracer
+	Timeout        time.Duration
+	MaxResultBytes int
 }
 type Service struct {
-	store                              *storage.Store
-	remote                             RemoteClient
-	tokens                             TokenSource
-	destinations                       DestinationPolicy
-	tracer                             core.Tracer
-	timeout                            time.Duration
-	maxSchema, maxResult, maxArguments int
+	store        *storage.Store
+	remote       RemoteClient
+	tokens       TokenSource
+	destinations DestinationPolicy
+	tracer       core.Tracer
+	timeout      time.Duration
+	maxResult    int
 }
 type ServerConfig struct {
 	Name        string `json:"name"`
@@ -255,14 +255,8 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	if cfg.Timeout > 2*time.Minute {
 		cfg.Timeout = 2 * time.Minute
 	}
-	if cfg.MaxSchemaBytes <= 0 {
-		cfg.MaxSchemaBytes = defaultMaxSchemaBytes
-	}
 	if cfg.MaxResultBytes <= 0 {
 		cfg.MaxResultBytes = defaultMaxResultBytes
-	}
-	if cfg.MaxArgumentBytes <= 0 {
-		cfg.MaxArgumentBytes = defaultMaxArguments
 	}
 	if cfg.Destinations == nil {
 		cfg.Destinations = HTTPSDestinationPolicy{}
@@ -270,7 +264,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	if cfg.Tracer == nil {
 		cfg.Tracer = core.NoopTracer{}
 	}
-	return &Service{store: cfg.Store, remote: cfg.Remote, tokens: cfg.Tokens, destinations: cfg.Destinations, tracer: cfg.Tracer, timeout: cfg.Timeout, maxSchema: cfg.MaxSchemaBytes, maxResult: cfg.MaxResultBytes, maxArguments: cfg.MaxArgumentBytes}, nil
+	return &Service{store: cfg.Store, remote: cfg.Remote, tokens: cfg.Tokens, destinations: cfg.Destinations, tracer: cfg.Tracer, timeout: cfg.Timeout, maxResult: cfg.MaxResultBytes}, nil
 }
 
 // HTTPSDestinationPolicy is the safe default: remote endpoints require HTTPS,
@@ -507,12 +501,12 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 	}
 	items := make([]storage.MCPTool, 0, len(tools))
 	for _, tool := range tools {
-		if len(tool.InputSchema) == 0 || len(tool.InputSchema) > s.maxSchema || strings.TrimSpace(tool.Name) == "" || len(tool.Name) > 256 || len(tool.Description) > 4096 {
+		if len(tool.InputSchema) == 0 || len(tool.InputSchema) > defaultMaxSchemaBytes || strings.TrimSpace(tool.Name) == "" || len(tool.Name) > 256 || len(tool.Description) > 4096 {
 			_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateSchemaInvalid, time.Now(), time.Time{})
 			end(ErrInvalidSchema)
 			return storage.MCPDiscovery{}, ErrInvalidSchema
 		}
-		if _, err := validateSchemaContext(ctx, tool.InputSchema, s.maxSchema); err != nil {
+		if _, err := validateSchemaContext(ctx, tool.InputSchema, defaultMaxSchemaBytes); err != nil {
 			_ = s.store.MCP().SetValidation(context.WithoutCancel(ctx), m.ID, StateSchemaInvalid, time.Now(), time.Time{})
 			end(ErrInvalidSchema)
 			return storage.MCPDiscovery{}, ErrInvalidSchema
@@ -616,7 +610,7 @@ func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, a
 	defer end(nil)
 	span.SetAttribute("mcp.server_id", captured.serverID)
 	span.SetAttribute("mcp.tool_name", traceSafeToolName(captured.name))
-	if len(args) > s.maxArguments {
+	if len(args) > defaultMaxArguments {
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
 	}
@@ -625,7 +619,7 @@ func (s *Service) executeCaptured(ctx context.Context, captured *CapturedTool, a
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments
 	}
-	resolved, err := validateSchemaContext(ctx, captured.schema, s.maxSchema)
+	resolved, err := validateSchemaContext(ctx, captured.schema, defaultMaxSchemaBytes)
 	if err != nil || resolved.Validate(schemaInstance(instance)) != nil {
 		end(ErrInvalidArguments)
 		return ToolResult{}, ErrInvalidArguments

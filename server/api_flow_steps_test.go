@@ -22,7 +22,7 @@ func flowAPIServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	s.SetFlowManagementAPI(api.NewFlowsHandler(flow.NewService(store, s.availability)))
+	s.setFlowManagementAPI(api.NewFlowsHandler(flow.NewService(store, s.availability)))
 	return s
 }
 

@@ -14,7 +14,6 @@ import (
 	"govoice/core/transcript"
 	"govoice/core/turn"
 	"govoice/tools/compat/whisker"
-	"govoice/transport/rtvi"
 	"govoice/transport/ws"
 )
 
@@ -54,16 +53,14 @@ func RunAll() (Report, error) {
 	scenarios := []scenario{
 		{"barge_in", 40 * time.Millisecond, []string{"observe runtime interruption", "advance output generation", "discard old output"}, checkBargeIn},
 		{"flush", 100 * time.Millisecond, []string{"enqueue queued and in-flight output", "wait for flush barrier", "verify new generation resumes"}, checkFlush},
-		{"turn_completion", 700 * time.Millisecond, []string{"start speech turn", "advance silence deadline", "observe completion"}, func() error { return checkTurn(base, true) }},
-		{"silence_timeout", 700 * time.Millisecond, []string{"observe activity", "advance silence deadline", "observe completion"}, func() error { return checkTurn(base, true) }},
-		{"no_speech_timeout", 10 * time.Second, []string{"start session without speech", "advance initial silence", "observe no-speech event"}, func() error { return checkTurn(base, false) }},
+		{"turn_completion", 700 * time.Millisecond, []string{"start speech turn", "advance silence deadline", "observe completion"}, func() error { return checkTurn(base) }},
+		{"silence_timeout", 700 * time.Millisecond, []string{"observe activity", "advance silence deadline", "observe completion"}, func() error { return checkTurn(base) }},
 		{"transcript_stabilization", 200 * time.Millisecond, []string{"observe final candidate", "complete turn", "advance grace", "verify one commit"}, checkTranscript},
 		{"late_final_and_invalidation", 200 * time.Millisecond, []string{"retire expired candidate", "reject late final", "invalidate incomplete turn"}, checkLateTranscript},
 		{"output_pacing_and_speaking", 60 * time.Millisecond, []string{"write three paced audio frames", "verify order and media time", "verify speaking start and drain"}, checkPacingSpeaking},
 		{"tool_interruption_cancellation", time.Millisecond, []string{"interrupt active tool call", "verify executor cancellation"}, checkToolCancellation},
 		{"teardown_leak", time.Millisecond, []string{"start session runtime", "close and await teardown", "verify no supervised tasks leaked"}, checkSessionTeardown},
 		{"input_mute", time.Millisecond, []string{"mute turn manager and runtime admission", "verify input is dropped before processors", "unmute and resume audio"}, func() error { return checkMute(base) }},
-		{"rtvi_wire", time.Millisecond, []string{"encode semantic speech-start event", "verify RTVI envelope and identity"}, checkRTVI},
 	}
 	report := Report{Schema: "govoice.eval/v1", Results: make([]Result, 0, len(scenarios))}
 	for _, sc := range scenarios {
@@ -215,9 +212,8 @@ func checkInflightFlush() error {
 	return nil
 }
 
-func checkTurn(at time.Time, speech bool) error {
+func checkTurn(at time.Time) error {
 	cfg := turn.DefaultConfig()
-	cfg.InitialSilenceTimeout = time.Second
 	cfg.SilenceTimeout = 100 * time.Millisecond
 	cfg.StartDebounce = 0
 	cfg.MinimumSpeechDuration = 0
@@ -228,13 +224,6 @@ func checkTurn(at time.Time, speech bool) error {
 	}
 	if err = m.Start(at); err != nil {
 		return err
-	}
-	if !speech {
-		frames, err := m.Advance(at.Add(time.Second))
-		if err != nil {
-			return err
-		}
-		return hasTurnKind(frames, core.TurnEventNoSpeechTimeout)
 	}
 	frames, err := m.Observe(turn.Observation{At: at.Add(time.Millisecond), TurnID: "t", Generation: 1, Speaking: true, Activity: true})
 	if err != nil {
@@ -773,17 +762,6 @@ func checkSessionTeardown() error {
 	}
 	if session.LeakedTasks() != 0 {
 		return fmt.Errorf("session reported %d leaked tasks", session.LeakedTasks())
-	}
-	return nil
-}
-func checkRTVI() error {
-	e := core.NewDebugEvent("user.speech.started", time.Unix(1, 0), "s", "t", 1, nil)
-	m, err := rtvi.EncodeDebugEvent(e)
-	if err != nil {
-		return err
-	}
-	if m.Label != rtvi.LabelRTVI || m.Type != rtvi.TypeUserStartedSpeaking {
-		return errors.New("RTVI event mismatch")
 	}
 	return nil
 }

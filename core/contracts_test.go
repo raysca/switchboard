@@ -160,27 +160,11 @@ func TestTraceContractPrivacyEnvelope(t *testing.T) {
 	}
 	textEvent := core.NewTraceEvent("stt.final", time.Now(), "s", "t", 1, core.TracePolicy{Content: core.TraceText}, attrs)
 	if textEvent.Attributes()["transcript"] != secret || textEvent.Attributes()["tool.arguments"] != nil {
-		t.Fatal("text mode must allow selected text but require explicit tool redaction")
-	}
-	redacted := core.NewTraceEvent("tool.complete", time.Now(), "s", "t", 1, core.TracePolicy{Content: core.TraceText, RedactToolContent: func(string) string { return "[redacted]" }}, attrs)
-	if redacted.Attributes()["tool.arguments"] != "[redacted]" {
-		t.Fatal("tool content did not pass explicit redaction")
+		t.Fatal("text mode must allow selected text but never tool content")
 	}
 	invalid := core.NewTraceEvent("stt.final", time.Now(), "s", "t", 1, core.TracePolicy{Content: "unexpected"}, attrs)
 	if len(invalid.Attributes()) != 0 {
 		t.Fatal("unknown content mode must fail closed")
-	}
-}
-
-func TestTraceContractRedactorPanicFailsClosed(t *testing.T) {
-	const secret = "unique-tool-secret-914"
-	event := core.NewTraceEvent("tool.complete", time.Now(), "s", "t", 1, core.TracePolicy{
-		Content:           core.TraceText,
-		RedactToolContent: func(string) string { panic(secret) },
-	}, map[string]any{"tool.result": secret, "status": "ok"})
-	attrs := event.Attributes()
-	if _, ok := attrs["tool.result"]; ok || attrs["status"] != "ok" {
-		t.Fatalf("redactor panic must drop only sensitive content: %#v", attrs)
 	}
 }
 
@@ -212,22 +196,6 @@ func TestDebugContractImmutableValue(t *testing.T) {
 	got["status"] = "changed"
 	if event.Attributes()["status"] != "ready" {
 		t.Fatal("debug accessor exposes mutable state")
-	}
-}
-
-func TestDebugContractFlowAndToolCorrelation(t *testing.T) {
-	first := core.NewDebugEvent("frame.flow", time.Now(), "s", "t", 2, nil)
-	first.PipelineID = "voice-pipeline"
-	first.Processor = "vad"
-	first.ProcessorIndex = 1
-	first.FrameKind = core.FrameInputAudio
-	first.Direction = core.Downstream
-	first.Sequence = 42
-	first.ToolCallID = "call-a"
-	second := first
-	second.ToolCallID = "call-b"
-	if first.PipelineID != "voice-pipeline" || first.ProcessorIndex != 1 || first.FrameKind != core.FrameInputAudio || first.Direction != core.Downstream || first.Sequence != 42 || first.ToolCallID != "call-a" || second.ToolCallID != "call-b" {
-		t.Fatal("debug values lost frame, processor, order, or tool correlation")
 	}
 }
 

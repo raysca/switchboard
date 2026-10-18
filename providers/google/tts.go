@@ -21,13 +21,15 @@ import (
 	texttospeechpb "cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
 )
 
+// chunkDuration is the playback length of one emitted audio frame.
+const chunkDuration = 20 * time.Millisecond
+
 // TTSConfig configures Google Cloud Text-to-Speech V1.
 type TTSConfig struct {
-	Voice                 string        // Default: "en-US-Chirp3-HD-Aoede" (streams); other voices use the unary request
-	LanguageCode          string        // Used when the voice name has no xx-YY prefix (default "en-US")
-	SampleRate            int           // Pinned: 24000 Hz
-	MaxSynthesisUnitChars int           // Pinned: 250
-	ChunkDuration         time.Duration // Default: 20ms
+	Voice                 string // Default: "en-US-Chirp3-HD-Aoede" (streams); other voices use the unary request
+	LanguageCode          string // Used when the voice name has no xx-YY prefix (default "en-US")
+	SampleRate            int    // Pinned: 24000 Hz
+	MaxSynthesisUnitChars int    // Pinned: 250
 	CredentialsFile       string
 	CredentialsJSON       []byte // In-memory service account JSON; preferred over CredentialsFile/APIKey
 	APIKey                string
@@ -47,7 +49,6 @@ func DefaultTTSConfig() TTSConfig {
 		LanguageCode:          "en-US",
 		SampleRate:            24000,
 		MaxSynthesisUnitChars: 250,
-		ChunkDuration:         20 * time.Millisecond,
 		RetryPolicy:           ttsRetryPolicy(),
 		CircuitBreaker:        resilience.NewBreaker(resilience.DefaultConfig()),
 	}
@@ -184,9 +185,6 @@ func normalizeTTSConfig(cfg TTSConfig) TTSConfig {
 	if cfg.MaxSynthesisUnitChars <= 0 {
 		cfg.MaxSynthesisUnitChars = 250
 	}
-	if cfg.ChunkDuration <= 0 {
-		cfg.ChunkDuration = 20 * time.Millisecond
-	}
 	if cfg.CircuitBreaker == nil {
 		cfg.CircuitBreaker = resilience.NewBreaker(resilience.DefaultConfig())
 	}
@@ -238,14 +236,6 @@ func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 		return p.handleSynthesisUnit(ctx, frame, e)
 
 	case *core.InterruptionFrame:
-		p.mu.Lock()
-		p.cancelAllLocked()
-		p.finishedSeq = p.nextSeq
-		p.cond.Broadcast()
-		p.mu.Unlock()
-		return e.Push(f)
-
-	case *core.CancelFrame:
 		p.mu.Lock()
 		p.cancelAllLocked()
 		p.finishedSeq = p.nextSeq
@@ -446,7 +436,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 		// Calculate 20ms chunk size in bytes:
 		// SampleRate (24000) * 2 bytes/sample (16-bit mono) * 0.02s = 960 bytes
 		bytesPerSample := 2
-		chunkBytes := int(float64(p.cfg.SampleRate*bytesPerSample) * p.cfg.ChunkDuration.Seconds())
+		chunkBytes := int(float64(p.cfg.SampleRate*bytesPerSample) * chunkDuration.Seconds())
 		if chunkBytes%2 != 0 {
 			chunkBytes++ // Ensure 2-byte sample alignment
 		}
@@ -478,7 +468,7 @@ func (p *TTSProcessor) handleSynthesisUnit(ctx context.Context, su *core.Synthes
 				Encoding:   core.EncodingPCM16LE,
 				SampleRate: p.cfg.SampleRate,
 				Channels:   1,
-				Duration:   p.cfg.ChunkDuration,
+				Duration:   chunkDuration,
 				Timestamp:  time.Now(),
 				Turn:       su.Turn,
 				Gen:        gen,

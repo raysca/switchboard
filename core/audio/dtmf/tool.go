@@ -3,6 +3,7 @@ package dtmf
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"govoice/core"
@@ -41,20 +42,32 @@ func Executor(out *OutputProcessor, next core.ToolExecutor) core.ToolExecutor {
 			r.StartedAt = started
 			return r, nil
 		}
-		done, err := out.send(uint64(call.Generation), args.Digits)
-		if err != nil {
-			cat := "unavailable"
-			if err == ErrBusy {
-				cat = "busy"
-			}
-			r := failed(call, cat)
+		// Wait for playback so the reply that follows is spoken after the tones,
+		// not interleaved with them in the output queue. A barge-in ends the wait
+		// through ctx: the tool loop cancels it when the call's generation goes stale.
+		res := make(chan error, 1)
+		frame := &core.OutputDTMFFrame{Digits: args.Digits, Gen: uint64(call.Generation), Result: res}
+		if out.session == nil {
+			r := failed(call, "unavailable")
 			r.StartedAt = started
 			return r, nil
 		}
-		// Wait for playback so the reply that follows is spoken after the tones,
-		// not interleaved with them in the output queue.
+		if err := out.session.Reenter(frame, core.Downstream, out.index, frame.Gen); err != nil {
+			r := failed(call, "unavailable")
+			r.StartedAt = started
+			return r, nil
+		}
 		select {
-		case <-done:
+		case err := <-res:
+			if err != nil {
+				cat := "unavailable"
+				if errors.Is(err, ErrBusy) {
+					cat = "busy"
+				}
+				r := failed(call, cat)
+				r.StartedAt = started
+				return r, nil
+			}
 		case <-ctx.Done():
 		}
 		return core.ToolResult{CallID: call.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{"played":true}`), StartedAt: started, EndedAt: time.Now()}, nil

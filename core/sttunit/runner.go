@@ -89,8 +89,6 @@ type Config struct {
 	// SendTimeout bounds one Send or Finish (default 500 ms). Live sends run on
 	// the session run loop, so it must stay well under the 2 s frame watchdog.
 	SendTimeout time.Duration
-	// Now stamps candidates (default time.Now).
-	Now func() time.Time
 }
 
 type stream struct {
@@ -177,15 +175,12 @@ func New(cfg Config) *Runner {
 	if cfg.SendTimeout <= 0 {
 		cfg.SendTimeout = 500 * time.Millisecond
 	}
-	if cfg.Now == nil {
-		cfg.Now = time.Now
-	}
 	return &Runner{cfg: cfg, maxPreRoll: DefaultMaxPreRollBytes, all: map[*stream]struct{}{}}
 }
 
-// STTCounts implements core.STTCounters (no rotation or dedup here).
-func (r *Runner) STTCounts() (rot, rotFail, dedup, errs uint64) {
-	return 0, 0, 0, r.errs.Load()
+// STTCounts implements core.STTCounters (no rotation here).
+func (r *Runner) STTCounts() (rot, rotFail, errs uint64) {
+	return 0, 0, r.errs.Load()
 }
 
 // Streams is the number of open provider streams (dialing, active or
@@ -246,7 +241,7 @@ func (r *Runner) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direct
 	case *core.UserStoppedSpeakingFrame:
 		r.finishActive(ctx, "", 0)
 		return e.PushDirection(f, dir)
-	case *core.InterruptionFrame, *core.CancelFrame:
+	case *core.InterruptionFrame:
 		r.mu.Lock()
 		if _, ok := f.(*core.InterruptionFrame); ok && r.session != nil && r.turn != "" {
 			// Barge-in advanced the generation: the rest of this utterance opens
@@ -721,7 +716,7 @@ func (r *Runner) emit(st *stream, res Result) {
 	}
 	gen = r.frameGen(gen)
 	frame := &core.TranscriptCandidateFrame{
-		Text: res.Text, Turn: core.TurnID(turn), Gen: core.Generation(gen), Timestamp: r.cfg.Now(),
+		Text: res.Text, Turn: core.TurnID(turn), Gen: core.Generation(gen), Timestamp: time.Now(),
 		Final: res.Final, EndOfUtterance: res.EndOfUtterance,
 		Stability: res.Stability, HasStability: res.HasStability, Provider: r.cfg.Provider,
 	}

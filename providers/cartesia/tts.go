@@ -20,10 +20,12 @@ const (
 	defaultVoice = "694f9389-aac1-45b6-b726-9d9369183238"
 )
 
+// ttsVersion is the Cartesia-Version header sent on the TTS websocket.
+const ttsVersion = "2025-04-16"
+
 // TTSConfig configures the Cartesia processor.
 type TTSConfig struct {
 	Endpoint   string // default "wss://api.cartesia.ai/tts/websocket"
-	Version    string // Cartesia-Version header, default "2025-04-16"
 	Model      string // default "sonic-3"
 	Voice      string // voice id
 	Language   string // default "en"
@@ -39,7 +41,7 @@ type TTSConfig struct {
 
 func DefaultTTSConfig() TTSConfig {
 	return TTSConfig{
-		Endpoint: "wss://api.cartesia.ai/tts/websocket", Version: "2025-04-16", Model: "sonic-3",
+		Endpoint: "wss://api.cartesia.ai/tts/websocket", Model: "sonic-3",
 		Voice: defaultVoice, Language: "en", SampleRate: 24000, Timeout: 15 * time.Second,
 		RetryPolicy: resilience.DefaultPolicy(),
 	}
@@ -61,9 +63,6 @@ func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	def := DefaultTTSConfig()
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = def.Endpoint
-	}
-	if cfg.Version == "" {
-		cfg.Version = def.Version
 	}
 	if cfg.Model == "" {
 		cfg.Model = def.Model
@@ -180,7 +179,7 @@ type unitRun struct {
 
 func (u *unitRun) dial(ctx context.Context) (*websocket.Conn, error) {
 	cfg := u.p.cfg
-	opts := &websocket.DialOptions{HTTPClient: u.p.cfg.Pool.Client(0), HTTPHeader: http.Header{"X-API-Key": {cfg.APIKey}, "Cartesia-Version": {cfg.Version}}}
+	opts := &websocket.DialOptions{HTTPClient: u.p.cfg.Pool.Client(0), HTTPHeader: http.Header{"X-API-Key": {cfg.APIKey}, "Cartesia-Version": {ttsVersion}}}
 	c, resp, err := websocket.Dial(ctx, cfg.Endpoint, opts)
 	if err != nil {
 		return nil, MapError("tts", err, resp)

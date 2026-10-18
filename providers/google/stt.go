@@ -24,7 +24,6 @@ import (
 
 // STTConfig configures the Google Speech-to-Text V2 processor.
 type STTConfig struct {
-	Endpoint                string        // Pinned: "speech.googleapis.com"
 	Model                   string        // Pinned: "chirp_2"
 	LanguageCode            string        // Default: "en-US"
 	StreamRotationThreshold time.Duration // Pinned: 240s (shorter for tests)
@@ -45,7 +44,6 @@ type STTConfig struct {
 // DefaultSTTConfig returns the configuration matching v1-lock.json.
 func DefaultSTTConfig() STTConfig {
 	return STTConfig{
-		Endpoint:                "speech.googleapis.com",
 		Model:                   "chirp_2",
 		LanguageCode:            "en-US",
 		StreamRotationThreshold: 240 * time.Second,
@@ -92,9 +90,6 @@ func speechEndpoint(cfg STTConfig) string {
 	loc := cfg.Location
 	if loc == "" {
 		loc = "us-central1"
-	}
-	if cfg.Endpoint != "" && cfg.Endpoint != "speech.googleapis.com" {
-		return cfg.Endpoint
 	}
 	if loc == "global" {
 		return "speech.googleapis.com"
@@ -357,15 +352,14 @@ type STTProcessor struct {
 	overlapBytes int
 
 	// Metrics
-	RotationsCount      atomic.Uint64
-	RotationFailures    atomic.Uint64
-	DeduplicatedResults atomic.Uint64
-	Errors              atomic.Uint64
+	RotationsCount   atomic.Uint64
+	RotationFailures atomic.Uint64
+	Errors           atomic.Uint64
 }
 
 // STTCounts implements core.STTCounters.
-func (p *STTProcessor) STTCounts() (rot, rotFail, dedup, errs uint64) {
-	return p.RotationsCount.Load(), p.RotationFailures.Load(), p.DeduplicatedResults.Load(), p.Errors.Load()
+func (p *STTProcessor) STTCounts() (rot, rotFail, errs uint64) {
+	return p.RotationsCount.Load(), p.RotationFailures.Load(), p.Errors.Load()
 }
 
 // NewSTTProcessor creates a new STTProcessor with the given config.
@@ -375,9 +369,6 @@ func NewSTTProcessor(cfg STTConfig) (*STTProcessor, error) {
 	}
 	if cfg.Model == "" {
 		cfg.Model = "chirp_2"
-	}
-	if cfg.Endpoint == "" {
-		cfg.Endpoint = "speech.googleapis.com"
 	}
 	if cfg.StreamRotationThreshold <= 0 {
 		cfg.StreamRotationThreshold = 240 * time.Second
@@ -444,9 +435,6 @@ func (p *STTProcessor) Close() error {
 // ProcessFrame handles incoming pipeline frames.
 func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	switch frame := f.(type) {
-	case *core.StartFrame:
-		return e.PushDirection(f, dir)
-
 	case *core.UserStartedSpeakingFrame:
 		p.mu.Lock()
 		old := p.setPendingOwnershipLocked(fmt.Sprintf("turn-%d-%d", frame.Gen, frame.Seq), frame.Gen)
@@ -509,9 +497,6 @@ func (p *STTProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.
 				_ = oldStream.Close()
 			}
 		}
-		return e.PushDirection(f, dir)
-
-	case *core.CancelFrame:
 		return e.PushDirection(f, dir)
 
 	default:
@@ -1201,11 +1186,6 @@ func (p *STTProcessor) setPendingOwnershipLocked(turn string, gen uint64) *activ
 	return p.bindOrDetachActiveLocked(turn, gen)
 }
 
-func (p *STTProcessor) assembleLocked(st *activeStream, result *STTResult) string {
-	text, _ := p.assembleResultLocked(st, result)
-	return text
-}
-
 func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult) (string, error) {
 	if st.gen > p.assemblyGen {
 		for key := range p.assemblies {
@@ -1292,8 +1272,6 @@ func (p *STTProcessor) assembleResultLocked(st *activeStream, result *STTResult)
 			existing := a.segments[i].text
 			if strings.Contains(existing, text) {
 				text = existing
-			} else if !strings.Contains(text, existing) {
-				a.segments[i].text = text
 			} else {
 				a.segments[i].text = text
 			}

@@ -34,24 +34,7 @@ type Config struct {
 	Timeout         time.Duration
 	RetryPolicy     resilience.Policy
 	CircuitBreaker  *resilience.Breaker
-	MaxLineLength   int
-	MaxEventSize    int
-	MaxTotalSize    int
 	HTTPClient      *http.Client
-}
-
-// DefaultConfig returns the frozen production configuration for xAI LLM.
-func DefaultConfig() Config {
-	return Config{
-		Endpoint:       PinnedEndpoint,
-		Model:          PinnedModelID,
-		Timeout:        30 * time.Second,
-		RetryPolicy:    resilience.DefaultPolicy(),
-		CircuitBreaker: resilience.NewBreaker(resilience.DefaultConfig()),
-		MaxLineLength:  DefaultMaxLineLength,
-		MaxEventSize:   DefaultMaxEventSize,
-		MaxTotalSize:   DefaultMaxTotalResponseSize,
-	}
 }
 
 // Processor implements core.Processor for the xAI LLM Responses API.
@@ -170,15 +153,6 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 		return p.handleUserTurn(ctx, frame, e)
 
 	case *core.InterruptionFrame:
-		p.mu.Lock()
-		if p.activeCancel != nil {
-			p.activeCancel()
-			p.activeCancel = nil
-		}
-		p.mu.Unlock()
-		return e.PushDirection(f, dir)
-
-	case *core.CancelFrame:
 		p.mu.Lock()
 		if p.activeCancel != nil {
 			p.activeCancel()

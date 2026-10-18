@@ -12,7 +12,7 @@ import (
 func TestMCPHandlerUsesAuthenticatedManagementBoundaryAndTrustedRequestID(t *testing.T) {
 	s := apiTestServer(t)
 	var called bool
-	s.SetMCPManagementAPI(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.setMCPManagementAPI(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		api.WriteError(w, http.StatusNotFound, "not_found", "missing", api.RequestIDFromContext(r.Context()))
 	}))

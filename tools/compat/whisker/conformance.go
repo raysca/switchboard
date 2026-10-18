@@ -22,6 +22,33 @@ type ScenarioResult struct {
 	Err    error
 }
 
+// Whisker-local lifecycle frames. Core has no Start/Cancel/TTS-audio frame types;
+// the numbers sit outside every core range and are never sent by core.
+const (
+	frameStart    core.FrameType = 9001
+	frameCancel   core.FrameType = 9002
+	frameTTSAudio core.FrameType = 9003
+)
+
+type startFrame struct{}
+
+func (*startFrame) Type() core.FrameType { return frameStart }
+
+type cancelFrame struct{ Gen uint64 }
+
+func (*cancelFrame) Type() core.FrameType { return frameCancel }
+func (f *cancelFrame) Generation() uint64 { return f.Gen }
+
+type ttsAudioFrame struct {
+	Audio                []byte
+	Turn                 string
+	Gen                  uint64
+	SampleRate, Channels int
+}
+
+func (*ttsAudioFrame) Type() core.FrameType { return frameTTSAudio }
+func (f *ttsAudioFrame) Generation() uint64 { return f.Gen }
+
 type frameProbe struct {
 	mu       sync.Mutex
 	sequence uint64
@@ -33,7 +60,7 @@ func (p *frameProbe) toolStarted(call core.ToolCall) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sequence++
-	e := core.NewDebugEvent("tool.started", time.Unix(1, int64(p.sequence)), "compat-session", call.TurnID, call.Generation, nil)
+	e := Observed{DebugEvent: core.NewDebugEvent("tool.started", time.Unix(1, int64(p.sequence)), "compat-session", call.TurnID, call.Generation, nil)}
 	e.PipelineID, e.Processor, e.ProcessorIndex = "compat-pipeline", "frame-probe", 0
 	e.Direction, e.FrameKind, e.Sequence, e.ToolCallID = core.Downstream, core.FrameToolCall, p.sequence, call.ID
 	if out, err := (Adapter{}).Adapt(e); err == nil {
@@ -45,7 +72,7 @@ func (p *frameProbe) runtimeCompleted(name string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sequence++
-	e := core.NewDebugEvent(name, time.Unix(1, int64(p.sequence)), "compat-session", p.turn, 0, nil)
+	e := Observed{DebugEvent: core.NewDebugEvent(name, time.Unix(1, int64(p.sequence)), "compat-session", p.turn, 0, nil)}
 	e.PipelineID, e.Processor, e.ProcessorIndex = "compat-pipeline", "frame-probe", 0
 	e.Direction, e.FrameKind, e.Sequence = core.Downstream, core.FrameEnd, p.sequence
 	if out, err := (Adapter{}).Adapt(e); err == nil {
@@ -63,7 +90,7 @@ func (p *frameProbe) ProcessFrame(_ context.Context, frame core.Frame, direction
 	if turn == "" {
 		turn = p.turn
 	}
-	e := core.NewDebugEvent(name, time.Unix(1, int64(p.sequence)), "compat-session", turn, gen, attrs)
+	e := Observed{DebugEvent: core.NewDebugEvent(name, time.Unix(1, int64(p.sequence)), "compat-session", turn, gen, attrs)}
 	e.PipelineID, e.Processor, e.ProcessorIndex = "compat-pipeline", "frame-probe", 0
 	e.Direction, e.FrameKind, e.Sequence, e.ToolCallID = direction, frame.Type(), p.sequence, call
 	out, err := (Adapter{}).Adapt(e)
@@ -85,11 +112,11 @@ func (p *frameProbe) snapshot() []Event {
 
 func observedFrameDetails(f core.Frame) (string, map[string]any, core.TurnID, core.Generation, string) {
 	switch x := f.(type) {
-	case *core.StartFrame:
+	case *startFrame:
 		return "session.started", nil, "", 0, ""
 	case *core.EndFrame:
 		return "session.ended", nil, "", 0, ""
-	case *core.CancelFrame:
+	case *cancelFrame:
 		return "session.cancelled", nil, "", core.Generation(x.Gen), ""
 	case *core.InputAudioFrame:
 		return "audio.input", map[string]any{"count": len(x.Samples), "sample_rate": x.SampleRate, "channels": x.Channels, "format": string(x.Encoding)}, "", core.Generation(x.Gen), ""
@@ -111,7 +138,7 @@ func observedFrameDetails(f core.Frame) (string, map[string]any, core.TurnID, co
 		return "llm.completed", nil, core.TurnID(x.Turn), core.Generation(x.Gen), ""
 	case *core.TTSStartedFrame:
 		return "tts.started", nil, core.TurnID(x.Turn), core.Generation(x.Gen), ""
-	case *core.TTSAudioFrame:
+	case *ttsAudioFrame:
 		return "tts.audio", map[string]any{"count": len(x.Audio), "sample_rate": x.SampleRate, "channels": x.Channels}, core.TurnID(x.Turn), core.Generation(x.Gen), ""
 	case *core.TTSStoppedFrame:
 		return "tts.completed", nil, core.TurnID(x.Turn), core.Generation(x.Gen), ""
@@ -158,12 +185,12 @@ func RunScenarios() []ScenarioResult {
 		{"user_speech", []core.Frame{&core.UserStartedSpeakingFrame{Gen: 1}, &core.UserStoppedSpeakingFrame{Gen: 1}}, []string{"user.speech.started", "user.speech.stopped"}},
 		{"stt_interim_final", []core.Frame{&core.InterimTranscriptionFrame{Text: "private interim", Turn: "turn-1", Gen: 1}, &core.FinalTranscriptionFrame{Text: "private final", Turn: "turn-1", Gen: 1}}, []string{"stt.interim", "stt.final"}},
 		{"llm_output", []core.Frame{&core.UserMessageFrame{Content: "private prompt", Turn: "turn-1", Gen: 1}, &core.LLMTextDeltaFrame{Delta: "private", Turn: "turn-1", Gen: 1}, &core.LLMTextFrame{Text: "private", Turn: "turn-1", Gen: 1}, &core.ErrorFrame{Err: errors.New("credential secret"), Fatal: false, Turn: "turn-1", Gen: 1}}, []string{"llm.requested", "llm.output", "llm.completed", "provider.error"}},
-		{"tts_lifecycle_audio", []core.Frame{&core.TTSStartedFrame{Turn: "turn-1", Gen: 1}, &core.TTSAudioFrame{Audio: audio, Turn: "turn-1", Gen: 1, SampleRate: 24000, Channels: 1}, &core.SpeakingStateFrame{State: core.SpeakingStarted, Turn: "turn-1", Gen: 1}, &core.TTSStoppedFrame{Turn: "turn-1", Gen: 1}, &core.SpeakingStateFrame{State: core.SpeakingStopped, Turn: "turn-1", Gen: 1}}, []string{"tts.started", "tts.audio", "assistant.speaking.started", "tts.completed", "assistant.speaking.stopped"}},
+		{"tts_lifecycle_audio", []core.Frame{&core.TTSStartedFrame{Turn: "turn-1", Gen: 1}, &ttsAudioFrame{Audio: audio, Turn: "turn-1", Gen: 1, SampleRate: 24000, Channels: 1}, &core.SpeakingStateFrame{State: core.SpeakingStarted, Turn: "turn-1", Gen: 1}, &core.TTSStoppedFrame{Turn: "turn-1", Gen: 1}, &core.SpeakingStateFrame{State: core.SpeakingStopped, Turn: "turn-1", Gen: 1}}, []string{"tts.started", "tts.audio", "assistant.speaking.started", "tts.completed", "assistant.speaking.stopped"}},
 		{"barge_in", nil, []string{"turn.interrupted", "output.flush.started", "output.flush.completed"}},
 		{"flush", nil, []string{"output.flush.started", "output.flush.completed"}},
 		{"tool_call_result", []core.Frame{&core.ToolCallFrame{Call: core.ToolCall{ID: "call-1", Name: "probe", Arguments: []byte(`{}`), SessionID: "compat-session", TurnID: "turn-1", Generation: 1}}}, []string{"tool.requested", "tool.started", "tool.completed", "tool.requested", "tool.started", "tool.failed"}},
 		{"provider_pipeline_errors", []core.Frame{&core.ErrorFrame{Err: errors.New("credential secret"), Fatal: false}, &core.ErrorFrame{Err: errors.New("credential secret"), Fatal: true}}, []string{"provider.error", "session.error"}},
-		{"session_teardown", []core.Frame{&core.CancelFrame{Gen: 1}}, []string{"session.cancelled", "session.ended", "processor.shutdown", "session.resources.completed"}},
+		{"session_teardown", []core.Frame{&cancelFrame{Gen: 1}}, []string{"session.cancelled", "session.ended", "processor.shutdown", "session.resources.completed"}},
 	}
 	results := make([]ScenarioResult, 0, len(specs))
 	for _, spec := range specs {
@@ -203,7 +230,7 @@ func runRuntimeScenario(spec scenarioSpec) ([]Event, error) {
 	case <-time.After(time.Second):
 		return nil, errors.New("session did not become ready")
 	}
-	if err := session.Post(&core.StartFrame{}); err != nil {
+	if err := session.Post(&startFrame{}); err != nil {
 		return nil, err
 	}
 	select {
@@ -358,7 +385,7 @@ func runTeardownScenario(omitCloseObservation bool) ([]Event, error) {
 	case <-time.After(time.Second):
 		return probe.snapshot(), errors.New("supervised teardown worker did not start")
 	}
-	for _, frame := range []core.Frame{&core.StartFrame{}, &core.CancelFrame{Gen: 1}, &core.EndFrame{}} {
+	for _, frame := range []core.Frame{&startFrame{}, &cancelFrame{Gen: 1}, &core.EndFrame{}} {
 		if err := session.Post(frame); err != nil {
 			return probe.snapshot(), err
 		}
@@ -424,7 +451,7 @@ func runBargeScenario(spec scenarioSpec) ([]Event, error) {
 			}
 		}
 	}
-	if err := postAndWait(&core.StartFrame{}); err != nil {
+	if err := postAndWait(&startFrame{}); err != nil {
 		return probe.snapshot(), err
 	}
 	if err := postAndWait(&core.UserMessageFrame{Turn: "turn-1", Gen: 1}); err != nil {
@@ -551,7 +578,7 @@ func runPacerFlushScenario(spec scenarioSpec) ([]Event, error) {
 }
 
 func runtimePacerEvent(name string, sequence, gen uint64, attrs map[string]any) Event {
-	e := core.NewDebugEvent(name, time.Unix(1, int64(sequence)), "compat-session", "turn-1", core.Generation(gen), attrs)
+	e := Observed{DebugEvent: core.NewDebugEvent(name, time.Unix(1, int64(sequence)), "compat-session", "turn-1", core.Generation(gen), attrs)}
 	e.PipelineID, e.Processor, e.ProcessorIndex = "compat-pipeline", "paced-writer", 0
 	e.FrameKind, e.Direction, e.Sequence = core.FrameFlush, core.Downstream, sequence
 	out, _ := (Adapter{}).Adapt(e)

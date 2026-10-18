@@ -94,7 +94,6 @@ type Server struct {
 	adminServer  *http.Server
 	probeServer  *http.Server
 	publicAddr   string // bound addresses after Start (useful with ":0")
-	adminAddr    string
 	wsServer     *ws.Server
 	backgrounds  map[string]background         // the sound catalogue (audio.backgrounds)
 	cues         map[string]func() ws.Underlay // route cue sounds by name
@@ -290,33 +289,33 @@ func (s *Server) SetTurnBackend(b smartturn.Backend) {
 	}
 }
 
-// SetProviderManagementAPI installs the authenticated management route handler.
+// setProviderManagementAPI installs the authenticated management route handler.
 // Configure it before serving requests; the outer API boundary always performs
 // administrator authentication before this handler is called.
-func (s *Server) SetProviderManagementAPI(handler http.Handler) {
+func (s *Server) setProviderManagementAPI(handler http.Handler) {
 	s.providerManagementAPI = handler
 }
 
-// SetFlowManagementAPI installs the flow route handler behind management
+// setFlowManagementAPI installs the flow route handler behind management
 // authentication. Configure it before serving requests.
-func (s *Server) SetFlowManagementAPI(handler http.Handler) {
+func (s *Server) setFlowManagementAPI(handler http.Handler) {
 	s.flowManagementAPI = handler
 }
 
-// SetMCPManagementAPI installs the MCP handler behind the management listener
+// setMCPManagementAPI installs the MCP handler behind the management listener
 // authentication boundary. Configure it before serving requests.
-func (s *Server) SetMCPManagementAPI(handler http.Handler) {
+func (s *Server) setMCPManagementAPI(handler http.Handler) {
 	s.mcpManagementAPI = handler
 }
 
-// SetSessionManagementAPI installs the session and traces route handler behind
+// setSessionManagementAPI installs the session and traces route handler behind
 // management authentication. Configure it before serving requests.
-func (s *Server) SetSessionManagementAPI(handler http.Handler) {
+func (s *Server) setSessionManagementAPI(handler http.Handler) {
 	s.sessionManagementAPI = handler
 }
 
-// SetStore attaches a durable SQL store for operations inspection and diagnostics.
-func (s *Server) SetStore(store *storage.Store) {
+// setStore attaches a durable SQL store for operations inspection and diagnostics.
+func (s *Server) setStore(store *storage.Store) {
 	s.store = store
 }
 
@@ -381,7 +380,7 @@ func (s *Server) getOperationsStatus(ctx context.Context) api.OperationsStatus {
 	health := "healthy"
 	if dbStatus.Status == "error" || vadStatus.WorkerStatus == "unavailable" {
 		health = "unhealthy"
-	} else if util >= 1.0 || vadStatus.WorkerStatus == "degraded" || (sessionsTotal > 0 && errorsTotal > 10 && float64(errorsTotal)/float64(sessionsTotal) > 0.5) {
+	} else if util >= 1.0 || (sessionsTotal > 0 && errorsTotal > 10 && float64(errorsTotal)/float64(sessionsTotal) > 0.5) {
 		health = "degraded"
 	}
 
@@ -987,7 +986,7 @@ func (s *Server) Start() error {
 		go func() { _ = s.probeServer.Serve(probeListener) }()
 	}
 
-	s.publicAddr, s.adminAddr = pubListener.Addr().String(), adminListener.Addr().String()
+	s.publicAddr = pubListener.Addr().String()
 	s.pruneStop = make(chan struct{})
 	go s.pruneTimelines()
 
@@ -1009,9 +1008,8 @@ func (s *Server) Start() error {
 // Logger is the configured structured logger (JSON when observability.json_format).
 func (s *Server) Logger() *slog.Logger { return s.logger }
 
-// PublicAddr and AdminAddr return the bound listener addresses once Start has returned.
+// PublicAddr returns the bound public listener address once Start has returned.
 func (s *Server) PublicAddr() string { return s.publicAddr }
-func (s *Server) AdminAddr() string  { return s.adminAddr }
 
 // Shutdown performs orderly drain-then-cancel shutdown per spec §37.
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -1258,7 +1256,7 @@ func stageProviders(c CallSpec) map[string]string {
 func (s *Server) recordProviderErrors(proc core.Processor, prov map[string]string) {
 	switch p := proc.(type) {
 	case core.STTCounters:
-		_, _, _, errs := p.STTCounts()
+		_, _, errs := p.STTCounts()
 		s.metrics.providerErrors.add(prov["stt"], "stt", errs)
 	case core.LLMCounters:
 		_, errs, _, _ := p.LLMCounts()
@@ -1283,10 +1281,9 @@ func (s *Server) recordProcessorMetrics(proc core.Processor) {
 			s.metrics.ContextEvictionsTotal.Add(uint64(n))
 		}
 	case core.STTCounters: // google and the failover wrapper
-		rot, rotFail, dedup, errs := p.STTCounts()
+		rot, rotFail, errs := p.STTCounts()
 		s.metrics.STTRotationsTotal.Add(rot)
 		s.metrics.STTRotationFailuresTotal.Add(rotFail)
-		s.metrics.STTDeduplicatedTotal.Add(dedup)
 		s.metrics.STTErrorsTotal.Add(errs)
 	case core.LLMCounters: // google, xai, openai and the failover wrapper
 		req, errs, retries, stale := p.LLMCounts()

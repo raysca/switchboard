@@ -101,9 +101,9 @@ export interface VoiceClientState {
   error: VoiceClientError | null;
 }
 
-export type VoiceClientListener = (state: VoiceClientState) => void;
+type VoiceClientListener = (state: VoiceClientState) => void;
 
-export interface ConnectOptions {
+interface ConnectOptions {
   flowId: string;
   principal?: string;
   wsBaseUrl?: string;

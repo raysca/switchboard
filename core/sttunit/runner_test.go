@@ -356,7 +356,7 @@ func TestRunner_DialFailureReportsErrorFrame(t *testing.T) {
 	if !errors.Is(ef.Err, core.ErrSTTUnavailable) {
 		t.Fatalf("dial failure %v does not wrap core.ErrSTTUnavailable", ef.Err)
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 1 {
+	if _, _, n := h.r.STTCounts(); n != 1 {
 		t.Fatalf("errors counted = %d, want 1", n)
 	}
 	// No redial for the rest of the turn: the audio passes through untranscribed.
@@ -383,7 +383,7 @@ func TestRunner_CircuitOpenDialIsReportedNotCounted(t *testing.T) {
 	if !errors.Is(h.errorFrames()[0].Err, resilience.ErrCircuitOpen) {
 		t.Fatalf("err = %v", h.errorFrames()[0].Err)
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 0 {
+	if _, _, n := h.r.STTCounts(); n != 0 {
 		t.Fatalf("an open breaker counted as a provider error: %d", n)
 	}
 }
@@ -410,7 +410,7 @@ func TestRunner_CloseCancelsDialAndLeaksNothing(t *testing.T) {
 	if len(h.errorFrames()) != 0 {
 		t.Fatal("a cancelled dial was reported as a failure")
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 0 {
+	if _, _, n := h.r.STTCounts(); n != 0 {
 		t.Fatalf("a cancelled dial counted %d provider errors", n)
 	}
 }
@@ -464,7 +464,7 @@ func TestRunner_SendFailureFailsTheFrameAndReleases(t *testing.T) {
 	if !errors.Is(err, broken) {
 		t.Fatalf("ProcessFrame err = %v, want the send error (STTFailover.syncFailure needs it)", err)
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 1 {
+	if _, _, n := h.r.STTCounts(); n != 1 {
 		t.Fatalf("errors counted = %d", n)
 	}
 	h.waitFor("released and closed", func() bool { return h.r.Streams() == 0 && conn.isClosed() })
@@ -529,7 +529,7 @@ func TestRunner_CloseDuringFlushIsQuiet(t *testing.T) {
 	if len(h.errorFrames()) != 0 {
 		t.Fatal("Close during a flush was reported as a failure")
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 0 {
+	if _, _, n := h.r.STTCounts(); n != 0 {
 		t.Fatalf("Close during a flush counted %d provider errors", n)
 	}
 }
@@ -576,7 +576,7 @@ func TestRunner_TaskLimitLosesTheTurnNotTheCall(t *testing.T) {
 	if errors.Is(ef.Err, core.ErrSTTUnavailable) {
 		t.Fatalf("the local task budget is not an unreachable STT: %v", ef.Err)
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 0 {
+	if _, _, n := h.r.STTCounts(); n != 0 {
 		t.Fatalf("the local task limit counted %d provider errors", n)
 	}
 	h.waitFor("frames passed", func() bool {
@@ -610,7 +610,7 @@ func TestRunner_ProviderCloseRacingSendIsQuiet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessFrame err = %v, want nil", err)
 	}
-	if _, _, _, errs := h.r.STTCounts(); errs != 0 {
+	if _, _, errs := h.r.STTCounts(); errs != 0 {
 		t.Fatalf("errors counted = %d", errs)
 	}
 	if len(h.errorFrames()) != 0 {
@@ -639,7 +639,7 @@ func TestRunner_ProviderCloseRacingSendOnBoundStreamIsOnlyA8(t *testing.T) {
 	}
 	h.waitFor("invalidation and error", func() bool { return len(h.invalidations()) == 1 && len(h.errorFrames()) == 1 })
 	time.Sleep(20 * time.Millisecond)
-	if _, _, _, n := h.r.STTCounts(); n != 1 {
+	if _, _, n := h.r.STTCounts(); n != 1 {
 		t.Fatalf("errors counted = %d, want 1 (the A8 invalidation only)", n)
 	}
 	if len(h.errorFrames()) != 1 || br.WouldRefuse() {
@@ -805,7 +805,7 @@ func TestRunner_MidUtteranceDrop_InvalidatesTurn(t *testing.T) {
 	if br.WouldRefuse() {
 		t.Fatal("a clean provider end was reported to the breaker")
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 1 {
+	if _, _, n := h.r.STTCounts(); n != 1 {
 		t.Fatalf("errors counted = %d", n)
 	}
 }
@@ -960,7 +960,7 @@ func TestRunner_StalledSendAndFailingRecvReportOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessFrame err = %v: the receive side already reported this stall", err)
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 1 {
+	if _, _, n := h.r.STTCounts(); n != 1 {
 		t.Fatalf("errors counted = %d, want 1", n)
 	}
 	if n := reports.Load(); n != 1 {
@@ -1018,7 +1018,7 @@ func TestRunner_EachFailurePathReportsOnce(t *testing.T) {
 			if n := len(h.errorFrames()); n != tc.frames {
 				t.Fatalf("error frames = %d, want %d", n, tc.frames)
 			}
-			if _, _, _, n := h.r.STTCounts(); n != 1 {
+			if _, _, n := h.r.STTCounts(); n != 1 {
 				t.Fatalf("errors counted = %d, want 1", n)
 			}
 		})
@@ -1061,7 +1061,7 @@ func TestRunner_ProviderHangDoesNotStackSessionTasks(t *testing.T) {
 			t.Fatalf("error frame %+v: a local limit is non-fatal and not an unreachable STT", ef)
 		}
 	}
-	if _, _, _, n := h.r.STTCounts(); n != 0 {
+	if _, _, n := h.r.STTCounts(); n != 0 {
 		t.Fatalf("the local limit counted %d provider errors", n)
 	}
 	if err := h.sess.Err(); err != nil {

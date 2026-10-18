@@ -80,6 +80,46 @@ describe("StepAdvanced", () => {
     expect(last(onChange).tts).not.toHaveProperty("clean_text");
   });
 
+  it("shows the four voice settings only for ElevenLabs and stores them by omission", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const { unmount } = render(<Harness onChange={onChange} />);
+    expect(screen.queryByLabelText("Stability")).not.toBeInTheDocument();
+    unmount();
+    const eleven = fromFlowConfig({
+      llm: { provider: "google", model: "gemini" },
+      tts: { provider: "elevenlabs", voice: "v", voice_settings: { speed: 1.1 } },
+      stt: { provider: "google" },
+    });
+    function Eleven() {
+      const [g, setG] = useState(eleven);
+      return (
+        <StepAdvanced
+          graph={g}
+          step={g.steps[0]}
+          providers={providers}
+          onChange={(n) => {
+            setG(n);
+            onChange(n);
+          }}
+        />
+      );
+    }
+    render(<Eleven />);
+    expect(screen.getByLabelText("Speed")).toHaveValue(1.1);
+    await user.type(screen.getByLabelText("Stability"), "0.4");
+    await user.type(screen.getByLabelText("Similarity boost"), "5");
+    await user.type(screen.getByLabelText("Style"), "0.2");
+    await user.tab(); // blur shows the stored (clamped) value, not the typed one
+    expect(screen.getByLabelText("Similarity boost")).toHaveValue(1);
+    expect(last(onChange).tts).toMatchObject({ voice_settings: { stability: 0.4, similarity_boost: 1, style: 0.2, speed: 1.1 } });
+    await user.clear(screen.getByLabelText("Stability"));
+    await user.clear(screen.getByLabelText("Similarity boost"));
+    await user.clear(screen.getByLabelText("Style"));
+    await user.clear(screen.getByLabelText("Speed"));
+    expect(last(onChange).tts).not.toHaveProperty("voice_settings");
+  });
+
   it("explains the obscure settings and leaves the field names alone", async () => {
     const user = userEvent.setup();
     render(<Harness onChange={vi.fn()} />);

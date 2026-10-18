@@ -164,6 +164,12 @@ const COPY = {
     when: "Turn off only if your text is already speech-ready.",
     defaults: "On.",
   },
+  "tts.voice_settings": {
+    label: "Voice settings",
+    what: "Tunes the ElevenLabs voice: stability, similarity boost, style (each 0 to 1) and speed (0.7 to 1.2).",
+    when: "When the stock voice sounds too flat, too variable or too fast.",
+    defaults: "Empty fields keep the ElevenLabs defaults. Voice fallbacks always use their provider defaults.",
+  },
   fallbacks: {
     label: "Fallbacks",
     what: "Backup providers tried in order when the main one fails.",

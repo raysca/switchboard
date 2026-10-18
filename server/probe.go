@@ -156,13 +156,17 @@ func (s *Server) probeStage(ctx context.Context, provider, stage string) (res Pr
 		svc := p.Services[stage]
 		switch stage {
 		case catalog.ServiceLLM:
-			spec.Model, ok = defaultEntry(svc.Models)
+			e, found := catalog.DefaultEntry(svc.Models)
+			spec.Model, ok = e.ID, found
 			spec.SystemPrompt = "Reply with the single word ok."
 		case catalog.ServiceTTS:
-			spec.Voice, ok = defaultEntry(svc.Voices)
+			e, found := catalog.DefaultEntry(svc.Voices)
+			spec.Voice, ok = e.ID, found
 		case catalog.ServiceSTT:
-			spec.Model, ok = defaultEntry(svc.Models)
-			spec.Language, _ = defaultEntry(svc.Languages)
+			e, found := catalog.DefaultEntry(svc.Models)
+			spec.Model, ok = e.ID, found
+			lang, _ := catalog.DefaultEntry(svc.Languages)
+			spec.Language = lang.ID
 		}
 	}
 	if !ok {
@@ -203,15 +207,6 @@ func (s *Server) probeStage(ctx context.Context, provider, stage string) (res Pr
 		res.LatencyMS = &ms
 	}
 	return res
-}
-
-func defaultEntry(es []catalog.Entry) (string, bool) {
-	for _, e := range es {
-		if e.Default {
-			return e.ID, true
-		}
-	}
-	return "", false
 }
 
 // circuitState is the worst breaker state this process reports for a provider's stage, or "unknown" when

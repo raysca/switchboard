@@ -1,6 +1,6 @@
 import { ApiError, type FlowDTO, type MCPServerDTO, type ToolDependencyDTO, type ToolSelection } from "../../api/client";
 
-export type Tone = "ok" | "bad" | "idle";
+type Tone = "ok" | "bad" | "idle";
 
 /** The server's own words for its state, in ours. Only `healthy` is Connected; an unknown state is shown as it is. */
 export function serverStatus(s: MCPServerDTO): { tone: Tone; label: string } {
@@ -55,7 +55,7 @@ export function drifts(flows: FlowDTO[], serverId: string): Drift[] {
   );
 }
 
-export type Repin = {
+type Repin = {
   /** The flow's whole tool list with every changed tool re-pinned; `null` when nothing can be re-pinned. */
   selection: ToolSelection[] | null;
   /** The tools that get re-pinned. */

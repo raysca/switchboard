@@ -240,14 +240,8 @@ func ValidateDigits(digits string) error {
 	return nil
 }
 
-// Send queues digits for playback under generation gen (0 = current). It
-// returns once queued, not once played.
-func (p *OutputProcessor) Send(gen uint64, digits string) error {
-	_, err := p.send(gen, digits)
-	return err
-}
-
-// send queues like Send and returns a channel closed when playback ends.
+// send queues digits for playback under generation gen (0 = current) and
+// returns a channel closed when playback ends.
 func (p *OutputProcessor) send(gen uint64, digits string) (<-chan struct{}, error) {
 	if err := ValidateDigits(digits); err != nil {
 		return nil, err
@@ -267,6 +261,15 @@ func (p *OutputProcessor) send(gen uint64, digits string) (<-chan struct{}, erro
 	}
 }
 
+// reply never blocks: Result is documented as buffered, and an unbuffered one
+// nobody reads must not wedge the output stage.
+func reply(c chan<- error, err error) {
+	select {
+	case c <- err:
+	default:
+	}
+}
+
 func (p *OutputProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
 	o, ok := f.(*core.OutputDTMFFrame)
 	if !ok || dir != core.Downstream {
@@ -274,7 +277,21 @@ func (p *OutputProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core
 	}
 	// Consumed here. A bad or surplus request is dropped: it is a content
 	// problem, not a reason to fail the call.
-	_ = p.Send(o.Gen, o.Digits)
+	done, err := p.send(o.Gen, o.Digits)
+	switch {
+	case o.Result == nil:
+	case err != nil:
+		reply(o.Result, err)
+	default:
+		// One supervised waiter per send; at most maxPending are queued.
+		_ = p.session.Go(func(ctx context.Context) {
+			select {
+			case <-done:
+				reply(o.Result, nil)
+			case <-ctx.Done():
+			}
+		})
+	}
 	return nil
 }
 

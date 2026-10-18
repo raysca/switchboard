@@ -17,6 +17,7 @@ import (
 
 	"google.golang.org/genai"
 	"govoice/core"
+	"govoice/core/coretest"
 	"govoice/core/resilience"
 	"govoice/core/tools"
 )
@@ -183,7 +184,7 @@ func TestGoogleLLMToolLoopClaimsOnceAndContinuesWithFunctionHistory(t *testing.T
 		ToolHistory: history,
 		ContextProvider: func() []core.Message {
 			msgs := history.Messages()
-			if err := core.ValidateToolPairing(msgs); err != nil {
+			if err := coretest.ValidateToolPairing(msgs); err != nil {
 				t.Errorf("provider-facing history invalid: %v", err)
 			}
 			return msgs
