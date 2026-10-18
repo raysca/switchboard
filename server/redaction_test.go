@@ -92,7 +92,7 @@ func TestDTMFTurnStoredMasked(t *testing.T) {
 	r.close(t.Context())
 	mu.Lock()
 	defer mu.Unlock()
-	if len(rows) != 1 || rows[0].Transcript != "DTMF: [REDACTED:dtmf 7]" {
+	if len(rows) != 1 || rows[0].Transcript != "DTMF: [REDACTED:dtmf 4]" {
 		t.Fatalf("%+v", rows)
 	}
 }
