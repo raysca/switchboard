@@ -133,6 +133,11 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
                   else next[key] = Math.min(max, Math.max(min, Number(e.target.value)));
                   setStage("tts", Object.keys(next).length ? { ...tts, voice_settings: next } : without(tts, "voice_settings"));
                 }}
+                onBlur={(e) => {
+                  // The input is uncontrolled: show the clamped value that was stored.
+                  const n = Number(e.target.value);
+                  if (e.target.value.trim() !== "" && Number.isFinite(n)) e.target.value = String(Math.min(max, Math.max(min, n)));
+                }}
               />
             </label>
           ))}

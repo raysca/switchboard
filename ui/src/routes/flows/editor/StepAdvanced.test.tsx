@@ -110,6 +110,8 @@ describe("StepAdvanced", () => {
     await user.type(screen.getByLabelText("Stability"), "0.4");
     await user.type(screen.getByLabelText("Similarity boost"), "5");
     await user.type(screen.getByLabelText("Style"), "0.2");
+    await user.tab(); // blur shows the stored (clamped) value, not the typed one
+    expect(screen.getByLabelText("Similarity boost")).toHaveValue(1);
     expect(last(onChange).tts).toMatchObject({ voice_settings: { stability: 0.4, similarity_boost: 1, style: 0.2, speed: 1.1 } });
     await user.clear(screen.getByLabelText("Stability"));
     await user.clear(screen.getByLabelText("Similarity boost"));
