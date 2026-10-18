@@ -350,6 +350,7 @@ func (w *TTSFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 			from := w.cfg.Candidates[idx].Provider
 			w.bad[idx] = class
 			u.pos++
+			u.owner = -1 // the failed candidate's later frames are dropped until run starts the next one
 			to := w.cfg.Candidates[u.order[u.pos]].Provider
 			u.stop() // the watchdog must not expire the unit while the retry waits for the run loop
 			w.mu.Unlock()
