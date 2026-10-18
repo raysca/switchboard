@@ -736,10 +736,10 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			}
 			var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
 			if slices.Contains(cfg.Turn.Stop, "turn-analyzer") && r.turnBackend != nil {
-				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.StopSecs})
+				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.Hold})
 				turnTap = a.Tap()
 				analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
-					return smartturn.Stop(a, base, cfg.Turn.Analyzer.StopSecs)
+					return smartturn.Stop(a, base, cfg.Turn.Analyzer.Hold)
 				}
 			}
 			var err error

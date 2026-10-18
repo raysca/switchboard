@@ -188,7 +188,7 @@ type Config struct {
 		MaxMute time.Duration `yaml:"max_mute"`
 		// Analyzer configures the Smart Turn v3 model behind turn.stop:
 		// [turn-analyzer, speech-timeout]. The model ends a turn as soon as it
-		// judges the user done; "incomplete" holds the turn up to StopSecs of
+		// judges the user done; "incomplete" holds the turn up to Hold (stop_secs) of
 		// silence (Pipecat stop_secs, default 3s). When the model cannot answer
 		// (worker crash, overload, no verdict within Budget) the turn ends at
 		// speech_timeout like before and a fallback metric is counted. Mode ""
@@ -197,8 +197,8 @@ type Config struct {
 			Mode      string        `yaml:"mode"` // "" | process | inprocess
 			Workers   int           `yaml:"workers"`
 			ModelPath string        `yaml:"model_path"`
-			StopSecs  time.Duration `yaml:"stop_secs"`
-			Budget    time.Duration `yaml:"budget"` // per-verdict latency budget, default 150ms
+			Hold      time.Duration `yaml:"stop_secs"` // Pipecat stop_secs
+			Budget    time.Duration `yaml:"budget"`    // per-verdict latency budget, default 150ms
 		} `yaml:"analyzer"`
 	} `yaml:"turn"`
 

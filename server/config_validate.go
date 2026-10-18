@@ -171,7 +171,7 @@ func validateTurn(cfg *Config) error {
 		if a.Mode != "" && a.Mode != "process" && a.Mode != "inprocess" {
 			return fmt.Errorf("turn.analyzer.mode %q must be process or inprocess", a.Mode)
 		}
-		if a.StopSecs < 0 || a.Budget < 0 || a.Workers < 0 {
+		if a.Hold < 0 || a.Budget < 0 || a.Workers < 0 {
 			return errors.New("turn.analyzer.stop_secs, budget and workers must be >= 0")
 		}
 		if cfg.Profile == ProfileProduction && cfg.TurnAnalyzerMode() != "process" {

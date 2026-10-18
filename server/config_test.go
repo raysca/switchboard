@@ -327,3 +327,18 @@ func TestValidateConfig_WarnsOnShortNoTranscriptTimeout(t *testing.T) {
 		}
 	}
 }
+
+// The Go field is a duration named for what it does; the YAML key stays Pipecat's stop_secs.
+func TestTurnAnalyzerStopSecsKeepsItsYAMLKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(path, []byte("profile: development\nturn:\n  analyzer:\n    stop_secs: 2s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Turn.Analyzer.Hold != 2*time.Second {
+		t.Fatalf("stop_secs loaded as %v", cfg.Turn.Analyzer.Hold)
+	}
+}

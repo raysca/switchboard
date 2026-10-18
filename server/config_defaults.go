@@ -61,7 +61,7 @@ func DefaultConfig(profile Profile) *Config {
 	// Model paths stay empty: the vad and smartturn packages resolve their
 	// default artifacts (and GOVOICE_*_MODEL_PATH) themselves.
 	cfg.Turn.Analyzer.Workers = 1
-	cfg.Turn.Analyzer.StopSecs = 3 * time.Second
+	cfg.Turn.Analyzer.Hold = 3 * time.Second
 	cfg.Turn.Analyzer.Budget = 150 * time.Millisecond
 
 	// Providers

@@ -102,7 +102,7 @@
    "Mode": "",
    "Workers": 1,
    "ModelPath": "",
-   "StopSecs": 3000000000,
+   "Hold": 3000000000,
    "Budget": 150000000
   }
  },
