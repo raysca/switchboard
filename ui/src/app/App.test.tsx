@@ -82,23 +82,44 @@ describe("admin shell", () => {
     expect(screen.getByRole("link", { name: "MCP tools" }).textContent).toContain("MCP tools");
   });
 
-  it("shows the key status in the top line once connected, with no way to clear it but reloading", async () => {
-    // A server that requires the key: only requests carrying one are answered.
-    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
-      const headers = (init?.headers ?? {}) as Record<string, string>;
-      return headers.Authorization
-        ? new Response(JSON.stringify({ data: operationsStatus }), { status: 200 })
-        : new Response("{}", { status: 401 });
-    });
+  async function signedInApp(fetcher: typeof fetch) {
     vi.stubGlobal("fetch", fetcher);
     render(<App initialPath="/dashboard" />);
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(/management key/i), "k");
     await user.click(screen.getByRole("button", { name: "Connect" }));
     expect(await screen.findByText("Key in memory")).toBeVisible();
+    return user;
+  }
+
+  // A server that requires the key: only requests carrying one are answered.
+  const keyedServer = () =>
+    vi.fn<typeof fetch>(async (_input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      return headers.Authorization
+        ? new Response(JSON.stringify({ data: operationsStatus }), { status: 200 })
+        : new Response("{}", { status: 401 });
+    });
+
+  it("shows the key status in the top line once connected", async () => {
+    await signedInApp(keyedServer());
     expect(screen.getByText("Key in memory").closest(".topbar")).not.toBeNull();
-    expect(screen.queryByRole("button", { name: "Clear key" })).toBeNull();
     expect(screen.queryByLabelText(/management key/i)).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("TestSignOutClearsTheKey", async () => {
+    const fetcher = keyedServer();
+    const user = await signedInApp(fetcher);
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(screen.getByLabelText(/management key/i)).toBeVisible();
+    expect(screen.getByText("No management key")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+    // Protected data is gone with the key, and nothing is asked of the server afterwards.
+    expect(screen.queryByText(/System \w+ · up /)).toBeNull();
+    const calls = fetcher.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 50));
+    expect(fetcher.mock.calls.length).toBe(calls);
     vi.unstubAllGlobals();
   });
 
@@ -160,6 +181,7 @@ describe("access without pasting a key", () => {
       render(<App />);
       expect(screen.queryByRole("region", { name: "Management access" })).toBeNull();
       expect(screen.getByText("Key in memory")).toBeVisible();
+      expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible(); // a link key can be dropped too
       await waitFor(() => expect(seen.some((c) => c.auth === "Bearer link-key-123")).toBe(true));
       expect(window.location.hash).toBe("");
       expect(window.location.href).not.toContain("link-key-123");
@@ -201,6 +223,7 @@ describe("access without pasting a key", () => {
       render(<App initialPath="/dashboard" />);
       expect(await screen.findByText("Signed in by the server")).toBeVisible();
       expect(screen.queryByRole("region", { name: "Management access" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull(); // the proxy's key cannot be dropped
       await waitFor(() => expect(seen.filter((c) => !c.url.includes("server-config")).length).toBeGreaterThan(0));
       expect(seen.every((c) => c.auth === null)).toBe(true);
     } finally {

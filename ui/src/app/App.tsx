@@ -189,6 +189,9 @@ export function App({ initialPath }: { initialPath?: string }) {
                 <Status tone={keyValue ? "good" : "neutral"}>
                   {keyValue === PROXIED_ACCESS ? "Signed in by the server" : keyValue ? "Key in memory" : "No management key"}
                 </Status>
+                {keyValue && keyValue !== PROXIED_ACCESS && (
+                  <ActionButton type="button" onClick={clearKey}>Sign out</ActionButton>
+                )}
               </div>
             </div>
             <main id="main" tabIndex={-1}>

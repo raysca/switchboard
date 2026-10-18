@@ -32,6 +32,21 @@ test("the UI, its API calls and the voice socket all work from the one public or
   expect(cspViolations).toEqual([]);
 });
 
+test("Sign out drops the key: the form returns and nothing is sent with the old key", async ({ page, stack }) => {
+  await connectAdmin(page, stack);
+  await expect(page.getByText(/^System \w+ · up /)).toBeVisible();
+  const afterSignOut: string[] = [];
+  await page.getByRole("button", { name: "Sign out" }).click();
+  page.on("request", (r) => {
+    if (r.url().includes("/api/v1/")) afterSignOut.push(`${r.method()} ${r.url()} ${r.headers()["authorization"] ?? ""}`);
+  });
+  await expect(page.getByLabel("Management key")).toBeVisible();
+  await expect(page.getByText("No management key")).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(afterSignOut).toEqual([]);
+  expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain(stack.managementKey);
+});
+
 test("the management and operational surfaces are as exposed as intended", async ({ request, stack }) => {
   expect((await request.get(`${stack.publicUrl}/health`)).status()).toBe(200);
   for (const p of ["/metrics", "/ready", "/debug/timeline"]) expect((await request.get(`${stack.publicUrl}${p}`)).status(), p).not.toBe(200);
