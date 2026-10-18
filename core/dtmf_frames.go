@@ -25,6 +25,9 @@ func (f *InputDTMFFrame) Generation() uint64 { return f.Gen }
 type OutputDTMFFrame struct {
 	Digits string
 	Gen    uint64
+	// Result, if set (buffered, cap 1), receives nil once the tones have played
+	// or the reason they were not queued.
+	Result chan<- error
 }
 
 func (f *OutputDTMFFrame) Type() FrameType    { return FrameOutputDTMF }

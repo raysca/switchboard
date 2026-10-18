@@ -3,6 +3,7 @@ package dtmf
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -224,7 +225,7 @@ func TestOutputFrameBecomesPacedToneAudio(t *testing.T) {
 
 func TestOutputStopsOnBargeIn(t *testing.T) {
 	out, sink, s := newOut(t)
-	if err := out.Send(0, "1234567890"); err != nil {
+	if _, err := out.send(0, "1234567890"); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "first frames", func() bool { n, _, _ := audioBytes(sink); return n > 0 })
@@ -242,7 +243,7 @@ func TestOutputStopsOnBargeIn(t *testing.T) {
 func TestOutputStaleGenerationIsDropped(t *testing.T) {
 	out, sink, s := newOut(t)
 	s.IncrementGeneration()
-	if err := out.Send(1, "5"); err != nil { // queued under the old generation
+	if _, err := out.send(1, "5"); err != nil { // queued under the old generation
 		t.Fatal(err)
 	}
 	time.Sleep(150 * time.Millisecond)
@@ -292,7 +293,8 @@ func TestSendDTMFToolValidationAndDelegation(t *testing.T) {
 	// Bounded backlog: a flood is refused, never queued without limit.
 	var busy bool
 	for i := 0; i < 3*maxPending && !busy; i++ {
-		busy = out.Send(0, "1") == ErrBusy
+		_, err := out.send(0, "1")
+		busy = err == ErrBusy
 	}
 	if !busy {
 		t.Fatal("pending sends are unbounded")
@@ -315,5 +317,65 @@ func TestToolDefinitionSchemaMatchesValidation(t *testing.T) {
 	}
 	if p := schema.Properties["digits"]; p.MaxLength != MaxDigitsPerSend || p.Pattern != "^[0-9*#A-D]{1,32}$" {
 		t.Fatalf("schema drifted from validation: %+v", p)
+	}
+}
+
+func TestSendDTMFGoesThroughTheOutputFrame(t *testing.T) {
+	out, err := NewOutputProcessor(OutputConfig{Tones: DefaultGeneratorConfig(24000)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &coretest.PassthroughProcessor{}
+	pipe, err := core.NewPipeline(out, sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen atomic.Int32
+	s.OnFrame = func(f core.Frame, _ core.Direction) {
+		if o, ok := f.(*core.OutputDTMFFrame); ok && o.Digits == "42" {
+			seen.Add(1)
+		}
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	r, err := Executor(out, nil).Execute(context.Background(), core.ToolCall{ID: "c", Name: ToolName, Arguments: json.RawMessage(`{"digits":"42"}`)})
+	if err != nil || r.Status != core.ToolSucceeded {
+		t.Fatalf("%+v %v", r, err)
+	}
+	want, _ := Generate("42", DefaultGeneratorConfig(24000))
+	if n, _, _ := audioBytes(sink); n != len(want) {
+		t.Fatalf("tool returned with %d of %d tone bytes released", n, len(want))
+	}
+	if seen.Load() == 0 {
+		t.Fatal("send_dtmf did not post an OutputDTMFFrame")
+	}
+}
+
+func TestSendDTMFFencedByBargeInEndsWithTheCall(t *testing.T) {
+	out, _, s := newOut(t)
+	exec := Executor(out, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.IncrementGeneration() // the call's generation (1) is now stale: the frame never plays
+	done := make(chan core.ToolResult, 1)
+	go func() {
+		r, _ := exec.Execute(ctx, core.ToolCall{ID: "c", Name: ToolName, Arguments: json.RawMessage(`{"digits":"1234"}`), Generation: 1})
+		done <- r
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel() // what the tool loop's stale watch does
+	select {
+	case r := <-done:
+		if r.Status != core.ToolSucceeded || string(r.Result) != `{"played":true}` {
+			t.Fatalf("result changed: %+v", r)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("executor hung after ctx cancel")
 	}
 }
