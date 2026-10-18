@@ -55,10 +55,9 @@ distinguish operational metadata from conversational content:
   pruned.
 - **Content retention (`ContentRetentionDays` / `ContentRetention`):**
   Defines the lifetime of conversation content (STT transcripts, LLM assistant
-  responses, tool argument summaries, and tool result summaries).
+  responses). Tool argument and result content is never stored.
   When content retention expires prior to metadata retention, the content purge
-  sets `transcript` and `assistant_text` to null, clears tool argument/result
-  payload summaries, and sanitizes text attributes in spans/events while
+  sets `transcript` and `assistant_text` to null while
   preserving session, turn, span, event timestamps, latencies, and structural
   metadata for operational debugging.
 - **Who called:** a session stores `caller`, the label the integration chose

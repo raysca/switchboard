@@ -24,7 +24,6 @@ type RunResult struct {
 	EventsDeleted    int64
 	ToolCallsDeleted int64
 	TurnsPurged      int64
-	TracesSanitized  int64
 }
 
 // Option configures a Job.
@@ -119,7 +118,6 @@ func (j *Job) RunOnce(ctx context.Context) (RunResult, error) {
 				return res, err
 			}
 			res.TurnsPurged += batch.TurnsPurged
-			res.TracesSanitized += batch.TracesSanitized
 			if batch.Examined < batchSize {
 				break
 			}
