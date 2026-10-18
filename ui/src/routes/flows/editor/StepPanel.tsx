@@ -225,7 +225,10 @@ export function StepPanel(props: StepPanelProps) {
                   providers={providers}
                   idPrefix={`step-${step.id}-tts`}
                   value={{ provider: str(tts.provider), voice: str(tts.voice) }}
-                  onChange={(v: StageValue) => patchStage("tts", { provider: v.provider, voice: v.voice ?? "" })}
+                  onChange={(v: StageValue) =>
+                    // voice_settings belong to ElevenLabs; the server rejects them on any other provider.
+                    patchStage("tts", { provider: v.provider, voice: v.voice ?? "", ...(v.provider === "elevenlabs" ? {} : { voice_settings: undefined }) })
+                  }
                 />
               </fieldset>
             </div>

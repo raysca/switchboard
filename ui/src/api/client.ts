@@ -215,6 +215,14 @@ export const stepConfigV2Schema = z.object({
   tts: z.object({
     provider: nonEmpty,
     voice: z.string().optional(),
+    voice_settings: z
+      .object({
+        stability: z.number().min(0).max(1).optional(),
+        similarity_boost: z.number().min(0).max(1).optional(),
+        style: z.number().min(0).max(1).optional(),
+        speed: z.number().min(0.7).max(1.2).optional(),
+      })
+      .optional(),
   }),
   context: z
     .object({

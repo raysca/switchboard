@@ -667,3 +667,55 @@ func TestFallbackSecretsResolveByProvider(t *testing.T) {
 		t.Fatalf("skipped counter moved by %d, want 1", n)
 	}
 }
+
+// voice_settings saved on a flow reach the started call's TTS StageSpec (single
+// step and a routed step); fallbacks carry none.
+func TestStoredFlow_VoiceSettingsReachStageSpec(t *testing.T) {
+	s := apiTestServer(t)
+	vars := testProviderVars(t)
+	vars["ELEVENLABS_API_KEY"] = "test-elevenlabs-key"
+	s.env = mapEnv(vars)
+	s.SetVADExecutor(&mockVADExecutor{ready: true, available: 4, total: 4})
+	enableTestManagement(t, s)
+
+	vs := `{"stability":0.3,"similarity_boost":0.9,"style":0.1,"speed":1.1}`
+	check := func(name string, got *flow.ElevenLabsVoiceSettings) {
+		t.Helper()
+		if got == nil || got.Stability == nil || *got.Stability != 0.3 || *got.SimilarityBoost != 0.9 || *got.Style != 0.1 || *got.Speed != 1.1 {
+			t.Fatalf("%s: voice settings = %+v", name, got)
+		}
+	}
+	single := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},` +
+		`"tts":{"provider":"elevenlabs","voice":"v1","voice_settings":` + vs + `,"fallbacks":[{"provider":"google","voice":"en-GB-Neural2-A"}]}}`
+	created, err := s.flows.Create(t.Context(), flow.CreateRequest{Name: "VS", Config: json.RawMessage(single)})
+	if err != nil || created.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("create: %v %+v", err, created.Readiness)
+	}
+	spec, release, err := s.resolveCall(t.Context(), created.ID, "vs-1", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	check("call TTS", spec.TTS.VoiceSettings)
+	if len(spec.TTSFallbacks) != 1 || spec.TTSFallbacks[0].VoiceSettings != nil {
+		t.Fatalf("fallback TTS must use provider defaults: %+v", spec.TTSFallbacks)
+	}
+
+	flat := `{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
+	step := `{"llm":{"provider":"google","model":"m"},"tts":{"provider":"elevenlabs","voice_settings":` + vs + `}}`
+	rs := &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: json.RawMessage(`{"start":"front","steps":[` +
+		`{"id":"front","name":"Front","config":` + flat + `},{"id":"sales","name":"Sales","config":` + step + `}],` +
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"buy"}]}`)}}}
+	call, err := s.callSpec(t.Context(), rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.TTS.VoiceSettings != nil {
+		t.Fatal("start step has no voice settings")
+	}
+	st, err := call.Flow.Resolve(t.Context(), "sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("step TTS", st.TTS.VoiceSettings)
+}

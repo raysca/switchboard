@@ -74,6 +74,37 @@ type TTSConfig struct {
 	// CleanText controls whether markdown, emojis, and formatting markers are stripped
 	// before synthesis. When nil or true, text cleaning is active. Set false to disable.
 	CleanText *bool `json:"clean_text,omitempty"`
+	// VoiceSettings tunes the ElevenLabs voice (provider elevenlabs only). Unset
+	// fields keep the provider defaults; fallback voices always use the defaults.
+	VoiceSettings *ElevenLabsVoiceSettings `json:"voice_settings,omitempty"`
+}
+
+// ElevenLabsVoiceSettings: stability, similarity_boost and style are 0..1,
+// speed is 0.7..1.2.
+type ElevenLabsVoiceSettings struct {
+	Stability       *float64 `json:"stability,omitempty"`
+	SimilarityBoost *float64 `json:"similarity_boost,omitempty"`
+	Style           *float64 `json:"style,omitempty"`
+	Speed           *float64 `json:"speed,omitempty"`
+}
+
+func (v *ElevenLabsVoiceSettings) validate(provider string) error {
+	if v == nil {
+		return nil
+	}
+	if provider != "elevenlabs" {
+		return fmt.Errorf("%w: tts.voice_settings requires the elevenlabs provider", ErrInvalidConfig)
+	}
+	for _, f := range []struct {
+		name   string
+		v      *float64
+		lo, hi float64
+	}{{"stability", v.Stability, 0, 1}, {"similarity_boost", v.SimilarityBoost, 0, 1}, {"style", v.Style, 0, 1}, {"speed", v.Speed, 0.7, 1.2}} {
+		if f.v != nil && (*f.v < f.lo || *f.v > f.hi) {
+			return fmt.Errorf("%w: tts.voice_settings.%s must be between %g and %g", ErrInvalidConfig, f.name, f.lo, f.hi)
+		}
+	}
+	return nil
 }
 
 type ContextLimits struct {
@@ -193,6 +224,9 @@ func DecodeConfig(raw json.RawMessage) (Config, error) {
 	}
 	if c.LLM.MaxParallel < 0 || c.LLM.MaxParallel > 16 {
 		return c, fmt.Errorf("%w: llm.max_parallel must be between 0 and 16", ErrInvalidConfig)
+	}
+	if err := c.TTS.VoiceSettings.validate(c.TTS.Provider); err != nil {
+		return c, err
 	}
 	if err := validateGreeting(c.Greeting); err != nil {
 		return c, err
