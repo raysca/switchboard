@@ -121,20 +121,19 @@ type Session struct {
 	AudioDropped   atomic.Uint64
 	Created        time.Time
 
-	observers      observerSet
-	debugMu        sync.Mutex
-	debugSeen      map[string]string // last turn emitted per latency DebugEvent name
-	debugLastStop  *UserStoppedSpeakingFrame
-	tracer         Tracer
-	tracePolicy    TracePolicy
-	traceCtx       context.Context // run-loop owned after Start
-	traceRootCtx   context.Context // immutable session parent for external async boundaries
-	sessionSpan    Span
-	traceQueue     *AsyncTracer
-	ownsTraceQueue bool
-	tracing        bool
-	turnSpans      map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
-	traceOrigins   map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
+	observers     observerSet
+	debugMu       sync.Mutex
+	debugSeen     map[string]string // last turn emitted per latency DebugEvent name
+	debugLastStop *UserStoppedSpeakingFrame
+	tracer        Tracer
+	tracePolicy   TracePolicy
+	traceCtx      context.Context // run-loop owned after Start
+	traceRootCtx  context.Context // immutable session parent for external async boundaries
+	sessionSpan   Span
+	traceQueue    *AsyncTracer
+	tracing       bool
+	turnSpans     map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
+	traceOrigins  map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
 }
 
 // A Frame interface can contain a non-comparable concrete value. The two
@@ -276,14 +275,8 @@ func (s *Session) Start() error {
 	s.state.Store(int32(StateRunning))
 	tracer, policy := s.tracer, s.tracePolicy
 	if _, noop := tracer.(NoopTracer); !noop {
-		if async, alreadyAsync := tracer.(*AsyncTracer); alreadyAsync {
-			s.traceQueue = async
-		} else {
-			s.traceQueue = NewAsyncTracer(tracer, defaultTraceQueueSize)
-			s.tracer = s.traceQueue
-			s.traceQueue = s.tracer.(*AsyncTracer)
-			s.ownsTraceQueue = true
-		}
+		s.traceQueue = NewAsyncTracer(tracer, defaultTraceQueueSize)
+		s.tracer = s.traceQueue
 		tracer = s.tracer
 		s.tracing = true
 	}
@@ -667,7 +660,7 @@ func (s *Session) Close() error {
 		if s.sessionSpan != nil {
 			s.sessionSpan.End(traceStatusError(s.Err(), "session_failure"))
 		}
-		if s.ownsTraceQueue && s.traceQueue != nil {
+		if s.traceQueue != nil {
 			s.traceQueue.Close()
 		}
 
