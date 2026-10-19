@@ -460,3 +460,25 @@ func TestTTSCharacterization_CloseWhileWaitingReturnsPromptly(t *testing.T) {
 		t.Fatalf("goroutines %d after Close, %d before", n, base)
 	}
 }
+
+// A blank final unit still closes the unit (Started, one empty final frame,
+// Stopped, Usage), whatever the number of synthesis requests it makes.
+func TestTTSCharacterization_BlankTextUnit(t *testing.T) {
+	var calls atomic.Int64
+	cfg := charCfg(&mockTTSClient{synthesizeFn: func(_ context.Context, _, _ string, _ int) ([]byte, error) {
+		calls.Add(1)
+		return nil, nil
+	}})
+	_, session, log := charStart(t, cfg)
+	_ = session.Post(&core.SynthesisUnitFrame{Turn: "t", Gen: 1, UnitID: 7, Text: "  ", IsFinal: true})
+	if !log.waitFor(func(fs []core.Frame) bool { return charMarks(fs, 7) == "USATP" }) {
+		t.Fatalf("sequence = %q, want USATP", charMarks(log.snapshot(), 7))
+	}
+	audio := charAudio(log.snapshot(), 7)
+	if len(audio) != 1 || len(audio[0].Samples) != 0 || !audio[0].IsFinal || !audio[0].TurnFinal {
+		t.Fatalf("audio = %+v, want one empty final turn-final frame", audio)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("client calls = %d, want 0 (same as base)", n)
+	}
+}
