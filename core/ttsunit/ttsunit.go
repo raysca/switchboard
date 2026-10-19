@@ -1,7 +1,8 @@
-// Package ttsunit is the per-unit machinery shared by streaming TTS
-// providers: in-order unit playback, cancel-all on interruption/Close, the
-// trace span, 20 ms framing with a held-back final frame, and the usage metric.
-// A provider supplies only Attempt (one synthesis try that calls Unit.Write).
+// Package ttsunit is the per-unit machinery shared by the TTS providers,
+// streaming and unary: in-order unit playback, cancel-all on interruption/Close,
+// the trace span, 20 ms framing with a held-back final frame, and the usage
+// metric. A provider supplies only Attempt (one synthesis try that calls
+// Unit.Write); unary providers also set LookAhead.
 package ttsunit
 
 import (
@@ -33,6 +34,11 @@ type Config struct {
 	// runner lock: it must not block long) and when a blank final unit ends a
 	// reply without an Attempt, so a provider can release its reply session.
 	EndReply func()
+	// LookAhead lets up to this many units past the one playing run Attempt early
+	// (unary providers: synthesis overlaps playback). Until its turn a unit's Write
+	// only buffers and Finish is deferred, so an early attempt may still retry.
+	// 0: Attempt runs on the unit's turn (streaming providers).
+	LookAhead int
 }
 
 type cancelEntry struct {
@@ -52,7 +58,9 @@ type Runner struct {
 	nextSeq     uint64
 	finishedSeq uint64
 	closed      bool
-	queue       core.SerialQueue // units wait here, not on a task slot each
+	// Unit seq runs on queues[seq%len]: queued units hold no task slot, and with
+	// LookAhead unit k starts only after unit k-len is done.
+	queues []core.SerialQueue
 
 	RequestsTotal atomic.Uint64
 	RetriesTotal  atomic.Uint64
@@ -68,7 +76,8 @@ func (r *Runner) TTSCounts() (req, errs, retries, stale uint64) {
 }
 
 func New(cfg Config) *Runner {
-	r := &Runner{cfg: cfg}
+	cfg.LookAhead = max(cfg.LookAhead, 0)
+	r := &Runner{cfg: cfg, queues: make([]core.SerialQueue, cfg.LookAhead+1)}
 	r.cond = sync.NewCond(&r.mu)
 	return r
 }
@@ -143,7 +152,7 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 		return err
 	}
 	r.RequestsTotal.Add(1)
-	if err := r.queue.Go(s, func(sessionCtx context.Context) {
+	if err := r.queues[seq%uint64(len(r.queues))].Go(s, func(sessionCtx context.Context) {
 		traceSession := core.SessionID(strconv.FormatUint(s.ID(), 10))
 		traceTurn, traceGen := core.TurnID(unit.Turn), core.Generation(unit.Gen)
 		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": r.cfg.Provider})
@@ -180,33 +189,27 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 			r.mu.Unlock()
 		}()
 
-		// Units are emitted strictly in arrival order.
-		r.mu.Lock()
-		for r.finishedSeq+1 != seq && synthCtx.Err() == nil && sessionCtx.Err() == nil && !r.closed {
-			r.cond.Wait()
-		}
-		stale := r.closed || synthCtx.Err() != nil || sessionCtx.Err() != nil || (unit.Gen != 0 && unit.Gen < s.CurrentGeneration())
-		r.mu.Unlock()
-		if stale {
-			r.StaleTotal.Add(1)
-			return
-		}
-
-		u := &Unit{Frame: unit, r: r, s: s, span: span, session: traceSession, turn: traceTurn, gen: traceGen, policy: policy}
+		var u *Unit
 		var err error
-		if strings.TrimSpace(unit.Text) == "" { // nothing to say; keep the drain boundary
-			if unit.IsFinal && r.cfg.EndReply != nil {
-				r.cfg.EndReply()
+		if r.cfg.LookAhead > 0 {
+			u, err = r.runAhead(unit, seq, s, synthCtx, sessionCtx, span, traceSession, traceTurn, traceGen, policy)
+			if u == nil { // stale: its slot is released in order
+				return
 			}
-			err = u.Finish()
 		} else {
-			err = resilience.Execute(synthCtx, r.cfg.Breaker, r.cfg.Policy, r.cfg.Classify, func() bool { return u.committed }, func(ctx context.Context, attempt int) error {
-				if attempt > 0 {
-					r.RetriesTotal.Add(1)
-				}
-				u.buf, u.Timings = nil, nil // nothing was emitted, so a retry starts clean
-				return r.cfg.Attempt(ctx, u, attempt)
-			})
+			// Units are emitted strictly in arrival order.
+			r.mu.Lock()
+			for r.finishedSeq+1 != seq && synthCtx.Err() == nil && sessionCtx.Err() == nil && !r.closed {
+				r.cond.Wait()
+			}
+			stale := r.closed || synthCtx.Err() != nil || sessionCtx.Err() != nil || (unit.Gen != 0 && unit.Gen < s.CurrentGeneration())
+			r.mu.Unlock()
+			if stale {
+				r.StaleTotal.Add(1)
+				return
+			}
+			u = &Unit{Frame: unit, r: r, s: s, span: span, session: traceSession, turn: traceTurn, gen: traceGen, policy: policy}
+			err = r.run(synthCtx, u)
 		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) || synthCtx.Err() != nil {
@@ -240,6 +243,65 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 		return err
 	}
 	return nil
+}
+
+// run performs the unit: a blank unit only keeps the drain boundary, any other
+// is attempted with retries until audio has been committed.
+func (r *Runner) run(synthCtx context.Context, u *Unit) error {
+	if strings.TrimSpace(u.Frame.Text) == "" { // nothing to say; keep the drain boundary
+		if u.Frame.IsFinal && r.cfg.EndReply != nil {
+			r.cfg.EndReply()
+		}
+		return u.Finish()
+	}
+	return resilience.Execute(synthCtx, r.cfg.Breaker, r.cfg.Policy, r.cfg.Classify, func() bool { return u.committed }, func(ctx context.Context, attempt int) error {
+		if attempt > 0 {
+			r.RetriesTotal.Add(1)
+		}
+		u.buf, u.Timings, u.finishPending = nil, nil, false // nothing was emitted, so a retry starts clean
+		return r.cfg.Attempt(ctx, u, attempt)
+	})
+}
+
+// runAhead is run for LookAhead > 0: the attempt starts as soon as its queue is free
+// (at most LookAhead units ahead of the one playing), with its audio held; then the unit waits its turn (a stale or
+// failed one too, so the next unit is never wedged) and releases the audio.
+// It returns a nil Unit when the unit was dropped as stale.
+func (r *Runner) runAhead(unit *core.SynthesisUnitFrame, seq uint64, s core.SessionController, synthCtx, sessionCtx context.Context,
+	span core.Span, session core.SessionID, turn core.TurnID, gen core.Generation, policy core.TracePolicy) (*Unit, error) {
+	canceled := func() bool {
+		return r.closed || synthCtx.Err() != nil || sessionCtx.Err() != nil || (unit.Gen != 0 && unit.Gen < s.CurrentGeneration())
+	}
+	// The window is the queues themselves: unit k waits behind unit k-(LookAhead+1).
+	r.mu.Lock()
+	skip := canceled()
+	r.mu.Unlock()
+
+	u := &Unit{Frame: unit, r: r, s: s, span: span, session: session, turn: turn, gen: gen, policy: policy}
+	var err error
+	blank := strings.TrimSpace(unit.Text) == ""
+	if !skip && !blank {
+		u.held = true
+		err = r.run(synthCtx, u)
+	}
+
+	r.mu.Lock()
+	for r.finishedSeq+1 != seq && synthCtx.Err() == nil && sessionCtx.Err() == nil && !r.closed {
+		r.cond.Wait()
+	}
+	skip = skip || canceled()
+	r.mu.Unlock()
+	if skip {
+		r.StaleTotal.Add(1)
+		return nil, nil
+	}
+	switch {
+	case blank:
+		err = r.run(synthCtx, u)
+	case err == nil:
+		err = u.release()
+	}
+	return u, err
 }
 
 // abandon releases seq when its task was never started. Calls are serialized
@@ -277,6 +339,9 @@ type Unit struct {
 	gen     core.Generation
 	policy  core.TracePolicy
 
+	held          bool // look-ahead: before the unit's turn Write buffers and Finish defers
+	finishPending bool // Finish was called while held
+
 	committed bool   // audio has been emitted: no retry
 	buf       []byte // audio not yet emitted; the last chunk is held to mark IsFinal
 	sent      int    // bytes emitted so far
@@ -296,6 +361,26 @@ func (u *Unit) stale() bool {
 // remainder so the last frame of the unit can carry IsFinal.
 func (u *Unit) Write(pcm []byte) error {
 	u.buf = append(u.buf, pcm...)
+	if u.held {
+		return nil
+	}
+	return u.flush()
+}
+
+// release ends the held state on the unit's turn: it emits the buffered whole
+// chunks and the deferred Finish.
+func (u *Unit) release() error {
+	u.held = false
+	if err := u.flush(); err != nil {
+		return err
+	}
+	if u.finishPending {
+		return u.Finish()
+	}
+	return nil
+}
+
+func (u *Unit) flush() error {
 	n := u.r.cfg.SampleRate * 2 * int(chunkDuration/time.Millisecond) / 1000
 	for len(u.buf) > n {
 		if err := u.emit(u.buf[:n:n], false); err != nil { // 3-index: frames never share capacity
@@ -352,6 +437,10 @@ func (u *Unit) emit(pcm []byte, final bool) error {
 // TTSStopped and usage. It is safe to call more than once.
 func (u *Unit) Finish() error {
 	if u.stopped {
+		return nil
+	}
+	if u.held {
+		u.finishPending = true
 		return nil
 	}
 	u.stopped = true
