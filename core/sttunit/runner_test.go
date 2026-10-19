@@ -900,6 +900,52 @@ func TestRunner_EmptyFinalSettlesTheTurn(t *testing.T) {
 	}
 }
 
+// Text a provider finalized while the stream was unbound is owed by the turn that adopts it: a provider
+// that then says nothing more (Riva answering CloseSend with an end only) lost those words (A8), it did
+// not commit them.
+func TestRunner_UnboundTextThenSilentEndIsALoss(t *testing.T) {
+	conn := newFakeConn(t)
+	h := newHarness(t, Config{Dial: dialConn(conn)})
+	h.audio(1) // idle audio opens an unbound stream
+	conn.results <- recvResult{res: Result{Text: "hello", Final: true}}
+	h.waitFor("result read", func() bool { return conn.recvs.Load() >= 2 })
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(2)
+	h.waitFor("turn bound", func() bool { return h.audioPassed() == 2 })
+	h.post(&core.UserStoppedSpeakingFrame{})
+	h.waitFor("finish sent", func() bool { return slices.Contains(conn.snapshot(), "finish") })
+	conn.results <- recvResult{err: ErrStreamEnded}
+	h.waitFor("invalidation and error", func() bool { return len(h.invalidations()) == 1 && len(h.errorFrames()) == 1 })
+	time.Sleep(20 * time.Millisecond)
+	if n := len(h.invalidations()) + len(h.errorFrames()); n != 2 {
+		t.Fatalf("lost turn reported %d frames, want one invalidation and one error", n)
+	}
+	if ef := h.errorFrames()[0]; !errors.Is(ef.Err, core.ErrTranscriptInvalidated) || ef.Turn != "turn-1-1" {
+		t.Fatalf("error frame %+v", ef)
+	}
+}
+
+// Noise the provider retracted before the turn began leaves nothing owed.
+func TestRunner_UnboundRetractionClearsSeed(t *testing.T) {
+	conn := newFakeConn(t)
+	h := newHarness(t, Config{Dial: dialConn(conn)})
+	h.audio(1)
+	conn.results <- recvResult{res: Result{Text: "uh"}}
+	conn.results <- recvResult{res: Result{Final: true}} // the empty Final retracts it
+	h.waitFor("results read", func() bool { return conn.recvs.Load() >= 3 })
+	h.post(&core.UserStartedSpeakingFrame{Gen: 1, Seq: 1})
+	h.audio(2)
+	h.waitFor("turn bound", func() bool { return h.audioPassed() == 2 })
+	h.post(&core.UserStoppedSpeakingFrame{})
+	h.waitFor("finish sent", func() bool { return slices.Contains(conn.snapshot(), "finish") })
+	conn.results <- recvResult{err: ErrStreamEnded}
+	h.waitFor("released", func() bool { return h.r.Streams() == 0 })
+	time.Sleep(20 * time.Millisecond)
+	if n := len(h.errorFrames()) + len(h.invalidations()); n != 0 {
+		t.Fatalf("retracted noise called lost: %d frames", n)
+	}
+}
+
 // A bound stream whose pre-roll flush fails lost the turn's held audio: the
 // turn is invalidated (so failover replays it) and nothing redials this turn.
 func TestRunner_FlushSendFailureLosesBoundTurn(t *testing.T) {
