@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 )
 
@@ -155,26 +154,9 @@ func (w *STTFailover) Active() string {
 	return w.cfg.Candidates[w.active].Provider
 }
 
-type sttProxySession struct {
-	SessionController
-	w   *STTFailover
-	idx int
-}
-
-func (p sttProxySession) Reenter(f Frame, dir Direction, resume int, gen uint64) error {
-	return p.w.fromCandidate(p.idx, f, dir, resume, gen)
-}
-
 func (w *STTFailover) Attach(s SessionController, index int) error {
 	w.session, w.index = s, index
-	for i, c := range w.cfg.Candidates {
-		if a, ok := c.Proc.(Attacher); ok {
-			if err := a.Attach(sttProxySession{SessionController: s, w: w, idx: i}, index); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return attachCandidates(s, index, len(w.cfg.Candidates), func(i int) Processor { return w.cfg.Candidates[i].Proc }, w.fromCandidate)
 }
 
 func (w *STTFailover) Close() error {
@@ -304,7 +286,7 @@ func (w *STTFailover) deliver(ctx context.Context, f Frame, n int, dir Direction
 // syncFailure handles a candidate's ProcessFrame error (stream open or write
 // failure). sendMu held.
 func (w *STTFailover) syncFailure(idx int, err error, f Frame, dir Direction, e Emitter) error {
-	class := w.classOf(err)
+	class := failoverClass(w.cfg.Classify, err)
 	w.mu.Lock()
 	ok := w.mayFailOverLocked(idx, class)
 	w.mu.Unlock()
@@ -364,13 +346,6 @@ func (w *STTFailover) startUtterance(ctx context.Context, fr *UserStartedSpeakin
 	return w.syncFailure(from, err, fr, dir, e)
 }
 
-func (w *STTFailover) classOf(err error) string {
-	if w.cfg.Classify == nil {
-		return ""
-	}
-	return w.cfg.Classify(err)
-}
-
 // mayFailOverLocked: idx is the active candidate, the class allowed and one more
 // candidate remains.
 func (w *STTFailover) mayFailOverLocked(idx int, class string) bool {
@@ -425,7 +400,7 @@ func (w *STTFailover) jump(from int, lazy bool, class string, last bool) error {
 		}
 		fromName, toName, turn, gen := w.cfg.Candidates[from].Provider, w.cfg.Candidates[to].Provider, w.turn, w.gen
 		w.mu.Unlock()
-		w.noteFailover(fromName, toName, class, turn, gen)
+		noteFailover(w.session, w.cfg.OnFailover, DebugSTTFailover, fromName, toName, class, TurnID(turn), Generation(gen))
 		var err error
 		for _, en := range entries {
 			if err = w.cfg.Candidates[to].Proc.ProcessFrame(en.ctx, en.f, en.dir, swallow{}); err != nil {
@@ -436,7 +411,7 @@ func (w *STTFailover) jump(from int, lazy bool, class string, last bool) error {
 			return nil
 		}
 		from, last = to, false
-		if class = w.classOf(err); class == "" {
+		if class = failoverClass(w.cfg.Classify, err); class == "" {
 			class = "server_error"
 		}
 	}
@@ -469,7 +444,7 @@ func (w *STTFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 		}
 	case *ErrorFrame:
 		if !fr.Fatal {
-			class = w.classOf(fr.Err)
+			class = failoverClass(w.cfg.Classify, fr.Err)
 			if errors.Is(fr.Err, ErrTranscriptInvalidated) {
 				class = "server_error" // the provider lost the turn: recoverable by replay
 			}
@@ -523,14 +498,4 @@ func mergeOverlap(carry, text string) string {
 
 func bareWord(s string) string {
 	return strings.TrimFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
-}
-
-func (w *STTFailover) noteFailover(from, to, class, turn string, gen uint64) {
-	if w.cfg.OnFailover != nil {
-		w.cfg.OnFailover(from, to, class)
-	}
-	if em, ok := w.session.(interface{ EmitDebug(DebugEvent) }); ok {
-		em.EmitDebug(NewDebugEvent(DebugSTTFailover, time.Now(), "", TurnID(turn), Generation(gen),
-			map[string]any{"component": from, "provider": to, "reason": class}))
-	}
 }

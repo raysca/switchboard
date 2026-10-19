@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"govoice/tools/internal/stack"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,35 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
 func execOutput(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).Output()
 	return string(out), err
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// freePorts returns n distinct ephemeral ports (listeners held together so the
-// OS cannot hand out the same one twice). ponytail: still a close-then-bind
-// race with other processes; a lost race shows as "server exited during start".
-func freePorts(n int) ([]int, error) {
-	var ports []int
-	for i := 0; i < n; i++ {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return nil, err
-		}
-		defer l.Close()
-		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
-	}
-	return ports, nil
 }
 
 // ServerOpts configures the child server.
@@ -62,15 +36,11 @@ type ServerOpts struct {
 // Server is the child process under test. Stop is idempotent and kills the
 // whole process group (server + vadworker children) so nothing is orphaned.
 type Server struct {
-	cmd              *exec.Cmd
-	PublicURL, Admin string
-	MetricsURL       string // metrics/probe base URL (default: Admin)
-	ContainerName    string // optional docker container name for resource stats
-	key              string // management API key; never printed or logged
-	LogPath          string
-	done             chan struct{}
-	mu               sync.Mutex
-	cpuSeen          map[int]float64 // highest CPU time seen per pid, so restarted workers do not make CPU go backwards
+	*stack.Server        // nil-child for ConnectTarget: Stop is then a no-op
+	MetricsURL    string // metrics/probe base URL (default: Admin)
+	ContainerName string // optional docker container name for resource stats
+	mu            sync.Mutex
+	cpuSeen       map[int]float64 // highest CPU time seen per pid, so restarted workers do not make CPU go backwards
 }
 
 func buildBinaries(root, dir string) (string, error) {
@@ -87,7 +57,7 @@ func buildBinaries(root, dir string) (string, error) {
 	return filepath.Join(dir, "server"), nil
 }
 
-func writeConfig(path string, pub, adm int, o ServerOpts) error {
+func configYAML(o ServerOpts, pub, adm int) []byte {
 	turn := ""
 	if o.TurnManager {
 		turn = "turn:\n  manager: true\n"
@@ -136,7 +106,7 @@ providers:
     stt: audio
     llm_extra_delay: %s
 %s`, pub, adm, maxS, maxS, maxS, maxS, o.VADMode, o.LLMDelay, turn)
-	return os.WriteFile(path, []byte(y), 0o600)
+	return []byte(y)
 }
 
 func StartServer(ctx context.Context, o ServerOpts) (*Server, error) {
@@ -149,55 +119,12 @@ func StartServer(ctx context.Context, o ServerOpts) (*Server, error) {
 	} else if _, err := os.Stat(filepath.Join(filepath.Dir(bin), "vadworker")); err != nil && o.VADMode == "process" {
 		return nil, fmt.Errorf("vadworker must sit next to %s: %w", bin, err)
 	}
-	ports, err := freePorts(2)
+	ss, err := stack.Start(ctx, stack.Spec{Root: o.Root, Bin: bin, Dir: o.WorkDir, Env: os.Environ(), Args: []string{"-vad-mode", o.VADMode},
+		Config: func(pub, adm int) []byte { return configYAML(o, pub, adm) }})
 	if err != nil {
 		return nil, err
 	}
-	pub, adm := ports[0], ports[1]
-	cfgPath := filepath.Join(o.WorkDir, "server.yaml")
-	if err := writeConfig(cfgPath, pub, adm, o); err != nil {
-		return nil, err
-	}
-	dev := filepath.Join(o.WorkDir, "data")
-	if err := os.MkdirAll(dev, 0o700); err != nil {
-		return nil, err
-	}
-	s := &Server{PublicURL: fmt.Sprintf("127.0.0.1:%d", pub), Admin: fmt.Sprintf("http://127.0.0.1:%d", adm), key: randHex(32),
-		LogPath: filepath.Join(o.WorkDir, "server.log"), done: make(chan struct{}), cpuSeen: map[int]float64{}}
-	logf, err := os.Create(s.LogPath)
-	if err != nil {
-		return nil, err
-	}
-	// ponytail: exec.Command, not CommandContext: cleanup must signal the group, not just the pid.
-	s.cmd = exec.Command(bin, "-config", cfgPath, "-vad-mode", o.VADMode)
-	s.cmd.Dir = o.Root
-	s.cmd.Stdout, s.cmd.Stderr = logf, logf
-	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// The flows use the echo provider: no keys, no network. ENV_FILE=/dev/null: no examples/.env autoload.
-	s.cmd.Env = append(os.Environ(), "GOVOICE_ROOT="+o.Root, "GOVOICE_DEV_DIR="+dev, "GOVOICE_MANAGEMENT_API_KEY="+s.key,
-		"TOKEN_SECRET="+randHex(32), "ENV_FILE=/dev/null")
-	if err := s.cmd.Start(); err != nil {
-		return nil, err
-	}
-	go func() { _ = s.cmd.Wait(); logf.Close(); close(s.done) }()
-	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
-		select {
-		case <-s.done:
-			return nil, fmt.Errorf("server exited during start (log: %s)", s.LogPath)
-		case <-ctx.Done():
-			s.Stop()
-			return nil, ctx.Err()
-		default:
-		}
-		if r, err := http.Get(s.Admin + "/ready"); err == nil {
-			r.Body.Close()
-			if r.StatusCode == 200 {
-				return s, nil
-			}
-		}
-	}
-	s.Stop()
-	return nil, fmt.Errorf("server not ready in 60s (log: %s)", s.LogPath)
+	return &Server{Server: ss, cpuSeen: map[int]float64{}}, nil
 }
 
 // ConnectTarget connects to an existing or containerized server under test.
@@ -216,10 +143,8 @@ func ConnectTarget(ctx context.Context, targetURL, adminURL, metricsURL, apiKey,
 	targetURL = strings.TrimSuffix(targetURL, "/ws")
 
 	s := &Server{
-		PublicURL:     targetURL,
-		Admin:         adminURL,
+		Server:        &stack.Server{Public: targetURL, Admin: adminURL, Key: apiKey},
 		MetricsURL:    metricsURL,
-		key:           apiKey,
 		ContainerName: container,
 		cpuSeen:       map[int]float64{},
 	}
@@ -243,53 +168,9 @@ func ConnectTarget(ctx context.Context, targetURL, adminURL, metricsURL, apiKey,
 	return nil, fmt.Errorf("target server at %s (/ready) not ready after 60s", metricsURL)
 }
 
-func (s *Server) PID() int {
-	if s.cmd != nil && s.cmd.Process != nil {
-		return s.cmd.Process.Pid
-	}
-	return 0
-}
-
-// Stop sends SIGTERM to the group, waits for graceful exit, then SIGKILLs the group.
-func (s *Server) Stop() {
-	if s == nil || s.cmd == nil || s.cmd.Process == nil {
-		return
-	}
-	pgid := s.cmd.Process.Pid
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	select {
-	case <-s.done:
-	case <-time.After(15 * time.Second):
-	}
-	_ = syscall.Kill(-pgid, syscall.SIGKILL) // sweeps vadworker stragglers; ESRCH when none
-	<-s.done
-}
-
-// api POSTs to the management API with the generated key.
-func (s *Server) api(path string, body any) (json.RawMessage, error) {
-	b, _ := json.Marshal(body)
-	req, _ := http.NewRequest("POST", s.Admin+"/api/v1/"+path, bytes.NewReader(b))
-	req.Header.Set("Authorization", "Bearer "+s.key)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("POST %s: %s", path, resp.Status) // body omitted: could echo secrets
-	}
-	var env struct{ Data json.RawMessage }
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, err
-	}
-	return env.Data, nil
-}
-
 // Provision creates the echo flow, returning its id.
 func (s *Server) Provision() (string, error) {
-	d, err := s.api("flows", map[string]any{"name": "Loadtest Echo", "description": "echo provider", "config": map[string]any{
+	d, err := s.Call("POST", "flows", map[string]any{"name": "Loadtest Echo", "description": "echo provider", "config": map[string]any{
 		"stt": map[string]any{"provider": "echo", "model": "chirp_2", "language": "en-US"},
 		"llm": map[string]any{"provider": "echo", "model": "fake", "system_prompt": "fake"},
 		"tts": map[string]any{"provider": "echo", "voice": "fake"}}})
@@ -301,19 +182,6 @@ func (s *Server) Provision() (string, error) {
 		return "", fmt.Errorf("flow response: %v", err)
 	}
 	return ag.ID, nil
-}
-
-// Token mints a single-use voice token (one per call).
-func (s *Server) Token(principal, flowID string) (string, error) {
-	d, err := s.api("voice-tokens", map[string]string{"principal": principal, "flow_id": flowID})
-	if err != nil {
-		return "", err
-	}
-	var t struct{ Token string }
-	if err := json.Unmarshal(d, &t); err != nil || t.Token == "" {
-		return "", fmt.Errorf("token response: %v", err)
-	}
-	return t.Token, nil
 }
 
 // ---- /metrics ----
@@ -475,7 +343,7 @@ func (s *Server) Proc() ProcStats {
 			return st
 		}
 	}
-	if s.cmd == nil || s.cmd.Process == nil {
+	if s.PID() == 0 {
 		return ProcStats{}
 	}
 	out, err := execOutput("ps", "-axo", "pid=,ppid=,rss=,time=")

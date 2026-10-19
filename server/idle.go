@@ -95,13 +95,13 @@ func (c IdleConfig) validate(dtmfAggregate bool, dtmfTimeout time.Duration) erro
 }
 
 // stage builds the call's idle controller, nil when idle handling is off.
-// speakIdx is filled in by the caller once the pipeline is laid out.
-func (c IdleConfig) stage(ctx *core.ConversationContext, tools *coreturn.ToolActivity, turn *coreturn.Processor, answering, held func() bool, force bool) (*core.IdleController, error) {
+// Its prompts, fallback and goodbye are spoken through speak (the assistant's Say), so they are assistant turns.
+func (c IdleConfig) stage(ctx *core.ConversationContext, tools *coreturn.ToolActivity, turn *coreturn.Processor, answering func() bool, speak func(string) error, held func() bool, force bool) (*core.IdleController, error) {
 	if !c.enabled() && !force {
 		return nil, nil
 	}
 	cfg := c.core()
-	cfg.History, cfg.Answering = ctx, answering
+	cfg.History, cfg.Answering, cfg.Speak = ctx, answering, speak
 	if tools != nil {
 		cfg.ToolsBusy = tools.Active
 	}

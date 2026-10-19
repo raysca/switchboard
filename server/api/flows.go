@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/uuid"
 	"govoice/server/flow"
 	"govoice/server/storage"
 )
@@ -32,11 +31,7 @@ func NewFlowsHandler(service FlowService) http.Handler {
 type flowsHandler struct{ service FlowService }
 
 func (h flowsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	requestID := RequestIDFromContext(r.Context())
-	if requestID == "" {
-		requestID = uuid.NewString()
-	}
-	w.Header().Set("X-Request-ID", requestID)
+	requestID := RequestID(w, r)
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/flows"), "/")
 	if r.URL.Path != "/api/v1/flows" && !strings.HasPrefix(r.URL.Path, "/api/v1/flows/") {
 		WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)

@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/google/uuid"
 	"govoice/server/api"
 	"govoice/server/storage"
 )
@@ -19,7 +18,7 @@ import (
 func Handler(service *Service) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/mcp-servers", func(w http.ResponseWriter, r *http.Request) {
-		id := requestID(w, r)
+		id := api.RequestID(w, r)
 		switch r.Method {
 		case http.MethodGet:
 			servers, err := service.store.MCP().ListServers(r.Context())
@@ -50,7 +49,7 @@ func Handler(service *Service) http.Handler {
 		}
 	})
 	mux.HandleFunc("/api/v1/mcp-servers/{id}", func(w http.ResponseWriter, r *http.Request) {
-		id := requestID(w, r)
+		id := api.RequestID(w, r)
 		if r.Method == http.MethodDelete {
 			if err := service.Delete(r.Context(), r.PathValue("id")); err != nil {
 				if errors.Is(err, storage.ErrMCPReferenced) {
@@ -84,7 +83,7 @@ func Handler(service *Service) http.Handler {
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerDetail]{Data: response})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/disable", func(w http.ResponseWriter, r *http.Request) {
-		id := requestID(w, r)
+		id := api.RequestID(w, r)
 		serverID := r.PathValue("id")
 		if err := service.Disable(r.Context(), serverID); err != nil {
 			writeLookupError(w, err, id)
@@ -98,7 +97,7 @@ func Handler(service *Service) http.Handler {
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/enable", func(w http.ResponseWriter, r *http.Request) {
-		id := requestID(w, r)
+		id := api.RequestID(w, r)
 		serverID := r.PathValue("id")
 		if err := service.Enable(r.Context(), serverID); err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
@@ -121,7 +120,7 @@ func Handler(service *Service) http.Handler {
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/detach-delete", func(w http.ResponseWriter, r *http.Request) {
-		id := requestID(w, r)
+		id := api.RequestID(w, r)
 		var input struct {
 			Confirm bool `json:"confirm"`
 		}
@@ -147,7 +146,7 @@ func Handler(service *Service) http.Handler {
 		api.WriteJSON(w, 202, api.SuccessResponse[DetachResult]{Data: DetachResult{Pending: true, Server: &v}})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/validate", func(w http.ResponseWriter, r *http.Request) {
-		id := requestID(w, r)
+		id := api.RequestID(w, r)
 		m, err := service.Validate(r.Context(), r.PathValue("id"))
 		// Validation failures (unavailable, invalid schema, a cancelled context)
 		// are reported in the view; a missing server is 404, a store failure 500.
@@ -159,7 +158,7 @@ func Handler(service *Service) http.Handler {
 		api.WriteJSON(w, 200, api.SuccessResponse[ServerView]{Data: view(m, service.tokens)})
 	})
 	mux.HandleFunc("POST /api/v1/mcp-servers/{id}/tools/{tool}/test", func(w http.ResponseWriter, r *http.Request) {
-		id := requestID(w, r)
+		id := api.RequestID(w, r)
 		var input struct {
 			Arguments json.RawMessage `json:"arguments"`
 		}
@@ -280,15 +279,6 @@ func isMCPSentinel(err error) bool {
 		}
 	}
 	return false
-}
-
-func requestID(w http.ResponseWriter, r *http.Request) string {
-	id := api.RequestIDFromContext(r.Context())
-	if id == "" {
-		id = uuid.NewString()
-	}
-	w.Header().Set("X-Request-ID", id)
-	return id
 }
 
 func toolViews(tools []storage.MCPTool) []ToolView {

@@ -341,7 +341,7 @@ func TestTTS_GenerationZeroUnitIsPlayed(t *testing.T) {
 	if session.CurrentGeneration() == 0 {
 		t.Fatal("test premise: session generation starts above 0")
 	}
-	_ = session.Post(&core.SynthesisUnitFrame{Turn: "idle-say-1", Gen: 0, UnitID: 1, Text: "Are you still there?", IsFinal: true})
+	_ = session.Post(&core.SynthesisUnitFrame{Turn: "say-1", Gen: 0, UnitID: 1, Text: "Are you still there?", IsFinal: true})
 	time.Sleep(150 * time.Millisecond)
 	mu.Lock()
 	defer mu.Unlock()
@@ -375,7 +375,7 @@ func TestTTS_GenerationZeroUnitStopsOnInterruption(t *testing.T) {
 	}
 	_ = session.Start()
 	defer session.Close()
-	_ = session.Post(&core.SynthesisUnitFrame{Turn: "idle-say-1", Gen: 0, UnitID: 1, Text: "Are you still there?", IsFinal: true})
+	_ = session.Post(&core.SynthesisUnitFrame{Turn: "say-1", Gen: 0, UnitID: 1, Text: "Are you still there?", IsFinal: true})
 	<-started
 	_ = session.Post(&core.InterruptionFrame{Gen: session.CurrentGeneration()})
 	time.Sleep(150 * time.Millisecond)

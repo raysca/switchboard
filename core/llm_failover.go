@@ -114,27 +114,9 @@ func NewLLMFailover(cfg LLMFailoverConfig) (*LLMFailover, error) {
 	return &LLMFailover{cfg: cfg}, nil
 }
 
-// proxySession shows a candidate the real session except for Reenter.
-type proxySession struct {
-	SessionController
-	w   *LLMFailover
-	idx int
-}
-
-func (p proxySession) Reenter(f Frame, dir Direction, resume int, gen uint64) error {
-	return p.w.fromCandidate(p.idx, f, dir, resume, gen)
-}
-
 func (w *LLMFailover) Attach(s SessionController, index int) error {
 	w.session, w.index = s, index
-	for i, c := range w.cfg.Candidates {
-		if a, ok := c.Proc.(Attacher); ok {
-			if err := a.Attach(proxySession{SessionController: s, w: w, idx: i}, index); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return attachCandidates(s, index, len(w.cfg.Candidates), func(i int) Processor { return w.cfg.Candidates[i].Proc }, w.fromCandidate)
 }
 
 func (w *LLMFailover) SetContextProvider(fn func() []Message) {
@@ -333,13 +315,13 @@ func (w *LLMFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 // when no candidate is left.
 func (w *LLMFailover) failoverLocked(g *failoverGen, idx int, err error, exhausted func() error) error {
 	from := w.cfg.Candidates[idx].Provider
-	class := w.classOf(err)
+	class := failoverClass(w.cfg.Classify, err)
 	// Try the following candidates; a candidate that cannot even start counts as failed.
 	for g.pos+1 < len(g.order) {
 		g.pos++
 		next := w.cfg.Candidates[g.order[g.pos]]
 		w.mu.Unlock()
-		w.noteFailover(g, from, next.Provider, class)
+		noteFailover(w.session, w.cfg.OnFailover, DebugLLMFailover, from, next.Provider, class, TurnID(g.user.Turn), Generation(g.gen))
 		err := next.Proc.ProcessFrame(g.ctx, g.user, Downstream, swallow{})
 		if err == nil {
 			w.mu.Lock()
@@ -414,25 +396,8 @@ func (w *LLMFailover) mayFailOver(g *failoverGen, err error) bool {
 	if w.cfg.Budget > 0 && time.Since(g.start) > w.cfg.Budget {
 		return false
 	}
-	class := w.classOf(err)
+	class := failoverClass(w.cfg.Classify, err)
 	return class != "" && (w.cfg.Allow == nil || w.cfg.Allow(class))
-}
-
-func (w *LLMFailover) noteFailover(g *failoverGen, from, to, class string) {
-	if w.cfg.OnFailover != nil {
-		w.cfg.OnFailover(from, to, class)
-	}
-	if em, ok := w.session.(interface{ EmitDebug(DebugEvent) }); ok {
-		em.EmitDebug(NewDebugEvent(DebugLLMFailover, time.Now(), "", TurnID(g.user.Turn), Generation(g.gen),
-			map[string]any{"component": from, "provider": to, "reason": class}))
-	}
-}
-
-func (w *LLMFailover) classOf(err error) string {
-	if w.cfg.Classify == nil {
-		return ""
-	}
-	return w.cfg.Classify(err)
 }
 
 // SummarizeText asks the primary candidate (fallbacks never summarize) for one

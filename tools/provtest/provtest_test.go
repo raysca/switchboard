@@ -1,7 +1,6 @@
 package provtest
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,6 +12,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/netpool"
+	"govoice/tools/internal/wav"
 )
 
 func dryOpts(t *testing.T) Options {
@@ -52,34 +52,6 @@ func TestWER(t *testing.T) {
 	}
 }
 
-func TestADPCMRoundTrip(t *testing.T) {
-	pcm := make([]byte, 0, 2*16000)
-	for i := 0; i < 16000; i++ { // 1 s of 300 Hz + 1.1 kHz
-		v := 6000*sinf(2*3.14159265*300*float64(i)/16000) + 2500*sinf(2*3.14159265*1100*float64(i)/16000)
-		pcm = append(pcm, byte(int16(v)), byte(int16(v)>>8))
-	}
-	wav := EncodeIMAWAV(pcm, 16000)
-	if len(wav) > len(pcm)/3 {
-		t.Fatalf("not compressed: %d -> %d", len(pcm), len(wav))
-	}
-	got, rate, err := ReadWAV(wav)
-	if err != nil || rate != 16000 || len(got) != len(pcm) {
-		t.Fatalf("decode: rate=%d len=%d/%d err=%v", rate, len(got), len(pcm), err)
-	}
-	var sig, noise float64
-	for i := 0; i < len(pcm); i += 2 {
-		a, b := float64(int16(uint16(pcm[i])|uint16(pcm[i+1])<<8)), float64(int16(uint16(got[i])|uint16(got[i+1])<<8))
-		sig += a * a
-		noise += (a - b) * (a - b)
-	}
-	if snr := 10 * log10(sig/noise); snr < 20 {
-		t.Fatalf("SNR %.1f dB", snr)
-	}
-	if p2, _, err := ReadWAV(EncodePCMWAV(pcm, 16000)); err != nil || !bytes.Equal(p2, pcm) {
-		t.Fatal("PCM WAV round trip")
-	}
-}
-
 func TestClipFixtures(t *testing.T) {
 	clips, err := LoadClips()
 	if err != nil {
@@ -98,8 +70,8 @@ func TestClipFixtures(t *testing.T) {
 		t.Fatalf("fixtures are %d bytes (> 150 KB)", size)
 	}
 	for _, c := range clips {
-		if secs := float64(len(c.PCM)) / 2 / clipRate; secs < 1 || secs > 12 || RMS(c.PCM) < 300 {
-			t.Errorf("clip %s: %.1fs rms %.0f", c.ID, secs, RMS(c.PCM))
+		if secs := float64(len(c.PCM)) / 2 / clipRate; secs < 1 || secs > 12 || wav.RMS(c.PCM) < 300 {
+			t.Errorf("clip %s: %.1fs rms %.0f", c.ID, secs, wav.RMS(c.PCM))
 		}
 	}
 	if len(Words(clips[2].Text)) != 12 {
@@ -236,7 +208,7 @@ func TestClipCodecSNR(t *testing.T) {
 			v := int16(float64(int16(uint16(c.PCM[i])|uint16(c.PCM[i+1])<<8)) * 0.9)
 			in[i], in[i+1] = byte(v), byte(uint16(v)>>8)
 		}
-		got, _, err := ReadWAV(EncodeIMAWAV(in, clipRate))
+		got, _, err := wav.ReadWAV(wav.EncodeIMAWAV(in, clipRate))
 		if err != nil || len(got) != len(in) {
 			t.Fatalf("%s: %v", c.ID, err)
 		}
@@ -251,27 +223,6 @@ func TestClipCodecSNR(t *testing.T) {
 		if snr < 30 {
 			t.Errorf("%s: SNR %.1f dB", c.ID, snr)
 		}
-	}
-}
-
-func TestReadWAVRobust(t *testing.T) {
-	pcm := []byte{1, 0, 2, 0, 3, 0}
-	good := EncodePCMWAV(pcm, 16000)
-	for name, b := range map[string][]byte{
-		"empty": nil, "short": good[:10], "no data": good[:36], "not riff": append([]byte("RIFX"), good[4:]...),
-	} {
-		if _, _, err := ReadWAV(b); err == nil {
-			t.Errorf("%s: no error", name)
-		}
-	}
-	// A truncated data chunk and an odd-sized chunk (padded) before data still parse.
-	if got, _, err := ReadWAV(good[:len(good)-1]); err != nil || len(got) != 4 {
-		t.Errorf("truncated: %v %d", err, len(got))
-	}
-	odd := append(append([]byte{}, good[:36]...), []byte("LIST\x03\x00\x00\x00abc\x00")...)
-	odd = append(odd, good[36:]...)
-	if got, rate, err := ReadWAV(odd); err != nil || rate != 16000 || !bytes.Equal(got, pcm) {
-		t.Errorf("odd chunk: %v %d %v", err, rate, got)
 	}
 }
 

@@ -1,4 +1,4 @@
-package provtest
+package wav
 
 import (
 	"bytes"

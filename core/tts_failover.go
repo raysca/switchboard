@@ -125,26 +125,9 @@ func NewTTSFailover(cfg TTSFailoverConfig) (*TTSFailover, error) {
 	return &TTSFailover{cfg: cfg, bad: map[int]string{}}, nil
 }
 
-type ttsProxySession struct {
-	SessionController
-	w   *TTSFailover
-	idx int
-}
-
-func (p ttsProxySession) Reenter(f Frame, dir Direction, resume int, gen uint64) error {
-	return p.w.fromCandidate(p.idx, f, dir, resume, gen)
-}
-
 func (w *TTSFailover) Attach(s SessionController, index int) error {
 	w.session, w.index = s, index
-	for i, c := range w.cfg.Candidates {
-		if a, ok := c.Proc.(Attacher); ok {
-			if err := a.Attach(ttsProxySession{SessionController: s, w: w, idx: i}, index); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return attachCandidates(s, index, len(w.cfg.Candidates), func(i int) Processor { return w.cfg.Candidates[i].Proc }, w.fromCandidate)
 }
 
 func (w *TTSFailover) Close() error {
@@ -347,7 +330,7 @@ func (w *TTSFailover) fromCandidate(idx int, f Frame, dir Direction, resume int,
 	switch fr := f.(type) {
 	case *UsageMetricsFrame:
 	case *ErrorFrame:
-		class := w.classOf(fr.Err)
+		class := failoverClass(w.cfg.Classify, fr.Err)
 		allowed := !fr.Fatal && class != "" && (w.cfg.Allow == nil || w.cfg.Allow(class))
 		if allowed && u == w.cur && !u.committed && u.pos+1 < len(u.order) && !(u.su.Gen != 0 && u.su.Gen < w.session.CurrentGeneration()) {
 			from := w.cfg.Candidates[idx].Provider
@@ -461,7 +444,7 @@ func (w *TTSFailover) expire(u *ttsUnit, attempt, progress int) {
 	}
 	c := w.cfg.Candidates[u.owner]
 	err := fmt.Errorf("core: tts %s stalled on unit %d: %w", c.Provider, u.su.UnitID, resilience.ErrTimeout)
-	class := w.classOf(err)
+	class := failoverClass(w.cfg.Classify, err)
 	if class == "" {
 		class = "timeout"
 	}
@@ -507,23 +490,10 @@ func (w *TTSFailover) noteFailover(n *failNote, su *SynthesisUnitFrame) {
 	if n == nil {
 		return
 	}
-	if w.cfg.OnFailover != nil {
-		w.cfg.OnFailover(n.from, n.to, n.class)
+	var turn TurnID
+	var gen Generation
+	if su != nil {
+		turn, gen = TurnID(su.Turn), Generation(su.Gen)
 	}
-	if em, ok := w.session.(interface{ EmitDebug(DebugEvent) }); ok {
-		var turn TurnID
-		var gen Generation
-		if su != nil {
-			turn, gen = TurnID(su.Turn), Generation(su.Gen)
-		}
-		em.EmitDebug(NewDebugEvent(DebugTTSFailover, time.Now(), "", turn, gen,
-			map[string]any{"component": n.from, "provider": n.to, "reason": n.class}))
-	}
-}
-
-func (w *TTSFailover) classOf(err error) string {
-	if w.cfg.Classify == nil {
-		return ""
-	}
-	return w.cfg.Classify(err)
+	noteFailover(w.session, w.cfg.OnFailover, DebugTTSFailover, n.from, n.to, n.class, turn, gen)
 }

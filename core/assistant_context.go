@@ -60,10 +60,11 @@ type AssistantContextProcessor struct {
 
 	activeTurn      string
 	active          atomic.Bool // mirrors activeTurn != "" for other goroutines
+	modelActive     atomic.Bool // active, and not a Say turn
 	activeGen       uint64
 	textBuf         strings.Builder
 	totalTurnText   strings.Builder
-	unitCounter     uint64 // session-global; never reused within this processor
+	unitCounter     uint64 // never reused within this processor
 	firstUnitID     uint64 // first unit in the active turn
 	finalUnitID     uint64 // 0 until final unit is emitted
 	finalSignalSent bool
@@ -81,7 +82,8 @@ type AssistantContextProcessor struct {
 	holdStop  chan struct{}
 	held      atomic.Bool
 	nudgeN    atomic.Uint64
-	sayN      atomic.Uint64 // fixed lines queued through Say
+	sayN      atomic.Uint64           // fixed lines queued through Say
+	port      atomic.Pointer[sayPort] // set at Attach; Say may run on another goroutine (the idle controller) before the session has run a frame
 
 	// Flush barrier coordination
 	pendingFlushGen   atomic.Uint64
@@ -126,6 +128,7 @@ func NewAssistantContextProcessor(ctxPool *ConversationContext, cfg AssistantCon
 func (p *AssistantContextProcessor) Attach(s SessionController, index int) error {
 	p.session = s
 	p.index = index
+	p.port.Store(&sayPort{s, index})
 	if sc := p.cfg.Summary; sc != nil && sc.Summarizer != nil {
 		var emit func(DebugEvent)
 		if d, ok := s.(interface{ EmitDebug(DebugEvent) }); ok {
@@ -134,6 +137,12 @@ func (p *AssistantContextProcessor) Attach(s SessionController, index int) error
 		p.summ = NewContextSummarizer(p.ctxPool, *sc, s.Go, emit)
 	}
 	return nil
+}
+
+// sayPort is where Say enters the pipeline.
+type sayPort struct {
+	session SessionController
+	index   int
 }
 
 // sayTurnPrefix marks the turns Say opens: not model replies (no completion gate, no latency events).
@@ -145,21 +154,29 @@ func IsSayTurn(turn string) bool { return strings.HasPrefix(turn, sayTurnPrefix)
 // ErrSayEmpty is returned by Say for text with nothing to speak.
 var ErrSayEmpty = errors.New("core: nothing to say")
 
+// ErrSayBusy is returned by Say while a model reply is generating or playing: the line would reset that turn.
+var ErrSayBusy = errors.New("core: a reply is in progress")
+
 // Say speaks text as the assistant's next turn: the same units, delivery tracking, history commit and
 // interruption rules as a model reply, without a model (a greeting). It enters at this processor, so
-// the line never reaches the LLM stage. It only queues; it fails if the text is empty or the session is closing.
+// the line never reaches the LLM stage. It only queues; it fails if the text is empty, a model reply is in
+// progress (ErrSayBusy) or the session is closing.
 func (p *AssistantContextProcessor) Say(text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return ErrSayEmpty
 	}
-	if p.session == nil {
+	port := p.port.Load()
+	if port == nil {
 		return errors.New("core: assistant context is not attached to a session")
 	}
+	if p.modelActive.Load() {
+		return ErrSayBusy
+	}
 	turn := fmt.Sprintf("%s%d", sayTurnPrefix, p.sayN.Add(1))
-	gen := p.session.CurrentGeneration()
+	gen := port.session.CurrentGeneration()
 	now := time.Now()
-	enter := func(f Frame) error { return p.session.Reenter(f, Downstream, p.index, gen) }
+	enter := func(f Frame) error { return port.session.Reenter(f, Downstream, port.index, gen) }
 	if err := enter(&UserMessageFrame{Turn: turn, Gen: gen, Timestamp: now}); err != nil {
 		return fmt.Errorf("say: %w", err)
 	}
@@ -182,6 +199,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		um := f.(*UserMessageFrame)
 		p.activeTurn = um.Turn
 		p.active.Store(true)
+		p.modelActive.Store(!IsSayTurn(um.Turn))
 		p.activeGen = um.Gen
 		if p.activeGen == 0 && p.session != nil {
 			p.activeGen = p.session.CurrentGeneration()
@@ -501,9 +519,6 @@ func (p *AssistantContextProcessor) slackReset() {
 func (p *AssistantContextProcessor) emitUnits(e Emitter, outs []slackOut) error {
 	for _, o := range outs {
 		unitID := p.unitCounter + 1
-		if u, ok := p.session.(interface{ NextUnitID() uint64 }); ok {
-			unitID = u.NextUnitID() // shared with idle speech, so ids may skip
-		}
 		p.unitCounter = unitID
 		if p.firstUnitID == 0 {
 			p.firstUnitID = unitID
@@ -699,6 +714,7 @@ func (p *AssistantContextProcessor) Active() bool { return p.active.Load() }
 func (p *AssistantContextProcessor) resetTurn() {
 	p.activeTurn = ""
 	p.active.Store(false)
+	p.modelActive.Store(false)
 	p.activeGen = 0
 	p.textBuf.Reset()
 	p.totalTurnText.Reset()

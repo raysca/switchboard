@@ -109,6 +109,7 @@ type stream struct {
 	draining    *time.Timer
 	lastText    string // last candidate emitted for the bound turn
 	settled     bool   // that candidate was Final: all heard text is committed
+	unboundText string // last interim text heard before a turn adopted the stream; the turn owes it (see beginTurn)
 
 	stopOnce, traceFinal, traceEnd, overflow sync.Once
 	span                                     core.Span
@@ -271,6 +272,9 @@ func (r *Runner) beginTurn(ctx context.Context, turn string, gen uint64) {
 	if a := r.active; a != nil {
 		a.mu.Lock()
 		if a.turn == "" || (a.turn == turn && a.gen < gen) {
+			if a.turn == "" { // words heard while unbound are owed: the provider resurfaces them, or their loss is A8's
+				a.lastText, a.settled = a.unboundText, a.unboundText == ""
+			}
 			a.turn, a.gen = turn, gen
 		} else if a.turn != turn || a.gen != gen {
 			old, r.active = a, nil
@@ -698,6 +702,8 @@ func (r *Runner) emit(st *stream, res Result) {
 			st.mu.Lock()
 			if st.turn != "" {
 				st.lastText, st.settled = "", true
+			} else {
+				st.unboundText = ""
 			}
 			st.mu.Unlock()
 		}
@@ -709,6 +715,10 @@ func (r *Runner) emit(st *stream, res Result) {
 		// Final, not Final && EndOfUtterance: a closing response need not carry
 		// an EOU final (Riva may answer CloseSend with nothing more).
 		st.lastText, st.settled = res.Text, res.Final
+	} else if res.Final { // committed between turns: echo or noise the provider will not resurface
+		st.unboundText = ""
+	} else {
+		st.unboundText = res.Text
 	}
 	st.mu.Unlock()
 	if turn == "" { // unbound (between turns): the Conn keeps the text for the adopting turn

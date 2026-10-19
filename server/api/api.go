@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const MaxBodyBytes = 64 << 10
@@ -27,6 +29,17 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 // the outer management boundary. It intentionally never reads HTTP headers.
 func RequestIDFromContext(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDContextKey{}).(string)
+	return id
+}
+
+// RequestID is the call's trusted request identifier (a new UUID when the
+// outer boundary installed none); it is also set as X-Request-ID.
+func RequestID(w http.ResponseWriter, r *http.Request) string {
+	id := RequestIDFromContext(r.Context())
+	if id == "" {
+		id = uuid.NewString()
+	}
+	w.Header().Set("X-Request-ID", id)
 	return id
 }
 

@@ -20,6 +20,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/coretest"
+	"govoice/core/netpool"
 	"govoice/core/resilience"
 	"govoice/providers/nvidia/rivapb"
 )
@@ -379,7 +380,7 @@ func TestDial_SSRFGuard(t *testing.T) {
 	}
 	for _, a := range []string{"169.254.169.254", "127.0.0.1", "10.0.0.1", "fd00:ec2::254"} {
 		ip, _ := netipParse(a)
-		if allowedIP(ip, false) && a != "" {
+		if netpool.AllowedIP(ip, false) && a != "" {
 			t.Fatalf("%s allowed", a)
 		}
 	}

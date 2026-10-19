@@ -62,6 +62,9 @@ type IdleConfig struct {
 	Say        bool
 	// Goodbye is spoken (TTS, no model) before hanging up for user idle.
 	Goodbye string
+	// Speak says a fixed line as the assistant's next turn (AssistantContextProcessor.Say): the prompt,
+	// the bot-stuck fallback and the goodbye are then in the history and the call records. Nil: they are skipped.
+	Speak func(text string) error
 	// GoodbyeWait caps the wait for the goodbye to finish playing (default 10s).
 	GoodbyeWait time.Duration
 
@@ -128,7 +131,6 @@ type IdleController struct {
 	clk     IdleClock
 	session SessionController
 	index   int
-	speak   int // pipeline index of TTS for direct speech; -1 = unavailable
 
 	wake chan struct{}
 
@@ -141,7 +143,8 @@ type IdleController struct {
 	ending, sawStart, done              bool
 	sayAfterCancel, sayNow              string // fallback phrase: held until the cancel's interruption is back, then due
 	endReason                           string
-	sayN, nudgeN                        atomic.Uint64
+	sayUntil                            time.Time // a spoken line is expected to have played by then (zero: none queued)
+	nudgeN                              atomic.Uint64
 
 	UserPrompts atomic.Uint64 // prompts issued
 	UserHangups atomic.Uint64 // calls ended for user idle
@@ -163,19 +166,12 @@ func NewIdleController(cfg IdleConfig) (*IdleController, error) {
 	if cfg.UserPrompt == "" {
 		cfg.UserPrompt = "Are you still there?"
 	}
-	c := &IdleController{cfg: cfg, clk: cfg.Clock, speak: -1, wake: make(chan struct{}, 1)}
+	c := &IdleController{cfg: cfg, clk: cfg.Clock, wake: make(chan struct{}, 1)}
 	if c.clk == nil {
 		c.clk = realIdleClock{}
 	}
 	return c, nil
 }
-
-// SetSpeakIndex sets the pipeline index of the TTS stage; without it prompts
-// fall back to the model and the goodbye/fallback phrases are skipped.
-func (c *IdleController) SetSpeakIndex(i int) { c.speak = i }
-
-// SpeakIndex is the index set by SetSpeakIndex (-1 when unset).
-func (c *IdleController) SpeakIndex() int { return c.speak }
 
 // SetOnEnd installs the hang-up (before the session starts); see IdleConfig.OnEnd.
 func (c *IdleController) SetOnEnd(fn func(reason string)) { c.cfg.OnEnd = fn }
@@ -250,6 +246,7 @@ func (c *IdleController) arm(now time.Time) {
 // userInput records any sign of the user: the prompt count restarts and the
 // user is no longer waiting for an answer to an earlier turn.
 func (c *IdleController) userInput() {
+	c.sayUntil = time.Time{}
 	c.prompts, c.userAt = 0, time.Time{}
 	c.waitingBot, c.botAt = false, time.Time{}
 	c.sayAfterCancel = "" // never talk over the user with a stale fallback
@@ -266,6 +263,7 @@ func (c *IdleController) observe(f Frame) {
 	case *SpeakingStateFrame:
 		switch v.State {
 		case SpeakingStarted:
+			c.sayUntil = time.Time{}
 			c.botSpeaking, c.waitingBot, c.sawStart, c.quietPolls = true, false, true, 0
 			c.userAt, c.botAt, c.strikes = time.Time{}, time.Time{}, 0
 		case SpeakingStopped:
@@ -297,6 +295,7 @@ func (c *IdleController) observe(f Frame) {
 		c.userInput()
 		c.arm(now) // restarts the clock; the aggregated message follows within the aggregate timeout
 	case *UserMessageFrame:
+		c.sayUntil = time.Time{}
 		c.userAt = time.Time{}
 		c.prompts = 0 // synthetic turns never pass this stage (they re-enter after it)
 		if c.cfg.BotTimeout > 0 {
@@ -462,9 +461,9 @@ func (c *IdleController) botStuckLocked(now time.Time) []func() {
 		c.beginEndLocked(now, IdleReasonBot, "")
 		return acts
 	}
-	if c.cfg.BotFallback != "" && c.speak >= 0 {
-		// Spoken once the interruption comes back: the generation bump it makes
-		// would otherwise fence this speech (the envelope is stamped at admission).
+	if c.cfg.BotFallback != "" && c.cfg.Speak != nil {
+		// Spoken once the interruption comes back: the assistant bumps the generation before it
+		// sends it up, and Say stamps the line with the generation it reads, so an earlier line is fenced.
 		c.sayAfterCancel = c.cfg.BotFallback
 	}
 	c.arm(now)
@@ -477,7 +476,9 @@ func (c *IdleController) userIdleLocked(now time.Time) []func() {
 	if c.botSpeaking || c.userSpeaking || c.turnUser {
 		return nil // the next transition re-arms the clock
 	}
-	if c.busy() || (c.cfg.Muted != nil && c.cfg.Muted()) || (c.cfg.Answering != nil && c.cfg.Answering()) {
+	// A line of our own that never played (stalled TTS) leaves the assistant Active: past its cap that no longer counts.
+	stalled := !c.sayUntil.IsZero() && now.After(c.sayUntil)
+	if c.busy() || (c.cfg.Muted != nil && c.cfg.Muted()) || (c.cfg.Answering != nil && !stalled && c.cfg.Answering()) {
 		c.userAt = now.Add(c.cfg.UserTimeout)
 		return nil
 	}
@@ -498,10 +499,11 @@ func (c *IdleController) userIdleLocked(now time.Time) []func() {
 	if nudge && c.cfg.BotTimeout > 0 {
 		c.waitingBot, c.botAt = true, now.Add(c.cfg.BotTimeout)
 	}
-	return []func(){
-		func() { c.debug(DebugIdleUserPrompt, map[string]any{"count": n}) },
-		func() { c.prompt(n, nudge) },
-	}
+	return []func(){func() {
+		if c.prompt(n, nudge) { // the event is a prompt that was queued, not one that was refused
+			c.debug(DebugIdleUserPrompt, map[string]any{"count": n})
+		}
+	}}
 }
 
 // beginEndLocked starts the hang-up: at once, or (true) once the goodbye the
@@ -510,7 +512,7 @@ func (c *IdleController) beginEndLocked(now time.Time, reason, goodbye string) b
 	c.ending, c.endReason = true, reason
 	c.userAt, c.botAt = time.Time{}, time.Time{}
 	c.endAt = now
-	if goodbye == "" || c.speak < 0 {
+	if goodbye == "" || c.cfg.Speak == nil {
 		return false
 	}
 	c.endAt, c.sawStart = now.Add(c.cfg.GoodbyeWait), false
@@ -524,10 +526,20 @@ func (c *IdleController) toClient(f Frame) {
 	}
 }
 
-func (c *IdleController) prompt(n int, nudge bool) {
+// prompt queues the nudge and reports whether it did. A prompt refused because a model reply is in progress
+// is not spent: the user clock (already re-armed for one UserTimeout later) asks again then.
+func (c *IdleController) prompt(n int, nudge bool) bool {
 	if !nudge {
-		c.say(c.cfg.UserPrompt)
-		return
+		if errors.Is(c.say(c.cfg.UserPrompt), ErrSayBusy) {
+			c.mu.Lock()
+			if c.prompts > 0 {
+				c.prompts--
+			}
+			c.mu.Unlock()
+			c.UserPrompts.Add(^uint64(0))
+			return false
+		}
+		return true
 	}
 	turn := "idle-" + strconv.FormatUint(c.nudgeN.Add(1), 10)
 	at := time.Now()
@@ -537,26 +549,24 @@ func (c *IdleController) prompt(n int, nudge bool) {
 			int(c.cfg.UserTimeout/time.Second), c.cfg.UserPrompt),
 	}
 	if c.cfg.History.AddMessage(msg) != nil {
-		return
+		return false
 	}
-	_ = c.session.Reenter(&UserMessageFrame{Turn: turn, Content: msg.Content, Gen: c.session.CurrentGeneration(), Timestamp: at}, Downstream, c.index+1, 0)
+	return c.session.Reenter(&UserMessageFrame{Turn: turn, Content: msg.Content, Gen: c.session.CurrentGeneration(), Timestamp: at}, Downstream, c.index+1, 0) == nil
 }
 
-// say speaks text through TTS without the model. Generation 0 keeps it from
-// being fenced by the interruption that may have just cancelled a stuck turn.
-func (c *IdleController) say(text string) {
-	if c.speak < 0 {
-		return
+// say speaks text as the assistant's next turn; it only queues, and an error means the call is ending.
+func (c *IdleController) say(text string) error {
+	if c.cfg.Speak == nil {
+		return nil
 	}
-	n := c.sayN.Add(1)
-	// Unit ids must increase across the whole session (transport pacer): a
-	// Session stamps id 0 when it delivers the frame (allocating here could
-	// lose the race to a reply unit and reach the pacer out of order).
-	unit := n
-	if _, ok := c.session.(interface{ NextUnitID() uint64 }); ok {
-		unit = 0
+	until := c.clk.Now().Add(c.cfg.GoodbyeWait)
+	err := c.cfg.Speak(text)
+	if err == nil {
+		c.mu.Lock()
+		c.sayUntil = until
+		c.mu.Unlock()
 	}
-	_ = c.session.Reenter(&SynthesisUnitFrame{Turn: "idle-say-" + strconv.FormatUint(n, 10), UnitID: unit, Text: text, IsFinal: true}, Downstream, c.speak, 0)
+	return err
 }
 
 func (c *IdleController) debug(name string, attrs map[string]any) {

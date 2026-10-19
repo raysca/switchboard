@@ -89,7 +89,6 @@ type Session struct {
 
 	state          atomic.Int32
 	gen            atomic.Uint64
-	unitSeq        atomic.Uint64 // session-wide synthesis unit ids (assistant and idle speech)
 	inputMuted     atomic.Bool
 	admissionMu    sync.Mutex
 	admissionMuted bool
@@ -121,20 +120,19 @@ type Session struct {
 	AudioDropped   atomic.Uint64
 	Created        time.Time
 
-	observers      observerSet
-	debugMu        sync.Mutex
-	debugSeen      map[string]string // last turn emitted per latency DebugEvent name
-	debugLastStop  *UserStoppedSpeakingFrame
-	tracer         Tracer
-	tracePolicy    TracePolicy
-	traceCtx       context.Context // run-loop owned after Start
-	traceRootCtx   context.Context // immutable session parent for external async boundaries
-	sessionSpan    Span
-	traceQueue     *AsyncTracer
-	ownsTraceQueue bool
-	tracing        bool
-	turnSpans      map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
-	traceOrigins   map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
+	observers     observerSet
+	debugMu       sync.Mutex
+	debugSeen     map[string]string // last turn emitted per latency DebugEvent name
+	debugLastStop *UserStoppedSpeakingFrame
+	tracer        Tracer
+	tracePolicy   TracePolicy
+	traceCtx      context.Context // run-loop owned after Start
+	traceRootCtx  context.Context // immutable session parent for external async boundaries
+	sessionSpan   Span
+	traceQueue    *AsyncTracer
+	tracing       bool
+	turnSpans     map[TurnID]Span                 // run-loop owned; finalized after runLoopDone
+	traceOrigins  map[traceFrameIdentity]struct{} // run-loop owned, reset for each envelope
 }
 
 // A Frame interface can contain a non-comparable concrete value. The two
@@ -210,10 +208,6 @@ func (s *Session) State() SessionState {
 	return SessionState(s.state.Load())
 }
 
-// NextUnitID returns the next synthesis unit id. Ids are unique and increasing
-// across everything that speaks, which the transport pacer requires.
-func (s *Session) NextUnitID() uint64 { return s.unitSeq.Add(1) }
-
 // CurrentGeneration returns the active turn generation of the session.
 func (s *Session) CurrentGeneration() uint64 {
 	return s.gen.Load()
@@ -276,14 +270,8 @@ func (s *Session) Start() error {
 	s.state.Store(int32(StateRunning))
 	tracer, policy := s.tracer, s.tracePolicy
 	if _, noop := tracer.(NoopTracer); !noop {
-		if async, alreadyAsync := tracer.(*AsyncTracer); alreadyAsync {
-			s.traceQueue = async
-		} else {
-			s.traceQueue = NewAsyncTracer(tracer, defaultTraceQueueSize)
-			s.tracer = s.traceQueue
-			s.traceQueue = s.tracer.(*AsyncTracer)
-			s.ownsTraceQueue = true
-		}
+		s.traceQueue = NewAsyncTracer(tracer, defaultTraceQueueSize)
+		s.tracer = s.traceQueue
 		tracer = s.tracer
 		s.tracing = true
 	}
@@ -667,7 +655,7 @@ func (s *Session) Close() error {
 		if s.sessionSpan != nil {
 			s.sessionSpan.End(traceStatusError(s.Err(), "session_failure"))
 		}
-		if s.ownsTraceQueue && s.traceQueue != nil {
+		if s.traceQueue != nil {
 			s.traceQueue.Close()
 		}
 
@@ -748,11 +736,6 @@ func (s *Session) processEnvelope(env Envelope) bool {
 	}
 	if env.CommittedFlush {
 		env.Frame = &FlushFrame{Gen: env.Gen, committed: true}
-	}
-	if su, ok := env.Frame.(*SynthesisUnitFrame); ok && su.UnitID == 0 {
-		// Out-of-band speech (idle) takes its id here, on the run loop, so it is
-		// ordered with the assistant's units as the transport pacer requires.
-		su.UnitID = s.NextUnitID()
 	}
 
 	// Reset per-envelope emit counter and set watchdog start time

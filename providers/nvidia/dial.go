@@ -160,30 +160,10 @@ func (c *Conn) Warm(ctx context.Context, stage string) error {
 	return err
 }
 
-var (
-	metadataV6 = netip.MustParseAddr("fd00:ec2::254") // AWS IMDS over IPv6
-	cgnat      = netip.MustParsePrefix("100.64.0.0/10")
-)
-
-// allowedIP mirrors providers/openai's SSRF rule (separate module, so copied):
-// link-local (incl. 169.254.169.254), multicast and unspecified are always
-// refused; loopback and private ranges only with allowPrivate.
-func allowedIP(ip netip.Addr, allowPrivate bool) bool {
-	ip = ip.Unmap()
-	switch {
-	case !ip.IsValid(), ip.IsUnspecified(), ip.IsMulticast(), ip.IsInterfaceLocalMulticast(),
-		ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast(), ip == metadataV6:
-		return false
-	case ip.IsLoopback(), ip.IsPrivate(), cgnat.Contains(ip):
-		return allowPrivate
-	}
-	return true
-}
-
-// dialAllowed adds to allowedIP: plaintext never leaves the private network
-// (allowedIP(ip, false) means ip is public).
+// dialAllowed adds to netpool.AllowedIP: plaintext never leaves the private network
+// (netpool.AllowedIP(ip, false) means ip is public).
 func dialAllowed(ip netip.Addr, allowPrivate, plaintext bool) bool {
-	return allowedIP(ip, allowPrivate) && !(plaintext && allowedIP(ip, false))
+	return netpool.AllowedIP(ip, allowPrivate) && !(plaintext && netpool.AllowedIP(ip, false))
 }
 
 func skipWarm(stage string) { netpool.NoteSkipped("nvidia", stage) }

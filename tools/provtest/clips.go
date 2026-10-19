@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+
+	"govoice/tools/internal/wav"
 )
 
 //go:embed testdata/clips
@@ -38,7 +40,7 @@ func LoadClips() ([]Clip, error) {
 		if err != nil {
 			return nil, err
 		}
-		pcm, rate, err := ReadWAV(raw)
+		pcm, rate, err := wav.ReadWAV(raw)
 		if err != nil || rate != clipRate {
 			return nil, fmt.Errorf("clip %s: rate %d: %v", clips[i].ID, rate, err)
 		}

@@ -9,6 +9,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/transport/resample"
+	"govoice/tools/internal/wav"
 )
 
 // Synthesize speaks text through t (a TTS target) and returns the audio at the pipeline rate.
@@ -72,7 +73,7 @@ func GenClips(t Target, dir string, b *Budget) error {
 		}
 		pcm[specs[i].ID] = p
 	}
-	pause := Silence(clipRate, 1.0)
+	pause := wav.Silence(clipRate, 1.0)
 	two := append(append(append([]byte{}, pcm["capital-of-france"]...), pause...), pcm["two-plus-two"]...)
 	pcm["two-sentences-pause"] = two
 	specs = append(specs, Clip{ID: "two-sentences-pause", Text: "What is the capital of France? What is two plus two?",
@@ -82,7 +83,7 @@ func GenClips(t Target, dir string, b *Budget) error {
 	}
 	for i := range specs {
 		specs[i].Language, specs[i].File = "en-US", specs[i].ID+".wav"
-		if err := os.WriteFile(filepath.Join(dir, specs[i].File), EncodeIMAWAV(pcm[specs[i].ID], clipRate), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, specs[i].File), wav.EncodeIMAWAV(pcm[specs[i].ID], clipRate), 0o644); err != nil {
 			return err
 		}
 	}

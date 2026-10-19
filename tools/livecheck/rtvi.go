@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/tools/internal/stack"
 	"govoice/transport/ws"
 )
 
@@ -37,7 +38,7 @@ type client struct {
 }
 
 func dial(ctx context.Context, s *server, fl string, pushToTalk bool) (*client, error) {
-	tok, err := s.token(fl)
+	tok, err := s.st.Token("livecheck", fl)
 	if err != nil {
 		return nil, err
 	}
@@ -48,28 +49,12 @@ func dial(ctx context.Context, s *server, fl string, pushToTalk bool) (*client, 
 		return nil, fmt.Errorf("dial: %v", err)
 	}
 	conn.SetReadLimit(1 << 20)
-	ptt := ""
-	if pushToTalk {
-		ptt = `,"push_to_talk":true`
-	}
-	ready, _ := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"` + ptt + `}}`)
-	if err := conn.Write(dctx, websocket.MessageBinary, ready); err != nil {
+	if err := stack.Handshake(dctx, conn, pushToTalk); err != nil {
+		conn.CloseNow()
 		return nil, err
 	}
 	s.calls++
 	c := &client{conn: conn, closed: make(chan struct{}), n: s.calls}
-	for {
-		_, data, err := conn.Read(dctx)
-		if err != nil {
-			conn.CloseNow()
-			return nil, fmt.Errorf("no bot-ready: %v", err)
-		}
-		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
-			if m, ok := f.(*ws.WireMessageFrame); ok && strings.Contains(m.Data, "bot-ready") {
-				break
-			}
-		}
-	}
 	c.t0 = time.Now()
 	go c.reader(context.Background())
 	c.next = time.Now()
