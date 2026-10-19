@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -31,5 +32,33 @@ func TestTTS_AttemptTimeoutIsPerPiece(t *testing.T) {
 	}
 	if m := charMarks(log.snapshot(), 1); strings.Contains(m, "E") || len(client.calls) != 3 {
 		t.Fatalf("marks = %q, calls = %d, want no error and 3 pieces", m, len(client.calls))
+	}
+}
+
+// A client that answers its context's deadline with an error of its own (a reset transport, not
+// context.DeadlineExceeded) is still a timeout: the attempt maps it, so the failover class stays "timeout".
+func TestTTS_PieceTimeoutIsATimeoutWhateverTheClientReturns(t *testing.T) {
+	client := &mockTTSClient{synthesizeFn: func(ctx context.Context, _, _ string, _ int) ([]byte, error) {
+		<-ctx.Done()
+		return nil, errors.New("transport reset by peer")
+	}}
+	cfg := charCfg(client)
+	cfg.RetryPolicy = resilience.Policy{MaxAttempts: 1, AttemptTimeout: 30 * time.Millisecond}
+	_, session, log := charStart(t, cfg)
+	_ = session.Post(&core.SynthesisUnitFrame{Turn: "t", Gen: 1, UnitID: 1, Text: "aaaaa", IsFinal: true})
+	var got error
+	if !log.waitFor(func(fs []core.Frame) bool {
+		for _, f := range fs {
+			if ef, ok := f.(*core.ErrorFrame); ok {
+				got = ef.Err
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatal("no error frame")
+	}
+	if !errors.Is(got, resilience.ErrTimeout) || !errors.Is(got, ErrProviderTimeout) {
+		t.Fatalf("error %v, want a provider timeout", got)
 	}
 }
