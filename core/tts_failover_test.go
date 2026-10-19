@@ -129,6 +129,9 @@ func TestTTSFailoverBeforeAudioReplaysUnitOnce(t *testing.T) {
 	}
 	select {
 	case e := <-r.events:
+		if e.TurnID != "t1" || e.Generation != 1 {
+			t.Fatalf("event turn=%q gen=%d", e.TurnID, e.Generation)
+		}
 		if a := e.Attributes(); a["component"] != "a" || a["provider"] != "b" || a["reason"] != "server_error" {
 			t.Fatalf("attrs %v", a)
 		}

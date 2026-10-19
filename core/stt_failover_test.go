@@ -204,6 +204,9 @@ func TestSTTFailoverMidUtteranceReplaysAndTranscribesOnce(t *testing.T) {
 	}
 	select {
 	case ev := <-r.events:
+		if ev.TurnID != "turn-1-2" || ev.Generation != 1 {
+			t.Fatalf("event turn=%q gen=%d", ev.TurnID, ev.Generation)
+		}
 		if a := ev.Attributes(); a["component"] != "a" || a["provider"] != "b" || a["reason"] != "server_error" {
 			t.Fatalf("event attrs = %v", a)
 		}
