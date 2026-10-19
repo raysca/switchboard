@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"govoice/core"
+	"govoice/tools/internal/wav"
 )
 
 const (
@@ -257,7 +258,7 @@ func (r *run) ttsSynth(g *rig) {
 		if perChar < 0.02 || perChar > 0.25 {
 			bad = append(bad, fmt.Sprintf("unit%d %.2fs for %d chars", i+1, d.Seconds(), utf8.RuneCountInString(ttsSentences[i])))
 		}
-		if rms := RMS(pcm); rms < 100 {
+		if rms := wav.RMS(pcm); rms < 100 {
 			silent = append(silent, fmt.Sprintf("unit%d rms %.0f", i+1, rms))
 		}
 		if len(pcm) >= 4 && string(pcm[:4]) == "RIFF" {

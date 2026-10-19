@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"govoice/core"
+	"govoice/tools/internal/wav"
 )
 
 // In-process fake providers: the dry mode of the suite and the way its own
@@ -166,7 +167,7 @@ func (t *FakeTTS) speak(ctx context.Context, u *core.SynthesisUnitFrame) {
 			phase += 2 * math.Pi * 220 / pipelineRate
 		}
 		if i == 0 && t.fault == FaultRIFF {
-			copy(b, EncodePCMWAV(nil, pipelineRate))
+			copy(b, wav.EncodePCMWAV(nil, pipelineRate))
 		}
 		rate := pipelineRate
 		if t.fault == FaultWrongRate {

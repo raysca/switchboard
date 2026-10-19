@@ -2,11 +2,12 @@ package main
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"os"
+
+	"govoice/tools/internal/wav"
 )
 
 const (
@@ -35,33 +36,14 @@ func loadClip(path string) ([]byte, error) {
 }
 
 func parseWAV(b []byte) ([]byte, error) {
-	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
-		return nil, errors.New("not a RIFF/WAVE file")
+	pcm, r, err := wav.ReadWAV(b)
+	if err != nil {
+		return nil, err
 	}
-	var fmtOK bool
-	for p := 12; p+8 <= len(b); {
-		id, n := string(b[p:p+4]), int(binary.LittleEndian.Uint32(b[p+4:p+8]))
-		body := b[p+8 : min(p+8+n, len(b))]
-		switch id {
-		case "fmt ":
-			if len(body) < 16 {
-				return nil, errors.New("short fmt chunk")
-			}
-			tag, ch := binary.LittleEndian.Uint16(body[0:]), binary.LittleEndian.Uint16(body[2:])
-			rate, bits := binary.LittleEndian.Uint32(body[4:]), binary.LittleEndian.Uint16(body[14:])
-			if tag != 1 || ch != 1 || rate != sampleRate || bits != 16 {
-				return nil, fmt.Errorf("need PCM16 mono %d Hz, got tag %d ch %d rate %d bits %d", sampleRate, tag, ch, rate, bits)
-			}
-			fmtOK = true
-		case "data":
-			if !fmtOK {
-				return nil, errors.New("data before fmt")
-			}
-			return body[:len(body)&^1], nil
-		}
-		p += 8 + n + n&1
+	if r != sampleRate {
+		return nil, fmt.Errorf("need PCM16 mono %d Hz, got %d Hz", sampleRate, r)
 	}
-	return nil, errors.New("no data chunk")
+	return pcm, nil
 }
 
 // trimSilence drops 20 ms frames below a small RMS at both ends, keeping 100 ms of margin.

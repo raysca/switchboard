@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -20,6 +19,7 @@ import (
 	"govoice/providers/nvidia"
 	"govoice/providers/nvidia/rivapb"
 	"govoice/server/catalog"
+	"govoice/tools/internal/wav"
 )
 
 const (
@@ -65,14 +65,14 @@ func loadWAV(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	i := bytes.Index(b, []byte("data"))
-	if len(b) < 44 || string(b[:4]) != "RIFF" || i < 0 {
-		return nil, fmt.Errorf("%s: not a WAV", path)
+	pcm, r, err := wav.ReadWAV(b)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	if r := binary.LittleEndian.Uint32(b[24:28]); r != rate {
+	if r != rate {
 		return nil, fmt.Errorf("%s: sample rate %d, want %d", path, r, rate)
 	}
-	return trimPCM(b[i+8:], path)
+	return trimPCM(pcm, path)
 }
 
 func trimPCM(pcm []byte, name string) ([]byte, error) {
