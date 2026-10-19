@@ -4,6 +4,7 @@ package contract
 
 import (
 	"os"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -12,8 +13,9 @@ import (
 	"govoice/providers/xai"
 )
 
-// The unary xAI TTS processor against the real adapter in a real core.Session: the server builds
-// this path only with xai_tts.disable_streaming (paid), so this is its only stack-level proof.
+// The unary xAI TTS processor, built directly with xai.NewTTSProcessor (not through the server
+// registry, so it does not prove the xai_tts.disable_streaming selection), against the real
+// adapter in a real core.Session: it proves the unary scheduler's frames and audio end to end.
 func TestStackUnaryTTSProcessor(t *testing.T) {
 	base := os.Getenv("OFFLINE_ADAPTER_URL")
 	if base == "" {
@@ -53,23 +55,29 @@ func TestStackUnaryTTSProcessor(t *testing.T) {
 	}
 
 	var started, stopped, usage, finals, errs int
+	var order []byte // S started, A audio, T stopped, P usage
 	var audioBytes int
 	done := func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		started, stopped, usage, finals, errs, audioBytes = 0, 0, 0, 0, 0, 0
+		order = order[:0]
 		for _, f := range frames {
 			switch v := f.(type) {
 			case *core.TTSStartedFrame:
 				started++
+				order = append(order, 'S')
 			case *core.TTSStoppedFrame:
 				stopped++
+				order = append(order, 'T')
 			case *core.UsageMetricsFrame:
 				usage++
+				order = append(order, 'P')
 			case *core.ErrorFrame:
 				errs++
 			case *core.OutputAudioFrame:
 				audioBytes += len(v.Samples)
+				order = append(order, 'A')
 				if v.IsFinal {
 					finals++
 				}
@@ -83,6 +91,9 @@ func TestStackUnaryTTSProcessor(t *testing.T) {
 	}
 	if errs != 0 || started != 1 || stopped != 1 || usage != 1 || finals != 1 {
 		t.Fatalf("frames: errors=%d started=%d stopped=%d usage=%d finals=%d", errs, started, stopped, usage, finals)
+	}
+	if !regexp.MustCompile(`^SA+TP$`).Match(order) {
+		t.Fatalf("frame order = %q, want S A+ T P", order)
 	}
 	if audioBytes < 2*16000 || audioBytes%2 != 0 {
 		t.Fatalf("audio: %d bytes, want >= 1 s of sample-aligned PCM16 at 16 kHz", audioBytes)
