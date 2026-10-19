@@ -748,3 +748,28 @@ func TestIdleRequestEndRefusesANonPositiveWait(t *testing.T) {
 		t.Fatal("a refused request must not consume the end")
 	}
 }
+
+// A prompt refused because a model reply is in progress is not a prompt spent: it is asked again one wait later.
+func TestIdleBusyPromptIsRetriedNotSpent(t *testing.T) {
+	var refused atomic.Bool
+	r := newIdleRig(t, func(c *core.IdleConfig) {
+		c.MaxPrompts = 1
+		inner := c.Speak
+		c.Speak = func(text string) error {
+			if refused.CompareAndSwap(false, true) {
+				return core.ErrSayBusy
+			}
+			return inner(text)
+		}
+	})
+	r.clk.parkedAt(t, r.at(15*time.Second))
+	r.clk.Advance(15 * time.Second)
+	r.clk.parkedAt(t, r.at(30*time.Second))
+	r.quiet(r.tts, 0)
+	r.clk.Advance(15 * time.Second)
+	r.wait("say:are you still there?", r.tts)
+	r.noEnd() // the one prompt has now been spent; the hang-up is one wait later
+	if r.ctl.UserPrompts.Load() != 1 {
+		t.Fatalf("prompts counted %d", r.ctl.UserPrompts.Load())
+	}
+}

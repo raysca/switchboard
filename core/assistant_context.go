@@ -60,6 +60,7 @@ type AssistantContextProcessor struct {
 
 	activeTurn      string
 	active          atomic.Bool // mirrors activeTurn != "" for other goroutines
+	modelActive     atomic.Bool // active, and not a Say turn
 	activeGen       uint64
 	textBuf         strings.Builder
 	totalTurnText   strings.Builder
@@ -153,9 +154,13 @@ func IsSayTurn(turn string) bool { return strings.HasPrefix(turn, sayTurnPrefix)
 // ErrSayEmpty is returned by Say for text with nothing to speak.
 var ErrSayEmpty = errors.New("core: nothing to say")
 
+// ErrSayBusy is returned by Say while a model reply is generating or playing: the line would reset that turn.
+var ErrSayBusy = errors.New("core: a reply is in progress")
+
 // Say speaks text as the assistant's next turn: the same units, delivery tracking, history commit and
 // interruption rules as a model reply, without a model (a greeting). It enters at this processor, so
-// the line never reaches the LLM stage. It only queues; it fails if the text is empty or the session is closing.
+// the line never reaches the LLM stage. It only queues; it fails if the text is empty, a model reply is in
+// progress (ErrSayBusy) or the session is closing.
 func (p *AssistantContextProcessor) Say(text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -164,6 +169,9 @@ func (p *AssistantContextProcessor) Say(text string) error {
 	port := p.port.Load()
 	if port == nil {
 		return errors.New("core: assistant context is not attached to a session")
+	}
+	if p.modelActive.Load() {
+		return ErrSayBusy
 	}
 	turn := fmt.Sprintf("%s%d", sayTurnPrefix, p.sayN.Add(1))
 	gen := port.session.CurrentGeneration()
@@ -191,6 +199,7 @@ func (p *AssistantContextProcessor) ProcessFrame(ctx context.Context, f Frame, d
 		um := f.(*UserMessageFrame)
 		p.activeTurn = um.Turn
 		p.active.Store(true)
+		p.modelActive.Store(!IsSayTurn(um.Turn))
 		p.activeGen = um.Gen
 		if p.activeGen == 0 && p.session != nil {
 			p.activeGen = p.session.CurrentGeneration()
@@ -705,6 +714,7 @@ func (p *AssistantContextProcessor) Active() bool { return p.active.Load() }
 func (p *AssistantContextProcessor) resetTurn() {
 	p.activeTurn = ""
 	p.active.Store(false)
+	p.modelActive.Store(false)
 	p.activeGen = 0
 	p.textBuf.Reset()
 	p.totalTurnText.Reset()

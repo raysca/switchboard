@@ -2,6 +2,7 @@ package core_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -257,4 +258,22 @@ func TestIdleStalledFallbackDoesNotDeferTheHangup(t *testing.T) {
 	})
 	r.down(&core.UserMessageFrame{Turn: "t1", Content: "hi"})
 	r.endsWithin(30*time.Second + 2*15*time.Second + 10*time.Second)
+}
+
+// Say opens a turn that resets the assistant's active one without an interruption: a model turn in flight
+// would lose its deltas, so Say refuses while one is active and takes the next free moment.
+func TestSayIsRefusedWhileAModelTurnIsActive(t *testing.T) {
+	r := newIdleSayRig(t, newUnitTTS(), func(c *core.IdleConfig) { c.UserTimeout, c.MaxPrompts = 0, 0 })
+	r.down(&core.UserMessageFrame{Turn: "t1", Content: "hi"})
+	for end := time.Now().Add(3 * time.Second); !r.asst.Active() && time.Now().Before(end); time.Sleep(time.Millisecond) {
+	}
+	if err := r.asst.Say("are you there?"); !errors.Is(err, core.ErrSayBusy) {
+		t.Fatalf("Say during a model turn = %v, want ErrSayBusy", err)
+	}
+	r.down(&core.LLMTextFrame{Turn: "t1", Gen: r.sess.CurrentGeneration(), Text: "the model reply"})
+	r.said("the model reply")
+	if err := r.asst.Say("are you there?"); err != nil {
+		t.Fatalf("Say once the turn is done: %v", err)
+	}
+	r.said("are you there?")
 }

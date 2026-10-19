@@ -527,7 +527,14 @@ func (c *IdleController) toClient(f Frame) {
 
 func (c *IdleController) prompt(n int, nudge bool) {
 	if !nudge {
-		c.say(c.cfg.UserPrompt)
+		if errors.Is(c.say(c.cfg.UserPrompt), ErrSayBusy) { // a model reply is in progress: not a prompt spent, ask again next tick
+			c.mu.Lock()
+			if c.prompts > 0 {
+				c.prompts--
+			}
+			c.mu.Unlock()
+			c.UserPrompts.Add(^uint64(0))
+		}
 		return
 	}
 	turn := "idle-" + strconv.FormatUint(c.nudgeN.Add(1), 10)
@@ -544,16 +551,18 @@ func (c *IdleController) prompt(n int, nudge bool) {
 }
 
 // say speaks text as the assistant's next turn; it only queues, and an error means the call is ending.
-func (c *IdleController) say(text string) {
+func (c *IdleController) say(text string) error {
 	if c.cfg.Speak == nil {
-		return
+		return nil
 	}
 	until := c.clk.Now().Add(c.cfg.GoodbyeWait)
-	if c.cfg.Speak(text) == nil {
+	err := c.cfg.Speak(text)
+	if err == nil {
 		c.mu.Lock()
 		c.sayUntil = until
 		c.mu.Unlock()
 	}
+	return err
 }
 
 func (c *IdleController) debug(name string, attrs map[string]any) {
