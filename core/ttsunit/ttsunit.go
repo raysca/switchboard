@@ -208,7 +208,7 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 				r.StaleTotal.Add(1)
 				return
 			}
-			u = &Unit{Frame: unit, r: r, s: s, span: span, session: traceSession, turn: traceTurn, gen: traceGen, policy: policy}
+			u = &Unit{Frame: unit, r: r, s: s, done: synthCtx.Done(), span: span, session: traceSession, turn: traceTurn, gen: traceGen, policy: policy}
 			err = r.run(synthCtx, u)
 		}
 		if err != nil {
@@ -277,7 +277,7 @@ func (r *Runner) runAhead(unit *core.SynthesisUnitFrame, seq uint64, s core.Sess
 	skip := canceled()
 	r.mu.Unlock()
 
-	u := &Unit{Frame: unit, r: r, s: s, span: span, session: session, turn: turn, gen: gen, policy: policy}
+	u := &Unit{Frame: unit, r: r, s: s, done: synthCtx.Done(), span: span, session: session, turn: turn, gen: gen, policy: policy}
 	var err error
 	blank := strings.TrimSpace(unit.Text) == ""
 	if !skip && !blank {
@@ -333,6 +333,7 @@ type Unit struct {
 
 	r       *Runner
 	s       core.SessionController
+	done    <-chan struct{} // closed on barge-in or close, also for gen 0 units a generation check cannot stop
 	span    core.Span
 	session core.SessionID
 	turn    core.TurnID
@@ -354,6 +355,11 @@ func (u *Unit) reenter(f core.Frame) error {
 }
 
 func (u *Unit) stale() bool {
+	select {
+	case <-u.done:
+		return true
+	default:
+	}
 	return u.Frame.Gen != 0 && u.Frame.Gen < u.s.CurrentGeneration()
 }
 

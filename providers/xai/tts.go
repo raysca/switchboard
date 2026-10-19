@@ -6,18 +6,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	"govoice/core"
 	"govoice/core/netpool"
 	"govoice/core/resilience"
+	"govoice/core/ttsunit"
 )
 
 // TTSConfig holds configuration for the xAI Text-to-Speech processor.
@@ -147,39 +143,12 @@ func (c *RealXAITTSClient) Synthesize(ctx context.Context, text string, cfg TTSC
 	return pcmBytes, nil
 }
 
-type ttsCancel struct {
-	seq    uint64
-	cancel context.CancelFunc
-}
-
-// TTSProcessor converts SynthesisUnitFrame into raw OutputAudioFrame chunks using xAI.
+// TTSProcessor converts SynthesisUnitFrame into raw OutputAudioFrame chunks using xAI, one request
+// per unit; scheduling, ordering, retries and framing live in core/ttsunit.
 type TTSProcessor struct {
-	cfg     TTSConfig
-	client  TTSClient
-	session core.SessionController
-	index   int
-
-	mu          sync.Mutex
-	cond        *sync.Cond
-	cancels     []ttsCancel
-	nextSeq     uint64
-	finishedSeq uint64
-	activeGen   uint64
-	closed      bool
-	queue       core.SerialQueue // units wait here, not on a task slot each
-
-	// Metrics
-	RequestsTotal atomic.Uint64
-	RetriesTotal  atomic.Uint64
-	AudioFrames   atomic.Uint64
-	AudioBytes    atomic.Uint64
-	ErrorsTotal   atomic.Uint64
-	StaleTotal    atomic.Uint64
-}
-
-// TTSCounts implements core.TTSCounters.
-func (p *TTSProcessor) TTSCounts() (req, errs, retries, stale uint64) {
-	return p.RequestsTotal.Load(), p.ErrorsTotal.Load(), p.RetriesTotal.Load(), p.StaleTotal.Load()
+	*ttsunit.Runner
+	cfg    TTSConfig
+	client TTSClient
 }
 
 // normalizeTTSConfig fills the defaults the unary and streaming processors share.
@@ -206,337 +175,29 @@ func normalizeTTSConfig(cfg TTSConfig) TTSConfig {
 	return cfg
 }
 
-// NewTTSProcessor creates a new xAI TTSProcessor.
+// NewTTSProcessor creates a new xAI TTSProcessor. Close never closes the client: the real one
+// shares the xAI netpool.
 func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	cfg = normalizeTTSConfig(cfg)
 	client := cfg.Client
 	if client == nil {
 		client = NewRealXAITTSClient()
 	}
-	p := &TTSProcessor{
-		cfg:    cfg,
-		client: client,
-	}
-	p.cond = sync.NewCond(&p.mu)
+	p := &TTSProcessor{cfg: cfg, client: client}
+	p.Runner = ttsunit.New(ttsunit.Config{
+		Provider: "xai", Model: cfg.Voice, SampleRate: cfg.SampleRate,
+		Breaker: cfg.CircuitBreaker, Policy: cfg.RetryPolicy, Classify: classify, Attempt: p.attempt,
+	})
 	return p, nil
 }
 
-// Attach registers the processor with the session pipeline and supervisor.
-func (p *TTSProcessor) Attach(s core.SessionController, index int) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.session = s
-	p.index = index
-	return nil
-}
-
-// Close gracefully closes the processor and cancels active synthesis operations.
-func (p *TTSProcessor) Close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.closed = true
-	p.cancelAllLocked()
-	p.finishedSeq = p.nextSeq
-	p.cond.Broadcast()
-	return nil
-}
-
-func (p *TTSProcessor) cancelAllLocked() {
-	for _, c := range p.cancels {
-		c.cancel()
-	}
-	p.cancels = nil
-}
-
-// ProcessFrame processes frames traversing the pipeline.
-func (p *TTSProcessor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
-	switch frame := f.(type) {
-	case *core.SynthesisUnitFrame:
-		return p.synthesizeUnit(ctx, frame, e)
-
-	case *core.InterruptionFrame:
-		p.mu.Lock()
-		p.cancelAllLocked()
-		p.finishedSeq = p.nextSeq
-		p.cond.Broadcast()
-		p.mu.Unlock()
-		return e.Push(f)
-
-	default:
-		return e.PushDirection(f, dir)
-	}
-}
-
-func (p *TTSProcessor) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFrame, e core.Emitter) error {
-	p.mu.Lock()
-	if p.closed { // the session is already ending: drop, do not fail it
-		p.mu.Unlock()
-		return nil
-	}
-
-	s := p.session
-	if s == nil {
-		p.mu.Unlock()
-		return errors.New("tts processor not attached to session")
-	}
-
-	// Stale generation check
-	if unit.Gen != 0 && unit.Gen < s.CurrentGeneration() {
-		p.StaleTotal.Add(1)
-		p.mu.Unlock()
-		return nil
-	}
-
-	parent := s.Context()
-	synthCtx, cancel := context.WithCancel(parent) // barge-in; the request deadline is per attempt
-	seq := p.nextSeq + 1
-	p.nextSeq = seq
-	p.cancels = append(p.cancels, ttsCancel{seq: seq, cancel: cancel})
-	p.activeGen = unit.Gen
-	p.mu.Unlock()
-
-	// Push unit frame downstream for assistant context tracking
-	if err := e.Push(unit); err != nil {
-		cancel()
-		p.abandon(seq)
+func (p *TTSProcessor) attempt(ctx context.Context, u *ttsunit.Unit, _ int) error {
+	pcm, err := p.client.Synthesize(ctx, u.Frame.Text, p.cfg)
+	if err != nil {
 		return err
 	}
-
-	p.RequestsTotal.Add(1)
-	if err := p.queue.Go(s, func(sessionCtx context.Context) {
-		traceSession := core.SessionID(strconv.FormatUint(s.ID(), 10))
-		traceTurn, traceGen := core.TurnID(unit.Turn), core.Generation(unit.Gen)
-		span := core.StartContextSpan(ctx, "tts.request", traceSession, traceTurn, traceGen, map[string]any{"provider": "xai"})
-		policy := core.TraceContextFromContext(ctx).Policy
-		traceFailure := error(errors.New("canceled"))
-		defer func() {
-			if v := recover(); v != nil {
-				traceFailure = errors.New("provider_failure")
-				span.AddEvent(core.NewTraceEvent("tts.failure", time.Now(), traceSession, traceTurn, traceGen, policy, nil))
-				span.End(traceFailure)
-				panic(v)
-			}
-			name := "tts.complete"
-			if traceFailure != nil {
-				name = "tts.failure"
-			}
-			span.AddEvent(core.NewTraceEvent(name, time.Now(), traceSession, traceTurn, traceGen, policy, nil))
-			span.End(traceFailure)
-		}()
-		defer cancel()
-		defer func() {
-			p.mu.Lock()
-			kept := make([]ttsCancel, 0, len(p.cancels))
-			for _, c := range p.cancels {
-				if c.seq != seq {
-					kept = append(kept, c)
-				}
-			}
-			p.cancels = kept
-			if p.finishedSeq+1 == seq {
-				p.finishedSeq = seq
-			}
-			p.cond.Broadcast()
-			p.mu.Unlock()
-		}()
-
-		var pcmData []byte
-		var committed bool
-
-		opErr := resilience.Execute(synthCtx, p.cfg.CircuitBreaker, p.cfg.RetryPolicy, classify, func() bool { return committed }, func(attemptCtx context.Context, attempt int) error {
-			if attempt > 0 {
-				p.RetriesTotal.Add(1)
-			}
-			data, err := p.client.Synthesize(attemptCtx, unit.Text, p.cfg)
-			if err != nil {
-				return err
-			}
-			pcmData = data
-			return nil
-		})
-
-		// Wait for turn in emission sequence: units must be emitted strictly in
-		// arrival order, failed ones included.
-		p.mu.Lock()
-		for p.finishedSeq+1 != seq && synthCtx.Err() == nil && sessionCtx.Err() == nil && !p.closed {
-			p.cond.Wait()
-		}
-		stale := p.closed || synthCtx.Err() != nil || sessionCtx.Err() != nil || (unit.Gen != 0 && unit.Gen < s.CurrentGeneration())
-		p.mu.Unlock()
-
-		if stale {
-			p.StaleTotal.Add(1)
-			return
-		}
-
-		// A failure waits its turn too, so its slot is released in order and
-		// later units are not wedged behind it.
-		if opErr != nil {
-			if errors.Is(opErr, context.Canceled) || synthCtx.Err() != nil {
-				return
-			}
-			traceFailure = errors.New("provider_failure")
-			p.ErrorsTotal.Add(1)
-			_ = s.Reenter(&core.ErrorFrame{
-				Err:    opErr,
-				Fatal:  false,
-				Turn:   core.TurnID(unit.Turn),
-				Gen:    core.Generation(unit.Gen),
-				UnitID: unit.UnitID,
-			}, core.Downstream, p.index+1, unit.Gen)
-			return
-		}
-
-		p.mu.Lock()
-		currentGen := s.CurrentGeneration()
-		if unit.Gen != 0 && unit.Gen < currentGen {
-			p.mu.Unlock()
-			return
-		}
-		p.mu.Unlock()
-
-		// Chunk raw PCM into 20ms frames:
-		// SampleRate (24000) * 2 bytes/sample * 0.02s = 960 bytes per chunk
-		sampleRate := p.cfg.SampleRate
-		if sampleRate <= 0 {
-			sampleRate = 24000
-		}
-		chunkSize := int(float64(sampleRate*2) * 0.02)
-		if chunkSize <= 0 {
-			chunkSize = 960
-		}
-
-		// Emit TTSStartedFrame
-		if err := s.Reenter(&core.TTSStartedFrame{
-			Turn:   unit.Turn,
-			Gen:    unit.Gen,
-			UnitID: unit.UnitID,
-		}, core.Downstream, p.index+1, unit.Gen); err != nil {
-			traceFailure = errors.New("transport_failure")
-			return
-		}
-
-		if len(pcmData)%2 != 0 { // keep sample alignment; a lone byte is dropped
-			pcmData = pcmData[:len(pcmData)-1]
-		}
-		totalBytes := len(pcmData)
-		firstAudio := true
-		if totalBytes > 0 {
-			var seq uint64
-			for offset := 0; offset < totalBytes; offset += chunkSize {
-				end := offset + chunkSize
-				isFinal := false
-				if end >= totalBytes {
-					end = totalBytes
-					isFinal = true
-				}
-
-				chunk := make([]byte, end-offset)
-				copy(chunk, pcmData[offset:end])
-				seq++
-
-				p.mu.Lock()
-				if synthCtx.Err() != nil || (unit.Gen != 0 && unit.Gen < s.CurrentGeneration()) { // gen 0 (idle prompt) stops on barge-in via synthCtx
-					p.mu.Unlock()
-					return
-				}
-				p.mu.Unlock()
-
-				audioFrame := &core.OutputAudioFrame{
-					Samples:    chunk,
-					Encoding:   core.EncodingPCM16LE,
-					SampleRate: sampleRate,
-					Channels:   1,
-					Duration:   20 * time.Millisecond,
-					Timestamp:  time.Now(),
-					Turn:       unit.Turn,
-					Gen:        unit.Gen,
-					UnitID:     unit.UnitID,
-					Seq:        seq,
-					IsFinal:    isFinal,
-					TurnFinal:  unit.IsFinal && isFinal,
-				}
-
-				p.AudioFrames.Add(1)
-				p.AudioBytes.Add(uint64(len(chunk)))
-
-				if err := s.Reenter(audioFrame, core.Downstream, p.index+1, unit.Gen); err != nil {
-					traceFailure = errors.New("transport_failure")
-					return
-				}
-				if firstAudio {
-					firstAudio = false
-					span.AddEvent(core.NewTraceEvent("tts.first_audio", time.Now(), traceSession, traceTurn, traceGen, policy, nil))
-				}
-			}
-		} else {
-			// Preserve the whole-turn drain boundary even when the provider
-			// returns no samples for the final synthesis unit.
-			empty := &core.OutputAudioFrame{
-				Encoding: core.EncodingPCM16LE, SampleRate: sampleRate, Channels: 1,
-				Turn: unit.Turn, Gen: unit.Gen, UnitID: unit.UnitID,
-				IsFinal: true, TurnFinal: unit.IsFinal,
-			}
-			if err := s.Reenter(empty, core.Downstream, p.index+1, unit.Gen); err != nil {
-				traceFailure = errors.New("transport_failure")
-				return
-			}
-		}
-
-		// Emit TTSStoppedFrame
-		if err := s.Reenter(&core.TTSStoppedFrame{
-			Turn:   unit.Turn,
-			Gen:    unit.Gen,
-			UnitID: unit.UnitID,
-		}, core.Downstream, p.index+1, unit.Gen); err != nil {
-			traceFailure = errors.New("transport_failure")
-			return
-		}
-		// Billing is per character sent: report it like core/ttsunit does, after TTSStopped.
-		_ = s.Reenter(&core.UsageMetricsFrame{
-			SessionID: traceSession, Turn: unit.Turn, Gen: unit.Gen, Provider: "xai", Model: p.cfg.Voice,
-			Service: "tts", Timestamp: time.Now(),
-			Characters:      core.Int64Ptr(int64(len([]rune(unit.Text)))),
-			AudioDurationMs: core.Int64Ptr(int64(totalBytes / 2 * 1000 / sampleRate)),
-			Requests:        core.Int64Ptr(1),
-		}, core.Downstream, p.index+1, unit.Gen)
-		traceFailure = nil
-	}); err != nil {
-		// The task was refused, so nothing will ever complete this slot: give
-		// it back so later units are not wedged behind it.
-		cancel()
-		p.abandon(seq)
-		if errors.Is(err, core.ErrSessionClosed) {
-			return nil
-		}
-		if errors.Is(err, core.ErrTooManyTasks) { // lose this unit, not the call
-			// Re-entered, not pushed: under TTSFailover e swallows, and the
-			// wrapper would wait for this unit until its watchdog fired.
-			_ = s.Reenter(&core.ErrorFrame{Err: err, Turn: core.TurnID(unit.Turn), Gen: core.Generation(unit.Gen), UnitID: unit.UnitID}, core.Downstream, p.index+1, unit.Gen)
-			return nil
-		}
+	if err := u.Write(pcm); err != nil {
 		return err
 	}
-	return nil
-}
-
-// abandon releases seq when its task was never started. Calls are serialized
-// with the frame handler, so seq is still the newest slot.
-func (p *TTSProcessor) abandon(seq uint64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	kept := make([]ttsCancel, 0, len(p.cancels))
-	for _, c := range p.cancels {
-		if c.seq != seq {
-			kept = append(kept, c)
-		}
-	}
-	p.cancels = kept
-	if p.nextSeq == seq {
-		p.nextSeq--
-		if p.finishedSeq > p.nextSeq {
-			p.finishedSeq = p.nextSeq
-		}
-	}
-	p.cond.Broadcast()
+	return u.Finish()
 }
