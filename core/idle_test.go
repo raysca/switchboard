@@ -773,3 +773,35 @@ func TestIdleBusyPromptIsRetriedNotSpent(t *testing.T) {
 		t.Fatalf("prompts counted %d", r.ctl.UserPrompts.Load())
 	}
 }
+
+// The prompt event is a prompt that was queued: a refused one leaves none, the retry one wait later does.
+func TestIdleBusyPromptEmitsNoEventUntilItIsSpoken(t *testing.T) {
+	var refused atomic.Bool
+	r := newIdleRig(t, func(c *core.IdleConfig) {
+		c.MaxPrompts = 1
+		inner := c.Speak
+		c.Speak = func(text string) error {
+			if refused.CompareAndSwap(false, true) {
+				return core.ErrSayBusy
+			}
+			return inner(text)
+		}
+	})
+	r.clk.parkedAt(t, r.at(15*time.Second))
+	r.clk.Advance(15 * time.Second)
+	r.clk.parkedAt(t, r.at(30*time.Second)) // the retry is one full wait later
+	if got := r.eventNames(); len(got) != 0 {
+		t.Fatalf("events after a refused prompt: %v", got)
+	}
+	r.clk.Advance(15 * time.Second)
+	r.wait("say:are you still there?", r.tts)
+	for end := time.Now().Add(3 * time.Second); time.Now().Before(end); time.Sleep(time.Millisecond) {
+		if got := r.eventNames(); len(got) == 1 {
+			if got[0] != "idle.user_prompt#1" {
+				t.Fatalf("events %v", got)
+			}
+			return
+		}
+	}
+	t.Fatal("no idle.user_prompt event for the spoken prompt")
+}

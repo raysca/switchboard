@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -39,6 +40,7 @@ type Server struct {
 	Public, Admin, Key, Log, Data string
 	cmd                           *exec.Cmd
 	done                          chan struct{}
+	stopOnce                      sync.Once
 }
 
 // RandHex returns 2n hex characters of crypto randomness.
@@ -63,6 +65,9 @@ func freePorts(n int) ([]int, error) {
 	}
 	return ports, nil
 }
+
+// killGroup signals a whole process group (a variable so tests can observe it).
+var killGroup = func(pgid int, sig syscall.Signal) error { return syscall.Kill(-pgid, sig) }
 
 // readyClient bounds each /ready probe, so a server that accepts and never answers cannot outlast Start's deadline.
 var readyClient = &http.Client{Timeout: 2 * time.Second}
@@ -103,7 +108,10 @@ func Start(ctx context.Context, sp Spec) (*Server, error) {
 	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
 		select {
 		case <-s.done:
-			_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL) // sweep what the exited server left in its group
+			// Sweep what the exited server left in its group, only while the group still exists (pid reuse).
+			if syscall.Kill(-s.cmd.Process.Pid, 0) == nil {
+				s.stopOnce.Do(func() { _ = killGroup(s.cmd.Process.Pid, syscall.SIGKILL) })
+			}
 			return nil, fmt.Errorf("server exited during start (log: %s)", s.Log)
 		case <-ctx.Done():
 			s.Stop()
@@ -136,12 +144,14 @@ func (s *Server) Stop() {
 		return
 	}
 	pgid := s.cmd.Process.Pid
-	_ = syscall.Kill(-pgid, syscall.SIGTERM)
-	select {
-	case <-s.done:
-	case <-time.After(15 * time.Second):
-	}
-	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	s.stopOnce.Do(func() { // a second Stop could signal a pgid the kernel has since reused
+		_ = killGroup(pgid, syscall.SIGTERM)
+		select {
+		case <-s.done:
+		case <-time.After(15 * time.Second):
+		}
+		_ = killGroup(pgid, syscall.SIGKILL)
+	})
 	<-s.done
 }
 

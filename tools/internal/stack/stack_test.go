@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -110,5 +111,23 @@ func TestReadyProbeIsBoundedPerRequest(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("probe took %v", d)
+	}
+}
+
+// Stop signals the group once: a second call (cleanup after a failed run) must not signal a pgid the kernel may
+// have handed to an unrelated process.
+func TestStopSignalsTheGroupOnce(t *testing.T) {
+	var calls []syscall.Signal
+	old := killGroup
+	killGroup = func(_ int, sig syscall.Signal) error { calls = append(calls, sig); return nil }
+	defer func() { killGroup = old }()
+	done := make(chan struct{})
+	close(done)
+	s := &Server{cmd: &exec.Cmd{Process: &os.Process{Pid: 424242}}, done: done}
+	s.Stop()
+	first := len(calls)
+	s.Stop()
+	if first == 0 || len(calls) != first {
+		t.Fatalf("signals: first Stop %d, after the second %d", first, len(calls))
 	}
 }

@@ -499,10 +499,11 @@ func (c *IdleController) userIdleLocked(now time.Time) []func() {
 	if nudge && c.cfg.BotTimeout > 0 {
 		c.waitingBot, c.botAt = true, now.Add(c.cfg.BotTimeout)
 	}
-	return []func(){
-		func() { c.debug(DebugIdleUserPrompt, map[string]any{"count": n}) },
-		func() { c.prompt(n, nudge) },
-	}
+	return []func(){func() {
+		if c.prompt(n, nudge) { // the event is a prompt that was queued, not one that was refused
+			c.debug(DebugIdleUserPrompt, map[string]any{"count": n})
+		}
+	}}
 }
 
 // beginEndLocked starts the hang-up: at once, or (true) once the goodbye the
@@ -525,17 +526,20 @@ func (c *IdleController) toClient(f Frame) {
 	}
 }
 
-func (c *IdleController) prompt(n int, nudge bool) {
+// prompt queues the nudge and reports whether it did. A prompt refused because a model reply is in progress
+// is not spent: the user clock (already re-armed for one UserTimeout later) asks again then.
+func (c *IdleController) prompt(n int, nudge bool) bool {
 	if !nudge {
-		if errors.Is(c.say(c.cfg.UserPrompt), ErrSayBusy) { // a model reply is in progress: not a prompt spent, ask again next tick
+		if errors.Is(c.say(c.cfg.UserPrompt), ErrSayBusy) {
 			c.mu.Lock()
 			if c.prompts > 0 {
 				c.prompts--
 			}
 			c.mu.Unlock()
 			c.UserPrompts.Add(^uint64(0))
+			return false
 		}
-		return
+		return true
 	}
 	turn := "idle-" + strconv.FormatUint(c.nudgeN.Add(1), 10)
 	at := time.Now()
@@ -545,9 +549,9 @@ func (c *IdleController) prompt(n int, nudge bool) {
 			int(c.cfg.UserTimeout/time.Second), c.cfg.UserPrompt),
 	}
 	if c.cfg.History.AddMessage(msg) != nil {
-		return
+		return false
 	}
-	_ = c.session.Reenter(&UserMessageFrame{Turn: turn, Content: msg.Content, Gen: c.session.CurrentGeneration(), Timestamp: at}, Downstream, c.index+1, 0)
+	return c.session.Reenter(&UserMessageFrame{Turn: turn, Content: msg.Content, Gen: c.session.CurrentGeneration(), Timestamp: at}, Downstream, c.index+1, 0) == nil
 }
 
 // say speaks text as the assistant's next turn; it only queues, and an error means the call is ending.
