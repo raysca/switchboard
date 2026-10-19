@@ -15,25 +15,6 @@ import (
 // breaker trip.
 var ErrBlockedAddress = errors.New("openai: base_url resolves to a blocked address")
 
-var metadataV6 = netip.MustParseAddr("fd00:ec2::254") // AWS IMDS over IPv6
-
-// allowedIP: link-local (incl. 169.254.169.254 metadata), multicast and
-// unspecified are always refused; loopback and private ranges only with
-// allowPrivate (self-hosted vLLM).
-func allowedIP(ip netip.Addr, allowPrivate bool) bool {
-	ip = ip.Unmap()
-	switch {
-	case !ip.IsValid(), ip.IsUnspecified(), ip.IsMulticast(), ip.IsInterfaceLocalMulticast(),
-		ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast(), ip == metadataV6:
-		return false
-	case ip.IsLoopback(), ip.IsPrivate(), cgnat.Contains(ip):
-		return allowPrivate
-	}
-	return true
-}
-
-var cgnat = netip.MustParsePrefix("100.64.0.0/10")
-
 // guardedPool is the process-wide pool for user-supplied base URLs: it checks
 // every dialled IP after DNS resolution (so DNS rebinding cannot slip past),
 // including pre-dialed spares, and is shared across sessions so HTTP/2
@@ -46,7 +27,7 @@ func guardedPool(provider string, allowPrivate bool) *netpool.Pool {
 	return netpool.Get(netpool.Options{Provider: provider, Stage: "llm", Variant: fmt.Sprintf("private=%t", allowPrivate),
 		Control: func(_, address string, _ syscall.RawConn) error {
 			ap, err := netip.ParseAddrPort(address)
-			if err != nil || !allowedIP(ap.Addr(), allowPrivate) {
+			if err != nil || !netpool.AllowedIP(ap.Addr(), allowPrivate) {
 				return ErrBlockedAddress
 			}
 			return nil
