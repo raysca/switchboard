@@ -298,7 +298,7 @@ func (u *Unit) Write(pcm []byte) error {
 	u.buf = append(u.buf, pcm...)
 	n := u.r.cfg.SampleRate * 2 * int(chunkDuration/time.Millisecond) / 1000
 	for len(u.buf) > n {
-		if err := u.emit(u.buf[:n], false); err != nil {
+		if err := u.emit(u.buf[:n:n], false); err != nil { // 3-index: frames never share capacity
 			return err
 		}
 		u.buf = u.buf[n:]
@@ -324,7 +324,6 @@ func (u *Unit) emit(pcm []byte, final bool) error {
 	if u.stale() {
 		return context.Canceled
 	}
-	pcm = append([]byte(nil), pcm...)
 	if len(pcm)%2 != 0 { // keep sample alignment; a lone byte is dropped
 		pcm = pcm[:len(pcm)-1]
 	}
@@ -356,7 +355,7 @@ func (u *Unit) Finish() error {
 		return nil
 	}
 	u.stopped = true
-	if err := u.emit(u.buf, true); err != nil {
+	if err := u.emit(u.buf[:len(u.buf):len(u.buf)], true); err != nil {
 		return err
 	}
 	u.buf = nil
