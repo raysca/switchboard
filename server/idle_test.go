@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"govoice/server/flow"
 	"strings"
 	"sync"
@@ -188,6 +187,7 @@ func newIdleE2E(t *testing.T, mod func(*Config)) *idleE2E {
 		t.Fatal(err)
 	}
 	var speaking atomic.Bool
+	var lastUnit atomic.Uint64 // the unit OutputTurnFinal named: a reply streamed as deltas ends on it, not on a final-flagged unit
 	up := func(s core.SpeakingState) {
 		_ = r.sess.Reenter(&core.SpeakingStateFrame{State: s, Reason: core.SpeakingStopDrained}, core.Upstream, r.sess.TailIndex(), 0)
 	}
@@ -207,11 +207,15 @@ func newIdleE2E(t *testing.T, mod func(*Config)) *idleE2E {
 				r.errs++
 			}
 			r.mu.Unlock()
+		case *core.OutputTurnFinalFrame:
+			if dir == core.Downstream {
+				lastUnit.Store(v.UnitID)
+			}
 		case *core.OutputAudioFrame:
 			if dir == core.Downstream && speaking.CompareAndSwap(false, true) {
 				up(core.SpeakingStarted)
 			}
-			if v.TurnFinal && speaking.CompareAndSwap(true, false) {
+			if (v.TurnFinal || (v.IsFinal && v.UnitID == lastUnit.Load())) && speaking.CompareAndSwap(true, false) {
 				up(core.SpeakingStopped)
 			}
 		}
@@ -323,7 +327,11 @@ func TestCallPipelineIdleUserSilenceEndsCall(t *testing.T) {
 // of a drain) and the user_idle reason in a non-fatal RTVI error.
 func TestIdleSilentCallerIsHungUpWithNormalClose(t *testing.T) {
 	s, _, dial := drainFixture(t, time.Second)
-	s.cfg.Idle.UserTimeout, s.cfg.Idle.MaxPrompts, s.cfg.Idle.PromptMode, s.cfg.Idle.Goodbye = 100*time.Millisecond, 1, "say", "" // no spoken goodbye: the drain fixture plays no audio to finish
+	s.cfg.Idle.UserTimeout, s.cfg.Idle.MaxPrompts, s.cfg.Idle.PromptMode, s.cfg.Idle.Goodbye = 100*time.Millisecond, 1, "say", "" // no spoken goodbye
+	// The prompt is the assistant's own turn, which stays active until its audio has been written.
+	s.registry.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
+		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2}), nil
+	})
 	conn, _ := dial(true)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -342,9 +350,9 @@ func TestIdleSilentCallerIsHungUpWithNormalClose(t *testing.T) {
 	idleWait(t, "hang-up counted", func() bool { return s.metrics.UserIdleHangupsTotal.Load() == 1 })
 }
 
-// idle speech re-enters at the TTS stage; the DTMF detector and input filter inserted at the
-// front of the pipeline after the idle controller was built must shift that index.
-func TestIdleSpeakIndexFollowsFrontInsertions(t *testing.T) {
+// Idle speech is the assistant's own Say: it reaches the TTS stage as that stage's next unit whatever
+// stages the pipeline has in front (the DTMF detector and input filter shift every index).
+func TestIdleSpeechIsTheAssistantsSay(t *testing.T) {
 	for name, mod := range map[string]func(*Config){
 		"none":   func(*Config) {},
 		"dtmf":   func(c *Config) { c.DTMF.Detect = true },
@@ -352,7 +360,7 @@ func TestIdleSpeakIndexFollowsFrontInsertions(t *testing.T) {
 		"both":   func(c *Config) { c.DTMF.Detect, c.Audio.InputFilters = true, []string{"denoise"} },
 	} {
 		cfg := DefaultConfig(ProfileDevelopment)
-		cfg.Idle.UserTimeout = 15 * time.Second
+		cfg.Idle.UserTimeout, cfg.Idle.MaxPrompts, cfg.Idle.PromptMode, cfg.Idle.Prompt = 150*time.Millisecond, 1, "say", "Anyone there?"
 		mod(cfg)
 		reg := NewRegistry()
 		tts := &coretest.PassthroughProcessor{}
@@ -365,24 +373,22 @@ func TestIdleSpeakIndexFollowsFrontInsertions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		var idle *core.IdleController
-		for _, p := range pipe.Processors() {
-			if c, ok := p.(*core.IdleController); ok {
-				idle = c
+		sess, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sess.Start(); err != nil {
+			t.Fatal(err)
+		}
+		idleWait(t, name+": the prompt reaches the TTS stage as a unit", func() bool {
+			for _, f := range tts.GetFrames() {
+				if u, ok := f.(*core.SynthesisUnitFrame); ok && u.Text == "Anyone there?" && core.IsSayTurn(u.Turn) {
+					return true
+				}
 			}
-		}
-		if idle == nil {
-			t.Fatalf("%s: no idle controller", name)
-		}
-		got := pipe.At(idle.SpeakIndex())
-		// the TTS stage may be wrapped (failover/unit reporting); it must at least not be the
-		// assistant-context stage or earlier: the stage at the index must follow the idle stage and the LLM.
-		if idle.SpeakIndex() < 0 || got == nil {
-			t.Fatalf("%s: speak index %d invalid", name, idle.SpeakIndex())
-		}
-		if got != core.Processor(tts) && !strings.Contains(fmt.Sprintf("%T", got), "TTS") {
-			t.Errorf("%s: speak index %d points at %T, want the TTS stage", name, idle.SpeakIndex(), got)
-		}
+			return false
+		})
+		_ = sess.Close()
 	}
 }
 

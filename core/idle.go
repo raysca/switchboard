@@ -62,6 +62,9 @@ type IdleConfig struct {
 	Say        bool
 	// Goodbye is spoken (TTS, no model) before hanging up for user idle.
 	Goodbye string
+	// Speak says a fixed line as the assistant's next turn (AssistantContextProcessor.Say): the prompt,
+	// the bot-stuck fallback and the goodbye are then in the history and the call records. Nil: they are skipped.
+	Speak func(text string) error
 	// GoodbyeWait caps the wait for the goodbye to finish playing (default 10s).
 	GoodbyeWait time.Duration
 
@@ -128,7 +131,6 @@ type IdleController struct {
 	clk     IdleClock
 	session SessionController
 	index   int
-	speak   int // pipeline index of TTS for direct speech; -1 = unavailable
 
 	wake chan struct{}
 
@@ -141,7 +143,7 @@ type IdleController struct {
 	ending, sawStart, done              bool
 	sayAfterCancel, sayNow              string // fallback phrase: held until the cancel's interruption is back, then due
 	endReason                           string
-	sayN, nudgeN                        atomic.Uint64
+	nudgeN                              atomic.Uint64
 
 	UserPrompts atomic.Uint64 // prompts issued
 	UserHangups atomic.Uint64 // calls ended for user idle
@@ -163,19 +165,12 @@ func NewIdleController(cfg IdleConfig) (*IdleController, error) {
 	if cfg.UserPrompt == "" {
 		cfg.UserPrompt = "Are you still there?"
 	}
-	c := &IdleController{cfg: cfg, clk: cfg.Clock, speak: -1, wake: make(chan struct{}, 1)}
+	c := &IdleController{cfg: cfg, clk: cfg.Clock, wake: make(chan struct{}, 1)}
 	if c.clk == nil {
 		c.clk = realIdleClock{}
 	}
 	return c, nil
 }
-
-// SetSpeakIndex sets the pipeline index of the TTS stage; without it prompts
-// fall back to the model and the goodbye/fallback phrases are skipped.
-func (c *IdleController) SetSpeakIndex(i int) { c.speak = i }
-
-// SpeakIndex is the index set by SetSpeakIndex (-1 when unset).
-func (c *IdleController) SpeakIndex() int { return c.speak }
 
 // SetOnEnd installs the hang-up (before the session starts); see IdleConfig.OnEnd.
 func (c *IdleController) SetOnEnd(fn func(reason string)) { c.cfg.OnEnd = fn }
@@ -462,9 +457,9 @@ func (c *IdleController) botStuckLocked(now time.Time) []func() {
 		c.beginEndLocked(now, IdleReasonBot, "")
 		return acts
 	}
-	if c.cfg.BotFallback != "" && c.speak >= 0 {
-		// Spoken once the interruption comes back: the generation bump it makes
-		// would otherwise fence this speech (the envelope is stamped at admission).
+	if c.cfg.BotFallback != "" && c.cfg.Speak != nil {
+		// Spoken once the interruption comes back: the assistant bumps the generation before it
+		// sends it up, and Say stamps the line with the generation it reads, so an earlier line is fenced.
 		c.sayAfterCancel = c.cfg.BotFallback
 	}
 	c.arm(now)
@@ -510,7 +505,7 @@ func (c *IdleController) beginEndLocked(now time.Time, reason, goodbye string) b
 	c.ending, c.endReason = true, reason
 	c.userAt, c.botAt = time.Time{}, time.Time{}
 	c.endAt = now
-	if goodbye == "" || c.speak < 0 {
+	if goodbye == "" || c.cfg.Speak == nil {
 		return false
 	}
 	c.endAt, c.sawStart = now.Add(c.cfg.GoodbyeWait), false
@@ -542,21 +537,11 @@ func (c *IdleController) prompt(n int, nudge bool) {
 	_ = c.session.Reenter(&UserMessageFrame{Turn: turn, Content: msg.Content, Gen: c.session.CurrentGeneration(), Timestamp: at}, Downstream, c.index+1, 0)
 }
 
-// say speaks text through TTS without the model. Generation 0 keeps it from
-// being fenced by the interruption that may have just cancelled a stuck turn.
+// say speaks text as the assistant's next turn; it only queues, and an error means the call is ending.
 func (c *IdleController) say(text string) {
-	if c.speak < 0 {
-		return
+	if c.cfg.Speak != nil {
+		_ = c.cfg.Speak(text)
 	}
-	n := c.sayN.Add(1)
-	// Unit ids must increase across the whole session (transport pacer): a
-	// Session stamps id 0 when it delivers the frame (allocating here could
-	// lose the race to a reply unit and reach the pacer out of order).
-	unit := n
-	if _, ok := c.session.(interface{ NextUnitID() uint64 }); ok {
-		unit = 0
-	}
-	_ = c.session.Reenter(&SynthesisUnitFrame{Turn: "idle-say-" + strconv.FormatUint(n, 10), UnitID: unit, Text: text, IsFinal: true}, Downstream, c.speak, 0)
 }
 
 func (c *IdleController) debug(name string, attrs map[string]any) {

@@ -89,7 +89,6 @@ type Session struct {
 
 	state          atomic.Int32
 	gen            atomic.Uint64
-	unitSeq        atomic.Uint64 // session-wide synthesis unit ids (assistant and idle speech)
 	inputMuted     atomic.Bool
 	admissionMu    sync.Mutex
 	admissionMuted bool
@@ -208,10 +207,6 @@ func (s *Session) Context() context.Context {
 func (s *Session) State() SessionState {
 	return SessionState(s.state.Load())
 }
-
-// NextUnitID returns the next synthesis unit id. Ids are unique and increasing
-// across everything that speaks, which the transport pacer requires.
-func (s *Session) NextUnitID() uint64 { return s.unitSeq.Add(1) }
 
 // CurrentGeneration returns the active turn generation of the session.
 func (s *Session) CurrentGeneration() uint64 {
@@ -741,11 +736,6 @@ func (s *Session) processEnvelope(env Envelope) bool {
 	}
 	if env.CommittedFlush {
 		env.Frame = &FlushFrame{Gen: env.Gen, committed: true}
-	}
-	if su, ok := env.Frame.(*SynthesisUnitFrame); ok && su.UnitID == 0 {
-		// Out-of-band speech (idle) takes its id here, on the run loop, so it is
-		// ordered with the assistant's units as the transport pacer requires.
-		su.UnitID = s.NextUnitID()
 	}
 
 	// Reset per-envelope emit counter and set watchdog start time

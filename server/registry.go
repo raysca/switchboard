@@ -809,7 +809,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 
 	procs := []core.Processor{vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc, &core.UnitFailureReporter{}}
-	idleProc, err := idleCfg.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, held, call.Flow != nil && call.Flow.CanEnd)
+	idleProc, err := idleCfg.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, asstCtxProc.Say, held, call.Flow != nil && call.Flow.CanEnd)
 	if err != nil {
 		return fail(fmt.Errorf("create idle controller: %w", err))
 	}
@@ -850,9 +850,6 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	if dt.in != nil {
 		procs = slices.Insert(procs, 0, dt.in) // before VAD
-	}
-	if idleProc != nil {
-		idleProc.SetSpeakIndex(slices.Index(procs, ttsProc)) // after every front insertion (dt.in, inFilter shift it)
 	}
 	if g, err := buildOutputGain(cfg, call.Audio); err != nil {
 		return fail(fmt.Errorf("create output gain: %w", err))

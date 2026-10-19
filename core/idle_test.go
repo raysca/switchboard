@@ -178,6 +178,10 @@ func newIdleRig(t *testing.T, mod func(*core.IdleConfig)) *idleRig {
 		History: r.hist, Clock: r.clk,
 		ToolsBusy: r.toolsBusy.Load, Muted: r.muted.Load,
 		OnEnd: func(reason string) { r.ended <- reason },
+		// the stand-in for AssistantContextProcessor.Say: the line enters at the TTS recorder
+		Speak: func(text string) error {
+			return r.sess.Reenter(&core.SynthesisUnitFrame{Turn: "say-x", Text: text, IsFinal: true}, core.Downstream, 2, 0)
+		},
 	}
 	if mod != nil {
 		mod(&cfg)
@@ -186,7 +190,6 @@ func newIdleRig(t *testing.T, mod func(*core.IdleConfig)) *idleRig {
 	if r.ctl, err = core.NewIdleController(cfg); err != nil {
 		t.Fatal(err)
 	}
-	r.ctl.SetSpeakIndex(2)
 	pipe, err := core.NewPipeline(r.ctl, r.llm, r.tts, r.tail)
 	if err != nil {
 		t.Fatal(err)

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"govoice/server/flow"
+	"govoice/server/storage"
 )
 
 // Per-flow quiet-caller and audio settings, end to end on the echo provider: a real server, real
@@ -185,5 +187,40 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 	}
 	if code, body := post(denied, "OtherAudio", `"audio":{"denoise":{"strength":0.8},"output_gain_db":-6}`); code != http.StatusCreated {
 		t.Fatalf("noise reduction and volume need no ceiling: %d %s", code, body)
+	}
+}
+
+// The prompt and the goodbye are lines the assistant spoke: they are in the call's turns (as the greeting
+// is), they are no caller turn, and they leave no reply-time sample.
+func TestCallBehaviorIdleLinesAreInTheCallsTurns(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), serverIdle(time.Minute, "server prompt"))
+	c := r.dial(behaviorFlow(t, r, "Quiet", "quietvoice", `,"idle":{"user_timeout_ms":1000,"max_prompts":1,"prompt":"Still there for the test?","prompt_mode":"say","goodbye":"Goodbye for now."}`))
+	r.waitEnded(c.sessionID, storage.EndSilentCaller)
+	var turns []storage.TurnRecord
+	eventually(t, "the prompt and the goodbye as stored turns", func() bool {
+		var err error
+		turns, err = r.s.store.Sessions().Turns(context.Background(), c.sessionID)
+		return err == nil && len(turns) == 2
+	})
+	if turns[0].AssistantText != "Still there for the test?" || turns[1].AssistantText != "Goodbye for now." {
+		t.Fatalf("stored turns: %+v", turns)
+	}
+	for _, turn := range turns {
+		if turn.Transcript != "" || turn.Interrupted {
+			t.Fatalf("an idle line is an assistant turn, not a caller turn: %+v", turn)
+		}
+		if strings.Contains(turn.LatenciesJSON, "llm_ttft_ms") || strings.Contains(turn.LatenciesJSON, "voice_to_voice_ms") {
+			t.Fatalf("an idle line is no model reply and must not count as a latency sample: %s", turn.LatenciesJSON)
+		}
+	}
+	w := apiRequest(r.s, http.MethodGet, "/api/v1/sessions/"+c.sessionID, e2eMgmtKey, "")
+	var out struct {
+		Data struct {
+			TurnCount     int  `json:"turn_count"`
+			MedianReplyMS *int `json:"median_reply_ms"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || out.Data.MedianReplyMS != nil || out.Data.TurnCount != 2 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }

@@ -168,6 +168,12 @@ privacy:
   Tool calls are stored by name, status and timing only (`tool_calls`;
   the summary columns stay empty and the API does not return them); their
   arguments and results are never stored, traced or exported to OTel.
+- **Idle lines:** the quiet-caller prompt (`prompt_mode: say`), the bot-stuck
+  fallback and the goodbye are operator-configured text, spoken as assistant
+  turns like a greeting. They are stored as turns (empty `transcript`, the line
+  as `assistant_text`), appear in the recording sidecar and reach the client as
+  bot text, and pass the same redaction. They are no caller turn and add no
+  reply-time sample.
 - **Tool calls on the client wire:** `llm-function-call-started`, `-in-progress` and `-stopped` carry only the call's `tool_call_id` (and `cancelled`), Pipecat's default `function_call_report_level` `none`: no tool name, arguments or result reaches the client, whatever the redaction settings. The `tool_call_id` itself is chosen by the provider or model (OpenAI-compatible backends echo whatever the server returns); it reaches the RTVI wire and the stored span's `ToolCallID`, as in Pipecat.
 - **NOT covered:** the live LLM context; anything the STT/LLM/TTS providers
   receive; the client's `user-transcription`; audio recordings (speech and DTMF

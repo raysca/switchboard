@@ -57,9 +57,11 @@ test("quiet-caller and audio settings are tried on a draft call, published, read
   await page.getByRole("button", { name: "Test call" }).click();
   await expect(page.getByRole("note").filter({ hasText: "This call runs your unpublished changes" })).toBeVisible();
   await startCall(page);
-  // The question and goodbye are spoken, not written in the transcript (the Go e2e pins their exact text);
-  // what the console shows is the hang-up, which only this flow's wait can cause on this server.
+  // The question and goodbye are the agent's own turns, so the console transcript shows them (the Go e2e pins
+  // their exact text and storage); the hang-up is what only this flow's wait can cause on this server.
   await expect(page.getByText("user_idle")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(PROMPT)).toBeVisible();
+  await expect(page.getByText(BYE)).toBeVisible();
   await expect(page.getByTestId("connection-state")).toHaveText(/disconnected/i);
   await step(page, "the draft call asked and hung up");
 
