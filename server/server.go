@@ -674,6 +674,9 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			}
 		case core.FrameLLMText:
 			lt := f.(*core.LLMTextFrame)
+			if core.IsSayTurn(lt.Turn) { // a spoken line, not a model reply
+				break
+			}
 			if lt.Turn != lastLLMTurn {
 				lastLLMTurn = lt.Turn
 				timeline.Record(TimelineEvent{Type: EventLLMComplete, TurnID: lt.Turn, Gen: lt.Gen})

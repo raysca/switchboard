@@ -46,7 +46,7 @@ func TestTheStartStepsGreetingIsSpokenFirstAndRecordedAsTurnOne(t *testing.T) {
 		t.Fatalf("the model spoke before the caller did")
 	}
 	for _, ev := range r.timeline() { // a greeting is not a caller turn or a model reply in the timeline
-		if ev.Type == EventSTTResult || ev.Type == EventLLMFirstToken {
+		if ev.Type == EventSTTResult || ev.Type == EventLLMFirstToken || ev.Type == EventLLMComplete {
 			t.Fatalf("the greeting recorded a %s event", ev.Type)
 		}
 	}
