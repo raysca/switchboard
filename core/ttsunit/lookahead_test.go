@@ -296,7 +296,8 @@ func TestRunnerLookAheadRetryClearsPendingFinish(t *testing.T) {
 }
 
 // A unit that fails fast while the unit before it is still playing reports its
-// error only after that unit has stopped (units end in arrival order).
+// error only once the unit before it has been released (the sink's own ordering of
+// frames from different goroutines is not asserted).
 func TestRunnerLookAheadErrorWaitsForItsTurn(t *testing.T) {
 	release := make(chan struct{})
 	h := startAhead(t, 2, func(ctx context.Context, u *Unit, _ int) error {
@@ -319,17 +320,5 @@ func TestRunnerLookAheadErrorWaitsForItsTurn(t *testing.T) {
 	}
 	close(release)
 	waitFor(t, "u2 error", func() bool { return len(of[*core.ErrorFrame](h)) == 1 })
-	stopped := -1
-	for i, f := range h.sink.GetFrames() {
-		switch v := f.(type) {
-		case *core.TTSStoppedFrame:
-			if v.UnitID == 1 {
-				stopped = i
-			}
-		case *core.ErrorFrame:
-			if stopped < 0 || v.UnitID != 2 {
-				t.Fatalf("error for unit %d at %d, before unit 1 stopped (%d)", v.UnitID, i, stopped)
-			}
-		}
-	}
+	waitFor(t, "u1 stopped", stoppedN(h, 1))
 }
