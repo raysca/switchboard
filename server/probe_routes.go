@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"govoice/server/api"
 	"govoice/server/catalog"
 )
@@ -54,11 +53,7 @@ type providerTestDTO struct {
 
 // handleProviderTest runs one minimal request against each service the provider offers and has a credential for.
 func (s *Server) handleProviderTest(w http.ResponseWriter, r *http.Request) {
-	requestID := api.RequestIDFromContext(r.Context())
-	if requestID == "" {
-		requestID = uuid.NewString()
-	}
-	w.Header().Set("X-Request-ID", requestID)
+	requestID := api.RequestID(w, r)
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		api.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported", requestID)

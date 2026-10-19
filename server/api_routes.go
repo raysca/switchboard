@@ -130,33 +130,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Token: signed, ExpiresAt: claims.ExpiresAt.Time, Scope: "voice:connect",
 		}})
 	default:
-		if r.URL.Path == "/api/v1/flows" || strings.HasPrefix(r.URL.Path, "/api/v1/flows/") {
-			if s.flowManagementAPI == nil {
-				api.WriteError(w, http.StatusServiceUnavailable, "flow_management_unavailable", "flow management storage is unavailable", requestID)
-				return
-			}
-			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
-			s.flowManagementAPI.ServeHTTP(w, r)
-			return
-		}
-		if r.URL.Path == "/api/v1/providers" || strings.HasPrefix(r.URL.Path, "/api/v1/providers/") {
-			if s.providerManagementAPI == nil {
-				api.WriteError(w, http.StatusServiceUnavailable, "provider_management_unavailable", "provider management storage is unavailable", requestID)
-				return
-			}
-			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
-			s.providerManagementAPI.ServeHTTP(w, r)
-			return
-		}
-		if r.URL.Path == "/api/v1/mcp-servers" || strings.HasPrefix(r.URL.Path, "/api/v1/mcp-servers/") {
-			if s.mcpManagementAPI == nil {
-				api.WriteError(w, http.StatusServiceUnavailable, "mcp_management_unavailable", "MCP management storage is unavailable", requestID)
-				return
-			}
-			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
-			s.mcpManagementAPI.ServeHTTP(w, r)
-			return
-		}
+		// The live-call routes sit under /api/v1/sessions, so they and demo are matched before the prefix table.
 		if r.URL.Path == "/api/v1/demo" || strings.HasPrefix(r.URL.Path, "/api/v1/demo/") {
 			s.handleDemo(w, r, requestID)
 			return
@@ -165,13 +139,24 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			s.handleLiveCall(w, r, requestID, id, action)
 			return
 		}
-		if r.URL.Path == "/api/v1/sessions" || strings.HasPrefix(r.URL.Path, "/api/v1/sessions/") {
-			if s.sessionManagementAPI == nil {
-				api.WriteError(w, http.StatusServiceUnavailable, "session_management_unavailable", "session management storage is unavailable", requestID)
+		// A table, not http.ServeMux: ServeMux would add path cleaning and redirects this API never had.
+		for _, p := range [...]struct {
+			prefix, code, message string
+			handler               http.Handler
+		}{
+			{"/api/v1/flows", "flow_management_unavailable", "flow management storage is unavailable", s.flowManagementAPI},
+			{"/api/v1/providers", "provider_management_unavailable", "provider management storage is unavailable", s.providerManagementAPI},
+			{"/api/v1/mcp-servers", "mcp_management_unavailable", "MCP management storage is unavailable", s.mcpManagementAPI},
+			{"/api/v1/sessions", "session_management_unavailable", "session management storage is unavailable", s.sessionManagementAPI},
+		} {
+			if r.URL.Path != p.prefix && !strings.HasPrefix(r.URL.Path, p.prefix+"/") {
+				continue
+			}
+			if p.handler == nil {
+				api.WriteError(w, http.StatusServiceUnavailable, p.code, p.message, requestID)
 				return
 			}
-			r = r.WithContext(api.WithRequestID(r.Context(), requestID))
-			s.sessionManagementAPI.ServeHTTP(w, r)
+			p.handler.ServeHTTP(w, r.WithContext(api.WithRequestID(r.Context(), requestID)))
 			return
 		}
 		api.WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)

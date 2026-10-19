@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"govoice/server/storage"
 )
 
@@ -138,11 +137,7 @@ type tracesHandler struct {
 }
 
 func (h tracesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	requestID := RequestIDFromContext(r.Context())
-	if requestID == "" {
-		requestID = uuid.NewString()
-	}
-	w.Header().Set("X-Request-ID", requestID)
+	requestID := RequestID(w, r)
 
 	if r.URL.Path != "/api/v1/sessions" && !strings.HasPrefix(r.URL.Path, "/api/v1/sessions/") {
 		WriteError(w, http.StatusNotFound, "not_found", "route not found", requestID)

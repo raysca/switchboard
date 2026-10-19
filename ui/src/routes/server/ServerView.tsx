@@ -27,7 +27,7 @@ function formatUptime(seconds: number): string {
 
 export function ServerView({ client, keyValue }: ServerViewProps) {
   const operationsQuery = useQuery({
-    queryKey: ["server-operations-status"],
+    queryKey: ["operations-status"],
     queryFn: () => client.getOperationsStatus(),
     enabled: !!keyValue,
     retry: false,

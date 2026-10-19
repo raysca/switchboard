@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 
-	"github.com/google/uuid"
 	"govoice/server/catalog"
 )
 
@@ -43,11 +42,7 @@ func envOrEmpty(env []string) []string {
 }
 
 func (h ProvidersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	requestID := RequestIDFromContext(r.Context())
-	if requestID == "" {
-		requestID = uuid.NewString()
-	}
-	w.Header().Set("X-Request-ID", requestID)
+	requestID := RequestID(w, r)
 	if r.Method != http.MethodGet {
 		flowMethodNotAllowed(w, requestID, http.MethodGet)
 		return
