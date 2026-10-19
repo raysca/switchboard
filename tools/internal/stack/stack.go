@@ -64,6 +64,9 @@ func freePorts(n int) ([]int, error) {
 	return ports, nil
 }
 
+// readyClient bounds each /ready probe, so a server that accepts and never answers cannot outlast Start's deadline.
+var readyClient = &http.Client{Timeout: 2 * time.Second}
+
 // Start spawns the child in its own process group and waits up to 60 s for /ready.
 func Start(ctx context.Context, sp Spec) (*Server, error) {
 	ports, err := freePorts(2)
@@ -100,13 +103,14 @@ func Start(ctx context.Context, sp Spec) (*Server, error) {
 	for deadline := time.Now().Add(60 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
 		select {
 		case <-s.done:
+			_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL) // sweep what the exited server left in its group
 			return nil, fmt.Errorf("server exited during start (log: %s)", s.Log)
 		case <-ctx.Done():
 			s.Stop()
 			return nil, ctx.Err()
 		default:
 		}
-		if r, err := http.Get(s.Admin + "/ready"); err == nil {
+		if r, err := readyClient.Get(s.Admin + "/ready"); err == nil {
 			r.Body.Close()
 			if r.StatusCode == 200 {
 				return s, nil
