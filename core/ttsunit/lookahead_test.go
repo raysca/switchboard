@@ -3,6 +3,7 @@ package ttsunit
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -291,5 +292,44 @@ func TestRunnerLookAheadRetryClearsPendingFinish(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if s := of[*core.TTSStoppedFrame](h); len(s) != 0 {
 		t.Fatalf("TTSStopped emitted from a discarded attempt's Finish")
+	}
+}
+
+// A unit that fails fast while the unit before it is still playing reports its
+// error only after that unit has stopped (units end in arrival order).
+func TestRunnerLookAheadErrorWaitsForItsTurn(t *testing.T) {
+	release := make(chan struct{})
+	h := startAhead(t, 2, func(ctx context.Context, u *Unit, _ int) error {
+		if u.Frame.Text == "u2" {
+			return errors.New("boom")
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		_ = u.Write(make([]byte, 1920))
+		return u.Finish()
+	})
+	h.say(t, 1, "u1", false)
+	h.say(t, 2, "u2", false)
+	time.Sleep(100 * time.Millisecond) // u2 has failed by now
+	if e := of[*core.ErrorFrame](h); len(e) != 0 {
+		t.Fatalf("error emitted while u1 is pending: %v", e[0].Err)
+	}
+	close(release)
+	waitFor(t, "u2 error", func() bool { return len(of[*core.ErrorFrame](h)) == 1 })
+	stopped := -1
+	for i, f := range h.sink.GetFrames() {
+		switch v := f.(type) {
+		case *core.TTSStoppedFrame:
+			if v.UnitID == 1 {
+				stopped = i
+			}
+		case *core.ErrorFrame:
+			if stopped < 0 || v.UnitID != 2 {
+				t.Fatalf("error for unit %d at %d, before unit 1 stopped (%d)", v.UnitID, i, stopped)
+			}
+		}
 	}
 }
