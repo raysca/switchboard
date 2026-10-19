@@ -152,7 +152,7 @@ func (s *server) attachTool(fl, url string) error {
 	if _, err := s.api("mcp-servers/"+srv+"/validate", struct{}{}); err != nil {
 		return err
 	}
-	d, err := s.call("GET", "mcp-servers/"+srv, nil)
+	d, err := s.st.Call("GET", "mcp-servers/"+srv, nil)
 	if err != nil {
 		return err
 	}
@@ -169,7 +169,7 @@ func (s *server) attachTool(fl, url string) error {
 	}
 	for _, t := range detail.Discovery.Tools {
 		if t.RemoteName == toolName {
-			cur, err := s.call("GET", "flows/"+fl, nil)
+			cur, err := s.st.Call("GET", "flows/"+fl, nil)
 			if err != nil {
 				return err
 			}
@@ -179,7 +179,7 @@ func (s *server) attachTool(fl, url string) error {
 			if err := json.Unmarshal(cur, &flow); err != nil {
 				return err
 			}
-			_, err = s.call("PUT", "flows/"+fl, map[string]any{"config": flow.CurrentVersion.Config, "mcp_tools": []map[string]any{
+			_, err = s.st.Call("PUT", "flows/"+fl, map[string]any{"config": flow.CurrentVersion.Config, "mcp_tools": []map[string]any{
 				{"mcp_server_id": srv, "remote_name": toolName, "schema_hash": t.SchemaHash, "required": true}}})
 			return err
 		}

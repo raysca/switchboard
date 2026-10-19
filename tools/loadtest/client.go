@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	"govoice/core"
+	"govoice/tools/internal/stack"
 	"govoice/transport/ws"
 )
 
@@ -221,7 +222,7 @@ func runCall(ctx context.Context, st *LoadState, p CallParams, principal string)
 		return err
 	}
 	dctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	conn, resp, err := websocket.Dial(dctx, "ws://"+p.Server.PublicURL+"/ws?token="+tok, nil)
+	conn, resp, err := websocket.Dial(dctx, "ws://"+p.Server.Public+"/ws?token="+tok, nil)
 	cancel()
 	if err != nil {
 		if resp != nil && (resp.StatusCode == 429 || resp.StatusCode == 503) {
@@ -236,34 +237,17 @@ func runCall(ctx context.Context, st *LoadState, p CallParams, principal string)
 	}
 	defer conn.CloseNow() // handshake failures; no-op after the graceful close below
 	conn.SetReadLimit(1 << 20)
-	cctx := ctx
 	rctx, rcancel := context.WithCancel(context.Background()) // reader outlives ctx so the close handshake completes
 	defer rcancel()
 
+	cctx := ctx
 	c := &call{conn: conn, st: st, audioCh: make(chan time.Time, 1), stopCh: make(chan struct{}, 1), errCh: make(chan error, 1)}
-	ready, _ := ws.EncodeMessageFrame(`{"id":"1","label":"rtvi-ai","type":"client-ready","data":{"version":"2.1.0"}}`)
-	if err := conn.Write(cctx, websocket.MessageBinary, ready); err != nil {
-		st.callFailed("handshake")
+	if err := stack.Handshake(ctx, conn, false); err != nil {
+		if ctx.Err() == nil {
+			st.callFailed("handshake")
+		}
 		return err
 	}
-	hctx, hcancel := context.WithTimeout(cctx, 20*time.Second)
-	botReady := false
-	for !botReady {
-		_, data, err := conn.Read(hctx)
-		if err != nil {
-			hcancel()
-			if ctx.Err() == nil {
-				st.callFailed("handshake")
-			}
-			return errors.New("no bot-ready")
-		}
-		if f, err := ws.DecodeBinaryFrame(data, 1, time.Now()); err == nil {
-			if m, ok := f.(*ws.WireMessageFrame); ok && strings.Contains(m.Data, "bot-ready") {
-				botReady = true
-			}
-		}
-	}
-	hcancel()
 	go c.reader(rctx)
 	defer func() { // graceful end even when the run stops mid-call: let a reply in flight finish, then close
 		for i := 0; i < 150 && c.speaking.Load(); i++ {

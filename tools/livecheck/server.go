@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"govoice/tools/internal/stack"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -68,33 +64,12 @@ var (
 const pingIdleTimeout = 3 * time.Second
 
 type server struct {
-	cmd           *exec.Cmd
+	st            *stack.Server
 	public, admin string
-	key           string
 	log           string
 	data          string // flow store; removed at stop, even with -keep-work
-	done          chan struct{}
 	calls         int
 	lastReq       atomic.Int64 // last good requestTotal
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-func freePorts(n int) ([]int, error) {
-	var ports []int
-	for i := 0; i < n; i++ {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return nil, err
-		}
-		defer l.Close()
-		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
-	}
-	return ports, nil
 }
 
 // buildServer builds the server child with tags plus the vad/turn workers into dir.
@@ -199,102 +174,27 @@ func childEnv(environ []string) []string {
 }
 
 func startServer(ctx context.Context, sp serverSpec) (*server, error) {
-	ports, err := freePorts(2)
+	ss, err := stack.Start(ctx, stack.Spec{Root: sp.root, Bin: sp.bin, Dir: filepath.Join(sp.work, sp.name),
+		Env:    append(childEnv(os.Environ()), sp.env...),
+		Config: func(pub, adm int) []byte { return []byte(serverYAML(sp, pub, adm)) }})
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(sp.work, sp.name)
-	if err := os.MkdirAll(filepath.Join(dir, "data"), 0o700); err != nil {
-		return nil, err
-	}
-	cfgPath := filepath.Join(dir, "server.yaml")
-	if err := os.WriteFile(cfgPath, []byte(serverYAML(sp, ports[0], ports[1])), 0o600); err != nil {
-		return nil, err
-	}
-	s := &server{public: fmt.Sprintf("127.0.0.1:%d", ports[0]), admin: fmt.Sprintf("http://127.0.0.1:%d", ports[1]),
-		key: randHex(32), log: filepath.Join(dir, "server.log"), data: filepath.Join(dir, "data"), done: make(chan struct{})}
-	theRedactor.add(s.key)
-	logf, err := os.Create(s.log)
-	if err != nil {
-		return nil, err
-	}
-	s.cmd = exec.Command(sp.bin, "-config", cfgPath)
-	s.cmd.Dir = sp.root
-	s.cmd.Stdout, s.cmd.Stderr = logf, logf
-	s.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	s.cmd.Env = append(childEnv(os.Environ()), "GOVOICE_ROOT="+sp.root, "GOVOICE_DEV_DIR="+s.data,
-		"GOVOICE_MANAGEMENT_API_KEY="+s.key, "TOKEN_SECRET="+randHex(32),
-		"ENV_FILE=/dev/null") // a development server would otherwise load examples/.env itself
-	s.cmd.Env = append(s.cmd.Env, sp.env...)
-	if err := s.cmd.Start(); err != nil {
-		logf.Close()
-		return nil, err
-	}
-	go func() { _ = s.cmd.Wait(); logf.Close(); close(s.done) }()
-	for dl := time.Now().Add(60 * time.Second); time.Now().Before(dl); time.Sleep(200 * time.Millisecond) {
-		select {
-		case <-s.done:
-			return nil, fmt.Errorf("server exited during start (log: %s)", s.log)
-		case <-ctx.Done():
-			s.stop()
-			return nil, ctx.Err()
-		default:
-		}
-		if r, err := http.Get(s.admin + "/ready"); err == nil {
-			r.Body.Close()
-			if r.StatusCode == 200 {
-				return s, nil
-			}
-		}
-	}
-	s.stop()
-	return nil, fmt.Errorf("server not ready in 60s (log: %s)", s.log)
+	theRedactor.add(ss.Key)
+	return &server{st: ss, public: ss.Public, admin: ss.Admin, log: ss.Log, data: ss.Data}, nil
 }
 
 // stop terminates the process group (server and its workers) and deletes the flow store.
 func (s *server) stop() {
-	if s == nil || s.cmd == nil || s.cmd.Process == nil {
+	if s == nil || s.st == nil {
 		return
 	}
-	pg := s.cmd.Process.Pid
-	_ = syscall.Kill(-pg, syscall.SIGTERM)
-	select {
-	case <-s.done:
-	case <-time.After(15 * time.Second):
-	}
-	_ = syscall.Kill(-pg, syscall.SIGKILL)
-	<-s.done
+	s.st.Stop()
 	_ = os.RemoveAll(s.data) // the run's flow store never outlives it
 }
 
-// call is one management API request. Response bodies are never echoed: they could contain secrets.
-func (s *server) call(method, path string, body any) (json.RawMessage, error) {
-	var rd io.Reader
-	if body != nil {
-		b, _ := json.Marshal(body)
-		rd = bytes.NewReader(b)
-	}
-	req, _ := http.NewRequest(method, s.admin+"/api/v1/"+path, rd)
-	req.Header.Set("Authorization", "Bearer "+s.key)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode/100 != 2 {
-		return nil, fmt.Errorf("%s %s: %s", method, path, resp.Status)
-	}
-	var env struct{ Data json.RawMessage }
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, err
-	}
-	return env.Data, nil
-}
-
 func (s *server) api(path string, body any) (json.RawMessage, error) {
-	return s.call("POST", path, body)
+	return s.st.Call("POST", path, body)
 }
 
 func (s *server) id(path string, body any) (string, error) {
@@ -307,18 +207,6 @@ func (s *server) id(path string, body any) (string, error) {
 		return "", fmt.Errorf("%s: no id in response", path)
 	}
 	return r.ID, nil
-}
-
-func (s *server) token(fl string) (string, error) {
-	d, err := s.api("voice-tokens", map[string]string{"principal": "livecheck", "flow_id": fl})
-	if err != nil {
-		return "", err
-	}
-	var t struct{ Token string }
-	if err := json.Unmarshal(d, &t); err != nil || t.Token == "" {
-		return "", fmt.Errorf("token response: %v", err)
-	}
-	return t.Token, nil
 }
 
 // logProblems returns the redacted WARN/ERROR lines of the server log.
