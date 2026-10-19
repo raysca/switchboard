@@ -214,3 +214,47 @@ func TestIdleGoodbyeThenHangup_Order(t *testing.T) {
 	}
 	t.Fatal("call did not end after the goodbye played")
 }
+
+// swallowTTS accepts units and never speaks nor fails: a stalled TTS stage.
+type swallowTTS struct{}
+
+func (swallowTTS) ProcessFrame(_ context.Context, f core.Frame, dir core.Direction, e core.Emitter) error {
+	if _, ok := f.(*core.SynthesisUnitFrame); ok {
+		return nil
+	}
+	return e.PushDirection(f, dir)
+}
+
+// endsWithin advances the fake clock in steps until the call ends, failing past limit.
+func (r *idleSayRig) endsWithin(limit time.Duration) {
+	r.t.Helper()
+	for el := time.Duration(0); el <= limit; el += 500 * time.Millisecond {
+		select {
+		case got := <-r.ended:
+			if got != core.IdleReasonUser {
+				r.t.Fatalf("ended with %q", got)
+			}
+			return
+		case <-time.After(3 * time.Millisecond):
+		}
+		r.clk.Advance(500 * time.Millisecond)
+	}
+	r.t.Fatalf("the call did not end within %v of fake time", limit)
+}
+
+// A prompt whose audio never comes (stalled TTS) must not hold the hang-up for ever: the assistant stays
+// Active for that turn, so the user clock stops waiting on it after the goodbye's cap.
+func TestIdleStalledPromptDoesNotDeferTheHangup(t *testing.T) {
+	r := newIdleSayRig(t, swallowTTS{}, func(c *core.IdleConfig) { c.MaxPrompts = 1 })
+	r.endsWithin(2*15*time.Second + 10*time.Second)
+}
+
+// The same for the bot-stuck fallback line when the TTS itself is stuck.
+func TestIdleStalledFallbackDoesNotDeferTheHangup(t *testing.T) {
+	r := newIdleSayRig(t, swallowTTS{}, func(c *core.IdleConfig) {
+		c.MaxPrompts = 1
+		c.BotTimeout, c.BotFallback = 30*time.Second, "sorry about that"
+	})
+	r.down(&core.UserMessageFrame{Turn: "t1", Content: "hi"})
+	r.endsWithin(30*time.Second + 2*15*time.Second + 10*time.Second)
+}

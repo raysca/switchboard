@@ -143,6 +143,7 @@ type IdleController struct {
 	ending, sawStart, done              bool
 	sayAfterCancel, sayNow              string // fallback phrase: held until the cancel's interruption is back, then due
 	endReason                           string
+	sayUntil                            time.Time // a spoken line is expected to have played by then (zero: none queued)
 	nudgeN                              atomic.Uint64
 
 	UserPrompts atomic.Uint64 // prompts issued
@@ -245,6 +246,7 @@ func (c *IdleController) arm(now time.Time) {
 // userInput records any sign of the user: the prompt count restarts and the
 // user is no longer waiting for an answer to an earlier turn.
 func (c *IdleController) userInput() {
+	c.sayUntil = time.Time{}
 	c.prompts, c.userAt = 0, time.Time{}
 	c.waitingBot, c.botAt = false, time.Time{}
 	c.sayAfterCancel = "" // never talk over the user with a stale fallback
@@ -261,6 +263,7 @@ func (c *IdleController) observe(f Frame) {
 	case *SpeakingStateFrame:
 		switch v.State {
 		case SpeakingStarted:
+			c.sayUntil = time.Time{}
 			c.botSpeaking, c.waitingBot, c.sawStart, c.quietPolls = true, false, true, 0
 			c.userAt, c.botAt, c.strikes = time.Time{}, time.Time{}, 0
 		case SpeakingStopped:
@@ -292,6 +295,7 @@ func (c *IdleController) observe(f Frame) {
 		c.userInput()
 		c.arm(now) // restarts the clock; the aggregated message follows within the aggregate timeout
 	case *UserMessageFrame:
+		c.sayUntil = time.Time{}
 		c.userAt = time.Time{}
 		c.prompts = 0 // synthetic turns never pass this stage (they re-enter after it)
 		if c.cfg.BotTimeout > 0 {
@@ -472,7 +476,9 @@ func (c *IdleController) userIdleLocked(now time.Time) []func() {
 	if c.botSpeaking || c.userSpeaking || c.turnUser {
 		return nil // the next transition re-arms the clock
 	}
-	if c.busy() || (c.cfg.Muted != nil && c.cfg.Muted()) || (c.cfg.Answering != nil && c.cfg.Answering()) {
+	// A line of our own that never played (stalled TTS) leaves the assistant Active: past its cap that no longer counts.
+	stalled := !c.sayUntil.IsZero() && now.After(c.sayUntil)
+	if c.busy() || (c.cfg.Muted != nil && c.cfg.Muted()) || (c.cfg.Answering != nil && !stalled && c.cfg.Answering()) {
 		c.userAt = now.Add(c.cfg.UserTimeout)
 		return nil
 	}
@@ -539,8 +545,14 @@ func (c *IdleController) prompt(n int, nudge bool) {
 
 // say speaks text as the assistant's next turn; it only queues, and an error means the call is ending.
 func (c *IdleController) say(text string) {
-	if c.cfg.Speak != nil {
-		_ = c.cfg.Speak(text)
+	if c.cfg.Speak == nil {
+		return
+	}
+	until := c.clk.Now().Add(c.cfg.GoodbyeWait)
+	if c.cfg.Speak(text) == nil {
+		c.mu.Lock()
+		c.sayUntil = until
+		c.mu.Unlock()
 	}
 }
 

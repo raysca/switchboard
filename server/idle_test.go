@@ -326,28 +326,34 @@ func TestCallPipelineIdleUserSilenceEndsCall(t *testing.T) {
 // WebSocket path, with a final 1000 close (not the 1001 "reconnect elsewhere"
 // of a drain) and the user_idle reason in a non-fatal RTVI error.
 func TestIdleSilentCallerIsHungUpWithNormalClose(t *testing.T) {
-	s, _, dial := drainFixture(t, time.Second)
-	s.cfg.Idle.UserTimeout, s.cfg.Idle.MaxPrompts, s.cfg.Idle.PromptMode, s.cfg.Idle.Goodbye = 100*time.Millisecond, 1, "say", "" // no spoken goodbye
-	// The prompt is the assistant's own turn, which stays active until its audio has been written.
-	s.registry.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
-		return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2}), nil
-	})
-	conn, _ := dial(true)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	var err error
-	saw := false
-	for {
-		var data []byte
-		if _, data, err = conn.Read(ctx); err != nil {
-			break
-		}
-		saw = saw || (bytes.Contains(data, []byte(core.IdleReasonUser)) && bytes.Contains(data, []byte(`"fatal":false`)))
+	// A TTS that plays the prompt, and one that never speaks (the prompt turn stays active until the cap).
+	for name, speaks := range map[string]bool{"speaking tts": true, "silent tts": false} {
+		t.Run(name, func(t *testing.T) {
+			s, _, dial := drainFixture(t, time.Second)
+			s.cfg.Idle.UserTimeout, s.cfg.Idle.MaxPrompts, s.cfg.Idle.PromptMode, s.cfg.Idle.Goodbye = 100*time.Millisecond, 1, "say", "" // no spoken goodbye
+			if speaks {
+				s.registry.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) {
+					return coretest.NewTTSProcessor(coretest.TTSConfig{FramesPerUnit: 2}), nil
+				})
+			}
+			conn, _ := dial(true)
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			var err error
+			saw := false
+			for {
+				var data []byte
+				if _, data, err = conn.Read(ctx); err != nil {
+					break
+				}
+				saw = saw || (bytes.Contains(data, []byte(core.IdleReasonUser)) && bytes.Contains(data, []byte(`"fatal":false`)))
+			}
+			if got := websocket.CloseStatus(err); got != websocket.StatusNormalClosure || !saw {
+				t.Fatalf("close status %d (%v), reason seen %v", got, err, saw)
+			}
+			idleWait(t, "hang-up counted", func() bool { return s.metrics.UserIdleHangupsTotal.Load() == 1 })
+		})
 	}
-	if got := websocket.CloseStatus(err); got != websocket.StatusNormalClosure || !saw {
-		t.Fatalf("close status %d (%v), reason seen %v", got, err, saw)
-	}
-	idleWait(t, "hang-up counted", func() bool { return s.metrics.UserIdleHangupsTotal.Load() == 1 })
 }
 
 // Idle speech is the assistant's own Say: it reaches the TTS stage as that stage's next unit whatever
