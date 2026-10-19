@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -134,8 +135,12 @@ func (c *RealGoogleTTSClient) Close() error {
 // scheduling, ordering, retries and framing live in core/ttsunit.
 type TTSProcessor struct {
 	*ttsunit.Runner
-	cfg TTSConfig
+	cfg          TTSConfig
+	pieceTimeout time.Duration // bounds one synthesis request (one piece)
 }
+
+// unitBackstop caps a whole unit's attempt; a stuck request is cut by pieceTimeout long before.
+const unitBackstop = 5 * time.Minute
 
 // normalizeTTSConfig fills the defaults the unary and streaming processors share.
 func normalizeTTSConfig(cfg TTSConfig) TTSConfig {
@@ -164,10 +169,15 @@ const ttsLookAhead = 2
 // NewTTSProcessor creates a new TTSProcessor.
 func NewTTSProcessor(cfg TTSConfig) (*TTSProcessor, error) {
 	cfg = normalizeTTSConfig(cfg)
-	p := &TTSProcessor{cfg: cfg}
+	p := &TTSProcessor{cfg: cfg, pieceTimeout: cfg.RetryPolicy.AttemptTimeout}
+	if p.pieceTimeout <= 0 {
+		p.pieceTimeout = ttsRetryPolicy().AttemptTimeout
+	}
+	policy := cfg.RetryPolicy
+	policy.AttemptTimeout = unitBackstop // each piece has its own timeout in attempt
 	p.Runner = ttsunit.New(ttsunit.Config{
 		Provider: cfg.Provider, Model: cfg.Voice, SampleRate: cfg.SampleRate,
-		Breaker: cfg.CircuitBreaker, Policy: cfg.RetryPolicy, Classify: classify,
+		Breaker: cfg.CircuitBreaker, Policy: policy, Classify: classify,
 		Attempt: p.attempt, LookAhead: ttsLookAhead,
 	})
 	return p, nil
@@ -179,8 +189,14 @@ func (p *TTSProcessor) attempt(ctx context.Context, u *ttsunit.Unit, _ int) erro
 		return nil // ponytail: construction-without-client guard (flush-ack test); emits nothing, as before
 	}
 	for _, piece := range splitUnit(u.Frame.Text, p.cfg.MaxSynthesisUnitChars) {
-		pcm, err := p.cfg.Client.SynthesizeSpeech(ctx, piece, p.cfg.Voice, p.cfg.SampleRate)
+		pctx, cancel := context.WithTimeoutCause(ctx, p.pieceTimeout, resilience.ErrTimeout)
+		pcm, err := p.cfg.Client.SynthesizeSpeech(pctx, piece, p.cfg.Voice, p.cfg.SampleRate)
+		timedOut := errors.Is(context.Cause(pctx), resilience.ErrTimeout)
+		cancel()
 		if err != nil {
+			if timedOut {
+				err = resilience.ErrTimeout
+			}
 			return MapError("tts", err) // R5: error frames keep carrying *ProviderError
 		}
 		if err := u.Write(pcm); err != nil {
@@ -227,8 +243,9 @@ func appendPiece(pieces []string, r []rune) []string {
 	return pieces
 }
 
-// ttsRetryPolicy bounds one synthesis request (at most MaxSynthesisUnitChars)
-// tighter than an LLM stream.
+// ttsRetryPolicy bounds one synthesis request (one piece of at most
+// MaxSynthesisUnitChars) tighter than an LLM stream; the unary processor applies
+// AttemptTimeout per piece, the streaming one as its idle limit.
 func ttsRetryPolicy() resilience.Policy {
 	p := resilience.DefaultPolicy()
 	p.AttemptTimeout = 10 * time.Second
