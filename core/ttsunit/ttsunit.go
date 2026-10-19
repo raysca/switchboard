@@ -189,11 +189,11 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 			r.mu.Unlock()
 		}()
 
-		var u *Unit
+		u := &Unit{Frame: unit, r: r, s: s, done: synthCtx.Done(), span: span, session: traceSession, turn: traceTurn, gen: traceGen, policy: policy}
 		var err error
 		if r.cfg.LookAhead > 0 {
-			u, err = r.runAhead(unit, seq, s, synthCtx, sessionCtx, span, traceSession, traceTurn, traceGen, policy)
-			if u == nil { // stale: its slot is released in order
+			var stale bool
+			if stale, err = r.runAhead(u, seq, synthCtx, sessionCtx); stale { // its slot is released in order
 				return
 			}
 		} else {
@@ -208,7 +208,6 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 				r.StaleTotal.Add(1)
 				return
 			}
-			u = &Unit{Frame: unit, r: r, s: s, done: synthCtx.Done(), span: span, session: traceSession, turn: traceTurn, gen: traceGen, policy: policy}
 			err = r.run(synthCtx, u)
 		}
 		if err != nil {
@@ -264,11 +263,12 @@ func (r *Runner) run(synthCtx context.Context, u *Unit) error {
 }
 
 // runAhead is run for LookAhead > 0: the attempt starts as soon as its queue is free
-// (at most LookAhead units ahead of the one playing), with its audio held; then the unit waits its turn (a stale or
-// failed one too, so the next unit is never wedged) and releases the audio.
-// It returns a nil Unit when the unit was dropped as stale.
-func (r *Runner) runAhead(unit *core.SynthesisUnitFrame, seq uint64, s core.SessionController, synthCtx, sessionCtx context.Context,
-	span core.Span, session core.SessionID, turn core.TurnID, gen core.Generation, policy core.TracePolicy) (*Unit, error) {
+// (at most LookAhead units ahead of the one playing), with its audio held; then
+// the unit waits its turn (a stale or failed one too, so the next unit is never
+// wedged) and releases the audio.
+// It reports stale when the unit was dropped.
+func (r *Runner) runAhead(u *Unit, seq uint64, synthCtx, sessionCtx context.Context) (stale bool, err error) {
+	unit, s := u.Frame, u.s
 	canceled := func() bool {
 		return r.closed || synthCtx.Err() != nil || sessionCtx.Err() != nil || (unit.Gen != 0 && unit.Gen < s.CurrentGeneration())
 	}
@@ -277,8 +277,6 @@ func (r *Runner) runAhead(unit *core.SynthesisUnitFrame, seq uint64, s core.Sess
 	skip := canceled()
 	r.mu.Unlock()
 
-	u := &Unit{Frame: unit, r: r, s: s, done: synthCtx.Done(), span: span, session: session, turn: turn, gen: gen, policy: policy}
-	var err error
 	blank := strings.TrimSpace(unit.Text) == ""
 	if !skip && !blank {
 		u.held = true
@@ -293,7 +291,7 @@ func (r *Runner) runAhead(unit *core.SynthesisUnitFrame, seq uint64, s core.Sess
 	r.mu.Unlock()
 	if skip {
 		r.StaleTotal.Add(1)
-		return nil, nil
+		return true, nil
 	}
 	switch {
 	case blank:
@@ -301,7 +299,7 @@ func (r *Runner) runAhead(unit *core.SynthesisUnitFrame, seq uint64, s core.Sess
 	case err == nil:
 		err = u.release()
 	}
-	return u, err
+	return false, err
 }
 
 // abandon releases seq when its task was never started. Calls are serialized
