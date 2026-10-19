@@ -109,7 +109,7 @@ type stream struct {
 	draining    *time.Timer
 	lastText    string // last candidate emitted for the bound turn
 	settled     bool   // that candidate was Final: all heard text is committed
-	unboundText string // last text heard before a turn adopted the stream; the turn owes it (see beginTurn)
+	unboundText string // last interim text heard before a turn adopted the stream; the turn owes it (see beginTurn)
 
 	stopOnce, traceFinal, traceEnd, overflow sync.Once
 	span                                     core.Span
@@ -715,6 +715,8 @@ func (r *Runner) emit(st *stream, res Result) {
 		// Final, not Final && EndOfUtterance: a closing response need not carry
 		// an EOU final (Riva may answer CloseSend with nothing more).
 		st.lastText, st.settled = res.Text, res.Final
+	} else if res.Final { // committed between turns: echo or noise the provider will not resurface
+		st.unboundText = ""
 	} else {
 		st.unboundText = res.Text
 	}

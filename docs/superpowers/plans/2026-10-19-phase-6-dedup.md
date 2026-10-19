@@ -343,7 +343,7 @@ Callers keep their own concerns: loadtest `ConnectTarget`, proc stats, Prometheu
 
 ---
 
-## Task 6.7 — Unbound final is not lost after adoption (ledger P2 Minor2; behaviour; U2 = yes)
+## Task 6.7 — Unbound interim text is not lost after adoption (ledger P2 Minor2; behaviour; U2 = yes, narrowed 2026-10-19: seed only non-Final unbound text — an unbound Final the provider never resurfaces is echo/noise, and seeding it would demote the provider for the rest of the call via the failover; `TestRunner_UnboundFinalThenSilentEndIsNotALoss`, `TestRunner_RebindKeepsWhatTheTurnHeard`)
 
 **Files:** `core/sttunit/runner.go` (`stream`, `emit` `:694-720`, `beginTurn` `:263-282`), `core/sttunit/runner_test.go`.
 
