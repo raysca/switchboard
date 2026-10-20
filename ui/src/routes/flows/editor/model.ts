@@ -124,7 +124,7 @@ export const DEFAULT_FAILOVER: readonly string[] = ["timeout", "server_error", "
 const SUMMARIZING = new Set(["google", "echo", "nvidia", "openai", "xai"]);
 
 /** What the server caps, when it is known: a flow may only tighten it. */
-export type ServerLimits = { maxMuteMs?: number };
+type ServerLimits = { maxMuteMs?: number };
 
 /** Problems that belong to the whole flow (header state line and Flow settings). */
 export function flowIssues(g: FlowDraft, limits?: ServerLimits): string[] {
