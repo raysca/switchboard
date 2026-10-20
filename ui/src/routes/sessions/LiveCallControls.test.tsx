@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError, type ApiClient } from "../../api/client";
@@ -54,6 +54,32 @@ describe("LiveCallControls", () => {
     await user.click(screen.getByRole("checkbox", { name: "Reply now" }));
     await user.click(screen.getByRole("button", { name: "Send note" }));
     expect(client.addSessionNote).toHaveBeenCalledWith("s1", NOTE, true);
+  });
+
+  it("unchecks Reply now after a successful send, so the next note does not force a reply", async () => {
+    const { client, user } = setup();
+    await user.type(screen.getByLabelText("Note for the agent"), NOTE);
+    await user.click(screen.getByRole("checkbox", { name: "Reply now" }));
+    await user.click(screen.getByRole("button", { name: "Send note" }));
+    await screen.findByText("Note sent.");
+    expect(screen.getByRole("checkbox", { name: "Reply now" })).not.toBeChecked();
+    await user.type(screen.getByLabelText("Note for the agent"), "again");
+    await user.click(screen.getByRole("button", { name: "Send note" }));
+    await waitFor(() => expect(client.addSessionNote).toHaveBeenLastCalledWith("s1", "again", false));
+  });
+
+  it("counts the server's bytes, not characters: 1500 CJK characters are too long", async () => {
+    const { client, user } = setup();
+    const box = screen.getByLabelText("Note for the agent");
+    await user.click(box);
+    await user.paste("汉".repeat(1500)); // 4500 bytes, 1500 UTF-16 units
+    expect(screen.getByRole("button", { name: "Send note" })).toBeDisabled();
+    expect(screen.getByText(/4500 bytes.*4096/)).toBeVisible();
+    await user.clear(box);
+    await user.paste("汉".repeat(1365)); // 4095 bytes
+    expect(screen.getByRole("button", { name: "Send note" })).toBeEnabled();
+    expect(screen.queryByText(/bytes/)).toBeNull();
+    expect(client.addSessionNote).not.toHaveBeenCalled();
   });
 
   it("asks for a reply", async () => {

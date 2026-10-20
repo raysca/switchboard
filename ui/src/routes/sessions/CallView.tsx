@@ -159,7 +159,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
       ))}
       {tracesQuery.isError && <p role="note" className="call-note">Steps and routes could not be loaded, so the transcript is not labelled by step.</p>}
 
-      {s.status === "active" && <LiveCallControls client={client} sessionId={sessionId} onEnded={() => void sessionQuery.refetch()} />}
+      {s.status === "active" && <LiveCallControls key={sessionId} client={client} sessionId={sessionId} onEnded={() => void sessionQuery.refetch()} />}
 
       <div className="call-columns">
         <section aria-labelledby="call-turns-title" className="call-section call-columns__main">

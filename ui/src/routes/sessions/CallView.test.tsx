@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { Link, MemoryRouter, Route, Routes } from "react-router";
 import type { FlowDTO, ApiClient, SessionDTO, SessionTracesDTO, TraceSpanDTO, TurnDTO } from "../../api/client";
 import { ApiError } from "../../api/client";
 import { CallView } from "./CallView";
@@ -281,6 +281,32 @@ describe("CallView", () => {
   it("offers the live-call controls only while the call is active", async () => {
     setup({ getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null })) });
     expect(await screen.findByRole("region", { name: "Guide this call" })).toBeVisible();
+  });
+
+  it("starts the live-call controls empty when the page moves to another call", async () => {
+    const full = {
+      getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null })),
+      getSessionTurns: vi.fn().mockResolvedValue(turns),
+      getSessionTraces: vi.fn().mockResolvedValue(traces(toBilling)),
+      getFlows: vi.fn().mockResolvedValue([flow()]),
+    } as unknown as ApiClient;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={[`/sessions/${ID}`]}>
+          <Link to="/sessions/other-call">other call</Link>
+          <Routes>
+            <Route path="/sessions/:sessionId" element={<CallView client={full} keyValue="k" />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Note for the agent"), "half a note");
+    await user.click(screen.getByRole("checkbox", { name: "Reply now" }));
+    await user.click(screen.getByRole("link", { name: "other call" }));
+    await waitFor(() => expect(full.getSession).toHaveBeenCalledWith("other-call"));
+    expect(await screen.findByLabelText("Note for the agent")).toHaveValue("");
+    expect(screen.getByRole("checkbox", { name: "Reply now" })).not.toBeChecked();
   });
 
   it("hides the live-call controls for an ended call", async () => {
