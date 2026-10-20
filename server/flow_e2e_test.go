@@ -788,6 +788,20 @@ func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	}
 }
 
+// send_dtmf is a call tool: after a route the new step can still press keys.
+func TestFlowE2ESendDTMFWorksAfterARoute(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(cfg *Config) { cfg.DTMF.SendTool = true })
+	c := r.dial(r.createRoutedFlow("salesvoice"))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	c.say("please transfer to sales")
+	c.waitReplies("[SALES", 1)
+	c.say(`call tool send_dtmf {"digits":"1"}`)
+	c.waitReplies("Tool send_dtmf returned", 1)
+	if c.replies("Tool send_dtmf failed") != 0 {
+		t.Fatal("send_dtmf failed after the route")
+	}
+}
+
 // endCallFlowJSON is a front -> sales flow; frontEnds and salesEnds give that step the end_call tool.
 func endCallFlowJSON(frontEnds, salesEnds bool) json.RawMessage {
 	stt := `"stt":{"provider":"echo","model":"s"}`

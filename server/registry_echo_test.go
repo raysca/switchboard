@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/core/audio/dtmf"
 	"govoice/providers/echo"
 	"govoice/providers/google"
 	"govoice/server/runtime"
@@ -83,9 +84,9 @@ func TestEchoLLMWiresTransferEndCallAndMCPPhrases(t *testing.T) {
 	}
 	opts := echoLLMOptions(DefaultConfig(ProfileDevelopment), StageSpec{
 		SystemPrompt: "front desk",
-		Tools:        []core.ToolDefinition{{Name: name, RemoteName: "lookup_order"}, {Name: "transfer_to_sales"}, {Name: endCallName}},
+		Tools:        []core.ToolDefinition{{Name: name, RemoteName: "lookup_order"}, {Name: "transfer_to_sales"}, {Name: endCallName}, {Name: dtmf.ToolName}},
 	})
-	for phrase, tool := range map[string]string{"transfer to sales": "transfer_to_sales", "end the call": endCallName, "call tool lookup_order": name} {
+	for phrase, tool := range map[string]string{"transfer to sales": "transfer_to_sales", "end the call": endCallName, "call tool lookup_order": name, "call tool send_dtmf": dtmf.ToolName} {
 		if opts.Phrases[phrase] != tool {
 			t.Errorf("phrase %q -> %q, want %q (all: %v)", phrase, opts.Phrases[phrase], tool, opts.Phrases)
 		}

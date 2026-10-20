@@ -16,12 +16,14 @@ type dtmfStages struct {
 	in  core.Processor // before VAD: tones in inbound audio -> InputDTMF
 	agg core.Processor // before user context: key presses -> user message
 	out core.Processor // before transport: OutputDTMF -> tone audio
+	// tones is the same processor as out, typed for dtmf.Executor; it is non-nil exactly when the
+	// send_dtmf tool is on (Config.DTMF.SendTool).
+	tones *dtmf.OutputProcessor
 }
 
-// buildDTMF constructs the enabled stages. With SendTool it appends the
-// send_dtmf tool to the primary LLM and every fallback of call (a local copy),
-// routing it to the output stage.
-func buildDTMF(cfg *Config, call *CallSpec) (dtmfStages, error) {
+// buildDTMF constructs the enabled stages. With SendTool the output stage also
+// backs the send_dtmf tool, which addTool puts on every LLM stage of every step.
+func buildDTMF(cfg *Config) (dtmfStages, error) {
 	var st dtmfStages
 	if cfg == nil {
 		return st, nil
@@ -49,18 +51,15 @@ func buildDTMF(cfg *Config, call *CallSpec) (dtmfStages, error) {
 		if err != nil {
 			return st, err
 		}
-		st.out = out
-		add := func(s *StageSpec) {
-			s.Tools = append(slices.Clone(s.Tools), dtmf.ToolDefinition())
-			s.ToolExecutor = dtmf.Executor(out, s.ToolExecutor)
-		}
-		add(&call.LLM)
-		call.LLMFallbacks = slices.Clone(call.LLMFallbacks)
-		for i := range call.LLMFallbacks {
-			add(&call.LLMFallbacks[i])
-		}
+		st.out, st.tones = out, out
 	}
 	return st, nil
+}
+
+// addTool gives one LLM stage the send_dtmf tool, routed to the tone output (a local copy of its tools).
+func (st dtmfStages) addTool(s *StageSpec) {
+	s.Tools = append(slices.Clone(s.Tools), dtmf.ToolDefinition())
+	s.ToolExecutor = dtmf.Executor(st.tones, s.ToolExecutor)
 }
 
 // onDTMF enters client-sent key presses (RTVI dtmf) as InputDTMF frames at the

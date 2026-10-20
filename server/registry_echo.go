@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"govoice/core"
+	"govoice/core/audio/dtmf"
 	"govoice/providers/echo"
 	"govoice/providers/google"
 )
@@ -66,11 +67,15 @@ func echoLLMOptions(cfg *Config, spec StageSpec) echo.LLMOptions {
 // mcpToolPhrases maps "call tool <remote name>" to each MCP tool's model-facing name, and that name
 // to the remote name the reply uses. A tool is an MCP tool when its definition carries a RemoteName
 // (set where the runtime binds it). Two attached tools with the same remote name: the phrase goes
-// to the first in the order given.
+// to the first in the order given. send_dtmf gets the same phrase ("call tool send_dtmf {json}") so the
+// e2e suites can send tones.
 func mcpToolPhrases(defs []core.ToolDefinition) (map[string]string, map[string]string) {
 	phrases, spoken := map[string]string{}, map[string]string{}
 	for _, d := range defs {
 		remote := d.RemoteName
+		if d.Name == dtmf.ToolName {
+			remote = d.Name
+		}
 		if remote == "" {
 			continue
 		}

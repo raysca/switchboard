@@ -584,7 +584,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	if err := idleCfg.validate(cfg.DTMF.Aggregate, cfg.DTMF.AggregateTimeout); err != nil {
 		return fail(fmt.Errorf("flow idle settings: %w", err)) // the server's DTMF rules changed since the flow was published
 	}
-	dt, err := buildDTMF(cfg, &call)
+	dt, err := buildDTMF(cfg)
 	if err != nil {
 		return fail(fmt.Errorf("create dtmf processors: %w", err))
 	}
@@ -619,6 +619,12 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	prepLLM := func(spec StageSpec, fallbacks []StageSpec) (StageSpec, []StageSpec) {
 		spec.History = ctxPool
 		fallbacks = slices.Clone(fallbacks)
+		if dt.tones != nil { // send_dtmf is a call tool: every step's stages have it, before the tool-activity wrap
+			dt.addTool(&spec)
+			for i := range fallbacks {
+				dt.addTool(&fallbacks[i])
+			}
+		}
 		if completion != nil {
 			spec.SystemPrompt = completionPrompt(spec.SystemPrompt, cfg.Turn.Completion)
 			for i := range fallbacks {
