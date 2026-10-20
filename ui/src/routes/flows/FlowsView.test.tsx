@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import type { FlowDTO, ApiClient, SessionDTO } from "../../api/client";
-import { ApiError } from "../../api/client";
+import { ApiError, FLOW_PAGES_MAX } from "../../api/client";
 import { FlowsView } from "./FlowsView";
 
 const flow = (over: Partial<FlowDTO> = {}, config: Record<string, unknown> = {}): FlowDTO => ({
@@ -179,12 +179,18 @@ describe("FlowsView", () => {
     expect(screen.getByRole("button", { name: "New flow" })).toBeVisible();
   });
 
-  it("hides archived flows, and says when the list was cut at the API's page size", async () => {
-    const many = Array.from({ length: 100 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }));
+  it("hides archived flows, and says the list was cut only at the page cap", async () => {
+    const many = Array.from({ length: FLOW_PAGES_MAX * 100 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }));
     many[0] = flow({ id: "f0", name: "Gone", archived: true });
     setup({ getFlows: vi.fn().mockResolvedValue(many) });
-    expect(await screen.findByText("Showing the first 100 flows.")).toBeVisible();
+    expect(await screen.findByText("Showing the first 1000 flows.")).toBeVisible();
     expect(screen.queryByRole("link", { name: "Gone" })).toBeNull();
+  });
+
+  it("has no cut-off note for a list the pages covered", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue(Array.from({ length: 101 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }))) });
+    expect(await screen.findByRole("link", { name: "Flow 100" })).toBeVisible();
+    expect(screen.queryByText(/Showing the first/)).toBeNull();
   });
 
   it("names each missing variable once, beside the reasons", async () => {

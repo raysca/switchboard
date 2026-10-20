@@ -184,6 +184,9 @@ export const flowSchema = z.object({
 });
 export type FlowDTO = z.infer<typeof flowSchema>;
 
+const FLOW_PAGE = 100; // the server's max page (server/api/api.go ParsePagination)
+export const FLOW_PAGES_MAX = 10; // ponytail: 1000 flows, O(n²) de-dup is fine at that size; offsets can skip a flow deleted mid-walk until the next refetch; a server-side search replaces this if anyone gets near it
+
 const flowsEnvelope = z.object({
   data: z.array(flowSchema),
 });
@@ -552,8 +555,15 @@ export function createApiClient(
       (await request("/providers", providersEnvelope)).data,
     // ponytail: one page of the server max (100); page through when someone has more flows.
     // Includes archived flows (sessions still name them); list views filter them out.
-    getFlows: async () =>
-      (await request("/flows?limit=100", flowsEnvelope)).data,
+    getFlows: async () => {
+      const all: FlowDTO[] = [];
+      for (let page = 0; page < FLOW_PAGES_MAX; page++) {
+        const batch = (await request(`/flows?limit=${FLOW_PAGE}&offset=${page * FLOW_PAGE}`, flowsEnvelope)).data;
+        for (const f of batch) if (!all.some((g) => g.id === f.id)) all.push(f); // a flow created between pages shifts offsets
+        if (batch.length < FLOW_PAGE) break;
+      }
+      return all;
+    },
     getFlow: async (id: string) =>
       (await request(`/flows/${encodeURIComponent(id)}`, flowEnvelope)).data,
     /** One earlier publish of a flow (config and tools), read-only: a rollback publishes it again. */

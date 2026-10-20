@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { asApiError, type FlowDTO, type ApiClient, type ApiError } from "../../api/client";
+import { asApiError, FLOW_PAGES_MAX, type FlowDTO, type ApiClient, type ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { ArchiveFlowDialog } from "./ArchiveFlowDialog";
 import { NewFlowDialog } from "./NewFlowDialog";
 import { canTest, liveCalls, readiness, routeCount, stepCount, toolCount } from "./flowStats";
 import { useActiveSessions } from "./useActiveSessions";
 
-/** The management API returns at most this many flows (GET /flows?limit=100). */
-const LIST_LIMIT = 100;
+/** getFlows reads at most this many flows (FLOW_PAGES_MAX pages of 100). */
+const LIST_LIMIT = FLOW_PAGES_MAX * 100;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 export type FlowsViewProps = { client: ApiClient; keyValue: string | null };

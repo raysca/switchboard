@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, PROXIED_ACCESS, probeProxiedAccess, createApiClient, flowSchema, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
+import { ApiError, FLOW_PAGES_MAX, PROXIED_ACCESS, probeProxiedAccess, createApiClient, flowSchema, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
 
 describe("management client", () => {
   it("sends an in-memory bearer and parses the response", async () => {
@@ -298,7 +298,7 @@ describe("management client", () => {
 
       const flows = await client.getFlows();
       expect(flows).toHaveLength(1);
-      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/flows?limit=100", expect.any(Object));
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/flows?limit=100&offset=0", expect.any(Object));
 
       const created = await client.createFlow({
         name: "Customer Support",
@@ -614,6 +614,50 @@ describe("access without a pasted key", () => {
       const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
       await expect(client.addSessionNote("s1", "x", false)).rejects.toMatchObject({ status: 429, code: "too_many_pending" });
     });
+  });
+});
+
+describe("getFlows follows the server's pages", () => {
+  const dto = (id: string) => ({
+    id, name: id, description: "", enabled: true, archived: false, current_version: null,
+    readiness: { state: "ready", reasons: [] }, created_at: "", updated_at: "",
+  });
+  const ids = (from: number, n: number) => Array.from({ length: n }, (_, i) => dto(`f${from + i}`));
+  const clientFor = (pageFor: (offset: number) => Response) => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => pageFor(Number(new URL(String(input), "http://x").searchParams.get("offset"))));
+    return { fetcher, client: createApiClient(() => ({ key: "k", generation: 1 }), fetcher) };
+  };
+  const ok = (data: unknown[]) => new Response(JSON.stringify({ data }), { status: 200 });
+  const urls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.map((c) => c[0]);
+
+  it("reads a second page when the first is full", async () => {
+    const { fetcher, client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : ids(100, 1)));
+    await expect(client.getFlows()).resolves.toHaveLength(101);
+    expect(urls(fetcher)).toEqual(["/api/v1/flows?limit=100&offset=0", "/api/v1/flows?limit=100&offset=100"]);
+  });
+
+  it("asks once more after exactly 100 flows, and gets an empty page", async () => {
+    const { fetcher, client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : []));
+    await expect(client.getFlows()).resolves.toHaveLength(100);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops at the page cap", async () => {
+    const { fetcher, client } = clientFor((o) => ok(ids(o, 100)));
+    await expect(client.getFlows()).resolves.toHaveLength(FLOW_PAGES_MAX * 100);
+    expect(fetcher).toHaveBeenCalledTimes(FLOW_PAGES_MAX);
+  });
+
+  it("lists a flow once when pages overlap", async () => {
+    const { client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : ids(99, 2)));
+    const flows = await client.getFlows();
+    expect(flows).toHaveLength(101);
+    expect(new Set(flows.map((f) => f.id)).size).toBe(101);
+  });
+
+  it("rejects, with no partial list, when a later page fails", async () => {
+    const { client } = clientFor((o) => (o === 0 ? ok(ids(0, 100)) : new Response("{}", { status: 500 })));
+    await expect(client.getFlows()).rejects.toBeInstanceOf(ApiError);
   });
 });
 
