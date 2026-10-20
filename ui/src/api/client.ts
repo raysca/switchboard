@@ -427,6 +427,8 @@ const sessionTracesEnvelope = z.object({
 type VoiceToken = z.infer<typeof tokenEnvelope>["data"];
 type AuthSnapshot = { key: string | null; generation: number };
 
+const acceptedEnvelope = z.object({ data: z.object({ accepted: z.number() }) });
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -685,6 +687,10 @@ export function createApiClient(
           turnsEnvelope,
         )
       ).data,
+    addSessionNote: async (id: string, content: string, run: boolean) =>
+      (await request(`/sessions/${encodeURIComponent(id)}/context`, acceptedEnvelope, { method: "POST", body: { messages: [{ content }], run } })).data,
+    runSession: async (id: string) =>
+      (await request(`/sessions/${encodeURIComponent(id)}/run`, acceptedEnvelope, { method: "POST" })).data,
     getSessionTraces: async (id: string) => {
       return (
         await request(

@@ -592,4 +592,27 @@ describe("access without a pasted key", () => {
     await expect(probeProxiedAccess(async () => new Response("{}", { status: 401 }))).resolves.toBe(false);
     await expect(probeProxiedAccess(async () => { throw new TypeError("offline"); })).resolves.toBe(false);
   });
+
+  describe("live-call controls", () => {
+    const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+    it("posts a note to the encoded id and a run request without a body", async () => {
+      const fetcher = vi.fn<typeof fetch>(async () => json(202, { data: { accepted: 1 } }));
+      const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+      await expect(client.addSessionNote("s/1", "vip", true)).resolves.toEqual({ accepted: 1 });
+      const [url, init] = fetcher.mock.calls[0];
+      expect(url).toBe("/api/v1/sessions/s%2F1/context");
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toBe('{"messages":[{"content":"vip"}],"run":true}');
+      await expect(client.runSession("s/1")).resolves.toEqual({ accepted: 1 });
+      const [runUrl, runInit] = fetcher.mock.calls[1];
+      expect(runUrl).toBe("/api/v1/sessions/s%2F1/run");
+      expect(runInit?.method).toBe("POST");
+      expect(runInit?.body).toBeUndefined();
+    });
+    it("turns a 429 too_many_pending into an ApiError with status and code", async () => {
+      const fetcher = vi.fn<typeof fetch>(async () => json(429, { error: { code: "too_many_pending", message: "busy", request_id: "r" } }));
+      const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+      await expect(client.addSessionNote("s1", "x", false)).rejects.toMatchObject({ status: 429, code: "too_many_pending" });
+    });
+  });
 });

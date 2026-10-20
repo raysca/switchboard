@@ -277,4 +277,32 @@ describe("CallView", () => {
     expect(screen.getAllByRole("img", { name: /Heard/ })).toHaveLength(1);
     expect(screen.getAllByText("Replied in 1.2 s").length).toBe(2);
   });
+
+  it("offers the live-call controls only while the call is active", async () => {
+    setup({ getSession: vi.fn().mockResolvedValue(session({ status: "active", ended_at: null })) });
+    expect(await screen.findByRole("region", { name: "Guide this call" })).toBeVisible();
+  });
+
+  it("hides the live-call controls for an ended call", async () => {
+    setup({});
+    await screen.findByText("Ended · 04:12");
+    expect(screen.queryByRole("region", { name: "Guide this call" })).toBeNull();
+  });
+
+  it("refetches turns and traces once when the call leaves active", async () => {
+    const getSession = vi
+      .fn()
+      .mockResolvedValueOnce(session({ status: "active", ended_at: null }))
+      .mockResolvedValue(session());
+    const getSessionTurns = vi.fn().mockResolvedValue(turns);
+    const getSessionTraces = vi.fn().mockResolvedValue(traces(toBilling));
+    const { user } = setup({ getSession, getSessionTurns, getSessionTraces, runSession: vi.fn().mockRejectedValue(new ApiError("gone", "not_found", 404, "")) });
+    await user.click(await screen.findByRole("button", { name: "Ask for a reply" }));
+    await screen.findByText("Ended · 04:12");
+    await waitFor(() => expect(getSessionTurns).toHaveBeenCalledTimes(2));
+    expect(getSessionTraces).toHaveBeenCalledTimes(2);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(getSessionTurns).toHaveBeenCalledTimes(2);
+    expect(getSessionTraces).toHaveBeenCalledTimes(2);
+  });
 });

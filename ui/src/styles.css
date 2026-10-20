@@ -3373,3 +3373,10 @@ main:has(.mcp-page) {
 .restore-confirm p {
   margin: 0;
 }
+.call-control textarea {
+  display: block;
+  width: 100%;
+}
+.call-control__error {
+  color: var(--bad);
+}
