@@ -83,6 +83,10 @@ type CallSpec struct {
 	StoredSessionID string
 	// TurnLatencies collects the call's per-turn stage latencies for its turn rows.
 	TurnLatencies *turnLatencies
+	// MaxCallDuration is how long the call may last: the shorter of the flow's limit and the server's.
+	MaxCallDuration time.Duration
+	// Ender is set when some step has end_call; the builder wires it to the idle controller.
+	Ender *callEnder
 	// Flow is set for flows with more than one step: the call starts on the
 	// start step and moves between steps by route.
 	Flow *CallFlow
@@ -125,9 +129,12 @@ type CallSpec struct {
 	VADStopMS int
 	// STTP99MS overrides the STT p99 for this call if > 0.
 	STTP99MS int
-	// Idle and Audio are the flow's quiet-caller and audio settings (nil: the server's).
+	// Idle, Audio and Turn are the flow's quiet-caller, audio and interruption settings (nil: the server's).
 	Idle  *flow.IdleSettings
 	Audio *flow.AudioSettings
+	// toolHold plays the flow's hold sound while a slow synchronous tool runs (nil: none).
+	toolHold *holdCue
+	Turn     *flow.TurnSettings
 	// PushToTalk: the client opted in at client-ready. Turns start and end
 	// only on its push-to-talk messages (ExternalStart/ExternalStop).
 	PushToTalk bool
@@ -142,6 +149,8 @@ type ProcessorFactory func(cfg *Config, spec StageSpec) (core.Processor, error)
 // before serving calls; lookups are unsynchronised.
 type Registry struct {
 	factories map[string]ProcessorFactory
+
+	turnWarned sync.Map // flow version ids already warned about turn settings with the manager off
 
 	googleLLMBreaker *resilience.Breaker
 	googleTTSBreaker *resilience.Breaker
@@ -549,6 +558,26 @@ func (r *Registry) Supports(provider, stage string) bool {
 // and use this only as the fallback.
 const CallUserContextIndex = 4
 
+// callStop is the call's end-of-turn detector: the server's chain with the flow's choices laid over it
+// (speech timeout, detector, smart hold). turnTap is the smart-turn analyzer's audio tap, nil without one.
+func (r *Registry) callStop(cfg *Config, call CallSpec) (stop coreturn.TurnDetector, turnTap core.Processor, err error) {
+	tc := cfg.Turn.forCall(call.Turn)
+	var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
+	if slices.Contains(tc.Stop, "turn-analyzer") && r.turnBackend != nil {
+		a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: tc.Analyzer.Budget, Hold: tc.Analyzer.Hold})
+		turnTap = a.Tap()
+		analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
+			return smartturn.Stop(a, base, tc.Analyzer.Hold)
+		}
+	}
+	st := coreturn.SpeechTimeoutConfig{
+		VADStop: cfg.vadStop(call.VADStopMS), UserSpeechTimeout: tc.SpeechTimeout,
+		STTP99: cfg.sttP99(call.STT.Provider, call.STTP99MS), NoTranscriptTimeout: tc.NoTranscriptTimeout,
+	}
+	stop, err = turnStopDetector(tc.Stop, st, tc.EagerGrace, analyzer)
+	return stop, turnTap, err
+}
+
 // BuildCallPipeline builds VAD -> STT -> transcript -> user context -> LLM ->
 // assistant context -> TTS -> transport for one call of a stored flow.
 func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, error) {
@@ -580,11 +609,18 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		return fail(fmt.Errorf("create stt processor: %w", err))
 	}
 	built = append(built, sttProc)
+	tc := cfg.Turn.forCall(call.Turn)
+	if call.Turn != nil && !tc.Manager {
+		// Once per flow version (a handful of short strings at most), not on every call.
+		if _, seen := r.turnWarned.LoadOrStore(call.FlowVersionID, struct{}{}); !seen {
+			slog.Warn("the flow sets turn settings but turn.manager is off on this server: ignored, except the mute list and the longest mute for push-to-talk calls", slog.String("flow_version", call.FlowVersionID))
+		}
+	}
 	idleCfg := cfg.Idle.forCall(call.Idle)
 	if err := idleCfg.validate(cfg.DTMF.Aggregate, cfg.DTMF.AggregateTimeout); err != nil {
 		return fail(fmt.Errorf("flow idle settings: %w", err)) // the server's DTMF rules changed since the flow was published
 	}
-	dt, err := buildDTMF(cfg, &call)
+	dt, err := buildDTMF(cfg)
 	if err != nil {
 		return fail(fmt.Errorf("create dtmf processors: %w", err))
 	}
@@ -597,13 +633,13 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	// LLM turn-completion protocol (turn.stop: llm-completion): every candidate's
 	// system prompt carries the marker instructions.
-	completion := completionConfig(cfg.Turn.Stop, cfg.Turn.Completion, r.onCompletion)
+	completion := completionConfig(tc.Stop, tc.Completion, r.onCompletion)
 	if call.PushToTalk {
 		completion = nil // a release is a definite end of turn: no "incomplete" holds
 	}
 	// function_call mute: every LLM stage's tool executor reports in-flight calls.
 	var muteTools *coreturn.ToolActivity
-	if (cfg.Turn.Manager && slices.Contains(cfg.Turn.Mute, coreturn.MuteFunctionCall)) || idleCfg.enabled() { // idle also pauses while a tool runs
+	if ((tc.Manager || call.PushToTalk) && slices.Contains(tc.Mute, coreturn.MuteFunctionCall)) || idleCfg.enabled() { // idle also pauses while a tool runs
 		muteTools = coreturn.NewToolActivity()
 	}
 	// The trigger is on every call: finished async tools, route flips and operator notes
@@ -619,10 +655,16 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	prepLLM := func(spec StageSpec, fallbacks []StageSpec) (StageSpec, []StageSpec) {
 		spec.History = ctxPool
 		fallbacks = slices.Clone(fallbacks)
-		if completion != nil {
-			spec.SystemPrompt = completionPrompt(spec.SystemPrompt, cfg.Turn.Completion)
+		if dt.tones != nil { // send_dtmf is a call tool: every step's stages have it, before the tool-activity wrap
+			dt.addTool(&spec)
 			for i := range fallbacks {
-				fallbacks[i].SystemPrompt = completionPrompt(fallbacks[i].SystemPrompt, cfg.Turn.Completion)
+				dt.addTool(&fallbacks[i])
+			}
+		}
+		if completion != nil {
+			spec.SystemPrompt = completionPrompt(spec.SystemPrompt, tc.Completion)
+			for i := range fallbacks {
+				fallbacks[i].SystemPrompt = completionPrompt(fallbacks[i].SystemPrompt, tc.Completion)
 			}
 		}
 		if muteTools != nil {
@@ -630,6 +672,10 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			for i := range fallbacks {
 				fallbacks[i].ToolExecutor = muteTools.Wrap(fallbacks[i].ToolExecutor, fallbacks[i].Tools)
 			}
+		}
+		spec.ToolExecutor = holdTools(spec.ToolExecutor, spec.Tools, call.toolHold)
+		for i := range fallbacks {
+			fallbacks[i].ToolExecutor = holdTools(fallbacks[i].ToolExecutor, fallbacks[i].Tools, call.toolHold)
 		}
 		spec.AsyncSink = asyncTrigger.Deliver
 		for i := range fallbacks {
@@ -732,7 +778,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	var turnProc, turnTap core.Processor
 	var turnTyped *coreturn.Processor
-	if cfg.Turn.Manager || call.PushToTalk {
+	if tc.Manager || call.PushToTalk {
 		mc := coreturn.DefaultConfig()
 		var stop coreturn.TurnDetector
 		if call.PushToTalk {
@@ -743,36 +789,24 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.ExternalStart()}
 			stop = coreturn.StopChain(coreturn.ExternalStop())
 		} else {
-			if cfg.Turn.MinWords > 0 {
-				mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.MinWordsStart(cfg.Turn.MinWords, true)}
-			}
-			var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
-			if slices.Contains(cfg.Turn.Stop, "turn-analyzer") && r.turnBackend != nil {
-				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.Hold})
-				turnTap = a.Tap()
-				analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
-					return smartturn.Stop(a, base, cfg.Turn.Analyzer.Hold)
-				}
+			if tc.MinWords > 0 {
+				mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.MinWordsStart(tc.MinWords, true)}
 			}
 			var err error
-			st := coreturn.SpeechTimeoutConfig{
-				VADStop: cfg.vadStop(call.VADStopMS), UserSpeechTimeout: cfg.Turn.SpeechTimeout,
-				STTP99: cfg.sttP99(call.STT.Provider, call.STTP99MS), NoTranscriptTimeout: cfg.Turn.NoTranscriptTimeout,
-			}
-			if stop, err = turnStopDetector(cfg.Turn.Stop, st, cfg.Turn.EagerGrace, analyzer); err != nil {
+			if stop, turnTap, err = r.callStop(cfg, call); err != nil {
 				return fail(err)
 			}
 		}
-		mute, err := coreturn.ParseMuteStrategies(cfg.Turn.Mute, muteTools)
+		mute, err := coreturn.ParseMuteStrategies(tc.Mute, muteTools)
 		if err != nil {
 			return fail(err)
 		}
-		opts := coreturn.ProcessorOptions{Detector: stop, Mute: mute, MaxMute: cfg.Turn.MaxMute, OnMuteDrop: r.onUserMuteDrop}
-		if cfg.Turn.MinWords > 0 && !call.PushToTalk {
+		opts := coreturn.ProcessorOptions{Detector: stop, Mute: mute, MaxMute: tc.MaxMute, OnMuteDrop: r.onUserMuteDrop}
+		if tc.MinWords > 0 && !call.PushToTalk {
 			stt, count := call.STT.Provider, r.onMinWordsNoInterims
 			opts.OnFinalWithoutInterims = func() {
 				slog.Warn("turn.min_words is on but the STT sent no interim results: turns start (and barge-in happens) only when the final transcript arrives; use an STT with interim results or disable turn.min_words",
-					slog.String("stt", stt), slog.Int("min_words", cfg.Turn.MinWords))
+					slog.String("stt", stt), slog.Int("min_words", tc.MinWords))
 				if count != nil {
 					count()
 				}
@@ -809,15 +843,15 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 
 	procs := []core.Processor{vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc, &core.UnitFailureReporter{}}
-	idleProc, err := idleCfg.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, asstCtxProc.Say, held, call.Flow != nil && call.Flow.CanEnd)
+	idleProc, err := idleCfg.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, asstCtxProc.Say, held, call.Ender != nil)
 	if err != nil {
 		return fail(fmt.Errorf("create idle controller: %w", err))
 	}
 	if idleProc != nil { // before the async trigger and the model; zero cost when off
 		procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(idleProc))
 	}
-	if call.Flow != nil && idleProc != nil {
-		call.Flow.End = func(stepID string) error {
+	if call.Ender != nil && idleProc != nil {
+		call.Ender.End = func(stepID string) error {
 			if !idleProc.RequestEnd(EndReasonFlow, endCallWait) {
 				return errCallEnding
 			}

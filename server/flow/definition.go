@@ -33,7 +33,7 @@ type Step struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// Config is the step's stages. STT, VAD, recording, context limits and
-	// async_tools, idle and audio are call-level: only the start step may set them.
+	// async_tools, idle and audio are call-level: only the start step may set them (audio.background alone may be set on any step).
 	Config Config `json:"-"`
 	// Tools lists the MCP tools ("<mcp_server_id>/<remote_name>") this step
 	// exposes, a subset of the flow version's selected tools.
@@ -130,9 +130,6 @@ func Decode(raw json.RawMessage) (Definition, error) {
 		case slugs[s]:
 			return Definition{}, invalid("step names must be unique (%q)", name)
 		}
-		if rn.EndCall && len(rg.Steps) < 2 {
-			return Definition{}, invalid("end_call needs a flow with at least two steps")
-		}
 		ids[rn.ID], slugs[s] = true, true
 		cfg, err := DecodeConfig(rn.Config)
 		if err != nil {
@@ -173,8 +170,11 @@ func (g Definition) validateCallLevel() error {
 		c := n.Config
 		if n.ID != g.Start {
 			if c.STT.Provider != "" || c.VADStopMS != 0 || c.STTP99MS != 0 || c.Recording != (RecordingConfig{}) ||
-				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Audio != nil || c.Context.Summarization != (SummarizationConfig{}) {
-				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, audio); set them on the start step", n.ID)
+				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Turn != nil || c.MaxCallDurationSeconds != 0 || c.Context.Summarization != (SummarizationConfig{}) {
+				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, turn, max_call_duration_seconds); set them on the start step", n.ID)
+			}
+			if a := c.Audio; a != nil && *a != (AudioSettings{Background: a.Background}) {
+				return invalid("step %q: audio may only set background on a step other than the start step", n.ID)
 			}
 		}
 		if entry.Context.Summarization.Enabled && !SummarizingProviders[c.LLM.Provider] {
@@ -182,6 +182,59 @@ func (g Definition) validateCallLevel() error {
 		}
 	}
 	return nil
+}
+
+// deadStepSettings names a setting a non-start step carries that only the start step's applies
+// (text cleaning and failover rules are call-wide). Publish refuses it; a stored version keeps
+// decoding and ignoring it (K1).
+func (g Definition) deadStepSettings() error {
+	for _, n := range g.Steps {
+		if n.ID == g.Start {
+			continue
+		}
+		switch {
+		case n.Config.TTS.CleanText != nil:
+			return invalid("step %q: tts.clean_text applies to the whole call; set it on the start step", n.ID)
+		case len(n.Config.Failover.On) != 0:
+			return invalid("step %q: failover applies to the whole call; set it on the start step", n.ID)
+		}
+	}
+	return nil
+}
+
+// withoutDeadStepSettings is raw with failover and tts.clean_text removed from every step but the start
+// one: what a copy of a stored version carries (the settings were ignored there, K1). Anything that is
+// not a steps-form object comes back unchanged.
+func withoutDeadStepSettings(raw json.RawMessage) json.RawMessage {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil || top["steps"] == nil {
+		return raw
+	}
+	var steps []map[string]json.RawMessage
+	var start string
+	if json.Unmarshal(top["steps"], &steps) != nil || json.Unmarshal(top["start"], &start) != nil {
+		return raw
+	}
+	for _, st := range steps {
+		var id string
+		var cfg map[string]json.RawMessage
+		if json.Unmarshal(st["id"], &id) != nil || id == start || json.Unmarshal(st["config"], &cfg) != nil {
+			continue
+		}
+		delete(cfg, "failover")
+		var tts map[string]json.RawMessage
+		if json.Unmarshal(cfg["tts"], &tts) == nil {
+			delete(tts, "clean_text")
+			cfg["tts"], _ = json.Marshal(tts)
+		}
+		st["config"], _ = json.Marshal(cfg)
+	}
+	top["steps"], _ = json.Marshal(steps)
+	out, err := json.Marshal(top)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 func (g Definition) StartStep() Step {

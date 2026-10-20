@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { ProviderStatus } from "../../../api/client";
+import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
 import { StepAdvanced } from "./StepAdvanced";
@@ -34,6 +34,8 @@ export type StepPanelProps = {
   graph: FlowDraft;
   stepId: string;
   providers: ProviderStatus[];
+  /** What the server offers (its background sounds); absent while it loads. */
+  serverConfig?: ServerConfigDTO;
   /** MCP tools selected on the flow ("<mcp_server_id>/<remote_name>"); a step may call a subset. */
   flowTools: string[];
   /** Chooses which MCP tools the flow has: shown above the step's own choice in the Tools tab. */
@@ -55,7 +57,7 @@ export type StepPanelProps = {
 
 /** Everything about one step, in tabs; Basics alone makes a step ready. */
 export function StepPanel(props: StepPanelProps) {
-  const { graph, stepId, providers, flowTools, toolPicker, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo, fallbackFocusId } = props;
+  const { graph, stepId, providers, serverConfig, flowTools, toolPicker, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo, fallbackFocusId } = props;
   const [routeTarget, setRouteTarget] = useState("");
   const step = graph.steps.find((n) => n.id === stepId);
   if (!step) return null;
@@ -309,15 +311,13 @@ export function StepPanel(props: StepPanelProps) {
                 <input
                   id="step-end-call"
                   type="checkbox"
-                  checked={!!step.end_call && graph.steps.length > 1}
-                  disabled={graph.steps.length === 1}
+                  checked={!!step.end_call}
                   onChange={(e) => onChange(updateStep(graph, step.id, { end_call: e.target.checked }))}
                 />
                 Can end the call
               </label>
               <p className="subtext">
                 Gives this step an end_call tool. The model uses it after saying goodbye; the call ends when it stops speaking.
-                {graph.steps.length === 1 && " Add a second step first: a one-step flow needs a second step to end the call."}
               </p>
             </fieldset>
             {toolPicker && (
@@ -329,6 +329,8 @@ export function StepPanel(props: StepPanelProps) {
             )}
             {flowTools.length === 0 ? (
               <p className="subtext">No tools are chosen for this flow yet.</p>
+            ) : graph.steps.length === 1 ? (
+              <p className="subtext">A one-step flow can call every tool of the flow.</p>
             ) : (
               <fieldset className="stage-box">
                 <legend>Tools this step can call</legend>
@@ -351,7 +353,7 @@ export function StepPanel(props: StepPanelProps) {
           </>
         )}
 
-        {tab === "advanced" && <StepAdvanced graph={graph} step={step} providers={providers} onChange={onChange} />}
+        {tab === "advanced" && <StepAdvanced graph={graph} step={step} providers={providers} serverConfig={serverConfig} onChange={onChange} />}
       </div>
     </SidePanel>
   );

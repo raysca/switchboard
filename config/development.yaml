@@ -117,9 +117,9 @@ warmup:
 #   stt_p99: {}                          # provider: duration, overrides the built-in STT p99
 #   eager_grace: 200ms
 #   completion: {}                       # llm-completion tuning
-#   mute: []                             # always | first_speech | until_first_bot_complete | function_call | critical_output
+#   mute: []                             # always | first_speech | until_first_bot_complete | function_call
 #   max_mute: 30s
-#   analyzer: {mode: "", workers: 1, model_path: third_party/smart_turn_v3.2_cpu.onnx, stop_secs: 3s, budget: 150ms}
+#   analyzer: {mode: "", workers: 1, model_path: third_party/smart_turn_v3.2_cpu.onnx, stop_secs: 3s, budget: 150ms, for_flows: false}  # for_flows: load the model so flows can choose end_of_turn smart (off: no worker process)
 # first_clause_chars: 0                  # try 40 for earlier first audio
 # tts_merge: {enabled: false, margin: 300ms, cap: 250}  # xai/google only: merge sentences while audio slack allows (fewer requests); implies first_clause_chars 40 if 0
 # audio:

@@ -96,8 +96,9 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const redescribed = !!flow && description.trim() !== flow.description;
   const unpublished = !published || renamed || redescribed || toolsChanged || canonical(toPayload(published)) !== canonical(toPayload(graph));
   const needSetup = graph.steps.filter((n) => stepIssues(graph, n.id).length > 0).length;
-  const flowProblems = flowIssues(graph);
-  const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph)];
+  const limits = serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms, maxCallSeconds: serverConfig.max_call_duration_seconds };
+  const flowProblems = flowIssues(graph, limits);
+  const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph, limits)];
   const callable = canCall(flow);
   // A test call runs what is on the canvas; changes that could not be published cannot be tested.
   const draft = unpublished && problems.length === 0 ? { config: toPayload(graph), ...(toolsChanged ? { mcp_tools: tools } : {}) } : undefined;
@@ -180,8 +181,10 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
     if (!flow?.current_version || flow.current_version.number < 2) return;
     const old = await client.getFlowVersion(flow.id, flow.current_version.number - 1);
     setTools(old.mcp_tools);
-    setGraph(fromFlowConfig(old.config, old.mcp_tools.map(toolKey)));
-    onSubmit({ name: name.trim(), description: description.trim(), enabled: flow.enabled, config: old.config as CreateFlowInput["config"], mcp_tools: old.mcp_tools });
+    // Through the editor's own model, so a setting the server now refuses on a step (a pre-7b copy of clean_text or failover) is dropped.
+    const restored = fromFlowConfig(old.config, old.mcp_tools.map(toolKey));
+    setGraph(restored);
+    onSubmit({ name: name.trim(), description: description.trim(), enabled: flow.enabled, config: toPayload(restored) as CreateFlowInput["config"], mcp_tools: old.mcp_tools });
     close();
   };
   const publish = () => {
@@ -292,6 +295,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
             graph={graph}
             stepId={panel.id}
             providers={providers}
+            serverConfig={serverConfig}
             flowTools={flowTools}
             toolPicker={<ToolPicker client={client} selected={tools} onChange={changeTools} asyncKeys={asyncKeys} onAsyncChange={changeAsync} />}
             tab={tab}

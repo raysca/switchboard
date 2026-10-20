@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import type { ProviderStatus } from "../../../api/client";
+import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { StepAdvanced } from "./StepAdvanced";
 import { fromFlowConfig, type FlowDraft } from "./model";
 
@@ -68,18 +68,6 @@ describe("StepAdvanced", () => {
     expect(input).toHaveValue(1);
   });
 
-  it("turns text cleaning off explicitly and back on by omission", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    render(<Harness onChange={onChange} />);
-    const box = screen.getByLabelText(/Clean text before speaking/);
-    expect(box).toBeChecked();
-    await user.click(box);
-    expect(last(onChange).tts).toMatchObject({ clean_text: false });
-    await user.click(box);
-    expect(last(onChange).tts).not.toHaveProperty("clean_text");
-  });
-
   it("shows the four voice settings only for ElevenLabs and stores them by omission", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -124,51 +112,73 @@ describe("StepAdvanced", () => {
     const user = userEvent.setup();
     render(<Harness onChange={vi.fn()} />);
     expect(screen.getByLabelText("Tool calls at once")).toBeInTheDocument();
-    for (const name of ["Fallbacks", "Tool calls at once", "Text cleaning"]) {
+    for (const name of ["Fallbacks", "Tool calls at once"]) {
       await user.click(screen.getByRole("button", { name: `Explain ${name}` }));
     }
     expect(screen.getByRole("region", { name: "Explain Tool calls at once" })).toHaveTextContent("1 to 16");
   });
 
-  describe("failover policy", () => {
-    const box = (name: RegExp | string) => screen.getByRole("checkbox", { name });
-
-    it("shows the three defaults checked, with the rejected-requests class off", () => {
-      render(<Harness onChange={vi.fn()} />);
-      const group = screen.getByRole("group", { name: "When to move to a fallback" });
-      expect(group).toHaveTextContent("Only matters when a stage has fallbacks.");
-      expect(box("Timeouts")).toBeChecked();
-      expect(box("Server errors and dropped connections")).toBeChecked();
-      expect(box("The provider's circuit breaker is open")).toBeChecked();
-      expect(box("Rejected requests (bad request, bad key)")).not.toBeChecked();
+  describe("background sound on a step other than the start", () => {
+    const server = {
+      audio: { backgrounds: ["cafe", "office"], cues: [], allow_flow_background: true, background_default: "cafe" },
+    } as unknown as ServerConfigDTO;
+    const two = fromFlowConfig({
+      start: "a",
+      steps: [
+        { id: "a", name: "A", config: { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" }, stt: { provider: "google" } } },
+        { id: "b", name: "B", config: { llm: { provider: "google", model: "gemini" }, tts: { provider: "google", voice: "aoede" } } },
+      ],
+      routes: [{ id: "e1", from: "a", to: "b", condition: "x" }],
     });
+    function Two({ onChange, serverConfig = server, initial = two }: { onChange: (g: FlowDraft) => void; serverConfig?: ServerConfigDTO; initial?: FlowDraft }) {
+      const [g, setG] = useState(initial);
+      return <StepAdvanced graph={g} step={g.steps[1]} providers={providers} serverConfig={serverConfig} onChange={(n) => (setG(n), onChange(n))} />;
+    }
+    const audioOf = (fn: ReturnType<typeof vi.fn>) => (fn.mock.calls.at(-1)![0] as FlowDraft).steps[1].config.audio;
 
-    it("writes the policy in a fixed order, and drops the key when it is the default again", async () => {
+    it("keeps the current sound by default, and writes none or a named sound", async () => {
       const user = userEvent.setup();
       const onChange = vi.fn();
-      render(<Harness onChange={onChange} />);
-      await user.click(box("Rejected requests (bad request, bad key)"));
-      expect(last(onChange).failover).toEqual({ on: ["timeout", "server_error", "circuit_open", "client_error"] });
-      await user.click(box("Rejected requests (bad request, bad key)"));
-      expect(last(onChange)).not.toHaveProperty("failover");
+      render(<Two onChange={onChange} />);
+      const select = screen.getByLabelText("Background sound");
+      expect(select).toHaveValue("");
+      expect(screen.getByRole("option", { name: "Keep the current sound" })).toBeInTheDocument();
+      await user.selectOptions(select, "office");
+      expect(audioOf(onChange)).toEqual({ background: { name: "office" } });
+      await user.selectOptions(select, "__none__");
+      expect(audioOf(onChange)).toEqual({ background: { name: "" } });
+      await user.selectOptions(select, "");
+      expect(audioOf(onChange)).toBeUndefined();
     });
 
-    it("keeps at least one class checked: an empty list would silently mean the defaults", async () => {
+    it("tells a catalogue sound named none or default from the choices of the same name", async () => {
       const user = userEvent.setup();
       const onChange = vi.fn();
-      render(<Harness onChange={onChange} />);
-      await user.click(box("Timeouts"));
-      await user.click(box("Server errors and dropped connections"));
-      expect(last(onChange).failover).toEqual({ on: ["circuit_open"] });
-      expect(box("The provider's circuit breaker is open")).toBeDisabled();
+      const odd = { audio: { ...server.audio, backgrounds: ["default", "none"] } } as unknown as ServerConfigDTO;
+      render(<Two onChange={onChange} serverConfig={odd} />);
+      const select = screen.getByLabelText("Background sound");
+      await user.selectOptions(select, screen.getByRole("option", { name: "none" }));
+      expect(audioOf(onChange)).toEqual({ background: { name: "none" } });
+      await user.selectOptions(select, screen.getByRole("option", { name: "None" }));
+      expect(audioOf(onChange)).toEqual({ background: { name: "" } });
+      await user.selectOptions(select, screen.getByRole("option", { name: "default" }));
+      expect(audioOf(onChange)).toEqual({ background: { name: "default" } });
     });
 
-    it("opens a stored policy showing it, and leaves it alone until changed", () => {
-      const stored = fromFlowConfig({ llm: { provider: "google", model: "gemini" }, tts: { provider: "google" }, stt: { provider: "google" }, failover: { on: ["client_error"] } });
-      render(<StepAdvanced graph={stored} step={stored.steps[0]} providers={providers} onChange={vi.fn()} />);
-      expect(box("Rejected requests (bad request, bad key)")).toBeChecked();
-      expect(box("Timeouts")).not.toBeChecked();
-      expect(screen.getByRole("button", { name: "Explain When to move to a fallback" })).toBeInTheDocument();
+    it("is not offered on the start step, and is disabled with the reason when flows may not choose", () => {
+      const { unmount } = render(<StepAdvanced graph={two} step={two.steps[0]} providers={providers} serverConfig={server} onChange={vi.fn()} />);
+      expect(screen.queryByLabelText("Background sound")).toBeNull();
+      unmount();
+      render(<Two onChange={vi.fn()} serverConfig={{ ...server, audio: { ...server.audio, allow_flow_background: false } } as ServerConfigDTO} />);
+      expect(screen.getByLabelText("Background sound")).toBeDisabled();
+      expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();
+    });
+
+    it("shows a stored sound the server no longer has", () => {
+      const stale = { ...two, steps: [two.steps[0], { ...two.steps[1], config: { ...two.steps[1].config, audio: { background: { name: "gone" } } } }] };
+      render(<Two onChange={vi.fn()} initial={stale} />);
+      expect(screen.getByLabelText("Background sound")).toHaveValue("gone");
+      expect(screen.getByRole("option", { name: "gone (not on this server)" })).toBeInTheDocument();
     });
   });
 });

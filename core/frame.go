@@ -463,9 +463,6 @@ type SpeakingStateFrame struct {
 	Turn   string
 	Gen    uint64
 	Reason SpeakingStopReason
-	// Uninterruptible reports, on SpeakingStarted, that the first written
-	// output was OutputUninterruptible (user mute strategies key off it).
-	Uninterruptible bool
 }
 
 func (f *SpeakingStateFrame) Type() FrameType    { return FrameSpeakingState }

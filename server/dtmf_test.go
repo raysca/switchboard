@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -180,5 +181,81 @@ func TestSendDTMFToolPlaysTonesToTransport(t *testing.T) {
 	}
 	if got != len(want) {
 		t.Fatalf("transport received %d of %d tone bytes", got, len(want))
+	}
+}
+
+// send_dtmf is a call tool, not a start-step tool: a step built after a route has it on the primary and on
+// every fallback, exactly once, like the start step.
+func TestSendDTMFToolOnEveryStep(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.DTMF.SendTool = true
+	var mu sync.Mutex
+	built := map[string][]StageSpec{} // system prompt -> every LLM stage built with it
+	reg := NewRegistry()
+	reg.Register("google.stt", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+	reg.Register("google.tts", func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+	reg.Register("google.llm", func(_ *Config, s StageSpec) (core.Processor, error) {
+		mu.Lock()
+		built[s.SystemPrompt] = append(built[s.SystemPrompt], s)
+		mu.Unlock()
+		return &coretest.PassthroughProcessor{}, nil
+	})
+	graph := &CallFlow{Start: "front"}
+	graph.Resolve = func(context.Context, string) (StepSpec, error) {
+		return StepSpec{Name: "Sales", LLM: StageSpec{Provider: "google", SystemPrompt: "SALES", Tools: []core.ToolDefinition{{Name: "lookup"}}},
+			LLMFallbacks: []StageSpec{{Provider: "google", SystemPrompt: "SALES"}},
+			TTS:          StageSpec{Provider: "google"}}, nil
+	}
+	call := CallSpec{STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, Flow: graph,
+		LLM:          StageSpec{Provider: "google", SystemPrompt: "FRONT"},
+		LLMFallbacks: []StageSpec{{Provider: "google", SystemPrompt: "FRONT"}}}
+	vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+	pipe, err := reg.BuildCallPipeline(cfg, call, vadProc, &fakeTransportSink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := core.NewSession(1, pipe, core.DefaultResourceBudget())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	if err := graph.Commit("sales"); err != nil {
+		t.Fatal(err)
+	}
+	count := func(s StageSpec) (n int) {
+		for _, d := range s.Tools {
+			if d.Name == dtmf.ToolName {
+				n++
+			}
+		}
+		return n
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		got := len(built["SALES"])
+		mu.Unlock()
+		if got >= 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, prompt := range []string{"FRONT", "SALES"} {
+		if len(built[prompt]) != 2 { // primary and its fallback
+			t.Fatalf("%s built %d llm stages, want 2", prompt, len(built[prompt]))
+		}
+		for i, s := range built[prompt] {
+			if n := count(s); n != 1 {
+				t.Errorf("%s stage %d has send_dtmf x%d, want 1", prompt, i, n)
+			}
+		}
+	}
+	if len(built["SALES"][0].Tools) != 2 { // the step's own tool survives
+		t.Errorf("sales tools = %+v", built["SALES"][0].Tools)
 	}
 }

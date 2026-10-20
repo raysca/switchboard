@@ -90,6 +90,12 @@ func (r *mcpCallRig) discovered(id string) (string, map[string]string) {
 // flowWith creates a plain echo flow with the given tools of one server attached.
 func (r *mcpCallRig) flowWith(serverID string, hashes map[string]string, required bool, async []string, tools ...string) flow.Flow {
 	r.t.Helper()
+	return r.flowWithExtra("", serverID, hashes, required, async, tools...)
+}
+
+// flowWithExtra is flowWith with more top-level config members (a JSON fragment starting with a comma).
+func (r *mcpCallRig) flowWithExtra(extra, serverID string, hashes map[string]string, required bool, async []string, tools ...string) flow.Flow {
+	r.t.Helper()
 	sel := make([]flow.ToolSelection, 0, len(tools))
 	for _, name := range tools {
 		hash := hashes[name]
@@ -99,7 +105,7 @@ func (r *mcpCallRig) flowWith(serverID string, hashes map[string]string, require
 		sel = append(sel, flow.ToolSelection{ServerID: serverID, RemoteName: name, SchemaHash: hash, Required: required})
 	}
 	asyncJSON, _ := json.Marshal(async)
-	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"},"async_tools":` + string(asyncJSON) + `}`
+	cfg := `{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"P"},"tts":{"provider":"echo","voice":"v"},"async_tools":` + string(asyncJSON) + extra + `}`
 	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "MCP " + strings.Join(tools, "+"), Config: json.RawMessage(cfg), MCPTools: sel})
 	if err != nil {
 		r.t.Fatalf("flow: %v", err)
@@ -230,4 +236,107 @@ func TestMCPCallUnreachable(t *testing.T) {
 	}
 	c.say("hello")
 	eventually(t, "the call to go on", func() bool { return c.replies("hello") > 0 })
+}
+
+// R5b: a synchronous tool that runs past tool_cue.after_ms plays the flow's hold sound, which stops when the
+// tool returns (before the reply is spoken). An async tool plays none, and an unknown cue is refused at publish.
+func TestMCPCallAHoldSoundPlaysWhileASlowToolRuns(t *testing.T) {
+	const holdCue = `,"audio":{"tool_cue":{"name":"chime","after_ms":300}}`
+	slow := func(rig *mcpCallRig, async bool) *e2eCall {
+		id, hashes := rig.server("slow", rig.ts.URL+"/slow", "")
+		var asyncTools []string
+		if async {
+			asyncTools = []string{id + "/slow_lookup"}
+		}
+		return rig.dial(rig.flowWithExtra(holdCue, id, hashes, false, asyncTools, "slow_lookup").ID)
+	}
+	t.Run("a synchronous tool", func(t *testing.T) {
+		r := newMCPCallRig(t, withCue(t), func(c *Config) { c.MCP.Timeout = 10 * time.Second })
+		c := slow(r, false)
+		c.say(`call tool slow_lookup {"delay_ms":1500}`)
+		eventually(t, "the hold sound on the wire", func() bool { return c.cueFrames() >= 5 && r.has(EventCueStart, "tool") })
+		c.waitReplies("Tool slow_lookup returned", 1)
+		eventually(t, "the hold stopped because the tool returned", func() bool { return r.has(EventCueStop, "tool_done") })
+		time.Sleep(400 * time.Millisecond) // past the fade
+		stopped := c.cueFrames()
+		time.Sleep(300 * time.Millisecond)
+		if c.cueFrames() != stopped {
+			t.Fatal("the hold sound kept playing after the tool returned")
+		}
+	})
+	t.Run("an async tool", func(t *testing.T) {
+		r := newMCPCallRig(t, withCue(t), func(c *Config) { c.MCP.Timeout = 10 * time.Second })
+		c := slow(r, true)
+		c.say(`call tool slow_lookup {"delay_ms":1500}`)
+		time.Sleep(1200 * time.Millisecond)
+		if c.cueFrames() != 0 || r.has(EventCueStart, "") {
+			t.Fatalf("an async tool plays no hold sound (frames=%d)", c.cueFrames())
+		}
+	})
+	t.Run("an unknown cue is refused at publish", func(t *testing.T) {
+		r := newMCPCallRig(t, withCue(t))
+		body := `{"name":"Nope","config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"audio":{"tool_cue":{"name":"ding"}}}}`
+		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
+		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "audio.tool_cue.name") {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+	})
+}
+
+// Barge-in cancels the running tool, and the hold sound ends with it instead of playing on.
+func TestMCPCallBargeInStopsTheHoldSound(t *testing.T) {
+	r := newMCPCallRig(t, withCue(t), func(c *Config) { c.MCP.Timeout = 10 * time.Second })
+	var live atomic.Pointer[ws.Connection]
+	onText := r.s.wsServer.OnText
+	r.s.wsServer.OnText = func(conn *ws.Connection, text string) error {
+		live.Store(conn)
+		return onText(conn, text)
+	}
+	id, hashes := r.server("slow", r.ts.URL+"/slow", "")
+	c := r.dial(r.flowWithExtra(`,"audio":{"tool_cue":{"name":"chime","after_ms":300}}`, id, hashes, false, nil, "slow_lookup").ID)
+	c.say(`call tool slow_lookup {"delay_ms":6000}`)
+	eventually(t, "the hold sound", func() bool { return r.has(EventCueStart, "tool") && c.cueFrames() >= 5 })
+
+	sess := live.Load().Session()
+	at := -1
+	for i, p := range sess.Processors() {
+		if _, ok := p.(*turn.Processor); ok {
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Fatal("no turn processor in the call pipeline")
+	}
+	gen := sess.CurrentGeneration()
+	if err := sess.Reenter(&core.UserStartedSpeakingFrame{Seq: 99, Gen: gen, Timestamp: time.Now()}, core.Downstream, at, gen); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Reenter(&core.TranscriptCandidateFrame{Text: "wait never mind", Turn: core.TurnID(fmt.Sprintf("turn-%d-99", gen)), Gen: core.Generation(gen), Final: true, EndOfUtterance: true, Timestamp: time.Now()}, core.Downstream, at, gen); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the tool to be abandoned", func() bool { return r.lastCall("slow_lookup").Cancelled })
+	// The caller finishes speaking: from here only the tool's end can have stopped the sound (while they
+	// speak the controller re-arms forever, so a missing toolDone would otherwise hide).
+	now := sess.CurrentGeneration() // the barge-in bumped it: a frame at the old one would be dropped as stale
+	if err := sess.Reenter(&core.UserStoppedSpeakingFrame{Seq: 99, Gen: now, Timestamp: time.Now()}, core.Downstream, at, now); err != nil {
+		t.Fatal(err)
+	}
+	// The sound was paused by the caller's speech (barge_in) or stopped by the tool's end (tool_done).
+	eventually(t, "the hold sound to stop", func() bool { return r.has(EventCueStop, "barge_in") || r.has(EventCueStop, "tool_done") })
+	time.Sleep(400 * time.Millisecond) // past the fade
+	stopped := c.cueFrames()
+	time.Sleep(300*time.Millisecond + 400*time.Millisecond) // longer than after_ms: a restart would show
+	if c.cueFrames() != stopped {
+		t.Fatal("the hold sound kept playing after the barge-in")
+	}
+	// Once the caller stopped speaking, a tool still counted as running would restart it.
+	starts := 0
+	for _, e := range r.timeline() {
+		if e.Type == EventCueStart {
+			starts++
+		}
+	}
+	if starts != 1 {
+		t.Fatalf("the hold sound started %d times: it must not restart after the tool was abandoned", starts)
+	}
 }

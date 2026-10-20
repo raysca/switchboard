@@ -15,6 +15,7 @@ import {
   stepIssues,
   toPayload,
   uniqueName,
+  updateStep,
   unreachableSteps,
   validate,
 } from "./model";
@@ -325,6 +326,8 @@ describe("what the server will accept", () => {
     expect(bad({ audio: { denoise: { strength: 0.01 } } })).toEqual([]);
     expect(bad({ audio: { denoise: {}, background: { name: "office", gain_db: 0.1 } } })).toContain("Background volume must be -60 to 0 dB.");
     expect(bad({ audio: { background: { name: "office", gain_db: -60 } } })).toEqual([]);
+    for (const ms of [-1, 10001]) expect(bad({ audio: { tool_cue: { name: "chime", after_ms: ms } } })).toContain("Hold sound starts after must be 0 to 10000 ms.");
+    for (const ms of [0, 10000]) expect(bad({ audio: { tool_cue: { name: "chime", after_ms: ms } } })).toEqual([]);
   });
 
   it("keeps idle and audio on the start step only", () => {
@@ -333,6 +336,77 @@ describe("what the server will accept", () => {
     expect(steps.find((n) => n.id === "a")!.config).toMatchObject({ idle: { user_timeout_ms: 8000 }, audio: { output_gain_db: -3 } });
     expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("idle");
     expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("audio");
+  });
+
+  it("keeps only audio.background on a step other than the start (K7): toPayload strips the rest, setStart moves the rest", () => {
+    const bg = { name: "office" };
+    const g = one({ audio: { output_gain_db: -3, background: { name: "cafe" } } }, { audio: { background: bg, denoise: {}, output_gain_db: 1, tool_cue: { name: "chime" } } });
+    const steps = (toPayload(g) as { steps: { id: string; config: Record<string, unknown> }[] }).steps;
+    expect(steps.find((n) => n.id === "a")!.config.audio).toEqual({ output_gain_db: -3, background: { name: "cafe" } });
+    expect(steps.find((n) => n.id === "b")!.config.audio).toEqual({ background: bg });
+    const onlyOthers = one({}, { audio: { output_gain_db: 1, tool_cue: { name: "chime" } } });
+    expect((toPayload(onlyOthers) as { steps: { id: string; config: Record<string, unknown> }[] }).steps.find((n) => n.id === "b")!.config).not.toHaveProperty("audio");
+
+    const moved = setStart(one({ audio: { output_gain_db: -3, tool_cue: { name: "chime" }, background: { name: "cafe" } } }, { audio: { background: bg } }), "b");
+    expect(moved.steps.find((n) => n.id === "b")!.config.audio).toEqual({ background: bg, output_gain_db: -3, tool_cue: { name: "chime" } });
+    expect(moved.steps.find((n) => n.id === "a")!.config.audio).toEqual({ background: { name: "cafe" } });
+    expect(setStart(one({ audio: { output_gain_db: -3 } }), "b").steps.find((n) => n.id === "a")!.config).not.toHaveProperty("audio");
+  });
+
+  it("keeps turn on the start step only: toPayload drops it elsewhere and setStart moves it", () => {
+    const g = one({ turn: { min_words: 3 } }, { turn: { min_words: 1 } });
+    const steps = (toPayload(g) as { steps: { id: string; config: Record<string, unknown> }[] }).steps;
+    expect(steps.find((n) => n.id === "a")!.config).toMatchObject({ turn: { min_words: 3 } });
+    expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("turn");
+    const moved = setStart(one({ turn: { mute: ["always"] } }), "b");
+    expect(moved.steps.find((n) => n.id === "b")!.config.turn).toEqual({ mute: ["always"] });
+    expect(moved.steps.find((n) => n.id === "a")!.config).not.toHaveProperty("turn");
+  });
+
+  it("flags a longest mute above the server's cap when the cap is known", () => {
+    const g = one({ turn: { max_mute_ms: 40000 } });
+    expect(flowIssues(g)).toEqual([]);
+    expect(flowIssues(g, { maxMuteMs: 30000 })).toContain("Longest mute is above this server's limit of 30 seconds.");
+    expect(flowIssues(one({ turn: { max_mute_ms: 30000 } }), { maxMuteMs: 30000 })).toEqual([]);
+    expect(validate(g, { maxMuteMs: 30000 }).join(" ")).toMatch(/server's limit/);
+  });
+
+  it("keeps the call limit on the start step only: toPayload drops it elsewhere and setStart moves it", () => {
+    const g = one({ max_call_duration_seconds: 600 }, { max_call_duration_seconds: 300 });
+    const steps = (toPayload(g) as { steps: { id: string; config: Record<string, unknown> }[] }).steps;
+    expect(steps.find((n) => n.id === "a")!.config).toMatchObject({ max_call_duration_seconds: 600 });
+    expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("max_call_duration_seconds");
+    const moved = setStart(one({ max_call_duration_seconds: 600 }), "b");
+    expect(moved.steps.find((n) => n.id === "b")!.config.max_call_duration_seconds).toBe(600);
+    expect(moved.steps.find((n) => n.id === "a")!.config).not.toHaveProperty("max_call_duration_seconds");
+  });
+
+  it("flags a call limit outside 1 to 1440 minutes, or above the server's when it is known", () => {
+    expect(flowIssues(one({ max_call_duration_seconds: 59 }))).toContain("Longest call must be 1 to 1440 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: 86401 }))).toContain("Longest call must be 1 to 1440 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: 0 }))).toContain("Longest call must be 1 to 1440 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: -60 }))).toContain("Longest call must be 1 to 1440 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: 600 }))).toEqual([]);
+    const g = one({ max_call_duration_seconds: 1900 });
+    expect(flowIssues(g)).toEqual([]);
+    expect(flowIssues(g, { maxCallSeconds: 1800 })).toContain("Longest call is above this server's limit of 30 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: 1800 }), { maxCallSeconds: 1800 })).toEqual([]);
+  });
+
+  it("mirrors the interruption limits", () => {
+    const bad = (turn: Record<string, unknown>) => flowIssues(one({ turn }));
+    for (const n of [-1, 11, 2.5]) expect(bad({ min_words: n })).toContain("Interrupt after must be 1 to 10 words.");
+    for (const n of [0, 1, 10]) expect(bad({ min_words: n })).toEqual([]);
+    for (const ms of [999, 60001]) expect(bad({ max_mute_ms: ms })).toContain("Longest mute must be 1 to 60 seconds.");
+    for (const ms of [1000, 60000]) expect(bad({ max_mute_ms: ms })).toEqual([]);
+  });
+
+  it("mirrors the end-of-turn limits", () => {
+    const bad = (turn: Record<string, unknown>) => flowIssues(one({ turn }));
+    for (const ms of [199, 3001]) expect(bad({ speech_timeout_ms: ms })).toContain("Wait for the caller to resume must be 200 to 3000 ms.");
+    for (const ms of [200, 3000]) expect(bad({ speech_timeout_ms: ms })).toEqual([]);
+    for (const ms of [499, 5001]) expect(bad({ end_of_turn: "smart", smart_hold_ms: ms })).toContain("Smart hold must be 500 to 5000 ms.");
+    for (const ms of [500, 5000]) expect(bad({ end_of_turn: "smart", smart_hold_ms: ms })).toEqual([]);
   });
 
   it("checks the summarisation details even while summarising is off", () => {
@@ -370,7 +444,7 @@ describe("what the server will accept", () => {
     expect("end_call" in out.steps[1]).toBe(false);
   });
 
-  it("drops end_call when deleting a step leaves a one-step flow", () => {
+  it("keeps end_call when deleting a step leaves a one-step flow", () => {
     const cfg = {
       start: "a",
       steps: [
@@ -379,9 +453,18 @@ describe("what the server will accept", () => {
       ],
       routes: [{ id: "r", from: "a", to: "b", condition: "x" }],
     };
-    const out = toPayload(removeStep(fromFlowConfig(cfg), "b")) as { steps: object[] };
+    const out = toPayload(removeStep(fromFlowConfig(cfg), "b")) as { steps: { end_call?: boolean }[] };
     expect(out.steps).toHaveLength(1);
-    expect("end_call" in out.steps[0]).toBe(false);
+    expect(out.steps[0].end_call).toBe(true);
+  });
+
+  it("saves a one-step main flow with end_call in steps form, and flat without it", () => {
+    const flat = { llm: { system_prompt: "p" }, tts: {} };
+    const g = fromFlowConfig(flat);
+    expect(toPayload(g)).toEqual(flat);
+    const out = toPayload(updateStep(g, "main", { end_call: true })) as { start: string; steps: { id: string; end_call?: boolean }[] };
+    expect(out.start).toBe("main");
+    expect(out.steps[0].end_call).toBe(true);
   });
 });
 
@@ -445,5 +528,36 @@ describe("greeting", () => {
     expect(over("a".repeat(MAX_GREETING_BYTES + 1))).toBe(true);
     expect(over("é".repeat(251))).toBe(true); // 251 characters, 502 bytes
     expect(over("   ")).toBe(false);
+  });
+});
+
+describe("call-wide tts.clean_text and failover", () => {
+  const cfg = (extra: Record<string, unknown>, tts: Record<string, unknown> = {}) => ({ llm: { provider: "g", model: "m" }, tts: { provider: "g", ...tts }, ...extra });
+  const g = () =>
+    fromFlowConfig({
+      start: "a",
+      steps: [
+        { id: "a", name: "A", config: cfg({ failover: { on: ["client_error"] } }, { clean_text: false }) },
+        { id: "b", name: "B", config: cfg({ failover: { on: ["timeout"] } }, { clean_text: false }) },
+      ],
+      routes: [{ id: "e", from: "a", to: "b", condition: "x" }],
+    });
+  type Out = { steps: { id: string; config: { tts: Record<string, unknown>; failover?: unknown } }[] };
+
+  it("toPayload keeps them on the start step and drops them from the others", () => {
+    const [a, b] = (toPayload(g()) as Out).steps;
+    expect(a.config.tts.clean_text).toBe(false);
+    expect(a.config.failover).toEqual({ on: ["client_error"] });
+    expect(b.config.tts).not.toHaveProperty("clean_text");
+    expect(b.config).not.toHaveProperty("failover");
+    expect(b.config.tts.provider).toBe("g");
+  });
+
+  it("setStart moves them to the new start step", () => {
+    const [a, b] = (toPayload(setStart(g(), "b")) as Out).steps;
+    expect(a.config.tts).not.toHaveProperty("clean_text");
+    expect(a.config).not.toHaveProperty("failover");
+    expect(b.config.tts.clean_text).toBe(false);
+    expect(b.config.failover).toEqual({ on: ["client_error"] });
   });
 });

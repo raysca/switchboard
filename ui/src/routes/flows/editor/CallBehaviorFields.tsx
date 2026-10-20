@@ -160,13 +160,15 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
   const denoise = audio.denoise !== undefined ? rec(audio.denoise) : null;
   const bg = audio.background !== undefined ? rec(audio.background) : null;
   const bgName = typeof bg?.name === "string" ? bg.name : "";
-  const sounds = serverConfig?.audio.backgrounds ?? [];
-  const known = !bgName || !serverConfig || sounds.includes(bgName); // not "unknown" while the list is still loading
-  const serverDefault = serverConfig?.audio.background_default ?? "";
-  // No key: the server's default (if any). An empty name: none, even when the server has a default.
-  const selected = bg === null ? (serverDefault ? "default" : "") : bgName;
-  const denied = serverConfig !== undefined && !serverConfig.audio.allow_flow_background && !bgName;
   const setBg = (key: string, value: unknown) => set("background", value === null ? without(bg ?? {}, key) : { ...bg, [key]: value });
+  const holdSound = audio.tool_cue !== undefined ? rec(audio.tool_cue) : null;
+  const holdName = typeof holdSound?.name === "string" ? holdSound.name : "";
+  const cues = serverConfig?.audio.cues ?? [];
+  const holdKnown = !holdName || !serverConfig || cues.includes(holdName);
+  const setHold = (key: string, value: unknown) => {
+    const next = value === null ? without(holdSound ?? {}, key) : { ...holdSound, [key]: value };
+    set("tool_cue", typeof next.name === "string" && next.name !== "" ? next : null);
+  };
   return (
     <fieldset className="stage-box">
       <legend>Audio</legend>
@@ -209,39 +211,7 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
         -30 to +6. Empty: the server's setting (0 unless it says otherwise).
       </p>
       <SettingHelp id="audio.output_gain_db" />
-      <label className="form-field" htmlFor="flow-bg">
-        <span>Background sound</span>
-        <select
-          id="flow-bg"
-          value={selected}
-          disabled={denied}
-          aria-describedby={denied ? "flow-bg-denied" : undefined}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "default" || (v === "" && !serverDefault)) return set("background", null);
-            set("background", v === "" ? { name: "" } : { ...bg, name: v });
-          }}
-        >
-          {serverDefault && <option value="default">Server default ({serverDefault})</option>}
-          <option value="">None</option>
-          {!known && <option value={bgName}>{bgName} (not on this server)</option>}
-          {sounds.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
-      </label>
-      {denied && (
-        <p id="flow-bg-denied" className="subtext">
-          This server does not allow flow background sounds.
-        </p>
-      )}
-      {!known && (
-        <p role="note" className="note note--bad">
-          "{bgName}" is not a sound on this server.
-        </p>
-      )}
+      <BackgroundSelect id="flow-bg" bg={bg} setBg={(next) => set("background", next)} serverConfig={serverConfig} />
       <SettingHelp id="audio.background" />
       {bg !== null && bgName !== "" && (
         <>
@@ -265,6 +235,92 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
           <SettingHelp id="audio.background_loop" />
         </>
       )}
+      <label className="form-field" htmlFor="flow-hold">
+        <span>Hold sound</span>
+        <select id="flow-hold" value={holdName} onChange={(e) => setHold("name", e.target.value === "" ? null : e.target.value)}>
+          <option value="">None</option>
+          {!holdKnown && <option value={holdName}>{holdName} (not on this server)</option>}
+          {cues.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!holdKnown && (
+        <p role="note" className="note note--bad">
+          "{holdName}" is not a sound on this server.
+        </p>
+      )}
+      <label className="form-field" htmlFor="flow-hold-after">
+        <span>Start the hold sound after (ms)</span>
+        <input
+          id="flow-hold-after"
+          type="number"
+          min={AUDIO_RANGE.holdAfterMs[0]}
+          max={AUDIO_RANGE.holdAfterMs[1]}
+          placeholder="1000"
+          disabled={holdName === ""}
+          value={typeof holdSound?.after_ms === "number" ? holdSound.after_ms : ""}
+          onChange={(e) => setHold("after_ms", num(e.target.value))}
+        />
+      </label>
+      <SettingHelp id="audio.tool_cue" />
     </fieldset>
+  );
+}
+
+/**
+ * The background sound choice. On the start step it is the call's sound (absent: the server's default, if any).
+ * On another step (`step`) absent means "keep the current sound" and None is its own choice, because a step
+ * that names nothing leaves whatever is playing.
+ */
+export function BackgroundSelect({ id, bg, setBg, serverConfig, step = false }: { id: string; bg: Rec | null; setBg: (next: Rec | null) => void; serverConfig?: ServerConfigDTO; step?: boolean }) {
+  const bgName = typeof bg?.name === "string" ? bg.name : "";
+  const sounds = serverConfig?.audio.backgrounds ?? [];
+  const known = !bgName || !serverConfig || sounds.includes(bgName); // not "unknown" while the list is still loading
+  const serverDefault = step ? "" : (serverConfig?.audio.background_default ?? "");
+  // Start step, no key: the server's default (if any). An empty name: none, even when the server has a default.
+  // Sentinel values the sound-name pattern (lowercase letters, digits, - and _) cannot produce.
+  const noneValue = step ? "__none__" : "";
+  const selected = bg === null ? (serverDefault ? "__default__" : "") : bgName === "" ? noneValue : bgName;
+  const denied = serverConfig !== undefined && !serverConfig.audio.allow_flow_background && !bgName;
+  return (
+    <>
+      <label className="form-field" htmlFor={id}>
+        <span>Background sound</span>
+        <select
+          id={id}
+          value={selected}
+          disabled={denied}
+          aria-describedby={denied ? `${id}-denied` : undefined}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === "__default__" || (v === "" && (step || !serverDefault))) return setBg(null);
+            setBg(v === noneValue ? { name: "" } : { ...bg, name: v });
+          }}
+        >
+          {step && <option value="">Keep the current sound</option>}
+          {serverDefault && <option value="__default__">Server default ({serverDefault})</option>}
+          <option value={noneValue}>None</option>
+          {!known && <option value={bgName}>{bgName} (not on this server)</option>}
+          {sounds.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
+      {denied && (
+        <p id={`${id}-denied`} className="subtext">
+          This server does not allow flow background sounds.
+        </p>
+      )}
+      {!known && (
+        <p role="note" className="note note--bad">
+          "{bgName}" is not a sound on this server.
+        </p>
+      )}
+    </>
   );
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"slices"
 	"time"
 
 	"govoice/core/redact"
@@ -144,63 +145,8 @@ type Config struct {
 		MaxParallel int `yaml:"max_parallel"`
 	} `yaml:"tools"`
 
-	// Turn routes live calls through the turn manager (core/turn.Processor).
-	// On by default: turns end on the transcript-gated speech timeout (Pipecat
-	// parity). Off: turns end on the raw VAD stop, which needs vad.stop_ms ~800.
-	Turn struct {
-		Manager  bool `yaml:"manager"`
-		MinWords int  `yaml:"min_words"` // >0: barge-in needs this many words while the bot speaks
-		// Stop is the any-stop chain that ends a user turn (first decisive wins):
-		// speech-timeout | eager; a non-empty chain must include speech-timeout.
-		// Empty keeps the built-in silence timeout. SpeechTimeout overrides its
-		// 700ms default. "eager" ends the turn after EagerGrace (default 200ms)
-		// of silence once the final transcript ends a sentence. There is no
-		// retraction after that: "Book a table. For two." becomes two user
-		// turns and the second barges in on the reply to the first. Only use
-		// it with punctuating STT and when latency beats occasional false cuts.
-		Stop []string `yaml:"stop"`
-		// Completion tunes the "llm-completion" entry of Stop (ignored otherwise):
-		// the model opens each reply with a completion marker; an incomplete
-		// turn is held silently for short_wait (default 5s) or long_wait
-		// (default 10s), then the model is re-prompted (nudge overrides the
-		// default wording, prompt the protocol instructions appended to the
-		// system prompt). Costs prompt tokens on every turn and relies on the
-		// model following the protocol; unmarked replies are spoken as-is.
-		Completion CompletionConfig `yaml:"completion"`
-		// SpeechTimeout is the resume window after the VAD stop (Pipecat user_speech_timeout; 0: 600ms).
-		SpeechTimeout time.Duration `yaml:"speech_timeout"`
-		EagerGrace    time.Duration `yaml:"eager_grace"`
-		// NoTranscriptTimeout ends a turn that never got a transcript after this much silence
-		// (0: 5s), so a dead STT cannot hold a turn open until max_turn_duration.
-		NoTranscriptTimeout time.Duration `yaml:"no_transcript_timeout"`
-		// STTP99 overrides the built-in per-provider STT p99 (end of speech to final transcript)
-		// the speech timeout waits for when the final is late.
-		STTP99 map[string]time.Duration `yaml:"stt_p99"`
-		// Mute lists user mute strategies (always, first_speech,
-		// until_first_bot_complete, function_call, critical_output). While any
-		// is muting, VAD starts/stops and transcripts are dropped (audio still
-		// flows to VAD/STT/recording): no turn starts, no barge-in, nothing
-		// reaches the context. Each strategy's continuous mute is capped at
-		// MaxMute (default 30s) so a lost signal cannot silence the user.
-		// until_first_bot_complete mutes until the bot first speaks, so use it
-		// only with an opening greeting (the cap is the only other release).
-		Mute    []string      `yaml:"mute"`
-		MaxMute time.Duration `yaml:"max_mute"`
-		// Analyzer configures the Smart Turn v3 model behind turn.stop:
-		// [turn-analyzer, speech-timeout]. The model ends a turn as soon as it
-		// judges the user done; "incomplete" holds the turn up to Hold (stop_secs) of
-		// silence (Pipecat stop_secs, default 3s). When the model cannot answer
-		// (worker crash, overload, no verdict within Budget) the turn ends at
-		// speech_timeout like before and a fallback metric is counted. Mode ""
-		// follows vad.mode (process = crash-isolated worker; production needs it).
-		Analyzer struct {
-			Mode      string        `yaml:"mode"` // "" | process | inprocess
-			Workers   int           `yaml:"workers"`
-			ModelPath string        `yaml:"model_path"`
-			Hold      time.Duration `yaml:"stop_secs"` // Pipecat stop_secs
-			Budget    time.Duration `yaml:"budget"`    // per-verdict latency budget, default 150ms
-		} `yaml:"analyzer"`
-	} `yaml:"turn"`
+	// Turn is how live calls take turns and who may interrupt (see TurnConfig).
+	Turn TurnConfig `yaml:"turn"`
 
 	// FirstClauseChars > 0 lets the first synthesis unit of a reply end at a
 	// clause boundary (comma, semicolon, colon, dash) once it has this many
@@ -387,6 +333,73 @@ func (c *Config) TurnAnalyzerMode() string {
 func (c *Config) vadStop(flowMS int) time.Duration {
 	pc := c.VADProcessorConfigForStopMS(flowMS)
 	return time.Duration(pc.StopChunks*vad.ChunkSamples*1000/vad.SampleRate) * time.Millisecond
+}
+
+// TurnConfig routes live calls through the turn manager (core/turn.Processor).
+// On by default: turns end on the transcript-gated speech timeout (Pipecat
+// parity). Off: turns end on the raw VAD stop, which needs vad.stop_ms ~800.
+type TurnConfig struct {
+	Manager  bool `yaml:"manager"`
+	MinWords int  `yaml:"min_words"` // >0: barge-in needs this many words while the bot speaks
+	// Stop is the any-stop chain that ends a user turn (first decisive wins):
+	// speech-timeout | eager; a non-empty chain must include speech-timeout.
+	// Empty keeps the built-in silence timeout. SpeechTimeout overrides its
+	// 700ms default. "eager" ends the turn after EagerGrace (default 200ms)
+	// of silence once the final transcript ends a sentence. There is no
+	// retraction after that: "Book a table. For two." becomes two user
+	// turns and the second barges in on the reply to the first. Only use
+	// it with punctuating STT and when latency beats occasional false cuts.
+	Stop []string `yaml:"stop"`
+	// Completion tunes the "llm-completion" entry of Stop (ignored otherwise):
+	// the model opens each reply with a completion marker; an incomplete
+	// turn is held silently for short_wait (default 5s) or long_wait
+	// (default 10s), then the model is re-prompted (nudge overrides the
+	// default wording, prompt the protocol instructions appended to the
+	// system prompt). Costs prompt tokens on every turn and relies on the
+	// model following the protocol; unmarked replies are spoken as-is.
+	Completion CompletionConfig `yaml:"completion"`
+	// SpeechTimeout is the resume window after the VAD stop (Pipecat user_speech_timeout; 0: 600ms).
+	SpeechTimeout time.Duration `yaml:"speech_timeout"`
+	EagerGrace    time.Duration `yaml:"eager_grace"`
+	// NoTranscriptTimeout ends a turn that never got a transcript after this much silence
+	// (0: 5s), so a dead STT cannot hold a turn open until max_turn_duration.
+	NoTranscriptTimeout time.Duration `yaml:"no_transcript_timeout"`
+	// STTP99 overrides the built-in per-provider STT p99 (end of speech to final transcript)
+	// the speech timeout waits for when the final is late.
+	STTP99 map[string]time.Duration `yaml:"stt_p99"`
+	// Mute lists user mute strategies (always, first_speech,
+	// until_first_bot_complete, function_call). While any
+	// is muting, VAD starts/stops and transcripts are dropped (audio still
+	// flows to VAD/STT/recording): no turn starts, no barge-in, nothing
+	// reaches the context. Each strategy's continuous mute is capped at
+	// MaxMute (default 30s) so a lost signal cannot silence the user.
+	// until_first_bot_complete mutes until the bot first speaks, so use it
+	// only with an opening greeting (the cap is the only other release).
+	Mute    []string      `yaml:"mute"`
+	MaxMute time.Duration `yaml:"max_mute"`
+	// Analyzer configures the Smart Turn v3 model behind turn.stop:
+	// [turn-analyzer, speech-timeout]. The model ends a turn as soon as it
+	// judges the user done; "incomplete" holds the turn up to Hold (stop_secs) of
+	// silence (Pipecat stop_secs, default 3s). When the model cannot answer
+	// (worker crash, overload, no verdict within Budget) the turn ends at
+	// speech_timeout like before and a fallback metric is counted. Mode ""
+	// follows vad.mode (process = crash-isolated worker; production needs it).
+	Analyzer struct {
+		Mode      string        `yaml:"mode"` // "" | process | inprocess
+		Workers   int           `yaml:"workers"`
+		ModelPath string        `yaml:"model_path"`
+		Hold      time.Duration `yaml:"stop_secs"` // Pipecat stop_secs
+		Budget    time.Duration `yaml:"budget"`    // per-verdict latency budget, default 150ms
+		// ForFlows loads the model although turn.stop does not list turn-analyzer, so a flow can choose
+		// end_of_turn "smart" without making every call smart. Off by default: no worker, no model memory.
+		ForFlows bool `yaml:"for_flows"`
+	} `yaml:"analyzer"`
+}
+
+// LoadsSmartTurn reports whether the server loads the Smart Turn model at start-up: its own default
+// chain uses it, or flows may choose it (turn.analyzer.for_flows).
+func (c *Config) LoadsSmartTurn() bool {
+	return slices.Contains(c.Turn.Stop, "turn-analyzer") || c.Turn.Analyzer.ForFlows
 }
 
 // sttP99 resolves the primary STT provider's p99: flow override, server map, built-in table.

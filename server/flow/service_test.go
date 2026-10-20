@@ -455,3 +455,80 @@ func TestVersionByNumberReturnsAnEarlierPublish(t *testing.T) {
 		t.Fatalf("a version that was never published should be sql.ErrNoRows, got %v", err)
 	}
 }
+
+func TestPublishRefusesCallWideSettingsOnANonStartStep(t *testing.T) {
+	svc := testServiceWith(t, ready())
+	front := `{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}`
+	mk := func(frontExtra, salesTTS, salesExtra string) json.RawMessage {
+		front := front[:len(front)-1] + frontExtra + "}"
+		return json.RawMessage(`{"start":"front","steps":[{"id":"front","name":"Front","config":` + front + `},` +
+			`{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"` + salesTTS + `}` + salesExtra + `}}],` +
+			`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+	}
+	for name, tc := range map[string]struct {
+		cfg  json.RawMessage
+		want string
+	}{
+		"clean_text": {mk("", `,"clean_text":false`, ""), `step "sales": tts.clean_text applies to the whole call; set it on the start step`},
+		"failover":   {mk("", "", `,"failover":{"on":["timeout"]}`), `step "sales": failover applies to the whole call; set it on the start step`},
+	} {
+		_, err := svc.Create(context.Background(), CreateRequest{Name: name, Config: tc.cfg})
+		if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: err=%v, want %q", name, err, tc.want)
+		}
+	}
+	// the start step may carry both
+	if _, err := svc.Create(context.Background(), CreateRequest{Name: "ok", Config: mk(`,"failover":{"on":["timeout"]}`, "", "")}); err != nil {
+		t.Fatalf("start-step failover: %v", err)
+	}
+	start := front[:len(front)-1] + `,"failover":{"on":["timeout"]}}`
+	start = strings.Replace(start, `"voice":"google.tts"}`, `"voice":"google.tts","clean_text":false}`, 1)
+	cfg := json.RawMessage(`{"start":"front","steps":[{"id":"front","name":"Front","config":` + start + `},{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}}],"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+	if _, err := svc.Create(context.Background(), CreateRequest{Name: "ok2", Config: cfg}); err != nil {
+		t.Fatalf("start-step both: %v", err)
+	}
+}
+
+// A stored version may carry settings publish now refuses (a call-wide setting on a later step; a route sound the
+// server dropped). Duplicate copies it anyway: the dead step settings are left out (they were ignored), the sound
+// name is kept (the call just runs without it).
+func TestDuplicateCopiesALegacyStoredVersion(t *testing.T) {
+	svc := testServiceWith(t, &fakePolicy{cues: []string{"chime"}})
+	ctx := context.Background()
+	routed := json.RawMessage(strings.Replace(twoStepCfg(""), `"routes":`, `"route_cue":{"name":"chime"},"routes":`, 1))
+	src, err := svc.Create(ctx, CreateRequest{Name: "src", Config: routed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := strings.LastIndex(string(routed), `"tts":{"provider":"cartesia","voice":"v"}}}`) // the sales step, the last one
+	legacy := string(routed)[:i] + `"tts":{"provider":"cartesia","voice":"v","clean_text":false},"failover":{"on":["timeout"]}}}` + string(routed)[i+len(`"tts":{"provider":"cartesia","voice":"v"}}}`):]
+	legacy = strings.Replace(legacy, `"chime"`, `"gone"`, 1)
+	if _, err := svc.store.DB().Exec(`DROP TRIGGER flow_versions_immutable_update`); err != nil { // the test's own database: stands in for a version stored by an older binary
+		t.Fatal(err)
+	}
+	if _, err := svc.store.DB().Exec(`UPDATE flow_versions SET config_json=? WHERE flow_id=?`, legacy, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(legacy, `"failover"`) || !strings.Contains(legacy, `"gone"`) {
+		t.Fatalf("legacy fixture lost its settings: %s", legacy)
+	}
+	cp, err := svc.Duplicate(ctx, src.ID, "copy")
+	if err != nil {
+		t.Fatalf("duplicate: %v", err)
+	}
+	g, err := Decode(cp.Version.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sales, _ := g.Step("sales")
+	if sales.Config.TTS.CleanText != nil || len(sales.Config.Failover.On) != 0 {
+		t.Fatalf("dead step settings were copied: %+v", sales.Config)
+	}
+	if g.RouteCue == nil || g.RouteCue.Name != "gone" {
+		t.Fatalf("route cue = %+v, want the stored name", g.RouteCue)
+	}
+	// new edits are still checked
+	if _, err := svc.Create(ctx, CreateRequest{Name: "new", Config: json.RawMessage(legacy)}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("a new publish of the legacy config must be refused: %v", err)
+	}
+}

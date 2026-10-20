@@ -49,6 +49,7 @@ type Server struct {
 	otel                  *otelexport.Exporter       // nil unless otel.enabled
 	redactor              *redact.Redactor           // sink redaction; never applied to the live LLM context
 	cfg                   *Config
+	adjustCall            func(*CallSpec) // tests only: changes the resolved call before it is built
 	catalog               *catalog.Catalog
 	metrics               *Metrics
 	timelines             *TimelineRegistry
@@ -555,10 +556,17 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	call.OnProviderRetry = func(stage, provider string, retry int) {
 		timeline.Record(TimelineEvent{Type: EventProviderRetry, Provider: provider, Details: fmt.Sprintf("%s retry %d", stage, retry)})
 	}
-	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
-	if cue != nil {
+	if hook := s.routeBackground(call.Flow, call.Audio, conn.SetBackground); hook != nil {
 		base := call.OnRoute
-		call.OnRoute = func(e core.RouteEvent) { base(e); cue.onRoute(e) }
+		call.OnRoute = func(e core.RouteEvent) { base(e); hook(e) }
+	}
+	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
+	hold := s.newCallHold(call.Audio, conn.Cue(), timeline, cue)
+	call.toolHold = hold
+	if cue != nil || hold != nil {
+		base := call.OnRoute
+		// The hold finishes first when a route starts preparing: the two sounds share one player.
+		call.OnRoute = func(e core.RouteEvent) { base(e); hold.onRoute(e); cue.onRoute(e) }
 	}
 	phase := "build_pipeline"
 	var stopRecording func()
@@ -644,6 +652,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		switch f.Type() {
 		case core.FrameUserStartedSpeaking:
 			cue.userSpeech(true)
+			hold.userSpeech(true)
 			if !speechActive {
 				speechActive = true
 				firstTokenRecorded = false
@@ -651,6 +660,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			}
 		case core.FrameUserStoppedSpeaking:
 			cue.userSpeech(false)
+			hold.userSpeech(false)
 			if speechActive {
 				speechActive = false
 				timeline.Record(TimelineEvent{Type: EventSpeechStop})
@@ -690,6 +700,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		case core.FrameOutputAudio:
 			// Audio frames stream directly to client; first chunk per unit is covered by EventTTSUnit
 			cue.botAudio()
+			hold.botAudio()
 		case core.FrameInterruption:
 			intr := f.(*core.InterruptionFrame)
 			if intr.Gen != lastInterruption {
@@ -783,8 +794,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	s.metrics.SessionsStartedTotal.Add(1)
 
 	// 6. Max call duration cost guard (spec §32, §35)
-	if s.cfg.Limits.MaxCallDuration > 0 {
-		maxDurTimer := time.NewTimer(s.cfg.Limits.MaxCallDuration)
+	if call.MaxCallDuration > 0 {
+		maxDurTimer := s.callLimitTimer(call)
 		go func() {
 			defer maxDurTimer.Stop()
 			select {
@@ -805,6 +816,15 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 
 	return session, nil
+}
+
+// callLimitTimer is the call's cost-guard timer: it runs for the CallSpec's limit (the flow's, already
+// clamped to the server's by callSpec), nil when there is none.
+func (s *Server) callLimitTimer(call CallSpec) *time.Timer {
+	if call.MaxCallDuration <= 0 {
+		return nil
+	}
+	return time.NewTimer(call.MaxCallDuration)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {

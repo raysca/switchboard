@@ -63,8 +63,10 @@ export const serverConfigSchema = z.object({
   voice_token_max_lifetime_seconds: z.number(),
   client_ip: z.string(),
   secure: z.boolean(),
-  audio: z.object({ backgrounds: z.array(z.string()), allow_flow_background: z.boolean(), background_default: z.string() }),
+  audio: z.object({ backgrounds: z.array(z.string()), cues: z.array(z.string()), allow_flow_background: z.boolean(), background_default: z.string() }),
   idle: z.object({ user_timeout_ms: z.number(), max_prompts: z.number(), prompt_mode: z.string() }),
+  // The effective values a call uses when its flow says nothing (never a raw 0 for "default").
+  turn: z.object({ manager: z.boolean(), min_words: z.number(), mute: z.array(z.string()), max_mute_ms: z.number(), speech_timeout_ms: z.number(), end_of_turn: z.string(), smart_turn_available: z.boolean(), smart_hold_ms: z.number() }),
 });
 export type ServerConfigDTO = z.infer<typeof serverConfigSchema>;
 const serverConfigEnvelope = z.object({ data: serverConfigSchema });

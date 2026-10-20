@@ -33,6 +33,8 @@ type CreateRequest struct {
 	Config      json.RawMessage `json:"config"`
 	Enabled     *bool           `json:"enabled,omitempty"`
 	MCPTools    []ToolSelection `json:"mcp_tools,omitempty"`
+
+	fromStored bool // a copy of a stored version (Duplicate)
 }
 
 type UpdateRequest struct {
@@ -130,7 +132,7 @@ func (s *Service) create(ctx context.Context, req CreateRequest, mcpReviewRequir
 	if err := validateDetails(name, req.Description); err != nil {
 		return Flow{}, err
 	}
-	config, err := s.attachedConfig(ctx, req.Config)
+	config, err := s.attachedConfig(ctx, req.Config, req.fromStored)
 	if err != nil {
 		return Flow{}, err
 	}
@@ -184,7 +186,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) (Flo
 	var config json.RawMessage
 	var err error
 	if len(req.Config) > 0 {
-		config, err = s.attachedConfig(ctx, req.Config)
+		config, err = s.attachedConfig(ctx, req.Config, false)
 		if err != nil {
 			return Flow{}, err
 		}
@@ -261,7 +263,7 @@ func (s *Service) Duplicate(ctx context.Context, id, name string) (Flow, error) 
 	if strings.TrimSpace(name) == "" {
 		name = source.Name + " copy"
 	}
-	return s.create(ctx, CreateRequest{Name: name, Description: source.Description, Config: source.Version.Config, Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools}, source.Version.MCPReviewRequired)
+	return s.create(ctx, CreateRequest{Name: name, Description: source.Description, Config: withoutDeadStepSettings(source.Version.Config), Enabled: boolPointer(source.Enabled), MCPTools: source.Version.MCPTools, fromStored: true}, source.Version.MCPReviewRequired)
 }
 
 // ResolveDraft validates config (and selection, when given) exactly as a publish of flow id would and returns what a call on it
@@ -275,7 +277,7 @@ func (s *Service) ResolveDraft(ctx context.Context, id string, config json.RawMe
 	if row.Archived || !row.Enabled || row.CurrentVersionID == "" {
 		return Snapshot{}, Readiness{}, fmt.Errorf("%w: flow unavailable", sql.ErrNoRows)
 	}
-	canonical, err := s.attachedConfig(ctx, config)
+	canonical, err := s.attachedConfig(ctx, config, false)
 	if err != nil {
 		if !errors.Is(err, ErrNotAttached) {
 			err = fmt.Errorf("%w: %w", ErrInvalidConfig, err)
@@ -553,7 +555,8 @@ var ErrNotAttached = errors.New("flow must be attached to providers")
 
 // attachedConfig validates that raw names a provider and an available
 // available provider for every stage, then returns its canonical form.
-func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+// stored: raw is a copy of a stored version (Duplicate), so a route sound the server dropped is not refused.
+func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage, stored bool) (json.RawMessage, error) {
 	canonical, err := normalizeConfig(raw)
 	if err != nil {
 		return nil, err
@@ -562,9 +565,14 @@ func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json
 	if err != nil {
 		return nil, err
 	}
+	if err := g.deadStepSettings(); err != nil {
+		return nil, err
+	}
 	if p, ok := policyOf(s.av); ok {
-		if pp := g.policyProblems(p); len(pp) > 0 {
-			return nil, invalid("%s", pp[0].message)
+		for _, pp := range g.policyProblems(p) {
+			if !(stored && pp.storedOK) {
+				return nil, invalid("%s", pp.message)
+			}
 		}
 	}
 	problems, _ := g.Problems(s.av)

@@ -92,10 +92,27 @@ type ServerConfig struct {
 	// nothing. Names and numbers only: never a file path or prompt text.
 	Audio ServerAudio `json:"audio"`
 	Idle  ServerIdle  `json:"idle"`
+	Turn  ServerTurn  `json:"turn"`
+}
+
+// ServerTurn is the server's effective turn-taking: what a call does when its flow says nothing. Numbers
+// are never a raw 0 for "default"; Mute is always a list.
+type ServerTurn struct {
+	Manager         bool     `json:"manager"`
+	MinWords        int      `json:"min_words"`
+	Mute            []string `json:"mute"`
+	MaxMuteMS       int      `json:"max_mute_ms"`
+	SpeechTimeoutMS int      `json:"speech_timeout_ms"`
+	// EndOfTurn is the server's detector: smart, eager or default. SmartTurnAvailable is whether a flow
+	// may choose smart; SmartHoldMS is the hold a smart call uses.
+	EndOfTurn          string `json:"end_of_turn"`
+	SmartTurnAvailable bool   `json:"smart_turn_available"`
+	SmartHoldMS        int    `json:"smart_hold_ms"`
 }
 
 type ServerAudio struct {
 	Backgrounds         []string `json:"backgrounds"`
+	Cues                []string `json:"cues"` // sound names a flow's route_cue may use
 	AllowFlowBackground bool     `json:"allow_flow_background"`
 	// BackgroundDefault is the sound every call plays unless its flow picks another or none ("" = none).
 	BackgroundDefault string `json:"background_default"`

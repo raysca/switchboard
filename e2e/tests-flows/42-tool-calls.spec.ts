@@ -21,15 +21,17 @@ test("a tool call shows in the test call's events and on the call's page", async
   await page.getByTestId("toggle-debug-btn").click();
   await page.getByLabel("Filter events").fill("llm-function-call");
   const events = ["llm-function-call-stopped", "llm-function-call-in-progress", "llm-function-call-started"];
-  await expect(page.getByLabel("RTVI event log").locator("code")).toHaveText(events);
+  // The filter also matches a row's raw payload, so other event types can sit in the list: count only the call's own events.
+  const callEvents = page.getByLabel("RTVI event log").locator("code").filter({ hasText: /^llm-function-call-/ });
+  await expect(callEvents).toHaveText(events);
   // Ordering barrier: after one more answered turn the log must still hold exactly those three.
   await pace(page); // the stack's guard against a text turn sent while the last reply commits (mcp-helpers.ts)
   await sendText(page, "barrier");
   await expect(botReply(page, /You said: barrier/)).toBeVisible();
-  await expect(page.getByLabel("RTVI event log").locator("code")).toHaveText(events);
+  await expect(callEvents).toHaveText(events);
   // The spoken text follows the reply's audio as bot-tts-text (the wait is the assertion).
   await page.getByLabel("Filter events").fill("bot-tts-text");
-  await expect(page.getByLabel("RTVI event log").locator("code").first()).toHaveText("bot-tts-text");
+  await expect(page.getByLabel("RTVI event log").locator("code").filter({ hasText: /^bot-tts-text$/ }).first()).toBeVisible();
   await page.getByLabel("Filter events").fill("llm-function-call");
   await step(page, "tool call events in the test call");
 

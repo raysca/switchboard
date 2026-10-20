@@ -5,7 +5,7 @@ import { asApiError, FLOW_PAGES_MAX, type FlowDTO, type ApiClient, type ApiError
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { ArchiveFlowDialog } from "./ArchiveFlowDialog";
 import { NewFlowDialog } from "./NewFlowDialog";
-import { canTest, liveCalls, readiness, routeCount, stepCount, toolCount } from "./flowStats";
+import { canTest, liveCalls, readiness, reasonText, routeCount, stepCount, toolCount } from "./flowStats";
 import { useActiveSessions } from "./useActiveSessions";
 
 /** getFlows reads at most this many flows (FLOW_PAGES_MAX pages of 100). */
@@ -160,7 +160,7 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
                       <div className="reasons-list">
                         {f.readiness.reasons.map((reason) => (
                           <span key={reason} className="reason">
-                            {reason}
+                            {reasonText(reason)}
                           </span>
                         ))}
                         {[...new Set(f.readiness.missing_env ?? [])].map((v) => (

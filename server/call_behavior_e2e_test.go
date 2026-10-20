@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -190,6 +192,51 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 	}
 }
 
+// The route sound is one of the server's cues: publish says which, and the editor reads the list from /server-config.
+func TestCallBehaviorThePublishAPIRefusesAnUnknownRouteCue(t *testing.T) {
+	cue := constWAV(t, "chime", 12000)
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Audio.Cues = map[string]CueConfig{"ding": {File: cue}, "chime": {File: cue}}
+	})
+	id := r.createRoutedFlow("salesvoice", `{"name":"chime","after_ms":50}`)
+	w := apiRequest(r.s, http.MethodGet, "/api/v1/server-config", e2eMgmtKey, "")
+	var cfg struct {
+		Data struct {
+			Audio struct {
+				Cues []string `json:"cues"`
+			} `json:"audio"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || !slices.Equal(cfg.Data.Audio.Cues, []string{"chime", "ding"}) {
+		t.Fatalf("server-config cues = %v (err %v): %s", cfg.Data.Audio.Cues, err, w.Body.String())
+	}
+	put := func(cue string) (int, string) {
+		body := `{"config":` + string(flowConfigJSON("SALES", "salesvoice", cue)) + `}`
+		w := apiRequest(r.s, http.MethodPut, "/api/v1/flows/"+id, e2eMgmtKey, body)
+		return w.Code, w.Body.String()
+	}
+	code, body := put(`{"name":"chimes"}`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, `route_cue.name \"chimes\" is not a sound on this server (available: chime, ding)`) {
+		t.Fatalf("an unknown route sound: %d %s", code, body)
+	}
+	if code, body := put(`{"name":"ding"}`); code != http.StatusOK {
+		t.Fatalf("a known route sound: %d %s", code, body)
+	}
+}
+
+// failover is a call-wide setting: on a later step publish says invalid_request and names the step.
+func TestCallBehaviorThePublishAPIRefusesCallWideSettingsOnALaterStep(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	id := r.createRoutedFlow("salesvoice")
+	cfg := string(flowConfigJSON("SALES", "salesvoice"))
+	i := strings.Index(cfg, `"id":"sales"`)
+	cfg = cfg[:i] + strings.Replace(cfg[i:], `"config":{`, `"config":{"failover":{"on":["timeout"]},`, 1)
+	w := apiRequest(r.s, http.MethodPut, "/api/v1/flows/"+id, e2eMgmtKey, `{"config":`+cfg+`}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_request") || !strings.Contains(w.Body.String(), `step \"sales\"`) {
+		t.Fatalf("failover on a later step: %d %s", w.Code, w.Body.String())
+	}
+}
+
 // The prompt and the goodbye are lines the assistant spoke: they are in the call's turns (as the greeting
 // is), they are no caller turn, and they leave no reply-time sample.
 func TestCallBehaviorIdleLinesAreInTheCallsTurns(t *testing.T) {
@@ -223,4 +270,65 @@ func TestCallBehaviorIdleLinesAreInTheCallsTurns(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || out.Data.MedianReplyMS != nil || out.Data.TurnCount != 2 {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
+}
+
+// A flow can ask for the Smart Turn model only on a server that loaded it: the echo rig has none, so publish
+// says why (and names the key that loads it).
+func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	body := func(turn string) string {
+		return `{"name":"smart","config":{"stt":{"provider":"echo","model":"m"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"turn":` + turn + `}}`
+	}
+	w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body(`{"end_of_turn":"smart"}`))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "turn.analyzer.for_flows") {
+		t.Fatalf("smart without the model: %d %s", w.Code, w.Body.String())
+	}
+	if w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body(`{"end_of_turn":"eager","speech_timeout_ms":900}`)); w.Code != http.StatusCreated {
+		t.Fatalf("eager needs no model: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// With the model loaded (for_flows) a smart flow is ready, and a call on it connects and replies. It does not
+// prove the smart chain runs (a typed turn bypasses the detector): TestTurnForCall and the build test do.
+func TestCallBehaviorASmartFlowConnectsAndRepliesWhenTheModelIsLoaded(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Turn.Analyzer.ForFlows = true })
+	r.s.SetTurnBackend(smartBackend{p: 0.9})
+	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "smart", Config: json.RawMessage(
+		`{"stt":{"provider":"echo","model":"m"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"turn":{"end_of_turn":"smart","smart_hold_ms":1500}}`)})
+	if err != nil || f.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("a smart flow on a server with the model: %+v err %v", f.Readiness, err)
+	}
+	c := r.dial(f.ID)
+	c.say("hello")
+	eventually(t, "a reply", func() bool { return c.replyCount() > 0 })
+}
+
+// A flow can shorten the call limit, never lengthen it: the publish API refuses a limit above the server's.
+func TestCallBehaviorThePublishAPIRefusesALongerCallLimit(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Limits.MaxCallDuration = 10 * time.Minute })
+	post := func(name string, seconds int) (int, string) {
+		body := fmt.Sprintf(`{"name":%q,"config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"max_call_duration_seconds":%d}}`, name, seconds)
+		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
+		return w.Code, w.Body.String()
+	}
+	code, body := post("TooLong", 601)
+	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, "601") || !strings.Contains(body, "600") {
+		t.Fatalf("a limit above the server's: %d %s", code, body)
+	}
+	if code, body := post("Shorter", 120); code != http.StatusCreated {
+		t.Fatalf("a shorter limit: %d %s", code, body)
+	}
+	if code, body := post("Equal", 600); code != http.StatusCreated {
+		t.Fatalf("the server's own limit: %d %s", code, body)
+	}
+}
+
+// The server lowered its limit after the flow was published: the call still ends at the server's limit,
+// the flow's longer one does not extend it.
+func TestCallBehaviorAFlowLimitLongerThanTheServersDoesNotExtendIt(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
+	id := behaviorFlow(t, r, "Plain", "plainvoice", `,"max_call_duration_seconds":1500`)
+	r.s.cfg.Limits.MaxCallDuration = time.Second
+	c := r.dial(id)
+	r.waitEnded(c.sessionID, storage.EndTimeLimit)
 }

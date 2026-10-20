@@ -313,3 +313,22 @@ Principle used: expose per flow only what is a **conversation-design choice** th
 ### Suggested Phase 7 scope addition
 
 R1 (S, bugs) + R2 (M, interruption control) + R3 (M, end-of-turn) + R5a/R5b (M, bed per step and tool hold sound) + R6 (S/M). Together these close every user-named gap that the library already supports, with no new core DSP. R4, R5c, R7 are good follow-ups; R8 needs provider work and belongs in its own phase.
+
+### Status after Phase 7b
+
+- 1.5 Bed per step: done. A step can name `audio.background`; the bed switches on arrival, a step without one keeps the current bed, a return to the start step restores the call's own.
+- 1.9 Hold sound while a slow tool runs: done for synchronous MCP tools (`audio.tool_cue`); async, transfer, `end_call` and `send_dtmf` never start it.
+- 1.10 Route cue name: done. Publish refuses a name outside `audio.cues` and the editor offers the server's list.
+- 2.11 Speech-timeout resume window: done (`turn.speech_timeout_ms`, 200..3000).
+- 2.14 Eager end of turn: done as `turn.end_of_turn: "eager"`; there is no punctuating-STT gate (the catalogue has no such mark), the speech-timeout fallback stays in the chain and the help copy warns.
+- 2.15 Smart Turn: done for per-flow choice and hold (`smart_hold_ms`), but only on a server that loads the model (`turn.analyzer.for_flows` or a smart default); otherwise it is a disabled option and `smart_turn_unavailable` in readiness. Workers and model stay server-only.
+- 3.2 Minimum words: done (`turn.min_words`, 0 = off, 1..10).
+- 3.4 Interruptions off: done (`turn.mute` with `always`, capped by `max_mute_ms`, which can only shorten the server's).
+- 3.5 Protect the greeting: partly. `first_speech` / `until_first_bot_complete` mute the caller per flow, but the greeting itself is still ordinary interruptible output (R4, not built).
+- 3.6 Mute during a tool: done (`turn.mute` with `function_call`).
+- 3.7 `critical_output`: done by deletion (strategy, `SpeakingStateFrame.Uninterruptible` and plumbing removed; a server YAML still listing it fails at start-up).
+- 4.1 Text cleaning: done. A non-start step with `tts.clean_text` is refused at publish (stored versions keep decoding and ignoring it) and the editor keeps it on Flow settings.
+- 5.10 `end_call`: done on any flow, including a one-step flow (saved in steps form).
+- 5.17 Failover classes: done. `failover.on` on a non-start step is refused at publish; the editor keeps it on Flow settings.
+- 7.3 `send_dtmf`: done. The tool is exposed on every step when `dtmf.send_tool` is on (intended behaviour change: it no longer disappears after the first route).
+- 7.5 Max call duration: done as tighten-only (`max_call_duration_seconds`, 60..server limit; a call lasts the shorter of the two).

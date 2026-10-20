@@ -13,7 +13,10 @@ export const STT_P99_RANGE = [100, 10000] as const;
 const DEFAULT_MAX_TOKENS = 4000;
 /** The server's limits for a flow's quiet-caller and audio settings (server/flow/call_behavior.go). */
 export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
-export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0] } as const;
+export const TURN_RANGE = { minWords: [1, 10], maxMuteS: [1, 60], speechTimeoutMs: [200, 3000], smartHoldMs: [500, 5000] } as const;
+/** `max_call_duration_seconds`: 0 or unset is the server's limit. */
+export const CALL_LIMIT_RANGE_S = [60, 86400] as const;
+export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0], holdAfterMs: [0, 10000] } as const;
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
 
@@ -37,7 +40,24 @@ export type FlowDraft = {
 };
 
 // Settings that belong to the call, not to one step: only the start step has them.
-const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio"] as const;
+const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio", "turn", "failover", "max_call_duration_seconds"] as const;
+
+/** `tts.clean_text` is call-wide too but lives inside `tts`: the config without it. */
+function withoutCleanText(config: StepConfig): StepConfig {
+  const tts = asRecord(config.tts);
+  if (!("clean_text" in tts)) return config;
+  const { clean_text: _drop, ...rest } = tts;
+  void _drop;
+  return { ...config, tts: rest };
+}
+
+/** A step other than the start may set only `audio.background` (K7): the config with every other call-level member gone. */
+function withOnlyBackground(config: StepConfig): StepConfig {
+  const { audio, ...rest } = config;
+  const background = asRecord(audio).background;
+  for (const k of CALL_LEVEL) delete rest[k];
+  return background === undefined ? rest : { ...rest, audio: { background } };
+}
 
 export function slug(name: string): string {
   return name
@@ -113,8 +133,11 @@ export const FAILOVER_CLASSES = [
 export const DEFAULT_FAILOVER: readonly string[] = ["timeout", "server_error", "circuit_open"];
 const SUMMARIZING = new Set(["google", "echo", "nvidia", "openai", "xai"]);
 
+/** What the server caps, when it is known: a flow may only tighten it. */
+type ServerLimits = { maxMuteMs?: number; maxCallSeconds?: number };
+
 /** Problems that belong to the whole flow (header state line and Flow settings). */
-export function flowIssues(g: FlowDraft): string[] {
+export function flowIssues(g: FlowDraft, limits?: ServerLimits): string[] {
   if (g.steps.length === 0) return [];
   const start = g.steps.find((n) => n.id === g.start);
   if (!start) return ["Choose a start step."];
@@ -131,7 +154,7 @@ export function flowIssues(g: FlowDraft): string[] {
   const stt99 = start.config.stt_p99_ms;
   if (typeof stt99 === "number" && stt99 !== 0 && (stt99 < STT_P99_RANGE[0] || stt99 > STT_P99_RANGE[1]))
     out.push(`Late-transcript wait must be between ${STT_P99_RANGE[0]} and ${STT_P99_RANGE[1]} ms.`);
-  out.push(...callBehaviorIssues(start.config));
+  out.push(...callBehaviorIssues(start.config, limits));
   const summary = asRecord(ctx.summarization);
   if (Object.keys(summary).length > 0) {
     const maxTokens = typeof ctx.max_tokens === "number" && ctx.max_tokens > 0 ? ctx.max_tokens : DEFAULT_MAX_TOKENS;
@@ -152,7 +175,7 @@ export function flowIssues(g: FlowDraft): string[] {
 
 const outside = (v: unknown, [lo, hi]: readonly [number, number]) => typeof v === "number" && (v < lo || v > hi);
 
-function callBehaviorIssues(config: StepConfig): string[] {
+function callBehaviorIssues(config: StepConfig, limits?: ServerLimits): string[] {
   const out: string[] = [];
   const idle = asRecord(config.idle);
   const t = idle.user_timeout_ms;
@@ -160,11 +183,22 @@ function callBehaviorIssues(config: StepConfig): string[] {
   if (typeof idle.max_prompts === "number" && (!Number.isInteger(idle.max_prompts) || outside(idle.max_prompts, IDLE_RANGE.prompts))) out.push("Ask this many times must be 1 to 10.");
   if (typeof idle.prompt === "string" && byteLength(idle.prompt) > IDLE_RANGE.textBytes) out.push(`What to say is over ${IDLE_RANGE.textBytes} bytes.`);
   if (typeof idle.goodbye === "string" && byteLength(idle.goodbye) > IDLE_RANGE.textBytes) out.push(`Goodbye is over ${IDLE_RANGE.textBytes} bytes.`);
+  const turn = asRecord(config.turn);
+  const words = turn.min_words;
+  if (typeof words === "number" && (!Number.isInteger(words) || words < 0 || words > TURN_RANGE.minWords[1])) out.push(`Interrupt after must be ${TURN_RANGE.minWords[0]} to ${TURN_RANGE.minWords[1]} words.`);
+  if (typeof turn.max_mute_ms === "number" && outside(turn.max_mute_ms, [TURN_RANGE.maxMuteS[0] * 1000, TURN_RANGE.maxMuteS[1] * 1000])) out.push(`Longest mute must be ${TURN_RANGE.maxMuteS[0]} to ${TURN_RANGE.maxMuteS[1]} seconds.`);
+  if (outside(turn.speech_timeout_ms, TURN_RANGE.speechTimeoutMs)) out.push(`Wait for the caller to resume must be ${TURN_RANGE.speechTimeoutMs[0]} to ${TURN_RANGE.speechTimeoutMs[1]} ms.`);
+  if (outside(turn.smart_hold_ms, TURN_RANGE.smartHoldMs)) out.push(`Smart hold must be ${TURN_RANGE.smartHoldMs[0]} to ${TURN_RANGE.smartHoldMs[1]} ms.`);
+  if (typeof turn.max_mute_ms === "number" && limits?.maxMuteMs !== undefined && turn.max_mute_ms > limits.maxMuteMs) out.push(`Longest mute is above this server's limit of ${limits.maxMuteMs / 1000} seconds.`);
+  const limit = config.max_call_duration_seconds;
+  if (typeof limit === "number" && (limit <= 0 || outside(limit, CALL_LIMIT_RANGE_S))) out.push(`Longest call must be ${CALL_LIMIT_RANGE_S[0] / 60} to ${CALL_LIMIT_RANGE_S[1] / 60} minutes.`);
+  if (typeof limit === "number" && limits?.maxCallSeconds !== undefined && limit > limits.maxCallSeconds) out.push(`Longest call is above this server's limit of ${limits.maxCallSeconds / 60} minutes.`);
   const audio = asRecord(config.audio);
   if (outside(audio.output_gain_db, AUDIO_RANGE.gain)) out.push("Voice volume must be -30 to +6 dB.");
   const strength = asRecord(audio.denoise).strength;
   if (typeof strength === "number" && (strength <= 0 || strength > 1)) out.push("Noise reduction strength must be 1 to 100%.");
   if (outside(asRecord(audio.background).gain_db, AUDIO_RANGE.backgroundGain)) out.push("Background volume must be -60 to 0 dB.");
+  if (outside(asRecord(audio.tool_cue).after_ms, AUDIO_RANGE.holdAfterMs)) out.push(`Hold sound starts after must be ${AUDIO_RANGE.holdAfterMs[0]} to ${AUDIO_RANGE.holdAfterMs[1]} ms.`);
   return out;
 }
 
@@ -243,7 +277,7 @@ function withoutBlankGreeting(config: StepConfig): StepConfig {
 /** A stored flat flow opens as one step named "main" and goes back flat; a step the user has named needs the flow form. */
 function isFlat(g: FlowDraft): boolean {
   const only = g.steps[0];
-  return g.steps.length === 1 && g.routes.length === 0 && !g.route_cue && only.id === "main" && only.name === "main";
+  return g.steps.length === 1 && g.routes.length === 0 && !g.route_cue && only.id === "main" && only.name === "main" && !only.end_call;
 }
 
 /** The config to send: the flat form for a plain one-step flow, else the flow. */
@@ -254,9 +288,11 @@ export function toPayload(g: FlowDraft): unknown {
   return {
     start: g.start,
     steps: g.steps.map((n) => {
-      const config = withoutBlankGreeting(n.config);
-      if (n.id !== g.start) for (const k of CALL_LEVEL) delete config[k];
-      return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call && g.steps.length > 1 ? { end_call: true } : {}), position: n.position };
+      let config = withoutBlankGreeting(n.config);
+      if (n.id !== g.start) {
+        config = withOnlyBackground(withoutCleanText(config));
+      }
+      return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call ? { end_call: true } : {}), position: n.position };
     }),
     routes: g.routes,
     ...(g.route_cue ? { route_cue: g.route_cue } : {}),
@@ -329,22 +365,32 @@ export function setStart(g: FlowDraft, id: string): FlowDraft {
   const old = g.steps.find((n) => n.id === g.start);
   const moved: StepConfig = {};
   for (const k of CALL_LEVEL) if (old && k in old.config) moved[k] = old.config[k];
+  // Each step keeps its own background: the audio that moves is the rest of the call's audio.
+  const { background: _own, ...movedAudio } = asRecord(moved.audio);
+  void _own;
+  if (Object.keys(movedAudio).length) moved.audio = movedAudio;
+  else delete moved.audio;
+  const clean = old ? asRecord(old.config.tts).clean_text : undefined;
   return {
     ...g,
     start: id,
     steps: g.steps.map((n) => {
       if (n.id === g.start) {
-        const config = { ...n.config };
-        for (const k of CALL_LEVEL) delete config[k];
-        return { ...n, config };
+        return { ...n, config: withOnlyBackground(withoutCleanText({ ...n.config })) };
       }
-      return n.id === id ? { ...n, config: { ...n.config, ...moved } } : n;
+      if (n.id !== id) return n;
+      const ownBackground = asRecord(n.config.audio).background;
+      const audio = { ...(ownBackground === undefined ? {} : { background: ownBackground }), ...asRecord(moved.audio) };
+      const config = withoutCleanText({ ...n.config, ...moved });
+      if (Object.keys(audio).length) config.audio = audio;
+      else delete config.audio;
+      return { ...n, config: clean === undefined ? config : { ...config, tts: { ...asRecord(config.tts), clean_text: clean } } };
     }),
   };
 }
 
 /** Problems the server would reject, in plain words. Empty means publishable. */
-export function validate(g: FlowDraft): string[] {
+export function validate(g: FlowDraft, limits?: ServerLimits): string[] {
   const errors: string[] = [];
   if (g.steps.length === 0 || g.steps.length > MAX_STEPS) errors.push(`A flow has 1 to ${MAX_STEPS} steps.`);
   if (!g.steps.some((n) => n.id === g.start)) errors.push("Choose a start step.");
@@ -379,6 +425,6 @@ export function validate(g: FlowDraft): string[] {
     else if (new TextEncoder().encode(e.condition).length > MAX_CONDITION)
       errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} has a condition longer than ${MAX_CONDITION} bytes.`);
   }
-  errors.push(...flowIssues(g).filter((m) => !m.startsWith("Choose speech-to-text")));
+  errors.push(...flowIssues(g, limits).filter((m) => !m.startsWith("Choose speech-to-text")));
   return errors;
 }

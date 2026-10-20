@@ -3,6 +3,10 @@ package flow
 import (
 	"fmt"
 	"math"
+	"slices"
+	"strings"
+
+	coreturn "govoice/core/turn"
 )
 
 // IdleSettings is a flow's quiet-caller behavior (call-level: the start step). Present, it replaces
@@ -20,6 +24,24 @@ type IdleSettings struct {
 	Goodbye string `json:"goodbye,omitempty"`
 }
 
+// TurnSettings is a flow's interruption rules and end-of-turn choice (call-level: the start step). Each
+// member overrides the server's turn setting only when present; absent means the server's.
+type TurnSettings struct {
+	// MinWords is how many words of caller speech cut the agent off: 0 (off, any speech does) or 1..10.
+	MinWords *int `json:"min_words,omitempty"`
+	// Mute replaces the server's mute list; [] is no mute. Names are core's four strategies.
+	Mute *[]string `json:"mute,omitempty"`
+	// MaxMuteMS caps one mute, 1000..60000 and (at publish) at most the server's own cap.
+	MaxMuteMS *int `json:"max_mute_ms,omitempty"`
+	// SpeechTimeoutMS is how long the caller may pause before the turn ends: 200..3000.
+	SpeechTimeoutMS *int `json:"speech_timeout_ms,omitempty"`
+	// EndOfTurn picks the detector: default (wait for silence), smart (a model judges) or eager (end on a
+	// full sentence). Every choice keeps the speech timeout as its fallback.
+	EndOfTurn string `json:"end_of_turn,omitempty"`
+	// SmartHoldMS is how long a turn the model judges unfinished is held: 500..5000, only with smart.
+	SmartHoldMS *int `json:"smart_hold_ms,omitempty"`
+}
+
 // AudioSettings is a flow's call audio (call-level). Each member overrides the server's setting
 // only when present.
 type AudioSettings struct {
@@ -29,6 +51,9 @@ type AudioSettings struct {
 	OutputGainDB *float64 `json:"output_gain_db,omitempty"`
 	// Background plays a server-configured sound under the voice.
 	Background *BackgroundSettings `json:"background,omitempty"`
+	// ToolCue plays a server cue (audio.cues) while a slow synchronous tool runs: once the tool has run
+	// after_ms (0: 1000 ms) with the call quiet.
+	ToolCue *RouteCue `json:"tool_cue,omitempty"`
 }
 
 type DenoiseSettings struct {
@@ -44,12 +69,33 @@ type BackgroundSettings struct {
 	Loop   *bool    `json:"loop,omitempty"`    // default true
 }
 
+// The end-of-turn choices a flow may name (turn.end_of_turn).
+const (
+	EndOfTurnDefault = "default"
+	EndOfTurnSmart   = "smart"
+	EndOfTurnEager   = "eager"
+)
+
 const (
 	maxIdleTextBytes = 200
 	minIdleTimeoutMS = 1000
 	maxIdleTimeoutMS = 300000
 	maxIdlePrompts   = 10
+
+	MinCallDurationSeconds = 60 // the shortest call limit a flow may set (the editor shows it too)
+	maxCallDurationSeconds = 86400
+
+	maxTurnMinWords = 10
+	minMaxMuteMS    = 1000
+	maxMaxMuteMS    = 60000
+
+	minSpeechTimeoutMS = 200
+	maxSpeechTimeoutMS = 3000
+	minSmartHoldMS     = 500
+	maxSmartHoldMS     = 5000
 )
+
+var muteStrategies = []string{coreturn.MuteAlways, coreturn.MuteFirstSpeech, coreturn.MuteUntilFirstBot, coreturn.MuteFunctionCall}
 
 func finite(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }
 
@@ -75,7 +121,7 @@ func (s *IdleSettings) validate() error {
 }
 
 func (a *AudioSettings) validate() error {
-	if a.Denoise == nil && a.OutputGainDB == nil && a.Background == nil {
+	if *a == (AudioSettings{}) {
 		return fmt.Errorf("%w: audio must set at least one member", ErrInvalidConfig)
 	}
 	if d := a.Denoise; d != nil && d.Strength != nil && (!finite(*d.Strength) || *d.Strength <= 0 || *d.Strength > 1) {
@@ -83,6 +129,9 @@ func (a *AudioSettings) validate() error {
 	}
 	if g := a.OutputGainDB; g != nil && (!finite(*g) || *g < -30 || *g > 6) {
 		return fmt.Errorf("%w: audio.output_gain_db must be between -30 and 6", ErrInvalidConfig)
+	}
+	if c := a.ToolCue; c != nil && (!cueName.MatchString(c.Name) || c.AfterMS < 0 || c.AfterMS > maxCueAfterMS) {
+		return fmt.Errorf("%w: audio.tool_cue.name must name a server cue (lowercase letters, digits, - and _, up to 32) and after_ms must be between 0 and %d", ErrInvalidConfig, maxCueAfterMS)
 	}
 	if b := a.Background; b != nil {
 		switch {
@@ -96,6 +145,47 @@ func (a *AudioSettings) validate() error {
 		}
 		if g := b.GainDB; g != nil && (!finite(*g) || *g < -60 || *g > 0) {
 			return fmt.Errorf("%w: audio.background.gain_db must be between -60 and 0", ErrInvalidConfig)
+		}
+	}
+	return nil
+}
+
+// validate checks the turn settings; greeting is the start step's, which until_first_bot_complete needs
+// (without one the cap is the only release).
+func (s *TurnSettings) validate(greeting string) error {
+	if *s == (TurnSettings{}) {
+		return fmt.Errorf("%w: turn must set at least one member", ErrInvalidConfig)
+	}
+	if w := s.MinWords; w != nil && (*w < 0 || *w > maxTurnMinWords) {
+		return fmt.Errorf("%w: turn.min_words must be between 0 (off) and %d", ErrInvalidConfig, maxTurnMinWords)
+	}
+	if s.Mute != nil {
+		for i, name := range *s.Mute {
+			switch {
+			case !slices.Contains(muteStrategies, name):
+				return fmt.Errorf("%w: turn.mute[%d] %q is not one of %s", ErrInvalidConfig, i, name, strings.Join(muteStrategies, ", "))
+			case slices.Contains((*s.Mute)[:i], name):
+				return fmt.Errorf("%w: turn.mute[%d] repeats %q", ErrInvalidConfig, i, name)
+			case name == coreturn.MuteUntilFirstBot && strings.TrimSpace(greeting) == "":
+				return fmt.Errorf("%w: turn.mute[%d] %s needs a greeting on the start step", ErrInvalidConfig, i, name)
+			}
+		}
+	}
+	if m := s.MaxMuteMS; m != nil && (*m < minMaxMuteMS || *m > maxMaxMuteMS) {
+		return fmt.Errorf("%w: turn.max_mute_ms must be between %d and %d", ErrInvalidConfig, minMaxMuteMS, maxMaxMuteMS)
+	}
+	if t := s.SpeechTimeoutMS; t != nil && (*t < minSpeechTimeoutMS || *t > maxSpeechTimeoutMS) {
+		return fmt.Errorf("%w: turn.speech_timeout_ms must be between %d and %d", ErrInvalidConfig, minSpeechTimeoutMS, maxSpeechTimeoutMS)
+	}
+	if !slices.Contains([]string{"", EndOfTurnDefault, EndOfTurnSmart, EndOfTurnEager}, s.EndOfTurn) {
+		return fmt.Errorf("%w: turn.end_of_turn must be %s, %s or %s", ErrInvalidConfig, EndOfTurnDefault, EndOfTurnSmart, EndOfTurnEager)
+	}
+	if h := s.SmartHoldMS; h != nil {
+		switch {
+		case s.EndOfTurn != EndOfTurnSmart:
+			return fmt.Errorf("%w: turn.smart_hold_ms only applies with turn.end_of_turn %q", ErrInvalidConfig, EndOfTurnSmart)
+		case *h < minSmartHoldMS || *h > maxSmartHoldMS:
+			return fmt.Errorf("%w: turn.smart_hold_ms must be between %d and %d", ErrInvalidConfig, minSmartHoldMS, maxSmartHoldMS)
 		}
 	}
 	return nil

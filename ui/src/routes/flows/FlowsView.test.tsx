@@ -106,6 +106,11 @@ describe("FlowsView", () => {
     expect(screen.getByText("2 enabled · 1 not ready")).toBeVisible();
   });
 
+  it("words a known readiness reason", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue([flow({ readiness: { state: "not_ready", reasons: ["smart_turn_unavailable"] } })]) });
+    expect(await screen.findByText("Smart end-of-turn needs turn.analyzer.for_flows on this server")).toBeVisible();
+  });
+
   it("toggles Enabled by sending only enabled, never a config", async () => {
     const updateFlow = vi.fn().mockResolvedValue(flow({ enabled: false }));
     const { user } = setup({ updateFlow });

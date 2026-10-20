@@ -46,7 +46,7 @@ test("designer: draw a two-step flow with a route and publish it", async ({ page
   await page.getByLabel("STT provider").selectOption(PROVIDER);
   await pick(page, "STT model", catalogDefault("stt"));
   await page.getByText("Advanced", { exact: true }).click();
-  await page.getByLabel("Sound name").fill("chime");
+  await page.getByRole("combobox", { name: "Route sound" }).selectOption({ label: "chime" });
   await page.getByLabel("Start after (ms)").fill("50");
   await step(page, "flow designed");
 

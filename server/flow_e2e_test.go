@@ -775,16 +775,33 @@ func TestFlowE2ECueStopsWhenTheRouteFails(t *testing.T) {
 	c.waitReplies("[FRONT", 2) // the caller is still with the front step
 }
 
-// A flow that names a sound the server does not have still hands off, silently.
+// A flow published with a sound the server had, on a server whose sounds changed since (a restart with a
+// smaller catalogue), still hands off, silently: publish refuses an unknown name, a running call never does.
 func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	probe := newProbe()
 	r := newFlowRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createRoutedFlow("salesvoice", `{"name":"missing","after_ms":50}`))
+	flowID := r.createRoutedFlow("salesvoice", `{"name":"chime","after_ms":50}`)
+	delete(r.s.cues, "chime")
+	c := r.dial(flowID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("transfer to sales")
 	c.waitReplies("[SALES", 1)
 	if c.cueFrames() != 0 || r.has(EventCueStart, "") {
 		t.Fatal("an unknown cue must play nothing")
+	}
+}
+
+// send_dtmf is a call tool: after a route the new step can still press keys.
+func TestFlowE2ESendDTMFWorksAfterARoute(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(cfg *Config) { cfg.DTMF.SendTool = true })
+	c := r.dial(r.createRoutedFlow("salesvoice"))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	c.say("please transfer to sales")
+	c.waitReplies("[SALES", 1)
+	c.say(`call tool send_dtmf {"digits":"1"}`)
+	c.waitReplies("Tool send_dtmf returned", 1)
+	if c.replies("Tool send_dtmf failed") != 0 {
+		t.Fatal("send_dtmf failed after the route")
 	}
 }
 
@@ -823,6 +840,64 @@ func TestFlowE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 	if !strings.Contains(attrs, `"reason":"`+EndReasonFlow+`"`) || !strings.Contains(attrs, `"from_step":"front"`) {
 		t.Fatalf("call.end attributes = %s", attrs)
 	}
+}
+
+// oneStepEndCallJSON is a single-step flow (no routes); ends gives the step the end_call tool.
+func oneStepEndCallJSON(ends bool) json.RawMessage {
+	return json.RawMessage(`{"start":"main","steps":[{"id":"main","name":"Main","end_call":` + strconv.FormatBool(ends) + `,"config":{` +
+		`"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"MAIN"},"tts":{"provider":"echo","voice":"v"}}}],"routes":[]}`)
+}
+
+func TestFlowE2EAOneStepFlowCanEndTheCall(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepCloser", Config: oneStepEndCallJSON(true)})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+	}
+	r.flowID = a.ID
+	c := r.dial(a.ID)
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	c.say("hello")
+	c.waitReplies("[MAIN", 1)
+	if r.activeSessions() != 1 {
+		t.Fatal("the call must stay up until end_call")
+	}
+	before := c.replyCount()
+	c.say("please end the call")
+	eventually(t, "the goodbye after end_call", func() bool { return c.replyCount() > before })
+	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
+	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
+
+	// The same one-step flow without the flag has no end_call tool: the phrase is just echoed and the call stays.
+	b, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepStays", Config: oneStepEndCallJSON(false)})
+	if err != nil || b.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", b.Readiness, err)
+	}
+	r.flowID = b.ID
+	d := r.dial(b.ID)
+	eventually(t, "second session", func() bool { return r.activeSessions() == 1 })
+	d.say("please end the call")
+	d.waitReplies("[MAIN", 1)
+	d.say("are you there")
+	d.waitReplies("[MAIN", 2)
+	if r.activeSessions() != 1 {
+		t.Fatal("a step without end_call must not hang up")
+	}
+}
+
+// end_call must hang up even when the server's own quiet-caller handling is off (the idle controller is forced on).
+func TestFlowE2EOneStepEndCallWithIdleOff(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
+	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepIdleOff", Config: oneStepEndCallJSON(true)})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+	}
+	r.flowID = a.ID
+	c := r.dial(a.ID)
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	c.say("please end the call")
+	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
+	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
 }
 
 // Only sales has end_call; the caller is on front, which lacks the tool, so the phrase is just echoed.
@@ -869,4 +944,91 @@ func TestFlowE2EConfiguredTokenLifetimeIsHonouredByTheLiveConnect(t *testing.T) 
 	if _, err := NewServer(cfg); err == nil || !strings.Contains(err.Error(), "token.max_lifetime") {
 		t.Fatalf("over-limit config built a server: %v", err)
 	}
+}
+
+// routedBackgroundFlow is front -> sales -> support (and sales -> front when back is set); the given
+// audio object, if any, goes on each step by id.
+func (r *flowRigE2E) routedBackgroundFlow(audio map[string]string, back bool) string {
+	r.t.Helper()
+	stage := func(prompt, voice, extra string) string {
+		return `"llm":{"provider":"echo","model":"m","system_prompt":"` + prompt + `"},"tts":{"provider":"echo","voice":"` + voice + `"}` + extra
+	}
+	step := func(id, name, prompt string, first bool) string {
+		cfg := stage(prompt, id+"voice", "")
+		if first {
+			cfg = `"stt":{"provider":"echo","model":"s"},` + cfg
+		}
+		if a := audio[id]; a != "" {
+			cfg += `,"audio":` + a
+		}
+		return `{"id":"` + id + `","name":"` + name + `","config":{` + cfg + `}}`
+	}
+	routes := `{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."},` +
+		`{"id":"e2","from":"sales","to":"support","condition":"The caller needs help."}`
+	if back {
+		routes += `,{"id":"e3","from":"sales","to":"front","condition":"The caller is done buying."}`
+	}
+	cfg := `{"start":"front","steps":[` + step("front", "Front desk", "FRONT", true) + `,` + step("sales", "Sales", "SALES", false) + `,` +
+		step("support", "Support", "SUPPORT", false) + `],"routes":[` + routes + `]}`
+	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "Beds", Config: json.RawMessage(cfg)})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
+		r.t.Fatalf("background flow: %+v err=%v", a.Readiness, err)
+	}
+	r.flowID = a.ID
+	return a.ID
+}
+
+// R5a: a step's background starts when the route to it arrives, and a step that names none keeps the
+// sound that is playing.
+func TestFlowE2EAStepsBackgroundStartsWhenTheRouteArrives(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Audio.Backgrounds = map[string]CueConfig{"office": {File: constWAV(t, "office", 20000), GainDB: ptrF(0)}}
+		c.Audio.AllowFlowBackground = true
+	})
+	c := r.dial(r.routedBackgroundFlow(map[string]string{"sales": `{"background":{"name":"office"}}`}, false))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+
+	c.say("hello")
+	c.waitReplies("[FRONT", 1)
+	time.Sleep(500 * time.Millisecond)
+	if c.cueFrames() != 0 {
+		t.Fatalf("the front step has no background: %d sound frames before the route", c.cueFrames())
+	}
+	c.say("transfer to sales")
+	c.waitReplies("[SALES", 1)
+	eventually(t, "the sales bed is heard", func() bool { return c.cueFrames() >= 5 })
+
+	c.say("transfer to support") // names no background: the office bed keeps playing
+	c.waitReplies("[SUPPORT", 1)
+	time.Sleep(300 * time.Millisecond)
+	before := c.cueFrames()
+	time.Sleep(300 * time.Millisecond)
+	if c.cueFrames() <= before+5 {
+		t.Fatal("a step without a background must keep the current sound")
+	}
+}
+
+// K7: a route back to the start step restores the bed the call began with, the server default included.
+func TestFlowE2EAStepsBackgroundIsRestoredWhenARouteReturnsToTheStart(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Audio.Backgrounds = map[string]CueConfig{"soft": {File: constWAV(t, "soft", 6000), GainDB: ptrF(0)}}
+		c.Audio.BackgroundDefault = "soft"
+		c.Audio.AllowFlowBackground = true
+	})
+	c := r.dial(r.routedBackgroundFlow(map[string]string{"sales": `{"background":{"name":""}}`}, true))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	eventually(t, "the server default plays on the start step", func() bool { return c.cueFrames() >= 5 })
+
+	c.say("transfer to sales")
+	c.waitReplies("[SALES", 1)
+	time.Sleep(400 * time.Millisecond)
+	silent := c.cueFrames()
+	time.Sleep(300 * time.Millisecond)
+	if c.cueFrames() != silent {
+		t.Fatal("sales asked for no sound: the default must stop")
+	}
+
+	c.say("transfer to front desk")
+	c.waitReplies("[FRONT", 1)
+	eventually(t, "the start step's bed is back", func() bool { return c.cueFrames() > silent+5 })
 }

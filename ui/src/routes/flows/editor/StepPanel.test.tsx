@@ -200,19 +200,29 @@ describe("StepPanel", () => {
     expect(screen.getByRole("tab", { name: /tools/i })).toHaveTextContent("1");
   });
 
-  it("disables the end_call tool on a one-step flow and says why", () => {
+  it("lets a one-step flow's only step end the call", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
     const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], routes: [] });
-    render(<Harness initial={one} stepId="a" initialTab="tools" />);
-    expect(screen.getByRole("checkbox", { name: /can end the call/i })).toBeDisabled();
-    expect(screen.getByText(/needs a second step/i)).toBeInTheDocument();
+    render(<Harness initial={one} stepId="a" initialTab="tools" onChange={onChange} />);
+    const box = screen.getByRole("checkbox", { name: /can end the call/i });
+    expect(box).toBeEnabled();
+    expect(screen.queryByText(/second step/i)).toBeNull();
+    await user.click(box);
+    expect(lastGraph(onChange).steps[0].end_call).toBe(true);
   });
 
-  it("shows end_call unchecked and disabled on a one-step flow that still carries the flag", () => {
+  it("does not offer a per-step tool list on a one-step flow: it can call every flow tool", () => {
+    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], routes: [] });
+    render(<Harness initial={one} stepId="a" initialTab="tools" flowTools={["crm/lookup"]} />);
+    expect(screen.queryByText("Tools this step can call")).toBeNull();
+    expect(screen.getByText(/can call every tool of the flow/i)).toBeVisible();
+  });
+
+  it("shows end_call checked on a one-step flow that carries the flag", () => {
     const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", end_call: true, config: {} }], routes: [] });
     render(<Harness initial={one} stepId="a" initialTab="tools" />);
-    const box = screen.getByRole("checkbox", { name: /can end the call/i });
-    expect(box).not.toBeChecked();
-    expect(box).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /can end the call/i })).toBeChecked();
   });
 
   it("offers Delete step and Make start step only on other steps", () => {

@@ -143,10 +143,48 @@ func TestDecodeStepEndCall(t *testing.T) {
 	}
 }
 
-func TestDecodeRejectsEndCallOnAOneStepFlow(t *testing.T) {
+func TestDecodeAcceptsEndCallOnAOneStepFlow(t *testing.T) {
 	front := `"config":{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
-	_, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","end_call":true,` + front + `}],"routes":[]}`))
-	if err == nil || !strings.Contains(err.Error(), "end_call needs a flow with at least two steps") {
+	g, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","end_call":true,` + front + `}],"routes":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := g.Step("a"); !a.EndCall {
+		t.Fatal("EndCall lost")
+	}
+}
+
+func TestDecodeRejectsACallLimitOnALaterStep(t *testing.T) {
+	raw := twoStepCfg("")
+	i := strings.Index(raw, `"id":"sales"`)
+	raw = raw[:i] + strings.Replace(raw[i:], `"config":{`, `"config":{"max_call_duration_seconds":600,`, 1)
+	_, err := Decode(json.RawMessage(raw))
+	if err == nil || !strings.Contains(err.Error(), `step "sales"`) || !strings.Contains(err.Error(), "max_call_duration_seconds") {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+// twoStepCfg is a routed flow whose second step carries the given extra config members.
+func twoStepCfg(salesExtra string) string {
+	sales := `{"id":"sales","name":"Sales","config":{"llm":{"provider":"openai","model":"m","system_prompt":"s"},"tts":{"provider":"cartesia","voice":"v"` + salesExtra + `}}}`
+	return `{"start":"front","steps":[{"id":"front","name":"Front","config":` + flatCfg + `},` + sales + `],` +
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`
+}
+
+// K1: stored versions that carry a start-step-only setting on another step keep decoding.
+func TestStoredFlowWithCallWideSettingsOnAStepStillDecodes(t *testing.T) {
+	for _, raw := range []string{
+		twoStepCfg(`,"clean_text":false`),
+		strings.Replace(twoStepCfg(""), `"tts":{"provider":"cartesia","voice":"v"}}}`, `"tts":{"provider":"cartesia","voice":"v"},"failover":{"on":["timeout"]}}}`, 1),
+	} {
+		if _, err := Decode(json.RawMessage(raw)); err != nil {
+			t.Fatalf("Decode(%s) = %v", raw, err)
+		}
+	}
+}
+
+// withSalesAudio is the routed flow whose second step carries the given audio object.
+func withSalesAudio(audio string) json.RawMessage {
+	const llm = `"llm":{"provider":"openai","model":"m","system_prompt":"s"}`
+	return json.RawMessage(strings.Replace(twoStepCfg(""), llm, llm+`,"audio":`+audio, 1))
 }

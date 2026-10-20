@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"govoice/core"
@@ -257,5 +258,35 @@ func TestCommitWithNoteKeepsTheWinnersNote(t *testing.T) {
 		if got, want := cf.takeNote(), winner.Load().(string); got != want {
 			t.Fatalf("iteration %d: note %q, want the committed transfer's %q", i, got, want)
 		}
+	}
+}
+
+// The call's limit is the shorter of the flow's and the server's: a flow can only shorten calls, and a
+// server lowered after the flow was published wins.
+func TestCallSpecTakesTheShorterCallLimit(t *testing.T) {
+	s := apiTestServer(t)
+	cases := []struct {
+		name   string
+		flow   string
+		server time.Duration
+		want   time.Duration
+	}{
+		{"flow shorter", `,"max_call_duration_seconds":600`, 30 * time.Minute, 10 * time.Minute},
+		{"flow absent", ``, 30 * time.Minute, 30 * time.Minute},
+		{"server lowered below the flow", `,"max_call_duration_seconds":600`, 5 * time.Minute, 5 * time.Minute},
+		{"flow equal", `,"max_call_duration_seconds":300`, 5 * time.Minute, 5 * time.Minute},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s.cfg.Limits.MaxCallDuration = c.server
+			raw := json.RawMessage(`{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}` + c.flow + `}`)
+			call, err := s.callSpec(t.Context(), &runtime.Session{Snapshot: flow.Snapshot{Version: flow.Version{Config: raw}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if call.MaxCallDuration != c.want {
+				t.Fatalf("MaxCallDuration = %v, want %v", call.MaxCallDuration, c.want)
+			}
+		})
 	}
 }

@@ -46,7 +46,51 @@ const startCfg = (fn: ReturnType<typeof vi.fn>) => {
   return g.steps.find((n) => n.id === g.start)!.config;
 };
 
+const limitServer: ServerConfigDTO = {
+  profile: "development",
+  max_sessions: 10,
+  max_call_duration_seconds: 1800,
+  voice_token_max_lifetime_seconds: 60,
+  client_ip: "",
+  secure: false,
+  audio: { backgrounds: [], cues: [], allow_flow_background: true, background_default: "" },
+  idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
+  turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000 },
+};
+
 describe("FlowSettingsPanel", () => {
+  it("sets the longest call in minutes (stored as seconds), with the server's limit as the ceiling", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} serverConfig={limitServer} />);
+    const field = screen.getByRole("spinbutton", { name: "Longest call (minutes)" });
+    expect(field).toHaveAttribute("placeholder", "30");
+    expect(field).toHaveAttribute("max", "30");
+    expect(field).toHaveAttribute("min", "1");
+    await user.type(field, "10");
+    expect(startCfg(onChange).max_call_duration_seconds).toBe(600);
+    await user.clear(field);
+    expect(startCfg(onChange)).not.toHaveProperty("max_call_duration_seconds");
+  });
+
+  it("says so when the server's limit is under a minute, and flags 0 or a negative number", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<Harness serverConfig={{ ...limitServer, max_call_duration_seconds: 45 }} />);
+    expect(screen.getByText(/server allows at most 45 seconds, so no per-flow limit can be set/i)).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Longest call (minutes)" })).toBeDisabled();
+    unmount();
+    render(<Harness serverConfig={limitServer} />);
+    await user.type(screen.getByRole("spinbutton", { name: "Longest call (minutes)" }), "0");
+    expect(screen.getByRole("alert")).toHaveTextContent(/Longest call must be 1 to 1440 minutes/);
+  });
+
+  it("opens Advanced on a stored call limit and shows it in minutes", () => {
+    const stored = fromFlowConfig({ llm: { provider: "g", model: "m" }, tts: { provider: "g" }, max_call_duration_seconds: 600 });
+    render(<Harness initial={stored} serverConfig={limitServer} />);
+    expect(screen.getAllByText("Advanced · 1 set")).toHaveLength(1);
+    expect(screen.getByRole("spinbutton", { name: "Longest call (minutes)" })).toHaveValue(10);
+  });
+
   it("says speech-to-text is missing, and sets it on the start step", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -81,20 +125,74 @@ describe("FlowSettingsPanel", () => {
     expect(startCfg(onChange).recording).toEqual({ enabled: true, disclosure_confirmed: true });
   });
 
-  it("edits the route sound only when the flow has routes", async () => {
+  it("sets text cleaning and the fallback rules on the start step, and opens Advanced when they are set", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    await user.type(screen.getByLabelText("Sound name"), "chime");
-    await user.type(screen.getByLabelText("Start after (ms)"), "50");
-    expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toEqual({ name: "chime", after_ms: 50 });
+    await user.click(screen.getByText("Advanced"));
+    const group = screen.getByRole("group", { name: "When to move to a fallback" });
+    expect(group).toHaveTextContent("Only matters when a stage has fallbacks.");
+    expect(within(group).getByRole("checkbox", { name: "Timeouts" })).toBeChecked();
+    expect(within(group).getByRole("checkbox", { name: "Rejected requests (bad request, bad key)" })).not.toBeChecked();
+    await user.click(within(group).getByRole("checkbox", { name: "Rejected requests (bad request, bad key)" }));
+    expect(startCfg(onChange).failover).toEqual({ on: ["timeout", "server_error", "circuit_open", "client_error"] });
+    await user.click(within(group).getByRole("checkbox", { name: "Rejected requests (bad request, bad key)" }));
+    expect(startCfg(onChange)).not.toHaveProperty("failover");
+    const clean = screen.getByLabelText(/Clean text before speaking/);
+    expect(clean).toBeChecked();
+    await user.click(clean);
+    expect(startCfg(onChange).tts).toMatchObject({ clean_text: false });
+    await user.click(clean);
+    expect(startCfg(onChange).tts).not.toHaveProperty("clean_text");
+    // a stored flow that set them opens Advanced on load
+    const stored = fromFlowConfig({ llm: { provider: "g", model: "m" }, tts: { provider: "g", clean_text: false }, failover: { on: ["client_error"] } });
+    render(<Harness initial={stored} />);
+    expect(screen.getAllByText("Advanced · 2 set")).toHaveLength(1);
+  });
+
+  describe("route sound", () => {
+    const cueServer: ServerConfigDTO = {
+      profile: "development",
+      max_sessions: 10,
+      max_call_duration_seconds: 1800,
+      voice_token_max_lifetime_seconds: 60,
+      client_ip: "",
+      secure: false,
+      audio: { backgrounds: [], cues: ["chime", "ding"], allow_flow_background: true, background_default: "" },
+      idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
+      turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000 },
+    };
+
+    it("is a choice among the server's cues, only when the flow has routes", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness onChange={onChange} serverConfig={cueServer} />);
+      const select = screen.getByRole("combobox", { name: "Route sound" });
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "chime", "ding"]);
+      await user.selectOptions(select, "chime");
+      await user.type(screen.getByLabelText("Start after (ms)"), "50");
+      expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toEqual({ name: "chime", after_ms: 50 });
+      await user.selectOptions(select, "");
+      expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toBeUndefined();
+    });
+
+    it("keeps a stored name selected while the server's list has not loaded", () => {
+      render(<Harness initial={{ ...two, route_cue: { name: "chime" } }} />);
+      expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chime");
+    });
+
+    it("shows a stored name the server lacks as selected and not on this server", () => {
+      render(<Harness initial={{ ...two, route_cue: { name: "chimes" } }} serverConfig={cueServer} />);
+      expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chimes");
+      expect(screen.getByRole("option", { name: "chimes (not on this server)" })).toBeInTheDocument();
+    });
   });
 
   it("asks for a step first on an empty flow, and renames the flow", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyFlow()} />);
     expect(screen.getByText("Add a step first; these settings live on the start step.")).toBeVisible();
-    expect(screen.queryByLabelText("Sound name")).toBeNull();
+    expect(screen.queryByLabelText("Route sound")).toBeNull();
     await user.clear(screen.getByLabelText("Flow name"));
     await user.type(screen.getByLabelText("Flow name"), "After hours");
     expect(screen.getByLabelText("Flow name")).toHaveValue("After hours");
@@ -166,7 +264,7 @@ describe("FlowSettingsPanel footer", () => {
       expect(advanced()).not.toHaveAttribute("open");
       expect(advanced()).toContainElement(screen.getByLabelText("Wait after the caller stops (ms)"));
       expect(advanced()).toContainElement(screen.getByLabelText("Max messages"));
-      expect(advanced()).toContainElement(screen.getByLabelText("Sound name"));
+      expect(advanced()).toContainElement(screen.getByLabelText("Route sound"));
       expect(advanced()).not.toContainElement(screen.getByLabelText("Record calls"));
       expect(screen.getByText(/^Advanced/)).toHaveTextContent(/^Advanced$/);
     });
@@ -175,6 +273,22 @@ describe("FlowSettingsPanel footer", () => {
       render(<Harness initial={withCfg({ vad_stop_ms: 400, context: { max_tokens: 3000 } })} />);
       expect(screen.getByText(/^Advanced/)).toHaveTextContent("Advanced · 2 set");
       expect(advanced()).toHaveAttribute("open");
+    });
+
+    it("opens by itself when the start step has interruption settings, and shows them there", () => {
+      render(<Harness initial={withCfg({ turn: { mute: ["always"] } })} />);
+      expect(screen.getByText(/^Advanced/)).toHaveTextContent("Advanced · 1 set");
+      expect(advanced()).toHaveAttribute("open");
+      expect(advanced()).toContainElement(screen.getByRole("group", { name: "Interruptions" }));
+      expect(screen.getByRole("radio", { name: "Not while the agent speaks (up to the longest-mute limit)" })).toBeChecked();
+    });
+
+    it("shows the end-of-turn choices in Turn-taking, and opens by itself when the start step sets one", async () => {
+      render(<Harness initial={withCfg({ turn: { end_of_turn: "eager", speech_timeout_ms: 900 } })} />);
+      expect(advanced()).toHaveAttribute("open");
+      expect(screen.getByRole("group", { name: "Turn-taking" })).toContainElement(screen.getByRole("combobox", { name: "End-of-turn detection" }));
+      expect(screen.getByRole("combobox", { name: "End-of-turn detection" })).toHaveValue("eager");
+      expect(screen.getByRole("spinbutton", { name: "Wait for the caller to resume (ms)" })).toHaveValue(900);
     });
 
     it("opens by itself when an advanced field has a problem", () => {
@@ -273,8 +387,9 @@ describe("FlowSettingsPanel footer", () => {
       voice_token_max_lifetime_seconds: 60,
       client_ip: "",
       secure: false,
-      audio: { backgrounds: ["cafe", "office"], allow_flow_background: true, background_default: "" },
+      audio: { backgrounds: ["cafe", "office"], cues: ["chime"], allow_flow_background: true, background_default: "" },
       idle: { user_timeout_ms: 15000, max_prompts: 2, prompt_mode: "llm" },
+      turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000 },
     };
     const withStart = (extra: Record<string, unknown>) =>
       fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" }, stt: { provider: "deepgram" }, ...extra } }], routes: [] });
@@ -413,11 +528,11 @@ describe("FlowSettingsPanel footer", () => {
       await openAdvanced(user);
       const select = screen.getByLabelText("Background sound");
       expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Server default (cafe)", "None", "cafe", "office"]);
-      expect(select).toHaveValue("default");
+      expect(select).toHaveValue("__default__");
       await user.selectOptions(select, "");
       expect(startCfg(onChange).audio).toEqual({ background: { name: "" } });
       expect(screen.queryByLabelText("Background volume (dB)")).toBeNull();
-      await user.selectOptions(select, "default");
+      await user.selectOptions(select, "__default__");
       expect(startCfg(onChange)).not.toHaveProperty("audio");
     });
 
@@ -439,7 +554,7 @@ describe("FlowSettingsPanel footer", () => {
 
     it("disables the sound with the reason when the server does not let flows choose one", async () => {
       const user = userEvent.setup();
-      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], allow_flow_background: false, background_default: "" } }} />);
+      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], cues: [], allow_flow_background: false, background_default: "" } }} />);
       await openAdvanced(user);
       expect(screen.getByLabelText("Background sound")).toBeDisabled();
       expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();
@@ -471,11 +586,53 @@ describe("FlowSettingsPanel footer", () => {
       expect(screen.getByLabelText("Repeat")).not.toBeChecked();
     });
 
+    it("chooses a hold sound from the server's cues and when it starts", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} onChange={onChange} />);
+      await openAdvanced(user);
+      const select = screen.getByLabelText("Hold sound");
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "chime"]);
+      expect(screen.getByLabelText("Start the hold sound after (ms)")).toBeDisabled();
+      await user.selectOptions(select, "chime");
+      expect(startCfg(onChange).audio).toEqual({ tool_cue: { name: "chime" } });
+      const after = screen.getByLabelText("Start the hold sound after (ms)");
+      expect(after).toHaveAttribute("placeholder", "1000");
+      await user.type(after, "500");
+      expect(startCfg(onChange).audio).toEqual({ tool_cue: { name: "chime", after_ms: 500 } });
+      await user.clear(after);
+      expect(startCfg(onChange).audio).toEqual({ tool_cue: { name: "chime" } });
+      await user.selectOptions(select, "");
+      expect(startCfg(onChange)).not.toHaveProperty("audio");
+    });
+
+    it("shows a stored hold sound the server no longer has, and keeps the other audio members", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} initial={withStart({ audio: { output_gain_db: -3, tool_cue: { name: "gone", after_ms: 200 } } })} onChange={onChange} />);
+      expect(screen.getByLabelText("Hold sound")).toHaveValue("gone");
+      expect(screen.getByRole("option", { name: "gone (not on this server)" })).toBeInTheDocument();
+      await user.selectOptions(screen.getByLabelText("Hold sound"), "chime");
+      expect(startCfg(onChange).audio).toEqual({ output_gain_db: -3, tool_cue: { name: "chime", after_ms: 200 } });
+    });
+
+    it("tells a server sound named default from the server-default choice", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={{ ...server, audio: { ...server.audio, backgrounds: ["default", "office"], background_default: "office" } }} onChange={onChange} />);
+      await openAdvanced(user);
+      const select = screen.getByLabelText("Background sound");
+      await user.selectOptions(select, screen.getByRole("option", { name: "default" }));
+      expect(startCfg(onChange).audio).toEqual({ background: { name: "default" } });
+      await user.selectOptions(select, screen.getByRole("option", { name: "Server default (office)" }));
+      expect(startCfg(onChange)).not.toHaveProperty("audio");
+    });
+
     it("explains each new field", async () => {
       const user = userEvent.setup();
       render(<Harness serverConfig={server} initial={withStart({ audio: { denoise: {}, background: { name: "office" } } })} />);
       await openAdvanced(user);
-      for (const name of ["Silent caller wait", "Questions before hanging up", "What to say", "How to say it", "Goodbye", "Noise reduction", "Voice volume", "Background sound", "Background volume", "Repeat background"]) {
+      for (const name of ["Silent caller wait", "Questions before hanging up", "What to say", "How to say it", "Goodbye", "Noise reduction", "Voice volume", "Background sound", "Background volume", "Repeat background", "Hold sound"]) {
         expect(screen.getByRole("button", { name: `Explain ${name}` })).toBeInTheDocument();
       }
     });

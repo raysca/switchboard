@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FlowDTO, SessionDTO } from "../../api/client";
-import { canTest, liveCalls, readiness, routeCount, stepCount, toolCount } from "./flowStats";
+import { canTest, liveCalls, readiness, reasonText, routeCount, stepCount, toolCount } from "./flowStats";
 
 const flow = (over: Partial<FlowDTO> = {}, config: Record<string, unknown> = {}): FlowDTO => ({
   id: "a1",
@@ -66,5 +66,12 @@ describe("flow figures", () => {
     ];
     expect(liveCalls(sessions, flow())).toEqual({ live: 3, onOlderVersion: 2 });
     expect(liveCalls([], flow())).toEqual({ live: 0, onOlderVersion: 0 });
+  });
+});
+
+describe("reasonText", () => {
+  it("words the codes it knows and keeps any other raw", () => {
+    expect(reasonText("smart_turn_unavailable")).toBe("Smart end-of-turn needs turn.analyzer.for_flows on this server");
+    expect(reasonText("missing_credential_llm")).toBe("missing_credential_llm");
   });
 });

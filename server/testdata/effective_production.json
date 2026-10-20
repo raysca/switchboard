@@ -105,7 +105,8 @@
    "Workers": 1,
    "ModelPath": "",
    "Hold": 3000000000,
-   "Budget": 150000000
+   "Budget": 150000000,
+   "ForFlows": false
   }
  },
  "FirstClauseChars": 0,

@@ -46,3 +46,11 @@ export function liveCalls(sessions: SessionDTO[], a: FlowDTO): LiveCalls {
   const current = a.current_version?.id;
   return { live: mine.length, onOlderVersion: mine.filter((s) => s.flow_version_id !== current).length };
 }
+
+const REASON_TEXT: Record<string, string> = {
+  smart_turn_unavailable: "Smart end-of-turn needs turn.analyzer.for_flows on this server",
+  idle_timeout_too_short: "The silence wait is shorter than the DTMF window",
+};
+
+/** A readiness reason in words; a code this screen does not know stays as the server sent it. */
+export const reasonText = (code: string): string => REASON_TEXT[code] ?? code;

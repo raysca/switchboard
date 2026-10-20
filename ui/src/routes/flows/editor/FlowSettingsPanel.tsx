@@ -3,8 +3,9 @@ import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
 import { AudioFields, QuietCallerBasics, QuietCallerDetails } from "./CallBehaviorFields";
+import { EndOfTurnFields, TurnFields } from "./TurnFields";
 import { SettingHelp } from "./SettingHelp";
-import { flowIssues, MAX_SUMMARY_PROMPT_BYTES, STT_P99_RANGE, updateStep, type FlowDraft, type StepConfig } from "./model";
+import { CALL_LIMIT_RANGE_S, DEFAULT_FAILOVER, FAILOVER_CLASSES, flowIssues, MAX_SUMMARY_PROMPT_BYTES, STT_P99_RANGE, updateStep, type FlowDraft, type StepConfig } from "./model";
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (v && typeof v === "object" && !Array.isArray(v) ? (v as Rec) : {});
@@ -45,8 +46,10 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const stt = rec(cfg.stt);
   const context = rec(cfg.context);
   const recording = rec(cfg.recording);
-  const problems = flowIssues(graph);
-  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio"] as const).filter((k) => k in cfg).length +
+  const tts = rec(cfg.tts);
+  const problems = flowIssues(graph, serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms, maxCallSeconds: serverConfig.max_call_duration_seconds });
+  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio", "turn", "failover", "max_call_duration_seconds"] as const).filter((k) => k in cfg).length +
+    (tts.clean_text === false ? 1 : 0) +
     (Object.keys(rec(cfg.idle)).some((k) => k !== "user_timeout_ms") ? 1 : 0) +
     (graph.route_cue && graph.routes.length > 0 ? 1 : 0);
   const [open, setOpen] = useState(advancedSet > 0);
@@ -60,6 +63,17 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const setSummary = (key: string, value: unknown) => setContext({ ...context, summarization: value === null ? without(summary, key) : { ...summary, [key]: value } });
   const setContext = (next: Rec) => setKey("context", Object.keys(next).length ? next : null);
   const cue = graph.route_cue;
+  const cueNames = serverConfig?.audio.cues ?? [];
+  const cueUnknown = cue !== undefined && cue.name !== "" && !cueNames.includes(cue.name);
+  const limitMaxS = serverConfig ? Math.min(CALL_LIMIT_RANGE_S[1], serverConfig.max_call_duration_seconds) : CALL_LIMIT_RANGE_S[1];
+  const limitPossible = limitMaxS >= CALL_LIMIT_RANGE_S[0];
+  const failoverOn = Array.isArray(rec(cfg.failover).on) ? (rec(cfg.failover).on as string[]) : [];
+  const failover = failoverOn.length ? failoverOn : DEFAULT_FAILOVER;
+  const setFailover = (id: string, on: boolean) => {
+    const next = FAILOVER_CLASSES.map((c): string => c.id).filter((c) => (c === id ? on : failover.includes(c)));
+    const isDefault = next.length === DEFAULT_FAILOVER.length && DEFAULT_FAILOVER.every((c) => next.includes(c));
+    setKey("failover", isDefault ? null : { on: next });
+  };
 
   return (
     <SidePanel
@@ -141,6 +155,36 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
           <QuietCallerDetails cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           <AudioFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           <fieldset className="stage-box">
+            <legend>Speaking</legend>
+            <label className="check-row" htmlFor="flow-clean-text">
+              <input
+                id="flow-clean-text"
+                type="checkbox"
+                checked={tts.clean_text !== false}
+                onChange={(e) => setKey("tts", e.target.checked ? without(tts, "clean_text") : { ...tts, clean_text: false })}
+              />
+              <span>Clean text before speaking (strip markdown, links and emoji)</span>
+            </label>
+            <SettingHelp id="tts.clean_text" />
+          </fieldset>
+          <fieldset className="stage-box">
+            <legend>When to move to a fallback</legend>
+            <p className="subtext">Only matters when a stage has fallbacks.</p>
+            {FAILOVER_CLASSES.map((c) => (
+              <label key={c.id} className="check-row" htmlFor={`flow-failover-${c.id}`}>
+                <input
+                  id={`flow-failover-${c.id}`}
+                  type="checkbox"
+                  checked={failover.includes(c.id)}
+                  disabled={failover.includes(c.id) && failover.length === 1}
+                  onChange={(e) => setFailover(c.id, e.target.checked)}
+                />
+                <span>{c.label}</span>
+              </label>
+            ))}
+            <SettingHelp id="failover.on" />
+          </fieldset>
+          <fieldset className="stage-box">
             <legend>Turn-taking</legend>
             <label className="form-field" htmlFor="flow-vad">
               <span>Wait after the caller stops (ms)</span>
@@ -176,6 +220,40 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
               {STT_P99_RANGE[0]} to {STT_P99_RANGE[1]}. Empty: the server default.
             </p>
             <SettingHelp id="stt_p99_ms" />
+            <EndOfTurnFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
+          </fieldset>
+          <TurnFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
+          <fieldset className="stage-box">
+            <legend>Call length</legend>
+            <label className="form-field" htmlFor="flow-call-limit">
+              <span>Longest call (minutes)</span>
+              <input
+                id="flow-call-limit"
+                type="number"
+                min={CALL_LIMIT_RANGE_S[0] / 60}
+                max={limitMaxS / 60}
+                step="any"
+                disabled={!limitPossible}
+                placeholder={serverConfig ? String(serverConfig.max_call_duration_seconds / 60) : "Server limit"}
+                aria-describedby="flow-call-limit-hint"
+                value={typeof cfg.max_call_duration_seconds === "number" ? cfg.max_call_duration_seconds / 60 : ""}
+                onChange={(e) => {
+                  const n = e.target.value.trim() === "" ? NaN : Number(e.target.value);
+                  setKey("max_call_duration_seconds", Number.isFinite(n) ? Math.round(n * 60) : null);
+                }}
+              />
+            </label>
+            <p id="flow-call-limit-hint" className="subtext">
+              {limitPossible
+                ? `${CALL_LIMIT_RANGE_S[0] / 60} to ${limitMaxS / 60}. Empty: the server's limit.`
+                : `The server allows at most ${limitMaxS} seconds, so no per-flow limit can be set.`}
+            </p>
+            {typeof cfg.max_call_duration_seconds === "number" && cfg.max_call_duration_seconds <= 0 && (
+              <p role="alert" className="note note--bad">
+                Longest call must be {CALL_LIMIT_RANGE_S[0] / 60} to {CALL_LIMIT_RANGE_S[1] / 60} minutes. Clear the field to use the server's limit.
+              </p>
+            )}
+            <SettingHelp id="max_call_duration_seconds" />
           </fieldset>
           <fieldset className="stage-box">
             <legend>Memory</legend>
@@ -275,21 +353,27 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
       {graph.routes.length > 0 && (
         <fieldset className="stage-box">
           <legend>Route sound</legend>
-          <p className="subtext">Plays while the caller moves between steps. Sounds are set up on the server (audio.cues).</p>
+          <p className="subtext">Plays while the caller moves between steps. The sounds are the ones set up on the server (audio.cues).</p>
           <div className="grid-2">
             <label className="form-field" htmlFor="cue-name">
-              <span>Sound name</span>
-              <input
+              <span>Route sound</span>
+              <select
                 id="cue-name"
-                type="text"
-                placeholder="none"
                 value={cue?.name ?? ""}
                 onChange={(e) => {
-                  const v = e.target.value.trim();
+                  const v = e.target.value;
                   const { route_cue: _drop, ...rest } = graph;
                   onChange(v ? { ...rest, route_cue: { ...(cue ?? {}), name: v } } : rest);
                 }}
-              />
+              >
+                <option value="">None</option>
+                {cueUnknown && <option value={cue.name}>{cue.name} (not on this server)</option>}
+                {cueNames.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="form-field" htmlFor="cue-after">
               <span>Start after (ms)</span>

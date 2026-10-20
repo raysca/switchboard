@@ -1,8 +1,9 @@
 import { useState } from "react";
-import type { ProviderStatus } from "../../../api/client";
+import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
+import { BackgroundSelect } from "./CallBehaviorFields";
 import { StageFields, type StageValue } from "../StageFields";
 import { SettingHelp } from "./SettingHelp";
-import { DEFAULT_FAILOVER, FAILOVER_CLASSES, MAX_FALLBACKS, updateStep, type FlowDraft, type DraftStep } from "./model";
+import { MAX_FALLBACKS, updateStep, type FlowDraft, type DraftStep } from "./model";
 
 type Fallback = { provider: string; model?: string; voice?: string };
 type Stage = Record<string, unknown>;
@@ -22,27 +23,34 @@ const VOICE_SETTINGS = [
 ] as const;
 type VoiceKey = (typeof VOICE_SETTINGS)[number]["key"];
 
-type Props = { graph: FlowDraft; step: DraftStep; providers: ProviderStatus[]; onChange: (g: FlowDraft) => void };
+type Props = { graph: FlowDraft; step: DraftStep; providers: ProviderStatus[]; serverConfig?: ServerConfigDTO; onChange: (g: FlowDraft) => void };
 
 /** Optional depth for one step: fallbacks and tuning. Nothing here is needed to take calls. */
-export function StepAdvanced({ graph, step, providers, onChange }: Props) {
+export function StepAdvanced({ graph, step, providers, serverConfig, onChange }: Props) {
   const llm = rec(step.config.llm);
   const tts = rec(step.config.tts);
   const setStage = (cap: "llm" | "tts", stage: Stage) => onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: stage } }));
   const setFallbacks = (cap: "llm" | "tts", stage: Stage, items: Fallback[]) =>
     setStage(cap, items.length ? { ...stage, fallbacks: items } : without(stage, "fallbacks"));
-  const failoverOn = Array.isArray(rec(step.config.failover).on) ? (rec(step.config.failover).on as string[]) : [];
-  const failover = failoverOn.length ? failoverOn : DEFAULT_FAILOVER;
-  const setFailover = (id: string, on: boolean) => {
-    const next = FAILOVER_CLASSES.map((c): string => c.id).filter((c) => (c === id ? on : failover.includes(c)));
-    const isDefault = next.length === DEFAULT_FAILOVER.length && DEFAULT_FAILOVER.every((c) => next.includes(c));
-    onChange(updateStep(graph, step.id, { config: isDefault ? without(step.config, "failover") : { ...step.config, failover: { on: next } } }));
-  };
   const parallel = Number(llm.max_parallel) || 1;
   const voiceSettings = rec(tts.voice_settings) as Partial<Record<VoiceKey, number>>;
 
+  // The start step's sound is set in Flow settings > Audio; a later step may switch it (K7).
+  const bg = rec(step.config.audio).background;
+  const setBg = (next: Stage | null) => {
+    const { audio: _drop, ...rest } = step.config;
+    void _drop;
+    onChange(updateStep(graph, step.id, { config: next ? { ...rest, audio: { background: next } } : rest }));
+  };
   return (
     <>
+      {step.id !== graph.start && (
+        <fieldset className="stage-box">
+          <legend>Sound</legend>
+          <BackgroundSelect id={`step-${step.id}-bg`} step bg={bg === undefined ? null : rec(bg)} setBg={setBg} serverConfig={serverConfig} />
+          <SettingHelp id="audio.step_background" />
+        </fieldset>
+      )}
       <SettingHelp id="fallbacks" />
       <FallbackList
         kind="llm"
@@ -65,23 +73,6 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
         onChange={(items) => setFallbacks("tts", tts, items)}
       />
       <fieldset className="stage-box">
-        <legend>When to move to a fallback</legend>
-        <p className="subtext">Only matters when a stage has fallbacks.</p>
-        {FAILOVER_CLASSES.map((c) => (
-          <label key={c.id} className="check-row" htmlFor={`step-${step.id}-failover-${c.id}`}>
-            <input
-              id={`step-${step.id}-failover-${c.id}`}
-              type="checkbox"
-              checked={failover.includes(c.id)}
-              disabled={failover.includes(c.id) && failover.length === 1}
-              onChange={(e) => setFailover(c.id, e.target.checked)}
-            />
-            <span>{c.label}</span>
-          </label>
-        ))}
-        <SettingHelp id="failover.on" />
-      </fieldset>
-      <fieldset className="stage-box">
         <legend>Tuning</legend>
         <label className="form-field" htmlFor={`step-${step.id}-parallel`}>
           <span>Tool calls at once</span>
@@ -102,16 +93,6 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
           1 to 16. Higher is faster when one turn needs several lookups.
         </p>
         <SettingHelp id="llm.max_parallel" />
-        <label className="check-row" htmlFor={`step-${step.id}-clean`}>
-          <input
-            id={`step-${step.id}-clean`}
-            type="checkbox"
-            checked={tts.clean_text !== false}
-            onChange={(e) => setStage("tts", e.target.checked ? without(tts, "clean_text") : { ...tts, clean_text: false })}
-          />
-          <span>Clean text before speaking (strip markdown, links and emoji)</span>
-        </label>
-        <SettingHelp id="tts.clean_text" />
       </fieldset>
       {tts.provider === "elevenlabs" && (
         <fieldset className="stage-box">
