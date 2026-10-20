@@ -13,6 +13,7 @@ import (
 
 	"govoice/core"
 	"govoice/core/coretest"
+	"govoice/server/storage"
 	"govoice/transport/ws"
 )
 
@@ -96,4 +97,13 @@ func TestTheCallLimitTimerRunsForTheCallSpecsLimit(t *testing.T) {
 	if s.callLimitTimer(CallSpec{}) != nil {
 		t.Fatal("no limit, no timer")
 	}
+}
+
+// K10 end to end: a 30 minute server limit and a call whose spec says 700 ms ends with the time limit,
+// so the timer reads the CallSpec, not the server's own limit.
+func TestCallBehaviorTheCallEndsAtItsSpecsLimitNotTheServers(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""), func(c *Config) { c.Limits.MaxCallDuration = 30 * time.Minute })
+	r.s.adjustCall = func(call *CallSpec) { call.MaxCallDuration = 700 * time.Millisecond }
+	c := r.dial(behaviorFlow(t, r, "Plain", "plainvoice", ``))
+	r.waitEnded(c.sessionID, storage.EndTimeLimit)
 }

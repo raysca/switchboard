@@ -49,6 +49,7 @@ type Server struct {
 	otel                  *otelexport.Exporter       // nil unless otel.enabled
 	redactor              *redact.Redactor           // sink redaction; never applied to the live LLM context
 	cfg                   *Config
+	adjustCall            func(*CallSpec) // tests only: changes the resolved call before it is built
 	catalog               *catalog.Catalog
 	metrics               *Metrics
 	timelines             *TimelineRegistry

@@ -84,6 +84,9 @@ func (s *Server) resolveCall(ctx context.Context, flowID, tokenID, caller string
 	}
 	call.History = history
 	call.TurnLatencies = lat
+	if s.adjustCall != nil {
+		s.adjustCall(&call)
+	}
 	return call, release, nil
 }
 
