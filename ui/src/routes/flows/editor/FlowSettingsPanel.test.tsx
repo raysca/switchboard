@@ -542,11 +542,41 @@ describe("FlowSettingsPanel footer", () => {
       expect(screen.getByLabelText("Repeat")).not.toBeChecked();
     });
 
+    it("chooses a hold sound from the server's cues and when it starts", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} onChange={onChange} />);
+      await openAdvanced(user);
+      const select = screen.getByLabelText("Hold sound");
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "chime"]);
+      expect(screen.getByLabelText("Start the hold sound after (ms)")).toBeDisabled();
+      await user.selectOptions(select, "chime");
+      expect(startCfg(onChange).audio).toEqual({ tool_cue: { name: "chime" } });
+      const after = screen.getByLabelText("Start the hold sound after (ms)");
+      expect(after).toHaveAttribute("placeholder", "1000");
+      await user.type(after, "500");
+      expect(startCfg(onChange).audio).toEqual({ tool_cue: { name: "chime", after_ms: 500 } });
+      await user.clear(after);
+      expect(startCfg(onChange).audio).toEqual({ tool_cue: { name: "chime" } });
+      await user.selectOptions(select, "");
+      expect(startCfg(onChange)).not.toHaveProperty("audio");
+    });
+
+    it("shows a stored hold sound the server no longer has, and keeps the other audio members", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={server} initial={withStart({ audio: { output_gain_db: -3, tool_cue: { name: "gone", after_ms: 200 } } })} onChange={onChange} />);
+      expect(screen.getByLabelText("Hold sound")).toHaveValue("gone");
+      expect(screen.getByRole("option", { name: "gone (not on this server)" })).toBeInTheDocument();
+      await user.selectOptions(screen.getByLabelText("Hold sound"), "chime");
+      expect(startCfg(onChange).audio).toEqual({ output_gain_db: -3, tool_cue: { name: "chime", after_ms: 200 } });
+    });
+
     it("explains each new field", async () => {
       const user = userEvent.setup();
       render(<Harness serverConfig={server} initial={withStart({ audio: { denoise: {}, background: { name: "office" } } })} />);
       await openAdvanced(user);
-      for (const name of ["Silent caller wait", "Questions before hanging up", "What to say", "How to say it", "Goodbye", "Noise reduction", "Voice volume", "Background sound", "Background volume", "Repeat background"]) {
+      for (const name of ["Silent caller wait", "Questions before hanging up", "What to say", "How to say it", "Goodbye", "Noise reduction", "Voice volume", "Background sound", "Background volume", "Repeat background", "Hold sound"]) {
         expect(screen.getByRole("button", { name: `Explain ${name}` })).toBeInTheDocument();
       }
     });

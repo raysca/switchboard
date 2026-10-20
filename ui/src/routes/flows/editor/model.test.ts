@@ -325,6 +325,8 @@ describe("what the server will accept", () => {
     expect(bad({ audio: { denoise: { strength: 0.01 } } })).toEqual([]);
     expect(bad({ audio: { denoise: {}, background: { name: "office", gain_db: 0.1 } } })).toContain("Background volume must be -60 to 0 dB.");
     expect(bad({ audio: { background: { name: "office", gain_db: -60 } } })).toEqual([]);
+    for (const ms of [-1, 10001]) expect(bad({ audio: { tool_cue: { name: "chime", after_ms: ms } } })).toContain("Hold sound starts after must be 0 to 10000 ms.");
+    for (const ms of [0, 10000]) expect(bad({ audio: { tool_cue: { name: "chime", after_ms: ms } } })).toEqual([]);
   });
 
   it("keeps idle and audio on the start step only", () => {

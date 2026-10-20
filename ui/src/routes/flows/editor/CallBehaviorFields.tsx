@@ -161,6 +161,14 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
   const bg = audio.background !== undefined ? rec(audio.background) : null;
   const bgName = typeof bg?.name === "string" ? bg.name : "";
   const setBg = (key: string, value: unknown) => set("background", value === null ? without(bg ?? {}, key) : { ...bg, [key]: value });
+  const holdSound = audio.tool_cue !== undefined ? rec(audio.tool_cue) : null;
+  const holdName = typeof holdSound?.name === "string" ? holdSound.name : "";
+  const cues = serverConfig?.audio.cues ?? [];
+  const holdKnown = !holdName || !serverConfig || cues.includes(holdName);
+  const setHold = (key: string, value: unknown) => {
+    const next = value === null ? without(holdSound ?? {}, key) : { ...holdSound, [key]: value };
+    set("tool_cue", typeof next.name === "string" && next.name !== "" ? next : null);
+  };
   return (
     <fieldset className="stage-box">
       <legend>Audio</legend>
@@ -227,6 +235,37 @@ export function AudioFields({ cfg, setKey, serverConfig }: Props) {
           <SettingHelp id="audio.background_loop" />
         </>
       )}
+      <label className="form-field" htmlFor="flow-hold">
+        <span>Hold sound</span>
+        <select id="flow-hold" value={holdName} onChange={(e) => setHold("name", e.target.value === "" ? null : e.target.value)}>
+          <option value="">None</option>
+          {!holdKnown && <option value={holdName}>{holdName} (not on this server)</option>}
+          {cues.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
+      {!holdKnown && (
+        <p role="note" className="note note--bad">
+          "{holdName}" is not a sound on this server.
+        </p>
+      )}
+      <label className="form-field" htmlFor="flow-hold-after">
+        <span>Start the hold sound after (ms)</span>
+        <input
+          id="flow-hold-after"
+          type="number"
+          min={AUDIO_RANGE.holdAfterMs[0]}
+          max={AUDIO_RANGE.holdAfterMs[1]}
+          placeholder="1000"
+          disabled={holdName === ""}
+          value={typeof holdSound?.after_ms === "number" ? holdSound.after_ms : ""}
+          onChange={(e) => setHold("after_ms", num(e.target.value))}
+        />
+      </label>
+      <SettingHelp id="audio.tool_cue" />
     </fieldset>
   );
 }

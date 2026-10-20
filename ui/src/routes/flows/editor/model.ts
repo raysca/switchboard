@@ -14,7 +14,7 @@ const DEFAULT_MAX_TOKENS = 4000;
 /** The server's limits for a flow's quiet-caller and audio settings (server/flow/call_behavior.go). */
 export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
 export const TURN_RANGE = { minWords: [1, 10], maxMuteS: [1, 60], speechTimeoutMs: [200, 3000], smartHoldMs: [500, 5000] } as const;
-export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0] } as const;
+export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0], holdAfterMs: [0, 10000] } as const;
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
 
@@ -193,6 +193,7 @@ function callBehaviorIssues(config: StepConfig, limits?: ServerLimits): string[]
   const strength = asRecord(audio.denoise).strength;
   if (typeof strength === "number" && (strength <= 0 || strength > 1)) out.push("Noise reduction strength must be 1 to 100%.");
   if (outside(asRecord(audio.background).gain_db, AUDIO_RANGE.backgroundGain)) out.push("Background volume must be -60 to 0 dB.");
+  if (outside(asRecord(audio.tool_cue).after_ms, AUDIO_RANGE.holdAfterMs)) out.push(`Hold sound starts after must be ${AUDIO_RANGE.holdAfterMs[0]} to ${AUDIO_RANGE.holdAfterMs[1]} ms.`);
   return out;
 }
 
