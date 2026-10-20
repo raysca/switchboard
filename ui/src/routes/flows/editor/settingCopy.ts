@@ -173,7 +173,7 @@ const COPY = {
   },
   "turn.speech_timeout_ms": {
     label: "Wait for the caller to resume",
-    what: "After the caller falls silent and a transcript is ready, how long the call waits for them to carry on before the turn is over.",
+    what: "After the speech detector hears silence and a transcript is ready, how long the call waits for the caller to carry on before the turn is over.",
     when: "Longer for callers who pause to think or read out numbers; shorter for brisk exchanges.",
     defaults: "200 to 3000 ms. Empty: the server's setting.",
     careful: "Too short cuts people off in a pause; too long makes every reply late.",
@@ -187,7 +187,7 @@ const COPY = {
   },
   "turn.smart_hold_ms": {
     label: "Smart hold",
-    what: "How long a turn the model judges unfinished is kept open before the call replies anyway.",
+    what: "How long a turn the model judges unfinished is kept open before the call replies anyway. The call waits the longer of this and its normal silence wait (the pause after the caller stops plus the resume window), so a value below that wait changes nothing.",
     when: "Longer for callers who trail off mid-thought.",
     defaults: "500 to 5000 ms. Empty: the server's setting.",
     careful: "The caller hears nothing from the agent for this long after an unfinished sentence.",
