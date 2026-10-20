@@ -35,6 +35,7 @@ func (t TurnConfig) endOfTurn() string {
 // shorten the mute cap.
 func (t TurnConfig) forCall(f *flow.TurnSettings) TurnConfig {
 	t.Mute = slices.Clone(t.Mute)
+	t.Stop = slices.Clone(t.Stop)
 	if f == nil {
 		return t
 	}

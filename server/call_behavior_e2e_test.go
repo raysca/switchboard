@@ -287,8 +287,9 @@ func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
 	}
 }
 
-// With the model loaded (for_flows) a smart flow is ready, and a call on it connects and replies.
-func TestCallBehaviorASmartFlowIsReadyAndRepliesWhenTheModelIsLoaded(t *testing.T) {
+// With the model loaded (for_flows) a smart flow is ready, and a call on it connects and replies. It does not
+// prove the smart chain runs (a typed turn bypasses the detector): TestTurnForCall and the build test do.
+func TestCallBehaviorASmartFlowConnectsAndRepliesWhenTheModelIsLoaded(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Turn.Analyzer.ForFlows = true })
 	r.s.SetTurnBackend(smartBackend{p: 0.9})
 	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "smart", Config: json.RawMessage(
