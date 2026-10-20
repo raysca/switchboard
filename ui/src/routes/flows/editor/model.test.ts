@@ -384,6 +384,8 @@ describe("what the server will accept", () => {
   it("flags a call limit outside 1 to 1440 minutes, or above the server's when it is known", () => {
     expect(flowIssues(one({ max_call_duration_seconds: 59 }))).toContain("Longest call must be 1 to 1440 minutes.");
     expect(flowIssues(one({ max_call_duration_seconds: 86401 }))).toContain("Longest call must be 1 to 1440 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: 0 }))).toContain("Longest call must be 1 to 1440 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: -60 }))).toContain("Longest call must be 1 to 1440 minutes.");
     expect(flowIssues(one({ max_call_duration_seconds: 600 }))).toEqual([]);
     const g = one({ max_call_duration_seconds: 1900 });
     expect(flowIssues(g)).toEqual([]);

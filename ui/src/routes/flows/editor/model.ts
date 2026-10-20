@@ -191,7 +191,7 @@ function callBehaviorIssues(config: StepConfig, limits?: ServerLimits): string[]
   if (outside(turn.smart_hold_ms, TURN_RANGE.smartHoldMs)) out.push(`Smart hold must be ${TURN_RANGE.smartHoldMs[0]} to ${TURN_RANGE.smartHoldMs[1]} ms.`);
   if (typeof turn.max_mute_ms === "number" && limits?.maxMuteMs !== undefined && turn.max_mute_ms > limits.maxMuteMs) out.push(`Longest mute is above this server's limit of ${limits.maxMuteMs / 1000} seconds.`);
   const limit = config.max_call_duration_seconds;
-  if (typeof limit === "number" && limit !== 0 && outside(limit, CALL_LIMIT_RANGE_S)) out.push(`Longest call must be ${CALL_LIMIT_RANGE_S[0] / 60} to ${CALL_LIMIT_RANGE_S[1] / 60} minutes.`);
+  if (typeof limit === "number" && (limit <= 0 || outside(limit, CALL_LIMIT_RANGE_S))) out.push(`Longest call must be ${CALL_LIMIT_RANGE_S[0] / 60} to ${CALL_LIMIT_RANGE_S[1] / 60} minutes.`);
   if (typeof limit === "number" && limits?.maxCallSeconds !== undefined && limit > limits.maxCallSeconds) out.push(`Longest call is above this server's limit of ${limits.maxCallSeconds / 60} minutes.`);
   const audio = asRecord(config.audio);
   if (outside(audio.output_gain_db, AUDIO_RANGE.gain)) out.push("Voice volume must be -30 to +6 dB.");

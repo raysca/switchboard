@@ -65,6 +65,8 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const cue = graph.route_cue;
   const cueNames = serverConfig?.audio.cues ?? [];
   const cueUnknown = cue !== undefined && cue.name !== "" && !cueNames.includes(cue.name);
+  const limitMaxS = serverConfig ? Math.min(CALL_LIMIT_RANGE_S[1], serverConfig.max_call_duration_seconds) : CALL_LIMIT_RANGE_S[1];
+  const limitPossible = limitMaxS >= CALL_LIMIT_RANGE_S[0];
   const failoverOn = Array.isArray(rec(cfg.failover).on) ? (rec(cfg.failover).on as string[]) : [];
   const failover = failoverOn.length ? failoverOn : DEFAULT_FAILOVER;
   const setFailover = (id: string, on: boolean) => {
@@ -229,20 +231,28 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
                 id="flow-call-limit"
                 type="number"
                 min={CALL_LIMIT_RANGE_S[0] / 60}
-                max={serverConfig ? Math.min(CALL_LIMIT_RANGE_S[1], serverConfig.max_call_duration_seconds) / 60 : CALL_LIMIT_RANGE_S[1] / 60}
+                max={limitMaxS / 60}
                 step="any"
+                disabled={!limitPossible}
                 placeholder={serverConfig ? String(serverConfig.max_call_duration_seconds / 60) : "Server limit"}
                 aria-describedby="flow-call-limit-hint"
                 value={typeof cfg.max_call_duration_seconds === "number" ? cfg.max_call_duration_seconds / 60 : ""}
                 onChange={(e) => {
                   const n = e.target.value.trim() === "" ? NaN : Number(e.target.value);
-                  setKey("max_call_duration_seconds", Number.isFinite(n) && n > 0 ? Math.round(n * 60) : null);
+                  setKey("max_call_duration_seconds", Number.isFinite(n) ? Math.round(n * 60) : null);
                 }}
               />
             </label>
             <p id="flow-call-limit-hint" className="subtext">
-              {CALL_LIMIT_RANGE_S[0] / 60} to {serverConfig ? Math.min(CALL_LIMIT_RANGE_S[1], serverConfig.max_call_duration_seconds) / 60 : CALL_LIMIT_RANGE_S[1] / 60}. Empty: the server's limit.
+              {limitPossible
+                ? `${CALL_LIMIT_RANGE_S[0] / 60} to ${limitMaxS / 60}. Empty: the server's limit.`
+                : `The server allows at most ${limitMaxS} seconds, so no per-flow limit can be set.`}
             </p>
+            {typeof cfg.max_call_duration_seconds === "number" && cfg.max_call_duration_seconds <= 0 && (
+              <p role="alert" className="note note--bad">
+                Longest call must be {CALL_LIMIT_RANGE_S[0] / 60} to {CALL_LIMIT_RANGE_S[1] / 60} minutes. Clear the field to use the server's limit.
+              </p>
+            )}
             <SettingHelp id="max_call_duration_seconds" />
           </fieldset>
           <fieldset className="stage-box">

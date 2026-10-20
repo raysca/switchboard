@@ -73,6 +73,17 @@ describe("FlowSettingsPanel", () => {
     expect(startCfg(onChange)).not.toHaveProperty("max_call_duration_seconds");
   });
 
+  it("says so when the server's limit is under a minute, and flags 0 or a negative number", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<Harness serverConfig={{ ...limitServer, max_call_duration_seconds: 45 }} />);
+    expect(screen.getByText(/server allows at most 45 seconds, so no per-flow limit can be set/i)).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Longest call (minutes)" })).toBeDisabled();
+    unmount();
+    render(<Harness serverConfig={limitServer} />);
+    await user.type(screen.getByRole("spinbutton", { name: "Longest call (minutes)" }), "0");
+    expect(screen.getByRole("alert")).toHaveTextContent(/Longest call must be 1 to 1440 minutes/);
+  });
+
   it("opens Advanced on a stored call limit and shows it in minutes", () => {
     const stored = fromFlowConfig({ llm: { provider: "g", model: "m" }, tts: { provider: "g" }, max_call_duration_seconds: 600 });
     render(<Harness initial={stored} serverConfig={limitServer} />);
