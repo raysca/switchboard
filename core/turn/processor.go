@@ -242,7 +242,7 @@ func (p *Processor) ProcessFrame(ctx context.Context, f core.Frame, dir core.Dir
 		switch v := f.(type) {
 		case *core.SpeakingStateFrame:
 			p.bot = v.State == core.SpeakingStarted
-			p.mute.onBot(p.bot, v.Uninterruptible)
+			p.mute.onBot(p.bot)
 			if err := p.checkMute(e); err != nil {
 				return err
 			}

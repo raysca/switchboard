@@ -288,32 +288,27 @@ func TestParseMuteStrategiesRejectsUnknown(t *testing.T) {
 	if _, err := ParseMuteStrategies([]string{"nope"}, nil); err == nil {
 		t.Fatal("unknown name accepted")
 	}
-	if s, err := ParseMuteStrategies([]string{MuteFunctionCall, MuteCriticalOutput}, nil); err != nil || len(s) != 2 || s[0].muted() {
+	if s, err := ParseMuteStrategies([]string{MuteFunctionCall, MuteAlways}, nil); err != nil || len(s) != 2 || s[0].muted() {
 		t.Fatal("nil tools must never mute")
 	}
 }
 
-func TestMuteCriticalOutput(t *testing.T) {
-	s := mustMute(t, []string{MuteCriticalOutput}, nil)[0]
-	s.bot(true, false)
-	if s.muted() {
-		t.Fatal("interruptible output muted")
+func TestParseMuteStrategiesRejectsCriticalOutput(t *testing.T) {
+	_, err := ParseMuteStrategies([]string{"critical_output"}, nil)
+	want := "turn.mute: critical_output was removed (nothing produces uninterruptible speech); remove it"
+	if err == nil || err.Error() != want {
+		t.Fatalf("critical_output: %v, want %q", err, want)
 	}
-	s.bot(false, false)
-	s.bot(true, true)
-	if !s.muted() {
-		t.Fatal("uninterruptible output not muted")
-	}
-	s.bot(false, false)
-	if s.muted() {
-		t.Fatal("stuck after output ended")
+	if _, err := ParseMuteStrategies([]string{"nope"}, nil); err == nil || strings.Contains(err.Error(), "removed") ||
+		!strings.Contains(err.Error(), "always, first_speech, until_first_bot_complete, function_call") {
+		t.Fatalf("other unknown names keep the generic message listing the four: %v", err)
 	}
 }
 
 type flagMute struct{ on bool }
 
 func (*flagMute) name() string  { return "test" }
-func (*flagMute) bot(_, _ bool) {}
+func (*flagMute) bot(bool)      {}
 func (f *flagMute) muted() bool { return f.on }
 
 type recEmitter struct{ out []core.Frame }

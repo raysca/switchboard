@@ -21,6 +21,10 @@ func TestTurnMuteConfigValidation(t *testing.T) {
 	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "turn.mute") {
 		t.Fatalf("unknown strategy accepted: %v", err)
 	}
+	cfg.Turn.Mute = []string{"critical_output"} // removed in 7b: a YAML that still lists it stops the start-up
+	if err := ValidateConfig(cfg); err == nil || !strings.Contains(err.Error(), "critical_output was removed") {
+		t.Fatalf("critical_output accepted: %v", err)
+	}
 	cfg.Turn.Mute, cfg.Turn.MaxMute = nil, -1
 	if err := ValidateConfig(cfg); err == nil {
 		t.Fatal("negative max_mute accepted")

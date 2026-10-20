@@ -177,7 +177,7 @@ type Config struct {
 		// the speech timeout waits for when the final is late.
 		STTP99 map[string]time.Duration `yaml:"stt_p99"`
 		// Mute lists user mute strategies (always, first_speech,
-		// until_first_bot_complete, function_call, critical_output). While any
+		// until_first_bot_complete, function_call). While any
 		// is muting, VAD starts/stops and transcripts are dropped (audio still
 		// flows to VAD/STT/recording): no turn starts, no barge-in, nothing
 		// reaches the context. Each strategy's continuous mute is capped at

@@ -22,7 +22,7 @@ import (
 // must not block. An instance belongs to one Processor.
 type UserMuteStrategy interface {
 	name() string
-	bot(speaking, critical bool)
+	bot(speaking bool)
 	muted() bool
 }
 
@@ -30,20 +30,20 @@ type UserMuteStrategy interface {
 //
 // ponytail: Pipecat also releases until_first_bot_complete on an ErrorFrame
 // before first audio; LLM/TTS errors flow downstream of this processor, so a
-// failed greeting is released by MaxMute instead. critical_output keys off
-// SpeakingStarted only: an uninterruptible unit queued behind interruptible
-// speech in the same speaking span does not mute (emit a disposition change
-// from SpeakingTracker if such mixed spans become real).
+// failed greeting is released by MaxMute instead.
 const (
 	MuteAlways           = "always"                   // while the bot speaks
 	MuteFirstSpeech      = "first_speech"             // while the bot speaks its first turn
 	MuteUntilFirstBot    = "until_first_bot_complete" // from session start until the bot's first speech ends
 	MuteFunctionCall     = "function_call"            // while a tool call runs
-	MuteCriticalOutput   = "critical_output"          // while uninterruptible output plays
 	DebugUserMuted       = "user.muted"
 	DebugUserUnmuted     = "user.unmuted"
 	DefaultMaxMute       = 30 * time.Second
 	muteReasonUnspecific = "none"
+
+	// removedMuteCriticalOutput is refused with its own message, not the generic one: a YAML that still
+	// lists it must say why it stopped working.
+	removedMuteCriticalOutput = "critical_output"
 )
 
 // ParseMuteStrategies builds strategies from config names. tools may be nil
@@ -58,13 +58,13 @@ func ParseMuteStrategies(names []string, tools *ToolActivity) ([]UserMuteStrateg
 			out = append(out, &botMute{n: n, f: func(s *botMute) bool { return s.speaking && !s.done }})
 		case MuteUntilFirstBot:
 			out = append(out, &botMute{n: n, f: func(s *botMute) bool { return !s.done }})
-		case MuteCriticalOutput:
-			out = append(out, &botMute{n: n, f: func(s *botMute) bool { return s.speaking && s.critical }})
+		case removedMuteCriticalOutput:
+			return nil, fmt.Errorf("turn.mute: %s was removed (nothing produces uninterruptible speech); remove it", n)
 		case MuteFunctionCall:
 			out = append(out, &toolMute{tools})
 		default:
-			return nil, fmt.Errorf("turn.mute: unknown strategy %q (%s, %s, %s, %s, %s)", n,
-				MuteAlways, MuteFirstSpeech, MuteUntilFirstBot, MuteFunctionCall, MuteCriticalOutput)
+			return nil, fmt.Errorf("turn.mute: unknown strategy %q (%s, %s, %s, %s)", n,
+				MuteAlways, MuteFirstSpeech, MuteUntilFirstBot, MuteFunctionCall)
 		}
 	}
 	return out, nil
@@ -72,24 +72,24 @@ func ParseMuteStrategies(names []string, tools *ToolActivity) ([]UserMuteStrateg
 
 // botMute tracks bot speaking state; f maps it to the strategy's verdict.
 type botMute struct {
-	n                        string
-	speaking, critical, done bool // done: the bot's first speech has ended
-	f                        func(*botMute) bool
+	n              string
+	speaking, done bool // done: the bot's first speech has ended
+	f              func(*botMute) bool
 }
 
 func (s *botMute) name() string { return s.n }
-func (s *botMute) bot(speaking, critical bool) {
+func (s *botMute) bot(speaking bool) {
 	if s.speaking && !speaking {
 		s.done = true
 	}
-	s.speaking, s.critical = speaking, speaking && critical
+	s.speaking = speaking
 }
 func (s *botMute) muted() bool { return s.f(s) }
 
 type toolMute struct{ t *ToolActivity }
 
 func (s *toolMute) name() string { return MuteFunctionCall }
-func (*toolMute) bot(_, _ bool)  {}
+func (*toolMute) bot(bool)       {}
 func (s *toolMute) muted() bool  { return s.t != nil && s.t.Active() }
 
 // ToolActivity counts in-flight tool executions of one call. Wrap the call's
@@ -160,12 +160,12 @@ func newMuter(s []UserMuteStrategy, max time.Duration) *muter {
 	return &muter{s: s, max: max, since: make([]time.Time, len(s)), expired: make([]bool, len(s))}
 }
 
-func (m *muter) onBot(speaking, critical bool) {
+func (m *muter) onBot(speaking bool) {
 	if m == nil {
 		return
 	}
 	for _, s := range m.s {
-		s.bot(speaking, critical)
+		s.bot(speaking)
 	}
 }
 

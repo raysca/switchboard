@@ -50,7 +50,7 @@ func (t *SpeakingTracker) ObserveWrite(turn string, gen uint64, disposition Outp
 		return SpeakingStateFrame{}, false
 	}
 	t.speaking = true
-	return SpeakingStateFrame{State: SpeakingStarted, Turn: turn, Gen: gen, Uninterruptible: disposition == OutputUninterruptible}, true
+	return SpeakingStateFrame{State: SpeakingStarted, Turn: turn, Gen: gen}, true
 }
 
 // StopThrough stops only interruptible speaking output at or before targetGen.
