@@ -219,14 +219,14 @@ describe("FlowsView", () => {
     const many = Array.from({ length: FLOW_PAGES_MAX * 100 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }));
     many[0] = flow({ id: "f0", name: "Gone", archived: true });
     setup({ getFlows: vi.fn().mockResolvedValue(many) });
-    expect(await screen.findByText("Showing the first 1000 flows.")).toBeVisible();
+    expect(await screen.findByText("Showing 999 flows; the console lists at most 1000.")).toBeVisible();
     expect(screen.queryByRole("link", { name: "Gone" })).toBeNull();
   });
 
   it("has no cut-off note for a list the pages covered", async () => {
     setup({ getFlows: vi.fn().mockResolvedValue(Array.from({ length: 101 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }))) });
     expect(await screen.findByRole("link", { name: "Flow 100" })).toBeVisible();
-    expect(screen.queryByText(/Showing the first/)).toBeNull();
+    expect(screen.queryByText(/the console lists at most/)).toBeNull();
   });
 
   it("names each missing variable once, beside the reasons", async () => {

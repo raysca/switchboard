@@ -139,7 +139,7 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
       ) : (
         <div className="flows-view">
           {actionError && !dialog && <ErrorState title="Flow action failed" error={actionError} onRetry={() => setActionError(null)} />}
-          {all.length >= LIST_LIMIT && <p className="subtext" role="note">Showing the first {LIST_LIMIT} flows.</p>}
+          {all.length >= LIST_LIMIT && <p className="subtext" role="note">Showing {flows.length} flows; the console lists at most {LIST_LIMIT}.</p>}
           {shown.length === 0 && <p className="subtext">No flow matches “{filter.trim()}”.</p>}
 
           <ul className="flow-list">
