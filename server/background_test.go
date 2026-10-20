@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"govoice/core"
 	"govoice/server/flow"
+	"govoice/transport/ws"
 )
 
 // constWAV writes a 100 ms 24 kHz mono WAV whose every sample is v and returns its path.
@@ -92,3 +94,50 @@ func TestTheCeilingOffIgnoresAFlowsBackgroundAtCallTime(t *testing.T) {
 }
 
 func near(got, want int16) bool { return got >= want-10 && got <= want+10 }
+
+// K7: a route switches the bed to the arriving step's, keeps it for a step that names none, skips a switch to
+// the sound already playing (each SetBackground restarts it) and restores the start step's resolved bed.
+func TestRouteBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testing.T) {
+	s := backgroundServer(t, true, "quiet") // the start step names none: it plays the default, ~2000
+	g := &CallFlow{Start: "front", Backgrounds: map[string]*flow.BackgroundSettings{
+		"sales": {Name: "loud"}, "shop": {Name: "loud"}, "mute": {Name: ""},
+	}}
+	var sets []ws.Underlay
+	hook := s.routeBackground(g, nil, func(u ws.Underlay) { sets = append(sets, u) })
+	active := func(to string) { hook(core.RouteEvent{Kind: core.RouteActive, To: to}) }
+	want := func(n int, what string) {
+		t.Helper()
+		if len(sets) != n {
+			t.Fatalf("%s: %d SetBackground calls, want %d", what, len(sets), n)
+		}
+	}
+
+	hook(core.RouteEvent{Kind: core.RoutePreparing, To: "sales"})
+	hook(core.RouteEvent{Kind: core.RouteFailed, To: "sales"})
+	want(0, "only an active route switches")
+	active("sales")
+	want(1, "arriving at a step with a sound")
+	if !near(level(t, sets[0]), 20000) {
+		t.Fatal("the arriving step's own sound")
+	}
+	active("shop")
+	want(1, "a step naming the sound already playing must not restart it")
+	active("plain")
+	want(1, "a step naming none keeps the current sound")
+	active("front")
+	want(2, "back at the start step")
+	if sets[1] == nil || !near(level(t, sets[1]), 2000) {
+		t.Fatal("the start step's resolved bed (the server default) is restored")
+	}
+	active("mute")
+	want(3, "a step asking for none")
+	if sets[2] != nil {
+		t.Fatal("none is a nil sound")
+	}
+	active("mute")
+	want(3, "none again is not a switch")
+
+	if s.routeBackground(&CallFlow{Start: "front"}, nil, func(ws.Underlay) {}) != nil {
+		t.Fatal("no step names a sound: nothing to watch")
+	}
+}

@@ -887,3 +887,90 @@ func TestFlowE2EConfiguredTokenLifetimeIsHonouredByTheLiveConnect(t *testing.T) 
 		t.Fatalf("over-limit config built a server: %v", err)
 	}
 }
+
+// routedBackgroundFlow is front -> sales -> support (and sales -> front when back is set); the given
+// audio object, if any, goes on each step by id.
+func (r *flowRigE2E) routedBackgroundFlow(audio map[string]string, back bool) string {
+	r.t.Helper()
+	stage := func(prompt, voice, extra string) string {
+		return `"llm":{"provider":"echo","model":"m","system_prompt":"` + prompt + `"},"tts":{"provider":"echo","voice":"` + voice + `"}` + extra
+	}
+	step := func(id, name, prompt string, first bool) string {
+		cfg := stage(prompt, id+"voice", "")
+		if first {
+			cfg = `"stt":{"provider":"echo","model":"s"},` + cfg
+		}
+		if a := audio[id]; a != "" {
+			cfg += `,"audio":` + a
+		}
+		return `{"id":"` + id + `","name":"` + name + `","config":{` + cfg + `}}`
+	}
+	routes := `{"id":"e1","from":"front","to":"sales","condition":"The caller wants to buy."},` +
+		`{"id":"e2","from":"sales","to":"support","condition":"The caller needs help."}`
+	if back {
+		routes += `,{"id":"e3","from":"sales","to":"front","condition":"The caller is done buying."}`
+	}
+	cfg := `{"start":"front","steps":[` + step("front", "Front desk", "FRONT", true) + `,` + step("sales", "Sales", "SALES", false) + `,` +
+		step("support", "Support", "SUPPORT", false) + `],"routes":[` + routes + `]}`
+	a, err := r.s.flows.Create(r.t.Context(), flow.CreateRequest{Name: "Beds", Config: json.RawMessage(cfg)})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
+		r.t.Fatalf("background flow: %+v err=%v", a.Readiness, err)
+	}
+	r.flowID = a.ID
+	return a.ID
+}
+
+// R5a: a step's background starts when the route to it arrives, and a step that names none keeps the
+// sound that is playing.
+func TestFlowE2EAStepsBackgroundStartsWhenTheRouteArrives(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Audio.Backgrounds = map[string]CueConfig{"office": {File: constWAV(t, "office", 20000), GainDB: ptrF(0)}}
+		c.Audio.AllowFlowBackground = true
+	})
+	c := r.dial(r.routedBackgroundFlow(map[string]string{"sales": `{"background":{"name":"office"}}`}, false))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+
+	c.say("hello")
+	c.waitReplies("[FRONT", 1)
+	time.Sleep(500 * time.Millisecond)
+	if c.cueFrames() != 0 {
+		t.Fatalf("the front step has no background: %d sound frames before the route", c.cueFrames())
+	}
+	c.say("transfer to sales")
+	c.waitReplies("[SALES", 1)
+	eventually(t, "the sales bed is heard", func() bool { return c.cueFrames() >= 5 })
+
+	c.say("transfer to support") // names no background: the office bed keeps playing
+	c.waitReplies("[SUPPORT", 1)
+	time.Sleep(300 * time.Millisecond)
+	before := c.cueFrames()
+	time.Sleep(300 * time.Millisecond)
+	if c.cueFrames() <= before+5 {
+		t.Fatal("a step without a background must keep the current sound")
+	}
+}
+
+// K7: a route back to the start step restores the bed the call began with, the server default included.
+func TestFlowE2EAStepsBackgroundIsRestoredWhenARouteReturnsToTheStart(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Audio.Backgrounds = map[string]CueConfig{"soft": {File: constWAV(t, "soft", 6000), GainDB: ptrF(0)}}
+		c.Audio.BackgroundDefault = "soft"
+		c.Audio.AllowFlowBackground = true
+	})
+	c := r.dial(r.routedBackgroundFlow(map[string]string{"sales": `{"background":{"name":""}}`}, true))
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	eventually(t, "the server default plays on the start step", func() bool { return c.cueFrames() >= 5 })
+
+	c.say("transfer to sales")
+	c.waitReplies("[SALES", 1)
+	time.Sleep(400 * time.Millisecond)
+	silent := c.cueFrames()
+	time.Sleep(300 * time.Millisecond)
+	if c.cueFrames() != silent {
+		t.Fatal("sales asked for no sound: the default must stop")
+	}
+
+	c.say("transfer to front desk")
+	c.waitReplies("[FRONT", 1)
+	eventually(t, "the start step's bed is back", func() bool { return c.cueFrames() > silent+5 })
+}

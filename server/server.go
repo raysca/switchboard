@@ -555,6 +555,10 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	call.OnProviderRetry = func(stage, provider string, retry int) {
 		timeline.Record(TimelineEvent{Type: EventProviderRetry, Provider: provider, Details: fmt.Sprintf("%s retry %d", stage, retry)})
 	}
+	if hook := s.routeBackground(call.Flow, call.Audio, conn.SetBackground); hook != nil {
+		base := call.OnRoute
+		call.OnRoute = func(e core.RouteEvent) { base(e); hook(e) }
+	}
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
 	if cue != nil {
 		base := call.OnRoute

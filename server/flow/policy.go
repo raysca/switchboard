@@ -42,17 +42,15 @@ type policyProblem struct {
 func (g Definition) policyProblems(p Policy) []policyProblem {
 	c := g.StartStep().Config
 	var out []policyProblem
-	if b := c.Audio; b != nil && b.Background != nil && b.Background.Name != "" {
-		name := b.Background.Name
-		switch {
-		case !p.AllowFlowBackground():
-			out = append(out, policyProblem{message: "audio.background: this server does not let flows choose a background sound (audio.allow_flow_background)"})
-		case !slices.Contains(p.Backgrounds(), name):
-			avail := "this server has no sounds"
-			if names := p.Backgrounds(); len(names) > 0 {
-				avail = "available: " + strings.Join(names, ", ")
+	for _, n := range g.Steps {
+		prefix := ""
+		if n.ID != g.Start {
+			prefix = fmt.Sprintf("step %q: ", n.ID)
+		}
+		if a := n.Config.Audio; a != nil {
+			if msg := backgroundProblem(a.Background, p); msg != "" {
+				out = append(out, policyProblem{message: prefix + msg})
 			}
-			out = append(out, policyProblem{message: fmt.Sprintf("audio.background.name %q is not a sound on this server (%s)", name, avail)})
 		}
 	}
 	if rc := g.RouteCue; rc != nil && rc.Name != "" && !slices.Contains(p.Cues(), rc.Name) {
@@ -79,6 +77,24 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 		}
 	}
 	return out
+}
+
+// backgroundProblem says why the server cannot play a step's background sound, or "" when it can.
+func backgroundProblem(b *BackgroundSettings, p Policy) string {
+	if b == nil || b.Name == "" {
+		return ""
+	}
+	if !p.AllowFlowBackground() {
+		return "audio.background: this server does not let flows choose a background sound (audio.allow_flow_background)"
+	}
+	if names := p.Backgrounds(); !slices.Contains(names, b.Name) {
+		avail := "this server has no sounds"
+		if len(names) > 0 {
+			avail = "available: " + strings.Join(names, ", ")
+		}
+		return fmt.Sprintf("audio.background.name %q is not a sound on this server (%s)", b.Name, avail)
+	}
+	return ""
 }
 
 func policyOf(av Availability) (Policy, bool) { p, ok := av.(Policy); return p, ok }

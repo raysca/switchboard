@@ -169,3 +169,9 @@ func TestStoredFlowWithCallWideSettingsOnAStepStillDecodes(t *testing.T) {
 		}
 	}
 }
+
+// withSalesAudio is the routed flow whose second step carries the given audio object.
+func withSalesAudio(audio string) json.RawMessage {
+	const llm = `"llm":{"provider":"openai","model":"m","system_prompt":"s"}`
+	return json.RawMessage(strings.Replace(twoStepCfg(""), llm, llm+`,"audio":`+audio, 1))
+}

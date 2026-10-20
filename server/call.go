@@ -339,7 +339,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	tools, exec := rs.Definitions, rs.Executor
 	var graph *CallFlow
 	if len(g.Steps) > 1 {
-		graph = &CallFlow{Start: g.Start, Cue: g.RouteCue, CanEnd: anyEndCall(g)}
+		graph = &CallFlow{Start: g.Start, Cue: g.RouteCue, CanEnd: anyEndCall(g), Backgrounds: stepBackgrounds(g)}
 		graph.Resolve = func(ctx context.Context, id string) (StepSpec, error) { return s.stepSpec(ctx, rs, g, graph, id) }
 		tools, exec = s.stepToolset(rs, g, entry, graph)
 	}
@@ -375,6 +375,20 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		STTP99MS:            cfg.STTP99MS,
 		Flow:                graph,
 	}, nil
+}
+
+// stepBackgrounds is the background each step of g names, by step id.
+func stepBackgrounds(g flow.Definition) map[string]*flow.BackgroundSettings {
+	var out map[string]*flow.BackgroundSettings
+	for _, n := range g.Steps {
+		if a := n.Config.Audio; a != nil && a.Background != nil {
+			if out == nil {
+				out = map[string]*flow.BackgroundSettings{}
+			}
+			out[n.ID] = a.Background
+		}
+	}
+	return out
 }
 
 func (s *Server) maxParallel(cfg flow.Config) int {

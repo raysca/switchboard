@@ -33,7 +33,7 @@ type Config struct {
 	// fallback. Fallbacks are optional; none = single provider (legacy configs).
 	Failover FailoverPolicy `json:"failover,omitempty"`
 	// Idle is what happens when the caller goes quiet; Audio is the call's noise reduction, voice volume
-	// and background sound. Both are call-level (start step) and optional: absent means the server's.
+	// and background sound. Both are call-level (start step) and optional: absent means the server's. A later step may set audio.background only.
 	Idle  *IdleSettings  `json:"idle,omitempty"`
 	Audio *AudioSettings `json:"audio,omitempty"`
 	// Turn is how the caller may interrupt the agent (call-level, optional: absent means the server's).

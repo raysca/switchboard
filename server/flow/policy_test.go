@@ -244,3 +244,40 @@ func TestSmartEndOfTurnNeedsTheModel(t *testing.T) {
 		t.Fatalf("manager off must not change readiness: %+v %v", got.Readiness, err)
 	}
 }
+
+func TestPublishChecksEveryStepsBackgroundSound(t *testing.T) {
+	salesAudio := withSalesAudio
+	cases := []struct {
+		name  string
+		p     *fakePolicy
+		audio string
+		want  string // "" = accepted
+	}{
+		{"unknown sound on a step", &fakePolicy{sounds: []string{"office"}, allow: true}, `{"background":{"name":"nope"}}`, `step "sales": audio.background.name "nope" is not a sound on this server (available: office)`},
+		{"ceiling off", &fakePolicy{sounds: []string{"office"}}, `{"background":{"name":"office"}}`, `step "sales": audio.background: this server does not let flows choose a background sound (audio.allow_flow_background)`},
+		{"known sound", &fakePolicy{sounds: []string{"office"}, allow: true}, `{"background":{"name":"office"}}`, ""},
+		{"none needs no ceiling", &fakePolicy{}, `{"background":{"name":""}}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := testServiceWith(t, c.p).Create(context.Background(), CreateRequest{Name: c.name, Config: salesAudio(c.audio)})
+			if c.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+	// A sound the server no longer offers does not take a stored flow offline (the call plays without it).
+	g, err := Decode(salesAudio(`{"background":{"name":"gone"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reasons, _ := g.Problems(&fakePolicy{sounds: []string{"office"}, allow: true}); len(reasons) != 0 {
+		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
+	}
+}

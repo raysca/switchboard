@@ -197,3 +197,27 @@ func TestTurnSettingsAreCallLevelAndKeepExplicitZeroAndEmpty(t *testing.T) {
 		t.Fatalf("turn on a later step: %v", err)
 	}
 }
+
+// K7: a step other than the start may set the background sound and nothing else of audio.
+func TestANonStartStepMayOnlySetABackground(t *testing.T) {
+	steps := withSalesAudio
+	g, err := Decode(steps(`{"background":{"name":"office","gain_db":-20}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := g.Step("sales"); s.Config.Audio == nil || s.Config.Audio.Background == nil || s.Config.Audio.Background.Name != "office" {
+		t.Fatalf("the step's background was lost: %+v", s.Config.Audio)
+	}
+	if _, err := Decode(steps(`{"background":{"name":""}}`)); err != nil {
+		t.Fatalf("an explicit none on a step: %v", err)
+	}
+	for _, audio := range []string{`{"denoise":{}}`, `{"output_gain_db":-3}`, `{"background":{"name":"office"},"output_gain_db":-3}`} {
+		_, err := Decode(steps(audio))
+		if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), `step "sales": audio may only set background on a step other than the start step`) {
+			t.Fatalf("%s: %v", audio, err)
+		}
+	}
+	if _, err := Decode(steps(`{}`)); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("an empty audio object: %v", err)
+	}
+}

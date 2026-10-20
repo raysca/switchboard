@@ -46,6 +46,8 @@ type CallFlow struct {
 	Resolve func(ctx context.Context, stepID string) (StepSpec, error)
 	Commit  func(target string) error
 	Cue     *flow.RouteCue
+	// Backgrounds is the background each step names (by step id); the steps that name none are absent.
+	Backgrounds map[string]*flow.BackgroundSettings
 	// CanEnd: some step has end_call, so the call builds the idle controller.
 	CanEnd bool
 	// End is set by the pipeline builder; the end_call tool calls it.

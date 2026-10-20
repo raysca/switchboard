@@ -33,7 +33,7 @@ type Step struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// Config is the step's stages. STT, VAD, recording, context limits and
-	// async_tools, idle and audio are call-level: only the start step may set them.
+	// async_tools, idle and audio are call-level: only the start step may set them (audio.background alone may be set on any step).
 	Config Config `json:"-"`
 	// Tools lists the MCP tools ("<mcp_server_id>/<remote_name>") this step
 	// exposes, a subset of the flow version's selected tools.
@@ -173,8 +173,11 @@ func (g Definition) validateCallLevel() error {
 		c := n.Config
 		if n.ID != g.Start {
 			if c.STT.Provider != "" || c.VADStopMS != 0 || c.STTP99MS != 0 || c.Recording != (RecordingConfig{}) ||
-				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Audio != nil || c.Turn != nil || c.Context.Summarization != (SummarizationConfig{}) {
-				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, audio, turn); set them on the start step", n.ID)
+				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Turn != nil || c.Context.Summarization != (SummarizationConfig{}) {
+				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, turn); set them on the start step", n.ID)
+			}
+			if a := c.Audio; a != nil && *a != (AudioSettings{Background: a.Background}) {
+				return invalid("step %q: audio may only set background on a step other than the start step", n.ID)
 			}
 		}
 		if entry.Context.Summarization.Enabled && !SummarizingProviders[c.LLM.Provider] {
