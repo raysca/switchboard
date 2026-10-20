@@ -220,6 +220,7 @@ func (r *Runner) synthesizeUnit(ctx context.Context, unit *core.SynthesisUnitFra
 			// before the closing frame lets it start the next unit.
 			_ = s.Reenter(&core.ErrorFrame{Err: err, Turn: traceTurn, Gen: traceGen, UnitID: unit.UnitID}, core.Downstream, r.index+1, unit.Gen)
 			if u.committed { // close out what was heard so playback can drain
+				u.failed = true
 				_ = u.Finish()
 			}
 			return
@@ -346,6 +347,7 @@ type Unit struct {
 	sent      int    // bytes emitted so far
 	seq       uint64
 	stopped   bool
+	failed    bool // the provider failed after audio started: the unit was not fully spoken
 }
 
 func (u *Unit) reenter(f core.Frame) error {
@@ -423,6 +425,9 @@ func (u *Unit) emit(pcm []byte, final bool) error {
 		Duration:  time.Duration(len(pcm)/2) * time.Second / time.Duration(rate),
 		Timestamp: time.Now(), Turn: u.Frame.Turn, Gen: u.Frame.Gen, UnitID: u.Frame.UnitID, Seq: u.seq,
 		IsFinal: final, TurnFinal: final && u.Frame.IsFinal, WordTimings: u.Timings,
+	}
+	if final && !u.failed && strings.TrimSpace(u.Frame.Text) != "" {
+		frame.Text = u.Frame.Text
 	}
 	u.Timings = nil
 	u.r.AudioFrames.Add(1)

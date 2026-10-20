@@ -240,3 +240,59 @@ func TestRunner_EndReplyHook(t *testing.T) {
 	_ = h.sess.Post(&core.InterruptionFrame{})
 	waitFor(t, "interruption", func() bool { return ends.Load() == 2 })
 }
+
+// The unit's text rides on its final frame only, so the transport can announce it once the
+// unit's last audio is written.
+func TestFinalFrameCarriesTheUnitText(t *testing.T) {
+	h := start(t, func(ctx context.Context, u *Unit, _ int) error {
+		u.Write(make([]byte, 2500))
+		return u.Finish()
+	})
+	h.say(t, 1, "Hello there.", false)
+	waitFor(t, "stop", stopped(h))
+	a := of[*core.OutputAudioFrame](h)
+	if len(a) < 2 {
+		t.Fatalf("frames = %d", len(a))
+	}
+	for i, f := range a {
+		want := ""
+		if i == len(a)-1 {
+			want = "Hello there."
+		}
+		if f.Text != want {
+			t.Fatalf("frame %d Text = %q, want %q", i, f.Text, want)
+		}
+	}
+}
+
+// A unit with no audio still ends with a marker; it carries the text of a non-blank unit only.
+func TestEmptyAudioMarkerText(t *testing.T) {
+	h := start(t, func(ctx context.Context, u *Unit, _ int) error { return u.Finish() })
+	h.say(t, 1, "Hi.", false)
+	h.say(t, 2, "  ", true)
+	waitFor(t, "both stops", func() bool { return len(of[*core.TTSStoppedFrame](h)) == 2 })
+	a := of[*core.OutputAudioFrame](h)
+	if len(a) != 2 || a[0].Text != "Hi." || a[1].Text != "" {
+		t.Fatalf("frames = %+v", a)
+	}
+}
+
+// A provider error after audio started closes the unit for playback to drain, but the unit was
+// not fully spoken, so its text is never announced.
+func TestFailedUnitSendsNoText(t *testing.T) {
+	h := start(t, func(ctx context.Context, u *Unit, _ int) error {
+		u.Write(make([]byte, 2000))
+		return errFlaky
+	})
+	h.say(t, 1, "Hello there.", true)
+	waitFor(t, "stop", stopped(h))
+	a := of[*core.OutputAudioFrame](h)
+	if len(a) == 0 || !a[len(a)-1].IsFinal {
+		t.Fatalf("frames = %+v", a)
+	}
+	for i, f := range a {
+		if f.Text != "" {
+			t.Fatalf("frame %d of a failed unit carries Text %q", i, f.Text)
+		}
+	}
+}

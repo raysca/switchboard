@@ -132,3 +132,14 @@ export async function openDesigner(page: Page, stack: Stack) {
 // A step on the React Flow canvas: clicking it opens its panel.
 export const stepCard = (page: Page, name: string) => page.locator(".react-flow__node").filter({ hasText: name });
 export const openFlowSettings = (page: Page) => page.getByRole("button", { name: "Flow settings" }).click();
+
+// The call page in a second tab of the same browser. The key lives in each tab's memory (a full load
+// drops it, 40-layout.spec.ts:25), so this tab loads the call URL first and signs in there.
+export async function openCallPage(page: Page, stack: Stack, sessionId: string): Promise<Page> {
+  const ops = await page.context().newPage();
+  await ops.goto(`${stack.uiUrl}/sessions/${encodeURIComponent(sessionId)}`);
+  await ops.getByLabel("Management key").fill(stack.managementKey);
+  await ops.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(ops.getByRole("heading", { level: 1, name: `call_${sessionId.slice(0, 8)}` })).toBeVisible();
+  return ops;
+}

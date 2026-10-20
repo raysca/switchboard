@@ -27,6 +27,10 @@ test("a tool call shows in the test call's events and on the call's page", async
   await sendText(page, "barrier");
   await expect(botReply(page, /You said: barrier/)).toBeVisible();
   await expect(page.getByLabel("RTVI event log").locator("code")).toHaveText(events);
+  // The spoken text follows the reply's audio as bot-tts-text (the wait is the assertion).
+  await page.getByLabel("Filter events").fill("bot-tts-text");
+  await expect(page.getByLabel("RTVI event log").locator("code").first()).toHaveText("bot-tts-text");
+  await page.getByLabel("Filter events").fill("llm-function-call");
   await step(page, "tool call events in the test call");
 
   await page.getByTestId("disconnect-btn").click();

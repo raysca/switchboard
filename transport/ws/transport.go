@@ -475,6 +475,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if t := conn.tap.Load(); t != nil && err == nil {
 			(*t).Bot(f) // only audio the pacer actually released, never a flushed tail
 		}
+		if err == nil && f.IsFinal && f.Text != "" { // the unit's last audio is on the socket
+			if msg, e := conn.rtvi.FormatBotTTSText(f.Text); e == nil {
+				_ = conn.WriteWireMessage(conn.ctx, msg)
+			}
+		}
 		if session := conn.session.Load(); session != nil {
 			_ = session.Reenter(&core.WriteCompletionFrame{
 				Turn:        f.Turn,

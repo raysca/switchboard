@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, PROXIED_ACCESS, probeProxiedAccess, createApiClient, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
+import { ApiError, FLOW_PAGES_MAX, PROXIED_ACCESS, probeProxiedAccess, createApiClient, flowSchema, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
 
 describe("management client", () => {
   it("sends an in-memory bearer and parses the response", async () => {
@@ -298,7 +298,7 @@ describe("management client", () => {
 
       const flows = await client.getFlows();
       expect(flows).toHaveLength(1);
-      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/flows?limit=100", expect.any(Object));
+      expect(fetcher).toHaveBeenLastCalledWith("/api/v1/flows?limit=100&offset=0", expect.any(Object));
 
       const created = await client.createFlow({
         name: "Customer Support",
@@ -591,5 +591,82 @@ describe("access without a pasted key", () => {
     await expect(probeProxiedAccess(ok)).resolves.toBe(true);
     await expect(probeProxiedAccess(async () => new Response("{}", { status: 401 }))).resolves.toBe(false);
     await expect(probeProxiedAccess(async () => { throw new TypeError("offline"); })).resolves.toBe(false);
+  });
+
+  describe("live-call controls", () => {
+    const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+    it("posts a note to the encoded id and a run request without a body", async () => {
+      const fetcher = vi.fn<typeof fetch>(async () => json(202, { data: { accepted: 1 } }));
+      const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+      await expect(client.addSessionNote("s/1", "vip", true)).resolves.toEqual({ accepted: 1 });
+      const [url, init] = fetcher.mock.calls[0];
+      expect(url).toBe("/api/v1/sessions/s%2F1/context");
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toBe('{"messages":[{"content":"vip"}],"run":true}');
+      await expect(client.runSession("s/1")).resolves.toEqual({ accepted: 1 });
+      const [runUrl, runInit] = fetcher.mock.calls[1];
+      expect(runUrl).toBe("/api/v1/sessions/s%2F1/run");
+      expect(runInit?.method).toBe("POST");
+      expect(runInit?.body).toBeUndefined();
+    });
+    it("turns a 429 too_many_pending into an ApiError with status and code", async () => {
+      const fetcher = vi.fn<typeof fetch>(async () => json(429, { error: { code: "too_many_pending", message: "busy", request_id: "r" } }));
+      const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
+      await expect(client.addSessionNote("s1", "x", false)).rejects.toMatchObject({ status: 429, code: "too_many_pending" });
+    });
+  });
+});
+
+describe("getFlows follows the server's pages", () => {
+  const dto = (id: string) => ({
+    id, name: id, description: "", enabled: true, archived: false, current_version: null,
+    readiness: { state: "ready", reasons: [] }, created_at: "", updated_at: "",
+  });
+  const ids = (from: number, n: number) => Array.from({ length: n }, (_, i) => dto(`f${from + i}`));
+  const clientFor = (pageFor: (offset: number) => Response) => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => pageFor(Number(new URL(String(input), "http://x").searchParams.get("offset"))));
+    return { fetcher, client: createApiClient(() => ({ key: "k", generation: 1 }), fetcher) };
+  };
+  const ok = (data: unknown[]) => new Response(JSON.stringify({ data }), { status: 200 });
+  const urls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.map((c) => c[0]);
+
+  it("reads a second page when the first is full", async () => {
+    const { fetcher, client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : ids(100, 1)));
+    await expect(client.getFlows()).resolves.toHaveLength(101);
+    expect(urls(fetcher)).toEqual(["/api/v1/flows?limit=100&offset=0", "/api/v1/flows?limit=100&offset=100"]);
+  });
+
+  it("asks once more after exactly 100 flows, and gets an empty page", async () => {
+    const { fetcher, client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : []));
+    await expect(client.getFlows()).resolves.toHaveLength(100);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops at the page cap", async () => {
+    const { fetcher, client } = clientFor((o) => ok(ids(o, 100)));
+    await expect(client.getFlows()).resolves.toHaveLength(FLOW_PAGES_MAX * 100);
+    expect(fetcher).toHaveBeenCalledTimes(FLOW_PAGES_MAX);
+  });
+
+  it("lists a flow once when pages overlap", async () => {
+    const { client } = clientFor((o) => ok(o === 0 ? ids(0, 100) : ids(99, 2)));
+    const flows = await client.getFlows();
+    expect(flows).toHaveLength(101);
+    expect(new Set(flows.map((f) => f.id)).size).toBe(101);
+  });
+
+  it("rejects, with no partial list, when a later page fails", async () => {
+    const { client } = clientFor((o) => (o === 0 ? ok(ids(0, 100)) : new Response("{}", { status: 500 })));
+    await expect(client.getFlows()).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("flow readiness", () => {
+  const parse = (r: object) => flowSchema.parse({ id: "a", name: "A", description: "", enabled: true, archived: false, current_version: null, readiness: r, created_at: "", updated_at: "" });
+  it("keeps the names of the missing variables", () => {
+    expect(parse({ state: "not_ready", reasons: ["missing_credential_llm"], missing_env: ["XAI_API_KEY"] }).readiness.missing_env).toEqual(["XAI_API_KEY"]);
+  });
+  it("accepts a readiness without them", () => {
+    expect(parse({ state: "ready", reasons: [] }).readiness.missing_env).toBeUndefined();
   });
 });

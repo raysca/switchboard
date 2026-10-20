@@ -1972,7 +1972,6 @@ main:has(.flow-editor) {
 .flow-row .check-row input:disabled {
   opacity: 0.5;
 }
-/* ponytail: native <details>; it does not close on outside click, add a handler if that bothers anyone */
 .row-menu {
   position: relative;
 }
@@ -3372,4 +3371,11 @@ main:has(.mcp-page) {
 }
 .restore-confirm p {
   margin: 0;
+}
+.call-control textarea {
+  display: block;
+  width: 100%;
+}
+.call-control__error {
+  color: var(--bad);
 }

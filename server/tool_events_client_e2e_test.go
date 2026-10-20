@@ -39,6 +39,7 @@ func TestMCPCallPipecatClientSeesFunctionCallEvents(t *testing.T) {
 	var got struct {
 		Events  []fnEvent `json:"events"`
 		Emitted []string  `json:"emitted"`
+		TTS     []string  `json:"tts"`
 	}
 	if err := json.Unmarshal([]byte(line), &got); err != nil {
 		t.Fatalf("EVENTS %s: %v", line, err)
@@ -49,5 +50,9 @@ func TestMCPCallPipecatClientSeesFunctionCallEvents(t *testing.T) {
 	}
 	if len(got.Emitted) != 1 || got.Emitted[0] != got.Events[1].Data["tool_call_id"] {
 		t.Fatalf("event emitter saw %q", got.Emitted)
+	}
+	// The spoken text of each unit arrives as bot-tts-text after its audio; the barrier turn's reply contains "barrier".
+	if !slices.ContainsFunc(got.TTS, func(s string) bool { return strings.Contains(s, "barrier") }) || slices.Contains(got.TTS, "") {
+		t.Fatalf("bot-tts-text payloads %q: want one containing \"barrier\" and none empty", got.TTS)
 	}
 }

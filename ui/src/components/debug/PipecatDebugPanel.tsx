@@ -46,6 +46,7 @@ export function PipecatDebugPanel({
         return "good";
       case "connected":
       case "connecting":
+      case "requesting_microphone":
       case "requesting_token":
         return "neutral";
       case "error":

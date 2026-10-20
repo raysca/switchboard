@@ -3,7 +3,7 @@
  *
  * The released @pipecat-ai/client-js@1.13.1 with @pipecat-ai/websocket-transport@1.7.2, against a running
  * Switchboard server: one text turn makes the flow call a tool; prints, as one JSON line after "EVENTS ",
- * the function-call callbacks the client fired (in order) and the ids its event emitter saw.
+ * the function-call callbacks the client fired (in order), the ids its event emitter saw and the bot-tts-text payloads.
  * Driven by server/tool_events_client_e2e_test.go, which asserts them. A
  * second "barrier" turn is answered before the events are printed, so the list is complete.
  *
@@ -35,6 +35,7 @@ function withTimeout(promise, ms, what) {
 async function main() {
   const events = [];
   const emitted = [];
+  const tts = [];
   const errors = [];
   let replied = false;
   let barrierAnswered = false;
@@ -55,6 +56,8 @@ async function main() {
         replied = true;
         if (data?.text?.includes('barrier')) barrierAnswered = true;
       },
+      // bot-tts-text follows the unit's audio, after bot-llm-text: its payload is {text}.
+      onBotTtsText: (data) => tts.push(data?.text ?? ''),
       onError: (err) => errors.push(err),
     },
   });
@@ -74,9 +77,13 @@ async function main() {
     while (Date.now() < by && !barrierAnswered) await new Promise((r) => setTimeout(r, 20));
   }
   if (!barrierAnswered) throw new Error('the barrier turn was never answered');
+  // The spoken text of the barrier reply follows its audio (and bot-llm-text, which set barrierAnswered).
+  for (const by = Date.now() + 5000; Date.now() < by && !tts.some((s) => s.includes('barrier'));) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
   await client.disconnect();
   if (errors.length) throw new Error(`RTVI errors: ${JSON.stringify(errors)}`);
-  console.log('EVENTS ' + JSON.stringify({ events, emitted }));
+  console.log('EVENTS ' + JSON.stringify({ events, emitted, tts }));
 }
 
 main().then(() => process.exit(0)).catch((err) => {

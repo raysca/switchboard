@@ -1,10 +1,11 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import type { ApiClient, ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { TurnTimeline } from "../../components/timeline/TurnTimeline";
 import { CallTranscript } from "./CallTranscript";
+import { LiveCallControls } from "./LiveCallControls";
 import { ReplyWaterfall } from "./ReplyWaterfall";
 import { callerLabel, clock, endReasonText, endedByFlow, failedRoutes, formatMs, interruptedCount, medianReplyMs, outcome, path, stepsFor, transcript, turnRows, versionLabel } from "./callStats";
 import { useNow } from "./useNow";
@@ -40,6 +41,19 @@ export function CallView({ client, keyValue }: CallViewProps) {
     refetchInterval: running ? LIVE_POLL_MS : false,
   });
   const flowsQuery = useQuery({ queryKey: ["flows"], queryFn: () => client.getFlows(), enabled: on, retry: false });
+
+  // Polling stops with the status, and its last fetch predates the final replies: fetch once more.
+  const status = sessionQuery.data?.status;
+  const was = useRef(status);
+  const { refetch: refetchTurns } = turnsQuery;
+  const { refetch: refetchTraces } = tracesQuery;
+  useEffect(() => {
+    if (was.current === "active" && status !== "active") {
+      void refetchTurns();
+      void refetchTraces();
+    }
+    was.current = status;
+  }, [status, refetchTurns, refetchTraces]);
 
   const now = useNow(running);
   // The heading and the way back are always there, so focus and the page's outline never depend on loading.
@@ -85,7 +99,7 @@ export function CallView({ client, keyValue }: CallViewProps) {
   const ended = endedByFlow(traces);
   const failed = failedRoutes(traces);
 
-  const status = (
+  const stateBar = (
     <span className="call-state">
       <span className="lamp" data-tone={o.live ? "warn" : undefined} aria-hidden="true" />
       {o.label} · {clock(s.started_at, s.ended_at, now)}
@@ -144,6 +158,8 @@ export function CallView({ client, keyValue }: CallViewProps) {
         </p>
       ))}
       {tracesQuery.isError && <p role="note" className="call-note">Steps and routes could not be loaded, so the transcript is not labelled by step.</p>}
+
+      {s.status === "active" && <LiveCallControls key={sessionId} client={client} sessionId={sessionId} onEnded={() => void sessionQuery.refetch()} />}
 
       <div className="call-columns">
         <section aria-labelledby="call-turns-title" className="call-section call-columns__main">
@@ -220,6 +236,6 @@ export function CallView({ client, keyValue }: CallViewProps) {
         <TurnTimeline turns={turns} traces={traces} loading={turnsQuery.isPending} />
       </details>
     </>,
-    <>{status}{started}</>,
+    <>{stateBar}{started}</>,
   );
 }

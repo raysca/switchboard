@@ -200,7 +200,7 @@ export function App({ initialPath }: { initialPath?: string }) {
                   <div>
                     <h2 id="access-title">Management access</h2>
                     <p>
-                      The key stays in this tab only (reloading clears it) and is sent as a bearer token to <code>/api/v1</code>.
+                      The key stays in this tab only, until you sign out or reload. It is sent as a bearer token to <code>/api/v1</code>.
                     </p>
                     {authError && (
                       <ErrorState

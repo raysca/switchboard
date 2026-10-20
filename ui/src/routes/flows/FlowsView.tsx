@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { asApiError, type FlowDTO, type ApiClient, type ApiError } from "../../api/client";
+import { asApiError, FLOW_PAGES_MAX, type FlowDTO, type ApiClient, type ApiError } from "../../api/client";
 import { EmptyState, ErrorState, LoadingState } from "../../components/primitives";
 import { ArchiveFlowDialog } from "./ArchiveFlowDialog";
 import { NewFlowDialog } from "./NewFlowDialog";
 import { canTest, liveCalls, readiness, routeCount, stepCount, toolCount } from "./flowStats";
 import { useActiveSessions } from "./useActiveSessions";
 
-/** The management API returns at most this many flows (GET /flows?limit=100). */
-const LIST_LIMIT = 100;
+/** getFlows reads at most this many flows (FLOW_PAGES_MAX pages of 100). */
+const LIST_LIMIT = FLOW_PAGES_MAX * 100;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 export type FlowsViewProps = { client: ApiClient; keyValue: string | null };
@@ -139,7 +139,7 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
       ) : (
         <div className="flows-view">
           {actionError && !dialog && <ErrorState title="Flow action failed" error={actionError} onRetry={() => setActionError(null)} />}
-          {all.length >= LIST_LIMIT && <p className="subtext" role="note">Showing the first {LIST_LIMIT} flows.</p>}
+          {all.length >= LIST_LIMIT && <p className="subtext" role="note">Showing {flows.length} flows; the console lists at most {LIST_LIMIT}.</p>}
           {shown.length === 0 && <p className="subtext">No flow matches “{filter.trim()}”.</p>}
 
           <ul className="flow-list">
@@ -161,6 +161,11 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
                         {f.readiness.reasons.map((reason) => (
                           <span key={reason} className="reason">
                             {reason}
+                          </span>
+                        ))}
+                        {[...new Set(f.readiness.missing_env ?? [])].map((v) => (
+                          <span key={v} className="reason">
+                            Set <code>{v}</code>
                           </span>
                         ))}
                       </div>
@@ -196,6 +201,11 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
                     </label>
                     <details
                       className="row-menu"
+                      // ponytail: closes when focus leaves (Tab away, click on a focusable control); a click on
+                      // non-focusable page background leaves it open until Escape or another menu action.
+                      onBlur={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) e.currentTarget.open = false;
+                      }}
                       onKeyDown={(e) => {
                         if (e.key !== "Escape") return;
                         e.currentTarget.open = false;
@@ -209,7 +219,7 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
                           <circle cx="19" cy="12" r="1.8" />
                         </svg>
                       </summary>
-                      <div className="row-menu__panel" onClick={(e) => (e.currentTarget.closest("details")!.open = false)}>
+                      <div className="row-menu__panel" tabIndex={-1} onClick={(e) => (e.currentTarget.closest("details")!.open = false)}>
                         <button type="button" aria-label={`Duplicate ${f.name}`} disabled={copyMutation.isPending} onClick={() => copyMutation.mutate({ id: f.id })}>
                           Duplicate
                         </button>

@@ -1,6 +1,6 @@
 import { test, expect, LIVE } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
-import { api, connectAdmin, openFlow, openFlowSettings, openFlowsList, startCall, stage } from "../lib/flows-helpers";
+import { api, connectAdmin, openCallPage, openFlow, openFlowSettings, openFlowsList, startCall, stage } from "../lib/flows-helpers";
 
 // Per-flow quiet-caller and audio settings: set in Flow settings, tried on a draft test call before
 // publishing, published, read back from the server and reopened. Echo providers: free and deterministic.
@@ -64,6 +64,17 @@ test("quiet-caller and audio settings are tried on a draft call, published, read
   await expect(page.getByText(BYE)).toBeVisible();
   await expect(page.getByTestId("connection-state")).toHaveText(/disconnected/i);
   await step(page, "the draft call asked and hung up");
+  const sessionId = (await page.getByTestId("session-summary").locator("code").innerText()).trim();
+
+  // The call page shows the same lines as the agent's own, and says why the call ended.
+  const ops = await openCallPage(page, stack, sessionId);
+  const lines = ops.getByRole("list", { name: "Transcript" });
+  await expect(lines).toContainText(PROMPT);
+  await expect(lines).toContainText(BYE);
+  await expect(lines).not.toContainText("Caller");
+  await expect(ops.locator("dl.call-figures").first()).toContainText("Caller went silent");
+  await step(ops, "idle lines on the call page");
+  await ops.close();
 
   // Publish and read the version back.
   await page.getByRole("button", { name: "Publish", exact: true }).click();

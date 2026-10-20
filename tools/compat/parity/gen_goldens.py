@@ -553,6 +553,59 @@ def function_call_scenarios():
     ]
 
 
+# --------------------------------------------------------------------------- bot-tts-* RTVI messages
+
+def _tts_text(steps):
+    from pipecat.frames.frames import BotStartedSpeakingFrame, TTSStartedFrame, TTSStoppedFrame, TTSTextFrame
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.processors.frame_processor import FrameDirection
+    from pipecat.processors.frameworks.rtvi.observer import RTVIObserver, RTVIObserverParams
+    from pipecat.transports.base_output import BaseOutputTransport
+    from pipecat.utils.text.base_text_aggregator import AggregationType
+
+    out = []
+
+    class Capture(RTVIObserver):
+        async def send_rtvi_message(self, model, exclude_none=True):
+            d = model.model_dump(exclude_none=exclude_none)
+            if d["type"].startswith("bot-tts-"):  # bot-started-speaking is the queue's release, not under test
+                out.append(json.dumps({"type": d["type"], "data": d.get("data", {})}, sort_keys=True, separators=(",", ":")))
+
+    # The observer handles text only when it was pushed from the output transport; isinstance is all it checks.
+    transport = object.__new__(BaseOutputTransport)
+
+    async def main():
+        obs = Capture(params=RTVIObserverParams(bot_output_enabled=False))
+
+        async def push(frame, src=None):
+            await obs.on_push_frame(FramePushed(source=src, destination=None, frame=frame, direction=FrameDirection.DOWNSTREAM, timestamp=0))
+
+        await push(BotStartedSpeakingFrame(), transport)
+        for s in steps:
+            if s["ev"] == "start":
+                await push(TTSStartedFrame())
+            elif s["ev"] == "stop":
+                await push(TTSStoppedFrame())
+            else:
+                await push(TTSTextFrame(s["text"], aggregated_by=AggregationType.SENTENCE), transport)
+        return out
+
+    return run_virtual(main)
+
+
+def tts_text_scenarios():
+    # Pins the message shapes and Pipecat's order (TTSStopped before the text, which follows the audio).
+    # Timing against playback and the drop of a flushed unit are pinned by the transport/ws Go tests, not here.
+    mod = "processors/frameworks/rtvi/observer.py"
+    p = {"bot_output_enabled": False}
+    def U(text):
+        return [{"t": 0, "ev": "start"}, {"t": 0, "ev": "stop"}, {"t": 0, "ev": "text", "text": text}]
+    return [
+        dict(id="one_unit", pipecat_module=mod, params=p, steps=U("Hello there.")),
+        dict(id="two_units", pipecat_module=mod, params=p, steps=U("Hello there.") + U("How can I help?")),
+    ]
+
+
 # --------------------------------------------------------------------------- declared intentional differences
 # id -> (reason, what go-voice does instead). The Go test fails if go-voice stops matching this or starts matching Pipecat.
 MINLEN = "go-voice merges a sentence shorter than assistant_context min_unit_length (10 runes) into the next unit so TTS gets prosodic context; Pipecat's SimpleTextAggregator emits every sentence."
@@ -614,6 +667,7 @@ AREAS = [
     ("summary", summary_scenarios, lambda sc: _summary(sc["messages"], sc["params"]["keep_turns"] * 2)),
     ("constants", constants_scenarios, lambda sc: sc["pipecat_out"]),
     ("function_calls", function_call_scenarios, lambda sc: _function_calls(sc["steps"])),
+    ("tts_text", tts_text_scenarios, lambda sc: _tts_text(sc["steps"])),
 ]
 
 

@@ -78,6 +78,7 @@ export function FlowVoiceTest({
   const isConnectedOrReady =
     state.sessionState === "connected" || state.sessionState === "ready";
   const isConnecting =
+    state.sessionState === "requesting_microphone" ||
     state.sessionState === "requesting_token" ||
     state.sessionState === "connecting";
   const inCall = isConnectedOrReady || isConnecting;

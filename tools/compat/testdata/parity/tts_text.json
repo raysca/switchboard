@@ -1,0 +1,80 @@
+{
+ "area": "tts_text",
+ "reference": {
+  "generator": "tools/compat/parity/gen_goldens.py",
+  "repository": "pipecat-impl",
+  "revision": "2967e1c09ad484076089bc88427d305fe8f79fa9"
+ },
+ "scenarios": [
+  {
+   "id": "one_unit",
+   "params": {
+    "bot_output_enabled": false
+   },
+   "pipecat": [
+    "{\"data\":{},\"type\":\"bot-tts-started\"}",
+    "{\"data\":{},\"type\":\"bot-tts-stopped\"}",
+    "{\"data\":{\"text\":\"Hello there.\"},\"type\":\"bot-tts-text\"}"
+   ],
+   "pipecat_module": "processors/frameworks/rtvi/observer.py",
+   "steps": [
+    {
+     "ev": "start",
+     "t": 0
+    },
+    {
+     "ev": "stop",
+     "t": 0
+    },
+    {
+     "ev": "text",
+     "t": 0,
+     "text": "Hello there."
+    }
+   ]
+  },
+  {
+   "id": "two_units",
+   "params": {
+    "bot_output_enabled": false
+   },
+   "pipecat": [
+    "{\"data\":{},\"type\":\"bot-tts-started\"}",
+    "{\"data\":{},\"type\":\"bot-tts-stopped\"}",
+    "{\"data\":{\"text\":\"Hello there.\"},\"type\":\"bot-tts-text\"}",
+    "{\"data\":{},\"type\":\"bot-tts-started\"}",
+    "{\"data\":{},\"type\":\"bot-tts-stopped\"}",
+    "{\"data\":{\"text\":\"How can I help?\"},\"type\":\"bot-tts-text\"}"
+   ],
+   "pipecat_module": "processors/frameworks/rtvi/observer.py",
+   "steps": [
+    {
+     "ev": "start",
+     "t": 0
+    },
+    {
+     "ev": "stop",
+     "t": 0
+    },
+    {
+     "ev": "text",
+     "t": 0,
+     "text": "Hello there."
+    },
+    {
+     "ev": "start",
+     "t": 0
+    },
+    {
+     "ev": "stop",
+     "t": 0
+    },
+    {
+     "ev": "text",
+     "t": 0,
+     "text": "How can I help?"
+    }
+   ]
+  }
+ ]
+}

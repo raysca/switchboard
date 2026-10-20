@@ -5,8 +5,12 @@ import { VoiceClient } from "./VoiceClient";
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
-  const promise = new Promise<T>((r) => (resolve = r));
-  return { promise, resolve };
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function setup() {
@@ -27,24 +31,87 @@ function setup() {
 describe("VoiceClient connect cancelled by disconnect", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("does not open the mic or socket when disconnected while fetching the token", async () => {
-    const { client, token, audio, sockets } = setup();
+  const TOKEN = { token: "x.e30.y", expires_at: "", scope: "" };
+
+  it("asks for the mic first and the token only after it is granted", async () => {
+    const { client, token, capture, audio, sockets } = setup();
+    const issue = (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient
+      .issueVoiceToken;
     const done = client.connect({ flowId: "a1" });
-    await client.disconnect();
-    token.resolve({ token: "x.e30.y", expires_at: "", scope: "" });
+    await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
+    expect(issue).not.toHaveBeenCalled();
+    capture.resolve();
+    await vi.waitFor(() => expect(issue).toHaveBeenCalledTimes(1));
+    token.resolve(TOKEN);
     await done;
-    expect(audio.startCapture).not.toHaveBeenCalled();
+    expect(sockets).toHaveBeenCalledTimes(1);
+  });
+
+  it("says it is waiting for the microphone, then for the token", async () => {
+    const { client, token, capture, audio } = setup();
+    const done = client.connect({ flowId: "a1" });
+    await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
+    expect(client.getState().sessionState).toBe("requesting_microphone");
+    capture.resolve();
+    await vi.waitFor(() => expect(client.getState().sessionState).toBe("requesting_token"));
+    token.resolve(TOKEN);
+    await done;
+  });
+
+  it("a mic denied asks for no token", async () => {
+    const { client, audio } = setup();
+    const issue = (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient
+      .issueVoiceToken;
+    (audio.startCapture as ReturnType<typeof vi.fn>).mockRejectedValue({
+      type: "permission_denied",
+      message: "Microphone permission was denied.",
+    });
+    await client.connect({ flowId: "a1" });
+    expect(issue).not.toHaveBeenCalled();
+    expect(client.getState().error?.category).toBe("mic");
+  });
+
+  it("a token failure after the mic releases the mic", async () => {
+    const { client, token, capture, audio } = setup();
+    const done = client.connect({ flowId: "a1" });
+    capture.resolve();
+    await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
+    await vi.waitFor(() =>
+      expect(
+        (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient.issueVoiceToken,
+      ).toHaveBeenCalled(),
+    );
+    token.reject(new Error("nope"));
+    await done;
+    expect(audio.stopCapture).toHaveBeenCalled();
+    expect(client.getState().error?.category).toBe("token");
+  });
+
+  it("asks for no token and opens no socket when disconnected while the mic opens", async () => {
+    const { client, capture, audio, sockets } = setup();
+    const issue = (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient
+      .issueVoiceToken;
+    const done = client.connect({ flowId: "a1" });
+    await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
+    await client.disconnect();
+    capture.resolve();
+    await done;
+    expect(issue).not.toHaveBeenCalled();
     expect(sockets).not.toHaveBeenCalled();
     expect(client.getState().sessionState).toBe("disconnected");
   });
 
-  it("releases the mic and opens no socket when disconnected while the mic opens", async () => {
+  it("releases the mic and opens no socket when disconnected while the token is fetched", async () => {
     const { client, token, capture, audio, sockets } = setup();
     const done = client.connect({ flowId: "a1" });
-    token.resolve({ token: "x.e30.y", expires_at: "", scope: "" });
-    await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
-    await client.disconnect();
     capture.resolve();
+    await vi.waitFor(() =>
+      expect(
+        (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient.issueVoiceToken,
+      ).toHaveBeenCalled(),
+    );
+    await client.disconnect();
+    token.resolve(TOKEN);
     await done;
     expect(audio.destroy).toHaveBeenCalled(); // disconnect released the mic
     expect(sockets).not.toHaveBeenCalled();
@@ -93,10 +160,11 @@ describe("VoiceClient connect cancelled by disconnect", () => {
   });
 
   it("asks for a draft token only when given a draft", async () => {
-    const issue = vi.fn(async (_input: unknown) => {
-      throw new Error("stop after the token request");
-    });
-    const client = new VoiceClient({ issueVoiceToken: issue } as unknown as ApiClient, new BrowserAudioController());
+    const { client, token, capture } = setup();
+    const issue = (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient
+      .issueVoiceToken;
+    capture.resolve();
+    token.resolve(TOKEN);
     await client.connect({ flowId: "f", draft: { config: { a: 1 } } });
     await client.disconnect();
     await client.connect({ flowId: "f" });

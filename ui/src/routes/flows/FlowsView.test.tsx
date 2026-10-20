@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import type { FlowDTO, ApiClient, SessionDTO } from "../../api/client";
-import { ApiError } from "../../api/client";
+import { ApiError, FLOW_PAGES_MAX } from "../../api/client";
 import { FlowsView } from "./FlowsView";
 
 const flow = (over: Partial<FlowDTO> = {}, config: Record<string, unknown> = {}): FlowDTO => ({
@@ -139,6 +139,42 @@ describe("FlowsView", () => {
     expect(screen.queryByTestId("where")).toBeNull();
   });
 
+  describe("row menu", () => {
+    const open = async () => {
+      const { user } = setup({});
+      const summary = await screen.findByLabelText("More actions for Front desk");
+      const menu = summary.closest("details")!;
+      await user.click(summary);
+      expect(menu.open).toBe(true);
+      return { user, summary, menu };
+    };
+
+    it("Escape closes it and returns focus to the summary", async () => {
+      const { user, summary, menu } = await open();
+      await user.keyboard("{Escape}");
+      expect(menu.open).toBe(false);
+      expect(summary).toHaveFocus();
+    });
+
+    it("closes when focus moves to a control outside it", async () => {
+      const { user, menu } = await open();
+      await user.click(screen.getByLabelText("Filter flows"));
+      expect(menu.open).toBe(false);
+    });
+
+    it("stays open while focus moves inside it, and when focus lands on its panel", async () => {
+      const { user, menu } = await open();
+      await user.tab();
+      expect(screen.getByRole("button", { name: "Duplicate Front desk" })).toHaveFocus();
+      expect(menu.open).toBe(true);
+      // Safari/Firefox on macOS focus the nearest focusable ancestor of a clicked button: the panel.
+      const panel = menu.querySelector(".row-menu__panel") as HTMLElement;
+      act(() => panel.focus());
+      expect(panel).toHaveFocus();
+      expect(menu.open).toBe(true);
+    });
+  });
+
   it("archives only after confirmation, and a failure stays in the dialog", async () => {
     const archiveFlow = vi.fn().mockRejectedValueOnce(new ApiError("busy", "conflict", 409, "r")).mockResolvedValue({ archived: true });
     const { user } = setup({ archiveFlow });
@@ -179,12 +215,32 @@ describe("FlowsView", () => {
     expect(screen.getByRole("button", { name: "New flow" })).toBeVisible();
   });
 
-  it("hides archived flows, and says when the list was cut at the API's page size", async () => {
-    const many = Array.from({ length: 100 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }));
+  it("hides archived flows, and says the list was cut only at the page cap", async () => {
+    const many = Array.from({ length: FLOW_PAGES_MAX * 100 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }));
     many[0] = flow({ id: "f0", name: "Gone", archived: true });
     setup({ getFlows: vi.fn().mockResolvedValue(many) });
-    expect(await screen.findByText("Showing the first 100 flows.")).toBeVisible();
+    expect(await screen.findByText("Showing 999 flows; the console lists at most 1000.")).toBeVisible();
     expect(screen.queryByRole("link", { name: "Gone" })).toBeNull();
+  });
+
+  it("has no cut-off note for a list the pages covered", async () => {
+    setup({ getFlows: vi.fn().mockResolvedValue(Array.from({ length: 101 }, (_, i) => flow({ id: `f${i}`, name: `Flow ${i}` }))) });
+    expect(await screen.findByRole("link", { name: "Flow 100" })).toBeVisible();
+    expect(screen.queryByText(/the console lists at most/)).toBeNull();
+  });
+
+  it("names each missing variable once, beside the reasons", async () => {
+    setup({
+      getFlows: vi.fn().mockResolvedValue([
+        flow({ readiness: { state: "not_ready", reasons: ["missing_credential_llm"], missing_env: ["XAI_API_KEY", "XAI_API_KEY"] } }),
+        flow({ id: "a2", name: "Off", enabled: false, readiness: { state: "not_ready", reasons: ["disabled"], missing_env: ["OFF_KEY"] } }),
+      ]),
+    });
+    const row = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
+    expect(within(row).getByText("missing_credential_llm")).toBeVisible();
+    expect(within(row).getAllByText("XAI_API_KEY")).toHaveLength(1);
+    expect(within(row).getByText("XAI_API_KEY").closest(".reason")).toHaveTextContent("Set XAI_API_KEY");
+    expect(screen.queryByText("OFF_KEY")).toBeNull();
   });
 
   it("shows a load failure with a retry", async () => {

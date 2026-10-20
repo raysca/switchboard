@@ -171,6 +171,29 @@ describe("transcript: words the system put in the caller's mouth", () => {
   });
 });
 
+describe("idle and note-triggered turns (empty or system transcript)", () => {
+  const st = steps(flow(graph));
+  const turns = [
+    turn(1, "2026-10-12T14:00:10Z", "2026-10-12T14:00:11Z", "", "Are you still there?"),
+    turn(2, "2026-10-12T14:00:20Z", "2026-10-12T14:00:21Z", "[async tool result:context_note]", "Noted, a VIP."),
+    turn(3, "2026-10-12T14:00:30Z", "2026-10-12T14:00:31Z", "", "Goodbye for now."),
+  ];
+  it("reads as the agent's lines, with no Caller line", () => {
+    const lines = transcript(session(), turns, traces(), st, "Front desk");
+    expect(lines.map((l) => (l.kind === "say" ? [l.who, l.label, l.text] : l))).toEqual([
+      ["step", "Reception", "Are you still there?"],
+      ["step", "Reception", "Noted, a VIP."],
+      ["step", "Reception", "Goodbye for now."],
+    ]);
+  });
+  it("shows the line in the turn rows with no reply-time note, and leaves the median unknown", () => {
+    const rows = turnRows(session(), turns);
+    expect(rows.map((r) => r.text)).toEqual(["Are you still there?", "Noted, a VIP.", "Goodbye for now."]);
+    expect(rows.every((r) => r.notes.length === 0)).toBe(true);
+    expect(medianReplyMs(turns)).toBeNull();
+  });
+});
+
 describe("stepsFor", () => {
   it("does not claim the current start step for a call on an earlier version, but keeps the names", () => {
     const f = flow(graph);
