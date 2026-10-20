@@ -1972,7 +1972,6 @@ main:has(.flow-editor) {
 .flow-row .check-row input:disabled {
   opacity: 0.5;
 }
-/* ponytail: native <details>; it does not close on outside click, add a handler if that bothers anyone */
 .row-menu {
   position: relative;
 }

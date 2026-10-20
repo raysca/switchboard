@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
@@ -137,6 +137,42 @@ describe("FlowsView", () => {
     await user.click(await screen.findByRole("button", { name: "Duplicate Front desk" }));
     expect(duplicateFlow).toHaveBeenCalledWith("a1", undefined);
     expect(screen.queryByTestId("where")).toBeNull();
+  });
+
+  describe("row menu", () => {
+    const open = async () => {
+      const { user } = setup({});
+      const summary = await screen.findByLabelText("More actions for Front desk");
+      const menu = summary.closest("details")!;
+      await user.click(summary);
+      expect(menu.open).toBe(true);
+      return { user, summary, menu };
+    };
+
+    it("Escape closes it and returns focus to the summary", async () => {
+      const { user, summary, menu } = await open();
+      await user.keyboard("{Escape}");
+      expect(menu.open).toBe(false);
+      expect(summary).toHaveFocus();
+    });
+
+    it("closes when focus moves to a control outside it", async () => {
+      const { user, menu } = await open();
+      await user.click(screen.getByLabelText("Filter flows"));
+      expect(menu.open).toBe(false);
+    });
+
+    it("stays open while focus moves inside it, and when focus lands on its panel", async () => {
+      const { user, menu } = await open();
+      await user.tab();
+      expect(screen.getByRole("button", { name: "Duplicate Front desk" })).toHaveFocus();
+      expect(menu.open).toBe(true);
+      // Safari/Firefox on macOS focus the nearest focusable ancestor of a clicked button: the panel.
+      const panel = menu.querySelector(".row-menu__panel") as HTMLElement;
+      act(() => panel.focus());
+      expect(panel).toHaveFocus();
+      expect(menu.open).toBe(true);
+    });
   });
 
   it("archives only after confirmation, and a failure stays in the dialog", async () => {

@@ -248,6 +248,11 @@ test("flows list: status, enable toggle without a new version, copy and archive"
 
   // Duplicate and Archive live in the row's "More actions" menu (a <details>), closed until opened.
   await row.locator("summary").click();
+  await expect(row.getByRole("button", { name: `Duplicate ${FLOW}` })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(row.getByRole("button", { name: `Duplicate ${FLOW}` })).toBeHidden();
+  await expect(row.locator("summary")).toBeFocused();
+  await row.locator("summary").click();
   await row.getByRole("button", { name: `Duplicate ${FLOW}` }).click();
   // The server names a copy "<name> copy" (server/flow/service.go, Duplicate).
   const copyName = `${FLOW} copy`;

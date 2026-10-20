@@ -28,7 +28,7 @@ describe("admin shell", () => {
     const strip = screen.getByRole("region", { name: "Management access" });
     expect(within(strip).getByLabelText("Management key")).toHaveAttribute("type", "password");
     expect(within(strip).getByRole("button", { name: "Connect" })).toBeVisible();
-    expect(within(strip).getByText(/The key stays in this tab only \(reloading clears it\)/)).toBeVisible();
+    expect(within(strip).getByText(/The key stays in this tab only, until you sign out or reload\./)).toBeVisible();
     expect(within(strip).getByText("/api/v1")).toBeVisible();
   });
 
