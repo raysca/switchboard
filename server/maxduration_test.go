@@ -76,3 +76,24 @@ func TestMaxCallDurationFiresOnceWithReason(t *testing.T) {
 		t.Fatalf("disconnects: normal=%d server=%d, want 0 and 1", n, srv)
 	}
 }
+
+// K10: the call's timer runs for the CallSpec's limit (the flow's, already clamped to the server's), not
+// the server's own: a flow limit tighter than the server's cannot be waited for in an e2e (60 s minimum).
+func TestTheCallLimitTimerRunsForTheCallSpecsLimit(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Limits.MaxCallDuration = 30 * time.Minute
+	s := &Server{cfg: cfg}
+	timer := s.callLimitTimer(CallSpec{MaxCallDuration: 30 * time.Millisecond})
+	if timer == nil {
+		t.Fatal("a limit was set: expected a timer")
+	}
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the timer used the server's 30 minutes, not the call's limit")
+	}
+	if s.callLimitTimer(CallSpec{}) != nil {
+		t.Fatal("no limit, no timer")
+	}
+}

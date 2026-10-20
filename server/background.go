@@ -61,6 +61,20 @@ func (s *Server) backgroundFor(f *flow.AudioSettings) ws.Underlay {
 	return nil
 }
 
+// stepBackgroundUsable says whether the server will play a non-start step's background now. A step
+// that asks for none is usable; one the server refuses is skipped, not replaced by the default.
+func (s *Server) stepBackgroundUsable(b *flow.BackgroundSettings) bool {
+	if b.Name == "" {
+		return true
+	}
+	_, known := s.backgrounds[b.Name]
+	if !s.cfg.Audio.AllowFlowBackground || !known {
+		s.logger.Warn("step background ignored: the step keeps the current sound", "sound", b.Name, "allowed", s.cfg.Audio.AllowFlowBackground, "known", known)
+		return false
+	}
+	return true
+}
+
 // routeBackground returns the OnRoute hook that switches the bed when a route makes a step active, or nil
 // when no step names a background (nothing would ever change). A step that names none keeps the playing
 // sound; the start step always has an entry, its resolved bed (server default included), so a return to it
@@ -75,6 +89,9 @@ func (s *Server) routeBackground(g *CallFlow, startAudio *flow.AudioSettings, se
 	}
 	choices := make(map[string]choice, len(g.Backgrounds)+1)
 	for id, b := range g.Backgrounds {
+		if id != g.Start && !s.stepBackgroundUsable(b) {
+			continue // refused now (ceiling off, sound dropped): the step keeps the current sound
+		}
 		e, on := s.resolveBed(&flow.AudioSettings{Background: b})
 		choices[id] = choice{e, on}
 	}

@@ -376,3 +376,26 @@ func TestHoldToolsStopsTheSoundWhenTheToolIsCancelledOrPanics(t *testing.T) {
 		}
 	})
 }
+
+// M1: the hold ends with the loop's outcome, not only when the executor really returns: an executor that
+// ignores its context and is abandoned must not leave the sound playing.
+func TestHoldToolsStopsWhenTheContextEndsEvenIfTheExecutorIgnoresIt(t *testing.T) {
+	h, p, r := newTestHold(t, nil)
+	gate := make(chan struct{})
+	defer close(gate)
+	exec := holdTools(core.ToolExecutorFunc(func(_ context.Context, c core.ToolCall) (core.ToolResult, error) {
+		<-gate // never looks at ctx
+		return core.ToolResult{CallID: c.ID}, nil
+	}), []core.ToolDefinition{{Name: "slow", RemoteName: "slow"}}, h)
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() { _, _ = exec.Execute(ctx, core.ToolCall{ID: "1", Name: "slow"}) }()
+	waitCue(t, "hold start", func() bool { s, _ := p.counts(); return s == 1 })
+	cancel()
+	waitCue(t, "hold stop although the executor still runs", func() bool { _, st := p.counts(); return st == 1 })
+	if h.running.Load() != 0 {
+		t.Fatalf("running = %d, want 0", h.running.Load())
+	}
+	if ev := r.events(); ev[len(ev)-1] != "cue_stop:tool_done" {
+		t.Fatalf("events = %v", ev)
+	}
+}

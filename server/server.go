@@ -794,7 +794,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 
 	// 6. Max call duration cost guard (spec §32, §35)
 	if call.MaxCallDuration > 0 {
-		maxDurTimer := time.NewTimer(call.MaxCallDuration)
+		maxDurTimer := s.callLimitTimer(call)
 		go func() {
 			defer maxDurTimer.Stop()
 			select {
@@ -815,6 +815,15 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	}
 
 	return session, nil
+}
+
+// callLimitTimer is the call's cost-guard timer: it runs for the CallSpec's limit (the flow's, already
+// clamped to the server's by callSpec), nil when there is none.
+func (s *Server) callLimitTimer(call CallSpec) *time.Timer {
+	if call.MaxCallDuration <= 0 {
+		return nil
+	}
+	return time.NewTimer(call.MaxCallDuration)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {

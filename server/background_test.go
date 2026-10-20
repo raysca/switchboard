@@ -141,3 +141,22 @@ func TestRouteBackgroundSwitchesOnArrivalKeepsOtherwiseAndSkipsTheSame(t *testin
 		t.Fatal("no step names a sound: nothing to watch")
 	}
 }
+
+// M2: a step's background the server refuses at call time (flow sounds turned off, or the sound dropped
+// after publish) keeps the current sound: it must not fall back to the server default.
+func TestARefusedStepBackgroundKeepsTheCurrentSoundInsteadOfTheServerDefault(t *testing.T) {
+	for name, s := range map[string]*Server{"ceiling off": backgroundServer(t, false, "quiet"), "sound dropped": backgroundServer(t, true, "quiet")} {
+		t.Run(name, func(t *testing.T) {
+			g := &CallFlow{Start: "front", Backgrounds: map[string]*flow.BackgroundSettings{"b": {Name: "loud"}, "gone": {Name: "nope"}}}
+			var sets int
+			hook := s.routeBackground(g, &flow.AudioSettings{Background: &flow.BackgroundSettings{Name: ""}}, func(ws.Underlay) { sets++ })
+			hook(core.RouteEvent{Kind: core.RouteActive, To: "gone"})
+			if name == "ceiling off" {
+				hook(core.RouteEvent{Kind: core.RouteActive, To: "b"})
+			}
+			if sets != 0 {
+				t.Fatalf("a refused step background must keep the current sound (start asked for none), got %d SetBackground calls", sets)
+			}
+		})
+	}
+}

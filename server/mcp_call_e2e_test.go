@@ -315,10 +315,15 @@ func TestMCPCallBargeInStopsTheHoldSound(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "the tool to be abandoned", func() bool { return r.lastCall("slow_lookup").Cancelled })
-	eventually(t, "the hold sound to stop", func() bool { return r.has(EventCueStop, "barge_in") || r.has(EventCueStop, "tool_done") })
-	time.Sleep(400 * time.Millisecond)
+	// The caller finishes speaking: from here only the tool's end can have stopped the sound (while they
+	// speak the controller re-arms forever, so a missing toolDone would otherwise hide).
+	if err := sess.Reenter(&core.UserStoppedSpeakingFrame{Seq: 100, Gen: gen, Timestamp: time.Now()}, core.Downstream, at, gen); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the hold sound to stop because the tool ended", func() bool { return r.has(EventCueStop, "tool_done") })
+	time.Sleep(400 * time.Millisecond) // past the fade
 	stopped := c.cueFrames()
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(300*time.Millisecond + 400*time.Millisecond) // longer than after_ms: a restart would show
 	if c.cueFrames() != stopped {
 		t.Fatal("the hold sound kept playing after the barge-in")
 	}

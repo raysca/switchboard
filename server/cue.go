@@ -394,8 +394,13 @@ func holdTools(next core.ToolExecutor, defs []core.ToolDefinition, h *holdCue) c
 	}
 	return core.ToolExecutorFunc(func(ctx context.Context, c core.ToolCall) (core.ToolResult, error) {
 		if slow[c.Name] {
+			// Done once, by whichever comes first: the executor returning, or its context ending (the
+			// loop abandons an executor that ignores the context, and that must not leave the sound on).
+			var once sync.Once
+			done := func() { once.Do(h.toolDone) }
 			h.toolStarted()
-			defer h.toolDone()
+			defer done()
+			defer context.AfterFunc(ctx, done)()
 		}
 		return next.Execute(ctx, c)
 	})
