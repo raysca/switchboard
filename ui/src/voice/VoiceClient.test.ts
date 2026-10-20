@@ -47,6 +47,17 @@ describe("VoiceClient connect cancelled by disconnect", () => {
     expect(sockets).toHaveBeenCalledTimes(1);
   });
 
+  it("says it is waiting for the microphone, then for the token", async () => {
+    const { client, token, capture, audio } = setup();
+    const done = client.connect({ flowId: "a1" });
+    await vi.waitFor(() => expect(audio.startCapture).toHaveBeenCalled());
+    expect(client.getState().sessionState).toBe("requesting_microphone");
+    capture.resolve();
+    await vi.waitFor(() => expect(client.getState().sessionState).toBe("requesting_token"));
+    token.resolve(TOKEN);
+    await done;
+  });
+
   it("a mic denied asks for no token", async () => {
     const { client, audio } = setup();
     const issue = (client as unknown as { apiClient: { issueVoiceToken: ReturnType<typeof vi.fn> } }).apiClient

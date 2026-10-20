@@ -37,6 +37,7 @@ import {
 
 export type SessionState =
   | "disconnected"
+  | "requesting_microphone"
   | "requesting_token"
   | "connecting"
   | "connected"
@@ -198,6 +199,7 @@ export class VoiceClient {
    */
   public async connect(options: ConnectOptions): Promise<void> {
     if (
+      this.state.sessionState === "requesting_microphone" ||
       this.state.sessionState === "requesting_token" ||
       this.state.sessionState === "connecting" ||
       this.state.sessionState === "connected" ||
@@ -219,7 +221,7 @@ export class VoiceClient {
 
     // Reset session errors and transient speaking states
     this.updateState({
-      sessionState: "requesting_token",
+      sessionState: "requesting_microphone",
       pushToTalk: options.pushToTalk === true,
       isTalking: false,
       error: null,
@@ -251,6 +253,7 @@ export class VoiceClient {
     if (attempt !== this.attempt) return;
 
     // Step 2: Request Voice Admission Token (after the mic: the token lives one minute, the permission prompt can outlast it)
+    this.updateState({ sessionState: "requesting_token" });
     let tokenStr = "";
     try {
       const tokenResp = await this.apiClient.issueVoiceToken({
