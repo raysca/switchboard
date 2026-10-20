@@ -65,14 +65,14 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 			out = append(out, policyProblem{message: "turn settings need turn.manager: true on this server"})
 		}
 		if m := t.MaxMuteMS; m != nil && time.Duration(*m)*time.Millisecond > p.MaxMute() {
-			out = append(out, policyProblem{message: fmt.Sprintf("turn.max_mute_ms %d is above this server's limit of %d (turn.max_mute): a flow can only shorten it", *m, p.MaxMute().Milliseconds())})
+			out = append(out, policyProblem{message: fmt.Sprintf("turn.max_mute_ms %d is above this server's limit of %d (turn.max_mute): a flow can only shorten it", *m, p.MaxMute().Milliseconds()), storedOK: true})
 		}
 		if t.EndOfTurn == EndOfTurnSmart && !p.SmartTurn() {
 			out = append(out, policyProblem{reason: reasonSmartTurnUnavailable, message: "Smart end-of-turn needs the Smart Turn model on this server (turn.analyzer.for_flows)"})
 		}
 	}
 	if s := c.MaxCallDurationSeconds; s != 0 && time.Duration(s)*time.Second > p.MaxCallDuration() {
-		out = append(out, policyProblem{message: fmt.Sprintf("max_call_duration_seconds %d is above this server's limit of %d (limits.max_call_duration): a flow can only shorten it", s, int(p.MaxCallDuration().Seconds()))})
+		out = append(out, policyProblem{message: fmt.Sprintf("max_call_duration_seconds %d is above this server's limit of %d (limits.max_call_duration): a flow can only shorten it", s, int(p.MaxCallDuration().Seconds())), storedOK: true})
 	}
 	if i := c.Idle; i != nil && i.UserTimeoutMS != nil && *i.UserTimeoutMS > 0 {
 		if floor := p.MinUserTimeout(); time.Duration(*i.UserTimeoutMS)*time.Millisecond <= floor {

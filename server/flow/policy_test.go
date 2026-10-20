@@ -329,3 +329,21 @@ func TestPublishRefusesACallLimitAboveTheServers(t *testing.T) {
 		}
 	}
 }
+
+// A server limit lowered after publishing does not stop a flow being duplicated: calls keep working (the
+// shorter value wins at call time), while a new publish above the lowered limit is still refused.
+func TestDuplicateKeepsALimitTheServerLaterLowered(t *testing.T) {
+	p := &fakePolicy{maxCall: 30 * time.Minute, manager: true, maxMute: 30 * time.Second}
+	svc := testServiceWith(t, p)
+	a, err := svc.Create(context.Background(), CreateRequest{Name: "src", Config: withExtra(`"max_call_duration_seconds":600,"turn":{"max_mute_ms":20000}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.maxCall, p.maxMute = 5*time.Minute, 10*time.Second
+	if _, err := svc.Duplicate(context.Background(), a.ID, "copy"); err != nil {
+		t.Fatalf("duplicate after the server lowered its limits: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), CreateRequest{Name: "new", Config: withExtra(`"max_call_duration_seconds":600`)}); err == nil {
+		t.Fatal("a new publish above the lowered limit must still be refused")
+	}
+}
