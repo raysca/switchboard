@@ -11,7 +11,17 @@ const ORDER = [ALWAYS, "first_speech", "until_first_bot_complete", "function_cal
 const DEFAULT_WORDS = 2;
 const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
 
-type Props = { cfg: StepConfig; setKey: (key: string, value: unknown) => void; serverConfig?: ServerConfigDTO };
+type SetKey = (key: string, value: unknown) => void;
+
+/** Members set or removed (null) on the turn object; an empty turn is no turn. A mute list equal to serverMute is no setting. */
+function writeTurn(turn: Rec, setKey: SetKey, patch: Rec, serverMute?: string[]) {
+  const next: Rec = { ...turn };
+  for (const [k, v] of Object.entries(patch)) if (v === null || v === undefined) delete next[k]; else next[k] = v;
+  if (serverMute && Array.isArray(next.mute) && sameList(next.mute as string[], serverMute)) delete next.mute;
+  setKey("turn", Object.keys(next).length ? next : null);
+}
+
+type Props = { cfg: StepConfig; setKey: SetKey; serverConfig?: ServerConfigDTO };
 
 /** How the caller may interrupt the agent: when, which parts are protected, and for how long. */
 export function TurnFields({ cfg, setKey, serverConfig }: Props) {
@@ -33,13 +43,7 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
     : flowMute !== null && serverHasAlways ? "any"
     : "server";
 
-  /** Members set or removed (null); a mute list equal to the server's is no setting; an empty turn is no turn. */
-  const write = (patch: { min_words?: number | null; mute?: string[] | null; max_mute_ms?: number | null }) => {
-    const next: Rec = { ...turn };
-    for (const [k, v] of Object.entries(patch)) if (v === null || v === undefined) delete next[k]; else next[k] = v;
-    if (Array.isArray(next.mute) && sameList(next.mute as string[], serverMute)) delete next.mute;
-    setKey("turn", Object.keys(next).length ? next : null);
-  };
+  const write = (patch: { min_words?: number | null; mute?: string[] | null; max_mute_ms?: number | null }) => writeTurn(turn, setKey, patch, serverMute);
   const withMute = (name: string, on: boolean) => ORDER.filter((n) => (n === name ? on : mute.includes(n)));
   const rest = mute.filter((m) => m !== ALWAYS); // the list without "always": what every choice but "never" keeps
 
@@ -119,5 +123,91 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
       <SettingHelp id="turn.max_mute_ms" />
       <p className="subtext">Muted speech still reaches speech-to-text (billed) and recordings.</p>
     </fieldset>
+  );
+}
+
+const DETECTORS = [
+  { id: "default", label: "Standard: wait for silence" },
+  { id: "smart", label: "Smart: a model judges if the caller is done" },
+  { id: "eager", label: "Fast: end on a full sentence" },
+];
+const serverDetector = (id: string) => DETECTORS.find((d) => d.id === id)?.label.toLowerCase() ?? id;
+const numberOrNull = (text: string) => {
+  const n = text.trim() === "" ? null : Number(text);
+  return n === null || !Number.isFinite(n) ? null : Math.round(n);
+};
+
+/** When the caller's turn ends: how long a pause is waited out, and which detector decides. */
+export function EndOfTurnFields({ cfg, setKey, serverConfig }: Props) {
+  const turn = rec(cfg.turn);
+  const st = serverConfig?.turn;
+  const off = st !== undefined && !st.manager;
+  const smartOk = st?.smart_turn_available ?? false;
+  const detector = typeof turn.end_of_turn === "string" ? turn.end_of_turn : "";
+  return (
+    <>
+      <label className="form-field" htmlFor="flow-turn-speech-timeout">
+        <span>Wait for the caller to resume (ms)</span>
+        <input
+          id="flow-turn-speech-timeout"
+          type="number"
+          min={TURN_RANGE.speechTimeoutMs[0]}
+          max={TURN_RANGE.speechTimeoutMs[1]}
+          disabled={off}
+          placeholder={st ? String(st.speech_timeout_ms) : "Server setting"}
+          aria-describedby="flow-turn-speech-timeout-hint"
+          value={typeof turn.speech_timeout_ms === "number" ? turn.speech_timeout_ms : ""}
+          onChange={(e) => writeTurn(turn, setKey, { speech_timeout_ms: numberOrNull(e.target.value) })}
+        />
+      </label>
+      <p id="flow-turn-speech-timeout-hint" className="subtext">
+        {TURN_RANGE.speechTimeoutMs[0]} to {TURN_RANGE.speechTimeoutMs[1]}. Empty: the server's setting.
+      </p>
+      <SettingHelp id="turn.speech_timeout_ms" />
+      <label className="form-field" htmlFor="flow-turn-end">
+        <span>End-of-turn detection</span>
+        <select
+          id="flow-turn-end"
+          disabled={off}
+          value={detector}
+          onChange={(e) => writeTurn(turn, setKey, { end_of_turn: e.target.value || null, smart_hold_ms: e.target.value === "smart" ? turn.smart_hold_ms : null })}
+        >
+          <option value="">{st ? `Server setting (${serverDetector(st.end_of_turn)})` : "Server setting"}</option>
+          {DETECTORS.map((d) => {
+            const unavailable = d.id === "smart" && !smartOk;
+            return (
+              <option key={d.id} value={d.id} disabled={unavailable}>
+                {d.label}
+                {unavailable ? " (not available on this server)" : ""}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+      {detector === "eager" && <p className="subtext">Can split "Book a table. For two." into two turns. Best with a speech-to-text that adds punctuation.</p>}
+      <SettingHelp id="turn.end_of_turn" />
+      {detector === "smart" && (
+        <>
+          <label className="form-field" htmlFor="flow-turn-smart-hold">
+            <span>Smart hold (ms)</span>
+            <input
+              id="flow-turn-smart-hold"
+              type="number"
+              min={TURN_RANGE.smartHoldMs[0]}
+              max={TURN_RANGE.smartHoldMs[1]}
+              disabled={off}
+              placeholder={st ? String(st.smart_hold_ms) : "Server setting"}
+              aria-describedby="flow-turn-smart-hold-hint"
+              value={typeof turn.smart_hold_ms === "number" ? turn.smart_hold_ms : ""}
+              onChange={(e) => writeTurn(turn, setKey, { smart_hold_ms: numberOrNull(e.target.value) })}
+            />
+          </label>
+          <p id="flow-turn-smart-hold-hint" className="subtext">
+            {TURN_RANGE.smartHoldMs[0]} to {TURN_RANGE.smartHoldMs[1]}. Empty: the server's setting.
+          </p>
+          <SettingHelp id="turn.smart_hold_ms" />
+        </>
+      )}
+    </>
   );
 }

@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import type { ServerConfigDTO } from "../../../api/client";
-import { TurnFields } from "./TurnFields";
+import { EndOfTurnFields, TurnFields } from "./TurnFields";
 import type { StepConfig } from "./model";
 
 const server = (turn: Partial<ServerConfigDTO["turn"]> = {}): ServerConfigDTO => ({
@@ -15,7 +15,7 @@ const server = (turn: Partial<ServerConfigDTO["turn"]> = {}): ServerConfigDTO =>
   secure: false,
   audio: { backgrounds: [], cues: [], allow_flow_background: true, background_default: "" },
   idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
-  turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, ...turn },
+  turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000, ...turn },
 });
 
 /** Holds the config like FlowSettingsPanel: a null value removes the key. */
@@ -173,5 +173,105 @@ describe("TurnFields", () => {
     render(<TurnFields cfg={{}} setKey={(k, v) => onSet(k, v)} />);
     await user.click(radio("Any time"));
     expect(onSet).toHaveBeenLastCalledWith("turn", { min_words: 0 });
+  });
+});
+
+/** Like Harness, for the end-of-turn controls. */
+function EotHarness({ initial = {}, serverConfig = server(), onSet = vi.fn() }: { initial?: StepConfig; serverConfig?: ServerConfigDTO; onSet?: (cfg: StepConfig) => void }) {
+  const [cfg, setCfg] = useState<StepConfig>(initial);
+  return (
+    <EndOfTurnFields
+      cfg={cfg}
+      serverConfig={serverConfig}
+      setKey={(key, value) => {
+        const { [key]: _drop, ...rest } = cfg;
+        const next = value === null || value === undefined ? rest : { ...rest, [key]: value };
+        setCfg(next);
+        onSet(next);
+      }}
+    />
+  );
+}
+const select = () => screen.getByRole("combobox", { name: "End-of-turn detection" });
+const resume = () => screen.getByRole("spinbutton", { name: "Wait for the caller to resume (ms)" });
+
+describe("EndOfTurnFields", () => {
+  it("shows the server's values as placeholders and the server's detector as the first choice", () => {
+    render(<EotHarness serverConfig={server({ speech_timeout_ms: 900, end_of_turn: "eager" })} />);
+    expect(resume()).toHaveAttribute("placeholder", "900");
+    expect(resume()).toHaveAttribute("min", "200");
+    expect(resume()).toHaveAttribute("max", "3000");
+    expect(select()).toHaveValue("");
+    expect(screen.getByRole("option", { name: "Server setting (fast: end on a full sentence)" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Standard: wait for silence" })).toBeVisible();
+  });
+
+  it("writes the resume wait in ms and removes turn when emptied", async () => {
+    const user = userEvent.setup();
+    const onSet = vi.fn();
+    render(<EotHarness onSet={onSet} />);
+    await user.type(resume(), "900");
+    expect(last(onSet).turn).toEqual({ speech_timeout_ms: 900 });
+    await user.clear(resume());
+    expect(last(onSet)).not.toHaveProperty("turn");
+  });
+
+  it("writes the detector, and the server setting removes it again", async () => {
+    const user = userEvent.setup();
+    const onSet = vi.fn();
+    render(<EotHarness onSet={onSet} />);
+    await user.selectOptions(select(), "eager");
+    expect(last(onSet).turn).toEqual({ end_of_turn: "eager" });
+    expect(screen.getByText(/can split "Book a table\. For two\." into two turns/i)).toBeVisible();
+    await user.selectOptions(select(), "default");
+    expect(last(onSet).turn).toEqual({ end_of_turn: "default" });
+    await user.selectOptions(select(), "");
+    expect(last(onSet)).not.toHaveProperty("turn");
+  });
+
+  it("disables Smart, with the reason, when the server has no model", () => {
+    render(<EotHarness />);
+    expect(screen.getByRole("option", { name: "Smart: a model judges if the caller is done (not available on this server)" })).toBeDisabled();
+    expect(screen.queryByRole("spinbutton", { name: "Smart hold (ms)" })).toBeNull();
+  });
+
+  it("offers Smart when the model is loaded and shows the hold only then, dropping it when the choice changes", async () => {
+    const user = userEvent.setup();
+    const onSet = vi.fn();
+    render(<EotHarness serverConfig={server({ smart_turn_available: true })} onSet={onSet} />);
+    await user.selectOptions(select(), "smart");
+    expect(last(onSet).turn).toEqual({ end_of_turn: "smart" });
+    const hold = screen.getByRole("spinbutton", { name: "Smart hold (ms)" });
+    expect(hold).toHaveAttribute("placeholder", "3000");
+    expect(hold).toHaveAttribute("min", "500");
+    expect(hold).toHaveAttribute("max", "5000");
+    await user.type(hold, "1500");
+    expect(last(onSet).turn).toEqual({ end_of_turn: "smart", smart_hold_ms: 1500 });
+    await user.selectOptions(select(), "eager");
+    expect(last(onSet).turn).toEqual({ end_of_turn: "eager" });
+    expect(screen.queryByRole("spinbutton", { name: "Smart hold (ms)" })).toBeNull();
+  });
+
+  it("keeps the other turn members when it writes", async () => {
+    const user = userEvent.setup();
+    const onSet = vi.fn();
+    render(<EotHarness initial={{ turn: { min_words: 0, mute: [] } }} onSet={onSet} />);
+    await user.selectOptions(select(), "eager");
+    expect(last(onSet).turn).toEqual({ min_words: 0, mute: [], end_of_turn: "eager" });
+  });
+
+  it("is disabled, and the server's turn manager off says so elsewhere", () => {
+    render(<EotHarness serverConfig={server({ manager: false })} />);
+    expect(select()).toBeDisabled();
+    expect(resume()).toBeDisabled();
+  });
+
+  it("works without the server's config (still loading)", async () => {
+    const user = userEvent.setup();
+    const onSet = vi.fn();
+    render(<EndOfTurnFields cfg={{}} setKey={(k, v) => onSet(k, v)} />);
+    await user.type(resume(), "7");
+    expect(onSet).toHaveBeenLastCalledWith("turn", { speech_timeout_ms: 7 });
+    expect(screen.getByRole("option", { name: /Smart: a model judges/ })).toBeDisabled();
   });
 });

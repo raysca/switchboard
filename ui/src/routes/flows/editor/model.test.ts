@@ -353,6 +353,14 @@ describe("what the server will accept", () => {
     for (const ms of [1000, 60000]) expect(bad({ max_mute_ms: ms })).toEqual([]);
   });
 
+  it("mirrors the end-of-turn limits", () => {
+    const bad = (turn: Record<string, unknown>) => flowIssues(one({ turn }));
+    for (const ms of [199, 3001]) expect(bad({ speech_timeout_ms: ms })).toContain("Wait for the caller to resume must be 200 to 3000 ms.");
+    for (const ms of [200, 3000]) expect(bad({ speech_timeout_ms: ms })).toEqual([]);
+    for (const ms of [499, 5001]) expect(bad({ end_of_turn: "smart", smart_hold_ms: ms })).toContain("Smart hold must be 500 to 5000 ms.");
+    for (const ms of [500, 5000]) expect(bad({ end_of_turn: "smart", smart_hold_ms: ms })).toEqual([]);
+  });
+
   it("checks the summarisation details even while summarising is off", () => {
     const g = one({ context: { max_tokens: 800, summarization: { enabled: false, trigger_tokens: 900 } } });
     expect(flowIssues(g)).toContain("Summarise-at must be below Max tokens (800).");

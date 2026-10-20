@@ -171,6 +171,27 @@ const COPY = {
     when: "Shorten it so a caller who really needs to speak is never ignored for long.",
     defaults: "1 to 60 seconds, at most the server's own limit. Empty: the server's limit.",
   },
+  "turn.speech_timeout_ms": {
+    label: "Wait for the caller to resume",
+    what: "After the caller falls silent and a transcript is ready, how long the call waits for them to carry on before the turn is over.",
+    when: "Longer for callers who pause to think or read out numbers; shorter for brisk exchanges.",
+    defaults: "200 to 3000 ms. Empty: the server's setting.",
+    careful: "Too short cuts people off in a pause; too long makes every reply late.",
+  },
+  "turn.end_of_turn": {
+    label: "End-of-turn detection",
+    what: "How the call decides the caller has finished. Standard waits for silence. Smart asks a small model whether the sentence is complete. Fast ends the turn as soon as a full sentence has been heard.",
+    when: "Smart for slow or hesitant speakers; Fast when the quickest reply matters more than the odd split turn.",
+    defaults: "The server's setting. Every choice still falls back to the silence wait above. Smart is offered only when the server has the model loaded.",
+    careful: "Fast cannot take a sentence back: \"Book a table. For two.\" becomes two turns, and the second interrupts the reply to the first. Use it with a speech-to-text that adds punctuation.",
+  },
+  "turn.smart_hold_ms": {
+    label: "Smart hold",
+    what: "How long a turn the model judges unfinished is kept open before the call replies anyway.",
+    when: "Longer for callers who trail off mid-thought.",
+    defaults: "500 to 5000 ms. Empty: the server's setting.",
+    careful: "The caller hears nothing from the agent for this long after an unfinished sentence.",
+  },
   "llm.max_parallel": {
     label: "Tool calls at once",
     what: "How many tool calls the model may run side by side in one round.",

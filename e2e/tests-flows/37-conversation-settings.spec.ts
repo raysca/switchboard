@@ -83,3 +83,34 @@ test("interruption settings are published, read back and shown after a reload", 
   await expect(page.getByRole("checkbox", { name: "Not while a tool runs" })).toBeChecked();
   await expect(page.getByRole("spinbutton", { name: "Longest mute (seconds)" })).toHaveValue("20");
 });
+
+test("end-of-turn settings are published, read back and shown after a reload", async ({ page, stack }) => {
+  const name = "E2E End Of Turn";
+  await api(stack, "/flows", {
+    method: "POST",
+    body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
+  });
+  const turnOf = async () => ((await api<{ data: { name: string; current_version: { config: { turn?: object } } }[] }>(stack, "/flows")).data.find((f) => f.name === name)!).current_version.config.turn;
+  await connectAdmin(page, stack);
+  await openFlow(page, name);
+  await openFlowSettings(page);
+  await page.locator("details.advanced").getByText("Advanced", { exact: true }).click();
+  const detection = page.getByRole("combobox", { name: "End-of-turn detection" });
+  // The echo stack loads no Smart Turn model: the choice is visible but cannot be picked.
+  await expect(detection.getByRole("option", { name: /^Smart: .*\(not available on this server\)$/ })).toHaveJSProperty("disabled", true);
+  await detection.selectOption({ label: "Fast: end on a full sentence" });
+  await page.getByRole("spinbutton", { name: "Wait for the caller to resume (ms)" }).fill("900");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v2" }).click();
+
+  await expect.poll(turnOf).toEqual({ speech_timeout_ms: 900, end_of_turn: "eager" });
+
+  await page.reload();
+  await connectAdmin(page, stack);
+  await openFlow(page, name);
+  await openFlowSettings(page);
+  await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
+  await expect(page.getByRole("combobox", { name: "End-of-turn detection" })).toHaveValue("eager");
+  await expect(page.getByRole("spinbutton", { name: "Wait for the caller to resume (ms)" })).toHaveValue("900");
+});

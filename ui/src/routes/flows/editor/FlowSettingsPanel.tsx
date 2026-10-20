@@ -3,7 +3,7 @@ import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
 import { AudioFields, QuietCallerBasics, QuietCallerDetails } from "./CallBehaviorFields";
-import { TurnFields } from "./TurnFields";
+import { EndOfTurnFields, TurnFields } from "./TurnFields";
 import { SettingHelp } from "./SettingHelp";
 import { DEFAULT_FAILOVER, FAILOVER_CLASSES, flowIssues, MAX_SUMMARY_PROMPT_BYTES, STT_P99_RANGE, updateStep, type FlowDraft, type StepConfig } from "./model";
 
@@ -218,6 +218,7 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
               {STT_P99_RANGE[0]} to {STT_P99_RANGE[1]}. Empty: the server default.
             </p>
             <SettingHelp id="stt_p99_ms" />
+            <EndOfTurnFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           </fieldset>
           <TurnFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           <fieldset className="stage-box">

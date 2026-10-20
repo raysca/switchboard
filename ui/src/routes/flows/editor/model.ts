@@ -13,7 +13,7 @@ export const STT_P99_RANGE = [100, 10000] as const;
 const DEFAULT_MAX_TOKENS = 4000;
 /** The server's limits for a flow's quiet-caller and audio settings (server/flow/call_behavior.go). */
 export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
-export const TURN_RANGE = { minWords: [1, 10], maxMuteS: [1, 60] } as const;
+export const TURN_RANGE = { minWords: [1, 10], maxMuteS: [1, 60], speechTimeoutMs: [200, 3000], smartHoldMs: [500, 5000] } as const;
 export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0] } as const;
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
@@ -174,6 +174,8 @@ function callBehaviorIssues(config: StepConfig): string[] {
   const words = turn.min_words;
   if (typeof words === "number" && (!Number.isInteger(words) || words < 0 || words > TURN_RANGE.minWords[1])) out.push(`Interrupt after must be ${TURN_RANGE.minWords[0]} to ${TURN_RANGE.minWords[1]} words.`);
   if (typeof turn.max_mute_ms === "number" && outside(turn.max_mute_ms, [TURN_RANGE.maxMuteS[0] * 1000, TURN_RANGE.maxMuteS[1] * 1000])) out.push(`Longest mute must be ${TURN_RANGE.maxMuteS[0]} to ${TURN_RANGE.maxMuteS[1]} seconds.`);
+  if (outside(turn.speech_timeout_ms, TURN_RANGE.speechTimeoutMs)) out.push(`Wait for the caller to resume must be ${TURN_RANGE.speechTimeoutMs[0]} to ${TURN_RANGE.speechTimeoutMs[1]} ms.`);
+  if (outside(turn.smart_hold_ms, TURN_RANGE.smartHoldMs)) out.push(`Smart hold must be ${TURN_RANGE.smartHoldMs[0]} to ${TURN_RANGE.smartHoldMs[1]} ms.`);
   const audio = asRecord(config.audio);
   if (outside(audio.output_gain_db, AUDIO_RANGE.gain)) out.push("Voice volume must be -30 to +6 dB.");
   const strength = asRecord(audio.denoise).strength;
