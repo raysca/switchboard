@@ -62,6 +62,8 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const setSummary = (key: string, value: unknown) => setContext({ ...context, summarization: value === null ? without(summary, key) : { ...summary, [key]: value } });
   const setContext = (next: Rec) => setKey("context", Object.keys(next).length ? next : null);
   const cue = graph.route_cue;
+  const cueNames = serverConfig?.audio.cues ?? [];
+  const cueUnknown = cue !== undefined && cue.name !== "" && serverConfig !== undefined && !cueNames.includes(cue.name);
   const failoverOn = Array.isArray(rec(cfg.failover).on) ? (rec(cfg.failover).on as string[]) : [];
   const failover = failoverOn.length ? failoverOn : DEFAULT_FAILOVER;
   const setFailover = (id: string, on: boolean) => {
@@ -314,21 +316,27 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
       {graph.routes.length > 0 && (
         <fieldset className="stage-box">
           <legend>Route sound</legend>
-          <p className="subtext">Plays while the caller moves between steps. Sounds are set up on the server (audio.cues).</p>
+          <p className="subtext">Plays while the caller moves between steps. The sounds are the ones set up on the server (audio.cues).</p>
           <div className="grid-2">
             <label className="form-field" htmlFor="cue-name">
-              <span>Sound name</span>
-              <input
+              <span>Route sound</span>
+              <select
                 id="cue-name"
-                type="text"
-                placeholder="none"
                 value={cue?.name ?? ""}
                 onChange={(e) => {
-                  const v = e.target.value.trim();
+                  const v = e.target.value;
                   const { route_cue: _drop, ...rest } = graph;
                   onChange(v ? { ...rest, route_cue: { ...(cue ?? {}), name: v } } : rest);
                 }}
-              />
+              >
+                <option value="">None</option>
+                {cueUnknown && <option value={cue.name}>{cue.name} (not on this server)</option>}
+                {cueNames.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="form-field" htmlFor="cue-after">
               <span>Start after (ms)</span>

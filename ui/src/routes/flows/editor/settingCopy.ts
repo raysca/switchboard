@@ -149,7 +149,7 @@ const COPY = {
     label: "Route sound",
     what: "A short sound played while the call moves between steps, so the caller does not hear silence.",
     when: "When a transfer takes more than a moment.",
-    defaults: "None. The name must be a sound your server has.",
+    defaults: "None. Pick one of the sounds your server has.",
   },
   "llm.max_parallel": {
     label: "Tool calls at once",

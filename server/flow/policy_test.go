@@ -15,11 +15,13 @@ type fakePolicy struct {
 	sounds   []string
 	allow    bool
 	minTimer time.Duration
+	cues     []string
 }
 
 func (p *fakePolicy) Backgrounds() []string         { return p.sounds }
 func (p *fakePolicy) AllowFlowBackground() bool     { return p.allow }
 func (p *fakePolicy) MinUserTimeout() time.Duration { return p.minTimer }
+func (p *fakePolicy) Cues() []string                { return p.cues }
 
 func withExtra(extra string) json.RawMessage {
 	return json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"},` + extra + `}`)
@@ -121,4 +123,42 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestPublishRefusesARouteSoundTheServerDoesNotHave(t *testing.T) {
+	routed := func(cue string) json.RawMessage {
+		return json.RawMessage(strings.Replace(twoStepCfg(""), `"routes":`, `"route_cue":`+cue+`,"routes":`, 1))
+	}
+	for _, c := range []struct {
+		name string
+		cues []string
+		cue  string
+		want string // "" = accepted
+	}{
+		{"unknown lists the available ones", []string{"chime"}, `{"name":"chimes"}`, `route_cue.name "chimes" is not a sound on this server (available: chime)`},
+		{"no cues at all", nil, `{"name":"chime","after_ms":50}`, `route_cue.name "chime" is not a sound on this server (this server has no cues)`},
+		{"known", []string{"chime"}, `{"name":"chime"}`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			svc := testServiceWith(t, &fakePolicy{cues: c.cues})
+			a, err := svc.Create(context.Background(), CreateRequest{Name: c.name, Config: routed(c.cue)})
+			if c.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want %q, got %v (%+v)", c.want, err, a)
+			}
+		})
+	}
+	// Readiness stays green for a stored flow whose sound the server dropped: the call runs without it (K6).
+	g, err := Decode(routed(`{"name":"gone"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reasons, _ := g.Problems(&fakePolicy{cues: []string{"chime"}}); len(reasons) != 0 {
+		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
+	}
 }

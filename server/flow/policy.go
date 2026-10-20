@@ -8,11 +8,12 @@ import (
 )
 
 // Policy is what the server knows about call behavior that a flow may only choose within: the named
-// background sounds, whether flows may choose one, and the shortest quiet-caller wait that is not
+// background sounds, the route sounds, whether flows may choose one, and the shortest quiet-caller wait that is not
 // confused with a key press. An Availability that also implements Policy turns these on; without it
 // (unit tests) a flow's choices are not checked against a server.
 type Policy interface {
 	Backgrounds() []string // sorted names of audio.backgrounds
+	Cues() []string        // sorted names of audio.cues (route sounds)
 	AllowFlowBackground() bool
 	MinUserTimeout() time.Duration // 0: no floor
 }
@@ -43,6 +44,13 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 			}
 			out = append(out, policyProblem{"", fmt.Sprintf("audio.background.name %q is not a sound on this server (%s)", name, avail)})
 		}
+	}
+	if rc := g.RouteCue; rc != nil && rc.Name != "" && !slices.Contains(p.Cues(), rc.Name) {
+		avail := "this server has no cues"
+		if names := p.Cues(); len(names) > 0 {
+			avail = "available: " + strings.Join(names, ", ")
+		}
+		out = append(out, policyProblem{"", fmt.Sprintf("route_cue.name %q is not a sound on this server (%s)", rc.Name, avail)})
 	}
 	if i := c.Idle; i != nil && i.UserTimeoutMS != nil && *i.UserTimeoutMS > 0 {
 		if floor := p.MinUserTimeout(); time.Duration(*i.UserTimeoutMS)*time.Millisecond <= floor {

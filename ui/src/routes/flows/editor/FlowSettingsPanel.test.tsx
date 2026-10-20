@@ -106,20 +106,43 @@ describe("FlowSettingsPanel", () => {
     expect(screen.getAllByText("Advanced · 2 set")).toHaveLength(1);
   });
 
-  it("edits the route sound only when the flow has routes", async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    render(<Harness onChange={onChange} />);
-    await user.type(screen.getByLabelText("Sound name"), "chime");
-    await user.type(screen.getByLabelText("Start after (ms)"), "50");
-    expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toEqual({ name: "chime", after_ms: 50 });
+  describe("route sound", () => {
+    const cueServer: ServerConfigDTO = {
+      profile: "development",
+      max_sessions: 10,
+      max_call_duration_seconds: 1800,
+      voice_token_max_lifetime_seconds: 60,
+      client_ip: "",
+      secure: false,
+      audio: { backgrounds: [], cues: ["chime", "ding"], allow_flow_background: true, background_default: "" },
+      idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
+    };
+
+    it("is a choice among the server's cues, only when the flow has routes", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness onChange={onChange} serverConfig={cueServer} />);
+      const select = screen.getByRole("combobox", { name: "Route sound" });
+      expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["None", "chime", "ding"]);
+      await user.selectOptions(select, "chime");
+      await user.type(screen.getByLabelText("Start after (ms)"), "50");
+      expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toEqual({ name: "chime", after_ms: 50 });
+      await user.selectOptions(select, "");
+      expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toBeUndefined();
+    });
+
+    it("shows a stored name the server lacks as selected and not on this server", () => {
+      render(<Harness initial={{ ...two, route_cue: { name: "chimes" } }} serverConfig={cueServer} />);
+      expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chimes");
+      expect(screen.getByRole("option", { name: "chimes (not on this server)" })).toBeInTheDocument();
+    });
   });
 
   it("asks for a step first on an empty flow, and renames the flow", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyFlow()} />);
     expect(screen.getByText("Add a step first; these settings live on the start step.")).toBeVisible();
-    expect(screen.queryByLabelText("Sound name")).toBeNull();
+    expect(screen.queryByLabelText("Route sound")).toBeNull();
     await user.clear(screen.getByLabelText("Flow name"));
     await user.type(screen.getByLabelText("Flow name"), "After hours");
     expect(screen.getByLabelText("Flow name")).toHaveValue("After hours");
@@ -191,7 +214,7 @@ describe("FlowSettingsPanel footer", () => {
       expect(advanced()).not.toHaveAttribute("open");
       expect(advanced()).toContainElement(screen.getByLabelText("Wait after the caller stops (ms)"));
       expect(advanced()).toContainElement(screen.getByLabelText("Max messages"));
-      expect(advanced()).toContainElement(screen.getByLabelText("Sound name"));
+      expect(advanced()).toContainElement(screen.getByLabelText("Route sound"));
       expect(advanced()).not.toContainElement(screen.getByLabelText("Record calls"));
       expect(screen.getByText(/^Advanced/)).toHaveTextContent(/^Advanced$/);
     });
@@ -298,7 +321,7 @@ describe("FlowSettingsPanel footer", () => {
       voice_token_max_lifetime_seconds: 60,
       client_ip: "",
       secure: false,
-      audio: { backgrounds: ["cafe", "office"], allow_flow_background: true, background_default: "" },
+      audio: { backgrounds: ["cafe", "office"], cues: ["chime"], allow_flow_background: true, background_default: "" },
       idle: { user_timeout_ms: 15000, max_prompts: 2, prompt_mode: "llm" },
     };
     const withStart = (extra: Record<string, unknown>) =>
@@ -464,7 +487,7 @@ describe("FlowSettingsPanel footer", () => {
 
     it("disables the sound with the reason when the server does not let flows choose one", async () => {
       const user = userEvent.setup();
-      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], allow_flow_background: false, background_default: "" } }} />);
+      render(<Harness serverConfig={{ ...server, audio: { backgrounds: ["office"], cues: [], allow_flow_background: false, background_default: "" } }} />);
       await openAdvanced(user);
       expect(screen.getByLabelText("Background sound")).toBeDisabled();
       expect(screen.getByText("This server does not allow flow background sounds.")).toBeVisible();

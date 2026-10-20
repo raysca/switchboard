@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -187,6 +188,38 @@ func TestCallBehaviorThePublishAPIRefusesASoundTheServerDoesNotOfferOrAllow(t *t
 	}
 	if code, body := post(denied, "OtherAudio", `"audio":{"denoise":{"strength":0.8},"output_gain_db":-6}`); code != http.StatusCreated {
 		t.Fatalf("noise reduction and volume need no ceiling: %d %s", code, body)
+	}
+}
+
+// The route sound is one of the server's cues: publish says which, and the editor reads the list from /server-config.
+func TestCallBehaviorThePublishAPIRefusesAnUnknownRouteCue(t *testing.T) {
+	cue := constWAV(t, "chime", 12000)
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) {
+		c.Audio.Cues = map[string]CueConfig{"ding": {File: cue}, "chime": {File: cue}}
+	})
+	id := r.createRoutedFlow("salesvoice", `{"name":"chime","after_ms":50}`)
+	w := apiRequest(r.s, http.MethodGet, "/api/v1/server-config", e2eMgmtKey, "")
+	var cfg struct {
+		Data struct {
+			Audio struct {
+				Cues []string `json:"cues"`
+			} `json:"audio"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil || !slices.Equal(cfg.Data.Audio.Cues, []string{"chime", "ding"}) {
+		t.Fatalf("server-config cues = %v (err %v): %s", cfg.Data.Audio.Cues, err, w.Body.String())
+	}
+	put := func(cue string) (int, string) {
+		body := `{"config":` + string(flowConfigJSON("SALES", "salesvoice", cue)) + `}`
+		w := apiRequest(r.s, http.MethodPut, "/api/v1/flows/"+id, e2eMgmtKey, body)
+		return w.Code, w.Body.String()
+	}
+	code, body := put(`{"name":"chimes"}`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, `route_cue.name \"chimes\" is not a sound on this server (available: chime, ding)`) {
+		t.Fatalf("an unknown route sound: %d %s", code, body)
+	}
+	if code, body := put(`{"name":"ding"}`); code != http.StatusOK {
+		t.Fatalf("a known route sound: %d %s", code, body)
 	}
 }
 

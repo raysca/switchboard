@@ -775,11 +775,14 @@ func TestFlowE2ECueStopsWhenTheRouteFails(t *testing.T) {
 	c.waitReplies("[FRONT", 2) // the caller is still with the front step
 }
 
-// A flow that names a sound the server does not have still hands off, silently.
+// A flow published with a sound the server had, on a server whose sounds changed since (a restart with a
+// smaller catalogue), still hands off, silently: publish refuses an unknown name, a running call never does.
 func TestFlowE2EUnknownCueNameStillHandsOff(t *testing.T) {
 	probe := newProbe()
 	r := newFlowRigE2E(t, probe, withCue(t))
-	c := r.dial(r.createRoutedFlow("salesvoice", `{"name":"missing","after_ms":50}`))
+	flowID := r.createRoutedFlow("salesvoice", `{"name":"chime","after_ms":50}`)
+	delete(r.s.cues, "chime")
+	c := r.dial(flowID)
 	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
 	c.say("transfer to sales")
 	c.waitReplies("[SALES", 1)
