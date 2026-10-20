@@ -483,3 +483,67 @@ func TestTTSWatchdogKeepsOtherCandidatesTails(t *testing.T) {
 		return false
 	})
 }
+
+// textTTS stands in for a ttsunit candidate: it fails the unit before audio, or speaks it
+// and puts the unit's text on the final frame, as ttsunit does.
+type textTTS struct {
+	s    core.SessionController
+	idx  int
+	fail bool
+}
+
+func (p *textTTS) Attach(s core.SessionController, i int) error { p.s, p.idx = s, i; return nil }
+func (p *textTTS) ProcessFrame(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+	su, ok := f.(*core.SynthesisUnitFrame)
+	if !ok {
+		return e.PushDirection(f, d)
+	}
+	return p.s.Go(func(context.Context) {
+		out := func(final bool, text string) {
+			_ = p.s.Reenter(&core.OutputAudioFrame{Samples: []byte{1, 2}, UnitID: su.UnitID, Gen: su.Gen, Turn: su.Turn, IsFinal: final, Text: text}, core.Downstream, p.idx+1, su.Gen)
+		}
+		if p.fail {
+			_ = p.s.Reenter(&core.ErrorFrame{Err: errTTS, UnitID: su.UnitID, Gen: core.Generation(su.Gen), Turn: core.TurnID(su.Turn)}, core.Downstream, p.idx+1, su.Gen)
+			return
+		}
+		out(true, "spoken")
+	})
+}
+
+func (r *ttsRig) texts() (n int, finals int) {
+	for _, f := range r.rec.GetFrames() {
+		if o, ok := f.(*core.OutputAudioFrame); ok {
+			if o.Text != "" {
+				n++
+			}
+			if o.IsFinal {
+				finals++
+			}
+		}
+	}
+	return
+}
+
+// A unit that fails over before any audio is spoken by the fallback alone: its text rides the fallback's final frame, once.
+func TestTTSFailoverUnitTextIsSentOnce(t *testing.T) {
+	r := newTTSRig(t, core.TTSFailoverConfig{Candidates: []core.TTSCandidate{{Provider: "a", Proc: &textTTS{fail: true}}, {Provider: "b", Proc: &textTTS{}}}})
+	r.unit(t, "t1", 1, true)
+	r.waitFor(t, func() bool { _, f := r.texts(); return f == 1 })
+	time.Sleep(50 * time.Millisecond)
+	if n, finals := r.texts(); n != 1 || finals != 1 {
+		t.Fatalf("texts=%d finals=%d, want 1 and 1", n, finals)
+	}
+}
+
+// A unit that wedges after audio is closed out by the watchdog without text: a partly failed unit sends none.
+func TestTTSFailoverClosingFrameCarriesNoText(t *testing.T) {
+	a := &hangTTS{frames: 1, canceled: make(chan struct{}, 1)}
+	r := newTTSRig(t, core.TTSFailoverConfig{UnitTimeout: 50 * time.Millisecond,
+		Candidates: []core.TTSCandidate{{Provider: "a", Proc: a}, {Provider: "b", Proc: &textTTS{}}}})
+	r.unit(t, "t1", 1, true)
+	r.waitFor(t, func() bool { _, f := r.texts(); return f == 1 })
+	time.Sleep(50 * time.Millisecond)
+	if n, finals := r.texts(); n != 0 || finals != 1 {
+		t.Fatalf("texts=%d finals=%d, want 0 and 1", n, finals)
+	}
+}
