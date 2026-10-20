@@ -115,3 +115,68 @@ func TestCallBehaviorIsCallLevelAndWorksInTheStepsForm(t *testing.T) {
 		}
 	}
 }
+
+func TestTurnSettingsValidation(t *testing.T) {
+	const greet = `"greeting":"Hello",`
+	cases := []struct {
+		name, extra, want string // want "" = accepted, else a substring of the error
+	}{
+		{"min_words 0 means off", `"turn":{"min_words":0}`, ""},
+		{"min_words 1", `"turn":{"min_words":1}`, ""},
+		{"min_words 10", `"turn":{"min_words":10}`, ""},
+		{"min_words -1", `"turn":{"min_words":-1}`, "turn.min_words"},
+		{"min_words 11", `"turn":{"min_words":11}`, "turn.min_words"},
+		{"min_words fraction", `"turn":{"min_words":1.5}`, "min_words"},
+		{"mute none", `"turn":{"mute":[]}`, ""},
+		{"mute all four", greet + `"turn":{"mute":["always","first_speech","until_first_bot_complete","function_call"]}`, ""},
+		{"mute one", `"turn":{"mute":["function_call"]}`, ""},
+		{"mute unknown names its index", `"turn":{"mute":["always","nope"]}`, "turn.mute[1]"},
+		{"mute critical_output is gone", `"turn":{"mute":["critical_output"]}`, "turn.mute[0]"},
+		{"mute duplicate", `"turn":{"mute":["always","always"]}`, "turn.mute[1]"},
+		{"until_first_bot_complete needs a greeting", `"turn":{"mute":["until_first_bot_complete"]}`, "turn.mute[0]"},
+		{"until_first_bot_complete blank greeting", `"greeting":"   ","turn":{"mute":["until_first_bot_complete"]}`, "greeting"},
+		{"max_mute 1000", `"turn":{"max_mute_ms":1000}`, ""},
+		{"max_mute 60000", `"turn":{"max_mute_ms":60000}`, ""},
+		{"max_mute 999", `"turn":{"max_mute_ms":999}`, "turn.max_mute_ms"},
+		{"max_mute 60001", `"turn":{"max_mute_ms":60001}`, "turn.max_mute_ms"},
+		{"max_mute 0", `"turn":{"max_mute_ms":0}`, "turn.max_mute_ms"},
+		{"max_mute negative", `"turn":{"max_mute_ms":-5}`, "turn.max_mute_ms"},
+		{"empty turn", `"turn":{}`, "turn must set at least one member"},
+		{"unknown member", `"turn":{"patience":3}`, "patience"},
+		{"wrong type", `"turn":{"min_words":"3"}`, "min_words"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Decode(flatWith(c.extra))
+			switch {
+			case c.want == "" && err != nil:
+				t.Fatalf("rejected: %v", err)
+			case c.want != "" && (err == nil || !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), c.want)):
+				t.Fatalf("want an error naming %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+func TestTurnSettingsAreCallLevelAndKeepExplicitZeroAndEmpty(t *testing.T) {
+	steps := func(startExtra, otherExtra string) json.RawMessage {
+		return json.RawMessage(`{"start":"a","steps":[` +
+			`{"id":"a","name":"A","config":{` + stages + startExtra + `}},` +
+			`{"id":"b","name":"B","config":{"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}` + otherExtra + `}}],` +
+			`"routes":[{"id":"r","from":"a","to":"b","condition":"x"}]}`)
+	}
+	g, err := Decode(steps(`,"turn":{"min_words":0,"mute":[]}`, ``))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := g.StartStep().Config.Turn
+	if tr == nil || tr.MinWords == nil || *tr.MinWords != 0 || tr.Mute == nil || len(*tr.Mute) != 0 {
+		t.Fatalf("explicit 0 and [] must stay present: %+v", tr)
+	}
+	if out, _ := json.Marshal(g.StartStep().Config); !strings.Contains(string(out), `"min_words":0`) || !strings.Contains(string(out), `"mute":[]`) {
+		t.Fatalf("explicit zero or empty list dropped on re-encode: %s", out)
+	}
+	if _, err := Decode(steps(``, `,"turn":{"min_words":2}`)); !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), "start step") {
+		t.Fatalf("turn on a later step: %v", err)
+	}
+}

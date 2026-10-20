@@ -3,6 +3,10 @@ package flow
 import (
 	"fmt"
 	"math"
+	"slices"
+	"strings"
+
+	coreturn "govoice/core/turn"
 )
 
 // IdleSettings is a flow's quiet-caller behavior (call-level: the start step). Present, it replaces
@@ -18,6 +22,17 @@ type IdleSettings struct {
 	PromptMode string `json:"prompt_mode,omitempty"`
 	// Goodbye is spoken, with no model, before hanging up.
 	Goodbye string `json:"goodbye,omitempty"`
+}
+
+// TurnSettings is a flow's interruption rules (call-level: the start step). Each member overrides the
+// server's turn setting only when present; absent means the server's.
+type TurnSettings struct {
+	// MinWords is how many words of caller speech cut the agent off: 0 (off, any speech does) or 1..10.
+	MinWords *int `json:"min_words,omitempty"`
+	// Mute replaces the server's mute list; [] is no mute. Names are core's four strategies.
+	Mute *[]string `json:"mute,omitempty"`
+	// MaxMuteMS caps one mute, 1000..60000 and (at publish) at most the server's own cap.
+	MaxMuteMS *int `json:"max_mute_ms,omitempty"`
 }
 
 // AudioSettings is a flow's call audio (call-level). Each member overrides the server's setting
@@ -49,7 +64,13 @@ const (
 	minIdleTimeoutMS = 1000
 	maxIdleTimeoutMS = 300000
 	maxIdlePrompts   = 10
+
+	maxTurnMinWords = 10
+	minMaxMuteMS    = 1000
+	maxMaxMuteMS    = 60000
 )
+
+var muteStrategies = []string{coreturn.MuteAlways, coreturn.MuteFirstSpeech, coreturn.MuteUntilFirstBot, coreturn.MuteFunctionCall}
 
 func finite(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }
 
@@ -97,6 +118,33 @@ func (a *AudioSettings) validate() error {
 		if g := b.GainDB; g != nil && (!finite(*g) || *g < -60 || *g > 0) {
 			return fmt.Errorf("%w: audio.background.gain_db must be between -60 and 0", ErrInvalidConfig)
 		}
+	}
+	return nil
+}
+
+// validate checks the turn settings; greeting is the start step's, which until_first_bot_complete needs
+// (without one the cap is the only release).
+func (s *TurnSettings) validate(greeting string) error {
+	if s.MinWords == nil && s.Mute == nil && s.MaxMuteMS == nil {
+		return fmt.Errorf("%w: turn must set at least one member", ErrInvalidConfig)
+	}
+	if w := s.MinWords; w != nil && (*w < 0 || *w > maxTurnMinWords) {
+		return fmt.Errorf("%w: turn.min_words must be between 0 (off) and %d", ErrInvalidConfig, maxTurnMinWords)
+	}
+	if s.Mute != nil {
+		for i, name := range *s.Mute {
+			switch {
+			case !slices.Contains(muteStrategies, name):
+				return fmt.Errorf("%w: turn.mute[%d] %q is not one of %s", ErrInvalidConfig, i, name, strings.Join(muteStrategies, ", "))
+			case slices.Contains((*s.Mute)[:i], name):
+				return fmt.Errorf("%w: turn.mute[%d] repeats %q", ErrInvalidConfig, i, name)
+			case name == coreturn.MuteUntilFirstBot && strings.TrimSpace(greeting) == "":
+				return fmt.Errorf("%w: turn.mute[%d] %s needs a greeting on the start step", ErrInvalidConfig, i, name)
+			}
+		}
+	}
+	if m := s.MaxMuteMS; m != nil && (*m < minMaxMuteMS || *m > maxMaxMuteMS) {
+		return fmt.Errorf("%w: turn.max_mute_ms must be between %d and %d", ErrInvalidConfig, minMaxMuteMS, maxMaxMuteMS)
 	}
 	return nil
 }

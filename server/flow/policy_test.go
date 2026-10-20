@@ -16,12 +16,16 @@ type fakePolicy struct {
 	allow    bool
 	minTimer time.Duration
 	cues     []string
+	manager  bool
+	maxMute  time.Duration
 }
 
 func (p *fakePolicy) Backgrounds() []string         { return p.sounds }
 func (p *fakePolicy) AllowFlowBackground() bool     { return p.allow }
 func (p *fakePolicy) MinUserTimeout() time.Duration { return p.minTimer }
 func (p *fakePolicy) Cues() []string                { return p.cues }
+func (p *fakePolicy) TurnManager() bool             { return p.manager }
+func (p *fakePolicy) MaxMute() time.Duration        { return p.maxMute }
 
 func withExtra(extra string) json.RawMessage {
 	return json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"},` + extra + `}`)
@@ -160,5 +164,49 @@ func TestPublishRefusesARouteSoundTheServerDoesNotHave(t *testing.T) {
 	}
 	if reasons, _ := g.Problems(&fakePolicy{cues: []string{"chime"}}); len(reasons) != 0 {
 		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
+	}
+}
+
+func TestPublishRefusesTurnSettingsTheServerCannotHonour(t *testing.T) {
+	cases := []struct {
+		name  string
+		p     *fakePolicy
+		extra string
+		want  string // "" = accepted
+	}{
+		{"manager off", &fakePolicy{maxMute: 30 * time.Second}, `"turn":{"min_words":2}`, "turn settings need turn.manager: true on this server"},
+		{"manager off, mute only", &fakePolicy{maxMute: 30 * time.Second}, `"turn":{"mute":["always"]}`, "turn.manager"},
+		{"manager on", &fakePolicy{manager: true, maxMute: 30 * time.Second}, `"turn":{"min_words":2,"mute":["always"]}`, ""},
+		{"max_mute above the server's", &fakePolicy{manager: true, maxMute: 30 * time.Second}, `"turn":{"max_mute_ms":40000}`, "turn.max_mute_ms 40000 is above this server's limit of 30000"},
+		{"max_mute one above", &fakePolicy{manager: true, maxMute: 30 * time.Second}, `"turn":{"max_mute_ms":30001}`, "turn.max_mute_ms"},
+		{"max_mute equal", &fakePolicy{manager: true, maxMute: 30 * time.Second}, `"turn":{"max_mute_ms":30000}`, ""},
+		{"max_mute below", &fakePolicy{manager: true, maxMute: 30 * time.Second}, `"turn":{"max_mute_ms":20000}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := testServiceWith(t, c.p)
+			_, err := svc.Create(context.Background(), CreateRequest{Name: c.name, Config: withExtra(c.extra)})
+			if c.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+	// Readiness stays green for a stored flow when the server changes later (K6): the call is still built.
+	p := &fakePolicy{manager: true, maxMute: 30 * time.Second}
+	svc := testServiceWith(t, p)
+	f, err := svc.Create(context.Background(), CreateRequest{Name: "later", Config: withExtra(`"turn":{"min_words":2,"max_mute_ms":25000}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.manager, p.maxMute = false, 10*time.Second
+	got, err := svc.Get(context.Background(), f.ID)
+	if err != nil || got.Readiness.State != ReadinessReady {
+		t.Fatalf("turn problems are publish-only: %+v %v", got.Readiness, err)
 	}
 }

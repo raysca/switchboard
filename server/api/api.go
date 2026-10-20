@@ -92,6 +92,17 @@ type ServerConfig struct {
 	// nothing. Names and numbers only: never a file path or prompt text.
 	Audio ServerAudio `json:"audio"`
 	Idle  ServerIdle  `json:"idle"`
+	Turn  ServerTurn  `json:"turn"`
+}
+
+// ServerTurn is the server's effective turn-taking: what a call does when its flow says nothing. Numbers
+// are never a raw 0 for "default"; Mute is always a list.
+type ServerTurn struct {
+	Manager         bool     `json:"manager"`
+	MinWords        int      `json:"min_words"`
+	Mute            []string `json:"mute"`
+	MaxMuteMS       int      `json:"max_mute_ms"`
+	SpeechTimeoutMS int      `json:"speech_timeout_ms"`
 }
 
 type ServerAudio struct {

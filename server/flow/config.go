@@ -36,6 +36,8 @@ type Config struct {
 	// and background sound. Both are call-level (start step) and optional: absent means the server's.
 	Idle  *IdleSettings  `json:"idle,omitempty"`
 	Audio *AudioSettings `json:"audio,omitempty"`
+	// Turn is how the caller may interrupt the agent (call-level, optional: absent means the server's).
+	Turn *TurnSettings `json:"turn,omitempty"`
 	// Recording opts this flow's calls into audio recording. It only takes
 	// effect when the server enables recording too.
 	Recording RecordingConfig `json:"recording,omitzero"`
@@ -244,6 +246,11 @@ func DecodeConfig(raw json.RawMessage) (Config, error) {
 	}
 	if c.Audio != nil {
 		if err := c.Audio.validate(); err != nil {
+			return c, err
+		}
+	}
+	if c.Turn != nil {
+		if err := c.Turn.validate(c.Greeting); err != nil {
 			return c, err
 		}
 	}

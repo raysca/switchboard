@@ -16,6 +16,8 @@ type Policy interface {
 	Cues() []string        // sorted names of audio.cues (route sounds)
 	AllowFlowBackground() bool
 	MinUserTimeout() time.Duration // 0: no floor
+	TurnManager() bool             // flows' turn settings need the turn manager
+	MaxMute() time.Duration        // the server's effective turn.max_mute: a flow can only shorten it
 }
 
 // reasonIdleTooShort is the one policy problem that also takes a stored flow offline: a call could not even
@@ -51,6 +53,14 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 			avail = "available: " + strings.Join(names, ", ")
 		}
 		out = append(out, policyProblem{"", fmt.Sprintf("route_cue.name %q is not a sound on this server (%s)", rc.Name, avail)})
+	}
+	if t := c.Turn; t != nil {
+		if !p.TurnManager() {
+			out = append(out, policyProblem{"", "turn settings need turn.manager: true on this server"})
+		}
+		if m := t.MaxMuteMS; m != nil && time.Duration(*m)*time.Millisecond > p.MaxMute() {
+			out = append(out, policyProblem{"", fmt.Sprintf("turn.max_mute_ms %d is above this server's limit of %d (turn.max_mute): a flow can only shorten it", *m, p.MaxMute().Milliseconds())})
+		}
 	}
 	if i := c.Idle; i != nil && i.UserTimeoutMS != nil && *i.UserTimeoutMS > 0 {
 		if floor := p.MinUserTimeout(); time.Duration(*i.UserTimeoutMS)*time.Millisecond <= floor {

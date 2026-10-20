@@ -125,9 +125,10 @@ type CallSpec struct {
 	VADStopMS int
 	// STTP99MS overrides the STT p99 for this call if > 0.
 	STTP99MS int
-	// Idle and Audio are the flow's quiet-caller and audio settings (nil: the server's).
+	// Idle, Audio and Turn are the flow's quiet-caller, audio and interruption settings (nil: the server's).
 	Idle  *flow.IdleSettings
 	Audio *flow.AudioSettings
+	Turn  *flow.TurnSettings
 	// PushToTalk: the client opted in at client-ready. Turns start and end
 	// only on its push-to-talk messages (ExternalStart/ExternalStop).
 	PushToTalk bool
@@ -580,6 +581,10 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 		return fail(fmt.Errorf("create stt processor: %w", err))
 	}
 	built = append(built, sttProc)
+	tc := cfg.Turn.forCall(call.Turn)
+	if call.Turn != nil && !tc.Manager {
+		slog.Warn("the flow sets turn settings but turn.manager is off on this server: ignored, except the mute list for push-to-talk calls")
+	}
 	idleCfg := cfg.Idle.forCall(call.Idle)
 	if err := idleCfg.validate(cfg.DTMF.Aggregate, cfg.DTMF.AggregateTimeout); err != nil {
 		return fail(fmt.Errorf("flow idle settings: %w", err)) // the server's DTMF rules changed since the flow was published
@@ -597,13 +602,13 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	// LLM turn-completion protocol (turn.stop: llm-completion): every candidate's
 	// system prompt carries the marker instructions.
-	completion := completionConfig(cfg.Turn.Stop, cfg.Turn.Completion, r.onCompletion)
+	completion := completionConfig(tc.Stop, tc.Completion, r.onCompletion)
 	if call.PushToTalk {
 		completion = nil // a release is a definite end of turn: no "incomplete" holds
 	}
 	// function_call mute: every LLM stage's tool executor reports in-flight calls.
 	var muteTools *coreturn.ToolActivity
-	if (cfg.Turn.Manager && slices.Contains(cfg.Turn.Mute, coreturn.MuteFunctionCall)) || idleCfg.enabled() { // idle also pauses while a tool runs
+	if ((tc.Manager || call.PushToTalk) && slices.Contains(tc.Mute, coreturn.MuteFunctionCall)) || idleCfg.enabled() { // idle also pauses while a tool runs
 		muteTools = coreturn.NewToolActivity()
 	}
 	// The trigger is on every call: finished async tools, route flips and operator notes
@@ -626,9 +631,9 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			}
 		}
 		if completion != nil {
-			spec.SystemPrompt = completionPrompt(spec.SystemPrompt, cfg.Turn.Completion)
+			spec.SystemPrompt = completionPrompt(spec.SystemPrompt, tc.Completion)
 			for i := range fallbacks {
-				fallbacks[i].SystemPrompt = completionPrompt(fallbacks[i].SystemPrompt, cfg.Turn.Completion)
+				fallbacks[i].SystemPrompt = completionPrompt(fallbacks[i].SystemPrompt, tc.Completion)
 			}
 		}
 		if muteTools != nil {
@@ -738,7 +743,7 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 	var turnProc, turnTap core.Processor
 	var turnTyped *coreturn.Processor
-	if cfg.Turn.Manager || call.PushToTalk {
+	if tc.Manager || call.PushToTalk {
 		mc := coreturn.DefaultConfig()
 		var stop coreturn.TurnDetector
 		if call.PushToTalk {
@@ -749,36 +754,36 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.ExternalStart()}
 			stop = coreturn.StopChain(coreturn.ExternalStop())
 		} else {
-			if cfg.Turn.MinWords > 0 {
-				mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.MinWordsStart(cfg.Turn.MinWords, true)}
+			if tc.MinWords > 0 {
+				mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.MinWordsStart(tc.MinWords, true)}
 			}
 			var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
-			if slices.Contains(cfg.Turn.Stop, "turn-analyzer") && r.turnBackend != nil {
-				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: cfg.Turn.Analyzer.Budget, Hold: cfg.Turn.Analyzer.Hold})
+			if slices.Contains(tc.Stop, "turn-analyzer") && r.turnBackend != nil {
+				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: tc.Analyzer.Budget, Hold: tc.Analyzer.Hold})
 				turnTap = a.Tap()
 				analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
-					return smartturn.Stop(a, base, cfg.Turn.Analyzer.Hold)
+					return smartturn.Stop(a, base, tc.Analyzer.Hold)
 				}
 			}
 			var err error
 			st := coreturn.SpeechTimeoutConfig{
-				VADStop: cfg.vadStop(call.VADStopMS), UserSpeechTimeout: cfg.Turn.SpeechTimeout,
-				STTP99: cfg.sttP99(call.STT.Provider, call.STTP99MS), NoTranscriptTimeout: cfg.Turn.NoTranscriptTimeout,
+				VADStop: cfg.vadStop(call.VADStopMS), UserSpeechTimeout: tc.SpeechTimeout,
+				STTP99: cfg.sttP99(call.STT.Provider, call.STTP99MS), NoTranscriptTimeout: tc.NoTranscriptTimeout,
 			}
-			if stop, err = turnStopDetector(cfg.Turn.Stop, st, cfg.Turn.EagerGrace, analyzer); err != nil {
+			if stop, err = turnStopDetector(tc.Stop, st, tc.EagerGrace, analyzer); err != nil {
 				return fail(err)
 			}
 		}
-		mute, err := coreturn.ParseMuteStrategies(cfg.Turn.Mute, muteTools)
+		mute, err := coreturn.ParseMuteStrategies(tc.Mute, muteTools)
 		if err != nil {
 			return fail(err)
 		}
-		opts := coreturn.ProcessorOptions{Detector: stop, Mute: mute, MaxMute: cfg.Turn.MaxMute, OnMuteDrop: r.onUserMuteDrop}
-		if cfg.Turn.MinWords > 0 && !call.PushToTalk {
+		opts := coreturn.ProcessorOptions{Detector: stop, Mute: mute, MaxMute: tc.MaxMute, OnMuteDrop: r.onUserMuteDrop}
+		if tc.MinWords > 0 && !call.PushToTalk {
 			stt, count := call.STT.Provider, r.onMinWordsNoInterims
 			opts.OnFinalWithoutInterims = func() {
 				slog.Warn("turn.min_words is on but the STT sent no interim results: turns start (and barge-in happens) only when the final transcript arrives; use an STT with interim results or disable turn.min_words",
-					slog.String("stt", stt), slog.Int("min_words", cfg.Turn.MinWords))
+					slog.String("stt", stt), slog.Int("min_words", tc.MinWords))
 				if count != nil {
 					count()
 				}

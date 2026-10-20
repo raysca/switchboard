@@ -370,6 +370,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		Recording:           cfg.Recording.Active(),
 		VADStopMS:           cfg.VADStopMS,
 		Idle:                cfg.Idle,
+		Turn:                cfg.Turn,
 		Audio:               cfg.Audio,
 		STTP99MS:            cfg.STTP99MS,
 		Flow:                graph,

@@ -53,6 +53,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			ClientIP:                     s.clientIP(r), Secure: s.secure(r),
 			Audio: api.ServerAudio{Backgrounds: append([]string{}, policyFrom(s.cfg).sounds...), Cues: append([]string{}, policyFrom(s.cfg).cues...), AllowFlowBackground: s.cfg.Audio.AllowFlowBackground, BackgroundDefault: s.cfg.Audio.BackgroundDefault},
 			Idle:  api.ServerIdle{UserTimeoutMS: int(s.cfg.Idle.UserTimeout.Milliseconds()), MaxPrompts: s.cfg.Idle.MaxPrompts, PromptMode: cmp.Or(s.cfg.Idle.PromptMode, "llm")},
+			Turn: api.ServerTurn{Manager: s.cfg.Turn.Manager, MinWords: s.cfg.Turn.MinWords, Mute: append([]string{}, s.cfg.Turn.Mute...),
+				MaxMuteMS: int(s.cfg.Turn.effectiveMaxMute().Milliseconds()), SpeechTimeoutMS: int(s.cfg.Turn.effectiveSpeechTimeout().Milliseconds())},
 		}})
 	case "/api/v1/operations/status":
 		if r.Method != http.MethodGet {

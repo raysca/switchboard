@@ -173,8 +173,8 @@ func (g Definition) validateCallLevel() error {
 		c := n.Config
 		if n.ID != g.Start {
 			if c.STT.Provider != "" || c.VADStopMS != 0 || c.STTP99MS != 0 || c.Recording != (RecordingConfig{}) ||
-				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Audio != nil || c.Context.Summarization != (SummarizationConfig{}) {
-				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, audio); set them on the start step", n.ID)
+				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Audio != nil || c.Turn != nil || c.Context.Summarization != (SummarizationConfig{}) {
+				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, audio, turn); set them on the start step", n.ID)
 			}
 		}
 		if entry.Context.Summarization.Enabled && !SummarizingProviders[c.LLM.Provider] {
