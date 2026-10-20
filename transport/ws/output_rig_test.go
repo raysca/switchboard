@@ -25,6 +25,7 @@ type wireEvent struct {
 	bytes int    // audio payload bytes
 	rate  uint32 // audio sample rate on the wire
 	first int16  // first audio sample: tests give each reply its own constant value
+	text  string // data.text of an RTVI message that has one (bot-tts-text)
 }
 
 // outputRig is a real ws.Server whose pipeline is only the Connection (the
@@ -88,9 +89,12 @@ func newOutputRig(t *testing.T) *outputRig {
 			case pb.GetMessage() != nil:
 				var head struct {
 					Type string `json:"type"`
+					Data struct {
+						Text string `json:"text"`
+					} `json:"data"`
 				}
 				_ = json.Unmarshal([]byte(pb.GetMessage().Data), &head)
-				ev.msg = head.Type
+				ev.msg, ev.text = head.Type, head.Data.Text
 			default:
 				continue
 			}

@@ -146,6 +146,10 @@ type OutputAudioFrame struct {
 	// previous frame of this unit; offsets are from the start of the unit's
 	// audio. Nil for providers without word timestamps.
 	WordTimings []WordTiming
+	// Text is set on a synthesis unit's final frame only: the unit's text as it was synthesized
+	// (after cleaning), when the unit completed. The transport sends it as bot-tts-text once
+	// the pacer has written this frame; a flushed frame never sends it.
+	Text string
 }
 
 // WordTiming places one spoken word within a synthesis unit's audio.
