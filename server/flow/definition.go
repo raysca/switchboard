@@ -202,6 +202,41 @@ func (g Definition) deadStepSettings() error {
 	return nil
 }
 
+// withoutDeadStepSettings is raw with failover and tts.clean_text removed from every step but the start
+// one: what a copy of a stored version carries (the settings were ignored there, K1). Anything that is
+// not a steps-form object comes back unchanged.
+func withoutDeadStepSettings(raw json.RawMessage) json.RawMessage {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil || top["steps"] == nil {
+		return raw
+	}
+	var steps []map[string]json.RawMessage
+	var start string
+	if json.Unmarshal(top["steps"], &steps) != nil || json.Unmarshal(top["start"], &start) != nil {
+		return raw
+	}
+	for _, st := range steps {
+		var id string
+		var cfg map[string]json.RawMessage
+		if json.Unmarshal(st["id"], &id) != nil || id == start || json.Unmarshal(st["config"], &cfg) != nil {
+			continue
+		}
+		delete(cfg, "failover")
+		var tts map[string]json.RawMessage
+		if json.Unmarshal(cfg["tts"], &tts) == nil {
+			delete(tts, "clean_text")
+			cfg["tts"], _ = json.Marshal(tts)
+		}
+		st["config"], _ = json.Marshal(cfg)
+	}
+	top["steps"], _ = json.Marshal(steps)
+	out, err := json.Marshal(top)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
 func (g Definition) StartStep() Step {
 	n, _ := g.Step(g.Start)
 	return n

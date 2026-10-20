@@ -64,7 +64,7 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const setContext = (next: Rec) => setKey("context", Object.keys(next).length ? next : null);
   const cue = graph.route_cue;
   const cueNames = serverConfig?.audio.cues ?? [];
-  const cueUnknown = cue !== undefined && cue.name !== "" && serverConfig !== undefined && !cueNames.includes(cue.name);
+  const cueUnknown = cue !== undefined && cue.name !== "" && !cueNames.includes(cue.name);
   const failoverOn = Array.isArray(rec(cfg.failover).on) ? (rec(cfg.failover).on as string[]) : [];
   const failover = failoverOn.length ? failoverOn : DEFAULT_FAILOVER;
   const setFailover = (id: string, on: boolean) => {

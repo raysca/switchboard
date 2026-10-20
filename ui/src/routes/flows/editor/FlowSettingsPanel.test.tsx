@@ -132,6 +132,11 @@ describe("FlowSettingsPanel", () => {
       expect((onChange.mock.calls.at(-1)![0] as FlowDraft).route_cue).toBeUndefined();
     });
 
+    it("keeps a stored name selected while the server's list has not loaded", () => {
+      render(<Harness initial={{ ...two, route_cue: { name: "chime" } }} />);
+      expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chime");
+    });
+
     it("shows a stored name the server lacks as selected and not on this server", () => {
       render(<Harness initial={{ ...two, route_cue: { name: "chimes" } }} serverConfig={cueServer} />);
       expect(screen.getByRole("combobox", { name: "Route sound" })).toHaveValue("chimes");

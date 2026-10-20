@@ -223,6 +223,19 @@ func TestCallBehaviorThePublishAPIRefusesAnUnknownRouteCue(t *testing.T) {
 	}
 }
 
+// failover is a call-wide setting: on a later step publish says invalid_request and names the step.
+func TestCallBehaviorThePublishAPIRefusesCallWideSettingsOnALaterStep(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	id := r.createRoutedFlow("salesvoice")
+	cfg := string(flowConfigJSON("SALES", "salesvoice"))
+	i := strings.Index(cfg, `"id":"sales"`)
+	cfg = cfg[:i] + strings.Replace(cfg[i:], `"config":{`, `"config":{"failover":{"on":["timeout"]},`, 1)
+	w := apiRequest(r.s, http.MethodPut, "/api/v1/flows/"+id, e2eMgmtKey, `{"config":`+cfg+`}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_request") || !strings.Contains(w.Body.String(), `step \"sales\"`) {
+		t.Fatalf("failover on a later step: %d %s", w.Code, w.Body.String())
+	}
+}
+
 // The prompt and the goodbye are lines the assistant spoke: they are in the call's turns (as the greeting
 // is), they are no caller turn, and they leave no reply-time sample.
 func TestCallBehaviorIdleLinesAreInTheCallsTurns(t *testing.T) {

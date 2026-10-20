@@ -27,7 +27,10 @@ const reasonIdleTooShort = "idle_timeout_too_short"
 
 // policyProblem is one thing a flow asks for that the server does not allow. reason is the readiness
 // code, empty when the problem only blocks a publish.
-type policyProblem struct{ reason, message string }
+type policyProblem struct {
+	reason, message string
+	storedOK        bool // a copy of a stored version is not refused for it (the call just runs without)
+}
 
 // policyProblems checks the start step's call-level choices against the server. Machine reasons feed
 // readiness; messages are what a publish says.
@@ -38,13 +41,13 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 		name := b.Background.Name
 		switch {
 		case !p.AllowFlowBackground():
-			out = append(out, policyProblem{"", "audio.background: this server does not let flows choose a background sound (audio.allow_flow_background)"})
+			out = append(out, policyProblem{message: "audio.background: this server does not let flows choose a background sound (audio.allow_flow_background)"})
 		case !slices.Contains(p.Backgrounds(), name):
 			avail := "this server has no sounds"
 			if names := p.Backgrounds(); len(names) > 0 {
 				avail = "available: " + strings.Join(names, ", ")
 			}
-			out = append(out, policyProblem{"", fmt.Sprintf("audio.background.name %q is not a sound on this server (%s)", name, avail)})
+			out = append(out, policyProblem{message: fmt.Sprintf("audio.background.name %q is not a sound on this server (%s)", name, avail)})
 		}
 	}
 	if rc := g.RouteCue; rc != nil && rc.Name != "" && !slices.Contains(p.Cues(), rc.Name) {
@@ -52,19 +55,19 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 		if names := p.Cues(); len(names) > 0 {
 			avail = "available: " + strings.Join(names, ", ")
 		}
-		out = append(out, policyProblem{"", fmt.Sprintf("route_cue.name %q is not a sound on this server (%s)", rc.Name, avail)})
+		out = append(out, policyProblem{message: fmt.Sprintf("route_cue.name %q is not a sound on this server (%s)", rc.Name, avail), storedOK: true})
 	}
 	if t := c.Turn; t != nil {
 		if !p.TurnManager() {
-			out = append(out, policyProblem{"", "turn settings need turn.manager: true on this server"})
+			out = append(out, policyProblem{message: "turn settings need turn.manager: true on this server"})
 		}
 		if m := t.MaxMuteMS; m != nil && time.Duration(*m)*time.Millisecond > p.MaxMute() {
-			out = append(out, policyProblem{"", fmt.Sprintf("turn.max_mute_ms %d is above this server's limit of %d (turn.max_mute): a flow can only shorten it", *m, p.MaxMute().Milliseconds())})
+			out = append(out, policyProblem{message: fmt.Sprintf("turn.max_mute_ms %d is above this server's limit of %d (turn.max_mute): a flow can only shorten it", *m, p.MaxMute().Milliseconds())})
 		}
 	}
 	if i := c.Idle; i != nil && i.UserTimeoutMS != nil && *i.UserTimeoutMS > 0 {
 		if floor := p.MinUserTimeout(); time.Duration(*i.UserTimeoutMS)*time.Millisecond <= floor {
-			out = append(out, policyProblem{reasonIdleTooShort, fmt.Sprintf("idle.user_timeout_ms must exceed %v: a key press is not silence (dtmf.aggregate_timeout)", floor)})
+			out = append(out, policyProblem{reason: reasonIdleTooShort, message: fmt.Sprintf("idle.user_timeout_ms must exceed %v: a key press is not silence (dtmf.aggregate_timeout)", floor)})
 		}
 	}
 	return out
