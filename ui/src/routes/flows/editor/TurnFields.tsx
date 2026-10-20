@@ -44,7 +44,9 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
     : "server";
   const shownWords = minWords !== null ? minWords : mode === "after" ? serverWords : 0;
 
-  const write = (patch: { min_words?: number | null; mute?: string[] | null; max_mute_ms?: number | null }) => writeTurn(turn, setKey, patch, serverMute);
+  // Server mute unknown (config loading): never compare against a guess, and never invent a mute list the flow did not have.
+  const write = (patch: { min_words?: number | null; mute?: string[] | null; max_mute_ms?: number | null }) =>
+    writeTurn(turn, setKey, st || flowMute !== null ? patch : { ...patch, mute: undefined }, st && serverMute);
   const withMute = (name: string, on: boolean) => ORDER.filter((n) => (n === name ? on : mute.includes(n)));
   const rest = mute.filter((m) => m !== ALWAYS); // the list without "always": what every choice but "never" keeps
 

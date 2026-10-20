@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import type { ServerConfigDTO } from "../../../api/client";
@@ -36,6 +36,15 @@ function Harness({ initial = {}, serverConfig = server(), onSet = vi.fn() }: { i
 }
 const last = (fn: ReturnType<typeof vi.fn>) => fn.mock.calls.at(-1)![0] as StepConfig;
 const radio = (name: RegExp | string) => screen.getByRole("radio", { name });
+
+describe("TurnFields before the server config arrives", () => {
+  it("keeps a stored empty mute list and min_words 0 when only the longest mute changes", () => {
+    const setKey = vi.fn();
+    render(<TurnFields cfg={{ turn: { mute: [], min_words: 0, max_mute_ms: 20000 } }} setKey={setKey} />);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Longest mute (seconds)" }), { target: { value: "5" } });
+    expect(setKey).toHaveBeenLastCalledWith("turn", { mute: [], min_words: 0, max_mute_ms: 5000 });
+  });
+});
 
 describe("TurnFields", () => {
   it("is a labelled group of four choices, the server's setting selected and described", () => {
