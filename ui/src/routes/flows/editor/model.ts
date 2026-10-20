@@ -123,8 +123,11 @@ export const FAILOVER_CLASSES = [
 export const DEFAULT_FAILOVER: readonly string[] = ["timeout", "server_error", "circuit_open"];
 const SUMMARIZING = new Set(["google", "echo", "nvidia", "openai", "xai"]);
 
+/** What the server caps, when it is known: a flow may only tighten it. */
+export type ServerLimits = { maxMuteMs?: number };
+
 /** Problems that belong to the whole flow (header state line and Flow settings). */
-export function flowIssues(g: FlowDraft): string[] {
+export function flowIssues(g: FlowDraft, limits?: ServerLimits): string[] {
   if (g.steps.length === 0) return [];
   const start = g.steps.find((n) => n.id === g.start);
   if (!start) return ["Choose a start step."];
@@ -141,7 +144,7 @@ export function flowIssues(g: FlowDraft): string[] {
   const stt99 = start.config.stt_p99_ms;
   if (typeof stt99 === "number" && stt99 !== 0 && (stt99 < STT_P99_RANGE[0] || stt99 > STT_P99_RANGE[1]))
     out.push(`Late-transcript wait must be between ${STT_P99_RANGE[0]} and ${STT_P99_RANGE[1]} ms.`);
-  out.push(...callBehaviorIssues(start.config));
+  out.push(...callBehaviorIssues(start.config, limits));
   const summary = asRecord(ctx.summarization);
   if (Object.keys(summary).length > 0) {
     const maxTokens = typeof ctx.max_tokens === "number" && ctx.max_tokens > 0 ? ctx.max_tokens : DEFAULT_MAX_TOKENS;
@@ -162,7 +165,7 @@ export function flowIssues(g: FlowDraft): string[] {
 
 const outside = (v: unknown, [lo, hi]: readonly [number, number]) => typeof v === "number" && (v < lo || v > hi);
 
-function callBehaviorIssues(config: StepConfig): string[] {
+function callBehaviorIssues(config: StepConfig, limits?: ServerLimits): string[] {
   const out: string[] = [];
   const idle = asRecord(config.idle);
   const t = idle.user_timeout_ms;
@@ -176,6 +179,7 @@ function callBehaviorIssues(config: StepConfig): string[] {
   if (typeof turn.max_mute_ms === "number" && outside(turn.max_mute_ms, [TURN_RANGE.maxMuteS[0] * 1000, TURN_RANGE.maxMuteS[1] * 1000])) out.push(`Longest mute must be ${TURN_RANGE.maxMuteS[0]} to ${TURN_RANGE.maxMuteS[1]} seconds.`);
   if (outside(turn.speech_timeout_ms, TURN_RANGE.speechTimeoutMs)) out.push(`Wait for the caller to resume must be ${TURN_RANGE.speechTimeoutMs[0]} to ${TURN_RANGE.speechTimeoutMs[1]} ms.`);
   if (outside(turn.smart_hold_ms, TURN_RANGE.smartHoldMs)) out.push(`Smart hold must be ${TURN_RANGE.smartHoldMs[0]} to ${TURN_RANGE.smartHoldMs[1]} ms.`);
+  if (typeof turn.max_mute_ms === "number" && limits?.maxMuteMs !== undefined && turn.max_mute_ms > limits.maxMuteMs) out.push(`Longest mute is above this server's limit of ${limits.maxMuteMs / 1000} seconds.`);
   const audio = asRecord(config.audio);
   if (outside(audio.output_gain_db, AUDIO_RANGE.gain)) out.push("Voice volume must be -30 to +6 dB.");
   const strength = asRecord(audio.denoise).strength;
@@ -366,7 +370,7 @@ export function setStart(g: FlowDraft, id: string): FlowDraft {
 }
 
 /** Problems the server would reject, in plain words. Empty means publishable. */
-export function validate(g: FlowDraft): string[] {
+export function validate(g: FlowDraft, limits?: ServerLimits): string[] {
   const errors: string[] = [];
   if (g.steps.length === 0 || g.steps.length > MAX_STEPS) errors.push(`A flow has 1 to ${MAX_STEPS} steps.`);
   if (!g.steps.some((n) => n.id === g.start)) errors.push("Choose a start step.");
@@ -401,6 +405,6 @@ export function validate(g: FlowDraft): string[] {
     else if (new TextEncoder().encode(e.condition).length > MAX_CONDITION)
       errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} has a condition longer than ${MAX_CONDITION} bytes.`);
   }
-  errors.push(...flowIssues(g).filter((m) => !m.startsWith("Choose speech-to-text")));
+  errors.push(...flowIssues(g, limits).filter((m) => !m.startsWith("Choose speech-to-text")));
   return errors;
 }

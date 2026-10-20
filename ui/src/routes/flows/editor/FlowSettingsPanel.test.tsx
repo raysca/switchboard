@@ -236,7 +236,7 @@ describe("FlowSettingsPanel footer", () => {
       expect(screen.getByText(/^Advanced/)).toHaveTextContent("Advanced · 1 set");
       expect(advanced()).toHaveAttribute("open");
       expect(advanced()).toContainElement(screen.getByRole("group", { name: "Interruptions" }));
-      expect(screen.getByRole("radio", { name: "Never while the agent speaks" })).toBeChecked();
+      expect(screen.getByRole("radio", { name: "Not while the agent speaks (up to the longest-mute limit)" })).toBeChecked();
     });
 
     it("shows the end-of-turn choices in Turn-taking, and opens by itself when the start step sets one", async () => {

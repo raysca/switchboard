@@ -35,36 +35,46 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
   const off = st !== undefined && !st.manager;
   const serverHasAlways = serverMute.includes(ALWAYS);
 
+  // The choice a call would act on: the flow's members over the server's (absent = the server's, 0 = off).
+  const serverWords = st?.min_words ?? 0;
   const mode =
-    flowMute?.includes(ALWAYS) ? "never"
-    : minWords === 0 ? "any"
-    : minWords !== null ? "after"
-    : mute.includes(ALWAYS) ? "server"
-    : flowMute !== null && serverHasAlways ? "any"
+    mute.includes(ALWAYS) ? (flowMute?.includes(ALWAYS) ? "never" : "server")
+    : minWords !== null ? (minWords === 0 ? "any" : "after")
+    : flowMute !== null && serverHasAlways ? (serverWords > 0 ? "after" : "any")
     : "server";
+  const shownWords = minWords !== null ? minWords : mode === "after" ? serverWords : 0;
 
   const write = (patch: { min_words?: number | null; mute?: string[] | null; max_mute_ms?: number | null }) => writeTurn(turn, setKey, patch, serverMute);
   const withMute = (name: string, on: boolean) => ORDER.filter((n) => (n === name ? on : mute.includes(n)));
   const rest = mute.filter((m) => m !== ALWAYS); // the list without "always": what every choice but "never" keeps
 
-  const serverSays = !st ? "" : ` (${mute.includes(ALWAYS) && flowMute === null ? "never while the agent speaks" : st.min_words > 0 ? `after ${st.min_words} word${st.min_words === 1 ? "" : "s"}` : "any speech interrupts"})`;
-  const maxSeconds = Math.min(TURN_RANGE.maxMuteS[1], st ? st.max_mute_ms / 1000 : TURN_RANGE.maxMuteS[1]);
+  const serverSays = !st ? "" : ` (${serverHasAlways ? "not while the agent speaks" : st.min_words > 0 ? `after ${st.min_words} word${st.min_words === 1 ? "" : "s"}` : "any speech interrupts"})`;
+  const serverCap = st ? st.max_mute_ms / 1000 : TURN_RANGE.maxMuteS[1];
+  const maxSeconds = Math.min(TURN_RANGE.maxMuteS[1], serverCap);
+  const minSeconds = Math.min(TURN_RANGE.maxMuteS[0], maxSeconds); // a server cap under the flow minimum leaves one value
   const choices = [
     { id: "server", label: `Server setting${serverSays}`, pick: () => write({ min_words: null, mute: serverHasAlways ? null : rest }) },
     { id: "any", label: "Any time", pick: () => write({ min_words: 0, mute: rest }) },
     { id: "after", label: "After a number of words", pick: () => write({ min_words: minWords !== null && minWords >= 1 ? minWords : DEFAULT_WORDS, mute: rest }) },
-    { id: "never", label: "Never while the agent speaks", pick: () => write({ min_words: null, mute: withMute(ALWAYS, true) }) },
+    { id: "never", label: "Not while the agent speaks (up to the longest-mute limit)", pick: () => write({ min_words: null, mute: withMute(ALWAYS, true) }) },
   ];
 
   return (
-    <fieldset className="stage-box" disabled={off}>
+    <fieldset className="stage-box">
       <legend>Interruptions</legend>
-      {off && <p className="subtext">This server has the turn manager off.</p>}
+      {off && (
+        <>
+          <p className="subtext">This server has the turn manager off, so these settings (and the end-of-turn ones above) are not used and cannot be published.</p>
+          <button type="button" className="action-button-small" disabled={Object.keys(turn).length === 0} onClick={() => setKey("turn", null)}>
+            Remove these settings
+          </button>
+        </>
+      )}
       <fieldset className="stage-box">
         <legend>When can the caller interrupt?</legend>
         {choices.map((c) => (
           <label key={c.id} className="check-row" htmlFor={`flow-turn-${c.id}`}>
-            <input id={`flow-turn-${c.id}`} type="radio" name="flow-turn-interrupt" checked={mode === c.id} onChange={c.pick} />
+            <input id={`flow-turn-${c.id}`} type="radio" name="flow-turn-interrupt" checked={mode === c.id} disabled={off} onChange={c.pick} />
             <span>{c.label}</span>
           </label>
         ))}
@@ -75,9 +85,9 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
             type="number"
             min={TURN_RANGE.minWords[0]}
             max={TURN_RANGE.minWords[1]}
-            disabled={mode !== "after"}
+            disabled={off || mode !== "after"}
             aria-describedby="flow-turn-words-hint"
-            value={wordsText ?? (minWords !== null && minWords >= 1 ? minWords : "")}
+            value={wordsText ?? (shownWords >= 1 ? shownWords : "")}
             onChange={(e) => {
               setWordsText(e.target.value);
               const n = Number(e.target.value);
@@ -92,11 +102,11 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
         <SettingHelp id="turn.interruptions" />
       </fieldset>
       <label className="check-row" htmlFor="flow-turn-first">
-        <input id="flow-turn-first" type="checkbox" checked={mute.includes("first_speech")} onChange={(e) => write({ mute: withMute("first_speech", e.target.checked) })} />
+        <input id="flow-turn-first" type="checkbox" checked={mute.includes("first_speech")} disabled={off} onChange={(e) => write({ mute: withMute("first_speech", e.target.checked) })} />
         <span>Protect the agent's first reply or greeting</span>
       </label>
       <label className="check-row" htmlFor="flow-turn-tool">
-        <input id="flow-turn-tool" type="checkbox" checked={mute.includes("function_call")} onChange={(e) => write({ mute: withMute("function_call", e.target.checked) })} />
+        <input id="flow-turn-tool" type="checkbox" checked={mute.includes("function_call")} disabled={off} onChange={(e) => write({ mute: withMute("function_call", e.target.checked) })} />
         <span>Not while a tool runs</span>
       </label>
       {mute.includes("until_first_bot_complete") && <p className="subtext">Also muted until the greeting has finished (set through the API, kept when you save).</p>}
@@ -106,8 +116,9 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
         <input
           id="flow-turn-max-mute"
           type="number"
-          min={TURN_RANGE.maxMuteS[0]}
+          min={minSeconds}
           max={maxSeconds}
+          disabled={off}
           placeholder={st ? String(st.max_mute_ms / 1000) : "Server setting"}
           aria-describedby="flow-turn-max-mute-hint"
           value={typeof turn.max_mute_ms === "number" ? turn.max_mute_ms / 1000 : ""}
@@ -118,7 +129,7 @@ export function TurnFields({ cfg, setKey, serverConfig }: Props) {
         />
       </label>
       <p id="flow-turn-max-mute-hint" className="subtext">
-        {TURN_RANGE.maxMuteS[0]} to {maxSeconds}. Empty: the server's limit.
+        {minSeconds} to {maxSeconds}. Empty: the server's limit.
       </p>
       <SettingHelp id="turn.max_mute_ms" />
       <p className="subtext">Muted speech still reaches speech-to-text (billed) and recordings.</p>
@@ -146,6 +157,7 @@ export function EndOfTurnFields({ cfg, setKey, serverConfig }: Props) {
   const detector = typeof turn.end_of_turn === "string" ? turn.end_of_turn : "";
   return (
     <>
+      {off && <p className="subtext">This server has the turn manager off. Remove the turn settings under Interruptions.</p>}
       <label className="form-field" htmlFor="flow-turn-speech-timeout">
         <span>Wait for the caller to resume (ms)</span>
         <input

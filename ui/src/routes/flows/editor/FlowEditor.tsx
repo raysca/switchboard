@@ -96,8 +96,9 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const redescribed = !!flow && description.trim() !== flow.description;
   const unpublished = !published || renamed || redescribed || toolsChanged || canonical(toPayload(published)) !== canonical(toPayload(graph));
   const needSetup = graph.steps.filter((n) => stepIssues(graph, n.id).length > 0).length;
-  const flowProblems = flowIssues(graph);
-  const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph)];
+  const limits = serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms };
+  const flowProblems = flowIssues(graph, limits);
+  const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph, limits)];
   const callable = canCall(flow);
   // A test call runs what is on the canvas; changes that could not be published cannot be tested.
   const draft = unpublished && problems.length === 0 ? { config: toPayload(graph), ...(toolsChanged ? { mcp_tools: tools } : {}) } : undefined;

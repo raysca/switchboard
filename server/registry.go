@@ -144,6 +144,8 @@ type ProcessorFactory func(cfg *Config, spec StageSpec) (core.Processor, error)
 type Registry struct {
 	factories map[string]ProcessorFactory
 
+	turnWarned sync.Map // flow version ids already warned about turn settings with the manager off
+
 	googleLLMBreaker *resilience.Breaker
 	googleTTSBreaker *resilience.Breaker
 	googleSTTBreaker *resilience.Breaker
@@ -583,7 +585,10 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	built = append(built, sttProc)
 	tc := cfg.Turn.forCall(call.Turn)
 	if call.Turn != nil && !tc.Manager {
-		slog.Warn("the flow sets turn settings but turn.manager is off on this server: ignored, except the mute list for push-to-talk calls")
+		// Once per flow version (a handful of short strings at most), not on every call.
+		if _, seen := r.turnWarned.LoadOrStore(call.FlowVersionID, struct{}{}); !seen {
+			slog.Warn("the flow sets turn settings but turn.manager is off on this server: ignored, except the mute list and the longest mute for push-to-talk calls", slog.String("flow_version", call.FlowVersionID))
+		}
 	}
 	idleCfg := cfg.Idle.forCall(call.Idle)
 	if err := idleCfg.validate(cfg.DTMF.Aggregate, cfg.DTMF.AggregateTimeout); err != nil {

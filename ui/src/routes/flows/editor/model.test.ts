@@ -345,6 +345,14 @@ describe("what the server will accept", () => {
     expect(moved.steps.find((n) => n.id === "a")!.config).not.toHaveProperty("turn");
   });
 
+  it("flags a longest mute above the server's cap when the cap is known", () => {
+    const g = one({ turn: { max_mute_ms: 40000 } });
+    expect(flowIssues(g)).toEqual([]);
+    expect(flowIssues(g, { maxMuteMs: 30000 })).toContain("Longest mute is above this server's limit of 30 seconds.");
+    expect(flowIssues(one({ turn: { max_mute_ms: 30000 } }), { maxMuteMs: 30000 })).toEqual([]);
+    expect(validate(g, { maxMuteMs: 30000 }).join(" ")).toMatch(/server's limit/);
+  });
+
   it("mirrors the interruption limits", () => {
     const bad = (turn: Record<string, unknown>) => flowIssues(one({ turn }));
     for (const n of [-1, 11, 2.5]) expect(bad({ min_words: n })).toContain("Interrupt after must be 1 to 10 words.");

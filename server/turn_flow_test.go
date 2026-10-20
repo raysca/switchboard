@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -316,5 +318,37 @@ func TestBuildCallPipelineUsesTheFlowsTurnSettings(t *testing.T) {
 	off.Idle.UserTimeout, off.Turn.Manager = 0, false
 	if _, _, err := turnTestBuild(t, off, CallSpec{Turn: &flow.TurnSettings{MinWords: ptr(3)}}); err != nil {
 		t.Fatalf("manager off must ignore the flow's turn settings: %v", err)
+	}
+}
+
+func TestTurnSettingsIgnoredWarningIsLoggedOncePerFlowVersion(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+	reg := NewRegistry()
+	for _, k := range []string{"google.stt", "google.tts", "google.llm"} {
+		reg.Register(k, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
+	}
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Idle.UserTimeout, cfg.Turn.Manager = 0, false
+	build := func(version string) {
+		t.Helper()
+		call := CallSpec{FlowVersionID: version, Turn: &flow.TurnSettings{MinWords: ptr(3)},
+			STT: StageSpec{Provider: "google"}, TTS: StageSpec{Provider: "google"}, LLM: StageSpec{Provider: "google"}}
+		vadProc := vad.NewProcessor(&mockVADExecutor{ready: true, available: 1, total: 1}, vad.DefaultProcessorConfig())
+		if _, err := reg.BuildCallPipeline(cfg, call, vadProc, &fakeTransportSink{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 3 {
+		build("v1")
+	}
+	if n := strings.Count(buf.String(), "turn.manager is off"); n != 1 {
+		t.Fatalf("warned %d times for one flow version, want 1: %s", n, buf.String())
+	}
+	build("v2")
+	if n := strings.Count(buf.String(), "turn.manager is off"); n != 2 {
+		t.Fatalf("a new flow version must warn once more: %d", n)
 	}
 }

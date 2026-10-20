@@ -47,7 +47,7 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const context = rec(cfg.context);
   const recording = rec(cfg.recording);
   const tts = rec(cfg.tts);
-  const problems = flowIssues(graph);
+  const problems = flowIssues(graph, serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms });
   const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio", "turn", "failover"] as const).filter((k) => k in cfg).length +
     (tts.clean_text === false ? 1 : 0) +
     (Object.keys(rec(cfg.idle)).some((k) => k !== "user_timeout_ms") ? 1 : 0) +

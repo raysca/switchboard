@@ -43,7 +43,7 @@ describe("TurnFields", () => {
     expect(screen.getByRole("group", { name: "Interruptions" })).toBeVisible();
     expect(screen.getByRole("group", { name: "When can the caller interrupt?" })).toBeVisible();
     expect(radio("Server setting (any speech interrupts)")).toBeChecked();
-    for (const n of ["Any time", "After a number of words", "Never while the agent speaks"]) expect(radio(n)).not.toBeChecked();
+    for (const n of ["Any time", "After a number of words", "Not while the agent speaks (up to the longest-mute limit)"]) expect(radio(n)).not.toBeChecked();
     expect(screen.getByText(/Muted speech still reaches speech-to-text/)).toBeVisible();
   });
 
@@ -52,7 +52,7 @@ describe("TurnFields", () => {
     expect(radio("Server setting (after 3 words)")).toBeChecked();
     unmount();
     render(<Harness serverConfig={server({ mute: ["always"] })} />);
-    expect(radio("Server setting (never while the agent speaks)")).toBeChecked();
+    expect(radio("Server setting (not while the agent speaks)")).toBeChecked();
   });
 
   it("any time writes min_words 0, and the server setting removes turn again", async () => {
@@ -82,11 +82,11 @@ describe("TurnFields", () => {
     expect(screen.getByText(/Needs a speech-to-text with interim results\./)).toBeVisible();
   });
 
-  it("never while the agent speaks mutes always, and drops the word count", async () => {
+  it("not while the agent speaks mutes always, and drops the word count", async () => {
     const user = userEvent.setup();
     const onSet = vi.fn();
     render(<Harness initial={{ turn: { min_words: 3 } }} onSet={onSet} />);
-    await user.click(radio("Never while the agent speaks"));
+    await user.click(radio("Not while the agent speaks (up to the longest-mute limit)"));
     expect(last(onSet).turn).toEqual({ mute: ["always"] });
     await user.click(radio(/^Server setting/));
     expect(last(onSet)).not.toHaveProperty("turn");
@@ -152,10 +152,57 @@ describe("TurnFields", () => {
     expect(screen.getByRole("spinbutton", { name: "Longest mute (seconds)" })).toHaveAttribute("max", "60");
   });
 
-  it("is disabled, and says why, while the server has the turn manager off", () => {
-    render(<Harness serverConfig={server({ manager: false })} />);
-    expect(screen.getByText("This server has the turn manager off.")).toBeVisible();
+  it("while the server has the turn manager off: controls are disabled, and one enabled button removes the stored settings", async () => {
+    const user = userEvent.setup();
+    const onSet = vi.fn();
+    render(<Harness initial={{ turn: { min_words: 3, speech_timeout_ms: 800, end_of_turn: "eager" } }} serverConfig={server({ manager: false })} onSet={onSet} />);
+    expect(screen.getByText(/This server has the turn manager off/)).toBeVisible();
     for (const el of [...screen.getAllByRole("radio"), ...screen.getAllByRole("checkbox"), ...screen.getAllByRole("spinbutton")]) expect(el).toBeDisabled();
+    const clear = screen.getByRole("button", { name: "Remove these settings" });
+    expect(clear).toBeEnabled();
+    await user.click(clear);
+    expect(onSet).toHaveBeenLastCalledWith({}); // the whole turn object: end-of-turn members too
+  });
+
+  it("offers nothing to remove when the flow has no turn settings", () => {
+    render(<Harness serverConfig={server({ manager: false })} />);
+    expect(screen.getByRole("button", { name: "Remove these settings" })).toBeDisabled();
+  });
+
+  it("shows no removal button while the manager is on", () => {
+    render(<Harness initial={{ turn: { min_words: 3 } }} />);
+    expect(screen.queryByRole("button", { name: "Remove these settings" })).toBeNull();
+  });
+
+  it("shows the effective choice: server mute always, server 3 words, flow mute without always -> after 3 words", () => {
+    render(<Harness initial={{ turn: { mute: ["function_call"] } }} serverConfig={server({ mute: ["always"], min_words: 3 })} />);
+    expect(radio("After a number of words")).toBeChecked();
+    expect(screen.getByRole("spinbutton", { name: "Words before the caller interrupts" })).toHaveValue(3);
+  });
+
+  it("shows the effective choice: server mute always + flow min_words 3 is still muted", () => {
+    render(<Harness initial={{ turn: { min_words: 3 } }} serverConfig={server({ mute: ["always"] })} />);
+    expect(radio(/^Server setting \(not while the agent speaks\)/)).toBeChecked();
+    expect(radio("After a number of words")).not.toBeChecked();
+  });
+
+  it("shows the effective choice: server mute always, flow mute without always, no server words -> any time", () => {
+    render(<Harness initial={{ turn: { mute: [] } }} serverConfig={server({ mute: ["always"] })} />);
+    expect(radio("Any time")).toBeChecked();
+  });
+
+  it("describes the server by the server's own mute list, not the flow's", () => {
+    render(<Harness initial={{ turn: { mute: ["always"] } }} serverConfig={server({ min_words: 4 })} />);
+    expect(radio("Not while the agent speaks (up to the longest-mute limit)")).toBeChecked();
+    expect(radio("Server setting (after 4 words)")).not.toBeChecked();
+  });
+
+  it("clamps the longest-mute range to a server cap under a second", () => {
+    render(<Harness serverConfig={server({ max_mute_ms: 500 })} />);
+    const secs = screen.getByRole("spinbutton", { name: "Longest mute (seconds)" });
+    expect(secs).toHaveAttribute("min", "0.5");
+    expect(secs).toHaveAttribute("max", "0.5");
+    expect(screen.getByText(/^0\.5 to 0\.5\./)).toBeVisible();
   });
 
   it("reads keyboard-first: the group, the checkboxes, then the longest mute", async () => {
@@ -264,6 +311,7 @@ describe("EndOfTurnFields", () => {
     render(<EotHarness serverConfig={server({ manager: false })} />);
     expect(select()).toBeDisabled();
     expect(resume()).toBeDisabled();
+    expect(screen.getByText(/Remove the turn settings under Interruptions/)).toBeVisible();
   });
 
   it("works without the server's config (still loading)", async () => {

@@ -59,6 +59,8 @@ func callerBargesIn(t *testing.T, r *flowRigE2E, flowID string) (interrupted boo
 // the clip yields 7 interim words (an interrupt at 7 or fewer, none at 8 or more). The thresholds below
 // keep clear of that edge: 1 and 5 interrupt, 10 does not.
 
+// Assumes longReply plays for less than the default 30 s longest-mute cap: past it the mute releases and the
+// caller could interrupt, so a longer reply would make this test pass for the wrong reason or fail.
 func TestCallBehaviorAFlowThatMutesWhileTheAgentSpeaksIsNotInterrupted(t *testing.T) {
 	r := interruptionRig(t)
 	protected := interruptionFlow(t, r, "protected", `{"mute":["always"]}`)
