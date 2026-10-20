@@ -66,20 +66,24 @@ test("flows list names the variables a not-ready flow is missing", async ({ page
     method: "POST",
     body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
   });
-  await page.route("**/api/v1/flows?*", async (route) => {
-    const res = await route.fetch();
-    const body = (await res.json()) as { data: { name: string; readiness: object }[] };
-    for (const f of body.data) {
-      if (f.name === NAME) f.readiness = { state: "not_ready", reasons: ["missing_credential_llm"], missing_env: ["E2E_MISSING_LLM_KEY", "E2E_MISSING_LLM_KEY"] };
-    }
-    await route.fulfill({ response: res, json: body });
-  });
-  await connectAdmin(page, stack);
-  await openFlowsList(page);
-  const row = page.getByRole("listitem").filter({ has: page.getByRole("link", { name: NAME, exact: true }) });
-  await expect(row).toContainText("missing_credential_llm");
-  await expect(row.getByText("E2E_MISSING_LLM_KEY")).toHaveCount(1);
-  await expect(row).toContainText("Set E2E_MISSING_LLM_KEY");
-  await step(page, "flows list: missing variables");
-  await api(stack, `/flows/${created.data.id}/archive`, { method: "POST" });
+  try {
+    await page.route("**/api/v1/flows?*", async (route) => {
+      const res = await route.fetch();
+      const body = (await res.json()) as { data: { name: string; readiness: object }[] };
+      for (const f of body.data) {
+        if (f.name === NAME) f.readiness = { state: "not_ready", reasons: ["missing_credential_llm"], missing_env: ["E2E_MISSING_LLM_KEY", "E2E_MISSING_LLM_KEY"] };
+      }
+      await route.fulfill({ response: res, json: body });
+    });
+    await connectAdmin(page, stack);
+    await openFlowsList(page);
+    const row = page.getByRole("listitem").filter({ has: page.getByRole("link", { name: NAME, exact: true }) });
+    await expect(row).toContainText("missing_credential_llm");
+    await expect(row.getByText("E2E_MISSING_LLM_KEY")).toHaveCount(1);
+    await expect(row).toContainText("Set E2E_MISSING_LLM_KEY");
+    await step(page, "flows list: missing variables");
+  } finally {
+    // archived even when an assertion fails, so a failed run leaves no live "E2E Not Ready" for later specs
+    await api(stack, `/flows/${created.data.id}/archive`, { method: "POST" });
+  }
 });
