@@ -51,6 +51,9 @@ type AudioSettings struct {
 	OutputGainDB *float64 `json:"output_gain_db,omitempty"`
 	// Background plays a server-configured sound under the voice.
 	Background *BackgroundSettings `json:"background,omitempty"`
+	// ToolCue plays a server cue (audio.cues) while a slow synchronous tool runs: once the tool has run
+	// after_ms (0: 1000 ms) with the call quiet.
+	ToolCue *RouteCue `json:"tool_cue,omitempty"`
 }
 
 type DenoiseSettings struct {
@@ -115,7 +118,7 @@ func (s *IdleSettings) validate() error {
 }
 
 func (a *AudioSettings) validate() error {
-	if a.Denoise == nil && a.OutputGainDB == nil && a.Background == nil {
+	if *a == (AudioSettings{}) {
 		return fmt.Errorf("%w: audio must set at least one member", ErrInvalidConfig)
 	}
 	if d := a.Denoise; d != nil && d.Strength != nil && (!finite(*d.Strength) || *d.Strength <= 0 || *d.Strength > 1) {
@@ -123,6 +126,9 @@ func (a *AudioSettings) validate() error {
 	}
 	if g := a.OutputGainDB; g != nil && (!finite(*g) || *g < -30 || *g > 6) {
 		return fmt.Errorf("%w: audio.output_gain_db must be between -30 and 6", ErrInvalidConfig)
+	}
+	if c := a.ToolCue; c != nil && (!cueName.MatchString(c.Name) || c.AfterMS < 0 || c.AfterMS > maxCueAfterMS) {
+		return fmt.Errorf("%w: audio.tool_cue.name must name a server cue (lowercase letters, digits, - and _, up to 32) and after_ms must be between 0 and %d", ErrInvalidConfig, maxCueAfterMS)
 	}
 	if b := a.Background; b != nil {
 		switch {

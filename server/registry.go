@@ -128,7 +128,9 @@ type CallSpec struct {
 	// Idle, Audio and Turn are the flow's quiet-caller, audio and interruption settings (nil: the server's).
 	Idle  *flow.IdleSettings
 	Audio *flow.AudioSettings
-	Turn  *flow.TurnSettings
+	// toolHold plays the flow's hold sound while a slow synchronous tool runs (nil: none).
+	toolHold *holdCue
+	Turn     *flow.TurnSettings
 	// PushToTalk: the client opted in at client-ready. Turns start and end
 	// only on its push-to-talk messages (ExternalStart/ExternalStop).
 	PushToTalk bool
@@ -666,6 +668,10 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			for i := range fallbacks {
 				fallbacks[i].ToolExecutor = muteTools.Wrap(fallbacks[i].ToolExecutor, fallbacks[i].Tools)
 			}
+		}
+		spec.ToolExecutor = holdTools(spec.ToolExecutor, spec.Tools, call.toolHold)
+		for i := range fallbacks {
+			fallbacks[i].ToolExecutor = holdTools(fallbacks[i].ToolExecutor, fallbacks[i].Tools, call.toolHold)
 		}
 		spec.AsyncSink = asyncTrigger.Deliver
 		for i := range fallbacks {

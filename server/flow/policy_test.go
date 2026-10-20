@@ -281,3 +281,36 @@ func TestPublishChecksEveryStepsBackgroundSound(t *testing.T) {
 		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
 	}
 }
+
+func TestPublishRefusesAHoldSoundTheServerDoesNotHave(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		cues []string
+		want string // "" = accepted
+	}{
+		{"unknown lists the available ones", []string{"chime"}, `audio.tool_cue.name "ding" is not a sound on this server (available: chime)`},
+		{"no cues at all", nil, `audio.tool_cue.name "ding" is not a sound on this server (this server has no cues)`},
+		{"known", []string{"ding"}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := testServiceWith(t, &fakePolicy{cues: c.cues}).Create(context.Background(), CreateRequest{Name: c.name, Config: withExtra(`"audio":{"tool_cue":{"name":"ding"}}`)})
+			if c.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+	// Readiness stays green for a stored flow whose sound the server dropped: the call runs without it (K6).
+	g, err := Decode(withExtra(`"audio":{"tool_cue":{"name":"gone"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reasons, _ := g.Problems(&fakePolicy{cues: []string{"chime"}}); len(reasons) != 0 {
+		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
+	}
+}

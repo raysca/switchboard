@@ -560,9 +560,12 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		call.OnRoute = func(e core.RouteEvent) { base(e); hook(e) }
 	}
 	cue := s.newCallCue(call.Flow, conn.Cue(), timeline)
-	if cue != nil {
+	hold := s.newCallHold(call.Audio, conn.Cue(), timeline, cue)
+	call.toolHold = hold
+	if cue != nil || hold != nil {
 		base := call.OnRoute
-		call.OnRoute = func(e core.RouteEvent) { base(e); cue.onRoute(e) }
+		// The hold finishes first when a route starts preparing: the two sounds share one player.
+		call.OnRoute = func(e core.RouteEvent) { base(e); hold.onRoute(e); cue.onRoute(e) }
 	}
 	phase := "build_pipeline"
 	var stopRecording func()
@@ -648,6 +651,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		switch f.Type() {
 		case core.FrameUserStartedSpeaking:
 			cue.userSpeech(true)
+			hold.userSpeech(true)
 			if !speechActive {
 				speechActive = true
 				firstTokenRecorded = false
@@ -655,6 +659,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 			}
 		case core.FrameUserStoppedSpeaking:
 			cue.userSpeech(false)
+			hold.userSpeech(false)
 			if speechActive {
 				speechActive = false
 				timeline.Record(TimelineEvent{Type: EventSpeechStop})
@@ -694,6 +699,7 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 		case core.FrameOutputAudio:
 			// Audio frames stream directly to client; first chunk per unit is covered by EventTTSUnit
 			cue.botAudio()
+			hold.botAudio()
 		case core.FrameInterruption:
 			intr := f.(*core.InterruptionFrame)
 			if intr.Gen != lastInterruption {

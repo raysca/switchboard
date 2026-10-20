@@ -54,11 +54,10 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 		}
 	}
 	if rc := g.RouteCue; rc != nil && rc.Name != "" && !slices.Contains(p.Cues(), rc.Name) {
-		avail := "this server has no cues"
-		if names := p.Cues(); len(names) > 0 {
-			avail = "available: " + strings.Join(names, ", ")
-		}
-		out = append(out, policyProblem{message: fmt.Sprintf("route_cue.name %q is not a sound on this server (%s)", rc.Name, avail), storedOK: true})
+		out = append(out, policyProblem{message: unknownCue("route_cue.name", rc.Name, p), storedOK: true})
+	}
+	if tc := c.Audio; tc != nil && tc.ToolCue != nil && !slices.Contains(p.Cues(), tc.ToolCue.Name) {
+		out = append(out, policyProblem{message: unknownCue("audio.tool_cue.name", tc.ToolCue.Name, p), storedOK: true})
 	}
 	if t := c.Turn; t != nil {
 		if !p.TurnManager() {
@@ -77,6 +76,15 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 		}
 	}
 	return out
+}
+
+// unknownCue is the publish message for a cue name the server does not have, listing the ones it has.
+func unknownCue(field, name string, p Policy) string {
+	avail := "this server has no cues"
+	if names := p.Cues(); len(names) > 0 {
+		avail = "available: " + strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s %q is not a sound on this server (%s)", field, name, avail)
 }
 
 // backgroundProblem says why the server cannot play a step's background sound, or "" when it can.

@@ -221,3 +221,36 @@ func TestANonStartStepMayOnlySetABackground(t *testing.T) {
 		t.Fatalf("an empty audio object: %v", err)
 	}
 }
+
+func TestToolCueValidation(t *testing.T) {
+	cases := []struct {
+		name, extra, want string // want "" = accepted
+	}{
+		{"name only", `"audio":{"tool_cue":{"name":"chime"}}`, ""},
+		{"after 0 means the default", `"audio":{"tool_cue":{"name":"chime","after_ms":0}}`, ""},
+		{"after 10000", `"audio":{"tool_cue":{"name":"chime","after_ms":10000}}`, ""},
+		{"after 10001", `"audio":{"tool_cue":{"name":"chime","after_ms":10001}}`, "audio.tool_cue"},
+		{"after negative", `"audio":{"tool_cue":{"name":"chime","after_ms":-1}}`, "audio.tool_cue"},
+		{"no name", `"audio":{"tool_cue":{"after_ms":500}}`, "audio.tool_cue.name"},
+		{"a path is not a name", `"audio":{"tool_cue":{"name":"../chime"}}`, "audio.tool_cue.name"},
+		{"with the other audio members", `"audio":{"output_gain_db":-3,"tool_cue":{"name":"chime"}}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := DecodeConfig(withExtra(c.extra))
+			if c.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+	// A step other than the start may carry only a background (K7): the hold sound is call-level.
+	if _, err := Decode(withSalesAudio(`{"tool_cue":{"name":"chime"}}`)); !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), `step "sales": audio may only set background`) {
+		t.Fatalf("tool_cue on a later step: %v", err)
+	}
+}
