@@ -187,6 +187,20 @@ describe("FlowsView", () => {
     expect(screen.queryByRole("link", { name: "Gone" })).toBeNull();
   });
 
+  it("names each missing variable once, beside the reasons", async () => {
+    setup({
+      getFlows: vi.fn().mockResolvedValue([
+        flow({ readiness: { state: "not_ready", reasons: ["missing_credential_llm"], missing_env: ["XAI_API_KEY", "XAI_API_KEY"] } }),
+        flow({ id: "a2", name: "Off", enabled: false, readiness: { state: "not_ready", reasons: ["disabled"], missing_env: ["OFF_KEY"] } }),
+      ]),
+    });
+    const row = (await screen.findByRole("link", { name: "Front desk" })).closest("li") as HTMLElement;
+    expect(within(row).getByText("missing_credential_llm")).toBeVisible();
+    expect(within(row).getAllByText("XAI_API_KEY")).toHaveLength(1);
+    expect(within(row).getByText("XAI_API_KEY").closest(".reason")).toHaveTextContent("Set XAI_API_KEY");
+    expect(screen.queryByText("OFF_KEY")).toBeNull();
+  });
+
   it("shows a load failure with a retry", async () => {
     setup({ getFlows: vi.fn().mockRejectedValue(new ApiError("down", "internal", 500, "r")) });
     expect(await screen.findByRole("alert")).toHaveTextContent("down");

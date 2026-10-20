@@ -1,6 +1,6 @@
 import { test, expect, LIVE, PROVIDER } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
-import { api, connectAdmin, loadProviders, openDesigner, openFlowSettings, providers, type ProviderStatus } from "../lib/flows-helpers";
+import { api, connectAdmin, loadProviders, openDesigner, openFlowSettings, openFlowsList, providers, stage, type ProviderStatus } from "../lib/flows-helpers";
 
 // Provider detection in the admin UI: the suite's provider is detected, only detected providers
 // are offered, and a missing STT provider is explained. No flow is created here.
@@ -56,4 +56,30 @@ test("providers page: the detected provider is listed with where its credential 
   await expect(panel).toContainText("never stored or shown here");
   await expect(page.locator("main input, main textarea, main form")).toHaveCount(0);
   await step(page, "providers page");
+});
+
+test("flows list names the variables a not-ready flow is missing", async ({ page, stack }) => {
+  // The suite's flow does not exist yet (spec 20 creates it), so this test makes its own; the echo stack
+  // is always ready, so only this row's readiness is altered in the response (route-mocked, R7).
+  const NAME = "E2E Not Ready";
+  const created = await api<{ data: { id: string } }>(stack, "/flows", {
+    method: "POST",
+    body: JSON.stringify({ name: NAME, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
+  });
+  await page.route("**/api/v1/flows?*", async (route) => {
+    const res = await route.fetch();
+    const body = (await res.json()) as { data: { name: string; readiness: object }[] };
+    for (const f of body.data) {
+      if (f.name === NAME) f.readiness = { state: "not_ready", reasons: ["missing_credential_llm"], missing_env: ["E2E_MISSING_LLM_KEY", "E2E_MISSING_LLM_KEY"] };
+    }
+    await route.fulfill({ response: res, json: body });
+  });
+  await connectAdmin(page, stack);
+  await openFlowsList(page);
+  const row = page.getByRole("listitem").filter({ has: page.getByRole("link", { name: NAME, exact: true }) });
+  await expect(row).toContainText("missing_credential_llm");
+  await expect(row.getByText("E2E_MISSING_LLM_KEY")).toHaveCount(1);
+  await expect(row).toContainText("Set E2E_MISSING_LLM_KEY");
+  await step(page, "flows list: missing variables");
+  await api(stack, `/flows/${created.data.id}/archive`, { method: "POST" });
 });

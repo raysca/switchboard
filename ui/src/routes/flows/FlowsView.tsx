@@ -163,6 +163,11 @@ export function FlowsView({ client, keyValue }: FlowsViewProps) {
                             {reason}
                           </span>
                         ))}
+                        {[...new Set(f.readiness.missing_env ?? [])].map((v) => (
+                          <span key={v} className="reason">
+                            Set <code>{v}</code>
+                          </span>
+                        ))}
                       </div>
                     )}
                   </div>

@@ -166,6 +166,7 @@ export type ToolDependencyDTO = z.infer<typeof toolDependencySchema>;
 const readinessSchema = z.object({
   state: z.string(),
   reasons: z.array(z.string()),
+  missing_env: z.array(z.string()).optional(),
   tool_dependencies: z.array(toolDependencySchema).optional(),
 });
 type ReadinessDTO = z.infer<typeof readinessSchema>;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, PROXIED_ACCESS, probeProxiedAccess, createApiClient, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
+import { ApiError, PROXIED_ACCESS, probeProxiedAccess, createApiClient, flowSchema, flowVersionSchema, routeSpan, sessionSchema, type TraceSpanDTO } from "./client";
 
 describe("management client", () => {
   it("sends an in-memory bearer and parses the response", async () => {
@@ -614,5 +614,15 @@ describe("access without a pasted key", () => {
       const client = createApiClient(() => ({ key: "k", generation: 1 }), fetcher);
       await expect(client.addSessionNote("s1", "x", false)).rejects.toMatchObject({ status: 429, code: "too_many_pending" });
     });
+  });
+});
+
+describe("flow readiness", () => {
+  const parse = (r: object) => flowSchema.parse({ id: "a", name: "A", description: "", enabled: true, archived: false, current_version: null, readiness: r, created_at: "", updated_at: "" });
+  it("keeps the names of the missing variables", () => {
+    expect(parse({ state: "not_ready", reasons: ["missing_credential_llm"], missing_env: ["XAI_API_KEY"] }).readiness.missing_env).toEqual(["XAI_API_KEY"]);
+  });
+  it("accepts a readiness without them", () => {
+    expect(parse({ state: "ready", reasons: [] }).readiness.missing_env).toBeUndefined();
   });
 });
