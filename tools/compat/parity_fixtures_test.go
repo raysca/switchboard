@@ -721,6 +721,34 @@ func TestParityFunctionCallMessages(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------- bot-tts-* RTVI messages
+
+func TestParityTTSTextMessages(t *testing.T) {
+	runParity(t, "tts_text", func(t *testing.T, sc parityScenario) []string {
+		h := rtvi.NewHandler()
+		var out []string
+		for _, st := range sc.Steps {
+			var msg string
+			var err error
+			switch st.Ev {
+			case "start":
+				msg, err = h.FormatBotTTSStarted()
+			case "stop":
+				msg, err = h.FormatBotTTSStopped()
+			case "text":
+				msg, err = h.FormatBotTTSText(st.Text)
+			default:
+				t.Fatalf("unknown step %q", st.Ev)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, rtviTypeAndData(t, msg))
+		}
+		return out
+	})
+}
+
 // rtviTypeAndData is a wire message as the goldens hold it: type and data, keys sorted, compact.
 func rtviTypeAndData(t *testing.T, msg string) string {
 	t.Helper()

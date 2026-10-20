@@ -30,6 +30,7 @@ const (
 	TypeBotLLMStopped       = "bot-llm-stopped" // the reply text for a turn is complete
 	TypeBotTTSStarted       = "bot-tts-started"
 	TypeBotTTSStopped       = "bot-tts-stopped"
+	TypeBotTTSText          = "bot-tts-text"
 	TypeBotStartedSpeaking  = "bot-started-speaking"
 	TypeBotStoppedSpeaking  = "bot-stopped-speaking"
 	TypeBotInterrupted      = "bot-interrupted" // a barge-in cut the bot's reply off (Pipecat BotInterruptedMessage)
@@ -374,6 +375,12 @@ func (h *Handler) FormatBotTTSStarted() (string, error) {
 
 func (h *Handler) FormatBotTTSStopped() (string, error) {
 	return h.formatMessage(TypeBotTTSStopped, nil)
+}
+
+// FormatBotTTSText announces the text of a synthesis unit once its audio has been played out.
+func (h *Handler) FormatBotTTSText(text string) (string, error) {
+	data, _ := json.Marshal(BotTextData{Text: text})
+	return h.formatMessage(TypeBotTTSText, data)
 }
 
 // FormatBotStartedSpeaking produces bot-started-speaking state events.
