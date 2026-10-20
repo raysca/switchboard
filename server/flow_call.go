@@ -48,10 +48,6 @@ type CallFlow struct {
 	Cue     *flow.RouteCue
 	// Backgrounds is the background each step names (by step id); the steps that name none are absent.
 	Backgrounds map[string]*flow.BackgroundSettings
-	// CanEnd: some step has end_call, so the call builds the idle controller.
-	CanEnd bool
-	// End is set by the pipeline builder; the end_call tool calls it.
-	End func(stepID string) error
 
 	noteMu   sync.Mutex
 	note     string
@@ -69,6 +65,22 @@ const (
 )
 
 var errCallEnding = errors.New("call is already ending")
+
+// callEnder is how the end_call tool hangs up. End is set by the pipeline builder
+// (the idle controller ends the call); a call whose flow has no end_call step has none.
+type callEnder struct {
+	End func(stepID string) error
+}
+
+// hangUp is the end_call tool's action for one step.
+func (e *callEnder) hangUp(stepID string) func() error {
+	return func() error {
+		if e.End == nil {
+			return errors.New("end not ready")
+		}
+		return e.End(stepID)
+	}
+}
 
 // endCallDefinition is the end_call tool a step gets when its end_call flag is set.
 func endCallDefinition() core.ToolDefinition {

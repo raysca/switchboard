@@ -83,6 +83,8 @@ type CallSpec struct {
 	StoredSessionID string
 	// TurnLatencies collects the call's per-turn stage latencies for its turn rows.
 	TurnLatencies *turnLatencies
+	// Ender is set when some step has end_call; the builder wires it to the idle controller.
+	Ender *callEnder
 	// Flow is set for flows with more than one step: the call starts on the
 	// start step and moves between steps by route.
 	Flow *CallFlow
@@ -839,15 +841,15 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 	}
 
 	procs := []core.Processor{vadProc, sttProc, transcriptProc, userCtxProc, llmProc, asstCtxProc, ttsProc, &core.UnitFailureReporter{}}
-	idleProc, err := idleCfg.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, asstCtxProc.Say, held, call.Flow != nil && call.Flow.CanEnd)
+	idleProc, err := idleCfg.stage(ctxPool, muteTools, turnTyped, asstCtxProc.Active, asstCtxProc.Say, held, call.Ender != nil)
 	if err != nil {
 		return fail(fmt.Errorf("create idle controller: %w", err))
 	}
 	if idleProc != nil { // before the async trigger and the model; zero cost when off
 		procs = slices.Insert(procs, slices.Index(procs, core.Processor(llmProc)), core.Processor(idleProc))
 	}
-	if call.Flow != nil && idleProc != nil {
-		call.Flow.End = func(stepID string) error {
+	if call.Ender != nil && idleProc != nil {
+		call.Ender.End = func(stepID string) error {
 			if !idleProc.RequestEnd(EndReasonFlow, endCallWait) {
 				return errCallEnding
 			}

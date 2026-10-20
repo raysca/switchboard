@@ -842,6 +842,49 @@ func TestFlowE2EEndCallEndsTheCallAfterTheGoodbye(t *testing.T) {
 	}
 }
 
+// oneStepEndCallJSON is a single-step flow (no routes); ends gives the step the end_call tool.
+func oneStepEndCallJSON(ends bool) json.RawMessage {
+	return json.RawMessage(`{"start":"main","steps":[{"id":"main","name":"Main","end_call":` + strconv.FormatBool(ends) + `,"config":{` +
+		`"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m","system_prompt":"MAIN"},"tts":{"provider":"echo","voice":"v"}}}],"routes":[]}`)
+}
+
+func TestFlowE2EAOneStepFlowCanEndTheCall(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepCloser", Config: oneStepEndCallJSON(true)})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+	}
+	r.flowID = a.ID
+	c := r.dial(a.ID)
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	c.say("hello")
+	c.waitReplies("[MAIN", 1)
+	if r.activeSessions() != 1 {
+		t.Fatal("the call must stay up until end_call")
+	}
+	before := c.replyCount()
+	c.say("please end the call")
+	eventually(t, "the goodbye after end_call", func() bool { return c.replyCount() > before })
+	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
+	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
+
+	// The same one-step flow without the flag has no end_call tool: the phrase is just echoed and the call stays.
+	b, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepStays", Config: oneStepEndCallJSON(false)})
+	if err != nil || b.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", b.Readiness, err)
+	}
+	r.flowID = b.ID
+	d := r.dial(b.ID)
+	eventually(t, "second session", func() bool { return r.activeSessions() == 1 })
+	d.say("please end the call")
+	d.waitReplies("[MAIN", 1)
+	d.say("are you there")
+	d.waitReplies("[MAIN", 2)
+	if r.activeSessions() != 1 {
+		t.Fatal("a step without end_call must not hang up")
+	}
+}
+
 // Only sales has end_call; the caller is on front, which lacks the tool, so the phrase is just echoed.
 func TestFlowE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe())

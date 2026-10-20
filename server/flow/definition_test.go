@@ -143,11 +143,14 @@ func TestDecodeStepEndCall(t *testing.T) {
 	}
 }
 
-func TestDecodeRejectsEndCallOnAOneStepFlow(t *testing.T) {
+func TestDecodeAcceptsEndCallOnAOneStepFlow(t *testing.T) {
 	front := `"config":{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}}`
-	_, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","end_call":true,` + front + `}],"routes":[]}`))
-	if err == nil || !strings.Contains(err.Error(), "end_call needs a flow with at least two steps") {
-		t.Fatalf("err = %v", err)
+	g, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","end_call":true,` + front + `}],"routes":[]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := g.Step("a"); !a.EndCall {
+		t.Fatal("EndCall lost")
 	}
 }
 

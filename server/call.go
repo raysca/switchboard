@@ -338,10 +338,24 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 	// A one-step flow is a plain flow: every captured tool, no routes.
 	tools, exec := rs.Definitions, rs.Executor
 	var graph *CallFlow
+	var ender *callEnder
+	if anyEndCall(g) {
+		ender = &callEnder{}
+	}
 	if len(g.Steps) > 1 {
-		graph = &CallFlow{Start: g.Start, Cue: g.RouteCue, CanEnd: anyEndCall(g), Backgrounds: stepBackgrounds(g)}
-		graph.Resolve = func(ctx context.Context, id string) (StepSpec, error) { return s.stepSpec(ctx, rs, g, graph, id) }
-		tools, exec = s.stepToolset(rs, g, entry, graph)
+		graph = &CallFlow{Start: g.Start, Cue: g.RouteCue, Backgrounds: stepBackgrounds(g)}
+		graph.Resolve = func(ctx context.Context, id string) (StepSpec, error) {
+			return s.stepSpec(ctx, rs, g, graph, ender, id)
+		}
+		tools, exec = s.stepToolset(rs, g, entry, graph, ender)
+	} else if entry.EndCall {
+		// One step with end_call: every captured tool plus the hang-up tool, no router.
+		allowed := make(map[string]bool, len(tools))
+		for _, d := range tools {
+			allowed[d.Name] = true
+		}
+		tools = append(tools[:len(tools):len(tools)], endCallDefinition())
+		exec = stepExecutor(rs.Executor, allowed, nil, nil, ender.hangUp(entry.ID))
 	}
 	fallbacks := s.resolveFallbacks(ctx, rs, "llm", cfg, &s.metrics.LLMFallbacksSkippedTotal, func(c flow.Candidate, secret []byte) StageSpec {
 		return StageSpec{Provider: c.Provider, Model: c.Model, SystemPrompt: cfg.LLM.SystemPrompt, Secret: secret, Tools: tools, ToolExecutor: exec, MaxParallel: maxParallel}
@@ -374,6 +388,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		Audio:               cfg.Audio,
 		STTP99MS:            cfg.STTP99MS,
 		Flow:                graph,
+		Ender:               ender,
 	}, nil
 }
 
@@ -429,7 +444,7 @@ func (s *Server) resolveStageSecrets(ctx context.Context, cfg flow.Config, names
 
 // stepToolset is the tools and executor of one step: its listed MCP tools plus
 // a transfer tool per outgoing route.
-func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step, cg *CallFlow) ([]core.ToolDefinition, core.ToolExecutor) {
+func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step, cg *CallFlow, ender *callEnder) ([]core.ToolDefinition, core.ToolExecutor) {
 	mcp := stepDefinitions(rs.Definitions, n.Tools)
 	allowed := make(map[string]bool, len(mcp))
 	for _, d := range mcp {
@@ -439,12 +454,7 @@ func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step
 	var end func() error
 	if n.EndCall {
 		defs = append(defs, endCallDefinition())
-		end = func() error {
-			if cg.End == nil {
-				return errors.New("end not ready")
-			}
-			return cg.End(n.ID)
-		}
+		end = ender.hangUp(n.ID)
 	}
 	return defs, stepExecutor(rs.Executor, allowed, transferTargets(g, n.ID), func(target, note string) error {
 		return cg.commitWithNote(target, note)
@@ -453,7 +463,7 @@ func (s *Server) stepToolset(rs *runtime.Session, g flow.Definition, n flow.Step
 
 // stepSpec resolves a non-start step's LLM and TTS when the step is activated:
 // secrets are read from the environment now, not held for the whole call.
-func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Definition, cg *CallFlow, id string) (StepSpec, error) {
+func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Definition, cg *CallFlow, ender *callEnder, id string) (StepSpec, error) {
 	n, ok := g.Step(id)
 	if !ok {
 		return StepSpec{}, fmt.Errorf("unknown step %q", id)
@@ -463,7 +473,7 @@ func (s *Server) stepSpec(ctx context.Context, rs *runtime.Session, g flow.Defin
 	if err != nil {
 		return StepSpec{}, err
 	}
-	tools, exec := s.stepToolset(rs, g, n, cg)
+	tools, exec := s.stepToolset(rs, g, n, cg, ender)
 	maxParallel := s.maxParallel(cfg)
 	return StepSpec{
 		Name: n.Name, Greeting: cfg.GreetingText(),

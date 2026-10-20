@@ -15,6 +15,7 @@ import {
   stepIssues,
   toPayload,
   uniqueName,
+  updateStep,
   unreachableSteps,
   validate,
 } from "./model";
@@ -421,7 +422,7 @@ describe("what the server will accept", () => {
     expect("end_call" in out.steps[1]).toBe(false);
   });
 
-  it("drops end_call when deleting a step leaves a one-step flow", () => {
+  it("keeps end_call when deleting a step leaves a one-step flow", () => {
     const cfg = {
       start: "a",
       steps: [
@@ -430,9 +431,18 @@ describe("what the server will accept", () => {
       ],
       routes: [{ id: "r", from: "a", to: "b", condition: "x" }],
     };
-    const out = toPayload(removeStep(fromFlowConfig(cfg), "b")) as { steps: object[] };
+    const out = toPayload(removeStep(fromFlowConfig(cfg), "b")) as { steps: { end_call?: boolean }[] };
     expect(out.steps).toHaveLength(1);
-    expect("end_call" in out.steps[0]).toBe(false);
+    expect(out.steps[0].end_call).toBe(true);
+  });
+
+  it("saves a one-step main flow with end_call in steps form, and flat without it", () => {
+    const flat = { llm: { system_prompt: "p" }, tts: {} };
+    const g = fromFlowConfig(flat);
+    expect(toPayload(g)).toEqual(flat);
+    const out = toPayload(updateStep(g, "main", { end_call: true })) as { start: string; steps: { id: string; end_call?: boolean }[] };
+    expect(out.start).toBe("main");
+    expect(out.steps[0].end_call).toBe(true);
   });
 });
 

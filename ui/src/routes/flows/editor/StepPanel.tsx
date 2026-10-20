@@ -311,15 +311,13 @@ export function StepPanel(props: StepPanelProps) {
                 <input
                   id="step-end-call"
                   type="checkbox"
-                  checked={!!step.end_call && graph.steps.length > 1}
-                  disabled={graph.steps.length === 1}
+                  checked={!!step.end_call}
                   onChange={(e) => onChange(updateStep(graph, step.id, { end_call: e.target.checked }))}
                 />
                 Can end the call
               </label>
               <p className="subtext">
                 Gives this step an end_call tool. The model uses it after saying goodbye; the call ends when it stops speaking.
-                {graph.steps.length === 1 && " Add a second step first: a one-step flow needs a second step to end the call."}
               </p>
             </fieldset>
             {toolPicker && (

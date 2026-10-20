@@ -272,7 +272,7 @@ function withoutBlankGreeting(config: StepConfig): StepConfig {
 /** A stored flat flow opens as one step named "main" and goes back flat; a step the user has named needs the flow form. */
 function isFlat(g: FlowDraft): boolean {
   const only = g.steps[0];
-  return g.steps.length === 1 && g.routes.length === 0 && !g.route_cue && only.id === "main" && only.name === "main";
+  return g.steps.length === 1 && g.routes.length === 0 && !g.route_cue && only.id === "main" && only.name === "main" && !only.end_call;
 }
 
 /** The config to send: the flat form for a plain one-step flow, else the flow. */
@@ -287,7 +287,7 @@ export function toPayload(g: FlowDraft): unknown {
       if (n.id !== g.start) {
         config = withOnlyBackground(withoutCleanText(config));
       }
-      return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call && g.steps.length > 1 ? { end_call: true } : {}), position: n.position };
+      return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call ? { end_call: true } : {}), position: n.position };
     }),
     routes: g.routes,
     ...(g.route_cue ? { route_cue: g.route_cue } : {}),
