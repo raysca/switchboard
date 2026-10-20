@@ -335,6 +335,24 @@ describe("what the server will accept", () => {
     expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("audio");
   });
 
+  it("keeps turn on the start step only: toPayload drops it elsewhere and setStart moves it", () => {
+    const g = one({ turn: { min_words: 3 } }, { turn: { min_words: 1 } });
+    const steps = (toPayload(g) as { steps: { id: string; config: Record<string, unknown> }[] }).steps;
+    expect(steps.find((n) => n.id === "a")!.config).toMatchObject({ turn: { min_words: 3 } });
+    expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("turn");
+    const moved = setStart(one({ turn: { mute: ["always"] } }), "b");
+    expect(moved.steps.find((n) => n.id === "b")!.config.turn).toEqual({ mute: ["always"] });
+    expect(moved.steps.find((n) => n.id === "a")!.config).not.toHaveProperty("turn");
+  });
+
+  it("mirrors the interruption limits", () => {
+    const bad = (turn: Record<string, unknown>) => flowIssues(one({ turn }));
+    for (const n of [-1, 11, 2.5]) expect(bad({ min_words: n })).toContain("Interrupt after must be 1 to 10 words.");
+    for (const n of [0, 1, 10]) expect(bad({ min_words: n })).toEqual([]);
+    for (const ms of [999, 60001]) expect(bad({ max_mute_ms: ms })).toContain("Longest mute must be 1 to 60 seconds.");
+    for (const ms of [1000, 60000]) expect(bad({ max_mute_ms: ms })).toEqual([]);
+  });
+
   it("checks the summarisation details even while summarising is off", () => {
     const g = one({ context: { max_tokens: 800, summarization: { enabled: false, trigger_tokens: 900 } } });
     expect(flowIssues(g)).toContain("Summarise-at must be below Max tokens (800).");

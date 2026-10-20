@@ -61,7 +61,7 @@ test("settings set in the editor are published, read back, reopened and run on a
   await page.keyboard.press("Escape");
   await expect(page.getByRole("region", { name: "Explain Wait for a late transcript" })).toHaveCount(0);
   await page.getByRole("checkbox", { name: "Rejected requests (bad request, bad key)" }).check(); // call-wide since 7b.1
-  await explainAll(page, 12); // every obscure setting in Flow settings explains itself
+  await explainAll(page, 15); // every obscure setting in Flow settings explains itself
   await step(page, "advanced flow settings");
   await page.getByRole("button", { name: "Done" }).click();
 

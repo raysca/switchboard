@@ -151,6 +151,26 @@ const COPY = {
     when: "When a transfer takes more than a moment.",
     defaults: "None. Pick one of the sounds your server has.",
   },
+  "turn.interruptions": {
+    label: "When can the caller interrupt?",
+    what: "Whether the caller's speech cuts the agent off while it talks: at any moment, only after a few words (so a quiet \"mm-hm\" does not), or never until the agent has finished.",
+    when: "Never or after a few words for a flow that reads out something the caller must hear; any time for a free-flowing chat.",
+    defaults: "The server's setting. After a number of words is 1 to 10 and needs a speech-to-text that sends interim results.",
+    careful: "Muted speech still reaches speech-to-text (billed) and recordings; it just starts no turn.",
+  },
+  "turn.mute": {
+    label: "Protect the agent while it works",
+    what: "Ignores the caller for the agent's first reply or greeting, or while a tool runs, so neither is cut short.",
+    when: "For a greeting with legal wording, or tools that must finish before the caller talks over them.",
+    defaults: "The server's list. Ticking a box starts from the server's list and changes that one entry.",
+    careful: "A muted caller is not heard at all until the mute ends or the longest-mute limit passes.",
+  },
+  "turn.max_mute_ms": {
+    label: "Longest mute",
+    what: "The most time one mute may last before the caller is heard again, so a stuck signal cannot silence them.",
+    when: "Shorten it so a caller who really needs to speak is never ignored for long.",
+    defaults: "1 to 60 seconds, at most the server's own limit. Empty: the server's limit.",
+  },
   "llm.max_parallel": {
     label: "Tool calls at once",
     what: "How many tool calls the model may run side by side in one round.",

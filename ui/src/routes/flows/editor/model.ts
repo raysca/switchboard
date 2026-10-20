@@ -13,6 +13,7 @@ export const STT_P99_RANGE = [100, 10000] as const;
 const DEFAULT_MAX_TOKENS = 4000;
 /** The server's limits for a flow's quiet-caller and audio settings (server/flow/call_behavior.go). */
 export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
+export const TURN_RANGE = { minWords: [1, 10], maxMuteS: [1, 60] } as const;
 export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0] } as const;
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
@@ -37,7 +38,7 @@ export type FlowDraft = {
 };
 
 // Settings that belong to the call, not to one step: only the start step has them.
-const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio", "failover"] as const;
+const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio", "turn", "failover"] as const;
 
 /** `tts.clean_text` is call-wide too but lives inside `tts`: the config without it. */
 function withoutCleanText(config: StepConfig): StepConfig {
@@ -169,6 +170,10 @@ function callBehaviorIssues(config: StepConfig): string[] {
   if (typeof idle.max_prompts === "number" && (!Number.isInteger(idle.max_prompts) || outside(idle.max_prompts, IDLE_RANGE.prompts))) out.push("Ask this many times must be 1 to 10.");
   if (typeof idle.prompt === "string" && byteLength(idle.prompt) > IDLE_RANGE.textBytes) out.push(`What to say is over ${IDLE_RANGE.textBytes} bytes.`);
   if (typeof idle.goodbye === "string" && byteLength(idle.goodbye) > IDLE_RANGE.textBytes) out.push(`Goodbye is over ${IDLE_RANGE.textBytes} bytes.`);
+  const turn = asRecord(config.turn);
+  const words = turn.min_words;
+  if (typeof words === "number" && (!Number.isInteger(words) || words < 0 || words > TURN_RANGE.minWords[1])) out.push(`Interrupt after must be ${TURN_RANGE.minWords[0]} to ${TURN_RANGE.minWords[1]} words.`);
+  if (typeof turn.max_mute_ms === "number" && outside(turn.max_mute_ms, [TURN_RANGE.maxMuteS[0] * 1000, TURN_RANGE.maxMuteS[1] * 1000])) out.push(`Longest mute must be ${TURN_RANGE.maxMuteS[0]} to ${TURN_RANGE.maxMuteS[1]} seconds.`);
   const audio = asRecord(config.audio);
   if (outside(audio.output_gain_db, AUDIO_RANGE.gain)) out.push("Voice volume must be -30 to +6 dB.");
   const strength = asRecord(audio.denoise).strength;

@@ -116,6 +116,7 @@ describe("FlowSettingsPanel", () => {
       secure: false,
       audio: { backgrounds: [], cues: ["chime", "ding"], allow_flow_background: true, background_default: "" },
       idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
+      turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600 },
     };
 
     it("is a choice among the server's cues, only when the flow has routes", async () => {
@@ -225,6 +226,14 @@ describe("FlowSettingsPanel footer", () => {
       expect(advanced()).toHaveAttribute("open");
     });
 
+    it("opens by itself when the start step has interruption settings, and shows them there", () => {
+      render(<Harness initial={withCfg({ turn: { mute: ["always"] } })} />);
+      expect(screen.getByText(/^Advanced/)).toHaveTextContent("Advanced · 1 set");
+      expect(advanced()).toHaveAttribute("open");
+      expect(advanced()).toContainElement(screen.getByRole("group", { name: "Interruptions" }));
+      expect(screen.getByRole("radio", { name: "Never while the agent speaks" })).toBeChecked();
+    });
+
     it("opens by itself when an advanced field has a problem", () => {
       render(<Harness initial={withCfg({ vad_stop_ms: 9000 })} />);
       expect(advanced()).toHaveAttribute("open");
@@ -323,6 +332,7 @@ describe("FlowSettingsPanel footer", () => {
       secure: false,
       audio: { backgrounds: ["cafe", "office"], cues: ["chime"], allow_flow_background: true, background_default: "" },
       idle: { user_timeout_ms: 15000, max_prompts: 2, prompt_mode: "llm" },
+      turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600 },
     };
     const withStart = (extra: Record<string, unknown>) =>
       fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: { llm: { provider: "g", model: "m" }, tts: { provider: "g" }, stt: { provider: "deepgram" }, ...extra } }], routes: [] });

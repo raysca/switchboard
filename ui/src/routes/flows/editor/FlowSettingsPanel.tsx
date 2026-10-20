@@ -3,6 +3,7 @@ import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
 import { AudioFields, QuietCallerBasics, QuietCallerDetails } from "./CallBehaviorFields";
+import { TurnFields } from "./TurnFields";
 import { SettingHelp } from "./SettingHelp";
 import { DEFAULT_FAILOVER, FAILOVER_CLASSES, flowIssues, MAX_SUMMARY_PROMPT_BYTES, STT_P99_RANGE, updateStep, type FlowDraft, type StepConfig } from "./model";
 
@@ -47,7 +48,7 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const recording = rec(cfg.recording);
   const tts = rec(cfg.tts);
   const problems = flowIssues(graph);
-  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio", "failover"] as const).filter((k) => k in cfg).length +
+  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio", "turn", "failover"] as const).filter((k) => k in cfg).length +
     (tts.clean_text === false ? 1 : 0) +
     (Object.keys(rec(cfg.idle)).some((k) => k !== "user_timeout_ms") ? 1 : 0) +
     (graph.route_cue && graph.routes.length > 0 ? 1 : 0);
@@ -218,6 +219,7 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
             </p>
             <SettingHelp id="stt_p99_ms" />
           </fieldset>
+          <TurnFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           <fieldset className="stage-box">
             <legend>Memory</legend>
             <div className="grid-2">

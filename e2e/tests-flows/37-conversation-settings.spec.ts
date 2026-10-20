@@ -51,3 +51,35 @@ test("text cleaning and fallback rules are flow settings that survive a reload",
   await expect(page.getByLabel(/Clean text before speaking/)).not.toBeChecked();
   await expect(page.getByLabel("Rejected requests (bad request, bad key)", { exact: true })).toBeChecked();
 });
+
+test("interruption settings are published, read back and shown after a reload", async ({ page, stack }) => {
+  const name = "E2E Interruptions";
+  await api(stack, "/flows", {
+    method: "POST",
+    body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
+  });
+  const turnOf = async () => ((await api<{ data: { name: string; current_version: { config: { turn?: object } } }[] }>(stack, "/flows")).data.find((f) => f.name === name)!).current_version.config.turn;
+  await connectAdmin(page, stack);
+  await openFlow(page, name);
+  await openFlowSettings(page);
+  await page.locator("details.advanced").getByText("Advanced", { exact: true }).click();
+  await page.getByRole("radio", { name: "After a number of words" }).check();
+  await page.getByRole("spinbutton", { name: "Words before the caller interrupts" }).fill("3");
+  await page.getByRole("checkbox", { name: "Not while a tool runs" }).check();
+  await page.getByRole("spinbutton", { name: "Longest mute (seconds)" }).fill("20");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v2" }).click();
+
+  await expect.poll(turnOf).toEqual({ min_words: 3, mute: ["function_call"], max_mute_ms: 20000 });
+
+  await page.reload();
+  await connectAdmin(page, stack);
+  await openFlow(page, name);
+  await openFlowSettings(page);
+  await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
+  await expect(page.getByRole("radio", { name: "After a number of words" })).toBeChecked();
+  await expect(page.getByRole("spinbutton", { name: "Words before the caller interrupts" })).toHaveValue("3");
+  await expect(page.getByRole("checkbox", { name: "Not while a tool runs" })).toBeChecked();
+  await expect(page.getByRole("spinbutton", { name: "Longest mute (seconds)" })).toHaveValue("20");
+});
