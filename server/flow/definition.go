@@ -170,8 +170,8 @@ func (g Definition) validateCallLevel() error {
 		c := n.Config
 		if n.ID != g.Start {
 			if c.STT.Provider != "" || c.VADStopMS != 0 || c.STTP99MS != 0 || c.Recording != (RecordingConfig{}) ||
-				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Turn != nil || c.Context.Summarization != (SummarizationConfig{}) {
-				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, turn); set them on the start step", n.ID)
+				c.Context.MaxMessages != 0 || c.Context.MaxTokens != 0 || len(c.AsyncTools) != 0 || c.Idle != nil || c.Turn != nil || c.MaxCallDurationSeconds != 0 || c.Context.Summarization != (SummarizationConfig{}) {
+				return invalid("step %q sets flow settings (stt, vad_stop_ms, stt_p99_ms, recording, context, async_tools, idle, turn, max_call_duration_seconds); set them on the start step", n.ID)
 			}
 			if a := c.Audio; a != nil && *a != (AudioSettings{Background: a.Background}) {
 				return invalid("step %q: audio may only set background on a step other than the start step", n.ID)

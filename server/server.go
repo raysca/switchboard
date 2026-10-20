@@ -793,8 +793,8 @@ func (s *Server) onSessionReady(conn *ws.Connection) (*core.Session, error) {
 	s.metrics.SessionsStartedTotal.Add(1)
 
 	// 6. Max call duration cost guard (spec §32, §35)
-	if s.cfg.Limits.MaxCallDuration > 0 {
-		maxDurTimer := time.NewTimer(s.cfg.Limits.MaxCallDuration)
+	if call.MaxCallDuration > 0 {
+		maxDurTimer := time.NewTimer(call.MaxCallDuration)
 		go func() {
 			defer maxDurTimer.Stop()
 			select {

@@ -96,7 +96,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
   const redescribed = !!flow && description.trim() !== flow.description;
   const unpublished = !published || renamed || redescribed || toolsChanged || canonical(toPayload(published)) !== canonical(toPayload(graph));
   const needSetup = graph.steps.filter((n) => stepIssues(graph, n.id).length > 0).length;
-  const limits = serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms };
+  const limits = serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms, maxCallSeconds: serverConfig.max_call_duration_seconds };
   const flowProblems = flowIssues(graph, limits);
   const problems = [...(name.trim() ? [] : ["Give the flow a name in Flow settings."]), ...validate(graph, limits)];
   const callable = canCall(flow);

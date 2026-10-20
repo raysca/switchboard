@@ -82,6 +82,9 @@ const (
 	maxIdleTimeoutMS = 300000
 	maxIdlePrompts   = 10
 
+	MinCallDurationSeconds = 60 // the shortest call limit a flow may set (the editor shows it too)
+	maxCallDurationSeconds = 86400
+
 	maxTurnMinWords = 10
 	minMaxMuteMS    = 1000
 	maxMaxMuteMS    = 60000

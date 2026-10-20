@@ -152,6 +152,12 @@ const COPY = {
     defaults: "None. When it is on, it starts after 1000 ms if you leave the delay empty (0 to 10000). The route sound waits only 300 ms because a gap between steps is always silent, but most tool calls return within a second and a sound on each of them would be noise.",
     careful: "Only tools that run in the foreground play it: not background tools, transfers, hang-up or key presses. It pauses while anyone speaks and stops when the tool returns.",
   },
+  max_call_duration_seconds: {
+    label: "Longest call",
+    what: "Ends the call after this many minutes, with the reason \"time limit\".",
+    when: "To cap the cost or length of calls to this flow.",
+    defaults: "1 minute up to the server's own limit. Empty: the server's limit. A flow can shorten calls, never lengthen them: if the server's limit is lowered later, the lower one applies.",
+  },
   recording: {
     label: "Recording",
     what: "Saves the call's audio on the server (only if the server enables recording too).",

@@ -83,6 +83,8 @@ type CallSpec struct {
 	StoredSessionID string
 	// TurnLatencies collects the call's per-turn stage latencies for its turn rows.
 	TurnLatencies *turnLatencies
+	// MaxCallDuration is how long the call may last: the shorter of the flow's limit and the server's.
+	MaxCallDuration time.Duration
 	// Ender is set when some step has end_call; the builder wires it to the idle controller.
 	Ender *callEnder
 	// Flow is set for flows with more than one step: the call starts on the

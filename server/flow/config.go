@@ -38,6 +38,9 @@ type Config struct {
 	Audio *AudioSettings `json:"audio,omitempty"`
 	// Turn is how the caller may interrupt the agent (call-level, optional: absent means the server's).
 	Turn *TurnSettings `json:"turn,omitempty"`
+	// MaxCallDurationSeconds shortens the call limit (call-level): 0 = the server's, else 60..86400 and
+	// no more than the server's (publish refuses more; a call uses the shorter of the two).
+	MaxCallDurationSeconds int `json:"max_call_duration_seconds,omitempty"`
 	// Recording opts this flow's calls into audio recording. It only takes
 	// effect when the server enables recording too.
 	Recording RecordingConfig `json:"recording,omitzero"`
@@ -253,6 +256,9 @@ func DecodeConfig(raw json.RawMessage) (Config, error) {
 		if err := c.Turn.validate(c.Greeting); err != nil {
 			return c, err
 		}
+	}
+	if s := c.MaxCallDurationSeconds; s != 0 && (s < MinCallDurationSeconds || s > maxCallDurationSeconds) {
+		return c, fmt.Errorf("%w: max_call_duration_seconds must be 0 (the server's limit) or between %d and %d", ErrInvalidConfig, MinCallDurationSeconds, maxCallDurationSeconds)
 	}
 	if err := c.Context.Summarization.validate(c.LLM.Provider, c.Context.MaxTokens); err != nil {
 		return c, err

@@ -15,10 +15,11 @@ type Policy interface {
 	Backgrounds() []string // sorted names of audio.backgrounds
 	Cues() []string        // sorted names of audio.cues (route sounds)
 	AllowFlowBackground() bool
-	MinUserTimeout() time.Duration // 0: no floor
-	TurnManager() bool             // flows' turn settings need the turn manager
-	MaxMute() time.Duration        // the server's effective turn.max_mute: a flow can only shorten it
-	SmartTurn() bool               // the Smart Turn model is loaded: a flow may ask for end_of_turn "smart"
+	MinUserTimeout() time.Duration  // 0: no floor
+	TurnManager() bool              // flows' turn settings need the turn manager
+	MaxMute() time.Duration         // the server's effective turn.max_mute: a flow can only shorten it
+	MaxCallDuration() time.Duration // the server's limits.max_call_duration: a flow can only shorten it
+	SmartTurn() bool                // the Smart Turn model is loaded: a flow may ask for end_of_turn "smart"
 }
 
 // reasonIdleTooShort is the one policy problem that also takes a stored flow offline: a call could not even
@@ -69,6 +70,9 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 		if t.EndOfTurn == EndOfTurnSmart && !p.SmartTurn() {
 			out = append(out, policyProblem{reason: reasonSmartTurnUnavailable, message: "Smart end-of-turn needs the Smart Turn model on this server (turn.analyzer.for_flows)"})
 		}
+	}
+	if s := c.MaxCallDurationSeconds; s != 0 && time.Duration(s)*time.Second > p.MaxCallDuration() {
+		out = append(out, policyProblem{message: fmt.Sprintf("max_call_duration_seconds %d is above this server's limit of %d (limits.max_call_duration): a flow can only shorten it", s, int(p.MaxCallDuration().Seconds()))})
 	}
 	if i := c.Idle; i != nil && i.UserTimeoutMS != nil && *i.UserTimeoutMS > 0 {
 		if floor := p.MinUserTimeout(); time.Duration(*i.UserTimeoutMS)*time.Millisecond <= floor {

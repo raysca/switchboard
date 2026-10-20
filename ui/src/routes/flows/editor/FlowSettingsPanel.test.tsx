@@ -46,7 +46,40 @@ const startCfg = (fn: ReturnType<typeof vi.fn>) => {
   return g.steps.find((n) => n.id === g.start)!.config;
 };
 
+const limitServer: ServerConfigDTO = {
+  profile: "development",
+  max_sessions: 10,
+  max_call_duration_seconds: 1800,
+  voice_token_max_lifetime_seconds: 60,
+  client_ip: "",
+  secure: false,
+  audio: { backgrounds: [], cues: [], allow_flow_background: true, background_default: "" },
+  idle: { user_timeout_ms: 0, max_prompts: 2, prompt_mode: "llm" },
+  turn: { manager: true, min_words: 0, mute: [], max_mute_ms: 30000, speech_timeout_ms: 600, end_of_turn: "default", smart_turn_available: false, smart_hold_ms: 3000 },
+};
+
 describe("FlowSettingsPanel", () => {
+  it("sets the longest call in minutes (stored as seconds), with the server's limit as the ceiling", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} serverConfig={limitServer} />);
+    const field = screen.getByRole("spinbutton", { name: "Longest call (minutes)" });
+    expect(field).toHaveAttribute("placeholder", "30");
+    expect(field).toHaveAttribute("max", "30");
+    expect(field).toHaveAttribute("min", "1");
+    await user.type(field, "10");
+    expect(startCfg(onChange).max_call_duration_seconds).toBe(600);
+    await user.clear(field);
+    expect(startCfg(onChange)).not.toHaveProperty("max_call_duration_seconds");
+  });
+
+  it("opens Advanced on a stored call limit and shows it in minutes", () => {
+    const stored = fromFlowConfig({ llm: { provider: "g", model: "m" }, tts: { provider: "g" }, max_call_duration_seconds: 600 });
+    render(<Harness initial={stored} serverConfig={limitServer} />);
+    expect(screen.getAllByText("Advanced · 1 set")).toHaveLength(1);
+    expect(screen.getByRole("spinbutton", { name: "Longest call (minutes)" })).toHaveValue(10);
+  });
+
   it("says speech-to-text is missing, and sets it on the start step", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

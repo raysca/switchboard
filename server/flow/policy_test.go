@@ -19,15 +19,17 @@ type fakePolicy struct {
 	manager  bool
 	maxMute  time.Duration
 	smart    bool
+	maxCall  time.Duration
 }
 
-func (p *fakePolicy) Backgrounds() []string         { return p.sounds }
-func (p *fakePolicy) AllowFlowBackground() bool     { return p.allow }
-func (p *fakePolicy) MinUserTimeout() time.Duration { return p.minTimer }
-func (p *fakePolicy) Cues() []string                { return p.cues }
-func (p *fakePolicy) TurnManager() bool             { return p.manager }
-func (p *fakePolicy) MaxMute() time.Duration        { return p.maxMute }
-func (p *fakePolicy) SmartTurn() bool               { return p.smart }
+func (p *fakePolicy) Backgrounds() []string          { return p.sounds }
+func (p *fakePolicy) AllowFlowBackground() bool      { return p.allow }
+func (p *fakePolicy) MinUserTimeout() time.Duration  { return p.minTimer }
+func (p *fakePolicy) Cues() []string                 { return p.cues }
+func (p *fakePolicy) TurnManager() bool              { return p.manager }
+func (p *fakePolicy) MaxMute() time.Duration         { return p.maxMute }
+func (p *fakePolicy) SmartTurn() bool                { return p.smart }
+func (p *fakePolicy) MaxCallDuration() time.Duration { return p.maxCall }
 
 func withExtra(extra string) json.RawMessage {
 	return json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"},` + extra + `}`)
@@ -312,5 +314,18 @@ func TestPublishRefusesAHoldSoundTheServerDoesNotHave(t *testing.T) {
 	}
 	if reasons, _ := g.Problems(&fakePolicy{cues: []string{"chime"}}); len(reasons) != 0 {
 		t.Fatalf("a dropped sound must not take the flow offline: %v", reasons)
+	}
+}
+
+func TestPublishRefusesACallLimitAboveTheServers(t *testing.T) {
+	svc := testServiceWith(t, &fakePolicy{maxCall: 30 * time.Minute})
+	_, err := svc.Create(context.Background(), CreateRequest{Name: "long", Config: withExtra(`"max_call_duration_seconds":1801`)})
+	if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), "1801") || !strings.Contains(err.Error(), "1800") {
+		t.Fatalf("want an invalid-config error naming both values, got %v", err)
+	}
+	for i, extra := range []string{`"max_call_duration_seconds":1800`, `"max_call_duration_seconds":600`, `"max_call_duration_seconds":0`} {
+		if _, err := svc.Create(context.Background(), CreateRequest{Name: "ok" + string(rune('a'+i)), Config: withExtra(extra)}); err != nil {
+			t.Fatalf("%s: %v", extra, err)
+		}
 	}
 }

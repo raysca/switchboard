@@ -110,3 +110,26 @@ func TestDecodeConfigTTSVoiceSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeCallLimit(t *testing.T) {
+	cases := []struct {
+		name, extra, want string // want "" = accepted
+	}{
+		{"absent", ``, ""},
+		{"zero means the server's", `,"max_call_duration_seconds":0`, ""},
+		{"minimum", `,"max_call_duration_seconds":60`, ""},
+		{"maximum", `,"max_call_duration_seconds":86400`, ""},
+		{"under a minute", `,"max_call_duration_seconds":59`, "max_call_duration_seconds must be 0"},
+		{"negative", `,"max_call_duration_seconds":-1`, "max_call_duration_seconds must be 0"},
+		{"over a day", `,"max_call_duration_seconds":86401`, "max_call_duration_seconds must be 0"},
+		{"overflows an int", `,"max_call_duration_seconds":99999999999999999999`, "max_call_duration_seconds"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := DecodeConfig(json.RawMessage(`{"stt":{"provider":"google"},"llm":{"provider":"google","model":"m"},"tts":{"provider":"google"}` + c.extra + `}`))
+			if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+}

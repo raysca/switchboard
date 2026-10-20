@@ -154,6 +154,16 @@ func TestDecodeAcceptsEndCallOnAOneStepFlow(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsACallLimitOnALaterStep(t *testing.T) {
+	raw := twoStepCfg("")
+	i := strings.Index(raw, `"id":"sales"`)
+	raw = raw[:i] + strings.Replace(raw[i:], `"config":{`, `"config":{"max_call_duration_seconds":600,`, 1)
+	_, err := Decode(json.RawMessage(raw))
+	if err == nil || !strings.Contains(err.Error(), `step "sales"`) || !strings.Contains(err.Error(), "max_call_duration_seconds") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // twoStepCfg is a routed flow whose second step carries the given extra config members.
 func twoStepCfg(salesExtra string) string {
 	sales := `{"id":"sales","name":"Sales","config":{"llm":{"provider":"openai","model":"m","system_prompt":"s"},"tts":{"provider":"cartesia","voice":"v"` + salesExtra + `}}}`

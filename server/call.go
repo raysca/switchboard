@@ -389,6 +389,7 @@ func (s *Server) callSpec(ctx context.Context, rs *runtime.Session) (CallSpec, e
 		STTP99MS:            cfg.STTP99MS,
 		Flow:                graph,
 		Ender:               ender,
+		MaxCallDuration:     callLimit(s.cfg.Limits.MaxCallDuration, cfg.MaxCallDurationSeconds),
 	}, nil
 }
 
@@ -529,4 +530,12 @@ func (c *CallSpec) wipeSecrets() {
 	}
 	c.LLMFallbacks, c.TTSFallbacks, c.STTFallbacks = nil, nil, nil
 	c.STT.Secret, c.LLM.Secret, c.TTS.Secret = nil, nil, nil
+}
+
+// callLimit is the shorter of the server's limit and the flow's (0 = the flow sets none).
+func callLimit(server time.Duration, flowSeconds int) time.Duration {
+	if flowSeconds > 0 {
+		return min(server, time.Duration(flowSeconds)*time.Second)
+	}
+	return server
 }

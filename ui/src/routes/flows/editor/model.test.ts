@@ -371,6 +371,26 @@ describe("what the server will accept", () => {
     expect(validate(g, { maxMuteMs: 30000 }).join(" ")).toMatch(/server's limit/);
   });
 
+  it("keeps the call limit on the start step only: toPayload drops it elsewhere and setStart moves it", () => {
+    const g = one({ max_call_duration_seconds: 600 }, { max_call_duration_seconds: 300 });
+    const steps = (toPayload(g) as { steps: { id: string; config: Record<string, unknown> }[] }).steps;
+    expect(steps.find((n) => n.id === "a")!.config).toMatchObject({ max_call_duration_seconds: 600 });
+    expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("max_call_duration_seconds");
+    const moved = setStart(one({ max_call_duration_seconds: 600 }), "b");
+    expect(moved.steps.find((n) => n.id === "b")!.config.max_call_duration_seconds).toBe(600);
+    expect(moved.steps.find((n) => n.id === "a")!.config).not.toHaveProperty("max_call_duration_seconds");
+  });
+
+  it("flags a call limit outside 1 to 1440 minutes, or above the server's when it is known", () => {
+    expect(flowIssues(one({ max_call_duration_seconds: 59 }))).toContain("Longest call must be 1 to 1440 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: 86401 }))).toContain("Longest call must be 1 to 1440 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: 600 }))).toEqual([]);
+    const g = one({ max_call_duration_seconds: 1900 });
+    expect(flowIssues(g)).toEqual([]);
+    expect(flowIssues(g, { maxCallSeconds: 1800 })).toContain("Longest call is above this server's limit of 30 minutes.");
+    expect(flowIssues(one({ max_call_duration_seconds: 1800 }), { maxCallSeconds: 1800 })).toEqual([]);
+  });
+
   it("mirrors the interruption limits", () => {
     const bad = (turn: Record<string, unknown>) => flowIssues(one({ turn }));
     for (const n of [-1, 11, 2.5]) expect(bad({ min_words: n })).toContain("Interrupt after must be 1 to 10 words.");

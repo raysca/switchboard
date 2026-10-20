@@ -210,3 +210,30 @@ test("a one-step flow can end the call: published in steps form, read back and s
   await page.getByRole("tab", { name: /Tools/ }).click();
   await expect(page.getByRole("checkbox", { name: /can end the call/i })).toBeChecked();
 });
+
+test("a shorter call limit is published in seconds, read back and shown in minutes after a reload", async ({ page, stack }) => {
+  const name = "E2E Call Limit";
+  await api(stack, "/flows", {
+    method: "POST",
+    body: JSON.stringify({ name, config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }) } }),
+  });
+  type Listed = { name: string; current_version: { config: { max_call_duration_seconds?: number } } };
+  const limitOf = async () => ((await api<{ data: Listed[] }>(stack, "/flows")).data.find((f) => f.name === name)!).current_version.config.max_call_duration_seconds;
+  await connectAdmin(page, stack);
+  await openFlow(page, name);
+  await openFlowSettings(page);
+  await page.locator("details.advanced").getByText("Advanced", { exact: true }).click();
+  await page.getByRole("spinbutton", { name: "Longest call (minutes)" }).fill("10");
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v2" }).click();
+
+  await expect.poll(limitOf).toBe(600);
+
+  await page.reload();
+  await connectAdmin(page, stack);
+  await openFlow(page, name);
+  await openFlowSettings(page);
+  await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
+  await expect(page.getByRole("spinbutton", { name: "Longest call (minutes)" })).toHaveValue("10");
+});

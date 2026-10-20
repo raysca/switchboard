@@ -5,7 +5,7 @@ import { StageFields, type StageValue } from "../StageFields";
 import { AudioFields, QuietCallerBasics, QuietCallerDetails } from "./CallBehaviorFields";
 import { EndOfTurnFields, TurnFields } from "./TurnFields";
 import { SettingHelp } from "./SettingHelp";
-import { DEFAULT_FAILOVER, FAILOVER_CLASSES, flowIssues, MAX_SUMMARY_PROMPT_BYTES, STT_P99_RANGE, updateStep, type FlowDraft, type StepConfig } from "./model";
+import { CALL_LIMIT_RANGE_S, DEFAULT_FAILOVER, FAILOVER_CLASSES, flowIssues, MAX_SUMMARY_PROMPT_BYTES, STT_P99_RANGE, updateStep, type FlowDraft, type StepConfig } from "./model";
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (v && typeof v === "object" && !Array.isArray(v) ? (v as Rec) : {});
@@ -47,8 +47,8 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
   const context = rec(cfg.context);
   const recording = rec(cfg.recording);
   const tts = rec(cfg.tts);
-  const problems = flowIssues(graph, serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms });
-  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio", "turn", "failover"] as const).filter((k) => k in cfg).length +
+  const problems = flowIssues(graph, serverConfig && { maxMuteMs: serverConfig.turn.max_mute_ms, maxCallSeconds: serverConfig.max_call_duration_seconds });
+  const advancedSet = (["vad_stop_ms", "stt_p99_ms", "context", "audio", "turn", "failover", "max_call_duration_seconds"] as const).filter((k) => k in cfg).length +
     (tts.clean_text === false ? 1 : 0) +
     (Object.keys(rec(cfg.idle)).some((k) => k !== "user_timeout_ms") ? 1 : 0) +
     (graph.route_cue && graph.routes.length > 0 ? 1 : 0);
@@ -221,6 +221,30 @@ export function FlowSettingsPanel({ graph, providers, serverConfig, name, descri
             <EndOfTurnFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
           </fieldset>
           <TurnFields cfg={cfg} setKey={setKey} serverConfig={serverConfig} />
+          <fieldset className="stage-box">
+            <legend>Call length</legend>
+            <label className="form-field" htmlFor="flow-call-limit">
+              <span>Longest call (minutes)</span>
+              <input
+                id="flow-call-limit"
+                type="number"
+                min={CALL_LIMIT_RANGE_S[0] / 60}
+                max={serverConfig ? Math.min(CALL_LIMIT_RANGE_S[1], serverConfig.max_call_duration_seconds) / 60 : CALL_LIMIT_RANGE_S[1] / 60}
+                step="any"
+                placeholder={serverConfig ? String(serverConfig.max_call_duration_seconds / 60) : "Server limit"}
+                aria-describedby="flow-call-limit-hint"
+                value={typeof cfg.max_call_duration_seconds === "number" ? cfg.max_call_duration_seconds / 60 : ""}
+                onChange={(e) => {
+                  const n = e.target.value.trim() === "" ? NaN : Number(e.target.value);
+                  setKey("max_call_duration_seconds", Number.isFinite(n) && n > 0 ? Math.round(n * 60) : null);
+                }}
+              />
+            </label>
+            <p id="flow-call-limit-hint" className="subtext">
+              {CALL_LIMIT_RANGE_S[0] / 60} to {serverConfig ? Math.min(CALL_LIMIT_RANGE_S[1], serverConfig.max_call_duration_seconds) / 60 : CALL_LIMIT_RANGE_S[1] / 60}. Empty: the server's limit.
+            </p>
+            <SettingHelp id="max_call_duration_seconds" />
+          </fieldset>
           <fieldset className="stage-box">
             <legend>Memory</legend>
             <div className="grid-2">

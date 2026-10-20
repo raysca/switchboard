@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -300,4 +301,34 @@ func TestCallBehaviorASmartFlowConnectsAndRepliesWhenTheModelIsLoaded(t *testing
 	c := r.dial(f.ID)
 	c.say("hello")
 	eventually(t, "a reply", func() bool { return c.replyCount() > 0 })
+}
+
+// A flow can shorten the call limit, never lengthen it: the publish API refuses a limit above the server's.
+func TestCallBehaviorThePublishAPIRefusesALongerCallLimit(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Limits.MaxCallDuration = 10 * time.Minute })
+	post := func(name string, seconds int) (int, string) {
+		body := fmt.Sprintf(`{"name":%q,"config":{"stt":{"provider":"echo","model":"s"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"max_call_duration_seconds":%d}}`, name, seconds)
+		w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body)
+		return w.Code, w.Body.String()
+	}
+	code, body := post("TooLong", 601)
+	if code != http.StatusBadRequest || !strings.Contains(body, "invalid_request") || !strings.Contains(body, "601") || !strings.Contains(body, "600") {
+		t.Fatalf("a limit above the server's: %d %s", code, body)
+	}
+	if code, body := post("Shorter", 120); code != http.StatusCreated {
+		t.Fatalf("a shorter limit: %d %s", code, body)
+	}
+	if code, body := post("Equal", 600); code != http.StatusCreated {
+		t.Fatalf("the server's own limit: %d %s", code, body)
+	}
+}
+
+// The server lowered its limit after the flow was published: the call still ends at the server's limit,
+// the flow's longer one does not extend it.
+func TestCallBehaviorAFlowLimitLongerThanTheServersDoesNotExtendIt(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
+	id := behaviorFlow(t, r, "Plain", "plainvoice", `,"max_call_duration_seconds":1500`)
+	r.s.cfg.Limits.MaxCallDuration = time.Second
+	c := r.dial(id)
+	r.waitEnded(c.sessionID, storage.EndTimeLimit)
 }

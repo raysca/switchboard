@@ -14,6 +14,8 @@ const DEFAULT_MAX_TOKENS = 4000;
 /** The server's limits for a flow's quiet-caller and audio settings (server/flow/call_behavior.go). */
 export const IDLE_RANGE = { timeoutMs: [1000, 300000], prompts: [1, 10], textBytes: 200 } as const;
 export const TURN_RANGE = { minWords: [1, 10], maxMuteS: [1, 60], speechTimeoutMs: [200, 3000], smartHoldMs: [500, 5000] } as const;
+/** `max_call_duration_seconds`: 0 or unset is the server's limit. */
+export const CALL_LIMIT_RANGE_S = [60, 86400] as const;
 export const AUDIO_RANGE = { gain: [-30, 6], backgroundGain: [-60, 0], holdAfterMs: [0, 10000] } as const;
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 const MAX_CONDITION = 512;
@@ -38,7 +40,7 @@ export type FlowDraft = {
 };
 
 // Settings that belong to the call, not to one step: only the start step has them.
-const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio", "turn", "failover"] as const;
+const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio", "turn", "failover", "max_call_duration_seconds"] as const;
 
 /** `tts.clean_text` is call-wide too but lives inside `tts`: the config without it. */
 function withoutCleanText(config: StepConfig): StepConfig {
@@ -132,7 +134,7 @@ export const DEFAULT_FAILOVER: readonly string[] = ["timeout", "server_error", "
 const SUMMARIZING = new Set(["google", "echo", "nvidia", "openai", "xai"]);
 
 /** What the server caps, when it is known: a flow may only tighten it. */
-type ServerLimits = { maxMuteMs?: number };
+type ServerLimits = { maxMuteMs?: number; maxCallSeconds?: number };
 
 /** Problems that belong to the whole flow (header state line and Flow settings). */
 export function flowIssues(g: FlowDraft, limits?: ServerLimits): string[] {
@@ -188,6 +190,9 @@ function callBehaviorIssues(config: StepConfig, limits?: ServerLimits): string[]
   if (outside(turn.speech_timeout_ms, TURN_RANGE.speechTimeoutMs)) out.push(`Wait for the caller to resume must be ${TURN_RANGE.speechTimeoutMs[0]} to ${TURN_RANGE.speechTimeoutMs[1]} ms.`);
   if (outside(turn.smart_hold_ms, TURN_RANGE.smartHoldMs)) out.push(`Smart hold must be ${TURN_RANGE.smartHoldMs[0]} to ${TURN_RANGE.smartHoldMs[1]} ms.`);
   if (typeof turn.max_mute_ms === "number" && limits?.maxMuteMs !== undefined && turn.max_mute_ms > limits.maxMuteMs) out.push(`Longest mute is above this server's limit of ${limits.maxMuteMs / 1000} seconds.`);
+  const limit = config.max_call_duration_seconds;
+  if (typeof limit === "number" && limit !== 0 && outside(limit, CALL_LIMIT_RANGE_S)) out.push(`Longest call must be ${CALL_LIMIT_RANGE_S[0] / 60} to ${CALL_LIMIT_RANGE_S[1] / 60} minutes.`);
+  if (typeof limit === "number" && limits?.maxCallSeconds !== undefined && limit > limits.maxCallSeconds) out.push(`Longest call is above this server's limit of ${limits.maxCallSeconds / 60} minutes.`);
   const audio = asRecord(config.audio);
   if (outside(audio.output_gain_db, AUDIO_RANGE.gain)) out.push("Voice volume must be -30 to +6 dB.");
   const strength = asRecord(audio.denoise).strength;
