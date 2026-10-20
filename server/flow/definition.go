@@ -184,6 +184,24 @@ func (g Definition) validateCallLevel() error {
 	return nil
 }
 
+// deadStepSettings names a setting a non-start step carries that only the start step's applies
+// (text cleaning and failover rules are call-wide). Publish refuses it; a stored version keeps
+// decoding and ignoring it (K1).
+func (g Definition) deadStepSettings() error {
+	for _, n := range g.Steps {
+		if n.ID == g.Start {
+			continue
+		}
+		switch {
+		case n.Config.TTS.CleanText != nil:
+			return invalid("step %q: tts.clean_text applies to the whole call; set it on the start step", n.ID)
+		case len(n.Config.Failover.On) != 0:
+			return invalid("step %q: failover applies to the whole call; set it on the start step", n.ID)
+		}
+	}
+	return nil
+}
+
 func (g Definition) StartStep() Step {
 	n, _ := g.Step(g.Start)
 	return n

@@ -180,8 +180,10 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
     if (!flow?.current_version || flow.current_version.number < 2) return;
     const old = await client.getFlowVersion(flow.id, flow.current_version.number - 1);
     setTools(old.mcp_tools);
-    setGraph(fromFlowConfig(old.config, old.mcp_tools.map(toolKey)));
-    onSubmit({ name: name.trim(), description: description.trim(), enabled: flow.enabled, config: old.config as CreateFlowInput["config"], mcp_tools: old.mcp_tools });
+    // Through the editor's own model, so a setting the server now refuses on a step (a pre-7b copy of clean_text or failover) is dropped.
+    const restored = fromFlowConfig(old.config, old.mcp_tools.map(toolKey));
+    setGraph(restored);
+    onSubmit({ name: name.trim(), description: description.trim(), enabled: flow.enabled, config: toPayload(restored) as CreateFlowInput["config"], mcp_tools: old.mcp_tools });
     close();
   };
   const publish = () => {

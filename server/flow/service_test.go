@@ -455,3 +455,36 @@ func TestVersionByNumberReturnsAnEarlierPublish(t *testing.T) {
 		t.Fatalf("a version that was never published should be sql.ErrNoRows, got %v", err)
 	}
 }
+
+func TestPublishRefusesCallWideSettingsOnANonStartStep(t *testing.T) {
+	svc := testServiceWith(t, ready())
+	front := `{"stt":{"provider":"google","model":"google.stt"},"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}`
+	mk := func(frontExtra, salesTTS, salesExtra string) json.RawMessage {
+		front := front[:len(front)-1] + frontExtra + "}"
+		return json.RawMessage(`{"start":"front","steps":[{"id":"front","name":"Front","config":` + front + `},` +
+			`{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"` + salesTTS + `}` + salesExtra + `}}],` +
+			`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+	}
+	for name, tc := range map[string]struct {
+		cfg  json.RawMessage
+		want string
+	}{
+		"clean_text": {mk("", `,"clean_text":false`, ""), `step "sales": tts.clean_text applies to the whole call; set it on the start step`},
+		"failover":   {mk("", "", `,"failover":{"on":["timeout"]}`), `step "sales": failover applies to the whole call; set it on the start step`},
+	} {
+		_, err := svc.Create(context.Background(), CreateRequest{Name: name, Config: tc.cfg})
+		if !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: err=%v, want %q", name, err, tc.want)
+		}
+	}
+	// the start step may carry both
+	if _, err := svc.Create(context.Background(), CreateRequest{Name: "ok", Config: mk(`,"failover":{"on":["timeout"]}`, "", "")}); err != nil {
+		t.Fatalf("start-step failover: %v", err)
+	}
+	start := front[:len(front)-1] + `,"failover":{"on":["timeout"]}}`
+	start = strings.Replace(start, `"voice":"google.tts"}`, `"voice":"google.tts","clean_text":false}`, 1)
+	cfg := json.RawMessage(`{"start":"front","steps":[{"id":"front","name":"Front","config":` + start + `},{"id":"sales","name":"Sales","config":{"llm":{"provider":"google","model":"google.llm"},"tts":{"provider":"google","voice":"google.tts"}}}],"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`)
+	if _, err := svc.Create(context.Background(), CreateRequest{Name: "ok2", Config: cfg}); err != nil {
+		t.Fatalf("start-step both: %v", err)
+	}
+}

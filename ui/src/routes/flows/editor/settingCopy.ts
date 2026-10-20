@@ -61,7 +61,7 @@ const COPY = {
   },
   "failover.on": {
     label: "When to move to a fallback",
-    what: "Which kinds of failure make a stage switch to its next fallback.",
+    what: "Which kinds of failure make a stage switch to its next fallback. Applies to every step of the call.",
     when: "Rarely. Add rejected requests only if a bad request to one provider may succeed on another.",
     defaults: "Timeouts, server errors and an open circuit breaker.",
     careful: "Rejected requests are usually your bug, not an outage; switching can hide it.",
@@ -160,7 +160,7 @@ const COPY = {
   },
   "tts.clean_text": {
     label: "Text cleaning",
-    what: "Removes markdown, links and emoji so the voice does not read symbols aloud.",
+    what: "Removes markdown, links and emoji so the voice does not read symbols aloud. Applies to every step of the call.",
     when: "Turn off only if your text is already speech-ready.",
     defaults: "On.",
   },

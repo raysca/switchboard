@@ -312,4 +312,26 @@ describe("FlowEditor MCP tools", () => {
     await openTools(user);
     expect(await screen.findByRole("checkbox", { name: "Background: echo" })).toBeChecked();
   });
+  it("restores a previous version without the call-wide settings it kept on a later step", async () => {
+    const legacy = {
+      start: "a",
+      steps: [
+        { id: "a", name: "Front", config: { ...flat, tts: { ...flat.tts, clean_text: false }, failover: { on: ["client_error"] } } },
+        { id: "b", name: "Sales", config: { llm: flat.llm, tts: { ...flat.tts, clean_text: false }, failover: { on: ["timeout"] } } },
+      ],
+      routes: [{ id: "e1", from: "a", to: "b", condition: "buy" }],
+    };
+    const getFlowVersion = vi.fn().mockResolvedValue({ id: "v1", number: 1, schema_version: 1, config: legacy, config_hash: "h", created_at: "", mcp_tools: [] });
+    const twice: FlowDTO = { ...flow, current_version: { ...flow.current_version!, number: 2 } };
+    const { user, onSubmit } = setup({ flow: twice, client: { ...client, getFlowVersion } as unknown as ApiClient });
+    await user.click(screen.getByRole("button", { name: "Flow settings" }));
+    await user.click(screen.getByRole("button", { name: "Restore v1…" }));
+    await user.click(screen.getByRole("button", { name: "Restore v1" }));
+    const sent = onSubmit.mock.calls[0][0] as { config: { steps: { id: string; config: { tts: Record<string, unknown>; failover?: unknown } }[] } };
+    const [front, sales] = sent.config.steps;
+    expect(front.config.tts.clean_text).toBe(false);
+    expect(front.config.failover).toEqual({ on: ["client_error"] });
+    expect(sales.config.tts).not.toHaveProperty("clean_text");
+    expect(sales.config).not.toHaveProperty("failover");
+  });
 });

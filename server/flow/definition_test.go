@@ -150,3 +150,22 @@ func TestDecodeRejectsEndCallOnAOneStepFlow(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// twoStepCfg is a routed flow whose second step carries the given extra config members.
+func twoStepCfg(salesExtra string) string {
+	sales := `{"id":"sales","name":"Sales","config":{"llm":{"provider":"openai","model":"m","system_prompt":"s"},"tts":{"provider":"cartesia","voice":"v"` + salesExtra + `}}}`
+	return `{"start":"front","steps":[{"id":"front","name":"Front","config":` + flatCfg + `},` + sales + `],` +
+		`"routes":[{"id":"e1","from":"front","to":"sales","condition":"wants to buy"}]}`
+}
+
+// K1: stored versions that carry a start-step-only setting on another step keep decoding.
+func TestStoredFlowWithCallWideSettingsOnAStepStillDecodes(t *testing.T) {
+	for _, raw := range []string{
+		twoStepCfg(`,"clean_text":false`),
+		strings.Replace(twoStepCfg(""), `"tts":{"provider":"cartesia","voice":"v"}}}`, `"tts":{"provider":"cartesia","voice":"v"},"failover":{"on":["timeout"]}}}`, 1),
+	} {
+		if _, err := Decode(json.RawMessage(raw)); err != nil {
+			t.Fatalf("Decode(%s) = %v", raw, err)
+		}
+	}
+}

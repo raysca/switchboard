@@ -37,7 +37,16 @@ export type FlowDraft = {
 };
 
 // Settings that belong to the call, not to one step: only the start step has them.
-const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio"] as const;
+const CALL_LEVEL = ["stt", "vad_stop_ms", "stt_p99_ms", "recording", "context", "async_tools", "idle", "audio", "failover"] as const;
+
+/** `tts.clean_text` is call-wide too but lives inside `tts`: the config without it. */
+function withoutCleanText(config: StepConfig): StepConfig {
+  const tts = asRecord(config.tts);
+  if (!("clean_text" in tts)) return config;
+  const { clean_text: _drop, ...rest } = tts;
+  void _drop;
+  return { ...config, tts: rest };
+}
 
 export function slug(name: string): string {
   return name
@@ -254,8 +263,11 @@ export function toPayload(g: FlowDraft): unknown {
   return {
     start: g.start,
     steps: g.steps.map((n) => {
-      const config = withoutBlankGreeting(n.config);
-      if (n.id !== g.start) for (const k of CALL_LEVEL) delete config[k];
+      let config = withoutBlankGreeting(n.config);
+      if (n.id !== g.start) {
+        config = { ...withoutCleanText(config) };
+        for (const k of CALL_LEVEL) delete config[k];
+      }
       return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call && g.steps.length > 1 ? { end_call: true } : {}), position: n.position };
     }),
     routes: g.routes,
@@ -329,16 +341,19 @@ export function setStart(g: FlowDraft, id: string): FlowDraft {
   const old = g.steps.find((n) => n.id === g.start);
   const moved: StepConfig = {};
   for (const k of CALL_LEVEL) if (old && k in old.config) moved[k] = old.config[k];
+  const clean = old ? asRecord(old.config.tts).clean_text : undefined;
   return {
     ...g,
     start: id,
     steps: g.steps.map((n) => {
       if (n.id === g.start) {
-        const config = { ...n.config };
+        const config = withoutCleanText({ ...n.config });
         for (const k of CALL_LEVEL) delete config[k];
         return { ...n, config };
       }
-      return n.id === id ? { ...n, config: { ...n.config, ...moved } } : n;
+      if (n.id !== id) return n;
+      const config = withoutCleanText({ ...n.config, ...moved });
+      return { ...n, config: clean === undefined ? config : { ...config, tts: { ...asRecord(config.tts), clean_text: clean } } };
     }),
   };
 }

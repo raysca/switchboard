@@ -562,6 +562,9 @@ func (s *Service) attachedConfig(ctx context.Context, raw json.RawMessage) (json
 	if err != nil {
 		return nil, err
 	}
+	if err := g.deadStepSettings(); err != nil {
+		return nil, err
+	}
 	if p, ok := policyOf(s.av); ok {
 		if pp := g.policyProblems(p); len(pp) > 0 {
 			return nil, invalid("%s", pp[0].message)

@@ -81,6 +81,31 @@ describe("FlowSettingsPanel", () => {
     expect(startCfg(onChange).recording).toEqual({ enabled: true, disclosure_confirmed: true });
   });
 
+  it("sets text cleaning and the fallback rules on the start step, and opens Advanced when they are set", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    await user.click(screen.getByText("Advanced"));
+    const group = screen.getByRole("group", { name: "When to move to a fallback" });
+    expect(group).toHaveTextContent("Only matters when a stage has fallbacks.");
+    expect(within(group).getByRole("checkbox", { name: "Timeouts" })).toBeChecked();
+    expect(within(group).getByRole("checkbox", { name: "Rejected requests (bad request, bad key)" })).not.toBeChecked();
+    await user.click(within(group).getByRole("checkbox", { name: "Rejected requests (bad request, bad key)" }));
+    expect(startCfg(onChange).failover).toEqual({ on: ["timeout", "server_error", "circuit_open", "client_error"] });
+    await user.click(within(group).getByRole("checkbox", { name: "Rejected requests (bad request, bad key)" }));
+    expect(startCfg(onChange)).not.toHaveProperty("failover");
+    const clean = screen.getByLabelText(/Clean text before speaking/);
+    expect(clean).toBeChecked();
+    await user.click(clean);
+    expect(startCfg(onChange).tts).toMatchObject({ clean_text: false });
+    await user.click(clean);
+    expect(startCfg(onChange).tts).not.toHaveProperty("clean_text");
+    // a stored flow that set them opens Advanced on load
+    const stored = fromFlowConfig({ llm: { provider: "g", model: "m" }, tts: { provider: "g", clean_text: false }, failover: { on: ["client_error"] } });
+    render(<Harness initial={stored} />);
+    expect(screen.getAllByText("Advanced · 2 set")).toHaveLength(1);
+  });
+
   it("edits the route sound only when the flow has routes", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

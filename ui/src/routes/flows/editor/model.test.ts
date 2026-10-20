@@ -447,3 +447,34 @@ describe("greeting", () => {
     expect(over("   ")).toBe(false);
   });
 });
+
+describe("call-wide tts.clean_text and failover", () => {
+  const cfg = (extra: Record<string, unknown>, tts: Record<string, unknown> = {}) => ({ llm: { provider: "g", model: "m" }, tts: { provider: "g", ...tts }, ...extra });
+  const g = () =>
+    fromFlowConfig({
+      start: "a",
+      steps: [
+        { id: "a", name: "A", config: cfg({ failover: { on: ["client_error"] } }, { clean_text: false }) },
+        { id: "b", name: "B", config: cfg({ failover: { on: ["timeout"] } }, { clean_text: false }) },
+      ],
+      routes: [{ id: "e", from: "a", to: "b", condition: "x" }],
+    });
+  type Out = { steps: { id: string; config: { tts: Record<string, unknown>; failover?: unknown } }[] };
+
+  it("toPayload keeps them on the start step and drops them from the others", () => {
+    const [a, b] = (toPayload(g()) as Out).steps;
+    expect(a.config.tts.clean_text).toBe(false);
+    expect(a.config.failover).toEqual({ on: ["client_error"] });
+    expect(b.config.tts).not.toHaveProperty("clean_text");
+    expect(b.config).not.toHaveProperty("failover");
+    expect(b.config.tts.provider).toBe("g");
+  });
+
+  it("setStart moves them to the new start step", () => {
+    const [a, b] = (toPayload(setStart(g(), "b")) as Out).steps;
+    expect(a.config.tts).not.toHaveProperty("clean_text");
+    expect(a.config).not.toHaveProperty("failover");
+    expect(b.config.tts.clean_text).toBe(false);
+    expect(b.config.failover).toEqual({ on: ["client_error"] });
+  });
+});
