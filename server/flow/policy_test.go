@@ -18,6 +18,7 @@ type fakePolicy struct {
 	cues     []string
 	manager  bool
 	maxMute  time.Duration
+	smart    bool
 }
 
 func (p *fakePolicy) Backgrounds() []string         { return p.sounds }
@@ -26,6 +27,7 @@ func (p *fakePolicy) MinUserTimeout() time.Duration { return p.minTimer }
 func (p *fakePolicy) Cues() []string                { return p.cues }
 func (p *fakePolicy) TurnManager() bool             { return p.manager }
 func (p *fakePolicy) MaxMute() time.Duration        { return p.maxMute }
+func (p *fakePolicy) SmartTurn() bool               { return p.smart }
 
 func withExtra(extra string) json.RawMessage {
 	return json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"},` + extra + `}`)
@@ -208,5 +210,37 @@ func TestPublishRefusesTurnSettingsTheServerCannotHonour(t *testing.T) {
 	got, err := svc.Get(context.Background(), f.ID)
 	if err != nil || got.Readiness.State != ReadinessReady {
 		t.Fatalf("turn problems are publish-only: %+v %v", got.Readiness, err)
+	}
+}
+
+func TestSmartEndOfTurnNeedsTheModel(t *testing.T) {
+	const want = "Smart end-of-turn needs the Smart Turn model on this server (turn.analyzer.for_flows)"
+	smart := withExtra(`"turn":{"end_of_turn":"smart","smart_hold_ms":1500}`)
+	svc := testServiceWith(t, &fakePolicy{manager: true, maxMute: 30 * time.Second})
+	if _, err := svc.Create(context.Background(), CreateRequest{Name: "no model", Config: smart}); !errors.Is(err, ErrInvalidConfig) || !strings.Contains(err.Error(), want) {
+		t.Fatalf("want a refusal naming for_flows, got %v", err)
+	}
+	for _, extra := range []string{`"turn":{"end_of_turn":"eager"}`, `"turn":{"end_of_turn":"default","speech_timeout_ms":900}`} {
+		if _, err := svc.Create(context.Background(), CreateRequest{Name: extra, Config: withExtra(extra)}); err != nil {
+			t.Fatalf("%s needs no model: %v", extra, err)
+		}
+	}
+	p := &fakePolicy{manager: true, maxMute: 30 * time.Second, smart: true}
+	svc = testServiceWith(t, p)
+	f, err := svc.Create(context.Background(), CreateRequest{Name: "model", Config: smart})
+	if err != nil || f.Readiness.State != ReadinessReady {
+		t.Fatalf("with the model: %+v %v", f.Readiness, err)
+	}
+	// A stored smart flow on a server that lost the model is not ready: its calls could not be built.
+	p.smart = false
+	got, err := svc.Get(context.Background(), f.ID)
+	if err != nil || got.Readiness.State != ReadinessNotReady || !contains(got.Readiness.Reasons, reasonSmartTurnUnavailable) {
+		t.Fatalf("want not_ready/%s, got %+v %v", reasonSmartTurnUnavailable, got.Readiness, err)
+	}
+	// turn.manager off is a publish-only refusal: readiness stays green (push-to-talk calls still work).
+	p.smart, p.manager = true, false
+	got, err = svc.Get(context.Background(), f.ID)
+	if err != nil || got.Readiness.State != ReadinessReady {
+		t.Fatalf("manager off must not change readiness: %+v %v", got.Readiness, err)
 	}
 }

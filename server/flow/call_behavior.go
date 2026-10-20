@@ -24,8 +24,8 @@ type IdleSettings struct {
 	Goodbye string `json:"goodbye,omitempty"`
 }
 
-// TurnSettings is a flow's interruption rules (call-level: the start step). Each member overrides the
-// server's turn setting only when present; absent means the server's.
+// TurnSettings is a flow's interruption rules and end-of-turn choice (call-level: the start step). Each
+// member overrides the server's turn setting only when present; absent means the server's.
 type TurnSettings struct {
 	// MinWords is how many words of caller speech cut the agent off: 0 (off, any speech does) or 1..10.
 	MinWords *int `json:"min_words,omitempty"`
@@ -33,6 +33,13 @@ type TurnSettings struct {
 	Mute *[]string `json:"mute,omitempty"`
 	// MaxMuteMS caps one mute, 1000..60000 and (at publish) at most the server's own cap.
 	MaxMuteMS *int `json:"max_mute_ms,omitempty"`
+	// SpeechTimeoutMS is how long the caller may pause before the turn ends: 200..3000.
+	SpeechTimeoutMS *int `json:"speech_timeout_ms,omitempty"`
+	// EndOfTurn picks the detector: default (wait for silence), smart (a model judges) or eager (end on a
+	// full sentence). Every choice keeps the speech timeout as its fallback.
+	EndOfTurn string `json:"end_of_turn,omitempty"`
+	// SmartHoldMS is how long a turn the model judges unfinished is held: 500..5000, only with smart.
+	SmartHoldMS *int `json:"smart_hold_ms,omitempty"`
 }
 
 // AudioSettings is a flow's call audio (call-level). Each member overrides the server's setting
@@ -59,6 +66,13 @@ type BackgroundSettings struct {
 	Loop   *bool    `json:"loop,omitempty"`    // default true
 }
 
+// The end-of-turn choices a flow may name (turn.end_of_turn).
+const (
+	EndOfTurnDefault = "default"
+	EndOfTurnSmart   = "smart"
+	EndOfTurnEager   = "eager"
+)
+
 const (
 	maxIdleTextBytes = 200
 	minIdleTimeoutMS = 1000
@@ -68,6 +82,11 @@ const (
 	maxTurnMinWords = 10
 	minMaxMuteMS    = 1000
 	maxMaxMuteMS    = 60000
+
+	minSpeechTimeoutMS = 200
+	maxSpeechTimeoutMS = 3000
+	minSmartHoldMS     = 500
+	maxSmartHoldMS     = 5000
 )
 
 var muteStrategies = []string{coreturn.MuteAlways, coreturn.MuteFirstSpeech, coreturn.MuteUntilFirstBot, coreturn.MuteFunctionCall}
@@ -125,7 +144,7 @@ func (a *AudioSettings) validate() error {
 // validate checks the turn settings; greeting is the start step's, which until_first_bot_complete needs
 // (without one the cap is the only release).
 func (s *TurnSettings) validate(greeting string) error {
-	if s.MinWords == nil && s.Mute == nil && s.MaxMuteMS == nil {
+	if *s == (TurnSettings{}) {
 		return fmt.Errorf("%w: turn must set at least one member", ErrInvalidConfig)
 	}
 	if w := s.MinWords; w != nil && (*w < 0 || *w > maxTurnMinWords) {
@@ -145,6 +164,20 @@ func (s *TurnSettings) validate(greeting string) error {
 	}
 	if m := s.MaxMuteMS; m != nil && (*m < minMaxMuteMS || *m > maxMaxMuteMS) {
 		return fmt.Errorf("%w: turn.max_mute_ms must be between %d and %d", ErrInvalidConfig, minMaxMuteMS, maxMaxMuteMS)
+	}
+	if t := s.SpeechTimeoutMS; t != nil && (*t < minSpeechTimeoutMS || *t > maxSpeechTimeoutMS) {
+		return fmt.Errorf("%w: turn.speech_timeout_ms must be between %d and %d", ErrInvalidConfig, minSpeechTimeoutMS, maxSpeechTimeoutMS)
+	}
+	if !slices.Contains([]string{"", EndOfTurnDefault, EndOfTurnSmart, EndOfTurnEager}, s.EndOfTurn) {
+		return fmt.Errorf("%w: turn.end_of_turn must be %s, %s or %s", ErrInvalidConfig, EndOfTurnDefault, EndOfTurnSmart, EndOfTurnEager)
+	}
+	if h := s.SmartHoldMS; h != nil {
+		switch {
+		case s.EndOfTurn != EndOfTurnSmart:
+			return fmt.Errorf("%w: turn.smart_hold_ms only applies with turn.end_of_turn %q", ErrInvalidConfig, EndOfTurnSmart)
+		case *h < minSmartHoldMS || *h > maxSmartHoldMS:
+			return fmt.Errorf("%w: turn.smart_hold_ms must be between %d and %d", ErrInvalidConfig, minSmartHoldMS, maxSmartHoldMS)
+		}
 	}
 	return nil
 }

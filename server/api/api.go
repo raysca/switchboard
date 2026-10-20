@@ -103,6 +103,11 @@ type ServerTurn struct {
 	Mute            []string `json:"mute"`
 	MaxMuteMS       int      `json:"max_mute_ms"`
 	SpeechTimeoutMS int      `json:"speech_timeout_ms"`
+	// EndOfTurn is the server's detector: smart, eager or default. SmartTurnAvailable is whether a flow
+	// may choose smart; SmartHoldMS is the hold a smart call uses.
+	EndOfTurn          string `json:"end_of_turn"`
+	SmartTurnAvailable bool   `json:"smart_turn_available"`
+	SmartHoldMS        int    `json:"smart_hold_ms"`
 }
 
 type ServerAudio struct {

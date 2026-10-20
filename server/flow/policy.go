@@ -18,12 +18,17 @@ type Policy interface {
 	MinUserTimeout() time.Duration // 0: no floor
 	TurnManager() bool             // flows' turn settings need the turn manager
 	MaxMute() time.Duration        // the server's effective turn.max_mute: a flow can only shorten it
+	SmartTurn() bool               // the Smart Turn model is loaded: a flow may ask for end_of_turn "smart"
 }
 
 // reasonIdleTooShort is the one policy problem that also takes a stored flow offline: a call could not even
 // be built with that wait. A sound the server no longer offers (or no longer lets flows choose) does not:
 // the call plays the server's default instead, so publish refuses it but readiness stays green.
 const reasonIdleTooShort = "idle_timeout_too_short"
+
+// reasonSmartTurnUnavailable also takes a stored flow offline: a call asking for the Smart Turn model
+// could not be built without it.
+const reasonSmartTurnUnavailable = "smart_turn_unavailable"
 
 // policyProblem is one thing a flow asks for that the server does not allow. reason is the readiness
 // code, empty when the problem only blocks a publish.
@@ -63,6 +68,9 @@ func (g Definition) policyProblems(p Policy) []policyProblem {
 		}
 		if m := t.MaxMuteMS; m != nil && time.Duration(*m)*time.Millisecond > p.MaxMute() {
 			out = append(out, policyProblem{message: fmt.Sprintf("turn.max_mute_ms %d is above this server's limit of %d (turn.max_mute): a flow can only shorten it", *m, p.MaxMute().Milliseconds())})
+		}
+		if t.EndOfTurn == EndOfTurnSmart && !p.SmartTurn() {
+			out = append(out, policyProblem{reason: reasonSmartTurnUnavailable, message: "Smart end-of-turn needs the Smart Turn model on this server (turn.analyzer.for_flows)"})
 		}
 	}
 	if i := c.Idle; i != nil && i.UserTimeoutMS != nil && *i.UserTimeoutMS > 0 {

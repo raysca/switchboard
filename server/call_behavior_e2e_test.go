@@ -270,3 +270,19 @@ func TestCallBehaviorIdleLinesAreInTheCallsTurns(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }
+
+// A flow can ask for the Smart Turn model only on a server that loaded it: the echo rig has none, so publish
+// says why (and names the key that loads it).
+func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	body := func(turn string) string {
+		return `{"name":"smart","config":{"stt":{"provider":"echo","model":"m"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"turn":` + turn + `}}`
+	}
+	w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body(`{"end_of_turn":"smart"}`))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "turn.analyzer.for_flows") {
+		t.Fatalf("smart without the model: %d %s", w.Code, w.Body.String())
+	}
+	if w := apiRequest(r.s, http.MethodPost, "/api/v1/flows", e2eMgmtKey, body(`{"end_of_turn":"eager","speech_timeout_ms":900}`)); w.Code != http.StatusCreated {
+		t.Fatalf("eager needs no model: %d %s", w.Code, w.Body.String())
+	}
+}

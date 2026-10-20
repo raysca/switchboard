@@ -25,6 +25,7 @@ type serverPolicy struct {
 	minTimer time.Duration
 	manager  bool
 	maxMute  time.Duration
+	smart    bool
 }
 
 func (p serverPolicy) Backgrounds() []string         { return p.sounds }
@@ -33,12 +34,13 @@ func (p serverPolicy) AllowFlowBackground() bool     { return p.allow }
 func (p serverPolicy) MinUserTimeout() time.Duration { return p.minTimer }
 func (p serverPolicy) TurnManager() bool             { return p.manager }
 func (p serverPolicy) MaxMute() time.Duration        { return p.maxMute }
+func (p serverPolicy) SmartTurn() bool               { return p.smart }
 
 // policyFrom reads the rules a flow's call settings must respect: the sound catalogue, the operator's
 // ceiling on flow backgrounds, and the DTMF window a quiet-caller wait has to exceed (idle.validate's rule).
 func policyFrom(cfg *Config) serverPolicy {
 	p := serverPolicy{sounds: slices.Sorted(maps.Keys(cfg.Audio.Backgrounds)), cues: slices.Sorted(maps.Keys(cfg.Audio.Cues)), allow: cfg.Audio.AllowFlowBackground,
-		manager: cfg.Turn.Manager, maxMute: cfg.Turn.effectiveMaxMute()}
+		manager: cfg.Turn.Manager, maxMute: cfg.Turn.effectiveMaxMute(), smart: slices.Contains(cfg.Turn.Stop, "turn-analyzer")}
 	if cfg.DTMF.Aggregate {
 		p.minTimer = max(cfg.DTMF.AggregateTimeout, 2*time.Second)
 	}
@@ -51,6 +53,7 @@ func (a providerAvailability) AllowFlowBackground() bool     { return a.policy.A
 func (a providerAvailability) MinUserTimeout() time.Duration { return a.policy.MinUserTimeout() }
 func (a providerAvailability) TurnManager() bool             { return a.policy.TurnManager() }
 func (a providerAvailability) MaxMute() time.Duration        { return a.policy.MaxMute() }
+func (a providerAvailability) SmartTurn() bool               { return a.policy.SmartTurn() }
 
 func (a providerAvailability) Check(provider, service string) flow.Unavailable {
 	p, ok := a.cat.Provider(provider)

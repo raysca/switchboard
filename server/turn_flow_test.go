@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"govoice/core"
 	"govoice/core/coretest"
+	coreturn "govoice/core/turn"
 	"govoice/server/flow"
+	"govoice/smartturn"
 	"govoice/vad"
 )
 
@@ -20,6 +23,9 @@ func ptr[T any](v T) *T { return &v }
 func TestTurnForCall(t *testing.T) {
 	server := func() TurnConfig {
 		return TurnConfig{Manager: true, MinWords: 4, Mute: []string{"first_speech"}, MaxMute: 20 * time.Second}
+	}
+	withCompletion := func() TurnConfig {
+		return TurnConfig{Manager: true, Stop: []string{"llm-completion", "speech-timeout"}}
 	}
 	cases := []struct {
 		name string
@@ -43,19 +49,58 @@ func TestTurnForCall(t *testing.T) {
 				c.MinWords, c.Mute, c.MaxMute = 1, []string{"function_call"}, time.Second
 				return c
 			}},
+		{"speech timeout", server, &flow.TurnSettings{SpeechTimeoutMS: ptr(900)}, func(c TurnConfig) TurnConfig { c.SpeechTimeout = 900 * time.Millisecond; return c }},
+		{"default on a server with no chain stays empty", server, &flow.TurnSettings{EndOfTurn: "default"}, func(c TurnConfig) TurnConfig { return c }},
+		{"smart", server, &flow.TurnSettings{EndOfTurn: "smart"}, func(c TurnConfig) TurnConfig { c.Stop = []string{"turn-analyzer", "speech-timeout"}; return c }},
+		{"eager", server, &flow.TurnSettings{EndOfTurn: "eager"}, func(c TurnConfig) TurnConfig { c.Stop = []string{"eager", "speech-timeout"}; return c }},
+		{"smart hold", server, &flow.TurnSettings{EndOfTurn: "smart", SmartHoldMS: ptr(2000)}, func(c TurnConfig) TurnConfig {
+			c.Stop, c.Analyzer.Hold = []string{"turn-analyzer", "speech-timeout"}, 2*time.Second
+			return c
+		}},
+		{"eager keeps the server's llm-completion", withCompletion, &flow.TurnSettings{EndOfTurn: "eager"}, func(c TurnConfig) TurnConfig {
+			c.Stop = []string{"eager", "speech-timeout", "llm-completion"}
+			return c
+		}},
+		{"smart keeps the server's llm-completion", withCompletion, &flow.TurnSettings{EndOfTurn: "smart"}, func(c TurnConfig) TurnConfig {
+			c.Stop = []string{"turn-analyzer", "speech-timeout", "llm-completion"}
+			return c
+		}},
+		{"default keeps llm-completion and the speech-timeout it needs", withCompletion, &flow.TurnSettings{EndOfTurn: "default"}, func(c TurnConfig) TurnConfig {
+			c.Stop = []string{"speech-timeout", "llm-completion"}
+			return c
+		}},
+		{"timeout alone keeps the server's chain", withCompletion, &flow.TurnSettings{SpeechTimeoutMS: ptr(900)}, func(c TurnConfig) TurnConfig { c.SpeechTimeout = 900 * time.Millisecond; return c }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			srv := c.srv()
 			got := srv.forCall(c.flow)
 			want := c.want(c.srv())
-			if got.MinWords != want.MinWords || got.MaxMute != want.MaxMute || got.Manager != want.Manager || !slices.Equal(got.Mute, want.Mute) {
+			if got.MinWords != want.MinWords || got.MaxMute != want.MaxMute || got.Manager != want.Manager || !slices.Equal(got.Mute, want.Mute) ||
+				got.SpeechTimeout != want.SpeechTimeout || !slices.Equal(got.Stop, want.Stop) || got.Analyzer.Hold != want.Analyzer.Hold {
 				t.Fatalf("got %+v, want %+v", got, want)
 			}
-			if !slices.Equal(srv.Mute, c.srv().Mute) || srv.MinWords != c.srv().MinWords || srv.MaxMute != c.srv().MaxMute {
+			if !slices.Equal(srv.Mute, c.srv().Mute) || srv.MinWords != c.srv().MinWords || srv.MaxMute != c.srv().MaxMute || !slices.Equal(srv.Stop, c.srv().Stop) {
 				t.Fatalf("the server's config changed: %+v", srv)
 			}
 		})
+	}
+}
+
+// Every chain forCall produces must build, with or without the server's llm-completion entry: a chain of
+// only [llm-completion] is the trap (turn.stop must include speech-timeout).
+func TestTurnForCallChainsAreAcceptedByTheStopDetector(t *testing.T) {
+	model := func(time.Duration) coreturn.UserTurnStopStrategy { return nil }
+	for _, srvStop := range [][]string{nil, {"speech-timeout"}, {"llm-completion", "speech-timeout"}, {"eager", "speech-timeout", "llm-completion"}} {
+		for _, eot := range []string{"", "default", "smart", "eager"} {
+			got := TurnConfig{Manager: true, Stop: srvStop}.forCall(&flow.TurnSettings{EndOfTurn: eot})
+			if _, err := turnStopDetector(got.Stop, coreturn.SpeechTimeoutConfig{}, 0, model); err != nil {
+				t.Errorf("server %v + %q -> %v: %v", srvStop, eot, got.Stop, err)
+			}
+		}
+	}
+	if _, err := turnStopDetector([]string{"llm-completion"}, coreturn.SpeechTimeoutConfig{}, 0, nil); err == nil || !strings.Contains(err.Error(), "must include speech-timeout") {
+		t.Fatalf("the trap this guards against is gone: %v", err)
 	}
 }
 
@@ -105,6 +150,9 @@ func TestServerConfigSendsTheEffectiveTurnSettings(t *testing.T) {
 		Mute            []string `json:"mute"`
 		MaxMuteMS       int      `json:"max_mute_ms"`
 		SpeechTimeoutMS int      `json:"speech_timeout_ms"`
+		EndOfTurn       string   `json:"end_of_turn"`
+		SmartAvailable  bool     `json:"smart_turn_available"`
+		SmartHoldMS     int      `json:"smart_hold_ms"`
 	}) {
 		t.Helper()
 		w := apiRequest(s, http.MethodGet, "/api/v1/server-config", "management-test-key-32-bytes-long-and-separate", "")
@@ -122,20 +170,22 @@ func TestServerConfigSendsTheEffectiveTurnSettings(t *testing.T) {
 		return out
 	}
 	got := get(apiTestServer(t))
-	if !got.Manager || got.SpeechTimeoutMS != 600 || got.MaxMuteMS != 30000 || got.MinWords != 0 || got.Mute == nil || len(got.Mute) != 0 {
+	if !got.Manager || got.SpeechTimeoutMS != 600 || got.MaxMuteMS != 30000 || got.MinWords != 0 || got.Mute == nil || len(got.Mute) != 0 ||
+		got.EndOfTurn != "default" || got.SmartAvailable || got.SmartHoldMS != 3000 {
 		t.Fatalf("defaults must be the effective values, never a raw 0: %+v", got)
 	}
 	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", "management-test-key-32-bytes-long-and-separate")
 	cfg := DefaultConfig(ProfileDevelopment)
 	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
 	cfg.Turn.MinWords, cfg.Turn.Mute, cfg.Turn.MaxMute, cfg.Turn.SpeechTimeout = 3, []string{"always"}, 12*time.Second, 900*time.Millisecond
+	cfg.Turn.Stop, cfg.Turn.Analyzer.Hold = []string{"eager", "speech-timeout"}, 2*time.Second
 	s, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.env = testProviderEnv(t)
 	got = get(s)
-	if got.MinWords != 3 || !slices.Equal(got.Mute, []string{"always"}) || got.MaxMuteMS != 12000 || got.SpeechTimeoutMS != 900 {
+	if got.MinWords != 3 || !slices.Equal(got.Mute, []string{"always"}) || got.MaxMuteMS != 12000 || got.SpeechTimeoutMS != 900 || got.EndOfTurn != "eager" || got.SmartHoldMS != 2000 {
 		t.Fatalf("configured values: %+v", got)
 	}
 }
@@ -146,10 +196,13 @@ func (*markedExecutor) Execute(context.Context, core.ToolCall) (core.ToolResult,
 	return core.ToolResult{}, nil
 }
 
-func turnTestBuild(t *testing.T, cfg *Config, call CallSpec) (*core.Pipeline, StageSpec, error) {
+func turnTestBuild(t *testing.T, cfg *Config, call CallSpec, model ...smartturn.Backend) (*core.Pipeline, StageSpec, error) {
 	t.Helper()
 	var llm StageSpec
 	reg := NewRegistry()
+	for _, b := range model {
+		reg.SetTurnBackend(b)
+	}
 	for _, k := range []string{"google.stt", "google.tts"} {
 		reg.Register(k, func(*Config, StageSpec) (core.Processor, error) { return &coretest.PassthroughProcessor{}, nil })
 	}
@@ -184,6 +237,18 @@ func TestBuildCallPipelineUsesTheFlowsTurnSettings(t *testing.T) {
 	// Push-to-talk keeps the flow's mute; a server with the manager off ignores the rest.
 	if _, _, err := turnTestBuild(t, cfg, CallSpec{PushToTalk: true, Turn: &flow.TurnSettings{MinWords: ptr(3), Mute: &[]string{"nope"}}}); err == nil {
 		t.Fatal("push-to-talk dropped the flow's mute list")
+	}
+	// The flow's chain is the one built: smart needs the model, and fails the build without it (readiness
+	// keeps such a flow off the line); eager and a timeout need nothing.
+	smart := CallSpec{Turn: &flow.TurnSettings{EndOfTurn: "smart", SmartHoldMS: ptr(1500)}}
+	if _, _, err := turnTestBuild(t, cfg, smart); err == nil || !strings.Contains(err.Error(), "smart-turn model is not loaded") {
+		t.Fatalf("smart without the model: %v", err)
+	}
+	if _, _, err := turnTestBuild(t, cfg, smart, smartBackend{p: 0.9}); err != nil {
+		t.Fatalf("smart with the model: %v", err)
+	}
+	if _, _, err := turnTestBuild(t, cfg, CallSpec{Turn: &flow.TurnSettings{EndOfTurn: "eager", SpeechTimeoutMS: ptr(900)}}); err != nil {
+		t.Fatalf("eager: %v", err)
 	}
 	off := DefaultConfig(ProfileDevelopment)
 	off.Idle.UserTimeout, off.Turn.Manager = 0, false
