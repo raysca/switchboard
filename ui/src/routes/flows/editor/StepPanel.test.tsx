@@ -212,6 +212,13 @@ describe("StepPanel", () => {
     expect(lastGraph(onChange).steps[0].end_call).toBe(true);
   });
 
+  it("does not offer a per-step tool list on a one-step flow: it can call every flow tool", () => {
+    const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", config: {} }], routes: [] });
+    render(<Harness initial={one} stepId="a" initialTab="tools" flowTools={["crm/lookup"]} />);
+    expect(screen.queryByText("Tools this step can call")).toBeNull();
+    expect(screen.getByText(/can call every tool of the flow/i)).toBeVisible();
+  });
+
   it("shows end_call checked on a one-step flow that carries the flag", () => {
     const one = fromFlowConfig({ start: "a", steps: [{ id: "a", name: "Reception", end_call: true, config: {} }], routes: [] });
     render(<Harness initial={one} stepId="a" initialTab="tools" />);

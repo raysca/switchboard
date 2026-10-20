@@ -329,6 +329,8 @@ export function StepPanel(props: StepPanelProps) {
             )}
             {flowTools.length === 0 ? (
               <p className="subtext">No tools are chosen for this flow yet.</p>
+            ) : graph.steps.length === 1 ? (
+              <p className="subtext">A one-step flow can call every tool of the flow.</p>
             ) : (
               <fieldset className="stage-box">
                 <legend>Tools this step can call</legend>
