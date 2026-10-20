@@ -281,8 +281,9 @@ export function BackgroundSelect({ id, bg, setBg, serverConfig, step = false }: 
   const known = !bgName || !serverConfig || sounds.includes(bgName); // not "unknown" while the list is still loading
   const serverDefault = step ? "" : (serverConfig?.audio.background_default ?? "");
   // Start step, no key: the server's default (if any). An empty name: none, even when the server has a default.
-  const noneValue = step ? "none" : "";
-  const selected = bg === null ? (serverDefault ? "default" : "") : bgName === "" ? noneValue : bgName;
+  // Sentinel values the sound-name pattern (lowercase letters, digits, - and _) cannot produce.
+  const noneValue = step ? "__none__" : "";
+  const selected = bg === null ? (serverDefault ? "__default__" : "") : bgName === "" ? noneValue : bgName;
   const denied = serverConfig !== undefined && !serverConfig.audio.allow_flow_background && !bgName;
   return (
     <>
@@ -295,12 +296,12 @@ export function BackgroundSelect({ id, bg, setBg, serverConfig, step = false }: 
           aria-describedby={denied ? `${id}-denied` : undefined}
           onChange={(e) => {
             const v = e.target.value;
-            if (v === "default" || (v === "" && (step || !serverDefault))) return setBg(null);
+            if (v === "__default__" || (v === "" && (step || !serverDefault))) return setBg(null);
             setBg(v === noneValue ? { name: "" } : { ...bg, name: v });
           }}
         >
           {step && <option value="">Keep the current sound</option>}
-          {serverDefault && <option value="default">Server default ({serverDefault})</option>}
+          {serverDefault && <option value="__default__">Server default ({serverDefault})</option>}
           <option value={noneValue}>None</option>
           {!known && <option value={bgName}>{bgName} (not on this server)</option>}
           {sounds.map((n) => (

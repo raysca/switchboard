@@ -145,10 +145,24 @@ describe("StepAdvanced", () => {
       expect(screen.getByRole("option", { name: "Keep the current sound" })).toBeInTheDocument();
       await user.selectOptions(select, "office");
       expect(audioOf(onChange)).toEqual({ background: { name: "office" } });
-      await user.selectOptions(select, "none");
+      await user.selectOptions(select, "__none__");
       expect(audioOf(onChange)).toEqual({ background: { name: "" } });
       await user.selectOptions(select, "");
       expect(audioOf(onChange)).toBeUndefined();
+    });
+
+    it("tells a catalogue sound named none or default from the choices of the same name", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      const odd = { audio: { ...server.audio, backgrounds: ["default", "none"] } } as unknown as ServerConfigDTO;
+      render(<Two onChange={onChange} serverConfig={odd} />);
+      const select = screen.getByLabelText("Background sound");
+      await user.selectOptions(select, screen.getByRole("option", { name: "none" }));
+      expect(audioOf(onChange)).toEqual({ background: { name: "none" } });
+      await user.selectOptions(select, screen.getByRole("option", { name: "None" }));
+      expect(audioOf(onChange)).toEqual({ background: { name: "" } });
+      await user.selectOptions(select, screen.getByRole("option", { name: "default" }));
+      expect(audioOf(onChange)).toEqual({ background: { name: "default" } });
     });
 
     it("is not offered on the start step, and is disabled with the reason when flows may not choose", () => {

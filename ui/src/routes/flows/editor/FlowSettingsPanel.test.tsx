@@ -517,11 +517,11 @@ describe("FlowSettingsPanel footer", () => {
       await openAdvanced(user);
       const select = screen.getByLabelText("Background sound");
       expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["Server default (cafe)", "None", "cafe", "office"]);
-      expect(select).toHaveValue("default");
+      expect(select).toHaveValue("__default__");
       await user.selectOptions(select, "");
       expect(startCfg(onChange).audio).toEqual({ background: { name: "" } });
       expect(screen.queryByLabelText("Background volume (dB)")).toBeNull();
-      await user.selectOptions(select, "default");
+      await user.selectOptions(select, "__default__");
       expect(startCfg(onChange)).not.toHaveProperty("audio");
     });
 
@@ -603,6 +603,18 @@ describe("FlowSettingsPanel footer", () => {
       expect(screen.getByRole("option", { name: "gone (not on this server)" })).toBeInTheDocument();
       await user.selectOptions(screen.getByLabelText("Hold sound"), "chime");
       expect(startCfg(onChange).audio).toEqual({ output_gain_db: -3, tool_cue: { name: "chime", after_ms: 200 } });
+    });
+
+    it("tells a server sound named default from the server-default choice", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(<Harness serverConfig={{ ...server, audio: { ...server.audio, backgrounds: ["default", "office"], background_default: "office" } }} onChange={onChange} />);
+      await openAdvanced(user);
+      const select = screen.getByLabelText("Background sound");
+      await user.selectOptions(select, screen.getByRole("option", { name: "default" }));
+      expect(startCfg(onChange).audio).toEqual({ background: { name: "default" } });
+      await user.selectOptions(select, screen.getByRole("option", { name: "Server default (office)" }));
+      expect(startCfg(onChange)).not.toHaveProperty("audio");
     });
 
     it("explains each new field", async () => {
