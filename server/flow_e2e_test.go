@@ -885,6 +885,21 @@ func TestFlowE2EAOneStepFlowCanEndTheCall(t *testing.T) {
 	}
 }
 
+// end_call must hang up even when the server's own quiet-caller handling is off (the idle controller is forced on).
+func TestFlowE2EOneStepEndCallWithIdleOff(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), serverIdle(0, ""))
+	a, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "OneStepIdleOff", Config: oneStepEndCallJSON(true)})
+	if err != nil || a.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("flow: %+v err=%v", a.Readiness, err)
+	}
+	r.flowID = a.ID
+	c := r.dial(a.ID)
+	eventually(t, "session", func() bool { return r.activeSessions() == 1 })
+	c.say("please end the call")
+	eventually(t, "the call ended by the flow", func() bool { return r.has(EventDisconnect, "terminated: "+EndReasonFlow) })
+	eventually(t, "session closed", func() bool { return r.activeSessions() == 0 })
+}
+
 // Only sales has end_call; the caller is on front, which lacks the tool, so the phrase is just echoed.
 func TestFlowE2EStepWithoutEndCallKeepsTheCall(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe())
