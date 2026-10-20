@@ -352,3 +352,29 @@ func TestTurnSettingsIgnoredWarningIsLoggedOncePerFlowVersion(t *testing.T) {
 		t.Fatalf("a new flow version must warn once more: %d", n)
 	}
 }
+
+func TestCallStopWaitsForTheFlowsSpeechTimeout(t *testing.T) {
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Turn.SpeechTimeout = 600 * time.Millisecond // the server's own; the flow's 900 ms must win
+	vadStop := cfg.vadStop(0)
+	ends := func(call CallSpec, silence time.Duration) bool {
+		t.Helper()
+		call.STT = StageSpec{Provider: "google"}
+		stop, _, err := NewRegistry().callStop(cfg, call)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, done := stop.Detect(coreturn.DetectionInput{SilenceFor: silence, Text: "hello there", TextFinal: true})
+		return done
+	}
+	flowCall := CallSpec{Turn: &flow.TurnSettings{SpeechTimeoutMS: ptr(900)}}
+	if ends(flowCall, vadStop+899*time.Millisecond) {
+		t.Fatal("the turn ended before the flow's 900 ms resume window")
+	}
+	if !ends(flowCall, vadStop+900*time.Millisecond) {
+		t.Fatal("the turn did not end at the flow's 900 ms resume window")
+	}
+	if !ends(CallSpec{}, vadStop+600*time.Millisecond) || ends(CallSpec{}, vadStop+599*time.Millisecond) {
+		t.Fatal("a flow without the setting must keep the server's 600 ms")
+	}
+}

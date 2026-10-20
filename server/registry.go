@@ -552,6 +552,26 @@ func (r *Registry) Supports(provider, stage string) bool {
 // and use this only as the fallback.
 const CallUserContextIndex = 4
 
+// callStop is the call's end-of-turn detector: the server's chain with the flow's choices laid over it
+// (speech timeout, detector, smart hold). turnTap is the smart-turn analyzer's audio tap, nil without one.
+func (r *Registry) callStop(cfg *Config, call CallSpec) (stop coreturn.TurnDetector, turnTap core.Processor, err error) {
+	tc := cfg.Turn.forCall(call.Turn)
+	var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
+	if slices.Contains(tc.Stop, "turn-analyzer") && r.turnBackend != nil {
+		a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: tc.Analyzer.Budget, Hold: tc.Analyzer.Hold})
+		turnTap = a.Tap()
+		analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
+			return smartturn.Stop(a, base, tc.Analyzer.Hold)
+		}
+	}
+	st := coreturn.SpeechTimeoutConfig{
+		VADStop: cfg.vadStop(call.VADStopMS), UserSpeechTimeout: tc.SpeechTimeout,
+		STTP99: cfg.sttP99(call.STT.Provider, call.STTP99MS), NoTranscriptTimeout: tc.NoTranscriptTimeout,
+	}
+	stop, err = turnStopDetector(tc.Stop, st, tc.EagerGrace, analyzer)
+	return stop, turnTap, err
+}
+
 // BuildCallPipeline builds VAD -> STT -> transcript -> user context -> LLM ->
 // assistant context -> TTS -> transport for one call of a stored flow.
 func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Processor, transportOutput core.Processor) (*core.Pipeline, error) {
@@ -762,20 +782,8 @@ func (r *Registry) BuildCallPipeline(cfg *Config, call CallSpec, vadProc *vad.Pr
 			if tc.MinWords > 0 {
 				mc.StartStrategies = []coreturn.UserTurnStartStrategy{coreturn.MinWordsStart(tc.MinWords, true)}
 			}
-			var analyzer func(time.Duration) coreturn.UserTurnStopStrategy
-			if slices.Contains(tc.Stop, "turn-analyzer") && r.turnBackend != nil {
-				a := smartturn.NewAnalyzer(r.turnBackend, smartturn.Config{Budget: tc.Analyzer.Budget, Hold: tc.Analyzer.Hold})
-				turnTap = a.Tap()
-				analyzer = func(base time.Duration) coreturn.UserTurnStopStrategy {
-					return smartturn.Stop(a, base, tc.Analyzer.Hold)
-				}
-			}
 			var err error
-			st := coreturn.SpeechTimeoutConfig{
-				VADStop: cfg.vadStop(call.VADStopMS), UserSpeechTimeout: tc.SpeechTimeout,
-				STTP99: cfg.sttP99(call.STT.Provider, call.STTP99MS), NoTranscriptTimeout: tc.NoTranscriptTimeout,
-			}
-			if stop, err = turnStopDetector(tc.Stop, st, tc.EagerGrace, analyzer); err != nil {
+			if stop, turnTap, err = r.callStop(cfg, call); err != nil {
 				return fail(err)
 			}
 		}
