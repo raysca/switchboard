@@ -1,6 +1,7 @@
 package server
 
 import (
+	"slices"
 	"time"
 
 	"govoice/core/redact"
@@ -389,7 +390,16 @@ type TurnConfig struct {
 		ModelPath string        `yaml:"model_path"`
 		Hold      time.Duration `yaml:"stop_secs"` // Pipecat stop_secs
 		Budget    time.Duration `yaml:"budget"`    // per-verdict latency budget, default 150ms
+		// ForFlows loads the model although turn.stop does not list turn-analyzer, so a flow can choose
+		// end_of_turn "smart" without making every call smart. Off by default: no worker, no model memory.
+		ForFlows bool `yaml:"for_flows"`
 	} `yaml:"analyzer"`
+}
+
+// LoadsSmartTurn reports whether the server loads the Smart Turn model at start-up: its own default
+// chain uses it, or flows may choose it (turn.analyzer.for_flows).
+func (c *Config) LoadsSmartTurn() bool {
+	return slices.Contains(c.Turn.Stop, "turn-analyzer") || c.Turn.Analyzer.ForFlows
 }
 
 // sttP99 resolves the primary STT provider's p99: flow override, server map, built-in table.

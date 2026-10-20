@@ -40,7 +40,7 @@ func (p serverPolicy) SmartTurn() bool               { return p.smart }
 // ceiling on flow backgrounds, and the DTMF window a quiet-caller wait has to exceed (idle.validate's rule).
 func policyFrom(cfg *Config) serverPolicy {
 	p := serverPolicy{sounds: slices.Sorted(maps.Keys(cfg.Audio.Backgrounds)), cues: slices.Sorted(maps.Keys(cfg.Audio.Cues)), allow: cfg.Audio.AllowFlowBackground,
-		manager: cfg.Turn.Manager, maxMute: cfg.Turn.effectiveMaxMute(), smart: slices.Contains(cfg.Turn.Stop, "turn-analyzer")}
+		manager: cfg.Turn.Manager, maxMute: cfg.Turn.effectiveMaxMute(), smart: cfg.LoadsSmartTurn()}
 	if cfg.DTMF.Aggregate {
 		p.minTimer = max(cfg.DTMF.AggregateTimeout, 2*time.Second)
 	}

@@ -104,6 +104,44 @@ func TestTurnForCallChainsAreAcceptedByTheStopDetector(t *testing.T) {
 	}
 }
 
+func TestLoadsSmartTurn(t *testing.T) {
+	var c Config
+	if c.LoadsSmartTurn() {
+		t.Fatal("an empty config loads the model")
+	}
+	c.Turn.Stop = []string{"turn-analyzer", "speech-timeout"}
+	if !c.LoadsSmartTurn() {
+		t.Fatal("a smart server default must load the model")
+	}
+	c.Turn.Stop, c.Turn.Analyzer.ForFlows = nil, true
+	if !c.LoadsSmartTurn() {
+		t.Fatal("for_flows must load the model")
+	}
+	if !policyFrom(&c).SmartTurn() {
+		t.Fatal("the policy must say smart is available when the model is loaded")
+	}
+}
+
+func TestForFlowsIsValidatedLikeASmartDefault(t *testing.T) {
+	for name, mut := range map[string]func(*Config){
+		"bad mode":        func(c *Config) { c.Turn.Analyzer.Mode = "thread" },
+		"negative budget": func(c *Config) { c.Turn.Analyzer.Budget = -1 },
+		"manager off":     func(c *Config) { c.Turn.Manager = false },
+	} {
+		cfg := DefaultConfig(ProfileDevelopment)
+		cfg.Turn.Analyzer.ForFlows = true
+		mut(cfg)
+		if err := validateTurn(cfg); err == nil {
+			t.Errorf("%s: for_flows accepted", name)
+		}
+	}
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Turn.Analyzer.ForFlows = true
+	if err := validateTurn(cfg); err != nil {
+		t.Fatalf("a valid for_flows config: %v", err)
+	}
+}
+
 func TestTurnForCallDoesNotAliasOrMutateTheServersConfig(t *testing.T) {
 	srv := TurnConfig{Manager: true, Mute: []string{"always", "function_call"}}
 	for _, f := range []*flow.TurnSettings{nil, {MinWords: ptr(1)}, {Mute: &[]string{"first_speech"}}} {
@@ -187,6 +225,30 @@ func TestServerConfigSendsTheEffectiveTurnSettings(t *testing.T) {
 	got = get(s)
 	if got.MinWords != 3 || !slices.Equal(got.Mute, []string{"always"}) || got.MaxMuteMS != 12000 || got.SpeechTimeoutMS != 900 || got.EndOfTurn != "eager" || got.SmartHoldMS != 2000 {
 		t.Fatalf("configured values: %+v", got)
+	}
+}
+
+func TestServerConfigSaysWhetherSmartTurnIsAvailable(t *testing.T) {
+	t.Setenv("GOVOICE_MANAGEMENT_API_KEY", "management-test-key-32-bytes-long-and-separate")
+	cfg := DefaultConfig(ProfileDevelopment)
+	cfg.Token.Secret = "voice-test-secret-32-bytes-long-and-separate"
+	cfg.Turn.Analyzer.ForFlows = true
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.env = testProviderEnv(t)
+	w := apiRequest(s, http.MethodGet, "/api/v1/server-config", "management-test-key-32-bytes-long-and-separate", "")
+	var env struct {
+		Data struct {
+			Turn struct {
+				EndOfTurn      string `json:"end_of_turn"`
+				SmartAvailable bool   `json:"smart_turn_available"`
+			}
+		} `json:"data"`
+	}
+	if json.Unmarshal(w.Body.Bytes(), &env) != nil || !env.Data.Turn.SmartAvailable || env.Data.Turn.EndOfTurn != "default" {
+		t.Fatalf("for_flows keeps the default chain but offers smart: %s", w.Body.String())
 	}
 }
 

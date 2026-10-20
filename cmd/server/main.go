@@ -9,7 +9,6 @@ import (
 	"syscall"
 
 	"path/filepath"
-	"slices"
 
 	"govoice/examples/envload"
 	"govoice/server"
@@ -86,7 +85,7 @@ func main() {
 		srv.SetVADExecutor(vadExec)
 	}
 
-	if slices.Contains(cfg.Turn.Stop, "turn-analyzer") {
+	if cfg.LoadsSmartTurn() {
 		smartturn.ConfigureModel(cfg.Turn.Analyzer.ModelPath)
 		var be smartturn.Backend
 		var err error

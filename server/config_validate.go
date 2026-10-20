@@ -167,7 +167,7 @@ func validateTurn(cfg *Config) error {
 	if _, err := turnStopDetector(cfg.Turn.Stop, coreturn.SpeechTimeoutConfig{UserSpeechTimeout: cfg.Turn.SpeechTimeout}, cfg.Turn.EagerGrace, func(time.Duration) coreturn.UserTurnStopStrategy { return nil }); err != nil {
 		return err
 	}
-	if a := cfg.Turn.Analyzer; slices.Contains(cfg.Turn.Stop, "turn-analyzer") {
+	if a := cfg.Turn.Analyzer; cfg.LoadsSmartTurn() {
 		if a.Mode != "" && a.Mode != "process" && a.Mode != "inprocess" {
 			return fmt.Errorf("turn.analyzer.mode %q must be process or inprocess", a.Mode)
 		}
@@ -202,6 +202,9 @@ func validateTurn(cfg *Config) error {
 	}
 	if cfg.Turn.MaxMute < 0 {
 		return errors.New("turn.max_mute must be >= 0")
+	}
+	if !cfg.Turn.Manager && cfg.Turn.Analyzer.ForFlows {
+		return errors.New("turn.analyzer.for_flows needs turn.manager: true")
 	}
 	if !cfg.Turn.Manager && (len(cfg.Turn.Mute) > 0 || cfg.Turn.MaxMute > 0) {
 		return errors.New("turn.mute and turn.max_mute need turn.manager: true")

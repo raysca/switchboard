@@ -286,3 +286,17 @@ func TestCallBehaviorPublishRefusesSmartEndOfTurnWithoutTheModel(t *testing.T) {
 		t.Fatalf("eager needs no model: %d %s", w.Code, w.Body.String())
 	}
 }
+
+// With the model loaded (for_flows) a smart flow is ready, and a call on it connects and replies.
+func TestCallBehaviorASmartFlowIsReadyAndRepliesWhenTheModelIsLoaded(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe(), func(c *Config) { c.Turn.Analyzer.ForFlows = true })
+	r.s.SetTurnBackend(smartBackend{p: 0.9})
+	f, err := r.s.flows.Create(t.Context(), flow.CreateRequest{Name: "smart", Config: json.RawMessage(
+		`{"stt":{"provider":"echo","model":"m"},"llm":{"provider":"echo","model":"m"},"tts":{"provider":"echo","voice":"v"},"turn":{"end_of_turn":"smart","smart_hold_ms":1500}}`)})
+	if err != nil || f.Readiness.State != flow.ReadinessReady {
+		t.Fatalf("a smart flow on a server with the model: %+v err %v", f.Readiness, err)
+	}
+	c := r.dial(f.ID)
+	c.say("hello")
+	eventually(t, "a reply", func() bool { return c.replyCount() > 0 })
+}
