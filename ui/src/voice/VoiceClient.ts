@@ -230,31 +230,7 @@ export class VoiceClient {
       currentBotStreamingText: "",
     });
 
-    // Step 1: Request Voice Admission Token
-    let tokenStr = "";
-    try {
-      const tokenResp = await this.apiClient.issueVoiceToken({
-        principal,
-        flow_id: flowId,
-        ...(options.draft ? { draft: options.draft } : {}),
-      });
-      if (attempt !== this.attempt) return;
-      tokenStr = tokenResp.token;
-      this.updateState({
-        sessionId: extractSessionIdFromToken(tokenStr),
-        sessionState: "connecting",
-      });
-    } catch (err: unknown) {
-      if (attempt !== this.attempt) return;
-      const msg = (err as Error)?.message ?? "Failed to acquire voice token";
-      this.updateState({
-        sessionState: "error",
-        error: { category: "token", message: msg, fatal: true },
-      });
-      return;
-    }
-
-    // Step 2: Initialize Microphone
+    // Step 1: Initialize Microphone
     try {
       await this.audioController.startCapture((pcmChunk) => {
         this.sendAudioChunk(pcmChunk);
@@ -273,6 +249,31 @@ export class VoiceClient {
     // disconnect() ran while the mic was opening: it already released the mic,
     // and stopping capture here would stop a newer attempt's mic.
     if (attempt !== this.attempt) return;
+
+    // Step 2: Request Voice Admission Token (after the mic: the token lives one minute, the permission prompt can outlast it)
+    let tokenStr = "";
+    try {
+      const tokenResp = await this.apiClient.issueVoiceToken({
+        principal,
+        flow_id: flowId,
+        ...(options.draft ? { draft: options.draft } : {}),
+      });
+      if (attempt !== this.attempt) return;
+      tokenStr = tokenResp.token;
+      this.updateState({
+        sessionId: extractSessionIdFromToken(tokenStr),
+        sessionState: "connecting",
+      });
+    } catch (err: unknown) {
+      if (attempt !== this.attempt) return;
+      this.audioController.stopCapture();
+      const msg = (err as Error)?.message ?? "Failed to acquire voice token";
+      this.updateState({
+        sessionState: "error",
+        error: { category: "token", message: msg, fatal: true },
+      });
+      return;
+    }
 
     // Step 3: Connect WebSocket
     const wsUrl = this.resolveWsUrl(tokenStr, options.wsBaseUrl);

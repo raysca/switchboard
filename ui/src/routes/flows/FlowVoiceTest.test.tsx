@@ -184,10 +184,12 @@ describe("FlowVoiceTest", () => {
       issueVoiceToken: vi.fn().mockRejectedValue(new Error("Token service unavailable")),
     });
     const flow = createMockFlow();
+    const mockAudio = new BrowserAudioController();
+    vi.spyOn(mockAudio, "startCapture").mockResolvedValue(undefined);
 
     render(
       <MemoryRouter>
-        <FlowVoiceTest flow={flow} client={client} keyValue="mgmt-key-1" />
+        <FlowVoiceTest flow={flow} client={client} keyValue="mgmt-key-1" audioController={mockAudio} />
       </MemoryRouter>,
     );
 
