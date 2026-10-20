@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { ProviderStatus } from "../../../api/client";
+import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
+import { BackgroundSelect } from "./CallBehaviorFields";
 import { StageFields, type StageValue } from "../StageFields";
 import { SettingHelp } from "./SettingHelp";
 import { MAX_FALLBACKS, updateStep, type FlowDraft, type DraftStep } from "./model";
@@ -22,10 +23,10 @@ const VOICE_SETTINGS = [
 ] as const;
 type VoiceKey = (typeof VOICE_SETTINGS)[number]["key"];
 
-type Props = { graph: FlowDraft; step: DraftStep; providers: ProviderStatus[]; onChange: (g: FlowDraft) => void };
+type Props = { graph: FlowDraft; step: DraftStep; providers: ProviderStatus[]; serverConfig?: ServerConfigDTO; onChange: (g: FlowDraft) => void };
 
 /** Optional depth for one step: fallbacks and tuning. Nothing here is needed to take calls. */
-export function StepAdvanced({ graph, step, providers, onChange }: Props) {
+export function StepAdvanced({ graph, step, providers, serverConfig, onChange }: Props) {
   const llm = rec(step.config.llm);
   const tts = rec(step.config.tts);
   const setStage = (cap: "llm" | "tts", stage: Stage) => onChange(updateStep(graph, step.id, { config: { ...step.config, [cap]: stage } }));
@@ -34,8 +35,22 @@ export function StepAdvanced({ graph, step, providers, onChange }: Props) {
   const parallel = Number(llm.max_parallel) || 1;
   const voiceSettings = rec(tts.voice_settings) as Partial<Record<VoiceKey, number>>;
 
+  // The start step's sound is set in Flow settings > Audio; a later step may switch it (K7).
+  const bg = rec(step.config.audio).background;
+  const setBg = (next: Stage | null) => {
+    const { audio: _drop, ...rest } = step.config;
+    void _drop;
+    onChange(updateStep(graph, step.id, { config: next ? { ...rest, audio: { background: next } } : rest }));
+  };
   return (
     <>
+      {step.id !== graph.start && (
+        <fieldset className="stage-box">
+          <legend>Sound</legend>
+          <BackgroundSelect id={`step-${step.id}-bg`} step bg={bg === undefined ? null : rec(bg)} setBg={setBg} serverConfig={serverConfig} />
+          <SettingHelp id="audio.step_background" />
+        </fieldset>
+      )}
       <SettingHelp id="fallbacks" />
       <FallbackList
         kind="llm"

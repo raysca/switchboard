@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type { ProviderStatus } from "../../../api/client";
+import type { ProviderStatus, ServerConfigDTO } from "../../../api/client";
 import { SidePanel } from "../../../components/SidePanel";
 import { StageFields, type StageValue } from "../StageFields";
 import { StepAdvanced } from "./StepAdvanced";
@@ -34,6 +34,8 @@ export type StepPanelProps = {
   graph: FlowDraft;
   stepId: string;
   providers: ProviderStatus[];
+  /** What the server offers (its background sounds); absent while it loads. */
+  serverConfig?: ServerConfigDTO;
   /** MCP tools selected on the flow ("<mcp_server_id>/<remote_name>"); a step may call a subset. */
   flowTools: string[];
   /** Chooses which MCP tools the flow has: shown above the step's own choice in the Tools tab. */
@@ -55,7 +57,7 @@ export type StepPanelProps = {
 
 /** Everything about one step, in tabs; Basics alone makes a step ready. */
 export function StepPanel(props: StepPanelProps) {
-  const { graph, stepId, providers, flowTools, toolPicker, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo, fallbackFocusId } = props;
+  const { graph, stepId, providers, serverConfig, flowTools, toolPicker, tab, onTab, focusRoute, onFocusRoute, focusName, wide, onToggleWide, onChange, onClose, returnFocusTo, fallbackFocusId } = props;
   const [routeTarget, setRouteTarget] = useState("");
   const step = graph.steps.find((n) => n.id === stepId);
   if (!step) return null;
@@ -351,7 +353,7 @@ export function StepPanel(props: StepPanelProps) {
           </>
         )}
 
-        {tab === "advanced" && <StepAdvanced graph={graph} step={step} providers={providers} onChange={onChange} />}
+        {tab === "advanced" && <StepAdvanced graph={graph} step={step} providers={providers} serverConfig={serverConfig} onChange={onChange} />}
       </div>
     </SidePanel>
   );

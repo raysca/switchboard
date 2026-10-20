@@ -126,6 +126,13 @@ const COPY = {
     defaults: "Server default: the sound the server plays on every call, if it has one. Pick None for silence, or one of the sounds your server provides.",
     careful: "It adds continuous audio traffic to every call of this flow.",
   },
+  "audio.step_background": {
+    label: "Background sound for this step",
+    what: "Switches the sound playing under the voice when the call moves to this step.",
+    when: "To change the mood for a step, or to stop the sound after it.",
+    defaults: "Keep the current sound: the step leaves whatever is playing. A route back to the first step brings back the sound the call began with.",
+    careful: "Switching restarts the sound from its beginning; choosing the sound that is already playing changes nothing.",
+  },
   "audio.background_gain": {
     label: "Background volume",
     what: "How loud the background sound is.",

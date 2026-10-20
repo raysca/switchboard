@@ -335,6 +335,21 @@ describe("what the server will accept", () => {
     expect(steps.find((n) => n.id === "b")!.config).not.toHaveProperty("audio");
   });
 
+  it("keeps only audio.background on a step other than the start (K7): toPayload strips the rest, setStart moves the rest", () => {
+    const bg = { name: "office" };
+    const g = one({ audio: { output_gain_db: -3, background: { name: "cafe" } } }, { audio: { background: bg, denoise: {}, output_gain_db: 1, tool_cue: { name: "chime" } } });
+    const steps = (toPayload(g) as { steps: { id: string; config: Record<string, unknown> }[] }).steps;
+    expect(steps.find((n) => n.id === "a")!.config.audio).toEqual({ output_gain_db: -3, background: { name: "cafe" } });
+    expect(steps.find((n) => n.id === "b")!.config.audio).toEqual({ background: bg });
+    const onlyOthers = one({}, { audio: { output_gain_db: 1, tool_cue: { name: "chime" } } });
+    expect((toPayload(onlyOthers) as { steps: { id: string; config: Record<string, unknown> }[] }).steps.find((n) => n.id === "b")!.config).not.toHaveProperty("audio");
+
+    const moved = setStart(one({ audio: { output_gain_db: -3, tool_cue: { name: "chime" }, background: { name: "cafe" } } }, { audio: { background: bg } }), "b");
+    expect(moved.steps.find((n) => n.id === "b")!.config.audio).toEqual({ background: bg, output_gain_db: -3, tool_cue: { name: "chime" } });
+    expect(moved.steps.find((n) => n.id === "a")!.config.audio).toEqual({ background: { name: "cafe" } });
+    expect(setStart(one({ audio: { output_gain_db: -3 } }), "b").steps.find((n) => n.id === "a")!.config).not.toHaveProperty("audio");
+  });
+
   it("keeps turn on the start step only: toPayload drops it elsewhere and setStart moves it", () => {
     const g = one({ turn: { min_words: 3 } }, { turn: { min_words: 1 } });
     const steps = (toPayload(g) as { steps: { id: string; config: Record<string, unknown> }[] }).steps;

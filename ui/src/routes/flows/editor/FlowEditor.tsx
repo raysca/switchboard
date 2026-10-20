@@ -295,6 +295,7 @@ export function FlowEditor({ flow, providers, client, keyValue, pending, onSubmi
             graph={graph}
             stepId={panel.id}
             providers={providers}
+            serverConfig={serverConfig}
             flowTools={flowTools}
             toolPicker={<ToolPicker client={client} selected={tools} onChange={changeTools} asyncKeys={asyncKeys} onAsyncChange={changeAsync} />}
             tab={tab}

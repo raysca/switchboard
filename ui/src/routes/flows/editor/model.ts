@@ -49,6 +49,14 @@ function withoutCleanText(config: StepConfig): StepConfig {
   return { ...config, tts: rest };
 }
 
+/** A step other than the start may set only `audio.background` (K7): the config with every other call-level member gone. */
+function withOnlyBackground(config: StepConfig): StepConfig {
+  const { audio, ...rest } = config;
+  const background = asRecord(audio).background;
+  for (const k of CALL_LEVEL) delete rest[k];
+  return background === undefined ? rest : { ...rest, audio: { background } };
+}
+
 export function slug(name: string): string {
   return name
     .toLowerCase()
@@ -276,8 +284,7 @@ export function toPayload(g: FlowDraft): unknown {
     steps: g.steps.map((n) => {
       let config = withoutBlankGreeting(n.config);
       if (n.id !== g.start) {
-        config = { ...withoutCleanText(config) };
-        for (const k of CALL_LEVEL) delete config[k];
+        config = withOnlyBackground(withoutCleanText(config));
       }
       return { id: n.id, name: n.name, config, ...(n.tools.length ? { tools: n.tools } : {}), ...(n.end_call && g.steps.length > 1 ? { end_call: true } : {}), position: n.position };
     }),
@@ -352,18 +359,25 @@ export function setStart(g: FlowDraft, id: string): FlowDraft {
   const old = g.steps.find((n) => n.id === g.start);
   const moved: StepConfig = {};
   for (const k of CALL_LEVEL) if (old && k in old.config) moved[k] = old.config[k];
+  // Each step keeps its own background: the audio that moves is the rest of the call's audio.
+  const { background: _own, ...movedAudio } = asRecord(moved.audio);
+  void _own;
+  if (Object.keys(movedAudio).length) moved.audio = movedAudio;
+  else delete moved.audio;
   const clean = old ? asRecord(old.config.tts).clean_text : undefined;
   return {
     ...g,
     start: id,
     steps: g.steps.map((n) => {
       if (n.id === g.start) {
-        const config = withoutCleanText({ ...n.config });
-        for (const k of CALL_LEVEL) delete config[k];
-        return { ...n, config };
+        return { ...n, config: withOnlyBackground(withoutCleanText({ ...n.config })) };
       }
       if (n.id !== id) return n;
+      const ownBackground = asRecord(n.config.audio).background;
+      const audio = { ...(ownBackground === undefined ? {} : { background: ownBackground }), ...asRecord(moved.audio) };
       const config = withoutCleanText({ ...n.config, ...moved });
+      if (Object.keys(audio).length) config.audio = audio;
+      else delete config.audio;
       return { ...n, config: clean === undefined ? config : { ...config, tts: { ...asRecord(config.tts), clean_text: clean } } };
     }),
   };

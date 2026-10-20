@@ -1,5 +1,5 @@
 import { test, expect, LIVE } from "../lib/flows-stack";
-import { api, connectAdmin, openFlow, openFlowSettings, stage } from "../lib/flows-helpers";
+import { api, connectAdmin, openFlow, openFlowSettings, stage, stepCard } from "../lib/flows-helpers";
 
 // Per-flow conversation settings (Phase 7b). Each test creates its own flow, so it runs alone with --grep.
 test.skip(LIVE, "echo-provider spec");
@@ -113,4 +113,45 @@ test("end-of-turn settings are published, read back and shown after a reload", a
   await expect(page.locator("details.advanced")).toHaveAttribute("open", "");
   await expect(page.getByRole("combobox", { name: "End-of-turn detection" })).toHaveValue("eager");
   await expect(page.getByRole("spinbutton", { name: "Wait for the caller to resume (ms)" })).toHaveValue("900");
+});
+
+test("a step's background sound is published, read back and shown after a reload", async ({ page, stack }) => {
+  const name = "E2E Step Background";
+  const cfg = (extra: object = {}) => ({ llm: stage({ model: "m", system_prompt: "You help." }), tts: stage({ voice: "v" }), ...extra });
+  await api(stack, "/flows", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      config: {
+        start: "front",
+        steps: [
+          { id: "front", name: "Front", config: { stt: stage({ model: "chirp" }), ...cfg() } },
+          { id: "sales", name: "Sales", config: cfg() },
+        ],
+        routes: [{ id: "e1", from: "front", to: "sales", condition: "wants to buy" }],
+      },
+    }),
+  });
+  type Listed = { name: string; current_version: { config: { steps: { id: string; config: { audio?: object } }[] } } };
+  const salesAudio = async () => {
+    const flows = (await api<{ data: Listed[] }>(stack, "/flows")).data;
+    return flows.find((f) => f.name === name)!.current_version.config.steps.find((s) => s.id === "sales")!.config.audio;
+  };
+  await connectAdmin(page, stack);
+  await openFlow(page, name);
+  await stepCard(page, "Sales").click();
+  await page.getByRole("tab", { name: /Advanced/ }).click();
+  await expect(page.getByRole("combobox", { name: "Background sound" })).toHaveValue("");
+  await page.getByRole("combobox", { name: "Background sound" }).selectOption("office");
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("button", { name: "Publish v2" }).click();
+
+  await expect.poll(salesAudio).toEqual({ background: { name: "office" } });
+
+  await page.reload();
+  await connectAdmin(page, stack);
+  await openFlow(page, name);
+  await stepCard(page, "Sales").click();
+  await page.getByRole("tab", { name: /Advanced/ }).click();
+  await expect(page.getByRole("combobox", { name: "Background sound" })).toHaveValue("office");
 });
