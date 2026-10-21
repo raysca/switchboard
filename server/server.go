@@ -73,7 +73,7 @@ type Server struct {
 	probes                probeGate
 	vadExecutor           vad.SharedExecutor
 	turnBackend           smartturn.Backend
-	mgmt                  *management
+	mgmt                  atomic.Pointer[management]
 	flows                 *flow.Service
 	mcpService            *mcp.Service
 	logger                *slog.Logger

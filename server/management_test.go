@@ -33,7 +33,7 @@ func TestEnableManagementWiresAPIsAndRetention(t *testing.T) {
 			t.Fatalf("%s status=%d body=%s", path, w.Code, w.Body)
 		}
 	}
-	if s.mgmt == nil || s.mgmt.retention == nil {
+	if s.mgmt.Load() == nil || s.mgmt.Load().retention == nil {
 		t.Fatal("retention job not started")
 	}
 }
@@ -145,9 +145,9 @@ func TestRefusedManagementStartLeavesNoClosedStoreBehind(t *testing.T) {
 				s.closeManagement()
 				t.Fatal("the start was not refused")
 			}
-			if s.store != nil || s.flows != nil || s.mcpService != nil || s.mgmt != nil || s.recSink != nil {
+			if s.store != nil || s.flows != nil || s.mcpService != nil || s.mgmt.Load() != nil || s.recSink != nil {
 				t.Fatalf("a refused start left store=%v flows=%v mcp=%v mgmt=%v recSink=%v",
-					s.store != nil, s.flows != nil, s.mcpService != nil, s.mgmt != nil, s.recSink != nil)
+					s.store != nil, s.flows != nil, s.mcpService != nil, s.mgmt.Load() != nil, s.recSink != nil)
 			}
 			if code := apiRequest(s, http.MethodGet, "/api/v1/flows", "management-test-key-32-bytes-long-and-separate", "").Code; code != http.StatusServiceUnavailable {
 				t.Fatalf("/api/v1/flows = %d after a refused start, want 503", code)
