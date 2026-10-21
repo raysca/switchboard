@@ -179,7 +179,7 @@ Gap types (the last column):
 What exists:
 
 - **Catalogue on the server.** The operator lists up to 8 named sounds under `audio.backgrounds` (`file` = a PCM16 mono WAV of 8..192 kHz, at most 10 MB; `gain_db` -60..0, default -30; `loop`, default true). `audio.background_default` names the sound every call gets; `audio.allow_flow_background` (false in production, true in development) lets flows choose. Files are read once at start-up (`server/audiofilter.go` `loadCues`), resampled to the fixed 24 kHz player rate, crossfaded at the loop point, and shared read-only by every call. There is no reload: a new file means editing YAML and restarting.
-- **How a user adds their own file:** only the operator can, by copying the WAV onto the server's disk and adding a YAML entry (`docs/audio-filters.md`). The flow can only name a catalogue key (`server/background.go`): never a path, which is a deliberate security rule (Ruling 2 of `2026-10-15-per-flow-call-behavior-design.md`). The repo ships no sound files (`assets/` holds speech test clips only).
+- **How a user adds their own file:** only the operator can, by copying the WAV onto the server's disk and adding a YAML entry (`docs/audio-filters.md`). The flow can only name a catalogue key (`server/background.go`): never a path, which is a deliberate security rule (Ruling 2 of `docs/history/superpowers/specs/2026-10-15-per-flow-call-behavior-design.md`). The repo ships no sound files (`assets/` holds speech test clips only).
 - **Per flow (start step):** `audio.background{name, gain_db, loop}`; `{"name":""}` means none. Publish refuses an unknown name or a flow background when not allowed (`flow/policy.go`); if the catalogue changes after publish, the call falls back to the server default with a log warning.
 - **UI:** a select of the server's sound names (from `GET /server-config`, names only), a volume input and a Repeat checkbox, under Flow settings > Advanced > Audio. **No preview/listen, no upload.**
 - **Mixing:** in the paced writer, at a constant level under speech and alone in silences (about 48 kB/s of WebSocket traffic per call). Bed frames are non-speech and uninterruptible, never recorded, never affect idle or speaking state.
@@ -299,7 +299,7 @@ Principle used: expose per flow only what is a **conversation-design choice** th
 
 - `dtmf: {aggregate: bool, send_tool: bool}` honoured only when the server enables the matching capability (as backgrounds). Why: IVR-navigating agents need `send_dtmf`; others should not have the tool in their prompt. Size: M. Privacy: digits are masked at sinks by `privacy.redaction.dtmf` (unchanged). Risk: low.
 
-### R8. LLM sampling parameters (needs core/provider work: Phase 8, not 7)
+### R8. LLM sampling parameters (needs core/provider work: own phase, not scheduled)
 
 - `llm.temperature` 0..2, `llm.max_output_tokens` 16..8192 per step (both optional; absent = provider default). Implement in `providers/google`, `providers/openai` (covers nvidia/offline), `providers/xai`; reasoning models that reject `temperature` need a catalogue flag. Why per-step: tone and verbosity are persona-level. Size: L (five adapters, catalogue, failover fallbacks inherit the step's values). Risk: provider 400s on unsupported params (classify as client errors; do not fail over).
 

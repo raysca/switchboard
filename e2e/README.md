@@ -73,7 +73,7 @@ permission granted.
 - `fixtures/voice-debug.wav`: "What is two plus two?"
 
 16 kHz mono PCM16 from macOS `say`, with 1 s silence before and 20 s after.
-Regenerate with `scripts/make-fixtures.sh` (needs `say` and `ffmpeg`).
+Regenerate with `e2e/scripts/make-fixtures.sh` (needs `say` and `ffmpeg`).
 **Chromium loops the file** for as long as capture is open; the 20 s of silence
 lets the bot answer before the question repeats (a repeat is a barge-in).
 

@@ -26,7 +26,7 @@ Production releases enforce a strict automated vulnerability scanning gate:
 - **High Severity:** 0 allowed.
 - **Medium / Low Severity:** Evaluated and triaged per release cycle.
 - **Automated Scanning Tools:**
-  - Trivy container scan: `trivy image --exit-code 1 --severity CRITICAL,HIGH govoice:release-security`
+  - Trivy container scan: `trivy image --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL govoice:release-security` (when `trivy` is not installed the Makefile falls back to `grype --only-fixed --fail-on high`, then to the dockerized `aquasec/trivy` with the same flags)
   - Govulncheck Go module scan: `govulncheck ./...`
 
 `make release-security` runs these scans, builds the image as `govoice:release-security`, and writes the module SBOM to `deploy/sbom.json` (git-ignored).
