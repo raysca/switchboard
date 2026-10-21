@@ -1,6 +1,6 @@
 # Review Remediation Master Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. This is a **master plan**: it fixes scope, order, dependencies and acceptance tests for nine phases. Before starting a phase, expand it into its own step-level TDD plan (`docs/superpowers/plans/2026-10-15-phase-N-<name>.md`) using superpowers:writing-plans, then execute that. Steps use checkbox (`- [ ]`) syntax.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. This is a **master plan**: it fixes scope, order, dependencies and acceptance tests for nine phases. Before starting a phase, expand it into its own step-level TDD plan (`docs/superpowers/remediation/plans/2026-10-15-phase-N-<name>.md`) using superpowers:writing-plans, then execute that. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Resolve every finding in the 2026-10-15 deep review (bugs, incomplete Pipecat-parity features, dead code, duplicates, server→UI gaps) without regressing the call path.
 

@@ -311,7 +311,7 @@ tts-sim: ## free|Simulate TTS unit sizing strategies for unary providers (TTSSIM
 
 .PHONY: tts-sim
 
-# Offline speech stack (docs/superpowers/specs/2026-10-15-offline-speech-service-design.md).
+# Offline speech stack (docs/history/superpowers/specs/2026-10-15-offline-speech-service-design.md).
 # OFFLINE_PROFILE=container-llm runs Ollama in Docker; host-llm expects Ollama on the host (Apple Silicon).
 OFFLINE_PROFILE ?= container-llm
 OFFLINE_COMPOSE := docker compose -f offline/compose.yaml $(if $(filter container-llm,$(OFFLINE_PROFILE)),--profile container-llm)
