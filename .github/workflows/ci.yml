@@ -110,6 +110,16 @@ jobs:
           go-version-file: go.mod
       - run: make test-postgres
 
+  deadcode:
+    runs-on: ubuntu-24.04
+    continue-on-error: true   # advisory: a new unreachable function is a review question, not a red build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make deadcode
+
   # Builds the production image and probes it from outside the container with no provider key:
   # /ready, /metrics, loopback-only admin, xAI speech compiled in, clean SIGTERM exit.
   image-smoke:

@@ -1,0 +1,2 @@
+# One grep -E pattern per line, matched against "path/file.go Symbol"; text after " #" is the reason.
+^core/coretest/   # test doubles shared by tests in many packages (core, server, providers); no binary uses them
