@@ -69,3 +69,6 @@ server/adminui/static/*
 # Local rehearsal secrets (deploy/rehearsal)
 deploy/rehearsal/.env
 deploy/rehearsal/google.json
+
+# written by make release-security
+deploy/sbom.json
