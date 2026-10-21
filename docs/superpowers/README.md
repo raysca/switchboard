@@ -22,5 +22,6 @@ The records of the 2026-10 review remediation: the plan that drove it, one plan 
 | [2026-10-19-phase-7-ui-gaps](remediation/plans/2026-10-19-phase-7-ui-gaps.md) | Phase 7: UI gaps. |
 | [2026-10-20-phase-7b-flow-settings](remediation/plans/2026-10-20-phase-7b-flow-settings.md) | Phase 7b: flow settings. |
 | [2026-10-21-phase-8-hygiene](remediation/plans/2026-10-21-phase-8-hygiene.md) | Phase 8: repo hygiene and documentation. |
+| [2026-10-21-phase-9-closeout](remediation/plans/2026-10-21-phase-9-closeout.md) | Phase 9: close-out. |
 
 New phase plans are named `remediation/plans/YYYY-MM-DD-phase-N-<name>.md`.
