@@ -94,6 +94,8 @@ verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
 	git diff --exit-code -- tools/compat/fixtures
 	@echo "=== Playback-clear probe (clear failure stays a failure unless the recorded decision matches) ==="
 	node tools/compat/probe_playback_clear.js
+	@echo "=== Docs links and paths ==="
+	node scripts/check-links.mjs --paths
 	@echo "=== All verify checks passed ==="
 
 deadcode: ## build|Unreachable functions not in scripts/deadcode-allow.txt (advisory in CI)
