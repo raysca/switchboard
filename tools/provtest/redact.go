@@ -79,15 +79,3 @@ func Redact(s string) string {
 // Leaks reports whether s still holds a credential-shaped substring or a
 // registered literal (used to assert that provider errors are already clean).
 func Leaks(s string) bool { return Redact(s) != s }
-
-// HasSecret reports whether s contains a registered literal secret (no pattern matching).
-func HasSecret(s string) bool {
-	secMu.Lock()
-	defer secMu.Unlock()
-	for _, l := range secrets {
-		if strings.Contains(s, l) {
-			return true
-		}
-	}
-	return false
-}

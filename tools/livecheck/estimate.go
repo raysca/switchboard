@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -140,5 +139,3 @@ func reqDelta(before, after map[string]int) map[string]int {
 	}
 	return out
 }
-
-func (s *spend) String() string { return fmt.Sprintf("%d/%d", s.total(0), s.max) }
