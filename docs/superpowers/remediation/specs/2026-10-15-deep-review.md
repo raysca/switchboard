@@ -157,7 +157,7 @@ New top item: **emit tool-call events from the tool loop → RTVI function-call 
 
 ---
 
-## Suggested order (superseded by the remediation plan: `docs/superpowers/plans/2026-10-15-review-remediation.md`)
+## Suggested order (superseded by the remediation plan: `docs/superpowers/remediation/plans/2026-10-15-review-remediation.md`)
 1. **A1 + D1 together**: build the shared STT runner, move the dial off-loop, add the invalidation-on-drop (A8). One change fixes the worst bug and deletes ~1,000 lines.
 2. **A2 + D7**: single publish path through `validateSelections`.
 3. **A3**: decide — wire `tool_calls` from the tool loop, or delete the table/DTO/purge. Then A4 (redact `error.category`), and delete the unreachable adapter/retention code (C server).

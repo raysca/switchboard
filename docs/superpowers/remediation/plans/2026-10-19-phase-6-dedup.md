@@ -8,7 +8,7 @@
 
 **Tech stack:** Go 1.27.1 workspace (`go.work`: `.`, `core`, `server`, `providers/{cartesia,deepgram,echo,elevenlabs,google,nvidia,openai,xai}`, `offline`, `offline/contract`). `core/go.mod` has **no requirements** (stays that way). `tools/` is in the root module `govoice`; `server` is its own module and cannot import `govoice/tools/internal/...`.
 
-**Spec:** `docs/superpowers/specs/2026-10-15-deep-review.md` §D (D1–D11), §E. Master: `docs/superpowers/plans/2026-10-15-review-remediation.md` Phase 6 (Tasks 6.1–6.6). Ledger: `.superpowers/sdd/2026-10-15-review-remediation/progress.md` (items deferred to Phase 6) and `p5/pr-notes.md` §(e). Mapping: master 6.1 → 6.1a–e; 6.2 → 6.2 (SSRF only); 6.3 → skipped (see Skipped); 6.4 → 6.3 (helpers) + 6.6 (D9); 6.5 → 6.4; 6.6 → 6.5; ledger "unbound-final" → 6.7; gate → 6.8.
+**Spec:** `docs/superpowers/remediation/specs/2026-10-15-deep-review.md` §D (D1–D11), §E. Master: `docs/superpowers/remediation/plans/2026-10-15-review-remediation.md` Phase 6 (Tasks 6.1–6.6). Ledger: `.superpowers/sdd/2026-10-15-review-remediation/progress.md` (items deferred to Phase 6) and `p5/pr-notes.md` §(e). Mapping: master 6.1 → 6.1a–e; 6.2 → 6.2 (SSRF only); 6.3 → skipped (see Skipped); 6.4 → 6.3 (helpers) + 6.6 (D9); 6.5 → 6.4; 6.6 → 6.5; ledger "unbound-final" → 6.7; gate → 6.8.
 
 ---
 

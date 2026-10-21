@@ -8,7 +8,7 @@
 
 **Tech stack:** React 19 / TS / Vite / TanStack Query / zod (`ui/`), Vitest + Testing Library, Playwright (`e2e/tests-flows`, `e2e/tests-oneport`), Go 1.27.1 workspace for 7.4 (`core`, root module `transport/*`, `tools/compat`), pinned `@pipecat-ai/client-js` 1.13.1 + `websocket-transport` 1.7.2 in `tools/compat`, Pipecat reference `pipecat-impl` @ 2967e1c (goldens via `gen_goldens.py` with the venv repaired in 7.0 Step 1b; `make parity-regen` fails today, fact 4).
 
-**Spec:** `docs/superpowers/specs/2026-10-15-deep-review.md` §B (B1–B10). Master: `docs/superpowers/plans/2026-10-15-review-remediation.md` Phase 7 (Tasks 7.1–7.5). Ledger: `.superpowers/sdd/2026-10-15-review-remediation/progress.md` (Phase 7 backlog lines: 1.7 "row menu a11y" and "offline offered when unreachable", 4.6b "token before mic", 5.6 "key-bar copy"), `p5/pr-notes.md`, `p6/pr-notes.md`. Mapping: master 7.1 → 7.1; 7.2 → 7.2 (B4) + 7.3 (B5); 7.3 (B6) → skipped (done); 7.4 → 7.4; 7.5 (B9) → skipped (covered); ledger items → 7.5, 7.6; Phase 6 visible effect → 7.7; gate → 7.8.
+**Spec:** `docs/superpowers/remediation/specs/2026-10-15-deep-review.md` §B (B1–B10). Master: `docs/superpowers/remediation/plans/2026-10-15-review-remediation.md` Phase 7 (Tasks 7.1–7.5). Ledger: `.superpowers/sdd/2026-10-15-review-remediation/progress.md` (Phase 7 backlog lines: 1.7 "row menu a11y" and "offline offered when unreachable", 4.6b "token before mic", 5.6 "key-bar copy"), `p5/pr-notes.md`, `p6/pr-notes.md`. Mapping: master 7.1 → 7.1; 7.2 → 7.2 (B4) + 7.3 (B5); 7.3 (B6) → skipped (done); 7.4 → 7.4; 7.5 (B9) → skipped (covered); ledger items → 7.5, 7.6; Phase 6 visible effect → 7.7; gate → 7.8.
 
 ---
 
@@ -252,7 +252,7 @@ New order: state `requesting_token` (kept; the UI label is generic) → **Step 1
 
 ## Phase 7 addendum (placeholder — do not execute yet)
 
-A separate settings-coverage audit (`docs/superpowers/specs/2026-10-19-settings-coverage-audit.md`, written in the main checkout) will recommend additional per-flow settings tasks. After the user decides which to take, they are appended here as **Tasks 7.9+** (each with Files, RED tests, Playwright step, Gate), and 7.8 moves to run after them. Until then this section is intentionally empty; 7.0–7.8 above do not depend on it.
+A separate settings-coverage audit (`docs/superpowers/remediation/specs/2026-10-19-settings-coverage-audit.md`, written in the main checkout) will recommend additional per-flow settings tasks. After the user decides which to take, they are appended here as **Tasks 7.9+** (each with Files, RED tests, Playwright step, Gate), and 7.8 moves to run after them. Until then this section is intentionally empty; 7.0–7.8 above do not depend on it.
 
 ---
 

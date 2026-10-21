@@ -8,7 +8,7 @@
 
 **Tech stack:** Go 1.27.1 workspace (`go.work`: `.`, `core`, `server`, `providers/{cartesia,deepgram,echo,elevenlabs,google,nvidia,openai,xai}`, `offline`, `offline/contract`), React/TS/Vite `ui/`, Playwright `e2e/`.
 
-**Spec:** `docs/superpowers/specs/2026-10-15-deep-review.md` §C (unreferenced code), §E (setter/mux), §G (parity reclassification). Master plan: `docs/superpowers/plans/2026-10-15-review-remediation.md` Phase 5, Tasks 5.1–5.6, decisions D-0.1–D-0.4. Mapping: master 5.1 → 5.1a/b/c; 5.2 → 5.2a/b/c; 5.3 → 5.3; 5.4 → 5.4a/b; 5.5 → 5.5a/b; 5.6 → 5.6a/b; gate → 5.7.
+**Spec:** `docs/superpowers/remediation/specs/2026-10-15-deep-review.md` §C (unreferenced code), §E (setter/mux), §G (parity reclassification). Master plan: `docs/superpowers/remediation/plans/2026-10-15-review-remediation.md` Phase 5, Tasks 5.1–5.6, decisions D-0.1–D-0.4. Mapping: master 5.1 → 5.1a/b/c; 5.2 → 5.2a/b/c; 5.3 → 5.3; 5.4 → 5.4a/b; 5.5 → 5.5a/b; 5.6 → 5.6a/b; gate → 5.7.
 
 ---
 

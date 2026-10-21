@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.27 workspace (`core`, `providers/*`, `server`, root module), `github.com/coder/websocket`, gRPC (Riva, Google Speech v2), `core.Session` supervisor (`Go`, `Reenter`, watchdog).
 
-**Spec:** `docs/superpowers/specs/2026-10-15-deep-review.md` items **A1**, **A8**, **D1**, **A15** (second half: xai `sendMu`) and **B7**. Master plan: `docs/superpowers/plans/2026-10-15-review-remediation.md` Phase 2. Mapping: master 2.1 (design) is this document; master 2.2 is Task 2.1 here; master 2.3 is Task 2.2; master 2.4 is Tasks 2.3–2.6; master 2.5 is Task 2.7; the phase gate is Task 2.8.
+**Spec:** `docs/superpowers/remediation/specs/2026-10-15-deep-review.md` items **A1**, **A8**, **D1**, **A15** (second half: xai `sendMu`) and **B7**. Master plan: `docs/superpowers/remediation/plans/2026-10-15-review-remediation.md` Phase 2. Mapping: master 2.1 (design) is this document; master 2.2 is Task 2.1 here; master 2.3 is Task 2.2; master 2.4 is Tasks 2.3–2.6; master 2.5 is Task 2.7; the phase gate is Task 2.8.
 
 ## Global Constraints
 
@@ -4769,7 +4769,7 @@ Expected: the grep prints nothing. The diff stat shows a net removal of more tha
 
 - [ ] **Step 4: Adversarial review.** Dispatch an independent reviewer agent (AGENTS.md "Mandatory Code Review Workflow") on `git diff main...HEAD` with this brief:
 
-> Review Phase 2 (core/sttunit plus the six STT adapters) against docs/superpowers/plans/2026-10-16-phase-2-stt-runner.md. Hunt for: (1) goroutine leaks or tasks that outlive Close, including a dial that ignores ctx, a Recv not unblocked by cancel, and a drain timer that outlives stop; (2) any Send, Finish, Recv, Dial or Reenter under Runner.mu or stream.mu, and any stream.mu → Runner.mu nesting; (3) pre-roll ordering holes between flush's final pass and the run loop's first live Send, and Finish sent twice or before held audio; (4) generation fencing on late finals and adoption at the right gen; (5) A8 false positives (invalidation after a settled final, on our own cancel, or on drain timeout) and false negatives; (6) dial storms after failures; (7) YAGNI: anything in sttunit not used by a provider wired in server/registry.go or server/nvidia.go, any write-only field, and whether Streams() should stay; (8) behaviour changes versus main that tests do not pin. Report each finding with file:line and a failing-test idea.
+> Review Phase 2 (core/sttunit plus the six STT adapters) against docs/superpowers/remediation/plans/2026-10-16-phase-2-stt-runner.md. Hunt for: (1) goroutine leaks or tasks that outlive Close, including a dial that ignores ctx, a Recv not unblocked by cancel, and a drain timer that outlives stop; (2) any Send, Finish, Recv, Dial or Reenter under Runner.mu or stream.mu, and any stream.mu → Runner.mu nesting; (3) pre-roll ordering holes between flush's final pass and the run loop's first live Send, and Finish sent twice or before held audio; (4) generation fencing on late finals and adoption at the right gen; (5) A8 false positives (invalidation after a settled final, on our own cancel, or on drain timeout) and false negatives; (6) dial storms after failures; (7) YAGNI: anything in sttunit not used by a provider wired in server/registry.go or server/nvidia.go, any write-only field, and whether Streams() should stay; (8) behaviour changes versus main that tests do not pin. Report each finding with file:line and a failing-test idea.
 
 Resolve every finding with a failing test, then the fix, then `make verify`, then a commit of the form `fix(core): …` or `fix(<provider>): …`.
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.27 workspace (`core`, `server`, `providers/*`, `offline`, root module for `transport`/`vad`/`smartturn`/`tools`/`cmd`), React/TS/Vite (`ui/`), SQLite/Postgres via goose migrations, protobuf RTVI frames.
 
-**Spec:** `docs/superpowers/specs/2026-10-15-deep-review.md` (sections A–G; item ids like A1, D1, G1 below refer to it). Reference behavior: `pipecat-impl/` and `docs/pipecat-parity-matrix.md`.
+**Spec:** `docs/superpowers/remediation/specs/2026-10-15-deep-review.md` (sections A–G; item ids like A1, D1, G1 below refer to it). Reference behavior: `pipecat-impl/` and `docs/pipecat-parity-matrix.md`.
 
 ## Global Constraints
 
