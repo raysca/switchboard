@@ -12,11 +12,11 @@
 //
 // Examples:
 //
-//	GOVOICE_LIVE=1 make flow-matrix PROFILES=google,nvidia SCENARIOS=S1 MODES=off,on
+//	GOVOICE_LIVE=1 make agent-matrix PROFILES=google,nvidia SCENARIOS=S1 MODES=off,on
 //	go run ./tools/livecheck -list
 //	make live-check-selftest
 //
-// See docs/benchmarks/README.md (how to add a profile) and docs/benchmarks/flow-matrix.md.
+// See docs/benchmarks/README.md (how to add a profile) and docs/benchmarks/agent-matrix.md.
 package main
 
 import (
