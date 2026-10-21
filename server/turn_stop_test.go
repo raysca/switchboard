@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/goleak"
+
 	"govoice/core"
 	"govoice/core/coretest"
 	coreturn "govoice/core/turn"
@@ -22,6 +24,12 @@ import (
 func TestMain(m *testing.M) {
 	code := m.Run()
 	vad.ShutdownORT()
+	if code == 0 {
+		if err := goleak.Find(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			code = 1
+		}
+	}
 	os.Exit(code)
 }
 

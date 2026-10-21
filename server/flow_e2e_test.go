@@ -192,6 +192,13 @@ func newFlowRigE2E(t *testing.T, probe *stageProbe, mods ...func(*Config)) *flow
 	probe.install(s)
 	ts := httptest.NewServer(s.wsServer)
 	t.Cleanup(ts.Close)
+	// Runs first (LIFO), after each call's own cleanup closed its connection: waits for the
+	// calls to end and releases the pinned MCP sessions, VAD and management plane.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = s.Shutdown(ctx)
+	})
 	return &flowRigE2E{t: t, s: s, ts: ts, probe: probe}
 }
 

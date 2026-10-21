@@ -162,6 +162,7 @@ func TestScenarioE_ManagedFailureIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial 1: %v", err)
 	}
+	defer conn1.CloseNow()
 	// Write malformed garbage
 	_ = conn1.Write(ctx, websocket.MessageBinary, []byte("garbage not protobuf"))
 
@@ -286,13 +287,21 @@ func TestScenarioJ_AdmissionSecurityDeployed(t *testing.T) {
 	}
 
 	// 3. Admin endpoints must return 404 on public listener
-	resp, _ := http.Get(tsPublic.URL + "/metrics")
+	resp, err := http.Get(tsPublic.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("public listener must NOT expose /metrics, got: %d", resp.StatusCode)
 	}
 
 	// 4. Admin endpoints must return 200 on admin listener
-	respAdmin, _ := http.Get(tsAdmin.URL + "/metrics")
+	respAdmin, err := http.Get(tsAdmin.URL + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respAdmin.Body.Close()
 	if respAdmin.StatusCode != http.StatusOK {
 		t.Fatalf("admin listener must expose /metrics, got: %d", respAdmin.StatusCode)
 	}

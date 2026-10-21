@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"go.uber.org/goleak"
 
 	"govoice/core"
 	"govoice/core/coretest"
@@ -189,6 +190,7 @@ func TestFinishCallWaitsForRecordingWhenReleasePanics(t *testing.T) {
 	if err := sess.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = sess.Close() })
 	s.mu.Lock()
 	s.activeCalls[sessionID] = &activeCall{sessionID: sessionID, principal: principal}
 	s.mu.Unlock()
@@ -249,6 +251,7 @@ func TestFinishCallRecordingPanicDoesNotStick(t *testing.T) {
 	if err := sess.Start(); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = sess.Close() })
 	s.mu.Lock()
 	s.activeCalls[sessionID] = &activeCall{sessionID: sessionID, principal: principal}
 	s.mu.Unlock()
@@ -279,5 +282,14 @@ func TestRecoverEachRunsStopAfterReleasePanics(t *testing.T) {
 	}()
 	if !stopped {
 		t.Fatal("stopRecording did not run after releaseCall panicked")
+	}
+}
+
+// waitUntil returning on its deadline must not leave its polling goroutine behind.
+func TestWaitUntilStopsPollingWhenItReturns(t *testing.T) {
+	before := goleak.IgnoreCurrent()
+	waitUntil(context.Background(), 30*time.Millisecond, func() bool { return false })
+	if err := goleak.Find(before); err != nil {
+		t.Fatalf("waitUntil leaked its poller: %v", err)
 	}
 }

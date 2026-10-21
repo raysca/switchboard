@@ -1371,9 +1371,15 @@ func (s *Server) onText(conn *ws.Connection, text string) error {
 // max elapses, or ctx ends.
 func waitUntil(ctx context.Context, max time.Duration, done func() bool) {
 	finished := make(chan struct{})
+	stop := make(chan struct{})
+	defer close(stop) // the poller ends with the wait (a blocking done ends when it returns)
 	go func() {
 		for !done() {
-			time.Sleep(20 * time.Millisecond)
+			select {
+			case <-stop:
+				return
+			case <-time.After(20 * time.Millisecond):
+			}
 		}
 		close(finished)
 	}()
