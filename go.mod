@@ -6,9 +6,9 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/yalue/onnxruntime_go v1.36.0
-	google.golang.org/protobuf v1.36.11
+	golang.org/x/time v0.15.0
+	google.golang.org/protobuf v1.36.12
 	govoice/core v0.0.0
-	govoice/providers/echo v0.0.0-00010101000000-000000000000
 	govoice/providers/google v0.0.0-00010101000000-000000000000
 	govoice/providers/xai v0.0.0-00010101000000-000000000000
 	govoice/server v0.0.0
@@ -43,7 +43,6 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
-	golang.org/x/time v0.15.0
 	google.golang.org/api v0.287.1 // indirect
 	google.golang.org/genai v1.71.0 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
@@ -56,8 +55,6 @@ require (
 replace govoice/server => ./server
 
 replace govoice/core => ./core
-
-replace govoice/providers/echo => ./providers/echo
 
 replace govoice/providers/google => ./providers/google
 

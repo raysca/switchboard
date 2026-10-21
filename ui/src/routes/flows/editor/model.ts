@@ -1,5 +1,5 @@
 // Pure flow-editing rules for the flow designer. They mirror the server's
-// validation (server/flow/flow.go): the server stays the authority, this
+// validation (server/flow/definition.go): the server stays the authority, this
 // keeps the canvas from offering what it would reject.
 
 import type { ToolSelection } from "../../../api/client";
@@ -421,7 +421,7 @@ export function validate(g: FlowDraft, limits?: ServerLimits): string[] {
     for (const i of stepIssues(g, n.id)) if (i.tab === "advanced") errors.push(`${nameIn(g, n.id)}: ${i.message}`);
   for (const e of g.routes) {
     if (blank(e.condition)) errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} needs a condition.`);
-    // The server counts bytes (server/flow/flow.go), not characters.
+    // The server counts bytes (server/flow/definition.go), not characters.
     else if (new TextEncoder().encode(e.condition).length > MAX_CONDITION)
       errors.push(`The route from ${nameIn(g, e.from)} to ${nameIn(g, e.to)} has a condition longer than ${MAX_CONDITION} bytes.`);
   }

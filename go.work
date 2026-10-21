@@ -4,7 +4,6 @@ use (
 	.
 	./core
 	./offline
-	./offline/contract
 	./providers/cartesia
 	./providers/deepgram
 	./providers/echo

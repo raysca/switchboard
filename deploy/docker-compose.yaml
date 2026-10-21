@@ -1,12 +1,12 @@
-# Production Docker Compose definition for Voice Framework V1
-# Fulfills spec §39 (Non-root, read-only root, declared writables, capability drops, health checks)
+# Production Docker Compose definition for Switchboard
+# Non-root, read-only root, declared writables, capability drops, health checks
 
 services:
   govoice:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: govoice:v1.0.0
+    image: govoice:local
     container_name: govoice-server
     restart: unless-stopped
     read_only: true

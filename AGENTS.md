@@ -20,7 +20,7 @@ The codebase is strictly bifurcated into an independent **Core Library** and an 
 │                       server/                               │
 │  (Configuration-based Agentic Voice AI Server)              │
 │  - REST Management API (/api/v1)                            │
-│  - Agent DB Storage & Credential Keyring (SQLite / Postgres)│
+│  - Flow Storage (SQLite / Postgres) & Env-Only Secrets      │
 │  - MCP Tools & Runtime Session Pinning                      │
 │  - WebSocket Transport (/ws) & RTVI Framing                 │
 └──────────────────────────────┬──────────────────────────────┘
@@ -44,11 +44,11 @@ The codebase is strictly bifurcated into an independent **Core Library** and an 
   - Operates purely on `Frame` abstractions (`ProcessFrame`, `Emitter`, `Direction`), generation counters, audio buffers, and provider interfaces.
 
 ### 2. `server/` (The Agentic Voice AI Server)
-- **Role:** The orchestration daemon that manages persistent agents, provider credentials, and live calls.
+- **Role:** The orchestration daemon that manages stored flows, provider configuration, and live calls.
 - **Invariants:**
   - Consumes `core/` exactly as an external 3rd-party client would.
-  - Dynamically builds and configures `core.Pipeline` instances for incoming calls according to the caller's pinned agent version (`server/call.go`, `server/registry.go`).
-  - Encapsulates database storage (`server/storage`), credentials (`server/credential`), MCP servers (`server/mcp`), and management endpoints (`server/api`).
+  - Dynamically builds and configures `core.Pipeline` instances for incoming calls according to the caller's pinned flow version (`server/call.go`, `server/registry.go`).
+  - Encapsulates database storage (`server/storage`), provider catalog (`server/catalog`; secrets are read from the environment only, see `docs/security/credentials.md`), MCP servers (`server/mcp`), and management endpoints (`server/api`).
 
 ---
 

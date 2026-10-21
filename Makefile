@@ -45,7 +45,7 @@ ort: ## build|Download the pinned ONNX Runtime for this OS/arch into third_party
 	@scripts/fetch-ort.sh fetch
 
 # Every module in go.work (root also covers vad, smartturn, transport, tools/*, cmd, examples).
-MODULES := . core providers/cartesia providers/deepgram providers/echo providers/elevenlabs providers/google providers/nvidia providers/openai providers/xai server offline offline/contract
+MODULES := . core providers/cartesia providers/deepgram providers/echo providers/elevenlabs providers/google providers/nvidia providers/openai providers/xai server offline
 
 test: build ## build|Vet (with and without xaispeech) + race-test every module with -tags xaispeech (about 3 min)
 	@failed=""; for m in $(MODULES); do \
@@ -89,6 +89,9 @@ verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
 	node tools/compat/validate_manifest.js
 	@echo "=== Verifying Protobuf Fixtures ==="
 	node tools/compat/verify_fixtures.js
+	@echo "=== Regenerating protobuf fixtures (must be byte-identical) ==="
+	node tools/compat/generate_fixtures.js >/dev/null
+	git diff --exit-code -- tools/compat/fixtures
 	@echo "=== Playback-clear probe (clear failure stays a failure unless the recorded decision matches) ==="
 	node tools/compat/probe_playback_clear.js
 	@echo "=== All verify checks passed ==="
@@ -308,7 +311,7 @@ tts-sim: ## free|Simulate TTS unit sizing strategies for unary providers (TTSSIM
 
 .PHONY: tts-sim
 
-# Offline speech stack (docs/superpowers/specs/2026-10-15-offline-speech-service-design.md).
+# Offline speech stack (docs/history/superpowers/specs/2026-10-15-offline-speech-service-design.md).
 # OFFLINE_PROFILE=container-llm runs Ollama in Docker; host-llm expects Ollama on the host (Apple Silicon).
 OFFLINE_PROFILE ?= container-llm
 OFFLINE_COMPOSE := docker compose -f offline/compose.yaml $(if $(filter container-llm,$(OFFLINE_PROFILE)),--profile container-llm)
@@ -332,7 +335,7 @@ offline-down: ## dev|Stop the offline speech stack (volumes are kept)
 	$(OFFLINE_COMPOSE) down
 
 offline-test: ## dev|Round trip through the running offline stack with the real xai clients (needs offline-up and offline-models)
-	cd offline/contract && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" ./...
+	cd server && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" ./offlinecontract/
 	cd server && OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -count=1 -v -tags "xaispeech offlinestack" -run TestOfflineStack .
 
 .PHONY: offline-up offline-models offline-down offline-test

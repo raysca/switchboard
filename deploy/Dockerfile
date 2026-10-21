@@ -1,4 +1,4 @@
-# Production image for Voice Framework V1.
+# Production image for Switchboard.
 # The module graph requires Go 1.27.1. The runtime loads Silero and ONNX Runtime
 # from the paths the process actually searches.
 # Admin UI (embedded into the server binary): Node is a build tool only and is not in the runtime image.
@@ -15,7 +15,7 @@ WORKDIR /src
 
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
-COPY core/go.mod ./core/
+COPY core/go.mod core/go.sum* ./core/
 COPY providers/cartesia/go.mod providers/cartesia/go.sum* ./providers/cartesia/
 COPY providers/deepgram/go.mod providers/deepgram/go.sum* ./providers/deepgram/
 COPY providers/echo/go.mod providers/echo/go.sum* ./providers/echo/
@@ -25,7 +25,6 @@ COPY providers/nvidia/go.mod providers/nvidia/go.sum* ./providers/nvidia/
 COPY providers/openai/go.mod providers/openai/go.sum* ./providers/openai/
 COPY providers/xai/go.mod providers/xai/go.sum* ./providers/xai/
 COPY offline/go.mod offline/go.sum* ./offline/
-COPY offline/contract/go.mod offline/contract/go.sum* ./offline/contract/
 COPY server/go.mod server/go.sum ./server/
 
 RUN go work sync

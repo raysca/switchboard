@@ -137,7 +137,8 @@ To rotate a key, change the variable and restart.
 - [Inbound audio filters](docs/audio-filters.md) and [output pacing and flush](docs/output-pacing-and-flush.md).
 
 **Design**
-- [Design specs](docs/superpowers/specs): the reasoning behind flows with steps (designed as "agent graphs"), the credentials catalog, streaming TTS, turn latency and the Switchboard console.
+- [Design history](docs/history/README.md): the reasoning behind flows with steps (designed as "agent graphs"), the credentials catalog, streaming TTS, turn latency and the Switchboard console.
+- [Review remediation](docs/superpowers/README.md): the plans and findings of the 2026-10 review.
 
 ---
 

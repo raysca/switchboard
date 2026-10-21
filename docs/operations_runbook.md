@@ -37,7 +37,7 @@ Measured with `tools/loadtest` (see `docs/benchmarks/capacity.md`; Apple M4 Pro,
 
 ### Step 1: Build the Hardened Image
 ```bash
-docker build -t govoice:v1 -f deploy/Dockerfile .
+docker build -t govoice:local -f deploy/Dockerfile .
 ```
 The Dockerfile builds a multi-stage image running as unprivileged user `govoice` (`uid=10001`), utilizing `tini` as PID 1 to ensure zombie child VAD worker processes are reaped correctly.
 
@@ -287,7 +287,7 @@ failover:
 
 By default the management API (`/api/v1`) lives on the loopback admin listener and the admin UI runs separately. With `public_admin: {enabled: true}` the public listener also serves the management API and the embedded admin UI (build it in with `make ui-embed`), so one port carries the UI, the API and the voice socket. It is off by default.
 
-- **Signing in to the admin UI without pasting the key.** Make a magic link: `make admin-link URL=https://<service-url>` (key from `GOVOICE_MANAGEMENT_API_KEY`), or `gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY | scripts/admin-link.sh https://<service-url>`. The link is `<url>/#key=<key>`: the key is in the URL fragment, which browsers never send to a server, and the admin UI reads it into memory and removes it from the address bar and history at once (reloading still clears it; open the link again). Treat the link like the key itself: it is a credential, so do not paste it into chat or tickets. The hosted UI never sends a keyless "are you signed in" request (that would count as a failed login below); only the dev server does.
+- **Signing in to the admin UI without pasting the key.** Make a magic link: `make admin-link URL=https://<service-url>` (key from `GOVOICE_MANAGEMENT_API_KEY`), or `gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY | scripts/admin-link.sh https://<service-url>`. The link is `<url>/#key=<key>`: the key is in the URL fragment, which browsers never send to a server, and the admin UI reads it into memory and removes it from the address bar and history at once (reloading or pressing Sign out in the top bar clears it; open the link again). Treat the link like the key itself: it is a credential, so do not paste it into chat or tickets. The hosted UI never sends a keyless "are you signed in" request (that would count as a failed login below); only the dev server does.
 - Every management route still needs the management key. `/metrics`, `/ready` and `/debug/*` are not mounted on the public port (they answer non-200 there): metrics expose internals and stay on the admin listener. `/health` stays public.
 - `origin_allow_same_host: true` admits a browser whose `Origin` host equals the request `Host`, so the page can open the voice socket without listing its own origin in `origin_allowlist`. A foreign browser origin is still rejected.
 - Production requires `tls.trusted_proxy_mode` for both keys: the `Host` header and the client address must come from your proxy, not the caller. See `config/cloudrun.yaml`.

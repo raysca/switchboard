@@ -69,3 +69,9 @@ server/adminui/static/*
 # Local rehearsal secrets (deploy/rehearsal)
 deploy/rehearsal/.env
 deploy/rehearsal/google.json
+
+# written by make release-security
+deploy/sbom.json
+
+# Vendored ONNX Runtime releases (make ort fetches the library; headers are not needed)
+third_party/onnxruntime-*/

@@ -6,7 +6,6 @@ tools
 bin
 assets
 results
-baseline
 scripts
 loadgen
 .env

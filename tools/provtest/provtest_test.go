@@ -355,3 +355,15 @@ func TestTTSTiming(t *testing.T) {
 		t.Error("old row should render dashes")
 	}
 }
+
+// HasSecret reports whether s contains a registered literal secret (no pattern matching).
+func HasSecret(s string) bool {
+	secMu.Lock()
+	defer secMu.Unlock()
+	for _, l := range secrets {
+		if strings.Contains(s, l) {
+			return true
+		}
+	}
+	return false
+}

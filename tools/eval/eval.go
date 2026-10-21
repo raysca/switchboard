@@ -457,17 +457,6 @@ func checkLateTranscript() error {
 	return nil
 }
 
-func checkCancellation() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	select {
-	case <-ctx.Done():
-		return nil
-	case <-time.After(time.Second):
-		return errors.New("cancelled operation remained live")
-	}
-}
-
 func checkBargeIn() error {
 	p := ws.NewPacedWriter(ws.PacerConfig{}, func(context.Context, []byte) error { return nil })
 	defer p.Close()

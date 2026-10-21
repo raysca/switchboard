@@ -1,5 +1,5 @@
 [Unit]
-Description=Voice Framework V1 Server
+Description=Switchboard Server
 Documentation=https://github.com/raymondottun/go-voice
 After=network.target network-online.target
 Wants=network-online.target
@@ -21,7 +21,7 @@ Environment=GOVOICE_MODEL_PATH=/opt/govoice/models/silero_vad.onnx
 Environment=GOVOICE_ORT_LIB=/opt/govoice/lib/libonnxruntime.so
 ExecStart=/opt/govoice/bin/server -config /etc/govoice/production.yaml
 
-# Process lifecycle and graceful shutdown (spec §37, §39)
+# Process lifecycle and graceful shutdown
 # SIGTERM drains for drain_timeout. TimeoutStopSec is longer than drain_timeout plus the 5s process margin.
 KillSignal=SIGTERM
 TimeoutStopSec=60s
