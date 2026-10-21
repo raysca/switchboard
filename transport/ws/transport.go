@@ -58,31 +58,6 @@ type ServerConfig struct {
 	Cues bool
 }
 
-// DefaultServerConfig returns a test/dev default: it allows any origin and a
-// missing Origin header. The server builds its own ServerConfig.
-func DefaultServerConfig(val *token.Validator) ServerConfig {
-	return ServerConfig{
-		Security: SecurityConfig{
-			AllowedOrigins:     []string{"*"},
-			AllowMissingOrigin: true,
-		},
-		TokenValidator:             val,
-		Pacer:                      DefaultPacerConfig(),
-		HandshakeTimeout:           5 * time.Second,
-		RTVIReadyTimeout:           5 * time.Second,
-		ReadTimeout:                30 * time.Second,
-		PingInterval:               15 * time.Second,
-		PingTimeout:                10 * time.Second,
-		PingMaxFailures:            2,
-		MaxConnectionLifetime:      60 * time.Minute,
-		MaxConcurrentSessions:      100,
-		MaxConcurrentSessionsPerIP: 10,
-		MaxPendingHandshakes:       50,
-		HandshakeRateLimit:         20.0,
-		FixedPlayerRate:            FixedPlayerSampleRate,
-	}
-}
-
 // Connection represents a live, authenticated WebSocket voice connection.
 type Connection struct {
 	id            uint64

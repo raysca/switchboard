@@ -79,7 +79,26 @@ func TestCompat_UnmodifiedClientPackage_RegressionGate(t *testing.T) {
 		t.Fatalf("NewValidator error: %v", err)
 	}
 
-	cfg := ws.DefaultServerConfig(validator)
+	cfg := ws.ServerConfig{
+		Security: ws.SecurityConfig{
+			AllowedOrigins:     []string{"*"},
+			AllowMissingOrigin: true,
+		},
+		TokenValidator:             validator,
+		Pacer:                      ws.DefaultPacerConfig(),
+		HandshakeTimeout:           5 * time.Second,
+		RTVIReadyTimeout:           5 * time.Second,
+		ReadTimeout:                30 * time.Second,
+		PingInterval:               15 * time.Second,
+		PingTimeout:                10 * time.Second,
+		PingMaxFailures:            2,
+		MaxConnectionLifetime:      60 * time.Minute,
+		MaxConcurrentSessions:      100,
+		MaxConcurrentSessionsPerIP: 10,
+		MaxPendingHandshakes:       50,
+		HandshakeRateLimit:         20.0,
+		FixedPlayerRate:            ws.FixedPlayerSampleRate,
+	}
 	server := ws.NewServer(cfg)
 
 	var sessionTornDown atomic.Bool
