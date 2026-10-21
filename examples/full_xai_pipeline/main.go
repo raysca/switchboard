@@ -93,7 +93,7 @@ func (c *audioCollector) Attach(s core.SessionController, index int) error {
 func main() {
 	_ = envload.Load()
 
-	fmt.Println("=== Voice Framework V1: 100% Native xAI End-to-End Pipeline Example ===")
+	fmt.Println("=== Switchboard: 100% Native xAI End-to-End Pipeline Example ===")
 	apiKey := os.Getenv("XAI_API_KEY")
 	if apiKey == "" {
 		log.Println("WARNING: XAI_API_KEY is not set. Real provider calls will fail without a valid key.")

@@ -40,7 +40,7 @@ import (
 // adminUIFS is the admin UI served with public_admin (the embedded build; tests replace it).
 var adminUIFS = adminui.Embedded()
 
-// Server represents the config-driven Voice Framework V1 server matching spec §27-37.
+// Server represents the config-driven Switchboard server.
 type Server struct {
 	authFails             *rate.Limiter // global failed-management-auth allowance: burst 10, one more per 6 s
 	authNow               func() time.Time

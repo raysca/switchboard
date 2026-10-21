@@ -3,7 +3,7 @@
 /**
  * cli.js - Standalone Pipecat RTVI Test Driver
  *
- * Connects to Voice Framework V1 server using unmodified @pipecat-ai/client-js
+ * Connects to Switchboard server using unmodified @pipecat-ai/client-js
  * and @pipecat-ai/websocket-transport, negotiates RTVI 2.1.0 readiness, streams
  * audio through VAD and STT, receives streamed LLM text and synthesized TTS audio,
  * and reports end-to-end latencies.
@@ -90,7 +90,7 @@ async function issueVoiceToken() {
 
 async function main() {
   console.log('================================================================');
-  console.log(` Voice Framework V1: Standalone RTVI Client Test Driver`);
+  console.log(` Switchboard: Standalone RTVI Client Test Driver`);
   console.log(` Flow:        ${flowId}`);
   console.log(` Turn:        ${textTurn !== null ? 'text: "' + textTurn + '"' : 'audio: ' + audioPath}`);
   console.log('================================================================\n');

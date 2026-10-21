@@ -29,7 +29,7 @@ func (forwardProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.D
 func main() {
 	_ = envload.Load()
 
-	fmt.Println("=== Voice Framework V1: Scenario C xAI LLM Interchangeability Example ===")
+	fmt.Println("=== Switchboard: Scenario C xAI LLM Interchangeability Example ===")
 
 	// 1. Initialize In-Process VAD Executor
 	vadCfg := vad.Config{

@@ -3,7 +3,7 @@
  *
  * Client regression gate verifying that the unmodified, released
  * @pipecat-ai/client-js@1.13.1 and @pipecat-ai/websocket-transport@1.7.2 packages
- * connect to the Go Voice Framework server, negotiate RTVI readiness,
+ * connect to the Switchboard server, negotiate RTVI readiness,
  * send/receive audio, receive RTVI events, and tear down cleanly.
  */
 

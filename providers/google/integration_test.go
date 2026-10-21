@@ -205,7 +205,7 @@ func TestLiveGoogle_MultiTurnRoundTrip(t *testing.T) {
 	}
 	defer ttsClient.Close()
 
-	audio, err := ttsClient.SynthesizeSpeech(ctx, "Hello from Voice Framework V1.", ttsCfg.Voice, ttsCfg.SampleRate)
+	audio, err := ttsClient.SynthesizeSpeech(ctx, "Hello from Switchboard.", ttsCfg.Voice, ttsCfg.SampleRate)
 	if err != nil {
 		t.Fatalf("real Google TTS synthesis failed: %v", err)
 	}

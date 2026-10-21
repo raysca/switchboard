@@ -97,7 +97,7 @@ func (forwardProcessor) ProcessFrame(_ context.Context, f core.Frame, dir core.D
 }
 
 func main() {
-	fmt.Println("=== Voice Framework V1: Custom Processor Example ===")
+	fmt.Println("=== Switchboard: Custom Processor Example ===")
 
 	// 1. Initialize custom processor
 	customFilter := NewProfanityMaskProcessor([]string{"secret", "classified", "forbidden"})
