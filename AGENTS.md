@@ -81,7 +81,7 @@ To sustain hundreds of concurrent voice calls with sub-200ms interruption latenc
 - **Explicit Lifecycle:** Never spawn a goroutine without an unambiguous termination path. Every goroutine must select on `ctx.Done()` or a dedicated close/done channel.
 - **Supervisor Integration:** In `core/`, all session-scoped background tasks must be spawned via `session.Go(...)` so unhandled panics and lifecycle teardowns are coordinated by the session supervisor.
 - **No Context in Structs:** Never store a `context.Context` inside a struct field. Pass context as the first argument (`ctx context.Context`) to methods and functions. Two exceptions, each tagged with a comment at the field:
-  - *Trace parentage* (`// trace parentage`): a context kept only so spans started later, off the caller's stack (failover replays, the async tracer, session trace roots), have the right parent. It is never used for cancellation or deadlines.
+  - *Trace parentage* (`// trace parentage`): a context kept for span parentage, so spans started later, off the caller's stack (failover replays, the async tracer, session trace roots), have the right parent. Any cancellation it carries is its owner's, never a per-request deadline.
   - *Owner lifetime* (`// owner lifetime`): the context of a long-lived object that owns goroutines, created together with its `cancel` in the constructor (or the stream open) and cancelled by the object's own `Close`/teardown (session, WebSocket connection, provider streams, export queue). Never a caller's request context.
 - **Immediate Defers:** Always invoke `defer cancel()` immediately after creating derived contexts (`context.WithTimeout`, `context.WithCancel`).
 
