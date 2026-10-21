@@ -1,6 +1,6 @@
 //go:build xaispeech && offlinestack
 
-package contract
+package offlinecontract
 
 import (
 	"bytes"

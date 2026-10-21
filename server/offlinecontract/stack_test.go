@@ -1,6 +1,6 @@
 //go:build xaispeech && offlinestack
 
-package contract
+package offlinecontract
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 // Round trip through the real compose stack: synthesize a phrase with the adapter's TTS (asking for
 // 16 kHz directly), feed it to the adapter's STT, expect the key word back.
-// Run with: OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -tags "xaispeech offlinestack" ./...
+// Run with: OFFLINE_ADAPTER_URL=http://127.0.0.1:8099 go test -tags "xaispeech offlinestack" ./offlinecontract/ (from server/)
 func TestStackRoundTrip(t *testing.T) {
 	base := os.Getenv("OFFLINE_ADAPTER_URL")
 	if base == "" {
