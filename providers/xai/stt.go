@@ -201,7 +201,7 @@ func (o *RealXAISTTOpener) OpenStream(ctx context.Context, cfg STTConfig) (STTSt
 type activeSTTStream struct {
 	stream     STTStream // nil while the open runs (set once, under mu)
 	cancel     context.CancelFunc
-	ctx        context.Context
+	ctx        context.Context // owner lifetime
 	id         int
 	readyCh    chan struct{}
 	turnID     string

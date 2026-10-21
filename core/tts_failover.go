@@ -94,7 +94,7 @@ type TTSFailover struct {
 
 type ttsUnit struct {
 	su        *SynthesisUnitFrame
-	ctx       context.Context // the unit's (trace parentage for replays)
+	ctx       context.Context // trace parentage: the unit's, for replays
 	order     []int           // candidate indexes
 	pos       int             // position in order of the running candidate
 	owner     int             // candidate index running it

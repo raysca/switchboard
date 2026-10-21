@@ -83,7 +83,7 @@ type Connection struct {
 	outResampler *resample.Resampler         // providerRate -> FixedPlayerRate
 	outRate      int                         // the rate outResampler was built for
 
-	ctx    context.Context
+	ctx    context.Context // owner lifetime
 	cancel context.CancelFunc
 
 	closed       atomic.Bool

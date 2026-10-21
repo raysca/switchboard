@@ -240,7 +240,7 @@ func (s *grpcSTTStream) Close() error {
 type activeStream struct {
 	stream            STTStream
 	cancel            context.CancelFunc
-	ctx               context.Context
+	ctx               context.Context // owner lifetime
 	createdAt         time.Time
 	id                int
 	turnID            string

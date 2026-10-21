@@ -91,7 +91,7 @@ type LLMFailover struct {
 // failoverGen is the state of the latest generation.
 type failoverGen struct {
 	gen       uint64
-	ctx       context.Context // the user message's (trace parentage for replays)
+	ctx       context.Context // trace parentage: the user message's, for replays
 	user      *UserMessageFrame
 	order     []int // candidate indexes, breaker-open ones last
 	pos       int   // position in order of the running candidate

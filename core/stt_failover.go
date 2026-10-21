@@ -109,7 +109,7 @@ type STTFailover struct {
 
 type journalEntry struct {
 	seq uint64
-	ctx context.Context // the frame's own (trace parentage for replays)
+	ctx context.Context // trace parentage: the frame's own, for replays
 	f   Frame
 	dir Direction
 	n   int // audio bytes
