@@ -89,6 +89,9 @@ verify: test ## build|test + gofmt + manifest/fixture checks: run before a PR
 	node tools/compat/validate_manifest.js
 	@echo "=== Verifying Protobuf Fixtures ==="
 	node tools/compat/verify_fixtures.js
+	@echo "=== Regenerating protobuf fixtures (must be byte-identical) ==="
+	node tools/compat/generate_fixtures.js >/dev/null
+	git diff --exit-code -- tools/compat/fixtures
 	@echo "=== Playback-clear probe (clear failure stays a failure unless the recorded decision matches) ==="
 	node tools/compat/probe_playback_clear.js
 	@echo "=== All verify checks passed ==="
