@@ -25,12 +25,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # The dylib is git-ignored (*.dylib); vad/silero.go looks for it at this path.
-      - name: onnxruntime 1.29.0
-        run: |
-          d=third_party/onnxruntime-osx-arm64-1.29.0
-          [ -f $d/lib/libonnxruntime.dylib ] || curl -fsSL https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/onnxruntime-osx-arm64-1.29.0.tgz | tar xz -C third_party
-      - run: go build ./...
+      # The dylib is git-ignored (*.dylib); make ort fetches it where vad/silero.go looks.
+      - run: make ort
+      - run: go build -tags xaispeech ./...
       - run: make perf-gate
       - if: always()
         uses: actions/upload-artifact@v4
