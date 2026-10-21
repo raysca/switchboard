@@ -61,6 +61,7 @@ The codebase is strictly bifurcated into an independent **Core Library** and an 
 
 ### 2. Strict YAGNI (You Aren't Gonna Need It) & Zero Bloat
 - **Server Consumption Requirement:** Every feature, processor, or configuration added to `core/` must ultimately be consumed and utilized by the `server/` runtime.
+- **Planned or parked library code:** a `core/` (or `transport/`, `vad/`, `smartturn/`) capability that no server call path reaches may stay only while its row in `docs/pipecat-parity-matrix.md` has the status `planned (hook exists)` or `parked` with the reason. Otherwise it is deleted. `make deadcode` lists every unreachable function; each one it keeps is named with a reason in `scripts/deadcode-allow.txt`, and a helper only tests use lives in a `_test.go` file (`export_test.go` for an external test package).
 - Do not write speculative, dead, or "just-in-case" library abstractions. If the server does not expose or consume it on a call path, it should not exist in the tree.
 - Eliminate dead code, unused helper methods, and redundant configuration knobs aggressively.
 
@@ -68,6 +69,7 @@ The codebase is strictly bifurcated into an independent **Core Library** and an 
 - **Every queue must be bounded.** Never create unbounded Go channels or unbounded slices that grow with incoming audio or tokens.
 - **Generation fencing:** Every asynchronous task and frame stream must respect `CurrentGeneration()` to avoid race conditions or late-arriving audio from interrupted turns.
 - **Zero Race Conditions:** All code must run and pass cleanly under `go test -race ./...`.
+- **No goroutine leaks:** the listed packages that own goroutines (`core/sttunit`, `core/ttsunit`, `transport/ws`, `vad`, `server`) end their tests with a `go.uber.org/goleak` check; a new package that starts goroutines adds one. (Not yet covered: `core` itself, whose tests leave one deliberately hung test processor, `core.hungProcessor`, and `smartturn`; recorded as a gap.)
 
 ---
 
@@ -78,7 +80,9 @@ To sustain hundreds of concurrent voice calls with sub-200ms interruption latenc
 ### 1. Goroutine Lifecycle & Context Propagation
 - **Explicit Lifecycle:** Never spawn a goroutine without an unambiguous termination path. Every goroutine must select on `ctx.Done()` or a dedicated close/done channel.
 - **Supervisor Integration:** In `core/`, all session-scoped background tasks must be spawned via `session.Go(...)` so unhandled panics and lifecycle teardowns are coordinated by the session supervisor.
-- **No Context in Structs:** Never store a `context.Context` inside a struct field. Pass context as the first argument (`ctx context.Context`) to methods and functions.
+- **No Context in Structs:** Never store a `context.Context` inside a struct field. Pass context as the first argument (`ctx context.Context`) to methods and functions. Two exceptions, each tagged with a comment at the field:
+  - *Trace parentage* (`// trace parentage`): a context kept only so spans started later, off the caller's stack (failover replays, the async tracer, session trace roots), have the right parent. It is never used for cancellation or deadlines.
+  - *Owner lifetime* (`// owner lifetime`): the context of a long-lived object that owns goroutines, created together with its `cancel` in the constructor (or the stream open) and cancelled by the object's own `Close`/teardown (session, WebSocket connection, provider streams, export queue). Never a caller's request context.
 - **Immediate Defers:** Always invoke `defer cancel()` immediately after creating derived contexts (`context.WithTimeout`, `context.WithCancel`).
 
 ### 2. Concurrency & Synchronization Hygiene
@@ -122,5 +126,7 @@ All engineering tasks, features, and refactors must conclude with an **independe
    - Error handling, recover blocks, and resource cleanup (`Close()`, `defer cancel()`).
 4. **Verification Gate:**
    - `gofmt -w .`
-   - `make verify` (or `go test -race ./core/...` and `go test -race ./server/...`).
+   - `make verify`: vet and `go test -race` in every module of the Makefile's `MODULES`, the Go end-to-end tests, gofmt, the protobuf fixture and manifest checks, and the docs link checker (`scripts/check-links.mjs`).
+   - `make deadcode`: no unreachable function outside `scripts/deadcode-allow.txt` (advisory in CI).
+   - `make e2e-echo` (Go and browser end-to-end on the free echo provider) and, when the offline stack is running, `make offline-test`. Paid/live targets only when asked.
    - Clean git status with descriptive conventional commit messages.
