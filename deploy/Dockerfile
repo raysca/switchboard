@@ -1,4 +1,4 @@
-# Production image for Voice Framework V1.
+# Production image for Switchboard.
 # The module graph requires Go 1.27.1. The runtime loads Silero and ONNX Runtime
 # from the paths the process actually searches.
 # Admin UI (embedded into the server binary): Node is a build tool only and is not in the runtime image.
