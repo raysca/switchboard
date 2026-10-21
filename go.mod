@@ -7,7 +7,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/yalue/onnxruntime_go v1.36.0
 	golang.org/x/time v0.15.0
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 	govoice/core v0.0.0
 	govoice/providers/google v0.0.0-00010101000000-000000000000
 	govoice/providers/xai v0.0.0-00010101000000-000000000000
