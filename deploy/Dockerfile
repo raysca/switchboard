@@ -15,7 +15,7 @@ WORKDIR /src
 
 COPY go.work go.work.sum ./
 COPY go.mod go.sum ./
-COPY core/go.mod ./core/
+COPY core/go.mod core/go.sum* ./core/
 COPY providers/cartesia/go.mod providers/cartesia/go.sum* ./providers/cartesia/
 COPY providers/deepgram/go.mod providers/deepgram/go.sum* ./providers/deepgram/
 COPY providers/echo/go.mod providers/echo/go.sum* ./providers/echo/
