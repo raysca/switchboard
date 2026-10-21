@@ -170,7 +170,7 @@ The table tracks every V2 P0/P1/P2 capability from the original V2 specification
 | P2 — Processor capability metadata | removed | Deleted from core: it had no production users. |
 | P2 — Provider/processor readiness events | removed | Deleted from core: it had no production users. |
 | P2 — Turn recording/replay hooks | removed | Deleted from core: it had no production users. |
-| P2 — Extended behavioral parity cases | P2 tracked | Eval scenarios cover false speech start, repeated barge-in, late STT, reconnect, TTS/tool completion races, mute update, congestion, overflow, and degradation. |
+| P2 — Extended behavioral parity cases | removed | The scenario catalog was deleted in Phase 8; it was never executed by `govoice-eval`. |
 
 ## Intentional differences and deferred scope
 
