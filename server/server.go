@@ -1031,9 +1031,6 @@ func (s *Server) Start() error {
 // Logger is the configured structured logger (JSON when observability.json_format).
 func (s *Server) Logger() *slog.Logger { return s.logger }
 
-// PublicAddr returns the bound public listener address once Start has returned.
-func (s *Server) PublicAddr() string { return s.publicAddr }
-
 // Shutdown performs orderly drain-then-cancel shutdown per spec §37.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()

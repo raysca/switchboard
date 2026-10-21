@@ -6,9 +6,9 @@ import (
 
 const DevInsecureTokenSecret = "dev-insecure-secret-key-for-testing-only-12345"
 
-// DefaultConfig returns the base configuration LoadConfig decodes YAML over
+// DefaultConfig returns the base configuration LoadConfigProfile decodes YAML over
 // (the only production path; direct callers are tests). Its origin allowlist
-// includes "*", so LoadConfig clears it, and the storage dialect, for the
+// includes "*", so LoadConfigProfile clears it, and the storage dialect, for the
 // production profile: those must be set explicitly.
 func DefaultConfig(profile Profile) *Config {
 	cfg := &Config{

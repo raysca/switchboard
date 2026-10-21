@@ -221,7 +221,7 @@ func TestServer_ServeTLS(t *testing.T) {
 	var resp *http.Response
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		resp, err = client.Get("https://" + srv.PublicAddr() + "/health")
+		resp, err = client.Get("https://" + publicAddr(srv) + "/health")
 		if err == nil {
 			break
 		}
@@ -272,3 +272,6 @@ func writeSelfSigned(t *testing.T, dir string) (string, string) {
 	}
 	return certPath, keyPath
 }
+
+// publicAddr is the bound public listener address once Start has returned.
+func publicAddr(s *Server) string { return s.publicAddr }

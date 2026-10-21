@@ -29,15 +29,6 @@ type RunResult struct {
 // Option configures a Job.
 type Option func(*Job)
 
-// WithClock sets a custom clock function for deterministic time in tests.
-func WithClock(fn func() time.Time) Option {
-	return func(j *Job) {
-		if fn != nil {
-			j.clock = fn
-		}
-	}
-}
-
 // WithInterval sets the recurring job run interval.
 func WithInterval(d time.Duration) Option {
 	return func(j *Job) {
