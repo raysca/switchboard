@@ -82,7 +82,7 @@ func TestParityMatrix(t *testing.T) {
 		}
 	}
 
-	valid := map[string]bool{"parity": true, "partial": true, "intentionally different": true, "not planned": true}
+	valid := map[string]bool{"parity": true, "partial": true, "intentionally different": true, "not planned": true, "planned (hook exists)": true, "parked": true}
 	// The Default cell says whether a stock server runs the feature, so "available" is never read as "on".
 	defaults := []string{"on", "off: ", "library only", "n/a"}
 	rows, inMatrix := 0, false
