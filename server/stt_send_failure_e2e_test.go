@@ -29,6 +29,7 @@ import (
 type flakySTT struct {
 	failStreams int32
 	deadAfter   bool // every dial fails once a write has failed
+	mute        bool // no stream ever delivers a transcript (a young stream finishing with one would reset the outage count)
 	armed       atomic.Bool
 	dials       atomic.Int32
 	failed      atomic.Int32
@@ -71,7 +72,7 @@ func (c *flakyConn) Finish(context.Context) error {
 func (c *flakyConn) Recv(ctx context.Context) (sttunit.Result, error) {
 	select {
 	case <-c.finish:
-		if c.delivered.CompareAndSwap(false, true) {
+		if c.delivered.CompareAndSwap(false, true) && !c.p.mute {
 			return sttunit.Result{Text: fmt.Sprintf("hello from stream %d", c.idx), Final: true, EndOfUtterance: true}, nil
 		}
 		return sttunit.Result{}, sttunit.ErrStreamEnded
@@ -173,7 +174,7 @@ func TestFlowE2E_STTSendFailureThenDeadProviderHangsUp(t *testing.T) {
 // failed write counts as an unreachable STT: two of them a no-transcript window apart, with no transcript
 // between, end the call as stt_unavailable instead of redialing for ever.
 func TestFlowE2E_STTSendFailureAlwaysFailingEndsCall(t *testing.T) {
-	p := &flakySTT{failStreams: 1 << 30}
+	p := &flakySTT{failStreams: 1 << 30, mute: true}
 	r := sttSendRig(t, map[string]*flakySTT{"s": p}, func(c *Config) { c.Turn.NoTranscriptTimeout = time.Second })
 	c := r.dial(sttSendFlow(t, r, `"model":"s"`))
 	go c.sendAudioLoose(callerSpeech(t))
