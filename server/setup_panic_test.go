@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"govoice/core"
+	"govoice/server/flow"
 )
 
 // waitSetupReleased waits for a panicked setup's connection to close, then polls until the admission
@@ -36,6 +37,16 @@ func waitSetupReleased(t *testing.T, r *flowRigE2E, c *e2eCall, baseline int) {
 func TestSetupPanicReleasesAdmissionAndRow(t *testing.T) {
 	r := newFlowRigE2E(t, newProbe())
 	r.s.registry.Register("echo.tts", func(cfg *Config, spec StageSpec) (core.Processor, error) { panic("tts ctor bug") })
+	waitSetupReleased(t, r, r.dial(r.createRoutedFlow("salesvoice")), 0)
+}
+
+// A panic after the flow is resolved but before the build's fail path exists (here a nil step background
+// in the call's flow) must still end the stored row and release the admission slot.
+func TestSetupPanicAfterResolveEndsRow(t *testing.T) {
+	r := newFlowRigE2E(t, newProbe())
+	r.s.adjustCall = func(call *CallSpec) {
+		call.Flow = &CallFlow{Start: "start", Backgrounds: map[string]*flow.BackgroundSettings{"other": nil}}
+	}
 	waitSetupReleased(t, r, r.dial(r.createRoutedFlow("salesvoice")), 0)
 }
 

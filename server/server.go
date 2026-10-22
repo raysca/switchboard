@@ -534,7 +534,9 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 
 	// A panic from here until the call is registered (flow resolution, a provider
 	// constructor) releases what setup acquired, then propagates to onSessionReady.
+	sessionID := s.nextCallID.Add(1)
 	var fail func(error) (*core.Session, error)
+	var releaseCall func()
 	registered := false
 	defer func() {
 		if r := recover(); r != nil {
@@ -542,14 +544,14 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 			case registered:
 			case fail != nil:
 				_, _ = fail(errors.New("call setup panicked"))
-			default:
+			default: // resolved, but setup has no fail path yet
+				s.recoverEach(sessionID, "releaseCall", releaseCall)
 				s.admission.ReleaseSession(principal, flowID)
 			}
 			panic(r)
 		}
 	}()
 
-	sessionID := s.nextCallID.Add(1)
 	timeline := s.timelines.GetOrCreate(sessionID)
 	timeline.Record(TimelineEvent{Type: EventConnect, Details: "websocket connected"})
 	timeline.Record(TimelineEvent{Type: EventAuthenticate, Details: fmt.Sprintf("principal=%s", principal)})
@@ -562,8 +564,9 @@ func (s *Server) startCall(conn *ws.Connection) (*core.Session, error) {
 		tokenID = claims.ID
 	}
 	ending := &endReason{transport: conn.CloseCause}
-	call, releaseCall, err := s.resolveCall(resolveCtx, conn.FlowID(), tokenID, principal, ending)
+	call, rel, err := s.resolveCall(resolveCtx, conn.FlowID(), tokenID, principal, ending)
 	cancelResolve()
+	releaseCall = rel
 	if err != nil {
 		s.admission.ReleaseSession(principal, flowID)
 		s.metrics.SessionsFailedTotal.Add(1)
