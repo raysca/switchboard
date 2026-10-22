@@ -19,7 +19,7 @@ A 400 from create or edit carries `error.details.reason`: `invalid_endpoint`, `d
 
 The server view includes `last_checked_at`, the time of the last written sync result (background or manual). `GET /api/v1/server-config` returns `mcp_sync_interval_seconds` (0 when `mcp.sync_interval` is off). Operator guide: [operations/mcp.md](../operations/mcp.md).
 
-A failed tool test returns an error with `error.details` `{category, message}`. `category` is one of `invalid_arguments`, `timeout`, `unavailable`, `result_too_large`, `tool_error`, `cancelled`. `message` is present only for `tool_error`: the tool's error text, cleaned of control characters, credential redacted, at most 512 bytes. The same category is stored on the tool call as `error_category`. In a call, a canceled MCP tool call now reports `cancelled: true` in the RTVI `llm-function-call-stopped` event.
+A failed tool test returns an error with `error.details` `{category, message}`; the same category is stored on the tool call as `error_category`. See the [error categories](../operations/mcp.md) for the values and the message rules. In a call, a canceled MCP tool call now reports `cancelled: true` in the RTVI `llm-function-call-stopped` event.
 
 The server DTO contains the `auth_env` variable name and `auth_env_set`, never the token. The `MCP_TOKEN_` prefix is checked again every time the token is read, so a row written outside the API with any other variable name never sends that variable's value. Endpoint query values are masked in responses. Validation and tool execution errors are bounded safe category messages and omit remote response details. Discovery results are sorted by remote tool name and include the canonical schema hash per tool plus the snapshot hash.
 

@@ -7,7 +7,7 @@ const AUTH_ENV_PREFIX = "MCP_TOKEN_";
 const AUTH_ENV_PATTERN = /^MCP_TOKEN_[A-Z0-9_]{1,48}$/;
 
 type Common = { pending: boolean; error: string | null; onCancel: () => void };
-/** Without `server` the dialog connects a new one; with it, it edits that server and sends only what changed. */
+/** Without `server` the dialog connects a new one; with it, it edits that server. */
 export type ConnectServerDialogProps = Common &
   ({ server?: undefined; onSubmit: (input: CreateMCPServerInput) => void } | { server: MCPServerDTO; onSubmit: (patch: UpdateMCPServerInput) => void });
 
@@ -31,13 +31,8 @@ export function ConnectServerDialog(props: ConnectServerDialogProps) {
     }
     setProblem(null);
     if (props.server) {
-      const patch: UpdateMCPServerInput = {};
-      if (name.trim() !== props.server.name) patch.name = name.trim();
-      if (endpoint.trim() !== props.server.endpoint) patch.endpoint = endpoint.trim();
-      if (description.trim() !== props.server.description) patch.description = description.trim();
-      if (authEnv.trim() !== props.server.auth_env) patch.auth_env = authEnv.trim();
-      if (Object.keys(patch).length === 0) return onCancel();
-      return props.onSubmit(patch);
+      // The server compares the endpoint and token variable with the stored ones and re-syncs only on a change.
+      return props.onSubmit({ name: name.trim(), description: description.trim(), endpoint: endpoint.trim(), auth_env: authEnv.trim() });
     }
     props.onSubmit({
       name: name.trim(),

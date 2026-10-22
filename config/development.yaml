@@ -81,8 +81,6 @@ observability:
 # Production always requires it.
 # Local test MCP servers (make mcp-test, make dev) run on plain HTTP at loopback.
 # Development and tests only: the production profile refuses this setting.
-# MCP servers are re-checked in the background every mcp.sync_interval
-# (default 5m; 0 = off; 30s to 24h when on).
 mcp:
   allow_local_http: true
 

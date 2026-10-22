@@ -371,7 +371,6 @@ const turnToolSchema = z.object({
   name: z.string(),
   status: z.string(),
   duration_ms: z.number(),
-  error_category: z.string().optional(),
 });
 type TurnToolDTO = z.infer<typeof turnToolSchema>;
 

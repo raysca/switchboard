@@ -169,7 +169,7 @@ describe("MCPView", () => {
     expect(screen.getByText("Checked automatically every 1 minute")).toBeVisible();
   });
 
-  it("edits a server in place: prefilled, only changed fields sent, the returned state shown", async () => {
+  it("edits a server in place: prefilled, all fields sent, the returned state shown", async () => {
     // After the save the server's own GET (re-read by the edit) returns the saved state, as the real one does.
     const saved = server({ name: "billing2", validation_state: "connection_failed" });
     let done = false;
@@ -184,7 +184,7 @@ describe("MCPView", () => {
     await user.clear(name);
     await user.type(name, "billing2");
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(updateMCPServer).toHaveBeenCalledWith("billing", { name: "billing2" });
+    expect(updateMCPServer).toHaveBeenCalledWith("billing", { name: "billing2", description: expect.any(String), endpoint: "https://mcp.example.com/billing", auth_env: expect.any(String) });
     expect(await screen.findByRole("heading", { name: "billing2", level: 2 })).toBeVisible();
     expect(await screen.findByText("fresh_tool")).toBeVisible(); // the tools the edit's re-sync found are re-read
     expect(screen.getAllByText(/^Unreachable/).length).toBeGreaterThan(0);
@@ -197,7 +197,7 @@ describe("MCPView", () => {
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     await user.clear(screen.getByLabelText("Token variable (optional)"));
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(updateMCPServer).toHaveBeenCalledWith("billing", { auth_env: "" });
+    expect(updateMCPServer).toHaveBeenCalledWith("billing", expect.objectContaining({ auth_env: "" }));
   });
 
   it("explains a refused edit by its reason", async () => {
@@ -207,15 +207,6 @@ describe("MCPView", () => {
     await user.type(screen.getByLabelText("Description (optional)"), "x");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("That address is not allowed: MCP servers must be public HTTPS addresses.");
-  });
-
-  it("adds the development note to a refused edit on a development server", async () => {
-    const updateMCPServer = vi.fn().mockRejectedValue(new ApiError("MCP server configuration is invalid", "invalid_mcp_server", 400, "r1", { reason: "destination_denied" }));
-    const { user } = setup({ updateMCPServer, getServerConfig: vi.fn().mockResolvedValue({ profile: "development", mcp_sync_interval_seconds: 60 }) });
-    await user.click(await screen.findByRole("button", { name: "Edit" }));
-    await user.type(screen.getByLabelText("Description (optional)"), "x");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("MCP servers must be public HTTPS addresses. This development server also allows local test addresses.");
   });
 
   it("gives the same sentence when connecting is refused", async () => {

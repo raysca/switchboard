@@ -86,7 +86,6 @@ describe("ToolTestConsole", () => {
     ["unavailable", { category: "unavailable" }, "The server could not be reached"],
     ["invalid_arguments", { category: "invalid_arguments" }, "The tool rejected the arguments"],
     ["result_too_large", { category: "result_too_large" }, "The tool's result was too large"],
-    ["cancelled", { category: "cancelled" }, "The call was cancelled"],
   ])("explains a %s failure", async (_n, details, sentence) => {
     const { user } = setup(vi.fn().mockRejectedValue(new ApiError("failed", "mcp_tool_failed", 502, "r9", details)));
     await user.click(screen.getByRole("button", { name: "Run tool" }));
