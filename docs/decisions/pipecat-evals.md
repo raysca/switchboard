@@ -64,9 +64,11 @@ to reply, multi-turn scripts. Judge/persona simulations need an LLM (default `ol
 - Internal state: turn manager transitions, generations/fencing, interruption bookkeeping, context contents,
   transcript stabilization, tool-loop rounds, breaker/retry state, metrics, traces, stored session rows.
 - Provider-side behavior: what was sent to STT/LLM/TTS, retries, deadlines, fallback.
-- Anything the server does not surface over RTVI: no `bot-tts-text`, `bot-interrupted`, `vad-*`, function-call or
-  marker messages, so `tts_response`, `function_call`, `llm_marker`, `vad_*` and interruption expectations cannot
-  pass today.
+- Anything the server does not surface over RTVI: no `vad-*` or marker messages, so `llm_marker` and `vad_*`
+  expectations cannot pass today. `bot-tts-text`, `bot-interrupted` and the `llm-function-call-*` events are sent
+  (see `docs/pipecat-compatibility.md`), but the function-call events carry only the call id and a cancelled
+  flag, no name, arguments or result, so a `function_call` expectation on name or arguments cannot pass either,
+  and the unmodified client ignores `bot-interrupted`.
 - Audio paths: audio modality needs a user TTS and a bot-audio STT in the harness plus real VAD/STT on the server;
   the fake STT ignores audio. Not attempted.
 - Admission, auth, token replay, rate limits: the harness sees only a closed socket.
