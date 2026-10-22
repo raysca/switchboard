@@ -326,3 +326,64 @@ func TestRedactorMasksCapturedContent(t *testing.T) {
 		t.Fatalf("content not redacted: %s", dump)
 	}
 }
+
+// STT providers trace one "stt.stream" span per provider stream.
+func TestSTTStreamSpanExported(t *testing.T) {
+	e, mem, _ := fixture(Config{})
+	st := e.Session("f", "v")
+	ctx := context.Background()
+	sess := st.StartSpan(ctx, ev(e, "session.start", t0, "", nil))
+	turn := st.StartSpan(ctx, ev(e, "turn.start", t0.Add(time.Second), "t1", nil))
+	bound := st.StartSpan(ctx, ev(e, "stt.stream", t0.Add(2*time.Second), "t1", map[string]any{"provider": "deepgram"}))
+	unbound := st.StartSpan(ctx, ev(e, "stt.stream", t0.Add(3*time.Second), "", map[string]any{"provider": "deepgram", "text": "SECRET-WORDS"}))
+	dangling := st.StartSpan(ctx, ev(e, "stt.stream", t0.Add(3*time.Second), "t1", map[string]any{"provider": "deepgram"}))
+	if _, ok := st.StartSpan(ctx, ev(e, "stt.request", t0, "t1", nil)).(noop); !ok {
+		t.Fatal("stt.request is not emitted by anyone and must stay unmapped")
+	}
+	bound.AddEvent(ev(e, "stt.start", t0.Add(2*time.Second), "t1", nil))
+	bound.AddEvent(ev(e, "stt.complete", t0.Add(2500*time.Millisecond), "t1", nil))
+	bound.End(nil)
+	unbound.End(nil)
+	turn.End(nil)
+	_ = dangling // never ended: must be closed at session end
+	sess.End(nil)
+	if err := e.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var stt []tracetest.SpanStub
+	var root, turnS tracetest.SpanStub
+	for _, s := range mem.GetSpans() {
+		switch s.Name {
+		case "govoice.stt":
+			stt = append(stt, s)
+		case "govoice.session":
+			root = s
+		case "govoice.turn":
+			turnS = s
+		}
+	}
+	if len(stt) != 3 {
+		t.Fatalf("want 3 stt spans (one closed at session end), got %d", len(stt))
+	}
+	b, u := stt[0], stt[1]
+	if b.Parent.SpanID() != turnS.SpanContext.SpanID() || u.Parent.SpanID() != root.SpanContext.SpanID() {
+		t.Fatal("bound stream must hang off the turn, unbound off the session")
+	}
+	if len(b.Events) != 2 || b.Events[0].Name != "govoice.stt.start" || b.Events[1].Name != "govoice.stt.complete" {
+		t.Fatalf("events %v", b.Events)
+	}
+	var prov string
+	for _, a := range b.Attributes {
+		if a.Key == "govoice.provider" {
+			prov = a.Value.Emit()
+		}
+	}
+	if prov != "deepgram" {
+		t.Fatalf("attrs %v", b.Attributes)
+	}
+	for _, a := range u.Attributes {
+		if a.Key == "govoice.text" || strings.Contains(a.Value.Emit(), "SECRET-WORDS") {
+			t.Fatal("text leaked by default")
+		}
+	}
+}
