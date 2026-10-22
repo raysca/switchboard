@@ -49,6 +49,7 @@ export function FlowVoiceTest({
   const startedAt = useRef<number | null>(null);
   // Which step held the call when each reply first appeared. Written once per line, so earlier lines never change.
   const stepOf = useRef(new Map<string, string>());
+  const lastActive = useRef<string | undefined>(undefined);
 
   // Initialize or maintain VoiceClient instance
   if (!voiceClientRef.current) {
@@ -93,6 +94,18 @@ export function FlowVoiceTest({
   if (!inCall) startedAt.current = null;
   const clock = mmss(inCall && startedAt.current !== null ? (now - startedAt.current) / 1000 : 0);
   for (const item of state.transcripts) if (item.speaker !== "user" && !stepOf.current.has(item.id)) stepOf.current.set(item.id, activeStep || flow.name);
+  // The step a route leads to speaks its greeting before the server reports it active, so that greeting was first
+  // labelled with the old step. Once the step changes, the lines after the old step's one goodbye (the first bot line
+  // after the caller's last message) are the new step's. Without a caller turn there is nothing to tell them apart.
+  if (activeStep && lastActive.current && activeStep !== lastActive.current) {
+    const lastUser = state.transcripts.reduce((at, t, i) => (t.speaker === "user" ? i : at), -1);
+    if (lastUser >= 0) {
+      for (const item of state.transcripts.slice(lastUser + 1).filter((t) => t.speaker !== "user").slice(1)) {
+        if (stepOf.current.get(item.id) === lastActive.current) stepOf.current.set(item.id, activeStep);
+      }
+    }
+  }
+  if (activeStep) lastActive.current = activeStep;
   useEffect(() => {
     onCall?.({ sessionId: state.sessionId, userSpeaking: state.isUserSpeaking, botSpeaking: state.isBotSpeaking, live: inCall });
   }, [onCall, state.sessionId, state.isUserSpeaking, state.isBotSpeaking, inCall]);

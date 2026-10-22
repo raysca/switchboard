@@ -812,6 +812,36 @@ describe("FlowVoiceTest", () => {
     expect(lines[0]).not.toHaveTextContent("Billing");
   });
 
+  it("relabels the incoming step's greeting once the step changes, keeping the old step's goodbye", async () => {
+    const h = await connected({ activeStep: "Front desk" });
+    h.ws.receiveRTVIMessage(RTVI_TYPE_USER_TRANSCRIPTION, { text: "I want to buy a car", final: true });
+    await screen.findByText("I want to buy a car");
+    await h.botSays("Connecting you to Sales."); // the old step's goodbye
+    await h.botSays("Hi, which car interests you?"); // the greeting: spoken before the server reports Sales active
+    let lines = await screen.findAllByTestId("transcript-bot");
+    expect(lines[1]).toHaveTextContent("Front desk"); // still unknown: no step change yet
+    h.setActiveStep("Sales");
+    lines = await screen.findAllByTestId("transcript-bot");
+    expect(lines[0]).toHaveTextContent("Front desk");
+    expect(lines[1]).toHaveTextContent("Sales");
+    // Later lines follow the active step, and a settled label never changes again.
+    h.ws.receiveRTVIMessage(RTVI_TYPE_USER_TRANSCRIPTION, { text: "The electric one", final: true });
+    await screen.findByText("The electric one");
+    await h.botSays("It suits long trips.");
+    h.setActiveStep("Service");
+    lines = await screen.findAllByTestId("transcript-bot");
+    expect(lines.map((l) => l.querySelector(".line__who")?.textContent)).toEqual(["Front desk", "Sales", "Sales"]);
+  });
+
+  it("does not relabel anything when the step changes without a caller turn to anchor it", async () => {
+    const h = await connected({ activeStep: "Front desk" });
+    await h.botSays("Welcome.");
+    await h.botSays("How can I help?");
+    h.setActiveStep("Sales");
+    const lines = await screen.findAllByTestId("transcript-bot");
+    expect(lines.map((l) => l.querySelector(".line__who")?.textContent)).toEqual(["Front desk", "Front desk"]);
+  });
+
   it("falls back to the flow's name when no step is known", async () => {
     const h = await connected();
     await h.botSays("Hi there.");
