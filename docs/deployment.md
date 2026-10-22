@@ -238,7 +238,7 @@ This is the deployment the repository automates, and it is a **demo**, not a pro
 
 **Signing in to the admin UI.** After the first deploy, `gcloud secrets versions access latest --secret=GOVOICE_MANAGEMENT_API_KEY --project <project> | scripts/admin-link.sh https://<service-url>` (also printed by the bootstrap), or `make admin-link URL=https://<service-url>` with the key in `GOVOICE_MANAGEMENT_API_KEY`. The link is `<url>/#key=<key>`: the key is in the URL fragment, which browsers never send to a server, and the admin UI reads it into memory and removes it from the address bar and history at once. The link is a credential: do not paste it into chat or tickets. The hosted UI never sends a keyless "are you signed in" request (that would count as a failed login below).
 
-<!-- src: deploy/gcp/bootstrap.sh:132-134; Makefile:203; former runbook -->
+<!-- src: deploy/gcp/bootstrap.sh:132-134; Makefile:199; former runbook -->
 
 **Local rehearsal.** `deploy/rehearsal/` runs the production image, the dentistry MCP server and an nginx that behaves like Cloud Run's front end on `http://localhost:8080`, with the development profile. Follow [its README](../deploy/rehearsal/README.md); it states what the rehearsal does not prove.
 
