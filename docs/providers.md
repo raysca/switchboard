@@ -21,6 +21,8 @@ Provider secrets live in the server's environment and nowhere else. The server n
 | `offline` | none | LLM; STT and TTS in builds tagged `xaispeech`. Local models behind `providers.offline.*` endpoints; see [Offline mode](#offline-mode-privacy) |
 | MCP servers | `MCP_TOKEN_<NAME>` | The bearer token of an MCP server whose `auth_env` names it (see [api/mcp.md](api/mcp.md)) |
 
+**LLM sampling.** A flow step's `llm.temperature`, `llm.top_p` and `llm.max_output_tokens` ([api/v1.md](api/v1.md)) reach each provider as: `google`, `generationConfig` `temperature`, `topP`, `maxOutputTokens` (on Gemini 2.5 the cap includes thinking tokens, so keep it at 256 or more); `xai` and `offline` on the Responses endpoint, `temperature`, `top_p`, `max_output_tokens`, and on a chat-completions endpoint `max_tokens`; `openai` (and any OpenAI-compatible server) and `nvidia`, `temperature`, `top_p`, `max_tokens`. Unset values are left out of the request. `echo` shows them in its labelled replies. Wire names are from the providers' documentation and are not verified against the live APIs.
+
 A value must be a single token: surrounding whitespace is trimmed, and a value with inner whitespace or control characters, or one that starts with `$` (an unexpanded shell reference), counts as missing. This applies to optional variables too: a set but unusable `OPENAI_BASE_URL` makes OpenAI undetected (naming the variable) rather than sending the key to the default endpoint. `GOOGLE_APPLICATION_CREDENTIALS` must name a regular file holding a JSON object with `"type": "service_account"`; a user ADC file or any other JSON counts as missing.
 
 Self-hosted NVIDIA NIM and Riva endpoints are not supported in this release: `nvidia` always uses the hosted NIM (`integrate.api.nvidia.com`) and NVCF Riva endpoints, and `providers.nvidia.allow_private` is removed (a config that still sets it fails to load). They come back as catalog environment fields when needed. Variables are read when they are needed (flow readiness, `GET /providers`, and the start of each call), never cached; in practice you change them by editing the environment file and restarting.
@@ -100,7 +102,7 @@ An entry with an existing `id` replaces it, a new one is appended, and an overla
 | `mimic` | `google` | `google` imitates Google's timing; `instant` has no delays (framework measurements, tests); both stream the reply word by word |
 | `stt` | `text` | `audio` turns voiced audio into placeholder words |
 | `audible` | `false` | speak a quiet 220 Hz tone instead of silence |
-| `label_replies` | `false` | prefix each reply with the step's prompt, so a test can tell which step answered |
+| `label_replies` | `false` | prefix each reply with the step's prompt, so a test can tell which step answered; it also shows the sampling the step set, e.g. `{temperature=0.3 top_p=0.9 max_output_tokens=200}` |
 | `llm_extra_delay` | `0` | added between reply pieces, after the first (the perf-gate self-test uses it) |
 
 - **Failure injection.** A step whose TTS voice is `brokenvoice` cannot be built, which the end-to-end suites use to fail a route. Stage-level failure injection for core tests lives in `core/coretest`, not here.
