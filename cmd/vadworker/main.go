@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -76,7 +77,7 @@ func main() {
 	for {
 		payload, err := vad.ReadFrame(os.Stdin, nil)
 		if err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return // parent closed connection or exited
 			}
 			fmt.Fprintf(os.Stderr, "vadworker: read frame error: %v\n", err)
