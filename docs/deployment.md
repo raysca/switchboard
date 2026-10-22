@@ -171,7 +171,7 @@ Migrations run forward-only at startup and a failed migration aborts the start. 
 
 `deploy/docker-compose.yaml` runs the server, Postgres and an nginx proxy. Steps:
 
-1. Put TLS files in a `certs` directory next to `nginx.conf` (git-ignored): `voice.example.com.crt` and `.key` for the public vhost, and `admin.crt` and `.key` for the internal 9091 vhost. The paths are fixed by `nginx.conf` and mounted by compose at `/etc/ssl/certs`; replace `voice.example.com` in the two `server_name` lines and in the file names with your host. For a throwaway test, `deploy/smoke-google.sh` creates a self-signed pair with `openssl req -x509 -newkey rsa:2048 -nodes -keyout deploy/certs/voice.example.com.key -out deploy/certs/voice.example.com.crt -days 2 -subj '/CN=localhost'` and copies it to `admin.crt` and `admin.key`.
+1. Put TLS files in a `certs` directory next to `nginx.conf` (git-ignored): `voice.example.com.crt` and `.key` for the public vhost, and `admin.crt` and `.key` for the internal 9091 vhost. The paths are fixed by `nginx.conf` and mounted by compose at `/etc/ssl/certs`; replace `voice.example.com` in the two `server_name` lines and in the file names with your host. For a throwaway test, `deploy/smoke-google.sh` creates a self-signed pair with the command below (do not run that script on a deployment host, see [section 17](#17-smoke-tests-troubleshooting-and-checklist)): `openssl req -x509 -newkey rsa:2048 -nodes -keyout deploy/certs/voice.example.com.key -out deploy/certs/voice.example.com.crt -days 2 -subj '/CN=localhost'` and copies it to `admin.crt` and `admin.key`.
 2. Put the provider variables in `deploy/govoice.env` and export `TOKEN_SECRET`, `GOVOICE_MANAGEMENT_API_KEY` and `POSTGRES_PASSWORD` (compose refuses to start without them).
 3. Start: `docker compose -f deploy/docker-compose.yaml up -d`.
 4. Call the management API from inside the container, because compose does not publish port 9090 (on Kubernetes use `kubectl port-forward` or `exec`): `docker exec govoice-server curl -H "Authorization: Bearer $GOVOICE_MANAGEMENT_API_KEY" http://127.0.0.1:9090/api/v1/...`. Then follow [quickstart.md](quickstart.md#5-check-providers-create-a-flow-issue-a-token) to check providers, create a flow and issue a voice token. This nginx proxies only `/ws` and `/health`, so the admin UI is not reachable through it; the UI needs `public_admin` ([section 10](#10-path-c-google-cloud-run-the-demo-deployment)).
@@ -340,15 +340,17 @@ Prometheus scrapes `:9092/metrics` (the probe listener). `deploy/alerts/govoice.
 
 ## 17. Smoke tests, troubleshooting and checklist
 
-| Check | Needs | What it proves |
-|---|---|---|
-| `deploy/smoke.sh` (CI job `image-smoke`) | docker, curl, openssl; no provider key | builds the image, starts it read-only with all capabilities dropped next to a throwaway Postgres, probes `/ready`, `/metrics` and `/health` from outside, checks the probe port does not serve the management API or `/debug/timeline`, checks xAI speech is in the build, and checks that SIGTERM exits 0 |
-| `deploy/smoke-google.sh` | `TOKEN_SECRET`, `GOOGLE_APPLICATION_CREDENTIALS` (host path), docker, openssl, jq | the Compose stack end to end with a Google service account: flow ready, voice token issued, `https://127.0.0.1/health` through nginx, clean SIGTERM |
-| `deploy/smoke-cloudrun.sh <url>` | `GOVOICE_MANAGEMENT_API_KEY`, jq; `SMOKE_LOCAL=1` for the rehearsal | UI served, `/metrics`, `/ready` and `/debug/timeline` absent on the public port, management API behind the key, `client_ip` and `secure` correct, three providers detected, the demo flow and MCP server ready, failed-login throttling |
-| `make e2e-oneport` | Node and Playwright | the one-port server on the echo provider, no secrets |
-| `make release-security` | docker, Go | the hardening gate of [section 3](#3-build) |
+> **Never run `deploy/smoke-google.sh` on a deployment host.** It drives `deploy/docker-compose.yaml` with the same project and the same fixed container names (`govoice-server`, `govoice-postgres`, `govoice-proxy`) as the live stack, so `compose up -d` replaces the running containers (with a freshly generated `POSTGRES_PASSWORD` and management key when you have not exported yours), and its exit trap runs `compose down -v`, which stops the stack and **deletes the Postgres volume** (`govoice_db`, your flow store). It also writes a 2-day self-signed certificate into `deploy/certs` when `voice.example.com.crt` is missing there. Run it only on a throwaway build machine.
 
-<!-- src: deploy/smoke.sh:1-70; deploy/smoke-google.sh:1-70; deploy/smoke-cloudrun.sh:1-62; .github/workflows/ci.yml:123-130; Makefile:180 -->
+| Check | Needs | What it proves | Blast radius (from the script) |
+|---|---|---|---|
+| `deploy/smoke.sh` (CI job `image-smoke`) | docker, curl, openssl; no provider key | builds the image, starts it read-only with all capabilities dropped next to a throwaway Postgres, probes `/ready`, `/metrics` and `/health` from outside, checks the probe port does not serve the management API or `/debug/timeline`, checks xAI speech is in the build, and checks that SIGTERM exits 0 | Isolated: builds `govoice:smoke` (or uses `SMOKE_IMAGE`), runs uniquely named `govoice-smoke-<pid>-*` containers on its own network, and removes only those on exit. It does not touch the Compose stack or its volumes. It costs a build and some CPU, so avoid running it on a loaded production host |
+| `deploy/smoke-google.sh` | `TOKEN_SECRET`, `GOOGLE_APPLICATION_CREDENTIALS` (host path), docker, openssl, jq | the Compose stack end to end with a Google service account: flow ready, voice token issued, `https://127.0.0.1/health` through nginx, clean SIGTERM | **Destructive on a deployment host**, see the warning above. It also builds `govoice:release-security`, while the Compose file runs `govoice:local`, so the run exercises whichever `govoice:local` image exists (or builds it), not the image it just built |
+| `deploy/smoke-cloudrun.sh <url>` | `GOVOICE_MANAGEMENT_API_KEY`, jq; `SMOKE_LOCAL=1` for the rehearsal | UI served, `/metrics`, `/ready` and `/debug/timeline` absent on the public port, management API behind the key, `client_ip` and `secure` correct, three providers detected, the demo flow and MCP server ready, failed-login throttling | Read-only HTTP against the URL you give it: no call is placed and nothing is created. It sends 11 requests with a wrong key, so it spends the global failed-login allowance (a wrong key may get 429 for a few seconds) and increments `voice_management_auth_failures_total` and `voice_management_auth_throttled_total`. It expects the Smile Dental demo flow, so it fails against a non-demo deployment |
+| `make e2e-oneport` | Node and Playwright | the one-port server on the echo provider, no secrets | Starts its own local echo-provider server for the test; no containers, no deployment |
+| `make release-security` | docker, Go | the hardening gate of [section 3](#3-build) | Builds `govoice:release-security`, writes `deploy/sbom.json` (git-ignored), runs a throwaway `docker run --rm` of the image and the scan; it does not touch the Compose stack |
+
+<!-- src: deploy/smoke.sh:1-70; deploy/smoke-google.sh:1-70 (compose project and `compose down -v` at 31-41, image tag at 25); deploy/smoke-cloudrun.sh:1-62; .github/workflows/ci.yml:123-130; Makefile:180 -->
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -372,7 +374,7 @@ Pre-deploy checklist:
 - [ ] Image built with `xaispeech` and scanned (`make release-security`).
 - [ ] Config edited (section 4) and secrets set with modes checked (section 6).
 - [ ] Database backed up; grace periods at least 60 s; probes wired; alerts loaded.
-- [ ] Smoke test passed; `GET /api/v1/server-config` checked after the deploy.
+- [ ] `deploy/smoke.sh` passed on a build machine (never `deploy/smoke-google.sh` on the deployment host); after the deploy, `deploy/smoke-cloudrun.sh <url>` for Cloud Run, and `GET /api/v1/server-config` checked.
 
 ## 18. Not provided by this repository
 
