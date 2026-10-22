@@ -565,12 +565,7 @@ func TestWorkerProcess_PoisonChunkKillsOneWorkerNotAll(t *testing.T) {
 // A worker that fails is logged with the tail of its stderr (the ORT/runtime diagnostics a crash
 // leaves), once: the next failure logs only what the next process wrote.
 func TestWorkerProcess_FailureLogsStderrTail(t *testing.T) {
-	var mu sync.Mutex
-	var logs strings.Builder
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(lockedWriter{&mu, &logs}, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	logged := func() string { mu.Lock(); defer mu.Unlock(); return logs.String() }
+	logged := captureLogs(t)
 
 	exec, err := New(Config{Mode: "process", Workers: 2, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1, ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond})
 	if err != nil {
@@ -621,6 +616,50 @@ func TestWorkerProcess_FailureLogsStderrTail(t *testing.T) {
 	out = logged()
 	if !strings.Contains(out, "stderr=second-failure-diagnostic") || strings.Count(out, "first-failure-diagnostic") != 1 {
 		t.Fatalf("second failure must log only its own stderr:\n%s", out)
+	}
+}
+
+// captureLogs routes slog's default logger to a buffer until the test ends. It swaps a process-global,
+// so no vad test may use t.Parallel.
+func captureLogs(t *testing.T) func() string {
+	var mu sync.Mutex
+	var logs strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(lockedWriter{&mu, &logs}, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return func() string { mu.Lock(); defer mu.Unlock(); return logs.String() }
+}
+
+// A worker that dies during start or handshake leaves a stderr that is logged once, at that failure,
+// and does not reappear in the next failure's log.
+func TestWorkerProcess_StartFailureLogsStderrOnce(t *testing.T) {
+	logged := captureLogs(t)
+	exec, err := New(Config{Mode: "process", Workers: 1, Batch: 4, QueueCap: 256, IntraOp: 1, PerSessionLimit: 1, ParentDeadline: 200 * time.Millisecond, ParentGrace: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer exec.Close()
+	b := exec.backend.(*workerProcessBackend)
+	wp := b.workers[0]
+	good := b.cfg.WorkerBinary
+	bad := filepath.Join(t.TempDir(), "vadworker.sh")
+	if err := os.WriteFile(bad, []byte("#!/bin/sh\necho startup-failure-marker >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b.cfg.WorkerBinary = bad // the worker is up and idle: nothing else reads cfg until the next respawn
+	if _, err := wp.start(); err == nil {
+		t.Fatal("start of a worker that exits at startup succeeded")
+	}
+	b.cfg.WorkerBinary = good
+	out := logged()
+	if !strings.Contains(out, "vad: worker failed") || strings.Count(out, "startup-failure-marker") != 1 {
+		t.Fatalf("startup failure not logged once with its stderr:\n%s", out)
+	}
+	_, _ = wp.stderr.Write([]byte("later-marker"))
+	wp.handleWorkerFailure(nil, ErrWorker, false)
+	out = logged()
+	if !strings.Contains(out, "stderr=later-marker") || strings.Count(out, "startup-failure-marker") != 1 {
+		t.Fatalf("a later failure must log only its own stderr:\n%s", out)
 	}
 }
 
