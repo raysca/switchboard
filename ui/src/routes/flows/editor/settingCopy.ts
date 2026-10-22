@@ -224,7 +224,7 @@ const COPY = {
     what: "How varied the model's wording is. Lower is steadier and more repeatable; higher is more varied.",
     when: "Lower for scripted or factual agents; higher for a more conversational one.",
     defaults: "0 to 2. Empty: the model's own default. Applies to model fallbacks too.",
-    careful: "Some newer models only accept their default and reject a value here, which fails the call at its first reply.",
+    careful: "Some newer models only accept their default and reject a value here: every reply then fails and the caller hears silence. Fallback models are tried only if failover lists client errors.",
   },
   "llm.top_p": {
     label: "Top P",
