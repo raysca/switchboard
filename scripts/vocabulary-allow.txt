@@ -36,3 +36,4 @@ docs/security/mcp.md	R	routes	# HTTP endpoints
 docs/decisions/pipecat-evals.md	R	per-turn routing	# generic English
 e2e/tests-oneport/**	R	client route	# SPA fallback
 deploy/smoke-cloudrun.sh	R	client route	# SPA fallback
+server/api_routes_table_test.go	R	api_routes_table	# HTTP routing table test (file name)
