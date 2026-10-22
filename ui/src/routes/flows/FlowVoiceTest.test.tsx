@@ -691,6 +691,8 @@ describe("FlowVoiceTest", () => {
     );
     expect(screen.queryByText("Push to talk")).toBeNull();
     expect(screen.queryByTestId("start-voice-test-btn")).toHaveTextContent("Start text test");
+    expect(screen.getByText(/Click "Start text test" to talk to this flow/)).toBeVisible(); // no voice wording on a text-only flow
+    expect(screen.queryByText(/voice test/i)).toBeNull();
     await userEvent.setup().click(screen.getByTestId("start-voice-test-btn"));
     await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
     await screen.findByTestId("disconnect-btn");

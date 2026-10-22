@@ -271,7 +271,13 @@ export function FlowVoiceTest({
       <div className="transcript" tabIndex={0} aria-label="Conversation transcripts">
         {state.transcripts.length === 0 && !state.currentInterimTranscript && !state.currentBotStreamingText ? (
           <p className="transcript__empty">
-            {isConnectedOrReady ? "Listening… Speak to start the transcript." : "No voice session active. Click \"Start voice test\" to test audio."}
+            {textOnly
+              ? isConnectedOrReady
+                ? "Type a message below to start the conversation."
+                : "No text session active. Click \"Start text test\" to talk to this flow."
+              : isConnectedOrReady
+                ? "Listening… Speak to start the transcript."
+                : "No voice session active. Click \"Start voice test\" to test audio."}
           </p>
         ) : (
           <div className="transcript__lines">
