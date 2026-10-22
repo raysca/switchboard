@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"govoice/core/netpool"
 )
 
 // A real call through the server on the real local models: Whisper hears a recorded clip, Ollama
@@ -28,6 +30,13 @@ func TestOfflineStackCall(t *testing.T) {
 		}
 	})
 	realVAD(t, rig.s)
+	// The xai clients to Ollama and the adapter use process-lifetime shared pools: drop their idle
+	// keep-alive connections so the package goleak check sees only leaks.
+	t.Cleanup(func() {
+		for _, o := range []netpool.Options{{Provider: "xai", Stage: "llm"}, {Provider: "xai", Stage: "tts"}} {
+			netpool.Get(o).Close()
+		}
+	})
 	call := rig.dial(offlineFlow(t, rig, offlineFlowConfig))
 	call.sendAudio(callerSpeech(t))
 

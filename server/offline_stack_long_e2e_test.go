@@ -145,6 +145,7 @@ func TestOfflineStackLongCallerSpeechIsOneTurn(t *testing.T) {
 	}
 	speech, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	http.DefaultClient.CloseIdleConnections() // the keep-alive connection to the stack outlives the test
 	if resp.StatusCode != 200 || len(speech) < 16000*2*15 {
 		t.Fatalf("caller audio: status %d, %d bytes", resp.StatusCode, len(speech))
 	}
