@@ -94,7 +94,7 @@ func TestStreamingTextUsageAndRequestShape(t *testing.T) {
 	if body["model"] != "llama-3.3-70b" || body["stream"] != true || body["stream_options"].(map[string]any)["include_usage"] != true {
 		t.Fatalf("body %v", body)
 	}
-	for _, leak := range []string{"store", "input", "reasoning", "search_parameters", "tools"} {
+	for _, leak := range []string{"store", "input", "reasoning", "search_parameters", "tools", "temperature", "top_p", "max_tokens"} {
 		if _, ok := body[leak]; ok {
 			t.Fatalf("vendor-specific %q leaked: %v", leak, body)
 		}
@@ -446,5 +446,20 @@ func TestToolLoopFramesReachTheSession(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "call:call_a,result:call_a:succeeded,text:done" {
 		t.Fatalf("frames %v", got)
+	}
+}
+
+func TestSamplingParametersReachTheRequestBody(t *testing.T) {
+	zero, topP := 0.0, 0.9
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &body)
+		sse(w, `{"choices":[{"delta":{"content":"ok"}}]}`, "[DONE]")
+	}))
+	defer srv.Close()
+	run(t, Config{BaseURL: srv.URL + "/v1", Model: "m", APIKey: "k", Temperature: &zero, TopP: &topP, MaxOutputTokens: 200})
+	if body["temperature"] != 0.0 || body["top_p"] != 0.9 || body["max_tokens"] != 200.0 {
+		t.Fatalf("body %v", body)
 	}
 }

@@ -67,6 +67,15 @@ type StageSpec struct {
 	OnRetry func(retry int)
 }
 
+// sampling unpacks the flow's sampling into the provider configs' shape
+// (providers cannot import server/flow): nil / 0 mean "provider default".
+func (s StageSpec) sampling() (temperature, topP *float64, maxOutputTokens int) {
+	if n := s.Sampling.MaxOutputTokens; n != nil {
+		maxOutputTokens = *n
+	}
+	return s.Sampling.Temperature, s.Sampling.TopP, maxOutputTokens
+}
+
 // toolLoopConfig is the default loop config with the stage's async hooks.
 func (s StageSpec) toolLoopConfig() coretools.ToolLoopConfig {
 	cfg := coretools.DefaultToolLoopConfig()
@@ -360,9 +369,7 @@ func NewRegistry() *Registry {
 			return nil, fmt.Errorf("openai.llm: %w", err)
 		}
 		br, _ := r.openaiBreakers.LoadOrStore(baseURL, resilience.NewBreaker(resilience.DefaultConfig()))
-		oaCfg := openai.Config{Model: spec.Model, BaseURL: baseURL, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br.(*resilience.Breaker),
-			AllowPrivate: cfg.Providers.OpenAILLM.AllowPrivateBaseURL}
-		oaCfg.RetryPolicy.OnRetry = spec.OnRetry
+		oaCfg := openAILLMConfig(cfg, spec, key, baseURL, br.(*resilience.Breaker))
 		if len(spec.Tools) > 0 {
 			loop, err := coretools.NewToolLoop(spec.Tools, spec.ToolExecutor, spec.History, spec.toolLoopConfig())
 			if err != nil {
@@ -512,6 +519,14 @@ func xaiLLMProcessor(spec StageSpec, endpoint, key string, br *resilience.Breake
 		xaiCfg.ToolDefinitions, xaiCfg.ToolLoop = spec.Tools, loop
 	}
 	return xai.NewProcessor(xaiCfg)
+}
+
+func openAILLMConfig(cfg *Config, spec StageSpec, key, baseURL string, br *resilience.Breaker) openai.Config {
+	c := openai.Config{Model: spec.Model, BaseURL: baseURL, SystemPrompt: spec.SystemPrompt, APIKey: key, CircuitBreaker: br,
+		AllowPrivate: cfg.Providers.OpenAILLM.AllowPrivateBaseURL}
+	c.RetryPolicy.OnRetry = spec.OnRetry
+	c.Temperature, c.TopP, c.MaxOutputTokens = spec.sampling()
+	return c
 }
 
 func apiKey(secret []byte) (string, error) {
