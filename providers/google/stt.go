@@ -635,9 +635,11 @@ func (p *STTProcessor) handleAudio(ctx context.Context, f *core.InputAudioFrame,
 			p.cfg.CircuitBreaker.Report(provErr, classify)
 		}
 		// Like a failed Recv: reported, not returned (a ProcessFrame error ends
-		// the call). active is cleared, so the next audio opens a fresh stream.
-		if err := e.Push(&core.ErrorFrame{Err: provErr, Turn: core.TurnID(turn), Gen: core.Generation(turnGen)}); err != nil {
-			return err
+		// the call), and re-entered from the session so STTFailover sees it (an
+		// emitter push would bypass it). active is cleared, so the next audio
+		// opens a fresh stream.
+		if p.session != nil {
+			_ = p.session.Reenter(&core.ErrorFrame{Err: provErr, Turn: core.TurnID(turn), Gen: core.Generation(turnGen)}, core.Downstream, p.index+1, turnGen)
 		}
 	}
 

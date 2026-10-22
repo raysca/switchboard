@@ -582,10 +582,12 @@ func TestGoogleSTTLiveSendFailureIsReportedNotFatal(t *testing.T) {
 	if out.n != 1 {
 		t.Fatalf("audio pushed downstream = %d, want 1", out.n)
 	}
-	if len(out.errs) != 1 {
-		t.Fatalf("error frames = %d, want 1", len(out.errs))
+	// Re-entered from the session (so STTFailover sees it), not pushed by the emitter.
+	if len(out.errs) != 0 {
+		t.Fatalf("error frames pushed on the emitter = %d, want 0", len(out.errs))
 	}
-	if ef := out.errs[0]; ef.Turn != "turn-1-1" || ef.Gen != 1 || errors.Is(ef.Err, core.ErrSTTUnavailable) || errors.Is(ef.Err, core.ErrTranscriptInvalidated) {
+	gwait(t, "error frame at the sink", 2*time.Second, func() bool { return len(countFrames[*core.ErrorFrame](sink)) == 1 })
+	if ef := countFrames[*core.ErrorFrame](sink)[0]; ef.Turn != "turn-1-1" || ef.Gen != 1 || errors.Is(ef.Err, core.ErrTranscriptInvalidated) {
 		t.Fatalf("error frame %+v", ef)
 	}
 	if n := proc.Errors.Load(); n != 1 {
@@ -594,7 +596,53 @@ func TestGoogleSTTLiveSendFailureIsReportedNotFatal(t *testing.T) {
 	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
 	gwait(t, "reopen", 2*time.Second, func() bool { return opener.opens.Load() == 2 })
 	time.Sleep(30 * time.Millisecond)
+	if n := len(countFrames[*core.ErrorFrame](sink)); n != 1 {
+		t.Fatalf("session error frames = %d, want exactly the one", n)
+	}
+}
+
+// With a fallback behind it, a Google live Send failure must reach STTFailover
+// (through the session, as a receive failure does) so the fallback takes over.
+func TestGoogleSTTLiveSendFailureFailsOver(t *testing.T) {
+	bad := &armedSendFailStream{mockSTTStream: newMockSTTStream()}
+	opener := &seqOpener{streams: []STTStream{bad, newMockSTTStream()}}
+	cfg := DefaultSTTConfig()
+	cfg.StreamOpener = opener
+	proc, err := NewSTTProcessor(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var switches atomic.Int32
+	w, err := core.NewSTTFailover(core.STTFailoverConfig{
+		Candidates: []core.STTCandidate{{Provider: "google", Proc: proc}, {Provider: "fb", Proc: &coretest.PassthroughProcessor{}}},
+		Classify:   func(error) string { return "server_error" },
+		OnFailover: func(_, to, _ string) {
+			if to == "fb" {
+				switches.Add(1)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &coretest.PassthroughProcessor{}
+	pipe, _ := core.NewPipeline(w, sink)
+	session, _ := core.NewSession(43, pipe, core.DefaultResourceBudget())
+	if err := session.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	_ = session.Post(&core.UserStartedSpeakingFrame{Seq: 1, Gen: 1})
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	attachedStream(t, proc)
+	bad.armed.Store(true)
+	_ = session.Post(&core.InputAudioFrame{Samples: make([]byte, 640), Gen: 1})
+	gwait(t, "failover to the fallback", 2*time.Second, func() bool { return switches.Load() == 1 })
+	time.Sleep(30 * time.Millisecond)
+	if n := switches.Load(); n != 1 {
+		t.Fatalf("switches = %d, want 1", n)
+	}
 	if n := len(countFrames[*core.ErrorFrame](sink)); n != 0 {
-		t.Fatalf("session error frames = %d, want 0", n)
+		t.Fatalf("session error frames = %d, want 0 (the failover swallows it)", n)
 	}
 }
