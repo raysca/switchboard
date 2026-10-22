@@ -111,7 +111,7 @@ Metrics (unlabelled: step ids are tenant data): `voice_routes_total`, `voice_rou
 
 ## OpenTelemetry export (optional)
 
-Off by default: with `otel.enabled: false` (or the section absent) no exporter is built and sessions run with no OTel code path. When enabled, each call exports one trace: `govoice.session` -> `govoice.turn` -> `govoice.llm|tts|tool`. STT calls are not exported yet: STT providers emit `stt.stream` spans but the exporter maps only `stt.request`, which nothing emits. Per-frame and per-processor spans are not exported.
+Off by default: with `otel.enabled: false` (or the section absent) no exporter is built and sessions run with no OTel code path. When enabled, each call exports one trace: `govoice.session` -> `govoice.turn` -> `govoice.stt|llm|tts|tool`. An STT span covers one provider stream; a stream opened before the turn is known (pre-roll) hangs off the session span; Google streams rotate every 240 s, so one utterance may have several. Per-frame and per-processor spans are not exported.
 
 ```yaml
 otel:
