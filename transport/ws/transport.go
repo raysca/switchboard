@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/netip"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -136,6 +138,7 @@ func (c *Connection) recoverPanic() {
 	if recover() == nil {
 		return
 	}
+	slog.Error("ws: connection goroutine panicked", "connection", c.id, "stack", string(debug.Stack()))
 	c.setCloseCause("panic")
 	c.traceError("panic")
 	c.closeBounded(websocket.StatusInternalError, "internal error", 500*time.Millisecond)
