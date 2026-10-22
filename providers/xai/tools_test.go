@@ -666,3 +666,59 @@ func TestXAIToolLoopFramesReachTheSession(t *testing.T) {
 		t.Fatalf("frames %v", got)
 	}
 }
+
+// Sampling is part of the request that is re-sent after a tool round, not only the first.
+func TestXAISamplingReachesTheSecondToolRoundRequest(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		mu.Lock()
+		bodies = append(bodies, m)
+		n := len(bodies)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"weather\",\"arguments\":\"{}\"}}\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[{\"id\":\"fc_1\",\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"weather\",\"arguments\":\"{}\"}]}}\n\n")
+		} else {
+			_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Sunny.\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"output_text\":\"Sunny.\"}}\n\n")
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	defs := []core.ToolDefinition{{Name: "weather", Description: "d", InputSchema: json.RawMessage(`{"type":"object"}`)}}
+	loop, err := coretools.NewToolLoop(defs, core.ToolExecutorFunc(func(_ context.Context, c core.ToolCall) (core.ToolResult, error) {
+		return core.ToolResult{CallID: c.ID, Status: core.ToolSucceeded, Result: json.RawMessage(`{"w":"sunny"}`)}, nil
+	}), core.NewConversationContext(core.ContextConfig{}), coretools.DefaultToolLoopConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	temp, topP := 0.3, 0.9
+	proc, err := NewProcessor(Config{APIKey: "xai-test-key", Endpoint: server.URL, Model: "grok-test", HTTPClient: server.Client(), ToolDefinitions: defs, ToolLoop: loop,
+		Temperature: &temp, TopP: &topP, MaxOutputTokens: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := newMockSessionController(3, 4)
+	if err := proc.Attach(session, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.ProcessFrame(context.Background(), &core.UserMessageFrame{Turn: "turn-1", Gen: 4, Content: "weather"}, core.Downstream, &mockEmitter{}); err != nil {
+		t.Fatal(err)
+	}
+	session.taskWg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 2 {
+		t.Fatalf("requests = %d, want 2", len(bodies))
+	}
+	for i, b := range bodies {
+		if b["temperature"] != 0.3 || b["top_p"] != 0.9 || b["max_output_tokens"] != 200.0 {
+			t.Fatalf("request %d lost sampling: %v", i+1, b)
+		}
+	}
+}
