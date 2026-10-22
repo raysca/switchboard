@@ -2,8 +2,6 @@
 // provider latency, label_replies = every reply names its step (the suites tell steps apart by it).
 // The development profile points providers.offline at a local stack (offline/); blank endpoints keep that
 // provider undetected, so a developer's running stack cannot change what the suite offers.
-// The development profile points providers.offline at a local stack (offline/); blank endpoints keep that
-// provider undetected, so a developer's running stack cannot change what the suite offers.
 // Throws if the config has no top-level `providers:` line to hook on, instead of silently leaving
 // the stack on echo's defaults (google timing, typed turns only).
 export function withEchoProvider(config: string): string {
