@@ -1,0 +1,38 @@
+# glob	ids	fragment	# reason
+docs/pipecat-parity-matrix.md	F	pipecat-flows	# Pipecat's Python DSL (proper noun)
+docs/pipecat-parity-matrix.md	F	Pipecat Flows	# proper noun
+ui/src/**	F	ReactFlow	# @xyflow/react component names
+ui/src/**	R	from "react-router"	# react-router named imports Route/Routes
+core/frame.go	F	flow direction	# generic English: frame direction
+core/turn/mute.go	F	flowing	# audio keeps flowing (data flow)
+core/turn/mute.go	F	flow downstream	# data flow
+core/output_backlog_test.go	F	TTS flows after	# data flow
+examples/custom_processor/main.go	F	frames flowing	# data flow
+providers/deepgram/stt.go	F	until audio flows	# data flow
+providers/elevenlabs/stt.go	F	until audio flows	# data flow
+providers/nvidia/*.go	F	flow control	# HTTP/2 flow control
+providers/nvidia/*.go	F	flow-control	# HTTP/2 flow control
+tools/compat/whisker/**	F	audio_frame_flow	# Whisker conformance scenario (frame data flow)
+tools/compat/whisker/**	F	frame.flow	# debug event name for frame data flow
+tools/eval/runner_test.go	F	audio_frame_flow	# same scenario
+tools/compat/testdata/parity/mute.json	F	flow downstream	# generated golden reason (data flow)
+tools/compat/parity/gen_goldens.py	F	flow downstream	# generator of the golden above
+docs/benchmarks/container-soak-churn-chaos.md	F	traffic flows	# generic English
+server/api/**	R	route not found	# HTTP 404 message
+server/api_routes.go	R	*	# HTTP routing table (file is HTTP-only for R)
+server/probe_routes.go	R	*	# HTTP probe endpoints
+server/api_*_test.go	R	management route	# HTTP endpoint
+server/api_routes_table_test.go	R	routing	# HTTP prefix routing
+server/adminui/*.go	R	client-side routes	# SPA paths
+server/public_admin_test.go	R	route	# SPA/HTTP paths (read each line in T9)
+server/management.go	R	routes pointing	# HTTP handlers
+server/server.go	R	route handler	# HTTP handlers
+server/dtmf.go	R	routed to the tone output	# generic English
+server/config.go	R	TurnConfig routes live calls	# generic English
+core/core_test.go	R	routing	# frame direction routing
+core/turn/manager.go	R	route normally	# generic English
+vad/resilience_test.go	R	routes slog	# generic English
+docs/security/mcp.md	R	routes	# HTTP endpoints
+docs/decisions/pipecat-evals.md	R	per-turn routing	# generic English
+e2e/tests-oneport/**	R	client route	# SPA fallback
+deploy/smoke-cloudrun.sh	R	client route	# SPA fallback
