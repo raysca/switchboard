@@ -195,7 +195,9 @@ sudo install -d -m 755 /opt/govoice/bin /opt/govoice/models /opt/govoice/lib /op
 sudo install -m 755 bin/server bin/vadworker bin/turnworker /opt/govoice/bin/
 sudo install -m 644 third_party/silero_vad.onnx /opt/govoice/models/silero_vad.onnx
 sudo install -m 644 third_party/smart_turn_v3.2_cpu.onnx /opt/govoice/third_party/smart_turn_v3.2_cpu.onnx
-# ONNX Runtime 1.29.0 for Linux; the tarball URL and sha256 are in deploy/Dockerfile
+# ONNX Runtime 1.29.0 for Linux: download and unpack the release tarball (x86_64: onnxruntime-linux-x64-1.29.0.tgz,
+# arm64: onnxruntime-linux-aarch64-1.29.0.tgz) from https://github.com/microsoft/onnxruntime/releases/download/v1.29.0/
+# and verify its sha256 against the values in deploy/Dockerfile. Use the directory name of your architecture below.
 sudo install -m 644 onnxruntime-linux-x64-1.29.0/lib/libonnxruntime.so /opt/govoice/lib/libonnxruntime.so
 sudo chown -R root:root /opt/govoice && sudo chown govoice:govoice /var/log/govoice
 
@@ -211,9 +213,23 @@ sudo systemctl status govoice.service
 journalctl -u govoice.service -f
 ```
 
-Before starting, set `probe_listen_addr` in the copied `production.yaml` to `127.0.0.1:9092` (or the private interface Prometheus scrapes), or firewall port 9092: on a host, `0.0.0.0:9092` binds every interface. The unit keeps only `CAP_NET_BIND_SERVICE` (needed only to bind ports below 1024 without a proxy), and sets `Restart=always`, `TimeoutStopSec=60s` (longer than `drain_timeout` plus the 5 s process margin), `LimitNOFILE`/`LimitNPROC`, and sandboxing (`ProtectSystem=strict`, `NoNewPrivileges`, `ReadWritePaths=/tmp /var/log/govoice`). Because of `ProtectSystem=strict`, a SQLite database must live under one of those writable paths.
+Before starting, set `probe_listen_addr` in the copied `production.yaml` to `127.0.0.1:9092` (or the private interface Prometheus scrapes), or firewall port 9092: on a host, `0.0.0.0:9092` binds every interface. The unit keeps only `CAP_NET_BIND_SERVICE` (needed only to bind ports below 1024 without a proxy), and sets `Restart=always`, `TimeoutStopSec=60s` (longer than `drain_timeout` plus the 5 s process margin), `LimitNOFILE`/`LimitNPROC`, and sandboxing (`ProtectSystem=strict`, `NoNewPrivileges`, `ReadWritePaths=/tmp /var/log/govoice`). `production.yaml` ships `storage.dialect: "postgres"`, so provide a database as described next.
 
-<!-- src: former runbook; deploy/govoice.service:17-45; config/production.yaml:12 -->
+**Writable paths and SQLite.** `ProtectSystem=strict` makes the whole filesystem read-only except `ReadWritePaths=/tmp /var/log/govoice`, and `PrivateTmp=true` gives the service a fresh, empty `/tmp` on every start. So a SQLite file in `/tmp` is lost at each restart, and `/var/log/govoice` is the log directory. If you use SQLite (one process only, [section 7](#7-storage)), give it its own directory and add it to the sandbox with a drop-in, then set `storage.dialect: "sqlite"` in `/etc/govoice/production.yaml` and `GOVOICE_DATABASE_DSN=/var/lib/govoice/switchboard.db` in `/etc/govoice/env`:
+
+```bash
+sudo install -d -m 700 -o govoice -g govoice /var/lib/govoice
+sudo systemctl edit govoice.service     # add the two lines below, then save
+#   [Service]
+#   ReadWritePaths=/var/lib/govoice
+sudo systemctl restart govoice.service
+```
+
+The directory must be writable by `govoice` because SQLite also creates WAL files and `<database>.migration.lock` beside the database file ([storage.md](storage.md)). Back it up as described in section 7.
+
+**Postgres for the systemd path.** The Compose stack creates the role and database from `POSTGRES_USER=govoice` and `POSTGRES_DB=govoice`; on a host you create them yourself. The role must own the database, because the server runs its migrations at startup. Run, as a Postgres superuser, `CREATE ROLE govoice LOGIN PASSWORD '<url-safe password>';` and `CREATE DATABASE govoice OWNER govoice;`, then set the DSN in `/etc/govoice/env`: `GOVOICE_DATABASE_DSN=postgres://govoice:<password>@<host>:5432/govoice?sslmode=require`. Compose uses `sslmode=disable` because Postgres is on its private network; for a remote database use `require`, or `verify-full` with the CA configured on the host (pgx understands the standard libpq `sslmode` parameter). Keep the password URL-safe (for example `openssl rand -hex 24`), because the DSN is a URL.
+
+<!-- src: former runbook; deploy/govoice.service:17-45; config/production.yaml:12,87-88; deploy/docker-compose.yaml:36-37,60-64; deploy/Dockerfile:58-75; server/storage/storage.go:56-70,131-160; server/management.go:84-92; docs/storage.md -->
 
 nginx on a host: `deploy/nginx.conf` is a complete `nginx.conf` (top-level `user`, `events` and `http`), not a site fragment, so install it as `/etc/nginx/nginx.conf` rather than into `sites-enabled`, then `sudo nginx -t && sudo systemctl reload nginx`. It resolves upstreams through Docker's DNS (`resolver 127.0.0.11`) and names them `govoice:8080` and `govoice:9092`: change the resolver and both upstream names for a host install, and check the `user nginx` line against your distribution.
 
