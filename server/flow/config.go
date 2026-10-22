@@ -68,8 +68,38 @@ type LLMConfig struct {
 	Model        string        `json:"model"`
 	SystemPrompt string        `json:"system_prompt,omitempty"`
 	Fallbacks    []LLMFallback `json:"fallbacks,omitempty"`
+	// LLMSampling is flat on the llm block (embedded for JSON).
+	LLMSampling
 	// MaxParallel bounds concurrently executing tool calls within one round (1..16, 0 keeps default 1).
 	MaxParallel int `json:"max_parallel,omitempty"`
+}
+
+// LLMSampling tunes generation for every LLM provider and its fallbacks; unset
+// (absent or null) keeps the provider default. temperature is 0..2, top_p 0..1,
+// max_output_tokens 1..8192 (not context.max_tokens, the history budget).
+type LLMSampling struct {
+	Temperature     *float64 `json:"temperature,omitempty"`
+	TopP            *float64 `json:"top_p,omitempty"`
+	MaxOutputTokens *int     `json:"max_output_tokens,omitempty"`
+}
+
+// MaxOutputTokensLimit is a ceiling under every catalog model's output limit.
+const MaxOutputTokensLimit = 8192
+
+func (s LLMSampling) validate() error {
+	for _, f := range []struct {
+		name   string
+		v      *float64
+		lo, hi float64
+	}{{"temperature", s.Temperature, 0, 2}, {"top_p", s.TopP, 0, 1}} {
+		if f.v != nil && (*f.v < f.lo || *f.v > f.hi) {
+			return fmt.Errorf("%w: llm.%s must be between %g and %g", ErrInvalidConfig, f.name, f.lo, f.hi)
+		}
+	}
+	if m := s.MaxOutputTokens; m != nil && (*m < 1 || *m > MaxOutputTokensLimit) {
+		return fmt.Errorf("%w: llm.max_output_tokens must be between 1 and %d", ErrInvalidConfig, MaxOutputTokensLimit)
+	}
+	return nil
 }
 
 type TTSConfig struct {
@@ -229,6 +259,9 @@ func DecodeConfig(raw json.RawMessage) (Config, error) {
 	}
 	if c.LLM.MaxParallel < 0 || c.LLM.MaxParallel > 16 {
 		return c, fmt.Errorf("%w: llm.max_parallel must be between 0 and 16", ErrInvalidConfig)
+	}
+	if err := c.LLM.LLMSampling.validate(); err != nil {
+		return c, err
 	}
 	if err := c.TTS.VoiceSettings.validate(c.TTS.Provider); err != nil {
 		return c, err

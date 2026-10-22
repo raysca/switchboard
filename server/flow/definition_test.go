@@ -188,3 +188,20 @@ func withSalesAudio(audio string) json.RawMessage {
 	const llm = `"llm":{"provider":"openai","model":"m","system_prompt":"s"}`
 	return json.RawMessage(strings.Replace(twoStepCfg(""), llm, llm+`,"audio":`+audio, 1))
 }
+
+func TestDecodeFlowSamplingIsPerStep(t *testing.T) {
+	d, err := Decode(json.RawMessage(`{"start":"a","steps":[
+		{"id":"a","name":"A","config":{"llm":{"provider":"google","model":"m","temperature":0.3}}},
+		{"id":"b","name":"B","config":{"llm":{"provider":"google","model":"m","top_p":0.5}}}],
+		"routes":[{"id":"e1","from":"a","to":"b","condition":"x"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := d.Steps[0].Config.LLM.LLMSampling, d.Steps[1].Config.LLM.LLMSampling
+	if a.Temperature == nil || a.TopP != nil || b.Temperature != nil || b.TopP == nil {
+		t.Fatalf("a=%+v b=%+v", a, b)
+	}
+	if _, err := Decode(json.RawMessage(`{"start":"a","steps":[{"id":"a","name":"A","config":{"llm":{"provider":"google","temperature":3}}}]}`)); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("step temperature 3: %v", err)
+	}
+}
