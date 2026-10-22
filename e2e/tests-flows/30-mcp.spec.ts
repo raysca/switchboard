@@ -1,6 +1,6 @@
 import { test, expect, LIVE } from "../lib/flows-stack";
 import { step } from "../lib/evidence";
-import { api, botReply, connectAdmin, openFlowTest, sendText, startCall } from "../lib/flows-helpers";
+import { api, botReply, connectAdmin, openFlowTest, sendText, stage, startCall } from "../lib/flows-helpers";
 import { connectMCPServer, lastMCPCall, mcpFlow, mcpRecord, pace } from "../lib/mcp-helpers";
 
 // MCP in the admin UI: the MCP tools page and the local test MCP servers (cmd/mcptest, started by
@@ -144,3 +144,46 @@ test("mcp: a slow tool answers under the timeout and is abandoned over it", asyn
 // Barge-in during a slow MCP tool is tested in Go (server/mcp_call_e2e_test.go
 // TestMCPCallBargeInCancelsSlowTool): in this fake stack the microphone's speech is heard by the
 // VAD but the fake STT produces no words, so no user turn starts and nothing interrupts.
+
+test("mcp: editing a failing server's endpoint to a healthy one connects it, and a flow that uses it is ready", async ({ page, stack }) => {
+  test.skip(LIVE, "the MCP cases run against the fake stack only");
+  await connectAdmin(page, stack);
+  const status = page.locator(".mcp-detail__status");
+  await connectMCPServer(page, "Edited Orders", `${stack.mcpUrl}/fail/list`, "MCP_TOKEN_TEST");
+  await expect(status).not.toContainText("Connected");
+
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Endpoint URL").fill(`${stack.mcpUrl}/ok`);
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  // The edit re-syncs by itself: no Sync tools click, no new server.
+  await expect(status).toContainText("Connected");
+  await expect(page.getByRole("heading", { name: "Edited Orders", level: 2 })).toBeVisible();
+  await expect(page.getByText("lookup_order").first()).toBeVisible();
+  await step(page, "edited server connected");
+
+  const servers = await api<{ data: { id: string; name: string }[] }>(stack, "/mcp-servers");
+  const id = servers.data.find((s) => s.name === "Edited Orders")!.id;
+  const detail = await api<{ data: { discovery: { tools: { remote_name: string; schema_hash: string }[] } } }>(stack, `/mcp-servers/${id}`);
+  const hash = detail.data.discovery.tools.find((t) => t.remote_name === "lookup_order")!.schema_hash;
+  const made = await api<{ data: { readiness: { state: string } } }>(stack, "/flows", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E Edited Orders",
+      config: { stt: stage({ model: "chirp" }), llm: stage({ model: "m", system_prompt: "You use tools." }), tts: stage({ voice: "v" }) },
+      mcp_tools: [{ mcp_server_id: id, remote_name: "lookup_order", schema_hash: hash, required: true }],
+    }),
+  });
+  expect(made.data.readiness.state).toBe("ready");
+});
+
+test("mcp: Try it on a tool that errors shows the tool's own message", async ({ page, stack }) => {
+  test.skip(LIVE, "the MCP cases run against the fake stack only");
+  await connectAdmin(page, stack);
+  await connectMCPServer(page, "Failing Tools", `${stack.mcpUrl}/fail/tools`);
+  await page.getByRole("button", { name: "Try it for tool_error" }).click();
+  await page.getByRole("button", { name: "Run tool" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "The tool reported an error: order system unavailable" })).toBeVisible();
+  await step(page, "try it shows the tool error message");
+});

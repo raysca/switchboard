@@ -45,6 +45,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
       setEditError(null);
       // The reply is the same view as GET, minus the tools: keep the tools, show the new state at once.
       queryClient.setQueryData(["mcp-server", server.id], { ...server, ...updated });
+      void queryClient.invalidateQueries({ queryKey: ["mcp-server", server.id] }); // the edit re-synced: read the new tools
       void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
       void queryClient.invalidateQueries({ queryKey: ["flows"] });
     },

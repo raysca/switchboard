@@ -170,8 +170,13 @@ describe("MCPView", () => {
   });
 
   it("edits a server in place: prefilled, only changed fields sent, the returned state shown", async () => {
-    const updateMCPServer = vi.fn().mockResolvedValue(server({ name: "billing2", validation_state: "connection_failed" }));
-    const { user } = setup({ updateMCPServer });
+    // After the save the server's own GET (re-read by the edit) returns the saved state, as the real one does.
+    const saved = server({ name: "billing2", validation_state: "connection_failed" });
+    let done = false;
+    const updateMCPServer = vi.fn().mockImplementation(async () => ((done = true), saved));
+    const getMCPServers = vi.fn().mockImplementation(async () => (done ? [saved, crm] : [server(), crm]));
+    const getMCPServer = vi.fn().mockImplementation(async () => (done ? detail(saved) : detail()));
+    const { user } = setup({ updateMCPServer, getMCPServers, getMCPServer });
     await user.click(await screen.findByRole("button", { name: "Edit" }));
     const name = screen.getByLabelText("Name");
     expect(name).toHaveValue("billing");

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,7 @@ import (
 	"govoice/core"
 	"govoice/core/turn"
 	"govoice/server/flow"
+	"govoice/server/mcp"
 	"govoice/server/mcp/mcptest"
 	"govoice/transport/ws"
 )
@@ -360,4 +363,55 @@ func TestFlowReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
 	if got, err = r.s.flows.Get(t.Context(), a.ID); err != nil || got.Readiness.State != flow.ReadinessReady {
 		t.Fatalf("readiness=%+v err=%v", got.Readiness, err)
 	}
+}
+
+// The background syncer, wired by EnableManagement, marks a server whose endpoint went away failed
+// (after two failed rounds, which the unit test TestSyncTwoStrikes pins exactly) and a flow that
+// requires its tool not ready; restarting the endpoint makes both healthy again. Rounds come from a
+// short timer, so the strike counting is not asserted here.
+func TestMCPCallBackgroundSyncFailsAndHealsAServerAndFlowReadiness(t *testing.T) {
+	r := newMCPCallRig(t)
+	var down atomic.Bool
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if down.Load() {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		r.mcp.Handler().ServeHTTP(w, req)
+	}))
+	t.Cleanup(live.Close)
+	// Config validation floors mcp.sync_interval at 30s, so this test runs its own Syncer on the
+	// server's MCP service (the 5m one EnableManagement started never ticks within the test).
+	y := mcp.NewSyncer(r.s.mcpService, 30*time.Millisecond, slog.New(slog.DiscardHandler), nil)
+	y.Start()
+	t.Cleanup(func() { _ = y.Stop(context.Background()) })
+	id, hashes := r.server("flaky", live.URL+"/ok", "MCP_TOKEN_TEST")
+	a := r.flowWith(id, hashes, true, nil, "lookup_order")
+	state := func() (server, flowState string) {
+		w := apiRequest(r.s, http.MethodGet, "/api/v1/mcp-servers/"+id, e2eMgmtKey, "")
+		var d struct {
+			Data struct {
+				ValidationState string `json:"validation_state"`
+			}
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &d)
+		got, err := r.s.flows.Get(t.Context(), a.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.Data.ValidationState, string(got.Readiness.State)
+	}
+	if s, f := state(); s != "healthy" || f != string(flow.ReadinessReady) {
+		t.Fatalf("before: server %q flow %q", s, f)
+	}
+	down.Store(true)
+	eventually(t, "the server to be marked failed and the flow not ready", func() bool {
+		s, f := state()
+		return s == "connection_failed" && f != string(flow.ReadinessReady)
+	})
+	down.Store(false)
+	eventually(t, "the server healthy and the flow ready again", func() bool {
+		s, f := state()
+		return s == "healthy" && f == string(flow.ReadinessReady)
+	})
 }
