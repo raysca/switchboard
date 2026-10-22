@@ -434,7 +434,8 @@ func isLoopbackIP(raw net.IP) bool {
 
 // validateServerConfig applies the rules shared by Create and Update and returns the
 // normalized endpoint. The destination error never says what an address resolved to.
-func (s *Service) validateServerConfig(ctx context.Context, cfg ServerConfig) (*url.URL, error) {
+// The destination check (it may resolve DNS) runs last, and only when checkDestination.
+func (s *Service) validateServerConfig(ctx context.Context, cfg ServerConfig, checkDestination bool) (*url.URL, error) {
 	if cfg.Transport == TransportLocalProcess {
 		return nil, ErrLocalDisabled
 	}
@@ -448,14 +449,16 @@ func (s *Service) validateServerConfig(ctx context.Context, cfg ServerConfig) (*
 	if u.RawQuery != "" {
 		return nil, fmt.Errorf("%w: query parameters are not accepted; use auth_env", ErrInvalidEndpoint)
 	}
-	if err = s.destinations.Validate(ctx, u); err != nil {
-		return nil, ErrDestinationDenied
-	}
 	if strings.TrimSpace(cfg.Name) == "" || len(cfg.Name) > 128 || len(cfg.Description) > 1024 {
 		return nil, ErrInvalidMetadata
 	}
 	if cfg.AuthEnv != "" && !ValidAuthEnv(cfg.AuthEnv) {
 		return nil, ErrInvalidAuthEnv
+	}
+	if checkDestination {
+		if err = s.destinations.Validate(ctx, u); err != nil {
+			return nil, ErrDestinationDenied
+		}
 	}
 	return u, nil
 }
@@ -464,7 +467,7 @@ func (s *Service) Create(ctx context.Context, cfg ServerConfig) (storage.MCPServ
 	if cfg.Transport == "" {
 		cfg.Transport = TransportStreamableHTTP
 	}
-	u, err := s.validateServerConfig(ctx, cfg)
+	u, err := s.validateServerConfig(ctx, cfg, true)
 	if err != nil {
 		return storage.MCPServer{}, err
 	}
@@ -510,18 +513,19 @@ func (s *Service) Update(ctx context.Context, id string, u ServerUpdate) (storag
 	if u.AuthEnv != nil {
 		cfg.AuthEnv = *u.AuthEnv
 	}
-	parsed, err := s.validateServerConfig(ctx, cfg)
+	endpointChanged := cfg.Endpoint != m.Endpoint
+	parsed, err := s.validateServerConfig(ctx, cfg, endpointChanged)
 	if err != nil {
 		return m, err
 	}
-	changed := parsed.String() != m.Endpoint || cfg.AuthEnv != m.AuthEnv
+	changed := endpointChanged || cfg.AuthEnv != m.AuthEnv
 	m.Name, m.Description, m.Endpoint, m.AuthEnv = strings.TrimSpace(cfg.Name), cfg.Description, parsed.String(), cfg.AuthEnv
-	if changed && m.Enabled {
-		m.ValidationState = StateNotValidated
-	}
-	if err = s.store.MCP().UpdateServer(ctx, m); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return m, ErrPendingDeletion // it was deleted or marked between the read and the write
+	if err = s.store.MCP().UpdateServer(ctx, m, changed); err != nil {
+		if errors.Is(err, sql.ErrNoRows) { // deleted or marked between the read and the write
+			if _, gerr := s.Get(ctx, id); gerr != nil {
+				return m, gerr
+			}
+			return m, ErrPendingDeletion
 		}
 		return m, fmt.Errorf("update MCP server: %w", err)
 	}
@@ -572,10 +576,10 @@ func (s *Service) endpoint(ctx context.Context, m storage.MCPServer) (*url.URL, 
 	}
 	u, err := url.ParseRequestURI(m.Endpoint)
 	if err != nil {
-		return nil, errors.New("invalid MCP endpoint")
+		return nil, ErrInvalidEndpoint
 	}
 	if err = s.destinations.Validate(ctx, u); err != nil {
-		return nil, errors.New("MCP destination denied")
+		return nil, ErrDestinationDenied
 	}
 	return u, nil
 }

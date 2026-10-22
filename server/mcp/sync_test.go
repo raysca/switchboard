@@ -19,6 +19,7 @@ import (
 // syncRig is one mcptest server behind a switch: down answers 503 (a connection failure).
 type syncRig struct {
 	svc   *Service
+	srv   *mcptest.Server
 	store *storage.Store
 	down  atomic.Bool
 	id    string
@@ -28,6 +29,7 @@ func newSyncRig(t *testing.T) *syncRig {
 	t.Helper()
 	r := &syncRig{}
 	srv := mcptest.New(mcptest.Options{})
+	r.srv = srv
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if r.down.Load() {
 			http.Error(w, "down", http.StatusServiceUnavailable)

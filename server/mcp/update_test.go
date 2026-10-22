@@ -146,30 +146,55 @@ func TestUpdateAuthEnvClears(t *testing.T) {
 
 func TestUpdatePendingDeletion(t *testing.T) {
 	r := newSyncRig(t)
+	if _, err := r.store.DB().Exec("UPDATE mcp_servers SET pending_delete=1 WHERE id=?", r.id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.svc.Update(context.Background(), r.id, ServerUpdate{Name: ptr("x")}); !errors.Is(err, ErrPendingDeletion) {
+		t.Fatalf("pending deletion: %v", err)
+	}
+	h := Handler(r.svc)
+	req := httptest.NewRequest("PATCH", "/api/v1/mcp-servers/"+r.id, strings.NewReader(`{"name":"x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != 409 {
+		t.Fatalf("PATCH pending=%d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRenameKeepsStateSetAfterTheRead(t *testing.T) {
+	r := newSyncRig(t)
 	ctx := context.Background()
-	if _, err := r.svc.Refresh(ctx, r.id); err != nil {
-		t.Fatal(err)
-	}
-	flows := flow.NewService(r.store, allAvailable{})
-	f, err := flows.Create(ctx, flow.CreateRequest{Name: "f", Config: json.RawMessage(`{"stt":{"provider":"google","model":"s"},"llm":{"provider":"google","model":"l"},"tts":{"provider":"google","voice":"t"}}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
 	m := r.state(t)
-	d, err := r.store.MCP().Discovery(ctx, m.LatestDiscoveryID)
+	if _, err := r.store.DB().Exec("UPDATE mcp_servers SET validation_state=? WHERE id=?", StateConnectionFailed, r.id); err != nil {
+		t.Fatal(err)
+	}
+	m.Name = "renamed"
+	if err := r.store.MCP().UpdateServer(ctx, m, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.state(t); got.Name != "renamed" || got.ValidationState != StateConnectionFailed {
+		t.Fatalf("rename overwrote state: %+v", got)
+	}
+	if _, err := r.store.DB().Exec("UPDATE mcp_servers SET enabled=0, validation_state='disabled' WHERE id=?", r.id); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.store.MCP().UpdateServer(ctx, m, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.state(t); got.ValidationState != StateDisabled {
+		t.Fatalf("endpoint edit of a row disabled at write time: %q", got.ValidationState)
+	}
+}
+
+func TestRenameSkipsDestinationCheck(t *testing.T) {
+	r := newSyncRig(t)
+	svc, err := NewService(ServiceConfig{Store: r.store, Remote: &testRemote{}, Destinations: HTTPSDestinationPolicy{}, Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = flows.SetMCPTools(ctx, f.ID, []flow.ToolSelection{{ServerID: m.ID, RemoteName: d.Tools[0].RemoteName, SchemaHash: d.Tools[0].SchemaHash, Required: true}}); err != nil {
-		t.Fatal(err)
-	}
-	if err = r.svc.DetachAndDelete(ctx, m.ID); err != nil {
-		t.Fatal(err)
-	}
-	if cur, gerr := r.svc.Get(ctx, m.ID); gerr == nil && cur.PendingDelete {
-		if _, err = r.svc.Update(ctx, m.ID, ServerUpdate{Name: ptr("x")}); !errors.Is(err, ErrPendingDeletion) {
-			t.Fatalf("pending deletion: %v", err)
-		}
+	if _, err := svc.Update(context.Background(), r.id, ServerUpdate{Name: ptr("renamed")}); err != nil {
+		t.Fatalf("rename of a server the policy would now deny: %v", err)
 	}
 }
 
@@ -198,6 +223,7 @@ func TestUpdateKeepsFlowReadyAndCapturedSessionOnOldEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	oldSrv := r.srv
 	newSrv, newURL := mcptestURL(t)
 	if _, err = r.svc.Update(ctx, r.id, ServerUpdate{Endpoint: ptr(newURL + "/open")}); err != nil {
 		t.Fatal(err)
@@ -208,6 +234,13 @@ func TestUpdateKeepsFlowReadyAndCapturedSessionOnOldEndpoint(t *testing.T) {
 	}
 	if _, err = captured.Execute(ctx, json.RawMessage(`{"text":"hi"}`)); err != nil {
 		t.Fatal(err)
+	}
+	var onOld bool
+	for _, rec := range oldSrv.Records() {
+		onOld = onOld || rec.Tool == "echo"
+	}
+	if !onOld {
+		t.Fatal("the captured session's call did not reach the old endpoint")
 	}
 	for _, rec := range newSrv.Records() {
 		if rec.Tool == "echo" {

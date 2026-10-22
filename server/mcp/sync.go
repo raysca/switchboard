@@ -99,6 +99,7 @@ func (y *Syncer) round(ctx context.Context) {
 			y.strikes[m.ID] = 1
 			continue
 		}
+		// A round that snapshotted the old endpoint can briefly overwrite an edit's result until the next tick (accepted; no guard).
 		y.svc.writeResult(ctx, m.ID, r)
 		if ok {
 			delete(y.strikes, m.ID)

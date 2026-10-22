@@ -344,10 +344,18 @@ func (r MCPRepository) CurrentReferences(ctx context.Context, id string) ([]MCPF
 	return out, rows.Err()
 }
 
-// UpdateServer stores an edit's name, description, endpoint, auth_env and validation state.
+// UpdateServer stores an edit's name, description, endpoint and auth_env. With resetValidation
+// (the endpoint or auth_env changed) an enabled row also goes back to not_validated, decided in
+// the same statement; otherwise validation_state is left as it is now.
 // sql.ErrNoRows: the server is missing or its deletion is pending.
-func (r MCPRepository) UpdateServer(ctx context.Context, m MCPServer) error {
-	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET name=?,description=?,endpoint=?,auth_env=?,validation_state=?,updated_at=? WHERE id=? AND pending_delete=?"), m.Name, m.Description, m.Endpoint, m.AuthEnv, m.ValidationState, utc(time.Now()), m.ID, boolValue(r.s.dialect, false))
+func (r MCPRepository) UpdateServer(ctx context.Context, m MCPServer, resetValidation bool) error {
+	set, args := "name=?,description=?,endpoint=?,auth_env=?,updated_at=?", []any{m.Name, m.Description, m.Endpoint, m.AuthEnv, utc(time.Now())}
+	if resetValidation {
+		set += ",validation_state=CASE WHEN enabled=? THEN 'not_validated' ELSE validation_state END"
+		args = append(args, boolValue(r.s.dialect, true))
+	}
+	args = append(args, m.ID, boolValue(r.s.dialect, false))
+	result, err := r.s.db.ExecContext(ctx, r.s.bind("UPDATE mcp_servers SET "+set+" WHERE id=? AND pending_delete=?"), args...)
 	if err != nil {
 		return err
 	}
