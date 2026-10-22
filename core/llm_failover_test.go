@@ -638,3 +638,27 @@ func TestADownstreamRefusalIsNotTheCandidatesFailure(t *testing.T) {
 		t.Fatalf("err=%v backupStarted=%d", sess.Err(), backup.Started.Load())
 	}
 }
+
+// panicOnUser is an LLM candidate whose start panics.
+type panicOnUser struct{}
+
+func (panicOnUser) ProcessFrame(_ context.Context, f core.Frame, d core.Direction, e core.Emitter) error {
+	if _, ok := f.(*core.UserMessageFrame); ok {
+		panic("candidate b blew up")
+	}
+	return e.PushDirection(f, d)
+}
+
+// The first-token watchdog drives the fallback from the run loop, so a fallback that panics is contained
+// as a session error like any run-loop panic, not a crash of the process from the timer goroutine.
+func TestFirstTokenWatchdogPanicIsContainedOnTheRunLoop(t *testing.T) {
+	r := newFailoverRig(t, core.LLMFailoverConfig{
+		Candidates:        []core.LLMCandidate{{Provider: "a", Proc: newSilent()}, {Provider: "b", Proc: panicOnUser{}}},
+		FirstTokenTimeout: 20 * time.Millisecond,
+	})
+	r.say(t, "hi")
+	r.waitFor(t, func() bool { return r.sess.Err() != nil })
+	if r.sess.State() != core.StateFailed {
+		t.Fatalf("state=%v, want StateFailed", r.sess.State())
+	}
+}
