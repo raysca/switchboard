@@ -392,6 +392,7 @@ func TestAdapterKeepsWhichMCPToolRan(t *testing.T) {
 	span.SetAttribute("mcp.server_id", "0192aaaa-0000-7000-8000-000000000001")
 	span.SetAttribute("mcp.tool_name", "lookup_order")
 	span.SetAttribute("mcp.duration_ms", int64(42))
+	span.SetAttribute("mcp.tool_count", 7) // discovery's count of tools
 	span.End(nil)
 	if err := adapter.Close(); err != nil {
 		t.Fatal(err)
@@ -400,7 +401,7 @@ func TestAdapterKeepsWhichMCPToolRan(t *testing.T) {
 	if err != nil || len(spans) != 1 {
 		t.Fatalf("spans %+v err %v", spans, err)
 	}
-	for _, want := range []string{`"mcp.server_id":"0192aaaa-0000-7000-8000-000000000001"`, `"mcp.tool_name":"lookup_order"`, `"mcp.duration_ms":42`} {
+	for _, want := range []string{`"mcp.tool_count":7`, `"mcp.server_id":"0192aaaa-0000-7000-8000-000000000001"`, `"mcp.tool_name":"lookup_order"`, `"mcp.duration_ms":42`} {
 		if !strings.Contains(spans[0].AttributesJSON, want) {
 			t.Fatalf("attributes %s lack %s", spans[0].AttributesJSON, want)
 		}
