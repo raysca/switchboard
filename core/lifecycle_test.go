@@ -172,8 +172,8 @@ func TestFlushStaleInterruptionCannotCancelCurrentTurn(t *testing.T) {
 	_ = s.Start()
 	defer s.Close()
 	_ = s.Post(&core.FlushFrame{Gen: 1})
+	awaitType(t, seen, core.FrameFlush) // control and data lanes keep no order between them
 	_ = s.Post(&core.UserMessageFrame{Turn: "B", Gen: 2, Content: "current"})
-	awaitType(t, seen, core.FrameFlush)
 	awaitType(t, seen, core.FrameUserMessage)
 	_ = s.Post(&core.InterruptionFrame{Turn: "B", Gen: 1})
 	_ = s.Post(&core.LLMTextDeltaFrame{Turn: "B", Gen: 2, Delta: "still current"})
@@ -201,8 +201,8 @@ func TestFlushInlineStaleInterruptionCannotCancelCurrentTurn(t *testing.T) {
 	_ = s.Start()
 	defer s.Close()
 	_ = s.Post(&core.FlushFrame{Gen: 1})
+	awaitType(t, seen, core.FrameFlush) // control and data lanes keep no order between them
 	_ = s.Post(&core.UserMessageFrame{Turn: "B", Gen: 2, Content: "current"})
-	awaitType(t, seen, core.FrameFlush)
 	awaitType(t, seen, core.FrameUserMessage)
 	_ = s.Post(&core.LLMTextDeltaFrame{Turn: "B", Gen: 2, Delta: "still current"})
 	awaitType(t, seen, core.FrameLLMTextDelta)
