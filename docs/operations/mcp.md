@@ -27,7 +27,7 @@ mcp:
 
 The two-strike rule: a healthy server is marked failed only on its second background failure in a row. One success clears the count, so a single network blip changes nothing. A server that is already failing is updated on every check.
 
-A manual Sync always writes its result at once. A manual Sync that heals a server also restarts the count. If the tool list is unchanged, no new discovery is stored; only the state and the check times change. If a tool's schema changed, a new discovery is stored and flows that pinned the old schema are flagged (see below).
+A manual Sync always writes its result at once. The count is kept by the background check: after a manual Sync heals a failed server, it again takes two background failures in a row to mark it failed. If the tool list is unchanged, no new discovery is stored; only the state and the check times change. If a tool's schema changed, a new discovery is stored and flows that pinned the old schema are flagged (see below).
 
 The server detail page shows when the server was last checked (`last_checked_at`) and the interval. `GET /api/v1/server-config` returns it as `mcp_sync_interval_seconds` (0 means off).
 

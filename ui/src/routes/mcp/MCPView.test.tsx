@@ -209,6 +209,15 @@ describe("MCPView", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("That address is not allowed: MCP servers must be public HTTPS addresses.");
   });
 
+  it("adds the development note to a refused edit on a development server", async () => {
+    const updateMCPServer = vi.fn().mockRejectedValue(new ApiError("MCP server configuration is invalid", "invalid_mcp_server", 400, "r1", { reason: "destination_denied" }));
+    const { user } = setup({ updateMCPServer, getServerConfig: vi.fn().mockResolvedValue({ profile: "development", mcp_sync_interval_seconds: 60 }) });
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.type(screen.getByLabelText("Description (optional)"), "x");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("MCP servers must be public HTTPS addresses. This development server also allows local test addresses.");
+  });
+
   it("gives the same sentence when connecting is refused", async () => {
     const createMCPServer = vi.fn().mockRejectedValue(new ApiError("MCP server configuration is invalid", "invalid_mcp_server", 400, "r1", { reason: "invalid_auth_env" }));
     const { user } = setup({ createMCPServer });

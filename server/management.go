@@ -55,7 +55,8 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	fail := func(err error) error { m.close(); return err }
 
 	m.traces = trace.NewAdapter(store.Traces())
-	mcpCfg := mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcp.EnvTokens(func(k string) string { return s.env(k) }), Tracer: m.traces, Timeout: s.cfg.MCP.Timeout}
+	mcpTokens := mcp.EnvTokens(func(k string) string { return s.env(k) })
+	mcpCfg := mcp.ServiceConfig{Store: store, Remote: mcp.NewSDKClient(), Tokens: mcpTokens, Tracer: m.traces, Timeout: s.cfg.MCP.Timeout}
 	if s.cfg.MCP.AllowLocalHTTP {
 		s.logger.Warn("MCP allows plain HTTP to loopback (development and tests)")
 		mcpCfg.Remote = mcp.NewSDKClient(mcp.AllowLoopbackHTTP())
@@ -84,7 +85,7 @@ func (s *Server) EnableManagement(ctx context.Context) error {
 	// The production provider check and the recording sink can still fail:
 	// both run before anything points at the store fail() closes.
 	flows := flow.NewService(store, s.availability)
-	flows.SetTokenEnv(func(n string) bool { return s.env(n) != "" })
+	flows.SetTokenEnv(func(n string) bool { _, ok := mcpTokens.Token(n); return ok })
 	if bad := s.unavailableFlowProviders(ctx, flows); len(bad) > 0 {
 		for _, b := range bad {
 			s.logger.Error("flow references a provider this build cannot run", slog.String("problem", b))

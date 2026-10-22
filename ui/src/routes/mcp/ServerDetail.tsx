@@ -49,7 +49,7 @@ export function ServerDetail({ client, server, flows, flowsFailed, flowsCapped, 
       void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
       void queryClient.invalidateQueries({ queryKey: ["flows"] });
     },
-    onError: (err) => setEditError(formatApiError(err, "Could not save the server")),
+    onError: (err) => setEditError(formatApiError(err, "Could not save the server", config?.profile === "development")),
   });
 
   const refresh = () => {

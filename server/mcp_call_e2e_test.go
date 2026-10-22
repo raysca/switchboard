@@ -359,6 +359,10 @@ func TestFlowReadinessNamesAnEmptyMCPTokenVariable(t *testing.T) {
 	if err != nil || got.Readiness.State != flow.ReadinessToolUnavailable || got.Readiness.ToolDependencies[0].State != "auth_env_missing" || len(got.Readiness.MissingEnv) != 1 || got.Readiness.MissingEnv[0] != "MCP_TOKEN_TEST" {
 		t.Fatalf("readiness=%+v err=%v", got.Readiness, err)
 	}
+	vars["MCP_TOKEN_TEST"] = "  " // whitespace-only: the token reader rejects it, so readiness must too
+	if got, err = r.s.flows.Get(t.Context(), a.ID); err != nil || got.Readiness.ToolDependencies[0].State != "auth_env_missing" {
+		t.Fatalf("whitespace token: readiness=%+v err=%v", got.Readiness, err)
+	}
 	vars["MCP_TOKEN_TEST"] = "tok-1"
 	if got, err = r.s.flows.Get(t.Context(), a.ID); err != nil || got.Readiness.State != flow.ReadinessReady {
 		t.Fatalf("readiness=%+v err=%v", got.Readiness, err)

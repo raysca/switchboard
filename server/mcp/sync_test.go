@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -276,5 +277,113 @@ func TestSyncerRoundsNeverOverlap(t *testing.T) {
 	}
 	if second.Sub(first) < slow || third.Sub(second) < slow {
 		t.Fatalf("next round started before the slow one ended: gaps %v, %v", second.Sub(first), third.Sub(second))
+	}
+}
+
+// epRemote lets a test answer per endpoint.
+type epRemote struct {
+	list func(ctx context.Context, endpoint string) ([]RemoteTool, error)
+}
+
+func (r epRemote) ListTools(ctx context.Context, endpoint, _ string) ([]RemoteTool, error) {
+	return r.list(ctx, endpoint)
+}
+func (epRemote) CallTool(context.Context, string, string, string, json.RawMessage) (RemoteResult, error) {
+	return RemoteResult{}, errors.New("unused")
+}
+
+func staleRig(t *testing.T, list func(ctx context.Context, endpoint string) ([]RemoteTool, error)) (*Service, *storage.Store, string) {
+	t.Helper()
+	store, err := storage.Open(context.Background(), storage.Config{Dialect: storage.SQLite, DSN: t.TempDir() + "/mcp.db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	svc, err := NewService(ServiceConfig{Store: store, Remote: epRemote{list}, Destinations: allowHTTP{}, Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc, store, createTestServer(t, svc, "https://a.example/rpc", "").ID
+}
+
+func oneTool(name string) []RemoteTool {
+	return []RemoteTool{{Name: name, InputSchema: json.RawMessage(`{"type":"object"}`)}}
+}
+
+// runRoundBlocked starts a round and returns once its sync is inside the remote call.
+func runRoundBlocked(t *testing.T, y *Syncer, entered <-chan struct{}) <-chan struct{} {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { defer close(done); y.round(context.Background()) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("round never reached the remote")
+	}
+	return done
+}
+
+// An edit that lands while the round syncs the old endpoint is not overwritten by the old result.
+func TestSyncRoundDoesNotOverwriteAnEditMadeDuringTheSync(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var first atomic.Bool
+	svc, store, id := staleRig(t, func(ctx context.Context, ep string) ([]RemoteTool, error) {
+		if ep == "https://a.example/rpc" {
+			if first.CompareAndSwap(true, false) {
+				close(entered)
+				<-release
+			}
+			return oneTool("old"), nil
+		}
+		return oneTool("new"), nil
+	})
+	first.Store(true)
+	y := quietSyncer(svc, nil)
+	done := runRoundBlocked(t, y, entered)
+	ep := "https://b.example/rpc"
+	if _, err := svc.Update(context.Background(), id, ServerUpdate{Endpoint: &ep}); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	<-done
+	m, err := svc.Get(context.Background(), id)
+	if err != nil || m.Endpoint != ep || m.ValidationState != StateHealthy {
+		t.Fatalf("server=%+v err=%v", m, err)
+	}
+	d, err := store.MCP().LatestDiscovery(context.Background(), id)
+	if err != nil || len(d.Tools) != 1 || d.Tools[0].RemoteName != "new" {
+		t.Fatalf("latest discovery = %+v err=%v, want the edited endpoint's tool", d, err)
+	}
+}
+
+// A manual Sync that fails while the round's sync is in flight is not overwritten by the round's success.
+func TestSyncRoundDoesNotOverwriteAManualSyncMadeDuringTheSync(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	svc, _, id := staleRig(t, func(ctx context.Context, ep string) ([]RemoteTool, error) {
+		switch calls.Add(1) {
+		case 1:
+			close(entered)
+			<-release
+			return oneTool("t"), nil
+		default:
+			return nil, errors.New("down")
+		}
+	})
+	calls.Store(0) // the create-time sync, if any, is not the round's
+	y := quietSyncer(svc, nil)
+	done := runRoundBlocked(t, y, entered)
+	if _, err := svc.Refresh(context.Background(), id); err == nil {
+		t.Fatal("manual sync should fail")
+	}
+	failed, _ := svc.Get(context.Background(), id)
+	close(release)
+	<-done
+	m, _ := svc.Get(context.Background(), id)
+	if failed.ValidationState == StateHealthy || m.ValidationState != failed.ValidationState {
+		t.Fatalf("state %q, want the manual failure %q kept", m.ValidationState, failed.ValidationState)
+	}
+	if y.strikes[id] != 0 {
+		t.Fatalf("strikes = %d, want untouched", y.strikes[id])
 	}
 }

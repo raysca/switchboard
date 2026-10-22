@@ -619,7 +619,7 @@ func (s *Service) Refresh(ctx context.Context, id string) (storage.MCPDiscovery,
 	if err != nil {
 		return storage.MCPDiscovery{}, err // ErrNotFound, or a store failure
 	}
-	r := s.syncServer(ctx, m)
+	r := s.syncServer(ctx, m, nil)
 	s.writeResult(ctx, m.ID, r)
 	return r.Discovery, r.Err
 }
@@ -635,7 +635,9 @@ func (s *Service) writeResult(ctx context.Context, id string, r syncResult) {
 
 // syncServer connects to m and stores its tool list as a discovery (unchanged
 // tools reuse the latest one). It writes no validation state: the caller does.
-func (s *Service) syncServer(ctx context.Context, m storage.MCPServer) syncResult {
+// If current is non-nil it is asked just before the discovery is stored; false
+// means the result is stale, nothing is stored and the result is empty.
+func (s *Service) syncServer(ctx context.Context, m storage.MCPServer, current func() bool) syncResult {
 	if err := ctx.Err(); err != nil {
 		return syncResult{Err: err}
 	}
@@ -679,6 +681,10 @@ func (s *Service) syncServer(ctx context.Context, m storage.MCPServer) syncResul
 	}
 	if err := ctx.Err(); err != nil {
 		return fail(StateConnectionFailed, time.Now(), err, err)
+	}
+	if current != nil && !current() {
+		end(nil)
+		return syncResult{}
 	}
 	d, err := s.store.MCP().AddDiscovery(ctx, m.ID, items)
 	if err != nil {

@@ -77,17 +77,29 @@ func (y *Syncer) round(ctx context.Context) {
 		return
 	}
 	present := make(map[string]bool, len(servers))
-	for _, m := range servers {
-		present[m.ID] = true
-		if !m.Enabled || m.PendingDelete {
-			delete(y.strikes, m.ID)
+	for _, listed := range servers {
+		present[listed.ID] = true
+		// Work from a fresh read: an edit or manual Sync may have landed since the list.
+		m, err := y.svc.store.MCP().Server(ctx, listed.ID)
+		if err != nil || !m.Enabled || m.PendingDelete {
+			delete(y.strikes, listed.ID)
 			continue
 		}
+		// current reports whether m is still the stored server: same target, nobody wrote a newer result.
+		current := func() bool {
+			n, err := y.svc.store.MCP().Server(ctx, m.ID)
+			return err == nil && n.Enabled && !n.PendingDelete && n.Endpoint == m.Endpoint && n.AuthEnv == m.AuthEnv && n.LastCheckedAt.Equal(m.LastCheckedAt)
+		}
 		sctx, cancel := y.svc.timed(ctx)
-		r := y.svc.syncServer(sctx, m)
+		r := y.svc.syncServer(sctx, m, current)
 		cancel()
 		if ctx.Err() != nil { // stopping: this result says nothing about the server
 			return
+		}
+		// Stale, or the sync never started: write nothing and leave the strikes alone.
+		// (A tiny race remains between this check and the write.)
+		if r.State == "" || !current() {
+			continue
 		}
 		ok := r.Err == nil
 		if y.onResult != nil {
@@ -99,7 +111,6 @@ func (y *Syncer) round(ctx context.Context) {
 			y.strikes[m.ID] = 1
 			continue
 		}
-		// A round that snapshotted the old endpoint can briefly overwrite an edit's result until the next tick (accepted; no guard).
 		y.svc.writeResult(ctx, m.ID, r)
 		if ok {
 			delete(y.strikes, m.ID)

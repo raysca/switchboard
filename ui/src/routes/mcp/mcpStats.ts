@@ -109,16 +109,17 @@ const CATEGORIES: Record<string, string> = {
 };
 
 /** The sentence for an error's `details` (`reason` or `category`), if it carries a known one. */
-function detailSentence(details: unknown): string | undefined {
+function detailSentence(details: unknown, development: boolean): string | undefined {
   const d = (details && typeof details === "object" ? details : {}) as { reason?: string; category?: string; message?: string };
+  if (d.reason === "destination_denied" && development) return `${REASONS.destination_denied} This development server also allows local test addresses.`;
   if (d.reason && REASONS[d.reason]) return REASONS[d.reason];
   if (d.category === "tool_error") return `The tool reported an error${d.message ? `: ${d.message}` : ""}`;
   return d.category ? CATEGORIES[d.category] : undefined;
 }
 
-export function formatApiError(err: unknown, fallback: string): string {
+export function formatApiError(err: unknown, fallback: string, development = false): string {
   if (err instanceof ApiError) {
-    const text = detailSentence(err.details) ?? err.message;
+    const text = detailSentence(err.details, development) ?? err.message;
     return err.requestId ? `${text} (Request ID: ${err.requestId})` : text;
   }
   if (err instanceof Error) return err.message;
