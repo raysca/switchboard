@@ -134,7 +134,7 @@ go test -race -count=1 ./tools/compat/...   # compare Switchboard with the commi
 make parity-regen                           # re-execute Pipecat from pipecat-impl/.venv, rewrite the goldens (needs: cd pipecat-impl && uv sync)
 ```
 
-Regeneration is deterministic (a second run is byte-identical). A fixture without a declared difference must match Pipecat exactly; a declared difference must still hold and must differ from Pipecat, so a stale one fails. `TestParityMatrix` also fails when the matrix cites a missing path, test or fixture, or leaves a declared difference unexplained. Only the turn-event fixture above pins `tests/test_turn_tracking_observer.py`; the new goldens pin the checkout revision and each cited module. A paired fixture drives one component with scripted frames; it is not evidence that the feature is enabled in a live call (most turn-taking features need `turn.manager: true`).
+Regeneration is deterministic (a second run is byte-identical). A fixture without a declared difference must match Pipecat exactly; a declared difference must still hold and must differ from Pipecat, so a stale one fails. `TestParityMatrix` also fails when the matrix cites a missing path, test or fixture, or leaves a declared difference unexplained. Only the turn-event fixture above pins `tests/test_turn_tracking_observer.py`; the new goldens pin the checkout revision and each cited module. A paired fixture drives one component with scripted frames; it is not evidence that the feature is enabled in a live call (most turn-taking features run only under the turn manager, which is on by default).
 
 ## Selected V2 capability status
 
@@ -178,7 +178,7 @@ The table tracks every V2 P0/P1/P2 capability from the original V2 specification
 |---|---|---|
 | Go framework API and internal execution | intentional difference | Behavioral and semantic compatibility is the objective. Go uses native contexts, goroutines, and its own public types; Python class names and internal implementation are not API requirements. |
 | Audio DSP dependency | removed | Deleted from core: it had no production users. |
-| Whisker wire protocol | parked (D-0.1) | Semantic adapter/conformance is required, but a byte-level wire claim waits for an official protocol/package version to be pinned. |
+| Whisker wire protocol | parked (`docs/decisions/whisker.md`) | Semantic adapter/conformance is required, but a byte-level wire claim waits for an official protocol/package version to be pinned. |
 | Playback clear in the pinned V1 client | intentional difference | The probe records a failure for both tested wire events. V2 must satisfy its output-flush gate through a compatible client/API or another playback-buffer mechanism with direct test evidence. |
 | PSTN, SIP, Twilio, and call-center behavior | deferred beyond V2 | Telephony remains out of scope; generic tones/DTMF do not imply telephony support. |
 

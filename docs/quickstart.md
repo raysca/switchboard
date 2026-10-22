@@ -46,7 +46,7 @@ To run it outside a laptop, see [deployment.md](deployment.md).
 
 `config/development.yaml` works as-is. YAML holds only infrastructure: listeners, TLS, limits, VAD, the token issuer, provider infrastructure (Google project/location/stream quotas, xAI endpoints) and `storage.dialect`. Models, voices and prompts belong to stored flows; provider keys belong to the environment. A `pipelines:` section is rejected at startup.
 
-The turn manager is on by default (see "Turn taking" below). Optional features (Smart Turn, idle, DTMF, recording, OTel, redaction, audio filters, failover) are off by default and listed as commented examples at the end of `config/development.yaml`; defaults and semantics per key are in the "Default" column of [pipecat-parity-matrix.md](pipecat-parity-matrix.md).
+The turn manager is on by default (see "Turn taking" below). Idle handling is on by default (`idle.user_timeout` 15 s, 2 prompts; `idle.user_timeout: 0s` turns it off). Other optional features (Smart Turn, DTMF, recording, OTel, redaction, audio filters, failover) are off by default and listed as commented examples at the end of `config/development.yaml`; defaults and semantics per key are in the "Default" column of [pipecat-parity-matrix.md](pipecat-parity-matrix.md).
 
 TTS streams by default. Two optional kill switches: `providers.google_tts.disable_streaming: true` serves Google voices with the unary request, and `providers.xai_tts.disable_streaming: true` does the same for xAI.
 
