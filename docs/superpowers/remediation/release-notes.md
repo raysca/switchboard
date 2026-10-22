@@ -209,6 +209,11 @@ Tests
 - No deterministic test for an injected write error on `OnWriteComplete`; the denied-microphone path is covered by Vitest only.
 - The checked-in Playwright run on the echo stack cannot exercise a real Smart Turn model.
 
+Call-setup panic handling (open)
+- A panic between the active-calls insert and the done goroutine can still leave an `activeCalls` entry; near-unreachable.
+- A panic after the call is registered is owned by `finishCall`; it is not covered by the setup recover.
+- Three recovered panic values are still logged unredacted: `core/session.go`, `transport/ws/pacing.go` (line 808) and `server/demo_api.go` (line 57).
+
 Build and tooling
 - The macOS ONNX Runtime download has no pinned sha256 yet (`fetch-ort` warns); the hash comes from the next CI `make ort` run.
 - `go work sync` is not a no-op in this workspace; module files are edited by hand.
