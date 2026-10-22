@@ -396,7 +396,7 @@ func stopTimerLocked(g *failoverGen) {
 // (anything it emits later is dropped like any abandoned attempt).
 func (w *LLMFailover) firstTokenExpired(g *failoverGen, pos int) {
 	w.mu.Lock()
-	if w.closed || g.done || g.committed || g.pos != pos || !w.mayFailOver(g, ErrFirstTokenTimeout) {
+	if w.closed || w.cur != g || g.done || g.committed || g.pos != pos || !w.mayFailOver(g, ErrFirstTokenTimeout) {
 		w.mu.Unlock()
 		return
 	}
