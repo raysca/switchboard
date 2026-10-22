@@ -25,3 +25,9 @@ The records of the 2026-10 review remediation: the plan that drove it, one plan 
 | [2026-10-21-phase-9-closeout](remediation/plans/2026-10-21-phase-9-closeout.md) | Phase 9: close-out. |
 
 New phase plans are named `remediation/plans/YYYY-MM-DD-phase-N-<name>.md`.
+
+## remediation/release-notes
+
+| File | What it is |
+|---|---|
+| [release-notes](remediation/release-notes.md) | What the remediation changed, the measured before/after, and the known gaps. |
